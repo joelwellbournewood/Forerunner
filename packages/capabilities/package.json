@@ -1,0 +1,30 @@
+{
+  "name": "@forerunner/capabilities",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser, email, desktop control, MCP connectors; each an MCP server the runtime can grant or revoke.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "vitest run --project unit --dir test"
+  },
+  "dependencies": {
+    "@forerunner/platform": "workspace:*",
+    "@forerunner/vault": "workspace:*",
+    "@forerunner/runtime": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "playwright": "^1.64.1",
+    "nodemailer": "^10.1.7",
+    "imapflow": "^2.5.8",
+    "mailparser": "^3.10.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^7.0.0",
+    "@types/mailparser": "^3.4.6",
+    "@forerunner/testenv": "workspace:*"
+  }
+}

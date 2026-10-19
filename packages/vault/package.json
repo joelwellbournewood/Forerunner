@@ -1,0 +1,19 @@
+{
+  "name": "@forerunner/vault",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OS keychain and encrypted file store; secrets by reference.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "vitest run --project unit --dir test"
+  },
+  "dependencies": {
+    "@forerunner/platform": "workspace:*",
+    "@napi-rs/keyring": "^2.1.2"
+  },
+  "devDependencies": {}
+}

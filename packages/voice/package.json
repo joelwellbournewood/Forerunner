@@ -1,0 +1,23 @@
+{
+  "name": "@forerunner/voice",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "STT, TTS, VAD, voice loop, latency measurement; local and cloud providers.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "vitest run --project unit --dir test"
+  },
+  "dependencies": {
+    "@forerunner/platform": "workspace:*",
+    "ws": "^8.22.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.0",
+    "@forerunner/testenv": "workspace:*"
+  }
+}

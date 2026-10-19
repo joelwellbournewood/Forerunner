@@ -1,0 +1,20 @@
+{
+  "name": "@forerunner/billing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Billing sources (subscription, plan credits, API key), routing, cost ledger, CHF rates, plan-usage view.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "vitest run --project unit --dir test"
+  },
+  "dependencies": {
+    "@forerunner/platform": "workspace:*",
+    "@forerunner/state": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {}
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@forerunner/evals",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Golden task sets per specialist, eval runner, calibration, model watch.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "vitest run --project unit --dir test"
+  },
+  "dependencies": {
+    "@forerunner/platform": "workspace:*",
+    "@forerunner/runtime": "workspace:*",
+    "@forerunner/critic": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@forerunner/testenv": "workspace:*"
+  }
+}

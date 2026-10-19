@@ -1,0 +1,21 @@
+{
+  "name": "@forerunner/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The nine release scenarios.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "vitest run --project unit --dir test"
+  },
+  "dependencies": {
+    "@forerunner/platform": "workspace:*",
+    "@forerunner/runtime": "workspace:*",
+    "@forerunner/testenv": "workspace:*",
+    "playwright": "^1.64.1"
+  },
+  "devDependencies": {}
+}

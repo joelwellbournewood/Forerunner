@@ -1,0 +1,23 @@
+{
+  "name": "@forerunner/critic",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Independent reviewer: tiers, grades, findings, verdicts, calibration.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "vitest run --project unit --dir test"
+  },
+  "dependencies": {
+    "@forerunner/platform": "workspace:*",
+    "@forerunner/state": "workspace:*",
+    "@forerunner/runtime": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@forerunner/testenv": "workspace:*"
+  }
+}
