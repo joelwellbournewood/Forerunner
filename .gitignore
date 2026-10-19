@@ -1,0 +1,35 @@
+node_modules/
+dist/
+build/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+.env.build
+*.local
+.DS_Store
+Thumbs.db
+# Tauri / Rust
+apps/*/src-tauri/target/
+apps/*/src-tauri/gen/schemas/
+target/
+# Android
+apps/mobile/src-tauri/gen/android/.gradle/
+apps/mobile/src-tauri/gen/android/app/build/
+apps/mobile/src-tauri/gen/android/build/
+*.keystore
+*.jks
+*.apk
+*.aab
+# test artefacts
+test-results/
+playwright-report/
+.vitest/
+.turbo/
+.forerunner-dev/
+tmp/
+# secrets that must never be committed
+*.pem
+*.p12
+*.pfx

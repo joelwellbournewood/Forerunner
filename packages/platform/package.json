@@ -1,0 +1,22 @@
+{
+  "name": "@forerunner/platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-platform primitives: paths, shell runner, clock, OS facts. The only place that knows about Windows vs Linux differences.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./paths": "./src/paths.ts",
+    "./shell": "./src/shell.ts",
+    "./clock": "./src/clock.ts",
+    "./os": "./src/os.ts",
+    "./ids": "./src/ids.ts",
+    "./errors": "./src/errors.ts",
+    "./log": "./src/log.ts"
+  },
+  "scripts": {
+    "test": "vitest run --project unit --dir test"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
