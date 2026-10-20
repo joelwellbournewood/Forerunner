@@ -93,15 +93,17 @@ describe("inbox", () => {
     await waitFor(() => $$("request").length > 0, "requests");
     const target = h.fake.state.requests.find((r) => r.id === "req-approval");
     if (!target) throw new Error("fixture");
-    target.version = 2;
     // The refusal must not depend on which version the page holds when it answers (a feed refresh
-    // can hand it the new one first), so the fake refuses this request's next answer outright.
+    // can hand it the new one first), so the fake refuses this request's next answer outright. The
+    // listing keeps version 1 until the banner is up: a refresh in between would remount the card
+    // under a new version key and drop the banner with it.
     h.fake.state.conflictOnce.add("req-approval");
     const card = $$("request").find((c) => c.dataset.requestId === "req-approval") as HTMLElement;
     await click($$("option", card)[0] as HTMLElement);
     await waitFor(() => $("conflict") !== null, "conflict");
     expect(must("conflict").textContent).toMatch(/changed on another device/);
     expect($$("option", card)).toHaveLength(0);
+    target.version = 2;
     const before = h.fake.calls("/inbox").length;
     await click(must("reload"));
     await waitFor(() => h.fake.calls("/inbox").length > before, "reloaded");
