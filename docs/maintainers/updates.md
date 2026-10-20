@@ -402,11 +402,12 @@ approval request fails the "refused before any approval" assertion.
   and exits with `RESTART_EXIT_CODE` (86); the shells' supervisor that reacts to it and the
   launcher that reads `current.json` do not exist yet, so until then `fr update apply` from the
   CLI stages and asks the user to restart.
-- `release.yml` does not yet build the signed `forerunner-release.json` asset; `release.md`
-  describes the Tauri/minisign plan, which this module replaces with the Ed25519 manifest
-  (ADR 0015). The workflow steps are `fr update manifest`, `fr update sign --key-file` (the
-  CI secret written to a temp file), upload; both commands exist and are tested, the workflow
-  change is pending.
+- `release.yml` builds and uploads the signed `forerunner-release.json` asset in its publish
+  job (`fr update manifest` from the downloaded artefacts, `fr update sign --key-file` with the
+  `UPDATE_SIGNING_KEY` secret written to a temp file and removed after); the step is skipped
+  when the secret is absent, so a release without the secret is unsigned and no install will
+  take it. `release.md` still describes the earlier Tauri/minisign plan, which this module
+  replaces with the Ed25519 manifest (ADR 0015).
 - The sync gate (`SyncGate`, `assertCanSync`, `isSchemaCompatible`) has no caller outside this
   module and its tests: spec M's "both apps must be on a compatible version before sync
   resumes" is not enforced in the sync path yet. `docs/requirements.md` M.6 should read "in

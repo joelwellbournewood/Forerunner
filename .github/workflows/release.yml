@@ -121,6 +121,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -128,6 +136,30 @@ jobs:
         run: |
           cd artifacts && find . -type f -exec sha256sum {} \; > SHA256SUMS.txt && cd ..
           node scripts/release-notes.mjs "${GITHUB_REF_NAME}" > RELEASE_NOTES.md
+      - name: Signed release manifest (ADR 0015; skipped without UPDATE_SIGNING_KEY)
+        if: env.UPDATE_SIGNING_KEY != ''
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          channel=stable; case "$tag" in *-*) channel=beta;; esac
+          pick() { find artifacts -type f -name "$1" | head -n 1; }
+          args=()
+          f=$(pick '*.msi');      [ -n "$f" ] && args+=(--artifact "windows-x64:$f")
+          f=$(pick '*.AppImage'); [ -n "$f" ] && args+=(--artifact "linux-x64:$f")
+          f=$(pick '*.apk');      [ -n "$f" ] && args+=(--artifact "android:$f")
+          node scripts/release-notes.mjs "$tag" --changelog CHANGELOG.md > notes-section.md
+          keyfile=$(mktemp); printf '%s' "$UPDATE_SIGNING_KEY" > "$keyfile"
+          pnpm exec tsx packages/runtime/src/cli/main.ts update manifest \
+            --version "$version" --channel "$channel" --notes-file notes-section.md --min-schema 1 \
+            --base-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${tag}" \
+            "${args[@]}" --out manifest.json
+          pnpm exec tsx packages/runtime/src/cli/main.ts update sign \
+            --manifest manifest.json --key-file "$keyfile" --out artifacts/forerunner-release.json
+          rm -f "$keyfile" manifest.json
       - uses: softprops/action-gh-release@v2
         with:
           body_path: RELEASE_NOTES.md
