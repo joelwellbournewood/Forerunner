@@ -6,8 +6,8 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 | Phase | Name | Status | Gate evidence |
 | --- | --- | --- | --- |
-| 0 | Foundations | in progress | gates.md § Phase 0 |
-| 1 | Single agent that does real work | not started | |
+| 0 | Foundations | CI green on both OS (run 39352102564); fresh-install timing pending the install scripts | gates.md § Phase 0 |
+| 1 | Single agent that does real work | gate passed on the fake provider (10 tasks via PRs, overspend blocked, kill under 2 s); live subscription/API checks blocked on credentials; minimal UI pages pending | gates.md § Phase 1 |
 | 2 | Two agents, one project | not started | |
 | 3 | Critic and quality loop | not started | |
 | 4 | Memory, docs and learning | not started | |
@@ -17,6 +17,17 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | 8 | Full integration and release 1.0 | not started | |
 
 ## Log
+
+### 2026-10-20 (later)
+- Sessions: startup checklist, state brief, planner, claims, executor, scheduler, state ports.
+  Conversation agent (notes, draft tasks, request answers, session control with read-back
+  confirmation). Billing wired into the enforcement ports. Capabilities: git host contract,
+  GitHub adapter, local git operations, PR task executor with rebase-before-PR and conflict
+  escalation, in-memory git host. Phase 1 gate test passes on the fake provider.
+- First fully green CI run on Windows and Linux (run 39352102564). Wave 1 snapshot committed
+  (state, vault, billing, fake provider, requirements, ADRs).
+- Android: SDK 34, NDK 27 and Rust targets installed; `tauri android init` generated the
+  project; the debug APK build fails in Gradle (being diagnosed).
 
 ### 2026-10-20
 - `@forerunner/runtime` core: capability tokens, enforcement hooks (budget, steps, wall clock, kill,

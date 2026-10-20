@@ -10,19 +10,19 @@ missing item, see BLOCKERS.md), **failed** (with the failing evidence and the fi
 
 | Check | Status | Command | Date | Result | CI |
 | --- | --- | --- | --- | --- | --- |
-| CI green on Windows and Linux | pending | `.github/workflows/ci.yml` | | | |
+| CI green on Windows and Linux | **passed** | `.github/workflows/ci.yml` (lint, typecheck, unit, integration with Postgres, secret scan incl. logs, docs check, link check, schema doc, gitleaks, dependency audit, runner image) | 2026-10-20 | check (ubuntu-latest) and check (windows-latest) both success on commit b5df700 | https://github.com/joelwellbournewood/Forerunner/actions/runs/39352102564 |
 | Scripted fresh install on clean Windows and Linux VMs under 15 minutes | pending | `scripts/fresh-install.ps1`, `scripts/fresh-install.sh` in `.github/workflows/fresh-install.yml` | | | |
-| Keys never appear in logs (automated scan) | pending | `pnpm secrets:scan --logs` | | | |
+| Keys never appear in logs (automated scan) | **passed** (continuous) | `pnpm secrets:scan && pnpm secrets:scan --logs` in CI on both runners; `Logger` redaction tests in `packages/platform/test/log.test.ts`; CLI tests assert no credential is echoed | 2026-10-20 | clean on both runners | https://github.com/joelwellbournewood/Forerunner/actions/runs/39352102564 |
 
 ## Phase 1 — Single agent
 
 | Check | Status | Command | Date | Result | CI |
 | --- | --- | --- | --- | --- | --- |
-| One agent plans and completes 10 tasks via PRs without exceeding any cap | pending | `pnpm test:integration -- phase1` | | | |
-| Deliberate overspend blocked by code | pending | `packages/runtime/test/enforcement.budget.test.ts` | | | |
+| One agent plans and completes 10 tasks via PRs without exceeding any cap | **passed** (fake provider, local bare repo) | `pnpm vitest run --project integration packages/capabilities/test/phase1-gate.integration.test.ts` | 2026-10-20 | 10 PRs opened, 10 tasks in review, all runs under task cap, session under cap, no denied audit entries (commit c989eed) | CI run 39352827893 (integration step) |
+| Deliberate overspend blocked by code | **passed** | `packages/runtime/test/hooks.test.ts` ("blocks a deliberate overspend before the call is made"), `packages/runtime/test/loop.test.ts` ("stops a run that tries to overspend"), gate test "blocks a deliberate overspend in code and the session stops cleanly with a handoff" | 2026-10-20 | run outcome budget_exceeded under the run cap; session stops with handoff; no PR opened | CI run 39352827893 |
 | Kill switch stops everything within 2 s | pending | `packages/runtime/test/killswitch.test.ts` | | | |
 | Same session once on subscription and once on API key with correct usage | blocked | needs tokens | | | |
-| Text chat first token under 1 s median | blocked | needs API key | | | |
+| Text chat first token under 1 s median | **partial**: measured under simulated latency (250 ms) in the gate test; live median blocked until an API key exists | gate test "text chat answers with a measured first token" | 2026-10-20 | ttft recorded per turn by `ConversationAgent`; live run pending | pending |
 
 ## Phases 2–7
 
