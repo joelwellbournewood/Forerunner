@@ -115,10 +115,8 @@ describe("context: cache layout", () => {
     expect(c[0]?.description).toBe("a b");
     expect(JSON.stringify(c[0]?.input_schema)).not.toContain("$schema");
     expect(JSON.stringify(c[0]?.input_schema)).not.toContain("examples");
-    expect(
-      (c[0]?.input_schema as { properties: { a: { description: string } } }).properties.a
-        .description,
-    ).toBe("multi line");
+    const schema = c[0]?.input_schema as { properties: { a: { description: string } } } | undefined;
+    expect(schema?.properties.a.description).toBe("multi line");
     expect(compactTools(tools)).toBe(c);
   });
   it("rejects volatile content in the system prompt and lays out stable prefixes", () => {
