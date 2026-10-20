@@ -45,9 +45,23 @@ missing item, see BLOCKERS.md), **failed** (with the failing evidence and the fi
 | Repeat-finding rate drops over 4 simulated weeks on the eval projects | pending (integration of critic and memory into the session loop first) | planned: `tests/e2e` four-week simulation | | | |
 | Memory loaded per session stays under the set token budget | **passed** (unit) | `packages/memory/test/retrieval.test.ts` (budgeted retrieval never exceeds the budget) | 2026-10-20 | retrieval cuts to the budget | CI unit step |
 
-## Phases 5–7
+## Phase 5 — Human experience and voice
 
-Filled in as each phase is reached.
+Filled in as the phase is reached.
+
+## Phase 6 — Capabilities
+
+| Check | Status | Command | Date | Result | CI |
+| --- | --- | --- | --- | --- | --- |
+| Injection suite passes | **passed** (fake provider) | `pnpm test:injection` (`evals/`: forty-plus hostile pages and emails plus clean controls through the extraction, command-gate and loop paths) | 2026-10-20 | every injection denied by the hooks and reported, no control flagged | CI run 39401060101, both OS |
+| Every capability can be revoked live from the panel | **passed** (unit); panel pending UI phase 2 | `packages/runtime/test/extensions-gate.test.ts`, `extensions-registry.test.ts` (revocation closes the connection and the gate refuses the next call) | 2026-10-20 | live revocation in code | CI unit step |
+| Cloud runner completes an overnight session while both PCs are off | **passed** (local: fake provider, local Postgres); real host pending | `FORERUNNER_TEST_PG=… pnpm vitest run --project integration services/cloud-runner` (`runner.integration.test.ts`: 8 simulated hours, no desktop online) | 2026-10-20 | 2 tasks done, runs and ledger on the human's API-key source, subscription skipped on a shared runner, key absent from the shared state; phone kill stops a session within 2 s | CI integration step |
+| An emailed task is acknowledged within 1 minute and completed in the cloud | **passed** (local: testenv mail server); real mailbox pending | `pnpm vitest run --project unit services/cloud-runner` (`email-watch.test.ts`: push and 5-minute poll delivery, each message handed over once; `inbox-trigger.test.ts`, `runner.test.ts`: the task starts a cloud session) | 2026-10-20 | 44 tests pass | CI unit step |
+| A spoofed or forwarded email is ignored | **passed** (local) | `packages/capabilities/test/email-commands.test.ts` (DKIM fail, unaligned sender, forwarded and replayed commands ignored and reported), `evals` injection suite email cases | 2026-10-20 | ignored with the reason recorded, nothing executed | CI unit and injection steps |
+
+## Phase 7 — Self-improvement and model economics
+
+Filled in as the phase is reached.
 
 ## Release 1.0 criteria
 

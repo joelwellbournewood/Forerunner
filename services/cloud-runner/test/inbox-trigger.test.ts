@@ -1,0 +1,283 @@
+import { SimulatedClock } from "@forerunner/platform";
+import { type AgentRow, openStore, type StateStore } from "@forerunner/state";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type InboxStartRequest, InboxTrigger } from "../src/inbox-trigger.ts";
+import { flush, type Seed, seedWorld } from "./helpers.ts";
+
+/**
+ * Inbox triggers on an in-memory store: a peer's message or the human's answer to a session's
+ * question asks the scheduler for one "message" session, each item at most once; the agent's
+ * own notes, read messages, items from before the runner started, the runner's own unlock
+ * challenges and rejected plans never do; nothing is checked while a session runs; a PC that
+ * is online keeps the items (ADR 0033) until it is gone.
+ */
+let store: StateStore;
+let clock: SimulatedClock;
+let seed: Seed;
+let peer: AgentRow;
+let requests: InboxStartRequest[];
+let active: boolean;
+let pcOnline: boolean;
+let deferAsked: number;
+
+beforeEach(async () => {
+  clock = new SimulatedClock("2026-03-02T22:00:00Z");
+  store = await openStore({ url: "sqlite::memory:", clock });
+  seed = await seedWorld(store);
+  peer = await store.agent.insert({
+    name: "Bob",
+    owner_human_id: seed.human.id,
+    model_config: {},
+    memory_location: "local",
+    status: "active",
+    kind: "principal",
+  });
+  requests = [];
+  active = false;
+  pcOnline = false;
+  deferAsked = 0;
+});
+afterEach(async () => {
+  await store.close();
+});
+
+function trigger(opts: Partial<ConstructorParameters<typeof InboxTrigger>[0]> = {}) {
+  return new InboxTrigger({
+    store,
+    clock,
+    agentId: seed.agent.id,
+    isActive: () => active,
+    shouldDefer: async () => {
+      deferAsked++;
+      return pcOnline;
+    },
+    request: async (req) => {
+      requests.push(req);
+      return "started";
+    },
+    pollMs: 30_000,
+    deferMs: 180_000,
+    ...opts,
+  });
+}
+
+function send(over: Record<string, unknown> = {}) {
+  return store.message.send({
+    from_agent_id: peer.id,
+    to_agent_id: seed.agent.id,
+    project_id: seed.project.id,
+    type: "handoff",
+    body: "Picked up the API task; the UI half is yours.",
+    requires_ack: false,
+    ...over,
+  });
+}
+
+async function sessionRequest(over: Record<string, unknown> = {}) {
+  const session = await store.session.insert({
+    agent_id: seed.agent.id,
+    project_id: seed.project.id,
+    trigger: "schedule",
+    runner: "cloud",
+  });
+  return store.humanRequest.insert({
+    human_id: seed.human.id,
+    project_id: seed.project.id,
+    session_id: session.id,
+    kind: "decision",
+    why: "Which database?",
+    steps: [],
+    options: ["sqlite", "postgres"],
+    blocking: true,
+    risk: "low",
+    author_agent: seed.agent.id,
+    ...over,
+  });
+}
+
+async function answer(id: string, body: unknown) {
+  const row = await store.humanRequest.mustGet(id);
+  await store.humanRequest.answer(id, row.version, body as never, seed.human.id);
+}
+
+describe("inbox triggers", () => {
+  it("a peer's message asks for one message session for its project and is never re-triggered", async () => {
+    const t = trigger();
+    // Before the runner started: left to the next session.
+    const old = await send({ body: "from before" });
+    await clock.advance(1_000);
+    expect(await t.check()).toBeNull();
+    await store.message.markRead(old.id);
+
+    await send();
+    // The agent's own note to itself and a message already read never count.
+    await send({ from_agent_id: seed.agent.id, body: "note to self" });
+    const read = await send({ body: "seen already" });
+    await store.message.markRead(read.id);
+
+    expect(await t.check()).toMatchObject({
+      agentId: seed.agent.id,
+      projectId: seed.project.id,
+      trigger: "message",
+      reason: "1 new message",
+    });
+    expect(requests).toHaveLength(1);
+    expect(await t.check()).toBeNull();
+    expect(requests).toHaveLength(1);
+    expect(t.stats).toMatchObject({ checks: 3, triggered: 1, deferred: 0 });
+
+    // Messages for two projects: no single project on the request.
+    const other = await store.project.insert({
+      name: "Other",
+      goal: "x",
+      repos: [],
+      stage: "build",
+      status: "active",
+      budget_usd_micro: 0,
+      autonomy_level: 2,
+      summary_cache: {},
+      data_assets: [],
+      settings: {},
+      small_project_mode: false,
+      active: true,
+    });
+    await clock.advance(1_000);
+    await send({ body: "two" });
+    await send({ body: "three", project_id: other.id });
+    const req = await t.check();
+    expect(req).toMatchObject({ trigger: "message", reason: "2 new messages" });
+    expect(req?.projectId).toBeUndefined();
+  });
+
+  it("waits while a session runs; afterwards only what the session did not read triggers", async () => {
+    const t = trigger();
+    await clock.advance(1_000);
+    const first = await send({ body: "first" });
+    active = true;
+    expect(await t.check()).toBeNull();
+    expect(t.stats).toMatchObject({ checks: 1, triggered: 0 });
+    // The session read the first message between tasks; a second arrived after it ended.
+    await store.message.markRead(first.id);
+    active = false;
+    await clock.advance(1_000);
+    await send({ body: "second" });
+    expect(await t.check()).toMatchObject({ reason: "1 new message" });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("an answered session question triggers; an approved plan carries planApproved; a rejected plan and the runner's unlock challenge do not", async () => {
+    const t = trigger();
+    await clock.advance(1_000);
+    const question = await sessionRequest();
+    await answer(question.id, "postgres");
+    expect(await t.check()).toMatchObject({
+      trigger: "message",
+      projectId: seed.project.id,
+      reason: "1 answered request",
+    });
+    expect(requests[0]?.planApproved).toBeUndefined();
+    expect(await t.check()).toBeNull();
+
+    const plan = await sessionRequest({
+      kind: "approval",
+      why: "Assisted mode: approve this session plan before work starts.",
+      options: ["approve", "reject"],
+      change_card: { key: "plan:s1", plan: [] },
+    });
+    await answer(plan.id, "approve");
+    expect(await t.check()).toMatchObject({ planApproved: true, reason: "1 answered request" });
+    expect(requests).toHaveLength(2);
+
+    const rejected = await sessionRequest({
+      kind: "approval",
+      options: ["approve", "reject"],
+      change_card: { key: "plan:s2", plan: [] },
+    });
+    await answer(rejected.id, "reject");
+    expect(await t.check()).toBeNull();
+    expect(requests).toHaveLength(2);
+
+    // The runner's own unlock challenge (no session) and an answer to an open question of
+    // another agent never start a session here.
+    const unlock = await store.humanRequest.insert({
+      human_id: seed.human.id,
+      kind: "credential",
+      why: "vault key",
+      steps: [],
+      options: ["unlock", "deny"],
+      blocking: true,
+      risk: "high",
+      change_card: { kind: "runner_vault_unlock" },
+      author_agent: seed.agent.id,
+    });
+    await answer(unlock.id, { challengeId: "x" });
+    const peersQuestion = await sessionRequest({ author_agent: peer.id });
+    await answer(peersQuestion.id, "sqlite");
+    expect(await t.check()).toBeNull();
+    expect(t.stats.triggered).toBe(2);
+  });
+
+  it("leaves the items to a PC that is online, backs off, and takes over once the PC is gone", async () => {
+    const t = trigger();
+    pcOnline = true;
+    await clock.advance(1_000);
+    await send();
+    expect(await t.check()).toBeNull();
+    expect(t.stats).toMatchObject({ deferred: 1, triggered: 0 });
+    expect(deferAsked).toBe(1);
+    // Inside the back-off nothing is re-asked.
+    await clock.advance(30_000);
+    expect(await t.check()).toBeNull();
+    expect(deferAsked).toBe(1);
+    pcOnline = false;
+    await clock.advance(180_000);
+    expect(await t.check()).toMatchObject({ trigger: "message", reason: "1 new message" });
+    expect(t.stats).toMatchObject({ deferred: 1, triggered: 1 });
+  });
+
+  it("an item the scheduler skipped for a PC that came online is not marked seen and triggers again later", async () => {
+    // The PC rule is checked twice: by shouldDefer before the request and by the scheduler's
+    // start. A PC that appears between the two makes the start report "skipped"; the items
+    // must stay available for the next check after the back-off, not be lost.
+    let outcome: "started" | "skipped" = "skipped";
+    const t = trigger({
+      request: async (req) => {
+        requests.push(req);
+        return outcome;
+      },
+    });
+    await clock.advance(1_000);
+    const handoff = await send();
+    expect(await t.check()).toBeNull();
+    expect(requests).toHaveLength(1);
+    expect(t.stats).toMatchObject({ triggered: 0, deferred: 1 });
+    expect((await store.message.mustGet(handoff.id)).read_at).toBeNull();
+    // Inside the back-off nothing is re-asked.
+    await clock.advance(30_000);
+    expect(await t.check()).toBeNull();
+    expect(requests).toHaveLength(1);
+    outcome = "started";
+    await clock.advance(180_000);
+    expect(await t.check()).toMatchObject({ trigger: "message", reason: "1 new message" });
+    expect(requests).toHaveLength(2);
+    expect(t.stats).toMatchObject({ triggered: 1, deferred: 1 });
+    expect(await t.check()).toBeNull();
+    expect(requests).toHaveLength(2);
+  });
+
+  it("polls on the clock once started and stops cleanly", async () => {
+    const t = trigger();
+    t.start();
+    await clock.advance(1_000);
+    await send();
+    await clock.advance(30_000);
+    await flush();
+    expect(requests).toHaveLength(1);
+    t.stop();
+    await clock.advance(1_000);
+    await send({ body: "after stop" });
+    await clock.advance(60_000);
+    await flush();
+    expect(requests).toHaveLength(1);
+  });
+});

@@ -1,0 +1,6 @@
+# The image is built with the repository root as the context (`docker build -f
+# services/cloud-runner/Dockerfile .`, as ci.yml and release.yml do), so the root .dockerignore
+# is the one that applies. This file only matters for a build that uses this directory as its
+# context, which has nothing to install; keep it in step with the root file.
+node_modules
+coverage
