@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   approvalPortFromRuntime,
   classifyClick,
+  classifySecretFill,
   classifySubmit,
   classifyTyping,
   describeFromHtml,
@@ -14,6 +15,7 @@ import {
   type GuardKind,
   guardVerdict,
   HumanRequestApprovalPort,
+  isOneShot,
 } from "../src/browser/guards.ts";
 
 const fixture = (name: string) =>
@@ -40,6 +42,9 @@ describe("guard classification", () => {
   it("payment fields and purchase buttons always need approval", () => {
     expect(classifyTyping(describeFromHtml(checkout, "#cardnumber"))).toEqual(["payment"]);
     expect(classifyTyping(describeFromHtml(checkout, "#cvc"))).toEqual(["payment"]);
+    expect(classifyTyping(describeFromHtml(checkout, "#expiry"))).toEqual(["payment"]);
+    // the cardholder's name is personal data, not the payment instrument
+    expect(classifyTyping(describeFromHtml(checkout, "#cardname"))).toEqual([]);
     expect(classifyTyping(describeFromHtml(checkout, "#code"))).toEqual([]);
     expect(classifyClick(describeFromHtml(checkout, "#place-order"))).toEqual(["purchase"]);
     expect(classifyClick(describeFromHtml(checkout, "#buy-now"))).toEqual(["purchase"]);
@@ -83,6 +88,29 @@ describe("guard classification", () => {
     expect(v.kinds).toEqual(["credential", "purchase", "personal_submit"]);
     expect(v.reason).toContain("password");
     expect(v.reason).toContain("purchases always");
+  });
+
+  it("a secret fill is a credential action unless the tool's own gate already asked; the element's other kinds stay", () => {
+    const password = describeFromHtml(login, "#password");
+    expect(classifySecretFill(password, {})).toEqual(["credential"]);
+    expect(classifySecretFill(password, { credentialApproved: true })).toEqual([]);
+    // a plain text field still counts as a credential entry when the fill is not yet approved
+    expect(classifySecretFill(describeFromHtml(login, "#username"), {})).toEqual(["credential"]);
+    const card = describeFromHtml(checkout, "#cardnumber");
+    expect(classifySecretFill(card, { credentialApproved: true })).toEqual(["payment"]);
+    expect(classifySecretFill(card, { credentialApproved: true, submit: true })).toEqual([
+      "payment",
+      "purchase",
+    ]);
+    expect(classifySecretFill(password, { credentialApproved: true, submit: true })).toEqual([]);
+  });
+
+  it("credential, payment and purchase approvals are one-shot; personal data and terms are remembered", () => {
+    expect(isOneShot(["credential"])).toBe(true);
+    expect(isOneShot(["payment"])).toBe(true);
+    expect(isOneShot(["purchase", "personal_submit"])).toBe(true);
+    expect(isOneShot(["personal_submit", "accept_terms"])).toBe(false);
+    expect(isOneShot([])).toBe(false);
   });
 
   it("finds fields by heuristics when autocomplete is missing", () => {
@@ -147,18 +175,57 @@ describe("GuardEnforcer", () => {
     expect(err.message).toContain("waiting for human approval");
   });
 
-  it("proceeds once approved and does not ask twice for the same action", async () => {
+  it("spends a credential, payment or purchase approval on the action it was given for: the same action asks again", async () => {
     const approvals = new FakeBrowserApprovals("approved");
-    const { e, audit } = enforcer(approvals);
-    const v = await e.enforce("browser_type", ["credential"], el, url);
+    const { e, audit } = enforcer(approvals, 4);
+    const order = describeFromHtml(checkout, "#place-order");
+    const checkoutUrl = "https://shop.example.test/checkout";
+    const v = await e.enforce("browser_click", ["purchase"], order, checkoutUrl);
     expect(v.needsApproval).toBe(true);
+    await e.enforce("browser_click", ["purchase"], order, checkoutUrl);
+    expect(approvals.requests).toHaveLength(2);
+    expect(audit.entries).toHaveLength(2);
+    expect(audit.entries[1]).toMatchObject({ allowed: true, resultSummary: "approved by human" });
     await e.enforce("browser_type", ["credential"], el, url);
+    await e.enforce("browser_type", ["credential"], el, url);
+    expect(approvals.requests).toHaveLength(4);
+    await e.enforce("browser_type", ["payment"], describeFromHtml(checkout, "#cvc"), checkoutUrl);
+    await e.enforce("browser_type", ["payment"], describeFromHtml(checkout, "#cvc"), checkoutUrl);
+    expect(approvals.requests).toHaveLength(6);
+    // a purchase that also submits personal data is still one-shot
+    await e.enforce("browser_click", ["purchase", "personal_submit"], order, checkoutUrl);
+    await e.enforce("browser_click", ["purchase", "personal_submit"], order, checkoutUrl);
+    expect(approvals.requests).toHaveLength(8);
+    expect(e.approved.size).toBe(0);
+  });
+
+  it("remembers an approval for personal data or terms on the same element and host for the session", async () => {
+    const approvals = new FakeBrowserApprovals("approved");
+    const { e, audit } = enforcer(approvals, 2);
+    const create = describeFromHtml(signup, "#create");
+    const signupUrl = "https://shop.example.test/signup";
+    const v = await e.enforce("browser_click", ["personal_submit"], create, signupUrl);
+    expect(v.needsApproval).toBe(true);
+    await e.enforce("browser_click", ["personal_submit"], create, signupUrl);
     expect(approvals.requests).toHaveLength(1);
     expect(audit.entries).toHaveLength(1);
     expect(audit.entries[0]).toMatchObject({ allowed: true, resultSummary: "approved by human" });
     // a different element asks again
-    await e.enforce("browser_type", ["credential"], describeFromHtml(login, "#otp"), url);
+    await e.enforce(
+      "browser_click",
+      ["accept_terms"],
+      describeFromHtml(signup, "#terms"),
+      signupUrl,
+    );
     expect(approvals.requests).toHaveLength(2);
+    // and so does the same element on another host
+    await e.enforce(
+      "browser_click",
+      ["personal_submit"],
+      create,
+      "https://other.example.test/signup",
+    );
+    expect(approvals.requests).toHaveLength(3);
   });
 
   it("never asks when the autonomy level frees the action", async () => {
@@ -236,7 +303,7 @@ describe("HumanRequestApprovalPort", () => {
       handoff: {},
       summary: "",
     });
-    const port = new HumanRequestApprovalPort(store.humanRequest);
+    const port = new HumanRequestApprovalPort(store.humanRequest, clock);
     const req = {
       sessionId: session.id,
       runId: "r1",
@@ -261,11 +328,31 @@ describe("HumanRequestApprovalPort", () => {
     if (!row) throw new Error("no request");
     await store.humanRequest.answer(row.id, row.version, "yes", human.id);
     expect(await port.ask(req)).toBe("approved");
+    // the "yes" is spent: the next identical purchase opens a new request instead of reusing it
+    expect(await port.ask(req)).toBe("pending");
+    const again = await store.humanRequest.open({ humanId: human.id });
+    expect(again).toHaveLength(1);
+    expect(again[0]?.id).not.toBe(row.id);
+    const spent = await store.humanRequest.mustGet(row.id);
+    expect(spent.status).toBe("answered");
+    expect((spent.change_card as { consumedAt?: string }).consumedAt).toBeTruthy();
+    expect(await port.ask(req)).toBe("pending");
+    expect(await store.humanRequest.open({ humanId: human.id })).toHaveLength(1);
+    const second = again[0];
+    if (!second) throw new Error("no request");
+    await store.humanRequest.answer(second.id, second.version, "yes", human.id);
+    expect(await port.ask(req)).toBe("approved");
+    expect(await port.ask(req)).toBe("pending");
+
     const other = { ...req, element: { tag: "button", text: "Buy now" } };
     expect(await port.ask(other)).toBe("pending");
-    const open2 = (await store.humanRequest.open({ humanId: human.id }))[0];
-    if (!open2) throw new Error("no request");
-    await store.humanRequest.answer(open2.id, open2.version, "no", human.id);
+    const target = (await store.humanRequest.open({ humanId: human.id })).find((r) =>
+      r.steps.includes("Element: button|||||Buy now"),
+    );
+    if (!target) throw new Error("no request");
+    await store.humanRequest.answer(target.id, target.version, "no", human.id);
+    // a "no" is not spent: the same action stays denied without a new card
+    expect(await port.ask(other)).toBe("denied");
     expect(await port.ask(other)).toBe("denied");
     await store.close();
   });

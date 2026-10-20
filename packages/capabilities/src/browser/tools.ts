@@ -72,6 +72,8 @@ export interface RevokeReport {
 export class BrowserSessionManager {
   private readonly browsers = new Map<string, Promise<AgentBrowser>>();
   private readonly sessions = new Map<string, BrowserSession>();
+  /** Sessions being opened, per run: concurrent first calls share one. */
+  private readonly opening = new Map<string, Promise<BrowserSession>>();
   private readonly logger: Logger;
 
   constructor(private readonly opts: BrowserSessionManagerOptions) {
@@ -108,10 +110,20 @@ export class BrowserSessionManager {
     }
   }
 
-  /** The run's session, created on first use. */
+  /** The run's session, created on first use; concurrent first calls share the one being opened. */
   async sessionFor(ctx: ToolExecutionContext): Promise<BrowserSession> {
     const existing = this.peek(ctx.runId);
     if (existing) return existing;
+    const inFlight = this.opening.get(ctx.runId);
+    if (inFlight) return inFlight;
+    const p = this.openSession(ctx).finally(() => {
+      if (this.opening.get(ctx.runId) === p) this.opening.delete(ctx.runId);
+    });
+    this.opening.set(ctx.runId, p);
+    return p;
+  }
+
+  private async openSession(ctx: ToolExecutionContext): Promise<BrowserSession> {
     if (ctx.signal.aborted) throw new ForerunnerError("killed", "run aborted");
     const binding = await this.opts.binding(ctx);
     const browser = await this.browserFor(ctx.agentId);
@@ -245,7 +257,7 @@ export function browserTools(manager: BrowserSessionManager): ToolSpec[] {
   const navigate: ToolSpec<{ url: string }> = {
     name: "browser_navigate",
     description:
-      "Open a URL in the agent's sandboxed browser. Only hosts in the run's site allowlist can be reached; subresources from other hosts are blocked.",
+      "Open a URL in the agent's sandboxed browser. Only hosts in the run's site allowlist can be reached; subresources, redirects and WebSockets to other hosts are blocked.",
     schema: z.object({ url: UrlInput }),
     actionClass: "read",
     risk: "low",
@@ -329,7 +341,12 @@ export function browserTools(manager: BrowserSessionManager): ToolSpec[] {
     timeoutMs: 60_000,
     async execute(input, ctx) {
       const s = requireSession(manager, ctx);
-      const r = await s.fillSecret(input.selector, input.secret, { submit: input.submit });
+      // This tool's class is `credential`: the hooks never run `execute` without a human's
+      // answer, so the session adds no second credential card for the same fill.
+      const r = await s.fillSecret(input.selector, input.secret, {
+        submit: input.submit,
+        credentialApproved: true,
+      });
       return {
         content: `Filled ${input.selector} with secret ${r.secret}${input.submit ? `; submitted, now at ${r.url}` : ""}.`,
       };

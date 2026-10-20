@@ -31,6 +31,11 @@ Status: accepted | superseded by NNNN
 | 0010 | Test environment: fake provider with recorded replies, simulated clock, fake git host |
 | 0011 | Local daemon API between the shells and the runtime |
 | 0012 | Voice pipeline: PCM contract, local helpers over stdio, latency anchors |
+| 0013 | Agent email: settings and sent log storage, the verification chain for email commands |
+| 0014 | Sandboxed browser: policy enforcement points and what the browser never does |
 | 0024 | State service shape: direct Postgres for runtimes, a thin service for devices, realtime, remote commands and the mirror |
 | 0025 | UI conventions over the daemon API: config source, SSE auth, chat stream frames, open shapes |
 | 0026 | Daemon lifecycle: one `fr daemon` per install, shells attach to it |
+| 0027 | Memory package parameters: embedder width, frontmatter keys, consolidation thresholds, scope grants |
+| 0028 | Critic independence and verdict rules in code |
+| 0030 | Command registry: risk resolution, confirmations, change log and undo |

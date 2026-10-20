@@ -15,6 +15,7 @@ import {
 import { MemoryVault, SecretResolver } from "@forerunner/vault";
 import { describe, expect, it } from "vitest";
 import { FakeBrowserApprovals } from "../src/browser/guards.ts";
+import { SitePolicy } from "../src/browser/policy.ts";
 import {
   BROWSER_TOOL_NAMES,
   BrowserSessionManager,
@@ -24,14 +25,19 @@ import {
 
 function manager(opts: { autonomy?: 0 | 1 | 2 | 3 | 4 } = {}) {
   const audit = new MemoryAudit();
+  let bindings = 0;
   const m = new BrowserSessionManager({
-    binding: () => ({ allowedDomains: ["allowed.test"], autonomy: opts.autonomy ?? 2 }),
+    binding: async () => {
+      bindings++;
+      await new Promise((r) => setTimeout(r, 5));
+      return { allowedDomains: ["allowed.test"], autonomy: opts.autonomy ?? 2 };
+    },
     approvals: new FakeBrowserApprovals("approved"),
     audit,
     clock: new SimulatedClock(),
     launch: { executablePath: "/nonexistent/chromium-for-tests" },
   });
-  return { m, audit };
+  return { m, audit, bindings: () => bindings };
 }
 
 describe("browser tools (no browser)", () => {
@@ -93,6 +99,30 @@ describe("browser tools (no browser)", () => {
     }
     expect((await by.browser_close?.execute({}, ctx))?.content).toContain("No browser session");
     expect(m.openSessions).toBe(0);
+  });
+
+  it("concurrent first calls for one run share the session being opened", async () => {
+    const w = manager();
+    const ctx: ToolExecutionContext = {
+      runId: "r1",
+      sessionId: "s1",
+      agentId: "alice",
+      humanId: "h1",
+      allowedPaths: [],
+      signal: new AbortController().signal,
+    };
+    const results = await Promise.all([
+      w.m.sessionFor(ctx).catch((e) => e),
+      w.m.sessionFor(ctx).catch((e) => e),
+      w.m.sessionFor(ctx).catch((e) => e),
+    ]);
+    for (const r of results) expect(isForerunnerError(r, "unavailable")).toBe(true);
+    // one binding resolution and one launch attempt for the three callers
+    expect(w.bindings()).toBe(1);
+    expect(w.m.openSessions).toBe(0);
+    // after the failure a new call starts afresh instead of reusing the rejected attempt
+    await w.m.sessionFor(ctx).catch(() => undefined);
+    expect(w.bindings()).toBe(2);
   });
 
   it("surfaces an unavailable browser as a ForerunnerError without touching the profile twice", async () => {
@@ -182,6 +212,24 @@ describe("browser tools behind the enforcement hooks", () => {
     expect(w.m.openSessions).toBe(0);
     const ok = await w.hooks.beforeToolCall(w.ctx, navigate, { url: "https://allowed.test/x" });
     expect(ok.allowed).toBe(true);
+  });
+
+  it("token domains are hostnames: every port of an allowed host passes, another host on the same port does not", async () => {
+    const w = world(["127.0.0.1"]);
+    const navigate = w.tools.browser_navigate;
+    if (!navigate) throw new Error("missing tool");
+    for (const url of ["http://127.0.0.1:3000/", "http://127.0.0.1:9000/x", "http://127.0.0.1/"]) {
+      const ok = await w.hooks.beforeToolCall(w.ctx, navigate, { url });
+      expect(ok.allowed, url).toBe(true);
+    }
+    await expect(
+      w.hooks.beforeToolCall(w.ctx, navigate, { url: "http://localhost:3000/" }),
+    ).rejects.toSatisfy((e) => isForerunnerError(e, "domain_not_allowed"));
+    // the session policy built from the same binding agrees, so nothing the hooks pass is refused later
+    const policy = new SitePolicy({ allow: ["127.0.0.1"] });
+    expect(policy.isAllowed("http://127.0.0.1:3000/")).toBe(true);
+    expect(policy.isAllowed("http://127.0.0.1:9000/x")).toBe(true);
+    expect(policy.isAllowed("http://localhost:3000/")).toBe(false);
   });
 
   it("resolves a granted secret reference for browser_fill_secret and asks the human first", async () => {

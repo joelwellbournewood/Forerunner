@@ -200,6 +200,45 @@ function writeUaCache(root: string, cache: UaCache): void {
   }
 }
 
+/**
+ * The Chromium features Playwright itself disables (`chromiumSwitches` in playwright-core),
+ * copied here because Chromium honours only the last `--disable-features` flag on its command
+ * line and Playwright does not merge a caller's flag into its own. Every entry Playwright adds
+ * or removes must be mirrored; `browser-profile.test.ts` compares this list with the installed
+ * Playwright's and fails when they drift.
+ */
+export const PLAYWRIGHT_DISABLED_FEATURES: readonly string[] = [
+  "AvoidUnnecessaryBeforeUnloadCheckSync",
+  "DestroyProfileOnBrowserClose",
+  "DialMediaRouteProvider",
+  "GlobalMediaControls",
+  "HttpsUpgrades",
+  "LensOverlay",
+  "MediaRouter",
+  "PaintHolding",
+  "ThirdPartyStoragePartitioning",
+  "BlockOriginHeaderModificationOnRedirect",
+  "AvoidCorsURLLoaderRestartOnRedirect",
+  "Translate",
+  "AutoDeElevate",
+  "OptimizationHints",
+  "NetworkTimeServiceQuerying",
+  "AimEnabled",
+  "msForceBrowserSignIn",
+  "msEdgeUpdateLaunchServicesPreferredVersion",
+];
+
+/**
+ * Features Forerunner disables on top. `LocalNetworkAccessChecks`: the policy route answers
+ * every HTTP(S) request from interception (see policy.ts), so a document carries no network
+ * address and Chromium would treat it as public and refuse the real connections that remain
+ * (WebSockets, event streams) to loopback and LAN hosts such as a local dev server. The site
+ * policy decides what a page may reach; the check would only add a second, blunter rule.
+ */
+export const FORERUNNER_DISABLED_FEATURES: readonly string[] = ["LocalNetworkAccessChecks"];
+
+export const DISABLE_FEATURES_ARG = `--disable-features=${[...PLAYWRIGHT_DISABLED_FEATURES, ...FORERUNNER_DISABLED_FEATURES].join(",")}`;
+
 /** Chromium flags on top of Playwright's defaults; each one removes a way out of the sandbox. */
 export const HARDENING_ARGS = [
   "--block-new-web-contents", // no popups or new windows: every page is one we opened and route
@@ -213,6 +252,7 @@ export const HARDENING_ARGS = [
   "--disable-client-side-phishing-detection",
   "--password-store=basic", // never the OS keychain of the human
   "--use-mock-keychain",
+  DISABLE_FEATURES_ARG,
 ];
 
 /**

@@ -1,6 +1,7 @@
 import { type Clock, ForerunnerError } from "@forerunner/platform";
 import {
   type ActionClass,
+  ALWAYS_HUMAN,
   type ApprovalOutcome,
   type ApprovalPort,
   type ApprovalRequest,
@@ -124,9 +125,13 @@ export function isCredentialField(f: FieldSummary | ElementDescriptor): boolean 
   return CREDENTIAL_PATTERN.test(haystack(f));
 }
 
+/** `cc-name` and its parts hold the cardholder's name, not the instrument: personal data, not payment. */
+const CC_NAME_AUTOCOMPLETE = /^cc-(name|given-name|additional-name|family-name)$/i;
+
 export function isPaymentField(f: FieldSummary | ElementDescriptor): boolean {
   if (f.tag !== "input" && f.tag !== "select" && f.tag !== "textarea") return false;
-  if (f.autocomplete && /^cc-/i.test(f.autocomplete)) return true;
+  const ac = (f.autocomplete ?? "").toLowerCase();
+  if (/^cc-/.test(ac)) return !CC_NAME_AUTOCOMPLETE.test(ac);
   return PAYMENT_PATTERN.test(haystack(f));
 }
 
@@ -161,6 +166,27 @@ export function classifyTyping(el: ElementDescriptor): GuardKind[] {
   if (isCredentialField(el)) kinds.push("credential");
   if (isPaymentField(el)) kinds.push("payment");
   return kinds;
+}
+
+/**
+ * Guards for typing a vault secret into an element. Typing a secret is a credential entry
+ * whatever the field looks like. `credentialApproved` says the caller's own gate already had a
+ * human approve this very fill (the runtime hooks do, before `execute`, because the
+ * `browser_fill_secret` tool has the `credential` action class): then the session adds no
+ * `credential` kind of its own, so one fill is one card. The element's other kinds (a payment
+ * field, a purchase or personal data on submit) are never covered by that approval and stay.
+ */
+export function classifySecretFill(
+  el: ElementDescriptor,
+  opts: { submit?: boolean; credentialApproved?: boolean },
+): GuardKind[] {
+  const kinds = new Set<GuardKind>(opts.credentialApproved ? [] : ["credential"]);
+  for (const k of classifyTyping(el)) {
+    if (k === "credential" && opts.credentialApproved) continue;
+    kinds.add(k);
+  }
+  if (opts.submit) for (const k of classifySubmit(el.form)) kinds.add(k);
+  return [...kinds];
 }
 
 /** Guards for submitting a form (Enter in a field, or a submit button). */
@@ -215,6 +241,15 @@ const SEVERITY: GuardKind[] = [
   "accept_terms",
   "personal_submit",
 ];
+
+/**
+ * Approvals for always-human kinds (credential, payment, purchase) are spent by the one action
+ * they were given for: a second identical click or keystroke asks again. Personal data and
+ * terms are remembered per element and host for the session.
+ */
+export function isOneShot(kinds: readonly GuardKind[]): boolean {
+  return kinds.some((k) => ALWAYS_HUMAN.has(GUARD_RULES[k].actionClass));
+}
 
 /** Decide in code whether the kinds need a human at this autonomy level. */
 export function guardVerdict(kinds: readonly GuardKind[], autonomy: AutonomyLevel): GuardVerdict {
@@ -361,11 +396,14 @@ export function elementForCard(el: ElementDescriptor): ElementDescriptor {
 }
 
 /**
- * Per-session enforcement: remembers approvals so a retry of the same guarded action does
- * not ask twice, writes an audit row for every ask, and throws `approval_required` when the
- * human said no or has not answered yet.
+ * Per-session enforcement: asks through the port before the action, writes an audit row for
+ * every ask, and throws `approval_required` when the human said no or has not answered yet.
+ * An approval for a credential, payment or purchase action is spent by that action (the port
+ * hands an answered "yes" out once; nothing is cached here), so the same click asks again. An
+ * approval for personal data or terms is remembered for the same element on the same host.
  */
 export class GuardEnforcer {
+  /** Remembered approvals: non-one-shot kinds only. */
   readonly approved = new Set<string>();
 
   constructor(private readonly deps: GuardEnforcerDeps) {}
@@ -405,7 +443,7 @@ export class GuardEnforcer {
     });
     const summary = `${verdict.kinds.join("+")} on ${url} (${elementSignature(element)})`;
     if (answer === "approved") {
-      this.approved.add(key);
+      if (!isOneShot(verdict.kinds)) this.approved.add(key);
       await this.deps.audit.append({
         sessionId: id.sessionId,
         runId: id.runId,
@@ -453,12 +491,23 @@ export function approvalPortFromRuntime(port: ApprovalPort): BrowserApprovalPort
   };
 }
 
+interface BrowserChangeCard {
+  key?: string;
+  /** Set when the "yes" was handed out to the action it was given for; a spent card never approves again. */
+  consumedAt?: string;
+}
+
 /**
  * Production port backed by HumanRequestRepo: one open request per distinct guarded action
- * in a session; an answered request decides, an open one keeps the action pending.
+ * in a session; an open one keeps the action pending. An answered "yes" approves exactly once
+ * and is marked spent (`change_card.consumedAt`, durable across a daemon restart), so the next
+ * identical action opens a new request; an answered "no" keeps denying the same action.
  */
 export class HumanRequestApprovalPort implements BrowserApprovalPort {
-  constructor(private readonly requests: HumanRequestRepo) {}
+  constructor(
+    private readonly requests: HumanRequestRepo,
+    private readonly clock: Pick<Clock, "nowIso">,
+  ) {}
 
   async ask(req: BrowserApprovalRequest): Promise<BrowserApprovalAnswer> {
     const key = `browser:${req.tool}:${req.guards.join("+")}:${req.url}:${elementSignature(req.element)}`;
@@ -466,10 +515,27 @@ export class HumanRequestApprovalPort implements BrowserApprovalPort {
       { session_id: req.sessionId, kind: "approval" },
       { orderBy: [{ column: "created_at", direction: "desc" }] },
     );
-    const same = existing.find((r) => (r.change_card as { key?: string } | null)?.key === key);
+    const same = existing.find((r) => (r.change_card as BrowserChangeCard | null)?.key === key);
     if (same) {
-      if (same.status === "answered") return isYes(same.answer) ? "approved" : "denied";
       if (same.status === "open") return "pending";
+      if (same.status === "answered") {
+        if (!isYes(same.answer)) return "denied";
+        const card = same.change_card as BrowserChangeCard | null;
+        if (!card?.consumedAt) {
+          try {
+            await this.requests.update(same.id, same.version, {
+              change_card: {
+                ...(same.change_card ?? {}),
+                consumedAt: this.clock.nowIso(),
+              },
+            });
+            return "approved";
+          } catch (e) {
+            // the row moved under us (another consumer took the "yes"): ask afresh below
+            if (!(e instanceof ForerunnerError && e.code === "version_conflict")) throw e;
+          }
+        }
+      }
     }
     await this.requests.insert({
       human_id: req.humanId,

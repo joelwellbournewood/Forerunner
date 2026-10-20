@@ -24,6 +24,7 @@ import {
   type BrowserApprovalPort,
   type BrowserIdentity,
   classifyClick,
+  classifySecretFill,
   classifySubmit,
   classifyTyping,
   type ElementDescriptor,
@@ -31,7 +32,15 @@ import {
   type GuardKind,
   type GuardVerdict,
 } from "./guards.ts";
-import { type BlockedRequest, installPolicyRoutes, type SitePolicy, urlHost } from "./policy.ts";
+import {
+  type BlockedRequest,
+  installPolicyRoutes,
+  installWebSocketPolicy,
+  MAX_REDIRECT_HOPS,
+  type PendingRedirect,
+  type SitePolicy,
+  urlHost,
+} from "./policy.ts";
 import {
   type BrowserProfileDirs,
   type LaunchProfileOptions,
@@ -135,6 +144,8 @@ export class AgentBrowser {
         const session = page ? browser.owners.get(page) : undefined;
         session?.onBlocked(info);
       },
+      { logger },
+      (info, page) => browser.owners.get(page)?.onRedirectStub(info),
     );
     return browser;
   }
@@ -173,6 +184,12 @@ export class AgentBrowser {
       this.logger.info("dialog dismissed", { type: d.type(), message: d.message().slice(0, 200) });
       d.dismiss().catch(() => undefined);
     });
+    await installWebSocketPolicy(
+      page,
+      () => this.owners.get(page)?.policy,
+      (info) => this.owners.get(page)?.onBlocked(info),
+      this.logger,
+    );
     return page;
   }
 
@@ -209,6 +226,12 @@ export class AgentBrowser {
 
 const SECRET_MARK = "[REDACTED]";
 
+/** Same document URL ignoring the fragment (a request URL never carries one, `page.url()` may). */
+function sameDocument(a: string, b: string): boolean {
+  const strip = (u: string) => u.split("#")[0] ?? u;
+  return strip(a) === strip(b);
+}
+
 export class BrowserSession {
   readonly identity: BrowserIdentity;
   readonly policy: SitePolicy;
@@ -218,6 +241,10 @@ export class BrowserSession {
   private stateReason: string | null = null;
   private blockedSinceNav: BlockedRequest[] = [];
   private blockedTotal = 0;
+  /** The main-frame redirect the route last answered with a stub, until the session follows it. */
+  private pendingRedirect: PendingRedirect | null = null;
+  /** Values typed through `fillSecret`: scrubbed from everything the page hands back. */
+  private readonly typedSecrets = new Set<string>();
   private seq = 0;
   private readonly logger: Logger;
 
@@ -265,6 +292,11 @@ export class BrowserSession {
   onBlocked(info: BlockedRequest): void {
     this.blockedTotal++;
     this.blockedSinceNav.push(info);
+  }
+
+  /** @internal Called by the policy route, before it serves the stub, for this session's page only. */
+  onRedirectStub(info: PendingRedirect): void {
+    this.pendingRedirect = info;
   }
 
   /** @internal */
@@ -366,8 +398,15 @@ export class BrowserSession {
     ) {
       return new ForerunnerError(
         "domain_not_allowed",
-        `${action} blocked by the site policy: ${blocked.host} (${blocked.reason})`,
-        { details: { url: blocked.url, host: blocked.host, reason: blocked.reason } },
+        `${action} blocked by the site policy: ${blocked.host} (${blocked.reason}${blocked.redirectedFrom ? `, redirected from ${blocked.redirectedFrom}` : ""})`,
+        {
+          details: {
+            url: blocked.url,
+            host: blocked.host,
+            reason: blocked.reason,
+            redirectedFrom: blocked.redirectedFrom,
+          },
+        },
       );
     }
     if (/Timeout/i.test(msg)) {
@@ -396,13 +435,10 @@ export class BrowserSession {
     }
     const page = await this.ensurePage();
     this.blockedSinceNav = [];
+    this.pendingRedirect = null;
     let status: number | null = null;
     try {
-      const resp = await page.goto(url, {
-        waitUntil: "load",
-        timeout: this.opts.navigationTimeoutMs ?? 30_000,
-      });
-      status = resp?.status() ?? null;
+      status = await this.followRedirects(page, await this.goto(page, url));
     } catch (e) {
       const err = this.mapError(e, "navigation", url);
       await this.audit("browser_navigate", url, "", false, `${err.code}: ${err.message}`);
@@ -438,11 +474,83 @@ export class BrowserSession {
     return result;
   }
 
-  async read(opts: Omit<ExtractOptions, "url"> = {}): Promise<PageExtract> {
+  /**
+   * `page.goto` returning the status. After the policy route aborts a document request,
+   * Chromium commits its own error page a moment later; a navigation started in that moment
+   * is reported as interrupted, so it is tried once more after the error page settled.
+   */
+  private async goto(page: Page, url: string): Promise<number | null> {
+    const options = {
+      waitUntil: "load" as const,
+      timeout: this.opts.navigationTimeoutMs ?? 30_000,
+    };
+    try {
+      const resp = await page.goto(url, options);
+      return resp?.status() ?? null;
+    } catch (e) {
+      if (!/interrupted by another navigation to "chrome-error:/i.test(errorMessage(e))) throw e;
+      await page.waitForLoadState("load", { timeout: 5_000 }).catch(() => undefined);
+      const resp = await page.goto(url, options);
+      return resp?.status() ?? null;
+    }
+  }
+
+  /**
+   * The policy route answers a redirecting main-frame document with a stub and records the
+   * target with this session (the browser would otherwise follow the redirect outside
+   * interception). Follow the recorded target here, hop by hop, each hop checked against the
+   * policy and fetched as a fresh routed navigation. Only the route's record counts: nothing
+   * the page says (the stub attribute included) can start a navigation. Returns the status of
+   * the last document loaded.
+   */
+  private async followRedirects(page: Page, status: number | null): Promise<number | null> {
+    for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
+      const pending = this.takePendingRedirect(page);
+      if (!pending) return status;
+      this.policy.assert(pending.target, "follow the redirect");
+      status = await this.goto(page, pending.target);
+      this.logger.debug("followed redirect", {
+        from: pending.from,
+        to: pending.target,
+        status,
+      });
+    }
+    throw new ForerunnerError("unavailable", `more than ${MAX_REDIRECT_HOPS} redirects`, {
+      details: { url: page.url() },
+    });
+  }
+
+  /** The recorded redirect, if the page still shows the stub it was recorded for; cleared either way. */
+  private takePendingRedirect(page: Page): PendingRedirect | null {
+    const pending = this.pendingRedirect;
+    this.pendingRedirect = null;
+    if (!pending) return null;
+    if (!sameDocument(page.url(), pending.from)) {
+      this.logger.debug("stale redirect record dropped", {
+        from: pending.from,
+        at: page.url(),
+      });
+      return null;
+    }
+    return pending;
+  }
+
+  /** The open page with any pending redirect stub resolved first. */
+  private async currentPage(action: string): Promise<Page> {
     const page = this.requirePage();
+    try {
+      await this.followRedirects(page, null);
+    } catch (e) {
+      throw this.mapError(e, action);
+    }
+    return page;
+  }
+
+  async read(opts: Omit<ExtractOptions, "url"> = {}): Promise<PageExtract> {
+    const page = await this.currentPage("read");
     let raw: RawExtract;
     try {
-      raw = (await page.evaluate(BROWSER_EXTRACT_SCRIPT)) as RawExtract;
+      raw = this.scrub((await page.evaluate(BROWSER_EXTRACT_SCRIPT)) as RawExtract);
     } catch (e) {
       throw this.mapError(e, "read");
     }
@@ -463,12 +571,14 @@ export class BrowserSession {
   }
 
   async describe(selector: string): Promise<ElementDescriptor> {
-    const page = this.requirePage();
+    const page = await this.currentPage("describe");
     let d: ElementDescriptor | null;
     try {
-      d = (await page.evaluate(
-        `(${BROWSER_DESCRIBE_SCRIPT})(${JSON.stringify(selector)})`,
-      )) as ElementDescriptor | null;
+      d = this.scrub(
+        (await page.evaluate(
+          `(${BROWSER_DESCRIBE_SCRIPT})(${JSON.stringify(selector)})`,
+        )) as ElementDescriptor | null,
+      );
     } catch (e) {
       throw this.mapError(e, "describe");
     }
@@ -484,8 +594,10 @@ export class BrowserSession {
     return this.requirePage().locator(selector).first();
   }
 
+  /** Wait for a navigation the action may have started, then resolve any redirect stub. */
   private async settle(page: Page): Promise<void> {
     await page.waitForLoadState("load", { timeout: 10_000 }).catch(() => undefined);
+    await this.followRedirects(page, null);
   }
 
   private async actionResult(verdict: GuardVerdict, page: Page): Promise<ActionResult> {
@@ -560,14 +672,41 @@ export class BrowserSession {
   }
 
   /**
+   * Scrub every value typed through `fillSecret` out of what the page hands back (a page
+   * script can echo a field's value into its text): defence in depth under the runtime's own
+   * redaction of tool output.
+   */
+  private scrub<T>(value: T): T {
+    if (!this.typedSecrets.size || value === null || value === undefined) return value;
+    const values = [...this.typedSecrets];
+    const walk = (v: unknown): unknown => {
+      if (typeof v === "string") return redactValues(v, values, SECRET_MARK);
+      if (Array.isArray(v)) return v.map(walk);
+      if (v && typeof v === "object") {
+        const out: Record<string, unknown> = {};
+        for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = walk(x);
+        return out;
+      }
+      return v;
+    };
+    return walk(value) as T;
+  }
+
+  /**
    * Type a vault secret into a field. `secret` is either a `secret:<name>` reference (resolved
    * through `resolveSecret`) or a value the runtime already resolved. The value is never
    * returned, logged or echoed in an error; the audit row carries the name.
+   *
+   * `credentialApproved`: the caller's own gate already had a human approve this fill (the
+   * runtime hooks do before `execute`, the tool's class being `credential`), so the session
+   * asks for no `credential` approval of its own; the element's other kinds (payment field,
+   * purchase or personal data on submit) are still enforced. Never set it from anything the
+   * model or a page says.
    */
   async fillSecret(
     selector: string,
     secret: string,
-    opts: { submit?: boolean; name?: string } = {},
+    opts: { submit?: boolean; name?: string; credentialApproved?: boolean } = {},
   ): Promise<ActionResult & { secret: string }> {
     const page = this.requirePage();
     let value: string;
@@ -598,13 +737,13 @@ export class BrowserSession {
         ? new ForerunnerError(e.code, redact(e.message), { details: e.details })
         : e;
     }
-    const kinds: GuardKind[] = [
-      "credential",
-      ...classifyTyping(el),
-      ...(opts.submit ? classifySubmit(el.form) : []),
-    ];
+    const kinds = classifySecretFill(el, {
+      submit: opts.submit,
+      credentialApproved: opts.credentialApproved,
+    });
     const verdict = await this.guards.enforce("browser_fill_secret", kinds, el, page.url());
     const summary = `${selector} (${el.tag}${el.type ? `/${el.type}` : ""}${el.name ? ` name=${el.name}` : ""}) <- secret:${name}${opts.submit ? " +submit" : ""}`;
+    this.typedSecrets.add(value);
     try {
       await this.fillLocator(this.locator(selector), value);
       if (opts.submit) {
@@ -646,7 +785,7 @@ export class BrowserSession {
   }
 
   async screenshot(opts: { fullPage?: boolean; label?: string } = {}): Promise<ScreenshotResult> {
-    const page = this.requirePage();
+    const page = await this.currentPage("screenshot");
     const stamp = this.opts.clock.nowIso().replace(/[:.]/g, "-");
     const name = `${stamp}-${safeSegment(this.identity.runId, "run")}-${++this.seq}${opts.label ? `-${safeSegment(opts.label)}` : ""}.png`;
     const path = join(this.browser.dirs.screenshots, name);

@@ -17,6 +17,13 @@
       <input name="q" type="search" placeholder="Search products">
       <button type="submit" id="search-button">Search</button>
     </form>
+    <p id="echo"></p>
   </main>
+  <script>
+    // A page script that mirrors the password field into visible text (what a hostile page would do).
+    document.getElementById("password").addEventListener("input", (e) => {
+      document.getElementById("echo").textContent = `you typed ${e.target.value}`;
+    });
+  </script>
 </body>
 </html>
