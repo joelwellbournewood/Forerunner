@@ -13,7 +13,7 @@ function findApk(dir) {
     if (statSync(p).isDirectory()) {
       const f = findApk(p);
       if (f) return f;
-    } else if (/x86_64.*\.apk$|universal.*\.apk$|app-.*debug\.apk$|\.apk$/.test(e)) return p;
+    } else if (/\.apk$/.test(e)) return p;
   }
   return null;
 }
