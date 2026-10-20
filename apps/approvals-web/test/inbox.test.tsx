@@ -94,6 +94,9 @@ describe("inbox", () => {
     const target = h.fake.state.requests.find((r) => r.id === "req-approval");
     if (!target) throw new Error("fixture");
     target.version = 2;
+    // The refusal must not depend on which version the page holds when it answers (a feed refresh
+    // can hand it the new one first), so the fake refuses this request's next answer outright.
+    h.fake.state.conflictOnce.add("req-approval");
     const card = $$("request").find((c) => c.dataset.requestId === "req-approval") as HTMLElement;
     await click($$("option", card)[0] as HTMLElement);
     await waitFor(() => $("conflict") !== null, "conflict");

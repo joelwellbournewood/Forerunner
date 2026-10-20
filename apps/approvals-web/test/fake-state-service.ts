@@ -85,6 +85,8 @@ export interface FakeState {
   lastCode: string | null;
   calls: CallRecord[];
   seenSignatures: Set<string>;
+  /** Request ids whose next answer is refused as a version conflict whatever version the client sends. */
+  conflictOnce: Set<string>;
 }
 
 class FakeApiError extends Error {
@@ -345,6 +347,7 @@ export async function startFakeStateService(opts: FakeOptions = {}): Promise<Fak
     lastCode: null,
     calls: [],
     seenSignatures: new Set(),
+    conflictOnce: new Set(),
   };
   let seq = 0;
   let counter = 0;
@@ -595,7 +598,7 @@ export async function startFakeStateService(opts: FakeOptions = {}): Promise<Fak
       if (r?.status !== "open") throw new FakeApiError(404, "not_found", `request ${id}`);
       const body = parseJson(bodyText);
       if (typeof body.version !== "number") throw new FakeApiError(400, "validation", "version");
-      if (body.version !== r.version) {
+      if (state.conflictOnce.delete(r.id) || body.version !== r.version) {
         throw new FakeApiError(409, "version_conflict", "stale version", {
           current: r.version,
         });
