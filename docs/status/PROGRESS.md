@@ -18,6 +18,22 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-20 (snapshot after the usage-limit stop)
+- Every background build wave stopped on an account usage limit at about 02:20 UTC (reset
+  05:10 UTC); finished agents were kept, cut-off agents resume with a note to continue from
+  their partial files.
+- Phase 0 gate complete: fresh install timed on fresh runners (Linux 89 s, Windows 200 s,
+  run 39357536106). Phase 2 local gate passed (two agents, five sessions each, no duplicate
+  task, no lost commit, every handoff acknowledged); the offline-48-hours half waits for the
+  state service sync.
+- Snapshot committed: phase-1 UI, shared state service, extensions registry, GitHub Projects
+  mirror, sandbox adapters, signed updates, model watch and estimates, sandboxed browser
+  (commit 5c031bd). Daemon gained the UI conventions of ADR 0025, the peer feed, the decision
+  log; the runner gained message receipts and peer overlap detection.
+- Resumed: critic, memory, commands, email, browser, injection suite. Started: wiring of the
+  new modules into the daemon and CLI, context-savings leftovers of ADR 0003, requirements
+  status pass.
+
 ### 2026-10-20 (daemon and waves 2-3)
 - Local daemon API (ADR 0011): composition root, Hono server on 127.0.0.1 with a bearer token
   in `daemon.json`, SSE streams, `fr daemon`; smoke-tested end to end with the fake provider.
