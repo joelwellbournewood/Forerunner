@@ -21,7 +21,6 @@ export default defineConfig({
           exclude: ["**/*.integration.test.ts", "**/node_modules/**", "**/dist/**"],
           environment: "node",
           testTimeout: 20_000,
-          passWithNoTests: true,
         },
       },
       {
@@ -36,7 +35,6 @@ export default defineConfig({
           testTimeout: 120_000,
           hookTimeout: 120_000,
           fileParallelism: false,
-          passWithNoTests: true,
         },
       },
       {
@@ -47,7 +45,6 @@ export default defineConfig({
           testTimeout: 1_800_000,
           hookTimeout: 600_000,
           fileParallelism: false,
-          passWithNoTests: true,
         },
       },
     ],

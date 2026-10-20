@@ -10,14 +10,8 @@ RUN apt-get update \
  && git config --system safe.directory '*'
 
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc tsconfig.base.json tsconfig.node.json ./
-COPY apps ./apps
-COPY packages ./packages
-COPY services ./services
-COPY testenv ./testenv
-COPY evals ./evals
-COPY tests ./tests
-COPY scripts ./scripts
+# .dockerignore keeps node_modules, build output and git out of the context.
+COPY . .
 RUN pnpm install --frozen-lockfile --prod=false --ignore-scripts \
  && pnpm store prune
 
