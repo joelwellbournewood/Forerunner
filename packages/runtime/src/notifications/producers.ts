@@ -139,6 +139,37 @@ export function updateAvailable(
   };
 }
 
+export interface UpdateOutcomeFacts {
+  /** `update`: a release was staged and the daemon restarts into it; `rollback`: it went back. */
+  reason: "update" | "rollback";
+  targetVersion: string;
+  fromVersion: string | null;
+}
+
+/**
+ * An update was applied or rolled back (spec M.4, M.5): the daemon restarts right after, so
+ * the human learns why the app went away for a moment. Normal urgency: it waits for the morning
+ * inside quiet hours like a finished session does. Links to `/settings` for the same reason
+ * `updateAvailable` does.
+ */
+export function updateApplied(humanId: string, u: UpdateOutcomeFacts): Notification {
+  const from = u.fromVersion ? ` (from ${u.fromVersion})` : "";
+  return {
+    kind: "update_applied",
+    humanId,
+    title:
+      u.reason === "rollback"
+        ? `Rolled back to ${u.targetVersion}${from}`
+        : `Update ${u.targetVersion} applied${from}; restarting`,
+    body:
+      u.reason === "rollback"
+        ? "The new version did not pass its health check or a rollback was requested; the previous version is running again. Open Settings to read the details."
+        : "The daemon restarts into the new version now. Open Settings to read the changelog.",
+    link: "/settings",
+    dedupeKey: `update-applied:${u.reason}:${u.targetVersion}`,
+  };
+}
+
 /** A verified email command was received (spec T); the outcome names what happened. */
 export function emailCommandReceived(
   humanId: string,
@@ -228,6 +259,8 @@ export function bindProducers(notifier: NotifierLike) {
     ) => notifier.notify(injectionFlagged(humanId, report, opts)),
     updateAvailable: (humanId: string, u: Parameters<typeof updateAvailable>[1]) =>
       notifier.notify(updateAvailable(humanId, u)),
+    updateApplied: (humanId: string, u: UpdateOutcomeFacts) =>
+      notifier.notify(updateApplied(humanId, u)),
     emailCommandReceived: (humanId: string, e: Parameters<typeof emailCommandReceived>[1]) =>
       notifier.notify(emailCommandReceived(humanId, e)),
     peerMessage: (humanId: string, m: MessageRow, fromName?: string) =>

@@ -35,7 +35,7 @@ export class KillSwitch {
   private nextId = 1;
   private readonly logger = log("killswitch");
   private frozen: KillScope | "all" | null = null;
-  private listeners = new Set<(report: KillReport) => void>();
+  private listeners = new Set<(report: KillReport, reason: string) => void>();
   private readonly protectedSessions = new Set<string>();
 
   constructor(
@@ -57,7 +57,8 @@ export class KillSwitch {
     };
   }
 
-  onStop(fn: (report: KillReport) => void): () => void {
+  /** Called after every stop with the report and the reason given to `stop()`. */
+  onStop(fn: (report: KillReport, reason: string) => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
@@ -121,7 +122,7 @@ export class KillSwitch {
       scope,
     };
     this.logger.warn("stopped", { ...report, reason });
-    for (const l of this.listeners) l(report);
+    for (const l of this.listeners) l(report, reason);
     return report;
   }
 

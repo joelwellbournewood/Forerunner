@@ -426,6 +426,75 @@ service, wrapper script) treats exit code 86 as "relaunch into the version `curr
 names" and removes the request file; any other exit code is a crash. Tests inject `exit`, read
 the file with `readRestartRequest`, and prove `stop()` returns with a stream open.
 
+**Notifications (`src/notifications`, spec R.6, E.5, O.8, S.8; ADR 0017, ADR 0038;
+`notifications.md` has the module).** `composeRuntime` builds the channels in the fallback
+order of ADR 0017 and one `Notifier` per runtime, exposed as `RuntimeApp.notifier` with the
+bound producer hooks as `RuntimeApp.notifications`:
+
+| Channel | Built from | Configured when |
+| --- | --- | --- |
+| desktop | `DesktopChannel` with `shellsConnected: () => rt.shells.count()` (`ShellPresence`, `src/daemon/shells.ts`: the `/events` streams that show toasts, see below) and `osFallback: osNotifierEnabled(env, config)`; only when the background services run (`startServices !== false`), since a CLI one-shot or the cloud runner has no desktop | always; delivered to an attached shell as the SSE event `notification`, else to `notify-send` / a PowerShell toast when the OS notifier is on |
+| telegram | `TelegramChannel` over `opts.notifications.fetch ?? fetchImpl ?? globalThis.fetch`, the `SecretResolver` over the vault, `telegramTokenRef` and `telegramApiBase` from the config, wrapped in `SecretCheckedChannel` (`src/wiring/notification-ports.ts`), which asks the vault whether the token *exists* (`vault.has`, never the value) before every prefs view, test send and dispatch | the human's `telegram_chat_id` is set and the token is in the vault (otherwise "bot token not set (secret telegram_bot_token)" in the settings view and the channel is skipped, not failed); the bot token is resolved by reference at send time and never logged |
+| signal | `SignalChannel({ account: config.signalAccount })` with the platform's `run`/`which` | an account is configured and the human's `signal_number` is set; `signal-cli` on PATH |
+| email | `EmailChannel(notificationEmailPort(...))` (`src/wiring/notification-ports.ts`): the agent's own mailbox under `EmailPolicy.send` as the agent, or `null` when the agent has no mailbox configured at compose | the port exists and an address resolves (`notify_prefs.email` or `human.email`) |
+
+Configuration keys (`config.json`, `notifications` block; `src/notifications/config.ts`):
+`signalAccount` (`FORERUNNER_SIGNAL_ACCOUNT`), `telegramTokenRef` (`FORERUNNER_TELEGRAM_TOKEN_REF`,
+default `secret:telegram_bot_token`; a value instead of a reference is refused),
+`telegramApiBase` (`FORERUNNER_TELEGRAM_API_BASE`). `FORERUNNER_OS_NOTIFY` (`1`/`0`) overrides
+`osNotifierEnabled`, which is otherwise on for a set-up install (a `config.json` exists) and off
+for a bare one, so a test composition never spawns an OS notifier. The human's preferences and
+quiet hours are `human.notify_prefs` (`prefs.ts`); `AuditedNotificationHumans` is the notifier's
+human port and appends one `audit_log` row (`notify.prefs`, the keys that changed, never the
+values) per preference write, which is a plain settings write, not a command-registry change
+card (ADR 0038 point 5). `notifier.start()` runs when the services run and `close()` stops it.
+
+Producers are bound to the real sources in `compose.ts`: `store.humanRequest.insert` is wrapped
+once, so every request this human receives (the hooks' approvals, the extension registry, the
+mirror, the Cloudflare deployer, the critic, the updater) raises `requestOpened` (urgent when
+blocking) and `inbox` on the bus; `startSession` reports the runner's result through
+`sessionEnded` (a budget stop becomes `budget_stop`); `KillSwitch.onStop` passes the report and
+the reason to `killSwitch`; the restarter's `restart` event raises `updateApplied` for an update
+or a rollback; `critic.verdict` and `critic.session_review` bus events with `escalation: true`
+and no `humanRequestId` raise `criticVerdict` at normal urgency, with the session id (and the
+task id, grade and summary when the payload lacks them) from the review row `reviewId` names,
+so the delivery is logged on that session like the session-end one. Failures to notify are
+logged (`notification not sent`) and never fail the producing operation. Routes, mounted at the
+root behind the bearer token and listed in `DAEMON_ROUTES`: `GET|PUT /notifications/prefs`,
+`POST /notifications/test`, `GET /notifications/recent?limit=`, `GET /notifications/pending`.
+`/events` writes every desktop delivery as `notification` `{ id, kind, title, body, level,
+route, humanId, projectId }` (ADR 0031 point 2) to every open stream, but only a stream that
+shows the frame as a toast counts as an attached shell for the channel's OS fallback
+(`isShellStream`, `src/daemon/shells.ts`): one that declares `?client=shell` or
+`X-Forerunner-Client: shell` is a shell, one that declares anything else (`client=ui`) is not,
+and an undeclared stream counts only when its bearer token came in the `Authorization` header,
+which no browser `EventSource` can send. So the desktop sidecar (reqwest, header) counts, while
+the React UI's own stream, the phone's web view and a browser tab (`?token=`) do not, and a
+blocking request with only those open still reaches `notify-send`. `server.ts` attaches a
+qualifying stream to `rt.shells` for its lifetime. To add a channel, see `notifications.md`
+("How to change it") and add one constructor line here; to add a producer, call
+`rt.notifications.<hook>` where the fact is known.
+
+**Cloudflare deploys (`@forerunner/capabilities` `cloudflare`, spec J.9, J.10, S.5, S.6, S.9;
+ADR 0035, ADR 0038; `cloudflare.md` has the module).** `composeRuntime` registers
+`cloudflare_plan`, `cloudflare_deploy`, `cloudflare_dns_upsert` and `cloudflare_verify_token`
+into the daemon's built-in `ToolRegistry` (`registerCloudflareTools` with
+`cloudflareToolDeps({ projects: store.project, vault, approvals:
+HumanRequestCloudflareApprovals(store.humanRequest, clock), audit: store.auditLog, clock,
+fetchImpl })`), so every run token lists them and the daemon's hooks and the extension gate
+apply as to any tool: a production deploy below autonomy 4 and a staging deploy below 3 become
+blocking `human_request` approvals (the hooks' card says `deploy_staging`, the deployer files
+its own `deploy_production` card, ADR 0035 point 3), money is a one-shot answer at every level,
+and every call and every outward action is an audit row. The deployer reads
+`project.settings.cloudflare` per call and resolves the token by reference from the vault. The
+catalog entry `cloudflare` (`src/extensions/catalog.json`) names the four tools and the classes
+`read`, `deploy_staging`, `deploy_production`, which the gate checks against the installed row
+once the extension is added from the panel. Routes (`server.ts`, structural handlers adapted to
+Hono, in `DAEMON_ROUTES`): `GET /cloudflare/projects/:projectId/settings` (settings with the
+secret by reference, scope) and `GET /cloudflare/projects/:projectId/token` (`verifyToken()`:
+status, expiry, scopes, warnings). No configuration key: the account, zones, secret reference
+and API base are per project.
+
 `server.ts` is the HTTP surface the desktop, Android and web shells talk to. Hono, bound to
 `127.0.0.1` only; every request carries `Authorization: Bearer <token>` compared with
 `timingSafeEqual`. The token is written to `<runtime dir>/daemon.json` (mode 0600) together
@@ -465,8 +534,12 @@ counts, or 202 `MirrorSyncPendingView` `{ pending: true, projectId, requestId }`
 human decides; the request never blocks on the approval, the run finishes in the background
 once `POST /requests/:id/answer` approves it and `project.changed` follows). `/health` gained
 `sandbox` and `extensions: { enabled, pending }` (`sandbox.reason` is the engine probe's text;
-the route is unauthenticated but loopback-only); `/events` also streams `extension.changed` and
-`restart.requested`. Each sub-app keeps its module's error mapping.
+the route is unauthenticated but loopback-only); `/events` also streams `extension.changed`,
+`restart.requested` and `notification`. The notification routes (`GET|PUT /notifications/prefs`,
+`POST /notifications/test`, `GET /notifications/recent`, `GET /notifications/pending`) and the
+Cloudflare panel routes (`GET /cloudflare/projects/:projectId/settings|token`) are mounted the
+same way (see "Notifications" and "Cloudflare deploys" above). Each sub-app keeps its module's
+error mapping.
 
 **Core loop routes (ADR 0036, all in `DAEMON_ROUTES`).** Reviews tab (spec K.2):
 `GET /projects/:id/reviews` and `GET /tasks/:id/reviews` answer `ReviewsView` (every review
@@ -547,7 +620,7 @@ cross-turn reference names an existing result of the same transcript by its tran
 and only lines that were sent; `executor-context.test.ts`: Run row
 fields and `headroom_used` with a proxyable versus a plain provider, cost view priced from the
 Run rows; `session-context.test.ts`: `headroom_saved_tokens` on the session and the
-`context.headroom_unavailable` event; `views.test.ts`: cost view savings money), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE with the restart event, `stop()` returning while `/events` is held open on a real socket), wiring (`wiring.test.ts`: extensions from catalog to a refused tool, model watch report and inbox decision, updates screen, mirror sync answering 202 then running on the inbox answer, estimates accuracy, sandboxed `run_command`, a refused lease closing the Run row, the eval runner keeping the model's command in the sandbox lease and offering only the specialist's tools, CLI registration and one-shot composition), hooks (overspend, steps, wall clock, kill, allowlist, schema,
+`context.headroom_unavailable` event; `views.test.ts`: cost view savings money), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE with the restart event, `stop()` returning while `/events` is held open on a real socket), wiring (`wiring.test.ts`: extensions from catalog to a refused tool, model watch report and inbox decision, updates screen, mirror sync answering 202 then running on the inbox answer, estimates accuracy, sandboxed `run_command`, a refused lease closing the Run row, the eval runner keeping the model's command in the sandbox lease and offering only the specialist's tools, CLI registration and one-shot composition; `notifications-wiring.test.ts`: the notifier and its producers on the real sources through the daemon, the prefs routes and their audit row, the `notification` SSE frame, quiet hours through the route, the Telegram token never leaving the vault's reach, the email channel over the agent mailbox; `packages/capabilities/test/cloudflare-wiring.test.ts`: the Cloudflare tools and routes through the daemon's hooks, gate and bearer token), hooks (overspend, steps, wall clock, kill, allowlist, schema,
 paths, domains, secrets, autonomy, injection), ladder, brief, loop driver (completion, overspend
 blocked, step cap, kill mid-run, timeout with partial output, inline denials, needs-human pause,
 injection flagged).
@@ -559,6 +632,12 @@ sandbox with only the worktree and the token's domains), I.3 (estimate error tra
 back to the planner), D.6 and D.21 (weekly model watch scheduled, decided in the inbox), M.3,
 M.4 and M.5 (updates screen, apply, rollback, restart contract, health check on start), S.9
 (every outward action of these modules is an audit row). Test: `test/wiring.test.ts`.
+R.6, E.5, O.8, S.8 and K.8's desktop notifications (the human is told about requests, finished
+sessions, budget stops, kill switch, updates and escalations, with quiet hours, through the
+channels the daemon wires). Test: `test/notifications-wiring.test.ts`. J.9, J.10, S.5, S.6 and
+S.9 for Cloudflare deploys (staging and production through the daemon's hooks and approvals,
+the token's scopes through the panel routes, every action audited). Test:
+`packages/capabilities/test/cloudflare-wiring.test.ts`.
 
 ## Known issues
 
@@ -589,3 +668,15 @@ M.4 and M.5 (updates screen, apply, rollback, restart contract, health check on 
   session event store is undecided.
 - Path containment resolves symlinks only when the target exists; the sandbox adapter mounts
   only the worktree so escapes cannot reach the host anyway.
+- Notifications: the email sender is resolved once at compose from the agent's email settings
+  row, so a mailbox configured while the daemon runs takes effect at the next start; the
+  `peerMessage`, `emailCommandReceived` and `injectionFlagged` producers have no daemon source
+  yet (ADR 0038 point 2); held and digest queues are in memory (ADR 0017 point 8); the
+  `update_applied` notification is sent while the process is exiting, so a slow channel may
+  not finish before the restart.
+- Shell detection: the desktop shell (`apps/desktop/src-tauri/src/daemon.rs`, `open_events`)
+  sends the token in the `Authorization` header and no `client` declaration, so it is counted by
+  the undeclared-stream rule of `shells.ts`. Once the shell sends `?client=shell` (or the
+  header), that rule can go and only declared shells will count.
+- Cloudflare: the session grant's domain allowlist is unchanged (the tools declare no domain
+  fields); a bridged tool that should reach `api.cloudflare.com` would need the grant extended.

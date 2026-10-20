@@ -11,6 +11,8 @@ import {
   type RateSource,
 } from "@forerunner/billing";
 import {
+  type email as agentEmail,
+  cloudflare,
   type GitHost,
   GitHubHost,
   MemoryGitHost,
@@ -33,10 +35,17 @@ import {
   ForerunnerError,
   join,
   log,
+  type Platform,
   systemClock,
 } from "@forerunner/platform";
-import { type JsonValue, openStore, type StateStore } from "@forerunner/state";
-import { openVault, SecretResolver, type Vault } from "@forerunner/vault";
+import {
+  type JsonValue,
+  openStore,
+  REVIEW_VERDICTS,
+  type ReviewVerdict,
+  type StateStore,
+} from "@forerunner/state";
+import { openVault, parseSecretRef, SecretResolver, type Vault } from "@forerunner/vault";
 import { LoopAgentDriver } from "../agent/loop.ts";
 import { ToolRegistry, type ToolSpec } from "../agent/tools.ts";
 import {
@@ -85,6 +94,19 @@ import {
   StateModelWatchApprovals,
   scheduleModelWatch,
 } from "../models/watch.ts";
+import {
+  bindProducers,
+  DesktopChannel,
+  EmailChannel,
+  NotificationEmitter,
+  Notifier,
+  notificationConfigFrom,
+  type ProducerHooks,
+  producers,
+  SignalChannel,
+  TelegramChannel,
+  type TelegramFetch,
+} from "../notifications/index.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
 import { ProviderRegistry } from "../provider/registry.ts";
 import type { ModelProvider } from "../provider/types.ts";
@@ -101,9 +123,15 @@ import { readUpdateConfig, UpdateConfig } from "../update/config.ts";
 import type { UpdateManager } from "../update/install.ts";
 import type { Restarter } from "../update/ports.ts";
 import { pricingFor, StateLedgerStore, stateSources } from "../wiring/billing-ports.ts";
+import {
+  AuditedNotificationHumans,
+  notificationEmailPort,
+  SecretCheckedChannel,
+} from "../wiring/notification-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
-import { DaemonRestarter, processExit } from "./restart.ts";
+import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
 import { DetectingSandboxPort } from "./sandbox-port.ts";
+import { ShellPresence } from "./shells.ts";
 import { fileTools } from "./tools.ts";
 
 /**
@@ -156,6 +184,48 @@ export interface ComposeOptions {
    * composed objects.
    */
   startServices?: boolean;
+  /**
+   * Notification channel seams (tests): the OS tools the desktop and Signal channels run, the
+   * fetch the Telegram channel uses, the platform, and the agent mailbox the email channel
+   * sends through. Production uses the platform's `run`/`which`, `globalThis.fetch` and
+   * `ImapSmtpMailbox` from the agent's email settings. `osNotifier` decides whether the
+   * desktop channel falls back to the OS notifier (`notify-send`, a PowerShell toast) when no
+   * shell holds `/events`; default: on for a set-up install (a `config.json` exists) unless
+   * `FORERUNNER_OS_NOTIFY=0`, and `FORERUNNER_OS_NOTIFY=1` turns it on anywhere (ADR 0038).
+   */
+  notifications?: {
+    run?: RunFn;
+    which?: WhichFn;
+    platform?: Platform;
+    fetch?: TelegramFetch;
+    mailboxFactory?: (config: agentEmail.MailboxConfig) => Promise<agentEmail.Mailbox>;
+    osNotifier?: boolean;
+  };
+}
+
+/** The runtime bus's `session` events as `startSession` emits them. */
+interface SessionBusEvent {
+  type: string;
+  payload?: Record<string, unknown>;
+  agentId?: string;
+  projectId?: string;
+}
+
+function isReviewVerdict(v: string): v is ReviewVerdict {
+  return (REVIEW_VERDICTS as readonly string[]).includes(v);
+}
+
+/** `FORERUNNER_OS_NOTIFY`: "1" forces the OS notifier on, "0" off; else on for a set-up install. */
+export function osNotifierEnabled(
+  env: NodeJS.ProcessEnv,
+  config: SetupConfig | null,
+  override?: boolean,
+): boolean {
+  if (override !== undefined) return override;
+  const flag = env.FORERUNNER_OS_NOTIFY?.trim();
+  if (flag === "1") return true;
+  if (flag === "0") return false;
+  return config !== null;
 }
 
 /** What a manual mirror sync came back with: the run, or the approval it waits on. */
@@ -215,6 +285,18 @@ export interface RuntimeApp {
   /** One-way GitHub Projects mirror. */
   mirror: ProjectsMirror;
   sandbox: { port: RunSandboxPort; detection: EngineDetection };
+  /**
+   * Notifications (spec R.6, ADR 0017): the one notifier behind the daemon routes, and the
+   * producer hooks bound to it (what the request path, the session runner, the kill switch, the
+   * updater and the extension approvals call).
+   */
+  notifier: Notifier;
+  notifications: ProducerHooks;
+  /**
+   * The toast-showing shells holding `/events` (`server.ts` attaches the streams that qualify,
+   * `shells.ts` says which do); the desktop channel falls back to the OS notifier at zero.
+   */
+  shells: ShellPresence;
   /** The tool registry a run starts with: built-in tools plus the bridged extension tools. */
   toolsForRun(): ToolRegistry;
   /**
@@ -551,6 +633,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const registryDir =
     opts.registryDir ?? env.FORERUNNER_REGISTRY_DIR ?? resolveRegistryDir(env).dir;
   const tools = fileTools();
+  // Cloudflare deploys (spec J.9, J.10, S.5, S.6, ADR 0035): the four tools go through the
+  // same hooks and gate as every other tool; the deployer reads `project.settings.cloudflare`
+  // per call, resolves the token by reference from the vault and asks the human through
+  // `human_request` rows (production below autonomy 4, money at every level).
+  cloudflare.registerCloudflareTools(
+    tools,
+    cloudflare.cloudflareToolDeps({
+      projects: store.project,
+      vault,
+      approvals: new cloudflare.HumanRequestCloudflareApprovals(store.humanRequest, clock),
+      audit: store.auditLog,
+      clock,
+      fetchImpl: opts.fetchImpl,
+    }),
+  );
   const registry = loadRegistry(registryDir, { toolNames: tools.names() });
   const specialists = specialistSpecFrom(registry);
   const toolsForRun = (): ToolRegistry => {
@@ -817,6 +914,128 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     config: updateConfig,
   });
 
+  // Notifications (spec R.6, E.5, O.8, S.8; ADR 0017, ADR 0038). Channels in the fallback
+  // order of ADR 0017; secrets by reference (the Telegram token is resolved through the vault
+  // at send time); the human's preferences and quiet hours come from `human.notify_prefs`.
+  // Desktop delivery is the SSE event `notification` on `/events` (the shells show the toast,
+  // ADR 0031), else the OS notifier when `osNotifierEnabled`; a headless composition
+  // (`startServices: false`: the CLI one-shots, the cloud runner) has no shell and no OS
+  // notifier, so it carries no desktop channel at all.
+  const notifyConfig = notificationConfigFrom(config, env);
+  const notificationEmitter = new NotificationEmitter();
+  const osTools = { run: opts.notifications?.run, which: opts.notifications?.which };
+  const osNotifier = osNotifierEnabled(env, config, opts.notifications?.osNotifier);
+  const emailPort = await notificationEmailPort({
+    store,
+    clock,
+    vault,
+    agentId: agent.id,
+    humanId: human.id,
+    mailboxFactory: opts.notifications?.mailboxFactory,
+  });
+  // Only the `/events` streams that show toasts count as shells (`shells.ts`): the UI's own
+  // EventSource, the phone's web view and a browser tab receive the frame but show nothing,
+  // so with none of the shells attached the OS notifier runs.
+  const shells = new ShellPresence();
+  // The bot token is checked for existence (never read here) so the settings screen says so
+  // and the notifier skips the channel instead of failing every send before the fallback.
+  const telegram = new SecretCheckedChannel(
+    new TelegramChannel({
+      fetch: opts.notifications?.fetch ?? opts.fetchImpl ?? globalThis.fetch,
+      secrets,
+      tokenRef: notifyConfig.telegramTokenRef,
+      apiBase: notifyConfig.telegramApiBase,
+    }),
+    vault,
+    { name: parseSecretRef(notifyConfig.telegramTokenRef), label: "bot token" },
+  );
+  const notifier = new Notifier({
+    clock,
+    channels: [
+      ...(opts.startServices !== false
+        ? [
+            new DesktopChannel({
+              emitter: notificationEmitter,
+              shellsConnected: () => shells.count(),
+              platform: opts.notifications?.platform,
+              osFallback: osNotifier,
+              ...osTools,
+            }),
+          ]
+        : []),
+      telegram,
+      new SignalChannel({ account: notifyConfig.signalAccount, ...osTools }),
+      new EmailChannel(emailPort),
+    ],
+    humans: new AuditedNotificationHumans(store, clock, { beforeRead: () => telegram.refresh() }),
+    audit: store.auditLog,
+    events: store.event,
+    emitter: notificationEmitter,
+  });
+  notificationEmitter.on("notification", (payload) => events.emit("notification", payload));
+  const notifications = bindProducers(notifier);
+  const notifyLater = (p: Promise<unknown>, what: string): void => {
+    p.catch((e: unknown) => logger.warn("notification not sent", { what, error: errorMessage(e) }));
+  };
+  // Producers: every human request this human gets (approvals from the hooks, the extension
+  // registry, the mirror, the Cloudflare deployer, the critic, the updater, ...) is one insert
+  // on the repo, so the hook lives there: blocking requests are urgent, the rest normal.
+  const insertHumanRequest = store.humanRequest.insert.bind(store.humanRequest);
+  store.humanRequest.insert = async (input) => {
+    const row = await insertHumanRequest(input);
+    if (row.human_id === human.id) {
+      notifyLater(notifications.requestOpened(row, row.human_id), `request ${row.id}`);
+      events.emit("inbox", {});
+    }
+    return row;
+  };
+  kill.onStop((report, reason) =>
+    notifyLater(notifications.killSwitch(human.id, report, reason), "kill switch"),
+  );
+  events.on("restart", (r: RestartRequestFile) =>
+    notifyLater(
+      notifications.updateApplied(human.id, {
+        reason: r.reason,
+        targetVersion: r.targetVersion,
+        fromVersion: r.fromVersion,
+      }),
+      `update ${r.reason}`,
+    ),
+  );
+  // A critic escalation that filed no request of its own (a retry one rung up, a session
+  // review the critic hands to the human) is raised to normal so it does not wait for the digest.
+  // The bus event names no session; the review row the critic wrote does, so the delivery is
+  // logged on the session it came from (as the session-end notification is).
+  const escalate = async (e: SessionBusEvent, p: Record<string, unknown>): Promise<void> => {
+    const verdict = typeof p.verdict === "string" ? p.verdict : "";
+    if (!isReviewVerdict(verdict)) return;
+    const reviewId = typeof p.reviewId === "string" ? p.reviewId : `${e.type}:${clock.now()}`;
+    const review = typeof p.reviewId === "string" ? await store.review.get(reviewId) : undefined;
+    const sessionId = typeof p.sessionId === "string" ? p.sessionId : (review?.session_id ?? null);
+    const taskId = typeof p.taskId === "string" ? p.taskId : (review?.task_id ?? null);
+    const n = producers.criticVerdict(
+      human.id,
+      {
+        id: reviewId,
+        verdict,
+        grade: typeof p.grade === "number" ? p.grade : (review?.grade ?? 0),
+        task_id: taskId,
+        session_id: sessionId,
+        summary: typeof p.summary === "string" ? p.summary : (review?.summary ?? ""),
+      },
+      e.projectId ?? null,
+    );
+    await notifier.notify({ ...n, urgency: "normal" });
+  };
+  events.on("session", (e: SessionBusEvent) => {
+    const p = e.payload;
+    if (p?.escalation !== true || p.humanRequestId) return;
+    if (e.type !== "critic.verdict" && e.type !== "critic.session_review") return;
+    notifyLater(escalate(e, p), `escalation ${String(p.reviewId ?? e.type)}`);
+  });
+  const agentNameOf = async (agentId: string): Promise<string | undefined> =>
+    agentId === agent.id ? agent.name : (await store.agent.get(agentId))?.name;
+
   const sessionGrant = (projectId?: string) => ({
     allowedTools: [...tools.names(), ...extensions.bridgedTools().map((t) => t.name)],
     allowedPaths: [dirs.worktrees],
@@ -840,7 +1059,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       DEFAULT_SESSION_CAP_USD_MICRO,
     ).usdMicro;
     const budgetUsdMicro = (req as { budgetUsdMicro?: number }).budgetUsdMicro ?? cap;
-    return runner.start({
+    const result = await runner.start({
       agentId: req.agentId,
       projectId: req.projectId,
       trigger: req.trigger,
@@ -850,6 +1069,23 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       onEvent: (type, payload) =>
         events.emit("session", { type, payload, agentId: req.agentId, projectId: req.projectId }),
     });
+    // Session end (spec E.5 "notify human"): the outcome, the counts and the summary; a
+    // budget stop becomes the urgent `budget_stop` (the producer decides by `stopReason`).
+    notifyLater(
+      notifications.sessionEnded(human.id, {
+        sessionId: result.sessionId,
+        status: result.status,
+        stopReason: result.stopReason,
+        summary: result.summary,
+        spentUsdMicro: result.spentUsdMicro,
+        completed: result.completed,
+        needsHuman: result.needsHuman,
+        projectId: req.projectId ?? null,
+        agentName: await agentNameOf(req.agentId),
+      }),
+      `session ${result.sessionId} ended`,
+    );
+    return result;
   };
   // Mirror requests run the mirror, the model watch its weekly check, everything else a session.
   const scheduler = new Scheduler({
@@ -925,6 +1161,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   await syncApprovals();
   await refreshMirrorSchedules();
   if (services) scheduler.start();
+  // Quiet-hours holds and the daily digest are flushed on the clock; a one-shot sends at once
+  // or holds in memory and never ticks.
+  const stopNotifier = services ? notifier.start() : () => undefined;
   logger.info("runtime composed", {
     stateUrl: stateUrl.replace(/\/\/[^@]*@/, "//[REDACTED]@"),
     vault: vault.backend,
@@ -980,12 +1219,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     estimates,
     mirror,
     sandbox: { port: sandboxPort, detection: sandboxDetection },
+    notifier,
+    notifications,
+    shells,
     toolsForRun,
     syncApprovals,
     refreshMirrorSchedules,
     mirrorSync,
     async close() {
       scheduler.stop();
+      stopNotifier();
       killWatcher.stop();
       commands.stop();
       context.close();

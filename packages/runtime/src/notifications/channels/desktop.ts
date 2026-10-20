@@ -27,6 +27,12 @@ export interface DesktopChannelOptions {
   which?: WhichFn;
   /** Windows AppUserModelID the toast is shown under; default: the PowerShell host's own. */
   appId?: string;
+  /**
+   * Fall back to the OS notifier (`notify-send`, a PowerShell toast) when no shell holds the
+   * event stream. Default true; the orchestrator turns it off for a composition that has no
+   * desktop (ADR 0038), and the channel then reports itself unavailable without a shell.
+   */
+  osFallback?: boolean;
   /** Limits for the OS tools. */
   maxTitleChars?: number;
   maxBodyChars?: number;
@@ -142,6 +148,9 @@ export class DesktopChannel implements Channel {
       projectId: n.projectId ?? null,
     });
     if (this.shells() > 0) return { ok: true, detail: "shell" };
+    if (this.opts.osFallback === false) {
+      return { ok: false, reason: "no shell connected (OS notifier off)", retryable: false };
+    }
     return this.osFallback(title, body, level);
   }
 

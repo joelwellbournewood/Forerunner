@@ -792,6 +792,20 @@ export const DAEMON_ROUTES = {
   cancelCommand: "POST /commands/:id/cancel (CommandResultView)",
   changes: "GET /changes?projectId=&undoable=&limit= (ChangeLogView[], newest first)",
   undoChange: "POST /changes/:id/undo (CommandResultView; only while the row is undoable)",
+  notificationPrefs:
+    "GET /notifications/prefs (NotificationPrefsView: prefs, resolved timezone and email, channel statuses)",
+  setNotificationPrefs:
+    "PUT /notifications/prefs { NotificationPrefsPatch } (NotificationPrefsView; 400 validation; one audit row naming the keys changed)",
+  testNotification:
+    "POST /notifications/test ({ deliveries }: one test send per configured channel)",
+  recentNotifications:
+    "GET /notifications/recent?limit= ({ notifications: NotificationRecordView[] })",
+  pendingNotifications:
+    "GET /notifications/pending ({ held, digest }: quiet-hours and digest queues)",
+  cloudflareSettings:
+    "GET /cloudflare/projects/:projectId/settings (settings with the secret by reference, scope)",
+  cloudflareToken:
+    "GET /cloudflare/projects/:projectId/token (verifyToken: status, expiry, scopes, warnings)",
   events:
-    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, heartbeat)",
+    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, notification, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts)",
 } as const;

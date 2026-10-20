@@ -1,17 +1,21 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { cloudflare } from "@forerunner/capabilities";
 import { errorMessage, ForerunnerError, join, log, osFacts } from "@forerunner/platform";
 import type { LessonStatus } from "@forerunner/state";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { ZodType } from "zod";
 import { writeKillRequest } from "../enforcement/killfile.ts";
 import { estimateAccuracyView } from "../estimates/view.ts";
 import { createExtensionsRoutes } from "../extensions/routes.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
+import type { NotificationEventPayload } from "../notifications/emitter.ts";
+import { createNotificationRoutes } from "../notifications/routes.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { defaultPeers } from "../session/runner.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
@@ -50,6 +54,7 @@ import {
 import type { RuntimeApp } from "./compose.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
+import { CLIENT_HEADER, isShellStream } from "./shells.ts";
 import {
   changeLogView,
   commandDefView,
@@ -289,6 +294,26 @@ export function createDaemonApp(
     }),
   );
   app.route("/model-watch", createModelWatchRoutes({ watch: rt.modelWatch }));
+  // Notifications (spec R.6, ADR 0017, ADR 0038): preferences, a test send, the recent list.
+  app.route(
+    "/",
+    createNotificationRoutes({ notifier: rt.notifier, actor: () => ({ humanId: rt.human.id }) }),
+  );
+  // Cloudflare panel routes (spec S.5, ADR 0035): the project's settings with the secret by
+  // reference, and the token's real scopes. Structural handlers, adapted to Hono's context;
+  // the API base comes from the project's settings (the stand-in sets it to 127.0.0.1).
+  for (const route of cloudflare.cloudflareRoutes({
+    projects: rt.store.project,
+    vault: rt.vault,
+    clock: rt.clock,
+  })) {
+    app.get(route.path, (c) =>
+      route.handler({
+        req: { param: (name) => c.req.param(name as never) as string | undefined },
+        json: (body, status) => c.json(body, (status ?? 200) as ContentfulStatusCode),
+      }),
+    );
+  }
 
   app.get("/me", async (c) => {
     const h = await rt.store.human.mustGet(rt.human.id);
@@ -1063,11 +1088,24 @@ export function createDaemonApp(
             exitCode: r.exitCode,
           }),
         });
+      // The desktop channel's delivery (ADR 0031 point 2): `{ title, body, level, route }` plus
+      // the record id and kind. Every stream gets the frame; only a shell (one that shows it
+      // as a toast, `shells.ts`) counts as attached for the channel's OS fallback.
+      const onNotification = (p: NotificationEventPayload) =>
+        void stream.writeSSE({ event: "notification", data: JSON.stringify(p) });
+      const detachShell = isShellStream({
+        client: c.req.query("client"),
+        clientHeader: c.req.header(CLIENT_HEADER),
+        bearerHeader: (c.req.header("authorization") ?? "").startsWith("Bearer "),
+      })
+        ? rt.shells.attach()
+        : () => undefined;
       rt.events.on("session", onSession);
       rt.events.on("inbox", onInbox);
       rt.events.on("project", onProject);
       rt.events.on("extension", onExtension);
       rt.events.on("restart", onRestart);
+      rt.events.on("notification", onNotification);
       try {
         await onInbox();
         await streamUntilClosed(stream, 15_000, async () => {
@@ -1083,6 +1121,8 @@ export function createDaemonApp(
         rt.events.off("project", onProject);
         rt.events.off("extension", onExtension);
         rt.events.off("restart", onRestart);
+        rt.events.off("notification", onNotification);
+        detachShell();
       }
     }),
   );

@@ -4,6 +4,7 @@
  * daemon routes. See docs/maintainers/notifications.md and ADR 0017.
  */
 export * from "./channels/index.ts";
+export * from "./config.ts";
 export * from "./emitter.ts";
 export * from "./notifier.ts";
 export * from "./prefs.ts";

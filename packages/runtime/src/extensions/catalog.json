@@ -67,12 +67,21 @@
       "version": "1.0.0",
       "module": "@forerunner/capabilities/cloudflare",
       "permissions": {
-        "tools": ["cloudflare.deploy", "cloudflare.list_zones", "cloudflare.purge_cache"],
+        "tools": [
+          "cloudflare_plan",
+          "cloudflare_deploy",
+          "cloudflare_dns_upsert",
+          "cloudflare_verify_token"
+        ],
         "actionClasses": ["read", "deploy_staging", "deploy_production"],
         "domains": ["api.cloudflare.com"],
         "paths": [],
         "secrets": ["cloudflare_api_token"],
-        "scopes": ["deploy to the zones and Workers the token is scoped to"]
+        "scopes": [
+          "plan and deploy Workers and Pages to the zones named in the project settings",
+          "upsert DNS records in those zones (a production action)",
+          "paid resources and plan changes always ask a human"
+        ]
       },
       "tags": ["deploy"]
     },

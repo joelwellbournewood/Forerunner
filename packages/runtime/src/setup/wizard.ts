@@ -34,6 +34,16 @@ export interface SetupConfig {
   credentials: { github: boolean; anthropic: boolean; anthropicSubscription: boolean };
   stateUrl: string;
   setupCompletedAt?: string;
+  /**
+   * Notification channels (`src/notifications/config.ts`): the Signal sender account and the
+   * Telegram bot token reference; `FORERUNNER_SIGNAL_ACCOUNT`, `FORERUNNER_TELEGRAM_TOKEN_REF`
+   * and `FORERUNNER_TELEGRAM_API_BASE` override them. Never a secret value.
+   */
+  notifications?: {
+    signalAccount?: string | null;
+    telegramTokenRef?: string;
+    telegramApiBase?: string;
+  };
 }
 
 export interface SetupInput {

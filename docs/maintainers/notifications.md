@@ -2,8 +2,13 @@
 
 Desktop, email, Telegram and Signal notifications with quiet hours, a daily digest, dedupe,
 retry and channel fallback. Code: `packages/runtime/src/notifications/` (exported from
-`src/notifications/index.ts`). ADR 0017 records the channel fallback order and what counts as
-urgent; ADR 0031 records the SSE event shape the desktop shell shows as a toast.
+`src/notifications/index.ts` and the package root). ADR 0017 records the channel fallback order
+and what counts as urgent; ADR 0031 records the SSE event shape the desktop shell shows as a
+toast; ADR 0038 records how the daemon wires the module. The wiring itself lives in
+`src/daemon/compose.ts` (channels, notifier, producers), `src/daemon/server.ts` (routes, the
+`notification` SSE frame), `src/wiring/notification-ports.ts` (the audited preference writes and
+the email sender over the agent email capability) and `src/notifications/config.ts` (the
+channel configuration); see "Wiring" below and `runtime.md`, "Notifications".
 
 ## Purpose
 
@@ -168,7 +173,7 @@ ResolvedPrefs }`.
 
 | Channel | Sends through | Configured when | Setup (what the human enters where) |
 | --- | --- | --- | --- |
-| `DesktopChannel({ emitter, shellsConnected?, platform?, run?, which?, appId? })` | Emits `notification` on the emitter; the daemon forwards it as the SSE event `notification` `{ id, kind, title, body, level, route, humanId, projectId }` and an attached shell shows the toast (ADR 0031). `id` is the `NotificationRecord` id, so a shell can match a toast with `GET /notifications/recent` (the notifier passes it as `ctx.recordId`; a test send has no record and uses its dedupe key). With no shell connected it falls back to the OS: `notify-send --app-name=Forerunner --urgency=<low\|normal\|critical> -- <title> <body>` on Linux, a PowerShell toast on Windows (`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <constant script>`; title, body and AppUserModelID travel in `FORERUNNER_TOAST_TITLE`, `FORERUNNER_TOAST_BODY`, `FORERUNNER_TOAST_APP_ID`, never inside the script). Both through `run()` with argv arrays; tools are located with `which()` once per process. | always | Nothing. Install the desktop shell for toasts while the window is closed; otherwise `notify-send` (libnotify) on Linux. |
+| `DesktopChannel({ emitter, shellsConnected?, platform?, run?, which?, appId?, osFallback? })` | Emits `notification` on the emitter; the daemon forwards it as the SSE event `notification` `{ id, kind, title, body, level, route, humanId, projectId }` and an attached shell shows the toast (ADR 0031). `id` is the `NotificationRecord` id, so a shell can match a toast with `GET /notifications/recent` (the notifier passes it as `ctx.recordId`; a test send has no record and uses its dedupe key). With no shell connected it falls back to the OS: `notify-send --app-name=Forerunner --urgency=<low\|normal\|critical> -- <title> <body>` on Linux, a PowerShell toast on Windows (`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <constant script>`; title, body and AppUserModelID travel in `FORERUNNER_TOAST_TITLE`, `FORERUNNER_TOAST_BODY`, `FORERUNNER_TOAST_APP_ID`, never inside the script). Both through `run()` with argv arrays; tools are located with `which()` once per process. `osFallback: false` (what the daemon passes when `osNotifierEnabled` is off, ADR 0038) reports "no shell connected (OS notifier off)" instead, not retryable, so the notifier moves on. | always | Nothing. Install the desktop shell for toasts while the window is closed; otherwise `notify-send` (libnotify) on Linux. |
 | `EmailChannel(port \| null)` | `port.sendEmail(to, subject, body)`; the agent email capability provides the port in production (its outbound policy applies), a fake in tests. Subject `[Forerunner] <title>`, body text plus `Open: fr://<route>`. | a port exists and an address resolves | Settings → Notifications → email (or leave empty to use the account email). Needs the agent email capability enabled. |
 | `TelegramChannel({ fetch, secrets, tokenRef?, apiBase?, timeoutMs? })` | `POST <apiBase>/bot<token>/sendMessage` `{ chat_id, text, disable_web_page_preview: true }` over the injected `fetch`. The bot token is a secret reference (`secret:telegram_bot_token` by default) resolved through the secrets port at send time; the URL is never logged and every error text passes through the resolver's redaction (and `/bot…/` is stripped). 429 and 5xx are retryable, other 4xx not. Text cut at 4096. | `telegram_chat_id` is set | 1. Create a bot with @BotFather, store its token in the vault as `telegram_bot_token` (`fr secrets set telegram_bot_token`). 2. Open a chat with the bot, send `/start`. 3. Read the chat id (`https://api.telegram.org/bot<token>/getUpdates`, field `message.chat.id`) and enter it in Settings → Notifications → Telegram chat id. 4. "Send a test". |
 | `SignalChannel({ account, binary?, run?, which?, timeoutMs? })` | `signal-cli -a <account> send -m <text> -- <recipient>` through `run()` when `signal-cli` is on PATH; otherwise `unavailable`, not retried. `account` is the agent's registered sender number, from configuration. | an account is configured and `signal_number` is set | Install `signal-cli` (Java), register or link a sender number for the agent, configure it as the account, enter your own number in Settings → Notifications → Signal number, "Send a test". Not available until `signal-cli` is on PATH. |
@@ -196,17 +201,54 @@ request path, the kill switch, the critic, the updater, the email command handle
 one hook each: `hooks.sessionEnded(humanId, facts)`, `hooks.requestOpened(req, humanId)`,
 `hooks.killSwitch(humanId, report, reason)`, ... Each resolves with the record.
 
-### Wiring (what the orchestrator does)
+### Configuration (`config.ts`)
 
-1. Build the channels: `new DesktopChannel({ emitter, shellsConnected: () => <SSE clients> })`,
-   `new EmailChannel(port)` with the agent email capability's sender (or `null`),
-   `new TelegramChannel({ fetch: globalThis.fetch, secrets })` with the run-less
-   `SecretResolver`, `new SignalChannel({ account: config.signalAccount ?? null })`.
-2. `const notifier = new Notifier({ clock, channels, humans: store.human, audit:
-   store.auditLog, events: store.event, emitter })`; `const stop = notifier.start()`.
-3. Forward `notifier.emitter.on("notification", payload => broadcast SSE "notification")`.
-4. Mount `createNotificationRoutes({ notifier, actor })`.
-5. `const hooks = bindProducers(notifier)` and call the hooks from the producers named above.
+`notificationConfigFrom(config, env)` merges the `notifications` block of `config.json`
+(`signalAccount`, `telegramTokenRef`, `telegramApiBase`) with the environment, which wins:
+`FORERUNNER_SIGNAL_ACCOUNT`, `FORERUNNER_TELEGRAM_TOKEN_REF`, `FORERUNNER_TELEGRAM_API_BASE`.
+A malformed value falls back to the default (`secret:telegram_bot_token`,
+`https://api.telegram.org`, no Signal account); a token value in place of a reference is
+refused, never stored. The per-human addresses are preferences, not configuration.
+
+### Wiring (what `composeRuntime` does, ADR 0038)
+
+All of it is in `packages/runtime/src/daemon/compose.ts` ("Notifications") and
+`server.ts`; `runtime.md` has the daemon-side view.
+
+1. Channels, in the fallback order of ADR 0017: `DesktopChannel({ emitter, shellsConnected:
+   () => rt.shells.count(), osFallback: osNotifierEnabled(env, config) })` only when the
+   background services run (a CLI one-shot or the cloud runner has no desktop);
+   `TelegramChannel({ fetch, secrets: SecretResolver(vault), tokenRef, apiBase })` wrapped in
+   `SecretCheckedChannel` (`src/wiring/notification-ports.ts`), whose `configured()` also says
+   "bot token not set (secret <name>)" when the vault has no such name (`vault.has`, never the
+   value; refreshed before every read of the human, so a token stored while the daemon runs
+   counts at the next view or send);
+   `SignalChannel({ account })`; `EmailChannel(port)` with the port from
+   `notificationEmailPort` (`src/wiring/notification-ports.ts`): the agent's own mailbox under
+   `EmailPolicy.send`, or `null` when the agent has no mailbox configured at compose.
+2. `new Notifier({ clock, channels, humans: AuditedNotificationHumans, audit: store.auditLog,
+   events: store.event, emitter })`; `notifier.start()` when the services run, stopped by
+   `close()`. `AuditedNotificationHumans` is `store.human` whose `notify_prefs` writes append
+   one `audit_log` row (`tool: notify.prefs`, the keys that changed, never the values).
+3. The emitter's `notification` payloads are re-emitted on the runtime bus; every open
+   `GET /events` stream subscribes and writes the SSE event `notification`. Only a stream that
+   shows the frame as a toast counts for `shellsConnected` (`src/daemon/shells.ts`): one that
+   declares `?client=shell` or `X-Forerunner-Client: shell`, or an undeclared one whose token
+   came in the `Authorization` header (the desktop sidecar; a browser's EventSource cannot send
+   headers). The UI's own stream, the phone and a browser tab (`?token=`) do not count, so the
+   OS notifier still runs when only they are open.
+4. `createNotificationRoutes({ notifier, actor })` is mounted at the daemon root; the routes are
+   in `DAEMON_ROUTES` (`notificationPrefs`, `setNotificationPrefs`, `testNotification`,
+   `recentNotifications`, `pendingNotifications`).
+5. `bindProducers(notifier)` is exposed as `RuntimeApp.notifications` and called from the real
+   sources: every `store.humanRequest.insert` for this human (`requestOpened`, blocking →
+   urgent; the wrap also emits `inbox` on the bus), the runner's result in `startSession`
+   (`sessionEnded`, a budget stop → `budget_stop`), `KillSwitch.onStop` (`killSwitch`, with
+   the reason), the restarter's `restart` event (`updateApplied`), and `critic.verdict` /
+   `critic.session_review` bus events with `escalation: true` and no `humanRequestId`
+   (`criticVerdict` raised to normal; the session id comes from the review row `reviewId`
+   names, so the delivery is logged on that session). `peerMessage`, `emailCommandReceived`
+   and `injectionFlagged` have no daemon source yet (Known issues).
 
 ## How to change it
 
@@ -220,7 +262,12 @@ one hook each: `hooks.sessionEnded(humanId, facts)`, `hooks.requestOpened(req, h
   `routes.ts`, make `configured()` return a human-readable reason, export it from
   `channels/index.ts`, add a fake to `test/notifications-helpers.ts` `defaultChannels` and tests
   for its payload and its failure reasons. Secrets are resolved at send time by reference, never
-  stored on the channel.
+  stored on the channel. Then construct it in `compose.ts` next to the others (its configuration
+  goes through `config.ts`, with a `FORERUNNER_*` override) and add a status line to
+  `notifications-wiring.test.ts`.
+- **Add a producer**: build the notification in `producers.ts`, add it to `bindProducers`, and
+  call `rt.notifications.<hook>` from the place in `compose.ts` (or the module) where the fact
+  is known; add a case to `notifications-wiring.test.ts` that asserts the record and its urgency.
 - **Change retry or dedupe**: `DEFAULT_RETRY`, `DEFAULT_DEDUPE_WINDOW_MS` in `notifier.ts`
   (both overridable per `Notifier`).
 - **Change the digest text**: `sendDigest` and `DIGEST_MAX_LINES` in `notifier.ts`.
@@ -234,9 +281,36 @@ one hook each: `hooks.sessionEnded(humanId, facts)`, `hooks.requestOpened(req, h
 ## Tests
 
 `pnpm vitest run --project unit packages/runtime/test/notifications.test.ts
-packages/runtime/test/notifications-channels.test.ts` (fake channels, `sqlite::memory:` store,
+packages/runtime/test/notifications-channels.test.ts
+packages/runtime/test/notifications-wiring.test.ts` (fake channels, `sqlite::memory:` store,
 `SimulatedClock`, no network; the Telegram tests use an injected `fetch`, the desktop and
 Signal tests injected `run` and `which`).
+
+- `notifications-wiring.test.ts` (the module inside `composeRuntime` and the daemon, fake
+  provider): the notifier and hooks on `RuntimeApp` and the routes in `DAEMON_ROUTES`;
+  `osNotifierEnabled`; the prefs routes with every channel's status for this daemon, one
+  `notify.prefs` audit row naming only the changed keys, 400 on bad input; a non-blocking
+  human request → normal, delivered by the injected OS notifier (`notify-send` argv) with its
+  `notify.desktop` audit row, a blocking one → urgent (`--urgency=critical`); an extension
+  waiting for approval → urgent; with `GET /events` open by a shell (token in the header) the
+  toast is the SSE event `notification` with `{ id, kind, title, body, level, route, humanId,
+  projectId }` and no OS command runs; a UI-style stream (`?token=`, nothing declared) is no
+  shell and the OS notifier still runs, `client=shell` declares one, `X-Forerunner-Client: ui`
+  opts out, and `rt.shells.count()` returns to 0 when the streams close; a finished session →
+  `session_ended` with the outcome, the `/sessions/<id>` link and a `notification` event in
+  the session log; a critic escalation on the bus → normal, one with a `humanRequestId` →
+  nothing extra, one whose review row names a session → logged on that session; the kill
+  switch → urgent with the reason; Telegram with a chat id and no token in the vault → "bot
+  token not set" in the prefs view, skipped (not failed) in a delivery and in a test send, no
+  request sent, configured again once the token is stored; an
+  applied update and a rollback → `update_applied`; quiet hours set through the route hold a
+  normal item (visible in `/notifications/pending`), not an urgent one, and `tick()` flushes it
+  once cleared; Telegram with a chat id and a token in the vault: the token reaches the request
+  URL and never the record, the audit rows, the logs or the open requests; a test send reports
+  every channel and stays out of the recent list; the email channel is "no email sender" without
+  an agent mailbox and, once the agent's mailbox is configured (a second composition over the
+  same store), sends a test notification to the human through `EmailPolicy` into a recording
+  mailbox.
 
 - `notifications.test.ts` (notifier): routing matrix over every kind; per-kind lists and the
   empty list; preferred channel and `"push"`; quiet hours hold and `tick()` flush at the window
@@ -271,8 +345,13 @@ Signal tests injected `run` and `which`).
   registered sender number, which the setup wizard does not yet guide.
 - `notify_channel: "push"` is treated as desktop first until the Android push service exists;
   the Android client reads the same preferences.
-- The email channel is only configured once the orchestrator wires the agent email capability's
-  sender; until then the settings screen shows "no email sender".
+- The email sender is resolved once at compose from the agent's email settings row: a mailbox
+  configured while the daemon runs takes effect at the next daemon start (the settings screen
+  shows "no email sender" until then). Re-reading the row on a settings change is a follow-up.
+- `peerMessage`, `emailCommandReceived` and `injectionFlagged` have builders and hooks but no
+  daemon source yet (ADR 0038, point 2): messages to the human arrive through the state service,
+  the email command handler runs on the cloud runner, and the loop's injection flag is a session
+  event. Each needs one call on `RuntimeApp.notifications` where the fact is known.
 - `update_available` links to `/settings` although the UI has a `/updates` page: the desktop
   shell's deep-link roots do not list `updates` yet. When they do, change the link in
   `producers.updateAvailable` and `SHELL_ROOTS` in the producers test together.

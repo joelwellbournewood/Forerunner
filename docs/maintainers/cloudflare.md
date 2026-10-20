@@ -1,9 +1,11 @@
 # Cloudflare deploys
 
 > Status: implemented in `packages/capabilities/src/cloudflare/` (phase 6), tested against the
-> fake Cloudflare API in `packages/capabilities/test/helpers/fake-cloudflare.ts`. No real token
-> exists yet (`docs/status/BLOCKERS.md`); the re-test against a named test zone is listed under
-> "Known issues". The orchestrator wires the ports under "How to wire it".
+> fake Cloudflare API in `packages/capabilities/test/helpers/fake-cloudflare.ts`, and wired into
+> the daemon (`packages/runtime/src/daemon/compose.ts` registers the tools, `server.ts` mounts
+> the routes; ADR 0038, "Where it is wired" below). No real token exists yet
+> (`docs/status/BLOCKERS.md`); the re-test against a named test zone is listed under "Known
+> issues".
 
 ## Purpose
 
@@ -196,24 +198,38 @@ dependency, like the email routes): `GET /cloudflare/projects/:projectId/setting
 and scope; the secret by reference) and `GET /cloudflare/projects/:projectId/token`
 (`verifyToken()`: status, expiry, scope lines, warnings). Nothing here writes to Cloudflare.
 
-## How to wire it
+## Where it is wired (ADR 0038)
+
+The module is exported as the `cloudflare` namespace of `@forerunner/capabilities`
+(`packages/capabilities/src/index.ts`). `composeRuntime` (`packages/runtime/src/daemon/compose.ts`,
+"Cloudflare deploys") registers the four tools into the daemon's built-in `ToolRegistry`:
 
 ```ts
-const approvals = new HumanRequestCloudflareApprovals(store.humanRequest, clock);
-registerCloudflareTools(registry, cloudflareToolDeps({
-  projects: store.project, vault, approvals, audit: store.auditLog, clock,
+cloudflare.registerCloudflareTools(tools, cloudflare.cloudflareToolDeps({
+  projects: store.project, vault,
+  approvals: new cloudflare.HumanRequestCloudflareApprovals(store.humanRequest, clock),
+  audit: store.auditLog, clock, fetchImpl: opts.fetchImpl,
 }));
-createCloudflareRoutes({ projects: store.project, vault, clock }, app);
 ```
 
-The capability token of a run must list the tools, the domain `api.cloudflare.com` and the
-secret `cloudflare_api_token` (the catalog entry declares them; the extension gate enforces
-them). That is the whole domain allowlist a deploy needs: zone hostnames are never added to
-it, because route hosts and DNS names are not domain fields (see "ToolSpecs"); the zones a run
-may touch come from `project.settings.cloudflare.zone_ids` and the deployer enforces them. The orchestrator also adds `export * as cloudflare from "./cloudflare/index.ts"` to
-`packages/capabilities/src/index.ts` and aligns the catalog's `permissions.tools` with the
-four tool names above (the catalog still lists the placeholder names `cloudflare.deploy`,
-`cloudflare.list_zones`, `cloudflare.purge_cache`).
+so every run token lists them with the file tools and the daemon's hooks (token allowlist,
+path fields, action classes, autonomy with `human_request` approvals through `StateApprovals`,
+audit rows) and the extension gate apply as to any other tool. The daemon (`server.ts`) mounts
+`cloudflareRoutes()` behind the bearer token with a two-line adapter over Hono's context
+(`DAEMON_ROUTES.cloudflareSettings`, `DAEMON_ROUTES.cloudflareToken`); the API base comes from
+the project's settings. The catalog entry `cloudflare` in
+`packages/runtime/src/extensions/catalog.json` names exactly the four tools and the classes
+`read`, `deploy_staging`, `deploy_production`: once the extension is installed from the panel,
+the gate checks a tool's name and class against the installed row, so a mismatch would refuse
+every call (`cloudflare-wiring.test.ts` proves the alignment).
+
+The capability token of a run must list the tools and the domain `api.cloudflare.com` (the
+catalog entry declares them; the extension gate enforces them once installed). That is the
+whole domain allowlist a deploy needs: zone hostnames are never added to it, because route
+hosts and DNS names are not domain fields (see "ToolSpecs"); the zones a run may touch come
+from `project.settings.cloudflare.zone_ids` and the deployer enforces them. The token itself is
+resolved by the deployer from the vault by the reference in the settings, never through the
+run's granted secrets, so it is never in model context, logs, audit rows or errors.
 
 ## How to change it
 
@@ -264,6 +280,18 @@ fake API on 127.0.0.1, `sqlite::memory:` store, `SimulatedClock`, memory vault):
   passes; an `_acme-challenge` TXT upsert and a Pages plan pass; a host outside the zones
   passes the hooks and is refused in code before any request with denied audit rows; a script
   path outside the run's roots is still refused by the hooks.
+- `cloudflare-wiring.test.ts` (the capability inside `composeRuntime` and the daemon, no model
+  provider): the four tools are in the daemon's registry and the catalog entry names them with
+  their real classes, domain and secret, and the routes are in `DAEMON_ROUTES`; a production
+  `cloudflare_deploy` at autonomy 2 is refused by the daemon's hooks before any request
+  (`pending`), filed as a blocking approval with the `deploy_staging` card, audited
+  (`approval_required: pending`) and raised to the human as an urgent notification; at
+  autonomy 3 the hooks pass the staging class and the deployer refuses production in code with
+  nothing written and a denied `cloudflare.deploy_worker` row; a `cloudflare_plan` at autonomy
+  2 passes the hooks and runs against the fake API with reads only; the panel routes answer 401
+  without the token, the settings by reference and the token's real scopes without the value,
+  404 for an unknown project; installing the `cloudflare` extension from the catalog makes the
+  gate refuse the tools while the grant is pending and allow them after the inbox answer.
 
 ## Known issues
 
@@ -278,6 +306,10 @@ fake API on 127.0.0.1, `sqlite::memory:` store, `SimulatedClock`, memory vault):
   of the single `cloudflare_deploy` tool the spec asks for.
 - The fake API lives in `packages/capabilities/test/helpers/`; BLOCKERS.md says `testenv`.
   Moving it there is a copy once `testenv` has a slot for it.
+- The daemon's session grant does not add `api.cloudflare.com` to a run's domain allowlist
+  (only the GitHub hosts); the tools declare no domain fields so the hooks never check it, and
+  the gate enforces the catalog's domain once the extension is installed. A session that should
+  reach the API through a bridged tool would need the grant extended.
 
 ## Requirement IDs covered
 
