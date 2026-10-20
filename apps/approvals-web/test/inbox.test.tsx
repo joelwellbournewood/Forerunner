@@ -86,7 +86,11 @@ describe("inbox", () => {
   });
 
   it("shows a 409 as changed, with a reload that fetches the latest", async () => {
-    await openInbox(h);
+    // The feed polls the inbox when the stream is not live; a poll landing between the version
+    // bump below and the click would hand the card the new version and the answer would succeed.
+    // This case keeps the poll far away so the only reload is the explicit one it clicks.
+    await openFromLink(h, { feed: { pollIntervalMs: 600_000 } });
+    await waitFor(() => $$("request").length > 0, "requests");
     const target = h.fake.state.requests.find((r) => r.id === "req-approval");
     if (!target) throw new Error("fixture");
     target.version = 2;
