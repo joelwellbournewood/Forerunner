@@ -33,10 +33,13 @@ export class StateLedger implements LedgerPort {
       task_id: e.taskId ?? null,
       run_id: e.runId,
       billing_source_id: e.billingSourceId,
-      kind: "api",
+      // A subscription run's rows are "subscription": an API-equivalent estimate with the plan
+      // share the run reports (ADR 0044); everything else is exact "api" spend.
+      kind: e.kind ?? "api",
       usd_micro: e.usdMicro,
       chf_micro: Math.round(e.usdMicro * rate),
       rate_chf_per_usd: rate,
+      plan_usage_share: e.planUsageShare ?? null,
       model: e.model,
       tokens_in: e.tokensIn,
       tokens_out: e.tokensOut,

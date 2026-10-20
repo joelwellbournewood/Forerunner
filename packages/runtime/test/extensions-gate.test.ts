@@ -236,7 +236,7 @@ describe("extension gate in the enforcement hooks", () => {
     await expect(gate.check(echoTool, { input: { text: "x" } })).resolves.toBeUndefined();
     // capability tools are gated through the tool index of the rows
     await h.registry.addFromCatalog("browser", human);
-    const browserOpen = { ...echoTool, name: "browser.open" };
+    const browserOpen = { ...echoTool, name: "browser_navigate" };
     await expect(gate.check(browserOpen)).resolves.toBeUndefined();
     const browser = (await h.registry.list({ kind: "capability" }))[0];
     await h.registry.toggle(browser?.id ?? "", false, human);

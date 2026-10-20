@@ -25,6 +25,13 @@ export interface BillingSourceLimits {
   /** Plan usage share (0..1) above which a subscription is not routed to. */
   planShareCap?: number;
   /**
+   * The plan's allowance as an estimated API-equivalent in usd_micro per UTC month
+   * (subscriptions). With it the runtime computes the plan usage share from the month's
+   * "subscription" ledger rows; without it the share is whatever the last probe or run
+   * reported (ADR 0044).
+   */
+  planUsdMicro?: number;
+  /**
    * True when the cloud runner that would use this subscription is the owner's personal
    * runner. Only then may a subscription be used off the owner's PC (spec, Security).
    */
@@ -104,6 +111,7 @@ const limitsSchema = z
   .object({
     monthlyUsdMicro: z.number().int().nonnegative().optional(),
     planShareCap: z.number().min(0).max(1).optional(),
+    planUsdMicro: z.number().int().positive().optional(),
     personalRunner: z.boolean().optional(),
   })
   .strict();

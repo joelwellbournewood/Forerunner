@@ -2,7 +2,7 @@ import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/plat
 import { z } from "zod";
 import { ContextPipeline, DEFAULT_CONTEXT_SETTINGS } from "../context/pipeline.ts";
 import type { SessionBudget } from "../enforcement/budget.ts";
-import type { EnforcementHooks, RunContext } from "../enforcement/hooks.ts";
+import type { EnforcementHooks, RunBilling, RunContext } from "../enforcement/hooks.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken } from "../enforcement/token.ts";
 import type { InjectionReport } from "../injection/scan.ts";
@@ -33,6 +33,8 @@ export interface RunRequest {
   provider: ModelProvider;
   model: string;
   billingSourceId: string;
+  /** How the run is billed (ADR 0044); absent: an API-style source. */
+  billing?: RunBilling;
   system: string;
   messages: ChatMessage[];
   tools: ToolRegistry;
@@ -193,6 +195,7 @@ export class LoopAgentDriver {
       model: req.model,
       provider: req.provider.name,
       billingSourceId: req.billingSourceId,
+      ...(req.billing ? { billing: req.billing } : {}),
       approvals: req.approvals ?? new Set(),
       cwd: req.cwd,
     };

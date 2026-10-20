@@ -13,3 +13,4 @@ export * from "./metered.ts";
 export * from "./registry.ts";
 export * from "./report.ts";
 export * from "./stats.ts";
+export * from "./tasks.ts";

@@ -128,7 +128,7 @@ describe("ExtensionRegistry: install needs a human", () => {
     const view = await h.registry.addFromCatalog("browser", human);
     expect(view.kind).toBe("capability");
     expect(view.status).toBe("enabled");
-    expect(view.permissions.tools).toContain("browser.open");
+    expect(view.permissions.tools).toContain("browser_navigate");
     expect(view.permissions.scopes).toContain("screenshots are logged");
     expect(view.review?.summary).toContain("scope: screenshots are logged");
     await expect(h.registry.addFromCatalog("browser", human)).rejects.toMatchObject({
@@ -620,7 +620,7 @@ describe("ExtensionRegistry: a grant may only name the extension's own tools", (
       kind: "capability",
       transport: undefined,
       permissions: {
-        tools: ["browser.open"],
+        tools: ["browser_navigate"],
         actionClasses: ["read"],
         domains: [],
         paths: [],
@@ -628,12 +628,13 @@ describe("ExtensionRegistry: a grant may only name the extension's own tools", (
         scopes: [],
       },
     });
-    // a connector named like the built-in capability passes the prefix rule; ownership stops it
+    // a connector named like the built-in capability: its tools must carry its own prefix, so
+    // the capability's real names are out of reach before ownership is even asked
     const shadowNamed = fakeCatalogEntry({
       id: "browser-shadow",
       name: "browser",
       permissions: {
-        tools: ["browser.open"],
+        tools: ["browser_navigate"],
         actionClasses: ["read"],
         domains: [],
         paths: [],
@@ -654,10 +655,11 @@ describe("ExtensionRegistry: a grant may only name the extension's own tools", (
       const browser = await h.registry.addFromCatalog("browser", human);
       await expect(h.registry.addFromUrl(http.url("/named.json"), human)).rejects.toMatchObject({
         code: "validation",
-        message: expect.stringMatching(/already belongs to extension browser/),
-        details: { tool: "browser.open", ownerExtensionId: browser.id },
+        message: expect.stringMatching(
+          /must start with browser\.|already belongs to extension browser/,
+        ),
       });
-      expect(await h.registry.lookupTool("browser.open")).toBe(browser.id);
+      expect(await h.registry.lookupTool("browser_navigate")).toBe(browser.id);
       expect(await h.registry.list({ kind: "connector" })).toEqual([]);
       expect(await h.store.extension.list()).toHaveLength(1);
     } finally {

@@ -1,0 +1,47 @@
+/**
+ * The one place the runtime reaches the voice package. `@forerunner/voice` is not declared in
+ * `packages/runtime/package.json` (dependencies are pre-declared; see the report of the change
+ * that added this module), so the relative path reaches the same sources the package exports
+ * (`"exports": "./src/index.ts"`). When the dependency is declared, this file becomes
+ * `export * from "@forerunner/voice";` and nothing else changes.
+ */
+export {
+  AsyncQueue,
+  type AudioChunk,
+  type AudioSink,
+  type Availability,
+  buildLatencyReport,
+  CartesiaTts,
+  type ConverseFn,
+  chunkDurationMs,
+  DEFAULT_LATENCY_TARGETS,
+  DeepgramStt,
+  ElevenLabsTts,
+  FakeStt,
+  type FakeSttScript,
+  FakeTts,
+  FasterWhisperStt,
+  KokoroTts,
+  type LatencyReport,
+  type LatencyTargets,
+  PiperTts,
+  type ProviderKind,
+  type ProviderStatus,
+  pacedSink,
+  type Selection,
+  type SelectionPolicy,
+  type SpokenApprovalRecord,
+  type SttEvent,
+  type SttProvider,
+  type SttSession,
+  type SttStartOptions,
+  spokenApprovalRecord,
+  type TranscriptEntry,
+  type TtsProvider,
+  toInt16,
+  VoiceLoop,
+  type VoiceLoopEvent,
+  type VoiceLoopState,
+  type VoiceMode,
+  VoiceProviderRegistry,
+} from "../../../voice/src/index.ts";

@@ -1,3 +1,5 @@
+/** Per-task billing port the executor asks before every run (ADR 0044). */
+export * from "./billing.ts";
 export * from "./brief.ts";
 export * from "./checklist.ts";
 export * from "./executor.ts";

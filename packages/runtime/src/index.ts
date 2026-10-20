@@ -1,3 +1,5 @@
+/** Claude Code tool specs for the hooks on the Agent SDK path (ADR 0044). */
+export * from "./agent/cc-tools.ts";
 export * from "./agent/loop.ts";
 export * from "./agent/sdk.ts";
 export * from "./agent/tools.ts";
@@ -46,7 +48,12 @@ export * from "./setup/validators.ts";
 export * from "./setup/wizard.ts";
 /** Signed updates (spec M); namespaced because its catalog port shares names with the extensions catalog. */
 export * as updates from "./update/index.ts";
+/** Per-task billing for the daemon: seeded sources, the vault-and-ledger probe, the router pick (ADR 0044). */
+export * from "./wiring/billing-pick.ts";
 export * from "./wiring/billing-ports.ts";
+/** The sandboxed browser and agent email inside the daemon (ADR 0047). */
+export * from "./wiring/browser-ports.ts";
 export * from "./wiring/desktop-ports.ts";
+export * from "./wiring/email-ports.ts";
 export * from "./wiring/model-config.ts";
 export * from "./wiring/state-ports.ts";

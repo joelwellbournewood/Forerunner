@@ -27,6 +27,21 @@ export const LIVE_CODER_OVERRIDES: SpecialistOverrides = {
   requiresSandbox: false,
 };
 
+/**
+ * The coder for the subscription half (ADR 0044): the registry's Claude Code names as written,
+ * `cc:Bash` included so the executor's withholding of it (no sandbox lease covers the
+ * subprocess) is exercised and audited, under the same small caps as the API-key half. The
+ * Agent SDK driver passes the names through; the loop driver, were it picked, maps them to the
+ * built-ins (ADR 0043), so the copy runs on either driver.
+ */
+export const LIVE_SDK_CODER_OVERRIDES: SpecialistOverrides = {
+  tools: ["cc:Read", "cc:Edit", "cc:MultiEdit", "cc:Write", "cc:Bash", "cc:Grep", "cc:Glob"],
+  maxBudgetUsd: 0.5,
+  maxTurns: 12,
+  timeoutMinutes: 5,
+  requiresSandbox: false,
+};
+
 const REPLACED_KEYS = new Set([
   "allowed_tools",
   "max_budget_usd",

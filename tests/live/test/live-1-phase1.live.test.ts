@@ -4,6 +4,12 @@ import { budgetLine } from "../src/budget.ts";
 import { composeLive, type LiveHarness } from "../src/harness.ts";
 import { type LiveCall, MeteredProvider } from "../src/metered.ts";
 import { liveEnabled, reportDir, SKIP_REASON, usd, writeReport } from "../src/report.ts";
+import {
+  PHASE1_KILL_TASK,
+  PHASE1_SESSION_CAP_USD_MICRO,
+  PHASE1_TASK_CAP_USD_MICRO,
+  PHASE1_TASKS,
+} from "../src/tasks.ts";
 
 /**
  * Phase 1 gate, the live half on the API key (spec, Build order: "The same session runs once
@@ -88,46 +94,14 @@ describe(`phase 1 gate, live half on the API key${LIVE ? "" : ` (${SKIP_REASON})
   live(
     "one session works three tasks via pull requests, Sonnet coder and critic, under every cap, with correct usage on the api_key source",
     async () => {
-      const sessionCap = 3_000_000;
-      const taskCap = 400_000;
+      const sessionCap = PHASE1_SESSION_CAP_USD_MICRO;
+      const taskCap = PHASE1_TASK_CAP_USD_MICRO;
       const project = await h.addProject({
         name: "Live sample",
         goal: "A tiny TypeScript library grown by small, reviewed changes",
         budgetUsdMicro: 5_000_000,
       });
-      const specs = [
-        {
-          title: "Add a greet function",
-          outcome:
-            "src/greet.ts exports greet(name: string): string that returns the text Hello, <name>! and test/greet.test.ts covers it with node:test",
-          acceptanceCriteria: [
-            "src/greet.ts exports greet(name: string): string",
-            'greet("Ada") returns "Hello, Ada!"',
-            "test/greet.test.ts exists, imports greet from ../src/greet.ts and asserts the example with node:assert/strict and node:test",
-          ],
-        },
-        {
-          title: "Add a clamp function",
-          outcome:
-            "src/clamp.ts exports clamp(n: number, min: number, max: number): number that limits n to [min, max] and throws a RangeError when min > max, with test/clamp.test.ts",
-          acceptanceCriteria: [
-            "src/clamp.ts exports clamp(n: number, min: number, max: number): number",
-            "clamp returns min when n < min, max when n > max, and n otherwise",
-            "clamp throws RangeError when min > max",
-            "test/clamp.test.ts exists and covers the three cases with node:test and node:assert/strict",
-          ],
-        },
-        {
-          title: "Start a changelog",
-          outcome:
-            "CHANGELOG.md exists with an Unreleased heading and one bullet that names the add function as the first feature",
-          acceptanceCriteria: [
-            "CHANGELOG.md exists at the repository root",
-            "CHANGELOG.md has a heading that contains the word Unreleased",
-            "under that heading one bullet names the add function",
-          ],
-        },
-      ];
+      const specs = PHASE1_TASKS;
       const tasks = [];
       for (const [i, s] of specs.entries()) {
         tasks.push(
@@ -360,15 +334,9 @@ describe(`phase 1 gate, live half on the API key${LIVE ? "" : ` (${SKIP_REASON})
       budgetUsdMicro: 2_000_000,
     });
     const task = await h.addTask(project, {
-      title: "Add a word list",
-      outcome:
-        "src/words.ts exports WORDS, an array of 300 distinct lowercase English words, and isWord(w: string): boolean",
-      acceptanceCriteria: [
-        "src/words.ts exports WORDS: readonly string[] with 300 distinct lowercase words",
-        "src/words.ts exports isWord(w: string): boolean",
-      ],
-      budgetUsdMicro: 400_000,
-      estimateUsdMicro: 400_000,
+      ...PHASE1_KILL_TASK,
+      budgetUsdMicro: PHASE1_TASK_CAP_USD_MICRO,
+      estimateUsdMicro: PHASE1_TASK_CAP_USD_MICRO,
     });
     const mark = h.provider.calls.length;
     const started = new Promise<void>((resolve) => {

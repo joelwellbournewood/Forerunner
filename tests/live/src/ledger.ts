@@ -9,6 +9,14 @@ import { dirname, ForerunnerError, join } from "@forerunner/platform";
  */
 export const LEDGER_FILE_NAME = "spend.json";
 
+/**
+ * What a row is: an API call priced in USD (the default, the field is omitted), or an Agent
+ * SDK run on the subscription (ADR 0044), which has no USD price: its `usd` is 0, so the caps
+ * ignore it, and its `note` reads "subscription: plan usage, est. USD x" with the SDK's own
+ * list-price figure.
+ */
+export type SpendKind = "api" | "subscription";
+
 export interface SpendRow {
   /** YYYY-MM-DD (UTC) of the call. */
   date: string;
@@ -19,8 +27,10 @@ export interface SpendRow {
   tokensOut: number;
   cacheRead: number;
   cacheWrite: number;
-  /** USD at the billing table's prices, six decimals (micro-USD precision). */
+  /** USD at the billing table's prices, six decimals (micro-USD precision); 0 for plan usage. */
   usd: number;
+  /** "subscription" for an SDK run on the plan; absent for an API call. */
+  kind?: SpendKind;
   /** What happened when it was not a plain success (an error code, an abort, no usage). */
   note?: string;
 }
@@ -103,6 +113,15 @@ export function parseLedger(json: string): LedgerFile {
       cacheWrite: nonNegativeInt(o.cacheWrite ?? 0, "cacheWrite", i),
       usd,
     };
+    if (o.kind !== undefined) {
+      if (o.kind !== "subscription" && o.kind !== "api") {
+        throw new ForerunnerError(
+          "validation",
+          `spend ledger row ${i}: kind must be "api" or "subscription"`,
+        );
+      }
+      if (o.kind === "subscription") row.kind = o.kind;
+    }
     if (typeof o.note === "string" && o.note !== "") row.note = o.note;
     return row;
   });
@@ -111,6 +130,11 @@ export function parseLedger(json: string): LedgerFile {
 
 export function formatLedger(file: LedgerFile): string {
   return `${JSON.stringify(file, null, 2)}\n`;
+}
+
+/** The subscription rows (plan usage, USD 0) of a set of rows. */
+export function subscriptionRows(rows: readonly SpendRow[]): SpendRow[] {
+  return rows.filter((r) => r.kind === "subscription");
 }
 
 export function sumUsd(rows: readonly SpendRow[]): number {

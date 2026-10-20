@@ -161,6 +161,51 @@ describe("SdkAgentDriver", () => {
     expect(res.outcome).toBe("budget_exceeded");
   });
 
+  it("ends a killed run the moment the abort fires, without waiting for the subprocess", async () => {
+    const h = harness();
+    let abort: AbortController | undefined;
+    let released = false;
+    const q: QueryLike = ({ options }) => {
+      abort = (options as { abortController?: AbortController }).abortController;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk-sess" };
+        yield assistant("working");
+        // The SDK keeps the iterator open after the abort while its subprocess winds down.
+        await new Promise<void>((resolve) => {
+          abort?.signal.addEventListener("abort", () => setTimeout(resolve, 5_000));
+        });
+        released = true;
+      })();
+    };
+    const driver = new SdkAgentDriver({
+      hooks: h.hooks,
+      kill: h.kill,
+      clock: h.clock,
+      queryImpl: q,
+    });
+    const run = driver.run({
+      token: issue(h, { allowedTools: ["echo"], budgetUsdMicro: 1_000_000 }),
+      budget: budget("sess-1", 50_000_000, h.clock),
+      billingSourceId: "bs",
+      credential: { kind: "api_key", value: "k" },
+      model: "claude-sonnet-5-5",
+      systemPrompt: "sys",
+      prompt: "p",
+      cwd: process.cwd(),
+      tools: registry(),
+      pricing: flatPricing,
+      timeoutMs: 60_000,
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(abort).toBeDefined();
+    const before = Date.now();
+    void h.kill.stop("all", "test");
+    const res = await run;
+    expect(Date.now() - before).toBeLessThan(1_000);
+    expect(res.outcome).toBe("killed");
+    expect(released).toBe(false);
+  });
+
   it("scrubs credentials from the subprocess environment", () => {
     const out = scrubEnv({
       PATH: "/bin",

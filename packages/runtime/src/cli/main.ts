@@ -9,7 +9,8 @@ import type { RuntimeApp } from "../daemon/compose.ts";
 import type { RunningDaemon } from "../daemon/server.ts";
 import { writeKillRequest } from "../enforcement/killfile.ts";
 import { registerModelWatchCli } from "../models/watch-cli.ts";
-import { ensureDirs, readConfig, runSetup } from "../setup/wizard.ts";
+import { describePlanAllowance } from "../setup/plan-allowance.ts";
+import { ensureDirs, readConfig, runSetup, type SetupReport } from "../setup/wizard.ts";
 import { registerUpdateCli } from "../update/cli.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 
@@ -86,6 +87,14 @@ export function buildProgram(deps: CliDeps = {}): Command {
       "--anthropic-key <key>",
       "Anthropic API key or subscription token (or FORERUNNER_ANTHROPIC_KEY)",
     )
+    .option(
+      "--subscription-token <token>",
+      "Claude subscription token from `claude setup-token` (or FORERUNNER_SUBSCRIPTION_TOKEN); format-checked, stored in the vault",
+    )
+    .option(
+      "--plan-usd-monthly <usd>",
+      "the subscription's plan allowance: API-equivalent usage per month in USD (or FORERUNNER_PLAN_USD_MONTHLY); the plan share cap stops subscription work at 95% of it",
+    )
     .option("--repos <list>", "comma separated owner/name repositories to verify access to")
     .option("--github-api <url>", "GitHub API base (fake git host in tests)")
     .option("--anthropic-api <url>", "Anthropic API base")
@@ -112,6 +121,8 @@ export function buildProgram(deps: CliDeps = {}): Command {
           timezone: opts.timezone,
           githubToken: opts.githubToken,
           anthropicKey: opts.anthropicKey,
+          subscriptionToken: opts.subscriptionToken,
+          planUsdMonthly: opts.planUsdMonthly,
           repos: opts.repos
             ? String(opts.repos)
                 .split(",")
@@ -132,6 +143,7 @@ export function buildProgram(deps: CliDeps = {}): Command {
           for (const p of r.problems) out(`  - ${p}`);
         }
         if (report.stored.length) out(`Stored in vault: ${report.stored.join(", ")}`);
+        out(`Billing sources: ${billingSourcesLine(report.sources)}`);
         if (report.skipped.length)
           out(`Not configured yet: ${report.skipped.join(", ")} (run fr setup again any time)`);
         out(report.complete ? "Setup complete." : "Setup saved; credentials can be added later.");
@@ -315,6 +327,25 @@ export function buildProgram(deps: CliDeps = {}): Command {
   });
 
   return program;
+}
+
+/**
+ * The setup summary's billing line: which sources the next start registers and, for the
+ * subscription, the plan allowance in force and where it came from (ADR 0044).
+ */
+export function billingSourcesLine(sources: SetupReport["sources"]): string {
+  const allowance = sources.planAllowance
+    ? `; ${describePlanAllowance(sources.planAllowance)}`
+    : "";
+  const parts = [
+    ...(sources.subscription
+      ? [`subscription (anthropic_subscription_token, Agent SDK${allowance})`]
+      : []),
+    ...(sources.apiKey ? ["API key (anthropic_api_key)"] : []),
+  ];
+  return parts.length
+    ? `${parts.join(", ")}${parts.length === 2 ? "; the router picks per task, subscription first" : ""}`
+    : "none yet (sessions need an API key or a subscription token)";
 }
 
 const isMain = (() => {

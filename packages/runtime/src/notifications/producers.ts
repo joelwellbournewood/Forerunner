@@ -6,7 +6,7 @@
  */
 import type { HumanRequestRow, MessageRow, ReviewRow } from "@forerunner/state";
 import type { KillReport, KillScope } from "../enforcement/killswitch.ts";
-import { describeInjection, type InjectionReport } from "../injection/scan.ts";
+import type { InjectionReport } from "../injection/scan.ts";
 import type { Notification, NotificationRecord } from "./types.ts";
 
 function cut(s: string, max: number): string {
@@ -101,7 +101,26 @@ export function criticVerdict(
   };
 }
 
-/** Prompt injection seen and ignored (scenario 6): always urgent, quoted to the human. */
+/**
+ * The report's summary for a notification body: where the content came from, how many
+ * instruction-like passages the scan found and which rules fired, never the passages
+ * themselves (ADR 0047: a notification travels through channels the flagged text must not
+ * reach; the quoted passages stay in the session log the link opens).
+ */
+export function summarizeInjection(report: InjectionReport, origin?: string): string {
+  const where = origin ? ` from ${origin}` : "";
+  const counts = new Map<string, number>();
+  for (const m of report.matches) counts.set(m.rule, (counts.get(m.rule) ?? 0) + 1);
+  const lines = [...counts]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([rule, n]) => `- ${rule}: ${n} passage${n === 1 ? "" : "s"}`);
+  return `Content${where} (${report.source}) contained ${report.matches.length} instruction-like passage(s). They were ignored:\n${lines.join("\n")}\nScore ${report.score}; open the session log to read them.`;
+}
+
+/**
+ * Prompt injection seen and ignored (scenario 6): always urgent, the human is told where and
+ * which rules fired; the passages themselves are in the audit row and the session log.
+ */
 export function injectionFlagged(
   humanId: string,
   report: InjectionReport,
@@ -112,7 +131,7 @@ export function injectionFlagged(
     kind: "injection_flagged",
     humanId,
     title: `Instructions found in ${report.source} content were ignored`,
-    body: cut(describeInjection(report, opts.origin), 1000),
+    body: cut(summarizeInjection(report, opts.origin), 1000),
     link: opts.sessionId ? `/sessions/${opts.sessionId}` : "/inbox",
     projectId: opts.projectId ?? undefined,
     sessionId: opts.sessionId,

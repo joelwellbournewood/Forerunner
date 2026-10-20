@@ -747,22 +747,28 @@ and V.5's prompt-injection part (the security suite's injection run, in CI's uni
 
 ## Gate harnesses
 
-Package: `tests/e2e` (`@forerunner/e2e`), the same package that will hold the nine release
-scenarios. Two harnesses run the phase 3 and phase 4 gates of the build order end to end on the
-fake provider, with no network: the real session runner, the real task executor with the
-built-in file tools in a worktree per task, the real critic loop, the real memory loop, an
-in-memory SQLite store and a `SimulatedClock`. They prove the plumbing and the rules in code;
-the live-model run of the phase 3 calibration is a separate opt-in (below) and is what turns
-the gate row into "passed".
+Package: `tests/e2e` (`@forerunner/e2e`), the same package that holds the nine release
+scenarios. Three harnesses run the phase 3, phase 4 and phase 7 gates of the build order end to
+end on the fake provider, with no network: the real session runner, the real task executor with
+the built-in file tools in a worktree per task, the real critic loop, the real memory loop, an
+in-memory SQLite store and a `SimulatedClock`; the phase 7 harness runs on the scenario world
+(below, "Scenarios") with the real PR flow, the updater and the model watch. They prove the
+plumbing and the rules in code; the live-model run of the phase 3 calibration is a separate
+opt-in (below) and is what turns the gate row into "passed".
 
 Files: `tests/e2e/src/world.ts` (the world: `gateWorld()`, `WorktreeDiffPort`,
 `RecordingPlanner`, the script helpers `criticTurn`, `specialistTurn`, `submitReview`,
 `closingReply`, `lessonsSection`), `tests/e2e/src/eval-defects.ts` (the scripted critic for the
 eval sets: `defectMarker`, `evidenceShowsDefect`, `evalCriticScript`),
 `tests/e2e/src/four-weeks.ts` (`CODER_FAMILIES`, `RESEARCHER_FAMILIES`, `familyScript`,
-`runFourWeeks`, `repeatStats`, `formatFourWeeks`), and the two scenario files
-`tests/e2e/scenarios/phase3-gate.integration.test.ts` and
-`tests/e2e/scenarios/phase4-gate.integration.test.ts`. The root `vitest.config.ts` runs
+`runFourWeeks`, `repeatStats`, `formatFourWeeks`), `tests/e2e/src/gate7-release.ts` (the
+Forerunner stand-in repository, `releaseFromMain`, the untouched-directory markers),
+`tests/e2e/src/gate7-model-watch.ts` (the model watch of an install on the world: the listing
+provider, the eval probe script, the eval runner over `@forerunner/evals`, the weekly
+scheduler), and the three scenario files
+`tests/e2e/scenarios/phase3-gate.integration.test.ts`,
+`tests/e2e/scenarios/phase4-gate.integration.test.ts` and
+`tests/e2e/scenarios/phase7-gate.integration.test.ts`. The root `vitest.config.ts` runs
 `tests/e2e/scenarios/**/*.test.ts` in the `e2e` project (30 min test timeout, no file
 parallelism); the integration project does not include `tests/e2e`.
 
@@ -873,13 +879,148 @@ new kinds stop arriving and lessons hold. Without memory every recurrence repeat
 schedule is fixed in the harness and is what makes the decline gradual rather than a cliff; the
 control run is what shows the decline is memory's doing.
 
+**Phase 5, a simulated week through the UI and the phone** (`gate5-daemon.ts`,
+`gate5-phone.ts`, `gate5-pc.ts`, `gate5-week.ts`, `phase5-gate.integration.test.ts`; ADR
+0045). The scenario world with a second project ("Space game", its own repository), both
+installs with a `CommandLoop` and a `ConversationAgent` (`scenario-commands.ts`), the voice
+loop on Alice's (`scenario-voice.ts`), the state service in process and J's phone paired
+through the real routes (`scenario-phone.ts`), J's PC as a `desktop` device row
+(`registerDesktopDevice`) with the daemon's `RemoteCommandWatcher` polling the shared store on
+the clock. Seven simulated days, Monday 2 to Sunday 8 November 2026, Europe/Zurich.
+
+*The UI.* `daemonFor(world, install, deps)` builds a `RuntimeApp` from the install's parts
+and hands it to the daemon's own `createDaemonApp`, so the week calls the routes `apps/ui`
+calls, with the bodies it sends: the New task dialog (`POST /projects/:id/tasks`), the inbox
+and its read receipt, the settings screen (`POST /commands/execute`, then
+`POST /commands/:id/confirm` with the tap), the Changes screen (`GET /changes`,
+`POST /changes/:id/undo`), chat (`POST /chat`) and the header's Resume (`POST /kill/resume`).
+What the week never opens (extensions, updates, the model watch, Cloudflare, desktop control,
+data, costs, the mirror, the sandbox, the sync gate, the vault) is an `absent` stand-in that
+throws `unavailable` naming the field when a route reaches it. `UiClient` records every call
+for the evidence. The screens are not rendered.
+
+*The phone.* `PhoneApprovals` lists the inbox and answers a request as the app does after a
+tap (`GET /requests/:id` for the version, signed `POST /requests/:id/answer`); on a high-risk
+request it first proves the answer without the biometric is refused (403
+`biometric_required`), then answers with `BiometricPhoneClient` (the same key and token,
+`biometric=1` in the signed string, the `X-Biometric-Assertion` header). It also relays the
+app's quick-chat envelope (`kind: "chat"`, verb `start`) and records every answer it gave.
+Plans go through scenario 9's helpers (`phoneUnderstands`, `phoneConfirmsAndSends`).
+
+*The week* (`runPhase5Week`). Every morning at 00:15 the humans create the day's task through
+their UIs (J on the service, M on the game, weekdays), the coder is scripted per task
+(`coderWrites`) and the critic accepts for the whole week; Bob's scheduled session runs at
+05:45 on weekdays, Alice's at 06:00 daily; at 07:00 J reads the summary in the UI's inbox and
+marks it read. Afternoons: Tuesday the tier 3 task's sign-off (the rules in code turned the
+accept into `human`) answered "accept" on the phone; Wednesday twenty status turns by voice
+for the latency median, then the settings matrix: a session budget ("Give it 20 francs
+tonight."), the autonomy by one step ("Set the autonomy of Sample service to 3") and the
+email mode ("Set the email mode to draft only."), each by voice, by chat and through the
+settings route, each confirmed by risk (a spoken or typed yes, a tap; the email mode's device
+card answered on the phone with the biometric after a spoken or typed yes was refused), each
+undone through its own channel, the change log entries compared with `sameEntry` (commands
+and parameters, before, after, scope, project, expiry, sentence, human, agent) and the state
+read back equal to the value before; Thursday the phone's plan ("switch to the game, give it
+15 francs until tomorrow and start a session on my PC") picked up by the watcher, the remote
+session on the game, the undo from the Changes screen and Resume in the header; Friday the
+phone's quick chat answered on the PC; Saturday a medium card asked by chat and answered
+"yes" in the phone's inbox, applied by the PC's drain. The report (`formatPhase5`) is printed
+and written to `FORERUNNER_E2E_REPORT_DIR` as `phase5-week.txt`.
+
+Measured on 2026-10-20 (fake provider, Linux, about 45 s): 12 scheduled and 1 remote session,
+13 completed, 12 tasks done and 13 pull requests on the two repositories; 30 voice turns with
+a median of 520 ms to first audio (end of turn 20, final transcript 300, model first token 0
+on the fake provider's zero-latency stream, first audio 200), all within target, 30
+`voice.turn` rows; 9 settings changes with the same entry across the three channels and 9
+undos; 10 phone answers (6 accepted, 4 of them with the biometric, 4 refused without it);
+81 UI calls; 32 audit rows, 1 denied (the hooks' hold below), 2 remote pickups.
+
+**Phase 7, the UI change shipped, the broken build rolled back, the model watch adopted**
+(`gate7-release.ts`, `gate7-model-watch.ts`, `phase7-gate.integration.test.ts`; ADR 0046).
+The scenario world with its repository as the Forerunner stand-in (`FORERUNNER_FILES`: the
+standard docs, `docs/maintainers/apps.md`, and `apps/ui/src/inbox-badge.ts`, the one UI file
+the request is about), Alice's `CommandLoop` and `ConversationAgent` (`scenario-commands.ts`),
+the release repository on the fake git host and two updaters, Alice's and Bob's, on two homes
+over the one shared store (`scenario-update.ts`). Three tests, in order, on one world.
+
+*The UI change.* J types "make the inbox badge show the blocking count"; no parser pattern
+knows it, so the conversation agent's model path runs with the registry's command tools only
+and the scripted model calls `task_create` (a ready, tier 2 task): asserted on the reply's
+action, the task row (title, status, tier, author, reason "via chat"), the change log row
+(words used, `undoable`, scope `project`), the conversation session's `chat.human`,
+`chat.reply` and `change` events, the one `task_create` audit row, and the model call
+(`fake-haiku`, no file tools offered). Alice's session runs it: `coderWrites` writes the UI
+file and the module's maintainer doc (the critic's docs-drift rule at tier 2 sends a PR back
+without it; the harness keeps the rule), `criticAccepts`; asserted on the session result, the
+review row (`tier: 2`, `fake-opus`, `accept`), the PR with both files on its branch and main
+unchanged, the two `write_file` audit rows. J merges the PR (the human approval); main holds
+the change. `releaseFromMain` builds 1.1.0 from main (the UI file as merged, `app/VERSION`,
+the healthy doctor, the changelog "- <request> (#<pr>)") and publishes it signed; both installs
+check the feed (available 1.1.0, the changelog, the trusted key), see `state: "available"` with
+the changelog in `composeUpdatesView`, apply ("Update and restart": staged dir with the UI
+file, manifest and sha256 verified, pointer `pending_health_check`, restart request, running
+version), pass the startup health check (pointer `installed`, probe called once); the one
+shared release row is `installed` with the changelog; per human the audit rows
+(`update.check` x3, `update.apply`, `update.health`, all allowed, naming their own human) and
+one `update_applied` notification; no updater inbox row; `plantMarkers` files in each
+install's config and data directories and memory root unchanged (`changedMarkers` empty);
+no token or key in any row or record.
+
+*The broken build.* An hour on, 1.2.0 with `brokenDoctor`. Alice's install takes it (check,
+apply, restart), the health check returns `rolled_back` 1.2.0 to 1.1.0 with the doctor's
+reason; asserted as scenario 7 does: pointer (`current 1.1.0`, `lastRollback.automatic`), the
+build it went back to holding the UI change, the shared release row `rolled_back` with the
+verdict, J's audit rows since the hour (check, apply with its check, `update.rollback` with
+the exact input and result summaries, agent null), the updater's `info` inbox row and the
+`Rolled back to 1.1.0 (from 1.2.0)` notification, no approval row, nothing answered. Then
+Bob's install: its check reads the same release table, lists 1.2.0 as `previously_rejected`
+with `available: null`, the updates view says `rejected`, an explicit `apply` is refused with
+an `update.apply` row `allowed: false`, and nothing moved (pointer, running version, disk,
+restart requests, probe calls, notifications, no inbox row for M). Alice's next check lists
+it rejected too and prune drops it.
+
+*The model watch.* `scenarioModelWatch` composes the production `ModelWatch` for Alice's
+install: `ListingProvider` over the world's gated provider lists the four fake models plus
+`fake-sonnet-6` (sonnet tier), `FixturePriceListSource` prices it at half the sonnet rung,
+`WATCH_PRICING` adds the fake models' rows to the built-in table, `StateModelWatchApprovals`
+opens the decision in J's inbox, `FileModelSettingsStore` writes under the install's config
+directory, the eval runner is `evalRunnerOnWorld`: `runEvalSet` over the registry's first four
+coder tasks with a driver that asks the provider `model-watch eval <task> at <effort>` and
+writes the task's reference solution on PASS, so the real checks (node on the files) grade
+it and the cost is the usage priced; the probes are `evalProbeReplies` (the sonnet model
+fails one task at every effort, the candidate none; a lower effort answers with half the
+output tokens). The weekly trigger is `scheduleModelWatch` on a `Scheduler` whose `start`
+routes `isModelWatchRequest` to `ModelWatch.run()` as the daemon does; `tick()` is the
+daemon's minute tick. Asserted: the schedule (`every`, a week, the human's time zone); the
+first tick's request (`trigger: schedule`) and report: the listing, the new model priced from
+the price list, three eval observations with the measured counts and costs (3/4 at medium,
+3/4 at low, 4/4 on the candidate; 42 000, 27 000 and 21 000 micro-USD), twelve probes, the
+switch recommendation (+25 points, -50%, the evidence line) and the lower-effort one
+(-35.71%), the pricing proposal row, the eval cost under the budget; the release row on
+`model_watch`, the `decision` request (options, card key, steps), nothing written and
+`syncPendingAnswers` 0 before the answer; the updates view listing the new model and both
+recommendations next to the app (M.5); J's "adopt" and `syncPendingAnswers()` 1: `health`
+adopted with the three applied lines, the release row `installed`, `models.json` (ladder
+sonnet/fake, effort coder low, one history entry) and `pricing.json` parsed back from the
+config directory, the `onAdopted` event's tables (`modelIdFor`, `effortForTask`), the ten
+`model_watch.*` audit rows in order with the eval costs; a day later nothing fires; a week
+later the second run (the gap within a minute of a week): the adopted model is the baseline at
+low, the old one a candidate that passes less and costs more, no recommendation, no proposal,
+`nothing_to_decide`, no new request, two reports listed.
+
+Measured on 2026-10-20 (fake provider, Linux): 3 tests, 24 to 27 s for the file, three
+consecutive runs green; the model watch test is the long one (about 17 s: 20 eval tasks
+through the real checks).
+
 ### How to run
 
 ```
 pnpm exec vitest run --project e2e tests/e2e/scenarios/phase3-gate.integration.test.ts
 pnpm exec vitest run --project e2e tests/e2e/scenarios/phase4-gate.integration.test.ts
+pnpm exec vitest run --project e2e tests/e2e/scenarios/phase5-gate.integration.test.ts
+pnpm exec vitest run --project e2e tests/e2e/scenarios/phase7-gate.integration.test.ts
 FORERUNNER_E2E_REPORT_DIR=<dir> pnpm exec vitest run --project e2e tests/e2e/scenarios   # keeps the evidence files
-pnpm --filter @forerunner/e2e test:gates                                                  # both files
+pnpm --filter @forerunner/e2e test:gates                                                  # the three files
 ```
 
 The live-model run of the phase 3 calibration (the gate proper) is opt-in in the same file:
@@ -925,18 +1066,55 @@ above, no Postgres, no Docker, no network).
   here.
 - The tier the live run reviews at: `tier: 1` in the live test; tier 2 picks Opus and runs the
   project's checks, which the eval runner already ran.
+- Phase 7, the request and the change: `REQUEST`, `TASK_TITLE` and the `task_create` input in
+  the test; `BADGE_BEFORE`/`BADGE_AFTER` and `APPS_DOC_*` in `gate7-release.ts`. A changed
+  module needs its maintainer doc in the same PR or the tier 2 critic sends it back.
+- Phase 7, the evals: `EVAL_TASKS` (first N coder tasks; at least `minEvalTasks`, every task
+  needs `expected_files`), `PROBE_USAGE` (output tokens per effort), `WATCH_PRICING` and
+  `CANDIDATE_PRICE_LIST` (the deltas follow from these: the expected costs in the test are
+  computed from the same numbers), `fails` in `evalProbeReplies` (which model fails which
+  task). A fifth fake model needs a pricing row or it is reported unpriced.
+- Phase 7, the week: `scheduleModelWatch` takes `everyMinutes`; the harness ticks by hand, so
+  a schedule change means new `advance` steps in the test.
 
 ### Tests
 
 The harnesses are the tests: `phase3-gate.integration.test.ts` (3 tests, 1 skipped without the
-live opt-in; 30 s) and `phase4-gate.integration.test.ts` (2 tests; 45 s; the with-memory run
-is made once in `beforeAll`, so each test also stands alone under `-t`). Both leave no files
-behind (temp roots are removed in `close()`), need no Postgres, no Docker and no network, and
-run on Windows and Linux (paths through `@forerunner/platform`, worktrees under `os.tmpdir()`).
+live opt-in; 30 s), `phase4-gate.integration.test.ts` (2 tests; 45 s; the with-memory run
+is made once in `beforeAll`, so each test also stands alone under `-t`),
+`phase5-gate.integration.test.ts` (4 tests asserting one week run in `beforeAll`, about 45 s;
+each test stands alone under `-t`, the week runs either way) and
+`phase7-gate.integration.test.ts` (3 tests in order on one world, about 25 s; the second and
+third build on the first, so run the file, not a single test). All leave no files behind
+(temp roots are removed in `close()`), need no Postgres, no Docker and no network, and run on
+Windows and Linux (paths through `@forerunner/platform`, worktrees under `os.tmpdir()`, the
+doctor and the eval checks as argv arrays).
 
 ### Known issues
 
 - The e2e vitest project is not in CI yet (see "How to run"); the gate rows cite local runs.
+- Phase 5 findings for the runtime, each pinned by an assertion in the harness so the fix is
+  seen: (1) the daemon's command routes carry no `ui` change source (`CommandTurn.source` is
+  `text | voice | phone`; the settings screen sends no source), so a change made in the
+  settings screen is logged as `chat`; (2) on the conversation's model path the hooks hold a
+  high-risk command tool (`email_mode_set`: `permission_change` is always-human,
+  `packages/runtime/src/enforcement/autonomy.ts`) and file their own blocking request before
+  the registry's device card can form, so by voice the email mode needs two phone answers
+  (the hold, then the card) and a second asking; the chat round finds the first answer by
+  the session's approval key; the registry's policy should be the one gate for a command
+  tool, as it is on the parsed and the UI path (ADR 0030); (3) an accepted critic sign-off
+  (`accept` in the inbox) is applied to nothing: the task stays `needs_human`
+  (`needs_human -> ready` is its only transition); (4) the undo of a `session.start` whose
+  session has ended reaches the kill switch (`SESSION_START_UNDO_REASON`) and freezes the
+  agent until Resume is pressed, so the next scheduled session would not run. Also: the
+  daemon has no route for a daily session schedule (the week's schedules are harness
+  configuration), and the state service's answer route records no decision-log entry
+  (the daemon's does).
+- Phase 5 stands in for the Android emulator and the OS audio devices (ADR 0045 items 2
+  and 3): the screens are not driven and the model stage of the voice latency is the fake
+  provider's zero-latency stream; the real-audio median with the live Haiku first token of
+  the response-time table (687 ms and 821 ms) would be 1207 ms and 1341 ms, over the 1.2 s
+  anchor on the model stage alone (gates.md, phase 5 pending rows).
 - `WorktreeDiffPort` stands in for the git diff: the harness has no repository per task, so the
   PR path (`PrTaskExecutor`, phase 1 and 2 gates) is not exercised here.
 - The scripted critic reads markers, not meaning: a live model is the only way to measure the
@@ -955,6 +1133,18 @@ run on Windows and Linux (paths through `@forerunner/platform`, worktrees under 
 - The live calibration now runs from `tests/live` ("Live runs" below, ADR 0040), which meters
   every call through the spend ledger; the `FORERUNNER_E2E_LIVE` opt-in in this file is the
   older, uncapped-across-runs path and should be retired in favour of it.
+- Phase 7: the update is built by the harness from main (`releaseFromMain`), not by the release
+  workflow's Tauri build; the real UI build and the Windows and Android runs are for the final
+  build (gates.md).
+- Phase 7: the second install's refusal of the broken build comes from the shared `release`
+  row (`UpdateManager.assertNotRejectedBefore`), not from a peer feed message; the refusal
+  text says "on this install before" even when a peer's rollback wrote the row (runtime
+  wording, filed). Two installs on separate stores would not learn from each other.
+- Phase 7: the model watch's eval runner is `runEvalSet` with a probe driver, because the
+  daemon's `LoopEvalRunner` grades `command_exit0` checks only inside a sandbox lease and the
+  world has none; a live run of the watch goes through `tests/live`.
+- Phase 7: the harness's three tests share one world in order; `-t` on the second or third
+  alone fails for lack of the first's release.
 
 ### Requirement IDs covered
 
@@ -964,7 +1154,27 @@ opt-in), D.2 and D.3 (the ladder end to end under the project ceiling, stopping 
 G.3 and N.4 (retrieval into the principal's and the specialist's brief under the project's token
 budgets, measured independently), G.4 (weekly consolidation through the inbox), B.4 (every
 sent-back task resolved its finding before closing), S.1 (every tool call audited, none denied
-by the hooks because the grant was right).
+by the hooks because the grant was right). Phase 7: M.1 (Forerunner as a project, the request
+in its task list through the conversation agent and the change log), M.2 (PR, tier 2 critic
+on the opus rung, the human merge), M.3 (signed release on the git host's releases, "Update
+available" with the changelog, "Update and restart" on two installs), M.4 (staged install,
+health check on restart, automatic rollback, config, data and memory untouched, the second
+install refusing the rolled-back release), M.5 (the model watch's recommendations in the
+updates view next to the app update), D.6 and D.21 (the weekly watch on the eval set with
+measured quality and cost deltas, a lower effort probed, the human's adopt applying the
+switch), G.6 (the docs-drift rule at tier 2), Q.2 and Q.6 (a free-form request through the
+model path with the command tools; the change log row with undo). Phase 5: E.1 (12 sessions
+from the schedulers on the clock), J.3 (the sign-off and the cards in the phone's inbox,
+blocking first), O.1 (voice and text in the app, the quick chat from the phone), O.3 and O.5
+(the loop over 30 turns, every stage measured, the median under the anchor on the fake
+stages), O.7 (the spoken yes logged with the line; a costly session start and a high-risk
+change confirmed by risk), O.10 (transcripts kept, no audio), Q.1 (the settings route and
+chat and voice call the same commands), Q.4 to Q.8 (the card, the yes, the tap, the device
+with the biometric, a chat or spoken yes refused on a high-risk change), Q.10 and Q.11 (the
+same sentence and entry across channels, undo from each), Q.12 (the same enforcement for
+the settings screen and conversation), R.2 to R.5 and R.7 (pairing, the service's routes,
+the PC's pickup, the plan from the phone, answers with the biometric, no secret in any row),
+S.9 (every pickup and tool call audited).
 
 ## Live runs
 
@@ -975,45 +1185,61 @@ in the test suite. Everything else runs on the fake provider; the nine release s
 ### Purpose
 
 The live halves of three gates on the real provider, under a budget enforced in code before
-every call: the phase 1 "same session on an API key with correct usage recorded" half (the
-subscription half is pending a `claude setup-token`, BLOCKERS.md) with the kill switch repeated
-live, the phase 3 critic calibration on the real tier 1 critic, and the response-time table of
-spec D.8 to D.15 (median and p90 time to first token per tier). It also exists so a live run can
+every call: the phase 1 "same session once on a subscription and once on an API key with
+correct usage recorded" check, both halves (the API-key half with the kill switch repeated
+live; the subscription half through the Agent SDK driver on a `claude setup-token` value, ADR
+0044, with the kill switch repeated on a live subprocess), the phase 3 critic calibration on
+the real tier 1 critic, and the response-time table of spec D.8 to D.15 (median and p90 time
+to first token per tier). It also exists so a live run can
 never spend more than its caps however it goes: a refused call fails the test with the reason
 and the ledger total, and the spend ledger is committed with the numbers.
 
-Files: `src/env.ts` (`.env.build` parser and `loadBuildEnv`, values returned and never logged),
-`src/ledger.ts` (`SpendLedger` over `tests/live/spend.json`), `src/budget.ts` (`LiveBudget`:
-caps from `FORERUNNER_LIVE_BUDGET_USD` and `FORERUNNER_LIVE_RUN_CAP_USD`, `reserve`/`settle`,
-the 80% warning line, `LiveBudgetError`), `src/metered.ts` (`MeteredProvider`, the gate in
-front of any `ModelProvider`), `src/registry.ts` (the registry copy with the coder on the
-built-in file tools), `src/harness.ts` (`liveProvider()`, `composeLive()` through
-`composeRuntime`, the fake git host, the audit sink), `src/dry-run.ts` (fake credentials and
-the fake ladder priced like the real one), `src/stats.ts`, `src/report.ts`; the tests under
-`test/`: `env`, `budget`, `metered`, `harness` (the dry run; on under the package's own `test`
-script, which no CI job invokes yet, see Known issues) and the three `live-*.live.test.ts`
-files (opt-in).
+Files: `src/env.ts` (`.env.build` parser and `loadBuildEnv`: the key, the workspace id and
+the subscription token, values returned and never logged), `src/ledger.ts` (`SpendLedger` over
+`tests/live/spend.json`; a row's optional `kind: "subscription"`), `src/budget.ts`
+(`LiveBudget`: caps from `FORERUNNER_LIVE_BUDGET_USD` and `FORERUNNER_LIVE_RUN_CAP_USD`,
+`reserve`/`settle`, the 80% warning line, `LiveBudgetError`), `src/metered.ts`
+(`MeteredProvider`, the gate in front of any `ModelProvider`), `src/registry.ts` (the registry
+copy: the coder on the built-in file tools, `LIVE_CODER_OVERRIDES`, or on the registry's `cc:`
+names for the SDK path, `LIVE_SDK_CODER_OVERRIDES`), `src/harness.ts` (`liveProvider()`,
+`composeLive()` through `composeRuntime`, the fake git host, the audit sink, the subscription
+composition, `settleSubscriptionRuns`, `scrubHostSessionEnv`), `src/tasks.ts` (the three
+phase 1 tasks and the kill task, shared by both halves), `src/dry-run.ts` (fake credentials and
+the fake ladder priced like the real one), `src/stats.ts`, `src/report.ts` (`reportDir`,
+`writeReport`, `readPhase1Evidence`); the tests under `test/`: `env`, `budget`, `metered`,
+`harness` (the dry runs of both halves; on under the package's own `test` script, which no CI
+job invokes yet, see Known issues) and the four `live-*.live.test.ts` files (opt-in).
 
 ### How it works
 
 **Credentials.** `loadBuildEnv()` takes `FORERUNNER_ANTHROPIC_KEY` (and
 `FORERUNNER_ANTHROPIC_WORKSPACE_ID`) from the process environment, else from `.env.build` at
-the repository root (`FORERUNNER_ENV_BUILD` points elsewhere). The parser handles `KEY=value`,
-`export`, quotes (a `#` inside the quotes is kept, a ` # comment` after the closing quote is
-dropped), comments and CRLF, in a few lines and with no dependency. The values go into the
-Anthropic adapter and into a `MemoryVault` under the usual secret names, nowhere else;
-`describeCredentials` says only where they came from, and `redactCredentials` is applied by
-the metered provider to every error text (an error event's message, a thrown error's message)
-before it reaches a call record, a ledger note or an audit row. The adapter sends the
-workspace id as the `anthropic-workspace-id` default header, as the daemon does for a
-user-scoped key.
+the repository root (`FORERUNNER_ENV_BUILD` points elsewhere), and `FORERUNNER_SUBSCRIPTION_TOKEN`
+(the `claude setup-token` value) the same way: the environment first, else the file, null when
+absent (the API-key half needs none; the subscription half skips with the reason). The parser
+handles `KEY=value`, `export`, quotes (a `#` inside the quotes is kept, a ` # comment` after
+the closing quote is dropped), comments and CRLF, in a few lines and with no dependency. The
+values go into the Anthropic adapter (the key) and into a `MemoryVault` under the usual secret
+names (`anthropic_api_key`, and `anthropic_subscription_token` only for the subscription
+half), nowhere else; `describeCredentials` says only where they came from and whether a
+subscription token exists, and `redactCredentials` (the key, the workspace id, the token) is
+applied by the metered provider to every error text (an error event's message, a thrown
+error's message) before it reaches a call record, a ledger note or an audit row, and to the
+subscription half's report before it is written. The adapter sends the workspace id as the
+`anthropic-workspace-id` default header, as the daemon does for a user-scoped key.
 
 **The ledger** (`tests/live/spend.json`, committed) is `{ "rows": [...] }`, one row per live
 call: `date` (UTC day), `run`, `model` (the id the provider answered with), `tokensIn`,
 `tokensOut`, `cacheRead`, `cacheWrite`, `usd` (six decimals, priced from the billing table in
-micro-USD arithmetic) and an optional `note` for anything but a plain success. Appends are
-read-modify-write through a temp file and a rename; a malformed file is an error, never read as
-empty. The ledger is the memory of the budget across runs and machines.
+micro-USD arithmetic) and an optional `note` for anything but a plain success. An Agent SDK
+run on the subscription is one row too (`kind: "subscription"`, appended by
+`settleSubscriptionRuns` from the Run row, since the subprocess calls the provider itself and
+never passes the metered gate): plan usage has no USD price, so `usd` is 0 and the caps ignore
+it, and the `note` reads `subscription: plan usage, est. USD x` with the SDK's own list-price
+figure (`total_cost_usd`), followed by the outcome when the run did not complete and by the
+hooks' API-equivalent estimate when the SDK reported no figure. Appends are read-modify-write
+through a temp file and a rename; a malformed file is an error, never read as empty. The
+ledger is the memory of the budget across runs and machines.
 
 **The budget** (`LiveBudget`). Before a call the metered provider asks for a reservation sized
 by a conservative estimate: the adapter's local token count of the whole input (system,
@@ -1035,8 +1261,9 @@ not visible to the harness; the per-run margin covers that under-count).
 
 **A run** is one vitest invocation: `vitest.config.ts` mints `FORERUNNER_LIVE_RUN` once (ISO
 time, or the value already in the environment) and hands it to every file; files run one after
-another in path order (`live-1-phase1`, `live-2-timing`, `live-3-phase3`), so the cheap halves
-come first and the ledger is never written from two workers at once. `--mode live` (the
+another in path order (`live-1-phase1`, `live-2-timing`, `live-3-phase3`,
+`live-4-subscription`), so the cheap halves come first and the ledger is never written from
+two workers at once. `--mode live` (the
 `test:live` script) sets `FORERUNNER_LIVE=1` for the workers; without it every live case is
 `it.skipIf`'d and the describe title carries the reason. The config also honours
 `FORERUNNER_LIVE=1` already exported in the shell, so with that variable set a plain
@@ -1052,11 +1279,34 @@ root, the process sandbox stand-in (`engine: "none"`), `startServices: false`, n
 without the OS notifier. The registry is copied to the temp root and the coder's frontmatter
 rewritten to `allowed_tools: read_file, write_file, list_dir`, `max_budget_usd 0.5`,
 `max_turns 12`, `timeout_minutes 5`, `requires_sandbox false` (ADR 0040 item 5: the registry's
-`cc:*` tools are the Agent SDK driver's; the in-process loop driver offers only the tools whose
-names match, so without the copy a registry coder has no tools; that mapping is a runtime
-follow-up). `harness.grant()` is the daemon's session grant (every built-in tool, the worktrees
-root, the host's name, the GitHub token by reference). Every live call leaves an audit row in
-the store through `AuditSink`.
+`cc:*` tools are the Agent SDK driver's; the in-process loop driver maps them to the built-ins
+since ADR 0043, the copy keeps the harness's small caps). `harness.grant()` is the daemon's
+session grant (every built-in tool, the worktrees root, the host's name, the GitHub token by
+reference). Every live call leaves an audit row in the store through `AuditSink`.
+
+**The subscription composition** (`composeLive({ subscription: true })`, ADR 0044): the same
+composition with the subscription token in the vault as `anthropic_subscription_token` beside
+the key, so `composeRuntime` seeds both billing sources and `RouterTaskBilling` picks the
+subscription for the human's own agent on the personal runner (`billing.personalRunner: true`,
+`hostCommands: false`); the coder's registry copy keeps the `cc:` names as written
+(`LIVE_SDK_CODER_OVERRIDES`, `cc:Bash` included so the executor's withholding of it is
+exercised and audited) under the same caps; the grant lists `claudeCodeToolNames()` next to
+the built-ins, as the daemon's does, so a derived run token can carry them. Every coder task
+then runs through `SdkAgentDriver`: a real Claude Code subprocess with the token in its
+environment (read from the vault by reference at run time), the hooks as `PreToolUse` and
+`PostToolUse`, the worktree as its only path; the critic, chat and the model listing stay on
+the Messages provider behind the metered gate, billed to the `api_key` source. After a session
+`settleSubscriptionRuns(sessionId)` appends the SDK runs to the spend ledger (above) with an
+audit row each (`live.subscription_run`). The dry run (`harness.test.ts`) does all of this on
+a fake `query` (`sdkQuery`), which also writes the change the PR executor commits and probes
+the `PreToolUse` hook with a path outside the worktree. Before a real subprocess runs,
+`scrubHostSessionEnv()` removes the hosting Claude Code session's `CLAUDECODE` and
+`CLAUDE_*` variables from the worker's `process.env` (all but `CLAUDE_CODE_PROXY_RESOLVES_HOSTS`,
+a network-path flag): the build box is itself a Claude Code session whose environment carries a
+host-managed provider, a remote transport and a messaging socket, the runtime's `scrubEnv`
+drops only credential-shaped names, and a nested `claude` inheriting them could run as the
+host's session instead of on the token; the names removed are in the evidence, a daemon on a
+human's PC never has them.
 
 **Phase 1 half** (`live-1-phase1.live.test.ts`): (1) the ladder's Haiku and Sonnet ids are
 listed by the provider (a free call); (2) the usage half: one session on a project with three
@@ -1078,6 +1328,34 @@ aborted in the ledger. Everything measured goes to `phase1-live.json` in the rep
 adapter's streaming, `median`/`p90` (nearest rank) per tier; the Haiku median against the text
 chat target is asserted (the phase 1 gate's own line), the rest is recorded
 (`timing-live.json`).
+
+**Subscription half** (`live-4-subscription.live.test.ts`; skipped with the reason when the
+token is missing): (1) both sources exist, the loop paths bill the key, a dry `billing.pick`
+names the subscription and the "sdk" driver (no model call; the ladder ids listed by the
+provider, a free call); (2) the same session: the three tasks of `src/tasks.ts` under the same
+caps; asserted: the session completed with 3 PRs and nothing failed; every coder Run row has
+`provider: anthropic-sdk`, `billing_source_id` the subscription row, Sonnet, an SDK session id,
+usage and an API-equivalent cost under the task cap; the store's rows of those runs are kind
+`subscription` on that source with `plan_usage_share` in (0, 1] and the Run row's tokens; the
+critic's runs on the key; the `billing.pick` audit row per coder run names `subscription`/`sdk`;
+one `registry.tool_unmapped` row per coder run for `cc:Bash`; the subprocess's tool calls
+reached the hooks (`cc:*` audit rows), none touched a path outside the worktrees root, every
+denial is a `path_not_allowed` or `tool_not_allowed`; the key's ledger has no subscription row
+and the same `api` entries as before; the critic's metered calls are in the spend ledger as in
+the API-key half; the rows that were in the spend ledger before the session are unchanged and
+the three SDK runs landed as USD 0 `subscription` rows with the note, the budget's run total
+being the metered calls alone; when the API-key half's `phase1-live.json` of the same run is
+in the report directory (or `FORERUNNER_LIVE_PHASE1_EVIDENCE` names it; `comparePhase1` in
+`src/report.ts`) each task's "completed or in review" outcome matches; a file from another run
+is listed in the evidence and flagged `stale` with the reason, never compared as this run's;
+without a file the evidence says the comparison was not made; (2b) the gate case:
+`completed + inReview === 3`, nothing sent back; (3) the kill switch on a live subprocess: the
+long task started, stopped once the subprocess streams text or asks for a tool, the session
+ends `killed` in under 2 s of wall time, the claim is released, the killed SDK run is settled
+as plan usage with `killed` in its note, no metered call after the stop; (4) the token is in
+the vault and nowhere else: the ledger file, the runtime log records, the audit log, the Run
+rows, the cost ledger, the sources, the metered calls and the evidence hold neither the token
+nor its prefix. Everything goes to `phase1-subscription-live.json`.
 
 **Phase 3 half** (`live-3-phase3.live.test.ts`): `gateWorld` from `tests/e2e` with the metered
 provider as the critic's provider (`pricingFor` for the real prices), `calibrate()` at tier 1
@@ -1140,6 +1418,36 @@ cost ledger equal to the spend ledger on the `api_key` source, verdicts accept 9
 after `stop()`, the aborted call settled. The gate case failed with those verdicts in its
 message, as it should until the critic fix lands.
 
+Run 4, `2026-10-20T20:04:16Z` (the subscription file alone, `FORERUNNER_LIVE=1 ... vitest run
+--config vitest.config.ts test/live-4-subscription.live.test.ts`, 121.6 s, 4 of 5 cases
+passed, USD 0.067530 on the key). Both billing sources registered, the pick named the
+subscription and the "sdk" driver at plan share 0% of the default USD 50 allowance. The
+session completed in 106.4 s (planning 22 ms) with 3 PRs: every coder task ran through the
+Agent SDK driver on a real Claude Code subprocess (28.0 s, 26.5 s, 26.8 s; the SDK's own
+list-price figures USD 0.1022, 0.0540, 0.0336; the hooks' API-equivalent estimates USD 0.0868,
+0.0568, 0.0411 under the USD 0.40 task cap; 368,662 tokens in, 360,654 of them cache reads,
+2,163 out; plan share 0.37% after the session), the Run rows citing the `subscription` source
+and the `anthropic-sdk` provider with their SDK session ids, 20 store rows of kind
+`subscription` with the plan share and the Run rows' tokens; the critic reviewed on the key
+(7 metered calls, USD 0.0675, reviews 6.1 s, 7.9 s, 8.2 s) and accepted 95, 93, 96 (the gate
+case passed: 3 of 3 completed, nothing sent back). Hooks on the SDK path: 3 `billing.pick`
+rows, `cc:Bash` withheld three times at run start and denied twice as `PreToolUse` when the
+subprocess asked for it, 13 tool calls allowed and audited, none outside the worktree. The
+key's 7 ledger rows hold no subscription row; the spend ledger's earlier rows were unchanged
+and the three SDK runs landed as USD 0 `subscription` rows with the note. The kill case
+measured 2016 ms from `stop()` to the session's `killed` end, 16 ms over the target, on one
+sample: the kill switch itself took 4 ms (2 runs stopped, 9 tokens revoked) and the rest was
+the SDK's abort waiting for the subprocess to exit (the first assistant turn had already
+ended); the claim was released, no call started after the stop, the killed run was settled as
+plan usage (`killed; no SDK cost reported, hooks est. USD 0.0187`). The token was found in the
+vault and in none of the ledger, 14 runtime log records, the audit log, the Run rows, the cost
+ledger, the sources, the metered calls or the evidence; 51 host-session variables were
+scrubbed before the subprocess ran. The per-task comparison with the API-key half was not made
+inside the file (its `phase1-live.json` was not in the report directory): gates.md compares the
+recorded outcomes of the two runs (3 of 3 completed on each source); the same-run check and the
+stale flag (`comparePhase1`, `test/report.test.ts`) were added after this run. Found on the way: one `submit_review`
+call of the critic was refused by the schema (`findings` sent as a string) and retried.
+
 ### How to run
 
 ```
@@ -1152,9 +1460,16 @@ pnpm --filter @forerunner/live typecheck       # tsc over the package alone (the
 ```
 
 The key is read from `.env.build` at the repository root (`FORERUNNER_ANTHROPIC_KEY`,
-`FORERUNNER_ANTHROPIC_WORKSPACE_ID`), or from the environment. `FORERUNNER_ANTHROPIC_API`
-overrides the API base; the SDK's `ANTHROPIC_*` variables are dropped from the composed
-runtime's environment. After a run: commit `spend.json`, copy the numbers into
+`FORERUNNER_ANTHROPIC_WORKSPACE_ID`), or from the environment; the subscription half also
+needs `FORERUNNER_SUBSCRIPTION_TOKEN` there (a `claude setup-token` value) and skips with the
+reason without it. One file alone:
+`FORERUNNER_LIVE=1 pnpm --filter @forerunner/live exec vitest run --config vitest.config.ts test/live-4-subscription.live.test.ts`
+(the run id is then minted for that invocation, and the per-task comparison needs the API-key
+half's `phase1-live.json` of the *same* run: run both files in one invocation with
+`FORERUNNER_LIVE_REPORT_DIR` set, or set `FORERUNNER_LIVE_RUN` to the API-key run's id and put
+its file in `FORERUNNER_LIVE_REPORT_DIR` or name it with `FORERUNNER_LIVE_PHASE1_EVIDENCE`; a
+file from another run is flagged stale in the evidence, not compared). `FORERUNNER_ANTHROPIC_API` overrides the API base; the SDK's
+`ANTHROPIC_*` variables are dropped from the composed runtime's environment. After a run: commit `spend.json`, copy the numbers into
 `docs/status/gates.md` and `docs/status/COST.md`. Never live in CI: `FORERUNNER_LIVE` is never
 set there (today `ci.yml` does not invoke the package at all; the step the orchestrator adds
 is `pnpm --filter @forerunner/live test`, which skips every live case).
@@ -1169,25 +1484,44 @@ is `pnpm --filter @forerunner/live test`, which skips every live case).
   defaults in `src/budget.ts`). The estimate (`LiveBudget.estimateFor`) prices from the
   billing package's table; a new model needs a price row there before it can run live (an
   unknown model is refused by the price lookup).
-- The coder's live tool set and caps: `LIVE_CODER_OVERRIDES` in `src/registry.ts`.
+- The coder's live tool set and caps: `LIVE_CODER_OVERRIDES` (loop) and
+  `LIVE_SDK_CODER_OVERRIDES` (SDK) in `src/registry.ts`; the tasks both halves seed:
+  `src/tasks.ts`.
 - The dry run: `test/harness.test.ts` scripts the coder and the critic with the e2e world's
-  helpers and prices the fake ladder like the real one (`DRY_RUN_PRICING`).
+  helpers and prices the fake ladder like the real one (`DRY_RUN_PRICING`); the subscription
+  dry run fakes the SDK's `query` (`sdkQuery`) and asserts the token reaches only the vault and
+  the fake subprocess environment.
+- What the subscription row of the spend ledger says: `subscriptionSpendRow` in
+  `src/harness.ts`; the host-session variables kept for the subprocess:
+  `HOST_SESSION_ENV_KEPT`.
 
 ### Tests
 
-`pnpm --filter @forerunner/live test`: 26 unit tests over 4 files (parser, quoted values with
-trailing comments, and credential sources; ledger round trip and validation; cap decisions,
-the estimate at the cache-write price, per-run cap with calls in flight, 80% warning once,
-settling failed and aborted calls, dated and unknown model ids; the metered provider on a
-scripted `FakeProvider`: rows per call, refusal before anything is sent, error and abort rows,
-credentials redacted from an error event and from a thrown error before the record, the note
-and the audit row, no credential-looking value in the ledger or the records; the dry run
-through `composeRuntime`: `api_key` billing source, one task through a PR on the fake host,
-spend ledger = store cost ledger = audit rows, and a refusal that surfaces as a failed task).
-The 9 live cases in the three `live-*` files are reported as skipped without
-`FORERUNNER_LIVE=1`. No network, no Docker, no Postgres; Windows and Linux (paths through
-`@forerunner/platform`, temp roots under `os.tmpdir()`). The script runs in no CI job yet (see
-Known issues); until it does, run it locally before a change to this package.
+`pnpm --filter @forerunner/live test`: 42 unit tests over 5 files (parser, quoted values with
+trailing comments, credential sources and the subscription token from the file or the
+environment, its redaction and its absence from the description; ledger round trip and
+validation, `subscription` rows kept with their kind and note and adding nothing to the totals
+or a cap decision; cap decisions, the estimate at the cache-write price, per-run cap with
+calls in flight, 80% warning once, settling failed and aborted calls, dated and unknown model
+ids; the metered provider on a scripted `FakeProvider`: rows per call, refusal before anything
+is sent, error and abort rows, credentials redacted from an error event and from a thrown
+error before the record, the note and the audit row, no credential-looking value in the
+ledger or the records; the API-key half's evidence file and the per-task comparison
+(`report.test.ts`): read from the report directory or the named path, the comparison made only
+for the same run, a file from another run flagged stale and listed with the reason, not made
+without a file, a task the other half lacks compared as null; the dry run through
+`composeRuntime`: `api_key` billing source, one
+task through a PR on the fake host, spend ledger = store cost ledger = audit rows, and a
+refusal that surfaces as a failed task; the dry run of the subscription half on a fake SDK
+`query`: both sources, the pick, the `cc:` grant, the token in the fake subprocess
+environment and nowhere else, `PreToolUse` denying a path outside the worktree, the Run row on
+the subscription source, `subscription` store rows, the key's ledger untouched, the USD 0 spend
+row with the note settled once, the audit row, the host-session scrub and the note of a killed
+run). The 14 live cases in the four `live-*` files are reported as skipped without
+`FORERUNNER_LIVE=1` (the subscription file also without a token, with that reason). No network,
+no Docker, no Postgres; Windows and Linux (paths through `@forerunner/platform`, temp roots
+under `os.tmpdir()`). The script runs in no CI job yet (see Known issues); until it does, run
+it locally before a change to this package.
 
 ### Known issues
 
@@ -1220,25 +1554,47 @@ Known issues); until it does, run it locally before a change to this package.
   `packages/runtime/src/wiring/state-ports.ts` passes none), so a breakdown by specialist
   reads `unknown`; the harness reads per-task coder spend from the Run rows and records the
   breakdown as evidence only. A runtime follow-up.
-- The subscription half of the phase 1 gate cannot run until a `claude setup-token` exists.
+- The kill switch on the Agent SDK path: one live sample measured 2016 ms from `stop()` to
+  the session's `killed` end (the switch itself 4 ms; the SDK's abort waits for the Claude Code
+  subprocess to exit), 16 ms over the 2 s target. The fix belongs in `packages/runtime`
+  (`SdkAgentDriver`: end the run as killed on abort without waiting for the child, or SIGKILL
+  after a short grace); the case keeps the target as written.
+- The subscription half compares the per-task outcomes with the API-key half only when that
+  half's `phase1-live.json` of the same run is in the report directory (or named by
+  `FORERUNNER_LIVE_PHASE1_EVIDENCE`); a run of the subscription file alone records that the
+  comparison was not made (a file from another run is flagged `stale` and listed, not
+  compared), and gates.md compares the recorded outcomes of the two runs it names. The recorded
+  subscription run (`2026-10-20T20:04:16Z`) predates the same-run check; its evidence reads
+  `made: false` with no file.
+- The subscription runs' usage in the spend ledger comes from the Run rows (the per-turn usage
+  the SDK reported), not from the metered gate, so a run that ended before its first assistant
+  message leaves a `0/0` row; the SDK's `total_cost_usd` is absent for a killed run and the
+  note then carries the hooks' estimate.
+- The harness mutates the worker's `process.env` for a real subprocess (`scrubHostSessionEnv`),
+  because the SDK driver builds the subprocess environment from `process.env`; the dry run
+  (fake `query`) leaves it alone, and `hostSessionEnv: "keep"` turns it off.
 - The phase 1 gate case (all three tasks completed) fails live on the tier 1 critic's
   escalate-at-confidence-0.5 verdicts until the critic fix lands; the usage case before it
   passes. The phase 3 live gate fails on the pass rate for the same reason (see "Measured");
   both are critic prompt and evidence findings, not harness ones, and the rows in gates.md
   say so.
-- A registry specialist on the daemon's loop driver has no tools (`cc:*` names are not mapped
-  to the built-ins); the harness works around it with a patched copy, the fix belongs in
-  `packages/runtime`.
+- The registry copy still narrows the coder's caps and, on the API-key half, its tools to the
+  three built-ins (ADR 0040 item 5); since ADR 0043 the loop driver maps `cc:` names itself,
+  so the tool rewrite is a choice of the harness, no longer a workaround.
 
 ### Requirement IDs covered
 
 I.1 and I.5 (the live budget and the per-run cap enforced in code before each call, the 80%
-warning), D.9 (text chat first token measured live on Haiku), D.10, D.11, D.14 (measured
-totals against their targets), D.12 (coder run durations and costs under the task budget),
-D.19 (time to first token and total time recorded per run), H.7 (calibration on the live
-critic), E.5 (session end with usage recorded), S.1 and S.3 (every live call audited; the key
-by reference in the vault, never in a log, a report or the ledger), V.6 (the measured
-response-time rows in gates.md).
+warning; subscription usage as a plan share on the SDK path, the API-equivalent rows under the
+task and session caps), D.9 (text chat first token measured live on Haiku), D.10, D.11, D.14
+(measured totals against their targets), D.12 (coder run durations and costs under the task
+budget, on the loop driver and on the Agent SDK), D.19 (time to first token and total time
+recorded per run), H.7 (calibration on the live critic), E.5 (session end with usage recorded
+on both billing sources), S.1 and S.3 (every live call audited; the hooks as PreToolUse and
+PostToolUse on the SDK path; the key and the subscription token by reference in the vault,
+never in a log, a report or the ledger), S.14 (the subscription token held by name and used
+only for its owner's agent, live), U.7 (every Run row with its billing source, the SDK runs
+with the subscription), V.6 (the measured response-time rows in gates.md).
 
 ## Scenarios
 

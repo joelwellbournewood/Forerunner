@@ -25,9 +25,14 @@ ask for budget; only this code and the runtime hooks can grant it.
 `BillingSource` fields: `id`, `kind`, `humanId`, `label`, `credentialRef` (a secret *name*,
 validated by `assertCredentialRef`, which rejects anything shaped like a token and never echoes
 the value), `enabled`, `priority` (lower first within a kind), `limits`
-(`monthlyUsdMicro`, `planShareCap`, `personalRunner`). `BillingSourceProbe.status(source)` returns
-`{ available, planUsageShare?, monthSpentUsdMicro?, reason? }`; `FakeProbe` is the test double,
-the live probe lands with the Agent SDK driver wiring.
+(`monthlyUsdMicro`, `planShareCap`, `planUsdMicro`, `personalRunner`). `planUsdMicro` is a
+subscription's allowance as an estimated API-equivalent per UTC month: the daemon computes the
+plan usage share from the month's "subscription" ledger rows over it, and a share a probe or a
+run reported wins when larger; the daemon always seeds one (`fr setup --plan-usd-monthly`,
+`FORERUNNER_PLAN_USD_MONTHLY`, `config.json`, else USD 50; ADR 0044 item 8), so the plan level
+is never silently absent. `BillingSourceProbe.status(source)`
+returns `{ available, planUsageShare?, monthSpentUsdMicro?, reason? }`; `FakeProbe` is the
+test double, the daemon's probe is `VaultLedgerProbe` in the runtime (below).
 
 ### Routing policy (`src/router.ts`)
 
@@ -50,6 +55,28 @@ Order of evaluation per source: owner, enabled, purpose preference, tier allowli
 rule, probe status, plan share cap, monthly limit. Survivors sort by preference rank, then
 `priority`, then id. Skip codes: `other_human`, `disabled`, `purpose`, `tier`, `cloud_runner`,
 `unavailable`, `plan_share`, `monthly_limit`.
+
+**The pick from the daemon (ADR 0044).** The daemon calls `pick` once per task, from
+`LoopTaskExecutor` through `RouterTaskBilling` (`packages/runtime/src/wiring/billing-pick.ts`),
+with these inputs: `runner` is the session's (`pc` on the PC; the cloud runner picks once per
+start, `services/cloud-runner/src/billing.ts`); `purpose` is `session`; `modelTier` is the
+run's starting rung; the policy is `pcRoutingPolicy(personalRunner)` (the package default, with
+`subscriptionOnCloudRunner: "always"` on a personal runner, which the PC is unless
+`FORERUNNER_RUNNER_PERSONAL=0`); the sources are the daemon human's rows from the state store
+(`stateSources`), seeded from the vault at every compose (`seedBillingSources`: a
+`subscription` row for `anthropic_subscription_token` carrying the plan allowance in force as
+`limits.planUsdMicro`, an `api_key` row for `anthropic_api_key`, both when both exist, a
+`fake` row only when nothing else does and disabled once a real source is enabled); a
+subscription is withheld before the router runs when the task's agent belongs to another
+human (reported as skipped `other_human`, so the API key can still serve that agent), and a
+`fake` row is withheld beside any real source (skipped `unavailable`: the stand-in never pays
+for real work, so a subscription at its cap and an API key at its limit are `unavailable`,
+never a run on the fake row); the
+probe is `VaultLedgerProbe`: available when the vault holds the credential, `planUsageShare`
+the larger of the month's `MAX(plan_usage_share)` on the source's ledger rows and the month's
+"subscription" `usd_micro` over `limits.planUsdMicro`, `monthSpentUsdMicro` the month's sum.
+A subscription pick runs the task on the Agent SDK driver, anything else on the loop driver;
+the pick is the Run row's `billing_source_id` and an audit row `billing.pick` with the reason.
 
 ### Pricing (`src/pricing.ts`)
 
@@ -132,6 +159,16 @@ tests use. The daemon's cost view (`costView` in `packages/runtime/src/daemon/vi
 implements both. The state adapter maps them to `CostLedgerRepo.record` / `.sum` / list with
 the same column names (`LedgerFilter` matches `CostFilter`, `LedgerSum` matches `CostSum`).
 
+**A subscription run's rows (ADR 0044).** The runtime's hooks write one row per model call
+through `StateLedger` (`packages/runtime/src/wiring/state-ports.ts`), not through
+`CostLedger.record`: for a subscription run they carry `kind: "subscription"`, `usd_micro` as
+the API-equivalent at list price from the pricing table in force, and `plan_usage_share` as
+the run's closure reports it (the month's rows before the run plus the run's spend so far over
+`limits.planUsdMicro`; without an allowance the share the pick saw). The session budget and
+`CapChecker` sum `usd_micro` regardless of kind, so a subscription run counts against the
+session, task, run and month caps as the ledger says, and the plan level is checked on top
+(`planUsageShare` against `planShareCap`, 80% finish-current, 100% stop).
+
 ### Caps (`src/caps.ts`, `src/defaults.ts`)
 
 `Caps = { monthUsdMicro, projectUsdMicro?, sessionUsdMicro, taskUsdMicro?, runUsdMicro?,
@@ -202,4 +239,8 @@ defaults. All time comes from `SimulatedClock`. The runtime's `views.test.ts` an
 - 5.5-generation prices were taken from the provider reference cached on 2026-10-06. The model
   watch must confirm them weekly; `as_of` says when a row was last confirmed.
 - The live `BillingSourceProbe` (plan usage from the subscription, spend from the Console) is
-  not in this package; routing uses whatever the probe reports.
+  not in this package; routing uses whatever the probe reports. The daemon's `VaultLedgerProbe`
+  reads the ledger: the plan share is the month's subscription spend at list price over
+  `limits.planUsdMicro` (always seeded: the setup input, else a default of USD 50), an estimate
+  that may stop subscription work before the real plan would until a probe reports the
+  provider's share; the live harness checks the plan level with a real token (BLOCKERS.md).

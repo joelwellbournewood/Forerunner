@@ -1,14 +1,31 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { closingReply, specialistReportTurn, specialistTurn, submitReview } from "@forerunner/e2e";
-import { join, SimulatedClock } from "@forerunner/platform";
-import { loadRegistry, SECRET_NAMES, stateSources } from "@forerunner/runtime";
+import { join, Logger, type LogRecord, SimulatedClock } from "@forerunner/platform";
+import {
+  BILLING_PICK_AUDIT_TOOL,
+  loadRegistry,
+  type QueryLike,
+  SDK_RUN_PROVIDER,
+  SECRET_NAMES,
+  stateSources,
+  TOOL_UNMAPPED_AUDIT,
+} from "@forerunner/runtime";
 import { FakeProvider, type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DRY_RUN_PRICING, dryRunCredentials } from "../src/dry-run.ts";
-import { composeLive, type LiveHarness, repositoryRegistryDir } from "../src/harness.ts";
+import {
+  composeLive,
+  type LiveHarness,
+  repositoryRegistryDir,
+  SUBSCRIPTION_RUN_AUDIT_TOOL,
+  scrubHostSessionEnv,
+  subscriptionSpendRow,
+} from "../src/harness.ts";
+import { subscriptionRows } from "../src/ledger.ts";
 import {
   LIVE_CODER_OVERRIDES,
+  LIVE_SDK_CODER_OVERRIDES,
   patchSpecialistFrontmatter,
   prepareLiveRegistry,
 } from "../src/registry.ts";
@@ -230,5 +247,355 @@ describe("live harness dry run (scripted provider, no network)", () => {
     } finally {
       await tight.close();
     }
+  });
+});
+
+/**
+ * The dry run of the subscription half (ADR 0044): both credentials in the vault, the router
+ * picks the subscription for the human's own agent on the personal runner, the task runs
+ * through the Agent SDK driver on a fake `query` (never a Claude Code subprocess) with the
+ * token in the subprocess environment and the registry's `cc:` names, the hooks deny a path
+ * outside the worktree as `PreToolUse`, the Run row cites the subscription source, the store's
+ * rows are "subscription", and the spend ledger gets a USD 0 row with the note. The token
+ * reaches the vault and the fake subprocess environment and nothing else.
+ */
+describe("live harness dry run of the subscription half (fake SDK query, no network)", () => {
+  let h: LiveHarness;
+  let ledgerDir: string;
+  const clock = new SimulatedClock("2026-10-20T15:00:00Z");
+  const logs: LogRecord[] = [];
+  let offLogs: () => void = () => undefined;
+  const token = dryRunCredentials({ subscription: true }).subscriptionToken ?? "";
+  const sdkCalls: { prompt: string; options: Record<string, unknown> }[] = [];
+  const hookDecisions: Record<string, string> = {};
+  type PreHook = (input: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  const decisionOf = (r: Record<string, unknown>): string => {
+    const out = r.hookSpecificOutput as
+      | { permissionDecision: string; permissionDecisionReason?: string }
+      | undefined;
+    return `${out?.permissionDecision ?? ""} ${out?.permissionDecisionReason ?? ""}`.trim();
+  };
+  const sdk: QueryLike = ({ prompt, options }) => {
+    const o = options ?? {};
+    sdkCalls.push({ prompt, options: o });
+    return (async function* () {
+      yield { type: "system", subtype: "init", session_id: "sdk-dry-1" };
+      const cwd = String(o.cwd);
+      const hooks = o.hooks as { PreToolUse: { hooks: PreHook[] }[] };
+      const pre = hooks.PreToolUse[0]?.hooks[0];
+      if (pre) {
+        hookDecisions.outside = decisionOf(
+          await pre({
+            tool_name: "Read",
+            tool_input: { file_path: join(tmpdir(), "elsewhere.txt") },
+            tool_use_id: "t1",
+          }),
+        );
+        hookDecisions.inside = decisionOf(
+          await pre({
+            tool_name: "Write",
+            tool_input: { file_path: join(cwd, "src", "greet.ts"), content: "" },
+            tool_use_id: "t2",
+          }),
+        );
+      }
+      // What the subprocess's Write tool would do: the change the PR executor then commits.
+      mkdirSync(join(cwd, "src"), { recursive: true });
+      writeFileSync(
+        join(cwd, "src", "greet.ts"),
+        "export function greet(name: string): string {\n  return `Hello, ` + name + `!`;\n}\n",
+        "utf8",
+      );
+      yield {
+        type: "assistant",
+        message: {
+          content: [{ type: "text", text: "Added greet. Criteria: met. Lesson: none." }],
+          usage: {
+            input_tokens: 1_500,
+            output_tokens: 300,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        },
+      };
+      yield {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "Added greet. Criteria: met. Lesson: none.",
+        total_cost_usd: 0.0061,
+      };
+    })();
+  };
+  const criticScript = (): ScriptedReply[] => [
+    submitReview({}, { times: Number.POSITIVE_INFINITY }),
+    closingReply(),
+  ];
+
+  beforeAll(async () => {
+    ledgerDir = mkdtempSync(join(tmpdir(), "fr-live-dry-sub-"));
+    temps.push(ledgerDir);
+    offLogs = Logger.addSink((r) => logs.push(r));
+    h = await composeLive({
+      env: { FORERUNNER_LIVE_RUN: "dry-run-sub" },
+      clock,
+      inner: new FakeProvider({
+        mode: "script",
+        clock,
+        latency: "none",
+        onNoMatch: "throw",
+        replies: criticScript(),
+      }),
+      credentials: dryRunCredentials({ subscription: true }),
+      ledgerPath: join(ledgerDir, "spend.json"),
+      config: { capUsd: 100, runCapUsd: 15, warnShare: 0.8 },
+      pricing: DRY_RUN_PRICING,
+      onWarn: () => undefined,
+      subscription: true,
+      sdkQuery: sdk,
+      planUsdMonthly: 100,
+    });
+  });
+  afterAll(async () => {
+    offLogs();
+    await h?.close();
+  });
+
+  it("composes both billing sources, the coder on the registry's cc: names and a grant that carries them", async () => {
+    const sources = await stateSources(h.app.store)(h.app.human.id);
+    expect(sources.map((s) => s.kind).sort()).toEqual(["api_key", "subscription"]);
+    expect(sources.find((s) => s.kind === "subscription")?.credentialRef).toBe(
+      SECRET_NAMES.anthropicOauth,
+    );
+    expect(await h.app.vault.has(SECRET_NAMES.anthropicOauth)).toBe(true);
+    expect(await h.app.vault.has(SECRET_NAMES.anthropic)).toBe(true);
+    expect(h.subscription).toBe(true);
+    expect(h.app.billing.planAllowance).toMatchObject({ usdMonthly: 100, origin: "option" });
+    expect(h.app.billing.hostCommands).toBe(false);
+    expect(h.app.registry.specialists.get("coder")?.allowed_tools).toEqual(
+      LIVE_SDK_CODER_OVERRIDES.tools,
+    );
+    expect(h.app.registry.specialists.get("coder")?.max_turns).toBe(12);
+    expect(h.grant().allowedTools).toEqual(expect.arrayContaining(["cc:Read", "cc:Write"]));
+    // The loop paths (critic, chat) stay on the key; a task picks the subscription.
+    expect(h.app.billingSourceId).toBe(sources.find((s) => s.kind === "api_key")?.id);
+    const pick = await h.app.billing.pick.pick({
+      agentId: h.app.agent.id,
+      agentOwnerHumanId: h.app.human.id,
+      runner: "pc",
+      modelTier: "sonnet",
+      purpose: "session",
+    });
+    expect(pick.source.kind).toBe("subscription");
+    expect(pick.driver).toBe("sdk");
+    expect(JSON.stringify(sources)).not.toContain(token);
+    // Without a token the subscription half refuses to compose, before any resource is made.
+    await expect(
+      composeLive({
+        subscription: true,
+        credentials: dryRunCredentials(),
+        ledgerPath: join(ledgerDir, "unused.json"),
+        inner: new FakeProvider({ mode: "script", clock, latency: "none", replies: [] }),
+        config: { capUsd: 100, runCapUsd: 15, warnShare: 0.8 },
+      }),
+    ).rejects.toThrow(/no subscription token/);
+  });
+
+  it("one session runs the task through the SDK driver on the subscription, the hooks apply, and the ledgers record plan usage with no USD", async () => {
+    const project = await h.addProject({
+      name: "Dry run sub",
+      goal: "Prove the subscription half",
+    });
+    const task = await h.addTask(project, {
+      title: "Add greet",
+      outcome: "src/greet.ts exports greet(name)",
+      acceptanceCriteria: ["src/greet.ts exports greet(name: string): string"],
+    });
+    const metered = h.provider.calls.length;
+    const res = await h.startSession({ projectId: project, budgetCapUsdMicro: 2_000_000 });
+    expect(res.status).toBe("completed");
+    expect(res.failed).toEqual([]);
+    expect([...res.completed, ...res.inReview]).toEqual([task.id]);
+    const prs = await h.app.gitHost.listPullRequests({ owner: h.repo.owner, name: h.repo.name });
+    expect(prs).toHaveLength(1);
+
+    // The SDK driver ran the coder: one fake query call with the token in its environment, the
+    // `cc:` names minus Bash, the worktree as its working directory.
+    expect(sdkCalls).toHaveLength(1);
+    const call = sdkCalls[0] as { prompt: string; options: Record<string, unknown> };
+    const env = call.options.env as Record<string, string | undefined>;
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe(token);
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect([...(call.options.allowedTools as string[])].sort()).toEqual(
+      ["Edit", "Glob", "Grep", "MultiEdit", "Read", "Write"].sort(),
+    );
+    expect(String(call.options.cwd).startsWith(h.app.dirs.worktrees)).toBe(true);
+    expect(call.options.maxTurns).toBe(12);
+    expect(call.prompt).toContain("Add greet");
+    // The hooks ran as PreToolUse: a path outside the worktree denied, one inside allowed.
+    expect(hookDecisions.outside).toMatch(/^deny path_not_allowed/);
+    expect(hookDecisions.inside).toBe("allow");
+
+    // The Run rows: the coder on the SDK provider and the subscription source; the critic on
+    // the Messages provider and the key.
+    const sources = await stateSources(h.app.store)(h.app.human.id);
+    const sub = sources.find((s) => s.kind === "subscription");
+    const key = sources.find((s) => s.kind === "api_key");
+    const runs = await h.app.store.run.forSession(res.sessionId);
+    const coder = runs.filter((r) => r.specialist === "coder");
+    expect(coder).toHaveLength(1);
+    expect(coder[0]).toMatchObject({
+      provider: SDK_RUN_PROVIDER,
+      billing_source_id: sub?.id,
+      outcome: "completed",
+      tokens_in: 1_500,
+      tokens_out: 300,
+    });
+    expect(coder[0]?.artifacts[0]).toMatchObject({ driver: "sdk", sdk_cost_usd_micro: 6_100 });
+    for (const r of runs.filter((r) => r.specialist !== "coder")) {
+      expect(r.billing_source_id).toBe(key?.id);
+      expect(r.provider).toBe("fake");
+    }
+    const subRows = await h.app.store.costLedger.list(
+      { billing_source_id: sub?.id },
+      { limit: 100 },
+    );
+    expect(subRows.length).toBeGreaterThan(0);
+    expect(subRows.every((r) => r.kind === "subscription" && r.run_id === coder[0]?.id)).toBe(true);
+    expect(subRows.every((r) => (r.plan_usage_share ?? 0) > 0)).toBe(true);
+    // The key's ledger holds nothing of the subscription run.
+    const keySum = await h.app.store.costLedger.sum({ billingSourceId: key?.id });
+    const keySubRows = await h.app.store.costLedger.sum({
+      billingSourceId: key?.id,
+      kind: "subscription",
+    });
+    expect(keySubRows.entries).toBe(0);
+    expect(keySum.entries).toBe(
+      (await h.app.store.costLedger.sum({ sessionId: res.sessionId, kind: "api" })).entries,
+    );
+    const audit = await h.app.store.auditLog.list({ runId: coder[0]?.id ?? "" });
+    expect(audit.find((a) => a.tool === BILLING_PICK_AUDIT_TOOL)?.input_summary).toContain(
+      '"driver":"sdk"',
+    );
+    expect(audit.find((a) => a.tool === TOOL_UNMAPPED_AUDIT)).toMatchObject({
+      allowed: false,
+      input_summary: "coder: cc:Bash",
+    });
+    expect(audit.filter((a) => a.tool === "cc:Read" && !a.allowed)).toHaveLength(1);
+
+    // The spend ledger: the critic's metered calls priced as before, plus one subscription row
+    // per SDK run with USD 0 and the note; the budget's totals are the metered calls alone.
+    const beforeSettle = h.ledger.rows();
+    expect(subscriptionRows(beforeSettle)).toEqual([]);
+    const settled = await h.settleSubscriptionRuns(res.sessionId);
+    expect(settled).toHaveLength(1);
+    expect(settled[0]).toMatchObject({
+      run: "dry-run-sub",
+      model: "claude-sonnet-5-5",
+      tokensIn: 1_500,
+      tokensOut: 300,
+      usd: 0,
+      kind: "subscription",
+      note: "subscription: plan usage, est. USD 0.0061",
+    });
+    expect(await h.settleSubscriptionRuns(res.sessionId)).toEqual([]);
+    const rows = h.ledger.rows();
+    expect(rows).toHaveLength(beforeSettle.length + 1);
+    expect(subscriptionRows(rows)).toEqual([settled[0]]);
+    const meteredCalls = h.provider.calls.slice(metered);
+    expect(meteredCalls.length).toBeGreaterThan(0);
+    expect(h.budget.snapshot().runUsd).toBe(
+      Math.round(meteredCalls.reduce((s, c) => s + c.usd, 0) * 1e6) / 1e6,
+    );
+    const subAudit = (await h.app.store.auditLog.list({ runId: coder[0]?.id ?? "" })).filter(
+      (a) => a.tool === SUBSCRIPTION_RUN_AUDIT_TOOL,
+    );
+    expect(subAudit).toHaveLength(1);
+    expect(subAudit[0]?.result_summary).toContain("est. USD 0.0061");
+    expect(subAudit[0]?.cost_usd_micro).toBe(0);
+
+    // The token is in the vault and the fake subprocess environment and nowhere else.
+    const text = readFileSync(h.ledger.path, "utf8");
+    for (const blob of [
+      text,
+      JSON.stringify(runs),
+      JSON.stringify(await h.app.store.auditLog.list(undefined, { limit: 10_000 })),
+      JSON.stringify(subRows),
+      JSON.stringify(h.provider.calls),
+      JSON.stringify(logs),
+      JSON.stringify(res),
+    ]) {
+      expect(blob).not.toContain(token);
+      expect(blob).not.toContain(["sk-", "ant-", "oat"].join(""));
+    }
+  });
+
+  it("strips the hosting Claude Code session's variables for a real subprocess, keeps the proxy flag and everything else, and leaves a faked SDK's environment alone", () => {
+    const env: NodeJS.ProcessEnv = {
+      CLAUDECODE: "1",
+      CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1",
+      CLAUDE_CODE_REMOTE: "true",
+      CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/x.sock",
+      CLAUDE_CODE_PROXY_RESOLVES_HOSTS: "1",
+      CLAUDE_PID: "7",
+      HTTPS_PROXY: "http://127.0.0.1:1",
+      NODE_EXTRA_CA_CERTS: "/x/ca.crt",
+      FORERUNNER_LIVE: "1",
+      PATH: "/bin",
+    };
+    const removed = scrubHostSessionEnv(env);
+    expect(removed).toEqual([
+      "CLAUDECODE",
+      "CLAUDE_CODE_MESSAGING_SOCKET",
+      "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
+      "CLAUDE_CODE_REMOTE",
+      "CLAUDE_PID",
+    ]);
+    expect(Object.keys(env).sort()).toEqual([
+      "CLAUDE_CODE_PROXY_RESOLVES_HOSTS",
+      "FORERUNNER_LIVE",
+      "HTTPS_PROXY",
+      "NODE_EXTRA_CA_CERTS",
+      "PATH",
+    ]);
+    expect(scrubHostSessionEnv(env)).toEqual([]);
+    // The dry run above faked the SDK, so the worker's environment was left as it was.
+    expect(h.hostEnvScrubbed).toEqual([]);
+  });
+
+  it("a killed or errored SDK run still gets its ledger row, with the outcome and the hooks' estimate in the note", () => {
+    const base = {
+      id: "run-x",
+      task_id: "t",
+      session_id: "s",
+      specialist: "coder",
+      model: "claude-sonnet-5-5",
+      provider: SDK_RUN_PROVIDER,
+      tokens_in: 10,
+      tokens_out: 2,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      cost_usd_micro: 1_234,
+      artifacts: [{ driver: "sdk", sdk_session_id: null, sdk_cost_usd_micro: 0 }],
+    };
+    const killed = subscriptionSpendRow(
+      { ...base, outcome: "killed" } as never,
+      "r9",
+      "2026-10-20",
+    );
+    expect(killed).toMatchObject({ usd: 0, kind: "subscription", tokensIn: 10, run: "r9" });
+    expect(killed.note).toBe(
+      "subscription: plan usage, est. USD 0.0000; killed; no SDK cost reported, hooks est. USD 0.0012",
+    );
+    const done = subscriptionSpendRow(
+      {
+        ...base,
+        outcome: "completed",
+        artifacts: [{ driver: "sdk", sdk_session_id: "x", sdk_cost_usd_micro: 25_000 }],
+      } as never,
+      "r9",
+      "2026-10-20",
+    );
+    expect(done.note).toBe("subscription: plan usage, est. USD 0.0250");
   });
 });

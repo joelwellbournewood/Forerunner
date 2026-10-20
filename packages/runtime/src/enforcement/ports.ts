@@ -22,11 +22,28 @@ export interface CapDecision {
   message?: string;
 }
 
+/** How a run is billed (ADR 0044): the ledger kind of its rows and, for a subscription, the plan share. */
+export type BillingKind = "api" | "subscription" | "plan_credits";
+
+/**
+ * The billing facts a caps check and a ledger row need from the run (ADR 0044). The caps
+ * port adds the plan level for a subscription (`planUsageShare` against `planShareCap`); the
+ * ledger port writes `kind` and the share on every row.
+ */
+export interface CapsBilling {
+  sourceId: string;
+  kind: BillingKind;
+  /** Plan usage share (0..1) of the subscription right now; absent when unknown. */
+  planUsageShare?: number;
+  /** The source's own cap on that share; absent for the policy default. */
+  planShareCap?: number;
+}
+
 export interface CapsPort {
   check(
     scope: CapScope,
     estimateUsdMicro: number,
-    opts: { phase: "work" | "review" },
+    opts: { phase: "work" | "review"; billing?: CapsBilling },
   ): Promise<CapDecision> | CapDecision;
 }
 
@@ -87,6 +104,10 @@ export interface LedgerEntry {
   model: string;
   provider: string;
   billingSourceId: string;
+  /** Ledger kind of the row; default "api". A subscription run's rows are "subscription" (an estimate). */
+  kind?: BillingKind;
+  /** Plan usage share after this call (subscriptions), 0..1; absent when unknown. */
+  planUsageShare?: number | null;
   usdMicro: number;
   tokensIn: number;
   tokensOut: number;

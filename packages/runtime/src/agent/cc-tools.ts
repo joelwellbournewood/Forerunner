@@ -1,0 +1,135 @@
+import { z } from "zod";
+import type { ActionClass } from "../enforcement/autonomy.ts";
+import { CLAUDE_CODE_PREFIX, KNOWN_CLAUDE_CODE_TOOLS } from "../registry/types.ts";
+import { ToolRegistry, type ToolSpec } from "./tools.ts";
+
+/**
+ * The Claude Code built-in tools as the enforcement hooks see them on the Agent SDK path
+ * (ADR 0044). The SDK executes these tools itself inside its subprocess; the specs exist so
+ * the hooks can apply the same rules as on the loop driver before each call: the token's
+ * allowlist (`cc:<Tool>` names), path containment for the file tools, the domain allowlist
+ * for the web tools, the autonomy decision by action class. `execute` is never called: a
+ * spec reached through it is a programming error, not a tool run.
+ */
+interface CcToolShape {
+  description: string;
+  actionClass: ActionClass;
+  risk: ToolSpec["risk"];
+  pathFields?: string[];
+  domainFields?: string[];
+}
+
+const SHAPES: Record<string, CcToolShape> = {
+  Read: { description: "Read a file", actionClass: "read", risk: "low", pathFields: ["file_path"] },
+  NotebookRead: {
+    description: "Read a notebook",
+    actionClass: "read",
+    risk: "low",
+    pathFields: ["notebook_path"],
+  },
+  Edit: {
+    description: "Edit a file in the worktree",
+    actionClass: "routine_reversible",
+    risk: "low",
+    pathFields: ["file_path"],
+  },
+  MultiEdit: {
+    description: "Edit a file in the worktree (several edits)",
+    actionClass: "routine_reversible",
+    risk: "low",
+    pathFields: ["file_path"],
+  },
+  Write: {
+    description: "Write a file in the worktree",
+    actionClass: "routine_reversible",
+    risk: "low",
+    pathFields: ["file_path"],
+  },
+  NotebookEdit: {
+    description: "Edit a notebook in the worktree",
+    actionClass: "routine_reversible",
+    risk: "low",
+    pathFields: ["notebook_path"],
+  },
+  Glob: {
+    description: "Find files by pattern",
+    actionClass: "read",
+    risk: "low",
+    pathFields: ["path"],
+  },
+  Grep: {
+    description: "Search file contents",
+    actionClass: "read",
+    risk: "low",
+    pathFields: ["path"],
+  },
+  LS: { description: "List a directory", actionClass: "read", risk: "low", pathFields: ["path"] },
+  Bash: {
+    description: "Run a shell command where the Claude Code subprocess runs",
+    actionClass: "routine_reversible",
+    risk: "medium",
+  },
+  WebFetch: {
+    description: "Fetch a web page",
+    actionClass: "read",
+    risk: "low",
+    domainFields: ["url"],
+  },
+  WebSearch: { description: "Search the web", actionClass: "read", risk: "low" },
+  Task: { description: "Delegate to a Claude Code subagent", actionClass: "read", risk: "low" },
+  TodoWrite: {
+    description: "Keep the subprocess's own task list",
+    actionClass: "read",
+    risk: "low",
+  },
+};
+
+/**
+ * Every Claude Code tool name with the prefix (`cc:Read`, ...). A session grant lists them so a
+ * run token derived for the SDK path may carry the registry's names (a derived token only
+ * narrows its parent); the loop driver never offers them because no registry holds them.
+ */
+export function claudeCodeToolNames(): string[] {
+  return KNOWN_CLAUDE_CODE_TOOLS.map((t) => `${CLAUDE_CODE_PREFIX}${t}`);
+}
+
+/** The spec for one Claude Code tool name (without the prefix), for the hooks only. */
+export function claudeCodeToolSpec(tool: string): ToolSpec {
+  const shape = Object.hasOwn(SHAPES, tool) ? SHAPES[tool] : undefined;
+  const name = `${CLAUDE_CODE_PREFIX}${tool}`;
+  return {
+    name,
+    description: shape?.description ?? `Claude Code tool ${tool}`,
+    // The SDK validates the input itself; the hooks only need the path and URL fields.
+    schema: z.looseObject({
+      file_path: z.string().optional(),
+      notebook_path: z.string().optional(),
+      path: z.string().optional(),
+      url: z.string().optional(),
+    }),
+    actionClass: shape?.actionClass ?? "non_routine",
+    risk: shape?.risk ?? "medium",
+    ...(shape?.pathFields ? { pathFields: shape.pathFields } : {}),
+    ...(shape?.domainFields ? { domainFields: shape.domainFields } : {}),
+    async execute() {
+      throw new Error(`${name} runs inside the Claude Code subprocess, never in the runtime`);
+    },
+  };
+}
+
+/**
+ * A run's tool registry for the SDK path: the base registry (the Forerunner tools the token
+ * may carry as MCP tools) plus a spec for every known Claude Code tool that is not there yet.
+ */
+export function withClaudeCodeTools(base: ToolRegistry): ToolRegistry {
+  const out = new ToolRegistry();
+  for (const name of base.names()) {
+    const t = base.get(name);
+    if (t) out.register(t);
+  }
+  for (const tool of KNOWN_CLAUDE_CODE_TOOLS) {
+    const name = `${CLAUDE_CODE_PREFIX}${tool}`;
+    if (!out.get(name)) out.register(claudeCodeToolSpec(tool));
+  }
+  return out;
+}

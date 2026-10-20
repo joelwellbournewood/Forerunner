@@ -182,6 +182,24 @@ export class TokenIssuer {
     return this.revoked.has(tokenId);
   }
 
+  /**
+   * The live claims of a run (issued by this issuer, not revoked, not expired), for a tool
+   * that binds a per-run resource to the token after the hooks admitted the call (the
+   * sandboxed browser's site policy, ADR 0047). The newest token of the run wins when a
+   * retry re-issued one; nothing is returned for a run this issuer never saw, so a caller
+   * fails closed (no domains, no secrets) instead of guessing.
+   */
+  claimsForRun(runId: string, now: number = this.now()): CapabilityClaims | undefined {
+    let found: CapabilityClaims | undefined;
+    for (const t of this.issued.values()) {
+      const c = t.claims;
+      if (c.runId !== runId || this.revoked.has(c.id)) continue;
+      if (new Date(c.expiresAt).getTime() <= now) continue;
+      if (!found || c.issuedAt > found.issuedAt) found = c;
+    }
+    return found;
+  }
+
   private sign(claims: CapabilityClaims): string {
     const canonical = JSON.stringify(claims, Object.keys(claims).sort());
     return createHmac("sha256", this.key).update(canonical).digest("hex");

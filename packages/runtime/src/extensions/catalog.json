@@ -10,13 +10,16 @@
       "module": "@forerunner/capabilities/browser",
       "permissions": {
         "tools": [
-          "browser.open",
-          "browser.read",
-          "browser.click",
-          "browser.type",
-          "browser.screenshot"
+          "browser_navigate",
+          "browser_read",
+          "browser_click",
+          "browser_type",
+          "browser_fill_secret",
+          "browser_screenshot",
+          "browser_download",
+          "browser_close"
         ],
-        "actionClasses": ["read", "routine_reversible", "external_send"],
+        "actionClasses": ["read", "routine_reversible", "credential"],
         "domains": [],
         "paths": [],
         "secrets": [],
@@ -32,7 +35,7 @@
       "version": "1.0.0",
       "module": "@forerunner/capabilities/email",
       "permissions": {
-        "tools": ["email.read", "email.draft", "email.send"],
+        "tools": ["email_list", "email_read", "email_draft", "email_send"],
         "actionClasses": ["read", "routine_reversible", "external_send"],
         "domains": [],
         "paths": [],

@@ -8,6 +8,14 @@ import { CLAUDE_CODE_PREFIX } from "./types.ts";
 export const RUN_COMMAND_TOOL = "run_command";
 
 /**
+ * The audit row kind for a registry tool a run will not offer (ADR 0043 item 5, ADR 0044):
+ * written by the composition for the loop driver's mapping and by the executor when the SDK
+ * path withholds `cc:Bash`. Declared here so neither the session layer nor the composition
+ * root depends on the other for it.
+ */
+export const TOOL_UNMAPPED_AUDIT = "registry.tool_unmapped";
+
+/**
  * How a registry entry's `allowed_tools` reach a run (ADR 0043). The registry names Claude
  * Code tools (`cc:Read`, `cc:Bash`, ...) because the Agent SDK driver (ADR 0004) offers that
  * tool set as is. The in-process loop driver offers Forerunner's own tools (`read_file`,

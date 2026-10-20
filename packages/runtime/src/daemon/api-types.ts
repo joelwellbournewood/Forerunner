@@ -712,6 +712,203 @@ export const ChangeLogView = z.object({
 });
 export type ChangeLogView = z.infer<typeof ChangeLogView>;
 
+// ---------------------------------------------------------------------------------------
+// Voice (spec O, Q.4, Q.5; ADR 0012, ADR 0048): the voice loop over the conversation agent,
+// reached by the shells through these routes. Audio travels as 16-bit PCM; the daemon never
+// stores it unless audio storage is on, and the views never carry a key.
+
+export const VOICE_MODES = ["push_to_talk", "open_mic"] as const;
+export type VoiceModeName = (typeof VOICE_MODES)[number];
+export const VOICE_STATES = ["idle", "listening", "transcribing", "thinking", "speaking"] as const;
+
+/** The provider the registry's policy picked, with the reason the Extensions panel shows. */
+export const VoiceProviderView = z.object({
+  name: z.string(),
+  kind: z.enum(["local", "cloud", "fake"]),
+  policy: z.enum(["preferred", "local", "cloud", "fake"]),
+  reason: z.string(),
+});
+export type VoiceProviderView = z.infer<typeof VoiceProviderView>;
+
+/** One registered provider: availability and, for a cloud one, its key by reference only. */
+export const VoiceProviderStatusView = z.object({
+  name: z.string(),
+  kind: z.enum(["local", "cloud", "fake"]),
+  available: z.boolean(),
+  reason: z.string(),
+  secretRef: z.string().optional(),
+  secretConfigured: z.boolean().optional(),
+  selected: z.boolean(),
+});
+export type VoiceProviderStatusView = z.infer<typeof VoiceProviderStatusView>;
+
+export const VoiceStatusView = z.object({
+  available: z.boolean(),
+  /** Why voice is unavailable (no provider, no key, no model credential), or how it was picked. */
+  reason: z.string(),
+  stt: VoiceProviderView.nullable(),
+  tts: VoiceProviderView.nullable(),
+  statuses: z.object({
+    stt: z.array(VoiceProviderStatusView),
+    tts: z.array(VoiceProviderStatusView),
+  }),
+  sessions: z.number().int(),
+  maxSessions: z.number().int(),
+  modes: z.array(z.enum(VOICE_MODES)),
+});
+export type VoiceStatusView = z.infer<typeof VoiceStatusView>;
+
+export const StartVoiceSessionBody = z.object({
+  projectId: z.string().optional(),
+  /** BCP-47; the spoken approval rules and the providers use it. */
+  language: z.string().optional(),
+  mode: z.enum(VOICE_MODES).optional(),
+});
+export type StartVoiceSessionBody = z.infer<typeof StartVoiceSessionBody>;
+
+export const VoicePressBody = z.object({ pressed: z.boolean() });
+export type VoicePressBody = z.infer<typeof VoicePressBody>;
+
+/** A captured chunk: 16-bit signed little-endian PCM, base64 in JSON (or raw as octet-stream). */
+export const VoiceAudioBody = z.object({
+  pcm: z.string().min(1),
+  sampleRate: z.number().int().positive(),
+  channels: z.number().int().min(1).max(8),
+  /** Position of the first sample on the capture timeline, ms. */
+  timestampMs: z.number().nonnegative(),
+});
+export type VoiceAudioBody = z.infer<typeof VoiceAudioBody>;
+
+export const VoiceTextBody = z.object({ text: z.string().min(1) });
+export type VoiceTextBody = z.infer<typeof VoiceTextBody>;
+
+/** The shell's answer to a read-back without speaking: a tap confirms, "no" cancels. */
+export const VoiceAnswerBody = z.object({ answer: z.enum(["tap", "no"]) });
+export type VoiceAnswerBody = z.infer<typeof VoiceAnswerBody>;
+
+const VoiceLatencyStage = z.object({
+  ms: z.number().nullable(),
+  targetMs: z.number(),
+  withinTarget: z.boolean(),
+});
+
+/** The per-stage latency report of one turn (spec O.5): each part measured, shown, compared. */
+export const VoiceLatencyView = z.object({
+  turn: z.number().int(),
+  endOfTurnMs: z.number().nullable(),
+  finalTranscriptMs: z.number().nullable(),
+  modelFirstTokenMs: z.number().nullable(),
+  firstAudioMs: z.number().nullable(),
+  totalToFirstAudioMs: z.number().nullable(),
+  stages: z.object({
+    endOfTurn: VoiceLatencyStage,
+    finalTranscript: VoiceLatencyStage,
+    modelFirstToken: VoiceLatencyStage,
+    firstAudio: VoiceLatencyStage,
+    total: VoiceLatencyStage,
+  }),
+  withinTarget: z.boolean(),
+  firstSentenceMs: z.number().nullable(),
+  ttsFirstByteMs: z.number().nullable(),
+  interrupted: z.boolean(),
+  noResponse: z.boolean(),
+  targets: z.object({
+    endOfTurnMs: z.number(),
+    finalTranscriptMs: z.number(),
+    modelFirstTokenMs: z.number(),
+    firstAudioMs: z.number(),
+    totalToFirstAudioMs: z.number(),
+  }),
+});
+export type VoiceLatencyView = z.infer<typeof VoiceLatencyView>;
+
+/** A spoken or tapped approval decision, logged with the exact transcript line (spec O.7). */
+export const VoiceApprovalView = z.object({
+  turn: z.number().int(),
+  line: z.string(),
+  approved: z.boolean(),
+  matched: z.string().nullable(),
+  blockedBy: z.enum(["negation", "question", "qualifier", "deferral", "ambiguous"]).nullable(),
+  at: z.string(),
+  subject: z.string().optional(),
+  method: z.enum(["spoken", "tap", "no"]),
+  pendingId: z.string(),
+  commands: z.array(z.string()),
+});
+export type VoiceApprovalView = z.infer<typeof VoiceApprovalView>;
+
+export const VoiceTurnView = z.object({
+  turn: z.number().int(),
+  source: z.enum(["audio", "text"]),
+  /** The final transcript. */
+  said: z.string(),
+  /** The assistant line that was played. */
+  heard: z.string(),
+  /** The agent's reply; null when the bridge repeated the read-back itself (a refused yes). */
+  reply: ChatReplyView.nullable(),
+  approval: VoiceApprovalView.nullable(),
+  /** The card waiting after this turn: read back, needs a yes, a tap or the device. */
+  pending: ChatPendingView.nullable(),
+  latency: VoiceLatencyView,
+  audioChunks: z.number().int(),
+  audioStored: z.boolean(),
+  interrupted: z.boolean(),
+  unspokenText: z.string().nullable(),
+  error: z.object({ code: z.string(), message: z.string() }).nullable(),
+});
+export type VoiceTurnView = z.infer<typeof VoiceTurnView>;
+
+export const VoiceSessionView = z.object({
+  id: z.string(),
+  state: z.enum(VOICE_STATES),
+  turn: z.number().int(),
+  mode: z.enum(VOICE_MODES),
+  language: z.string().nullable(),
+  projectId: z.string().nullable(),
+  /** The conversation session whose event log holds the chat, the approvals and the turns. */
+  conversationSessionId: z.string(),
+  providers: z.object({ stt: VoiceProviderView, tts: VoiceProviderView }),
+  pending: ChatPendingView.nullable(),
+  startedAt: z.string(),
+  endedAt: z.string().nullable(),
+  turns: z.number().int(),
+  lastTurn: VoiceTurnView.nullable(),
+  /** The last event's seq, for `GET /voice/sessions/:id/events?afterSeq=`. */
+  lastSeq: z.number().int(),
+});
+export type VoiceSessionView = z.infer<typeof VoiceSessionView>;
+
+export const VoiceAnswerView = z.object({
+  pendingId: z.string(),
+  answer: z.enum(["tap", "no"]),
+  result: CommandResultViewSchema,
+  approval: VoiceApprovalView,
+});
+export type VoiceAnswerView = z.infer<typeof VoiceAnswerView>;
+
+/**
+ * One frame of `GET /voice/sessions/:id/events`. `type` is the loop's event type (`state`,
+ * `turn_start`, `transcript_partial`, `transcript_final`, `model_delta`, `sentence`, `audio`,
+ * `speaking_start`, `speaking_end`, `barge_in`, `turn_end`, `error`) or the bridge's
+ * (`voice.first_audio`, `voice.readback` = approval needed, `voice.approval`, `voice.answer`,
+ * `voice.turn` = done, `voice.stopped`); `data` holds the event's fields without `type` and
+ * `turn`. An `audio` frame's data is `{ sentenceIndex, sampleRate, channels, timestampMs,
+ * pcm }` with `pcm` base64 16-bit PCM; audio frames are never replayed on a resume.
+ */
+export const VoiceEventView = z.object({
+  seq: z.number().int(),
+  at: z.string(),
+  type: z.string(),
+  turn: z.number().int().nullable(),
+  data: z.unknown(),
+});
+export type VoiceEventView = z.infer<typeof VoiceEventView>;
+
+/** Server-sent event names on GET /voice/sessions/:id/events. */
+export type VoiceSseEvent =
+  | { event: "voice.event"; data: VoiceEventView }
+  | { event: "heartbeat"; data: { at: string } };
+
 export const ErrorBody = z.object({
   code: z.string(),
   message: z.string(),
@@ -855,6 +1052,22 @@ export const DAEMON_ROUTES = {
   dataAsset: "GET /data/:id (DataAssetView)",
   dataSample: "GET /data/:id/sample?rows=&bytes= (DataSample, capped by the data limits)",
   removeDataAsset: "DELETE /data/:id ({ ok, id, deletedFromDisk }; needs the daemon's human)",
+  voiceStatus:
+    "GET /voice/status (VoiceStatusView: available with the providers picked, or the reason voice is unavailable)",
+  startVoiceSession:
+    "POST /voice/sessions { projectId?, language?, mode? } (201 VoiceSessionView; 503 unavailable with the reason when no provider or no model credential is configured)",
+  voiceSession: "GET /voice/sessions/:id (VoiceSessionView)",
+  stopVoiceSession: "POST /voice/sessions/:id/stop (VoiceSessionView; immediate in every state)",
+  voicePress:
+    "POST /voice/sessions/:id/press { pressed } (push-to-talk press or release; a press while the agent speaks is the barge-in; VoiceSessionView)",
+  voiceAudio:
+    "POST /voice/sessions/:id/audio { pcm (base64 int16 LE), sampleRate, channels, timestampMs } | application/octet-stream ?sampleRate=&channels=&timestampMs= (one captured chunk; VoiceSessionView)",
+  voiceText:
+    "POST /voice/sessions/:id/text { text } (the text fallback: one turn through the same loop, approval rules and TTS; VoiceTurnView once the turn has ended)",
+  voiceAnswer:
+    "POST /voice/sessions/:id/answer { answer: tap|no } (answers the read-back without speaking through the registry; VoiceAnswerView; 404 without a card)",
+  voiceEvents:
+    "GET /voice/sessions/:id/events?afterSeq= (JSON VoiceEventView[]) | Accept: text/event-stream (SSE voice.event frames: state, transcript, model deltas, sentences, audio, first audio, read-back = approval needed, approval, turn = done; heartbeat; ?token= accepted)",
   events:
     "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, notification, desktop.indicator, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts)",
 } as const;

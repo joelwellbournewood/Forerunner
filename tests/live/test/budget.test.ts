@@ -13,7 +13,14 @@ import {
   LiveBudgetError,
   RUN_CAP_VAR,
 } from "../src/budget.ts";
-import { formatLedger, parseLedger, SpendLedger, type SpendRow, sumUsd } from "../src/ledger.ts";
+import {
+  formatLedger,
+  parseLedger,
+  SpendLedger,
+  type SpendRow,
+  subscriptionRows,
+  sumUsd,
+} from "../src/ledger.ts";
 
 const temps: string[] = [];
 afterAll(() => {
@@ -270,5 +277,50 @@ describe("live budget", () => {
         requestedModel: "mystery-model",
       }),
     ).toThrow(/no price known/);
+  });
+});
+
+describe("subscription rows in the spend ledger (ADR 0044)", () => {
+  const sub = (note: string, run = "r1"): SpendRow => ({
+    ...row(0, run),
+    kind: "subscription",
+    note,
+  });
+
+  it("keeps a subscription row's kind and note across a round trip and rejects any other kind", () => {
+    const ledger = tempLedger();
+    ledger.append(row(0.25));
+    ledger.append(sub("subscription: plan usage, est. USD 0.0123"));
+    const rows = parseLedger(readFileSync(ledger.path, "utf8")).rows;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.kind).toBeUndefined();
+    expect(rows[1]).toMatchObject({
+      kind: "subscription",
+      usd: 0,
+      note: "subscription: plan usage, est. USD 0.0123",
+    });
+    expect(subscriptionRows(rows)).toEqual([rows[1]]);
+    // "api" is the default and is not written back; anything else is a malformed ledger.
+    expect(
+      parseLedger(formatLedger({ rows: [{ ...row(0.1), kind: "api" }] })).rows[0]?.kind,
+    ).toBeUndefined();
+    expect(() => parseLedger(JSON.stringify({ rows: [{ ...row(0.1), kind: "plan" }] }))).toThrow(
+      /kind must be/,
+    );
+  });
+
+  it("plan usage has no USD price: the rows add nothing to the totals and never move a cap decision", () => {
+    const ledger = tempLedger([row(1.5), sub("subscription: plan usage, est. USD 2.0000")]);
+    expect(sumUsd(ledger.rows())).toBe(1.5);
+    expect(ledger.runUsd("r1")).toBe(1.5);
+    const { b } = budget(ledger, { capUsd: 2, runCapUsd: 2 });
+    const s = b.snapshot();
+    expect(s.ledgerUsd).toBe(1.5);
+    expect(s.runUsd).toBe(1.5);
+    expect(s.remainingUsd).toBe(0.5);
+    // A call estimated at USD 0.4 fits (1.5 + 0.4 under 2); it would not if the plan usage's
+    // list-price figure counted.
+    expect(b.decide(400_000, SONNET).allowed).toBe(true);
+    expect(b.decide(600_000, SONNET).allowed).toBe(false);
   });
 });

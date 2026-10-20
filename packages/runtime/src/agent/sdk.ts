@@ -1,6 +1,6 @@
 import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import type { SessionBudget } from "../enforcement/budget.ts";
-import type { EnforcementHooks, RunContext } from "../enforcement/hooks.ts";
+import type { EnforcementHooks, RunBilling, RunContext } from "../enforcement/hooks.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken } from "../enforcement/token.ts";
 import type { EffortLevel, Usage } from "../provider/types.ts";
@@ -18,6 +18,8 @@ export interface SdkRunRequest {
   token: SignedToken;
   budget: SessionBudget;
   billingSourceId: string;
+  /** How the run is billed (ADR 0044): "subscription" rows with the plan share on this path. */
+  billing?: RunBilling;
   /** Exactly one credential, chosen by the billing router. */
   credential: { kind: "api_key" | "oauth_token"; value: string };
   model: string;
@@ -103,7 +105,9 @@ export class SdkAgentDriver {
       model: req.model,
       provider: "anthropic-sdk",
       billingSourceId: req.billingSourceId,
+      ...(req.billing ? { billing: req.billing } : {}),
       approvals: new Set(),
+      cwd: req.cwd,
     };
     const emit = (ev: RunEvent) => req.onEvent?.(ev);
     const ccTools = claims.allowedTools
@@ -170,77 +174,102 @@ export class SdkAgentDriver {
         cw: 0,
         usd: 0,
       };
-      for await (const msg of query({ prompt: req.prompt, options })) {
-        const type = msg.type as string;
-        if (type === "system" && msg.subtype === "init")
-          sessionId = (msg.session_id as string) ?? null;
-        if (type === "stream_event") {
-          const ev = msg.event as
-            | { type?: string; delta?: { type?: string; text?: string } }
-            | undefined;
-          if (
-            ev?.type === "content_block_delta" &&
-            ev.delta?.type === "text_delta" &&
-            ev.delta.text
-          ) {
-            if (ttftMs === null) ttftMs = Math.round(clock.monotonic() - started);
-            emit({ type: "text_delta", text: ev.delta.text });
+      // The kill switch and the timeout abort the controller; the SDK then tears its
+      // subprocess down, which can take longer than the 2 s the kill switch promises. The run
+      // ends the moment the abort fires: the iterator is left to finish in the background.
+      const iterator = query({ prompt: req.prompt, options })[Symbol.asyncIterator]();
+      const aborted = new Promise<never>((_, reject) => {
+        const fail = () => {
+          const reason = controller.signal.reason;
+          reject(reason instanceof Error ? reason : new ForerunnerError("killed", "run killed"));
+        };
+        if (controller.signal.aborted) fail();
+        else controller.signal.addEventListener("abort", fail, { once: true });
+      });
+      aborted.catch(() => undefined);
+      try {
+        for (;;) {
+          const next = await Promise.race([iterator.next(), aborted]);
+          if (next.done) break;
+          const msg = next.value;
+          const type = msg.type as string;
+          if (type === "system" && msg.subtype === "init")
+            sessionId = (msg.session_id as string) ?? null;
+          if (type === "stream_event") {
+            const ev = msg.event as
+              | { type?: string; delta?: { type?: string; text?: string } }
+              | undefined;
+            if (
+              ev?.type === "content_block_delta" &&
+              ev.delta?.type === "text_delta" &&
+              ev.delta.text
+            ) {
+              if (ttftMs === null) ttftMs = Math.round(clock.monotonic() - started);
+              emit({ type: "text_delta", text: ev.delta.text });
+            }
+          }
+          if (type === "assistant") {
+            numTurns++;
+            const m = msg.message as
+              | { content?: { type: string; text?: string }[]; usage?: Record<string, number> }
+              | undefined;
+            const text = (m?.content ?? [])
+              .filter((b) => b.type === "text")
+              .map((b) => b.text ?? "")
+              .join("");
+            if (text) finalText = text;
+            const u = m?.usage;
+            if (u) {
+              const turnUsage: Usage = {
+                input_tokens: u.input_tokens ?? 0,
+                output_tokens: u.output_tokens ?? 0,
+                cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
+                cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
+              };
+              const turnCost = req.pricing.cost(turnUsage);
+              usage = addUsage(usage, turnUsage);
+              cost += turnCost;
+              await this.deps.hooks.afterModelCall(ctx, turnUsage, turnCost);
+              emit({
+                type: "model_call_end",
+                turn: numTurns,
+                usage: turnUsage,
+                costUsdMicro: turnCost,
+                ttftMs: ttftMs ?? 0,
+                stopReason: "turn",
+              });
+              // Enforce before the SDK makes its next call.
+              await this.deps.hooks.beforeModelCall(
+                ctx,
+                req.pricing.estimate(turnUsage.input_tokens, 4096),
+              );
+            }
+          }
+          if (type === "result") {
+            sdkCostUsd = (msg.total_cost_usd as number) ?? 0;
+            if (msg.is_error) {
+              outcome = "error";
+              error = {
+                code: "provider_error",
+                message: String(msg.result ?? msg.subtype ?? "sdk error"),
+              };
+            }
+            if (typeof msg.result === "string" && msg.result) finalText = msg.result;
+            lastCum = {
+              in: usage.input_tokens,
+              out: usage.output_tokens,
+              cr: usage.cache_read_input_tokens,
+              cw: usage.cache_creation_input_tokens,
+              usd: sdkCostUsd,
+            };
           }
         }
-        if (type === "assistant") {
-          numTurns++;
-          const m = msg.message as
-            | { content?: { type: string; text?: string }[]; usage?: Record<string, number> }
-            | undefined;
-          const text = (m?.content ?? [])
-            .filter((b) => b.type === "text")
-            .map((b) => b.text ?? "")
-            .join("");
-          if (text) finalText = text;
-          const u = m?.usage;
-          if (u) {
-            const turnUsage: Usage = {
-              input_tokens: u.input_tokens ?? 0,
-              output_tokens: u.output_tokens ?? 0,
-              cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
-              cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
-            };
-            const turnCost = req.pricing.cost(turnUsage);
-            usage = addUsage(usage, turnUsage);
-            cost += turnCost;
-            await this.deps.hooks.afterModelCall(ctx, turnUsage, turnCost);
-            emit({
-              type: "model_call_end",
-              turn: numTurns,
-              usage: turnUsage,
-              costUsdMicro: turnCost,
-              ttftMs: ttftMs ?? 0,
-              stopReason: "turn",
-            });
-            // Enforce before the SDK makes its next call.
-            await this.deps.hooks.beforeModelCall(
-              ctx,
-              req.pricing.estimate(turnUsage.input_tokens, 4096),
-            );
-          }
-        }
-        if (type === "result") {
-          sdkCostUsd = (msg.total_cost_usd as number) ?? 0;
-          if (msg.is_error) {
-            outcome = "error";
-            error = {
-              code: "provider_error",
-              message: String(msg.result ?? msg.subtype ?? "sdk error"),
-            };
-          }
-          if (typeof msg.result === "string" && msg.result) finalText = msg.result;
-          lastCum = {
-            in: usage.input_tokens,
-            out: usage.output_tokens,
-            cr: usage.cache_read_input_tokens,
-            cw: usage.cache_creation_input_tokens,
-            usd: sdkCostUsd,
-          };
+      } finally {
+        if (controller.signal.aborted) {
+          // Not awaited: the subprocess teardown must not delay the killed outcome.
+          void Promise.resolve()
+            .then(() => iterator.return?.(undefined))
+            .catch(() => undefined);
         }
       }
       void lastCum;

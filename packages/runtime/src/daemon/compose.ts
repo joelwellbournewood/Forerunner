@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
 import { mkdirSync } from "node:fs";
 import {
-  BillingRouter,
+  type BillingSource,
+  type BillingSourceProbe,
   BUILTIN_PRICING,
   CapChecker,
   CostLedger,
@@ -13,6 +14,7 @@ import {
 } from "@forerunner/billing";
 import {
   type email as agentEmail,
+  browser,
   cloudflare,
   desktop,
   type GitHost,
@@ -46,6 +48,7 @@ import {
 } from "@forerunner/platform";
 import {
   type DeviceRow,
+  type JsonObject,
   type JsonValue,
   type NewAuditLog,
   openStore,
@@ -54,7 +57,9 @@ import {
   type StateStore,
 } from "@forerunner/state";
 import { openVault, parseSecretRef, SecretResolver, type Vault } from "@forerunner/vault";
-import { LoopAgentDriver, type RunPricing } from "../agent/loop.ts";
+import { claudeCodeToolNames } from "../agent/cc-tools.ts";
+import { LoopAgentDriver, type RunEvent, type RunPricing } from "../agent/loop.ts";
+import { type QueryLike, SdkAgentDriver } from "../agent/sdk.ts";
 import { ToolRegistry, type ToolSpec } from "../agent/tools.ts";
 import {
   DEFAULT_HEADROOM_PORT,
@@ -72,7 +77,7 @@ import type { DataLimits } from "../data/types.ts";
 import type { EnforcementHooks, HookDeps, RunContext } from "../enforcement/hooks.ts";
 import { KillFileWatcher } from "../enforcement/killfile.ts";
 import { KillSwitch } from "../enforcement/killswitch.ts";
-import type { CapDecision, CapScope, CapsPort } from "../enforcement/ports.ts";
+import type { CapDecision, CapScope, CapsBilling, CapsPort } from "../enforcement/ports.ts";
 import { TokenIssuer } from "../enforcement/token.ts";
 import { EstimateModel, kindOfTask } from "../estimates/model.ts";
 import { HumanRequestExtensionApprovals } from "../extensions/approvals.ts";
@@ -131,27 +136,69 @@ import {
   resolveRegistryDir,
   type SpecialistDef,
   type SpecialistDriver,
+  TOOL_UNMAPPED_AUDIT,
 } from "../registry/index.ts";
 import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
 import { detectSandboxEngine, type EngineDetection } from "../sandbox/detect.ts";
 import type { RunFn, WhichFn } from "../sandbox/types.ts";
+import type { TaskBillingPort } from "../session/billing.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import { type BlockedSyncResult, syncBlockedByFindings } from "../session/findings.ts";
 import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
 import { Scheduler, type StartRequest } from "../session/triggers.ts";
+import {
+  describePlanAllowance,
+  PLAN_USD_MONTHLY_ENV,
+  type PlanAllowance,
+  resolvePlanAllowance,
+} from "../setup/plan-allowance.ts";
 import { readConfig, SECRET_NAMES, type SetupConfig } from "../setup/wizard.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 import { readUpdateConfig, UpdateConfig } from "../update/config.ts";
 import type { UpdateManager } from "../update/install.ts";
 import type { Restarter } from "../update/ports.ts";
 import { SchemaSync } from "../update/sync.ts";
-import { pricingFor, StateLedgerStore, stateSources } from "../wiring/billing-ports.ts";
+import {
+  buildVoiceRegistry,
+  type VoicePreferences,
+  VoiceSessions,
+  vaultHasSecret,
+  voicePreferences,
+} from "../voice/index.ts";
+import {
+  type AudioSink,
+  type LatencyTargets,
+  type SttProvider,
+  type TtsProvider,
+  VoiceProviderRegistry,
+} from "../voice/pkg.ts";
+import {
+  RouterTaskBilling,
+  sdkHostCommandsEnabled,
+  seedBillingSources,
+} from "../wiring/billing-pick.ts";
+import {
+  credentialFor,
+  pricingFor,
+  StateLedgerStore,
+  stateSources,
+} from "../wiring/billing-ports.ts";
+import {
+  BROWSER_CAPABILITY_NAME,
+  type BrowserMode,
+  browserBindingResolver,
+  browserModeFor,
+  browserPresence,
+  browserSettingsOf,
+  type CapabilityPresence,
+} from "../wiring/browser-ports.ts";
 import {
   BusIndicator,
   desktopBindingResolver,
   GuardedAllowlistStore,
   UnavailableDesktopAdapter,
 } from "../wiring/desktop-ports.ts";
+import { type AgentEmailPorts, agentEmailPorts, emailPresence } from "../wiring/email-ports.ts";
 import { readEffectiveModelConfig } from "../wiring/model-config.ts";
 import {
   AuditedNotificationHumans,
@@ -272,6 +319,49 @@ export interface ComposeOptions {
     heartbeatMs?: number;
     deviceName?: string;
   };
+  /**
+   * Per-task billing and the Agent SDK path (ADR 0044). `personalRunner`: whether this
+   * install is the human's own runner (the PC: true; `FORERUNNER_RUNNER_PERSONAL=0` says no);
+   * `probe` replaces the vault-and-ledger probe (tests); `hostCommands` lets `cc:Bash` run
+   * where the Claude Code subprocess runs (`FORERUNNER_SDK_HOST_COMMANDS=1`; default off);
+   * `sdkQuery` replaces the SDK's `query` so a test never spawns Claude Code.
+   */
+  billing?: {
+    personalRunner?: boolean;
+    probe?: BillingSourceProbe;
+    hostCommands?: boolean;
+    /** The subscription's plan allowance in USD per month, ahead of the environment and `config.json`. */
+    planUsdMonthly?: number;
+  };
+  sdkQuery?: QueryLike;
+  /**
+   * The sandboxed browser (ADR 0047): `mode` ahead of `FORERUNNER_BROWSER_MODE` and the
+   * Chromium probe (`static` never launches Chromium: the page reader over HTTP; tests pass
+   * it), `fetch` the static mode's fetch (tests reach their loopback servers; default
+   * `fetchImpl`, else `globalThis.fetch`), `launchTimeoutMs` Playwright's launch limit.
+   */
+  browser?: {
+    mode?: BrowserMode;
+    fetch?: browser.FetchLike;
+    launchTimeoutMs?: number;
+  };
+  /**
+   * Voice (spec O; ADR 0012, ADR 0048). Production registers the local helpers and the cloud
+   * providers by secret reference (`buildVoiceRegistry`) and prefers the names in
+   * `FORERUNNER_VOICE_STT` / `FORERUNNER_VOICE_TTS`; tests inject the fake providers (`stt`,
+   * `tts`) or a whole `registry`, and a `sink` in place of the paced one. `storeAudio`
+   * (`FORERUNNER_VOICE_STORE_AUDIO=1`) writes WAVs under `<data>/voice/<session>`; off by default.
+   */
+  voice?: {
+    stt?: SttProvider;
+    tts?: TtsProvider;
+    registry?: VoiceProviderRegistry;
+    preferred?: VoicePreferences;
+    sink?: (clock: Clock) => AudioSink;
+    storeAudio?: boolean;
+    targets?: Partial<LatencyTargets>;
+    maxSessions?: number;
+  };
 }
 
 /** The runtime bus's `session` events as `startSession` emits them. */
@@ -338,10 +428,17 @@ export interface RuntimeApp {
   providers: ProviderRegistry;
   provider: ModelProvider | null;
   registry: Registry;
-  /** The driver specialists run on; decides how the registry's `cc:` tool names are mapped (ADR 0043). */
+  /**
+   * The driver specialists run on by default; decides how the registry's `cc:` tool names
+   * are mapped (ADR 0043). Per task the executor may pick the other one (ADR 0044): a task
+   * billed to a subscription runs on the Agent SDK driver with the names as written.
+   */
   specialistDriver: SpecialistDriver;
-  /** A runnable registry entry as the executor sees it: `allowed_tools` mapped for `specialistDriver`. */
-  specialists: (name: string) => SpecialistSpec | undefined;
+  /**
+   * A runnable registry entry as the executor sees it: `allowed_tools` mapped for
+   * `specialistDriver`, or for the driver named as the second argument.
+   */
+  specialists: (name: string, driver?: SpecialistDriver) => SpecialistSpec | undefined;
   tools: ToolRegistry;
   executor: TaskExecutor;
   runner: SessionRunner;
@@ -350,7 +447,25 @@ export interface RuntimeApp {
   gitHost: GitHost;
   human: { id: string; name: string; timezone: string };
   agent: { id: string; name: string };
+  /**
+   * The source the loop paths are billed to (the critic, chat, the model watch's evals): the
+   * API key when the vault has one, else the subscription, else the fake source. Task runs
+   * pick their own source through `billing.pick` (ADR 0044).
+   */
   billingSourceId: string;
+  /**
+   * Per-task billing (ADR 0044): the human's sources (both when both credentials exist), the
+   * router's pick per task, and the Agent SDK driver a subscription pick runs on.
+   */
+  billing: {
+    sources: () => Promise<BillingSource[]>;
+    pick: TaskBillingPort;
+    sdk: SdkAgentDriver;
+    /** Whether `cc:Bash` is granted on the SDK path (see `ComposeOptions.billing.hostCommands`). */
+    hostCommands: boolean;
+    /** The plan allowance the subscription row was seeded with, and where it came from. */
+    planAllowance: PlanAllowance;
+  };
   chfPerUsd: () => number;
   /** Context layer per session: policy, Headroom probe, pipeline, savings (ADR 0003). */
   context: ContextManager;
@@ -370,6 +485,11 @@ export interface RuntimeApp {
   memory: MemoryLoop;
   /** The command registry (spec Q): the only way chat, voice, the UI and the phone change state. */
   commands: CommandLoop;
+  /**
+   * Voice sessions (spec O; ADR 0048): the voice loop over the conversation agent behind the
+   * `/voice` routes; `status()` says whether a provider pair is usable and why not.
+   */
+  voice: VoiceSessions;
   /** Signed updates (spec M) over this process's store. */
   updates: UpdateManager;
   updateConfig: UpdateConfig;
@@ -434,7 +554,28 @@ export interface RuntimeApp {
     watcher: RemoteCommandWatcher | null;
     presence: DesktopPresence | null;
   };
-  /** The tool registry a run starts with: built-in tools plus the bridged extension tools. */
+  /**
+   * The sandboxed browser and agent email inside the daemon (spec L.2, L.3; ADR 0047): the
+   * browser mode and session manager, the email ports the tools and the notifier share, the
+   * presence switches (`enabled()`: whether the next run is offered the tools), the project
+   * site allowlists in force, and `refresh()`, which re-reads all of them (every session
+   * start does).
+   */
+  capabilities: {
+    browser: {
+      mode: BrowserMode;
+      manager: browser.BrowserSessionManager;
+      presence: CapabilityPresence;
+    };
+    email: { ports: AgentEmailPorts; presence: CapabilityPresence };
+    /** Every project's `settings.browser.allowedDomains`, as read at the last refresh. */
+    browserDomains(): readonly string[];
+    refresh(): Promise<void>;
+  };
+  /**
+   * The tool registry a run starts with: the built-in tools, the capability tools whose
+   * presence switch is on, plus the bridged extension tools.
+   */
   toolsForRun(): ToolRegistry;
   /**
    * Apply answered human requests: extension grants, model watch decisions, memory
@@ -475,6 +616,13 @@ export interface SpecialistSpecOptions {
   commands?: (d: SpecialistDef) => boolean;
   /** Told at every lookup about each name the loop driver will not offer; never silent. */
   onDropped?: (specialist: string, drop: DroppedTool) => void;
+  /**
+   * Domains added to an entry's own `allowed_domains` at lookup, given the tool names the run
+   * will carry (ADR 0047: an entry that names a browser tool gets the projects' site
+   * allowlists; the session token caps them to the session's project when the run token is
+   * derived, so nothing is widened beyond the session grant).
+   */
+  extraDomains?: (d: SpecialistDef, tools: readonly string[]) => readonly string[];
 }
 
 /**
@@ -486,15 +634,17 @@ export interface SpecialistSpecOptions {
 export function specialistSpecFrom(
   registry: Registry,
   opts: SpecialistSpecOptions,
-): (name: string) => SpecialistSpec | undefined {
-  const driver: SpecialistDriver | undefined = opts?.driver;
-  if (driver !== "loop" && driver !== "sdk") {
+): (name: string, driver?: SpecialistDriver) => SpecialistSpec | undefined {
+  const defaultDriver: SpecialistDriver | undefined = opts?.driver;
+  if (defaultDriver !== "loop" && defaultDriver !== "sdk") {
     throw new ForerunnerError(
       "validation",
       'specialistSpecFrom needs the driver the executor runs specialists on ("loop" or "sdk")',
     );
   }
-  return (name) => {
+  // The second argument is the executor's per-task choice (ADR 0044): a subscription run asks
+  // for the "sdk" form of the same entry; anything else gets the composition's default.
+  return (name, driver = defaultDriver) => {
     const d = registry.specialists.get(name);
     if (!d?.runnable) return undefined;
     let allowedTools = [...d.allowed_tools];
@@ -506,6 +656,7 @@ export function specialistSpecFrom(
       for (const drop of mapping.dropped) opts.onDropped?.(d.name, drop);
       allowedTools = mapping.tools;
     }
+    const extra = opts.extraDomains?.(d, allowedTools) ?? [];
     return {
       name: d.name,
       prompt: d.prompt,
@@ -513,7 +664,9 @@ export function specialistSpecFrom(
       defaultTier: d.default_tier,
       defaultEffort: d.default_effort,
       allowedTools,
-      allowedDomains: d.allowed_domains,
+      allowedDomains: extra.length
+        ? [...new Set([...d.allowed_domains, ...extra])]
+        : d.allowed_domains,
       maxBudgetUsdMicro: Math.round(d.max_budget_usd * 1_000_000),
       maxTurns: d.max_turns,
       timeoutMs: d.timeout_minutes * 60_000,
@@ -521,8 +674,15 @@ export function specialistSpecFrom(
   };
 }
 
-/** The audit row kind for a registry tool the loop driver will not offer (ADR 0043). */
-export const TOOL_UNMAPPED_AUDIT = "registry.tool_unmapped";
+/** The audit row kind for a registry tool a run will not offer (ADR 0043); declared in the registry module. */
+export { TOOL_UNMAPPED_AUDIT };
+
+/**
+ * The audit row kind of an `injection_flagged` run event (ADR 0047): one per run and tool,
+ * `allowed: true` (the content was wrapped as data and ignored, nothing was refused), the
+ * source, the rules and the score in the summaries, never the flagged passages.
+ */
+export const INJECTION_FLAGGED_AUDIT = "injection.flagged";
 
 /**
  * Audit rows for the names `specialistSpecFrom` drops: one row per specialist and tool for the
@@ -593,7 +753,7 @@ class DynamicCaps implements CapsPort {
   async check(
     scope: CapScope,
     estimateUsdMicro: number,
-    opts: { phase: "work" | "review" },
+    opts: { phase: "work" | "review"; billing?: CapsBilling },
   ): Promise<CapDecision> {
     const key = `${scope.humanId}:${scope.projectId ?? ""}`;
     let caps = this.cache.get(key);
@@ -607,13 +767,20 @@ class DynamicCaps implements CapsPort {
       };
       this.cache.set(key, caps);
     }
+    // A subscription run adds the plan level (spec I.1, ADR 0044): the share the run reports
+    // against the source's cap; at 80% of it finish the current task, at the cap stop.
+    const plan = opts.billing?.kind === "subscription" ? opts.billing : undefined;
     const r = await this.checker.check(scope, estimateUsdMicro, {
       phase: opts.phase,
       caps: {
         monthUsdMicro: caps.monthUsdMicro > 0 ? caps.monthUsdMicro : Number.MAX_SAFE_INTEGER,
         projectUsdMicro: caps.projectUsdMicro > 0 ? caps.projectUsdMicro : undefined,
         sessionUsdMicro: Number.MAX_SAFE_INTEGER, // the session cap is enforced in-process by SessionBudget
+        ...(plan?.planShareCap !== undefined ? { planShareCap: plan.planShareCap } : {}),
       },
+      ...(plan && typeof plan.planUsageShare === "number"
+        ? { planUsageShare: plan.planUsageShare, sourceKind: "subscription" as const }
+        : {}),
     });
     return {
       decision: r.decision,
@@ -712,50 +879,45 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   }
   if (provider) providers.register(provider);
 
-  // Billing: sources from the store (seeded from the vault on first run), caps, ledger, pricing.
-  const sources = await stateSources(store)(human.id);
-  let billingSourceId = sources[0]?.id ?? "";
-  if (!billingSourceId) {
-    const hasOauth = await vault.has(SECRET_NAMES.anthropicOauth);
-    const hasKey = await vault.has(SECRET_NAMES.anthropic);
-    if (hasOauth)
-      billingSourceId = (
-        await store.billingSource.insert({
-          human_id: human.id,
-          kind: "subscription",
-          label: "Claude subscription",
-          credential_ref: SECRET_NAMES.anthropicOauth,
-          limits: { planShareCap: 0.95 },
-          enabled: true,
-          priority: 1,
-        })
-      ).id;
-    else if (hasKey)
-      billingSourceId = (
-        await store.billingSource.insert({
-          human_id: human.id,
-          kind: "api_key",
-          label: "Anthropic API key",
-          credential_ref: SECRET_NAMES.anthropic,
-          limits: {},
-          enabled: true,
-          priority: 2,
-        })
-      ).id;
-    else
-      billingSourceId = (
-        await store.billingSource.insert({
-          human_id: human.id,
-          kind: "fake",
-          label: "No credential (fake provider)",
-          credential_ref: "none",
-          limits: {},
-          enabled: true,
-          priority: 9,
-        })
-      ).id;
-  }
-  void BillingRouter;
+  // Billing (ADR 0044): the human's sources from the vault, both when both credentials exist
+  // (a `subscription` row for the OAuth token, an `api_key` row for the key; a `fake` row only
+  // when nothing else exists), the pick per task through the router (below), and the source
+  // the loop paths (critic, chat, evals) are billed to: the one the Messages provider above
+  // authenticates with, which is the key when there is one.
+  // The plan allowance (`limits.planUsdMicro`): the option, the environment, config.json,
+  // else the default, so the plan share cap is never silently absent.
+  const planAllowance = resolvePlanAllowance([
+    { value: opts.billing?.planUsdMonthly, origin: "option" },
+    { value: env[PLAN_USD_MONTHLY_ENV], origin: "env" },
+    { value: config?.subscription?.planUsdMonthly, origin: "config" },
+  ]);
+  const billingRows = await seedBillingSources({
+    store,
+    vault,
+    humanId: human.id,
+    env,
+    planAllowance,
+  });
+  const rowFor = (ref: string) => billingRows.find((r) => r.credential_ref === ref && r.enabled);
+  const hasKey = await vault.has(SECRET_NAMES.anthropic);
+  const hasOauth = await vault.has(SECRET_NAMES.anthropicOauth);
+  const billingSourceId =
+    (hasKey ? rowFor(SECRET_NAMES.anthropic)?.id : undefined) ??
+    (hasOauth ? rowFor(SECRET_NAMES.anthropicOauth)?.id : undefined) ??
+    billingRows.find((r) => r.enabled)?.id ??
+    billingRows[0]?.id ??
+    "";
+  const personalRunner =
+    opts.billing?.personalRunner ?? env.FORERUNNER_RUNNER_PERSONAL?.trim() !== "0";
+  const taskBilling = new RouterTaskBilling({
+    store,
+    vault,
+    clock,
+    humanId: human.id,
+    personalRunner,
+    ...(opts.billing?.probe ? { probe: opts.billing.probe } : {}),
+  });
+  const sdkHostCommands = sdkHostCommandsEnabled(env, opts.billing?.hostCommands);
   const rates =
     opts.rates ?? new FixedRateSource(opts.chfPerUsd ?? Number(env.FORERUNNER_CHF_PER_USD ?? 0.8));
   let lastRate = opts.chfPerUsd ?? 0.8;
@@ -906,11 +1068,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   };
   const hooks = new DaemonHooks(hookDeps, gate, extensions);
   const driver = new LoopAgentDriver({ hooks, kill, clock });
-  // The driver specialists run on (ADR 0004, ADR 0043). The executor runs the in-process loop
-  // driver built above; the Agent SDK driver (the subscription path) has no session path yet.
-  // The registry names Claude Code tools and each driver maps them, so the choice is made
-  // here, next to the driver, and `specialistSpecFrom` follows it: "loop" maps `cc:` names to
-  // the built-ins, "sdk" passes them through unchanged.
+  // The Agent SDK driver (ADR 0004): the same hooks, kill switch and clock; `queryImpl` is
+  // the test seam so no test spawns Claude Code. A task picks it when its billing source is a
+  // subscription (ADR 0044); the credential is read from the vault at that run's start.
+  const sdkDriver = new SdkAgentDriver({
+    hooks,
+    kill,
+    clock,
+    ...(opts.sdkQuery ? { queryImpl: opts.sdkQuery } : {}),
+  });
+  // The driver specialists run on by default (ADR 0004, ADR 0043): the in-process loop
+  // driver built above, on an API-style source. The registry names Claude Code tools and
+  // each driver maps them, so the default is set here, next to the drivers, and
+  // `specialistSpecFrom` follows it: "loop" maps `cc:` names to the built-ins, "sdk" passes
+  // them through unchanged. Per task the executor asks for the "sdk" form when the billing
+  // pick names a subscription (ADR 0044).
   const specialistDriver: SpecialistDriver = "loop";
 
   // Registry and tools. A run starts with the built-in tools plus whatever the enabled
@@ -993,12 +1165,107 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   desktopController.attachKillSwitch(kill);
   desktopController.attachExtensionRegistry(extensions);
   desktop.registerDesktopTools(tools, desktopController);
-  const registry = loadRegistry(registryDir, { toolNames: tools.names() });
+  // Sandboxed browser (spec L.2, S.30, S.31; ADR 0014, ADR 0047): one session manager per
+  // daemon behind the eight browser_* tools. The binding per run is the run token's domains
+  // (the hooks refused a URL outside them already; the session policy covers subresources,
+  // redirects and WebSockets), the project's block list and autonomy level. Chromium through
+  // Playwright when the probe finds one, else the static page reader over HTTP with the same
+  // policy, the same hop cap and the same extractor (`FORERUNNER_BROWSER_MODE` decides too).
+  // The tools are offered to a run only while the `browser` capability row is installed and
+  // enabled (added from the catalog, approved in the inbox); the gate refuses a run in flight
+  // when it is toggled off, and the manager revokes its sessions at once.
+  const browserProbe = browser.resolveChromiumExecutable(env);
+  const browserMode = browserModeFor(env, browserProbe, opts.browser?.mode);
+  const browserBinding = browserBindingResolver({
+    claims: (runId) => tokens.claimsForRun(runId),
+    projects: store.project,
+    humans: store.human,
+  });
+  const browserManager = new browser.BrowserSessionManager({
+    binding: browserBinding,
+    approvals: new browser.HumanRequestApprovalPort(store.humanRequest, clock),
+    audit: ports.audit,
+    clock,
+    launch: {
+      appDirs: { env },
+      ...(browserProbe.executablePath ? { executablePath: browserProbe.executablePath } : {}),
+      timeoutMs: opts.browser?.launchTimeoutMs ?? 60_000,
+    },
+  });
+  browserManager.attachKillSwitch(kill);
+  const realBrowserTools = browser.browserTools(browserManager);
+  const browserToolSpecs: ToolSpec[] =
+    browserMode === "chromium"
+      ? realBrowserTools
+      : browser.staticBrowserTools(realBrowserTools, {
+          binding: browserBinding,
+          audit: ports.audit,
+          clock,
+          fetch: opts.browser?.fetch ?? opts.fetchImpl,
+        });
+  const browserToolNames = new Set(browserToolSpecs.map((t) => t.name));
+  const browserOn = browserPresence(store.extension);
+  extensions.onEvent((e) => {
+    if (e.name !== BROWSER_CAPABILITY_NAME) return;
+    browserOn.refresh().catch((err: unknown) => {
+      logger.warn("browser capability presence not refreshed", { error: errorMessage(err) });
+    });
+    if (e.type === "extension.disabled" || e.type === "extension.removed") {
+      browserManager
+        .revoke(
+          "all",
+          `${BROWSER_CAPABILITY_NAME} ${e.type === "extension.removed" ? "removed" : "disabled"} in the Extensions panel`,
+        )
+        .catch((err: unknown) => {
+          logger.warn("browser revoke after extension change failed", { error: errorMessage(err) });
+        });
+    }
+  });
+  // Agent email (spec S.15 to S.29; ADR 0013, ADR 0047): the four email_* tools over the
+  // capability's ports (settings row, identity, sent log, approvals, policy, the mailbox
+  // opened by reference from the vault), which the notifier's email channel shares below.
+  // The mode, the caps and the blocked content are the policy's per call; the tools are
+  // offered to a run only while the agent's settings name a mailbox and the mode is not off.
+  const emailPorts = agentEmailPorts({
+    store,
+    clock,
+    vault,
+    agentId: agent.id,
+    ...(opts.notifications?.mailboxFactory
+      ? { mailboxFactory: opts.notifications.mailboxFactory }
+      : {}),
+  });
+  const emailOn = emailPresence(emailPorts);
+  // The projects' site allowlists (`settings.browser.allowedDomains`), read at compose and at
+  // every session start: the session grant carries its project's; a registry entry that
+  // names a browser tool gets the union, which the derived run token caps to the session's.
+  let browserDomains: readonly string[] = [];
+  const refreshBrowserDomains = async (): Promise<void> => {
+    const projects = await store.project.list({}, { limit: 1000 });
+    browserDomains = [
+      ...new Set(projects.flatMap((p) => browserSettingsOf(p.settings).allowedDomains)),
+    ].sort();
+  };
+  const refreshCapabilities = async (): Promise<void> => {
+    await Promise.all([browserOn.refresh(), emailOn.refresh(), refreshBrowserDomains()]);
+  };
+  await refreshCapabilities();
+  /** The capability tools the next run is offered: those whose presence switch is on now. */
+  const capabilityTools = (): ToolSpec[] => [
+    ...(browserOn.enabled() ? browserToolSpecs : []),
+    ...(emailOn.enabled() ? emailPorts.tools : []),
+  ];
+  const registry = loadRegistry(registryDir, {
+    toolNames: [...tools.names(), ...browserToolNames, ...emailPorts.tools.map((t) => t.name)],
+  });
   const toolsForRun = (): ToolRegistry => {
     const out = new ToolRegistry();
     for (const name of tools.names()) {
       const t = tools.get(name);
       if (t) out.register(t);
+    }
+    for (const t of capabilityTools()) {
+      if (!out.get(t.name)) out.register(t);
     }
     for (const t of extensions.bridgedTools()) {
       if (!out.get(t.name)) out.register(t);
@@ -1047,6 +1314,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // host either way, which is the promise `commands` stands for.
     commands: () => true,
     onDropped: droppedTools.onDropped,
+    extraDomains: (_d, mapped) =>
+      mapped.some((t) => browserToolNames.has(t)) ? browserDomains : [],
   });
   for (const d of registry.runnableSpecialists()) specialists(d.name);
   await droppedTools.flush();
@@ -1116,6 +1385,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       sandbox: sandboxPort,
       context,
       billingSourceId,
+      // Per-task billing (ADR 0044): the router picks the source; a subscription pick runs on
+      // the SDK driver with the OAuth token read from the vault by the source's reference,
+      // priced from the table in force for the Anthropic model id the ladder names.
+      billing: taskBilling,
+      sdk: {
+        driver: sdkDriver,
+        credential: (source) => credentialFor(source, vault),
+        workRoot: join(dirs.worktrees, "sdk-runs"),
+        pricing: (modelId) => pricingFor(modelId, pricingTable),
+        hostCommands: sdkHostCommands,
+      },
       specialists,
       memory,
       modelConfig: () => modelConfig.get(),
@@ -1322,7 +1602,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     vault,
     agentId: agent.id,
     humanId: human.id,
-    mailboxFactory: opts.notifications?.mailboxFactory,
+    ports: emailPorts,
   });
   // Only the `/events` streams that show toasts count as shells (`shells.ts`): the UI's own
   // EventSource, the phone's web view and a browser tab receive the frame but show nothing,
@@ -1424,16 +1704,77 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     if (e.type !== "critic.verdict" && e.type !== "critic.session_review") return;
     notifyLater(escalate(e, p), `escalation ${String(p.reviewId ?? e.type)}`);
   });
+  // Prompt injection seen and ignored (spec S.2, S.25; ADR 0047): every `injection_flagged`
+  // run event of either driver (the hooks scanned an untrusted tool result and wrapped it as
+  // data) is one audit row and one urgent notification, once per run and tool. The report's
+  // rules, counts and score travel; the flagged passages never leave the session log.
+  const flaggedByTask = new Map<string, Set<string>>();
+  const flagInjection = async (
+    taskId: string,
+    ev: Extract<RunEvent, { type: "injection_flagged" }>,
+  ): Promise<void> => {
+    // One run of a task at a time: the task's set is the run's, cleared at its `run_end`.
+    const seen = flaggedByTask.get(taskId) ?? new Set<string>();
+    if (seen.has(ev.tool)) return;
+    seen.add(ev.tool);
+    flaggedByTask.set(taskId, seen);
+    const runs = await store.run.forTask(taskId);
+    const run = runs.find((r) => r.outcome === "running") ?? runs[runs.length - 1];
+    const task = await store.task.get(taskId);
+    const rules = [...new Set(ev.report.matches.map((m) => m.rule))].sort();
+    await store.auditLog.append({
+      session_id: run?.session_id ?? null,
+      run_id: run?.id ?? null,
+      agent_id: agent.id,
+      human_id: human.id,
+      tool: INJECTION_FLAGGED_AUDIT,
+      input_summary: `${ev.tool}: ${ev.report.source}`,
+      result_summary: `ignored: ${ev.report.matches.length} instruction-like passage(s), rules ${rules.join(", ")}, score ${ev.report.score}; the human was notified`,
+      allowed: true,
+      occurred_at: clock.nowIso(),
+    });
+    await notifications.injectionFlagged(human.id, ev.report, {
+      origin: ev.tool,
+      sessionId: run?.session_id,
+      projectId: task?.project_id ?? null,
+    });
+  };
+  events.on("run", (e: { taskId: string; ev: RunEvent }) => {
+    if (e.ev.type === "run_end") {
+      // A retry of the task is a new run: its flags count again.
+      flaggedByTask.delete(e.taskId);
+      return;
+    }
+    if (e.ev.type !== "injection_flagged") return;
+    notifyLater(flagInjection(e.taskId, e.ev), `injection flagged in ${e.ev.tool}`);
+  });
   const agentNameOf = async (agentId: string): Promise<string | undefined> =>
     agentId === agent.id ? agent.name : (await store.agent.get(agentId))?.name;
 
-  const sessionGrant = (projectId?: string) => ({
-    allowedTools: [...tools.names(), ...extensions.bridgedTools().map((t) => t.name)],
+  // The session grant (ADR 0044): the loop tools, the bridged tools and, when a subscription
+  // source exists, the Claude Code names, so a run token derived for the SDK path can carry
+  // the registry's `cc:` names (a derived token only narrows); the loop driver never offers a
+  // `cc:` name, so an install without the OAuth token declares none. The SDK work root sits
+  // under the worktrees root, which the grant's paths cover.
+  // The capability tools present at this start join the grant; the project's own site
+  // allowlist (`settings.browser.allowedDomains`) joins the domains (ADR 0047).
+  const sessionGrant = (project: { settings: JsonObject } | null) => ({
+    allowedTools: [
+      ...tools.names(),
+      ...capabilityTools().map((t) => t.name),
+      ...extensions.bridgedTools().map((t) => t.name),
+      ...(hasOauth ? claudeCodeToolNames() : []),
+    ],
     allowedPaths: [dirs.worktrees],
-    allowedDomains: [hostOf(config?.githubApiBase ?? "https://api.github.com"), "github.com"],
+    allowedDomains: [
+      ...new Set([
+        hostOf(config?.githubApiBase ?? "https://api.github.com"),
+        "github.com",
+        ...browserSettingsOf(project?.settings).allowedDomains,
+      ]),
+    ],
     grantedSecrets: ghToken ? [SECRET_NAMES.github] : [],
     maxDepth: 2,
-    ...(projectId ? {} : {}),
   });
   const startSession = async (req: StartRequest) => {
     // The model watch and the memory consolidation are local jobs (this install's providers
@@ -1444,6 +1785,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     if (!provider)
       throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
     const project = req.projectId ? await store.project.mustGet(req.projectId) : null;
+    // What the run is offered is decided now: the capability rows and settings as they stand.
+    await refreshCapabilities();
     // The cap the command registry wrote (a temporary override while its window is open, else
     // the permanent setting), so a session the scheduler starts honours "give it 20 francs
     // tonight" exactly as one started by the command (spec Q.12).
@@ -1459,7 +1802,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       trigger: req.trigger,
       budgetCapUsdMicro: budgetUsdMicro,
       appVersion,
-      grant: sessionGrant(req.projectId),
+      grant: sessionGrant(project),
       onEvent: (type, payload) =>
         events.emit("session", { type, payload, agentId: req.agentId, projectId: req.projectId }),
     });
@@ -1559,6 +1902,32 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         commands,
       })
     : null;
+  // Voice (spec O; ADR 0012, ADR 0048): the loop over the conversation agent, behind the
+  // daemon's /voice routes. The providers are the local helpers and the cloud ones by secret
+  // reference; none is probed here. Without a usable pair, or without a model credential,
+  // `voice.status()` reports why and a session start is refused with `unavailable`.
+  const voiceRegistry =
+    opts.voice?.registry ??
+    (opts.voice?.stt || opts.voice?.tts
+      ? injectedVoiceRegistry(opts.voice.stt, opts.voice.tts)
+      : buildVoiceRegistry({ env, vault, clock }));
+  const voice = new VoiceSessions({
+    registry: voiceRegistry,
+    preferred: opts.voice?.preferred ?? voicePreferences(env),
+    hasSecret: vaultHasSecret(vault),
+    conversation: () => conversation,
+    commands,
+    store,
+    clock,
+    humanId: human.id,
+    agentId: agent.id,
+    ...(opts.voice?.sink ? { sink: opts.voice.sink } : {}),
+    storeAudio: opts.voice?.storeAudio ?? env.FORERUNNER_VOICE_STORE_AUDIO?.trim() === "1",
+    audioDir: join(dirs.data, "voice"),
+    env,
+    ...(opts.voice?.targets ? { targets: opts.voice.targets } : {}),
+    ...(opts.voice?.maxSessions ? { maxSessions: opts.voice.maxSessions } : {}),
+  });
   // Background services: the daemon starts them; a CLI one-shot (startServices: false) only
   // uses the composed objects and never connects a connector or ticks the scheduler.
   const services = opts.startServices !== false;
@@ -1634,6 +2003,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     agent: agent.name,
     critic: criticAgent.name,
     sandbox: sandboxDetection.engine,
+    browser: browserMode,
+    email: emailOn.enabled() ? "on" : "off",
+    billingSources: billingRows.filter((r) => r.enabled).map((r) => r.kind),
+    planAllowance: describePlanAllowance(planAllowance),
+    sdkHostCommands,
     bridgedTools: extensions.bridgedTools().length,
     mirrors: mirrorSchedules.size,
     services,
@@ -1664,6 +2038,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     human: { id: human.id, name: human.name, timezone: human.timezone },
     agent: { id: agent.id, name: agent.name },
     billingSourceId,
+    billing: {
+      sources: () => stateSources(store)(human.id),
+      pick: taskBilling,
+      sdk: sdkDriver,
+      hostCommands: sdkHostCommands,
+      planAllowance,
+    },
     chfPerUsd,
     context,
     costLedger,
@@ -1671,6 +2052,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     criticAgent: { id: criticAgent.id, name: criticAgent.name },
     memory,
     commands,
+    voice,
     events,
     appVersion,
     startedAt: clock.now(),
@@ -1697,12 +2079,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       watcher: remoteWatcher,
       presence,
     },
+    capabilities: {
+      browser: { mode: browserMode, manager: browserManager, presence: browserOn },
+      email: { ports: emailPorts, presence: emailOn },
+      browserDomains: () => browserDomains,
+      refresh: refreshCapabilities,
+    },
     toolsForRun,
     syncApprovals,
     refreshMirrorSchedules,
     mirrorSync,
     async close() {
+      await voice.close();
       remoteWatcher?.stop();
+      await browserManager.closeAll().catch((e: unknown) => {
+        logger.warn("browser sessions did not close cleanly", { error: errorMessage(e) });
+      });
       presence?.stop();
       scheduler.stop();
       stopNotifier();
@@ -1940,4 +2332,12 @@ function unavailableProvider(): ModelProvider {
     },
     complete: async () => fail(),
   };
+}
+
+/** A registry of the injected providers only (tests): a missing side makes voice unavailable. */
+function injectedVoiceRegistry(stt?: SttProvider, tts?: TtsProvider): VoiceProviderRegistry {
+  const registry = new VoiceProviderRegistry();
+  if (stt) registry.registerStt(stt);
+  if (tts) registry.registerTts(tts);
+  return registry;
 }

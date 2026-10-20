@@ -3,15 +3,16 @@
  * leave an audit row, and the email sender over the agent's own mailbox (the agent email
  * capability's policy applies). Nothing here decides routing or urgency; that is the notifier's.
  */
-import { email as agentEmail } from "@forerunner/capabilities";
+import type { email as agentEmail } from "@forerunner/capabilities";
 import { type Clock, ForerunnerError } from "@forerunner/platform";
 import type { HumanRow, JsonObject, StateStore } from "@forerunner/state";
-import { SecretResolver, type Vault } from "@forerunner/vault";
+import type { Vault } from "@forerunner/vault";
 import type { EmailPort } from "../notifications/channels/email.ts";
 import type { Channel, ChannelContext, ChannelResult } from "../notifications/channels/types.ts";
 import type { HumanLookup } from "../notifications/notifier.ts";
 import { readPrefs } from "../notifications/prefs.ts";
 import type { ChannelName, Notification } from "../notifications/types.ts";
+import { type AgentEmailPorts, agentEmailPorts, storedEmailConfig } from "./email-ports.ts";
 
 /** Audit row of every notification preference write (the keys that changed, never the values). */
 export const NOTIFY_PREFS_TOOL = "notify.prefs";
@@ -126,6 +127,11 @@ export interface NotificationEmailDeps {
   humanId: string;
   /** Tests hand in a fake mailbox; production opens `ImapSmtpMailbox` from the settings. */
   mailboxFactory?: (config: agentEmail.MailboxConfig) => Promise<agentEmail.Mailbox>;
+  /**
+   * The capability's ports when the composition built them already (the `email_*` tools
+   * share them, ADR 0047); otherwise built here over the same store and vault.
+   */
+  ports?: AgentEmailPorts;
 }
 
 /**
@@ -140,53 +146,13 @@ export interface NotificationEmailDeps {
 export async function notificationEmailPort(
   deps: NotificationEmailDeps,
 ): Promise<EmailPort | null> {
-  const row = await deps.store.extension.byName(
-    agentEmail.EMAIL_EXTENSION_KIND,
-    agentEmail.emailExtensionName(deps.agentId),
-  );
-  if (!row) return null;
-  const parsed = agentEmail.AgentEmailConfigSchema.safeParse(row.config);
-  const configured = parsed.success ? parsed.data.settings.mailbox : null;
+  const configured = (await storedEmailConfig(deps.store.extension, deps.agentId))?.settings
+    .mailbox;
   if (!configured) return null;
-
-  const settings = new agentEmail.EmailSettingsStore(deps.store.extension, deps.clock);
-  const identity = new agentEmail.StoreIdentityLookup(deps.store.agent, deps.store.human);
-  const sentLog = new agentEmail.AuditSentLog(deps.store.auditLog, deps.clock);
-  const approvals = new agentEmail.HumanRequestApprovalPort(deps.store.humanRequest);
-  let mailbox: Promise<agentEmail.Mailbox> | null = null;
-  const open = async (): Promise<agentEmail.Mailbox> => {
-    const current = (await settings.get(deps.agentId)).settings.mailbox ?? configured;
-    if (deps.mailboxFactory) return deps.mailboxFactory(current);
-    const granted = new Set<string>();
-    for (const ref of [current.imap?.passwordRef, current.smtp?.passwordRef]) {
-      if (ref) granted.add(ref.replace(/^secret:/, ""));
-    }
-    return new agentEmail.ImapSmtpMailbox({
-      config: current,
-      secrets: new SecretResolver(deps.vault),
-      granted,
-      clock: deps.clock,
-    });
-  };
-  const mailboxFor = (): Promise<agentEmail.Mailbox> => {
-    mailbox ??= open().catch((e: unknown) => {
-      mailbox = null;
-      throw e;
-    });
-    return mailbox;
-  };
-  const policy = new agentEmail.EmailPolicy({
-    settings,
-    identity,
-    sentLog,
-    approvals,
-    mailboxFor,
-    clock: deps.clock,
-    events: new agentEmail.StoreEventSink(deps.store.event, deps.agentId),
-  });
+  const ports = deps.ports ?? agentEmailPorts(deps);
   return {
     async sendEmail(to, subject, body) {
-      const outcome = await policy.send(
+      const outcome = await ports.policy.send(
         { to: [to], subject, text: body },
         { agentId: deps.agentId, humanId: deps.humanId, kind: "send" },
       );

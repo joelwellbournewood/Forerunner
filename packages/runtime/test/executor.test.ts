@@ -1,4 +1,5 @@
-import { ForerunnerError, Logger, type LogRecord } from "@forerunner/platform";
+import { tmpdir } from "node:os";
+import { ForerunnerError, join, Logger, type LogRecord } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
 import { describe, expect, it, vi } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
@@ -6,9 +7,13 @@ import { SessionBudget } from "../src/enforcement/budget.ts";
 import {
   LoopTaskExecutor,
   RUN_PERSIST_FAILED_AUDIT_TOOL,
+  type RunSandboxPort,
   type SpecialistSpec,
 } from "../src/session/executor.ts";
 import { flatPricing, harness, issue, registry, ScriptedProvider, until } from "./helpers.ts";
+
+// Credential-shaped, built by concatenation so no scanner sees a token. // not-a-secret
+const KEY_LIKE = ["sk-ant-api03-", "leaked", "0".repeat(40)].join(""); // not-a-secret
 
 const coder: SpecialistSpec = {
   name: "coder",
@@ -419,5 +424,75 @@ describe("LoopTaskExecutor: the Run row (D.5, D.19)", () => {
       off();
       await store.close();
     }
+  });
+});
+
+describe("LoopTaskExecutor: error messages before the store", () => {
+  it("redacts a thrown error's message before it becomes the Run row's error artifact", async () => {
+    const h = harness();
+    const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
+    const w = await seed(store);
+    // A lease that fails quoting something credential-shaped (a tool's output, an env dump).
+    const port: RunSandboxPort = {
+      open: async () => {
+        throw new ForerunnerError("internal", `sandbox start failed: key ${KEY_LIKE}`);
+      },
+    };
+    const exec = new LoopTaskExecutor({
+      store,
+      clock: h.clock,
+      tokens: h.tokens,
+      driver: new LoopAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock }),
+      provider: new ScriptedProvider([{ text: "never reached" }], h.clock),
+      pricing: flatPricing,
+      tools: registry(),
+      billingSourceId: "bs",
+      specialists: (n) => (n === "coder" ? coder : undefined),
+      sandbox: port,
+      worktreeFor: async () => join(tmpdir(), "worktree-never-used"),
+    });
+    const token = issue(h, {
+      agentId: w.agent,
+      ownerHumanId: w.human,
+      projectId: w.project,
+      allowedTools: ["echo", "read_file"],
+      budgetUsdMicro: 5_000_000,
+      sessionId: w.session.id,
+    });
+    const budget = new SessionBudget({
+      sessionId: w.session.id,
+      budgetUsdMicro: 5_000_000,
+      stepCap: 100,
+      deadlineMs: h.clock.now() + 3_600_000,
+      reserveShare: 0.2,
+    });
+    let err: unknown = null;
+    try {
+      await exec.execute({
+        task: w.task,
+        session: w.session,
+        token,
+        budget,
+        item: {
+          taskId: w.task.id,
+          title: w.task.title,
+          specialist: "coder",
+          estimateUsdMicro: 300_000,
+        },
+        signal: new AbortController().signal,
+      });
+    } catch (e) {
+      err = e;
+    }
+    // The error still reaches the runner as thrown...
+    expect(err).toBeInstanceOf(ForerunnerError);
+    // ...and the Run row is closed as an error whose artifact never carries the value.
+    const run = (await store.run.forTask(w.task.id))[0];
+    expect(run?.outcome).toBe("error");
+    const artifact = run?.artifacts[0] as { error: string };
+    expect(artifact.error).toContain("sandbox start failed");
+    expect(artifact.error).toContain("[REDACTED]");
+    expect(JSON.stringify(run)).not.toContain(KEY_LIKE);
+    await store.close();
   });
 });

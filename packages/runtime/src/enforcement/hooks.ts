@@ -12,8 +12,27 @@ import type { Usage } from "../provider/types.ts";
 import { type AutonomyDecision, decideAutonomy } from "./autonomy.ts";
 import type { SessionBudget } from "./budget.ts";
 import type { KillSwitch } from "./killswitch.ts";
-import type { ApprovalPort, AuditPort, CapsPort, LedgerPort, SecretsPort } from "./ports.ts";
+import type {
+  ApprovalPort,
+  AuditPort,
+  BillingKind,
+  CapsPort,
+  LedgerPort,
+  SecretsPort,
+} from "./ports.ts";
 import type { CapabilityClaims, SignedToken, TokenIssuer } from "./token.ts";
+
+/**
+ * How the run is billed (ADR 0044). Absent: an API-style source ("api" rows, no plan level).
+ * For a subscription the executor sets `kind: "subscription"`, the source's `planShareCap`
+ * and `planUsageShare`, a closure that reports the plan share as this run's spend moves it;
+ * the hooks read it before every model call (the caps' plan level) and after (the ledger row).
+ */
+export interface RunBilling {
+  kind: BillingKind;
+  planShareCap?: number;
+  planUsageShare?: () => number | null;
+}
 
 export interface RunContext {
   token: SignedToken;
@@ -25,6 +44,7 @@ export interface RunContext {
   model: string;
   provider: string;
   billingSourceId: string;
+  billing?: RunBilling;
   /** Approvals already granted for this run (approval ids or tool+hash keys). */
   approvals?: Set<string>;
   /** Working directory of the run; relative paths in tool inputs resolve against it. */
@@ -93,6 +113,7 @@ export class EnforcementHooks {
       estimateUsdMicro,
       ctx.phase,
     );
+    const share = ctx.billing?.planUsageShare?.();
     const outer = await this.deps.caps.check(
       {
         humanId: claims.ownerHumanId,
@@ -102,7 +123,21 @@ export class EnforcementHooks {
         runId: claims.runId,
       },
       estimateUsdMicro,
-      { phase: ctx.phase },
+      {
+        phase: ctx.phase,
+        ...(ctx.billing
+          ? {
+              billing: {
+                sourceId: ctx.billingSourceId,
+                kind: ctx.billing.kind,
+                ...(typeof share === "number" ? { planUsageShare: share } : {}),
+                ...(ctx.billing.planShareCap !== undefined
+                  ? { planShareCap: ctx.billing.planShareCap }
+                  : {}),
+              },
+            }
+          : {}),
+      },
     );
     if (outer.decision === "stop") {
       throw new ForerunnerError(
@@ -140,6 +175,8 @@ export class EnforcementHooks {
       model: ctx.model,
       provider: ctx.provider,
       billingSourceId: ctx.billingSourceId,
+      kind: ctx.billing?.kind ?? "api",
+      planUsageShare: ctx.billing?.planUsageShare?.() ?? null,
       usdMicro,
       tokensIn: usage.input_tokens,
       tokensOut: usage.output_tokens,

@@ -3,11 +3,21 @@ import { type AppDirs, appDirs, ForerunnerError, join, log, osFacts } from "@for
 import type { Vault } from "@forerunner/vault";
 import { currentInstallRecord, type InstallRecord, writeInstallRecord } from "./install-record.ts";
 import {
+  assertPlanUsdMonthly,
+  DEFAULT_PLAN_USD_MONTHLY,
+  describePlanAllowance,
+  PLAN_USD_MONTHLY_ENV,
+  type PlanAllowance,
+  parsePlanUsdMonthly,
+  resolvePlanAllowance,
+} from "./plan-allowance.ts";
+import {
   assertCredentialKind,
   CREDENTIAL_REQUESTS,
   type ValidationResult,
   validateAnthropicKey,
   validateGitHubToken,
+  validateSubscriptionTokenFormat,
 } from "./validators.ts";
 
 /**
@@ -22,6 +32,16 @@ export const SECRET_NAMES = {
   anthropicOauth: "anthropic_subscription_token",
 } as const;
 
+export {
+  DEFAULT_PLAN_USD_MONTHLY,
+  describePlanAllowance,
+  PLAN_USD_MONTHLY_ENV,
+  type PlanAllowance,
+  type PlanAllowanceOrigin,
+  parsePlanUsdMonthly,
+  resolvePlanAllowance,
+} from "./plan-allowance.ts";
+
 export interface SetupConfig {
   version: 1;
   profile: string;
@@ -33,6 +53,13 @@ export interface SetupConfig {
   anthropicWorkspaceId?: string;
   repos: string[];
   credentials: { github: boolean; anthropic: boolean; anthropicSubscription: boolean };
+  /**
+   * The subscription's plan allowance the human gave (`--plan-usd-monthly`,
+   * `FORERUNNER_PLAN_USD_MONTHLY` or the interactive question; ADR 0044): USD of
+   * API-equivalent usage per month, the base of the plan usage share. Absent: the default
+   * (`DEFAULT_PLAN_USD_MONTHLY`) applies at compose. Not a secret.
+   */
+  subscription?: { planUsdMonthly: number };
   stateUrl: string;
   setupCompletedAt?: string;
   /**
@@ -53,6 +80,10 @@ export interface SetupInput {
   timezone?: string;
   githubToken?: string;
   anthropicKey?: string;
+  /** A `claude setup-token` token (or FORERUNNER_SUBSCRIPTION_TOKEN); format-checked, stored as `anthropic_subscription_token`. */
+  subscriptionToken?: string;
+  /** `--plan-usd-monthly`: the plan allowance in USD per month (or FORERUNNER_PLAN_USD_MONTHLY); a bad value is a `validation` error. */
+  planUsdMonthly?: number | string;
   repos?: string[];
   githubApiBase?: string;
   anthropicApiBase?: string;
@@ -73,11 +104,39 @@ export interface SetupReport {
   /** `<config>/install.json`: where this checkout and its node binary are (read by the shell). */
   installRecordPath: string;
   installRecord: InstallRecord;
-  results: { github?: ValidationResult; anthropic?: ValidationResult };
+  results: {
+    github?: ValidationResult;
+    anthropic?: ValidationResult;
+    subscription?: ValidationResult;
+    /** The interactive allowance answer when one was given: accepted, or why the default applies. */
+    planAllowance?: ValidationResult;
+  };
   stored: string[];
   skipped: string[];
   complete: boolean;
+  /**
+   * The billing sources this install will register at its next start (ADR 0044): the
+   * subscription when `anthropic_subscription_token` is in the vault, the API key when
+   * `anthropic_api_key` is; both when both are.
+   */
+  sources: {
+    subscription: boolean;
+    apiKey: boolean;
+    /** The plan allowance in force for the subscription source (with its origin); null without one. */
+    planAllowance: PlanAllowance | null;
+  };
 }
+
+/** Environment variable the non-interactive setup reads the subscription token from. */
+export const SUBSCRIPTION_TOKEN_ENV = "FORERUNNER_SUBSCRIPTION_TOKEN";
+
+/** The interactive question for the plan allowance (asked once a subscription source exists). */
+export const PLAN_ALLOWANCE_QUESTION = [
+  "\nPlan allowance",
+  "What: the API-equivalent usage your Claude plan covers per month, in USD (an estimate; not a secret).",
+  "Why: the provider reports no plan usage to the Agent SDK, so Forerunner estimates the plan share from this and stops subscription work at the plan share cap (the API key takes over when there is one).",
+  `Enter a number of USD, or press Enter for the default USD ${DEFAULT_PLAN_USD_MONTHLY} (change it any time with fr setup --plan-usd-monthly): `,
+].join("\n");
 
 export function configPath(dirs: AppDirs = appDirs()): string {
   return join(dirs.config, "config.json");
@@ -144,9 +203,19 @@ export async function runSetup(vault: Vault, input: SetupInput): Promise<SetupRe
   const results: SetupReport["results"] = {};
   const stored: string[] = [];
   const skipped: string[] = [];
+  // The plan allowance from the flag and the environment is checked before any prompt, so a
+  // bad value fails the run before a credential is stored.
+  const planFromFlag =
+    input.planUsdMonthly === undefined
+      ? null
+      : assertPlanUsdMonthly(input.planUsdMonthly, "--plan-usd-monthly");
+  const planEnvValue = env[PLAN_USD_MONTHLY_ENV]?.trim();
+  const planFromEnv = planEnvValue
+    ? assertPlanUsdMonthly(planEnvValue, PLAN_USD_MONTHLY_ENV)
+    : null;
 
   const ask = async (
-    kind: "github" | "anthropic",
+    kind: "github" | "anthropic" | "subscription",
     provided: string | undefined,
   ): Promise<string | undefined> => {
     if (provided) return provided;
@@ -218,6 +287,83 @@ export async function runSetup(vault: Vault, input: SetupInput): Promise<SetupRe
     skipped.push("anthropic");
   }
 
+  // Subscription token (ADR 0044): from the flag or FORERUNNER_SUBSCRIPTION_TOKEN, or asked
+  // for interactively unless the Anthropic step already stored one. Format-checked only: a
+  // live call through the Agent SDK is never made at setup (the live harness does that).
+  const subscriptionProvided = input.subscriptionToken ?? env[SUBSCRIPTION_TOKEN_ENV];
+  const alreadyStoredByAnthropicStep = stored.includes(SECRET_NAMES.anthropicOauth);
+  const st = alreadyStoredByAnthropicStep
+    ? undefined
+    : await ask("subscription", subscriptionProvided);
+  if (st) {
+    results.subscription = validateSubscriptionTokenFormat(st);
+    if (results.subscription.ok) {
+      await vault.set(SECRET_NAMES.anthropicOauth, st.trim());
+      config.credentials.anthropicSubscription = true;
+      stored.push(SECRET_NAMES.anthropicOauth);
+    } else if (input.nonInteractive) {
+      throw new ForerunnerError(
+        "validation",
+        `Subscription token rejected: ${results.subscription.problems.join(" ")}`,
+      );
+    }
+  } else if (!alreadyStoredByAnthropicStep && !(await vault.has(SECRET_NAMES.anthropicOauth))) {
+    skipped.push("subscription");
+  }
+  const hasSubscription = await vault.has(SECRET_NAMES.anthropicOauth);
+  const hasApiKey = await vault.has(SECRET_NAMES.anthropic);
+  config.credentials.anthropicSubscription = hasSubscription;
+  config.credentials.anthropic = hasApiKey;
+
+  // Plan allowance (ADR 0044): a first-class input next to the token, so the plan share cap
+  // is never silently absent. The flag, then the environment, then (interactively, when
+  // neither spoke and the config holds none) one question, then the config file, then the
+  // default; what the human gave is written to config.json (never a secret).
+  let planFromPrompt: number | null = null;
+  if (
+    hasSubscription &&
+    planFromFlag === null &&
+    planFromEnv === null &&
+    existing?.subscription === undefined &&
+    !input.nonInteractive &&
+    input.prompt
+  ) {
+    const answer = (await input.prompt(PLAN_ALLOWANCE_QUESTION, false)).trim();
+    if (answer) {
+      planFromPrompt = parsePlanUsdMonthly(answer);
+      results.planAllowance =
+        planFromPrompt === null
+          ? {
+              ok: false,
+              summary: `The plan allowance was not a number of USD; the default USD ${DEFAULT_PLAN_USD_MONTHLY}/month applies.`,
+              problems: [
+                "Enter a positive number such as 100, or set it later with fr setup --plan-usd-monthly.",
+              ],
+              details: { kind: "plan_allowance" },
+            }
+          : {
+              ok: true,
+              summary: `Plan allowance USD ${planFromPrompt}/month accepted.`,
+              problems: [],
+              details: { kind: "plan_allowance" },
+            };
+    }
+  }
+  const planAllowance = hasSubscription
+    ? resolvePlanAllowance([
+        { value: planFromFlag, origin: "flag" },
+        { value: planFromEnv, origin: "env" },
+        { value: planFromPrompt, origin: "prompt" },
+        { value: existing?.subscription?.planUsdMonthly, origin: "config" },
+      ])
+    : null;
+  if (planAllowance && planAllowance.origin !== "default") {
+    config.subscription = { planUsdMonthly: planAllowance.usdMonthly };
+  } else if (existing?.subscription) {
+    config.subscription = existing.subscription;
+  }
+  const sources = { subscription: hasSubscription, apiKey: hasApiKey, planAllowance };
+
   const complete =
     config.credentials.github &&
     (config.credentials.anthropic || config.credentials.anthropicSubscription);
@@ -238,6 +384,11 @@ export async function runSetup(vault: Vault, input: SetupInput): Promise<SetupRe
     stored,
     skipped,
     complete,
+    sources: {
+      subscription: sources.subscription,
+      apiKey: sources.apiKey,
+      planAllowance: planAllowance ? describePlanAllowance(planAllowance) : null,
+    },
   });
   return {
     dirs,
@@ -249,5 +400,6 @@ export async function runSetup(vault: Vault, input: SetupInput): Promise<SetupRe
     stored,
     skipped,
     complete,
+    sources,
   };
 }

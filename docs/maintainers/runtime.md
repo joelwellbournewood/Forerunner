@@ -51,17 +51,20 @@ scope stays frozen (new registrations abort at once) until `resume()`.
 for each tool use: `beforeToolCall` → execute with per-tool timeout → `afterToolCall`. Outcomes:
 `completed`, `timeout` (partial text kept), `budget_exceeded`, `step_cap_exceeded`, `killed`,
 `needs_human` (approval pending), `max_turns`, `error`. Events stream to the live session view.
-`SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks.
+`SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks; a task
+runs on it when its billing source is a subscription (see "Billing per task" below, ADR 0044).
 
 **Specialist tools on each driver (`src/registry/tools.ts`, ADR 0043).** The registry names
 Claude Code tools (`allowed_tools: cc:Read, cc:Edit, cc:Bash, ...`) for the SDK driver, which
 offers that tool set as is. The loop driver offers Forerunner's tools, so each driver maps the
-names its own way and the choice is made in `composeRuntime` next to the driver it builds
-(`specialistDriver`, "loop" today; the SDK driver has no session path yet). `specialistSpecFrom(
-registry, { driver, tools, commands, onDropped })` turns a runnable entry into the executor's
-`SpecialistSpec`; the options are required, a call without a driver is a `validation` error,
-and an executor built elsewhere (the cloud runner) takes `RuntimeApp.specialists`, never the
-registry's names by omission. On "sdk" the `cc:` names stay as written; on "loop" `loopToolsFor` replaces
+names its own way and the default is set in `composeRuntime` next to the drivers it builds
+(`specialistDriver`, "loop"); per task the executor asks for the other form when the billing
+pick names a subscription (ADR 0044). `specialistSpecFrom(registry, { driver, tools, commands,
+onDropped })` turns a runnable entry into the executor's `SpecialistSpec` and returns a lookup
+`(name, driver?)` whose second argument overrides the default for one call; the options are
+required, a call without a driver is a `validation` error, and an executor built elsewhere
+(the cloud runner) takes `RuntimeApp.specialists`, never the registry's names by omission. On
+"sdk" the `cc:` names stay as written; on "loop" `loopToolsFor` replaces
 them with the built-ins (`CLAUDE_CODE_TOOL_EQUIVALENTS`: `cc:Read`, `cc:NotebookRead` →
 `read_file`; `cc:Write`, `cc:Edit`, `cc:MultiEdit`, `cc:NotebookEdit` → `write_file`;
 `cc:Glob`, `cc:Grep`, `cc:LS` → `list_dir`; `cc:Bash` → `run_command`), resolved against
@@ -82,6 +85,59 @@ names the driver calls and a call outside the grant is `tool_not_allowed` with i
 `RuntimeApp.specialistDriver` and `RuntimeApp.specialists` expose the choice and the mapped
 specs; the model watch's eval runner uses the same `loopToolsFor` (commands only with a sandbox
 port) and logs its drops. Tests: `test/registry-tools.test.ts`, `test/cc-tools-wiring.test.ts`.
+
+**Billing per task and the SDK path (`src/session/billing.ts`, `src/wiring/billing-pick.ts`,
+`src/agent/cc-tools.ts`; ADR 0044).** `LoopTaskExecutor` takes a `TaskBillingPort`; the
+daemon's is `RouterTaskBilling`, which calls `BillingRouter.pick` once per task with the
+session's runner (`pc`), purpose `session`, the run's starting tier, the install's policy
+(`pcRoutingPolicy(personalRunner)`; `FORERUNNER_RUNNER_PERSONAL=0` says this PC is not the
+human's own) and `VaultLedgerProbe` (available when the vault holds the credential; the plan
+share from the month's ledger rows, `MAX(plan_usage_share)` or the month's subscription spend
+over `limits.planUsdMicro`). The agent's owner (the agent row, else the token's owner claim)
+is compared with the daemon's human first: another human's agent never sees the subscription
+(withheld, reported as skipped `other_human`); the API key may serve it. The pick goes on the
+Run row (`billing_source_id`) and into an audit row `billing.pick` (`BILLING_PICK_AUDIT_TOOL`:
+task, run, agent, tier, source, kind and driver in `input_summary`, the router's reason with
+every skip in `result_summary`). A `subscription` pick runs the task through `SdkAgentDriver`
+with `credential: { kind: "oauth_token" }` read from the vault by the source's reference at
+run start (`credentialFor`, inside the executor's try, held in no field), the registry's `cc:`
+names as written (`specialists(name, "sdk")`), the same derived token, `SessionBudget`,
+hooks, kill switch and critic; everything else runs through `LoopAgentDriver` as before. One
+executor, two drivers behind one `DriverOutcome`: the brief, the memory block, the retry
+ladder, the Run row (`provider: "anthropic-sdk"` on the SDK path; artifacts with the SDK
+session id and its own list-price figure `sdk_cost_usd_micro`), the whole-millisecond timings,
+`run.persist_failed` and the lessons are shared; a driver's error message goes through
+`redact()` before it becomes the task's `summary`, and a thrown error's before it enters the
+Run row's `error` artifact, since the store has no redaction layer of its own. The hooks get the run's billing facts
+(`RunContext.billing`: `kind`, `planShareCap`, a `planUsageShare` closure fed by the session
+budget's spend on the run, `planShareAfter`): `afterModelCall` writes "subscription" ledger
+rows with `plan_usage_share`, `beforeModelCall` hands the share to the caps port, and
+`DynamicCaps` adds the plan level to `CapChecker` (80% finish-current, the cap stops). The SDK
+subprocess is no sandbox: `cc:Bash` is withheld from the SDK token with a
+`registry.tool_unmapped` row unless `billing.hostCommands` (`FORERUNNER_SDK_HOST_COMMANDS=1`)
+opts in, which warns on the run; the other Claude Code tools get `ToolSpec`s for the hooks
+(`withClaudeCodeTools`: `pathFields` on the file tools, `domainFields` on `WebFetch`,
+`routine_reversible` for edits), the token's only path is the worktree or the run's own
+directory under `<worktrees>/sdk-runs/<runId>`, and the session grant lists the `cc:` names
+(`claudeCodeToolNames`) when the vault holds the OAuth token, so a derived token can carry
+them and an install on the API key alone declares none. Both sources are seeded from the
+vault at compose (`seedBillingSources`: `subscription` for `anthropic_subscription_token` with
+the plan allowance in force as `limits.planUsdMicro`, `api_key` for `anthropic_api_key`, a
+`fake` row only when nothing else exists, and an earlier `fake` row disabled as soon as a real
+source is enabled; `RouterTaskBilling` also withholds a `fake` candidate beside a real source,
+skipped `unavailable`, so a subscription at its cap and an API key at its limit end in
+`unavailable` rather than real work booked to a stand-in). The plan allowance
+(`src/setup/plan-allowance.ts`, ADR 0044 item 8) is resolved most explicit first:
+`ComposeOptions.billing.planUsdMonthly`, `FORERUNNER_PLAN_USD_MONTHLY`, `config.json`'s
+`subscription.planUsdMonthly` (what `fr setup` recorded), else `DEFAULT_PLAN_USD_MONTHLY`
+(USD 50), so the caps' plan level always exists; a human-set value updates the row at the next
+compose, the default only fills a row that has none; `RuntimeApp.billing.planAllowance` and the
+compose log say which applies (`describePlanAllowance`). `RuntimeApp.billingSourceId` is the
+loop paths' source (the key when there is one, the one the Messages provider authenticates
+with), `RuntimeApp.billing` exposes `sources()`, `pick`, the SDK driver and `hostCommands`;
+`ComposeOptions.sdkQuery` injects the SDK's `query` so no test spawns Claude Code. Tests:
+`test/subscription-path.test.ts` (the path, the seeding, the fake row withheld, the setup
+questions and the allowance), `test/executor.test.ts` (the redacted error artifact).
 
 ### Context layer (`src/context/`, ADR 0003)
 
@@ -188,8 +244,16 @@ wired yet (see Known issues).
 
 `pnpm fr -- <command>` (installed as `fr`): `setup` (guided or `--non-interactive`; each
 credential is explained with what, why, scopes, where to click and how it is verified, validated
-on paste through `src/setup/validators.ts`, then stored in the vault by name; `config.json`
-never holds a secret), `status` (directories, config, secret names only), `doctor`
+on paste through `src/setup/validators.ts`, then stored in the vault by name; the questions in
+order are the GitHub token, the Anthropic API key, the subscription token
+(`--subscription-token`, `FORERUNNER_SUBSCRIPTION_TOKEN`; skipped when the Anthropic step
+already stored a `sk-ant-oat…` token; format-checked only, no request, ADR 0044) and, once a
+subscription source exists, the plan allowance (`--plan-usd-monthly`,
+`FORERUNNER_PLAN_USD_MONTHLY`; a positive number of USD per month, else the default USD 50;
+written to `config.json` as `subscription.planUsdMonthly` when given; a bad flag or
+environment value is a `validation` error before any credential is stored); the summary's
+"Billing sources:" line names the sources the next start registers and the allowance with its
+origin; `config.json` never holds a secret), `status` (directories, config, secret names only), `doctor`
 (prerequisites), `kill` (writes a kill request file), `dirs`, `daemon`. The kill request file
 in the runtime directory is polled by `KillFileWatcher` in every running runtime, so the CLI,
 the tray and the app can stop sessions across processes on both platforms.
@@ -232,8 +296,9 @@ claimed tasks, peer claims, next-session queue) and renders a `StateBrief` under
 over the work budget (cap minus the review reserve) are cut before starting. Autonomy 0 and
 unapproved level 1 turn the plan into a HumanRequest and pause. Execution claims each task
 (atomic, renewed every ttl/6), transitions it to in progress, runs the `TaskExecutor`
-(`LoopTaskExecutor`: validated brief, derived narrower token, specialist prompt and model from
-the registry, Run row recorded), then moves it to done (tier 0 with checks passed), in review,
+(`LoopTaskExecutor`: validated brief, the billing source picked for the task and the driver
+that follows it, derived narrower token, specialist prompt and model from the registry, Run
+row recorded; ADR 0044), then moves it to done (tier 0 with checks passed), in review,
 needs human or failed; the inbox is re-checked between tasks and a human "stop" ends the
 session; at 80% of the budget or a mid-task cap no new task starts. Session end writes the
 project summary cache, sends a handoff (requires ack) to the project's peers
@@ -273,9 +338,10 @@ both dialects (version conflict, dismissed never consumed, rollback inside a tra
 Requirements: J.2, E.2.
 
 **The Run row.** `LoopTaskExecutor` inserts the task's Run row as `running` before the driver
-starts (model, effort, prompt version, billing source, depth) and patches it with the result
-afterwards: tokens, cost, `ttft_ms`, `duration_ms`, outcome, `timed_out`, the context numbers
-and the artifacts; a driver that throws closes it as `error` with the reason. `ttft_ms` and
+starts (model, effort, prompt version, the billing source the task picked, depth) and patches
+it with the result afterwards: tokens, cost, `ttft_ms`, `duration_ms`, outcome, `timed_out`,
+the context numbers and the artifacts, on the loop path and on the SDK path alike (ADR 0044);
+a driver that throws closes it as `error` with the reason. `ttft_ms` and
 `duration_ms` are INTEGER columns and the store refuses a fraction, while `performance.now()`
 differences carry one, so every millisecond measurement is rounded where it is produced
 (`LoopAgentDriver`: `wholeMs` on each call's first-token time and on the run and tool
@@ -455,9 +521,11 @@ port the chat is read-only.
 otherwise a provider that fails every call with `provider_auth`), the specialist registry,
 the session runner, scheduler and conversation agent, and returns a `RuntimeApp` with a
 `close()`. It also bootstraps identity on first run (one human, one principal agent) and seeds
-the billing source from the vault. `DynamicCaps` turns a human's monthly cap and a project's
-budget into per-call caps so the cap checker never runs with stale limits. There is exactly
-one wiring: the daemon, the CLI and the tests all go through it (ADR 0029).
+the billing sources from the vault (both when both credentials exist, ADR 0044). `DynamicCaps`
+turns a human's monthly cap and a project's budget into per-call caps so the cap checker never
+runs with stale limits, and adds the plan level for a subscription run from the billing facts
+the hooks pass. There is exactly one wiring: the daemon, the CLI and the tests all go through
+it (ADR 0029).
 
 **Modules composed (phases 6 and 7).** In order, each with its ports filled from what exists
 already:
@@ -670,6 +738,61 @@ human is the actor, so a delete always has one and removal never goes through a 
 `worktreeFor` is not set: the daemon's worktrees are per task and the data dir lies outside
 them (ADR 0039 point 12). `RuntimeApp.data` exposes the registry and the importer.
 
+**Sandboxed browser and agent email (`@forerunner/capabilities` `browser` and `email`, spec
+L.2, L.3, S.15 to S.31; ADR 0013, ADR 0014, [ADR 0047](../decisions/0047-daemon-wiring-of-browser-email-and-injection-notifications.md);
+`browser.md` and `email.md` have the modules and their "How it is wired" sections).**
+`composeRuntime` builds one `BrowserSessionManager` with `browserBindingResolver`
+(`src/wiring/browser-ports.ts`: the run token's domains from `TokenIssuer.claimsForRun` as the
+allow list, the project's `settings.browser.blockedDomains` on top, the project's autonomy
+level, the token id) and the eight `browser_*` tools in the mode `browserModeFor` decides at
+compose (`ComposeOptions.browser.mode`, else `FORERUNNER_BROWSER_MODE`, else Chromium when
+`resolveChromiumExecutable` finds one, else the static reader `staticBrowserTools`: the same
+specs, navigate as an HTTP fetch through the same `SitePolicy` and hop cap, read through
+`extractFromHtml`, the rest `not_supported`); `agentEmailPorts` (`src/wiring/email-ports.ts`)
+builds the email capability's ports once (settings row, identity, sent log, approvals, policy,
+the mailbox opened by reference from the vault on first use) for the four `email_*` tools and
+the notifier's email channel alike. Neither set is in the built-in `ToolRegistry`: a
+presence switch per capability (`CapabilityPresence`) decides whether `toolsForRun()` and the
+session grant carry them, read at compose, at every session start (`startSession` calls
+`rt.capabilities.refresh()` before the runner starts), on every extension event of the
+`browser` row, and on demand: the browser's is the `browser` capability row installed and
+enabled (added from the catalog, approved in the inbox, as desktop control), the email's is a
+mailbox in the agent's settings row and a mode other than `off`. So the tools are absent, not
+failing, when a capability is off or unconfigured, while a run in flight is covered per call:
+the extension gate refuses the browser tools of a row toggled off, the registry revokes the
+run tokens carrying them and the manager revokes its sessions (`extensions.onEvent`); the
+email policy reads the mode on every call. The hooks apply as to any tool: `browser_navigate`
+and `browser_download` carry `domainFields`, so a URL outside the run token is
+`domain_not_allowed` before any request leaves; `email_send` is `external_send` and waits for
+the human below autonomy 4; `browser_read`, `email_list` and `email_read` return untrusted
+output that is wrapped and scanned. The project's site allowlist is
+`settings.browser.allowedDomains` (`browserSettingsOf`): it joins the session grant's domains,
+and because `derive` only narrows, `specialistSpecFrom`'s `extraDomains` hook adds the union
+of every project's allowlist to a registry entry that names a browser tool (no other entry;
+`allowed_domains: []` still means no network for a coder's sandbox), which the derived run
+token caps to the session's project. A registry entry naming a capability tool while the
+capability is off gets a `registry.tool_unmapped` row (`unavailable`) at compose like any
+unregistered name (ADR 0043) and the tool once it is on; the registry's researcher names
+`cc:WebFetch`, which has no loop equivalent, so it browses on the Agent SDK driver only. The
+catalog entries `browser` and `email` (`src/extensions/catalog.json`) name the real tools and
+classes (`read`, `routine_reversible`, `credential`; `read`, `routine_reversible`,
+`external_send`). `RuntimeApp.capabilities` exposes the browser mode, manager and presence,
+the email ports and presence, the allowlists in force and `refresh()`; `close()` closes the
+browser sessions.
+
+**Prompt injection reported (spec S.2, S.25; ADR 0047).** Every `injection_flagged` run event
+(the hooks' `afterToolCall` scanned an untrusted tool result and wrapped it as data; both
+drivers emit it through the executor's `onEvent`, which `makeLoop` puts on the runtime bus as
+`run`) is, once per run and tool (`flaggedByTask`, cleared at `run_end`; a retry is a new run),
+one audit row `injection.flagged` (`INJECTION_FLAGGED_AUDIT`, `allowed: true`: the content was
+ignored, nothing was refused; the session, run, agent, human, the tool and source in
+`input_summary`, the passage count, rules and score in `result_summary`) and one urgent
+notification through `notifications.injectionFlagged` with the run's session and project.
+The producer's body (`summarizeInjection`) names the origin, the source, the number of
+passages and the rules with their counts, never the passages: they are in the tool call's own
+audit row and the session log the notification links to. Failures to notify are logged, never
+fail the run.
+
 `server.ts` is the HTTP surface the desktop, Android and web shells talk to. Hono, bound to
 `127.0.0.1` only; every request carries `Authorization: Bearer <token>` compared with
 `timingSafeEqual`. The token is written to `<runtime dir>/daemon.json` (mode 0600) together
@@ -719,6 +842,47 @@ are mounted as described above. The notification routes (`GET|PUT /notifications
 Cloudflare panel routes (`GET /cloudflare/projects/:projectId/settings|token`) are mounted the
 same way (see "Notifications" and "Cloudflare deploys" above). Each sub-app keeps its module's
 error mapping.
+
+**Voice (`src/voice/`, spec O, Q.4, Q.5; ADR 0012, [ADR 0048](../decisions/0048-voice-bridge-in-the-daemon.md);
+`voice.md` has the loop and "How the shell reaches it").** `composeRuntime` builds one
+`VoiceSessions` (`RuntimeApp.voice`) over the conversation agent, the command registry and a
+`VoiceProviderRegistry`: in production `buildVoiceRegistry` registers the local helpers
+(`faster-whisper`, `kokoro`, `piper` when `FORERUNNER_PIPER_MODEL` is set) and the cloud
+providers by secret reference (`deepgram`, `cartesia`, `elevenlabs` behind
+`secret:deepgram_api_key`, `secret:cartesia_api_key`, `secret:elevenlabs_api_key`; voice ids
+from `FORERUNNER_CARTESIA_VOICE` / `FORERUNNER_ELEVENLABS_VOICE`), probes nothing at compose and
+registers no fake; `ComposeOptions.voice` injects the fake providers (`stt`, `tts`), a whole
+`registry`, a `sink`, `storeAudio`, latency `targets` and `maxSessions` (tests). A session
+start selects the pair with the package's policy (local if available, else cloud with a key,
+with `FORERUNNER_VOICE_STT` / `FORERUNNER_VOICE_TTS` as the preferred names; `hasSecret` asks
+the vault whether the reference has a value, never the value) and opens a `VoiceBridge`: the
+real `VoiceLoop` with the bridge as its one `converse` port over `ConversationAgent.chat`
+(`source: "voice"`), the spoken approval rules (`expectYes`) in front of a pending card (a
+refused line repeats the read-back and never reaches the agent; a yes is forwarded as the
+line or the canonical "yes"), and `TextTurnStt` so a typed line runs as a push-to-talk turn
+without audio through the same loop, rules, TTS and rows. Playback goes to `pacedSink` on the
+clock; the shell plays the `audio` frames. Routes (`server.ts`, all in `DAEMON_ROUTES`):
+`GET /voice/status` (`VoiceStatusView`: the picked providers and the reason, or
+`available: false` with the reason: no helper and no key, or no model credential),
+`POST /voice/sessions` (201 `VoiceSessionView`; 503 `unavailable` with the reason; at most
+4 open sessions), `GET /voice/sessions/:id`, `POST /voice/sessions/:id/stop` (immediate),
+`POST /voice/sessions/:id/press { pressed }`, `POST /voice/sessions/:id/audio` (JSON base64
+PCM or `application/octet-stream` with the format in the query),
+`POST /voice/sessions/:id/text { text }` (`VoiceTurnView` once the turn ended; 409 while a
+capture is open), `POST /voice/sessions/:id/answer { answer: tap|no }` (a tap confirms the
+card through `CommandLoop.confirm` as a tap, "no" cancels; 404 without a card) and
+`GET /voice/sessions/:id/events` (JSON after `afterSeq`, or SSE `voice.event` frames with
+`?token=` like the other EventSource routes: the loop's events, `voice.first_audio`,
+`voice.readback` = approval needed, `voice.approval`, `voice.answer`, `voice.turn` = done,
+`voice.stopped`; audio frames live only, 1000 other frames kept per session for a resume).
+Recorded: on the conversation session `voice.turn` (source, said, heard, chunks, audio
+stored, pending card id, the latency stages) and `voice.approval` (the exact line, approved,
+`blockedBy`, method, card, commands) next to the agent's `chat.*` rows; in `audit_log`
+`voice.session` (start with mode, language and provider names; stop) and `voice.approval`
+per decision. No audio and nothing played is in the audit log; audio is written only with
+`FORERUNNER_VOICE_STORE_AUDIO=1` under `<data>/voice/<session>`. `close()` stops every open
+session. The shells' hook-up is a later item (`voice.md`); `tests/e2e/src/scenario-voice.ts`
+keeps its own bridge until scenario 3 is pointed at this one.
 
 **Core loop routes (ADR 0036, all in `DAEMON_ROUTES`).** Reviews tab (spec K.2):
 `GET /projects/:id/reviews` and `GET /tasks/:id/reviews` answer `ReviewsView` (every review
@@ -819,7 +983,7 @@ cross-turn reference names an existing result of the same transcript by its tran
 and only lines that were sent; `executor-context.test.ts`: Run row
 fields and `headroom_used` with a proxyable versus a plain provider, cost view priced from the
 Run rows; `session-context.test.ts`: `headroom_saved_tokens` on the session and the
-`context.headroom_unavailable` event; `views.test.ts`: cost view savings money), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler; the next-session queue consumed per brief in `runner-queue.test.ts` and `checklist-queue.test.ts`), executor (brief, derived token, Run row; a fractional first-token time and duration stored as integers on the real store; a refused Run row write as a `run.persist_failed` audit row and a log line that name the run and never the prompt), receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE with the restart event, `stop()` returning while `/events` is held open on a real socket), wiring (`wiring.test.ts`: extensions from catalog to a refused tool, model watch report and inbox decision, updates screen, mirror sync answering 202 then running on the inbox answer, estimates accuracy, sandboxed `run_command`, a refused lease closing the Run row, the eval runner keeping the model's command in the sandbox lease and offering only the specialist's tools, CLI registration and one-shot composition; `cc-tools-wiring.test.ts`: the composition on a registry copy whose coder names `cc:Read`, `cc:Edit`, `cc:Glob`, the executor's spec carrying `read_file`, `write_file`, `list_dir` with the registry untouched, one task through the `LoopTaskExecutor` with `read_file` and `write_file` allowed and `run_command` refused by the hooks, the audit rows of each, and a `cc:WebFetch` dropped at compose with one `registry.tool_unmapped` row per specialist and tool; `registry-tools.test.ts`: the table entry by entry, an unknown `cc:Foo` dropped with its reason and its audit row, the command gate, unavailable and bridged names, order and duplicates, the "sdk" and no-option branches keeping the names as written; `notifications-wiring.test.ts`: the notifier and its producers on the real sources through the daemon, the prefs routes and their audit row, the `notification` SSE frame, quiet hours through the route, the Telegram token never leaving the vault's reach, the email channel over the agent mailbox; `packages/capabilities/test/cloudflare-wiring.test.ts`: the Cloudflare tools and routes through the daemon's hooks, gate and bearer token; `model-config-wiring.test.ts`: `models.json` applied at compose to the chat rung, a session on the built-in rung and effort, the model watch proposing a switch and a lower effort on a fake eval runner, the human's adopt through the inbox swapping the tables so the next session runs the adopted rung at the adopted effort and the critic reviews on the adopted rung without a restart, a malformed file ignored with an audit row and its content kept out of the log; `packages/capabilities/test/desktop-wiring.test.ts`: the six desktop tools behind the daemon's hooks and gate, off until installed, the allowlist and status routes, an app outside the allowlist refused and put to the human, an allowlisted app run through the fake adapter with the indicator on the bus and as the `desktop.indicator` frame on `/events` (on with the app, off at `endRun`), a panel toggle revoking live; `desktop-wiring.test.ts` (runtime): the guarded allowlist file, a file that is not JSON or not an allowlist answering `validation` naming the file on the routes and on every tool call with a `desktop_allowlist.read` audit row and the parser's snippet kept out of the error, the audit log and the log, a fixed file read at the next call; `data-wiring.test.ts`: a folder import through the daemon route in the registry and the project's listing, the data tools behind the hooks, a zip-slip archive refused whole, a path outside the run's roots refused as a capability grant), hooks (overspend, steps, wall clock, kill, allowlist, schema,
+`context.headroom_unavailable` event; `views.test.ts`: cost view savings money), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler; the next-session queue consumed per brief in `runner-queue.test.ts` and `checklist-queue.test.ts`), executor (brief, derived token, Run row; a fractional first-token time and duration stored as integers on the real store; a refused Run row write as a `run.persist_failed` audit row and a log line that name the run and never the prompt; a thrown error's message redacted before the Run row's `error` artifact), receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE with the restart event, `stop()` returning while `/events` is held open on a real socket), wiring (`wiring.test.ts`: extensions from catalog to a refused tool, model watch report and inbox decision, updates screen, mirror sync answering 202 then running on the inbox answer, estimates accuracy, sandboxed `run_command`, a refused lease closing the Run row, the eval runner keeping the model's command in the sandbox lease and offering only the specialist's tools, CLI registration and one-shot composition; `cc-tools-wiring.test.ts`: the composition on a registry copy whose coder names `cc:Read`, `cc:Edit`, `cc:Glob`, the executor's spec carrying `read_file`, `write_file`, `list_dir` with the registry untouched, one task through the `LoopTaskExecutor` with `read_file` and `write_file` allowed and `run_command` refused by the hooks, the audit rows of each, and a `cc:WebFetch` dropped at compose with one `registry.tool_unmapped` row per specialist and tool; `registry-tools.test.ts`: the table entry by entry, an unknown `cc:Foo` dropped with its reason and its audit row, the command gate, unavailable and bridged names, order and duplicates, the "sdk" and no-option branches keeping the names as written; `notifications-wiring.test.ts`: the notifier and its producers on the real sources through the daemon, the prefs routes and their audit row, the `notification` SSE frame, quiet hours through the route, the Telegram token never leaving the vault's reach, the email channel over the agent mailbox; `packages/capabilities/test/cloudflare-wiring.test.ts`: the Cloudflare tools and routes through the daemon's hooks, gate and bearer token; `model-config-wiring.test.ts`: `models.json` applied at compose to the chat rung, a session on the built-in rung and effort, the model watch proposing a switch and a lower effort on a fake eval runner, the human's adopt through the inbox swapping the tables so the next session runs the adopted rung at the adopted effort and the critic reviews on the adopted rung without a restart, a malformed file ignored with an audit row and its content kept out of the log; `packages/capabilities/test/desktop-wiring.test.ts`: the six desktop tools behind the daemon's hooks and gate, off until installed, the allowlist and status routes, an app outside the allowlist refused and put to the human, an allowlisted app run through the fake adapter with the indicator on the bus and as the `desktop.indicator` frame on `/events` (on with the app, off at `endRun`), a panel toggle revoking live; `desktop-wiring.test.ts` (runtime): the guarded allowlist file, a file that is not JSON or not an allowlist answering `validation` naming the file on the routes and on every tool call with a `desktop_allowlist.read` audit row and the parser's snippet kept out of the error, the audit log and the log, a fixed file read at the next call; `data-wiring.test.ts`: a folder import through the daemon route in the registry and the project's listing, the data tools behind the hooks, a zip-slip archive refused whole, a path outside the run's roots refused as a capability grant; `voice-route.test.ts`: the voice routes on the composed daemon with the voice package's fake providers and the fake model, every delay on the simulated clock: a text turn's events (first audio, done) and its `voice.turn` row with `chat.human` carrying `source: "voice"`, a risky command read back as `voice.readback` and filed as a pending card, "Yes, but what does it cost?" refused as a question with the card kept and the agent not called, "Yes, go ahead." applied with the change log naming the words, both `voice.approval` rows and audit rows with the exact lines, a tap confirmed through the registry, an audio turn pushed as 20 ms frames (JSON and octet-stream) with the release 20 ms after the last frame giving `endOfTurnMs` 20, `finalTranscriptMs` 300, every stage within target and the total the sum of the four, the SSE stream replaying the kept frames then carrying the live `audio` frames, stop and the audit rows without any transcript or PCM, and two compositions where voice is unavailable (no provider; Deepgram with its key in the vault but no TTS) answering the reason on `/voice/status` and 503 on a start with the key never in the body; `capabilities-wiring.test.ts`: the browser and email tools absent until the `browser` capability is approved in the inbox and the agent's email settings name a mailbox with a mode other than off, gone again at mode off and after a panel toggle, the catalog entries naming the real tools, `settings.browser.allowedDomains` into the session grant and the registry entry's run token, one scout session through `POST /sessions` in static browser mode: the page inside the allowlist read with the reader's rows beside the hooks', the collector outside the token refused before any request with its `tool_denied` event, the mail read, the stranger emailed in full discretion through the policy, three flagged reads as two `injection.flagged` rows and two urgent notifications (one per run and tool) carrying the rules and never the passage (nor the toast argv, nor the log), a read-only mode refusing `email_send` in the policy with its `email.send` row), hooks (overspend, steps, wall clock, kill, allowlist, schema,
 paths, domains, secrets, autonomy, injection), ladder, brief, loop driver (completion, overspend
 blocked, step cap, kill mid-run, timeout with partial output, inline denials, needs-human pause,
 injection flagged, whole-millisecond first-token time and durations, `wholeMs`), remote control
@@ -861,6 +1025,15 @@ C.4, S.1 and S.3 for specialist tools on the loop driver (the registry's `cc:` n
 to the built-ins the token carries, nothing widened, every dropped name an audit row, ADR
 0043). Tests: `test/cc-tools-wiring.test.ts`, `test/registry-tools.test.ts`,
 `services/cloud-runner/test/runner.test.ts` (the cloud runner's executor on `rt.specialists`).
+I.1 (the plan share cap enforced before every call on a subscription run), I.5 (80% and 100%
+of the plan share), S.14 (a subscription token never used for another human's agent; read by
+reference, never logged), U.7 (the Run row's billing source per task), A.5 (the subscription
+token's request text and format check on paste, the plan allowance as a setup input with a
+default) and the phase 1 check's subscription half
+(a task on the subscription through the Agent SDK driver with the OAuth token and the `cc:`
+names, "subscription" ledger rows with the plan share, the API key at the cap and for another
+human's agent, the kill switch on an SDK run, the hooks on the SDK path; ADR 0044). Test:
+`test/subscription-path.test.ts`.
 R.6, E.5, O.8, S.8 and K.8's desktop notifications (the human is told about requests, finished
 sessions, budget stops, kill switch, updates and escalations, with quiet hours, through the
 channels the daemon wires). Test: `test/notifications-wiring.test.ts`. J.9, J.10, S.5, S.6 and
@@ -890,11 +1063,43 @@ the watcher), D.3 (the project's ceiling caps the retry ladder). Tests:
 `test/remote-watcher.test.ts`, `test/remote-pause.test.ts`, `test/remote-wiring.test.ts`,
 `test/remote-presence.test.ts`, `test/executor-ceiling.test.ts`, `packages/state/test/suite.ts`
 (the owner filter on both dialects).
+O.1, O.3, O.5, O.7, O.9, O.10 and Q.4, Q.5 for voice through the daemon (a text or audio turn
+through the one loop with every latency stage measured; a risky command read back and waiting
+for the yes, a wrong answer doing nothing, a yes or a tap applied through the registry with
+the words logged; stop at once; transcripts in session history and no audio stored; voice
+unavailable with the reason when no provider is configured; ADR 0048). Test:
+`test/voice-route.test.ts`.
+L.2 and L.3 in the daemon (the browser tools and the email tools offered to a run only while
+the capability is on, behind the hooks and the gate; the project's site allowlist in the
+session grant and the run token; the static reader where no Chromium exists), S.2 and S.25
+(every flagged read one audit row and one urgent notification to the human, the passages
+never in the notification), S.3 (the run token binds the browser's policy), S.6 and K.6
+(nothing offered until a human approves the capability; revoked live), S.9 (the reader's and
+the policy's rows beside the hooks'), S.16, S.17, S.20, S.26 and S.27 (the modes, the sent log
+and the signature through the daemon's tools). Test: `test/capabilities-wiring.test.ts`
+(ADR 0047).
 
 ## Known issues
 
+- Voice (ADR 0048): a tap through `POST /voice/sessions/:id/answer` confirms the card in the
+  registry and the bridge, but the conversation agent keeps its own copy of the pending card
+  until the next line; a bare "yes" right after a tap answers a card that is no longer
+  pending and is reported as "Not done". The Extensions panel's `voice-*` entries do not feed
+  the preferred provider yet (`FORERUNNER_VOICE_STT` / `FORERUNNER_VOICE_TTS` do), the shells
+  do not call the `/voice` routes yet, and `@forerunner/voice` is reached by relative path
+  from `src/voice/pkg.ts` because the dependency is not declared in `package.json`.
 - The SDK driver's live behaviour is only verified when a credential is present (see
-  `gates.md`); without one the integration test skips with a visible reason.
+  `gates.md`); without one the integration test skips with a visible reason. The subscription
+  path (ADR 0044) is covered on a fake `query`; a real `claude setup-token` token through the
+  Agent SDK is the live harness's case and BLOCKERS.md's row. On the SDK path `cc:Bash` is
+  withheld unless `FORERUNNER_SDK_HOST_COMMANDS=1`, so a subscription coder cannot run tests
+  until the subprocess can be pointed into a sandbox lease; the plan share is an estimate (the
+  month's subscription rows at list price over the allowance: the default USD 50 unless `fr
+  setup --plan-usd-monthly` or `FORERUNNER_PLAN_USD_MONTHLY` set it), never the provider's own
+  figure until a probe reports one, so it can stop subscription work before the real plan
+  would, and the live harness checks the plan level with a real token (BLOCKERS.md, the
+  subscription row); the cloud runner's executor passes no billing port and stays on the loop
+  driver.
 - Connector cost reads 0 (see "Extension cost"); a weekly eval of a tier 2+ task on an install
   without a container engine fails as `error` because the process stand-in is refused for it,
   exactly as for a task run.
@@ -916,12 +1121,21 @@ the watcher), D.3 (the project's ceiling caps the retry ladder). Tests:
   session event store is undecided.
 - Path containment resolves symlinks only when the target exists; the sandbox adapter mounts
   only the worktree so escapes cannot reach the host anyway.
-- Notifications: the email sender is resolved once at compose from the agent's email settings
-  row, so a mailbox configured while the daemon runs takes effect at the next start; the
-  `peerMessage`, `emailCommandReceived` and `injectionFlagged` producers have no daemon source
-  yet (ADR 0038 point 2); held and digest queues are in memory (ADR 0017 point 8); the
-  `update_applied` notification is sent while the process is exiting, so a slow channel may
-  not finish before the restart.
+- Notifications: the email channel is resolved once at compose from the agent's email settings
+  row (`notificationEmailPort` answers null without a mailbox), so a mailbox configured while
+  the daemon runs reaches the channel at the next start (the `email_*` tools pick it up at the
+  next session start, ADR 0047); the `peerMessage` and `emailCommandReceived` producers have no
+  daemon source yet (ADR 0038 point 2; `injectionFlagged` has one since ADR 0047); held and
+  digest queues are in memory (ADR 0017 point 8); the `update_applied` notification is sent
+  while the process is exiting, so a slow channel may not finish before the restart.
+- Browser and email (ADR 0047): the browser mode is decided at compose, so a Chromium that
+  exists but fails to launch is not demoted to the static reader at run time (the navigation
+  fails with the launch error, audited); the daemon mounts no email settings routes, so the
+  mode and the mailbox are changed through the capability's routes elsewhere, the CLI or the
+  store; the critic and the conversation agent run the driver outside the executor and raise
+  no `run` bus event, so a flagged read there is logged by the hooks but not notified; the
+  per-agent browser block list is not read (the project's is); scenario 6 still wires its own
+  research install instead of `composeRuntime` (`testing.md`).
 - Shell detection: the desktop shell (`apps/desktop/src-tauri/src/daemon.rs`, `open_events`)
   sends the token in the `Authorization` header and no `client` declaration, so it is counted by
   the undeclared-stream rule of `shells.ts`. Once the shell sends `?client=shell` (or the

@@ -21,6 +21,16 @@ import { buildPeerFeed } from "../session/peers.ts";
 import { defaultPeers } from "../session/runner.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
 import type { SchemaSyncStatus } from "../update/sync.ts";
+import type { VoiceBridgeEntry } from "../voice/bridge.ts";
+import type { AudioChunk } from "../voice/pkg.ts";
+import {
+  decodePcm,
+  voiceAnswerView,
+  voiceEventView,
+  voiceSessionView,
+  voiceStatusView,
+  voiceTurnView,
+} from "../voice/views.ts";
 import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring/desktop-ports.ts";
 import { DecisionLog, StateAudit } from "../wiring/state-ports.ts";
 import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
@@ -50,10 +60,15 @@ import {
   type PendingChangeView,
   PinLessonBody,
   StartSessionBody,
+  StartVoiceSessionBody,
   type SyncHealth,
   TransitionTaskBody,
   UpdateLessonBody,
   UpdateProjectSettingsBody,
+  VoiceAnswerBody,
+  VoiceAudioBody,
+  VoicePressBody,
+  VoiceTextBody,
 } from "./api-types.ts";
 import type { RuntimeApp } from "./compose.ts";
 import type { RestartRequestFile } from "./restart.ts";
@@ -244,7 +259,9 @@ export function createDaemonApp(
     const header = c.req.header("authorization") ?? "";
     const sseRoute =
       c.req.method === "GET" &&
-      (c.req.path === "/events" || /^\/sessions\/[^/]+\/events$/.test(c.req.path));
+      (c.req.path === "/events" ||
+        /^\/sessions\/[^/]+\/events$/.test(c.req.path) ||
+        /^\/voice\/sessions\/[^/]+\/events$/.test(c.req.path));
     const got = header.startsWith("Bearer ")
       ? header.slice(7)
       : sseRoute
@@ -1105,6 +1122,141 @@ export function createDaemonApp(
       ]),
     ];
     return c.json(rows);
+  });
+
+  // -------------------------------------------------------------------------------------
+  // Voice (spec O, Q.4; ADR 0012, ADR 0048): the voice loop over the conversation agent. A
+  // shell opens a session, pushes captured audio (push-to-talk press, chunks, release) or a
+  // typed line, streams the loop's events (first audio, read-back = approval needed, done)
+  // and answers a read-back by voice (a spoken turn) or by tap. Every state change goes
+  // through the command registry with the read-back rules; `voice.turn` and `voice.approval`
+  // rows land on the conversation session, the session's start, stop and approval decisions
+  // in the audit log. Without a provider pair the status says why and a start is 503.
+
+  const voiceAudioMeta = VoiceAudioBody.omit({ pcm: true });
+
+  app.get("/voice/status", async (c) => c.json(voiceStatusView(await rt.voice.status())));
+
+  app.post("/voice/sessions", async (c) => {
+    const body = await parse(c, StartVoiceSessionBody);
+    const session = await rt.voice.start(body);
+    return c.json(voiceSessionView(session, chf()), 201);
+  });
+
+  app.get("/voice/sessions/:id", (c) =>
+    c.json(voiceSessionView(rt.voice.mustGet(c.req.param("id")), chf())),
+  );
+
+  app.post("/voice/sessions/:id/stop", async (c) => {
+    const session = await rt.voice.stop(c.req.param("id"));
+    return c.json(voiceSessionView(session, chf()));
+  });
+
+  app.post("/voice/sessions/:id/press", async (c) => {
+    const session = rt.voice.mustGet(c.req.param("id"));
+    const body = await parse(c, VoicePressBody);
+    session.bridge.press(body.pressed);
+    return c.json(voiceSessionView(session, chf()));
+  });
+
+  // One captured chunk: JSON with base64 PCM, or the raw bytes as octet-stream with the
+  // format in the query (the shell's cheaper path). Nothing of it is stored or logged.
+  app.post("/voice/sessions/:id/audio", async (c) => {
+    const session = rt.voice.mustGet(c.req.param("id"));
+    const type = c.req.header("content-type") ?? "";
+    let chunk: AudioChunk;
+    if (type.includes("application/octet-stream")) {
+      const meta = voiceAudioMeta.safeParse({
+        sampleRate: Number(c.req.query("sampleRate")),
+        channels: Number(c.req.query("channels") ?? 1),
+        timestampMs: Number(c.req.query("timestampMs") ?? 0),
+      });
+      if (!meta.success)
+        throw new ForerunnerError(
+          "validation",
+          meta.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+        );
+      chunk = decodePcm(Buffer.from(await c.req.arrayBuffer()), meta.data);
+    } else {
+      const body = await parse(c, VoiceAudioBody);
+      chunk = decodePcm(Buffer.from(body.pcm, "base64"), body);
+    }
+    session.bridge.push(chunk);
+    return c.json(voiceSessionView(session, chf()));
+  });
+
+  // The text fallback (shells without audio capture): one turn through the same loop, the
+  // same approval rules and TTS; answers once the turn has ended.
+  app.post("/voice/sessions/:id/text", async (c) => {
+    const session = rt.voice.mustGet(c.req.param("id"));
+    const body = await parse(c, VoiceTextBody);
+    const turn = await session.bridge.text(body.text);
+    if (turn.pending || turn.approval) rt.events.emit("inbox", {});
+    return c.json(voiceTurnView(turn, chf()));
+  });
+
+  // A tap confirms the read-back through the registry as a tap; "no" cancels the card.
+  app.post("/voice/sessions/:id/answer", async (c) => {
+    const session = rt.voice.mustGet(c.req.param("id"));
+    const body = await parse(c, VoiceAnswerBody);
+    const r = await session.bridge.answer(body.answer, { kind: "human", id: rt.human.id });
+    rt.events.emit("inbox", {});
+    return c.json(voiceAnswerView(r, body.answer, chf()));
+  });
+
+  app.get("/voice/sessions/:id/events", async (c) => {
+    const session = rt.voice.mustGet(c.req.param("id"));
+    const bridge = session.bridge;
+    const afterSeq = Number(c.req.query("afterSeq") ?? 0);
+    const accept = c.req.header("accept") ?? "";
+    if (!accept.includes("text/event-stream")) {
+      return c.json(bridge.eventsAfter(afterSeq).map((e) => voiceEventView(e, chf())));
+    }
+    return streamSSE(c, async (stream) => {
+      const write = (entry: VoiceBridgeEntry) =>
+        stream.writeSSE({
+          event: "voice.event",
+          data: JSON.stringify(voiceEventView(entry, chf())),
+          id: String(entry.seq),
+        });
+      // Replay what the stream missed, then go live; events that arrive during the replay
+      // are held and written in order once, never twice.
+      let replaying = true;
+      let last = afterSeq;
+      const held: VoiceBridgeEntry[] = [];
+      const unsubscribe = bridge.subscribe((entry) => {
+        if (replaying) {
+          held.push(entry);
+          return;
+        }
+        if (entry.seq <= last) return;
+        last = entry.seq;
+        void write(entry);
+      });
+      try {
+        for (const entry of bridge.eventsAfter(afterSeq)) {
+          last = entry.seq;
+          await write(entry);
+        }
+        replaying = false;
+        for (const entry of held.splice(0)) {
+          if (entry.seq <= last) continue;
+          last = entry.seq;
+          await write(entry);
+        }
+        let ticks = 0;
+        await streamUntilClosed(stream, 1000, async () => {
+          if (++ticks % 15 === 0)
+            await stream.writeSSE({
+              event: "heartbeat",
+              data: JSON.stringify({ at: rt.clock.nowIso() }),
+            });
+          return !bridge.ended;
+        });
+      } finally {
+        unsubscribe();
+      }
+    });
   });
 
   app.get("/events", (c) =>

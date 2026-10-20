@@ -18,11 +18,18 @@ export const DRY_RUN_PRICING: PricingTable = Object.freeze({
   "fake-fable": BUILTIN_PRICING["claude-fable-5-1"] as PricingTable[string],
 });
 
-/** Fixture credentials built by concatenation: no credential shape sits in the source. */
-export function dryRunCredentials(): LiveCredentials {
+/**
+ * Fixture credentials built by concatenation: no credential shape sits in the source. With
+ * `subscription`, a token-shaped value too (the dry run of the subscription half, where the
+ * SDK's `query` is a fake and the value only has to reach the vault and nothing else).
+ */
+export function dryRunCredentials(opts: { subscription?: boolean } = {}): LiveCredentials {
   return {
     apiKey: ["sk-ant-", "api03-", "dry-run-", "0".repeat(16)].join(""), // not-a-secret
     workspaceId: null,
+    subscriptionToken: opts.subscription
+      ? ["sk-", "ant-", "oat01-", "dry-run-", "1".repeat(40)].join("") // not-a-secret
+      : null,
     source: "process-env",
   };
 }

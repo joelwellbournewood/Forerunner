@@ -18,6 +18,19 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-20 (phase 3 gate passes live, nine scenarios, remote commands and sync gate landed)
+- Snapshots 984ed45 (live harness, ADR 0040), 612ec33 (remote commands owner filter and PC
+  pickup, pause as graceful stop, presence heartbeat, install record and schema sync gate, ADR
+  0041), 9ceecb6 (nine scenarios on the fake provider, critic evidence and escalate default per
+  ADR 0042, Claude Code tool names per driver per ADR 0043, integer run-row milliseconds, queue
+  consume scoped per human, periodic claim renewal); ADR 0010 written. CI green on both OS at
+  run 75. Progress report 4 posted.
+- Live: phase 1 API-key half passed in full (run 18:58 UTC: 3 of 3 tasks, accept 93 to 95,
+  kill 49 ms); phase 3 gate passed on the re-run (40 of 40 caught, 40 of 40 clean accepted,
+  USD 2.32); ledger USD 5.86 of 100. Subscription token received; the Agent SDK session path
+  and the live subscription half are being built (ADR 0044).
+- Requirements 109 done / 106 in progress / 13 todo; milestone rows 25 of 30 passed.
+
 ### 2026-10-20 (live model runs, wiring passes, phase 3 and 4 harnesses landed)
 - Credits restored (API key with a workspace id for live runs, build credits). Snapshots since
   the last report: voice and sandbox fixes, reviews of model watch, desktop control, data assets

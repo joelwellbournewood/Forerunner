@@ -24,7 +24,10 @@ export interface CredentialRequest {
   howVerified: string;
 }
 
-export const CREDENTIAL_REQUESTS: Record<"github" | "anthropic", CredentialRequest> = {
+export const CREDENTIAL_REQUESTS: Record<
+  "github" | "anthropic" | "subscription",
+  CredentialRequest
+> = {
   github: {
     name: "GitHub token",
     what: "A fine-grained personal access token (or a GitHub App installation) for the repositories Forerunner may work in.",
@@ -54,7 +57,52 @@ export const CREDENTIAL_REQUESTS: Record<"github" | "anthropic", CredentialReque
     howVerified:
       "Forerunner calls GET /v1/models with the key; a 200 proves the key works, a 401 means it is wrong or revoked. No tokens are generated during the check.",
   },
+  subscription: {
+    name: "Claude subscription token",
+    what: "A long-lived token from `claude setup-token` for your own Claude Pro, Max or Team plan.",
+    why: "Day-to-day sessions and specialist runs through the Claude Agent SDK on the flat fee you already pay; the API key stays the fallback. Only your own agent ever uses it.",
+    scopes: [
+      "Your own plan only: a subscription token is never granted to another person's agent",
+      "Plan usage limits apply; Forerunner stops subscription work at the plan share cap",
+    ],
+    whereToClick:
+      "A terminal with Claude Code logged in: run `claude setup-token` and paste the token it prints",
+    howVerified:
+      "The format is checked on paste (sk-ant-oat…) and the token is stored in the vault by name; the first subscription run proves it works, and the live harness checks it against the Agent SDK. No request is made during setup.",
+  },
 };
+
+/** The prefix of a token `claude setup-token` prints (an OAuth token, not an API key). */
+export const SUBSCRIPTION_TOKEN_PREFIX = "sk-ant-oat";
+
+/**
+ * A subscription token is checked for its shape only (spec: validate on paste; a real call
+ * through the Agent SDK is the live harness's job, never a unit test's): the `sk-ant-oat`
+ * prefix, a plausible length, no whitespace. The value never enters the result.
+ */
+export function validateSubscriptionTokenFormat(token: string): ValidationResult {
+  const v = token.trim();
+  const problems: string[] = [];
+  if (!v.startsWith(SUBSCRIPTION_TOKEN_PREFIX)) {
+    const kind = classifyCredential(v);
+    problems.push(
+      kind === "anthropic_api_key"
+        ? "This is an Anthropic API key (sk-ant-api…), not a subscription token; pass it as --anthropic-key."
+        : `A subscription token from \`claude setup-token\` starts with ${SUBSCRIPTION_TOKEN_PREFIX}.`,
+    );
+  }
+  if (/\s/.test(v)) problems.push("The token contains whitespace; paste it in one piece.");
+  if (v.length < 40) problems.push("The token is too short to be a subscription token.");
+  const ok = problems.length === 0;
+  return {
+    ok,
+    summary: ok
+      ? "Subscription token format accepted (sk-ant-oat…); stored for the Agent SDK path, verified on first use."
+      : "The value is not a subscription token.",
+    problems,
+    details: { kind: "subscription", verified: "format" },
+  };
+}
 
 export interface GitHubValidationOptions {
   token: string;
