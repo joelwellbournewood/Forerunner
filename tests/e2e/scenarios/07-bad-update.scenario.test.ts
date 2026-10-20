@@ -381,13 +381,14 @@ describe("scenario 7: bad update", () => {
       to: GOOD,
       reason: `health check timed out after ${HEALTH_TIMEOUT_MS} ms`,
     });
-    // The abort killed the doctor: its own run ended by signal, after the timeout won.
+    // The abort killed the doctor after the timeout won: by signal on Linux, with exit code 1
+    // on Windows (no signals there); either way its own run ended without an ok.
     const doctorRun = await waitFor(
       () => up.probe.results.find((r) => r.version === HUNG),
       "the hung doctor's exit",
     );
     expect(doctorRun.result.ok).toBe(false);
-    expect(doctorRun.result.detail).toMatch(/^doctor exited by signal/);
+    expect(doctorRun.result.detail).toMatch(/^doctor exited (by signal|[1-9]\d*):/);
     expect(up.probe.checks.map((c) => c.version)).toEqual([GOOD, BAD, HUNG]);
 
     // --- Clause: rolls back on its own; the pointer, the rows and the shell say so ----------
