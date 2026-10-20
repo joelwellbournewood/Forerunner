@@ -16,6 +16,17 @@ import { defaultEgressRoute } from "../src/sandbox/factory.ts";
  */
 const IMAGE = "node:22-bookworm-slim";
 
+/**
+ * The container runs as the host uid:gid (the factory's default on rootful Docker on Linux):
+ * the bind-mounted worktree belongs to the host user, and a root container with every
+ * capability dropped cannot write into it on a runner with an unprivileged user.
+ */
+function hostUser(): string | undefined {
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function")
+    return undefined;
+  return `${process.getuid()}:${process.getgid()}`;
+}
+
 interface Ready {
   engine: "docker" | "podman" | null;
   reason: string;
@@ -110,11 +121,11 @@ describe.skipIf(ready.engine === null)(
         limits: { cpus: 1, memoryMb: 512, pidsLimit: 128, timeoutMs: 60_000 },
         network: { mode: "none" },
         taskId: "int-basic",
-        user: "0:0",
+        user: hostUser(),
       });
       try {
         const r = await sb.run(["node", "-e", "console.log(1+1)"]);
-        expect(r.code).toBe(0);
+        expect(r.code, r.stderr).toBe(0);
         expect(r.stdout.trim()).toBe("2");
 
         // Host -> container through the bind mount.
@@ -130,7 +141,7 @@ describe.skipIf(ready.engine === null)(
           "-e",
           "require('fs').writeFileSync('out.txt', 'from container')",
         ]);
-        expect(w.code).toBe(0);
+        expect(w.code, w.stderr).toBe(0);
         expect(await sb.readFile("out.txt")).toBe("from container");
 
         // A symlink planted by the sandboxed command cannot redirect host-side reads.
@@ -205,7 +216,7 @@ describe.skipIf(ready.engine === null)(
         limits: { timeoutMs: 60_000 },
         network: { mode: "none" },
         taskId: "int-netnone",
-        user: "0:0",
+        user: hostUser(),
       });
       try {
         const r = await sb.run([
@@ -236,7 +247,7 @@ describe.skipIf(ready.engine === null)(
           limits: { timeoutMs: 60_000 },
           network: { mode: "allowlist", domains: ["127.0.0.1"] },
           taskId: "int-allow",
-          user: "0:0",
+          user: hostUser(),
           egress: { route: ready.route, onDecision: (d) => decisions.push(d) },
         });
         try {
