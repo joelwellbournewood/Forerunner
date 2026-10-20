@@ -8,6 +8,7 @@ import type { ChatReply, PendingConfirmation } from "../conversation/agent.ts";
 import type {
   ChatPendingView,
   ChatReplyView,
+  CommandResultJson,
   VoiceAnswerView,
   VoiceApprovalView,
   VoiceEventView,
@@ -21,7 +22,7 @@ import { VOICE_MODES } from "../daemon/api-types.ts";
 import { money } from "../daemon/views.ts";
 import type { CommandResultView } from "../loop/ports.ts";
 import type { VoiceApproval, VoiceBridgeEntry, VoiceTurn } from "./bridge.ts";
-import { type AudioChunk, type LatencyReport, toInt16 } from "./pkg.ts";
+import { type AudioChunk, bytesToPcm, type LatencyReport, toInt16 } from "./pkg.ts";
 import type { VoiceAvailability, VoiceSession } from "./sessions.ts";
 
 export function chatPendingView(p: PendingConfirmation, chf: number): ChatPendingView {
@@ -65,6 +66,15 @@ export function voiceLatencyView(l: LatencyReport): VoiceLatencyView {
   };
 }
 
+/** The registry's result as the views carry it: the cost in CHF at the day's rate. */
+export function commandResultJson(r: CommandResultView, chf: number): CommandResultJson {
+  const { costUsdMicro, ...rest } = r;
+  return {
+    ...rest,
+    ...(typeof costUsdMicro === "number" ? { cost: money(costUsdMicro, chf) } : {}),
+  };
+}
+
 export function voiceApprovalView(a: VoiceApproval): VoiceApprovalView {
   return {
     turn: a.turn,
@@ -77,6 +87,8 @@ export function voiceApprovalView(a: VoiceApproval): VoiceApprovalView {
     method: a.method,
     pendingId: a.pendingId,
     commands: a.commands,
+    status: a.status,
+    reason: a.reason,
   };
 }
 
@@ -88,6 +100,7 @@ export function voiceTurnView(t: VoiceTurn, chf: number): VoiceTurnView {
     heard: t.heard,
     reply: t.reply ? voiceChatReplyView(t.reply, chf) : null,
     approval: t.approval ? voiceApprovalView(t.approval) : null,
+    outcome: t.outcome ? commandResultJson(t.outcome, chf) : null,
     pending: t.pending ? chatPendingView(t.pending, chf) : null,
     latency: voiceLatencyView(t.latency),
     audioChunks: t.audioChunks,
@@ -140,14 +153,10 @@ export function voiceAnswerView(
   answer: "tap" | "no",
   chf: number,
 ): VoiceAnswerView {
-  const { costUsdMicro, ...rest } = r.result;
   return {
     pendingId: r.pendingId,
     answer,
-    result: {
-      ...rest,
-      ...(typeof costUsdMicro === "number" ? { cost: money(costUsdMicro, chf) } : {}),
-    },
+    result: commandResultJson(r.result, chf),
     approval: voiceApprovalView(r.approval),
   };
 }
@@ -161,14 +170,11 @@ export function encodePcm(chunk: AudioChunk): string {
 
 /** Decode what `POST /voice/sessions/:id/audio` carries into the loop's chunk. */
 export function decodePcm(
-  bytes: Buffer,
+  bytes: Uint8Array,
   meta: { sampleRate: number; channels: number; timestampMs: number },
 ): AudioChunk {
-  const even = bytes.byteLength - (bytes.byteLength % 2);
-  const pcm = new Int16Array(even / 2);
-  for (let i = 0; i < pcm.length; i++) pcm[i] = bytes.readInt16LE(i * 2);
   return {
-    pcm,
+    pcm: bytesToPcm(bytes),
     sampleRate: meta.sampleRate,
     channels: meta.channels,
     timestampMs: meta.timestampMs,
@@ -206,20 +212,15 @@ export function voiceEventView(entry: VoiceBridgeEntry, chf: number): VoiceEvent
       return { ...base, data: { pending: chatPendingView(e.pending, chf) } };
     case "voice.approval":
       return { ...base, data: { approval: voiceApprovalView(e.approval) } };
-    case "voice.answer": {
-      const { costUsdMicro, ...rest } = e.result;
+    case "voice.answer":
       return {
         ...base,
         data: {
           pendingId: e.pendingId,
           answer: e.answer,
-          result: {
-            ...rest,
-            ...(typeof costUsdMicro === "number" ? { cost: money(costUsdMicro, chf) } : {}),
-          },
+          result: commandResultJson(e.result, chf),
         },
       };
-    }
     case "voice.turn":
       return { ...base, data: { record: voiceTurnView(e.record, chf) } };
     default: {

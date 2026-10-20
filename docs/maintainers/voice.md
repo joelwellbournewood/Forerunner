@@ -178,6 +178,33 @@ open-mic barge-in can trigger on the agent's own voice, so the shell defaults to
 devices without AEC). The Android app uses the same loop over the phone's audio session. The
 cloud runner has no device and uses `pacedSink`.
 
+### How the shell reaches it
+
+The loop is not driven by the shells directly: the daemon composes it once per voice session
+(`packages/runtime/src/voice/`, [ADR 0048](../decisions/0048-voice-bridge-in-the-daemon.md);
+`runtime.md`, "Voice" under the local daemon) over the conversation agent and the command
+registry, and the shells talk to it over the daemon's `/voice` routes (`DAEMON_ROUTES` in
+`packages/runtime/src/daemon/api-types.ts`, bearer token as for every route):
+
+| Step | Route | What happens |
+| --- | --- | --- |
+| Can I talk? | `GET /voice/status` | `VoiceStatusView`: `available` with the STT and TTS provider the registry's policy picked and the reason, or `available: false` with the reason to show (no local helper and no key, or no model credential); every registered provider's status row with its key by reference only |
+| Open | `POST /voice/sessions { projectId?, language?, mode? }` | 201 `VoiceSessionView` (`id`, `conversationSessionId`, providers, `pending`); 503 `unavailable` with the reason when nothing can run |
+| Listen | `GET /voice/sessions/:id/events` with `Accept: text/event-stream` (`?token=` allowed, `?afterSeq=` to resume) | SSE `voice.event` frames (`VoiceEventView`): the loop's `state`, `turn_start`, `transcript_partial`, `transcript_final`, `model_delta`, `sentence`, `audio` (base64 16-bit PCM with `sampleRate`, `channels`: the shell plays it), `speaking_start`, `speaking_end`, `barge_in`, `turn_end`, `error`, plus `voice.first_audio` (first audio with how long after the end of the turn), `voice.readback` (approval needed: the card read back, `pending.id`), `voice.approval` (the decision with the exact line), `voice.answer`, `voice.turn` (done: the turn's record with the latency stages) and `voice.stopped`; `heartbeat` every 15 s. Without the SSE accept header the same route answers the kept frames as JSON (audio frames are never kept) |
+| Speak (push-to-talk) | `POST /voice/sessions/:id/press { pressed: true }`, then one `POST /voice/sessions/:id/audio` per captured chunk (JSON `{ pcm (base64 int16 LE), sampleRate, channels, timestampMs }` or the raw bytes as `application/octet-stream` with `?sampleRate=&channels=&timestampMs=`), then `{ pressed: false }` | the loop's turn: STT, the agent, TTS; a press while the agent speaks is the barge-in. In `open_mic` mode the shell streams audio continuously and never presses |
+| Type (no microphone) | `POST /voice/sessions/:id/text { text }` | the same turn through the same loop (`TextTurnStt`: the line is the final transcript), answered with `VoiceTurnView` once the turn has ended; refused (409) while a capture is open |
+| Answer a read-back | say yes or no (a turn), or `POST /voice/sessions/:id/answer { answer: "tap" \| "no" }` | a spoken line is judged by `expectYes`: a yes is confirmed and a plain "no" (no, nope, cancel, stop, nein, non, abbrechen) cancelled by the bridge through the registry itself with `source: "voice"`, exactly as a tap is, and the registry's sentence is spoken; a refused line (a question, a qualifier, a deferral, a hesitation) repeats the card. A tap confirms as a tap (a medium-risk card; a high-risk card still needs the paired device and the result says so), "no" cancels. The registry's pending list decides whether the card still waits: a card tapped in the UI, answered by email or expired is refused with the reason and forgotten by the session. The decision (`VoiceApprovalView`, the `voice.approval` frame) carries the registry's `status` and `reason`, the turn (`VoiceTurnView`) its `outcome` (the result with the sentence, change log id and undo token), and a `voice.answer` frame carries the same result for a spoken, tapped or cancelled answer |
+| Read | `GET /voice/sessions/:id` | `VoiceSessionView` with `state`, `turn`, `pending`, `lastTurn`, `lastSeq` |
+| Close | `POST /voice/sessions/:id/stop` | immediate in every state (O.9); input is refused afterwards |
+
+The desktop shell (`apps/desktop`), the Android app (`apps/mobile`) and the approvals web page
+(`apps/approvals-web`) are not hooked up yet: the desktop and Android shells capture with the
+OS audio APIs above and call `press` and `audio`, play the `audio` frames, show the
+`voice.readback` card with a Yes button that calls `answer`; a shell without capture (the web
+page, a phone without microphone permission) calls `text` and plays or prints the reply. What
+the bridge records is in `runtime.md` ("Voice"): `voice.turn` and `voice.approval` rows on the
+conversation session, `voice.session` and `voice.approval` audit rows, never audio.
+
 ### What is stored
 
 - Transcripts: always, as `TranscriptEntry` rows handed to session history (`audioStored: false`).
@@ -290,6 +317,13 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
   or ordering, but the provider's work (and a cloud provider's bill) continues meanwhile. The
   fake, local and cloud providers all honour the signal; the model stream is the only worker
   raced against the abort.
+- The shells do not call the `/voice` routes yet (above, "How the shell reaches it"); the
+  daemon's bridge is exercised by `packages/runtime/test/voice-route.test.ts` and scenario 3
+  still carries its own copy (`tests/e2e/src/scenario-voice.ts`) until it is pointed at
+  `VoiceBridge`. The conversation agent's own per-human copy of a pending card outlives a
+  voice answer until its next typed line (`runtime.md`, "Known issues": a bare "yes" typed
+  right after is reported as "Not done"; nothing runs twice). The Extensions panel's `voice-local` / `voice-deepgram` entries do not yet
+  feed the registry's `preferred` name; `FORERUNNER_VOICE_STT` / `FORERUNNER_VOICE_TTS` do.
 
 ## Requirements covered
 
@@ -299,6 +333,7 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
 | O.4 | local by default (faster-whisper, Kokoro or Piper), cloud option (Deepgram, Cartesia or ElevenLabs), chosen in Extensions | `providers/*`, `registry.ts` | `test/registry.test.ts`, `test/local-helpers.test.ts`, `test/cloud.test.ts`, `test/availability.test.ts` |
 | O.5 | latency budget per stage, under 1.2 s to first audio, each part measured and shown | `latency.ts`, `loop.ts` | `test/latency.test.ts`, `test/loop.test.ts` |
 | O.7 | waits for "yes"; spoken approvals logged with the transcript line | `approval.ts` (the read-back and confirm step itself is the runtime's conversation agent) | `test/approval.test.ts`, `test/loop.test.ts` |
+| O.1, O.7, O.9, Q.4, Q.5 (voice) | talk by voice or typed line through the daemon; the card read back and the wait for the yes with the line logged; stop at once; the same registry as chat | `packages/runtime/src/voice/` (`VoiceBridge`, `TextTurnStt`, `VoiceSessions`), the `/voice` routes | `packages/runtime/test/voice-route.test.ts` |
 | O.10 | transcripts kept, audio not stored unless turned on | `loop.ts`, `store.ts` | `test/loop.test.ts` (audio storage) |
 | D.8 | voice chat first audio under 1.2 s (measurement; the model choice is the runtime's) | `latency.ts` | `test/loop.test.ts` |
 | L.6 | TTS for summaries and alerts, STT for voice notes, pluggable provider | `splitSentences()` + any `TtsProvider`; any `SttProvider`; `registry.ts` | `test/sentences.test.ts`, `test/registry.test.ts` |

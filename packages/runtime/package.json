@@ -22,6 +22,7 @@
     "@forerunner/platform": "workspace:*",
     "@forerunner/state": "workspace:*",
     "@forerunner/vault": "workspace:*",
+    "@forerunner/voice": "workspace:*",
     "@hono/node-server": "^2.1.5",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "adm-zip": "^0.6.1",

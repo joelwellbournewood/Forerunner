@@ -261,6 +261,9 @@ describe("voice routes on the composed daemon", () => {
     expect(done.record.heard).toBe(STATUS_REPLY);
     const lastSeq = seen.at(-1)?.seq ?? 0;
     expect(await events(sessionId, lastSeq)).toEqual([]);
+    // A resume point that is not a number is refused, never a silent empty replay.
+    expect((await req(`/voice/sessions/${sessionId}/events?afterSeq=abc`)).status).toBe(409);
+    expect((await req(`/voice/sessions/${sessionId}/events?afterSeq=-1`)).status).toBe(409);
 
     // Session history (spec O.5, O.10): the chat turn with its source and the voice.turn row.
     const human = await eventRows("chat.human");
@@ -333,7 +336,9 @@ describe("voice routes on the composed daemon", () => {
     expect(project.settings[SESSION_OVERRIDE_KEY]).toBeUndefined();
     expect((await rt.store.changeLog.list()).some((c) => c.source === "voice")).toBe(false);
 
-    // A yes applies the change through the registry: the change log names the words used.
+    // A yes applies the change through the registry itself (no model call): the registry's
+    // outcome is on the decision and its sentence is what he hears; the change log names the
+    // words used.
     const yes = VoiceTurnView.parse(
       await json(
         await drive(clock, post(`/voice/sessions/${sessionId}/text`, { text: "Yes, go ahead." })),
@@ -343,31 +348,177 @@ describe("voice routes on the composed daemon", () => {
       approved: true,
       line: "Yes, go ahead.",
       method: "spoken",
+      status: "done",
+      reason: null,
     });
     expect(yes.pending).toBeNull();
-    expect(yes.reply?.actions.map((a) => a.kind)).toEqual(["budget.set"]);
+    expect(yes.reply).toBeNull();
+    expect(yes.outcome).toMatchObject({ status: "done", commands: ["budget.set"] });
+    expect(yes.outcome?.changeLogId).toBeDefined();
+    expect(yes.heard).toBe(yes.outcome?.sentence);
+    expect((rt.provider as FakeProvider).calls).toHaveLength(callsBefore);
     expect(await jsonList(await req("/commands/pending"))).toEqual([]);
     const changed = await rt.store.project.mustGet(projectId);
     expect(changed.settings[SESSION_OVERRIDE_KEY]).toBeDefined();
     const change = (await rt.store.changeLog.list()).find((c) => c.source === "voice");
     expect(change?.words_used).toBe("Give it 20 francs tonight.");
+    // The transcript keeps the line and the outcome as the agent would have written them.
+    expect((await eventRows("chat.human")).at(-1)).toMatchObject({
+      text: "Yes, go ahead.",
+      source: "voice",
+    });
+    expect((await eventRows("chat.confirmed")).at(-1)).toMatchObject({
+      confirmationId: card?.id,
+      words: "Yes, go ahead.",
+      status: "done",
+      commands: ["budget.set"],
+    });
+    expect((await eventRows("chat.reply")).at(-1)).toMatchObject({
+      text: yes.heard,
+      actions: ["budget.set"],
+    });
 
-    // Spoken approvals are logged with the exact line (spec O.7): the rows and the audit log.
+    // Spoken approvals are logged with the exact line (spec O.7) and the registry's outcome:
+    // the rows and the audit log.
     const approvals = await eventRows("voice.approval");
-    expect(approvals.map((a) => [a.line, a.approved, a.blockedBy])).toEqual([
-      ["Yes, but what does it cost?", false, "question"],
-      ["Yes, go ahead.", true, null],
+    expect(approvals.map((a) => [a.line, a.approved, a.blockedBy, a.status])).toEqual([
+      ["Yes, but what does it cost?", false, "question", "pending"],
+      ["Yes, go ahead.", true, null, "done"],
     ]);
-    const audits = (await rt.store.auditLog.list({ tool: VOICE_APPROVAL_AUDIT_TOOL } as never)).map(
-      (r) => JSON.parse(r.input_summary) as Json,
-    );
-    expect(audits.map((a) => a.line)).toEqual(["Yes, but what does it cost?", "Yes, go ahead."]);
+    const audits = await rt.store.auditLog.list({ tool: VOICE_APPROVAL_AUDIT_TOOL } as never);
+    expect(audits.map((r) => [(JSON.parse(r.input_summary) as Json).line, r.allowed])).toEqual([
+      ["Yes, but what does it cost?", false],
+      ["Yes, go ahead.", true],
+    ]);
+    expect(audits.map((r) => (JSON.parse(r.input_summary) as Json).status)).toEqual([
+      "pending",
+      "done",
+    ]);
     expect((await eventRows("voice.turn")).map((r) => r.pendingId)).toEqual([
       null,
       card?.id,
       card?.id,
       null,
     ]);
+    // The registry's result reaches the stream as a voice.answer frame like a tap's.
+    const seenYes = await events(sessionId);
+    const answered = seenYes.filter((e) => e.type === "voice.answer");
+    expect(answered).toHaveLength(1);
+    expect(answered[0]?.data).toMatchObject({
+      pendingId: card?.id,
+      answer: "spoken",
+      result: { status: "done" },
+    });
+  });
+
+  it("a chat line between the read-back and the spoken yes does not lose the card: the registry decides", async () => {
+    const ask = VoiceTurnView.parse(
+      await json(
+        await drive(
+          clock,
+          post(`/voice/sessions/${sessionId}/text`, { text: "Give it 30 francs tonight." }),
+        ),
+      ),
+    );
+    const card = ask.pending;
+    expect(card).toMatchObject({ decision: "needs_yes", commands: ["budget.set"] });
+    // A typed line from the same human in the meantime: the conversation agent drops its own
+    // copy of the card, the registry still holds it and so does the voice session.
+    const chat = await post("/chat", {
+      humanId: rt.human.id,
+      agentId: rt.agent.id,
+      text: "What is the status?",
+    });
+    expect(chat.status).toBe(200);
+    expect(((await json(chat)) as { reply: string }).reply).toBe(STATUS_REPLY);
+    expect((await jsonList(await req("/commands/pending"))).map((p) => p.id)).toEqual([card?.id]);
+    expect(
+      VoiceSessionView.parse(await json(await req(`/voice/sessions/${sessionId}`))).pending?.id,
+    ).toBe(card?.id);
+    const changesBefore = (await rt.store.changeLog.list()).length;
+
+    // The spoken yes answers the registry's card, so what the audit row says happened happened.
+    const yes = VoiceTurnView.parse(
+      await json(
+        await drive(clock, post(`/voice/sessions/${sessionId}/text`, { text: "Yes, go ahead." })),
+      ),
+    );
+    expect(yes.approval).toMatchObject({ approved: true, status: "done", pendingId: card?.id });
+    expect(yes.pending).toBeNull();
+    expect(yes.outcome?.status).toBe("done");
+    expect(await jsonList(await req("/commands/pending"))).toEqual([]);
+    const changes = await rt.store.changeLog.list();
+    expect(changes).toHaveLength(changesBefore + 1);
+    expect(changes.some((c) => c.words_used === "Give it 30 francs tonight.")).toBe(true);
+    const audit = (await rt.store.auditLog.list({ tool: VOICE_APPROVAL_AUDIT_TOOL } as never)).at(
+      -1,
+    );
+    expect(audit?.allowed).toBe(true);
+    expect(JSON.parse(audit?.input_summary ?? "{}")).toMatchObject({
+      pendingId: card?.id,
+      status: "done",
+    });
+  });
+
+  it("a card answered elsewhere is gone for the voice session too: nothing runs twice", async () => {
+    const ask = VoiceTurnView.parse(
+      await json(
+        await drive(
+          clock,
+          post(`/voice/sessions/${sessionId}/text`, { text: "Give it 35 francs tonight." }),
+        ),
+      ),
+    );
+    const card = ask.pending;
+    expect(card?.commands).toEqual(["budget.set"]);
+    // The UI taps the card while the voice session still shows it.
+    const tapped = await post(`/commands/${card?.id}/confirm`, { answer: "tap" });
+    expect(tapped.status).toBe(200);
+    expect(((await json(tapped)) as { status: string }).status).toBe("done");
+    const changesBefore = (await rt.store.changeLog.list()).length;
+    // A spoken yes is refused by the registry (no such pending change), recorded as such, and
+    // the voice session forgets the card; the change does not run a second time.
+    const yes = VoiceTurnView.parse(
+      await json(await drive(clock, post(`/voice/sessions/${sessionId}/text`, { text: "Yes." }))),
+    );
+    expect(yes.approval).toMatchObject({
+      approved: true,
+      status: "refused",
+      pendingId: card?.id,
+      reason: expect.stringContaining("no pending confirmation"),
+    });
+    expect(yes.heard).toMatch(/^Not done: /);
+    expect(yes.pending).toBeNull();
+    expect(yes.outcome?.code).toBe("not_found");
+    expect((await rt.store.changeLog.list()).length).toBe(changesBefore);
+    const audit = (await rt.store.auditLog.list({ tool: VOICE_APPROVAL_AUDIT_TOOL } as never)).at(
+      -1,
+    );
+    expect(audit?.allowed).toBe(false);
+    expect(JSON.parse(audit?.input_summary ?? "{}")).toMatchObject({ status: "refused" });
+    // Without a card, a tap is 404; with a card cancelled elsewhere, a question is plain chat.
+    expect((await post(`/voice/sessions/${sessionId}/answer`, { answer: "tap" })).status).toBe(404);
+    const ask2 = VoiceTurnView.parse(
+      await json(
+        await drive(
+          clock,
+          post(`/voice/sessions/${sessionId}/text`, { text: "Give it 40 francs tonight." }),
+        ),
+      ),
+    );
+    expect(ask2.pending?.commands).toEqual(["budget.set"]);
+    expect((await post(`/commands/${ask2.pending?.id}/cancel`, {})).status).toBe(200);
+    const plain = VoiceTurnView.parse(
+      await json(
+        await drive(
+          clock,
+          post(`/voice/sessions/${sessionId}/text`, { text: "What is the status?" }),
+        ),
+      ),
+    );
+    expect(plain.approval).toBeNull();
+    expect(plain.pending).toBeNull();
+    expect(plain.heard).toBe(STATUS_REPLY);
   });
 
   it("a tap answers the read-back through the registry without a spoken yes", async () => {
@@ -397,7 +548,9 @@ describe("voice routes on the composed daemon", () => {
     const approvals = await eventRows("voice.approval");
     expect(approvals.at(-1)).toMatchObject({ method: "tap", approved: true, status: "done" });
     const seen = await events(sessionId);
-    expect(seen.filter((e) => e.type === "voice.answer")).toHaveLength(1);
+    expect(
+      seen.filter((e) => e.type === "voice.answer" && (e.data as Json).answer === "tap"),
+    ).toHaveLength(1);
   });
 
   it("an audio turn: press, chunks, release; every latency stage measured on the clock", async () => {
@@ -438,6 +591,25 @@ describe("voice routes on the composed daemon", () => {
       body: new Uint8Array(4),
     });
     expect(bad.status).toBe(409);
+    // A rate no capture device has is refused before the loop resamples it to 16 kHz (a chunk
+    // declared at 1 Hz would be expanded 16000 times), in both bodies.
+    const first = frames[0];
+    if (!first) throw new Error("no frame");
+    for (const rate of [1, 7999, 192_001]) {
+      const lowJson = await post(`/voice/sessions/${sessionId}/audio`, {
+        pcm: encodePcm(first),
+        sampleRate: rate,
+        channels: 1,
+        timestampMs: 0,
+      });
+      expect(lowJson.status).toBe(409);
+      const lowRaw = await req(`/voice/sessions/${sessionId}/audio?sampleRate=${rate}&channels=1`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: Buffer.from(encodePcm(first), "base64"),
+      });
+      expect(lowRaw.status).toBe(409);
+    }
     // The release comes 20 ms after the last frame: the push-to-talk end of turn.
     clock.tickMonotonic(20);
     const released = VoiceSessionView.parse(
@@ -614,6 +786,64 @@ describe("voice unavailable", () => {
           secretConfigured: true,
         }),
       ]);
+    } finally {
+      await rt.close();
+    }
+  });
+});
+
+describe("voice session eviction", () => {
+  it("drops stopped sessions beyond the kept count and after the grace period", async () => {
+    const clock = new SimulatedClock("2026-11-03T09:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-voice-evict-"));
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new FakeProvider({ replies: [], clock, latency: "none" }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+      voice: {
+        stt: new FakeStt({ clock, scripts: () => ({ final: "" }) }),
+        tts: new FakeTts({ clock }),
+        keepStopped: 2,
+        retainStoppedMs: 60_000,
+      },
+    });
+    const { app, token } = createDaemonApp(rt);
+    const req = (path: string, init: RequestInit = {}) =>
+      app.request(path, {
+        ...init,
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      });
+    try {
+      const ids: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const started = await req("/voice/sessions", { method: "POST", body: "{}" });
+        expect(started.status).toBe(201);
+        const id = VoiceSessionView.parse(await json(started)).id;
+        await clock.advance(1000);
+        expect(
+          (await req(`/voice/sessions/${id}/stop`, { method: "POST", body: "{}" })).status,
+        ).toBe(200);
+        ids.push(id);
+      }
+      // Two stopped sessions are kept for a late GET or stream; the oldest is gone.
+      expect((await req(`/voice/sessions/${ids[0]}`)).status).toBe(404);
+      for (const id of [ids[1], ids[2]]) {
+        const view = VoiceSessionView.parse(await json(await req(`/voice/sessions/${id}`)));
+        expect(view.endedAt).not.toBeNull();
+      }
+      // After the grace period nothing of them is kept.
+      await clock.advance(60_001);
+      expect((await req(`/voice/sessions/${ids[2]}`)).status).toBe(404);
+      expect((await req(`/voice/sessions/${ids[1]}`)).status).toBe(404);
+      expect(VoiceStatusView.parse(await json(await req("/voice/status"))).sessions).toBe(0);
     } finally {
       await rt.close();
     }

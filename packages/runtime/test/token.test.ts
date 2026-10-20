@@ -27,6 +27,27 @@ describe("capability tokens", () => {
     expect(() => h.tokens.verify(t, h.clock.now())).toThrow(/revoked/);
   });
 
+  it("claimsForRun returns the run's newest live token; a same-instant re-issue wins by issue order", async () => {
+    const h = harness();
+    expect(h.tokens.claimsForRun("run-x")).toBeUndefined();
+    const first = issue(h, { runId: "run-x", allowedDomains: ["a.example"] });
+    // The simulated clock does not move: both tokens carry the same `issuedAt`.
+    const second = issue(h, { runId: "run-x", allowedDomains: ["b.example"] });
+    expect(second.claims.issuedAt).toBe(first.claims.issuedAt);
+    expect(h.tokens.claimsForRun("run-x")?.id).toBe(second.claims.id);
+    // A revoked re-issue falls back to the live one; an expired one is never returned.
+    h.tokens.revoke(second.claims.id);
+    expect(h.tokens.claimsForRun("run-x")?.id).toBe(first.claims.id);
+    await h.clock.advance(3_600_000);
+    expect(h.tokens.claimsForRun("run-x")).toBeUndefined();
+    // A later clock tick orders by time again, whatever the insertion order.
+    const third = issue(h, { runId: "run-x" });
+    await h.clock.advance(1);
+    const fourth = issue(h, { runId: "run-x" });
+    expect(fourth.claims.issuedAt > third.claims.issuedAt).toBe(true);
+    expect(h.tokens.claimsForRun("run-x")?.id).toBe(fourth.claims.id);
+  });
+
   it("derived tokens never widen and depth grows by one", () => {
     const h = harness();
     const parent = issue(h, {

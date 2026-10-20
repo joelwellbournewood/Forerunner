@@ -19,8 +19,9 @@ health, version and migration checks.
 Requirements covered (ids from `docs/requirements.md`): F.1, F.2, F.3, F.4 (claims expire
 while an install is away; the service exposes them), M.6 (schema compatibility check), R.2
 (pairing, per-device keys, revoke at once), R.3 (reads and writes the shared state directly;
-offline queue through the outbox contract and `/sync/outbox`), R.4 (remote control: commands
-through the service, picked up atomically; live session log), R.5 (notes, tasks, ideas,
+offline queue through the outbox contract and `/sync/outbox`; a replayed remote command is
+enqueued once), R.4 (remote control: commands through the service, enqueued once per device
+and envelope `clientId`, picked up atomically; live session log), R.5 (notes, tasks, ideas,
 uploads, review comment / approve / reject, answer requests), R.7 (scoped session tokens, no
 secrets on the phone, biometric for high-risk confirmations, revoke from desktop), R.8 (the
 service never runs agents), Q.8 (high-risk confirmation needs a paired device with
@@ -121,7 +122,7 @@ biometric API succeeded for that action. Admin callers hold every scope and do n
 | `GET /projects/:id/decisions?all=1`, `POST /projects/:id/decisions { question, options, chosen, rationale, supersedes? }` | |
 | `GET /projects/:id/queue`, `POST /projects/:id/queue { kind, text, priority, transcript? }` | notes, tasks, ideas for the next session |
 | `GET /projects/:id/uploads`, `POST /projects/:id/uploads` (multipart `file`, optional `kind`) | `data_asset` row; file under `<data>/uploads/<project>/<asset id>-<safe name>`; metadata only in responses |
-| `POST /remote/commands { target: pc|cloud, targetDeviceId?, command: start|pause|stop|kill, params }`, `GET /remote/commands`, `GET /remote/commands/:id` | the phone's view of its commands |
+| `POST /remote/commands { target: pc|cloud, targetDeviceId?, command: start|pause|stop|kill, params }`, `GET /remote/commands`, `GET /remote/commands/:id` | the phone's view of its commands; a device's POST whose `params.clientId` it sent before answers 200 with the first row and creates nothing, a different body under that id is 409 ("Remote control" below) |
 | `GET /remote/commands/pending?target=&deviceId=&humanId=&agentId=` (admin) | atomic pick-up (`RemoteCommandRepo.pickUp`): 200 with the command or 204; `humanId` restricts it to commands from that human's devices and `agentId` to commands for that agent (the runner passes its own) |
 | `POST /remote/commands/:id/complete|fail { result }` (admin) | |
 | `GET /sessions?agentId=&projectId=&status=`, `GET /sessions/:id` | `SessionView` with the current task; a device sees only sessions of its own human's agents (summaries and handoff text are that human's notes), `agentId` of another human is 403; admins see every session |
@@ -173,6 +174,26 @@ same command (tested). On the PC, `stop` and `kill` go through the kill switch (
 flight is aborted) and `pause` is the graceful stop (the row reads `paused` at once, the task
 in flight finishes, the session closes at the next task boundary with its handoff; `runtime.md`,
 `src/wiring/session-ports.ts`).
+
+**Once per tap (idempotency).** The phone's outbox POSTs an envelope until it is acknowledged,
+and a lost answer makes it send the same envelope again: directly, or as a `remote.enqueue`
+action of `POST /sync/outbox` under the same `clientId` (the app's `sendPlan` queues a failed
+POST under the envelope's own id). `enqueueRemoteCommandOnce` (`src/routes/remote.ts`)
+therefore runs a device's enqueue through the same `IdempotencyStore` as the outbox, keyed on
+`idempotencyKeyOf(principal)` (the device id; `src/outbox.ts`) and the envelope's
+`params.clientId`: the first POST is 201; a repeat returns the first row with 200, creates no
+row and announces nothing; the outbox's replay reports `duplicate` with the first row's id,
+and the reverse order (queued offline, then posted directly after the reconnect) reads the
+queued row back, because both routes store the same record (`remoteEnqueueResult`: id,
+version, status and a SHA-256 fingerprint of target, target device, command and params with
+object keys sorted). The same clientId with a different body is 409 `version_conflict`
+(`details.commandId` names the earlier command), as is a clientId the outbox already spent on
+another action; a `clientId` that is not a string of 1 to 200 characters is 400. Admin callers
+and commands without a clientId are enqueued every time, as before. The record lives a week
+(`IDEMPOTENCY_TTL_MS`, `idempotency.json`), so a copy older than that, or one that reaches a
+second service instance with its own file (Known issues), still becomes a second row: the
+daemon's `RemoteCommandWatcher` refuses that row as a duplicate from its audit rows
+(`runtime.md`, "one tap acts once"), which is why the limit is enforced on both sides.
 
 ### GitHub mirror
 
@@ -279,7 +300,7 @@ Environment:
 | --- | --- |
 | `auth.test.ts` | canonical signature, scopes, pairing (single use, proof, expiry), token expiry, revocation within one request, signature window both ways, replayed mutation refused (re-signed retry and signed reads pass; guard swept after the window), query string inside the signature, scope 403s, high-risk needs signed + biometric (a forged flag is a signature failure), admin token (no prefix match), rate limit 429 and recovery, admin bucket per `X-Forerunner-Install`, `X-Forwarded-For` trusted only behind a declared proxy, bucket cap / sweep / poller tick, schema mismatch 409, CORS only for the configured origin, 413 |
 | `routes.test.ts` | health, 404 shape, project cards, task list / get / transition (409, 400 illegal, 404), inbox and receipts (monotonic, first wins, other humans 403, the sender's device cannot receipt a message to another human or agent while it may still read it, also through the outbox), sessions scoped to the device's human's agents, unaddressed requests 403 for devices, agent inbox, requests (answer, 409, 404), decisions and supersede, queue, costs (own human only), reviews (comment → message, approve → request answered), sessions and the JSON event page, uploads (metadata only, safe name, cap, missing file, written under the harness temp dir) |
-| `remote.test.ts` | enqueue, atomic pick-up (two pickers, one wins on SQLite; the Postgres race is in the integration test), per-device addressing, complete / fail lifecycle, device cannot pick up, validation |
+| `remote.test.ts` | enqueue, atomic pick-up (two pickers, one wins on SQLite; the Postgres race is in the integration test), per-device addressing, complete / fail lifecycle, device cannot pick up, validation; once per device and envelope `clientId`: a re-signed repeat is 200 with the first row and the store gains nothing, the outbox's `remote.enqueue` replay of the same id is `duplicate` with that row, the reverse order reads the queued row back, a different body is 409 naming the earlier command, another device's same id is its own row, commands without a clientId and admin callers unchanged, a malformed clientId 400 |
 | `realtime.test.ts` | `ChangeBus` buffer / resume / dedupe / filter, poller `onTick`; over a real server with `fetch` and a `ReadableStream` reader: event after a write, per-human filtering, polling fallback for direct store writes, `Last-Event-ID` resume, `resync` when the id fell out of a one-entry buffer, heartbeat on the simulated clock, session log stream with `afterSeq`, 401, public limiter keyed by the socket over a real server |
 | `mirror.test.ts` | rendering, idempotent push, label and state updates, comment sync back (quoted, once, marker ignored), close sync back (done when allowed, cancelled otherwise, ignored with open findings), reopen on GitHub is undone; `MirrorScheduler` on the simulated clock (active projects only, unchanged second pass, stop), a failing project reported without stopping the others |
 | `outbox.test.ts` | `flushOutbox` ordering, rejection, transport failure; `IdempotencyStore` persistence, TTL and `run()` under overlapping calls; `/sync/outbox` batch, duplicates, two batches in flight with one clientId apply once, scope per action, end to end |
@@ -307,7 +328,9 @@ directory (`helpers.ts` sets `uploadsDir` and `serviceStateDir`; `close()` remov
 - Pairing codes, the SSE resume buffer and the replay guard are per instance; several
   instances need sticky sessions. Session tokens, idempotency keys and the mirror mapping are
   JSON files, so they are per instance too unless the volume is shared; two instances with
-  the mirror enabled against one repo would create duplicate issues, so enable it on one.
+  the mirror enabled against one repo would create duplicate issues, so enable it on one, and
+  a remote command the phone replays to the other instance becomes a second row (the daemon's
+  watcher refuses it from its audit rows, so it never acts twice).
 - The mirror has no "sync now" route yet; `StartedService.mirror.runOnce()` exists for an
   embedder, and a pass runs at most every `FORERUNNER_MIRROR_INTERVAL_MS`.
 - Signed mutations are single use, which means a client library that resends a cached

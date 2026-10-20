@@ -16,6 +16,7 @@ import { TokenIssuer } from "../src/enforcement/token.ts";
 import { CommandLoop, sessionCommandPorts } from "../src/loop/commands.ts";
 import {
   approvalOf,
+  DEFAULT_DUPLICATE_WINDOW_MS,
   DEFAULT_TAP_MAX_AGE_MS,
   isFreshTap,
   REMOTE_AUDIT_TOOL,
@@ -31,7 +32,8 @@ import { Scheduler, type StartRequest } from "../src/session/triggers.ts";
  * the scheduler and kill-switch ports), a scripted chat and a SimulatedClock. Covers: the
  * store never hands another human's command to this PC and a row forced through is refused
  * and audited; a plan runs through the registry (low acts, the phone's tap answers a medium
- * card, a high-risk step files a change card the phone confirms on its device); a kill from
+ * card, a high-risk step files a change card the phone confirms on its device); a replayed
+ * envelope (same device and clientId) is refused as a duplicate and acts once; a kill from
  * the phone stops a registered run within one poll; the plain verbs; chat.
  */
 let store: StateStore;
@@ -126,7 +128,9 @@ const chat = async (req: ChatRequest): Promise<ChatReply> => {
   };
 };
 
-function watcher(over: { pollMs?: number; chat?: typeof chat | null } = {}) {
+function watcher(
+  over: { pollMs?: number; chat?: typeof chat | null; duplicateWindowMs?: number } = {},
+) {
   return new RemoteCommandWatcher({
     store,
     clock,
@@ -139,6 +143,7 @@ function watcher(over: { pollMs?: number; chat?: typeof chat | null } = {}) {
     agentId: agent.id,
     humanId: human.id,
     ...(over.pollMs ? { pollMs: over.pollMs } : {}),
+    ...(over.duplicateWindowMs !== undefined ? { duplicateWindowMs: over.duplicateWindowMs } : {}),
   });
 }
 
@@ -156,9 +161,11 @@ beforeEach(async () => {
   ).id;
 });
 
+/** Every envelope gets its own outbox key, as the app's `newClientId` gives it (a replay reuses one). */
+let clientIds = 0;
 function plan(
   steps: { name: string; params: JsonObject }[],
-  over: { confirmedAt?: string | null } = {},
+  over: { confirmedAt?: string | null; clientId?: string } = {},
 ): JsonObject {
   const confirmedAt = over.confirmedAt === undefined ? clock.nowIso() : over.confirmedAt;
   return {
@@ -167,7 +174,7 @@ function plan(
     plan: steps,
     wordsUsed: steps.map((s) => s.name).join(", "),
     card: { what: "test" },
-    clientId: "c-1",
+    clientId: over.clientId ?? `c-${++clientIds}`,
     ...(confirmedAt ? { confirmedAt } : {}),
   };
 }
@@ -267,7 +274,7 @@ describe("plans through the command registry", () => {
       kind: "plan",
       status: "done",
       executed: ["project.switch"],
-      clientId: "c-1",
+      clientId: row.params.clientId,
       undoOf: null,
     });
     expect(typeof (done.result as { changeLogId?: unknown }).changeLogId).toBe("string");
@@ -695,6 +702,121 @@ describe("chat", () => {
     const failed = await store.remoteCommand.mustGet(row2.id);
     expect(failed.status).toBe("failed");
     expect(failed.result).toMatchObject({ code: "provider_auth" });
+  });
+});
+
+describe("replayed envelopes", () => {
+  const enqueue = (params: JsonObject) =>
+    store.remoteCommand.enqueue({ device_id: phone.id, target: "pc", command: "start", params });
+
+  it("two rows with the same clientId: one executed, the other failed as a duplicate and audited; one change log entry", async () => {
+    const other = await store.project.insert({ name: "Other", goal: "x", autonomy_level: 2 });
+    // The phone's outbox replayed the envelope after a lost answer: same device, same clientId.
+    const envelope = plan([{ name: "project.switch", params: { project: other.id } }], {
+      clientId: "replayed-1",
+    });
+    const first = await enqueue(envelope);
+    const second = await enqueue(envelope);
+    const w = watcher();
+    expect(await w.drain()).toBe(2);
+    expect(await store.remoteCommand.mustGet(first.id)).toMatchObject({
+      status: "done",
+      result: { status: "done", executed: ["project.switch"], clientId: "replayed-1" },
+    });
+    const dup = await store.remoteCommand.mustGet(second.id);
+    expect(dup.status).toBe("failed");
+    expect(dup.result).toMatchObject({
+      kind: "plan",
+      status: "duplicate",
+      code: "duplicate",
+      duplicateOf: first.id,
+      clientId: "replayed-1",
+    });
+    expect(String((dup.result as { error: string }).error)).toMatch(
+      /^duplicate: envelope replayed-1 from device .* was already handled as command /,
+    );
+    expect(w.stats.duplicates).toBe(1);
+    expect(await commands.changeLog({ humanId: human.id })).toHaveLength(1);
+    expect(await commands.activeProject(human.id)).toBe(other.id);
+    const audit = await audits();
+    expect(audit).toHaveLength(2);
+    expect(audit[0]).toMatchObject({ allowed: true });
+    expect(JSON.parse(audit[0]?.input_summary ?? "{}")).toMatchObject({
+      commandId: first.id,
+      deviceId: phone.id,
+      clientId: "replayed-1",
+      commands: ["project.switch"],
+    });
+    expect(audit[1]).toMatchObject({
+      allowed: false,
+      denied_reason: expect.stringMatching(/^duplicate: envelope replayed-1/),
+    });
+    expect(JSON.parse(audit[1]?.input_summary ?? "{}")).toMatchObject({
+      commandId: second.id,
+      deviceId: phone.id,
+      clientId: "replayed-1",
+    });
+    expect(JSON.parse(audit[1]?.result_summary ?? "{}")).toMatchObject({ duplicateOf: first.id });
+
+    // A third copy reaches another daemon of this install (a restart, a restored backup, a
+    // second state service): the audit rows are its memory, and it refuses too.
+    const third = await enqueue(envelope);
+    const restarted = watcher();
+    expect(await restarted.drain()).toBe(1);
+    expect((await store.remoteCommand.mustGet(third.id)).result).toMatchObject({
+      status: "duplicate",
+      duplicateOf: first.id,
+    });
+    expect(restarted.stats.duplicates).toBe(1);
+    expect(await commands.changeLog({ humanId: human.id })).toHaveLength(1);
+
+    // The same plan under a new clientId is a new tap and runs.
+    const fresh = await enqueue(
+      plan([{ name: "project.switch", params: { project: project.id } }], { clientId: "tap-2" }),
+    );
+    expect(await restarted.drain()).toBe(1);
+    expect((await store.remoteCommand.mustGet(fresh.id)).result).toMatchObject({
+      status: "done",
+      executed: ["project.switch"],
+    });
+    expect(await commands.changeLog({ humanId: human.id })).toHaveLength(2);
+  });
+
+  it("the audit rows are read back a month by default; a replay older than the window is not recognised by a new process", async () => {
+    expect(DEFAULT_DUPLICATE_WINDOW_MS).toBe(30 * 24 * 60 * 60 * 1000);
+    const envelope = plan([{ name: "project.switch", params: { project: project.id } }], {
+      clientId: "old-1",
+    });
+    await enqueue(envelope);
+    expect(await watcher().drain()).toBe(1);
+    await clock.advance(2 * 60 * 60 * 1000);
+    // A new process with a one-hour window no longer sees the first handling: the low-risk
+    // plan runs again (the window is the limit of this line of defence).
+    const short = await enqueue(envelope);
+    expect(await watcher({ duplicateWindowMs: 60 * 60 * 1000 }).drain()).toBe(1);
+    expect((await store.remoteCommand.mustGet(short.id)).result).toMatchObject({
+      status: "done",
+      executed: ["project.switch"],
+    });
+    // The default window does.
+    const long = await enqueue(envelope);
+    expect(await watcher().drain()).toBe(1);
+    expect((await store.remoteCommand.mustGet(long.id)).result).toMatchObject({
+      status: "duplicate",
+    });
+  });
+
+  it("a replayed chat envelope is one model turn", async () => {
+    const env: JsonObject = { v: 1, kind: "chat", text: "status?", clientId: "chat-1" };
+    const first = await enqueue(env);
+    const second = await enqueue(env);
+    expect(await watcher().drain()).toBe(2);
+    expect(chatCalls).toHaveLength(1);
+    expect((await store.remoteCommand.mustGet(first.id)).status).toBe("done");
+    expect(await store.remoteCommand.mustGet(second.id)).toMatchObject({
+      status: "failed",
+      result: { kind: "chat", status: "duplicate", duplicateOf: first.id, clientId: "chat-1" },
+    });
   });
 });
 

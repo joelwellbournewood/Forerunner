@@ -48,6 +48,7 @@ export * from "./setup/validators.ts";
 export * from "./setup/wizard.ts";
 /** Signed updates (spec M); namespaced because its catalog port shares names with the extensions catalog. */
 export * as updates from "./update/index.ts";
+export * from "./voice/index.ts";
 /** Per-task billing for the daemon: seeded sources, the vault-and-ledger probe, the router pick (ADR 0044). */
 export * from "./wiring/billing-pick.ts";
 export * from "./wiring/billing-ports.ts";

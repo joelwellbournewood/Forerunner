@@ -4,13 +4,21 @@ import { type Principal, requireScope, requireSigned } from "../auth/principal.t
 import { ApiError, toApiError } from "../errors.ts";
 import { type App, announce, parseBody, principal, type RouteContext } from "../http.ts";
 import {
+  idempotencyKeyOf,
   OUTBOX_ACTION_KINDS,
   OUTBOX_BATCH_MAX,
   type OutboxAction,
   type OutboxResult,
 } from "../outbox.ts";
 import { answerRequestAs, applyReceipt, sendMessageAs } from "./inbox.ts";
-import { enqueueRemoteCommand, REMOTE_COMMANDS } from "./remote.ts";
+import {
+  commandFingerprint,
+  enqueueRemoteCommand,
+  REMOTE_COMMANDS,
+  remoteEnqueueResult,
+} from "./remote.ts";
+
+export { idempotencyKeyOf };
 
 const ActionSchema = z.object({
   clientId: z.string().min(8).max(128),
@@ -83,11 +91,6 @@ function parsePayload<K extends keyof typeof payloads>(
   return result.data as z.infer<(typeof payloads)[K]>;
 }
 
-/** Devices are their own idempotency space; admin callers are split by install (ADR 0009). */
-export function idempotencyKeyOf(p: Principal): string {
-  return p.kind === "device" ? p.deviceId : `admin:${p.installId ?? "default"}`;
-}
-
 /** Apply one queued action with the same checks as the direct route. */
 export async function applyOutboxAction(
   ctx: RouteContext,
@@ -134,12 +137,11 @@ export async function applyOutboxAction(
     }
     case "remote.enqueue": {
       requireScope(p, "write:remote");
-      const row = await enqueueRemoteCommand(
-        ctx,
-        p,
-        parsePayload("remote.enqueue", action.payload),
-      );
-      return { id: row.id, version: row.version, status: row.status };
+      const body = parsePayload("remote.enqueue", action.payload);
+      const row = await enqueueRemoteCommand(ctx, p, body);
+      // The same record `POST /remote/commands` keeps: a later direct POST under this
+      // clientId reads the row back (same body) or is refused (different body).
+      return remoteEnqueueResult(row, commandFingerprint(body));
     }
     case "task.transition": {
       requireScope(p, "write:approvals");

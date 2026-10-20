@@ -361,6 +361,9 @@ export interface ComposeOptions {
     storeAudio?: boolean;
     targets?: Partial<LatencyTargets>;
     maxSessions?: number;
+    /** Stopped sessions kept for a late `GET` or stream (default 8) and for how long (default 10 min). */
+    keepStopped?: number;
+    retainStoppedMs?: number;
   };
 }
 
@@ -1927,6 +1930,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     env,
     ...(opts.voice?.targets ? { targets: opts.voice.targets } : {}),
     ...(opts.voice?.maxSessions ? { maxSessions: opts.voice.maxSessions } : {}),
+    ...(opts.voice?.keepStopped !== undefined ? { keepStopped: opts.voice.keepStopped } : {}),
+    ...(opts.voice?.retainStoppedMs !== undefined
+      ? { retainStoppedMs: opts.voice.retainStoppedMs }
+      : {}),
   });
   // Background services: the daemon starts them; a CLI one-shot (startServices: false) only
   // uses the composed objects and never connects a connector or ticks the scheduler.

@@ -29,6 +29,7 @@ checked in code before any byte leaves the machine. A prompt may ask; only code 
 | `extract.ts` | readable page content, hidden-text detection, injection scan and untrusted envelopes; `extractFromHtml` (no browser) and the in-page scripts (computed styles) |
 | `html.ts` | small tolerant HTML parser and selector matcher so guards and extraction run on fixtures without Chromium |
 | `session.ts` | `AgentBrowser` (one persistent context per agent) and `BrowserSession` (one per run: navigate, read, click, type, fill secret, screenshot, download, close, revoke) |
+| `static.ts` | `staticBrowserTools`, `fetchThroughPolicy`: the stand-in for an install without Chromium (the same specs; navigate as an HTTP fetch through the same `SitePolicy` and hop cap, read through `extractFromHtml`, the rest `not_supported`), ADR 0047 |
 | `tools.ts` | `BrowserSessionManager`, the eight `ToolSpec`s, `registerBrowserTools`, kill-switch attachment |
 
 ## Profile layout
@@ -249,6 +250,32 @@ Live, in code, three ways to reach it:
 The integration test proves an in-flight navigation fails with `killed` within the time budget,
 the context is closed, later calls are refused, and a new grant starts a fresh browser.
 
+## How it is wired
+
+`composeRuntime` (`packages/runtime/src/daemon/compose.ts`, ADR 0047) builds one
+`BrowserSessionManager` per daemon with `browserBindingResolver` (`src/wiring/browser-ports.ts`):
+the allow list is the run token's domains read from the issuer (`TokenIssuer.claimsForRun`), the
+block list the project's `settings.browser.blockedDomains`, the autonomy level the project's
+(the human's default without one), the token id for the audit rows; `HumanRequestApprovalPort`
+over `store.humanRequest` answers the guards, `StateAudit` writes the rows, the kill switch is
+attached, `closeAll()` runs at `close()`. The mode is decided at compose (`browserModeFor`):
+`ComposeOptions.browser.mode`, else `FORERUNNER_BROWSER_MODE` (`static` | `chromium`), else
+Chromium when `resolveChromiumExecutable` finds one and the static reader (`static.ts`,
+`staticBrowserTools`) otherwise; no launch is probed at compose, so a Chromium that exists but
+cannot launch fails on the first navigation, audited by the hooks. The eight tools join a run's
+registry (`toolsForRun()`) and the session grant only while the `browser` capability row is
+installed and enabled (`browserPresence`: added from the catalog, approved in the inbox, neither
+pending nor errored), re-read at every session start and on every extension event of the row;
+a toggle off also makes the extension gate refuse the tools of a run in flight, revokes the run
+tokens that carry them and revokes the manager's sessions. The project's own site allowlist,
+`settings.browser.allowedDomains`, joins the session grant's domains; because `derive` only
+narrows, a registry entry that names a browser tool gets the union of every project's
+allowlist added to its `allowed_domains` (`specialistSpecFrom`'s `extraDomains`), which the
+derived run token caps to the session's project. The catalog entry `browser`
+(`src/extensions/catalog.json`) names the eight tools and the classes `read`,
+`routine_reversible` and `credential`. `RuntimeApp.capabilities.browser` exposes the mode,
+the manager and the presence switch; `rt.capabilities.refresh()` re-reads everything.
+
 ## How to change it
 
 - **A new guard kind**: add it to `GuardKind` and `GUARD_RULES` with the action class that
@@ -271,13 +298,17 @@ the context is closed, later calls are refused, and a new grant starts a fresh b
   `disabledFeatures` list from playwright-core into `PLAYWRIGHT_DISABLED_FEATURES`. Then run
   the integration test: `route.fetch`, `route.fulfill({ response })` and `routeWebSocket` are
   the APIs the policy depends on.
-- **Wiring** (orchestrator): construct `BrowserSessionManager({ binding, approvals, audit,
-  clock, launch, resolveSecret })` with `HumanRequestApprovalPort(store.humanRequest, clock)`
-  (one-shot for money and credentials; `approvalPortFromRuntime` is for in-memory ports and
-  tests, see "Guards"), `StateAudit(store)`, the daemon clock and
-  `launch: { appDirs }`; `registerBrowserTools(registry, manager)`; `attachKillSwitch(kill)`;
-  `closeAll()` on shutdown. `binding` reads the run token (`allowedDomains`, `autonomy`,
-  `tokenId`) and a per-agent or per-project block list from settings.
+- **Wiring** (another orchestrator than the daemon): construct `BrowserSessionManager({ binding,
+  approvals, audit, clock, launch, resolveSecret })` with `HumanRequestApprovalPort(store.humanRequest,
+  clock)` (one-shot for money and credentials; `approvalPortFromRuntime` is for in-memory ports
+  and tests, see "Guards"), `StateAudit(store)`, the daemon clock and `launch: { appDirs }`;
+  `registerBrowserTools(registry, manager)` (or `staticBrowserTools(browserTools(manager), {
+  binding, audit, clock })` where no Chromium exists); `attachKillSwitch(kill)`; `closeAll()` on
+  shutdown. `binding` reads the run token (`allowedDomains`, `autonomy`, `tokenId`) and a
+  per-agent or per-project block list from settings. The daemon's wiring is "How it is wired".
+- **The static reader**: `static.ts` keeps the real specs' names, classes, risks, schemas and
+  `domainFields`; change a tool's contract in `tools.ts` and the reader follows. A new tool
+  that cannot work without a page falls into the `not_supported` branch by default.
 
 ## Tests
 
@@ -288,6 +319,7 @@ the context is closed, later calls are refused, and a new grant starts a fresh b
 | `test/browser-policy.test.ts` | unit | host-only patterns (`domainCovered` semantics, scheme/port/path rejected), every URL decided as the runtime's `domainAllowed`/`domainCovered` decide it, block wins, empty allow list, `assert` errors, narrowing, redirect helpers (target resolution, method keeping, hop headers, stub escaping) |
 | `test/browser-profile.test.ts` | unit | profile layout per agent, executable override, exactly one `--disable-features` carrying Playwright's list and ours, drift check against the installed Playwright (skips visibly when the bundle cannot be read) |
 | `test/browser-tools.test.ts` | unit | the eight tools, classes, risks, schemas; refusal before navigation; unavailable browser as `ForerunnerError`; concurrent first calls for one run share one opening (one binding, one launch); behind `EnforcementHooks`: token domains deny before any browser exists, a hostname token domain passes every port of that host and no other host, secret references resolved and asked for `browser_fill_secret` |
+| `packages/runtime/test/capabilities-wiring.test.ts` | unit | the daemon's wiring (ADR 0047): the tools absent until the `browser` capability is approved in the inbox and gone again after a toggle off, the catalog entry naming the eight tools, the project's `settings.browser.allowedDomains` into the session grant and the registry entry's run token, a session through the daemon in static mode reading the page inside the allowlist (the reader's own audit rows beside the hooks'), the collector outside the token refused by the hooks before any request with its `tool_denied` event, the hidden instruction flagged once per run and tool as an `injection.flagged` row and an urgent notification carrying the rules and never the passage |
 | `test/browser.integration.test.ts` | integration | against two `node:http` servers on the loopback interface told apart by hostname (`127.0.0.1` allowed, `localhost` not): profile location, headless, AI user agent; navigation outside the allowlist refused before any request and audited; subresources, document redirects, redirect chains and subresource redirects to the other host aborted with no request arriving, allowed ones followed; a page forging the redirect stub attribute (towards the blocked host and towards an allowed page) is read as content and moves nothing, a real redirect still follows; WebSockets refused (1008) or connected; visible, hidden and injected content; password and one-time-code typing need approval at autonomy 4; vault secret typed through a POST that redirects, cookie kept, value nowhere; a page echoing the typed secret hands back `[REDACTED]`; `browser_fill_secret` behind the hooks is one card for the fill and still asks for a payment field; a purchase approval is spent by its order, the same order asks again and goes out only with a fresh "yes"; purchases and payment fields need approval at 4, personal data and terms only below 4; screenshot and downloads inside the sandbox and audited; concurrent first calls share one session; live revocation; the kill switch |
 
 Run: `pnpm vitest run --project unit packages/capabilities/test/browser-*.test.ts` and
@@ -298,6 +330,30 @@ nothing or the launch fails. Chromium is expected to be installed where Playwrig
 
 ## Known issues
 
+- Static mode (no Chromium) reads static pages only: no scripts, subresources, forms,
+  WebSockets, screenshots or downloads; `browser_click`, `browser_type`,
+  `browser_fill_secret`, `browser_screenshot` and `browser_download` refuse with
+  `not_supported` after the hooks and the gate decided on them. The mode is decided at
+  compose; a Chromium that exists but fails to launch is not demoted to the reader at run time
+  (the navigation fails with the launch error, audited).
+- The block list is the project's (`settings.browser.blockedDomains`); a per-agent block list
+  is not read. `settings.browser` is written through `PUT /projects/:id/settings`; no UI
+  screen edits it yet.
+- The registry's researcher names `cc:WebFetch` and `cc:WebSearch`, which have no loop-driver
+  equivalent (ADR 0043), so it has no browser on the loop path; a registry entry gets the
+  browser by naming `browser_navigate` and `browser_read` (dropped with a
+  `registry.tool_unmapped` row while the capability is off, offered once it is on).
+- `tests/e2e/src/scenario-capabilities.ts` keeps its own copy of the static reader and its own
+  wiring; the scenario is not yet pointed at `composeRuntime`.
+- An installed `browser` capability row is not re-synced from the catalog: a row installed
+  before the tools were renamed to `browser_*` (`browser.open`, `browser.read`, ...) keeps the
+  old names in `permissions.tools`, so `ExtensionRegistry.lookupTool("browser_navigate")` is
+  undefined for it, the extension gate passes the `browser_*` tools through un-gated and a
+  toggle-off revokes no run token by tool name. Presence still drops the tools at the next
+  session start and the compose listener still calls `browserManager.revoke("all")`, so the
+  exposure is a run in flight on the stale row. Remove and re-add the capability from the
+  catalog (the extensions panel, or `DELETE /extensions/:id` then `POST /extensions` with the
+  catalog id `browser`) to refresh it; a reconcile at registry start is not written yet.
 - The route answers requests from Node (Playwright's fetch): bodies are buffered, HTTP/1.1
   only, no streaming except for `eventsource`, `media` and `websocket` resource types, whose
   redirects (rare) are therefore not re-checked beyond their first host.
@@ -337,6 +393,10 @@ values scrubbed from what the page echoes); S.6 (passwords on third-party sites 
 money always need a human, once per action); S.8 (kill switch revokes browser sessions live);
 S.9 (every outward action audited with who, what, when, result); S.30 (own profile, logins
 from the vault, one card per fill); S.31 (personal data and terms below autonomy 4, purchases
-always, every time); S.25 and T.9 in part (the sandbox browser that email links and
+always, every time); in the daemon (ADR 0047, `packages/runtime/test/capabilities-wiring.test.ts`):
+L.2's allowlist per project (`settings.browser.allowedDomains` into the session grant and the
+run token), S.3 (the token binds the session's policy), S.6 and K.6 (nothing offered until a
+human approves the capability; revoked live), S.9 (the reader's rows beside the hooks'); S.25
+and T.9 in part (the sandbox browser that email links and
 attachments open in); V.5 in part (injection fixtures for the security suite, both extraction
 paths).

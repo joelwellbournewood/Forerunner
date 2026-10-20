@@ -116,6 +116,109 @@ describe("remote commands", () => {
     expect((await h.admin.get("/remote/commands/pending?target=moon")).status).toBe(400);
   });
 
+  it("a device's envelope is enqueued once per clientId: a repeat returns the first row, the outbox's replay is a duplicate, a different body is 409", async () => {
+    const envelope = {
+      v: 1,
+      kind: "plan",
+      plan: [{ name: "session.start", params: { project: h.seed.project.id } }],
+      wordsUsed: "start the sample",
+      card: { what: "Start a session" },
+      clientId: "11111111-2222-4333-8444-555555555555",
+      confirmedAt: h.clock.nowIso(),
+    };
+    const body = { target: "pc", command: "start", params: envelope };
+    const first = await phone.post("/remote/commands", body);
+    expect(first.status).toBe(201);
+    const created = await json<{ id: string; status: string }>(first);
+    expect(created.status).toBe("pending");
+
+    // The answer was lost; the phone POSTs the same envelope again (re-signed, as the app's
+    // client signs every attempt: a byte-identical replay is the signature guard's 401):
+    // the first row, nothing new.
+    await h.clock.advance(1_000);
+    const again = await phone.post("/remote/commands", body);
+    expect(again.status).toBe(200);
+    expect(await json<{ id: string }>(again)).toMatchObject({ id: created.id });
+    expect(await h.store.remoteCommand.count()).toBe(1);
+
+    // The app's actual retry path: the outbox replays the envelope under the same clientId.
+    const { results } = await json<{ results: { status: string; result: { id: string } }[] }>(
+      await phone.post("/sync/outbox", {
+        actions: [
+          {
+            clientId: envelope.clientId,
+            kind: "remote.enqueue",
+            payload: body,
+            createdAt: h.clock.nowIso(),
+          },
+        ],
+      }),
+    );
+    expect(results[0]).toMatchObject({ status: "duplicate", result: { id: created.id } });
+    expect(await h.store.remoteCommand.count()).toBe(1);
+
+    // The same clientId with a different body is a client bug, refused.
+    const different = await phone.post("/remote/commands", {
+      ...body,
+      params: { ...envelope, plan: [{ name: "session.stop", params: { scope: "all" } }] },
+    });
+    expect(different.status).toBe(409);
+    expect(await json<{ code: string; details: { commandId: string } }>(different)).toMatchObject({
+      code: "version_conflict",
+      details: { commandId: created.id },
+    });
+    expect(await h.store.remoteCommand.count()).toBe(1);
+
+    // The other order: queued offline first, then the direct POST after the reconnect.
+    const queued = {
+      ...body,
+      params: { ...envelope, clientId: "11111111-2222-4333-8444-666666666666" },
+    };
+    const viaOutbox = await json<{ results: { status: string; result: { id: string } }[] }>(
+      await phone.post("/sync/outbox", {
+        actions: [
+          {
+            clientId: queued.params.clientId,
+            kind: "remote.enqueue",
+            payload: queued,
+            createdAt: h.clock.nowIso(),
+          },
+        ],
+      }),
+    );
+    expect(viaOutbox.results[0]?.status).toBe("applied");
+    const direct = await phone.post("/remote/commands", queued);
+    expect(direct.status).toBe(200);
+    expect(await json<{ id: string }>(direct)).toMatchObject({
+      id: viaOutbox.results[0]?.result.id,
+    });
+    expect(await h.store.remoteCommand.count()).toBe(2);
+
+    // Each issuing device is its own space: another phone's same clientId is its own command.
+    const secondPhone = await h.pairDevice(h.seed.ada.id);
+    expect((await secondPhone.post("/remote/commands", body)).status).toBe(201);
+    expect(await h.store.remoteCommand.count()).toBe(3);
+
+    // Without a clientId every POST is a new row, as before; admin callers too.
+    const plain = { target: "pc", command: "start", params: { projectId: h.seed.project.id } };
+    expect((await phone.post("/remote/commands", plain)).status).toBe(201);
+    await h.clock.advance(1_000);
+    expect((await phone.post("/remote/commands", plain)).status).toBe(201);
+    const admin = { ...body, deviceId: h.seed.desktop.id };
+    expect((await h.admin.post("/remote/commands", admin)).status).toBe(201);
+    expect((await h.admin.post("/remote/commands", admin)).status).toBe(201);
+    expect(await h.store.remoteCommand.count()).toBe(7);
+
+    // A clientId that is not a short string is a validation error, not a command.
+    for (const clientId of ["", 7, "x".repeat(201)]) {
+      expect(
+        (await phone.post("/remote/commands", { ...body, params: { ...envelope, clientId } }))
+          .status,
+      ).toBe(400);
+    }
+    expect(await h.store.remoteCommand.count()).toBe(7);
+  });
+
   it("validates the command name and the target device's owner", async () => {
     expect(
       (await phone.post("/remote/commands", { target: "pc", command: "format-disk", params: {} }))

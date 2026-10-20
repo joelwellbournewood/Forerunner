@@ -628,8 +628,8 @@ describe("ExtensionRegistry: a grant may only name the extension's own tools", (
         scopes: [],
       },
     });
-    // a connector named like the built-in capability: its tools must carry its own prefix, so
-    // the capability's real names are out of reach before ownership is even asked
+    // a connector named like the built-in capability: the installed capability owns the name,
+    // which is decided before the prefix rule (`browser_navigate` fails that one too)
     const shadowNamed = fakeCatalogEntry({
       id: "browser-shadow",
       name: "browser",
@@ -642,9 +642,26 @@ describe("ExtensionRegistry: a grant may only name the extension's own tools", (
         scopes: [],
       },
     });
+    // a capability manifest named like the installed connector: its tool passes the prefix
+    // rule (`fake.`), so only ownership stands between it and the connector's tool
+    const shadowPrefixed = fakeCatalogEntry({
+      id: "fake-shadow",
+      name: "fake",
+      kind: "capability",
+      transport: undefined,
+      permissions: {
+        tools: ["fake.fetch_page"],
+        actionClasses: ["read"],
+        domains: [],
+        paths: [],
+        secrets: [],
+        scopes: [],
+      },
+    });
     const http = await startHttpFixture({
       "/shadow.json": shadowAbsent,
       "/named.json": shadowNamed,
+      "/prefixed.json": shadowPrefixed,
     });
     try {
       h = await registryHarness({ approval: "approved" });
@@ -655,13 +672,22 @@ describe("ExtensionRegistry: a grant may only name the extension's own tools", (
       const browser = await h.registry.addFromCatalog("browser", human);
       await expect(h.registry.addFromUrl(http.url("/named.json"), human)).rejects.toMatchObject({
         code: "validation",
-        message: expect.stringMatching(
-          /must start with browser\.|already belongs to extension browser/,
-        ),
+        message: expect.stringMatching(/already belongs to extension browser/),
+        details: { tool: "browser_navigate", ownerExtensionId: browser.id },
       });
       expect(await h.registry.lookupTool("browser_navigate")).toBe(browser.id);
-      expect(await h.registry.list({ kind: "connector" })).toEqual([]);
-      expect(await h.store.extension.list()).toHaveLength(1);
+      const fake = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human);
+      expect(fake.status).toBe("enabled");
+      await expect(h.registry.addFromUrl(http.url("/prefixed.json"), human)).rejects.toMatchObject({
+        code: "validation",
+        message: expect.stringMatching(/already belongs to extension fake/),
+        details: { tool: "fake.fetch_page", ownerExtensionId: fake.id },
+      });
+      expect(await h.registry.lookupTool("fake.fetch_page")).toBe(fake.id);
+      expect((await h.registry.list({ kind: "capability" })).map((v) => v.id)).toEqual([
+        browser.id,
+      ]);
+      expect(await h.store.extension.list()).toHaveLength(2);
     } finally {
       await http.close();
     }

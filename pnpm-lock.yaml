@@ -329,6 +329,9 @@ importers:
       '@forerunner/vault':
         specifier: workspace:*
         version: link:../vault
+      '@forerunner/voice':
+        specifier: workspace:*
+        version: link:../voice
       '@hono/node-server':
         specifier: ^2.1.5
         version: 2.1.5(hono@4.13.13)

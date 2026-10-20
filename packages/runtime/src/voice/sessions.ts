@@ -72,9 +72,19 @@ export interface VoiceSessionsDeps {
   targets?: Partial<LatencyTargets>;
   /** Concurrent voice sessions per daemon; default 4. */
   maxSessions?: number;
+  /**
+   * Stopped sessions still answer `GET /voice/sessions/:id` and a late stream for a while,
+   * then they are dropped (a bridge keeps up to 1000 buffered events and every turn's record,
+   * so a daemon open for weeks must not keep every session it ever opened): at most
+   * `keepStopped` of them (default 8) and none older than `retainStoppedMs` (default 10 min).
+   */
+  keepStopped?: number;
+  retainStoppedMs?: number;
 }
 
 export const DEFAULT_MAX_VOICE_SESSIONS = 4;
+export const DEFAULT_KEEP_STOPPED = 8;
+export const DEFAULT_RETAIN_STOPPED_MS = 10 * 60_000;
 const NO_MODEL = "no model credential configured; run fr setup";
 
 interface Picked {
@@ -92,8 +102,17 @@ export class VoiceSessions {
     return this.deps.maxSessions ?? DEFAULT_MAX_VOICE_SESSIONS;
   }
 
+  get keepStopped(): number {
+    return this.deps.keepStopped ?? DEFAULT_KEEP_STOPPED;
+  }
+
+  get retainStoppedMs(): number {
+    return this.deps.retainStoppedMs ?? DEFAULT_RETAIN_STOPPED_MS;
+  }
+
   /** What the shells show before opening the microphone; never throws. */
   async status(): Promise<VoiceAvailability> {
+    this.sweep();
     const base = {
       stt: null,
       tts: null,
@@ -119,6 +138,7 @@ export class VoiceSessions {
   }
 
   async start(opts: StartVoiceSessionOptions = {}): Promise<VoiceSession> {
+    this.sweep();
     const agent = this.deps.conversation();
     if (!agent) throw new ForerunnerError("provider_auth", NO_MODEL);
     if (this.open().length >= this.maxSessions) {
@@ -157,16 +177,18 @@ export class VoiceSessions {
   }
 
   get(id: string): VoiceSession | undefined {
+    this.sweep();
     return this.sessions.get(id);
   }
 
   mustGet(id: string): VoiceSession {
-    const s = this.sessions.get(id);
+    const s = this.get(id);
     if (!s) throw new ForerunnerError("not_found", `no voice session ${id}`);
     return s;
   }
 
   list(): VoiceSession[] {
+    this.sweep();
     return [...this.sessions.values()];
   }
 
@@ -184,6 +206,22 @@ export class VoiceSessions {
   async close(): Promise<void> {
     for (const s of this.open()) {
       await s.bridge.stop().catch(() => undefined);
+    }
+  }
+
+  /**
+   * Drop the stopped sessions beyond the kept count or older than the grace period. Lazy, on
+   * every access, so no timer runs and the simulated clock of the tests decides the age.
+   */
+  private sweep(): void {
+    const now = this.deps.clock.now();
+    const stopped = [...this.sessions.values()]
+      .filter((s) => s.bridge.endedAt !== null)
+      .sort((a, b) => Date.parse(a.bridge.endedAt ?? "") - Date.parse(b.bridge.endedAt ?? ""));
+    for (const [i, s] of stopped.entries()) {
+      const beyondCap = stopped.length - i > this.keepStopped;
+      const stale = now - Date.parse(s.bridge.endedAt ?? "") > this.retainStoppedMs;
+      if (beyondCap || stale) this.sessions.delete(s.id);
     }
   }
 

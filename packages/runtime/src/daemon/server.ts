@@ -1207,7 +1207,11 @@ export function createDaemonApp(
   app.get("/voice/sessions/:id/events", async (c) => {
     const session = rt.voice.mustGet(c.req.param("id"));
     const bridge = session.bridge;
-    const afterSeq = Number(c.req.query("afterSeq") ?? 0);
+    // A resume point that is not a number is refused, never a silent replay of nothing.
+    const rawAfter = c.req.query("afterSeq");
+    const afterSeq = rawAfter === undefined || rawAfter === "" ? 0 : Number(rawAfter);
+    if (!Number.isFinite(afterSeq) || afterSeq < 0)
+      throw new ForerunnerError("validation", "afterSeq must be a non-negative number");
     const accept = c.req.header("accept") ?? "";
     if (!accept.includes("text/event-stream")) {
       return c.json(bridge.eventsAfter(afterSeq).map((e) => voiceEventView(e, chf())));

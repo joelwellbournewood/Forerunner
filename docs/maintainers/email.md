@@ -236,6 +236,29 @@ STARTTLS gets a `provider_error` and nothing else. Plaintext exists only in
 `loopbackSmtpFactory` for the testenv listener on 127.0.0.1, which refuses any other host;
 pass `createTransport` explicitly if a deployment really needs something else.
 
+## How it is wired
+
+`composeRuntime` (`packages/runtime/src/daemon/compose.ts`, ADR 0047) builds the ports once with
+`agentEmailPorts` (`packages/runtime/src/wiring/email-ports.ts`): `EmailSettingsStore` over
+`store.extension`, `StoreIdentityLookup`, `AuditSentLog`, `HumanRequestApprovalPort`, the
+`EmailPolicy` with `StoreEventSink`, and `mailboxFor`, which opens `ImapSmtpMailbox` from the
+settings in force on first use with the credentials by reference from the vault
+(`notifications.mailboxFactory` is the test seam) and keeps it; `emailTools` over these ports
+are the four `email_*` tools, and the notifier's `EmailChannel` (`notificationEmailPort`) sends
+through the same policy and mailbox. The tools join a run's registry (`toolsForRun()`) and the
+session grant only while the agent's settings row names a mailbox and the mode is not `off`
+(`emailPresence`), re-read at every session start and by `rt.capabilities.refresh()`; the
+mode, the caps, the blocked content, the approvals, the signature and the sent log are the
+policy's on every call, so a mode changed under a running session refuses the next send with
+`tool_not_allowed` and its `email.send` row. `email_send` is `external_send`, so the hooks
+hold it for the human below autonomy 4 before the policy sees it; `email_list` and
+`email_read` return untrusted output the hooks wrap and scan, and a flagged read is one
+`injection.flagged` audit row and one urgent notification (runtime.md, "Prompt injection").
+The catalog entry `email` names the four tools and the classes `read`, `routine_reversible`
+and `external_send`; the agent's settings row (`email:<agentId>`) is the spec's own switch,
+the catalog entry is the panel's. `RuntimeApp.capabilities.email` exposes the ports and the
+presence switch. The email command watcher stays on the cloud runner.
+
 ## How to change it
 
 - New blocked class: add the rule list in `policy.ts`, extend `BlockedClass`, add a case to the
@@ -286,6 +309,13 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
 - `email-routes.test.ts`: the seven routes over a fake app: settings GET/PUT with audit and
   validation, pause/resume enforced by the policy, marker rotation invalidates the old marker,
   sent log newest first, command audit.
+- `packages/runtime/test/capabilities-wiring.test.ts` (runtime, ADR 0047): the tools absent
+  until the settings name a mailbox with a mode other than off and gone again at mode off, a
+  session through the daemon sending to a stranger in full discretion (signature on, one
+  `email.send` row, one message in the fake mailbox), `email_send` in read-only mode refused
+  by the policy with its `email.send` row `allowed: false` and nothing sent, an injected mail
+  read through `email_read` flagged once as an `injection.flagged` row and an urgent
+  notification carrying the rules and never the passage.
 - `email-commands.test.ts`: the gate (marker, thread reply, spoofed DKIM, bogus signature, SPF
   fail, wrong sender, forwarded by another, forwarded by the owner, quoted command, missing
   marker, disabled, each agent obeys only its own human); the handler (question, task with ack
@@ -320,9 +350,27 @@ same file; the live e2e runs under `tests/e2e/`.
   does), or add an IMAP flag claim (`\Flagged` set-and-check) if several must share one.
 - Sends held while paused are not resent on resume (see limit 5); the owner's record is the
   `email.queued` rows.
+- The daemon mounts no email settings routes yet (`createEmailRoutes` is a table for the
+  caller's app); the settings row is written by the cloud runner's routes, the CLI or a test
+  through `EmailSettingsStore`, and the daemon picks a changed mode or mailbox up at the next
+  session start (`emailPresence`), the policy at the next call.
+- The mailbox is opened once per daemon from the settings at that moment; a changed host or
+  credential reference takes effect after a restart (the connection is kept, not re-read).
+- An installed `email` capability row is not re-synced from the catalog: a row installed
+  before the tool names were set to `email_*` keeps its old `permissions.tools`, so the
+  extension gate does not recognise the daemon's `email_*` tools as the row's and a toggle-off
+  revokes no run token by tool name; presence (`emailPresence`) still drops the tools at the
+  next session start. Remove and re-add the capability from the catalog (`DELETE
+  /extensions/:id`, then `POST /extensions` with the catalog id `email`) to refresh it; the
+  same gap is listed for the browser in `browser.md`.
 
 ## Requirements covered
 
+In the daemon (ADR 0047, `packages/runtime/test/capabilities-wiring.test.ts`): L.3, S.16 and
+S.17 (off offers nothing, read only sends nothing: absent at run start, refused and audited
+under a running session), S.20 (full discretion sends to a stranger inside the limits), S.25
+(an inbound instruction is reported, never acted on), S.26 (the `email.send` row), S.27 (the
+signature). In the module:
 S.1, S.2, S.4 (mailbox credentials by reference, values scrubbed), S.6 (paid sign-ups, terms,
 always-human classes through `requestCommandApproval`), S.9 (audit row per outward action),
 S.15, S.16, S.17, S.18, S.19, S.20, S.21, S.22, S.23, S.24, S.25, S.26, S.27, S.28 (the flag

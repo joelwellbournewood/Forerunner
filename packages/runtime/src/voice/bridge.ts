@@ -10,12 +10,19 @@
  *
  * Every state change still goes through the command registry: the conversation agent parses
  * the line, composes the change card and files it; this bridge only decides whether a spoken
- * line is the "yes" the card waits for (`expectYes`, spec O.7), and a line the rules refuse (a
- * question, a qualifier, a deferral) never confirms anything: the card is read back again. A
- * tap from the shell confirms through the registry as a tap. Every approval decision and every
- * turn's transcript and latency report are appended to the conversation session's event log
- * (`voice.approval`, `voice.turn`) and the session's start, stop and approval decisions are
- * `audit_log` rows; audio is never stored unless `storeAudio` is on, and never logged.
+ * line is the "yes" the card waits for (`expectYes`, spec O.7) or a "no", and hands that
+ * answer to the registry itself (`confirm` as a yes with `source: "voice"`, `cancel`), exactly
+ * as a tap from the shell does. The registry is the one source of truth for what waits: the
+ * bridge's copy of the card follows the registry's pending list (a card answered in the UI,
+ * by email or expired is gone here too; a yes to it is refused by the registry with the
+ * reason), never the conversation agent's per-human copy, which a typed line drops. A line the
+ * rules refuse (a question, a qualifier, a deferral, a hesitation) never confirms anything:
+ * the card is read back again. Every approval decision carries the exact line and the
+ * registry's outcome, and every turn's transcript and latency report are appended to the
+ * conversation session's event log (`voice.approval`, `voice.turn`, plus the `chat.*` rows
+ * the agent would have written for a line the bridge answered itself); the session's start,
+ * stop and approval decisions are `audit_log` rows; audio is never stored unless `storeAudio`
+ * is on, and never logged.
  */
 import { EventEmitter } from "node:events";
 import type { Actor, ConfirmationAnswer } from "@forerunner/commands";
@@ -23,7 +30,6 @@ import { type Clock, errorMessage, ForerunnerError, join, log, newId } from "@fo
 import type { StateStore } from "@forerunner/state";
 import type { ChatReply, ConversationAgent, PendingConfirmation } from "../conversation/agent.ts";
 import type { CommandResultView } from "../loop/ports.ts";
-import { isYes } from "../wiring/state-ports.ts";
 import {
   AsyncQueue,
   type AudioChunk,
@@ -46,10 +52,12 @@ import {
 } from "./pkg.ts";
 import { TextTurnStt } from "./text-turn.ts";
 
-/** What the bridge needs of the command registry: the tap and the "no" of the shell. */
+/** What the bridge needs of the command registry: the cards that wait, a yes or a tap, a no. */
 export interface VoiceBridgeCommands {
   confirm(pendingId: string, answer: ConfirmationAnswer): Promise<CommandResultView>;
   cancel(pendingId: string, by: Actor): Promise<CommandResultView>;
+  /** The registry's pending cards of the human: the one source of truth for what still waits. */
+  pending(humanId?: string): ReadonlyArray<{ id: string }>;
 }
 
 export interface VoiceBridgeOptions {
@@ -86,11 +94,19 @@ export interface VoiceBridgeOptions {
 export type VoiceTurnSource = "audio" | "text";
 export type VoiceAnswerMethod = "spoken" | "tap" | "no";
 
-/** A spoken (or tapped) approval decision with the card it answered. */
+/** A spoken (or tapped) approval decision with the card it answered and what the registry did. */
 export interface VoiceApproval extends SpokenApprovalRecord {
   method: VoiceAnswerMethod;
   pendingId: string;
   commands: string[];
+  /**
+   * The registry's outcome: `pending` when the line was not an answer and the card still
+   * waits; else what the registry did with the answer (`done`, `partial`, `cancelled`, or
+   * `refused` with the `reason`: a card answered elsewhere or expired, a high-risk card that
+   * needs the paired device).
+   */
+  status: CommandResultView["status"];
+  reason: string | null;
 }
 
 export interface VoiceTurn {
@@ -100,10 +116,15 @@ export interface VoiceTurn {
   said: string;
   /** What the human heard: the assistant transcript line (what was played). */
   heard: string;
-  /** The conversation agent's reply; null when the bridge answered itself (a refused yes). */
+  /**
+   * The conversation agent's reply; null when the bridge answered the line itself: a spoken
+   * answer to a card (refused and read back again, or confirmed or cancelled by the registry).
+   */
   reply: ChatReply | null;
   /** The approval decision of this turn, when a card was pending. */
   approval: VoiceApproval | null;
+  /** The registry's result when this turn answered a card (sentence, change log id, undo). */
+  outcome: CommandResultView | null;
   /** The change card waiting after this turn (read back, needs a yes or a tap). */
   pending: PendingConfirmation | null;
   latency: LatencyReport;
@@ -135,12 +156,12 @@ export type VoiceBridgeEvent =
   /** The agent read a change card back and waits for a yes or a tap (approval needed). */
   | { type: "voice.readback"; turn: number; pending: PendingConfirmation }
   | { type: "voice.approval"; turn: number; approval: VoiceApproval }
-  /** A tap or a "no" from the shell answered the card through the registry. */
+  /** The registry's result of an answer to the card: a spoken yes or no, a tap or a "no" from the shell. */
   | {
       type: "voice.answer";
       turn: number;
       pendingId: string;
-      answer: "tap" | "no";
+      answer: "tap" | "no" | "spoken";
       result: CommandResultView;
     }
   | { type: "voice.turn"; turn: number; record: VoiceTurn }
@@ -158,6 +179,7 @@ interface TurnState {
   source: VoiceTurnSource;
   reply: ChatReply | null;
   approval: VoiceApproval | null;
+  outcome: CommandResultView | null;
   chunks: number;
   tEndOfTurn: number | null;
   tFinal: number | null;
@@ -169,6 +191,12 @@ interface TurnState {
 const DEFAULT_BUFFER = 1000;
 export const VOICE_SESSION_AUDIT_TOOL = "voice.session";
 export const VOICE_APPROVAL_AUDIT_TOOL = "voice.approval";
+/**
+ * A spoken "no" that cancels the card: the registry's own reading of a typed or spoken reply
+ * (`confirmByText`) and the conversation agent's. Every other negation `expectYes` flags (a
+ * hesitation: "wait", "maybe", "not now") refuses without cancelling; the card waits.
+ */
+const SPOKEN_NO_RE = /^\s*(no|nope|cancel|stop|nein|non|abbrechen)\b/i;
 
 export class VoiceBridge {
   readonly id: string;
@@ -251,7 +279,10 @@ export class VoiceBridge {
     return this.endedAt !== null;
   }
 
-  /** The change card the agent is waiting on, read from its last reply. */
+  /**
+   * The change card this session read back and still waits on: taken from the agent's reply,
+   * kept only while the registry lists it (checked at every answer).
+   */
   get pending(): PendingConfirmation | null {
     return this.pendingCard;
   }
@@ -310,7 +341,9 @@ export class VoiceBridge {
   /**
    * The shell answered the read-back without speaking: a tap confirms the card through the
    * registry as a tap (a medium-risk card; a high-risk one still needs the paired device, and
-   * the registry says so), a "no" cancels it. A spoken yes is a turn, not this.
+   * the registry says so), a "no" cancels it. The registry decides: a card it no longer holds
+   * (answered elsewhere, expired) is refused with the reason and forgotten here. A spoken yes
+   * is a turn, not this.
    */
   async answer(
     answer: "tap" | "no",
@@ -323,30 +356,22 @@ export class VoiceBridge {
       answer === "tap"
         ? await this.opts.commands.confirm(card.id, { kind: "tap", by, source: "voice" })
         : await this.opts.commands.cancel(card.id, by);
-    this.pendingCard = null;
     const turn = this.loop.currentTurn;
-    const approval: VoiceApproval = {
+    const approval = await this.decided(
       turn,
-      line: "",
-      approved: answer === "tap",
-      matched: null,
-      blockedBy: null,
-      at: this.clock.nowIso(),
-      subject: card.readback,
-      method: answer,
-      pendingId: card.id,
-      commands: card.commands,
-    };
-    this.approvals.push(approval);
-    await this.appendEvent("voice.approval", { ...approval, status: result.status });
-    await this.audit(VOICE_APPROVAL_AUDIT_TOOL, result.status !== "refused", {
-      method: answer,
-      pendingId: card.id,
-      commands: card.commands,
-      status: result.status,
-      ...(result.reason ? { reason: result.reason } : {}),
-    });
-    this.record({ type: "voice.approval", turn, approval });
+      card,
+      {
+        turn,
+        line: "",
+        approved: answer === "tap",
+        matched: null,
+        blockedBy: null,
+        at: this.clock.nowIso(),
+        subject: card.readback,
+        method: answer,
+      },
+      result,
+    );
     this.record({ type: "voice.answer", turn, pendingId: card.id, answer, result });
     return { pendingId: card.id, result, approval };
   }
@@ -453,6 +478,7 @@ export class VoiceBridge {
         source: "audio",
         reply: null,
         approval: null,
+        outcome: null,
         chunks: 0,
         tEndOfTurn: null,
         tFinal: null,
@@ -551,6 +577,7 @@ export class VoiceBridge {
       heard: assistant?.text ?? "",
       reply: st.reply,
       approval: st.approval,
+      outcome: st.outcome,
       pending: this.pendingCard,
       latency: report,
       audioChunks: st.chunks,
@@ -576,6 +603,7 @@ export class VoiceBridge {
           interrupted: record.interrupted,
           unspokenText: record.unspokenText,
           pendingId: record.pending?.id ?? null,
+          outcome: record.outcome?.status ?? null,
           error: record.error,
           latency: {
             endOfTurnMs: report.endOfTurnMs,
@@ -600,51 +628,145 @@ export class VoiceBridge {
   private readonly converse: ConverseFn = (transcript, signal) =>
     this.converseTurn(transcript, signal);
 
+  /** A line said while a card waits: decided by the rules, carried out by the registry. */
+  private async spokenAnswer(
+    st: TurnState,
+    card: PendingConfirmation,
+    record: SpokenApprovalRecord,
+  ): Promise<string> {
+    const by: Actor = { kind: "human", id: this.opts.humanId };
+    let result: CommandResultView | null = null;
+    if (record.approved) {
+      result = await this.opts.commands.confirm(card.id, { kind: "yes", by, source: "voice" });
+    } else if (isSpokenNo(record)) {
+      result = await this.opts.commands.cancel(card.id, by);
+    }
+    const approval = await this.decided(st.turn, card, { ...record, method: "spoken" }, result);
+    st.approval = approval;
+    st.outcome = result;
+    // Not a yes and not a no: nothing is confirmed, the card stays, the read-back repeats.
+    const spoken = result
+      ? spokenOutcome(result)
+      : `I did not take that as a yes. ${card.readback}`;
+    await this.chatRows(record, spoken, card, result);
+    if (result) {
+      this.record({
+        type: "voice.answer",
+        turn: st.turn,
+        pendingId: card.id,
+        answer: "spoken",
+        result,
+      });
+    }
+    return spoken;
+  }
+
+  /**
+   * Book an approval decision: the bridge's copy of the card follows the registry's pending
+   * list, the `voice.approval` row and audit row carry the exact line and the registry's
+   * status, and a card that still waits is read back again (the event the shell shows).
+   */
+  private async decided(
+    turn: number,
+    card: PendingConfirmation,
+    decision: SpokenApprovalRecord & { method: VoiceAnswerMethod },
+    result: CommandResultView | null,
+  ): Promise<VoiceApproval> {
+    const stays = this.registryHas(card.id);
+    this.pendingCard = stays ? card : null;
+    const notAnswered = decision.blockedBy ? `not a yes: ${decision.blockedBy}` : "not a yes";
+    const approval: VoiceApproval = {
+      ...decision,
+      pendingId: card.id,
+      commands: card.commands,
+      status: result?.status ?? "pending",
+      reason: result ? (result.reason ?? null) : notAnswered,
+    };
+    this.approvals.push(approval);
+    await this.appendEvent("voice.approval", { ...approval });
+    const allowed = result !== null && result.status !== "refused";
+    await this.audit(
+      VOICE_APPROVAL_AUDIT_TOOL,
+      allowed,
+      {
+        method: approval.method,
+        line: approval.line,
+        approved: approval.approved,
+        blockedBy: approval.blockedBy,
+        pendingId: card.id,
+        commands: card.commands,
+        status: approval.status,
+        ...(approval.reason ? { reason: approval.reason } : {}),
+      },
+      allowed ? undefined : (approval.reason ?? "refused"),
+    );
+    this.record({ type: "voice.approval", turn, approval });
+    if (stays) this.record({ type: "voice.readback", turn, pending: card });
+    return approval;
+  }
+
+  /** Whether the registry still lists the card for this human. */
+  private registryHas(pendingId: string): boolean {
+    return this.opts.commands.pending(this.opts.humanId).some((p) => p.id === pendingId);
+  }
+
+  /**
+   * The transcript rows the conversation agent writes for a line it handles (`chat.human`,
+   * `chat.confirmed` / `chat.cancelled`, `chat.reply`; `daemon/views.ts` renders them), for a
+   * line the bridge answered itself, so the conversation reads the same either way.
+   */
+  private async chatRows(
+    record: SpokenApprovalRecord,
+    spoken: string,
+    card: PendingConfirmation,
+    result: CommandResultView | null,
+  ): Promise<void> {
+    const transcriptId = newId(this.clock.now());
+    await this.appendEvent("chat.human", { transcriptId, text: record.line, source: "voice" });
+    if (result) {
+      await this.appendEvent(record.approved ? "chat.confirmed" : "chat.cancelled", {
+        confirmationId: card.id,
+        transcriptId,
+        commands: card.commands,
+        words: record.line,
+        status: result.status,
+      });
+    }
+    const acted = result !== null && (result.status === "done" || result.status === "partial");
+    await this.appendEvent("chat.reply", {
+      transcriptId,
+      text: spoken,
+      actions: acted ? [card.commands.join("+") || "command"] : [],
+    });
+  }
+
   /**
    * The loop's converse port over the conversation agent. With a card pending, the spoken
-   * rules decide whether the line is a yes (spec O.7) and the decision is logged with the
-   * exact line; a refused line repeats the read-back and never reaches the agent.
+   * rules decide whether the line is a yes (spec O.7) or a no, the registry carries the answer
+   * out and the decision is logged with the exact line and the registry's outcome; a refused
+   * line repeats the read-back. None of that reaches the agent. The registry's pending list
+   * is the truth: a card it no longer holds is gone here too, and a line that is not an
+   * answer to it is a plain line.
    */
   private async *converseTurn(transcript: string, signal: AbortSignal): AsyncIterable<string> {
     const turn = this.loop.currentTurn;
     const st = this.turnState(turn);
-    let text = transcript;
-    const pending = this.pendingCard;
-    if (pending) {
+    const card = this.pendingCard;
+    if (card) {
       const record = spokenApprovalRecord(
         turn,
         transcript,
         this.clock,
-        pending.readback,
+        card.readback,
         this.language ? { language: this.language } : {},
       );
-      const approval: VoiceApproval = {
-        ...record,
-        method: "spoken",
-        pendingId: pending.id,
-        commands: pending.commands,
-      };
-      this.approvals.push(approval);
-      st.approval = approval;
-      await this.appendEvent("voice.approval", { ...approval });
-      await this.audit(VOICE_APPROVAL_AUDIT_TOOL, true, {
-        method: "spoken",
-        line: approval.line,
-        approved: approval.approved,
-        blockedBy: approval.blockedBy,
-        pendingId: pending.id,
-        commands: pending.commands,
-      });
-      this.record({ type: "voice.approval", turn, approval });
-      if (!record.approved && record.blockedBy !== "negation") {
-        // Not a yes: nothing is confirmed, the card stays pending, the read-back repeats.
+      const isAnswer = record.approved || isSpokenNo(record);
+      if (isAnswer || this.registryHas(card.id)) {
         st.reply = null;
-        this.record({ type: "voice.readback", turn, pending });
-        yield `I did not take that as a yes. ${pending.readback}`;
+        yield await this.spokenAnswer(st, card, record);
         return;
       }
-      // The exact line when the agent's own check reads it as a yes, else the canonical word.
-      text = record.approved && !isYes(transcript) ? "yes" : transcript;
+      this.pendingCard = null;
     }
     const deltas = new AsyncQueue<string>();
     let streamed = "";
@@ -653,7 +775,7 @@ export class VoiceBridge {
         humanId: this.opts.humanId,
         agentId: this.opts.agentId,
         ...(this.projectId ? { projectId: this.projectId } : {}),
-        text,
+        text: transcript,
         source: "voice",
         signal,
         onToken: (t) => {
@@ -679,6 +801,27 @@ export class VoiceBridge {
       );
     for await (const d of deltas) yield d;
   }
+}
+
+/** The sentence the human hears for the registry's answer (the conversation agent's wording). */
+export function spokenOutcome(r: CommandResultView): string {
+  switch (r.status) {
+    case "done":
+      return r.sentence ?? "Done.";
+    case "partial":
+      return `${r.sentence ?? "Done."} (partly: ${r.reason ?? "a step failed"})`;
+    case "pending":
+      return r.readback ?? "Needs confirmation.";
+    case "cancelled":
+      return "Cancelled; nothing was changed.";
+    default:
+      return `Not done: ${r.reason ?? "refused"}.`;
+  }
+}
+
+/** A negation that is a "no" to the card (cancel), not a hesitation (the card waits). */
+function isSpokenNo(record: SpokenApprovalRecord): boolean {
+  return record.blockedBy === "negation" && SPOKEN_NO_RE.test(record.line);
 }
 
 /** What of a reply the shell still has to say after the deltas it already streamed. */

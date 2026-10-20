@@ -187,15 +187,18 @@ export class TokenIssuer {
    * that binds a per-run resource to the token after the hooks admitted the call (the
    * sandboxed browser's site policy, ADR 0047). The newest token of the run wins when a
    * retry re-issued one; nothing is returned for a run this issuer never saw, so a caller
-   * fails closed (no domains, no secrets) instead of guessing.
+   * fails closed (no domains, no secrets) instead of guessing. `issuedAt` has millisecond
+   * resolution, so two tokens of one run issued in the same instant (a simulated clock, a
+   * real-clock tie) are ordered by issue order: the later one wins.
    */
   claimsForRun(runId: string, now: number = this.now()): CapabilityClaims | undefined {
     let found: CapabilityClaims | undefined;
+    // `issued` is a Map in insertion order, so `>=` prefers the later entry on a tie.
     for (const t of this.issued.values()) {
       const c = t.claims;
       if (c.runId !== runId || this.revoked.has(c.id)) continue;
       if (new Date(c.expiresAt).getTime() <= now) continue;
-      if (!found || c.issuedAt > found.issuedAt) found = c;
+      if (!found || c.issuedAt >= found.issuedAt) found = c;
     }
     return found;
   }

@@ -769,10 +769,13 @@ export type StartVoiceSessionBody = z.infer<typeof StartVoiceSessionBody>;
 export const VoicePressBody = z.object({ pressed: z.boolean() });
 export type VoicePressBody = z.infer<typeof VoicePressBody>;
 
+/** Capture rates real devices produce; the loop resamples to 16 kHz, so an absurd rate is refused. */
+export const VOICE_SAMPLE_RATE = { min: 8000, max: 192_000 } as const;
+
 /** A captured chunk: 16-bit signed little-endian PCM, base64 in JSON (or raw as octet-stream). */
 export const VoiceAudioBody = z.object({
   pcm: z.string().min(1),
-  sampleRate: z.number().int().positive(),
+  sampleRate: z.number().int().min(VOICE_SAMPLE_RATE.min).max(VOICE_SAMPLE_RATE.max),
   channels: z.number().int().min(1).max(8),
   /** Position of the first sample on the capture timeline, ms. */
   timestampMs: z.number().nonnegative(),
@@ -822,7 +825,13 @@ export const VoiceLatencyView = z.object({
 });
 export type VoiceLatencyView = z.infer<typeof VoiceLatencyView>;
 
-/** A spoken or tapped approval decision, logged with the exact transcript line (spec O.7). */
+/**
+ * A spoken or tapped approval decision, logged with the exact transcript line (spec O.7) and
+ * the registry's outcome: `approved` is what the human's answer meant, `status` what the
+ * registry did with it (`pending` when the line was not an answer and the card still waits,
+ * `done` / `partial` / `cancelled`, or `refused` with the `reason`: a card answered elsewhere
+ * or expired, a high-risk card that needs the paired device).
+ */
 export const VoiceApprovalView = z.object({
   turn: z.number().int(),
   line: z.string(),
@@ -834,6 +843,8 @@ export const VoiceApprovalView = z.object({
   method: z.enum(["spoken", "tap", "no"]),
   pendingId: z.string(),
   commands: z.array(z.string()),
+  status: z.enum(["done", "partial", "pending", "cancelled", "refused"]),
+  reason: z.string().nullable(),
 });
 export type VoiceApprovalView = z.infer<typeof VoiceApprovalView>;
 
@@ -844,9 +855,14 @@ export const VoiceTurnView = z.object({
   said: z.string(),
   /** The assistant line that was played. */
   heard: z.string(),
-  /** The agent's reply; null when the bridge repeated the read-back itself (a refused yes). */
+  /**
+   * The agent's reply; null when the bridge answered the line itself: a spoken answer to a
+   * card (refused and read back again, or confirmed or cancelled through the registry).
+   */
   reply: ChatReplyView.nullable(),
   approval: VoiceApprovalView.nullable(),
+  /** The registry's result when this turn answered a card (its sentence, change log id, undo). */
+  outcome: CommandResultViewSchema.nullable(),
   /** The card waiting after this turn: read back, needs a yes, a tap or the device. */
   pending: ChatPendingView.nullable(),
   latency: VoiceLatencyView,
@@ -1063,11 +1079,11 @@ export const DAEMON_ROUTES = {
   voiceAudio:
     "POST /voice/sessions/:id/audio { pcm (base64 int16 LE), sampleRate, channels, timestampMs } | application/octet-stream ?sampleRate=&channels=&timestampMs= (one captured chunk; VoiceSessionView)",
   voiceText:
-    "POST /voice/sessions/:id/text { text } (the text fallback: one turn through the same loop, approval rules and TTS; VoiceTurnView once the turn has ended)",
+    "POST /voice/sessions/:id/text { text } (the text fallback: one turn through the same loop, approval rules and TTS; VoiceTurnView once the turn has ended, with the registry's outcome when the line answered a card)",
   voiceAnswer:
-    "POST /voice/sessions/:id/answer { answer: tap|no } (answers the read-back without speaking through the registry; VoiceAnswerView; 404 without a card)",
+    "POST /voice/sessions/:id/answer { answer: tap|no } (answers the read-back without speaking through the registry, which decides and whose status is on the decision; VoiceAnswerView; 404 without a card)",
   voiceEvents:
-    "GET /voice/sessions/:id/events?afterSeq= (JSON VoiceEventView[]) | Accept: text/event-stream (SSE voice.event frames: state, transcript, model deltas, sentences, audio, first audio, read-back = approval needed, approval, turn = done; heartbeat; ?token= accepted)",
+    "GET /voice/sessions/:id/events?afterSeq= (JSON VoiceEventView[]; 409 when afterSeq is not a number) | Accept: text/event-stream (SSE voice.event frames: state, transcript, model deltas, sentences, audio, first audio, read-back = approval needed, approval with the registry's status, answer = the registry's result of a spoken, tapped or cancelled answer, turn = done; heartbeat; ?token= accepted)",
   events:
     "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, notification, desktop.indicator, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts)",
 } as const;

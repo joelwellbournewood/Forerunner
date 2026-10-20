@@ -914,18 +914,20 @@ their UIs (J on the service, M on the game, weekdays), the coder is scripted per
 marks it read. Afternoons: Tuesday the tier 3 task's sign-off (the rules in code turned the
 accept into `human`) answered "accept" on the phone; Wednesday twenty status turns by voice
 for the latency median, then the settings matrix: a session budget ("Give it 20 francs
-tonight."), the autonomy by one step ("Set the autonomy of Sample service to 3") and the
-email mode ("Set the email mode to draft only."), each by voice, by chat and through the
-settings route, each confirmed by risk (a spoken or typed yes, a tap; the email mode's device
-card answered on the phone with the biometric after a spoken or typed yes was refused), each
-undone through its own channel, the change log entries compared with `sameEntry` (commands
-and parameters, before, after, scope, project, expiry, sentence, human, agent) and the state
-read back equal to the value before; Thursday the phone's plan ("switch to the game, give it
-15 francs until tomorrow and start a session on my PC") picked up by the watcher, the remote
+tonight."), the autonomy by one step ("Set the autonomy of Sample service to 3") and the email
+mode ("Set the email mode to draft only."), each by voice, by chat and through the settings
+route (`uiFormParams`: the values the settings form holds, built from its fields, the project,
+CHF 20 until the end of tonight as the app resolves it, level 3, draft only, never from what the
+spoken change resolved to), each confirmed by risk (a spoken or typed yes, a tap; the email
+mode's device card answered on the phone with the biometric after a spoken or typed yes was
+refused), each undone through its own channel, the change log entries compared with `sameEntry`
+(commands and parameters, before, after, scope, project, expiry, sentence, human, agent) and the
+state read back equal to the value before; Thursday the phone's plan ("switch to the game, give
+it 15 francs until tomorrow and start a session on my PC") picked up by the watcher, the remote
 session on the game, the undo from the Changes screen and Resume in the header; Friday the
-phone's quick chat answered on the PC; Saturday a medium card asked by chat and answered
-"yes" in the phone's inbox, applied by the PC's drain. The report (`formatPhase5`) is printed
-and written to `FORERUNNER_E2E_REPORT_DIR` as `phase5-week.txt`.
+phone's quick chat answered on the PC; Saturday a medium card asked by chat and answered "yes"
+in the phone's inbox, applied by the PC's drain. The report (`formatPhase5`) is printed and
+written to `FORERUNNER_E2E_REPORT_DIR` as `phase5-week.txt`.
 
 Measured on 2026-10-20 (fake provider, Linux, about 45 s): 12 scheduled and 1 remote session,
 13 completed, 12 tasks done and 13 pull requests on the two repositories; 30 voice turns with
@@ -987,7 +989,9 @@ opens the decision in J's inbox, `FileModelSettingsStore` writes under the insta
 directory, the eval runner is `evalRunnerOnWorld`: `runEvalSet` over the registry's first four
 coder tasks with a driver that asks the provider `model-watch eval <task> at <effort>` and
 writes the task's reference solution on PASS, so the real checks (node on the files) grade
-it and the cost is the usage priced; the probes are `evalProbeReplies` (the sonnet model
+it and the cost is the usage priced (any answer but PASS or FAIL, such as a bare
+`FakeProvider`'s echo of an unscripted probe, errors the run instead of grading as a failed
+task); the probes are `evalProbeReplies` (the sonnet model
 fails one task at every effort, the candidate none; a lower effort answers with half the
 output tokens). The weekly trigger is `scheduleModelWatch` on a `Scheduler` whose `start`
 routes `isModelWatchRequest` to `ModelWatch.run()` as the daemon does; `tick()` is the
@@ -1041,9 +1045,12 @@ skipped. The Anthropic SDK reads `ANTHROPIC_BASE_URL` from the environment when 
 given no base URL, so unset it for the run unless the calls are meant to go through a proxy.
 The result and the cost go to `docs/status/gates.md` and `docs/status/COST.md`.
 
-CI: `.github/workflows/ci.yml` runs the `unit` and `integration` projects; the `e2e` project
-is not in it, so the harness files run locally until the workflow adds them (the two commands
-above, no Postgres, no Docker, no network).
+CI: `.github/workflows/ci.yml` runs the whole `e2e` project (`pnpm exec vitest run --project
+e2e tests/e2e/scenarios`, the step named "Phase 3 and 4 gate harnesses and the nine scenarios
+(fake provider)") on both the Linux and the Windows job, so every harness file under
+`tests/e2e/scenarios` runs in CI from the commit that adds it (no Postgres, no Docker, no
+network there either); the step's name predates the phase 5 and 7 harnesses. The gate rows
+cite the local runs and the step, with the CI link of the first run that carried the file.
 
 ### How to change it
 
@@ -1084,32 +1091,76 @@ live opt-in; 30 s), `phase4-gate.integration.test.ts` (2 tests; 45 s; the with-m
 is made once in `beforeAll`, so each test also stands alone under `-t`),
 `phase5-gate.integration.test.ts` (4 tests asserting one week run in `beforeAll`, about 45 s;
 each test stands alone under `-t`, the week runs either way) and
-`phase7-gate.integration.test.ts` (3 tests in order on one world, about 25 s; the second and
-third build on the first, so run the file, not a single test). All leave no files behind
+`phase7-gate.integration.test.ts` (4 tests, about 25 s: three gate tests in order on one
+world, the second and third building on the first, so run the file, not a single test; the
+fourth a guard on the harness's own eval driver, which stands alone under `-t guard` and
+fails without the driver's PASS/FAIL check). All leave no files behind
 (temp roots are removed in `close()`), need no Postgres, no Docker and no network, and run on
 Windows and Linux (paths through `@forerunner/platform`, worktrees under `os.tmpdir()`, the
 doctor and the eval checks as argv arrays).
 
 ### Known issues
 
-- The e2e vitest project is not in CI yet (see "How to run"); the gate rows cite local runs.
-- Phase 5 findings for the runtime, each pinned by an assertion in the harness so the fix is
-  seen: (1) the daemon's command routes carry no `ui` change source (`CommandTurn.source` is
-  `text | voice | phone`; the settings screen sends no source), so a change made in the
-  settings screen is logged as `chat`; (2) on the conversation's model path the hooks hold a
-  high-risk command tool (`email_mode_set`: `permission_change` is always-human,
-  `packages/runtime/src/enforcement/autonomy.ts`) and file their own blocking request before
-  the registry's device card can form, so by voice the email mode needs two phone answers
-  (the hold, then the card) and a second asking; the chat round finds the first answer by
-  the session's approval key; the registry's policy should be the one gate for a command
-  tool, as it is on the parsed and the UI path (ADR 0030); (3) an accepted critic sign-off
-  (`accept` in the inbox) is applied to nothing: the task stays `needs_human`
-  (`needs_human -> ready` is its only transition); (4) the undo of a `session.start` whose
-  session has ended reaches the kill switch (`SESSION_START_UNDO_REASON`) and freezes the
-  agent until Resume is pressed, so the next scheduled session would not run. Also: the
-  daemon has no route for a daily session schedule (the week's schedules are harness
-  configuration), and the state service's answer route records no decision-log entry
-  (the daemon's does).
+- The CI step that runs the e2e project is still named after the phase 3 and 4 harnesses
+  (see "How to run"); the gate rows cite local runs and that step.
+- Phase 5 runtime follow-ups, opened by the gate (ADR 0045 item 7). The ids are the keys of
+  `PHASE5_RUNTIME_FOLLOW_UPS` in `tests/e2e/src/gate5-week.ts`, printed as the last line of
+  `phase5-week.txt`, and sit on the harness assertions that pin each defect, so the harness
+  is the regression check. Each is a `packages/runtime` change whose PR starts with the
+  failing test named here (failing test first, fix, keep the test) and inverts the pin in
+  the same PR. None of the runtime tests is written yet: the gate's paths end at `tests/e2e`.
+  - **RT-P5-1, an accepted critic sign-off is applied to nothing.** The critic loop's `human`
+    decision (the rules turn a tier 3 accept into it, `tier3_human_signoff` in
+    `packages/critic/src/rules.ts`) moves the task to `needs_human` and files a blocking
+    `approval` request with the options `accept`, `revise`, `cancel`
+    (`packages/runtime/src/loop/critic.ts`); nothing reads the answer, so the task stays
+    there (`needs_human -> ready` is its only way on, `packages/state/src/workflow.ts`).
+    Test first: a new `packages/runtime/test/signoff-answer.test.ts` that files the sign-off
+    through the critic loop on the fake provider, answers `accept` on the request row and
+    expects, after `syncApprovals`, the task `done` with the review's findings resolved
+    against the run (`revise` -> `failed` -> `ready` with the attempt counted, `cancel` ->
+    `cancelled`). Fix: a sync next to `syncBlockedByFindings`
+    (`packages/runtime/src/session/findings.ts`) called from `syncApprovals` (daemon
+    `compose.ts`; `gate5-daemon.ts` mirrors it). Pin to invert:
+    `phase5-gate.integration.test.ts` test 1, `expect(..., "RT-P5-1").toBe("needs_human")`
+    becomes `"done"`.
+  - **RT-P5-2, the undo of a `session.start` whose session has ended freezes the kill
+    switch.** The registry's undo reaches the kill port with `SESSION_START_UNDO_REASON`
+    (`packages/runtime/src/loop/commands.ts`, `kill`): a queued or deferred start is dropped
+    (`Scheduler.cancelPending`), but a start that already ran is a `kill.stop` of the agent's
+    scope, which freezes the agent until Resume even when that session completed hours ago,
+    so the next scheduled session would not run. Test first: in
+    `packages/runtime/test/loop-commands.test.ts`, the undo of a `session.start` whose
+    session is `completed` leaves `isFrozen` false and marks the change row `irreversible`
+    (a start still running is stopped as today). Fix: in that `kill` port, when the start's
+    session is no longer the agent's active one, answer without `kill.stop` and let the
+    executor record the undo as irreversible. Pin to invert: test 4,
+    `killFrozenAfterUndo: true, resumedFromUi: true` become `false`.
+  - **RT-P5-3, the hooks hold a command tool on the model path before the registry's card
+    forms.** On the conversation's model path `email_mode_set` is classed `permission_change`
+    (always-human, `packages/runtime/src/enforcement/autonomy.ts`), so the hooks file their
+    own blocking request (`approval_required: pending`) before the registry's device card
+    can form: by voice the email mode needs two phone answers (the hold, then the card) and
+    a second asking; the chat round finds the first answer by the session's approval key.
+    The registry's policy should be the one gate for a command tool, as it is on the parsed
+    and the UI path (ADR 0030). Test first: in `packages/runtime/test/conversation.test.ts`,
+    a model turn calling `email_mode_set` yields one pending card with `needs_device`, no
+    `human_request` from the hooks and no denied audit row, and `autonomy_set` one
+    `needs_yes` card. Fix: the command tools registered with the hooks as gated by the
+    registry's policy (the card is the approval), so the autonomy hold does not run for
+    them. Pins to invert: test 1, `denied` becomes `[]` and `report.audit.denied` 0; test
+    3, `hookApproval` null on voice and chat.
+  - **RT-P5-4, the daemon's command routes carry no `ui` change source.** `CommandTurn.source`
+    and the route bodies are `text | voice | phone` (`packages/runtime/src/daemon/api-types.ts`,
+    `server.ts`), the settings screen sends none, so a change made in the settings screen is
+    logged as `chat`. Test first: in `packages/runtime/test/loop-routes.test.ts`, `POST
+    /commands/execute` with `source: "ui"` then the tap gives a change log row with
+    `source: "ui"`. Fix: `ui` in the zod enums and in the command loop's `CommandSource`,
+    `SettingsPage.tsx` sending it. Pin to invert: test 3, `expect(ui.row.source, "RT-P5-4")`
+    becomes `"ui"`.
+  - Noted, not pinned: the daemon has no route for a daily session schedule (the week's
+    schedules are harness configuration), and the state service's answer route records no
+    decision-log entry (the daemon's does).
 - Phase 5 stands in for the Android emulator and the OS audio devices (ADR 0045 items 2
   and 3): the screens are not driven and the model stage of the voice latency is the fake
   provider's zero-latency stream; the real-audio median with the live Haiku first token of
@@ -1143,8 +1194,9 @@ doctor and the eval checks as argv arrays).
 - Phase 7: the model watch's eval runner is `runEvalSet` with a probe driver, because the
   daemon's `LoopEvalRunner` grades `command_exit0` checks only inside a sandbox lease and the
   world has none; a live run of the watch goes through `tests/live`.
-- Phase 7: the harness's three tests share one world in order; `-t` on the second or third
-  alone fails for lack of the first's release.
+- Phase 7: the harness's three gate tests share one world in order; `-t` on the second or
+  third alone fails for lack of the first's release (the fourth, the driver guard, stands
+  alone).
 
 ### Requirement IDs covered
 
@@ -1156,7 +1208,8 @@ budgets, measured independently), G.4 (weekly consolidation through the inbox), 
 sent-back task resolved its finding before closing), S.1 (every tool call audited, none denied
 by the hooks because the grant was right). Phase 7: M.1 (Forerunner as a project, the request
 in its task list through the conversation agent and the change log), M.2 (PR, tier 2 critic
-on the opus rung, the human merge), M.3 (signed release on the git host's releases, "Update
+on the opus rung, the human merge; the "tests in Docker" clause is proven by
+`packages/runtime/test/sandbox-container.test.ts`, not by the harness), M.3 (signed release on the git host's releases, "Update
 available" with the changelog, "Update and restart" on two installs), M.4 (staged install,
 health check on restart, automatic rollback, config, data and memory untouched, the second
 install refusing the rolled-back release), M.5 (the model watch's recommendations in the
@@ -1794,7 +1847,8 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
 - The session cap reaches a run through the task's allowance (`LoopTaskExecutor` caps the run
   at the session's remaining budget); a task with an estimate stops at its own share first.
   Scenario 5 uses a task without an estimate so the session cap is the one that binds.
-- The e2e vitest project is not in CI yet; the gate rows cite local runs. The Windows and
+- The e2e vitest project runs in CI on both OS (`ci.yml`, the step named after the phase 3
+  and 4 harnesses); the gate rows cite local runs and that step. The Windows and
   Android runs of the scenarios wait for the final build; scenario 9 drives the phone through
   the app's parser and card builder, not through the Android emulator or the screens.
 - The shell has no voice wiring to the conversation agent yet (the daemon has no voice route;

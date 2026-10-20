@@ -11,6 +11,7 @@ export {
   type AudioSink,
   type Availability,
   buildLatencyReport,
+  bytesToPcm,
   CartesiaTts,
   type ConverseFn,
   chunkDurationMs,
@@ -44,4 +45,4 @@ export {
   type VoiceLoopState,
   type VoiceMode,
   VoiceProviderRegistry,
-} from "../../../voice/src/index.ts";
+} from "@forerunner/voice";

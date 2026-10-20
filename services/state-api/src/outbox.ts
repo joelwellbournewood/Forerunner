@@ -1,4 +1,5 @@
 import type { Clock } from "@forerunner/platform";
+import type { Principal } from "./auth/principal.ts";
 import { type JsonState, MemoryJsonState } from "./state-file.ts";
 
 /**
@@ -191,6 +192,16 @@ export function migrateIdempotency(raw: unknown): IdempotencyFile {
 }
 
 export const IDEMPOTENCY_TTL_MS = 7 * 24 * 3600 * 1000;
+
+/**
+ * Devices are their own idempotency space; admin callers are split by install (ADR 0009).
+ * `POST /sync/outbox` and `POST /remote/commands` share it: the phone retries a lost
+ * `/remote/commands` answer through its outbox under the envelope's own `clientId`, so the
+ * two routes must remember the same key.
+ */
+export function idempotencyKeyOf(p: Principal): string {
+  return p.kind === "device" ? p.deviceId : `admin:${p.installId ?? "default"}`;
+}
 
 /**
  * Remembers (device, clientId) -> result for a week so retried batches are safe. `run()` is
