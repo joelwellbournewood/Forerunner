@@ -56,8 +56,10 @@ jobs:
       - name: Free disk space for the emulator (the APK build leaves under 4 GB; the emulator needs 1.8 x disk-size)
         run: |
           df -h / | tail -1
+          # The NDK and the Rust build directory stay: e2e/run.mjs builds the debug x86_64 APK for the
+          # emulator in the next step and needs both (run 5 removed them and the debug build failed).
           sudo rm -rf /usr/share/dotnet /usr/local/share/powershell /opt/ghc /usr/local/share/boost \
-            "$AGENT_TOOLSDIRECTORY/CodeQL" /usr/local/lib/android/sdk/ndk/[0-9]* apps/mobile/src-tauri/target
+            "$AGENT_TOOLSDIRECTORY/CodeQL"
           sudo docker image prune -af >/dev/null 2>&1 || true
           df -h / | tail -1
           ls -l /dev/kvm || echo "no /dev/kvm on this runner"
