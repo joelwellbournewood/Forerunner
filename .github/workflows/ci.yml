@@ -100,8 +100,7 @@ jobs:
           if ($svc) { Set-Service -Name $svc.Name -StartupType Manual; Start-Service -Name $svc.Name }
           else { & "$env:PGBIN\pg_ctl.exe" -D "$env:PGDATA" -w start }
           $env:PGPASSWORD = "root"
-          & "$env:PGBIN\psql.exe" -U postgres -c "ALTER USER postgres PASSWORD 'forerunner';" postgres
-          & "$env:PGBIN\psql.exe" -U postgres -c "CREATE DATABASE forerunner_test;" postgres
+          & "$env:PGBIN\psql.exe" -U postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE forerunner_test;" -c "ALTER USER postgres PASSWORD 'forerunner';" postgres
           "FORERUNNER_TEST_PG=postgres://postgres:forerunner@localhost:5432/forerunner_test" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Typecheck
         run: pnpm typecheck
