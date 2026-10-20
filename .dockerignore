@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+**/target
+**/.git
+**/coverage
+**/test-results
+**/.forerunner-dev
+apps/*/src-tauri/gen
