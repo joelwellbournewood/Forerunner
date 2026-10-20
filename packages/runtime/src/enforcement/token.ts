@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { ForerunnerError, newId } from "@forerunner/platform";
+import { ForerunnerError, isInside, newId } from "@forerunner/platform";
 
 /**
  * Capability token: the authority a run has. Issued by the runtime, verified by the hooks
@@ -84,7 +84,11 @@ export class TokenIssuer {
     return token;
   }
 
-  /** Derive a narrower token for a sub-agent. Never widens anything. */
+  /**
+   * Derive a narrower token for a sub-agent. Never widens anything: tools and secrets are the
+   * intersection, paths must lie inside a parent root, domains must match a parent pattern,
+   * the budget is the minimum, depth grows by one and is capped.
+   */
   derive(
     parent: SignedToken,
     overrides: Partial<
@@ -101,8 +105,18 @@ export class TokenIssuer {
     > & { runId: string },
   ): SignedToken {
     const p = this.verify(parent);
-    const sub = <T>(requested: T[] | undefined, parentSet: T[]): T[] =>
+    const subset = (requested: string[] | undefined, parentSet: string[]): string[] =>
       requested === undefined ? [...parentSet] : requested.filter((x) => parentSet.includes(x));
+    const paths =
+      overrides.allowedPaths === undefined
+        ? [...p.allowedPaths]
+        : overrides.allowedPaths.filter((child) =>
+            p.allowedPaths.some((root) => isInside(root, child)),
+          );
+    const domains =
+      overrides.allowedDomains === undefined
+        ? [...p.allowedDomains]
+        : overrides.allowedDomains.filter((d) => domainCovered(d.toLowerCase(), p.allowedDomains));
     const budget = Math.min(overrides.budgetUsdMicro ?? p.budgetUsdMicro, p.budgetUsdMicro);
     return this.issue({
       runId: overrides.runId,
@@ -111,10 +125,10 @@ export class TokenIssuer {
       ownerHumanId: p.ownerHumanId,
       projectId: p.projectId,
       taskId: overrides.taskId ?? p.taskId,
-      allowedTools: sub(overrides.allowedTools, p.allowedTools),
-      allowedPaths: sub(overrides.allowedPaths, p.allowedPaths),
-      allowedDomains: sub(overrides.allowedDomains, p.allowedDomains),
-      grantedSecrets: sub(overrides.grantedSecrets, p.grantedSecrets),
+      allowedTools: subset(overrides.allowedTools, p.allowedTools),
+      allowedPaths: paths,
+      allowedDomains: domains,
+      grantedSecrets: subset(overrides.grantedSecrets, p.grantedSecrets),
       budgetUsdMicro: budget,
       depth: p.depth + 1,
       maxDepth: p.maxDepth,
@@ -172,4 +186,22 @@ export class TokenIssuer {
     const canonical = JSON.stringify(claims, Object.keys(claims).sort());
     return createHmac("sha256", this.key).update(canonical).digest("hex");
   }
+}
+
+/** A requested domain is covered when a parent entry equals it or a parent wildcard contains it. */
+export function domainCovered(domain: string, parentPatterns: readonly string[]): boolean {
+  for (const p of parentPatterns) {
+    if (p === domain) return true;
+    if (p.startsWith("*.")) {
+      const base = p.slice(2);
+      if (domain === base || domain.endsWith(`.${base}`)) return true;
+      // a narrower wildcard under the parent wildcard is fine too
+      if (
+        domain.startsWith("*.") &&
+        (domain.slice(2) === base || domain.slice(2).endsWith(`.${base}`))
+      )
+        return true;
+    }
+  }
+  return false;
 }

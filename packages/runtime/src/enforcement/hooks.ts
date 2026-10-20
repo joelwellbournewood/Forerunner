@@ -27,6 +27,8 @@ export interface RunContext {
   billingSourceId: string;
   /** Approvals already granted for this run (approval ids or tool+hash keys). */
   approvals?: Set<string>;
+  /** Working directory of the run; relative paths in tool inputs resolve against it. */
+  cwd?: string;
 }
 
 export interface HookDeps {
@@ -203,7 +205,7 @@ export class EnforcementHooks {
       const values = Array.isArray(value) ? value : value === undefined ? [] : [value];
       for (const v of values) {
         if (typeof v !== "string") continue;
-        const abs = resolvePath(v);
+        const abs = ctx.cwd ? resolvePath(ctx.cwd, v) : resolvePath(v);
         if (!claims.allowedPaths.some((root) => isInside(root, abs))) {
           throw await deny("path_not_allowed", `path outside the run's allowed roots: ${v}`, {
             field,

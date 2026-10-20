@@ -1,3 +1,4 @@
+import { join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import { TokenIssuer } from "../src/enforcement/token.ts";
 import { harness, issue } from "./helpers.ts";
@@ -30,7 +31,8 @@ describe("capability tokens", () => {
     const h = harness();
     const parent = issue(h, {
       allowedTools: ["echo", "read_file"],
-      allowedPaths: ["/w/a"],
+      allowedPaths: [join("/", "w", "a")],
+      allowedDomains: ["*.example.org", "api.github.com"],
       grantedSecrets: ["gh"],
       budgetUsdMicro: 500,
       depth: 0,
@@ -39,10 +41,18 @@ describe("capability tokens", () => {
     const child = h.tokens.derive(parent, {
       runId: "run-2",
       allowedTools: ["read_file", "delete_repo"],
+      allowedPaths: [join("/", "w", "a", "task-1"), join("/", "w", "b")],
+      allowedDomains: ["docs.example.org", "api.github.com", "evil.com", "*.sub.example.org"],
       budgetUsdMicro: 900,
       grantedSecrets: ["gh", "aws"],
     });
     expect(child.claims.allowedTools).toEqual(["read_file"]);
+    expect(child.claims.allowedPaths).toEqual([join("/", "w", "a", "task-1")]);
+    expect(child.claims.allowedDomains).toEqual([
+      "docs.example.org",
+      "api.github.com",
+      "*.sub.example.org",
+    ]);
     expect(child.claims.budgetUsdMicro).toBe(500);
     expect(child.claims.grantedSecrets).toEqual(["gh"]);
     expect(child.claims.depth).toBe(1);

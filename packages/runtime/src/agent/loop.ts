@@ -151,6 +151,7 @@ export class LoopAgentDriver {
       provider: req.provider.name,
       billingSourceId: req.billingSourceId,
       approvals: req.approvals ?? new Set(),
+      cwd: req.cwd,
     };
 
     const messages: ChatMessage[] = [...req.messages];
