@@ -271,7 +271,7 @@ describe("local daemon", () => {
     const killed = await json(
       await req("/kill", {
         method: "POST",
-        body: JSON.stringify({ scope: { all: true }, reason: "test" }),
+        body: JSON.stringify({ scope: "all", reason: "test" }),
         headers: { "content-type": "application/json" },
       }),
     );
