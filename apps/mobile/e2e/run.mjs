@@ -486,7 +486,10 @@ async function main() {
       // gone with the device
     }
   });
-  const playwright = await import(pathToFileURL(require_(uiDir).resolve("@playwright/test")).href);
+  // @playwright/test is CommonJS: imported from ESM its exports sit on `default` (run 6 on the
+  // hosted emulator read `chromium` off the namespace and got undefined).
+  const pwModule = await import(pathToFileURL(require_(uiDir).resolve("@playwright/test")).href);
+  const playwright = pwModule.chromium ? pwModule : pwModule.default;
   const browser = await playwright.chromium.connectOverCDP(`http://127.0.0.1:${devtoolsPort}`);
   cleanups.push(() => browser.close().catch(() => {}));
   const page = await waitForPage(browser, 30_000);
