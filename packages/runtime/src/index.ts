@@ -21,3 +21,4 @@ export * from "./setup/validators.ts";
 export * from "./setup/wizard.ts";
 export * from "./wiring/billing-ports.ts";
 export * from "./wiring/state-ports.ts";
+export * from "./daemon/api-types.ts";

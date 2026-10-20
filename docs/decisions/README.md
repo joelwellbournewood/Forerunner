@@ -29,3 +29,4 @@ Status: accepted | superseded by NNNN
 | 0008 | Money: USD micro-units in the ledger, CHF at a daily rate, plan usage as a share |
 | 0009 | Device identity and auth for the state service: Ed25519 device keys, scoped tokens |
 | 0010 | Test environment: fake provider with recorded replies, simulated clock, fake git host |
+| 0011 | Local daemon API between the shells and the runtime |
