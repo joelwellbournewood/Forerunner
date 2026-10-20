@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { isForerunnerError, join, sep } from "@forerunner/platform";
+import { appDirs, isForerunnerError, join, sep } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
 import { Command } from "commander";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -41,11 +41,12 @@ import {
   versionsRoot,
   writePointer,
 } from "../src/update/pointer.ts";
-import { HumanRequestUpdatePort } from "../src/update/ports.ts";
+import { FakeUpdateHumanPort, HumanRequestUpdatePort } from "../src/update/ports.ts";
 import { isReleaseVersion } from "../src/update/semver.ts";
 import { generateSigningKeyPair, signManifest } from "../src/update/sign.ts";
 import { ReleaseVerifier, refusalReason, sha256Hex } from "../src/update/verify.ts";
 import {
+  BootingRestarter,
   buildRelease,
   FakeReleaseServer,
   type Harness,
@@ -437,6 +438,78 @@ describe("health check and automatic rollback", () => {
       expect(h.manager.prune()).toEqual(["1.2.0"]);
     } finally {
       await h.close();
+    }
+  });
+
+  it("a rollback on one install refuses the release on every install sharing the state store, and the refusal says so", async () => {
+    // Alice's install rolls 1.2.0 back. Bob's install (its own home, the same store, as two
+    // updaters over one shared state) never ran it, yet the shared release row refuses it for
+    // him too: the message must name the shared state, not "this install".
+    const alice = await harness({
+      probe: new StaticHealthProbe({ ok: false, detail: "daemon answered 500" }),
+    });
+    const bobHome = mkdtempSync(join(tmpdir(), "fr-update-bob-"));
+    const bobDirs = appDirs({ env: { FORERUNNER_HOME: bobHome } });
+    for (const d of Object.values(bobDirs)) mkdirSync(d, { recursive: true });
+    const bobRunning = { version: "1.0.0" };
+    const bobHuman = new FakeUpdateHumanPort("approved");
+    const bobRestarter = new BootingRestarter(bobRunning);
+    const bob = new UpdateManager({
+      ...alice.deps,
+      dirs: bobDirs,
+      human: bobHuman,
+      restarter: bobRestarter,
+      probe: new StaticHealthProbe({ ok: true, detail: "fake daemon healthy" }),
+      runningVersion: () => bobRunning.version,
+      humanId: "human-b",
+    });
+    const byBob = { kind: "human" as const, id: "human-b" };
+    try {
+      await alice.manager.apply({ by: { kind: "human", id: "human-j" } });
+      expect((await alice.manager.healthCheck()).kind).toBe("rolled_back");
+      expect((await alice.store.release.latest("stable"))?.status).toBe("rolled_back");
+      expect(readPointer(bobDirs)).toBeNull();
+
+      // Bob's next check lists 1.2.0 as previously rejected and falls through to 1.1.0.
+      const check = await bob.check(byBob, { fresh: true });
+      expect(check.available?.version).toBe("1.1.0");
+      expect(check.rejected).toEqual([
+        {
+          version: "1.2.0",
+          reason: "previously_rejected",
+          message:
+            "release 1.2.0 was rolled back on an install sharing this state; cut a new release",
+        },
+      ]);
+      expect(check.rejected[0]?.message).not.toContain("this install");
+
+      // An explicit apply is refused with the same words and audited as denied.
+      const e = await bob.apply({ by: byBob, version: "1.2.0" }).catch((err: unknown) => err);
+      expect(isForerunnerError(e, "validation") && e.details.reason).toBe("previously_rejected");
+      expect(isForerunnerError(e) && e.message).toBe(
+        "release 1.2.0 was rolled back on an install sharing this state; cut a new release",
+      );
+      const denied = await alice.store.auditLog.list({ tool: "update.apply", allowed: false });
+      expect(denied).toHaveLength(1);
+      expect(denied[0]).toMatchObject({
+        tool: "update.apply",
+        allowed: false,
+        denied_reason: "previously_rejected",
+        input_summary: "install 1.2.0",
+        human_id: "human-b",
+        agent_id: null,
+      });
+      expect(denied[0]?.result_summary).toContain("on an install sharing this state");
+      expect(denied[0]?.result_summary).not.toContain("this install");
+
+      // Bob's install is untouched: nothing staged, no pointer, nobody asked, no restart.
+      expect(readPointer(bobDirs)).toBeNull();
+      expect(bob.status().versionsOnDisk).toEqual([]);
+      expect(bobHuman.asks).toHaveLength(0);
+      expect(bobRestarter.requests).toHaveLength(0);
+      expect(bobRunning.version).toBe("1.0.0");
+    } finally {
+      await alice.close();
     }
   });
 

@@ -170,9 +170,9 @@ localSchemaVersion, platform?, fetchImpl?, humanId?, checkCacheMs? }`:
 
 | Method | Does |
 | --- | --- |
-| `check(by?, { fresh? })` → `UpdateCheck` | lists the channel, walks newest-first, stops at the first release that is not newer than `installedVersion()` (the pointer's current, else the running version); the first candidate that verifies, is schema-compatible and was not rolled back or failed here before becomes `available`; the ones skipped are `rejected: [{ version, reason, message }]`. The result is reused for `checkCacheMs` (default 60 s, `DEFAULT_CHECK_CACHE_MS`; 0 disables) while the installed version is unchanged, with `cached: true`: the screen asks on every view without a feed request or an audit row. `fresh: true` (the CLI, `apply`) always asks the feed; `invalidateCheck()` runs after apply, rollback and a health verdict. Only a real feed query audits `update.check`. |
+| `check(by?, { fresh? })` → `UpdateCheck` | lists the channel, walks newest-first, stops at the first release that is not newer than `installedVersion()` (the pointer's current, else the running version); the first candidate that verifies, is schema-compatible and was not rolled back or failed before on any install sharing the state store becomes `available`; the ones skipped are `rejected: [{ version, reason, message }]`. The result is reused for `checkCacheMs` (default 60 s, `DEFAULT_CHECK_CACHE_MS`; 0 disables) while the installed version is unchanged, with `cached: true`: the screen asks on every view without a feed request or an audit row. `fresh: true` (the CLI, `apply`) always asks the feed; `invalidateCheck()` runs after apply, rollback and a health verdict. Only a real feed query audits `update.check`. |
 | `stage(signed)` → `StagedInstall` | verifies the manifest, picks the artefact for `platform` (`detectArtifactPlatform()`: windows-x64, linux-x64, android), streams the download to the staging directory while hashing (more bytes than the manifest says is `tampered` at once), checks size and SHA-256, unpacks a `.zip` with `unpackZip` (refuses `..` segments, absolute and drive-letter names, backslashes, NUL, symlink entries, and any entry that resolves outside the target) or keeps a non-zip artefact as one file, writes `release.json`, renames the staging directory into place. Any failure removes the staging directory. |
-| `apply({ by, version? })` → `ApplyResult` | under the install lock. Trust first: the manifest is verified (signature, downgrade, schema) and a release that rolled back or failed here before is refused, each audited as denied, before anyone is asked; then an agent actor needs `human.ask({ kind: approval, key: "update.apply:<version>" })` to answer `approved` (`pending` or `denied` → `approval_required`, audited as denied), so no refused release ever becomes an inbox item; then stages; inserts the `release` row (`status: published`, changelog, signature, artefacts) or reuses it; writes the pointer `{ current: version, previous: <old current or running version>, state: pending_health_check }`; audits `update.apply`; calls `restarter.restart({ reason: "update", targetVersion, fromVersion })`. |
+| `apply({ by, version? })` → `ApplyResult` | under the install lock. Trust first: the manifest is verified (signature, downgrade, schema) and a release that rolled back or failed before on any install sharing the state store is refused, each audited as denied, before anyone is asked; then an agent actor needs `human.ask({ kind: approval, key: "update.apply:<version>" })` to answer `approved` (`pending` or `denied` → `approval_required`, audited as denied), so no refused release ever becomes an inbox item; then stages; inserts the `release` row (`status: published`, changelog, signature, artefacts) or reuses it; writes the pointer `{ current: version, previous: <old current or running version>, state: pending_health_check }`; audits `update.apply`; calls `restarter.restart({ reason: "update", targetVersion, fromVersion })`. |
 | `healthCheck()` → `HealthOutcome` | the first-start check, see below. |
 | `rollback({ by, reason? })` → `RollbackResult` | under the install lock. Manual rollback to `previous` (`not_found` when there is none; agents need approval, key `update.rollback:<from>:<to>`): pointer `{ current: previous when its directory exists else null, previous: null, state: installed, lastRollback: {automatic: false} }`, release row → `rolled_back`, audit `update.rollback`, `human.notify(warning)`, restart. |
 | `status()` → `UpdateStatus` | running version, channel, platform, pointer, version directories on disk, trusted key ids. No network. |
@@ -213,7 +213,12 @@ is run by the shell on **every** start and does nothing unless `current.json` is
    notification; outcome `failed_no_previous`.
 
 The rolled-back version's directory stays until `prune()`; the release is never offered again
-on this install (`previously_rejected`): the fix is a new release.
+(`previously_rejected`): the fix is a new release. The `release` row lives in the shared state
+store and carries no install id, so a version one install rolled back is refused on every
+install sharing that store, including one that never ran it, and the refusal says so: `release
+1.2.0 was rolled back on an install sharing this state; cut a new release` (never "on this
+install"). The `update.apply` audit row of such a refusal is `allowed: false`,
+`denied_reason: previously_rejected`.
 
 ### Ports (`ports.ts`)
 
@@ -367,7 +372,7 @@ the local store can reach.
 
 ## Tests
 
-`packages/runtime/test/update-*.test.ts` (58 tests, `pnpm vitest run --project unit
+`packages/runtime/test/update-*.test.ts` (59 tests, `pnpm vitest run --project unit
 packages/runtime/test/update-verify.test.ts packages/runtime/test/update-install.test.ts
 packages/runtime/test/update-screen.test.ts packages/runtime/test/update-health.test.ts
 packages/runtime/test/update-githost.test.ts`), all against stand-ins on 127.0.0.1: a fake
@@ -394,8 +399,12 @@ routes, `fr update` on the program and the daemon exiting with `RESTART_EXIT_COD
   refused before any approval is asked; artefact bytes or size mismatch refused; zip-slip and
   symlink entries refused (unit and through `apply`); agent approval denied/pending/approved;
   automatic rollback with row, notification, audit, restart and unchanged protected
-  directories; timeout on the simulated clock; running-version mismatch; no previous version;
-  manual rollback and its approval; pointer crash simulation between temp write and rename,
+  directories; a second manager over the same store with its own home (a peer's install) lists
+  the version the first rolled back as `previously_rejected`, its explicit apply is refused with
+  the message naming the shared state (never "this install") and an `update.apply` row denied
+  `previously_rejected`, and nothing is staged, asked or restarted in its home; timeout on the
+  simulated clock; running-version mismatch; no previous version; manual rollback and its
+  approval; pointer crash simulation between temp write and rename,
   stale temp cleanup, corrupt pointer, unsafe version names; platform detection; the CLI
   commands including keygen (private key never printed), manifest (hashes from files, bad
   spec refused) and sign by file and by secret reference (key never printed, missing secret

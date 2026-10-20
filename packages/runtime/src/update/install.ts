@@ -500,13 +500,17 @@ export class UpdateManager {
     return row;
   }
 
-  /** A release that rolled back or failed on this install is never offered or installed again. */
+  /**
+   * A release that rolled back or failed is never offered or installed again. The `release`
+   * row comes from the shared state store, so a rollback on any install sharing it counts here
+   * too; the row does not say which install it was, and the refusal says so.
+   */
   private async assertNotRejectedBefore(m: ReleaseManifest): Promise<void> {
     const existing = await this.existingRow(m);
     if (existing && (existing.status === "rolled_back" || existing.status === "failed")) {
       throw refusal(
         "previously_rejected",
-        `release ${m.version} was ${existing.status.replace("_", " ")} on this install before; cut a new release`,
+        `release ${m.version} was ${existing.status.replace("_", " ")} on an install sharing this state; cut a new release`,
         { version: m.version, status: existing.status },
       );
     }
