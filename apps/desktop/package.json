@@ -1,0 +1,16 @@
+{
+  "name": "@forerunner/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tauri 2 shell for Windows and Linux around @forerunner/ui.",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "typecheck": "echo 'no TypeScript in the desktop shell; see @forerunner/ui'"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.3"
+  }
+}
