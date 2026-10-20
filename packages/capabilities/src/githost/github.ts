@@ -70,7 +70,7 @@ export class GitHubHost implements GitHost {
               : {}),
         },
         body: opts.raw
-          ? (opts.raw as unknown as BodyInit)
+          ? (Buffer.from(opts.raw) as unknown as RequestInit["body"])
           : body !== undefined
             ? JSON.stringify(body)
             : undefined,
