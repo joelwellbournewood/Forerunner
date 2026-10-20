@@ -4,7 +4,8 @@ import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
-import { createDaemonApp } from "../src/daemon/server.ts";
+import { RESTART_EXIT_CODE } from "../src/daemon/restart.ts";
+import { createDaemonApp, startDaemon } from "../src/daemon/server.ts";
 import { ScriptedProvider } from "./helpers.ts";
 
 const REGISTRY = join(process.cwd(), "evals", "registry");
@@ -351,7 +352,7 @@ describe("local daemon", () => {
     expect(peers[0]?.activeClaims.map((c) => c.taskId)).toEqual([task.id]);
   });
 
-  it("streams events over SSE", async () => {
+  it("streams events over SSE, including a restart request", async () => {
     const res = await req("/events", { headers: { accept: "text/event-stream" } });
     expect(res.status).toBe(200);
     const reader = res.body?.getReader();
@@ -359,6 +360,38 @@ describe("local daemon", () => {
     const { value } = await reader.read();
     const text = new TextDecoder().decode(value);
     expect(text).toContain("event: inbox.changed");
+    // "Update and restart" is announced to the attached UI before the daemon goes down.
+    rt.events.emit("restart", {
+      schema: 1,
+      reason: "update",
+      targetVersion: "0.2.0",
+      fromVersion: "0.1.0-test",
+      requestedAt: clock.nowIso(),
+      pid: process.pid,
+      exitCode: RESTART_EXIT_CODE,
+    });
+    const next = new TextDecoder().decode((await reader.read()).value);
+    expect(next).toContain("event: restart.requested");
+    expect(next).toContain('"targetVersion":"0.2.0"');
     await reader.cancel();
+  });
+
+  it("stop() returns while a shell holds /events open (the restart contract needs a bounded stop)", async () => {
+    const daemon = await startDaemon(rt, {});
+    const res = await fetch(`${daemon.url}/events?token=${daemon.token}`, {
+      headers: { accept: "text/event-stream" },
+    });
+    expect(res.status).toBe(200);
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error("no body");
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain("event: inbox.changed");
+    const stopped = await Promise.race([
+      daemon.stop().then(() => "stopped"),
+      new Promise<string>((r) => setTimeout(() => r("hung"), 2_000)),
+    ]);
+    expect(stopped).toBe("stopped");
+    // The stream was ended from the server side, not left to the client.
+    const rest = await reader.read().catch(() => ({ done: true as const, value: undefined }));
+    expect(rest.done).toBe(true);
   });
 });

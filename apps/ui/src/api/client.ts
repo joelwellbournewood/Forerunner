@@ -8,6 +8,8 @@ import {
   type CreateProjectBody as CreateProjectBodySchema,
   type CreateTaskBody as CreateTaskBodySchema,
   DAEMON_ROUTES,
+  type DecisionView,
+  DecisionView as DecisionViewSchema,
   ErrorBody,
   type EventView,
   EventView as EventViewSchema,
@@ -21,6 +23,8 @@ import {
   type KillBody as KillBodySchema,
   type MessageView,
   MessageView as MessageViewSchema,
+  type PeerFeedView,
+  PeerFeedView as PeerFeedViewSchema,
   type ProjectCard,
   ProjectCard as ProjectCardSchema,
   type ProjectSummary,
@@ -42,11 +46,13 @@ export type {
   ChatReplyView,
   ChatRequestBody,
   CostView,
+  DecisionView,
   EventView,
   HealthView,
   HumanRequestView,
   InboxView,
   MessageView,
+  PeerFeedView,
   ProjectCard,
   ProjectSummary,
   RunView,
@@ -62,13 +68,14 @@ export type CreateProjectBody = z.infer<typeof CreateProjectBodySchema>;
 export type TransitionTaskBody = z.infer<typeof TransitionTaskBodySchema>;
 export type KillBody = z.infer<typeof KillBodySchema>;
 
-/** Shapes the contract leaves open (ADR 0014): lists are bare arrays, kill reports its state. */
+/** Shapes the contract leaves open (ADR 0025): lists are bare arrays, kill reports its state. */
 export const KillResult = z.looseObject({ killActive: z.boolean() });
 export type KillResult = z.infer<typeof KillResult>;
 
 export const ProjectList = z.array(ProjectCardSchema);
 export const TaskList = z.array(TaskViewSchema);
 export const RunList = z.array(RunViewSchema);
+export const DecisionList = z.array(DecisionViewSchema);
 export const SessionList = z.array(SessionViewSchema);
 export const EventList = z.array(EventViewSchema);
 export const SettingList = z.array(SettingViewSchema);
@@ -152,6 +159,10 @@ export interface DaemonClient {
   createTask(projectId: string, body: CreateTaskInput): Promise<TaskView>;
   transitionTask(taskId: string, body: TransitionTaskBody): Promise<TaskView>;
   runs(projectId: string, filter?: { limit?: number }, signal?: AbortSignal): Promise<RunView[]>;
+  /** Current decisions of a project (answered questions the agent never asks again). */
+  decisions(projectId: string, signal?: AbortSignal): Promise<DecisionView[]>;
+  /** What the other agents on the project are doing. */
+  peers(projectId: string, signal?: AbortSignal): Promise<PeerFeedView>;
   sessions(
     filter?: { agentId?: string; projectId?: string; status?: string },
     signal?: AbortSignal,
@@ -302,6 +313,10 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       post(routePath("transitionTask", { id: taskId }), TaskViewSchema, body),
     runs: (projectId, filter, signal) =>
       get(routePath("runs", { id: projectId }), RunList, { limit: filter?.limit }, signal),
+    decisions: (projectId, signal) =>
+      get(routePath("decisions", { id: projectId }), DecisionList, undefined, signal),
+    peers: (projectId, signal) =>
+      get(routePath("peers", { id: projectId }), PeerFeedViewSchema, undefined, signal),
     sessions: (filter, signal) =>
       get(
         routePath("sessions"),

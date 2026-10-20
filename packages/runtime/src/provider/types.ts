@@ -64,6 +64,11 @@ export interface ModelRequest {
   cache?: { system?: boolean; tools?: boolean };
   /** Opaque metadata recorded with the run (prompt version, task id). Never sent as instructions. */
   metadata?: Record<string, string>;
+  /**
+   * Context-layer bypass (ADR 0003 section 4). "off" means every tool result reaches the model
+   * exactly as produced: the critic, evals and the model watch set it. Never sent to the provider.
+   */
+  compression?: "default" | "off";
   signal?: AbortSignal;
 }
 

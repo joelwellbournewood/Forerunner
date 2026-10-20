@@ -23,6 +23,8 @@ export interface AnthropicProviderOptions {
   /** OAuth token from `claude setup-token` (subscription). Exactly one of apiKey/authToken is set. */
   authToken?: string;
   baseURL?: string;
+  /** Sent with every request, e.g. X-Headroom-Project when the base URL is the Headroom proxy. */
+  defaultHeaders?: Record<string, string>;
   clock?: Clock;
   /** Injected for tests; defaults to global fetch. */
   fetch?: typeof fetch;
@@ -33,6 +35,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
   readonly name = "anthropic";
   private readonly client: Anthropic;
   private readonly clock: Clock;
+  private readonly opts: AnthropicProviderOptions;
 
   constructor(opts: AnthropicProviderOptions) {
     if (!opts.apiKey && !opts.authToken) {
@@ -41,13 +44,33 @@ export class AnthropicMessagesProvider implements ModelProvider {
         "anthropic provider needs an API key or a subscription token",
       );
     }
+    this.opts = opts;
     this.clock = opts.clock ?? systemClock;
     this.client = new Anthropic({
       apiKey: opts.apiKey ?? null,
       authToken: opts.authToken ?? null,
       baseURL: opts.baseURL,
+      defaultHeaders: opts.defaultHeaders,
       fetch: opts.fetch,
       maxRetries: opts.maxRetries ?? 2,
+    });
+  }
+
+  /** Where this adapter sends requests (undefined: the SDK default). */
+  get baseURL(): string | undefined {
+    return this.opts.baseURL;
+  }
+
+  /**
+   * The same credential through a local proxy (ADR 0003: the Headroom proxy on loopback) with
+   * extra request headers. Returns a new adapter; this one is unchanged, so a critic run can
+   * keep calling the API directly while a specialist run goes through the proxy.
+   */
+  viaProxy(baseURL: string, headers: Record<string, string>): AnthropicMessagesProvider {
+    return new AnthropicMessagesProvider({
+      ...this.opts,
+      baseURL,
+      defaultHeaders: { ...(this.opts.defaultHeaders ?? {}), ...headers },
     });
   }
 

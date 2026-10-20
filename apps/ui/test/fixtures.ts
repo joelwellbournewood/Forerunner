@@ -1,11 +1,13 @@
 import type {
   AgentView,
   CostView,
+  DecisionView,
   EventView,
   HealthView,
   HumanRequestView,
   HumanView,
   MessageView,
+  PeerFeedView,
   ProjectCard,
   ProjectSummary,
   RunView,
@@ -511,4 +513,58 @@ export const HEALTH: HealthView = {
   vaultBackend: "file",
   activeSessions: 0,
   killActive: false,
+  // The fake runs no container engine: the process stand-in (ADR 0007), as the daemon reports it.
+  sandbox: { kind: "process", available: false, engine: "none", reason: "fake daemon" },
+  extensions: { enabled: 0, pending: 0 },
+};
+
+export const DECISIONS: DecisionView[] = [
+  {
+    id: "dec_1",
+    projectId: "proj_atlas",
+    question: "Which search backend should the docs site use?",
+    options: ["Static index built at deploy time", "Hosted search service"],
+    chosen: "Static index built at deploy time",
+    decidedBy: "human_alice",
+    rationale: "No runtime dependency and no per-query cost.",
+    supersedes: null,
+    createdAt: "2026-10-18T09:00:00.000Z",
+  },
+];
+
+export const PEERS: Record<string, PeerFeedView> = {
+  proj_atlas: {
+    generatedAt: "2026-10-19T21:15:00.000Z",
+    projectId: "proj_atlas",
+    peers: [
+      {
+        agentId: "agent_bob",
+        agentName: "Bob's agent",
+        online: true,
+        activeClaims: [
+          {
+            taskId: "task_2",
+            title: "Add the search box to the header",
+            status: "in_review",
+            expiresAt: "2026-10-21T00:00:00.000Z",
+          },
+        ],
+        openPullRequests: [
+          {
+            taskId: "task_2",
+            title: "Add the search box to the header",
+            url: "https://example.test/org/atlas/pull/12",
+          },
+        ],
+        lastHandoff: {
+          at: "2026-10-19T21:10:00.000Z",
+          summary: "Search box wired; PR #12 waits for review.",
+          inFlight: ["task_2"],
+          blocked: [],
+          next: ["Review PR #12"],
+        },
+        inFlightFiles: { task_2: ["src/header.tsx", "src/search.ts"] },
+      },
+    ],
+  },
 };

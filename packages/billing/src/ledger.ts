@@ -12,6 +12,7 @@ import { assertMicro, roundHalfUp, usdToChfMicro } from "./money.ts";
 import {
   BUILTIN_PRICING,
   cacheSavingsUsdMicro,
+  compressionSavingsUsdMicro,
   costOf,
   type PricingTable,
   priceFor,
@@ -103,8 +104,71 @@ export interface AllocationReport {
   byTask: AllocationBucket[];
 }
 
+/** Which runs and sessions a savings report covers; the same keys as the ledger filter. */
+export type SavingsFilter = Pick<
+  LedgerFilter,
+  "humanId" | "agentId" | "projectId" | "sessionId" | "taskId" | "runId" | "from" | "to"
+>;
+
+/**
+ * One Run as the savings view reads it (the state package's `run` table, ADR 0003 section 3).
+ * Savings are fields on the Run, never ledger rows; the ledger only supplies the day's rate.
+ */
+export interface SavingsRun {
+  run_id: string;
+  session_id?: string | null;
+  project_id?: string | null;
+  task_id?: string | null;
+  specialist?: string | null;
+  model: string;
+  /** Request size with no transforms (estimated) and as sent, counted the same way. */
+  tokens_before_compression: number;
+  tokens_after_compression: number;
+  cache_read_tokens: number;
+  cache_write_tokens?: number;
+  context_transforms?: string[];
+  headroom_used?: boolean;
+  /** The run's own CHF rate when the source knows it; else the run's ledger entry supplies it. */
+  rate_chf_per_usd?: number | null;
+  /** When the run happened; runs with neither a rate nor a ledger entry are quoted for this day. */
+  occurred_at?: string | null;
+}
+
+export interface SavingsSession {
+  session_id: string;
+  project_id?: string | null;
+  /** Headroom proxy `/stats` tokens_saved delta over the session (0 when it was not used). */
+  headroom_saved_tokens: number;
+}
+
+/** Where the Run rows come from. The runtime adapts the state store; tests use the ledger entries. */
+export interface RunSource {
+  listRuns(filter: SavingsFilter): Promise<SavingsRun[]>;
+}
+
+export interface SessionSource {
+  listSessions(filter: SavingsFilter): Promise<SavingsSession[]>;
+}
+
+export interface SavingsMoney {
+  usd_micro: number;
+  chf_micro: number;
+}
+
+/** Savings allocated to one project, specialist or model (ADR 0003: the same Run fields, summed). */
+export interface SavingsBucket {
+  key: string;
+  runs: number;
+  compressionTokens: number;
+  cacheReadTokens: number;
+  compression: SavingsMoney;
+  cache: SavingsMoney;
+  total: SavingsMoney;
+}
+
 export interface SavingsReport {
-  sessionId: string;
+  filter: SavingsFilter;
+  /** "Saved by compression (estimated)": tokens_before - tokens_after at the input price. */
   compression: {
     runsMeasured: number;
     tokensBefore: number;
@@ -113,6 +177,7 @@ export interface SavingsReport {
     usd_micro: number;
     chf_micro: number;
   };
+  /** "Saved by caching (measured)": cache reads at input price minus cache read price. */
   cache: {
     cacheReadTokens: number;
     usdMicroAtFullPrice: number;
@@ -120,13 +185,23 @@ export interface SavingsReport {
     usd_micro: number;
     chf_micro: number;
   };
-  total: { usd_micro: number; chf_micro: number };
+  /** Cache writes cost 1.25x the input price; shown beside the reads, never netted. */
+  cacheWriteTokens: number;
+  /** "Saved by Headroom": the proxy's own count per session, in tokens (a session spans models). */
+  headroom: { runs: number; sessions: number; tokensSaved: number };
+  total: SavingsMoney;
   /** Runs whose model has no price row; their tokens are counted, their money is not. */
   unpricedRuns: number;
+  /** How often each context transform was applied across the measured runs. */
+  transforms: Record<string, number>;
+  byProject: SavingsBucket[];
+  bySpecialist: SavingsBucket[];
+  byModel: SavingsBucket[];
 }
 
 export const NO_SPECIALIST = "(none)";
 export const NO_TASK = "(no task)";
+export const NO_PROJECT = "(no project)";
 
 export interface CostLedgerOptions {
   sink: LedgerSink;
@@ -134,6 +209,10 @@ export interface CostLedgerOptions {
   rates: RateSource;
   clock: Clock;
   pricing?: PricingTable;
+  /** Run rows for savings(); without it the ledger entries stand in (tests, in-memory). */
+  runs?: RunSource;
+  /** Session rows for the Headroom line of savings(); optional. */
+  sessions?: SessionSource;
 }
 
 export class CostLedger {
@@ -141,6 +220,8 @@ export class CostLedger {
   private readonly query: LedgerQuery;
   private readonly rates: RateSource;
   private readonly clock: Clock;
+  private readonly runs: RunSource | undefined;
+  private readonly sessions: SessionSource | undefined;
   readonly pricing: PricingTable;
 
   constructor(opts: CostLedgerOptions) {
@@ -148,6 +229,8 @@ export class CostLedger {
     this.query = opts.query;
     this.rates = opts.rates;
     this.clock = opts.clock;
+    this.runs = opts.runs;
+    this.sessions = opts.sessions;
     this.pricing = opts.pricing ?? BUILTIN_PRICING;
   }
 
@@ -245,11 +328,25 @@ export class CostLedger {
     return report;
   }
 
-  /** Token savings from compression and prompt caching, shown separately from spend. */
-  async savings(sessionId: string): Promise<SavingsReport> {
-    const entries = await this.query.list({ sessionId });
+  /**
+   * Token savings from compression (estimated), prompt caching (measured) and the Headroom
+   * proxy, priced at read time from the Run rows (ADR 0003 section 3): saved tokens x the
+   * model's input price in usd_micro, CHF at the rate of the run's own ledger entry, each
+   * rounded half-up once (ADR 0008) and summed as integers. Never netted against spend.
+   * A plain string is a session id.
+   */
+  async savings(input: SavingsFilter | string): Promise<SavingsReport> {
+    const filter: SavingsFilter = typeof input === "string" ? { sessionId: input } : { ...input };
+    const entries = await this.query.list(filter);
+    const entryByRun = new Map<string, StoredLedgerEntry>();
+    for (const e of entries) {
+      if (e.run_id && !entryByRun.has(e.run_id)) entryByRun.set(e.run_id, e);
+    }
+    const runs = this.runs ? await this.runs.listRuns(filter) : entriesAsRuns(entries);
+    const sessions = this.sessions ? await this.sessions.listSessions(filter) : [];
+
     const report: SavingsReport = {
-      sessionId,
+      filter,
       compression: {
         runsMeasured: 0,
         tokensBefore: 0,
@@ -265,51 +362,162 @@ export class CostLedger {
         usd_micro: 0,
         chf_micro: 0,
       },
+      cacheWriteTokens: 0,
+      headroom: { runs: 0, sessions: sessions.length, tokensSaved: 0 },
       total: { usd_micro: 0, chf_micro: 0 },
       unpricedRuns: 0,
+      transforms: {},
+      byProject: [],
+      bySpecialist: [],
+      byModel: [],
     };
-    for (const e of entries) {
+    const buckets = {
+      byProject: new Map<string, SavingsBucket>(),
+      bySpecialist: new Map<string, SavingsBucket>(),
+      byModel: new Map<string, SavingsBucket>(),
+    };
+    for (const run of runs) {
+      const entry = entryByRun.get(run.run_id);
+      const rate =
+        run.rate_chf_per_usd ??
+        entry?.rate_chf_per_usd ??
+        (await this.rates.quote(run.occurred_at ?? entry?.occurred_at ?? this.clock.nowIso()))
+          .chfPerUsd;
       let inputPrice: number | null = null;
       let cacheReadPrice = 0;
       try {
-        const p = priceFor(e.model, this.pricing);
+        const p = priceFor(run.model, this.pricing);
         inputPrice = p.input_per_mtok_usd;
         cacheReadPrice = p.cache_read_per_mtok_usd;
       } catch {
         report.unpricedRuns += 1;
       }
-      const before = e.tokens_before_compression;
-      const after = e.tokens_after_compression;
-      if (typeof before === "number" && typeof after === "number") {
-        const saved = Math.max(before - after, 0);
+      const before = Math.max(0, run.tokens_before_compression);
+      const after = Math.max(0, run.tokens_after_compression);
+      const saved = Math.max(before - after, 0);
+      const compression: SavingsMoney = { usd_micro: 0, chf_micro: 0 };
+      if (before > 0) {
         report.compression.runsMeasured += 1;
         report.compression.tokensBefore += before;
         report.compression.tokensAfter += after;
         report.compression.tokensSaved += saved;
         if (inputPrice !== null) {
-          const usd = roundHalfUp(saved * inputPrice);
-          report.compression.usd_micro += usd;
-          report.compression.chf_micro += usdToChfMicro(usd, e.rate_chf_per_usd);
+          compression.usd_micro = compressionSavingsUsdMicro(saved, run.model, this.pricing);
+          compression.chf_micro = usdToChfMicro(compression.usd_micro, rate);
+          report.compression.usd_micro += compression.usd_micro;
+          report.compression.chf_micro += compression.chf_micro;
         }
       }
-      report.cache.cacheReadTokens += e.cache_read_tokens;
-      if (inputPrice !== null && e.cache_read_tokens > 0) {
-        const usage: TokenUsage = {
-          tokens_in: 0,
-          tokens_out: 0,
-          cache_read_tokens: e.cache_read_tokens,
-        };
-        const saved = cacheSavingsUsdMicro(usage, e.model, this.pricing);
-        report.cache.usdMicroAtFullPrice += roundHalfUp(e.cache_read_tokens * inputPrice);
-        report.cache.usdMicroPaid += roundHalfUp(e.cache_read_tokens * cacheReadPrice);
-        report.cache.usd_micro += saved;
-        report.cache.chf_micro += usdToChfMicro(saved, e.rate_chf_per_usd);
+      const reads = Math.max(0, run.cache_read_tokens);
+      report.cache.cacheReadTokens += reads;
+      report.cacheWriteTokens += Math.max(0, run.cache_write_tokens ?? 0);
+      const cache: SavingsMoney = { usd_micro: 0, chf_micro: 0 };
+      if (inputPrice !== null && reads > 0) {
+        const usage: TokenUsage = { tokens_in: 0, tokens_out: 0, cache_read_tokens: reads };
+        cache.usd_micro = cacheSavingsUsdMicro(usage, run.model, this.pricing);
+        cache.chf_micro = usdToChfMicro(cache.usd_micro, rate);
+        report.cache.usdMicroAtFullPrice += roundHalfUp(reads * inputPrice);
+        report.cache.usdMicroPaid += roundHalfUp(reads * cacheReadPrice);
+        report.cache.usd_micro += cache.usd_micro;
+        report.cache.chf_micro += cache.chf_micro;
       }
+      for (const name of run.context_transforms ?? [])
+        report.transforms[name] = (report.transforms[name] ?? 0) + 1;
+      if (run.headroom_used) report.headroom.runs += 1;
+      const contribution = { saved, reads, compression, cache };
+      addToBucket(
+        buckets.byProject,
+        run.project_id ?? entry?.project_id ?? NO_PROJECT,
+        contribution,
+      );
+      addToBucket(
+        buckets.bySpecialist,
+        run.specialist ?? entry?.specialist ?? NO_SPECIALIST,
+        contribution,
+      );
+      addToBucket(buckets.byModel, run.model, contribution);
     }
+    for (const s of sessions) report.headroom.tokensSaved += Math.max(0, s.headroom_saved_tokens);
     report.total.usd_micro = report.compression.usd_micro + report.cache.usd_micro;
     report.total.chf_micro = report.compression.chf_micro + report.cache.chf_micro;
+    report.byProject = sortBuckets(buckets.byProject);
+    report.bySpecialist = sortBuckets(buckets.bySpecialist);
+    report.byModel = sortBuckets(buckets.byModel);
     return report;
   }
+}
+
+/**
+ * Ledger entries as Run rows, for a ledger without a RunSource (the in-memory sink): entries
+ * of one run are folded together, cache tokens summed, the first measured compression kept.
+ */
+export function entriesAsRuns(entries: Iterable<StoredLedgerEntry>): SavingsRun[] {
+  const byRun = new Map<string, SavingsRun>();
+  for (const e of entries) {
+    const id = e.run_id ?? e.id;
+    const before = e.tokens_before_compression ?? 0;
+    const after = e.tokens_after_compression ?? 0;
+    const existing = byRun.get(id);
+    if (!existing) {
+      byRun.set(id, {
+        run_id: id,
+        session_id: e.session_id ?? null,
+        project_id: e.project_id ?? null,
+        task_id: e.task_id ?? null,
+        specialist: e.specialist ?? null,
+        model: e.model,
+        tokens_before_compression: before,
+        tokens_after_compression: after,
+        cache_read_tokens: e.cache_read_tokens,
+        cache_write_tokens: e.cache_write_tokens,
+        rate_chf_per_usd: e.rate_chf_per_usd,
+        occurred_at: e.occurred_at,
+      });
+      continue;
+    }
+    existing.cache_read_tokens += e.cache_read_tokens;
+    existing.cache_write_tokens = (existing.cache_write_tokens ?? 0) + e.cache_write_tokens;
+    if (existing.tokens_before_compression === 0 && before > 0) {
+      existing.tokens_before_compression = before;
+      existing.tokens_after_compression = after;
+    }
+  }
+  return [...byRun.values()];
+}
+
+function addToBucket(
+  map: Map<string, SavingsBucket>,
+  key: string,
+  c: { saved: number; reads: number; compression: SavingsMoney; cache: SavingsMoney },
+): void {
+  let b = map.get(key);
+  if (!b) {
+    b = {
+      key,
+      runs: 0,
+      compressionTokens: 0,
+      cacheReadTokens: 0,
+      compression: { usd_micro: 0, chf_micro: 0 },
+      cache: { usd_micro: 0, chf_micro: 0 },
+      total: { usd_micro: 0, chf_micro: 0 },
+    };
+    map.set(key, b);
+  }
+  b.runs += 1;
+  b.compressionTokens += c.saved;
+  b.cacheReadTokens += c.reads;
+  b.compression.usd_micro += c.compression.usd_micro;
+  b.compression.chf_micro += c.compression.chf_micro;
+  b.cache.usd_micro += c.cache.usd_micro;
+  b.cache.chf_micro += c.cache.chf_micro;
+  b.total.usd_micro = b.compression.usd_micro + b.cache.usd_micro;
+  b.total.chf_micro = b.compression.chf_micro + b.cache.chf_micro;
+}
+
+function sortBuckets(map: Map<string, SavingsBucket>): SavingsBucket[] {
+  return [...map.values()].sort(
+    (a, b) => b.total.usd_micro - a.total.usd_micro || (a.key < b.key ? -1 : 1),
+  );
 }
 
 /** UTC calendar month containing `nowMs`: from inclusive, to exclusive. */

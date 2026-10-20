@@ -38,4 +38,5 @@ Status: accepted | superseded by NNNN
 | 0026 | Daemon lifecycle: one `fr daemon` per install, shells attach to it |
 | 0027 | Memory package parameters: embedder width, frontmatter keys, consolidation thresholds, scope grants |
 | 0028 | Critic independence and verdict rules in code |
+| 0029 | Daemon wiring of the phase 6 and 7 modules: extensions, updates, model watch, estimates, mirror, sandbox |
 | 0030 | Command registry: risk resolution, confirmations, change log and undo |

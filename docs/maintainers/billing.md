@@ -103,9 +103,30 @@ from the source kind and writes through `LedgerSink.record`. It returns
 combination of human, project, session, task, run and time window with a per-kind split;
 `monthTotals(humanId)` uses the UTC calendar month. `allocation({ projectId }, outcomeLookup)`
 groups by specialist, model and task with runs, tasks, accepted/rejected/open counts,
-`successRate` (accepted over decided) and `costPerAcceptedTaskUsdMicro`. `savings(sessionId)`
-reports compression (tokens before/after, valued at the input price) and cache reads (what they
-would have cost at full price minus what was paid) separately from spend.
+`successRate` (accepted over decided) and `costPerAcceptedTaskUsdMicro`.
+
+**Savings (ADR 0003 section 3; requirement I.7).** `savings(filter | sessionId)` returns a
+`SavingsReport` computed at read time from the Run rows, never from ledger rows: `cost_ledger`
+stays spend-only and nothing in it is netted. Three lines are kept apart: `compression`
+("estimated": `tokens_before_compression - tokens_after_compression` x the model's input price,
+`compressionSavingsUsdMicro`), `cache` ("measured": `cache_read_tokens` x (input price - cache
+read price), `cacheSavingsUsdMicro`, with `usdMicroAtFullPrice` / `usdMicroPaid` and the
+`cacheWriteTokens` beside it because writes cost 1.25x) and `headroom` (the proxy's own count
+from `session.headroom_saved_tokens`, tokens only because a session spans models). Each run is
+rounded half-up once in USD micro (ADR 0008) and converted to CHF at `rate_chf_per_usd` of the
+run's own ledger entry (`cost_ledger.run_id`; a run without an entry is quoted for its day), then
+the integers are summed. `byProject`, `bySpecialist` and `byModel` allocate the same fields
+(`SavingsBucket`), `transforms` counts how often each context transform fired, `unpricedRuns`
+counts runs whose model has no price row (tokens shown, money honestly zero). A price correction
+changes past savings figures, never past spend; that is why savings are not ledger entries.
+
+Sources: `RunSource.listRuns(filter)` and `SessionSource.listSessions(filter)` (optional
+`CostLedgerOptions.runs` / `.sessions`); the runtime's `StateLedgerStore` implements both over
+the state store (a session filter reads the session's runs; other filters go through the
+matching ledger entries' `run_id` / `session_id`). Without a `RunSource` the ledger entries stand
+in (`entriesAsRuns`, one run per `run_id`, cache tokens summed), which is what the in-memory
+tests use. The daemon's cost view (`costView` in `packages/runtime/src/daemon/views.ts`) shows
+`savings.compressionTokens` / `cacheTokens` and the two money pairs from this report.
 
 `LedgerSink` / `LedgerQuery` are the only storage the package needs; `InMemoryLedger`
 implements both. The state adapter maps them to `CostLedgerRepo.record` / `.sum` / list with
@@ -159,19 +180,23 @@ max(estimate, 1)` clamped to [-1, 10]. `errorStats(specialist, taskType?)` gives
 
 ## Tests
 
-`pnpm vitest run --project unit packages/billing` (8 files, 75 tests, no network): money
+`pnpm vitest run --project unit packages/billing` (8 files, 77 tests, no network): money
 rounding and formatting; rate fetch, cache, fallback and default flag with an injected fetch;
 pricing math including cache tokens, unknown model, id normalisation and overrides; source
 validation and the credential-shaped `credentialRef` rejection; every routing rule and the
 cross-human invariant; ledger record, totals, month window, allocation and savings with the
-in-memory sink; cap boundaries (79.9 / 80 / 100%), every level, the reserve, plan share and
-determinism; the estimate tracker and the CHF defaults. All time comes from `SimulatedClock`.
+in-memory sink, plus savings from Run rows through a `RunSource` (ADR 0008 half-up rounding at
+the 0.5 micro boundary, CHF at each run's own rate, allocation by project / specialist / model,
+transform counts, Headroom session totals, `entriesAsRuns` folding); cap boundaries (79.9 / 80 /
+100%), every level, the reserve, plan share and determinism; the estimate tracker and the CHF
+defaults. All time comes from `SimulatedClock`. The runtime's `views.test.ts` and
+`executor-context.test.ts` prove the cost view prices a compressed run through the state store.
 
 ## Known issues
 
-- The state schema's `cost_ledger` has no `tokens_before_compression` /
-  `tokens_after_compression` columns yet; the adapter must add them (migration) or `savings()`
-  only reports cache savings on Postgres/SQLite.
+- `cost_ledger` carries no compression columns by design (ADR 0003): `savings()` reads the Run
+  and Session rows. The `tokensBeforeCompression` / `tokensAfterCompression` fields on
+  `LedgerEntry` are kept for the in-memory sink and are not written by the state adapter.
 - Haiku 5.5's second price tier above 100K prompt tokens is not modelled; costs there are
   under-estimated by up to 5x until a tiered price row exists.
 - 5.5-generation prices were taken from the provider reference cached on 2026-10-06. The model

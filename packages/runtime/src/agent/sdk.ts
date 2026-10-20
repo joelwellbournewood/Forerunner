@@ -33,6 +33,12 @@ export interface SdkRunRequest {
   phase?: "work" | "review";
   onEvent?: (ev: RunEvent) => void;
   baseURL?: string;
+  /**
+   * Extra subprocess environment from the session's context layer (`headroomSdkEnv`:
+   * `ANTHROPIC_BASE_URL` and `ANTHROPIC_CUSTOM_HEADERS`, ADR 0003). Applied after the
+   * credential; never a credential itself.
+   */
+  env?: Record<string, string>;
   label?: string;
 }
 
@@ -136,6 +142,7 @@ export class SdkAgentDriver {
           ? { ANTHROPIC_API_KEY: req.credential.value }
           : { CLAUDE_CODE_OAUTH_TOKEN: req.credential.value }),
         ...(req.baseURL ? { ANTHROPIC_BASE_URL: req.baseURL } : {}),
+        ...(req.env ?? {}),
       };
       const hooks = this.sdkHooks(ctx, req.tools, emit);
       const options: Record<string, unknown> = {

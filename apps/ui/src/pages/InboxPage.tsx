@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import {
   describeError,
@@ -47,10 +47,22 @@ export function InboxPage() {
     [client, humanId],
   );
 
+  // The page keeps the header badge in step with what it loaded, and reloads when the
+  // install stream (`inbox.changed` on /events, or the poll) reports a count it has not seen,
+  // so an answer given elsewhere (phone, chat, another device) shows up without Refresh.
   const blockingCount = inbox.data?.blockingCount ?? null;
+  const loadedCount = useRef<number | null>(null);
   useEffect(() => {
-    if (blockingCount !== null) store.dispatch({ type: "blockingCount", count: blockingCount });
+    if (blockingCount === null) return;
+    loadedCount.current = blockingCount;
+    store.dispatch({ type: "blockingCount", count: blockingCount });
   }, [blockingCount, store]);
+  const streamedCount = useUiState((s) => s.blockingCount);
+  const reload = inbox.reload;
+  useEffect(() => {
+    if (loadedCount.current === null || streamedCount === loadedCount.current) return;
+    reload();
+  }, [streamedCount, reload]);
 
   const answer = async (request: HumanRequestView, value: unknown) => {
     await client.answerRequest(request.id, { version: request.version, answer: value });

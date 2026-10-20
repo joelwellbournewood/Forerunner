@@ -74,9 +74,13 @@ export function dedupWithinBlock(text: string, _ctx: TransformContext): Transfor
 }
 
 /**
- * Across tool results in one session: spans of >= 8 lines and >= 200 chars that appeared
- * verbatim in a strictly earlier result are replaced by a reference. Matching looks only
- * backwards, so appending a turn never changes an earlier one.
+ * Across tool results in one transcript: spans of >= 8 lines and >= 200 chars that appeared
+ * verbatim in a strictly earlier result of the same transcript are replaced by a reference.
+ * Matching looks only backwards, so appending a turn never changes an earlier one. One index
+ * per run (`ContextPipeline.beginRun`): a reference `#k` must name a result that is in the
+ * model's current context, so the index is never shared between runs, and `remember()` is
+ * given the text as sent (after truncation and the hard cap) so the lines a reference names
+ * are lines the model has.
  */
 export class CrossTurnDedup {
   private index = new Map<string, { turn: number; line: number }>();
@@ -84,7 +88,8 @@ export class CrossTurnDedup {
   private static SPAN = 8;
   private static MIN_CHARS = 200;
 
-  apply(text: string, turn: number): TransformResult {
+  /** Folds spans seen in earlier turns; does not register this turn. */
+  fold(text: string, turn: number): TransformResult {
     try {
       const lines = text.split("\n");
       const out: string[] = [];
@@ -117,15 +122,30 @@ export class CrossTurnDedup {
         out.push(line);
         i++;
       }
-      // Register the original lines of this turn (earliest occurrence wins).
-      this.turns[turn] = lines;
-      lines.forEach((l, n) => {
-        if (anchorable(l) && !this.index.has(l)) this.index.set(l, { turn, line: n });
-      });
       const joined = out.join("\n");
       return { text: joined, changed, note: changed ? "dedup-cross" : undefined };
     } catch {
       return unchanged(text);
     }
+  }
+
+  /** Registers the lines of a turn as sent (earliest occurrence wins). Never throws. */
+  remember(text: string, turn: number): void {
+    try {
+      const lines = text.split("\n");
+      this.turns[turn] = lines;
+      lines.forEach((l, n) => {
+        if (anchorable(l) && !this.index.has(l)) this.index.set(l, { turn, line: n });
+      });
+    } catch {
+      // registration is best effort
+    }
+  }
+
+  /** `fold` then `remember` of the folded text: the one-step form for a block sent as is. */
+  apply(text: string, turn: number): TransformResult {
+    const r = this.fold(text, turn);
+    this.remember(r.text, turn);
+    return r;
   }
 }

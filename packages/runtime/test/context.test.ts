@@ -10,7 +10,11 @@ import {
 import { CrossTurnDedup, dedupWithinBlock } from "../src/context/dedup.ts";
 import { elideDenseLines } from "../src/context/dense.ts";
 import { collapseLogs } from "../src/context/logs.ts";
-import { ContextPipeline } from "../src/context/pipeline.ts";
+import {
+  ContextPipeline,
+  contextSettingsFrom,
+  DEFAULT_CONTEXT_SETTINGS,
+} from "../src/context/pipeline.ts";
 import { truncateWithErrors } from "../src/context/truncate.ts";
 
 const count = (t: string) => Math.ceil(t.length / 4);
@@ -90,7 +94,15 @@ describe("context: truncate", () => {
     expect(count(r.text)).toBeLessThan(count(text));
     expect(r.text).toContain("67: FATAL: database connection refused");
     expect(r.text).toContain("Tests  3 failed");
-    expect(r.text).toMatch(/omitted; original [0-9a-f]{12}/);
+    // No original store: the marker names no hash, so it can never point at nothing.
+    expect(r.text).toMatch(/tokens omitted\]/);
+    expect(r.text).not.toContain("original ");
+    const stored = truncateWithErrors(text, {
+      ...ctx,
+      maxTokens: 400,
+      originalHash: "abcdef012345",
+    });
+    expect(stored.text).toMatch(/omitted; original abcdef012345\]/);
   });
   it("does nothing under the cap", () => {
     expect(truncateWithErrors("short", { ...ctx, maxTokens: 10 }).changed).toBe(false);
@@ -165,5 +177,88 @@ describe("context: pipeline", () => {
       toolProfiles: {},
     });
     expect(off.compressToolResult(noisy).text).toBe(noisy);
+  });
+});
+
+describe("context: project settings and run-scoped savings", () => {
+  it("reads settings.context with the defaults in code and extends the built-in tool profiles", () => {
+    expect(contextSettingsFrom(undefined)).toEqual(DEFAULT_CONTEXT_SETTINGS);
+    expect(contextSettingsFrom({})).toEqual(DEFAULT_CONTEXT_SETTINGS);
+    const s = contextSettingsFrom({
+      members: ["a"],
+      context: {
+        compression: "headroom",
+        maxToolResultTokens: 2000,
+        toolProfiles: { grep: { skip: ["dedup"] }, read_file: { maxTokens: 8000 } },
+      },
+    });
+    expect(s.compression).toBe("headroom");
+    expect(s.maxToolResultTokens).toBe(2000);
+    expect(s.toolProfiles.grep).toEqual({ skip: ["dedup"] });
+    expect(s.toolProfiles.read_file).toEqual({ maxTokens: 8000 });
+    expect(s.toolProfiles.git_diff).toEqual({ skip: ["dedup"] });
+    expect(contextSettingsFrom({ context: { compression: "off" } }).compression).toBe("off");
+  });
+
+  it("falls back to the defaults on malformed input instead of failing a session", () => {
+    expect(contextSettingsFrom({ context: { compression: "maximum" } })).toEqual(
+      DEFAULT_CONTEXT_SETTINGS,
+    );
+    expect(contextSettingsFrom({ context: { maxToolResultTokens: -1 } })).toEqual(
+      DEFAULT_CONTEXT_SETTINGS,
+    );
+    expect(contextSettingsFrom({ context: "yes" })).toEqual(DEFAULT_CONTEXT_SETTINGS);
+    expect(contextSettingsFrom(42)).toEqual(DEFAULT_CONTEXT_SETTINGS);
+  });
+
+  it("measures one run inside a session with mark() and lists the transforms it applied", () => {
+    const p = new ContextPipeline();
+    const noisy = `${"same line\n".repeat(50)}${"Z".repeat(3000)}\n${Array.from({ length: 1200 }, (_, i) => `row ${i} ${"y".repeat(30)}`).join("\n")}`;
+    const first = p.compressToolResult(noisy, "run_command");
+    expect(first.record.transforms).toEqual(expect.arrayContaining(["logs", "dense", "truncate"]));
+    expect(first.record.original).toBeNull();
+    const mark = p.mark();
+    expect(mark).toBe(1);
+    const run = p.beginRun();
+    run.compressToolResult("tiny", "echo");
+    const second = run.compressToolResult(noisy, "run_command");
+    const third = run.compressToolResult(noisy, "run_command");
+    const measured = p.savings(mark);
+    expect(measured.records).toBe(3);
+    expect(measured.tokensBefore).toBe(second.record.tokensBefore * 2 + 1); // "tiny" is one token
+    expect(measured.tokensAfter).toBe(second.record.tokensAfter + third.record.tokensAfter + 1);
+    expect(measured.saved).toBe(measured.tokensBefore - measured.tokensAfter);
+    // The second copy inside the run references the first; the lines it names are lines the
+    // model has (the first result as sent, after truncation), so the omitted middle is still
+    // there and still needs truncating. Both results share the transcript, so #2 is the second.
+    expect(second.record.transforms).toEqual(["logs", "dense", "truncate"]);
+    expect(third.record.transforms).toEqual(["logs", "dense", "dedup-cross", "truncate"]);
+    expect(third.text).toContain("[same as tool result #2 lines ");
+    const sentLines = second.text.split("\n");
+    for (const m of third.text.matchAll(/\[same as tool result #2 lines (\d+)-(\d+)\]/g)) {
+      expect(Number(m[2])).toBeLessThanOrEqual(sentLines.length);
+    }
+    // Both are capped by truncate; the reference made the third cheaper than its input.
+    expect(third.record.tokensAfter).toBeLessThan(third.record.tokensBefore);
+    expect(measured.transforms).toEqual(["logs", "dense", "truncate", "dedup-cross"]);
+    // A pipeline-level block is a run of its own: no cross-turn reference without a transcript.
+    const alone = p.compressToolResult(noisy, "run_command");
+    expect(alone.record.transforms).not.toContain("dedup-cross");
+    const all = p.savings();
+    expect(all.records).toBe(5);
+    expect(all.saved).toBe(
+      measured.saved +
+        first.record.tokensBefore -
+        first.record.tokensAfter +
+        alone.record.tokensBefore -
+        alone.record.tokensAfter,
+    );
+    expect(p.savings(99)).toEqual({
+      tokensBefore: 0,
+      tokensAfter: 0,
+      saved: 0,
+      transforms: [],
+      records: 0,
+    });
   });
 });

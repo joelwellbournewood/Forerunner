@@ -55,18 +55,104 @@ for each tool use: `beforeToolCall` → execute with per-tool timeout → `after
 
 ### Context layer (`src/context/`, ADR 0003)
 
-Baseline compression that is always available: `collapseLogs` (CRLF, ANSI, trailing spaces,
-progress bars, repeated lines), `elideDenseLines` (minified/base64 lines), `dedupWithinBlock`
-and `CrossTurnDedup` (repeated windows inside a block and across earlier tool results, always
-keeping the earliest occurrence), `truncateWithErrors` (head/tail with error lines and test
-summaries kept, original hash noted). `ContextPipeline.compressToolResult` applies them to the
-live zone only (the newest tool result), records tokens before/after and the transforms used,
-honours per-tool profiles (`read_file` 16k cap, diffs skip dedup) and a per-call bypass (the
-critic and evals pass `"off"`). `cache-layout.ts` keeps the prefix stable: compacted tool
-schemas, `layoutSystem` order (registry prompt → project brief → instructions → pinned lessons),
-`assertStablePrefix` rejects timestamps, UUIDs, JWTs and hashes in the system prompt,
-`volatilePreamble` puts them in the first user message. `fitToBudget` is the greedy
-retrieval-under-budget helper used by memory. The Headroom proxy adapter lands with phase 6.
+Requirements covered: N.1 (compression proxy, toggle per project, savings measured), N.2
+(stable prefixes and `cache` marks for prompt caching), I.7 (savings shown separately; the
+money side is in `billing.md`).
+
+**Native baseline (always on).** `collapseLogs` (CRLF, ANSI, trailing spaces, progress bars,
+repeated lines), `elideDenseLines` (minified/base64 lines), `dedupWithinBlock` and
+`CrossTurnDedup` (repeated windows inside a block and across earlier tool results of the same
+transcript, always keeping the earliest occurrence), `truncateWithErrors` (head/tail with error
+lines and test summaries kept). `ContextPipeline` is one per session (settings, token counter,
+the original-block store, the measurement records); `pipeline.beginRun({ maxChars })` gives a
+`RunCompressor` for one transcript, and `compressToolResult(text, tool, bypass)` on it applies
+the transforms to the live zone only (the newest tool result), never grows a block, records
+tokens before/after and the transforms used, and honours per-tool profiles (`read_file` 16k cap,
+diffs skip dedup). The cross-turn index belongs to the run compressor, never to the session: a
+`[same as tool result #k lines a-b]` reference can only name the k-th tool result of the same
+transcript (k is transcript-relative), and the index registers a result *as sent* (after
+truncation and under the loop's hard character cap, `CrossTurnDedup.fold` then `remember`), so
+the lines a reference names are lines the model has. Two runs of one session sharing the
+pipeline never reference each other's results. `pipeline.compressToolResult` without a run is a
+one-block run of its own (no cross-turn references). `pipeline.mark()` / `pipeline.savings(since)`
+measure one run inside a session (`PipelineSavings`: tokens before/after, saved, distinct
+transforms, records).
+
+**Originals (`originals.ts`).** The original of every changed block is written, after
+`redact()`, to `join(appDirs().cache, "context", <sessionId>, <hash>.txt)` (`ContextOriginals` →
+`SessionOriginals.write/read/list`, `originalHash` = 12 hex chars of SHA-1), so the log view can
+show it and a retry can re-expand it; `CompressionRecord.original` carries the hash. The
+`truncate` marker names the hash (`[... N lines omitted; original <hash>]`) only when the
+pipeline has a store and the write succeeded; without a store, or when the write failed, the
+marker is bare, so it never points at nothing. There is no session retention mechanism yet:
+`ContextOriginals.prune(now, maxAgeMs)` deletes session directories older than 30 days
+(`originalsMaxAgeMs`) when the manager starts, and `remove(sessionId)` deletes one session's
+directory. `cache-layout.ts` keeps the prefix
+stable: compacted tool schemas, `layoutSystem` order (registry prompt → project brief →
+instructions → pinned lessons), `assertStablePrefix` rejects timestamps, UUIDs, JWTs and hashes in
+the system prompt, `volatilePreamble` puts them in the first user message. `fitToBudget` is the
+greedy retrieval-under-budget helper used by memory.
+
+**Where it runs.** `LoopAgentDriver` begins a run compressor on the session's pipeline
+(`RunRequest.context`; without one the run gets a private native pipeline) with the run's hard
+cap (`maxToolResultChars`, 60k) and compresses every tool result before it joins the transcript,
+emits a `context_compressed` run event per compressed result (numbers only, never
+content), passes `compression` through on the `ModelRequest`, and returns
+`RunResult.context` (`RunContextStats`). Compression never throws into the loop (a failing
+transform leaves the result as produced and emits a warning) and the budget hook counts the
+request after compression, so savings lower spend but cannot bypass a cap. The per-call bypass
+`compression: "off"` (`RunRequest` and `ModelRequest.compression`) leaves tool results
+byte-identical: the critic, evals and the model watch use it.
+
+**Per project (`settings.context`, section 4 of the ADR).** `contextSettingsFrom(project.settings)`
+reads `{ compression: "off" | "native" | "headroom" (default "native"), maxToolResultTokens,
+toolProfiles }` with the defaults in code; malformed input falls back to the defaults. `off`
+disables every transform except the cache layout; `headroom` means native plus the proxy when it
+is available, never silently off.
+
+**Headroom proxy (`headroom.ts`, optional, never a dependency).** `HeadroomPort` is the seam:
+`probe()` (`GET /health` on `FORERUNNER_HEADROOM_URL`, else `http://127.0.0.1:${FORERUNNER_HEADROOM_PORT ?? 8787}`,
+500 ms through the `Clock`; available only for `{ status: "healthy", ready: true }`) and
+`tokensSaved(projectId)` (`GET /stats` → `projects[id].tokens_saved`, null when unreachable).
+`HeadroomAdapter` is the real one: it tells `not_installed` (no `headroom` on PATH) from
+`not_running` and `unhealthy` (wedged or not ready) and rejects a non-loopback URL with
+`validation` because the proxy sees the credential (`headroomFromEnv` turns that into a
+`NoHeadroom` port with the reason). `selectCompression(policy, port)` turns the policy into the
+effective mode: `native` and `off` never probe; `headroom` probes and degrades to native with a
+`notice` (never silent). `managedHeadroomArgv` / `ManagedHeadroomProcess` cover
+`FORERUNNER_HEADROOM_MANAGED=1` (`headroom proxy --host 127.0.0.1 --mode cache --no-ccr
+--lossless --no-cache`, logs to `<logs>/headroom.log`, stopped on daemon close and, through
+`bindKillSwitch(kill)`, on a global kill-switch stop; a scoped stop of one agent or session
+leaves the shared proxy alone). Routing: `AnthropicMessagesProvider.viaProxy(url,
+headroomHeaders(projectId))` sends the same credential through the proxy with
+`X-Headroom-Project`; `headroomSdkEnv` gives an SDK subprocess `ANTHROPIC_BASE_URL` and
+`ANTHROPIC_CUSTOM_HEADERS`, and `SessionContext.sdkEnv` holds it for the session (null unless the
+proxy is in use) so a caller of `SdkAgentDriver.run({ env })` routes through the proxy exactly
+when the in-process loop would. A provider without `viaProxy` (the fake) keeps `headroom_used`
+false.
+
+**Per session (`manager.ts`).** `ContextManager.forSession(sessionId, projectId)` resolves the
+project's settings, probes once when the policy is `headroom`, creates the session's pipeline
+(with its originals directory when `originalsDir` is configured; `composeRuntime` passes
+`join(dirs.cache, "context")`) and remembers the proxy's `tokens_saved` baseline. While the
+session is open and the policy is `headroom`, a timer on the session's `Clock`
+(`clock.setTimeout`, `HEADROOM_REPROBE_MS` = 60 s, rescheduled after each probe) re-probes
+without any task having to start: a proxy that died drops the session to native with one notice
+and `sdkEnv` null; one that came back is used again from the next run on, silently. `endSession`
+cancels the timer and returns the pipeline totals and the `/stats` delta; `close()` cancels every
+timer on daemon close. `originalsFor(sessionId)` is the log view's handle on the stored originals. `SessionRunner` calls it at start (emitting
+`context.headroom_unavailable` once when Headroom was asked for and is not usable) and at end
+(`session.headroom_saved_tokens`, plus `compressionSavedTokens` / `headroomSavedTokens` /
+`headroomUsed` on `session.ended`). `LoopTaskExecutor` runs each task with the session's pipeline
+and the proxied provider when selected, and records `tokens_before_compression`,
+`tokens_after_compression`, `context_transforms` and `headroom_used` on the Run row through the
+run repo. `composeRuntime` wires `headroomFromEnv(env)` (or `opts.headroom` in tests), the
+manager (settings from the project row) and a `CostLedger` over the store that the cost view
+uses to price the savings (`costView(store, filter, chfPerUsd, rt.costLedger)`).
+
+Not adopted for 1.0 (ADR 0003): JSON array thinning and old-turn summarisation (phase 4), ML and
+AST compression, CCR, output shaping. The Extensions-panel entry for installing Headroom is not
+wired yet (see Known issues).
 
 ### Command line and setup (`src/cli/main.ts`, `src/setup/`)
 
@@ -74,9 +160,26 @@ retrieval-under-budget helper used by memory. The Headroom proxy adapter lands w
 credential is explained with what, why, scopes, where to click and how it is verified, validated
 on paste through `src/setup/validators.ts`, then stored in the vault by name; `config.json`
 never holds a secret), `status` (directories, config, secret names only), `doctor`
-(prerequisites), `kill` (writes a kill request file), `dirs`. The kill request file in the
-runtime directory is polled by `KillFileWatcher` in every running runtime, so the CLI, the
-tray and the app can stop sessions across processes on both platforms.
+(prerequisites), `kill` (writes a kill request file), `dirs`, `daemon`. The kill request file
+in the runtime directory is polled by `KillFileWatcher` in every running runtime, so the CLI,
+the tray and the app can stop sessions across processes on both platforms.
+
+`buildProgram(deps)` builds the commander program (tests inspect it; the module parses
+`process.argv` only when it is the entry point). The module commands registered on it:
+
+| Command | Backed by | Notes |
+| --- | --- | --- |
+| `fr update check\|apply\|rollback\|status\|health\|keygen\|sign` | `registerUpdateCli` with `composeUpdateManager({ runningVersion })` | A manager of its own over the configured store; no daemon needed. `apply` stages the release and asks for a restart (a CLI cannot relaunch the app). |
+| `fr models watch\|report` | `registerModelWatchCli` over the composed runtime's `modelWatch` | Runs the weekly model watch now, lists reports. |
+| `fr mirror sync\|enable\|disable` | `registerMirrorCli` over the composed runtime's `store` and `mirror` | One-way GitHub Projects mirror. |
+
+Commands that need the whole product compose it once through `composeRuntime` (the same
+wiring as the daemon) with `startServices: false`, a one-shot: the composed objects exist but no
+connector is started, the scheduler never ticks and the kill-file watcher is off; a `postAction`
+hook closes it. `fr daemon` composes with the services on, keeps the runtime open and closes it
+on SIGINT/SIGTERM or a restart request through a bounded shutdown (`EXIT_DEADLINE_MS`, 8 s):
+the server's `stop()` ends the SSE streams and closes the connections, the store is closed,
+and the process exits with the requested code even if a step hangs.
 
 ### Sessions (`src/session/`, `src/wiring/state-ports.ts`)
 
@@ -155,7 +258,68 @@ otherwise a provider that fails every call with `provider_auth`), the specialist
 the session runner, scheduler and conversation agent, and returns a `RuntimeApp` with a
 `close()`. It also bootstraps identity on first run (one human, one principal agent) and seeds
 the billing source from the vault. `DynamicCaps` turns a human's monthly cap and a project's
-budget into per-call caps so the cap checker never runs with stale limits.
+budget into per-call caps so the cap checker never runs with stale limits. There is exactly
+one wiring: the daemon, the CLI and the tests all go through it (ADR 0029).
+
+**Modules composed (phases 6 and 7).** In order, each with its ports filled from what exists
+already:
+
+| Module | Construction in `compose.ts` | Enforced where |
+| --- | --- | --- |
+| Extensions (`src/extensions`, spec K.6, L.5) | `ExtensionRegistry` over `store.extension` and `store.auditLog`, the built-in catalog plus `FORERUNNER_EXTENSION_CATALOG_URL`, `HumanRequestExtensionApprovals`, `DefaultMcpConnectorFactory` (tests inject an in-memory one), `SecretResolver` over the vault, the `TokenIssuer` as revoker, `chfPerUsd`, `ledgerCost` (ledger rows whose `specialist` is `extension:<id>`). `registry.start()` reconnects enabled connectors at compose (when `startServices` is on); `close()` closes them. | `DaemonHooks extends GatedEnforcementHooks`: the gate refuses a disabled, pending, removed or errored extension's tool before any other check, and books a bridged tool call's `costUsdMicro` on its extension in `afterToolCall` (see "Extension cost" below: bridged MCP calls carry none, so the column reads 0 today). `toolsForRun()` builds a run's `ToolRegistry` from the file tools plus `registry.bridgedTools()` at run start (revocation shows at the next run; the gate covers runs in flight); the session grant lists the bridged names. |
+| Sandbox (`src/sandbox`, ADR 0007) | `detectSandboxEngine` once (tests pass `sandboxDetection`), `DetectingSandboxPort` as the executor's `RunSandboxPort`: `createSandbox` per run with only the worktree mounted and the run token's `allowedDomains` as the egress allowlist (none → disconnected); egress decisions are audit rows (`sandbox.egress`). | `LoopTaskExecutor` replaces `run_command` with one that executes inside the lease (`withSandboxedCommands`) and destroys the sandbox after the run; a lease the port refuses (or a driver that throws) closes the Run row as `outcome: "error"` with its duration and the reason in `artifacts`, so no run stays `running`. Tier 2+ refuses the process stand-in unless the project setting `allowProcessSandbox` is on (factory). The model watch's eval runner takes the same port (below). `/health.sandbox` reports `{ kind, available, engine, reason }`. |
+| Estimates (`src/estimates`, spec I.3) | `EstimateModel.fromStore(store)` with registry defaults for the cold start; `StaticPlanner(500_000, estimates)` prices plan items; `SessionRunner.onTaskFinished` feeds actual cost and wall time back (`observe`). | `GET /costs/estimates` serves the accuracy view (`EstimateAccuracyView`). |
+| GitHub Projects mirror (`@forerunner/capabilities`) | `ProjectsMirror` over the store, the vault (`githubHostForSecretRef` resolves `settings.github_mirror.secret_ref`, default `secret:github_token`) and `DaemonMirrorApprovals` (compose.ts): the daemon's `MirrorHumanPort`, which files the approval request like `HumanRequestMirrorPort`, reuses an open one for the same project, reports which request a project waits on and wakes on `syncApprovals()` instead of waiting for the next poll; an injected `gitHost` (tests) short-circuits `hostFor`. | The scheduler's `start` is `mirrorStartHandler(mirror, startSession)`; `refreshMirrorSchedules()` registers an `every` schedule per project whose settings enable the mirror, at compose and from `PUT /projects/:id/settings`. `RuntimeApp.mirrorSync()` runs one now and answers with the run, or with the approval request as soon as the mirror asks (the run goes on in the background and finishes when the inbox answers it; a second call joins the run). |
+| Model watch (`src/models`, spec D.6, D.21) | `ModelWatch` over the provider registry, `BUILTIN_PRICING` plus `<config>/pricing.json` and `<config>/models.json` (`FileModelSettingsStore`), `FetchPriceListSource` when `FORERUNNER_PRICE_LIST_URL` is set, else `UnconfiguredPriceListSource` (reports "no price list configured", invents nothing), `LoopEvalRunner` (below) and `StateModelWatchApprovals`. `scheduleModelWatch` registers the weekly run; `startSession` routes `isModelWatchRequest` to `modelWatch.run()`. | Routes under `/model-watch`; answers from the inbox are applied by `syncApprovals()`. |
+| Updates (`src/update`, spec M) | `composeUpdateManager({ store, dirs, clock, humanId, runningVersion, restarter })` over the daemon's own store (the `store` option was added for this; the CLI leaves it out and opens one). A malformed `update.json` is logged and ignored. | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback` with `RegistryConnectorCatalog` (connector versions from the extension catalog) and `ModelWatchUpdates` (the latest report as new models, deprecations, price changes and recommendations). `fr daemon` runs `updates.healthCheck()` once the server listens. |
+
+`syncApprovals()` (extension grants and model watch decisions) runs at compose and after
+every `POST /requests/:id/answer`, so an answer in the inbox takes effect at once.
+
+**Eval runner (`src/models/eval-runner.ts`).** `@forerunner/evals` depends on this package, so
+the daemon cannot import it. `LoopEvalRunner` reads the specialist's eval set (the same task
+files, tolerant schema), writes each task's fixture files into a work directory under
+`<cache>/model-watch`, runs the specialist through the loop driver with a token of its own
+(depth 0, the task's budget, only the work directory allowed, `compression: "off"`) and grades
+the mechanical checks (`file_exists`, `file_contains`, `regex`, `json_path`, `command_exit0`);
+`rubric` checks count as "needs model". The token allows only the loop driver's equivalents of
+the specialist's `allowed_tools` (`loopToolNamesFor`: `cc:Read` → `read_file`, `cc:Write`,
+`cc:Edit`, `cc:MultiEdit`, `cc:NotebookEdit` → `write_file`, `cc:Glob`, `cc:Grep`, `cc:LS` →
+`list_dir`, `cc:Bash` → `run_command`; Forerunner names pass through; anything else is
+dropped), so a researcher eval is never offered `run_command`. Nothing an eval runs executes on
+the host: the runner takes the daemon's `RunSandboxPort` and opens one lease per eval task
+(synthetic task `eval:<id>`, the work directory as the worktree, no egress, the brief's risk
+tier) whenever the specialist may run commands or the task has a `command_exit0` check; the
+model's `run_command` is `withSandboxedCommands` over that lease and the grader's commands run
+inside it too (they execute what the model wrote); the lease is destroyed before the work
+directory is removed. Without a sandbox port `run_command` is not offered and command checks
+count as errors. A model with no price in the effective table throws before any call; the
+watch records it as skipped. Every model call passes the daemon's hooks, so the monthly cap,
+the kill switch and the audit log apply. `ComposeOptions.evalRunner` replaces it (the
+evals-backed runner, a fake in tests).
+
+**Extension cost.** `recordCost` books a bridged tool call's `result.costUsdMicro` on the
+extension row, and bridged MCP calls report no price of their own (extensions.md), so a
+connector's cost column reads 0 until a capability module charges through the cost ledger with
+`specialist = extension:<id>` (then `ledgerCost` adds it). Pricing the tokens of a tool result
+onto the connector was not done: those tokens are already billed to the model call that reads
+them.
+
+**Restart contract (`src/daemon/restart.ts`).** "Update and restart" never spawns anything:
+`DaemonRestarter` writes `<runtime>/restart.json` (`{ schema: 1, reason, targetVersion,
+fromVersion, requestedAt, pid, exitCode }`), emits `restart` on the runtime's events and ends
+the process with `RESTART_EXIT_CODE` (86). `fr daemon` installs an `exit` that stops the
+server and closes the store first, bounded by `EXIT_DEADLINE_MS`. The stop is bounded because
+an attached shell holds `GET /events` open for as long as it runs and `server.close()` alone
+waits for every response: `RunningDaemon.stop()` first ends every open SSE stream (each handler
+registers a closer with `createDaemonApp`'s `closeStreams`), then closes the server while
+sweeping keep-alive sockets that went idle (`closeIdleConnections`) and, after `STOP_TIMEOUT_MS`
+(3 s), closes whatever is still open (`closeAllConnections`); it always returns. `/events`
+streams `restart.requested` (`{ reason, targetVersion, fromVersion, exitCode }`) before that,
+so the UI can show "restarting". A shell that supervises the daemon (desktop sidecar, Android
+service, wrapper script) treats exit code 86 as "relaunch into the version `current.json`
+names" and removes the request file; any other exit code is a crash. Tests inject `exit`, read
+the file with `readRestartRequest`, and prove `stop()` returns with a stream open.
 
 `server.ts` is the HTTP surface the desktop, Android and web shells talk to. Hono, bound to
 `127.0.0.1` only; every request carries `Authorization: Bearer <token>` compared with
@@ -181,6 +345,22 @@ and `{killActive}` from the kill routes.
 `list_dir`, `run_command`), each declaring its action class and path fields so the hooks can
 enforce containment. `fr daemon [--provider fake] [--port N]` starts the server; `fr status`
 reads `daemon.json` and reports health.
+
+**Mounted routes beyond ADR 0011** (all in `DAEMON_ROUTES`, all behind the bearer check):
+the Extensions panel sub-app (`GET /extensions`, `GET /extensions/catalog`,
+`GET|DELETE /extensions/:id`, `POST /extensions`, `POST /extensions/:id/toggle|approve|deny`,
+`PUT /extensions/:id/permissions`), the updates screen (`GET /updates`, `GET /updates/status`,
+`POST /updates/apply`, `POST /updates/rollback`), the model watch under `/model-watch`
+(`GET /reports`, `GET /reports/latest`, `GET /reports/:id`, `POST /run`,
+`POST /reports/:id/answer`, `POST /sync`), `GET /costs/estimates`,
+`PUT /projects/:id/settings` (merges a settings patch with a version check and refreshes the
+mirror schedules) and `POST /projects/:id/mirror/sync` (200 `MirrorRunView` with the run's
+counts, or 202 `MirrorSyncPendingView` `{ pending: true, projectId, requestId }` while the
+human decides; the request never blocks on the approval, the run finishes in the background
+once `POST /requests/:id/answer` approves it and `project.changed` follows). `/health` gained
+`sandbox` and `extensions: { enabled, pending }` (`sandbox.reason` is the engine probe's text;
+the route is unauthenticated but loopback-only); `/events` also streams `extension.changed` and
+`restart.requested`. Each sub-app keeps its module's error mapping.
 
 ### Specialist registry (`src/registry/`)
 
@@ -223,14 +403,62 @@ the human; it is never acted on.
 
 `packages/runtime/test/*.test.ts` (unit, fake provider, no network): tokens, autonomy, kill
 switch timing, budget rules, context transforms (golden cases, idempotence, FATAL-at-line-67,
-stable-prefix lint, bypass), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE), hooks (overspend, steps, wall clock, kill, allowlist, schema,
+bare truncate marker without a store and named marker with one, stable-prefix lint, bypass,
+project settings, run-scoped savings with references that name sent lines of the same
+transcript), the context layer end to end
+(`headroom.test.ts`: adapter against an in-process `node:http` proxy that is absent, unhealthy,
+wedged, healthy or dies mid-session, URL validation, selection never silent, managed argv and
+process; `context-proxy.test.ts`: a global kill-switch stop kills the managed proxy and a scoped
+stop does not, `SdkAgentDriver.run({ env })` carries `headroomSdkEnv` into the subprocess;
+`context-manager.test.ts`: probe once, timer-driven re-probe every 60 s without a task start,
+recovery without a second notice, timer cancelled at session end and by `close()`, `/stats`
+delta, originals written after `redact()` under the hash the marker names, unchanged blocks
+store nothing, pruning by age, no store means no marker; `loop-context.test.ts`: compressed live
+zone keeps the FATAL line, `context_compressed` event, byte-identical `"off"` bypass, two runs
+on one session pipeline measured separately and never referencing each other's results, a
+cross-turn reference names an existing result of the same transcript by its transcript number
+and only lines that were sent; `executor-context.test.ts`: Run row
+fields and `headroom_used` with a proxyable versus a plain provider, cost view priced from the
+Run rows; `session-context.test.ts`: `headroom_saved_tokens` on the session and the
+`context.headroom_unavailable` event; `views.test.ts`: cost view savings money), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE with the restart event, `stop()` returning while `/events` is held open on a real socket), wiring (`wiring.test.ts`: extensions from catalog to a refused tool, model watch report and inbox decision, updates screen, mirror sync answering 202 then running on the inbox answer, estimates accuracy, sandboxed `run_command`, a refused lease closing the Run row, the eval runner keeping the model's command in the sandbox lease and offering only the specialist's tools, CLI registration and one-shot composition), hooks (overspend, steps, wall clock, kill, allowlist, schema,
 paths, domains, secrets, autonomy, injection), ladder, brief, loop driver (completion, overspend
 blocked, step cap, kill mid-run, timeout with partial output, inline denials, needs-human pause,
 injection flagged).
+
+## Requirements covered by the daemon wiring
+
+K.6 and L.5 (extensions reachable from the daemon, revoked live), S.7 (task commands in a
+sandbox with only the worktree and the token's domains), I.3 (estimate error tracked and fed
+back to the planner), D.6 and D.21 (weekly model watch scheduled, decided in the inbox), M.3,
+M.4 and M.5 (updates screen, apply, rollback, restart contract, health check on start), S.9
+(every outward action of these modules is an audit row). Test: `test/wiring.test.ts`.
 
 ## Known issues
 
 - The SDK driver's live behaviour is only verified when a credential is present (see
   `gates.md`); without one the integration test skips with a visible reason.
+- `LoopTaskExecutor` derives a run token with the registry's `allowed_tools` as written
+  (`cc:` names for the SDK driver), so an in-process run of a registry specialist through the
+  loop driver is offered no built-in file tool; only the eval runner maps them
+  (`loopToolNamesFor`). Decide whether the executor should map the same way.
+- Connector cost reads 0 (see "Extension cost"); a weekly eval of a tier 2+ task on an install
+  without a container engine fails as `error` because the process stand-in is refused for it,
+  exactly as for a task run.
+- Headroom: `headroom.integration.test.ts` against a real proxy (`FORERUNNER_TEST_HEADROOM_URL`)
+  and the Phase 6 replayed eval gate (>= 30 % savings on tool-heavy transcripts) are not written
+  yet; the Extensions panel entry and `fr context install-headroom` are not wired. No session
+  path uses `SdkAgentDriver` yet, so `SessionContext.sdkEnv` has no live caller (the driver
+  accepts it; the in-process loop routes through `viaProxy`). The ADR's "proxy dies mid-run"
+  path (`provider_error`, retry without the proxy) is not implemented: the 60 s re-probe drops
+  the session to native for the next run, the failing call is retried by the ordinary retry
+  policy.
+- Context originals: there is no session retention mechanism, so stored originals are pruned by
+  age (30 days) when the daemon starts, not with a session's data. A failed write leaves the
+  block compressed with a bare marker; the log view then has nothing to expand.
+- Context follow-ups (ADR 0003 section 3): `CostView` has no "Saved by Headroom" line and no
+  probe status (Headroom tokens exist only in `SavingsReport.headroom`; needs an api-types and
+  UI change). The `context_compressed` run event reaches SSE but is not stored as a session
+  event, so the stored session log has no per-call numbers; whether to persist it through the
+  session event store is undecided.
 - Path containment resolves symlinks only when the target exists; the sandbox adapter mounts
   only the worktree so escapes cannot reach the host anyway.

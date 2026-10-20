@@ -4,12 +4,17 @@ import { errorMessage, ForerunnerError, join, log, osFacts } from "@forerunner/p
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { streamSSE } from "hono/streaming";
+import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import type { ZodType } from "zod";
 import { writeKillRequest } from "../enforcement/killfile.ts";
+import { estimateAccuracyView } from "../estimates/view.ts";
+import { createExtensionsRoutes } from "../extensions/routes.ts";
+import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { defaultPeers } from "../session/runner.ts";
+import { createUpdateRoutes } from "../update/screen.ts";
 import { DecisionLog } from "../wiring/state-ports.ts";
+import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
 import {
   AnswerRequestBody,
   ChatRequestBody,
@@ -19,11 +24,17 @@ import {
   type EventView,
   type HealthView,
   KillBody,
+  type MirrorRunView,
+  MirrorSyncBody,
+  type MirrorSyncPendingView,
   type PeerFeedView,
   StartSessionBody,
   TransitionTaskBody,
+  UpdateProjectSettingsBody,
 } from "./api-types.ts";
 import type { RuntimeApp } from "./compose.ts";
+import type { RestartRequestFile } from "./restart.ts";
+import { sandboxHealth } from "./sandbox-port.ts";
 import {
   costView,
   eventView,
@@ -46,6 +57,13 @@ export interface DaemonServerOptions {
   host?: string;
   port?: number;
 }
+
+/**
+ * How long `RunningDaemon.stop()` waits for in-flight responses after the SSE streams were
+ * ended before it closes the remaining connections itself. The restart contract (ADR 0029)
+ * needs a bounded stop: an attached shell holds `/events` open for as long as it runs.
+ */
+export const STOP_TIMEOUT_MS = 3_000;
 
 /** Origins the shells and the dev server use; anything else gets no CORS headers. */
 export function isLocalOrigin(origin: string | undefined): boolean {
@@ -71,11 +89,53 @@ export function isLocalOrigin(origin: string | undefined): boolean {
 export function createDaemonApp(
   rt: RuntimeApp,
   opts: DaemonServerOptions = {},
-): { app: Hono; token: string } {
+): { app: Hono; token: string; closeStreams: () => void } {
   const token = opts.token ?? randomBytes(24).toString("base64url");
   const app = new Hono();
   const logger = log("daemon");
   const chf = () => rt.chfPerUsd();
+
+  // Every open SSE stream registers how to end it: `server.close()` waits for in-flight
+  // responses and an EventSource never finishes on its own, so a stop (and "Update and
+  // restart") first ends the streams, then closes the server.
+  const streams = new Set<() => void>();
+  const closeStreams = () => {
+    for (const close of [...streams]) close();
+  };
+  /** Tick every `tickMs` until the client goes away, the daemon stops or `onTick` returns false. */
+  const streamUntilClosed = async (
+    stream: SSEStreamingApi,
+    tickMs: number,
+    onTick: () => Promise<boolean | undefined>,
+  ): Promise<void> => {
+    let open = true;
+    let wake: (() => void) | null = null;
+    const close = () => {
+      open = false;
+      wake?.();
+    };
+    stream.onAbort(close);
+    streams.add(close);
+    try {
+      while (open) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(() => {
+            wake = null;
+            resolve();
+          }, tickMs);
+          wake = () => {
+            clearTimeout(timer);
+            wake = null;
+            resolve();
+          };
+        });
+        if (!open) break;
+        if ((await onTick()) === false) break;
+      }
+    } finally {
+      streams.delete(close);
+    }
+  };
 
   app.onError((err, c) => {
     if (err instanceof ForerunnerError) {
@@ -152,6 +212,7 @@ export function createDaemonApp(
 
   app.get("/health", async (c) => {
     const active = await rt.store.session.active(rt.agent.id);
+    const extensions = await rt.extensions.list();
     const view: HealthView = {
       ok: true,
       version: rt.appVersion,
@@ -162,9 +223,33 @@ export function createDaemonApp(
       vaultBackend: rt.vault.backend,
       activeSessions: active.filter((s) => s.summary !== "conversation").length,
       killActive: rt.kill.isFrozen({ agentId: rt.agent.id }),
+      sandbox: sandboxHealth(rt.sandbox.detection),
+      extensions: {
+        enabled: extensions.filter((e) => e.status === "enabled").length,
+        pending: extensions.filter((e) => e.status === "pending_approval").length,
+      },
     };
     return c.json(view);
   });
+
+  // Module sub-apps behind the same bearer check: the Extensions panel (spec K.6, L.5), the
+  // updates screen (spec M) and the model watch (spec D). Each keeps its own error mapping.
+  app.route(
+    "/",
+    createExtensionsRoutes({ registry: rt.extensions, actor: () => ({ humanId: rt.human.id }) }),
+  );
+  app.route(
+    "/",
+    createUpdateRoutes({
+      manager: rt.updates,
+      clock: rt.clock,
+      extensions: rt.store.extension,
+      catalog: new RegistryConnectorCatalog(rt.extensions.catalog),
+      modelWatch: new ModelWatchUpdates(rt.modelWatch),
+      humanId: rt.human.id,
+    }),
+  );
+  app.route("/model-watch", createModelWatchRoutes({ watch: rt.modelWatch }));
 
   app.get("/me", async (c) => {
     const h = await rt.store.human.mustGet(rt.human.id);
@@ -378,10 +463,6 @@ export function createDaemonApp(
     }
     return streamSSE(c, async (stream) => {
       let seq = afterSeq;
-      let open = true;
-      stream.onAbort(() => {
-        open = false;
-      });
       const flush = async () => {
         const rows = await rt.store.event.list(id, seq, 500);
         for (const e of rows) {
@@ -400,8 +481,7 @@ export function createDaemonApp(
       rt.events.on("session", listener);
       try {
         let ticks = 0;
-        while (open) {
-          await stream.sleep(1000);
+        await streamUntilClosed(stream, 1000, async () => {
           await flush();
           if (++ticks % 15 === 0)
             await stream.writeSSE({
@@ -411,9 +491,10 @@ export function createDaemonApp(
           const s = await rt.store.session.get(id);
           if (s && ["completed", "stopped", "failed", "killed"].includes(s.status)) {
             await flush();
-            break;
+            return false;
           }
-        }
+          return true;
+        });
       } finally {
         rt.events.off("session", listener);
       }
@@ -492,8 +573,52 @@ export function createDaemonApp(
       rt.human.id,
     );
     await new DecisionLog(rt.store).recordAnswer(r, rt.human.id);
+    // An answered extension grant or model watch decision is applied at once.
+    await rt.syncApprovals();
     rt.events.emit("inbox", {});
     return c.json(requestView(r, null));
+  });
+
+  // Project settings (mirror, sandbox and other switches); the mirror schedule follows the
+  // settings, so enabling the mirror here registers its run and disabling removes it.
+  app.put("/projects/:id/settings", async (c) => {
+    const body = await parse(c, UpdateProjectSettingsBody);
+    const current = await rt.store.project.mustGet(c.req.param("id"));
+    const merged: Record<string, unknown> = { ...(current.settings as Record<string, unknown>) };
+    for (const [k, v] of Object.entries(body.settings)) {
+      const prev = merged[k];
+      merged[k] =
+        v && typeof v === "object" && !Array.isArray(v) && prev && typeof prev === "object"
+          ? { ...(prev as Record<string, unknown>), ...(v as Record<string, unknown>) }
+          : v;
+    }
+    const updated = await rt.store.project.update(current.id, body.version, {
+      settings: merged as never,
+    });
+    const mirrors = await rt.refreshMirrorSchedules();
+    rt.events.emit("project", { id: updated.id });
+    return c.json({
+      id: updated.id,
+      version: updated.version,
+      settings: updated.settings,
+      mirrorScheduled: mirrors.includes(updated.id),
+    });
+  });
+
+  // A manual run answers at once: the run's counts, or 202 with the approval request the
+  // mirror filed (the run goes on in the background and finishes once the inbox answers it).
+  app.post("/projects/:id/mirror/sync", async (c) => {
+    const body = await parse(c, MirrorSyncBody);
+    const r = await rt.mirrorSync(c.req.param("id"), { full: body.full === true });
+    if (r.state === "pending") {
+      const view: MirrorSyncPendingView = {
+        pending: true,
+        projectId: r.projectId,
+        requestId: r.requestId,
+      };
+      return c.json(view, 202);
+    }
+    return c.json(r.result satisfies MirrorRunView);
   });
 
   app.get("/projects/:id/peers", async (c) => {
@@ -617,9 +742,13 @@ export function createDaemonApp(
           humanId: rt.human.id,
         },
         chf(),
+        rt.costLedger,
       ),
     ),
   );
+
+  // Estimate accuracy (spec I): what the Performance screen shows next to the cost view.
+  app.get("/costs/estimates", (c) => c.json(estimateAccuracyView(rt.estimates, rt.clock.nowIso())));
 
   app.get("/settings", async (c) => {
     const h = await rt.store.human.mustGet(rt.human.id);
@@ -689,10 +818,6 @@ export function createDaemonApp(
 
   app.get("/events", (c) =>
     streamSSE(c, async (stream) => {
-      let open = true;
-      stream.onAbort(() => {
-        open = false;
-      });
       const onSession = (e: { type: string; payload: Record<string, unknown> }) => {
         void stream.writeSSE({
           event: "session.changed",
@@ -708,43 +833,72 @@ export function createDaemonApp(
       };
       const onProject = (p: { id: string }) =>
         void stream.writeSSE({ event: "project.changed", data: JSON.stringify(p) });
+      const onExtension = (e: { type: string; extensionId: string; name: string }) =>
+        void stream.writeSSE({
+          event: "extension.changed",
+          data: JSON.stringify({ type: e.type, id: e.extensionId, name: e.name }),
+        });
+      // "Update and restart": the UI learns the daemon is going down before the stream ends.
+      const onRestart = (r: RestartRequestFile) =>
+        void stream.writeSSE({
+          event: "restart.requested",
+          data: JSON.stringify({
+            reason: r.reason,
+            targetVersion: r.targetVersion,
+            fromVersion: r.fromVersion,
+            exitCode: r.exitCode,
+          }),
+        });
       rt.events.on("session", onSession);
       rt.events.on("inbox", onInbox);
       rt.events.on("project", onProject);
+      rt.events.on("extension", onExtension);
+      rt.events.on("restart", onRestart);
       try {
         await onInbox();
-        while (open) {
-          await stream.sleep(15_000);
+        await streamUntilClosed(stream, 15_000, async () => {
           await stream.writeSSE({
             event: "heartbeat",
             data: JSON.stringify({ at: rt.clock.nowIso() }),
           });
-        }
+          return true;
+        });
       } finally {
         rt.events.off("session", onSession);
         rt.events.off("inbox", onInbox);
         rt.events.off("project", onProject);
+        rt.events.off("extension", onExtension);
+        rt.events.off("restart", onRestart);
       }
     }),
   );
 
-  return { app, token };
+  return { app, token, closeStreams };
 }
 
 export interface RunningDaemon {
   url: string;
   token: string;
   port: number;
-  stop(): Promise<void>;
+  /**
+   * End the SSE streams, stop accepting connections and wait for in-flight responses; after
+   * `timeoutMs` (default STOP_TIMEOUT_MS) the remaining connections are closed. Always returns.
+   */
+  stop(opts?: { timeoutMs?: number }): Promise<void>;
 }
 
 export async function startDaemon(
   rt: RuntimeApp,
   opts: DaemonServerOptions = {},
 ): Promise<RunningDaemon> {
-  const { app, token } = createDaemonApp(rt, opts);
+  const { app, token, closeStreams } = createDaemonApp(rt, opts);
   const host = opts.host ?? "127.0.0.1";
   const server = serve({ fetch: app.fetch, hostname: host, port: opts.port ?? 0 });
+  // Node's http.Server has these; the HTTP/2 server types do not, so they are optional here.
+  const sockets = server as unknown as {
+    closeIdleConnections?: () => void;
+    closeAllConnections?: () => void;
+  };
   const port = await new Promise<number>((resolve, reject) => {
     server.once("listening", () => {
       const a = server.address();
@@ -778,8 +932,26 @@ export async function startDaemon(
     url: `http://${host}:${port}`,
     token,
     port,
-    async stop() {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+    async stop(stopOpts = {}) {
+      const timeoutMs = stopOpts.timeoutMs ?? STOP_TIMEOUT_MS;
+      closeStreams();
+      await new Promise<void>((resolve) => {
+        // A keep-alive socket whose SSE response has just ended is idle, not closed: sweep the
+        // idle ones until the server reports closed, and close the rest at the deadline.
+        const sweep = setInterval(() => sockets.closeIdleConnections?.(), 25);
+        const done = () => {
+          clearInterval(sweep);
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          log("daemon").warn("connections still open at stop; closing them", { timeoutMs });
+          sockets.closeAllConnections?.();
+          done();
+        }, timeoutMs);
+        server.close(done);
+        sockets.closeIdleConnections?.();
+      });
       try {
         unlinkSync(file);
       } catch {

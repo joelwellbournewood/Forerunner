@@ -14,19 +14,18 @@ const BUTTON_STYLES: Record<ButtonVariant, string> = {
   ghost: "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800",
 };
 
+/** The button look as a class string, for links that should read as buttons (never nest a <button> in an <a>). */
+export function buttonClassName(variant: ButtonVariant = "secondary", className = ""): string {
+  return `inline-flex items-center gap-1 rounded px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${BUTTON_STYLES[variant]} ${className}`;
+}
+
 export function Button({
   variant = "secondary",
   className = "",
   type = "button",
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
-  return (
-    <button
-      type={type}
-      className={`inline-flex items-center gap-1 rounded px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${BUTTON_STYLES[variant]} ${className}`}
-      {...rest}
-    />
-  );
+  return <button type={type} className={buttonClassName(variant, className)} {...rest} />;
 }
 
 export type Tone = "neutral" | "good" | "warn" | "bad" | "info";

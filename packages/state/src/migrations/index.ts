@@ -3,6 +3,7 @@ import { quoteIdent } from "../db/dialect.ts";
 import type { Database } from "../db/types.ts";
 import { ENTITIES, type EntityDef } from "../schema.ts";
 import { MIGRATION_0001 } from "./0001-initial.ts";
+import { MIGRATION_0002 } from "./0002-headroom-savings.ts";
 import { createTableSql } from "./generate.ts";
 import type { Migration } from "./types.ts";
 
@@ -15,12 +16,12 @@ export {
   renderMigrationModule,
 } from "./generate.ts";
 export type { Migration } from "./types.ts";
-export { MIGRATION_0001 };
+export { MIGRATION_0001, MIGRATION_0002 };
 
 const logger = log("state:migrations");
 
 /** All migrations, ascending. Add new ones at the end; never edit a shipped one. */
-export const MIGRATIONS: readonly Migration[] = [MIGRATION_0001];
+export const MIGRATIONS: readonly Migration[] = [MIGRATION_0001, MIGRATION_0002];
 
 const MIGRATIONS_TABLE = "schema_migrations";
 

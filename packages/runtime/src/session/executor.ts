@@ -1,11 +1,15 @@
-import { type Clock, errorMessage, ForerunnerError, newId } from "@forerunner/platform";
+import { type Clock, errorMessage, ForerunnerError, log, newId } from "@forerunner/platform";
 import type { StateStore, TaskRow } from "@forerunner/state";
+import { z } from "zod";
 import type { LoopAgentDriver, RunEvent, RunPricing } from "../agent/loop.ts";
-import type { ToolRegistry } from "../agent/tools.ts";
+import { ToolRegistry, type ToolSpec } from "../agent/tools.ts";
 import { type DelegationBrief, renderBrief, validateBrief } from "../brief.ts";
+import { headroomHeaders, isProxyable } from "../context/headroom.ts";
+import type { ContextManager } from "../context/manager.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import { effortForTask, modelIdFor, startingTier } from "../models/ladder.ts";
 import type { EffortLevel, ModelProvider, ModelTier } from "../provider/types.ts";
+import type { Sandbox } from "../sandbox/types.ts";
 import type { PlanItem, TaskExecutionResult, TaskExecutor } from "./runner.ts";
 
 /**
@@ -28,6 +32,35 @@ export interface SpecialistSpec {
   timeoutMs: number;
 }
 
+/** Name of the command tool the sandbox port replaces (declared in daemon/tools.ts). */
+export const RUN_COMMAND_TOOL = "run_command";
+
+export interface RunSandboxLease {
+  sandbox: Sandbox;
+  /** Which sandbox the run got: docker, podman, process (stand-in) or fake (tests). */
+  engine: string;
+  /** Lines for the session log (the process-sandbox warning, image fallback notes). */
+  warnings: string[];
+}
+
+/**
+ * Where a task's commands run (spec Security "Sandboxing", ADR 0007). The daemon implements
+ * it with `createSandbox` (a container when an engine is reachable, else the process
+ * stand-in); tests hand in a FakeSandbox. The executor opens one lease per run, pins the
+ * `run_command` tool to it and destroys it afterwards.
+ */
+export interface RunSandboxPort {
+  open(req: {
+    /** The task, or for a model watch eval a synthetic one (`eval:<id>`, no project, the brief's tier). */
+    task: Pick<TaskRow, "id" | "project_id" | "risk_tier">;
+    worktree: string;
+    /** The run token's domain allowlist: the sandbox's egress allowlist. */
+    allowedDomains: readonly string[];
+    timeoutMs: number;
+    signal: AbortSignal;
+  }): Promise<RunSandboxLease>;
+}
+
 export interface LoopTaskExecutorDeps {
   store: StateStore;
   clock: Clock;
@@ -36,6 +69,18 @@ export interface LoopTaskExecutorDeps {
   provider: ModelProvider;
   pricing: RunPricing;
   tools: ToolRegistry;
+  /**
+   * Tools for one run, built at run start (bridged extension tools are merged here so a
+   * revocation takes effect at the next run). Default: `tools`.
+   */
+  toolsFor?: () => ToolRegistry;
+  /** Sandbox for the task's commands when a worktree exists. Absent: commands run on the host. */
+  sandbox?: RunSandboxPort;
+  /**
+   * Context layer per session (ADR 0003): the session's pipeline and whether its calls go
+   * through the Headroom proxy. Absent: a run-private native pipeline, no proxy.
+   */
+  context?: ContextManager;
   billingSourceId: string;
   specialists: (name: string) => SpecialistSpec | undefined;
   /** Model ceiling for the project (spec D). */
@@ -47,6 +92,8 @@ export interface LoopTaskExecutorDeps {
 }
 
 export class LoopTaskExecutor implements TaskExecutor {
+  private readonly logger = log("executor");
+
   constructor(private readonly deps: LoopTaskExecutorDeps) {}
 
   async execute(ctx: Parameters<TaskExecutor["execute"]>[0]): Promise<TaskExecutionResult> {
@@ -107,6 +154,16 @@ export class LoopTaskExecutor implements TaskExecutor {
       brief.riskTier,
       this.deps.effortOffset ?? 0,
     );
+    // Context layer: the session's pipeline, and the proxy only when the session selected it and
+    // the provider can route through it (the fake provider cannot, so headroom_used stays false).
+    const sessionContext = await this.deps.context?.forSession(session.id, task.project_id);
+    const proxyUrl = sessionContext?.selection.headroom?.url;
+    const provider =
+      sessionContext?.selection.headroomUsed && proxyUrl && isProxyable(this.deps.provider)
+        ? this.deps.provider.viaProxy(proxyUrl, headroomHeaders(task.project_id))
+        : this.deps.provider;
+    const headroomUsed = provider !== this.deps.provider;
+    const startedMono = clock.monotonic();
     const run = await store.run.insert({
       id: runId,
       task_id: task.id,
@@ -132,27 +189,62 @@ export class LoopTaskExecutor implements TaskExecutor {
       timed_out: false,
       tokens_before_compression: 0,
       tokens_after_compression: 0,
+      context_transforms: [],
+      headroom_used: headroomUsed,
       author_agent: session.agent_id,
     });
     await store.task.patch(task.id, { attempt: task.attempt + 1, specialist: spec.name });
 
-    const result = await this.deps.driver.run({
-      token: child,
-      budget,
-      provider: this.deps.provider,
-      model,
-      billingSourceId: this.deps.billingSourceId,
-      system: spec.prompt,
-      messages: [{ role: "user", content: renderBrief(brief) }],
-      tools: this.deps.tools,
-      pricing: this.deps.pricing,
-      timeoutMs: spec.timeoutMs,
-      maxTurns: spec.maxTurns,
-      effort,
-      cwd: worktree,
-      label: `${spec.name} on ${task.title}`,
-      onEvent: (ev) => this.deps.onEvent?.(task.id, ev),
-    });
+    // Tools for this run; with a worktree and a sandbox port, commands run inside the sandbox
+    // with only the worktree mounted and the token's domains as the egress allowlist. A lease
+    // the port refuses (a tier 2+ task with no engine) or a driver that throws still ends the
+    // Run row: it is closed as "error" before the error reaches the runner, so run history,
+    // the cost view and the estimate feedback never see a run that never ended.
+    let lease: RunSandboxLease | null = null;
+    let result: Awaited<ReturnType<LoopAgentDriver["run"]>>;
+    try {
+      let tools = this.deps.toolsFor?.() ?? this.deps.tools;
+      if (worktree && this.deps.sandbox) {
+        lease = await this.deps.sandbox.open({
+          task,
+          worktree,
+          allowedDomains: child.claims.allowedDomains,
+          timeoutMs: spec.timeoutMs,
+          signal: ctx.signal,
+        });
+        for (const w of lease.warnings)
+          this.deps.onEvent?.(task.id, { type: "warning", message: w });
+        tools = withSandboxedCommands(tools, lease.sandbox);
+      }
+      result = await this.deps.driver.run({
+        token: child,
+        budget,
+        provider,
+        context: sessionContext?.pipeline,
+        headroomUsed,
+        model,
+        billingSourceId: this.deps.billingSourceId,
+        system: spec.prompt,
+        messages: [{ role: "user", content: renderBrief(brief) }],
+        tools,
+        pricing: this.deps.pricing,
+        timeoutMs: spec.timeoutMs,
+        maxTurns: spec.maxTurns,
+        effort,
+        cwd: worktree,
+        label: `${spec.name} on ${task.title}`,
+        onEvent: (ev) => this.deps.onEvent?.(task.id, ev),
+      });
+    } catch (e) {
+      await this.endRunWithError(run.id, e, startedMono);
+      throw e;
+    } finally {
+      if (lease) {
+        await lease.sandbox.destroy().catch((e: unknown) => {
+          this.logger.warn("sandbox destroy failed", { taskId: task.id, error: errorMessage(e) });
+        });
+      }
+    }
 
     const outcome: TaskExecutionResult["outcome"] =
       result.outcome === "completed"
@@ -177,6 +269,10 @@ export class LoopTaskExecutor implements TaskExecutor {
         duration_ms: result.durationMs,
         outcome: result.outcome,
         timed_out: result.outcome === "timeout",
+        tokens_before_compression: result.context.tokensBefore,
+        tokens_after_compression: result.context.tokensAfter,
+        context_transforms: result.context.transforms,
+        headroom_used: result.context.headroomUsed,
         artifacts: result.injectionReports.length
           ? [{ injectionReports: result.injectionReports.length }]
           : [],
@@ -193,6 +289,60 @@ export class LoopTaskExecutor implements TaskExecutor {
       checksPassed: result.outcome === "completed",
     };
   }
+
+  /** Close a Run row whose run threw before the driver returned (outcome "error", duration, why). */
+  private async endRunWithError(runId: string, e: unknown, startedMono: number): Promise<void> {
+    try {
+      await this.deps.store.run.patch(runId, {
+        outcome: "error",
+        duration_ms: Math.max(0, Math.round(this.deps.clock.monotonic() - startedMono)),
+        artifacts: [{ error: errorMessage(e) }],
+      });
+    } catch (patchError) {
+      this.logger.warn("could not close the run row", { runId, error: errorMessage(patchError) });
+    }
+  }
+}
+
+/**
+ * The run's tool registry with `run_command` executing inside the sandbox (argv array, no
+ * shell, the sandbox's own timeout and output caps). Every other tool is kept as is.
+ */
+export function withSandboxedCommands(base: ToolRegistry, sandbox: Sandbox): ToolRegistry {
+  const out = new ToolRegistry();
+  for (const name of base.names()) {
+    const t = base.get(name);
+    if (t && name !== RUN_COMMAND_TOOL) out.register(t);
+  }
+  const original = base.get(RUN_COMMAND_TOOL);
+  const runCommand: ToolSpec<{ argv: string[]; timeoutSec?: number }> = {
+    name: RUN_COMMAND_TOOL,
+    description:
+      original?.description ??
+      'Run a command (argv array, no shell) inside the task sandbox, e.g. ["pnpm","test"].',
+    schema: z.object({
+      argv: z.array(z.string().min(1)).min(1),
+      timeoutSec: z.number().int().min(1).max(1800).optional(),
+    }),
+    actionClass: original?.actionClass ?? "routine_reversible",
+    risk: original?.risk ?? "medium",
+    timeoutMs: original?.timeoutMs ?? 30 * 60 * 1000,
+    async execute(input, ctx) {
+      const r = await sandbox.run(input.argv, {
+        timeoutMs: (input.timeoutSec ?? 600) * 1000,
+        signal: ctx.signal,
+        maxOutputBytes: 512 * 1024,
+      });
+      const content = `exit ${r.code}${r.timedOut ? " (timeout)" : ""}\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}`;
+      return {
+        content,
+        isError: r.code !== 0,
+        untrusted: { source: "tool_output", origin: `${sandbox.kind}:${input.argv[0]}` },
+      };
+    },
+  };
+  out.register(runCommand);
+  return out;
 }
 
 export function planItemFor(task: TaskRow, specialist = "coder"): PlanItem {

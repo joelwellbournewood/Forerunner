@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalizeNewlines, SimulatedClock } from "@forerunner/platform";
@@ -9,11 +10,13 @@ import {
   toPositional,
   upsertSql,
 } from "../src/db/dialect.ts";
-import { openSqlite } from "../src/db/sqlite.ts";
+import { openSqlite, type SqliteDatabase } from "../src/db/sqlite.ts";
 import { renderDataModelDoc, schemaSummary } from "../src/docs.ts";
 import { monotonicId } from "../src/ids.ts";
 import { MIGRATION_0001 } from "../src/migrations/0001-initial.ts";
+import { MIGRATION_0002 } from "../src/migrations/0002-headroom-savings.ts";
 import {
+  createTableSql,
   generateInitialMigration,
   generateSchemaSql,
   renderMigrationModule,
@@ -25,6 +28,7 @@ import {
   pendingMigrations,
 } from "../src/migrations/index.ts";
 import { decodeRow, encodePatch } from "../src/repos/codec.ts";
+import { createRepos } from "../src/repos/index.ts";
 import { allColumns, COMMON_COLUMNS, ENTITIES, type EntityDef, tableOrder } from "../src/schema.ts";
 import { parseStoreUrl } from "../src/store.ts";
 import {
@@ -149,14 +153,141 @@ describe("schema", () => {
   });
 });
 
-describe("migration v1 snapshot", () => {
-  it("equals the generator output for both dialects (a schema change needs a new migration file)", () => {
-    const generated = generateInitialMigration();
+/** SHA-256 of JSON.stringify(MIGRATION_0001.up) when v1 was frozen. A shipped migration never changes. */
+const V1_FROZEN_SHA256 = "37a1b172413c2fce67967faacaf4626c24186deddde44deafbc69467872ff5d2";
+
+interface SqliteColumn {
+  name: string;
+  type: string;
+  notnull: number;
+  dflt_value: string | null;
+  pk: number;
+}
+
+/** Column and index shape of every schema table, for comparing two SQLite databases. */
+async function sqliteShape(db: SqliteDatabase): Promise<Record<string, unknown>> {
+  const shape: Record<string, unknown> = {};
+  for (const table of [...tableOrder(), "schema_migrations"]) {
+    const columns = await db.query<SqliteColumn>(`PRAGMA table_info("${table}")`);
+    const indexes = await db.query<{ name: string; unique: number }>(
+      `PRAGMA index_list("${table}")`,
+    );
+    shape[table] = {
+      columns: columns.map((c) => ({
+        name: c.name,
+        type: c.type,
+        notnull: c.notnull,
+        dflt: c.dflt_value,
+        pk: c.pk,
+      })),
+      indexes: indexes
+        .filter((i) => !i.name.startsWith("sqlite_autoindex"))
+        .map((i) => ({ name: i.name, unique: i.unique }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  }
+  return shape;
+}
+
+describe("migrations", () => {
+  it("keeps v1 frozen and contiguous: a schema change needs a new migration file", () => {
     expect(MIGRATION_0001.version).toBe(1);
-    expect(MIGRATION_0001.up.sqlite).toEqual(generated.sqlite);
-    expect(MIGRATION_0001.up.postgres).toEqual(generated.postgres);
+    expect(
+      createHash("sha256").update(JSON.stringify(MIGRATION_0001.up)).digest("hex"),
+      "0001-initial.ts changed; shipped migrations are frozen, add a new one instead",
+    ).toBe(V1_FROZEN_SHA256);
     expect(MIGRATIONS[0]).toBe(MIGRATION_0001);
+    expect(MIGRATIONS[1]).toBe(MIGRATION_0002);
     expect(MIGRATIONS.map((m) => m.version)).toEqual(MIGRATIONS.map((_, i) => i + 1));
+    // v1 is the generator's output for the v1 subset: the v2 columns are the only difference.
+    const generated = generateInitialMigration();
+    const strip = (stmts: string[]) =>
+      stmts.map((s) =>
+        s
+          .split("\n")
+          .filter(
+            (line) => !/"context_transforms"|"headroom_used"|"headroom_saved_tokens"/.test(line),
+          )
+          .join("\n")
+          .replace(/,\n {2}PRIMARY KEY/g, ",\n  PRIMARY KEY"),
+      );
+    expect(strip(generated.sqlite)).toEqual(MIGRATION_0001.up.sqlite);
+    expect(strip(generated.postgres)).toEqual(MIGRATION_0001.up.postgres);
+  });
+
+  it("v1 + v2 applied in order equals the generator's schema for the current declaration (SQLite)", async () => {
+    const migrated = await openSqlite(":memory:");
+    const generated = await openSqlite(":memory:");
+    try {
+      await migrate(migrated, { clock: new SimulatedClock() });
+      for (const stmt of generateSchemaSql("sqlite")) await generated.exec(stmt);
+      await generated.exec(createTableSql(ENTITIES.schema_migrations as EntityDef, "sqlite"));
+      expect(await sqliteShape(migrated)).toEqual(await sqliteShape(generated));
+    } finally {
+      await migrated.close();
+      await generated.close();
+    }
+  });
+
+  it("migrates a v1 database forward: old rows read back with the v2 defaults and accept the new fields", async () => {
+    const db = await openSqlite(":memory:");
+    try {
+      const clock = new SimulatedClock("2026-10-20T10:00:00.000Z");
+      const at = clock.nowIso();
+      expect(await migrate(db, { clock, migrations: [MIGRATION_0001] })).toEqual({
+        applied: [1],
+        version: 1,
+      });
+      // Rows written by the v1 schema, by hand: the repositories would fill in v2 columns.
+      await db.query(
+        `INSERT INTO "human" ("id", "created_at", "updated_at", "name", "email") VALUES (?, ?, ?, ?, ?)`,
+        ["h1", at, at, "Ada", "ada@example.test"],
+      );
+      await db.query(
+        `INSERT INTO "agent" ("id", "created_at", "updated_at", "name", "owner_human_id") VALUES (?, ?, ?, ?, ?)`,
+        ["a1", at, at, "Alice", "h1"],
+      );
+      await db.query(
+        `INSERT INTO "session" ("id", "created_at", "updated_at", "agent_id") VALUES (?, ?, ?, ?)`,
+        ["s1", at, at, "a1"],
+      );
+      await db.query(
+        `INSERT INTO "run" ("id", "created_at", "updated_at", "session_id", "specialist", "model", "tokens_before_compression", "tokens_after_compression") VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ["r1", at, at, "s1", "coder", "claude-sonnet-4-5", 5000, 2000],
+      );
+      const v1Columns = (await db.query<SqliteColumn>(`PRAGMA table_info("run")`)).map(
+        (c) => c.name,
+      );
+      expect(v1Columns).not.toContain("context_transforms");
+
+      expect(await migrate(db, { clock })).toEqual({ applied: [2], version: 2 });
+      expect(await appliedVersions(db)).toEqual([1, 2]);
+
+      const repos = createRepos(db, clock);
+      const run = await repos.run.mustGet("r1");
+      expect(run.tokens_before_compression).toBe(5000);
+      expect(run.tokens_after_compression).toBe(2000);
+      expect(run.context_transforms).toEqual([]);
+      expect(run.headroom_used).toBe(false);
+      const session = await repos.session.mustGet("s1");
+      expect(session.headroom_saved_tokens).toBe(0);
+
+      const patched = await repos.run.patch("r1", {
+        context_transforms: ["logs", "truncate"],
+        headroom_used: true,
+      });
+      expect(patched.context_transforms).toEqual(["logs", "truncate"]);
+      expect(patched.headroom_used).toBe(true);
+      expect(
+        (await repos.session.patch("s1", { headroom_saved_tokens: 1234 })).headroom_saved_tokens,
+      ).toBe(1234);
+      // A fresh insert through the repository fills the v2 defaults.
+      const fresh = await repos.run.insert({ session_id: "s1", specialist: "x", model: "m" });
+      expect(fresh.context_transforms).toEqual([]);
+      expect(fresh.headroom_used).toBe(false);
+    } finally {
+      await db.close();
+    }
   });
 
   it("renders a module that round-trips through the generator text", () => {
@@ -192,10 +323,11 @@ describe("migration v1 snapshot", () => {
     const db = await openSqlite(":memory:");
     try {
       const clock = new SimulatedClock("2026-05-05T05:05:05.000Z");
+      const probe = MIGRATIONS.length + 1;
       const extra = [
         ...MIGRATIONS,
         {
-          version: 2,
+          version: probe,
           name: "probe",
           up: {
             sqlite: ['CREATE TABLE "probe" ("id" TEXT PRIMARY KEY)'],
@@ -203,32 +335,37 @@ describe("migration v1 snapshot", () => {
           },
         },
       ];
-      expect(await pendingMigrations(db, extra)).toHaveLength(2);
+      const versions = extra.map((m) => m.version);
+      expect(await pendingMigrations(db, extra)).toHaveLength(extra.length);
       const first = await migrate(db, { clock, migrations: extra });
-      expect(first).toEqual({ applied: [1, 2], version: 2 });
+      expect(first).toEqual({ applied: versions, version: probe });
       const rows = await db.query<{ version: number; applied_at: string }>(
         'SELECT * FROM "schema_migrations" ORDER BY "version"',
       );
-      expect(rows.map((r) => r.applied_at)).toEqual([
-        "2026-05-05T05:05:05.000Z",
-        "2026-05-05T05:05:05.000Z",
-      ]);
-      expect(await migrate(db, { clock, migrations: extra })).toEqual({ applied: [], version: 2 });
-      expect(await appliedVersions(db)).toEqual([1, 2]);
+      expect(rows.map((r) => r.applied_at)).toEqual(versions.map(() => "2026-05-05T05:05:05.000Z"));
+      expect(await migrate(db, { clock, migrations: extra })).toEqual({
+        applied: [],
+        version: probe,
+      });
+      expect(await appliedVersions(db)).toEqual(versions);
       await expect(
         migrate(db, {
-          migrations: [{ version: 3, name: "gap", up: { sqlite: [], postgres: [] } }],
+          migrations: [{ version: probe + 1, name: "gap", up: { sqlite: [], postgres: [] } }],
         }),
       ).rejects.toThrow(/contiguous/);
       await expect(
         migrate(db, {
           migrations: [
             ...extra,
-            { version: 3, name: "bad", up: { sqlite: ["THIS IS NOT SQL"], postgres: [] } },
+            {
+              version: probe + 1,
+              name: "bad",
+              up: { sqlite: ["THIS IS NOT SQL"], postgres: [] },
+            },
           ],
         }),
       ).rejects.toThrow();
-      expect(await appliedVersions(db)).toEqual([1, 2]);
+      expect(await appliedVersions(db)).toEqual(versions);
     } finally {
       await db.close();
     }

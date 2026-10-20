@@ -300,11 +300,12 @@ skipping the rollback write fails the four rollback tests.
 
 ## Known issues
 
-- Not wired yet: the daemon does not mount the routes or run the health check, the CLI does
-  not register `fr update`, and `packages/runtime/src/index.ts` does not export the module
-  (the orchestrator does this). The shells' `Restarter` (Tauri relaunch into
-  `<versions>/<current>`) and the launcher that reads `current.json` do not exist yet; until
-  then `fr update apply` stages and asks the user to restart.
+- Wired by the daemon (`runtime.md`, "Local daemon"): the routes are mounted, `fr daemon` runs
+  the health check once it listens, `fr update` is registered and the package index exports the
+  module as the `updates` namespace. The daemon's `Restarter` writes `<runtime>/restart.json`
+  and exits with `RESTART_EXIT_CODE` (86); the shells' supervisor that reacts to it and the
+  launcher that reads `current.json` do not exist yet, so until then `fr update apply` from the
+  CLI stages and asks the user to restart.
 - `release.yml` does not yet build the signed `forerunner-release.json` asset; `release.md`
   describes the Tauri/minisign plan, which this module replaces with the Ed25519 manifest
   (ADR 0015). The workflow step is: write the manifest, `fr update sign`, upload.

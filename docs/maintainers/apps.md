@@ -7,7 +7,7 @@ daemon address (see "What the shells inject").
 
 ## Purpose
 
-Phase-1 screens of spec module K against the local daemon API (ADR 0011, ADR 0014): Home,
+Phase-1 screens of spec module K against the local daemon API (ADR 0011, ADR 0025): Home,
 Project page with tabs, Live session view, Inbox, Settings, Memory and Extensions placeholders,
 plus the shell with the active project, kill switch, inbox badge, command palette, keyboard
 shortcuts and dark mode. Quick chat per project with streaming replies, read-back
@@ -36,7 +36,8 @@ apps/ui/
     main.tsx, App.tsx (client + store from the globals, BrowserRouter), routes.tsx (AppRoutes)
     styles.css           Tailwind 4; dark variant bound to <html data-theme="dark">
     api/config.ts        DaemonConfig resolution (shell injection > Vite env > default)
-    api/client.ts        createClient(): typed fetch client for every DAEMON_ROUTES entry
+    api/client.ts        createClient(): typed fetch client over DAEMON_ROUTES (phase-1 routes,
+                         decisions, peers; the rest is listed under Known issues)
     api/sse.ts           EventSource subscriptions with polling fallback; SseParser for fetch streams
     api/chat-stream.ts   streamChat(): POST /chat/stream tokens -> final reply
     store/store.ts       reducer + subscribe/getSnapshot (projects, active project, inbox count,
@@ -62,8 +63,8 @@ apps/ui/
 | `/` | Home: project cards (stage, next milestone, health, spend vs budget, waiting-on-you, latest critic grade), New project dialog | store (`GET /projects`), `POST /projects` |
 | `/projects/:id/:tab?` | Project page; tabs `summary`, `plan`, `tasks`, `docs`, `reviews`, `costs`, `data`, `chat` (default `summary`); opening a project makes it active | `GET /projects/:id`, `/summary`, `/tasks`, `/runs`, `GET /costs?projectId=`, `POST /projects/:id/tasks`, `POST /tasks/:id/transition`, `POST /sessions`, `POST /chat/stream` |
 | `/sessions/:id` | Live session view: header (status, agent, current task + specialist, steps/stepCap, spent/cap bar, Stop), event stream with level chips, raw JSON toggle, follow/auto-scroll | `GET /sessions/:id`, `GET /sessions/:id/events` (JSON backlog, then SSE), `POST /sessions/:id/stop` |
-| `/inbox` | Requests (blocking first, newest first) with option buttons and a free-text answer, messages with read marking | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /messages/:id/read` |
-| `/settings` | Theme override, daemon connection status, every setting grouped by scope with the scope badge on each row ("edit via chat" hint) | `GET /settings` |
+| `/inbox` | Requests (blocking first, newest first) with option buttons and a free-text answer, messages with read marking; reloads itself when the install stream reports a blocking count the page has not seen (an answer given on another device) | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /messages/:id/read` |
+| `/settings` | Theme override, daemon connection status (version, profile, platform, uptime, state URL, vault, sessions, sandbox kind and engine, extensions enabled and pending), every setting grouped by scope with the scope badge on each row ("edit via chat" hint) | `GET /settings`, `GET /health` from the store |
 | `/memory`, `/extensions` | Placeholders naming phase 4 and phase 6 | none |
 
 Placeholders render `<Placeholder phase={n}>` so the phase is visible in the UI
@@ -73,11 +74,14 @@ Placeholders render `<Placeholder phase={n}>` so the phase is visible in the UI
 
 ### API client
 
-`createClient(config, fetchImpl?)` returns a `DaemonClient` with one method per route
+`createClient(config, fetchImpl?)` returns a `DaemonClient` with one method per phase-1 route
 (`health, me, agents, projects, createProject, project, projectSummary, tasks, createTask,
-transitionTask, runs, sessions, startSession, session, sessionEvents, stopSession, kill, resume,
-inbox, answerRequest, markRead, chat, costs, settings`) plus `url()` and `raw()` for the stream
-helpers. Paths come from `routePath(name, params)` over `DAEMON_ROUTES`, URL-encoded; the
+transitionTask, runs, decisions, peers, sessions, startSession, session, sessionEvents,
+stopSession, kill, resume, inbox, answerRequest, markRead, chat, costs, settings`) plus `url()`
+and `raw()` for the stream helpers. `decisions` (`DecisionView[]`) and `peers` (`PeerFeedView`)
+have no page yet; they are there so the project page can show them in phase 2 without touching
+the client. Routes the table gained after phase 1 (estimates, project settings, mirror,
+extensions, updates, model watch) have no method yet; see Known issues. Paths come from `routePath(name, params)` over `DAEMON_ROUTES`, URL-encoded; the
 client sends `Authorization: Bearer <token>` and validates every JSON body with the contract's
 zod schema. Failures are `ApiError { code, status, details }`: the daemon's `ErrorBody.code`
 when it sent one, else `ui.network`, `ui.http_error`, `ui.invalid_response`, `ui.aborted`.
@@ -96,7 +100,7 @@ from the UI.
 `subscribeDaemonEvents(client, humanId, handlers)` and `subscribeSessionEvents(client,
 sessionId, handlers, { afterSeq })` open an `EventSource` on `/events` or
 `/sessions/:id/events` with the token as `?token=` (EventSource cannot send headers, ADR
-0013). Events are parsed with `parseDaemonEvent` (`session.event`, `inbox.changed`,
+0025). Events are parsed with `parseDaemonEvent` (`session.event`, `inbox.changed`,
 `session.changed`, `project.changed`, `heartbeat`; unknown or malformed frames are dropped).
 When `EventSource` is missing (jsdom) or closes, the helper polls every 5 s and retries SSE
 every 30 s; `onMode` reports `connecting | sse | polling | closed` and the session header shows
@@ -139,7 +143,11 @@ light | dark`, resolved to `<html data-theme>` and `color-scheme`; `styles.css` 
 
 `test/fake-daemon.ts` exports `createFakeDaemon(options)` (a Hono app over `test/fixtures.ts`
 with mutable state: projects, tasks, sessions, events, requests, messages, kill flag, pending chat
-confirmation) and `startFakeDaemon({ port })` (`@hono/node-server` on 127.0.0.1). It requires
+confirmation; decisions and the peer feed are served read-only from `DECISIONS` and `PEERS`) and
+`startFakeDaemon({ port })` (`@hono/node-server` on 127.0.0.1). Its `/health` answer is the
+`HEALTH` fixture, which must carry every field of `HealthView`, `sandbox` (the process stand-in,
+no engine) and `extensions` included: when the contract gains a field, this fixture is the first
+thing that fails (`pnpm typecheck`), before every page test does. It requires
 the bearer token on every route (and accepts `?token=` on the two SSE routes), answers CORS,
 records every POST at `GET /__test/calls`, resets at `POST /__test/reset`, and can push an event
 with `POST /__test/emit`. `POST /sessions` starts a scripted run (six events including a warning
@@ -169,8 +177,11 @@ The desktop CSP (`apps/desktop/src-tauri/tauri.conf.json`) already allows
   (render with `renderApp(route)` from `test/helpers.tsx`) and, for a user flow, a spec in
   `e2e/`.
 - **Add a route to the client**: the contract changes first (`api-types.ts`, ADR); then add the
-  method to `DaemonClient` in `api/client.ts` using `routePath` and the schema, the fixture and
-  handler in `test/fake-daemon.ts`, and a round-trip assertion in `test/client.test.ts`.
+  method to `DaemonClient` in `api/client.ts` using `routePath` and the schema, the fixture in
+  `test/fixtures.ts`, the handler in `test/fake-daemon.ts`, a round-trip assertion plus a
+  malformed-body rejection in `test/client.test.ts`, and the method name in the list above.
+- **Links that look like buttons**: use `buttonClassName(variant)` from `components/ui.tsx` on
+  the `<Link>`; never put a `<Button>` inside a link (invalid HTML, double tab stop).
 - **Fill a placeholder tab** (Docs phase 4, Reviews phase 3, Data phase 5, Plan graph phase 5,
   Memory phase 4, Extensions phase 6): replace the `<PlaceholderTab>` / `<Placeholder>` in
   `ProjectPage.tsx` or `PlaceholderPages.tsx`; the tests that assert `data-phase` must change
@@ -191,17 +202,21 @@ cd apps/ui && pnpm test:ui        # Playwright, headless Chromium, fake daemon +
 ```
 
 Unit tests (`test/*.test.ts[x]`): `client` (config resolution, route paths, token header,
-contract validation rejects malformed bodies, error mapping, mutation round trips), `money`,
+contract validation rejects malformed bodies, `/health` with its sandbox and extensions sections
+and rejection of a health body without them, decisions and peers round trips with malformed
+bodies rejected, error mapping, mutation round trips), `money`,
 `sse` (parser, event validation, EventSource path, polling fallback without repeats, chat
 stream incl. error frames), `store`, `app` (shell with no daemon), `home` (cards from fixtures,
-header, badge, New project dialog, not-connected state), `project` (summary + Read aloud
+header, badge, Open is a link and not a button nested in one, New project dialog, not-connected
+state), `project` (summary + Read aloud
 disabled without speech, plan milestones and phase-5 TODO, costs, placeholders, Start session
 dialog with CHF conversion then the live view), `tasks` (transition mirror vs. state, filters,
 links, legal transition buttons posting version + reason, New task dialog), `session`
 (escalations highlighted, filters, raw toggle, stop, polling fallback visible), `inbox`
-(blocking first, option answer, free text, mark read), `chat` (streaming, pending confirmation
+(blocking first, option answer, free text, reload when the store's blocking count changes behind
+the page's back, mark read), `chat` (streaming, pending confirmation
 Yes/No sends "yes"/"no", make-this-a-task draft), `settings` (scope on every row, daemon
-status, placeholders name their phase), `shell` (shortcut matcher, palette filter and project
+status incl. sandbox and extensions, placeholders name their phase), `shell` (shortcut matcher, palette filter and project
 switch, g-sequences, header switcher, kill switch, persistence).
 
 Playwright (`e2e/*.spec.ts`, one worker, 2-minute global budget, ~25 s): home shows two
@@ -218,8 +233,23 @@ workflow runs `pnpm --filter @forerunner/ui test:ui` after `playwright install c
 
 ## Known issues
 
-- The daemon server itself (`fr daemon`) is not in the tree yet; the UI is proven against the
-  fake daemon. The first real run should check the open shapes listed in ADR 0014.
+- The daemon server exists (`packages/runtime/src/daemon/server.ts`, started by `fr daemon`,
+  ADR 0026) and implements the ADR 0025 conventions (CORS, `?token=` on the two SSE routes,
+  `token`/`reply`/`error` chat frames, `killActive`), but the UI has so far only been run against
+  the fake daemon. The first run against the real one should confirm the open shapes of ADR 0025
+  item 5 and the SSE frames end to end, and that run goes into `docs/status/gates.md`.
+- Routes in `DAEMON_ROUTES` without a client method or fake-daemon handler: `costEstimates`,
+  `updateProjectSettings`, `mirrorSync`, `extensions`, `extensionCatalog`, `extension`,
+  `addExtension`, `toggleExtension`, `approveExtension`, `denyExtension`, `extensionPermissions`,
+  `removeExtension`, `updates`, `updatesStatus`, `applyUpdate`, `rollbackUpdate`,
+  `modelWatchReports`, `modelWatchLatest`, `modelWatchReport`, `modelWatchRun`,
+  `modelWatchAnswer`, `modelWatchSync`. They arrive with the screens that need them (project
+  settings and mirror with phase 2, Extensions phase 6, updates and model watch phase 7),
+  each the way "Add a route to the client" describes. ADR 0025 item 9 ("serving every route")
+  reads as every route the client has.
+- The Inbox reloads on a changed blocking count only; a non-blocking request answered elsewhere
+  shows up on Refresh or with the next blocking change (the `inbox.changed` frame carries only
+  the count).
 - No milestones route: the Plan tab derives milestones from tasks and the card.
 - `Read aloud` uses the browser's Web Speech API; WebKitGTK (Linux Tauri) may expose no voices,
   in which case the button is disabled with a tooltip saying so.

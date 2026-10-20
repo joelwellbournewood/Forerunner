@@ -1,5 +1,6 @@
 import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import { z } from "zod";
+import { ContextPipeline, DEFAULT_CONTEXT_SETTINGS } from "../context/pipeline.ts";
 import type { SessionBudget } from "../enforcement/budget.ts";
 import type { EnforcementHooks, RunContext } from "../enforcement/hooks.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
@@ -49,6 +50,27 @@ export interface RunRequest {
   label?: string;
   /** The human's own channel: survives scoped and global stops. */
   protected?: boolean;
+  /**
+   * Session-scoped context pipeline (ADR 0003): tool results are compressed in the live zone
+   * before they join the transcript, by a compressor this run begins on it (cross-turn
+   * references never leave the run). Default: a run-private pipeline with the default settings.
+   */
+  context?: ContextPipeline;
+  /** "off" bypasses every transform (critic, evals, model watch): results stay byte-identical. */
+  compression?: "default" | "off";
+  /** Whether the session routed this run's calls through the Headroom proxy (recorded on the Run). */
+  headroomUsed?: boolean;
+}
+
+/** Per-run context-layer measurement, recorded on the Run row (ADR 0003 section 3). */
+export interface RunContextStats {
+  /** Tool-result tokens as produced (estimated, counterfactual) and as sent. */
+  tokensBefore: number;
+  tokensAfter: number;
+  saved: number;
+  /** Distinct transform names applied in this run, first-use order. */
+  transforms: string[];
+  headroomUsed: boolean;
 }
 
 export type RunOutcome =
@@ -84,6 +106,14 @@ export type RunEvent =
     }
   | { type: "tool_denied"; id: string; name: string; code: string; reason: string }
   | { type: "injection_flagged"; tool: string; report: InjectionReport }
+  /** ADR 0003: the numbers of one compressed tool result; never its content. */
+  | {
+      type: "context_compressed";
+      tool: string;
+      tokensBefore: number;
+      tokensAfter: number;
+      transforms: string[];
+    }
   | { type: "warning"; message: string }
   | { type: "run_end"; outcome: RunOutcome; costUsdMicro: number; steps: number };
 
@@ -103,6 +133,7 @@ export interface RunResult {
   injectionReports: InjectionReport[];
   /** True when the loop stopped because the session says finish current, no new work. */
   finishCurrent: boolean;
+  context: RunContextStats;
 }
 
 export interface LoopDriverDeps {
@@ -172,6 +203,14 @@ export class LoopAgentDriver {
       (s) => z.toJSONSchema(s) as Record<string, unknown>,
     );
     const maxTurns = req.maxTurns ?? 100;
+    const pipeline =
+      req.context ??
+      new ContextPipeline(DEFAULT_CONTEXT_SETTINGS, (t) => req.provider.countTokens(t));
+    const contextMark = pipeline.mark();
+    const bypass = req.compression ?? "default";
+    const maxToolResultChars = req.maxToolResultChars ?? 60_000;
+    // One compressor per run: a cross-turn reference can only name a result in this transcript.
+    const compressor = pipeline.beginRun({ maxChars: maxToolResultChars });
 
     emit({ type: "run_start", runId: claims.runId, model: req.model });
     try {
@@ -206,6 +245,7 @@ export class LoopAgentDriver {
               max_tokens: maxOut,
               effort: req.effort,
               cache: { system: true, tools: true },
+              compression: bypass,
               signal: controller.signal,
             }),
             emit,
@@ -315,11 +355,28 @@ export class LoopAgentDriver {
             reports.push(post.report);
             emit({ type: "injection_flagged", tool: call.name, report: post.report });
           }
-          const limit = req.maxToolResultChars ?? 60_000;
+          // Live-zone compression (ADR 0003): lossless first, lossy last, measured, never fatal.
+          let produced = post.content;
+          try {
+            const c = compressor.compressToolResult(post.content, call.name, bypass);
+            produced = c.text;
+            if (c.record.tokensAfter < c.record.tokensBefore) {
+              emit({
+                type: "context_compressed",
+                tool: call.name,
+                tokensBefore: c.record.tokensBefore,
+                tokensAfter: c.record.tokensAfter,
+                transforms: c.record.transforms,
+              });
+            }
+          } catch (e) {
+            emit({ type: "warning", message: `context compression skipped: ${errorMessage(e)}` });
+          }
+          const limit = maxToolResultChars;
           const content =
-            post.content.length > limit
-              ? `${post.content.slice(0, limit)}\n…[truncated ${post.content.length - limit} chars]`
-              : post.content;
+            produced.length > limit
+              ? `${produced.slice(0, limit)}\n…[truncated ${produced.length - limit} chars]`
+              : produced;
           results.push({
             type: "tool_result",
             tool_use_id: call.id,
@@ -352,7 +409,15 @@ export class LoopAgentDriver {
       unregister();
     }
     emit({ type: "run_end", outcome, costUsdMicro: cost, steps: modelCalls + toolCalls });
+    const measured = pipeline.savings(contextMark);
     return {
+      context: {
+        tokensBefore: measured.tokensBefore,
+        tokensAfter: measured.tokensAfter,
+        saved: measured.saved,
+        transforms: measured.transforms,
+        headroomUsed: req.headroomUsed ?? false,
+      },
       runId: claims.runId,
       outcome,
       finalText,

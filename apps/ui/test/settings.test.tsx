@@ -30,6 +30,10 @@ describe("Settings", () => {
     expect(status).toHaveTextContent("present (never shown)");
     expect(status).not.toHaveTextContent("test-token");
     expect(status).toHaveTextContent("v0.1.0-fake");
+    expect(within(status).getByTestId("sandbox-health")).toHaveTextContent(
+      "process stand-in fake daemon",
+    );
+    expect(within(status).getByTestId("extensions-health")).toHaveTextContent("0 enabled");
   });
 
   it("placeholder pages name the phase that fills them", async () => {

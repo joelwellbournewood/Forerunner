@@ -3,6 +3,7 @@ import os from "node:os";
 import { join } from "@forerunner/platform";
 import { afterAll, describe, expect, it } from "vitest";
 import { openSqlite, silenceSqliteExperimentalWarning } from "../src/db/sqlite.ts";
+import { MIGRATIONS } from "../src/migrations/index.ts";
 import { openStore } from "../src/store.ts";
 
 const tmp = mkdtempSync(join(os.tmpdir(), "fr-state-"));
@@ -20,7 +21,7 @@ describe("sqlite adapter", () => {
       await db.close();
     }
     const store = await openStore({ url: `sqlite:${file}` });
-    expect(store.migration?.applied).toEqual([1]);
+    expect(store.migration?.applied).toEqual(MIGRATIONS.map((m) => m.version));
     await store.close();
     const reopened = await openStore({ url: `sqlite:${file}` });
     expect(reopened.migration?.applied).toEqual([]);

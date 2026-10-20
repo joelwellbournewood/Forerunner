@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { TransformContext, TransformResult } from "./types.ts";
 import { unchanged } from "./types.ts";
 
@@ -10,7 +9,10 @@ const MAX_ERRORS = 20;
 const CONTEXT = 2;
 export const DEFAULT_MAX_TOKENS = 4000;
 
-/** Head/tail truncation that keeps error lines (with context) and test summaries. */
+/**
+ * Head/tail truncation that keeps error lines (with context) and test summaries. The marker
+ * names the stored original (`; original <hash>`) only when `ctx.originalHash` is set.
+ */
 export function truncateWithErrors(text: string, ctx: TransformContext): TransformResult {
   try {
     const cap = ctx.maxTokens ?? DEFAULT_MAX_TOKENS;
@@ -38,10 +40,12 @@ export function truncateWithErrors(text: string, ctx: TransformContext): Transfo
     const headLines = head.split("\n").length;
     const tailLines = tail.split("\n").length;
     const omitted = Math.max(0, lines.length - headLines - tailLines);
-    const hash = createHash("sha1").update(text).digest("hex").slice(0, 12);
+    // The original is named only when the pipeline stores it (ctx.originalHash); a bare
+    // marker otherwise, so the reference always resolves.
+    const original = ctx.originalHash ? `; original ${ctx.originalHash}` : "";
     const parts = [
       head,
-      `\n[... ${omitted} lines, ~${Math.max(0, tokens - ctx.countTokens(head) - ctx.countTokens(tail))} tokens omitted; original ${hash}]`,
+      `\n[... ${omitted} lines, ~${Math.max(0, tokens - ctx.countTokens(head) - ctx.countTokens(tail))} tokens omitted${original}]`,
     ];
     if (errorBlock.length)
       parts.push(`\n[errors and summaries kept from the omitted part]\n${errorBlock.join("\n")}`);

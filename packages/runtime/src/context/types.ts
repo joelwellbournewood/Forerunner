@@ -9,6 +9,11 @@ export interface TransformContext {
   countTokens: (text: string) => number;
   /** Cap for truncate; set per tool profile. */
   maxTokens?: number;
+  /**
+   * Hash under which the pipeline stores the block's original (originals.ts). Only set when a
+   * store is in place: a marker must never name a hash that resolves to nothing.
+   */
+  originalHash?: string;
 }
 
 export interface TransformResult {

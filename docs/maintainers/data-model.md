@@ -686,6 +686,8 @@ Carries the common columns (see Invariants).
 | `timed_out` | bool | no | `false` |  | True when the run hit its time limit. |
 | `tokens_before_compression` | int | no | `0` |  | Context size before compression. |
 | `tokens_after_compression` | int | no | `0` |  | Context size after compression. |
+| `context_transforms` | json | no | `[]` |  | Context transforms applied to tool results (ADR 0003). |
+| `headroom_used` | bool | no | `false` |  | True when the Headroom proxy served the run's model calls. |
 
 Indexes:
 
@@ -747,6 +749,7 @@ Carries the common columns (see Invariants).
 | `handoff` | json | no | `{}` |  | Handoff note: done, in flight, blocked, next. |
 | `runner` | text (`pc`, `cloud`) | no | `"pc"` |  | Where it ran. |
 | `device_id` | text | yes |  | `device.id` | Device that ran it. |
+| `headroom_saved_tokens` | int | no | `0` |  | Tokens the Headroom proxy saved during the session. |
 
 Indexes:
 

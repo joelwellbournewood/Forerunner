@@ -8,7 +8,7 @@ import { z } from "zod";
 import { type DaemonClient, routePath } from "./client.ts";
 
 /**
- * Realtime from the daemon (ADR 0011, ADR 0014). Two streams: `/events` for the whole
+ * Realtime from the daemon (ADR 0011, ADR 0025). Two streams: `/events` for the whole
  * install (inbox counts, session and project changes) and `/sessions/:id/events` for one
  * live log. Both use EventSource when the browser has it; EventSource cannot send headers, so
  * the bearer token travels as the `token` query parameter on these two routes only. When

@@ -1,7 +1,7 @@
 /**
  * Mirror of `TASK_TRANSITIONS` in `packages/state/src/workflow.ts` (the UI cannot import
  * `@forerunner/state`, which needs Node). The daemon validates every transition; this list
- * only decides which buttons to offer. `test/task-transitions.test.ts` checks the two agree.
+ * only decides which buttons to offer. `test/tasks.test.tsx` checks the two agree.
  */
 export const TASK_TRANSITIONS: Readonly<Record<string, readonly string[]>> = {
   draft: ["ready", "cancelled"],

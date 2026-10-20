@@ -267,6 +267,9 @@ export interface RunRow extends BaseRow {
   timed_out: boolean;
   tokens_before_compression: number;
   tokens_after_compression: number;
+  /** Names of the context transforms applied to this run's tool results (ADR 0003). */
+  context_transforms: string[];
+  headroom_used: boolean;
 }
 export type NewRun = New<RunRow, "session_id" | "specialist" | "model">;
 
@@ -286,6 +289,8 @@ export interface SessionRow extends BaseRow {
   handoff: JsonValue;
   runner: Runner;
   device_id: string | null;
+  /** Headroom proxy `/stats` tokens_saved delta between session start and end (ADR 0003). */
+  headroom_saved_tokens: number;
 }
 export type NewSession = New<SessionRow, "agent_id">;
 

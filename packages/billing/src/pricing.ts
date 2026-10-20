@@ -170,6 +170,19 @@ export function estimateUsdMicro(
   return costOf({ tokens_in: est.inputTokens, tokens_out: est.maxOutputTokens }, modelId, table);
 }
 
+/**
+ * Counterfactual value of tokens the context layer removed before the call (ADR 0003): saved
+ * tokens at the model's full input price, rounded half-up once (ADR 0008). Unknown model throws.
+ */
+export function compressionSavingsUsdMicro(
+  savedTokens: number,
+  modelId: string,
+  table: PricingTable = BUILTIN_PRICING,
+): number {
+  const p = priceFor(modelId, table);
+  return roundHalfUp(assertTokens(savedTokens, "saved_tokens") * p.input_per_mtok_usd);
+}
+
 /** What cache reads in `usage` would have cost at the full input price minus what was paid. */
 export function cacheSavingsUsdMicro(
   usage: TokenUsage,

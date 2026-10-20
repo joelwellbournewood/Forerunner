@@ -1,3 +1,4 @@
+import { CostLedger, FixedRateSource } from "@forerunner/billing";
 import type {
   EventRow,
   HumanRequestRow,
@@ -7,6 +8,7 @@ import type {
   StateStore,
   TaskRow,
 } from "@forerunner/state";
+import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import type {
   CostView,
   EventView,
@@ -305,6 +307,7 @@ export async function costView(
   store: StateStore,
   filter: { projectId?: string; from?: string; to?: string; humanId?: string },
   chfPerUsd: number,
+  ledger?: Pick<CostLedger, "savings">,
 ): Promise<CostView> {
   const f = {
     projectId: filter.projectId,
@@ -331,12 +334,14 @@ export async function costView(
     bucket("task_id"),
     bucket("project_id"),
   ]);
-  const runs = filter.projectId ? await store.run.list({} as never, { limit: 5000 }) : [];
-  const compressionTokens = runs.reduce(
-    (s, r) => s + Math.max(0, r.tokens_before_compression - r.tokens_after_compression),
-    0,
-  );
-  const cacheTokens = (totals as { cache_read_tokens?: number }).cache_read_tokens ?? 0;
+  // Savings (ADR 0003 section 3): read from the Run rows and priced at read time by the billing
+  // ledger; "estimated" for compression, "measured" for cache reads, never netted against spend.
+  const savings = await (ledger ?? savingsLedger(store, chfPerUsd)).savings({
+    ...(f.projectId ? { projectId: f.projectId } : {}),
+    ...(f.humanId ? { humanId: f.humanId } : {}),
+    ...(f.from ? { from: f.from } : {}),
+    ...(f.to ? { to: f.to } : {}),
+  });
   return {
     totals: money(totals.usd_micro, chfPerUsd),
     planUsageShare: (totals as { plan_usage_share?: number | null }).plan_usage_share ?? null,
@@ -345,12 +350,28 @@ export async function costView(
     byTask,
     byProject,
     savings: {
-      compressionTokens,
-      cacheTokens,
-      compression: money(0, chfPerUsd),
-      cache: money(0, chfPerUsd),
+      compressionTokens: savings.compression.tokensSaved,
+      cacheTokens: savings.cache.cacheReadTokens,
+      compression: {
+        usdMicro: savings.compression.usd_micro,
+        chfMicro: savings.compression.chf_micro,
+      },
+      cache: { usdMicro: savings.cache.usd_micro, chfMicro: savings.cache.chf_micro },
     },
     from: filter.from ?? "",
     to: filter.to ?? "",
   };
+}
+
+/** A savings-only ledger over the store when the daemon did not hand one in (tests, CLI). */
+function savingsLedger(store: StateStore, chfPerUsd: number): Pick<CostLedger, "savings"> {
+  const ledgerStore = new StateLedgerStore(store);
+  return new CostLedger({
+    sink: ledgerStore,
+    query: ledgerStore,
+    runs: ledgerStore,
+    sessions: ledgerStore,
+    rates: new FixedRateSource(chfPerUsd),
+    clock: store.clock,
+  });
 }

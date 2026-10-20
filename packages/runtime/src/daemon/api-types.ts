@@ -272,6 +272,21 @@ export const TransitionTaskBody = z.object({
 
 export const AnswerRequestBody = z.object({ version: z.number().int(), answer: z.unknown() });
 
+/** Where task commands run on this machine (ADR 0007): a container when an engine is reachable. */
+export const SandboxHealth = z.object({
+  kind: z.enum(["container", "process"]),
+  available: z.boolean(),
+  engine: z.enum(["docker", "podman", "none"]),
+  reason: z.string(),
+});
+export type SandboxHealth = z.infer<typeof SandboxHealth>;
+
+export const ExtensionsHealth = z.object({
+  enabled: z.number().int(),
+  pending: z.number().int(),
+});
+export type ExtensionsHealth = z.infer<typeof ExtensionsHealth>;
+
 export const HealthView = z.object({
   ok: z.literal(true),
   version: z.string(),
@@ -282,8 +297,55 @@ export const HealthView = z.object({
   vaultBackend: z.string(),
   activeSessions: z.number().int(),
   killActive: z.boolean(),
+  sandbox: SandboxHealth,
+  extensions: ExtensionsHealth,
 });
 export type HealthView = z.infer<typeof HealthView>;
+
+/** Merge a patch into `project.settings` with a version check (mirror, sandbox and other switches). */
+export const UpdateProjectSettingsBody = z.object({
+  version: z.number().int(),
+  settings: z.record(z.string(), z.unknown()),
+});
+export type UpdateProjectSettingsBody = z.infer<typeof UpdateProjectSettingsBody>;
+
+export const MirrorSyncBody = z.object({ full: z.boolean().optional() });
+export type MirrorSyncBody = z.infer<typeof MirrorSyncBody>;
+
+/** A finished mirror run (`POST /projects/:id/mirror/sync`, 200). */
+export const MirrorRunView = z.object({
+  projectId: z.string(),
+  githubProjectId: z.string(),
+  githubProjectUrl: z.string(),
+  scanned: z.number().int(),
+  changed: z.number().int(),
+  created: z.number().int(),
+  updated: z.number().int(),
+  archived: z.number().int(),
+  deleted: z.number().int(),
+  skipped: z.number().int(),
+  errors: z.number().int(),
+  stopped: z
+    .object({ reason: z.literal("rate_limit"), retryAfterMs: z.number().nullable() })
+    .nullable(),
+  sessionId: z.string().nullable(),
+  eventId: z.string().nullable(),
+  durationMs: z.number(),
+});
+export type MirrorRunView = z.infer<typeof MirrorRunView>;
+
+/**
+ * The mirror asked the human before creating the board (`202`): the run finishes in the
+ * background once the request is answered in the inbox; the UI follows `project.changed`.
+ */
+export const MirrorSyncPendingView = z.object({
+  pending: z.literal(true),
+  projectId: z.string(),
+  requestId: z.string(),
+});
+export type MirrorSyncPendingView = z.infer<typeof MirrorSyncPendingView>;
+export const MirrorSyncView = z.union([MirrorRunView, MirrorSyncPendingView]);
+export type MirrorSyncView = z.infer<typeof MirrorSyncView>;
 
 export const AgentView = z.object({
   id: z.string(),
@@ -367,6 +429,11 @@ export type DaemonSseEvent =
   | { event: "inbox.changed"; data: { blockingCount: number } }
   | { event: "session.changed"; data: SessionView }
   | { event: "project.changed"; data: { id: string } }
+  | { event: "extension.changed"; data: { type: string; id: string; name: string } }
+  | {
+      event: "restart.requested";
+      data: { reason: string; targetVersion: string; fromVersion: string; exitCode: number };
+    }
   | { event: "heartbeat"; data: { at: string } };
 
 /**
@@ -400,7 +467,31 @@ export const DAEMON_ROUTES = {
   markRead: "POST /messages/:id/read",
   chat: "POST /chat (JSON) | POST /chat/stream (SSE tokens then a final reply event)",
   costs: "GET /costs?projectId=&from=&to=",
+  costEstimates: "GET /costs/estimates (estimate-versus-actual accuracy, EstimateAccuracyView)",
   settings: "GET /settings?scope=&scopeId=",
+  updateProjectSettings:
+    "PUT /projects/:id/settings { version, settings } (merged; mirror schedule follows)",
+  mirrorSync:
+    "POST /projects/:id/mirror/sync { full? } (one-way GitHub Projects mirror run: 200 MirrorRunView, or 202 MirrorSyncPendingView while the human decides)",
+  extensions: "GET /extensions?kind=",
+  extensionCatalog: "GET /extensions/catalog",
+  extension: "GET /extensions/:id",
+  addExtension: "POST /extensions { catalogId } | { url } (202 while the human decides)",
+  toggleExtension: "POST /extensions/:id/toggle { enabled }",
+  approveExtension: "POST /extensions/:id/approve",
+  denyExtension: "POST /extensions/:id/deny",
+  extensionPermissions: "PUT /extensions/:id/permissions { permissions }",
+  removeExtension: "DELETE /extensions/:id",
+  updates: "GET /updates (app, connector and model updates; asks the feed)",
+  updatesStatus: "GET /updates/status (no network)",
+  applyUpdate: "POST /updates/apply { version? } (202; the daemon exits with RESTART_EXIT_CODE)",
+  rollbackUpdate: "POST /updates/rollback { reason? } (202; same restart contract)",
+  modelWatchReports: "GET /model-watch/reports?limit=",
+  modelWatchLatest: "GET /model-watch/reports/latest",
+  modelWatchReport: "GET /model-watch/reports/:id",
+  modelWatchRun: "POST /model-watch/run",
+  modelWatchAnswer: "POST /model-watch/reports/:id/answer { decision, adopt?, by }",
+  modelWatchSync: "POST /model-watch/sync",
   events:
-    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, heartbeat)",
+    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, heartbeat)",
 } as const;

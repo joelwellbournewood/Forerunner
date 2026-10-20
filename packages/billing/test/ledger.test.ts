@@ -1,6 +1,15 @@
 import { SimulatedClock } from "@forerunner/platform";
 import { beforeEach, describe, expect, it } from "vitest";
-import { CostLedger, monthWindow, NO_SPECIALIST, type TaskOutcome } from "../src/ledger.ts";
+import {
+  CostLedger,
+  entriesAsRuns,
+  monthWindow,
+  NO_PROJECT,
+  NO_SPECIALIST,
+  type SavingsFilter,
+  type SavingsRun,
+  type TaskOutcome,
+} from "../src/ledger.ts";
 import { FixedRateSource, type RateQuote, type RateSource, toRateDate } from "../src/rates.ts";
 import { InMemoryLedger } from "../src/sink.ts";
 import { makeBillingSource } from "../src/sources.ts";
@@ -336,6 +345,189 @@ describe("CostLedger", () => {
     });
     expect(s.total).toEqual({ usd_micro: 117_000, chf_micro: 93_600 });
     expect(s.unpricedRuns).toBe(1);
+    expect(s.filter).toEqual({ sessionId: "s1" });
     expect((await ledger.savings("nope")).total.usd_micro).toBe(0);
+  });
+
+  it("prices Run rows at the run's own rate with ADR 0008 rounding and allocates by project, specialist and model", async () => {
+    // Ledger entries supply the CHF rate per run (cost_ledger.run_id); the Run rows carry the savings.
+    const entryFor = (run_id: string, project_id: string, rate: number, model: string) =>
+      mem.record({
+        human_id: "alice",
+        project_id,
+        session_id: "s1",
+        run_id,
+        billing_source_id: "alice-api",
+        kind: "api",
+        usd_micro: 1,
+        chf_micro: 1,
+        rate_chf_per_usd: rate,
+        model,
+        specialist: "coder",
+        tokens_in: 1,
+        tokens_out: 1,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        occurred_at: clock.nowIso(),
+      });
+    await entryFor("r1", "p1", 0.8, "claude-haiku-5-5");
+    await entryFor("r2", "p2", 0.9, "claude-haiku-5-5");
+    await entryFor("r3", "p1", 0.9, "claude-sonnet-4-5");
+    await entryFor("r4", "p1", 0.8, "mystery-9");
+    const runs: SavingsRun[] = [
+      // 5 tokens x 0.1 USD/MTok = 0.5 micro -> 1 (half-up); 15 cache reads x 0.09 = 1.35 -> 1.
+      {
+        run_id: "r1",
+        session_id: "s1",
+        specialist: "coder",
+        model: "claude-haiku-5-5",
+        tokens_before_compression: 1005,
+        tokens_after_compression: 1000,
+        cache_read_tokens: 15,
+        cache_write_tokens: 7,
+        context_transforms: ["logs", "truncate"],
+        headroom_used: true,
+      },
+      // 4 tokens x 0.1 = 0.4 micro -> 0: counted in tokens, worth nothing in money.
+      {
+        run_id: "r2",
+        session_id: "s1",
+        specialist: "researcher",
+        model: "claude-haiku-5-5",
+        tokens_before_compression: 1004,
+        tokens_after_compression: 1000,
+        cache_read_tokens: 0,
+        context_transforms: ["logs"],
+      },
+      // 60k tokens x 3 USD/MTok = 180_000 micro, CHF at this run's own 0.9 rate = 162_000.
+      {
+        run_id: "r3",
+        session_id: "s1",
+        specialist: "coder",
+        model: "claude-sonnet-4-5",
+        tokens_before_compression: 100_000,
+        tokens_after_compression: 40_000,
+        cache_read_tokens: 0,
+      },
+      // Unknown model: tokens counted, money not.
+      {
+        run_id: "r4",
+        session_id: "s1",
+        specialist: "coder",
+        model: "mystery-9",
+        tokens_before_compression: 10,
+        tokens_after_compression: 5,
+        cache_read_tokens: 100,
+      },
+      // No ledger entry and no rate: quoted at the day's rate (0.8 here), no project.
+      {
+        run_id: "r5",
+        session_id: "s2",
+        specialist: null,
+        model: "claude-sonnet-4-5",
+        tokens_before_compression: 0,
+        tokens_after_compression: 0,
+        cache_read_tokens: 1000,
+        occurred_at: clock.nowIso(),
+      },
+    ];
+    const seen: SavingsFilter[] = [];
+    const withRuns = new CostLedger({
+      sink: mem,
+      query: mem,
+      rates: new FixedRateSource(0.8),
+      clock,
+      runs: {
+        async listRuns(filter) {
+          seen.push(filter);
+          return runs;
+        },
+      },
+      sessions: {
+        async listSessions() {
+          return [
+            { session_id: "s1", headroom_saved_tokens: 500 },
+            { session_id: "s2", headroom_saved_tokens: 250 },
+          ];
+        },
+      },
+    });
+    // The RunSource honours the filter in production; here it returns every run, and the ledger
+    // entries listed for the filter supply each run's rate and project.
+    const s = await withRuns.savings({ sessionId: "s1" });
+    expect(seen).toEqual([{ sessionId: "s1" }]);
+    expect(s.compression).toEqual({
+      runsMeasured: 4,
+      tokensBefore: 102_019,
+      tokensAfter: 42_005,
+      tokensSaved: 60_014,
+      usd_micro: 180_001,
+      chf_micro: 162_001,
+    });
+    // r1: 15 x 0.1 = 1.5 -> 2 at full price, 15 x 0.01 = 0.15 -> 0 paid; r5: 1000 x 3 = 3000, paid 300.
+    expect(s.cache).toEqual({
+      cacheReadTokens: 1_115,
+      usdMicroAtFullPrice: 3_002,
+      usdMicroPaid: 300,
+      usd_micro: 2_701,
+      chf_micro: 2_161,
+    });
+    expect(s.cacheWriteTokens).toBe(7);
+    expect(s.total).toEqual({ usd_micro: 182_702, chf_micro: 164_162 });
+    expect(s.unpricedRuns).toBe(1);
+    expect(s.transforms).toEqual({ logs: 2, truncate: 1 });
+    expect(s.headroom).toEqual({ runs: 1, sessions: 2, tokensSaved: 750 });
+    expect(s.byProject.map((b) => [b.key, b.runs, b.total.usd_micro, b.total.chf_micro])).toEqual([
+      ["p1", 3, 180_002, 162_002],
+      [NO_PROJECT, 1, 2_700, 2_160],
+      ["p2", 1, 0, 0],
+    ]);
+    expect(s.bySpecialist.map((b) => [b.key, b.compressionTokens, b.cacheReadTokens])).toEqual([
+      ["coder", 60_010, 115],
+      [NO_SPECIALIST, 0, 1_000],
+      ["researcher", 4, 0],
+    ]);
+    expect(s.byModel.map((b) => [b.key, b.compression.usd_micro, b.cache.usd_micro])).toEqual([
+      ["claude-sonnet-4-5", 180_000, 2_700],
+      ["claude-haiku-5-5", 1, 1],
+      ["mystery-9", 0, 0],
+    ]);
+  });
+
+  it("entriesAsRuns folds one run's calls together and keeps the first measured compression", () => {
+    const base = {
+      human_id: "alice",
+      billing_source_id: null,
+      kind: "api" as const,
+      usd_micro: 0,
+      chf_micro: 0,
+      rate_chf_per_usd: 0.8,
+      model: "claude-sonnet-4-5",
+      tokens_in: 0,
+      tokens_out: 0,
+      cache_write_tokens: 1,
+      occurred_at: clock.nowIso(),
+    };
+    const runs = entriesAsRuns([
+      { ...base, id: "e1", run_id: "r1", cache_read_tokens: 10 },
+      {
+        ...base,
+        id: "e2",
+        run_id: "r1",
+        cache_read_tokens: 20,
+        tokens_before_compression: 50,
+        tokens_after_compression: 20,
+      },
+      { ...base, id: "e3", cache_read_tokens: 5 },
+    ]);
+    expect(runs).toHaveLength(2);
+    expect(runs[0]).toMatchObject({
+      run_id: "r1",
+      cache_read_tokens: 30,
+      cache_write_tokens: 2,
+      tokens_before_compression: 50,
+      tokens_after_compression: 20,
+    });
+    expect(runs[1]?.run_id).toBe("e3");
   });
 });

@@ -60,6 +60,28 @@ describe("Inbox", () => {
     });
   });
 
+  it("reloads when the install stream reports a new blocking count", async () => {
+    const harness = createHarness();
+    renderApp("/inbox", harness);
+    expect(await screen.findAllByTestId("request")).toHaveLength(2);
+    // Answered elsewhere (phone, chat): the daemon state changes behind the page's back ...
+    const answered = await harness.daemon.app.fetch(
+      new Request("http://127.0.0.1:9/requests/req_1/answer", {
+        method: "POST",
+        headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+        body: JSON.stringify({ version: 1, answer: "Approve" }),
+      }),
+    );
+    expect(answered.status).toBe(200);
+    expect(screen.getAllByTestId("request")).toHaveLength(2);
+    // ... and the only signal the UI gets is `inbox.changed` on /events, which the provider
+    // turns into this dispatch.
+    harness.store.dispatch({ type: "blockingCount", count: 0 });
+    await waitFor(() => expect(screen.getAllByTestId("request")).toHaveLength(1));
+    expect(screen.getByTestId("blocking-count")).toHaveTextContent("0 blocking");
+    expect(screen.getAllByTestId("request")[0]).toHaveAttribute("data-request-id", "req_2");
+  });
+
   it("marks a message read", async () => {
     const user = userEvent.setup();
     const harness = createHarness();

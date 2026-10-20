@@ -84,6 +84,23 @@ export class FixturePriceListSource implements PriceListSource {
 
 export const PRICE_LIST_URL_ENV = "FORERUNNER_PRICE_LIST_URL";
 
+/**
+ * The source an install gets when no price list URL is configured: every fetch fails with
+ * `unavailable` naming the variable to set. The watch records that in the report and treats
+ * every model outside the pricing table as unpriced; nothing is ever guessed.
+ */
+export class UnconfiguredPriceListSource implements PriceListSource {
+  readonly name = "none";
+
+  async fetch(): Promise<PriceList> {
+    throw new ForerunnerError(
+      "unavailable",
+      `no price list configured (set ${PRICE_LIST_URL_ENV} to a JSON price list URL)`,
+      { details: { env: PRICE_LIST_URL_ENV }, retryable: false },
+    );
+  }
+}
+
 /** The configured price list URL, or undefined when none is set (the watch then reports it). */
 export function priceListUrlFromEnv(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const v = env[PRICE_LIST_URL_ENV]?.trim();

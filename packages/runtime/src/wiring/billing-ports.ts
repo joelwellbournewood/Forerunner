@@ -10,17 +10,92 @@ import {
   type LedgerSink,
   type LedgerSum,
   type PricingTable,
+  type RunSource,
+  type SavingsFilter,
+  type SavingsRun,
+  type SavingsSession,
+  type SessionSource,
   type StoredLedgerEntry,
 } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
-import type { StateStore } from "@forerunner/state";
+import type { RunRow, SessionRow, StateStore } from "@forerunner/state";
 import type { Vault } from "@forerunner/vault";
 import type { RunPricing } from "../agent/loop.ts";
 import type { CapDecision, CapScope, CapsPort } from "../enforcement/ports.ts";
 
-/** The state store's cost ledger as the billing package's sink and query. */
-export class StateLedgerStore implements LedgerSink, LedgerQuery {
+const ID_CHUNK = 500;
+
+/**
+ * The state store's cost ledger as the billing package's sink and query, and its Run and
+ * Session rows as the savings sources (ADR 0003: savings live on the Run and the Session).
+ */
+export class StateLedgerStore implements LedgerSink, LedgerQuery, RunSource, SessionSource {
   constructor(private readonly store: StateStore) {}
+
+  /**
+   * Runs for a savings filter. A session filter reads the session's runs directly (runs without
+   * a ledger entry included); any other filter is answered through the ledger entries that match
+   * it, so project, human and time-window filters mean the same thing as for spend.
+   */
+  async listRuns(filter: SavingsFilter): Promise<SavingsRun[]> {
+    let rows: RunRow[];
+    if (filter.runId) {
+      const one = await this.store.run.get(filter.runId);
+      rows = one ? [one] : [];
+    } else if (filter.sessionId) {
+      rows = await this.store.run.forSession(filter.sessionId, { limit: 10_000 });
+    } else {
+      const entries = await this.list(filter);
+      const ids = [...new Set(entries.map((e) => e.run_id).filter((id): id is string => !!id))];
+      rows = [];
+      for (let i = 0; i < ids.length; i += ID_CHUNK) {
+        rows.push(
+          ...(await this.store.run.list({ id: ids.slice(i, i + ID_CHUNK) }, { limit: ID_CHUNK })),
+        );
+      }
+    }
+    return rows
+      .filter((r) => !filter.taskId || r.task_id === filter.taskId)
+      .map((r) => ({
+        run_id: r.id,
+        session_id: r.session_id,
+        task_id: r.task_id,
+        specialist: r.specialist,
+        model: r.model,
+        tokens_before_compression: r.tokens_before_compression,
+        tokens_after_compression: r.tokens_after_compression,
+        cache_read_tokens: r.cache_read_tokens,
+        cache_write_tokens: r.cache_write_tokens,
+        context_transforms: r.context_transforms,
+        headroom_used: r.headroom_used,
+        occurred_at: r.created_at,
+      }));
+  }
+
+  async listSessions(filter: SavingsFilter): Promise<SavingsSession[]> {
+    let rows: SessionRow[];
+    if (filter.sessionId) {
+      const one = await this.store.session.get(filter.sessionId);
+      rows = one ? [one] : [];
+    } else {
+      const entries = await this.list(filter);
+      const ids = [...new Set(entries.map((e) => e.session_id).filter((id): id is string => !!id))];
+      rows = [];
+      for (let i = 0; i < ids.length; i += ID_CHUNK) {
+        rows.push(
+          ...(await this.store.session.list(
+            { id: ids.slice(i, i + ID_CHUNK) },
+            { limit: ID_CHUNK },
+          )),
+        );
+      }
+    }
+    return rows.map((s) => ({
+      session_id: s.id,
+      project_id: s.project_id,
+      headroom_saved_tokens: s.headroom_saved_tokens,
+    }));
+  }
 
   async record(entry: BillingLedgerEntry): Promise<StoredLedgerEntry> {
     const row = await this.store.costLedger.record({

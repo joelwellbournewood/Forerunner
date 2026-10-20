@@ -254,6 +254,9 @@ export const ENTITIES: Record<string, EntityDef> = {
       json("handoff", "Handoff note: done, in flight, blocked, next.", { default: {} }),
       text("runner", "Where it ran.", { default: "pc", enum: RUNNERS }),
       text("device_id", "Device that ran it.", nullableRef("device")),
+      int("headroom_saved_tokens", "Tokens the Headroom proxy saved during the session.", {
+        default: 0,
+      }),
     ],
     indexes: [{ columns: ["agent_id", "status"] }, { columns: ["project_id"] }],
   },
@@ -405,6 +408,12 @@ export const ENTITIES: Record<string, EntityDef> = {
       bool("timed_out", "True when the run hit its time limit.", { default: false }),
       int("tokens_before_compression", "Context size before compression.", { default: 0 }),
       int("tokens_after_compression", "Context size after compression.", { default: 0 }),
+      json("context_transforms", "Context transforms applied to tool results (ADR 0003).", {
+        default: [],
+      }),
+      bool("headroom_used", "True when the Headroom proxy served the run's model calls.", {
+        default: false,
+      }),
     ],
     indexes: [{ columns: ["session_id"] }, { columns: ["task_id"] }],
   },

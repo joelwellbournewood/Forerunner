@@ -134,6 +134,51 @@ describe("daemon client", () => {
     expect(client.url("/events")).toBe("http://127.0.0.1:9/events");
   });
 
+  it("validates /health including the sandbox and extensions sections", async () => {
+    const daemon = createFakeDaemon({ token: "tok" });
+    const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
+    const health = await client.health();
+    expect(health.sandbox).toEqual({
+      kind: "process",
+      available: false,
+      engine: "none",
+      reason: "fake daemon",
+    });
+    expect(health.extensions).toEqual({ enabled: 0, pending: 0 });
+    const legacy = createClient(testConfig(), async () => {
+      const { sandbox: _s, extensions: _e, ...rest } = health;
+      return jsonResponse(rest);
+    });
+    await expect(legacy.health()).rejects.toMatchObject({ code: "ui.invalid_response" });
+  });
+
+  it("reads a project's decisions and peer feed and rejects malformed bodies", async () => {
+    const daemon = createFakeDaemon({ token: "tok" });
+    const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
+    const decisions = await client.decisions("proj_atlas");
+    expect(decisions.map((d) => d.id)).toEqual(["dec_1"]);
+    expect(decisions[0]?.chosen).toBe("Static index built at deploy time");
+    expect(await client.decisions("proj_beacon")).toEqual([]);
+    const peers = await client.peers("proj_atlas");
+    expect(peers.projectId).toBe("proj_atlas");
+    expect(peers.peers.map((p) => p.agentName)).toEqual(["Bob's agent"]);
+    expect(peers.peers[0]?.activeClaims[0]?.taskId).toBe("task_2");
+    const empty = await client.peers("proj_beacon");
+    expect(empty.peers).toEqual([]);
+    await expect(client.decisions("proj_missing")).rejects.toMatchObject({ status: 404 });
+
+    const badDecisions = createClient(testConfig(), async () =>
+      jsonResponse([{ id: "d", projectId: "p", question: "q", chosen: 1 }]),
+    );
+    await expect(badDecisions.decisions("p")).rejects.toMatchObject({
+      code: "ui.invalid_response",
+    });
+    const badPeers = createClient(testConfig(), async () =>
+      jsonResponse({ generatedAt: "now", projectId: "p", peers: [{ agentId: "a" }] }),
+    );
+    await expect(badPeers.peers("p")).rejects.toMatchObject({ code: "ui.invalid_response" });
+  });
+
   it("round-trips the phase-1 mutations against the fake daemon", async () => {
     const daemon = createFakeDaemon({ token: "tok", eventDelayMs: 5 });
     const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));

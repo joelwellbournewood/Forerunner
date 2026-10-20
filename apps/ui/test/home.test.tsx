@@ -24,6 +24,19 @@ describe("Home", () => {
     expect(beacon.getByTestId("health-badge")).toHaveTextContent("good");
   });
 
+  it("opens a project through a link, not a button nested in a link", async () => {
+    renderApp("/");
+    const cards = await screen.findAllByTestId("project-card");
+    const open = within(cards[1] as HTMLElement).getByTestId("open-project");
+    expect(open.tagName).toBe("A");
+    expect(open).toHaveAttribute("href", "/projects/proj_beacon");
+    expect(open.querySelector("button")).toBeNull();
+    expect(within(cards[1] as HTMLElement).queryByRole("button", { name: "Open" })).toBeNull();
+    await userEvent.setup().click(open);
+    await waitFor(() => expect(screen.getByTestId("active-project")).toHaveTextContent("Beacon"));
+    expect(await screen.findByTestId("project-header")).toHaveTextContent("Beacon");
+  });
+
   it("shows the active project in the header and the blocking count in the inbox badge", async () => {
     renderApp("/");
     await waitFor(() => expect(screen.getByTestId("active-project")).toHaveTextContent("Atlas"));

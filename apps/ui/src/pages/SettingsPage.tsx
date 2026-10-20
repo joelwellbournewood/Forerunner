@@ -110,6 +110,23 @@ export function SettingsPage() {
                 {connection.health.activeSessions} active
                 {connection.health.killActive ? " · kill switch active" : ""}
               </dd>
+              <dt className="text-neutral-500">Sandbox</dt>
+              <dd data-testid="sandbox-health">
+                <Badge tone={connection.health.sandbox.available ? "good" : "warn"}>
+                  {connection.health.sandbox.kind}
+                  {connection.health.sandbox.available
+                    ? ` via ${connection.health.sandbox.engine}`
+                    : " stand-in"}
+                </Badge>{" "}
+                {connection.health.sandbox.reason}
+              </dd>
+              <dt className="text-neutral-500">Extensions</dt>
+              <dd data-testid="extensions-health">
+                {connection.health.extensions.enabled} enabled
+                {connection.health.extensions.pending > 0
+                  ? ` · ${connection.health.extensions.pending} waiting for your approval`
+                  : ""}
+              </dd>
             </>
           ) : null}
           {config.platform ? (

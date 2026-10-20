@@ -1,5 +1,5 @@
 /**
- * Where the UI finds the local daemon (ADR 0011, ADR 0014).
+ * Where the UI finds the local daemon (ADR 0011, ADR 0025).
  *
  * Resolution order:
  *   1. `window.__FORERUNNER__` injected by the Tauri shell (desktop, Android) from `daemon.json`.

@@ -12,7 +12,7 @@ import { readSseStream } from "./sse.ts";
  * Chat replies always stream (spec D: "All replies stream"). `POST /chat/stream` answers with
  * `text/event-stream`: `token` frames carry `{ "text": "..." }` pieces of the reply in order,
  * a final `reply` frame carries the full `ChatReplyView`, and an `error` frame carries an
- * `ErrorBody` (ADR 0014). A daemon that answers with plain JSON is accepted too: the whole
+ * `ErrorBody` (ADR 0025). A daemon that answers with plain JSON is accepted too: the whole
  * reply then arrives at once.
  */
 

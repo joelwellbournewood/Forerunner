@@ -24,11 +24,13 @@ import { streamSSE } from "hono/streaming";
 import {
   AGENTS,
   COSTS,
+  DECISIONS,
   EVENTS,
   HEALTH,
   ME,
   MESSAGES,
   money,
+  PEERS,
   PROJECTS,
   REQUESTS,
   RUNS,
@@ -135,7 +137,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       allowMethods: ["GET", "POST", "OPTIONS"],
     }),
   );
-  // Bearer token on every route; the two EventSource routes also accept ?token= (ADR 0014).
+  // Bearer token on every route; the two EventSource routes also accept ?token= (ADR 0025).
   app.use("*", async (c, next) => {
     if (c.req.method === "OPTIONS") return next();
     const header = c.req.header("authorization") ?? "";
@@ -291,6 +293,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const id = c.req.param("id");
     const taskIds = new Set(state.tasks.filter((t) => t.projectId === id).map((t) => t.id));
     return c.json(RUNS.filter((r) => r.taskId && taskIds.has(r.taskId)));
+  });
+  app.get("/projects/:id/decisions", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id)) {
+      return errorBody(c, 404, "not_found", "no such project");
+    }
+    return c.json(DECISIONS.filter((d) => d.projectId === id));
+  });
+  app.get("/projects/:id/peers", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id)) {
+      return errorBody(c, 404, "not_found", "no such project");
+    }
+    return c.json(PEERS[id] ?? { generatedAt: new Date().toISOString(), projectId: id, peers: [] });
   });
 
   app.get("/sessions", (c) => {

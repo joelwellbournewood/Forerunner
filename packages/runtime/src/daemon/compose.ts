@@ -1,35 +1,101 @@
 import { EventEmitter } from "node:events";
-import { BillingRouter, CapChecker, FixedRateSource, type RateSource } from "@forerunner/billing";
-import { type GitHost, GitHubHost, MemoryGitHost, PrTaskExecutor } from "@forerunner/capabilities";
+import { mkdirSync } from "node:fs";
+import {
+  BillingRouter,
+  BUILTIN_PRICING,
+  CapChecker,
+  CostLedger,
+  FixedRateSource,
+  loadPricing,
+  PRICING_FILE_NAME,
+  type RateSource,
+} from "@forerunner/billing";
+import {
+  type GitHost,
+  GitHubHost,
+  MemoryGitHost,
+  MIRROR_APPROVE_OPTION,
+  type MirrorApprovalAnswer,
+  type MirrorApprovalRequest,
+  type MirrorHumanPort,
+  type MirrorRunResult,
+  mirrorSettingsOf,
+  mirrorStartHandler,
+  ProjectsMirror,
+  PrTaskExecutor,
+  scheduleMirror,
+} from "@forerunner/capabilities";
 import {
   type AppDirs,
   appDirs,
   type Clock,
+  errorMessage,
   ForerunnerError,
   join,
   log,
   systemClock,
 } from "@forerunner/platform";
-import { openStore, type StateStore } from "@forerunner/state";
+import { type JsonValue, openStore, type StateStore } from "@forerunner/state";
 import { openVault, SecretResolver, type Vault } from "@forerunner/vault";
 import { LoopAgentDriver } from "../agent/loop.ts";
-import type { ToolRegistry } from "../agent/tools.ts";
+import { ToolRegistry, type ToolSpec } from "../agent/tools.ts";
+import {
+  DEFAULT_HEADROOM_PORT,
+  type HeadroomPort,
+  headroomFromEnv,
+  ManagedHeadroomProcess,
+} from "../context/headroom.ts";
+import { ContextManager } from "../context/manager.ts";
+import { contextSettingsFrom } from "../context/pipeline.ts";
 import { ConversationAgent } from "../conversation/agent.ts";
-import { EnforcementHooks } from "../enforcement/hooks.ts";
+import type { EnforcementHooks, HookDeps, RunContext } from "../enforcement/hooks.ts";
 import { KillFileWatcher } from "../enforcement/killfile.ts";
 import { KillSwitch } from "../enforcement/killswitch.ts";
 import type { CapDecision, CapScope, CapsPort } from "../enforcement/ports.ts";
 import { TokenIssuer } from "../enforcement/token.ts";
+import { EstimateModel, kindOfTask } from "../estimates/model.ts";
+import { HumanRequestExtensionApprovals } from "../extensions/approvals.ts";
+import { catalogUrlFromEnv, ExtensionCatalog, loadBuiltinCatalog } from "../extensions/catalog.ts";
+import { ExtensionGate, GatedEnforcementHooks } from "../extensions/gate.ts";
+import {
+  DefaultMcpConnectorFactory,
+  isBridgedTool,
+  type McpConnectorFactory,
+} from "../extensions/mcp.ts";
+import { ExtensionRegistry } from "../extensions/registry.ts";
+import { LoopEvalRunner } from "../models/eval-runner.ts";
+import {
+  FetchPriceListSource,
+  type PriceListSource,
+  priceListUrlFromEnv,
+  UnconfiguredPriceListSource,
+} from "../models/price-list.ts";
+import { FileModelSettingsStore } from "../models/settings.ts";
+import {
+  type EvalRunnerPort,
+  isModelWatchRequest,
+  ModelWatch,
+  StateModelWatchApprovals,
+  scheduleModelWatch,
+} from "../models/watch.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
 import { ProviderRegistry } from "../provider/registry.ts";
 import type { ModelProvider } from "../provider/types.ts";
 import { loadRegistry, type Registry, resolveRegistryDir } from "../registry/index.ts";
-import { LoopTaskExecutor, type SpecialistSpec } from "../session/executor.ts";
+import { detectSandboxEngine, type EngineDetection } from "../sandbox/detect.ts";
+import type { RunFn, WhichFn } from "../sandbox/types.ts";
+import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
-import { Scheduler } from "../session/triggers.ts";
+import { Scheduler, type StartRequest } from "../session/triggers.ts";
 import { readConfig, SECRET_NAMES, type SetupConfig } from "../setup/wizard.ts";
+import { composeUpdateManager } from "../update/compose.ts";
+import { readUpdateConfig, UpdateConfig } from "../update/config.ts";
+import type { UpdateManager } from "../update/install.ts";
+import type { Restarter } from "../update/ports.ts";
 import { pricingFor, StateLedgerStore, stateSources } from "../wiring/billing-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
+import { DaemonRestarter, processExit } from "./restart.ts";
+import { DetectingSandboxPort } from "./sandbox-port.ts";
 import { fileTools } from "./tools.ts";
 
 /**
@@ -48,12 +114,46 @@ export interface ComposeOptions {
   provider?: ModelProvider;
   /** Injected git host (tests); otherwise GitHub from the vault token, else an in-memory host. */
   gitHost?: GitHost;
+  /** Injected Headroom port (tests); otherwise the adapter from FORERUNNER_HEADROOM_* (ADR 0003). */
+  headroom?: HeadroomPort;
   registryDir?: string;
   chfPerUsd?: number;
   rates?: RateSource;
   appVersion?: string;
   identity?: { humanName?: string; email?: string; timezone?: string; agentName?: string };
+  /** MCP connector factory (tests use an in-memory transport). */
+  connectors?: McpConnectorFactory;
+  /** Extension catalog; default: the built-in one plus FORERUNNER_EXTENSION_CATALOG_URL. */
+  catalog?: ExtensionCatalog;
+  /** fetch for the release feed, the price list and the remote catalog (tests use 127.0.0.1). */
+  fetchImpl?: typeof fetch;
+  /** Eval runner for the model watch; default: the registry's eval sets through the loop driver. */
+  evalRunner?: EvalRunnerPort;
+  /** Price list URL; default FORERUNNER_PRICE_LIST_URL, else no price list (nothing is guessed). */
+  priceListUrl?: string;
+  /** Sandbox port for task commands; default: container when reachable, else the process stand-in. */
+  sandbox?: RunSandboxPort;
+  /** Pre-computed engine detection (tests never probe docker). */
+  sandboxDetection?: EngineDetection;
+  sandboxRun?: RunFn;
+  sandboxWhich?: WhichFn;
+  /** "Update and restart"; default: write the restart request and exit with RESTART_EXIT_CODE. */
+  restarter?: Restarter;
+  /** How the daemon ends the process on a restart request (tests record the code). */
+  exit?: (code: number) => void;
+  updateConfig?: UpdateConfig;
+  /**
+   * Start the background services: connect the enabled connectors, run the scheduler and the
+   * kill-file watcher. Default true (the daemon); CLI one-shots pass false and only use the
+   * composed objects.
+   */
+  startServices?: boolean;
 }
+
+/** What a manual mirror sync came back with: the run, or the approval it waits on. */
+export type MirrorSyncOutcome =
+  | { state: "done"; result: MirrorRunResult }
+  | { state: "pending"; projectId: string; requestId: string };
 
 export interface RuntimeApp {
   dirs: AppDirs;
@@ -78,9 +178,42 @@ export interface RuntimeApp {
   agent: { id: string; name: string };
   billingSourceId: string;
   chfPerUsd: () => number;
+  /** Context layer per session: policy, Headroom probe, pipeline, savings (ADR 0003). */
+  context: ContextManager;
+  /** The billing ledger over the store; the cost view prices savings through it. */
+  costLedger: CostLedger;
   events: EventEmitter;
   appVersion: string;
   startedAt: number;
+  /** Extensions panel backend; its gate sits in front of every tool call. */
+  extensions: ExtensionRegistry;
+  gate: ExtensionGate;
+  /** Signed updates (spec M) over this process's store. */
+  updates: UpdateManager;
+  updateConfig: UpdateConfig;
+  restarter: Restarter;
+  /** Weekly model watch (spec D) on the registered providers. */
+  modelWatch: ModelWatch;
+  /** Estimate-versus-actual learning the planner consumes (spec I). */
+  estimates: EstimateModel;
+  /** One-way GitHub Projects mirror. */
+  mirror: ProjectsMirror;
+  sandbox: { port: RunSandboxPort; detection: EngineDetection };
+  /** The tool registry a run starts with: built-in tools plus the bridged extension tools. */
+  toolsForRun(): ToolRegistry;
+  /** Apply answered human requests: extension grants and model watch decisions. */
+  syncApprovals(): Promise<{
+    extensions: { approved: string[]; denied: string[] };
+    modelWatch: number;
+  }>;
+  /** Add or drop mirror schedules after a project's settings changed. */
+  refreshMirrorSchedules(): Promise<string[]>;
+  /**
+   * Run the mirror for a project now. Resolves with the run, or with the open approval request
+   * as soon as the mirror asks the human (the run goes on in the background and finishes when
+   * the request is answered in the inbox); a second call while a run is in flight joins it.
+   */
+  mirrorSync(projectId: string, opts?: { full?: boolean }): Promise<MirrorSyncOutcome>;
   close(): Promise<void>;
 }
 
@@ -91,7 +224,7 @@ export function specialistSpecFrom(
 ): (name: string) => SpecialistSpec | undefined {
   return (name) => {
     const d = registry.specialists.get(name);
-    if (!d || !d.runnable) return undefined;
+    if (!d?.runnable) return undefined;
     return {
       name: d.name,
       prompt: d.prompt,
@@ -267,6 +400,45 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     () => undefined,
   );
   const ledgerStore = new StateLedgerStore(store);
+  const costLedger = new CostLedger({
+    sink: ledgerStore,
+    query: ledgerStore,
+    runs: ledgerStore,
+    sessions: ledgerStore,
+    rates,
+    clock,
+    pricing: await loadPricing(join(dirs.config, PRICING_FILE_NAME)),
+  });
+
+  // Context layer (ADR 0003): the native pipeline is always on; the Headroom proxy is probed
+  // only for projects whose settings.context.compression is "headroom", never assumed.
+  let headroom: HeadroomPort;
+  if (opts.headroom) headroom = opts.headroom;
+  else {
+    const resolved = headroomFromEnv(env, { clock });
+    if (resolved.error) logger.warn("headroom disabled", { error: resolved.error.message });
+    headroom = resolved.port;
+  }
+  const managedHeadroom =
+    !opts.headroom && env.FORERUNNER_HEADROOM_MANAGED === "1" && headroom.url
+      ? new ManagedHeadroomProcess({
+          port: Number(new URL(headroom.url).port) || DEFAULT_HEADROOM_PORT,
+          logDir: dirs.logs,
+          env,
+        })
+      : null;
+  if (managedHeadroom && !managedHeadroom.start())
+    logger.warn("headroom proxy could not be started; continuing without it");
+  const context = new ContextManager({
+    clock,
+    headroom,
+    originalsDir: join(dirs.cache, "context"),
+    countTokens: (t) => (provider ?? unavailableProvider()).countTokens(t),
+    settingsFor: async (projectId) =>
+      contextSettingsFrom(projectId ? (await store.project.get(projectId))?.settings : undefined),
+    onNotice: (sessionId, sel) =>
+      logger.warn("headroom not in use", { sessionId, notice: sel.notice }),
+  });
   const checker = new CapChecker({
     query: ledgerStore,
     clock,
@@ -288,9 +460,43 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       for (const t of await store.task.claimedBy(id))
         await store.task.releaseClaim(t.id, id, "kill switch").catch(() => undefined);
   });
+  // A managed proxy dies with the global stop, like every other child process (ADR 0003).
+  managedHeadroom?.bindKillSwitch(kill);
   const ports = statePorts(store, { chfPerUsd });
   const secrets = new SecretResolver(vault);
-  const hooks = new EnforcementHooks({
+
+  // Extensions (spec K, L): the registry behind the panel and the gate in front of every tool
+  // call. A disabled, pending, removed or errored extension's tool is refused in code.
+  const catalog =
+    opts.catalog ??
+    new ExtensionCatalog(loadBuiltinCatalog(), {
+      remoteUrl: catalogUrlFromEnv(env),
+      fetch: opts.fetchImpl,
+    });
+  const extensions = new ExtensionRegistry({
+    extensions: store.extension,
+    audit: store.auditLog,
+    clock,
+    catalog,
+    approvals: new HumanRequestExtensionApprovals(store.humanRequest),
+    connectors: opts.connectors ?? new DefaultMcpConnectorFactory(),
+    secrets,
+    tokens,
+    fetch: opts.fetchImpl,
+    chfPerUsd,
+    // Capability modules that charge through the ledger name the extension in the
+    // `specialist` column as `extension:<id>`. Bridged MCP calls report no price of their
+    // own, so a connector's cost reads 0 until a capability module charges through the ledger
+    // (runtime.md, "Extension cost").
+    ledgerCost: async (id) => {
+      const key = `extension:${id}`;
+      const buckets = await store.costLedger.breakdown("specialist");
+      return buckets.find((b) => b.key === key)?.usd_micro ?? 0;
+    },
+    events: (e) => events.emit("extension", e),
+  });
+  const gate = new ExtensionGate({ registry: extensions, clock, audit: store.auditLog });
+  const hookDeps: HookDeps = {
     tokens,
     caps,
     secrets,
@@ -299,15 +505,53 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     ledger: ports.ledger,
     audit: ports.audit,
     approvals: ports.approvals,
-  });
+  };
+  const hooks = new DaemonHooks(hookDeps, gate, extensions);
   const driver = new LoopAgentDriver({ hooks, kill, clock });
 
-  // Registry and tools.
+  // Registry and tools. A run starts with the built-in tools plus whatever the enabled
+  // connectors bridge at that moment; the gate covers runs already in flight.
   const registryDir =
     opts.registryDir ?? env.FORERUNNER_REGISTRY_DIR ?? resolveRegistryDir(env).dir;
   const tools = fileTools();
   const registry = loadRegistry(registryDir, { toolNames: tools.names() });
   const specialists = specialistSpecFrom(registry);
+  const toolsForRun = (): ToolRegistry => {
+    const out = new ToolRegistry();
+    for (const name of tools.names()) {
+      const t = tools.get(name);
+      if (t) out.register(t);
+    }
+    for (const t of extensions.bridgedTools()) {
+      if (!out.get(t.name)) out.register(t);
+    }
+    return out;
+  };
+
+  // Sandbox (ADR 0007): a container when an engine is reachable, else the process stand-in;
+  // the health view reports which. Detection is probed once here (cached per process).
+  const sandboxDetection =
+    opts.sandboxDetection ??
+    (await detectSandboxEngine({ env, clock, run: opts.sandboxRun, which: opts.sandboxWhich }));
+  const sandboxPort: RunSandboxPort =
+    opts.sandbox ??
+    new DetectingSandboxPort({
+      env,
+      clock,
+      store,
+      audit: store.auditLog,
+      detection: sandboxDetection,
+      run: opts.sandboxRun,
+      which: opts.sandboxWhich,
+    });
+
+  // Estimates (spec I): learned from finished tasks in the store; cold start from the registry.
+  const estimates = await EstimateModel.fromStore(store, {
+    defaults: (name) => {
+      const d = registry.specialists.get(name);
+      return d ? { maxBudgetUsd: d.max_budget_usd, timeoutMinutes: d.timeout_minutes } : undefined;
+    },
+  });
 
   // Git host and the PR executor.
   const ghToken = await vault.get(SECRET_NAMES.github);
@@ -325,9 +569,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       driver,
       provider: provider ?? unavailableProvider(),
       pricing: provider
-        ? pricingFor(defaultModelFor(provider))
+        ? pricingForProvider(provider, defaultModelFor(provider))
         : { estimate: () => 0, cost: () => 0 },
       tools,
+      toolsFor: toolsForRun,
+      sandbox: sandboxPort,
+      context,
       billingSourceId,
       specialists,
       ...(worktree ? { worktreeFor: async () => worktree } : {}),
@@ -341,7 +588,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     repoFor: async (task) => {
       const project = await store.project.get(task.project_id);
       const full = project?.repos[0];
-      if (!full || !full.includes("/")) return null;
+      if (!full?.includes("/")) return null;
       const [owner, name] = full.split("/") as [string, string];
       const info = await gitHost.getRepo({ owner, name });
       return { clone: info.cloneUrl, repo: { owner, name }, base: info.defaultBranch };
@@ -355,40 +602,210 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     clock,
     tokens,
     kill,
-    planner: new StaticPlanner(),
+    planner: new StaticPlanner(500_000, estimates),
     executor,
+    context,
+    // Actual versus estimate at task.finished feeds the next plan (spec I).
+    onTaskFinished: ({ task, item, result, durationMs }) => {
+      const planned = estimates.estimate({
+        specialist: item.specialist,
+        risk_tier: task.risk_tier,
+        est_cost_usd_micro: task.est_cost_usd_micro,
+        budget_usd_micro: task.budget_usd_micro,
+      });
+      estimates.observe({
+        specialist: item.specialist,
+        kind: kindOfTask({ risk_tier: task.risk_tier }),
+        estimateUsdMicro: item.estimateUsdMicro > 0 ? item.estimateUsdMicro : planned.usdMicro,
+        actualUsdMicro: result.costUsdMicro,
+        estimateWallMs: planned.wallMs,
+        actualWallMs: durationMs,
+        at: clock.nowIso(),
+        taskId: task.id,
+      });
+    },
+  });
+
+  // GitHub Projects mirror: the host comes from the vault by the secret reference in the
+  // project's settings (default secret:github_token) unless a host was injected. The approval
+  // port tells the daemon which request a project waits on and wakes on an inbox answer.
+  const mirrorApprovals = new DaemonMirrorApprovals(store, clock, { pollMs: 2_000 });
+  const mirror = new ProjectsMirror({
+    store,
+    clock,
+    vault,
+    githubApiBase: config?.githubApiBase,
+    fetchImpl: opts.fetchImpl,
+    human: mirrorApprovals,
+    humanId: human.id,
+    ...(opts.gitHost ? { hostFor: () => gitHost } : {}),
+  });
+  const mirrorRuns = new Map<string, Promise<MirrorRunResult>>();
+  const mirrorSync = async (
+    projectId: string,
+    o: { full?: boolean } = {},
+  ): Promise<MirrorSyncOutcome> => {
+    let running = mirrorRuns.get(projectId);
+    if (!running) {
+      running = mirror.sync(projectId, {
+        full: o.full === true,
+        trigger: "manual",
+        agentId: agent.id,
+      });
+      mirrorRuns.set(projectId, running);
+      running.then(
+        (r) => {
+          mirrorRuns.delete(projectId);
+          events.emit("project", { id: r.projectId });
+        },
+        (e: unknown) => {
+          mirrorRuns.delete(projectId);
+          logger.warn("mirror sync failed", { projectId, error: errorMessage(e) });
+        },
+      );
+    }
+    // The caller gets whichever comes first: the run, or the approval the mirror filed.
+    const pendingNow = mirrorApprovals.pendingRequest(projectId);
+    const asked = pendingNow
+      ? Promise.resolve(pendingNow)
+      : new Promise<string>((resolve) => {
+          const off = mirrorApprovals.onAsked((pid, requestId) => {
+            if (pid !== projectId) return;
+            off();
+            resolve(requestId);
+          });
+          void running?.then(off, off);
+        });
+    return Promise.race([
+      running.then((result) => ({ state: "done" as const, result })),
+      asked.then((requestId) => ({ state: "pending" as const, projectId, requestId })),
+    ]);
+  };
+
+  // Model watch (spec D): providers, pricing (built-in plus <config>/pricing.json), a price
+  // list only when one is configured, the eval sets through the loop driver, decisions as
+  // human requests. Nothing changes a ladder or a price without a recorded "adopt".
+  const modelSettings = new FileModelSettingsStore({
+    configDir: dirs.config,
+    nowIso: () => clock.nowIso(),
+  });
+  const priceListUrl = opts.priceListUrl ?? priceListUrlFromEnv(env);
+  const priceList: PriceListSource = priceListUrl
+    ? new FetchPriceListSource({ url: priceListUrl, fetch: opts.fetchImpl })
+    : new UnconfiguredPriceListSource();
+  const evalWorkRoot = join(dirs.cache, "model-watch");
+  const evalRunner =
+    opts.evalRunner ??
+    new LoopEvalRunner({
+      registry,
+      driver,
+      providers,
+      tokens,
+      clock,
+      humanId: human.id,
+      agentId: agent.id,
+      billingSourceId,
+      workRoot: evalWorkRoot,
+      tools: () => fileTools(),
+      // Evals run commands where task runs do: inside a lease over the work directory.
+      sandbox: sandboxPort,
+    });
+  const modelWatch = new ModelWatch({
+    clock,
+    store,
+    providers,
+    priceList,
+    evals: evalRunner,
+    approvals: new StateModelWatchApprovals(store, { agentId: agent.id }),
+    settings: modelSettings,
+    humanId: human.id,
+    agentId: agent.id,
+    pricing: BUILTIN_PRICING,
+    ...(provider ? { evalProvider: provider.name } : {}),
+  });
+
+  // Updates (spec M) over this process's store; a bad update.json is reported, not fatal.
+  const restarter =
+    opts.restarter ??
+    new DaemonRestarter({ dirs, clock, events, exit: opts.exit ?? processExit() });
+  let updateConfig: UpdateConfig;
+  try {
+    updateConfig = opts.updateConfig ?? readUpdateConfig(dirs, env);
+  } catch (e) {
+    logger.warn("update.json ignored", { error: errorMessage(e) });
+    updateConfig = UpdateConfig.parse({});
+  }
+  const updates = await composeUpdateManager({
+    dirs,
+    env,
+    clock,
+    store,
+    humanId: human.id,
+    runningVersion: appVersion,
+    restarter,
+    fetchImpl: opts.fetchImpl,
+    config: updateConfig,
   });
 
   const sessionGrant = (projectId?: string) => ({
-    allowedTools: tools.names(),
+    allowedTools: [...tools.names(), ...extensions.bridgedTools().map((t) => t.name)],
     allowedPaths: [dirs.worktrees],
     allowedDomains: [hostOf(config?.githubApiBase ?? "https://api.github.com"), "github.com"],
     grantedSecrets: ghToken ? [SECRET_NAMES.github] : [],
     maxDepth: 2,
     ...(projectId ? {} : {}),
   });
+  const startSession = async (req: StartRequest) => {
+    if (isModelWatchRequest(req)) return modelWatch.run();
+    if (!provider)
+      throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
+    const project = req.projectId ? await store.project.mustGet(req.projectId) : null;
+    const cap =
+      (project?.settings as { session_cap_usd_micro?: number } | null)?.session_cap_usd_micro ??
+      DEFAULT_SESSION_CAP_USD_MICRO;
+    const budgetUsdMicro = (req as { budgetUsdMicro?: number }).budgetUsdMicro ?? cap;
+    return runner.start({
+      agentId: req.agentId,
+      projectId: req.projectId,
+      trigger: req.trigger,
+      budgetCapUsdMicro: budgetUsdMicro,
+      appVersion,
+      grant: sessionGrant(req.projectId),
+      onEvent: (type, payload) =>
+        events.emit("session", { type, payload, agentId: req.agentId, projectId: req.projectId }),
+    });
+  };
+  // Mirror requests run the mirror, the model watch its weekly check, everything else a session.
   const scheduler = new Scheduler({
     clock,
-    start: async (req) => {
-      if (!provider)
-        throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
-      const project = req.projectId ? await store.project.mustGet(req.projectId) : null;
-      const cap =
-        (project?.settings as { session_cap_usd_micro?: number } | null)?.session_cap_usd_micro ??
-        DEFAULT_SESSION_CAP_USD_MICRO;
-      const budgetUsdMicro = (req as { budgetUsdMicro?: number }).budgetUsdMicro ?? cap;
-      return runner.start({
-        agentId: req.agentId,
-        projectId: req.projectId,
-        trigger: req.trigger,
-        budgetCapUsdMicro: budgetUsdMicro,
-        appVersion,
-        grant: sessionGrant(req.projectId),
-        onEvent: (type, payload) =>
-          events.emit("session", { type, payload, agentId: req.agentId, projectId: req.projectId }),
-      });
-    },
+    start: mirrorStartHandler(mirror, startSession, { agentId: agent.id }),
   });
+  scheduleModelWatch(scheduler, { timezone: human.timezone });
+  const mirrorSchedules = new Set<string>();
+  const refreshMirrorSchedules = async (): Promise<string[]> => {
+    const projects = await store.project.list({}, { limit: 1000 });
+    const wanted = new Set(projects.filter((p) => mirrorSettingsOf(p)).map((p) => p.id));
+    for (const id of [...mirrorSchedules]) {
+      if (wanted.has(id)) continue;
+      scheduler.remove(`mirror:${id}`);
+      mirrorSchedules.delete(id);
+    }
+    for (const id of wanted) {
+      if (mirrorSchedules.has(id)) continue;
+      scheduleMirror(scheduler, { projectId: id });
+      mirrorSchedules.add(id);
+    }
+    return [...mirrorSchedules];
+  };
+  const syncApprovals = async () => {
+    const out = {
+      extensions: await extensions.syncApprovals({ humanId: human.id }),
+      modelWatch: await modelWatch.syncPendingAnswers(),
+    };
+    // A mirror run waiting on its approval re-reads the request now, not at the next poll.
+    mirrorApprovals.wake();
+    return out;
+  };
   const conversation = provider
     ? new ConversationAgent({
         store,
@@ -404,9 +821,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         modelId: chatModelFor(provider),
       })
     : null;
+  // Background services: the daemon starts them; a CLI one-shot (startServices: false) only
+  // uses the composed objects and never connects a connector or ticks the scheduler.
+  const services = opts.startServices !== false;
   const killWatcher = new KillFileWatcher(kill, clock, dirs.runtime);
-  killWatcher.start();
-  scheduler.start();
+  if (services) killWatcher.start();
+  mkdirSync(evalWorkRoot, { recursive: true });
+  if (services) await extensions.start();
+  await syncApprovals();
+  await refreshMirrorSchedules();
+  if (services) scheduler.start();
   logger.info("runtime composed", {
     stateUrl: stateUrl.replace(/\/\/[^@]*@/, "//[REDACTED]@"),
     vault: vault.backend,
@@ -414,6 +838,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     registry: registryDir,
     human: human.name,
     agent: agent.name,
+    sandbox: sandboxDetection.engine,
+    bridgedTools: extensions.bridgedTools().length,
+    mirrors: mirrorSchedules.size,
+    services,
   });
 
   return {
@@ -439,15 +867,181 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     agent: { id: agent.id, name: agent.name },
     billingSourceId,
     chfPerUsd,
+    context,
+    costLedger,
     events,
     appVersion,
     startedAt: clock.now(),
+    extensions,
+    gate,
+    updates: updates.manager,
+    updateConfig,
+    restarter,
+    modelWatch,
+    estimates,
+    mirror,
+    sandbox: { port: sandboxPort, detection: sandboxDetection },
+    toolsForRun,
+    syncApprovals,
+    refreshMirrorSchedules,
+    mirrorSync,
     async close() {
       scheduler.stop();
       killWatcher.stop();
+      context.close();
+      managedHeadroom?.stop();
+      await extensions.close();
+      await updates.close();
       await store.close();
     },
   };
+}
+
+/**
+ * The daemon's mirror approval port. Like `HumanRequestMirrorPort` it files one human request
+ * before a board is created and waits for the answer through the clock, but it also tells the
+ * daemon which request a project waits on (so `POST /projects/:id/mirror/sync` answers 202
+ * instead of blocking until the human decides), wakes when a request is answered in the inbox
+ * instead of waiting for the next poll, and reuses an open request for the same project (a
+ * second sync, or a daemon restart, never files a duplicate). A timeout withdraws the request
+ * and counts as deny; nothing is created meanwhile.
+ */
+export class DaemonMirrorApprovals implements MirrorHumanPort {
+  private readonly pending = new Map<string, string>();
+  private readonly wakers = new Set<() => void>();
+  private readonly askListeners = new Set<(projectId: string, requestId: string) => void>();
+
+  constructor(
+    private readonly store: Pick<StateStore, "humanRequest">,
+    private readonly clock: Clock,
+    private readonly opts: { pollMs?: number; timeoutMs?: number } = {},
+  ) {}
+
+  /** The open approval request a project's mirror run waits on, if any. */
+  pendingRequest(projectId: string): string | undefined {
+    return this.pending.get(projectId);
+  }
+
+  /** Called with the request id when `ask` has filed (or found) the request; returns the off switch. */
+  onAsked(listener: (projectId: string, requestId: string) => void): () => void {
+    this.askListeners.add(listener);
+    return () => {
+      this.askListeners.delete(listener);
+    };
+  }
+
+  /** Re-read every awaited request now (an answer arrived in the inbox). */
+  wake(): void {
+    for (const w of [...this.wakers]) w();
+  }
+
+  async ask(req: MirrorApprovalRequest): Promise<MirrorApprovalAnswer> {
+    const open = await this.store.humanRequest.open(
+      { projectId: req.projectId, ...(req.humanId ? { humanId: req.humanId } : {}) },
+      { limit: 50 },
+    );
+    const row =
+      open.find((r) => r.kind === "approval" && r.options[0] === MIRROR_APPROVE_OPTION) ??
+      (await this.store.humanRequest.insert({
+        human_id: req.humanId,
+        project_id: req.projectId,
+        session_id: null,
+        kind: "approval",
+        why: req.why,
+        steps: [
+          `Forerunner will create the GitHub project "${req.title}" under ${req.owner}`,
+          "Tasks are mirrored one way; edits on GitHub never change Forerunner",
+        ],
+        options: req.options,
+        blocking: false,
+        risk: "low",
+      }));
+    this.pending.set(req.projectId, row.id);
+    for (const l of [...this.askListeners]) l(req.projectId, row.id);
+    try {
+      const pollMs = Math.max(100, this.opts.pollMs ?? 5_000);
+      const deadline = this.clock.now() + (this.opts.timeoutMs ?? 24 * 60 * 60_000);
+      while (this.clock.now() < deadline) {
+        await this.sleepOrWake(pollMs);
+        const cur = await this.store.humanRequest.mustGet(row.id);
+        if (cur.status === "answered") return mirrorDecision(cur.answer, req.options);
+        if (cur.status !== "open") return "deny";
+      }
+      try {
+        const cur = await this.store.humanRequest.mustGet(row.id);
+        if (cur.status === "open") await this.store.humanRequest.withdraw(cur.id, cur.version);
+      } catch {
+        // the answer is deny either way
+      }
+      return "deny";
+    } finally {
+      this.pending.delete(req.projectId);
+    }
+  }
+
+  private sleepOrWake(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const ac = new AbortController();
+      const wake = () => {
+        this.wakers.delete(wake);
+        ac.abort();
+        resolve();
+      };
+      this.wakers.add(wake);
+      this.clock.sleep(ms, ac.signal).then(
+        () => {
+          this.wakers.delete(wake);
+          resolve();
+        },
+        () => undefined,
+      );
+    });
+  }
+}
+
+function mirrorDecision(answer: JsonValue | null, options: string[]): MirrorApprovalAnswer {
+  const chosen =
+    typeof answer === "string"
+      ? answer
+      : answer && typeof answer === "object" && !Array.isArray(answer)
+        ? String(
+            (answer as Record<string, JsonValue>).choice ??
+              (answer as Record<string, JsonValue>).option ??
+              "",
+          )
+        : "";
+  if (chosen === options[0] || /^(approve|approved|yes|create)/i.test(chosen.trim()))
+    return "approve";
+  return "deny";
+}
+
+/**
+ * The daemon's hooks: the extension gate in front of every tool call, and the cost of a
+ * bridged tool call booked on its extension afterwards (kept here, not in hooks.ts). Bridged
+ * MCP calls carry no price, so `recordCost` books nothing for them (it ignores 0): a
+ * connector's cost column stays 0 until a capability module charges through the ledger.
+ */
+class DaemonHooks extends GatedEnforcementHooks {
+  constructor(
+    deps: HookDeps,
+    gate: ExtensionGate,
+    private readonly extensions: ExtensionRegistry,
+  ) {
+    super(deps, gate);
+  }
+
+  override async afterToolCall(
+    ctx: RunContext,
+    tool: ToolSpec,
+    input: unknown,
+    result: Parameters<EnforcementHooks["afterToolCall"]>[3],
+  ): ReturnType<EnforcementHooks["afterToolCall"]> {
+    const out = await super.afterToolCall(ctx, tool, input, result);
+    if (isBridgedTool(tool)) {
+      await this.extensions.recordCost(tool.extensionId, result.costUsdMicro ?? 0);
+    }
+    return out;
+  }
 }
 
 function hostOf(url: string): string {

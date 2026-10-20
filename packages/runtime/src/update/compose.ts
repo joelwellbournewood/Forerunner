@@ -1,5 +1,5 @@
 import { type AppDirs, appDirs, type Clock, join, systemClock } from "@forerunner/platform";
-import { MIGRATIONS, openStore } from "@forerunner/state";
+import { MIGRATIONS, openStore, type StateStore } from "@forerunner/state";
 import { readConfig } from "../setup/wizard.ts";
 import { readUpdateConfig, type UpdateConfig } from "./config.ts";
 import { feedFromConfig } from "./feed.ts";
@@ -10,7 +10,9 @@ import { ReleaseVerifier } from "./verify.ts";
 
 /**
  * Build an UpdateManager from this install's configuration (used by the CLI and by the daemon
- * composition). Everything that needs a shell (restart) or a UI is injectable.
+ * composition). Everything that needs a shell (restart) or a UI is injectable. The daemon
+ * passes its own open store (`store`), so one process holds one connection; the CLI leaves it
+ * out and a store is opened and closed here.
  */
 export interface ComposeUpdateOptions {
   dirs?: AppDirs;
@@ -23,6 +25,8 @@ export interface ComposeUpdateOptions {
   config?: UpdateConfig;
   stateUrl?: string;
   humanId?: string | null;
+  /** An already open store (the daemon's). When given it is neither opened nor closed here. */
+  store?: StateStore;
 }
 
 export interface ComposedUpdate {
@@ -45,7 +49,8 @@ export async function composeUpdateManager(
     env.FORERUNNER_STATE_URL ??
     setup?.stateUrl ??
     `sqlite:${join(dirs.data, "state.sqlite")}`;
-  const store = await openStore({ url: stateUrl, clock });
+  const owned = opts.store === undefined;
+  const store = opts.store ?? (await openStore({ url: stateUrl, clock }));
   const manager = new UpdateManager({
     dirs,
     clock,
@@ -61,5 +66,12 @@ export async function composeUpdateManager(
     fetchImpl: opts.fetchImpl,
     humanId: opts.humanId ?? null,
   });
-  return { manager, config, dirs, close: () => store.close() };
+  return {
+    manager,
+    config,
+    dirs,
+    close: async () => {
+      if (owned) await store.close();
+    },
+  };
 }

@@ -1,6 +1,14 @@
 import { Link } from "react-router";
 import type { ProjectCard as ProjectCardView } from "../api/client.ts";
-import { Badge, Button, EmptyState, healthTone, Loading, SpendBar } from "../components/ui.tsx";
+import {
+  Badge,
+  Button,
+  buttonClassName,
+  EmptyState,
+  healthTone,
+  Loading,
+  SpendBar,
+} from "../components/ui.tsx";
 import { relativeTime } from "../lib/time.ts";
 import { useShell } from "../shell/ShellContext.ts";
 import { useUiState, useUiStore } from "../store/context.tsx";
@@ -119,8 +127,13 @@ export function ProjectCard({
         />
       </div>
       <div className="mt-3 flex gap-2">
-        <Link to={href} onClick={onActivate}>
-          <Button variant="secondary">Open</Button>
+        <Link
+          to={href}
+          onClick={onActivate}
+          className={buttonClassName("secondary")}
+          data-testid="open-project"
+        >
+          Open
         </Link>
         {!isActive ? (
           <Button variant="ghost" onClick={onActivate}>

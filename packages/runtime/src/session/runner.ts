@@ -1,9 +1,11 @@
 import { type Clock, errorMessage, ForerunnerError, log, newId } from "@forerunner/platform";
 import type { SessionRow, StateStore, TaskRow } from "@forerunner/state";
+import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
+import { type EstimatePort, planEstimateUsdMicro } from "../estimates/model.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, runStartupChecklist } from "./checklist.ts";
 import {
@@ -140,6 +142,16 @@ export interface SessionResult {
   stopReason: string;
 }
 
+/** What the runner reports when a task's execution ends (estimate-versus-actual learning, spec I). */
+export interface TaskFinishedInfo {
+  sessionId: string;
+  task: TaskRow;
+  item: PlanItem;
+  result: TaskExecutionResult;
+  /** Wall time of the executor call. */
+  durationMs: number;
+}
+
 export interface SessionRunnerDeps {
   store: StateStore;
   clock: Clock;
@@ -149,6 +161,13 @@ export interface SessionRunnerDeps {
   executor: TaskExecutor;
   /** Peer agents to hand off to; default: other principal agents on the project's humans. */
   peersOf?: (agentId: string, projectId: string | undefined) => Promise<string[]>;
+  /** Called after every `task.finished` event; failures are logged, never fatal. */
+  onTaskFinished?: (info: TaskFinishedInfo) => void | Promise<void>;
+  /**
+   * Context layer (ADR 0003): probes Headroom at session start when the project asks for it and
+   * turns the proxy's counter delta into `session.headroom_saved_tokens` at the end.
+   */
+  context?: ContextManager;
 }
 
 export class SessionRunner {
@@ -208,6 +227,17 @@ export class SessionRunner {
       stepCap,
       autonomy,
     });
+    // Context layer: resolve the project's compression policy now; when it asked for Headroom
+    // and the proxy is not usable, say so once per session (never silently native).
+    const sessionContext = await this.deps.context?.forSession(session.id, project?.id);
+    if (sessionContext?.selection.notice) {
+      await emit("context.headroom_unavailable", {
+        warning: sessionContext.selection.notice,
+        status: sessionContext.selection.headroom?.status ?? "disabled",
+        policy: sessionContext.selection.policy,
+        mode: sessionContext.selection.mode,
+      });
+    }
 
     const budget = new SessionBudget({
       sessionId: session.id,
@@ -476,6 +506,7 @@ export class SessionRunner {
             Math.max(1000, Math.floor(claimTtlMs / 6)),
           );
           let result: TaskExecutionResult;
+          const execStarted = clock.monotonic();
           try {
             result = await this.deps.executor.execute({
               task,
@@ -524,6 +555,20 @@ export class SessionRunner {
             },
             result.costUsdMicro,
           );
+          try {
+            await this.deps.onTaskFinished?.({
+              sessionId: session.id,
+              task,
+              item,
+              result,
+              durationMs: Math.max(0, Math.round(clock.monotonic() - execStarted)),
+            });
+          } catch (e) {
+            this.logger.warn("task finished hook failed", {
+              taskId: task.id,
+              error: errorMessage(e),
+            });
+          }
           const closeTier0 =
             result.outcome === "done" && task.risk_tier === 0 && result.checksPassed;
           if (closeTier0) {
@@ -677,12 +722,19 @@ export class SessionRunner {
         ? "stopped"
         : status;
     const current = await store.session.mustGet(session.id);
+    let contextEnd: ContextSessionEnd | null = null;
+    try {
+      contextEnd = (await this.deps.context?.endSession(session.id)) ?? null;
+    } catch (e) {
+      this.logger.warn("context end failed", { sessionId: session.id, error: errorMessage(e) });
+    }
     const patched = await store.session.patch(session.id, {
       summary,
       handoff: handoff as never,
       spent_usd_micro: spent,
       steps: budget.snapshot().steps,
       ended_at: clock.nowIso(),
+      headroom_saved_tokens: contextEnd?.headroomSavedTokens ?? 0,
     });
     try {
       await store.session.setStatus(
@@ -702,6 +754,9 @@ export class SessionRunner {
       inReview: inReview.length,
       failed: failed.length,
       skipped: skipped.length,
+      compressionSavedTokens: contextEnd?.compression.saved ?? 0,
+      headroomSavedTokens: contextEnd?.headroomSavedTokens ?? 0,
+      headroomUsed: contextEnd?.selection.headroomUsed ?? false,
     });
     return {
       sessionId: session.id,
@@ -824,9 +879,16 @@ export function defaultPeers(store: StateStore) {
   };
 }
 
-/** Plans the ready tasks in priority order with the task's own estimate; no model call. */
+/**
+ * Plans the ready tasks in priority order; no model call. With an `EstimatePort` the learned
+ * estimate (actual-versus-estimate per specialist and task kind, spec I) prices each item,
+ * otherwise the task's own estimate, its budget or the default.
+ */
 export class StaticPlanner implements Planner {
-  constructor(private readonly defaultEstimateUsdMicro = 500_000) {}
+  constructor(
+    private readonly defaultEstimateUsdMicro = 500_000,
+    private readonly estimates?: EstimatePort,
+  ) {}
   async plan(ctx: PlannerContext): Promise<SessionPlan> {
     const items = ctx.readyTasks
       .filter((t) => !t.claimed_by || (t.claim_expires && t.claim_expires < ctx.brief.generatedAt))
@@ -835,8 +897,9 @@ export class StaticPlanner implements Planner {
         taskId: t.id,
         title: t.title,
         specialist: t.specialist ?? "coder",
-        estimateUsdMicro:
-          t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
+        estimateUsdMicro: this.estimates
+          ? planEstimateUsdMicro(this.estimates, t)
+          : t.est_cost_usd_micro || t.budget_usd_micro || this.defaultEstimateUsdMicro,
       }));
     return {
       items,
