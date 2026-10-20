@@ -173,7 +173,7 @@ export class GitHubHost implements GitHost {
       undefined,
       { allow404: true },
     );
-    if (!r || r.type !== "file") return null;
+    if (r?.type !== "file") return null;
     const content = Buffer.from(String(r.content ?? ""), "base64").toString("utf8");
     return { path, sha: String(r.sha), content, encoding: "utf8" };
   }

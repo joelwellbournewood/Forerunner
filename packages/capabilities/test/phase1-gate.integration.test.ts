@@ -24,7 +24,7 @@ import {
   type ToolSpec,
 } from "@forerunner/runtime";
 import { openStore } from "@forerunner/state";
-import { FakeProvider, textReply, toolReply } from "@forerunner/testenv";
+import { FakeProvider, textReply } from "@forerunner/testenv";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { GitOps } from "../src/githost/git.ts";
