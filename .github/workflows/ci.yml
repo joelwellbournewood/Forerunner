@@ -46,7 +46,7 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
       - name: Lint
-        run: pnpm lint
+        run: pnpm lint && pnpm lint:paths
       - name: Typecheck
         run: pnpm typecheck
       - name: Unit tests (fake provider, no network)

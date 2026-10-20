@@ -11,6 +11,9 @@ importers:
       '@biomejs/biome':
         specifier: ^2.5.15
         version: 2.5.15
+      '@forerunner/platform':
+        specifier: workspace:*
+        version: link:packages/platform
       '@types/node':
         specifier: ^22.19.0
         version: 22.20.5
