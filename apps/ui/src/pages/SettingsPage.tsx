@@ -204,6 +204,8 @@ function SettingChangeDialog({
       client.executeCommands({
         commands: [{ name: command.name, params }],
         wordsUsed: `Settings: ${setting.key} to ${value}`,
+        // The change log names the channel: this screen is `ui`, chat and voice are theirs.
+        source: "ui",
         ...(setting.scope === "project" && setting.scopeId ? { projectId: setting.scopeId } : {}),
       }),
     );

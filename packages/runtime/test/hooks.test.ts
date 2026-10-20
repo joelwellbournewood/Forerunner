@@ -1,5 +1,7 @@
 import { ForerunnerError, join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import type { ToolSpec } from "../src/agent/tools.ts";
 import type { RunContext } from "../src/enforcement/hooks.ts";
 import { AutoApprove, type CapsPort, type SecretsPort } from "../src/enforcement/ports.ts";
 import {
@@ -226,6 +228,49 @@ describe("enforcement hooks: tool calls", () => {
     });
     expect(p.allowed).toBe(false);
     expect(pending.audit.entries.at(-1)?.deniedReason).toContain("pending");
+  });
+
+  it("a tool gated by the command registry skips the autonomy hold; the allowlist and the always-human rule for other tools stay (RT-P5-3)", async () => {
+    // A command tool of the registry: high risk, always-human class, confirmed by the
+    // registry's change card (ADR 0030), so the hooks must not file a second request.
+    const emailModeTool: ToolSpec<{ mode: string }> = {
+      name: "email_mode_set",
+      description: "set the email mode through the command registry",
+      schema: z.object({ mode: z.string() }),
+      actionClass: "permission_change",
+      risk: "high",
+      gate: "registry",
+      async execute(input) {
+        return { content: `Needs confirmation: ${input.mode}` };
+      },
+    };
+    const approvals = new AutoApprove("pending");
+    const pending = harness({ approvals });
+    const c = ctx(
+      pending,
+      issue(pending, { allowedTools: ["email_mode_set", "delete_repo"], autonomy: 4 }),
+    );
+    const d = await pending.hooks.beforeToolCall(c, emailModeTool, { mode: "draft_only" });
+    expect(d.allowed).toBe(true);
+    expect(approvals.requests).toEqual([]);
+    expect(pending.audit.entries).toEqual([]);
+    // The same class on a tool the registry does not gate still waits for the human.
+    const held = await pending.hooks.beforeToolCall(c, deleteRepoTool, { repo: "o/r" });
+    expect(held.allowed).toBe(false);
+    expect(approvals.requests.map((r) => r.tool)).toEqual(["delete_repo"]);
+    expect(pending.audit.entries.at(-1)?.deniedReason).toBe("approval_required: pending");
+    // The gate is not a bypass: the allowlist, the schema and the kill state still apply.
+    const c2 = ctx(pending, issue(pending, { allowedTools: ["delete_repo"], autonomy: 4 }));
+    await expect(
+      pending.hooks.beforeToolCall(c2, emailModeTool, { mode: "off" }),
+    ).rejects.toMatchObject({ code: "tool_not_allowed" });
+    await expect(pending.hooks.beforeToolCall(c, emailModeTool, { mode: 1 })).rejects.toMatchObject(
+      { code: "validation" },
+    );
+    await pending.kill.stop({ agentId: "alice" }, "test");
+    await expect(
+      pending.hooks.beforeToolCall(c, emailModeTool, { mode: "off" }),
+    ).rejects.toMatchObject({ code: "killed" });
   });
 
   it("wraps untrusted tool output as data and flags injection", async () => {

@@ -143,7 +143,12 @@ import { detectSandboxEngine, type EngineDetection } from "../sandbox/detect.ts"
 import type { RunFn, WhichFn } from "../sandbox/types.ts";
 import type { TaskBillingPort } from "../session/billing.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
-import { type BlockedSyncResult, syncBlockedByFindings } from "../session/findings.ts";
+import {
+  type BlockedSyncResult,
+  type SignoffSyncResult,
+  syncBlockedByFindings,
+  syncSignoffAnswers,
+} from "../session/findings.ts";
 import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
 import { Scheduler, type StartRequest } from "../session/triggers.ts";
 import {
@@ -217,6 +222,9 @@ import { fileTools } from "./tools.ts";
  * wires enforcement, sessions, the conversation agent, the scheduler and the kill switch. The
  * daemon server, the CLI and the tests all go through this so there is exactly one wiring.
  */
+/** The approvals poll (`ComposeOptions.approvalsPollMs`): answers from other devices within 5 s. */
+export const DEFAULT_APPROVALS_POLL_MS = 5_000;
+
 export interface ComposeOptions {
   env?: NodeJS.ProcessEnv;
   dirs?: AppDirs;
@@ -319,6 +327,14 @@ export interface ComposeOptions {
     heartbeatMs?: number;
     deviceName?: string;
   };
+  /**
+   * How often answered approvals are applied from the shared state
+   * (`FORERUNNER_APPROVALS_POLL_MS`, default `DEFAULT_APPROVALS_POLL_MS`): an answer given on
+   * the phone or in the web approvals reaches no route of this daemon, so `syncApprovals()`
+   * runs on this poll wherever answers can arrive from another device (the same condition
+   * as the remote commands: shared state, services running).
+   */
+  approvalsPollMs?: number;
   /**
    * Per-task billing and the Agent SDK path (ADR 0044). `personalRunner`: whether this
    * install is the human's own runner (the PC: true; `FORERUNNER_RUNNER_PERSONAL=0` says no);
@@ -582,13 +598,17 @@ export interface RuntimeApp {
   toolsForRun(): ToolRegistry;
   /**
    * Apply answered human requests: extension grants, model watch decisions, memory
-   * consolidations, and the rework/accept/cancel answers for tasks blocked by open findings.
+   * consolidations, the rework/accept/cancel answers for tasks blocked by open findings and
+   * the accept/revise/cancel answers to critic sign-offs. Runs after every answer given
+   * through this daemon's route and, where answers can arrive from another device, on the
+   * approvals poll (`approvalsPollMs`).
    */
   syncApprovals(): Promise<{
     extensions: { approved: string[]; denied: string[] };
     modelWatch: number;
     memory: { applied: number; skipped: number };
     findings: BlockedSyncResult;
+    signoffs: SignoffSyncResult;
   }>;
   /** Add or drop mirror schedules after a project's settings changed. */
   refreshMirrorSchedules(): Promise<string[]>;
@@ -1844,14 +1864,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // Weekly memory consolidation (spec G.4): report only; the human applies it from the inbox.
   scheduleMemoryConsolidation(scheduler, { timezone: human.timezone });
   // The command registry (spec Q): every change by chat, voice, the UI or the phone runs here.
+  // session.start reports the scheduler's outcome; the undo of a start that only queued drops
+  // the waiting request (ADR 0036), of a start still running stops that session only, and of
+  // a start whose session ended is a no-op the loop refuses with the reason (RT-P5-2).
+  const { startUndoState, ...sessionPorts } = sessionCommandPorts({ scheduler, kill, store });
   const commands = new CommandLoop({
     store,
     clock,
+    startUndoState,
     ports: {
       chfPerUsd: async () => chfPerUsd(),
-      // session.start reports the scheduler's outcome; the undo of a start that only queued
-      // drops the waiting request instead of killing the running session (ADR 0036).
-      ...sessionCommandPorts({ scheduler, kill }),
+      ...sessionPorts,
       // session.pause is the graceful stop: the row reads `paused` at once and a session
       // running in this process ends at the next task boundary (the runner reads the pause
       // message between tasks); its undo withdraws the message (wiring/session-ports.ts).
@@ -1881,6 +1904,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       modelWatch: await modelWatch.syncPendingAnswers(),
       memory: await memory.syncApprovals(),
       findings: await syncBlockedByFindings({ store, clock, humanId: human.id, agentId: agent.id }),
+      signoffs: await syncSignoffAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
     };
     // A mirror run waiting on its approval re-reads the request now, not at the next poll.
     mirrorApprovals.wake();
@@ -1998,6 +2022,32 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // The PC's heartbeat and the phone's commands (only built when the services run).
   presence?.start();
   remoteWatcher?.start();
+  // Answers given on another device (the phone, the web approvals) land in the shared state
+  // and reach no route of this daemon: the approvals poll applies them within
+  // `approvalsPollMs`, the way the remote watcher picks up the phone's commands. Only where
+  // answers can come from elsewhere; the daemon's own answer route applies at once.
+  const approvalsPollMs = positiveMs(
+    opts.approvalsPollMs ?? env.FORERUNNER_APPROVALS_POLL_MS,
+    DEFAULT_APPROVALS_POLL_MS,
+  );
+  let approvalsTimer: (() => void) | null = null;
+  const stopApprovalsPoll = () => {
+    approvalsTimer?.();
+    approvalsTimer = null;
+  };
+  if (services && remoteEnabled) {
+    const tick = async () => {
+      if (!schemaSync.paused) {
+        try {
+          await syncApprovals();
+        } catch (e) {
+          logger.warn("approvals poll failed", { error: errorMessage(e) });
+        }
+      }
+      if (approvalsTimer) approvalsTimer = clock.setTimeout(tick, approvalsPollMs);
+    };
+    approvalsTimer = clock.setTimeout(tick, approvalsPollMs);
+  }
   // Quiet-hours holds and the daily digest are flushed on the clock; a one-shot sends at once
   // or holds in memory and never ticks.
   const stopNotifier = services ? notifier.start() : () => undefined;
@@ -2098,6 +2148,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     mirrorSync,
     async close() {
       await voice.close();
+      stopApprovalsPoll();
       remoteWatcher?.stop();
       await browserManager.closeAll().catch((e: unknown) => {
         logger.warn("browser sessions did not close cleanly", { error: errorMessage(e) });

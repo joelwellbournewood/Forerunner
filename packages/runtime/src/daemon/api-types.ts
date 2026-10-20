@@ -626,9 +626,13 @@ export const CommandCallBody = z.object({
   params: z.unknown().optional(),
 });
 
+/** The channel a command route is called from; the change log records chat, voice or ui. */
+export const CommandSourceBody = z.enum(["text", "voice", "phone", "ui"]);
+export type CommandSourceBody = z.infer<typeof CommandSourceBody>;
+
 export const CommandParseBody = z.object({
   text: z.string().min(1),
-  source: z.enum(["text", "voice", "phone"]).optional(),
+  source: CommandSourceBody.optional(),
   projectId: z.string().optional(),
   deviceId: z.string().optional(),
 });
@@ -645,7 +649,8 @@ export const CommandExecuteBody = z.object({
   /** One command, or several as one change card and one change log row (spec Q.9). */
   commands: z.array(CommandCallBody).min(1),
   wordsUsed: z.string().optional(),
-  source: z.enum(["text", "voice", "phone"]).optional(),
+  /** `ui` from the settings screen (logged as `ui`); absent means typed chat. */
+  source: CommandSourceBody.optional(),
   projectId: z.string().optional(),
   deviceId: z.string().optional(),
   /** The settings screen showed the card and got a tap: run without a pending card. */
@@ -1028,9 +1033,9 @@ export const DAEMON_ROUTES = {
     "POST /memory/consolidation/run (report only; files the approval request the inbox answers; ConsolidationRunView)",
   commands: "GET /commands (the registry: CommandDefView[])",
   parseCommand:
-    "POST /commands/parse { text, source?, projectId?, deviceId? } (CommandParseView; nothing runs)",
+    "POST /commands/parse { text, source?: text|voice|phone|ui, projectId?, deviceId? } (CommandParseView; nothing runs)",
   executeCommands:
-    "POST /commands/execute { commands, wordsUsed?, source?, projectId?, deviceId?, confirm? } (CommandResultView: one change card, one change log row; medium risk comes back pending, high needs the device)",
+    "POST /commands/execute { commands, wordsUsed?, source?: text|voice|phone|ui, projectId?, deviceId?, confirm? } (CommandResultView: one change card, one change log row logged with the source, ui for the settings screen; medium risk comes back pending, high needs the device)",
   pendingCommands: "GET /commands/pending (PendingChangeView[])",
   confirmCommand:
     "POST /commands/:id/confirm { answer: yes|no|tap|device, deviceId?, biometric? } (CommandResultView)",

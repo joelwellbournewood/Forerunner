@@ -30,6 +30,7 @@ import {
   type RuntimeApp,
   ShellPresence,
   syncBlockedByFindings,
+  syncSignoffAnswers,
 } from "@forerunner/runtime";
 import type {
   ChangeLogView,
@@ -83,6 +84,8 @@ export interface DaemonDeps {
   /** The daemon's own `desktop` device row and watcher, when the install has them. */
   pcDevice?: DeviceRow | null;
   watcher?: RemoteCommandWatcher | null;
+  /** The daemon's approvals poll on the clock (`composeRuntime`'s `approvalsPollMs`); off when absent. */
+  approvalsPollMs?: number;
 }
 
 export interface JsonResponse<T = unknown> {
@@ -240,6 +243,28 @@ export function daemonFor(
   events.setMaxListeners(100);
   const humanId = install.human.id;
   const agentId = install.agent.id;
+  // The halves of `composeRuntime`'s `syncApprovals` the week can reach: the memory
+  // consolidation answers, the blocked-findings answers and the critic sign-off answers.
+  const syncApprovals: RuntimeApp["syncApprovals"] = async () => ({
+    extensions: { approved: [], denied: [] },
+    modelWatch: 0,
+    memory: install.memory
+      ? await install.memory.syncApprovals()
+      : { applied: 0, skipped: 0, stale: 0 },
+    findings: await syncBlockedByFindings({ store, clock, humanId, agentId }),
+    signoffs: await syncSignoffAnswers({ store, clock, humanId, agentId }),
+  });
+  // The daemon's approvals poll (compose.ts): an answer given on the phone lands in the
+  // shared store and reaches no route of this daemon, so it is applied within the poll.
+  let approvalsTimer: (() => void) | null = null;
+  if (deps.approvalsPollMs) {
+    const every = deps.approvalsPollMs;
+    const tick = async () => {
+      await syncApprovals();
+      if (approvalsTimer) approvalsTimer = clock.setTimeout(tick, every);
+    };
+    approvalsTimer = clock.setTimeout(tick, every);
+  }
   const real: Partial<RuntimeApp> = {
     dirs,
     config: null,
@@ -278,14 +303,7 @@ export function daemonFor(
       watcher: deps.watcher ?? null,
       presence: null,
     },
-    syncApprovals: async () => ({
-      extensions: { approved: [], denied: [] },
-      modelWatch: 0,
-      memory: install.memory
-        ? await install.memory.syncApprovals()
-        : { applied: 0, skipped: 0, stale: 0 },
-      findings: await syncBlockedByFindings({ store, clock, humanId, agentId }),
-    }),
+    syncApprovals,
     refreshMirrorSchedules: async () => [],
     close: async () => undefined,
   };
@@ -318,5 +336,10 @@ export function daemonFor(
   for (const name of ABSENT) view[name] = absent(`rt.${name}`);
   const rt = view as unknown as RuntimeApp;
   const { app, token, closeStreams } = createDaemonApp(rt, opts);
-  return { rt, app, token, ui: new UiClient(app, token), close: closeStreams };
+  const close = () => {
+    approvalsTimer?.();
+    approvalsTimer = null;
+    closeStreams();
+  };
+  return { rt, app, token, ui: new UiClient(app, token), close };
 }

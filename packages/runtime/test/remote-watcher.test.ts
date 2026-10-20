@@ -105,7 +105,7 @@ beforeEach(async () => {
   commands = new CommandLoop({
     store,
     clock,
-    ports: { chfPerUsd: async () => 0.8, ...sessionCommandPorts({ scheduler, kill }) },
+    ports: { chfPerUsd: async () => 0.8, ...sessionCommandPorts({ scheduler, kill, store }) },
   });
   await commands.start();
 });

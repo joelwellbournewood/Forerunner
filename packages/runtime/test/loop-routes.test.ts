@@ -678,4 +678,63 @@ describe("core loop routes", () => {
     const project = await rt.store.project.mustGet(projectId);
     expect(project.settings[SESSION_OVERRIDE_KEY]).toBeUndefined();
   });
+
+  it("the settings screen's change is logged with source ui: the route takes it and the change log row shows it (RT-P5-4)", async () => {
+    const asked = CommandResultViewSchema.parse(
+      await json(
+        await req("/commands/execute", {
+          method: "POST",
+          body: JSON.stringify({
+            commands: [{ name: "autonomy.set", params: { level: 3, project: projectId } }],
+            wordsUsed: "Settings: project.autonomy to 3",
+            source: "ui",
+            projectId,
+          }),
+        }),
+      ),
+    );
+    expect(asked.status).toBe("pending");
+    expect(asked.decision).toBe("needs_yes");
+    const tapped = CommandResultViewSchema.parse(
+      await json(
+        await req(`/commands/${asked.pendingId}/confirm`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "tap" }),
+        }),
+      ),
+    );
+    expect(tapped.status).toBe("done");
+    const row = await rt.store.changeLog.mustGet(tapped.changeLogId ?? "");
+    expect(row.source).toBe("ui");
+    expect(row.words_used).toBe("Settings: project.autonomy to 3");
+    const shown = (await jsonList(await req(`/changes?projectId=${projectId}`)))
+      .map((c) => ChangeLogView.parse(c))
+      .find((c) => c.id === row.id);
+    expect(shown?.source).toBe("ui");
+    // The parse route takes the source too (nothing runs).
+    const parsed = await req("/commands/parse", {
+      method: "POST",
+      body: JSON.stringify({ text: "switch to game", source: "ui" }),
+    });
+    expect(parsed.status).toBe(200);
+    // A source the daemon does not know is refused (validation answers 409), nothing runs.
+    const changesBefore = (await rt.store.changeLog.list()).length;
+    expect(
+      (
+        await req("/commands/execute", {
+          method: "POST",
+          body: JSON.stringify({
+            commands: [{ name: "project.switch", params: { project: "PharmaWatch" } }],
+            source: "palette",
+          }),
+        })
+      ).status,
+    ).toBe(409);
+    expect((await rt.store.changeLog.list()).length).toBe(changesBefore);
+    const undone = CommandResultViewSchema.parse(
+      await json(await req(`/changes/${row.id}/undo`, { method: "POST" })),
+    );
+    expect(undone.status).toBe("done");
+    expect((await rt.store.project.mustGet(projectId)).autonomy_level).toBe(2);
+  });
 });

@@ -7,16 +7,66 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | Phase | Name | Status | Gate evidence |
 | --- | --- | --- | --- |
 | 0 | Foundations | CI green on both OS (run 39352102564); fresh-install timing pending the install scripts | gates.md § Phase 0 |
-| 1 | Single agent that does real work | gate passed on the fake provider (10 tasks via PRs, overspend blocked, kill under 2 s); daemon API, `fr daemon` and the phase-1 UI (home, project tabs, live session, inbox, settings, chat) done and tested against a fake daemon; live subscription/API checks blocked on credentials | gates.md § Phase 1 |
-| 2 | Two agents, one project | local half of the gate passed (two agents, five sessions each); state service with device auth and realtime, receipts, decision log, GitHub Projects mirror, approvals web fallback done; offline-48-hours half pending the sync test | gates.md § Phase 2 |
-| 3 | Critic and quality loop | critic service (tiers, findings, verdicts, calibration), eval sets, retry ladder built and unit-tested; gate needs a live model (blocked on credentials); reviews tab pending | gates.md § Phase 3 |
-| 4 | Memory, docs and learning | memory package (three scopes, retrieval under budget, consolidation, promotion) built and unit-tested; four-week simulation and memory UI pending | |
-| 5 | Human experience and voice | voice pipeline, natural-language commands with change cards and undo, desktop shell (tray, notifications, restart, deep links) built; notifications, Android app, imports in progress | |
-| 6 | Capabilities | extensions registry with live revocation, sandboxed browser, agent email with the five modes and email commands, sandboxes, context savings done; injection suite, Cloudflare, desktop control, cloud runner in progress | |
-| 7 | Self-improvement and model economics | signed updates with staged install and rollback, model watch, estimate learning built and wired; Forerunner-as-a-project and the update-and-restart shell side pending | |
-| 8 | Full integration and release 1.0 | not started | |
+| 1 | Single agent that does real work | gate passed on the fake provider and live on both billing sources (API key in full; the subscription session through the Agent SDK driver, ADR 0044); kill under 2 s live (49 ms) | gates.md § Phase 1 |
+| 2 | Two agents, one project | gate passed on the fake provider (two agents, five sessions each, claims, peer feed, PR flow, human requests); state service with device auth, realtime, receipts, decision log, GitHub Projects mirror, approvals web fallback done | gates.md § Phase 2 |
+| 3 | Critic and quality loop | gate passed live (40 of 40 seeded defects caught, 40 of 40 clean submissions accepted after ADR 0042); reviews tab done | gates.md § Phase 3 |
+| 4 | Memory, docs and learning | gate harness passed on the fake provider (four simulated weeks, retrieval under budget, consolidation applied only as approved, no cross-human lesson); memory UI done | gates.md § Phase 4 |
+| 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 30 voice turns, nine settings changes with one change log, ten phone answers); the Android emulator and real-audio halves pending (no emulator boots on the hosted runner) | gates.md § Phase 5 |
+| 6 | Capabilities | injection suite, live revocation, overnight cloud-runner session, emailed task and spoofed email passed on the fake provider and the in-process mail server; live halves pending a real mailbox and host | gates.md § Phase 6 |
+| 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts) | gates.md § Phase 7 |
+| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each) and on Windows in CI; no Android run; requirements 170 done, 49 in progress, 9 todo; security suite with 42 open findings pinned; release criteria not met, no release cut; build stopped for budget on 2026-10-20 | gates.md § Phase 8 and § Release 1.0 criteria |
 
 ## Log
+
+### 2026-10-20 (requirements close-out, security review, runtime follow-ups; build stopped for budget)
+- Requirements close-out over all 22 sections: every in-progress row verified against the code
+  and its tests; 170 done, 49 in progress, 9 todo of 228 (from 160 / 57 / 11). Fourteen new
+  close-out tests pin the rows that moved. Each remaining gap is a `BLOCKERS.md` row that says
+  "missing in code", "partly built" or "docs gap" with the stand-in in use.
+- Integrated security review in three surfaces (state service and clients; runtime, vault and
+  tokens; capabilities and runners): 17 adversarial test files, 185 tests, 42 of them
+  `it.fails` markers that pin an open finding with its attack path and proposed fix in the test.
+  The fix stage was stopped for budget after the first surface's fixes started; the markers
+  stay until the fixes land.
+- Runtime follow-ups from the phase 5 week: an accepted tier 3 sign-off closes the task
+  (`syncSignoffAnswers`); the undo of `session.start` stops the started session; registry
+  commands reach the model path through the daemon's tools; a UI change names its source;
+  the peer rollback wording names the shared state; the answer route writes the decision log.
+  Two of three items reviewed and accepted (85, 88); the third's fix was cut off by the stop.
+- Android: four dispatches of `android.yml` built the APK; the hosted emulator never boots
+  (gates.md phase 5 row, BLOCKERS.md). The row stays pending for a machine with an emulator.
+- CI green on both OS at runs 84 and 85. Release criteria table filled in `gates.md`: not
+  met, no release cut. Progress report 5 posted to the contact issue.
+
+### Where to pick up (handover)
+In this order, each item a wave of its own with the snapshot procedure in `AGENTS.md`:
+1. Land the security fixes: for every `it.fails` in `**/test/security-*.test.ts*`, apply the
+   fix the test names, drop `.fails`, keep the test (the state service's `inbox.ts` carries a
+   partial fix from the stopped stage: finish or revert it against its test file).
+2. Finish the runtime follow-up item "sign-off and undo" (`packages/runtime/test/signoff-answer.test.ts`
+   and `loop-commands.test.ts` pin it; the critic's open findings are in its review).
+3. Close the requirement rows marked "missing in code" in `BLOCKERS.md` (A.2, B.6, D.20, O.1,
+   S.9, S.13, S.15/S.29, J.6/J.7) and then the "partly built" rows; each needs code, a test
+   and its maintainer doc.
+4. Run the nine scenarios on a machine with an Android emulator (`node apps/mobile/e2e/run.mjs`),
+   then re-run every gate on the final build and fill the phase 8 "re-run" row.
+5. Cut the release: tag `v1.0.0` (`release.yml` builds Windows, Linux and Android artefacts,
+   writes the changelog section and signs the update manifest with `UPDATE_SIGNING_KEY`).
+Credentials: the API key and the subscription token used for the live runs must be revoked
+and re-issued; the ledger `tests/live/spend.json` carries every live call (USD 5.93).
+
+### 2026-10-20 (subscription path live, gate harnesses 5 and 7, daemon capabilities wired)
+- Snapshots 692a8fe/6c9919e (per-task billing source and the Agent SDK session path, ADR 0044;
+  the live subscription half: three tasks through a real Claude Code subprocess on the
+  subscription, plan share recorded; SDK kill ends at the abort), 0057e53 (Android workflow on
+  an API 30 test image after the hosted emulator never booted on API 34; desktop workflow green
+  on both OS). CI green at run 82. Phase 5 and 7 gate harnesses (ADR 0045, 0046) and the
+  runtime-gaps wave (browser and email tools in the daemon with the injection notification, ADR
+  0047; a voice bridge and routes, ADR 0048; phone command replay dedupe) in the next snapshot.
+- Running: requirements close-out (five section groups), the four runtime defects the phase 5
+  harness pinned. Next: the security review wave, Windows and Android scenario rounds, release
+  artefacts and criteria.
+- The user funds the remaining build with about 320 USD from 19:50 UTC.
 
 ### 2026-10-20 (phase 3 gate passes live, nine scenarios, remote commands and sync gate landed)
 - Snapshots 984ed45 (live harness, ADR 0040), 612ec33 (remote commands owner filter and PC

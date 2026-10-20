@@ -3,6 +3,7 @@ import { ContextPipeline, type RunEvent, type SignedToken } from "@forerunner/ru
 import { textReply, toolReply } from "@forerunner/testenv";
 import { describe, expect, it, vi } from "vitest";
 import { VERDICT_ADJUSTED_AUDIT_TOOL } from "../src/critic.ts";
+import { SIGNOFF_KEY } from "../src/followup.ts";
 import { ESCALATE_RULE } from "../src/rules.ts";
 import { SUBMIT_REVIEW_TOOL } from "../src/schema.ts";
 import type { CheckCommand, CheckRunner } from "../src/tier0.ts";
@@ -410,6 +411,16 @@ describe("CriticService: rules in code", () => {
       expect(req.why).toContain("Flawless migration.");
       expect(req.why).toContain("tier 3");
       expect(req.options).toEqual(["accept", "revise", "cancel"]);
+      // The card the runtime's sign-off sync applies the answer through (RT-P5-1).
+      expect(req.change_card).toEqual({
+        key: SIGNOFF_KEY,
+        task_id: w.ids.task,
+        review_id: out.reviewId,
+        run_id: null,
+        finding_ids: [],
+        reason: "verdict",
+        applied_at: null,
+      });
       const run = (await w.store.run.forTask(w.ids.task))[0];
       expect(run).toMatchObject({
         specialist: "critic",

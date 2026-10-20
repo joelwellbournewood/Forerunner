@@ -267,12 +267,18 @@ export class EnforcementHooks {
       }
     }
 
+    // A command tool of the registry is confirmed by the registry's own policy (the change
+    // card: a yes for medium risk, the paired device for high, ADR 0030); a hold here would
+    // make one change need two answers. Everything above and below still applies to it.
     const approvalKey = `${tool.name}:${stableHash(input)}`;
-    const decision: AutonomyDecision = decideAutonomy(tool.actionClass, {
-      level: claims.autonomy,
-      planApproved: claims.planApproved,
-      actionApproved: ctx.approvals?.has(approvalKey) ?? false,
-    });
+    const decision: AutonomyDecision =
+      tool.gate === "registry"
+        ? "allow"
+        : decideAutonomy(tool.actionClass, {
+            level: claims.autonomy,
+            planApproved: claims.planApproved,
+            actionApproved: ctx.approvals?.has(approvalKey) ?? false,
+          });
     if (decision === "forbidden") {
       throw await deny(
         "autonomy_insufficient",

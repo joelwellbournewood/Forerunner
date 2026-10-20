@@ -161,10 +161,17 @@ export const sessionStart: CommandDef<SessionStartParams> = {
       started && typeof started === "object" && typeof started.sessionId === "string"
         ? started.sessionId
         : null;
+    // The start's identity (the scheduler's entry): the undo names it so the runtime stops
+    // the session this start began, never a later start of the agent.
+    const startId =
+      started && typeof started === "object" && typeof started.startId === "string"
+        ? started.startId
+        : null;
     return {
       before: { session_id: null, remote_command_id: null },
       after: {
         session_id: sessionId,
+        start_id: startId,
         remote_command_id: null,
         agent_id: agentId,
         budget_usd_micro: s.budgetUsd,
@@ -185,7 +192,10 @@ export const sessionStart: CommandDef<SessionStartParams> = {
     const scope =
       typeof a.session_id === "string"
         ? { sessionId: a.session_id }
-        : { agentId: typeof a.agent_id === "string" ? a.agent_id : (ctx.agentId ?? "") };
+        : {
+            agentId: typeof a.agent_id === "string" ? a.agent_id : (ctx.agentId ?? ""),
+            ...(typeof a.start_id === "string" ? { startId: a.start_id } : {}),
+          };
     await ctx.ports.kill?.(scope, "undo of session.start");
   },
 };

@@ -20,10 +20,15 @@ import {
   toToolSpecs,
 } from "@forerunner/commands";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
-import type { ChangeLogRow, JsonObject, StateStore } from "@forerunner/state";
+import type { ChangeLogRow, JsonObject, SessionRow, StateStore } from "@forerunner/state";
 import type { ToolSpec } from "../agent/tools.ts";
 import type { KillScope } from "../enforcement/killswitch.ts";
-import type { Scheduler, StartRequest } from "../session/triggers.ts";
+import type {
+  Scheduler,
+  SchedulerLogEntry,
+  StartOutcome,
+  StartRequest,
+} from "../session/triggers.ts";
 import type {
   CommandCallLike,
   CommandResultView,
@@ -49,6 +54,13 @@ export interface CommandLoopDeps {
   ports: CommandPorts;
   /** A model-backed intent parser for phrases the patterns do not understand. */
   model?: ModelIntentPort;
+  /**
+   * What the undo of a `session.start` would do (`sessionCommandPorts().startUndoState`, asked
+   * with the start's identity from the row's `after.start_id`): the undo of a start whose
+   * session already ended is refused with `SESSION_START_ENDED_REASON` and the row marked
+   * irreversible, before the executor runs anything.
+   */
+  startUndoState?: SessionCommandPorts["startUndoState"];
 }
 
 /** The daemon's view of a pending change card. */
@@ -56,10 +68,12 @@ export interface PendingView extends PendingConfirmation {
   cardJson: Record<string, unknown>;
 }
 
-const SOURCE_OF: Record<CommandTurn["source"], CommandSource> = {
+/** The change log source of a turn: the settings screen and the Changes screen are `ui`. */
+export const SOURCE_OF: Record<CommandTurn["source"], CommandSource> = {
   text: "chat",
   voice: "voice",
   phone: "chat",
+  ui: "ui",
 };
 
 export class CommandLoop implements ConversationCommands {
@@ -179,7 +193,20 @@ export class CommandLoop implements ConversationCommands {
     return viewOf(r, [call.name]);
   }
 
+  /**
+   * The command tools for the model path. Each is gated by the registry (`gate: "registry"`):
+   * the executor confirms by risk and the change card is the one approval, so the hooks file
+   * no second request for a high-risk command (RT-P5-3; the always-human rule of the autonomy
+   * table keeps applying to every tool that is not a registry command).
+   */
   tools(turn: CommandTurn, onResult: (r: CommandResultView) => void): ToolSpec[] {
+    return this.commandToolSpecs(turn, onResult).map((spec) => ({ ...spec, gate: "registry" }));
+  }
+
+  private commandToolSpecs(
+    turn: CommandTurn,
+    onResult: (r: CommandResultView) => void,
+  ): ToolSpec[] {
     return toToolSpecs(this.registry, {
       execute: async (call) => {
         const r = await this.executor.execute({
@@ -224,8 +251,56 @@ export class CommandLoop implements ConversationCommands {
         commands: ["undo"],
       };
     }
+    const ended = await this.endedStart(id, turn.humanId);
+    if (ended) return ended;
     const r = await this.executor.undo(id, ctx);
     return viewOf(r, ["undo"]);
+  }
+
+  /**
+   * The undo of a change that is one `session.start` whose session already ended (phase 5
+   * follow-up RT-P5-2): nothing is left to undo, so the row is marked irreversible (the
+   * Changes screen stops offering it) and the human is told why, before the executor runs
+   * anything. The check is made for that start (`after.start_id`, the scheduler entry the
+   * port answered with), so a later start of the same agent, running or not, never stands in
+   * for it. A start the registry can still act on (a remote command the PC has not picked up,
+   * a port that named the session) and a composed change (the start is one part; its undo is
+   * a no-op inside the whole) go to the executor as before.
+   */
+  private async endedStart(
+    changeLogId: string,
+    humanId: string,
+  ): Promise<CommandResultView | null> {
+    const check = this.deps.startUndoState;
+    if (!check) return null;
+    const { store } = this.deps;
+    const row = await store.changeLog.get(changeLogId);
+    if (row?.undo_state !== "undoable" || row.human_id !== humanId) return null;
+    const commands = row.commands as { name?: unknown }[];
+    if (commands.length !== 1 || commands[0]?.name !== "session.start") return null;
+    const after =
+      row.after && typeof row.after === "object" && !Array.isArray(row.after)
+        ? (row.after as JsonObject)
+        : {};
+    if (typeof after.session_id === "string") return null;
+    if (typeof after.remote_command_id === "string") {
+      const remote = await store.remoteCommand.get(after.remote_command_id);
+      if (remote?.status === "pending") return null;
+    }
+    const agentId = typeof after.agent_id === "string" ? after.agent_id : row.agent_id;
+    const startId = typeof after.start_id === "string" ? after.start_id : undefined;
+    if (!agentId || (await check(agentId, startId)) !== "ended") return null;
+    await store.changeLog.update(row.id, row.version, { undo_state: "irreversible" });
+    this.logger.info("undo of a session.start refused: the session already ended", {
+      changeLogId,
+    });
+    return {
+      status: "refused",
+      reason: SESSION_START_ENDED_REASON,
+      code: "validation",
+      card: null,
+      commands: ["undo"],
+    };
   }
 
   activeProject(humanId: string): Promise<string | null> {
@@ -343,40 +418,116 @@ export function viewOf(r: ExecuteResult, commands: string[]): CommandResultView 
  * `commands/session.ts`); the registry test below pins the coupling.
  */
 export const SESSION_START_UNDO_REASON = "undo of session.start";
+/** What the undo of a `session.start` whose session already ended answers with. */
+export const SESSION_START_ENDED_REASON =
+  "the session this start began has already ended; there is nothing to undo";
+/** The principal's conversation session is never a work session (`summary` marks it). */
+const CONVERSATION_SUMMARY = "conversation";
 
 export interface SessionStartOutcome {
   /** Never known synchronously: the scheduler starts the runner in the background. */
   sessionId?: string;
-  outcome: "started" | "queued" | "deferred";
+  /**
+   * The identity of the start: the scheduler's entry id, the same through the queue and the
+   * run. `session.start` keeps it in its change log row (`after.start_id`) and its undo names
+   * it (`KillScope.startId`), so the undo acts on this start and never on a later one.
+   */
+  startId: string;
+  outcome: StartOutcome;
 }
 
 /**
- * The `startSession` and `kill` ports of the command registry over the scheduler and the kill
- * switch. `session.start` reports the scheduler's outcome; its undo arrives as a kill of the
- * agent's scope with `SESSION_START_UNDO_REASON`, and when the start only queued or was
- * deferred by quiet hours the undo drops that waiting request instead of stopping whatever
- * session the agent is running. A start that did run is stopped as before (the just-started
- * session is the agent's active one), and `session.stop` reaches the kill switch unchanged.
+ * What the undo of a `session.start` would do: drop the request still waiting (`pending`:
+ * queued behind a running session or deferred by quiet hours), stop the session that start
+ * began and that still runs (`running`), or nothing because that session ended, or the row
+ * names no start the scheduler knows (`ended`).
+ */
+export type StartUndoState = "pending" | "running" | "ended";
+
+export interface SessionCommandPorts extends Pick<CommandPorts, "startSession" | "kill"> {
+  /**
+   * The state of one start of the agent: `startId` is the identity `startSession` answered
+   * with. Without it (a row written before starts had one) nothing running is ever matched,
+   * so the answer is `ended`.
+   */
+  startUndoState(agentId: string, startId?: string): Promise<StartUndoState>;
+}
+
+const nothingStopped = () => ({ stoppedRuns: 0, killedProcesses: 0 });
+
+/**
+ * The `startSession` and `kill` ports of the command registry over the scheduler, the kill
+ * switch and the store's sessions. `session.start` reports the scheduler's outcome and the
+ * start's identity (`startId`; the session id is never known synchronously); its undo
+ * arrives as a kill of the agent's scope naming that start (`{ agentId, startId }`) with
+ * `SESSION_START_UNDO_REASON` and is answered by `startUndoState`: a start still waiting
+ * (queued or deferred) is dropped (`Scheduler.cancelPending`); a start whose session still
+ * runs (`Scheduler.activeStart` carries its id) is stopped as that session only
+ * (`{ agentId, sessionId }`, the row this runner began for it: the agent's active row of this
+ * install's runner kind with the start's trigger, begun at or after the start), never as
+ * the agent's scope, so the kill switch holds nothing else and the next scheduled session
+ * runs; a start that is neither (its session ended, or the queue slot went to a newer
+ * request) is a no-op that never reaches the kill switch (`CommandLoop.undo` marks such a
+ * row irreversible with `SESSION_START_ENDED_REASON`). A later start of the same agent, by
+ * hand, from the phone or by schedule, is never mistaken for the one undone, and an undo
+ * whose row names no start matches nothing running. `session.stop` reaches the kill switch
+ * unchanged.
  */
 export function sessionCommandPorts(deps: {
-  scheduler: Pick<Scheduler, "request" | "cancelPending">;
+  scheduler: Pick<Scheduler, "requestStart" | "cancelPending" | "pendingStart" | "activeStart">;
   kill: {
     stop(
       scope: KillScope | "all",
       reason: string,
     ): Promise<{ stoppedRuns: number; killedProcesses: number }>;
   };
-}): Pick<CommandPorts, "startSession" | "kill"> {
+  /** The sessions of the store: the row of the running session an undo stops. */
+  store: Pick<StateStore, "session">;
+  /** The runner this scheduler starts sessions on (the rows' `runner`); default `pc`. */
+  runner?: SessionRow["runner"];
+}): SessionCommandPorts {
+  const logger = log("session-ports");
+  const runner = deps.runner ?? "pc";
+  const startUndoState = async (agentId: string, startId?: string): Promise<StartUndoState> => {
+    if (!startId) return "ended";
+    if (deps.scheduler.pendingStart(agentId)?.id === startId) return "pending";
+    if (deps.scheduler.activeStart(agentId)?.id === startId) return "running";
+    return "ended";
+  };
+  /** The session row of this runner that the active start began, if the runner made it yet. */
+  const sessionOf = async (agentId: string, start: SchedulerLogEntry) => {
+    const rows = (await deps.store.session.active(agentId)).filter(
+      (s) =>
+        s.summary !== CONVERSATION_SUMMARY &&
+        s.runner === runner &&
+        s.trigger === start.req.trigger &&
+        (s.started_at ?? s.created_at) >= start.at,
+    );
+    rows.sort((a, b) =>
+      (a.started_at ?? a.created_at) < (b.started_at ?? b.created_at)
+        ? -1
+        : (a.started_at ?? a.created_at) > (b.started_at ?? b.created_at)
+          ? 1
+          : a.id < b.id
+            ? -1
+            : 1,
+    );
+    return rows[0];
+  };
   return {
     startSession: async (req) => {
-      const outcome = await deps.scheduler.request({
+      const entry = await deps.scheduler.requestStart({
         agentId: req.agentId,
         projectId: req.projectId,
         trigger: req.trigger,
         reason: req.reason,
         ...(req.budgetUsdMicro ? { budgetUsdMicro: req.budgetUsdMicro } : {}),
       } as StartRequest);
-      return { sessionId: undefined, outcome } satisfies SessionStartOutcome;
+      return {
+        sessionId: undefined,
+        startId: entry.id,
+        outcome: entry.result,
+      } satisfies SessionStartOutcome;
     },
     kill: async (scope, reason) => {
       if (
@@ -385,11 +536,30 @@ export function sessionCommandPorts(deps: {
         scope.agentId &&
         !scope.sessionId
       ) {
-        const dropped = deps.scheduler.cancelPending(scope.agentId, reason);
-        if (dropped) return { stoppedRuns: 0, killedProcesses: 0 };
+        const { agentId, startId } = scope;
+        const state = await startUndoState(agentId, startId);
+        if (state === "pending") {
+          deps.scheduler.cancelPending(agentId, reason);
+          return nothingStopped();
+        }
+        if (state === "ended") return nothingStopped();
+        const start = deps.scheduler.activeStart(agentId);
+        const session = start ? await sessionOf(agentId, start) : undefined;
+        if (!session) {
+          logger.warn("undo of a session.start: the running start has no session row yet", {
+            agentId,
+            startId,
+          });
+          return nothingStopped();
+        }
+        return deps.kill.stop({ agentId, sessionId: session.id }, reason);
       }
-      return deps.kill.stop(scope, reason);
+      if (scope === "all") return deps.kill.stop(scope, reason);
+      // The kill switch's scope is the agent and the session; a start id is the port's.
+      const { startId: _startId, ...killScope } = scope;
+      return deps.kill.stop(killScope, reason);
     },
+    startUndoState,
   };
 }
 

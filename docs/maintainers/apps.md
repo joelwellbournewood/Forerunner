@@ -131,7 +131,8 @@ fixtures with both sides and compares key sets so drift fails before a screen do
 The settings screen is a client of the command registry (spec Q.1, ADR 0037):
 `commandForSetting(row)` maps `project.autonomy` to `autonomy.set`, `project.budget` and
 `human.monthly_cap` to `budget.set`, and the keys of `SETTING_SPECS` to `settings.set`; the
-dialog posts `executeCommands({ commands: [one], wordsUsed: "Settings: <key> to <value>" })`,
+dialog posts `executeCommands({ commands: [one], wordsUsed: "Settings: <key> to <value>",
+source: "ui" })` (the change log row reads `ui`, where chat and voice read theirs),
 shows the daemon's card through `CommandResult`, answers `needs_yes` with `{ answer: "tap" }`
 and `needs_device` with `{ answer: "device", deviceId: <installId> }` (the daemon checks the
 device), and shows the sentence with Undo (`POST /changes/:id/undo`). `ChangeCard` renders the
@@ -220,7 +221,7 @@ into `pending_approval`, and emit `extension.changed`; `POST /updates/apply` emi
 `restart.requested` and bumps the version `/health` reports; the command routes mirror the
 daemon (one card and one change log row per request, low risk acts, medium needs a yes or a
 tap, high needs `{ answer: "device" }`, `confirm: "tap"` runs a medium change at once, the
-`SOURCE_OF` mapping `text → chat`, `voice → voice`, `phone → chat`, undo rows). Run directly
+`SOURCE_OF` mapping `text → chat`, `voice → voice`, `phone → chat`, `ui → ui`, undo rows). Run directly
 (`pnpm exec tsx test/fake-daemon.ts`) it reads `FAKE_DAEMON_PORT`, `FAKE_DAEMON_TOKEN` and
 `FAKE_DAEMON_EVENT_DELAY_MS`.
 
@@ -332,9 +333,9 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
   meanwhile), `GET/POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/import`,
   `GET /projects/:id/docs[/:path]`, `GET /performance`. Shapes are in `contracts.ts` and the
   fixtures.
-- `POST /commands/execute` takes `source: text | voice | phone` only, so a change made from
-  the settings screen is logged with source `chat` (the daemon's `SOURCE_OF`) and the words
-  `Settings: <key> to <value>`; a `ui` source needs the daemon body and `SOURCE_OF` extended.
+- The settings screen's changes are logged with source `ui` (`POST /commands/execute` with
+  `source: "ui"`), but the Changes screen's undo (`POST /changes/:id/undo`, no body) is still
+  logged as `chat` by the daemon; a `source` on that route and on `undoChange` would close it.
 - A high-risk confirmation from the desktop sends `installId` as the device id; the daemon
   accepts it only once the desktop registers as a device (ADR 0030, item 3). Until then the
   dialog shows the daemon's refusal as such.

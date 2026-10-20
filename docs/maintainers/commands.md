@@ -61,7 +61,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `task.transition` | project | low; `done`/`cancelled` medium | when the graph allows the way back | `task.status` through `TaskRepo.transition` |
 | `budget.set` | session / project / global (month) | medium within the ceiling, high above it or raising the ceiling | yes | see below |
 | `autonomy.set` | project | one step medium, more high, same level low | yes | `project.autonomy_level` |
-| `session.start` | session | medium above the costly threshold (USD 2), else low | yes (stop) | ports or a `remote_command` row |
+| `session.start` | session | medium above the costly threshold (USD 2), else low | yes (stop that start's session; `after.start_id` names the start) | ports or a `remote_command` row |
 | `session.stop` | session / global | low | no | ports.kill or a `remote_command` row |
 | `session.pause` | session | low | yes (resume) | ports or `session.status` |
 | `capability.grant` | global | high | yes | `extension.permissions`, `enabled` |
@@ -175,6 +175,15 @@ call the ports: they enqueue a `remote_command` row (`target` pc or cloud, the a
 budget and reason) that the PC or the cloud runner picks up through the state service. The
 sentence says so ("the PC picks it up in seconds"); undo fails the row while it is still
 pending and otherwise stops the session through the kill switch.
+
+On the desktop `session.start` calls `ports.startSession`, which answers the session id when
+it knows it and otherwise the start's identity (`startId`: in the runtime the scheduler
+entry's id, one id from the queue to the run). The row's `after` keeps both (`session_id`,
+`start_id`) and the undo passes them back: `kill({ sessionId })` when the session is known,
+else `kill({ agentId, startId })` with the reason `undo of session.start`, so the runtime's
+port (`sessionCommandPorts`, runtime.md) stops the session that start began and never the
+agent's scope or a later start of the agent (`KillScope.startId`, ADR 0049). A row without
+`start_id` (written before starts had one) matches nothing running there.
 
 ### Understanding (`src/intent.ts`)
 

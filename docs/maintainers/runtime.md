@@ -24,7 +24,7 @@ narrow the parent (intersection of lists, min of budgets, depth + 1, depth cap e
 | --- | --- |
 | `beforeModelCall(ctx, estimate)` | token valid and not revoked, kill state, session wall clock, run deadline, step cap, run cap, session cap with 80% finish-current and review reserve, outer caps (task, project, month, plan share) via `CapsPort` |
 | `afterModelCall(ctx, usage, usd)` | records spend in `SessionBudget` and the ledger |
-| `beforeToolCall(ctx, tool, input)` | token/kill, step, tool allowlist, zod schema, path containment for `pathFields`, domain allowlist for `domainFields`, autonomy decision (may ask `ApprovalPort`; pending pauses the run), secret-ref resolution for granted names only; denials are audited |
+| `beforeToolCall(ctx, tool, input)` | token/kill, step, tool allowlist, zod schema, path containment for `pathFields`, domain allowlist for `domainFields`, autonomy decision (may ask `ApprovalPort`; pending pauses the run; skipped for a tool with `gate: "registry"`, a command of the command registry whose executor confirms by risk itself, so the change card is the one approval and the hooks file no second request), secret-ref resolution for granted names only; denials are audited |
 | `afterToolCall(ctx, tool, input, result)` | redacts resolved secrets, wraps untrusted output in the data envelope and scans it for injection, audits |
 
 The per-session accounting is `SessionBudget` (`src/enforcement/budget.ts`): run and session
@@ -36,7 +36,15 @@ before a call is conservative: full input at input price plus `max_tokens` at ou
 Action classes map to decisions per level 0–4. `destructive`, `financial`, `credential`,
 `permission_change` and `capability_grant` need a human at every level. Level 0 proposes only,
 level 1 runs routine work after plan approval, level 2 frees routine reversible work, level 3
-also merges reviewed PRs and deploys to staging, level 4 everything else.
+also merges reviewed PRs and deploys to staging, level 4 everything else. The one exception
+to the hooks asking is a tool gated by the command registry (`ToolSpec.gate: "registry"`, set
+by `CommandLoop.tools` on the conversation agent's model path): its always-human rule is the
+registry's own (a high-risk command needs the paired device, ADR 0030), applied by the
+executor when the tool runs, so the human answers one card instead of a hold and then the
+card (RT-P5-3, testing.md). The decision is recorded here, no ADR number having been reserved
+for the change: the alternative, the hooks asking first and the registry reusing the
+answer, was rejected because the card is what the human reads back and the hold shows the
+tool's raw input instead.
 
 ### Kill switch (`src/enforcement/killswitch.ts`)
 
@@ -407,7 +415,7 @@ over `@forerunner/critic`, `@forerunner/memory` and `@forerunner/commands`, and 
 wires them (`RuntimeApp.critic`, `memory`, `commands`, `criticAgent`). Tests run the runner
 with fakes of the ports (`test/loop-memory.test.ts`) and with the real implementations on the
 fake provider (`test/loop-critic.test.ts`, `test/conversation.test.ts`, `test/loop-routes.test.ts`,
-`test/loop-commands.test.ts`).
+`test/loop-commands.test.ts`, `test/signoff-answer.test.ts`, `test/approvals-poll.test.ts`).
 
 **Critic (`CriticLoop`, spec H, B.4, D.2, D.3).** After `TaskExecutor.execute` returns
 `done` or `in_review` for a task above tier 0, the runner moves it to `in_review` and calls
@@ -438,7 +446,33 @@ blocking request per task (`change_card.key = "findings:blocked"`, options `rewo
 `RuntimeApp.syncApprovals()` after every inbox answer, applies it: `rework` goes
 `failed -> ready` with the findings as the next brief's constraints, `accept` resolves the
 open findings against the run and closes the task, `cancel` cancels it; the card records
-`applied_at` and the outcome. At session end `reviewSession` runs the critic's honesty, plan and cost checks on the
+`applied_at` and the outcome. The sign-off ends with the human the same way
+(`syncSignoffAnswers`, same file; phase 5 follow-up RT-P5-1): every `human` decision (a
+tier 3 review, a `human` verdict, the ladder's last rung, filed by `CriticService`,
+`applyVerdict` or the loop's ladder branch) carries a `change_card` keyed `critic:signoff`
+(`signoffCard` in `@forerunner/critic`: the task, the review, the run, the review's finding
+ids, the reason, `applied_at`), and `syncApprovals()` applies the answer of each answered one
+once, and only when the request is the task's current sign-off (ADR 0049): a request whose
+`review_id` is not the task's latest review (the human moved the task on from the UI without
+answering, a later session reviewed it again and filed a new sign-off while the old one
+stayed open in the inbox) is skipped as `stale` and touches nothing, so an old card never
+closes the task or resolves a later review's findings. `accept` resolves the card's findings
+and the task's other open findings up to the card's review (the rework's history: the critic
+resolves earlier findings only on its own accept, so the ladder's last rung leaves them
+open; `reviewedBefore`) against the run and closes the task (the task graph has no
+`needs_human -> done` edge, so it re-enters the flow and closes through review,
+`ready -> claimed -> in_progress -> in_review -> done`, in one store transaction with the
+findings and the audit row, so every rule of the store holds and nothing observes the
+intermediate states; a close the store still refuses over an open finding is recorded
+`findings_open`), `revise` goes `ready -> failed -> ready` with the attempt counted and
+the findings kept open, and the owner agent gets a `request` message with the request's
+steps as required actions, `cancel` cancels; a task the human moved on in the meantime or an
+answer outside the options is skipped and recorded on the card (`task_moved_on`,
+`unrecognized_answer`). Each applied answer is one `critic.signoff` audit row (ids and the
+outcome, never the text). Both syncs scan the human's answered blocking approvals
+(`unappliedAnswers`: `kind: approval`, `status: answered`, `blocking: true`, newest first)
+page by page to the last page, so an answer that sat behind hundreds of later answers
+during a long downtime is still applied. At session end `reviewSession` runs the critic's honesty, plan and cost checks on the
 stored summary (tier 0 by default, `SessionRunnerDeps.sessionReviewTier`), persisted as a
 review with `session_id` set; `critic.session_review` carries the grade and a `human` verdict
 as an escalation. Lesson proposals (repeat findings) are recorded in critic memory through the
@@ -478,20 +512,41 @@ deletes its file. Events: `memory.loaded`, `memory.over_budget`, `memory.load_fa
 intent parser behind one object. `contextFor(turn)` builds the `CommandContext` for every
 caller: the human as actor, the principal, the active project (`activeProjectOf`), the
 human's time zone, the paired device, the conversation session for the activity event, and
-the source (`chat` for text and the phone, `voice` for voice). The conversation agent calls
+the source (`SOURCE_OF`: `chat` for text and the phone, `voice` for voice, `ui` for the
+settings screen's route calls). The conversation agent calls
 `parse` (deterministic; `matched: "none"` means the model answers), `compose` (one card, one
-change log row for a combined request), `tools` (the command tools for the model path),
-`confirmByText` and `undo`; the daemon calls `execute`, `confirm`, `cancel`, `pending`,
-`changeLog` and `undo`. `start()` persists the command table and re-arms the reverts of
+change log row for a combined request), `tools` (the command tools for the model path, each
+`gate: "registry"` so the hooks leave the confirmation to the executor), `confirmByText` and
+`undo`; the daemon calls `execute`, `confirm`, `cancel`, `pending`, `changeLog` and `undo`. `start()` persists the command table and re-arms the reverts of
 temporary changes after a restart; `stop()` cancels the timers. `sessionCapFromSettings` is
 how the scheduler's `startSession` reads the cap the registry wrote (a temporary override
 while its window is open, else `session_cap_usd_micro`), so a session started by the
 scheduler honours "give it 20 francs tonight" (spec Q.12). `sessionCommandPorts` builds the
-registry's `startSession` and `kill` ports over the scheduler and the kill switch:
-`session.start` answers `{ outcome: started | queued | deferred }` (the session id is never
-known synchronously), and its undo (a kill of the agent's scope with
-`SESSION_START_UNDO_REASON`) drops a waiting request (`Scheduler.cancelPending`) instead of
-stopping the session the agent is running; a start that ran is stopped as before.
+registry's `startSession` and `kill` ports over the scheduler, the kill switch and the
+store's sessions: `session.start` answers `{ outcome: started | queued | deferred, startId }`
+(the session id is never known synchronously; `startId` is the scheduler entry's id, one id
+from the queue to the run, `Scheduler.requestStart`), which the registry keeps in the change
+log row (`after.start_id`) and names in the undo's kill scope (`KillScope.startId`,
+`@forerunner/commands`). The undo (a kill of the agent's scope naming the start, with
+`SESSION_START_UNDO_REASON`) is answered by `startUndoState(agentId, startId)` for that
+start and no other (phase 5 follow-up RT-P5-2, ADR 0049): `pending` (the scheduler's
+`pendingStart` carries the id) drops the waiting request (`Scheduler.cancelPending`) instead
+of stopping the session the agent is running; `running` (`Scheduler.activeStart` carries
+the id) stops the session that start began as that session only (`kill.stop({ agentId,
+sessionId })`, never the agent's scope, so the kill switch holds nothing else and the next
+scheduled session runs), the row being the agent's active session of this install's runner
+kind (`runner`, default `pc`; a cloud session of the agent in the shared store is never it)
+with the start's trigger, begun at or after the start; `ended` (neither: the session ended,
+the queue slot went to a newer request, or the row names no start) is a no-op that never
+reaches the kill switch. A later start of the same agent, by hand, from the phone or by
+schedule, is never mistaken for the one undone: the morning's start undone in the afternoon
+while the afternoon's session runs is the no-op, and the afternoon's undo stops the
+afternoon's session only. `CommandLoop.undo` asks the same `startUndoState` before the
+executor: the undo of a change that is one `session.start` whose session ended is refused
+with `SESSION_START_ENDED_REASON` ("the session this start began has already ended; there
+is nothing to undo") and the row is marked `irreversible` (the Changes screen stops
+offering it; no undo row is written); inside a composed change (the phone's "switch,
+budget, start") the start part is the no-op and the rest is undone.
 
 ### Conversation agent (`src/conversation/agent.ts`)
 
@@ -507,8 +562,11 @@ refused without a model call, and only a sentence no pattern understands goes to
 which is offered the registry's command tools and nothing else. Every change lands in the
 change log with the words used and the undo token (`actions[].undoToken`). Each model turn
 runs through the loop driver with its own small budget and a token at autonomy 4 (the human
-is giving instructions; the registry's confirmation policy guards by risk); the run is
-registered as protected so scoped and global stops never cut the human's channel.
+is giving instructions; the registry's confirmation policy guards by risk, and because the
+command tools are gated by the registry the hooks hold none of them: a high-risk command such
+as `email_mode_set` forms its `needs_device` card on the first call, one request and one
+answer, `test/conversation.test.ts`); the run is registered as protected so scoped and
+global stops never cut the human's channel.
 Transcripts are events on a per-agent conversation session (`chat.human`, `chat.reply`,
 `chat.confirmed`, `chat.cancelled`, and the executor's `change` events). Without a command
 port the chat is read-only.
@@ -539,8 +597,17 @@ already:
 | Model watch (`src/models`, spec D.6, D.21) | `ModelWatch` over the provider registry, `BUILTIN_PRICING` plus `<config>/pricing.json` and `<config>/models.json` (`FileModelSettingsStore`), `FetchPriceListSource` when `FORERUNNER_PRICE_LIST_URL` is set, else `UnconfiguredPriceListSource` (reports "no price list configured", invents nothing), `LoopEvalRunner` (below) and `StateModelWatchApprovals`. `scheduleModelWatch` registers the weekly run; `startSession` routes `isModelWatchRequest` to `modelWatch.run()`. | Routes under `/model-watch`; answers from the inbox are applied by `syncApprovals()`. |
 | Updates (`src/update`, spec M) | `composeUpdateManager({ store, dirs, clock, humanId, runningVersion, restarter })` over the daemon's own store (the `store` option was added for this; the CLI leaves it out and opens one). A malformed `update.json` is logged and ignored. | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback` with `RegistryConnectorCatalog` (connector versions from the extension catalog) and `ModelWatchUpdates` (the latest report as new models, deprecations, price changes and recommendations). `fr daemon` runs `updates.healthCheck()` once the server listens. |
 
-`syncApprovals()` (extension grants and model watch decisions) runs at compose and after
-every `POST /requests/:id/answer`, so an answer in the inbox takes effect at once.
+`syncApprovals()` (extension grants, model watch decisions, memory consolidations, the
+blocked-findings answers and the critic sign-off answers) runs at compose and after every
+`POST /requests/:id/answer`, so an answer in the inbox takes effect at once, and on the
+approvals poll (`ComposeOptions.approvalsPollMs`, `FORERUNNER_APPROVALS_POLL_MS`,
+`DEFAULT_APPROVALS_POLL_MS` = 5 s): an answer given on the phone or in the web approvals
+lands in the shared state through the state service and reaches no route of this daemon, so
+the poll applies it within seconds, the way the remote watcher picks up the phone's commands.
+The poll runs only where answers can come from another device, the remote commands'
+condition (`remoteCommandsEnabled`: shared state, services running); a daemon on a local
+`sqlite:` store has no poll, its own answer route being the only answer path. The poll skips
+while the schema sync gate is paused and stops with `close()`.
 
 **Eval runner (`src/models/eval-runner.ts`).** `@forerunner/evals` depends on this package, so
 the daemon cannot import it. `LoopEvalRunner` reads the specialist's eval set (the same task
@@ -917,8 +984,9 @@ view per principal, the critic and shared, with counts), `GET /memory?scope=&age
 applies it through `syncApprovals`, which also applies the `rework`/`accept`/`cancel` answers
 of tasks blocked by findings). Commands (spec Q): `GET /commands` (the registry),
 `POST /commands/parse` (nothing runs), `POST /commands/execute` (one or several commands as one
-change card and one change log row; `confirm: "tap"` is the settings-screen path after the
-card was shown), `GET /commands/pending`, `POST /commands/:id/confirm` (`yes`, `no`, `tap`, or
+change card and one change log row; `source` is `text`, `voice`, `phone` or `ui`
+(`CommandSourceBody`), the settings screen sends `ui` and the row is logged with it;
+`confirm: "tap"` is the settings-screen path after the card was shown), `GET /commands/pending`, `POST /commands/:id/confirm` (`yes`, `no`, `tap`, or
 `device` with `deviceId` and `biometric`; a chat yes on a high-risk card is refused), `POST
 /commands/:id/cancel`, `GET /changes?projectId=&undoable=` (`ChangeLogView[]`) and
 `POST /changes/:id/undo`. Results are `CommandResultViewSchema`; `/me.activeProjectId` is the
@@ -984,6 +1052,24 @@ the human; it is never acted on.
 
 ## Tests
 
+`closeout-security.test.ts` (requirements close-out 2026-10-20, spec S.5 and S.8, through
+`composeRuntime` and the daemon routes on an in-memory store): a capability added from the
+catalog carries its declared scopes in the review on the inbox card and, after the human's
+yes, in the row `GET /extensions` and `GET /extensions/:id` serve to the panel, nothing wider
+(S.5); `POST /kill` with `scope: { agentId }` stops that agent's registered runs, revokes its
+run tokens, releases its task claims back to `ready`, freezes new registrations in its scope
+and leaves the other agent's run, token and claim untouched; `scope: "all"` releases every
+agent's claims; `/kill/resume` lifts the freeze and a revoked token stays revoked (S.8).
+
+`closeout-claims.test.ts` (requirements close-out 2026-10-20, spec U.18, the session runner as
+the claim holder on an in-memory store under the simulated clock): a session started without
+`claimTtlMs` claims its task with the expiry 30 minutes out; the claim is renewed every five
+minutes while the task runs, each renewal moving the expiry 30 minutes from then, and the peer's
+claim is refused with the holder meanwhile; once the holder's renewals fail (its machine gone)
+the claim holds for the rest of its 30 minutes and no longer: `expireClaims` returns the task to
+`ready` with the reason `claim expired`, the peer's claim succeeds, and the lapsed holder's late
+return cannot take the task back from the new holder.
+
 `packages/runtime/test/*.test.ts` (unit, fake provider, no network): tokens, autonomy, kill
 switch timing, budget rules, context transforms (golden cases, idempotence, FATAL-at-line-67,
 bare truncate marker without a store and named marker with one, stable-prefix lint, bypass,
@@ -1045,6 +1131,20 @@ sandbox with only the worktree and the token's domains), I.3 (estimate error tra
 back to the planner), D.6 and D.21 (weekly model watch scheduled, decided in the inbox), M.3,
 M.4 and M.5 (updates screen, apply, rollback, restart contract, health check on start), S.9
 (every outward action of these modules is an audit row). Test: `test/wiring.test.ts`.
+H.2 and J.3 for the critic sign-off answered from the inbox (accept closes the task with the
+findings up to the card's review resolved against the run, revise counts the attempt and
+keeps the findings open, cancel cancels; applied once with an audit row, only for the task's
+current sign-off (a stale one is skipped and recorded), found however many later answers
+sit in front of it; the daemon's approvals poll brings an answer given on another device
+to the PC within seconds), Q.1 and Q.11 for the undo of `session.start` (the undo acts on
+the start the row names: a start whose session ended is a no-op refused with the reason and
+the row irreversible even while a later start of the agent runs; a running start stopped as
+that session only, never a cloud session of the agent; a queued start that ran stopped under
+its own id), S.8 for the kill switch holding only what the human stopped (an undo never
+freezes the agent; the next scheduled session runs). Tests: `test/signoff-answer.test.ts`,
+`test/approvals-poll.test.ts`, `test/loop-commands.test.ts`,
+`tests/e2e/scenarios/phase5-gate.integration.test.ts` (Tuesday's sign-off on the phone closing
+the task, Thursday's undo of the phone's plan leaving the kill switch open).
 C.4, S.1 and S.3 for specialist tools on the loop driver (the registry's `cc:` names mapped
 to the built-ins the token carries, nothing widened, every dropped name an audit row, ADR
 0043). Tests: `test/cc-tools-wiring.test.ts`, `test/registry-tools.test.ts`,
@@ -1089,6 +1189,12 @@ the watcher), D.3 (the project's ceiling caps the retry ladder). Tests:
 `test/remote-watcher.test.ts`, `test/remote-pause.test.ts`, `test/remote-wiring.test.ts`,
 `test/remote-presence.test.ts`, `test/executor-ceiling.test.ts`, `packages/state/test/suite.ts`
 (the owner filter on both dialects).
+Q.5, Q.7 and Q.8 for a command on the conversation's model path (one change card and one
+answer per change: the registry confirms by risk, a yes for medium, the paired device for
+high, and the hooks hold no command tool; `test/conversation.test.ts`, `test/hooks.test.ts`),
+Q.11 and Q.12 for the settings screen's route (`source: "ui"` on the change log row, the same
+executor and policy as chat and voice; `test/loop-routes.test.ts`, `apps/ui/test/settings.test.tsx`,
+`tests/e2e/scenarios/phase5-gate.integration.test.ts`).
 O.1, O.3, O.5, O.7, O.9, O.10 and Q.4, Q.5 for voice through the daemon (a text or audio turn
 through the one loop with every latency stage measured; a risky command read back and waiting
 for the yes, a wrong answer doing nothing, a yes or a tap applied through the registry with
@@ -1107,6 +1213,32 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 ## Known issues
 
+- A level 0 or 1 session that files its plan ends `paused`, which `session.active()` counts as
+  active, so the agent cannot start again until a human closes it; the `plan:<session>` approval
+  starts nothing on the desktop daemon (BLOCKERS.md, the J.6 / J.7 row).
+- The task workflow has no `needs_human -> done` edge, so an accepted critic sign-off closes
+  the task along the graph's own edges (`ready -> claimed -> in_progress -> in_review -> done`)
+  in one store transaction (`syncSignoffAnswers`); a direct edge for a human's acceptance is a
+  `packages/state` change (`workflow.ts`, the generated data-model doc) and would make the
+  walk one transition (ADR 0049). The registry's `session.start` records no session id in
+  its change log row (the scheduler starts the runner in the background) but the start's
+  id, so "the session that start began" is the scheduler's active start with that id and
+  its session row; an undo that lands in the instant between the scheduler's start and the
+  runner's insert of the row stops nothing (a warning, `session-ports`) and the row is
+  marked undone. A daemon restart forgets the scheduler's entries, so the undo of a start
+  made before it is the no-op (`ended`), including one whose session the restarted daemon
+  does not run anyway. `sessionCommandPorts` takes the install's runner kind (`runner`,
+  default `pc`); `composeRuntime` passes none, so a cloud runner composing the daemon's
+  command loop would match `pc` rows. A sign-off request left open when the human moves
+  the task on from the UI stays open in the inbox until answered; its answer is then skipped
+  as `stale` (nothing withdraws it when the next review files a new one).
+- Commands: `POST /changes/:id/undo` takes no body, so its turn is `text` and an undo made
+  from the Changes screen is logged with source `chat` while the settings screen's own
+  changes are `ui` (RT-P5-4 closed the execute and parse routes only); a `source` on the undo
+  route and the UI client's `undoChange` would close it. The command tools' `gate:
+  "registry"` is set by `CommandLoop.tools`, not by `toToolSpecs` in `@forerunner/commands`,
+  so a caller that builds command tools from the registry without the loop gets tools the
+  hooks hold as before.
 - Voice (ADR 0048): a spoken yes, a spoken "no", a tap or a "no" through the voice session
   answers the card in the registry (the one source of truth) and the bridge's copy follows
   the registry, but the conversation agent keeps its own per-human copy of the card until its

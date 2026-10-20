@@ -174,7 +174,7 @@ localSchemaVersion, platform?, fetchImpl?, humanId?, checkCacheMs? }`:
 | `stage(signed)` → `StagedInstall` | verifies the manifest, picks the artefact for `platform` (`detectArtifactPlatform()`: windows-x64, linux-x64, android), streams the download to the staging directory while hashing (more bytes than the manifest says is `tampered` at once), checks size and SHA-256, unpacks a `.zip` with `unpackZip` (refuses `..` segments, absolute and drive-letter names, backslashes, NUL, symlink entries, and any entry that resolves outside the target) or keeps a non-zip artefact as one file, writes `release.json`, renames the staging directory into place. Any failure removes the staging directory. |
 | `apply({ by, version? })` → `ApplyResult` | under the install lock. Trust first: the manifest is verified (signature, downgrade, schema) and a release that rolled back or failed here before is refused, each audited as denied, before anyone is asked; then an agent actor needs `human.ask({ kind: approval, key: "update.apply:<version>" })` to answer `approved` (`pending` or `denied` → `approval_required`, audited as denied), so no refused release ever becomes an inbox item; then stages; inserts the `release` row (`status: published`, changelog, signature, artefacts) or reuses it; writes the pointer `{ current: version, previous: <old current or running version>, state: pending_health_check }`; audits `update.apply`; calls `restarter.restart({ reason: "update", targetVersion, fromVersion })`. |
 | `healthCheck()` → `HealthOutcome` | the first-start check, see below. |
-| `rollback({ by, reason? })` → `RollbackResult` | under the install lock. Manual rollback to `previous` (`not_found` when there is none; agents need approval, key `update.rollback:<from>:<to>`): pointer `{ current: previous when its directory exists else null, previous: null, state: installed, lastRollback: {automatic: false} }`, release row → `rolled_back`, audit `update.rollback`, `human.notify(warning)`, restart. |
+| `rollback({ by, reason? })` → `RollbackResult` | under the install lock. Manual rollback to `previous` (`not_found` when there is none; agents need approval, key `update.rollback:<from>:<to>`): pointer `{ current: previous when its directory exists else null, previous: null, state: installed, lastRollback: {automatic: false} }`, release row → `rolled_back` with `health: { ok: false, detail, manual: true, checkedAt, reportedBy: { human, agent } }` (the reporter, for peer installs' refusals), audit `update.rollback`, `human.notify(warning)`, restart. |
 | `status()` → `UpdateStatus` | running version, channel, platform, pointer, version directories on disk, trusted key ids. No network. |
 | `prune()` | under the install lock: removes version directories that are neither current nor previous. |
 
@@ -203,17 +203,36 @@ is run by the shell on **every** start and does nothing unless `current.json` is
 2. Otherwise the probe runs under `healthTimeoutMs` on the injected `Clock` (`probeWithTimeout`);
    a timeout or a thrown probe is a failed result.
 3. Success: pointer → `installed`, release row → `installed` with `health: { ok: true, detail,
-   probe, checkedAt }`, audit `update.health` allowed.
+   probe, checkedAt, reportedBy: { human: humanId, agent: null } }` (`reportedBy` names the
+   install whose check produced the verdict; the shared row's author is whoever first
+   recorded the release, which may be a peer), audit `update.health` allowed.
 4. Failure with a `previous`: pointer → `{ current: previous (null when it has no directory:
    the packaged build), previous: null, state: installed, lastRollback: { from, to, reason, at,
-   automatic: true } }`, release row → `rolled_back` with the reason in `health`, audit
+   automatic: true } }`, release row → `rolled_back` with the reason and `reportedBy` in `health`, audit
    `update.rollback`, `human.notify(error)` (an inbox item), `restarter.restart({ reason:
    "rollback", targetVersion: to })`. Outcome `rolled_back`.
 5. Failure without a `previous` (first install): pointer → `failed`, row → `failed`,
    notification; outcome `failed_no_previous`.
 
 The rolled-back version's directory stays until `prune()`; the release is never offered again
-on this install (`previously_rejected`): the fix is a new release.
+(`previously_rejected`): the fix is a new release. The rule (`assertNotRejectedBefore`) reads
+the `release` row, which every install on the same state shares (ADR 0046), so a peer's
+rollback refuses the release here too, before any download. The refusal says which install
+reported the verdict and when rather than claiming it happened here: `rejectionReport(row,
+humanId)` takes the reporter from `health.reportedBy`, which the automatic rollback
+(`health.ts`) and the manual one both write (a `reportedBy` naming no human means the reporter
+is unknown, not that the author stands in), else, for a row an older updater wrote, from the
+row's author (the install that first recorded the release), and the time from
+`health.checkedAt`, else `updated_at`; `mine` is true when the reporter's human is this
+install's. The row carries no install id, so a second install of the same human (a laptop
+beside the PC) reads as `mine` too; the wording therefore claims the human, never the machine.
+`previouslyRejectedMessage` reads `release 1.2.0 was rolled back (reported by this install's
+human, human <id>, on <at>); cut a new release`, `... on another install (reported by human
+<id> on <at>) ...`, or, for a row that names no install, `... on an install sharing this
+release table on <at> (reporter not recorded) ...`; a `failed` row says `failed its health
+check` in place of `was rolled back`. The refusal's `details` carry `peer`, `reportedBy {
+human, agent }` and `reportedAt` for the screen; `check()` lists the text under `rejected`,
+and the audit row's `result_summary` is the same text.
 
 ### Ports (`ports.ts`)
 
@@ -367,7 +386,7 @@ the local store can reach.
 
 ## Tests
 
-`packages/runtime/test/update-*.test.ts` (58 tests, `pnpm vitest run --project unit
+`packages/runtime/test/update-*.test.ts` (60 tests, `pnpm vitest run --project unit
 packages/runtime/test/update-verify.test.ts packages/runtime/test/update-install.test.ts
 packages/runtime/test/update-screen.test.ts packages/runtime/test/update-health.test.ts
 packages/runtime/test/update-githost.test.ts`), all against stand-ins on 127.0.0.1: a fake
@@ -395,7 +414,19 @@ routes, `fr update` on the program and the daemon exiting with `RESTART_EXIT_COD
   symlink entries refused (unit and through `apply`); agent approval denied/pending/approved;
   automatic rollback with row, notification, audit, restart and unchanged protected
   directories; timeout on the simulated clock; running-version mismatch; no previous version;
-  manual rollback and its approval; pointer crash simulation between temp write and rename,
+  manual rollback and its approval; a previously rejected release names the reporting install
+  (a second `UpdateManager` of another human over the same store with its own directories,
+  running build and shell: after an automatic rollback the first install's `check` and
+  `apply` say "(reported by this install's human, human human-j, on <checkedAt>)" and the
+  peer's "on another install (reported by human human-j on <checkedAt>)", `details.peer`,
+  `reportedBy` and `reportedAt` on both, the peer's refusal audited under its own human with
+  that text, nothing staged or restarted there; when the peer applied and passed first, so the
+  row's author is the peer, the install whose health check rolled back is still the one named,
+  on its own refusal and on the peer's once the peer is below the release again; a manual
+  rollback writes `health.reportedBy`; a row with no reporter is refused "on an install
+  sharing this release table ... (reporter not recorded)"; a `failed` row reads "failed its
+  health check"); pointer
+  crash simulation between temp write and rename,
   stale temp cleanup, corrupt pointer, unsafe version names; platform detection; the CLI
   commands including keygen (private key never printed), manifest (hashes from files, bad
   spec refused) and sign by file and by secret reference (key never printed, missing secret
@@ -421,7 +452,10 @@ routes, `fr update` on the program and the daemon exiting with `RESTART_EXIT_COD
   or unreadable `daemon.json`, ok, version mismatch, not ok, 503, unreachable, timeout on the
   simulated clock aborting the request); `DoctorHealthProbe` running `node -e` (all ok, a
   failing check, `required` subset, non-zero exit, unparsable output); `DefaultHealthProbe`
-  selection; `probeWithTimeout` with a throwing probe and timer cleanup.
+  selection; `probeWithTimeout` with a throwing probe and timer cleanup; `runStartupHealthCheck`
+  over a `sqlite::memory:` store writes `health.reportedBy` naming this install's human on the
+  `rolled_back` and `failed` rows while the row's author (a peer that first recorded the
+  release) stays, and `{ human: null }` when the install has no human.
 - `update-githost.test.ts`: the release workflow's API calls against the testenv fake git host
   (create release, upload the artefact and the signed manifest as assets), then
   `GitHubReleasesFeed` lists the manifest, the manager stages from the host's
@@ -484,13 +518,17 @@ cases; skipping the open-item lookup in `ensureRequest` fails the "not every tic
 - `GitHubReleasesFeed` fetches one manifest asset per release on every `list`; with many
   releases on the channel that is one request each (bounded by `perPage`, default 30). A
   cache keyed by release id would remove the repeat fetches.
+- `health.reportedBy` names a human, not an install: the release row has no install column,
+  so two installs of one human over one state cannot be told apart in a refusal (the text
+  says "this install's human"). Recording an install id there (and comparing on it) would
+  need one the runtime knows about itself; it has none today.
 
 ## Requirements covered
 
 | ID | Clause | Where |
 | --- | --- | --- |
 | M.3 | signed builds from GitHub Releases; "Update available", changelog, "Update and restart" | `feed.ts`, `verify.ts`, `sign.ts`, `screen.ts` (`AppUpdateView.available.changelog`), `UpdateManager.apply` + `Restarter` |
-| M.4 | staged install, health check on restart, automatic rollback; config, memory and data untouched | `install.ts`, `pointer.ts`, `health.ts`; `protectedHashes` tests |
+| M.4 | staged install, health check on restart, automatic rollback; config, memory and data untouched | `install.ts`, `pointer.ts`, `health.ts`; `protectedHashes` tests; a rolled-back release refused on every install of the shared state, the refusal naming the reporting install and time (`rejectionReport`) |
 | M.5 | connector and model updates on the same updates screen | `screen.ts` (`connectors`, `models`), `ExtensionCatalog`, `ModelWatchReport` |
 | M.6 | shared state schema changes use versioned migrations; both apps on a compatible version before sync resumes | `compat.ts` (`isSchemaCompatible`, `SyncGate`), `sync.ts` (`SchemaSync` over the store's `schema_migrations`), wired in `compose.ts` (sessions, approvals, manual and scheduled mirror runs), `session/runner.ts`, `session/peers.ts`, `daemon/server.ts`, `cli/main.ts`; `minSchema` in the manifest and `assertSchemaCompatible` keep a release from staging onto a store it cannot reach; `sync-gate.test.ts` |
 | K.6 (part) | Extensions panel: version and updates | `ConnectorUpdateView` |

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { applyVerdict, type FollowupContext } from "../src/followup.ts";
+import {
+  applyVerdict,
+  type FollowupContext,
+  SIGNOFF_KEY,
+  SIGNOFF_OPTIONS,
+} from "../src/followup.ts";
 import type { ReviewFinding } from "../src/types.ts";
 import { reviewOutput, type World, world } from "./helpers.ts";
 
@@ -202,6 +207,7 @@ describe("applyVerdict (B.4, D.2)", () => {
         human_id: w.ids.human,
         blocking: true,
         kind: "approval",
+        change_card: { key: SIGNOFF_KEY, reason: "retry_ladder_exhausted", applied_at: null },
       });
       expect(req.why).toContain("Retry ladder exhausted");
     } finally {
@@ -298,6 +304,14 @@ describe("applyVerdict (B.4, D.2)", () => {
         const req = await w2.store.humanRequest.mustGet(d2.humanRequestId);
         expect(req.why).toContain("Needs eyes.");
         expect(req.session_id).toBe(w2.ids.session);
+        expect(req.options).toEqual([...SIGNOFF_OPTIONS]);
+        // The card the runtime's sign-off sync applies the answer through (RT-P5-1).
+        expect(req.change_card).toMatchObject({
+          key: SIGNOFF_KEY,
+          task_id: w2.ids.task,
+          reason: "verdict",
+          applied_at: null,
+        });
       } finally {
         await w2.close();
       }

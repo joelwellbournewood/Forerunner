@@ -4,8 +4,10 @@ import { FakeProvider, type ScriptedReply, textReply, toolReply } from "@forerun
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { ConversationAgent } from "../src/conversation/agent.ts";
+import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../src/injection/scan.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
+import { StateApprovals } from "../src/wiring/state-ports.ts";
 import { flatPricing, harness } from "./helpers.ts";
 
 /**
@@ -14,9 +16,21 @@ import { flatPricing, harness } from "./helpers.ts";
  * by risk, every change lands in the change log with undo, and the model path only ever sees
  * the registry's command tools.
  */
-async function setup(replies: ScriptedReply[] = []) {
+async function setup(
+  replies: ScriptedReply[] = [],
+  opts: {
+    /**
+     * The daemon's approval port (`StateApprovals`): a hold files a blocking HumanRequest
+     * and answers `pending`, as in production, instead of the harness's auto-approve.
+     */
+    storeApprovals?: boolean;
+  } = {},
+) {
   const h = harness();
   const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
+  const hooks = opts.storeApprovals
+    ? new EnforcementHooks({ ...h.deps, approvals: new StateApprovals(store) })
+    : h.hooks;
   const human = (
     await store.human.insert({
       name: "J",
@@ -83,7 +97,7 @@ async function setup(replies: ScriptedReply[] = []) {
     provider,
     pricing: flatPricing,
     billingSourceId: "bs",
-    hooksDriver: new LoopAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock }),
+    hooksDriver: new LoopAgentDriver({ hooks, kill: h.kill, clock: h.clock }),
     modelId: "fake-haiku",
     commands,
   });
@@ -280,6 +294,95 @@ describe("conversation agent over the command registry", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.commands.map((c) => (c as { name: string }).name)).toEqual(["note.add"]);
     expect(rows[0]?.words_used).toBe(text);
+    await w.store.close();
+  });
+
+  /**
+   * RT-P5-3 (testing.md, "Gate harnesses", Known issues): on the model path the registry's
+   * change card is the one approval of a command tool. With the daemon's store-backed
+   * approval port the hooks used to hold a high-risk command tool (`permission_change` is
+   * always-human) and file their own blocking request before the card could form, so one
+   * change needed two answers (by voice two phone answers and a second asking).
+   */
+  it("a high-risk command tool on the model path forms one card for the paired device; the hooks file no second request", async () => {
+    const w = await setup(
+      [
+        toolReply("email_mode_set", { mode: "draft_only" }, "Changing the email mode.", {
+          when: { toolAvailable: "email_mode_set" },
+        }),
+        textReply("Confirm it on your paired device.", {
+          when: { lastUserIncludes: "Needs confirmation" },
+        }),
+      ],
+      { storeApprovals: true },
+    );
+    const text = "Set the email mode to draft only.";
+    const r1 = await w.chat(text);
+    expect(w.provider.calls.length).toBeGreaterThan(0); // no pattern: the model, with the tools
+    expect(r1.pendingConfirmation).toMatchObject({
+      commands: ["email.mode.set"],
+      decision: "needs_device",
+    });
+    expect(r1.reply).toContain("paired device");
+    // One request filed: the registry's card. The hooks held nothing and denied nothing.
+    const requests = await w.store.humanRequest.list();
+    expect(requests.map((q) => q.id)).toEqual([r1.pendingConfirmation?.id]);
+    expect(w.h.audit.entries.filter((e) => !e.allowed)).toEqual([]);
+    expect(w.h.audit.entries.filter((e) => e.tool === "email_mode_set")).toHaveLength(1);
+    expect(await w.store.changeLog.list()).toHaveLength(0);
+    // A typed yes is not enough (Q.8); the one answer on the paired device applies the change.
+    const r2 = await w.chat("yes");
+    expect(r2.actions).toEqual([]);
+    expect(await w.store.changeLog.list()).toHaveLength(0);
+    const phone = await w.store.device.register({
+      owner_human_id: w.human,
+      name: "Pixel",
+      platform: "android",
+      public_key: ["pk", "phone", "fixture"].join("-"), // not-a-secret
+      kind: "phone",
+    });
+    const done = await w.commands.confirm(r1.pendingConfirmation?.id ?? "", {
+      kind: "device",
+      deviceId: phone.id,
+      biometric: true,
+      by: { kind: "human", id: w.human },
+    });
+    expect(done.status).toBe("done");
+    expect(done.sentence).toBe("Changed the email mode of Alice from Off to Draft only. Undo.");
+    const rows = await w.store.changeLog.list();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ source: "chat", words_used: text, undo_state: "undoable" });
+    expect(rows[0]?.commands.map((c) => (c as { name: string }).name)).toEqual(["email.mode.set"]);
+    // Still the one request, now answered; nothing else waits for the human.
+    const after = await w.store.humanRequest.list();
+    expect(after.map((q) => [q.id, q.status])).toEqual([[r1.pendingConfirmation?.id, "answered"]]);
+    expect(await w.store.humanRequest.open({ humanId: w.human })).toEqual([]);
+    await w.store.close();
+  });
+
+  it("a medium-risk command tool on the model path is one needs_yes card; the yes applies it with one request filed", async () => {
+    const w = await setup(
+      [
+        toolReply("autonomy_set", { level: 3 }, "Raising the autonomy by one step.", {
+          when: { toolAvailable: "autonomy_set" },
+        }),
+        textReply("Say yes to confirm.", { when: { lastUserIncludes: "Needs confirmation" } }),
+      ],
+      { storeApprovals: true },
+    );
+    const r1 = await w.chat("let alice work on the game with a bit more freedom");
+    expect(w.provider.calls.length).toBeGreaterThan(0);
+    expect(r1.pendingConfirmation).toMatchObject({
+      commands: ["autonomy.set"],
+      decision: "needs_yes",
+    });
+    expect(await w.store.humanRequest.list()).toHaveLength(1);
+    expect(w.h.audit.entries.filter((e) => !e.allowed)).toEqual([]);
+    const r2 = await w.chat("yes");
+    expect(r2.actions[0]?.kind).toBe("autonomy.set");
+    expect((await w.store.project.mustGet(w.game)).autonomy_level).toBe(3);
+    expect((await w.store.humanRequest.list()).map((q) => q.status)).toEqual(["answered"]);
+    expect(await w.store.changeLog.list()).toHaveLength(1);
     await w.store.close();
   });
 

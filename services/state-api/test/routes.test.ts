@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "@forerunner/platform";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DecisionLog } from "@forerunner/runtime/wiring/state-ports";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ADMIN_TOKEN, type DeviceClient, type Harness, harness, json } from "./helpers.ts";
 
 describe("state service routes", () => {
@@ -328,6 +329,184 @@ describe("state service routes", () => {
     );
     const bobPhone = await h.pairDevice(h.seed.bob.id);
     expect((await bobPhone.get(`/requests/${r.id}`)).status).toBe(403);
+  });
+
+  it("answering a decision request writes the decision-log entry: who, what, when, from which device; supersede through the outbox; nothing for an approval", async () => {
+    const why = "Which database?";
+    const r = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      project_id: h.seed.project.id,
+      kind: "decision",
+      why,
+      options: ["sqlite", "postgres"],
+      blocking: true,
+    });
+    await h.clock.advance(5 * 60_000);
+    const res = await phone.post(`/requests/${r.id}/answer`, {
+      version: r.version,
+      answer: "postgres",
+    });
+    expect(res.status).toBe(200);
+    const answeredAt = h.clock.nowIso();
+    // The same entry the daemon's answer route writes: one current decision on the project.
+    const current = await h.store.decision.current(h.seed.project.id);
+    expect(current).toHaveLength(1);
+    const first = current[0] as (typeof current)[number];
+    expect(first).toMatchObject({
+      project_id: h.seed.project.id,
+      question: why,
+      options: ["sqlite", "postgres"],
+      chosen: "postgres",
+      decided_by: h.seed.ada.id,
+      author_human: h.seed.ada.id,
+      created_at: answeredAt,
+      supersedes: null,
+      superseded_by: null,
+    });
+    // From which device, and for which request (the row has no device column).
+    expect(first.rationale).toBe(
+      `request ${r.id} answered from device ${phone.deviceId} (phone) through the state service`,
+    );
+    expect(await h.store.decision.findAnswered(h.seed.project.id, "which database")).toMatchObject({
+      id: first.id,
+    });
+    // The service lists it, and the change feed carried it.
+    const listed = await json<{ decisions: { id: string; decidedBy: string }[] }>(
+      await phone.get(`/projects/${h.seed.project.id}/decisions`),
+    );
+    expect(listed.decisions.map((d) => d.id)).toEqual([first.id]);
+    const events = h.api.bus.since(0, (e) => e.type === "decision.changed") ?? [];
+    expect(events.map((e) => e.payload)).toEqual([
+      { id: first.id, version: first.version, requestId: r.id },
+    ]);
+
+    // An answered approval is not a decision: nothing is written.
+    const approval = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      project_id: h.seed.project.id,
+      kind: "approval",
+      why: "Merge the PR?",
+      options: ["yes", "no"],
+      blocking: true,
+    });
+    expect(
+      (
+        await phone.post(`/requests/${approval.id}/answer`, {
+          version: approval.version,
+          answer: "yes",
+        })
+      ).status,
+    ).toBe(200);
+    expect(await h.store.decision.current(h.seed.project.id)).toHaveLength(1);
+
+    // A different answer to the same question through the outbox supersedes the first entry.
+    const again = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      project_id: h.seed.project.id,
+      kind: "decision",
+      why,
+      options: ["sqlite", "postgres"],
+      blocking: true,
+    });
+    await h.clock.advance(60_000);
+    const sync = await phone.post("/sync/outbox", {
+      actions: [
+        {
+          clientId: "22222222-1",
+          kind: "request.answer",
+          payload: { id: again.id, version: again.version, answer: "sqlite" },
+          createdAt: h.clock.nowIso(),
+        },
+      ],
+    });
+    expect(sync.status).toBe(200);
+    const after = await h.store.decision.current(h.seed.project.id);
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({
+      chosen: "sqlite",
+      decided_by: h.seed.ada.id,
+      supersedes: first.id,
+      created_at: h.clock.nowIso(),
+    });
+    expect(after[0]?.rationale).toContain(
+      `request ${again.id} answered from device ${phone.deviceId}`,
+    );
+    expect((await h.store.decision.mustGet(first.id)).superseded_by).toBe(after[0]?.id);
+
+    // The runtime answering an unaddressed request through the service is logged as the
+    // runtime, naming its install.
+    const unaddressed = await h.store.humanRequest.insert({
+      project_id: h.seed.project.id,
+      kind: "decision",
+      why: "Which region?",
+      options: ["eu", "us"],
+      blocking: false,
+    });
+    const byRuntime = await h.admin.post(
+      `/requests/${unaddressed.id}/answer`,
+      { version: unaddressed.version, answer: "eu" },
+      { headers: { "x-forerunner-install": "pc-ada" } },
+    );
+    expect(byRuntime.status).toBe(200);
+    const region = await h.store.decision.findAnswered(h.seed.project.id, "Which region?");
+    expect(region).toMatchObject({ chosen: "eu", decided_by: "runtime", author_human: "runtime" });
+    expect(region?.rationale).toBe(
+      `request ${unaddressed.id} answered from the runtime (install pc-ada) through the state service`,
+    );
+    expect(await h.store.decision.current(h.seed.project.id)).toHaveLength(2);
+  });
+
+  it("the answer and its decision-log entry are one write: a failed decision write leaves the request open and the retry succeeds", async () => {
+    const r = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      project_id: h.seed.project.id,
+      kind: "decision",
+      why: "Which queue?",
+      options: ["redis", "postgres"],
+      blocking: true,
+    });
+    const spy = vi
+      .spyOn(DecisionLog.prototype, "recordAnswer")
+      .mockRejectedValueOnce(new Error("decision table unavailable"));
+    try {
+      const failed = await phone.post(`/requests/${r.id}/answer`, {
+        version: r.version,
+        answer: "postgres",
+      });
+      expect(failed.status).toBe(500);
+      expect(spy).toHaveBeenCalledTimes(1);
+      // Rolled back together: the request is still open at its version, no decision row, and
+      // nothing went on the change feed.
+      expect(await h.store.humanRequest.get(r.id)).toMatchObject({
+        status: "open",
+        version: r.version,
+        answer: null,
+      });
+      expect(await h.store.decision.current(h.seed.project.id)).toEqual([]);
+      expect(
+        h.api.bus.since(
+          0,
+          (e) => e.type === "human_request.changed" || e.type === "decision.changed",
+        ) ?? [],
+      ).toEqual([]);
+      // The retry at the same version (re-signed a moment later, as a client would) goes
+      // through and writes both.
+      await h.clock.advance(1_000);
+      const retry = await phone.post(`/requests/${r.id}/answer`, {
+        version: r.version,
+        answer: "postgres",
+      });
+      expect(retry.status).toBe(200);
+      expect(await h.store.humanRequest.get(r.id)).toMatchObject({
+        status: "answered",
+        answer: "postgres",
+      });
+      expect(await h.store.decision.current(h.seed.project.id)).toMatchObject([
+        { question: "Which queue?", chosen: "postgres", decided_by: h.seed.ada.id },
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("records and lists decisions, with supersede", async () => {

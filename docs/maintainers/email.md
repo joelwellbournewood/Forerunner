@@ -309,6 +309,20 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
 - `email-routes.test.ts`: the seven routes over a fake app: settings GET/PUT with audit and
   validation, pause/resume enforced by the policy, marker rotation invalidates the old marker,
   sent log newest first, command audit.
+- `closeout-email.test.ts` (requirements close-out, 2026-10-20): a second human's agent lists
+  and reads its own mailbox only (the tools bind the mailbox to the run's agent id, the schemas
+  drop any mailbox or agent the model names, mode off reads nothing while the other mailbox has
+  mail, one settings row per agent; S.10, S.15); in draft only, allowlist and full discretion
+  the blocked-content rules and the daily and per-recipient caps hold and a changed cap takes
+  effect at once, every refusal an `email.send` row (S.21); a fresh agent starts at 20 sends a
+  day and 5 per recipient (S.22).
+- `closeout-email-commands.test.ts` (requirements close-out, 2026-10-20, T.1): the command
+  toggle and the sending mode are independent settings and independent gates (read only
+  answers the owner's command while refusing a stranger; commands off in full discretion
+  leaves the owner's marked mail as data: no model call, no reply, no session); the
+  acknowledgement reaches the owner in read only, draft only, allowlist and full discretion
+  with the daily and per-recipient caps at zero, logged as a reply to the human with no
+  refused row and no approval ticket, while nothing to a stranger goes out in the same world.
 - `packages/runtime/test/capabilities-wiring.test.ts` (runtime, ADR 0047): the tools absent
   until the settings name a mailbox with a mode other than off and gone again at mode off, a
   session through the daemon sending to a stranger in full discretion (signature on, one
@@ -377,3 +391,18 @@ S.15, S.16, S.17, S.18, S.19, S.20, S.21, S.22, S.23, S.24, S.25, S.26, S.27, S.
 and the routes; the tray button is the app's), S.29 (available; the setup-screen text is the
 app's), T.1, T.2, T.3, T.4, T.5, T.6, T.7, T.8, T.9, T.10, T.11, T.12, T.14. T.13 is the cloud
 runner's (the port passes the human id so the runner can pick the billing source).
+
+Requirements close-out (2026-10-20): S.16 to S.27 are `done` on the suites above plus
+`closeout-email.test.ts`; S.15, S.28 and S.29 stay `in progress` because the daemon mounts no
+email routes and `apps/ui` has no Settings -> Capabilities -> Email page (the mode picker, the
+full-discretion warning and the tray's pause route), see `docs/status/BLOCKERS.md`.
+
+Email commands close-out (2026-10-20): T.3 to T.12 are `done` on `email-commands.test.ts`,
+`email-auth.test.ts`, `email-inbound.test.ts`, `email-settings.test.ts`, `email-routes.test.ts`
+and the cloud runner's `runner.test.ts` and `email-watch.test.ts` (the capped cloud session,
+the acknowledgement within a minute, the completion in the thread). T.1 stays `in progress`:
+`closeout-email-commands.test.ts` proves the toggle and the replies in every mode that reads
+mail, but in mode `off` the policy refuses even the reply to the owner while the runner's
+watcher reads only the command toggle, a conflict inside the spec that an ADR has to settle.
+T.14 stays `in progress`: the audit row and `GET .../email/commands` exist, no app mounts or
+shows them. Both have rows in `docs/status/BLOCKERS.md`.

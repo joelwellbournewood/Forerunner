@@ -265,11 +265,15 @@ export async function runStartupHealthCheck(deps: HealthCheckDeps): Promise<Heal
   } else {
     result = await probeWithTimeout(deps.probe, version, deps.timeoutMs, deps.clock);
   }
+  // The release row is shared by every install on the same state (ADR 0046) and its author is
+  // whoever first recorded the release, so the verdict names the install that produced it:
+  // `rejectionReport` (install.ts) reads `reportedBy` ahead of the author.
   const health: JsonValue = {
     ok: result.ok,
     detail: result.detail,
     probe: deps.probe.name,
     checkedAt: now(),
+    reportedBy: { human: deps.humanId ?? null, agent: null },
     ...(result.checks
       ? { checks: result.checks.map((c) => ({ name: c.name, ok: c.ok, detail: c.detail })) }
       : {}),

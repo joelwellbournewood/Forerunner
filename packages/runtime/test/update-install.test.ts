@@ -6,17 +6,18 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { isForerunnerError, join, sep } from "@forerunner/platform";
+import { appDirs, isForerunnerError, join, sep } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
 import { Command } from "commander";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { registerUpdateCli } from "../src/update/cli.ts";
 import { GitHubReleasesFeed, MemoryReleaseFeed } from "../src/update/feed.ts";
-import { StaticHealthProbe } from "../src/update/health.ts";
+import { type HealthProbe, StaticHealthProbe } from "../src/update/health.ts";
 import {
   assertSafeZipEntry,
   detectArtifactPlatform,
@@ -29,7 +30,7 @@ import {
   readInstallLock,
   withInstallLock,
 } from "../src/update/lock.ts";
-import { ReleaseManifest } from "../src/update/manifest.ts";
+import { ReleaseManifest, type SignedManifest } from "../src/update/manifest.ts";
 import {
   type CurrentPointer,
   cleanStalePointerTemps,
@@ -46,6 +47,7 @@ import { isReleaseVersion } from "../src/update/semver.ts";
 import { generateSigningKeyPair, signManifest } from "../src/update/sign.ts";
 import { ReleaseVerifier, refusalReason, sha256Hex } from "../src/update/verify.ts";
 import {
+  BootingRestarter,
   buildRelease,
   FakeReleaseServer,
   type Harness,
@@ -1189,6 +1191,239 @@ describe("HumanRequestUpdatePort", () => {
       }
     } finally {
       await s.stop();
+    }
+  });
+});
+
+describe("a previously rejected release names the install that reported it", () => {
+  const byJ = { kind: "human", id: "human-j" } as const;
+  const byM = { kind: "human", id: "human-m" } as const;
+
+  /** A feed listing only the fake server's signed release of `version` (its assets stay served). */
+  function feedWith(version: string): MemoryReleaseFeed {
+    const rel = server.releases.find((r) => r.tag === `v${version}` && !r.draft);
+    if (!rel || !("signature" in rel.signed))
+      throw new Error(`no signed ${version} on the fake server`);
+    return new MemoryReleaseFeed([rel.signed as SignedManifest]);
+  }
+
+  /**
+   * A second install of another human over the same store: its own directories (no pointer),
+   * its own running build and shell, optionally its own health probe.
+   */
+  function peerOf(
+    h: Harness,
+    humanId: string,
+    over: { probe?: HealthProbe } = {},
+  ): { manager: UpdateManager; home: string; restarter: BootingRestarter } {
+    const home = mkdtempSync(join(tmpdir(), "fr-update-peer-"));
+    const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+    for (const d of Object.values(dirs)) mkdirSync(d, { recursive: true });
+    const running = { version: h.running.version };
+    const restarter = new BootingRestarter(running);
+    const manager = new UpdateManager({
+      ...h.deps,
+      dirs,
+      humanId,
+      restarter,
+      runningVersion: () => running.version,
+      probe: over.probe ?? h.deps.probe,
+    });
+    return { manager, home, restarter };
+  }
+
+  const mine = (id: string, at: string) =>
+    `release 1.2.0 was rolled back (reported by this install's human, human ${id}, on ${at}); cut a new release`;
+  const peerWording = (id: string, at: string) =>
+    `release 1.2.0 was rolled back on another install (reported by human ${id} on ${at}); cut a new release`;
+
+  it("after an automatic rollback: this install's human is named here, 'another install' with the reporter and time for a peer over the same release table", async () => {
+    const h = await harness({
+      feed: feedWith("1.2.0"),
+      probe: new StaticHealthProbe({ ok: false, detail: "doctor exited 1" }),
+    });
+    const peer = peerOf(h, "human-m");
+    try {
+      await h.manager.apply({ by: byJ });
+      expect((await h.manager.healthCheck()).kind).toBe("rolled_back");
+      const row = (await h.store.release.latest("stable")) as { status: string; health: unknown };
+      expect(row.status).toBe("rolled_back");
+      const at = (row.health as { checkedAt: string }).checkedAt;
+      expect(at).toBe(h.clock.nowIso());
+      // The install that rolled back: its own human is the reporter, with the verdict's time.
+      const own = await h.manager.check(byJ, { fresh: true });
+      expect(own.available).toBeNull();
+      expect(own.rejected).toEqual([
+        { version: "1.2.0", reason: "previously_rejected", message: mine("human-j", at) },
+      ]);
+      const e = await h.manager.apply({ by: byJ, version: "1.2.0" }).catch((err: unknown) => err);
+      expect(isForerunnerError(e, "validation") ? e.details : null).toEqual({
+        reason: "previously_rejected",
+        version: "1.2.0",
+        status: "rolled_back",
+        peer: false,
+        reportedBy: { human: "human-j", agent: null },
+        reportedAt: at,
+      });
+      // A peer install reads the same row: the refusal stands, and says whose rollback it was.
+      const theirs = await peer.manager.check(byM, { fresh: true });
+      expect(theirs.available).toBeNull();
+      expect(theirs.rejected).toEqual([
+        { version: "1.2.0", reason: "previously_rejected", message: peerWording("human-j", at) },
+      ]);
+      const pe = await peer.manager
+        .apply({ by: byM, version: "1.2.0" })
+        .catch((err: unknown) => err);
+      expect(isForerunnerError(pe, "validation") ? pe.details : null).toEqual({
+        reason: "previously_rejected",
+        version: "1.2.0",
+        status: "rolled_back",
+        peer: true,
+        reportedBy: { human: "human-j", agent: null },
+        reportedAt: at,
+      });
+      // The peer's refusal is audited under its own human with that wording; nothing moved there.
+      const denied = await h.store.auditLog.list({ tool: "update.apply", humanId: "human-m" });
+      expect(denied).toHaveLength(1);
+      expect(denied[0]).toMatchObject({ allowed: false, denied_reason: "previously_rejected" });
+      expect(denied[0]?.result_summary).toContain("on another install (reported by human human-j");
+      expect(readPointer(appDirs({ env: { FORERUNNER_HOME: peer.home } }))).toBeNull();
+      expect(peer.restarter.requests).toEqual([]);
+      expect(h.restarter.requests.filter((r) => r.targetVersion === "1.2.0")).toHaveLength(1);
+      // The wording never claims this install's human for a row another human's install wrote.
+      expect(theirs.rejected[0]?.message).not.toContain("this install");
+      expect(own.rejected[0]?.message).not.toContain("another install");
+    } finally {
+      rmSync(peer.home, { recursive: true, force: true });
+      await h.close();
+    }
+  });
+
+  it("a manual rollback records its reporter on the row; a row that names no install is refused without claiming one", async () => {
+    const h = await harness({ feed: feedWith("1.2.0") });
+    const peer = peerOf(h, "human-m");
+    try {
+      await h.manager.apply({ by: byJ });
+      expect((await h.manager.healthCheck()).kind).toBe("healthy");
+      await h.clock.advance(60_000);
+      await h.manager.rollback({ by: byJ, reason: "the inbox badge is wrong" });
+      const rolledAt = h.clock.nowIso();
+      const row = await h.store.release.latest("stable");
+      expect(row?.status).toBe("rolled_back");
+      expect(row?.health).toEqual({
+        ok: false,
+        detail: "the inbox badge is wrong",
+        manual: true,
+        checkedAt: rolledAt,
+        reportedBy: { human: "human-j", agent: null },
+      });
+      const own = await h.manager.check(byJ, { fresh: true });
+      expect(own.rejected[0]?.message).toBe(mine("human-j", rolledAt));
+      const theirs = await peer.manager.check(byM, { fresh: true });
+      expect(theirs.rejected[0]?.message).toBe(peerWording("human-j", rolledAt));
+      // An older updater's row (no reporter, no author): still refused, with the row's time,
+      // and the text names no install.
+      await h.clock.advance(60_000);
+      await h.store.release.patch((row as { id: string }).id, {
+        health: null,
+        author_human: null,
+        author_agent: "updater",
+      });
+      const unsigned = await peer.manager.check(byM, { fresh: true });
+      expect(unsigned.rejected).toEqual([
+        {
+          version: "1.2.0",
+          reason: "previously_rejected",
+          message: `release 1.2.0 was rolled back on an install sharing this release table on ${h.clock.nowIso()} (reporter not recorded); cut a new release`,
+        },
+      ]);
+      const e = await peer.manager
+        .apply({ by: byM, version: "1.2.0" })
+        .catch((err: unknown) => err);
+      expect(isForerunnerError(e, "validation") ? e.details : null).toMatchObject({
+        reason: "previously_rejected",
+        peer: true,
+        reportedBy: { human: null, agent: null },
+        reportedAt: h.clock.nowIso(),
+      });
+      // A failed first install reads the same way, with its own verb.
+      await h.store.release.patch((row as { id: string }).id, {
+        status: "failed",
+        author_human: "human-m",
+      });
+      const failed = await peer.manager.check(byM, { fresh: true });
+      expect(failed.rejected[0]?.message).toBe(
+        `release 1.2.0 failed its health check (reported by this install's human, human human-m, on ${h.clock.nowIso()}); cut a new release`,
+      );
+    } finally {
+      rmSync(peer.home, { recursive: true, force: true });
+      await h.close();
+    }
+  });
+
+  it("the install whose health check rolled back is the reporter, not the install that first recorded the release", async () => {
+    // M applies 1.2.0 first and passes, so the shared row's author is human-m. J reuses that
+    // row and its health check fails: the automatic rollback must name J on the row, so J's
+    // refusal names J's own human and M's (once M is below 1.2.0 again) names J, not M.
+    const h = await harness({
+      feed: feedWith("1.2.0"),
+      probe: new StaticHealthProbe({ ok: false, detail: "doctor exited 1" }),
+    });
+    const peer = peerOf(h, "human-m", {
+      probe: new StaticHealthProbe({ ok: true, detail: "fake daemon healthy" }),
+    });
+    try {
+      await peer.manager.apply({ by: byM });
+      expect((await peer.manager.healthCheck()).kind).toBe("healthy");
+      const recorded = await h.store.release.latest("stable");
+      expect(recorded).toMatchObject({ status: "installed", author_human: "human-m" });
+
+      await h.clock.advance(60_000);
+      await h.manager.apply({ by: byJ });
+      expect((await h.manager.healthCheck()).kind).toBe("rolled_back");
+      const at = h.clock.nowIso();
+      const row = await h.store.release.latest("stable");
+      expect(row).toMatchObject({
+        id: recorded?.id,
+        status: "rolled_back",
+        author_human: "human-m",
+      });
+      expect(row?.health).toMatchObject({
+        ok: false,
+        detail: "doctor exited 1",
+        checkedAt: at,
+        reportedBy: { human: "human-j", agent: null },
+      });
+
+      // J, whose health check rolled back: its own human, not the row's author.
+      const own = await h.manager.check(byJ, { fresh: true });
+      expect(own.rejected).toEqual([
+        { version: "1.2.0", reason: "previously_rejected", message: mine("human-j", at) },
+      ]);
+      const e = await h.manager.apply({ by: byJ, version: "1.2.0" }).catch((err: unknown) => err);
+      expect(isForerunnerError(e, "validation") ? e.details : null).toMatchObject({
+        reason: "previously_rejected",
+        peer: false,
+        reportedBy: { human: "human-j", agent: null },
+        reportedAt: at,
+      });
+
+      // M is healthy on 1.2.0 (an apply there is `already_installed`); after a manual rollback
+      // (which leaves J's verdict on the row) M reads J as the reporter on another install.
+      await h.clock.advance(60_000);
+      await peer.manager.rollback({ by: byM, reason: "trying the peer's verdict" });
+      expect((await h.store.release.latest("stable"))?.health).toMatchObject({
+        checkedAt: at,
+        reportedBy: { human: "human-j", agent: null },
+      });
+      const theirs = await peer.manager.check(byM, { fresh: true });
+      expect(theirs.rejected).toEqual([
+        { version: "1.2.0", reason: "previously_rejected", message: peerWording("human-j", at) },
+      ]);
+      expect(theirs.rejected[0]?.message).not.toContain("human-m");
+    } finally {
+      rmSync(peer.home, { recursive: true, force: true });
+      await h.close();
     }
   });
 });

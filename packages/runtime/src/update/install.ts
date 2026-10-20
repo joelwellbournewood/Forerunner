@@ -27,7 +27,7 @@ import {
   resolve,
   safeSegment,
 } from "@forerunner/platform";
-import type { AuditLogRepo, ReleaseRepo, ReleaseRow } from "@forerunner/state";
+import type { AuditLogRepo, JsonObject, ReleaseRepo, ReleaseRow } from "@forerunner/state";
 import AdmZip from "adm-zip";
 import type { UpdateConfig } from "./config.ts";
 import type { ReleaseFeed } from "./feed.ts";
@@ -52,7 +52,7 @@ import {
   versionsRoot,
   writePointer,
 } from "./pointer.ts";
-import type { Restarter, UpdateHumanPort } from "./ports.ts";
+import { type Restarter, UPDATE_REQUEST_AUTHOR, type UpdateHumanPort } from "./ports.ts";
 import { compareSemver } from "./semver.ts";
 import { type ReleaseVerifier, refusal, refusalReason, type VerifyRefusal } from "./verify.ts";
 
@@ -149,6 +149,75 @@ const logger = log("update:install");
 export const RELEASE_RECORD_FILE = "release.json";
 export const DOWNLOAD_DIR = "download";
 export const DEFAULT_CHECK_CACHE_MS = 60_000;
+
+/**
+ * Who reported a rollback or a failed health check on a release row, and when. The row is
+ * shared by every install on the same state (ADR 0046), so a refusal must say which install
+ * reported the verdict instead of claiming it happened here.
+ */
+export interface RejectionReport {
+  /** Human of the install that reported it, when the row names one. */
+  human: string | null;
+  /** Agent that applied it, when an agent did (the updater's own author name is not one). */
+  agent: string | null;
+  /** When the verdict was recorded: `health.checkedAt`, else the row's last update. */
+  at: string;
+  /**
+   * True when the reporter is this install's human. The row carries no install id, so a
+   * second install of the same human (a laptop beside the PC) reads as `mine` too; the
+   * wording therefore claims the human, never the machine.
+   */
+  mine: boolean;
+}
+
+function jsonObject(v: unknown): JsonObject | null {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as JsonObject) : null;
+}
+
+function stringOrNull(v: unknown): string | null {
+  return typeof v === "string" && v ? v : null;
+}
+
+/**
+ * Read the reporter of a `rolled_back` or `failed` row. `health.reportedBy`, written by the
+ * automatic rollback (health.ts) and the manual one below, is authoritative, even when it
+ * names no human (then the reporter is unknown, not the author). Only a row from an older
+ * updater lacks it; its author is the install that first recorded the release, which is the
+ * one that rolled it back unless a second install applied the same release first.
+ */
+export function rejectionReport(row: ReleaseRow, humanId: string | null): RejectionReport {
+  const health = jsonObject(row.health);
+  const reportedBy = jsonObject(health?.reportedBy);
+  const human = reportedBy ? stringOrNull(reportedBy.human) : row.author_human;
+  const agentRaw = reportedBy ? stringOrNull(reportedBy.agent) : row.author_agent;
+  const agent = agentRaw === UPDATE_REQUEST_AUTHOR ? null : agentRaw;
+  const at = stringOrNull(health?.checkedAt) ?? row.updated_at;
+  return { human, agent, at, mine: human !== null && human === humanId };
+}
+
+/**
+ * The refusal text for a rejected release: by whom and when, and where as far as the row
+ * tells. The reporter is a human id, not an install, so the own case says "this install's
+ * human" rather than "this install" (see `RejectionReport.mine`).
+ */
+export function previouslyRejectedMessage(
+  version: string,
+  status: ReleaseRow["status"],
+  report: RejectionReport,
+): string {
+  const what = status === "failed" ? "failed its health check" : "was rolled back";
+  const who = report.human
+    ? `human ${report.human}`
+    : report.agent
+      ? `agent ${report.agent}`
+      : null;
+  const where = report.mine
+    ? `(reported by this install's human, ${who}, on ${report.at})`
+    : who
+      ? `on another install (reported by ${who} on ${report.at})`
+      : `on an install sharing this release table on ${report.at} (reporter not recorded)`;
+  return `release ${version} ${what} ${where}; cut a new release`;
+}
 
 export function detectArtifactPlatform(
   platform: Platform = currentPlatform(),
@@ -500,14 +569,26 @@ export class UpdateManager {
     return row;
   }
 
-  /** A release that rolled back or failed on this install is never offered or installed again. */
+  /**
+   * A release that rolled back or failed is never offered or installed again. The rule reads
+   * the shared release table, so a peer install's rollback counts here too; the refusal names
+   * the install that reported it and when (`rejectionReport`) rather than claiming it was
+   * this one.
+   */
   private async assertNotRejectedBefore(m: ReleaseManifest): Promise<void> {
     const existing = await this.existingRow(m);
     if (existing && (existing.status === "rolled_back" || existing.status === "failed")) {
+      const report = rejectionReport(existing, this.deps.humanId ?? null);
       throw refusal(
         "previously_rejected",
-        `release ${m.version} was ${existing.status.replace("_", " ")} on this install before; cut a new release`,
-        { version: m.version, status: existing.status },
+        previouslyRejectedMessage(m.version, existing.status, report),
+        {
+          version: m.version,
+          status: existing.status,
+          peer: !report.mine,
+          reportedBy: { human: report.human, agent: report.agent },
+          reportedAt: report.at,
+        },
       );
     }
   }
@@ -676,11 +757,17 @@ export class UpdateManager {
       { orderBy: "created_at desc", limit: 1 },
     );
     if (row && (row.status === "published" || row.status === "installed")) {
+      // The row is shared with peer installs: name the reporter so their refusal can say
+      // whose rollback it was (rejectionReport).
       await this.deps.store.release.setStatus(row.id, row.version, "rolled_back", {
         ok: false,
         detail: reason,
         manual: true,
         checkedAt: this.now(),
+        reportedBy: {
+          human: this.deps.humanId ?? (by.kind === "human" ? by.id : null),
+          agent: by.kind === "agent" ? by.id : null,
+        },
       });
     }
     await this.audit(

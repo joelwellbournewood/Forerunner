@@ -44,6 +44,16 @@ export interface ToolSpec<I = unknown> {
   domainFields?: string[];
   /** Per-call wall-clock limit. */
   timeoutMs?: number;
+  /**
+   * Who confirms this tool with the human. `hooks` (the default): the autonomy table decides
+   * per call and the hooks file the approval request. `registry`: the tool is a command of
+   * the command registry, whose executor confirms by risk itself (the change card is the
+   * approval: a yes for medium risk, the paired device for high, ADR 0030), so the hooks run
+   * every other check (token, kill state, allowlist, schema, paths, domains, secrets) but
+   * file no second request. Set by `CommandLoop.tools` on the conversation agent's model
+   * path; a tool that is not a registry command keeps the hooks' always-human rule.
+   */
+  gate?: "hooks" | "registry";
   execute(input: I, ctx: ToolExecutionContext): Promise<ToolResult>;
 }
 

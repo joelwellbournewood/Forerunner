@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { openStore } from "@forerunner/state";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   DaemonHealthProbe,
@@ -9,8 +10,11 @@ import {
   DoctorHealthProbe,
   type HealthResult,
   probeWithTimeout,
+  runStartupHealthCheck,
   StaticHealthProbe,
 } from "../src/update/health.ts";
+import { writePointer } from "../src/update/pointer.ts";
+import { FakeUpdateHumanPort, RecordingRestarter } from "../src/update/ports.ts";
 
 /**
  * The default health probes: the daemon's /health route (located through daemon.json) and
@@ -227,6 +231,109 @@ describe("DefaultHealthProbe and probeWithTimeout", () => {
     // without a doctor argv the daemon route is the only probe
     const daemonOnly = new DefaultHealthProbe({ dirs: dirsFor() });
     expect((await daemonOnly.check({ version: "1.0.0", signal })).detail).toMatch(/not found/);
+  });
+
+  it("names the install whose check produced the verdict on the release row (health.reportedBy), not the row's author", async () => {
+    const clock = new SimulatedClock("2026-10-20T12:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    const pending = (dirs: ReturnType<typeof dirsFor>, current: string, previous: string | null) =>
+      writePointer(dirs, {
+        schema: 1,
+        current,
+        previous,
+        state: "pending_health_check",
+        updatedAt: clock.nowIso(),
+        lastRollback: null,
+      });
+    const depsFor = (
+      dirs: ReturnType<typeof dirsFor>,
+      version: string,
+      humanId: string | null | undefined,
+    ) => ({
+      dirs,
+      clock,
+      probe: new StaticHealthProbe({ ok: false, detail: "daemon answered 500" }),
+      timeoutMs: 1_000,
+      store: { release: store.release, auditLog: store.auditLog },
+      human: new FakeUpdateHumanPort(),
+      restarter: new RecordingRestarter(),
+      runningVersion: version,
+      ...(humanId === undefined ? {} : { humanId }),
+    });
+    try {
+      // The shared row was first recorded by another install (its author); this one rolls back.
+      const shared = await store.release.insert({
+        release_version: "1.2.0",
+        channel: "stable",
+        changelog: "",
+        signature: "",
+        status: "installed",
+        artifacts: [],
+        published_at: null,
+        author_human: "human-m",
+        author_agent: "updater",
+      });
+      const dirs = dirsFor();
+      pending(dirs, "1.2.0", "1.1.0");
+      const rolled = await runStartupHealthCheck(depsFor(dirs, "1.2.0", "human-j"));
+      expect(rolled).toMatchObject({ kind: "rolled_back", from: "1.2.0", to: "1.1.0" });
+      const after = await store.release.mustGet(shared.id);
+      expect(after.author_human).toBe("human-m");
+      expect(after.health).toEqual({
+        ok: false,
+        detail: "daemon answered 500",
+        probe: "static",
+        checkedAt: clock.nowIso(),
+        reportedBy: { human: "human-j", agent: null },
+      });
+
+      // A first install with nothing to roll back to: the failed row names it too.
+      await store.release.insert({
+        release_version: "1.3.0",
+        channel: "stable",
+        changelog: "",
+        signature: "",
+        status: "published",
+        artifacts: [],
+        published_at: null,
+        author_human: "human-m",
+        author_agent: "updater",
+      });
+      const first = dirsFor();
+      pending(first, "1.3.0", null);
+      await clock.advance(1_000);
+      expect((await runStartupHealthCheck(depsFor(first, "1.3.0", "human-j"))).kind).toBe(
+        "failed_no_previous",
+      );
+      expect((await store.release.latest("stable", "failed"))?.health).toMatchObject({
+        checkedAt: clock.nowIso(),
+        reportedBy: { human: "human-j", agent: null },
+      });
+
+      // An install with no human (a bare CLI run) records that the reporter is unknown rather
+      // than letting the row's author pass for it.
+      await store.release.insert({
+        release_version: "1.4.0",
+        channel: "stable",
+        changelog: "",
+        signature: "",
+        status: "published",
+        artifacts: [],
+        published_at: null,
+        author_human: "human-m",
+        author_agent: "updater",
+      });
+      const bare = dirsFor();
+      pending(bare, "1.4.0", "1.1.0");
+      await clock.advance(1_000);
+      expect((await runStartupHealthCheck(depsFor(bare, "1.4.0", undefined))).kind).toBe(
+        "rolled_back",
+      );
+      const rows = await store.release.list({ release_version: "1.4.0" }, { limit: 1 });
+      expect(rows[0]?.health).toMatchObject({ reportedBy: { human: null, agent: null } });
+    } finally {
+      await store.close();
+    }
   });
 
   it("turns a throwing probe into a failed result and cancels the timer on success", async () => {

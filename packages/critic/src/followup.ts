@@ -6,9 +6,46 @@ import {
   type RetryAction,
   retryAction,
 } from "@forerunner/runtime";
-import type { FindingRow, StateStore, TaskRow } from "@forerunner/state";
+import type { FindingRow, JsonObject, StateStore, TaskRow } from "@forerunner/state";
 import { criticSettingsOf, stricterCeiling } from "./model.ts";
 import type { ReviewOutput } from "./types.ts";
+
+/**
+ * The sign-off request's card (`human_request.change_card`). A tier 3 review, a `human`
+ * verdict and the retry ladder's last rung all end with one blocking request whose options
+ * are `SIGNOFF_OPTIONS`; the runtime's `syncSignoffAnswers` (`packages/runtime`,
+ * `session/findings.ts`) finds the answered ones by `SIGNOFF_KEY`, applies the answer to the
+ * task named here (accept closes it with the findings resolved against `run_id`, revise sends
+ * it down the retry ladder, cancel cancels it) and writes `applied_at` and `outcome` back, so
+ * every answer is applied once.
+ */
+export const SIGNOFF_KEY = "critic:signoff";
+export const SIGNOFF_OPTIONS = ["accept", "revise", "cancel"] as const;
+export type SignoffAnswer = (typeof SIGNOFF_OPTIONS)[number];
+/** Why the sign-off was filed: the verdict itself (tier 3, `human`) or an exhausted ladder. */
+export type SignoffReason = "verdict" | "retry_ladder_exhausted";
+
+export interface SignoffCardInput {
+  taskId: string;
+  reviewId: string | null;
+  /** The run that produced the work; an accepted sign-off resolves the findings against it. */
+  runId: string | null;
+  /** The findings of the review the sign-off is about (open until the answer). */
+  findingIds: readonly string[];
+  reason: SignoffReason;
+}
+
+export function signoffCard(input: SignoffCardInput): JsonObject {
+  return {
+    key: SIGNOFF_KEY,
+    task_id: input.taskId,
+    review_id: input.reviewId,
+    run_id: input.runId,
+    finding_ids: [...input.findingIds],
+    reason: input.reason,
+    applied_at: null,
+  };
+}
 
 /**
  * What happens to a task after its review (spec B.4, D.2, H). The verdict is applied through
@@ -143,11 +180,15 @@ async function signoffRequest(
   task: TaskRow,
   review: ReviewOutput,
   why: string,
+  reason: SignoffReason,
 ): Promise<string> {
   if (review.humanRequestId) {
     const existing = await ctx.store.humanRequest.get(review.humanRequestId);
     if (existing && existing.status === "open") return existing.id;
   }
+  const findingIds = review.reviewId
+    ? (await ctx.store.finding.forReview(review.reviewId)).map((f) => f.id)
+    : [];
   const req = await ctx.store.humanRequest.insert({
     human_id: ctx.humanId ?? null,
     project_id: task.project_id,
@@ -156,11 +197,18 @@ async function signoffRequest(
     kind: "approval",
     why: `${why}: ${review.summary}`.slice(0, 4000),
     steps: requiredActionsOf(review),
-    options: ["accept", "revise", "cancel"],
+    options: [...SIGNOFF_OPTIONS],
     blocking: true,
     risk: review.findings.some((f) => f.severity === "critical" || f.severity === "high")
       ? "high"
       : "medium",
+    change_card: signoffCard({
+      taskId: task.id,
+      reviewId: review.reviewId ?? null,
+      runId: ctx.runId ?? review.runId ?? null,
+      findingIds,
+      reason,
+    }),
     author_agent: ctx.criticAgentId,
   });
   return req.id;
@@ -240,6 +288,7 @@ export async function applyVerdict(
           needs,
           review,
           `Retry ladder exhausted after ${task.attempt + 1} failed attempt(s) at ${current} (ceiling ${ceiling})`,
+          "retry_ladder_exhausted",
         );
         return { action: "human", task: needs, humanRequestId, reason: "retry_ladder_exhausted" };
       }
@@ -270,7 +319,13 @@ export async function applyVerdict(
         "critic: human sign-off required",
         { agentId: criticAgentId },
       );
-      const humanRequestId = await signoffRequest(ctx, needs, review, "Critic sign-off needed");
+      const humanRequestId = await signoffRequest(
+        ctx,
+        needs,
+        review,
+        "Critic sign-off needed",
+        "verdict",
+      );
       return { action: "human", task: needs, humanRequestId, reason: "verdict" };
     }
     default: {

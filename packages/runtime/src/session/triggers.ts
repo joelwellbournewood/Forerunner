@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type { SessionTriggerKind } from "./runner.ts";
 
@@ -61,20 +62,40 @@ export function localParts(
   };
 }
 
+export interface SchedulerLogEntry {
+  /**
+   * The identity of the start request: one id from the request through the queue (queued or
+   * deferred, then started when the queue drains) to its end. The command registry's
+   * `session.start` records it in its change log row (`after.start_id`), so the undo of a
+   * start is the undo of that start and never of a later one of the same agent.
+   */
+  id: string;
+  at: string;
+  req: StartRequest;
+  result: "started" | "queued" | "deferred" | "cancelled" | "error";
+  detail?: string;
+}
+
+/** What `request` answers: the start ran, waits behind a running session, or waits for daytime. */
+export type StartOutcome = "started" | "queued" | "deferred";
+
+/** The log entry of a request just made (`requestStart`): never cancelled or in error yet. */
+export interface StartEntry extends SchedulerLogEntry {
+  result: StartOutcome;
+}
+
 export class Scheduler {
   private readonly schedules = new Map<string, Schedule>();
   private readonly firedDay = new Map<string, string>();
   private readonly lastEvery = new Map<string, number>();
   private readonly active = new Set<string>();
-  private readonly pending = new Map<string, StartRequest>();
+  /** The log entry of the start each active agent is running, until it ends. */
+  private readonly activeStarts = new Map<string, SchedulerLogEntry>();
+  /** The request waiting per agent (queued or deferred), as its log entry so the id follows it. */
+  private readonly pending = new Map<string, SchedulerLogEntry>();
   private cancel: (() => void) | null = null;
   private readonly logger = log("scheduler");
-  readonly log: {
-    at: string;
-    req: StartRequest;
-    result: "started" | "queued" | "deferred" | "cancelled" | "error";
-    detail?: string;
-  }[] = [];
+  readonly log: SchedulerLogEntry[] = [];
 
   constructor(
     private readonly deps: SchedulerDeps,
@@ -140,39 +161,53 @@ export class Scheduler {
         });
       }
     }
-    // Drain queued requests for agents that are now free.
-    for (const [agentId, req] of [...this.pending]) {
+    // Drain queued requests for agents that are now free; a drained request keeps its id.
+    for (const [agentId, waiting] of [...this.pending]) {
       if (!this.active.has(agentId)) {
         this.pending.delete(agentId);
-        await this.request(req);
+        await this.requestStart(waiting.req, undefined, waiting.id);
       }
     }
   }
 
   /** External triggers call this: message, human answer, CI, PR comment, email, remote, manual. */
-  async request(
+  async request(req: StartRequest, now: number = this.deps.clock.now()): Promise<StartOutcome> {
+    return (await this.requestStart(req, now)).result;
+  }
+
+  /**
+   * `request` with the log entry it made, whose `id` names the start from now on (the entry
+   * `activeStart` or `pendingStart` answers with carries the same id until the start ends).
+   */
+  async requestStart(
     req: StartRequest,
     now: number = this.deps.clock.now(),
-  ): Promise<"started" | "queued" | "deferred"> {
+    id: string = randomUUID(),
+  ): Promise<StartEntry> {
     const at = new Date(now).toISOString();
     if (req.trigger !== "manual" && this.deps.isQuietHours?.(req.agentId, now)) {
-      this.pending.set(req.agentId, req);
-      this.log.push({ at, req, result: "deferred", detail: "quiet hours" });
-      return "deferred";
+      const deferred: StartEntry = { id, at, req, result: "deferred", detail: "quiet hours" };
+      this.pending.set(req.agentId, deferred);
+      this.log.push(deferred);
+      return deferred;
     }
     if (this.active.has(req.agentId)) {
       // One active session per agent; the newest request wins the queue slot (the next session
       // reads the inbox anyway, so nothing is lost).
-      this.pending.set(req.agentId, req);
-      this.log.push({ at, req, result: "queued" });
-      return "queued";
+      const queued: StartEntry = { id, at, req, result: "queued" };
+      this.pending.set(req.agentId, queued);
+      this.log.push(queued);
+      return queued;
     }
     this.active.add(req.agentId);
-    this.log.push({ at, req, result: "started" });
+    const entry: StartEntry = { id, at, req, result: "started" };
+    this.log.push(entry);
+    this.activeStarts.set(req.agentId, entry);
     void this.deps
       .start(req)
       .catch((e) => {
         this.log.push({
+          id,
           at: new Date(this.deps.clock.now()).toISOString(),
           req,
           result: "error",
@@ -181,16 +216,32 @@ export class Scheduler {
       })
       .finally(() => {
         this.active.delete(req.agentId);
+        if (this.activeStarts.get(req.agentId) === entry) this.activeStarts.delete(req.agentId);
       });
-    return "started";
+    return entry;
   }
 
   isActive(agentId: string): boolean {
     return this.active.has(agentId);
   }
 
+  /**
+   * The start the agent is running now (its log entry, the same object `log` holds), or
+   * undefined when nothing runs. The registry's session ports compare its `id` with the one
+   * their change log row recorded to tell "that start's session still runs" from "a later
+   * session of the agent runs".
+   */
+  activeStart(agentId: string): SchedulerLogEntry | undefined {
+    return this.activeStarts.get(agentId);
+  }
+
   /** The request waiting for the agent (queued behind an active session or deferred by quiet hours). */
   pendingFor(agentId: string): StartRequest | undefined {
+    return this.pending.get(agentId)?.req;
+  }
+
+  /** The waiting request as its log entry (its `id` is the start's identity). */
+  pendingStart(agentId: string): SchedulerLogEntry | undefined {
     return this.pending.get(agentId);
   }
 
@@ -199,15 +250,16 @@ export class Scheduler {
    * is touched. Returns the dropped request, or undefined when none was waiting.
    */
   cancelPending(agentId: string, reason = "cancelled"): StartRequest | undefined {
-    const req = this.pending.get(agentId);
-    if (!req) return undefined;
+    const waiting = this.pending.get(agentId);
+    if (!waiting) return undefined;
     this.pending.delete(agentId);
     this.log.push({
+      id: waiting.id,
       at: new Date(this.deps.clock.now()).toISOString(),
-      req,
+      req: waiting.req,
       result: "cancelled",
       detail: reason,
     });
-    return req;
+    return waiting.req;
   }
 }

@@ -43,6 +43,7 @@ import {
   CommandParseBody,
   type CommandParseView,
   type CommandResultJson,
+  type CommandSourceBody,
   type ConsolidationProposalView,
   type ConsolidationRunView,
   CreateProjectBody,
@@ -931,7 +932,7 @@ export function createDaemonApp(
   // the turn (the human, the principal, the active project, the device) itself.
 
   const turnFor = async (body: {
-    source?: "text" | "voice" | "phone";
+    source?: CommandSourceBody;
     projectId?: string;
     deviceId?: string;
     wordsUsed?: string;

@@ -210,6 +210,23 @@ rule the store enforces holds:
 | escalate | the runtime's `retryAction(attempt + 1, currentTier, ceiling)`: 1st `improve_brief`, 2nd `split_or_change_specialist`, 3rd `escalate` with `nextTier = nextRung(current, ceiling)` when under the ceiling, otherwise `human`. The task goes back to ready and the owner agent is told; the session runner applies the decision | `{ action: "retry", retry, task, attempt, nextTier, messageId, requiredActions }` or `{ action: "human", ..., reason: "retry_ladder_exhausted" }` |
 | human | `in_review -> needs_human`; the review's sign-off request is reused while open, otherwise a new blocking one is created | `{ action: "human", task, humanRequestId, reason: "verdict" }` |
 
+Every sign-off request (the one `CriticService.review` files for a `human` verdict, the one
+`applyVerdict` files when the ladder ends, and the runtime loop's own after a last-rung
+revise) has the options `SIGNOFF_OPTIONS` (`accept`, `revise`, `cancel`) and a `change_card`
+built by `signoffCard` and keyed `SIGNOFF_KEY` (`critic:signoff`): the task, the review, the
+run that produced the work, the review's finding ids, the reason (`verdict` or
+`retry_ladder_exhausted`) and `applied_at: null`. The answer is applied by the runtime
+(`syncSignoffAnswers` in `packages/runtime/src/session/findings.ts`, from
+`RuntimeApp.syncApprovals`; runtime.md, "The core loop"; ADR 0049): accept closes the task
+with the card's findings and the task's other open findings up to the card's review
+resolved against `run_id` (the ladder's last rung leaves the earlier rungs' findings open:
+this package resolves them only on its own accept), revise sends it down the ladder, cancel
+cancels it, and the card's `applied_at` and `outcome` make every answer apply once. The
+runtime applies an answer only when the card's `review_id` is the task's latest review
+(`ReviewRepo.latestForTask`): a sign-off left open while the task was reviewed again is
+`stale` and touches nothing, so a filing site must set `review_id` to the review the
+sign-off is about. This package files the card and never reads it.
+
 A task in `in_progress` is moved to `in_review` first; any other state is a `validation` error.
 Escalation never goes above the ceiling: `followup.ts#escalationCeiling` always reads the task's
 project row (`settings.critic_ceiling`) and takes the stricter of it and `ctx.ceiling` (the
@@ -355,7 +372,10 @@ network):
   honest session, tier 0 session review through the service.
 - `followup.test.ts`: every verdict path, `findings_open` on accept with a foreign open finding,
   the retry ladder up to the ceiling and then the human, the project row's ceiling honoured
-  with no ceiling in the context and with a higher or lower one.
+  with no ceiling in the context and with a higher or lower one, the sign-off request's
+  options and `critic:signoff` card (reason `verdict` and `retry_ladder_exhausted`). The
+  card's consumer is tested in the runtime (`packages/runtime/test/signoff-answer.test.ts`:
+  accept, revise and cancel through the critic loop on the fake provider).
 - `calibration.test.ts`: the rate and gate arithmetic, a full run over synthetic eval tasks
   with the report on disk, the gate passing, evidence rendering (input files, the work
   directory scrubbed from check output, no driver note, nothing naming the variant), and the
@@ -418,7 +438,8 @@ and `.../researcher`; the result and the report path go to `docs/status/gates.md
 
 H.1 (independence: clean context, own token, one tool, compression bypass; the evidence's
 contents and its "Evidence not available" close, ADR 0042), H.2 (tiers 0 to 3, tier 3 human
-sign-off), H.3 (grade, confidence, findings with severity, verdict, evidence; an escalate's
+sign-off: the blocking request with its `critic:signoff` card, whose answer the runtime
+applies, `packages/runtime/test/signoff-answer.test.ts`), H.3 (grade, confidence, findings with severity, verdict, evidence; an escalate's
 ground and a downgraded escalate's reason in the evidence and the audit log), H.4 (low
 confidence never accepts: `low` and any number under 0.6 escalate; `medium` sits above the
 line), H.5 (findings tracked to resolution, patterns to lesson

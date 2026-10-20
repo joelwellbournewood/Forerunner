@@ -1,3 +1,4 @@
+import { DecisionLog } from "@forerunner/runtime/wiring/state-ports";
 import type { HumanRequestRow, MessageRow } from "@forerunner/state";
 import { MESSAGE_TYPES } from "@forerunner/state";
 import { z } from "zod";
@@ -124,6 +125,18 @@ export async function applyReceipt(
   return row;
 }
 
+/**
+ * The decision row has no device column, so the rationale carries where the answer came from
+ * and which request it answered; who and when are the row's `decided_by` and `created_at`.
+ */
+export function decisionRationale(p: Principal, request: HumanRequestRow): string {
+  const from =
+    p.kind === "device"
+      ? `device ${p.deviceId} (${p.device.kind})`
+      : `the runtime${p.installId ? ` (install ${p.installId})` : ""}`;
+  return `request ${request.id} answered from ${from} through the state service`;
+}
+
 export async function answerRequestAs(
   ctx: RouteContext,
   p: Principal,
@@ -141,12 +154,33 @@ export async function answerRequestAs(
       : null;
   if (current.risk === "high" || cardRisk === "high") requireScope(p, "confirm:high");
   const by = p.kind === "device" ? p.humanId : (current.human_id ?? "runtime");
-  const row = await ctx.store.humanRequest.answer(id, version, answer as never, by);
+  // Spec J: every human decision is logged with who, what, when and from which device. This
+  // is the entry the daemon's answer route writes (`DecisionLog.recordAnswer`: a `decision`
+  // row per project, superseding an older answer to the same question); only an answered
+  // request of kind `decision` with a project makes one. The answer and the entry are one
+  // transaction: a failed decision write leaves the request open at its version, so the
+  // client's retry is not a 409 on an answered row that has no decision.
+  const { row, decision } = await ctx.store.transaction(async (tx) => {
+    const answered = await tx.humanRequest.answer(id, version, answer as never, by);
+    const entry = await new DecisionLog(tx).recordAnswer(
+      answered,
+      by,
+      decisionRationale(p, answered),
+    );
+    return { row: answered, decision: entry };
+  });
   announce(ctx, "human_request.changed", "human_request", row, {
     humanId: row.human_id,
     projectId: row.project_id,
     payload: { status: row.status, blocking: row.blocking },
   });
+  if (decision) {
+    announce(ctx, "decision.changed", "decision", decision, {
+      humanId: row.human_id,
+      projectId: decision.project_id,
+      payload: { requestId: row.id },
+    });
+  }
   return row;
 }
 

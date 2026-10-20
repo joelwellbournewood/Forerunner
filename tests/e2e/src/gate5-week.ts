@@ -79,6 +79,13 @@ export const MIN_VOICE_TURNS = 20;
  * poll); ten simulated seconds keeps "within seconds" and the run under two minutes.
  */
 export const WEEK_PC_POLL_MS = 10_000;
+/**
+ * The daemons' approvals poll during the week (compose.ts: `FORERUNNER_APPROVALS_POLL_MS`,
+ * 5 s by default): an answer given on the phone (Tuesday's sign-off) is applied by J's
+ * daemon within this poll. A simulated minute keeps the week's seven days to about ten
+ * thousand polls per daemon.
+ */
+export const WEEK_APPROVALS_POLL_MS = 60_000;
 
 const GAME_REPO = { owner: "sample", name: "game" };
 const STATUS_QUESTION = "What is the status?";
@@ -103,12 +110,24 @@ const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satu
  * write first, and marks the harness assertion that fails once the fix lands, so the
  * fixing PR inverts it in the same change.
  */
-export const PHASE5_RUNTIME_FOLLOW_UPS = {
-  "RT-P5-1": "an accepted critic sign-off is applied to nothing; the task stays needs_human",
-  "RT-P5-2": "the undo of a session.start whose session has ended freezes the kill switch",
-  "RT-P5-3": "the hooks hold a command tool on the model path before the registry's card forms",
-  "RT-P5-4": "the daemon's command routes carry no ui change source; the settings screen logs chat",
-} as const;
+export const PHASE5_RUNTIME_FOLLOW_UPS = {} as const;
+
+/**
+ * Follow-ups the runtime closed, whose pins the harness inverted (testing.md keeps the
+ * entries): RT-P5-1, an accepted sign-off closes its task (`syncSignoffAnswers` from
+ * `syncApprovals`, reached by the daemon's approvals poll within `WEEK_APPROVALS_POLL_MS`
+ * of the phone's answer); RT-P5-2, the undo of a `session.start` whose session ended is a
+ * no-op that never reaches the kill switch (the registry's session ports read the
+ * scheduler's active start); RT-P5-3, the hooks no longer hold a command tool on the model
+ * path (the registry's card is the one approval, `gate: "registry"` on the command tools);
+ * RT-P5-4, the command routes take `source: "ui"` and the settings screen sends it.
+ */
+export const PHASE5_RUNTIME_FOLLOW_UPS_CLOSED = [
+  "RT-P5-1",
+  "RT-P5-2",
+  "RT-P5-3",
+  "RT-P5-4",
+] as const;
 
 export type SettingsChange = "budget" | "autonomy" | "email";
 export type Channel = "voice" | "chat" | "ui";
@@ -124,12 +143,13 @@ export interface SettingsRecord {
   /** The phone's answers on the card: the status without the biometric, then with it. */
   phoneAnswer: { withoutBiometric: number; withBiometric: number } | null;
   /**
-   * On the conversation's model path the hooks hold a high-risk command tool before the
-   * registry sees it (`permission_change` is always-human) and file their own blocking
-   * request; the phone answers it and the human asks again. "reused": the hooks found that
-   * answer for the same tool and input in the session and let the tool through at once.
-   * Follow-up RT-P5-3 (`PHASE5_RUNTIME_FOLLOW_UPS`): once the registry's policy is the one
-   * gate for a command tool, this is `null` on every channel.
+   * A hold by the hooks on the conversation's model path before the registry's card formed:
+   * the blocking request they filed for the command tool, answered on the phone, after which
+   * the human asked again; "reused": the hooks found that answer for the same tool and input
+   * in the session and let the tool through at once. `null` on every channel since the
+   * registry's policy is the one gate for a command tool (RT-P5-3 closed,
+   * `PHASE5_RUNTIME_FOLLOW_UPS_CLOSED`); the harness still detects a hold so a regression
+   * is seen here, not as a missing card.
    */
   hookApproval: HookApproval | "reused" | null;
   row: ChangeLogView;
@@ -203,10 +223,10 @@ export interface PhoneFlowReport {
   undone: boolean;
   activeProjectAfterUndo: string | null;
   /**
-   * The undo of `session.start` reaches the kill switch, which freezes the agent even when
-   * the session has long ended (follow-up RT-P5-2, `PHASE5_RUNTIME_FOLLOW_UPS`); J presses
-   * Resume in the UI's header, else no scheduled session would run the next morning. Once
-   * the undo of an ended start is a no-op, this is `false` and `resumedFromUi` with it.
+   * Whether the undo of the plan's `session.start` (its session ended hours before) froze
+   * the agent on the kill switch, and whether J had to press Resume in the UI's header for
+   * Friday's scheduled session to run. Both false since RT-P5-2 was closed: the undo of an
+   * ended start is a no-op that never reaches the kill switch (`PHASE5_RUNTIME_FOLLOW_UPS_CLOSED`).
    */
   killFrozenAfterUndo: boolean;
   resumedFromUi: boolean;
@@ -342,7 +362,12 @@ export async function phase5World(): Promise<Phase5World> {
       commands,
       agent,
       sessionId,
-      daemon: daemonFor(w, install, { commands, conversation: agent, notifier }),
+      daemon: daemonFor(w, install, {
+        commands,
+        conversation: agent,
+        notifier,
+        approvalsPollMs: WEEK_APPROVALS_POLL_MS,
+      }),
     };
   };
   const j = await side(w.alice, w.project.id);
@@ -576,6 +601,19 @@ interface ChangeOutcome {
 }
 
 /**
+ * Whether the hooks ever filed a hold for the email mode command tool in this world (see
+ * `SettingsRecord.hookApproval`): the hold is a blocking `approval` request whose card names
+ * the tool, as the daemon's approval port writes it. None exists since RT-P5-3 was closed;
+ * a card that forms at the first ask is then the registry's alone, not a reused hold.
+ */
+async function hooksHoldFiled(x: Phase5World): Promise<boolean> {
+  const rows = await x.w.store.humanRequest.list({ kind: "approval" } as never);
+  return rows.some(
+    (r) => r.blocking && (r.change_card as { tool?: unknown } | null)?.tool === "email_mode_set",
+  );
+}
+
+/**
  * The hooks' hold on the model path (see `SettingsRecord.hookApproval`): the blocking
  * request they filed is in the phone's inbox with the tool's risk (high: the service wants
  * the biometric); the phone answers it, and the caller asks again.
@@ -604,8 +642,9 @@ async function byVoice(x: Phase5World, change: SettingsChange): Promise<ChangeOu
   let asked = await x.voice.say(ask);
   let hookApproval: SettingsRecord["hookApproval"] = null;
   if (change === "email") {
-    if (asked.reply?.pendingConfirmation) hookApproval = "reused";
-    else {
+    if (asked.reply?.pendingConfirmation) {
+      if (await hooksHoldFiled(x)) hookApproval = "reused";
+    } else {
       hookApproval = await phoneApprovesHooksHold(x, asked.heard);
       asked = await x.voice.say(ask);
     }
@@ -672,8 +711,9 @@ async function byChat(x: Phase5World, change: SettingsChange): Promise<ChangeOut
   let asked: ChatReplyView = await ui.chat(chatBody(x, ask));
   let hookApproval: SettingsRecord["hookApproval"] = null;
   if (change === "email") {
-    if (asked.pendingConfirmation) hookApproval = "reused";
-    else {
+    if (asked.pendingConfirmation) {
+      if (await hooksHoldFiled(x)) hookApproval = "reused";
+    } else {
       hookApproval = await phoneApprovesHooksHold(x, asked.reply);
       asked = await ui.chat(chatBody(x, ask));
     }
@@ -750,6 +790,7 @@ async function byUi(x: Phase5World, change: SettingsChange): Promise<ChangeOutco
   const first = await ui.executeCommands({
     commands: [{ name, params }],
     wordsUsed: `Settings: ${name} to ${JSON.stringify(params)}`,
+    source: "ui",
     projectId: x.w.project.id,
   });
   must(first.status === "pending" && first.pendingId, `ui: ${name} did not ask: ${first.status}`);
@@ -991,9 +1032,13 @@ export async function runPhase5Week(x: Phase5World): Promise<Phase5Report> {
       must(req, "no blocking sign-off request in the phone's inbox on Tuesday");
       const answered = await x.approvals.answer(req.id, "accept");
       must(answered.status === 200, `the sign-off answer got ${answered.status}`);
+      const atAnswer = (await w.store.task.mustGet(req.taskId as string)).status;
+      // J's daemon applies the phone's answer on its approvals poll (RT-P5-1 closed); the
+      // test asserts the task `done` at the end of the week.
+      await w.advanceTo(w.clock.now() + WEEK_APPROVALS_POLL_MS);
       signoff = await w.store.task.mustGet(req.taskId as string);
       report.afternoon.push(
-        `sign-off ${req.id} answered "accept" on the phone (task ${signoff.status})`,
+        `sign-off ${req.id} answered "accept" on the phone (task ${atAnswer}; ${signoff.status} after the daemon's approvals poll)`,
       );
     }
     if (day === 2) {
@@ -1135,12 +1180,11 @@ export function formatPhase5(r: Phase5Report): string {
   lines.push(
     `ui calls ${r.uiCalls}; audit rows ${r.audit.rows}, denied ${r.audit.denied}, remote pickups ${r.audit.remotePickups}`,
   );
+  const pinned = Object.entries(PHASE5_RUNTIME_FOLLOW_UPS as Record<string, string>)
+    .map(([id, what]) => `${id} ${what}`)
+    .join("; ");
   lines.push(
-    `runtime follow-ups pinned (testing.md, Gate harnesses, Known issues): ${Object.entries(
-      PHASE5_RUNTIME_FOLLOW_UPS,
-    )
-      .map(([id, what]) => `${id} ${what}`)
-      .join("; ")}`,
+    `runtime follow-ups pinned (testing.md, Gate harnesses, Known issues): ${pinned || "none"}; closed: ${PHASE5_RUNTIME_FOLLOW_UPS_CLOSED.join(", ")}`,
   );
   return lines.join("\n");
 }

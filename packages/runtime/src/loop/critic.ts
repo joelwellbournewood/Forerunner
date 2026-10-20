@@ -10,6 +10,8 @@ import {
   type ReviewEvidence,
   type ReviewOutput,
   type ReviewTier,
+  SIGNOFF_OPTIONS,
+  signoffCard,
 } from "@forerunner/critic";
 import { checkDocDrift } from "@forerunner/memory";
 import {
@@ -370,11 +372,21 @@ export class CriticLoop implements CriticPort {
           steps: output.findings.map(
             (f) => `[${f.severity}] ${f.description}: ${f.requiredAction}`,
           ),
-          options: ["accept", "revise", "cancel"],
+          options: [...SIGNOFF_OPTIONS],
           blocking: true,
           risk: output.findings.some((f) => f.severity === "critical" || f.severity === "high")
             ? "high"
             : "medium",
+          // The card `syncSignoffAnswers` (session/findings.ts) applies the answer through.
+          change_card: signoffCard({
+            taskId: task.id,
+            reviewId: output.reviewId ?? null,
+            runId: result.runId ?? null,
+            findingIds: output.reviewId
+              ? (await store.finding.forReview(output.reviewId)).map((f) => f.id)
+              : [],
+            reason: "retry_ladder_exhausted",
+          }),
           author_agent: this.deps.criticAgentId,
         });
         humanRequestId = request.id;

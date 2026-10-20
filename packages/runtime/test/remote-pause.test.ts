@@ -146,7 +146,7 @@ describe("through the command registry", () => {
       clock,
       ports: {
         chfPerUsd: async () => 0.8,
-        ...sessionCommandPorts({ scheduler, kill }),
+        ...sessionCommandPorts({ scheduler, kill, store }),
         ...ports(),
       },
     });

@@ -1233,6 +1233,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     text: "chat",
     voice: "voice",
     phone: "chat",
+    ui: "ui",
   };
   const projectByRef = (ref: string | undefined) =>
     ref

@@ -27,7 +27,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "@forerunner/platform";
-import { REMOTE_AUDIT_TOOL } from "@forerunner/runtime";
+import { REMOTE_AUDIT_TOOL, SIGNOFF_AUDIT_TOOL } from "@forerunner/runtime";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   FIRST_AUDIO_ANCHOR_MS,
@@ -94,11 +94,12 @@ describe("phase 5 gate: a simulated week through the UI and the phone (fake prov
       expect(d.summaryRead).toBe(true);
     }
     expect(report.sessions).toMatchObject({ scheduled: 12, remote: 1, completed: 13 });
-    // Tuesday's tier 3 task went to J (sign-off) with its PR open; every other task closed
-    // with a PR: thirteen pull requests on the two repositories, twelve tasks done.
+    // Tuesday's tier 3 task went to J (sign-off) with its PR open and closed on his "accept"
+    // that afternoon (RT-P5-1 closed); every other task closed with a PR in its session:
+    // thirteen pull requests on the two repositories, thirteen tasks done.
     const tuesday = report.days[1]?.sessions.find((s) => s.agent === "Alice");
     expect(tuesday).toMatchObject({ completed: 0, needsHuman: 1 });
-    expect(report.sessions.tasksDone).toBe(12);
+    expect(report.sessions.tasksDone).toBe(13);
     expect(report.sessions.pullRequests).toBe(13);
     const schedulerStarts = [...w.alice.scheduler.log, ...w.bob.scheduler.log].filter(
       (l) => l.result === "started",
@@ -146,33 +147,41 @@ describe("phase 5 gate: a simulated week through the UI and the phone (fake prov
     const signoff = requests.find((r) => r.blocking && r.task_id);
     expect(signoff).toMatchObject({ status: "answered", answer: "accept", answered_by: w.j.id });
     expect(phoneAnswered.has(signoff?.id ?? "")).toBe(true);
-    // Follow-up RT-P5-1 (testing.md, Gate harnesses, Known issues): nothing applies an
-    // accepted sign-off to the task, which stays `needs_human` (`needs_human -> ready` is its
-    // only way on). Pinned so the fix is seen; the fixing PR inverts this to `ready`.
-    expect((await w.store.task.mustGet(signoff?.task_id ?? "")).status, "RT-P5-1").toBe(
-      "needs_human",
-    );
-    // High-risk answers: the hooks' hold (once) and the three email mode cards (voice, chat,
-    // UI), each refused without the biometric (403) and accepted with it; the sign-off and
-    // Saturday's medium card as plain answers.
+    // The accepted sign-off closed its task (RT-P5-1 closed): J's daemon applied the phone's
+    // answer through `syncSignoffAnswers` on its approvals poll, within a simulated minute,
+    // with the review's findings resolved against the run and one `critic.signoff` audit row.
+    expect((await w.store.task.mustGet(signoff?.task_id ?? "")).status, "RT-P5-1").toBe("done");
+    const signoffAudit = (await w.auditRows()).filter((r) => r.tool === SIGNOFF_AUDIT_TOOL);
+    expect(signoffAudit).toHaveLength(1);
+    expect(JSON.parse(signoffAudit[0]?.input_summary ?? "{}")).toMatchObject({
+      requestId: signoff?.id,
+      taskId: signoff?.task_id,
+      answer: "accept",
+    });
+    expect(await w.store.finding.openFor(signoff?.task_id ?? "")).toEqual([]);
+    expect((signoff?.change_card as { outcome?: string } | null)?.outcome).toBe("accept");
+    // High-risk answers: the three email mode cards (voice, chat, UI), each refused without
+    // the biometric (403) and accepted with it; the sign-off and Saturday's medium card as
+    // plain answers. No fourth high answer: the hooks file no hold of their own on the
+    // model path any more (RT-P5-3 closed), so one change is one phone answer.
     const high = report.phoneAnswers.filter((a) => a.risk === "high");
-    expect(high.filter((a) => !a.biometric).map((a) => a.status)).toEqual([403, 403, 403, 403]);
-    expect(high.filter((a) => a.biometric).map((a) => a.status)).toEqual([200, 200, 200, 200]);
-    expect(report.phoneAnswers.filter((a) => a.status === 200)).toHaveLength(6);
+    expect(high.filter((a) => !a.biometric).map((a) => a.status)).toEqual([403, 403, 403]);
+    expect(high.filter((a) => a.biometric).map((a) => a.status)).toEqual([200, 200, 200]);
+    expect(report.phoneAnswers.filter((a) => a.status === 200)).toHaveLength(5);
     expect(report.inboxCard.answerKind).toBe(JSON.stringify("yes"));
 
-    // Audit: a row per tool call of every run, one per remote pickup (the plan and the chat).
-    // The only denials are the hooks' holds on the email mode command tool on the
-    // conversation's model path (`permission_change` is always-human; the hooks file their
-    // own request before the registry's card can form), once by voice; the chat round found
-    // that answer in the session. Follow-up RT-P5-3 (testing.md): the registry's policy
-    // should be the one gate for a command tool, as it is for the parsed and the UI path;
-    // the fixing PR inverts this to no denial and `hookApproval` null on every channel.
+    // Audit: a row per tool call of every run, one per remote pickup (the plan and the chat),
+    // and no denial: the registry's card is the one gate for a command tool on the
+    // conversation's model path too (RT-P5-3 closed, `gate: "registry"` on the command
+    // tools; `packages/runtime/test/conversation.test.ts`), as it is for the parsed and the
+    // UI path, so the email mode command tool is audited as an allowed call that formed the
+    // card, never as `approval_required: pending`.
     const denied = (await w.auditRows()).filter((r) => !r.allowed);
-    expect(denied.map((r) => [r.tool, r.denied_reason])).toEqual([
-      ["email_mode_set", "approval_required: pending"],
-    ]);
-    expect(report.audit.denied).toBe(1);
+    expect(denied.map((r) => [r.tool, r.denied_reason])).toEqual([]);
+    expect(report.audit.denied).toBe(0);
+    const emailToolCalls = (await w.auditRows()).filter((r) => r.tool === "email_mode_set");
+    expect(emailToolCalls.length).toBeGreaterThanOrEqual(2); // by voice and by chat
+    expect(emailToolCalls.every((r) => r.allowed)).toBe(true);
     expect(report.audit.remotePickups).toBe(2);
     const pickups = (await w.auditRows()).filter((r) => r.tool === REMOTE_AUDIT_TOOL);
     expect(pickups.map((r) => JSON.parse(r.input_summary ?? "{}").kind).sort()).toEqual([
@@ -257,9 +266,9 @@ describe("phase 5 gate: a simulated week through the UI and the phone (fake prov
       expect(sameEntry(voice.row, ui.row), `${change}: voice vs ui`).toBe(true);
       expect(voice.row.source).toBe("voice");
       expect(chat.row.source).toBe("chat");
-      // Follow-up RT-P5-4 (testing.md): the UI's command route carries no "ui" source today,
-      // its turn is `text`, logged as `chat`. Pinned; the fixing PR inverts this to "ui".
-      expect(ui.row.source, "RT-P5-4").toBe("chat");
+      // The settings route carries the screen's own source (RT-P5-4 closed: `source: "ui"`
+      // in the route body, sent by `SettingsPage.tsx`; `packages/runtime/test/loop-routes.test.ts`).
+      expect(ui.row.source, "RT-P5-4").toBe("ui");
       expect(voice.row.wordsUsed).not.toBe(ui.row.wordsUsed);
       for (const s of [voice, chat, ui]) {
         expect(s.row.undoState, `${change}/${s.channel}`).toBe("undone");
@@ -277,16 +286,10 @@ describe("phase 5 gate: a simulated week through the UI and the phone (fake prov
         expect(s.decision, `${s.change}/${s.channel}`).toBe("needs_device");
         expect(s.phoneAnswer).toEqual({ withoutBiometric: 403, withBiometric: 200 });
         if (s.channel !== "ui") expect(s.refusedYes).toContain("not enough");
-        // The model path's extra approval (the hooks' hold), answered on the phone once by
-        // voice and found again by chat; the UI's command route goes straight to the registry.
-        // Follow-up RT-P5-3: the fixing PR turns the voice and chat pins into `toBeNull()`.
-        if (s.channel === "voice")
-          expect(s.hookApproval, "RT-P5-3").toMatchObject({
-            withoutBiometric: 403,
-            withBiometric: 200,
-          });
-        if (s.channel === "chat") expect(s.hookApproval, "RT-P5-3").toBe("reused");
-        if (s.channel === "ui") expect(s.hookApproval).toBeNull();
+        // One approval per change on every channel: the registry's card. The model path
+        // (voice, chat) files no extra hold by the hooks any more (RT-P5-3 closed), and the
+        // UI's command route goes straight to the registry as before.
+        expect(s.hookApproval, `RT-P5-3 ${s.channel}`).toBeNull();
       } else {
         expect(s.hookApproval).toBeNull();
         expect(s.decision, `${s.change}/${s.channel}`).toBe("needs_yes");
@@ -326,11 +329,11 @@ describe("phase 5 gate: a simulated week through the UI and the phone (fake prov
       activeProjectAfter: x.game.id,
       undone: true,
       activeProjectAfterUndo: w.project.id,
-      // Follow-up RT-P5-2 (testing.md): the undo's kill of the ended session froze the
-      // agent; J resumed from the UI's header, and Friday's scheduled session ran. Pinned;
-      // the fixing PR inverts both to false.
-      killFrozenAfterUndo: true,
-      resumedFromUi: true,
+      // The undo of the plan's `session.start`, whose session ended hours before, is a no-op
+      // that never reaches the kill switch (RT-P5-2 closed): nothing froze, J pressed no
+      // Resume, and Friday's scheduled session ran on its own.
+      killFrozenAfterUndo: false,
+      resumedFromUi: false,
     });
     const row = await w.store.changeLog.mustGet(f.changeLogId);
     expect(row).toMatchObject({

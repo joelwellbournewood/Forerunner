@@ -55,6 +55,12 @@ export interface SessionStartPortRequest extends StartRequest {
 export interface KillScope {
   agentId?: string;
   sessionId?: string;
+  /**
+   * The undo of a `session.start` names the start it undoes (the `startId` the start port
+   * answered with, kept in the row's `after.start_id`), so the runtime's port stops the
+   * session that start began and nothing else: never the agent's scope, never a later start.
+   */
+  startId?: string;
 }
 
 export interface KillReportLike {
@@ -69,8 +75,14 @@ export interface KillReportLike {
 export interface CommandPorts {
   /** CHF per USD at the day's rate (the billing RateSource). */
   chfPerUsd(dateIso: string): Promise<number>;
-  /** Starts a session for the principal agent (the scheduler in production). */
-  startSession?(req: SessionStartPortRequest): Promise<{ sessionId?: string } | undefined>;
+  /**
+   * Starts a session for the principal agent (the scheduler in production). `sessionId` when
+   * the port knows it at once; `startId` the identity of the start request (the scheduler's
+   * entry), which the undo passes back in its kill scope.
+   */
+  startSession?(
+    req: SessionStartPortRequest,
+  ): Promise<{ sessionId?: string; startId?: string } | undefined>;
   /** The kill switch: stops runs for one agent, one session or everyone. */
   kill?(scope: KillScope | "all", reason: string): Promise<KillReportLike | undefined>;
   pauseSession?(sessionId: string, reason: string): Promise<void>;

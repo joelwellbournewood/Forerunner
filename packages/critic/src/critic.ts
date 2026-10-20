@@ -30,6 +30,7 @@ import type {
 import { docDriftFor } from "./docs-drift.ts";
 import { type RenderOptions, renderEvidence } from "./evidence.ts";
 import { fingerprintOf } from "./fingerprint.ts";
+import { SIGNOFF_OPTIONS, signoffCard } from "./followup.ts";
 import {
   type CriticModelPick,
   type CriticSettings,
@@ -727,9 +728,19 @@ export class CriticService {
           4000,
         ),
         steps: out.findings.map((f) => `[${f.severity}] ${f.description}: ${f.requiredAction}`),
-        options: ["accept", "revise", "cancel"],
+        options: [...SIGNOFF_OPTIONS],
         blocking: true,
         risk: worst ? RISK_OF_SEVERITY[worst] : "medium",
+        // The card the runtime's sign-off sync applies the answer through (a task subject).
+        change_card: taskId
+          ? signoffCard({
+              taskId,
+              reviewId: review.id,
+              runId: input.evidence.runId ?? null,
+              findingIds,
+              reason: "verdict",
+            })
+          : null,
         author_agent: this.deps.criticAgentId,
       });
       humanRequestId = req.id;

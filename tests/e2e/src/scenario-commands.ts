@@ -34,14 +34,22 @@ export const SCENARIO_CHF_PER_USD = 0.8;
 
 export async function commandLoopFor(world: ScenarioWorld, install: Install): Promise<CommandLoop> {
   const rates = new FixedRateSource(SCENARIO_CHF_PER_USD);
+  // As `composeRuntime` builds them: the session ports over the install's scheduler, kill
+  // switch and the store, and the start-undo check the loop reads before the executor.
+  const { startUndoState, ...sessionPorts } = sessionCommandPorts({
+    scheduler: install.scheduler,
+    kill: install.kill,
+    store: world.store,
+  });
   const commands = new CommandLoop({
     store: world.store,
     clock: world.clock,
     ports: {
       // The day's rate from the billing package, as the daemon's `chfPerUsd` port reads it.
       chfPerUsd: (dateIso) => rates.chfPerUsd(dateIso),
-      ...sessionCommandPorts({ scheduler: install.scheduler, kill: install.kill }),
+      ...sessionPorts,
     },
+    startUndoState,
   });
   await commands.start();
   return commands;

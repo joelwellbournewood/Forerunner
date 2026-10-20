@@ -893,8 +893,9 @@ and hands it to the daemon's own `createDaemonApp`, so the week calls the routes
 calls, with the bodies it sends: the New task dialog (`POST /projects/:id/tasks`), the inbox
 and its read receipt, the settings screen (`POST /commands/execute`, then
 `POST /commands/:id/confirm` with the tap), the Changes screen (`GET /changes`,
-`POST /changes/:id/undo`), chat (`POST /chat`) and the header's Resume (`POST /kill/resume`).
-What the week never opens (extensions, updates, the model watch, Cloudflare, desktop control,
+`POST /changes/:id/undo`) and chat (`POST /chat`); the header's Resume (`POST /kill/resume`)
+is wired in `UiClient` but the week no longer needs it (nothing freezes the agent since
+RT-P5-2 closed). What the week never opens (extensions, updates, the model watch, Cloudflare, desktop control,
 data, costs, the mirror, the sandbox, the sync gate, the vault) is an `absent` stand-in that
 throws `unavailable` naming the field when a route reaches it. `UiClient` records every call
 for the evidence. The screens are not rendered.
@@ -912,7 +913,9 @@ their UIs (J on the service, M on the game, weekdays), the coder is scripted per
 (`coderWrites`) and the critic accepts for the whole week; Bob's scheduled session runs at
 05:45 on weekdays, Alice's at 06:00 daily; at 07:00 J reads the summary in the UI's inbox and
 marks it read. Afternoons: Tuesday the tier 3 task's sign-off (the rules in code turned the
-accept into `human`) answered "accept" on the phone; Wednesday twenty status turns by voice
+accept into `human`) answered "accept" on the phone and applied by J's daemon on its
+approvals poll within a simulated minute (`WEEK_APPROVALS_POLL_MS`; the task closes with its
+findings resolved and one `critic.signoff` audit row); Wednesday twenty status turns by voice
 for the latency median, then the settings matrix: a session budget ("Give it 20 francs
 tonight."), the autonomy by one step ("Set the autonomy of Sample service to 3") and the email
 mode ("Set the email mode to draft only."), each by voice, by chat and through the settings
@@ -924,18 +927,24 @@ refused), each undone through its own channel, the change log entries compared w
 (commands and parameters, before, after, scope, project, expiry, sentence, human, agent) and the
 state read back equal to the value before; Thursday the phone's plan ("switch to the game, give
 it 15 francs until tomorrow and start a session on my PC") picked up by the watcher, the remote
-session on the game, the undo from the Changes screen and Resume in the header; Friday the
+session on the game, the undo from the Changes screen (the start's session long ended: the
+undo's start part is a no-op, the kill switch stays open, no Resume is pressed); Friday the
 phone's quick chat answered on the PC; Saturday a medium card asked by chat and answered "yes"
 in the phone's inbox, applied by the PC's drain. The report (`formatPhase5`) is printed and
 written to `FORERUNNER_E2E_REPORT_DIR` as `phase5-week.txt`.
 
-Measured on 2026-10-20 (fake provider, Linux, about 45 s): 12 scheduled and 1 remote session,
-13 completed, 12 tasks done and 13 pull requests on the two repositories; 30 voice turns with
+Measured on 2026-10-20 (fake provider, Linux, about 60 s with the daemons' approvals poll
+every simulated minute): 12 scheduled and 1 remote session, 13 completed, 13 tasks done
+(Tuesday's tier 3 task closed by the sign-off's accept) and 13 pull requests on the two
+repositories; 30 voice turns with
 a median of 520 ms to first audio (end of turn 20, final transcript 300, model first token 0
 on the fake provider's zero-latency stream, first audio 200), all within target, 30
 `voice.turn` rows; 9 settings changes with the same entry across the three channels and 9
-undos; 10 phone answers (6 accepted, 4 of them with the biometric, 4 refused without it);
-81 UI calls; 32 audit rows, 1 denied (the hooks' hold below), 2 remote pickups.
+undos; 8 phone answers (5 accepted, 3 of them with the biometric, 3 refused without it);
+80 UI calls (no Resume in the header any more); 32 audit rows (one `critic.signoff`), none
+denied, 2 remote pickups (three runs on 2026-10-20 after RT-P5-1 to RT-P5-4 closed; before,
+10 phone answers, 81 UI calls and 32 audit rows with the one denial of the hooks' hold, then
+31 rows and 81 calls with the Resume).
 
 **Phase 7, the UI change shipped, the broken build rolled back, the model watch adopted**
 (`gate7-release.ts`, `gate7-model-watch.ts`, `phase7-gate.integration.test.ts`; ADR 0046).
@@ -1089,7 +1098,7 @@ cite the local runs and the step, with the CI link of the first run that carried
 The harnesses are the tests: `phase3-gate.integration.test.ts` (3 tests, 1 skipped without the
 live opt-in; 30 s), `phase4-gate.integration.test.ts` (2 tests; 45 s; the with-memory run
 is made once in `beforeAll`, so each test also stands alone under `-t`),
-`phase5-gate.integration.test.ts` (4 tests asserting one week run in `beforeAll`, about 45 s;
+`phase5-gate.integration.test.ts` (4 tests asserting one week run in `beforeAll`, about 60 s;
 each test stands alone under `-t`, the week runs either way) and
 `phase7-gate.integration.test.ts` (4 tests, about 25 s: three gate tests in order on one
 world, the second and third building on the first, so run the file, not a single test; the
@@ -1108,59 +1117,108 @@ doctor and the eval checks as argv arrays).
   `phase5-week.txt`, and sit on the harness assertions that pin each defect, so the harness
   is the regression check. Each is a `packages/runtime` change whose PR starts with the
   failing test named here (failing test first, fix, keep the test) and inverts the pin in
-  the same PR. None of the runtime tests is written yet: the gate's paths end at `tests/e2e`.
-  - **RT-P5-1, an accepted critic sign-off is applied to nothing.** The critic loop's `human`
-    decision (the rules turn a tier 3 accept into it, `tier3_human_signoff` in
-    `packages/critic/src/rules.ts`) moves the task to `needs_human` and files a blocking
-    `approval` request with the options `accept`, `revise`, `cancel`
-    (`packages/runtime/src/loop/critic.ts`); nothing reads the answer, so the task stays
-    there (`needs_human -> ready` is its only way on, `packages/state/src/workflow.ts`).
-    Test first: a new `packages/runtime/test/signoff-answer.test.ts` that files the sign-off
-    through the critic loop on the fake provider, answers `accept` on the request row and
-    expects, after `syncApprovals`, the task `done` with the review's findings resolved
-    against the run (`revise` -> `failed` -> `ready` with the attempt counted, `cancel` ->
-    `cancelled`). Fix: a sync next to `syncBlockedByFindings`
-    (`packages/runtime/src/session/findings.ts`) called from `syncApprovals` (daemon
-    `compose.ts`; `gate5-daemon.ts` mirrors it). Pin to invert:
-    `phase5-gate.integration.test.ts` test 1, `expect(..., "RT-P5-1").toBe("needs_human")`
-    becomes `"done"`.
-  - **RT-P5-2, the undo of a `session.start` whose session has ended freezes the kill
-    switch.** The registry's undo reaches the kill port with `SESSION_START_UNDO_REASON`
-    (`packages/runtime/src/loop/commands.ts`, `kill`): a queued or deferred start is dropped
-    (`Scheduler.cancelPending`), but a start that already ran is a `kill.stop` of the agent's
-    scope, which freezes the agent until Resume even when that session completed hours ago,
-    so the next scheduled session would not run. Test first: in
-    `packages/runtime/test/loop-commands.test.ts`, the undo of a `session.start` whose
-    session is `completed` leaves `isFrozen` false and marks the change row `irreversible`
-    (a start still running is stopped as today). Fix: in that `kill` port, when the start's
-    session is no longer the agent's active one, answer without `kill.stop` and let the
-    executor record the undo as irreversible. Pin to invert: test 4,
-    `killFrozenAfterUndo: true, resumedFromUi: true` become `false`.
-  - **RT-P5-3, the hooks hold a command tool on the model path before the registry's card
-    forms.** On the conversation's model path `email_mode_set` is classed `permission_change`
-    (always-human, `packages/runtime/src/enforcement/autonomy.ts`), so the hooks file their
-    own blocking request (`approval_required: pending`) before the registry's device card
-    can form: by voice the email mode needs two phone answers (the hold, then the card) and
-    a second asking; the chat round finds the first answer by the session's approval key.
-    The registry's policy should be the one gate for a command tool, as it is on the parsed
-    and the UI path (ADR 0030). Test first: in `packages/runtime/test/conversation.test.ts`,
-    a model turn calling `email_mode_set` yields one pending card with `needs_device`, no
-    `human_request` from the hooks and no denied audit row, and `autonomy_set` one
-    `needs_yes` card. Fix: the command tools registered with the hooks as gated by the
-    registry's policy (the card is the approval), so the autonomy hold does not run for
-    them. Pins to invert: test 1, `denied` becomes `[]` and `report.audit.denied` 0; test
-    3, `hookApproval` null on voice and chat.
-  - **RT-P5-4, the daemon's command routes carry no `ui` change source.** `CommandTurn.source`
-    and the route bodies are `text | voice | phone` (`packages/runtime/src/daemon/api-types.ts`,
-    `server.ts`), the settings screen sends none, so a change made in the settings screen is
-    logged as `chat`. Test first: in `packages/runtime/test/loop-routes.test.ts`, `POST
-    /commands/execute` with `source: "ui"` then the tap gives a change log row with
-    `source: "ui"`. Fix: `ui` in the zod enums and in the command loop's `CommandSource`,
-    `SettingsPage.tsx` sending it. Pin to invert: test 3, `expect(ui.row.source, "RT-P5-4")`
-    becomes `"ui"`.
+  the same PR. A closed item moves to `PHASE5_RUNTIME_FOLLOW_UPS_CLOSED` (its id stays on
+  the inverted assertion) and its entry below names the tests that keep it closed; an open
+  item has no runtime test yet: the gate's paths end at `tests/e2e`.
+  - **RT-P5-1, closed 2026-10-20: an accepted critic sign-off was applied to nothing.** The
+    critic loop's `human` decision (the rules turn a tier 3 accept into it,
+    `tier3_human_signoff` in `packages/critic/src/rules.ts`) moves the task to `needs_human`
+    and files a blocking `approval` request with the options `accept`, `revise`, `cancel`;
+    nothing read the answer, so the task stayed there (`needs_human -> ready` is its only way
+    on, `packages/state/src/workflow.ts`), and nothing in the daemon saw an answer given on
+    the phone at all (the state service's answer route reaches no daemon route; the PC's
+    watcher applies inbox answers to pending change cards only). Fix: every sign-off request
+    carries a `change_card` keyed `critic:signoff` (`signoffCard` in
+    `packages/critic/src/followup.ts`: task, review, run, finding ids, reason; filed by
+    `CriticService.review`, `applyVerdict` and the loop's ladder branch in
+    `packages/runtime/src/loop/critic.ts`); `syncSignoffAnswers`
+    (`packages/runtime/src/session/findings.ts`, next to `syncBlockedByFindings`) applies the
+    answer once, from `syncApprovals` (`compose.ts`; `gate5-daemon.ts` mirrors it): accept
+    resolves the open findings against the run and closes the task along the graph's own
+    edges in one transaction, revise goes `failed -> ready` with the attempt counted and the
+    owner agent told, cancel cancels; one `critic.signoff` audit row each. And the daemon
+    runs `syncApprovals` on an approvals poll (`FORERUNNER_APPROVALS_POLL_MS`, default 5 s,
+    only where answers can come from another device; `WEEK_APPROVALS_POLL_MS`, a simulated
+    minute, in `gate5-week.ts` and `gate5-daemon.ts`), so the phone's answer reaches the PC
+    without a route of the daemon being called (runtime.md, "The core loop" and "Local
+    daemon"). Tests: `packages/runtime/test/signoff-answer.test.ts` (the sign-off through the
+    critic loop on the fake provider: the card, accept with the findings resolved against the
+    run and the task `done`, accept of a clean review, revise with the attempt counted and the
+    findings open, cancel, the ladder's own sign-off, a moved-on task and an unknown answer
+    skipped and recorded, applied once, the answer words),
+    `packages/runtime/test/approvals-poll.test.ts` (the composed daemon applies a sign-off
+    answered in the store within the poll, once; a daemon on a local store has no poll),
+    `packages/critic/test/critic.test.ts` and `followup.test.ts` (the card on every filing
+    site). Pin inverted: test 1, `expect(..., "RT-P5-1")` is `"done"`, with the audit row,
+    no open finding and the card's outcome; thirteen tasks done.
+  - **RT-P5-2, closed 2026-10-20: the undo of a `session.start` whose session had ended
+    froze the kill switch.** The registry's undo reaches the kill port with
+    `SESSION_START_UNDO_REASON` (`packages/runtime/src/loop/commands.ts`, `kill`): a queued
+    or deferred start was dropped (`Scheduler.cancelPending`), but a start that had run was a
+    `kill.stop` of the agent's scope, which froze the agent until Resume even when that
+    session completed hours ago, so the next scheduled session would not run. Fix:
+    `sessionCommandPorts` (now over the store's sessions too) answers the undo by
+    `startUndoState(agentId)`: `pending` drops the request, `running` stops that session only
+    (`{ agentId, sessionId }`, never the agent's scope), `ended` is a no-op that never reaches
+    the kill switch; "that start's session" is `Scheduler.activeStart` (the log entry of the
+    running start) against the entry the port recorded when it made the start, so a later
+    (scheduled) session is never the one undone. `CommandLoop.undo` asks the same check
+    before the executor: a change that is one ended `session.start` is refused with
+    `SESSION_START_ENDED_REASON` and its row marked `irreversible`; inside a composed change
+    the start is the no-op and the rest is undone (runtime.md, "The core loop", commands).
+    Tests: `packages/runtime/test/loop-commands.test.ts` (an ended start: refused with the
+    reason, nothing stopped, `isFrozen` false, the row `irreversible` and no longer offered,
+    no undo row; a running start stopped as that session only with the agent not frozen; a
+    scheduled session running while the old start is undone left alone; the phone's composed
+    plan undone as a whole with the ended start a no-op; the queued and deferred cases as
+    before). Pins inverted: test 4, `killFrozenAfterUndo` and `resumedFromUi` are `false`
+    (J pressed no Resume; Friday's scheduled session ran on its own).
+  - **RT-P5-3, closed 2026-10-20: the hooks held a command tool on the model path before
+    the registry's card formed.** On the conversation's model path `email_mode_set` is
+    classed `permission_change` (always-human, `packages/runtime/src/enforcement/autonomy.ts`),
+    so the hooks filed their own blocking request (`approval_required: pending`) before the
+    registry's device card could form: by voice the email mode needed two phone answers (the
+    hold, then the card) and a second asking; the chat round found the first answer by the
+    session's approval key. Fix: `ToolSpec.gate` (`packages/runtime/src/agent/tools.ts`);
+    `CommandLoop.tools` marks every command tool `gate: "registry"` and
+    `EnforcementHooks.beforeToolCall` runs every other check (token, kill state, allowlist,
+    schema, paths, domains, secrets, audit) but not the autonomy decision for such a tool,
+    because the registry's executor confirms by risk and the card is the one approval (ADR
+    0030); a tool that is not a registry command keeps the always-human rule. Tests:
+    `packages/runtime/test/conversation.test.ts` (on the daemon's store-backed approval port
+    a model turn calling `email_mode_set` yields one `needs_device` card, one HumanRequest,
+    no denied audit row, a typed yes refused and the one device answer applying the change;
+    `autonomy_set` one `needs_yes` card, the yes applying it) and
+    `packages/runtime/test/hooks.test.ts` (a registry-gated tool skips the hold, `delete_repo`
+    still waits for the human, the allowlist, the schema and the kill state still apply).
+    Pins inverted: test 1, `denied` is `[]`, `report.audit.denied` 0, three high-risk phone
+    answers; test 3, `hookApproval` null on every channel. `hooksHoldFiled` in
+    `gate5-week.ts` still looks for a hold (a blocking `approval` request naming the tool), so
+    a regression is reported as a hold, not as a missing card.
+  - **RT-P5-4, closed 2026-10-20: the daemon's command routes carried no `ui` change
+    source.** `CommandTurn.source` and the route bodies were `text | voice | phone`, the
+    settings screen sent none, so a change made in the settings screen was logged as `chat`.
+    Fix: `ui` on `CommandTurn.source` (`packages/runtime/src/loop/ports.ts`), in the command
+    loop's exported `SOURCE_OF` (`ui -> ui`) and in `CommandSourceBody`, the enum of
+    `POST /commands/parse` and `POST /commands/execute` (`api-types.ts`, `server.ts`);
+    `SettingsPage.tsx` sends `source: "ui"`. The state's `CHANGE_SOURCES` already held `ui`
+    (the column's default), so no migration and no `data-model.md` change. Tests:
+    `packages/runtime/test/loop-routes.test.ts` (`POST /commands/execute` with `source: "ui"`
+    then the tap gives a change log row and a `ChangeLogView` with `source: "ui"`; the parse
+    route takes it; an unknown source is refused with nothing run) and
+    `apps/ui/test/settings.test.tsx` (the posted body carries `source: "ui"` and the fake
+    daemon's row shows it). Pin inverted: test 3, `ui.row.source` is `"ui"`; `byUi` sends
+    `source: "ui"` as the screen does. Still `chat`: an undo from the Changes screen
+    (`POST /changes/:id/undo` builds a `text` turn; runtime.md, Known issues).
   - Noted, not pinned: the daemon has no route for a daily session schedule (the week's
-    schedules are harness configuration), and the state service's answer route records no
-    decision-log entry (the daemon's does).
+    schedules are harness configuration).
+  - **Closed 2026-10-20: the state service's answer route recorded no decision-log entry
+    (the daemon's does).** `answerRequestAs` (`services/state-api/src/routes/inbox.ts`) now
+    writes it through the daemon's own `DecisionLog.recordAnswer`, for the route, the outbox's
+    `request.answer` and the review approve / reject path alike; the device (or the runtime's
+    install) and the request id go in the rationale, since the `decision` row has no device
+    column (state-service.md, Routes). Test: `services/state-api/test/routes.test.ts`
+    ("answering a decision request writes the decision-log entry").
 - Phase 5 stands in for the Android emulator and the OS audio devices (ADR 0045 items 2
   and 3): the screens are not driven and the model stage of the voice latency is the fake
   provider's zero-latency stream; the real-audio median with the live Haiku first token of
@@ -1188,9 +1246,18 @@ doctor and the eval checks as argv arrays).
   workflow's Tauri build; the real UI build and the Windows and Android runs are for the final
   build (gates.md).
 - Phase 7: the second install's refusal of the broken build comes from the shared `release`
-  row (`UpdateManager.assertNotRejectedBefore`), not from a peer feed message; the refusal
-  text says "on this install before" even when a peer's rollback wrote the row (runtime
-  wording, filed). Two installs on separate stores would not learn from each other.
+  row (`UpdateManager.assertNotRejectedBefore`), not from a peer feed message. Closed
+  2026-10-20: the refusal text said "on this install before" even when a peer's rollback
+  wrote the row; it now names the reporting install and time (`rejectionReport`,
+  `previouslyRejectedMessage` in `packages/runtime/src/update/install.ts`: "on another
+  install (reported by human <id> on <checkedAt>)" for a peer, "(reported by this install's
+  human, human <id>, on <checkedAt>)" for the reporter, since the row names a human and not a
+  machine; the automatic rollback in `health.ts` writes `health.reportedBy` so the install
+  whose check failed is named even when a peer first recorded the row; test "a previously
+  rejected release names the install that reported it" in
+  `packages/runtime/test/update-install.test.ts`; the harness's
+  `expect.stringContaining(BROKEN)` holds either way). Two installs on separate stores would
+  not learn from each other.
 - Phase 7: the model watch's eval runner is `runEvalSet` with a probe driver, because the
   daemon's `LoopEvalRunner` grades `command_exit0` checks only inside a sandbox lease and the
   world has none; a live run of the watch goes through `tests/live`.
@@ -1223,8 +1290,10 @@ blocking first), O.1 (voice and text in the app, the quick chat from the phone),
 stages), O.7 (the spoken yes logged with the line; a costly session start and a high-risk
 change confirmed by risk), O.10 (transcripts kept, no audio), Q.1 (the settings route and
 chat and voice call the same commands), Q.4 to Q.8 (the card, the yes, the tap, the device
-with the biometric, a chat or spoken yes refused on a high-risk change), Q.10 and Q.11 (the
-same sentence and entry across channels, undo from each), Q.12 (the same enforcement for
+with the biometric, a chat or spoken yes refused on a high-risk change; one card and one
+answer per change on the model path too since RT-P5-3 closed), Q.10 and Q.11 (the
+same sentence and entry across channels, undo from each, the settings route's rows with
+source `ui` since RT-P5-4 closed), Q.12 (the same enforcement for
 the settings screen and conversation), R.2 to R.5 and R.7 (pairing, the service's routes,
 the PC's pickup, the plan from the phone, answers with the biometric, no secret in any row),
 S.9 (every pickup and tool call audited).

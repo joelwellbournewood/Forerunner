@@ -117,9 +117,11 @@ describe("Settings", () => {
     await user.type(input, "3");
     await user.click(within(dialog).getByTestId("setting-apply"));
     await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));
+    // The settings screen names its channel (RT-P5-4): the row is logged as `ui`, not `chat`.
     expect(postedCalls(harness, "/commands/execute")[0]?.body).toEqual({
       commands: [{ name: "autonomy.set", params: { level: 3, project: "proj_atlas" } }],
       wordsUsed: "Settings: project.autonomy to 3",
+      source: "ui",
       projectId: "proj_atlas",
     });
     // Medium risk: the change card, then a yes.
@@ -139,8 +141,9 @@ describe("Settings", () => {
       "Set autonomy for Atlas from 2 to 3. Undo.",
     );
     expect(harness.daemon.state.projects[0]?.autonomyLevel).toBe(3);
-    // The change log row is the one voice and chat would write (source aside).
+    // The change log row is the one voice and chat would write, with its own source.
     const entry = harness.daemon.state.changes[0];
+    expect(entry?.source).toBe("ui");
     expect(entry?.sentence).toBe("Set autonomy for Atlas from 2 to 3. Undo.");
     expect(entry?.wordsUsed).toBe("Settings: project.autonomy to 3");
     expect(entry?.commands).toEqual([

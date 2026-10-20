@@ -217,7 +217,11 @@ export interface CommandTurn {
   activeProjectId: string | null;
   /** The conversation session whose log receives the spoken sentence. */
   sessionId: string;
-  source: "text" | "voice" | "phone";
+  /**
+   * The channel: typed chat, voice, the phone's relayed chat, or the UI's own screens (the
+   * settings screen, the Changes screen); the change log records `chat`, `voice` or `ui`.
+   */
+  source: "text" | "voice" | "phone" | "ui";
   /** The words the human used (stored in the change log). */
   wordsUsed: string;
   deviceId?: string | null;
