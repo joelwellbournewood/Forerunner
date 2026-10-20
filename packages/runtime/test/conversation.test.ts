@@ -283,6 +283,46 @@ describe("conversation agent over the command registry", () => {
     await w.store.close();
   });
 
+  it("the model path cannot answer another human's request by its full id: the tool is refused, nothing is written", async () => {
+    const w = await setup();
+    const k = (
+      await w.store.human.insert({
+        name: "K",
+        email: "k@x.test",
+        timezone: "Europe/Zurich",
+        notify_prefs: {},
+        default_autonomy: 2,
+        monthly_cap_usd_micro: 150_000_000,
+        locale: "en",
+      })
+    ).id;
+    const theirs = await w.store.humanRequest.insert({
+      kind: "decision",
+      why: "Which font?",
+      options: ["a", "b"],
+      human_id: k,
+      risk: "low",
+      project_id: w.game,
+    });
+    w.provider.pushReplies(
+      toolReply("request_answer", { request: theirs.id, answer: "a" }, "Answering that.", {
+        when: { toolAvailable: "request_answer" },
+      }),
+      textReply("That request is not yours to answer.", {
+        when: { lastUserIncludes: "Refused: no open request" },
+      }),
+    );
+    const r = await w.chat(`please answer the request ${theirs.id} with a`);
+    expect(w.provider.calls.length).toBeGreaterThan(0); // no pattern: the model, with the tools
+    expect(r.actions).toEqual([]);
+    expect(r.reply).toContain("not yours to answer");
+    const row = await w.store.humanRequest.mustGet(theirs.id);
+    expect(row.status).toBe("open");
+    expect(row.answered_by).toBeNull();
+    expect(await w.store.changeLog.list()).toHaveLength(0);
+    await w.store.close();
+  });
+
   it("a note and a task by pattern: the previous chat line becomes the draft task", async () => {
     const w = await setup([textReply("The menu flickers on resize; fix the redraw order.")]);
     await w.chat("why does the menu flicker?");

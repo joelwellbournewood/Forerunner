@@ -80,6 +80,14 @@ ceiling is `human.monthly_cap_usd_micro` plus `notify_prefs.monthly_cap_chf_micr
 values fall back to the billing defaults (CHF 5 per session, CHF 150 per month).
 `sessionBudgetOf(project, ctx)` and `monthlyCeilingOf(human, ctx)` are exported for the runtime.
 
+`request.answer` resolves its id or prefix only among the requests the caller may answer: a
+`human_request` whose `human_id` is null (addressed to nobody in particular) or the caller's own
+(`ctx.humanId`). A request addressed to another human is not found, by its full id as much as by
+a prefix, and the refusal is the one an unknown id gets (`not_found`, "no open request <id>"),
+so a full id seen in a shared project view confirms nothing and answers nothing. The full-id
+lookup also reaches closed requests of the caller's own, which `plan` refuses with the
+request's status; prefixes match open requests only.
+
 ### The change card (`src/change-card.ts`)
 
 `ChangeCard { command, what, oldValue, newValue, scope, scopeLabel ("this session" | "this
@@ -258,13 +266,14 @@ entry and its rollback, shared projects, the settings-screen path, another human
 token/device and undo/revert refused, a double tap runs once, no email answer on the
 settings-screen path, a risen risk refused when the yes arrives), `commands.test.ts` (the
 PharmaWatch sentence exactly, every command's risk, writes and undo, prototype keys as unknown
-settings), `intent.test.ts` (the two spec sentences, thirty English and German phrases,
-ambiguity questions, budget tails that are not a time, invalid values as a question, the
-envelope refusal, the model port, time parsing with `rest`), and `scenario.test.ts` (the
-Android scenario end to end and the phase 5 gate: ui, chat and voice produce the same change
-log entry).
+settings, another human's request not found by full id or prefix while the addressee and anyone
+for an unaddressed request can answer), `intent.test.ts` (the two spec sentences, thirty
+English and German phrases, ambiguity questions, budget tails that are not a time, invalid
+values as a question, the envelope refusal, the model port, time parsing with `rest`), and
+`scenario.test.ts` (the Android scenario end to end and the phase 5 gate: ui, chat and voice
+produce the same change log entry).
 
-Run: `pnpm vitest run --project unit packages/commands/test` (122 tests).
+Run: `pnpm vitest run --project unit packages/commands/test` (123 tests).
 
 ## Known issues
 

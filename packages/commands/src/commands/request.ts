@@ -16,11 +16,21 @@ const params = z.object({
 });
 export type RequestAnswerParams = z.infer<typeof params>;
 
+/** A request the caller may answer: addressed to nobody in particular, or to the caller. */
+function answerableBy(r: HumanRequestRow, ctx: CommandContext): boolean {
+  return r.human_id === null || r.human_id === ctx.humanId;
+}
+
+/**
+ * Resolve the id or prefix among the requests the caller may answer. A request addressed to
+ * another human is treated as not found whichever way it is named, and the refusal is the one
+ * an unknown id gets, so knowing or guessing a full id confirms nothing and answers nothing.
+ */
 async function findRequest(p: RequestAnswerParams, ctx: CommandContext): Promise<HumanRequestRow> {
   const direct = await ctx.store.humanRequest.get(p.request);
-  if (direct) return direct;
+  if (direct && answerableBy(direct, ctx)) return direct;
   const open = await ctx.store.humanRequest.open({}, { limit: 200 });
-  const mine = open.filter((r) => r.human_id === null || r.human_id === ctx.humanId);
+  const mine = open.filter((r) => answerableBy(r, ctx));
   const matches = mine.filter((r) => r.id.startsWith(p.request));
   if (matches.length === 1) return matches[0] as HumanRequestRow;
   if (matches.length > 1) {

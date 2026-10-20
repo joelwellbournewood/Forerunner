@@ -503,6 +503,68 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     await w.store.close();
   });
 
+  it("request.answer reaches only requests the caller may answer: another human's request is not found by full id as by prefix", async () => {
+    const w = await world();
+    const theirs = await w.store.humanRequest.insert({
+      kind: "decision",
+      why: "Which font?",
+      options: ["serif", "sans"],
+      human_id: w.other.id,
+      risk: "low",
+    });
+    for (const request of [theirs.id, theirs.id.slice(0, 8)]) {
+      const r = refused(
+        await w.executor.execute({
+          name: "request.answer",
+          params: { request, answer: "serif" },
+          ctx: w.ctx(),
+        }),
+      );
+      // The same refusal as for an id that does not exist, so it does not confirm the id.
+      expect(r.code).toBe("not_found");
+      expect(r.reason).toBe(`no open request ${request}`);
+    }
+    const unknown = refused(
+      await w.executor.execute({
+        name: "request.answer",
+        params: { request: "no-such-request-id", answer: "serif" },
+        ctx: w.ctx(),
+      }),
+    );
+    expect(unknown.code).toBe("not_found");
+    expect(unknown.reason).toBe("no open request no-such-request-id");
+    const untouched = await w.store.humanRequest.mustGet(theirs.id);
+    expect(untouched.status).toBe("open");
+    expect(untouched.answered_by).toBeNull();
+    expect(await w.store.changeLog.list()).toHaveLength(0);
+    // The addressee answers it by full id; a request with no addressee is open to anyone.
+    const byMara = done(
+      await w.executor.execute({
+        name: "request.answer",
+        params: { request: theirs.id, answer: "sans" },
+        ctx: w.ctx({ humanId: w.other.id, actor: { kind: "human", id: w.other.id } }),
+      }),
+    );
+    expect(byMara.sentence).toBe('Answered "Which font?" with "sans".');
+    expect((await w.store.humanRequest.mustGet(theirs.id)).answered_by).toBe(w.other.id);
+    const anyone = await w.store.humanRequest.insert({
+      kind: "decision",
+      why: "Ship on Friday?",
+      options: ["yes", "no"],
+      human_id: null,
+      risk: "low",
+    });
+    done(
+      await w.executor.execute({
+        name: "request.answer",
+        params: { request: anyone.id, answer: "yes" },
+        ctx: w.ctx(),
+      }),
+    );
+    expect((await w.store.humanRequest.mustGet(anyone.id)).answered_by).toBe(w.human.id);
+    await w.store.close();
+  });
+
   it("email.mode.set writes the capability row the email module reads, and undo restores the mode", async () => {
     const w = await world();
     const r = done(
