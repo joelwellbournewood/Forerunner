@@ -1,4 +1,4 @@
-import { ForerunnerError, join } from "@forerunner/platform";
+import { appDirs, ForerunnerError, join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_COMMAND_POLL_MS,
@@ -13,6 +13,8 @@ import {
 } from "../src/config.ts";
 
 const HOME = join("/tmp", "fr-config-test");
+// appDirs resolves the override, which on Windows adds the drive letter; expect the same.
+const DIRS = appDirs({ env: { FORERUNNER_HOME: HOME } });
 const PG = "postgres://user:hunter2@db.internal:5432/forerunner"; // not-a-secret
 
 describe("runner configuration", () => {
@@ -23,7 +25,7 @@ describe("runner configuration", () => {
     expect(cfg.runnerId).toMatch(/^runner-[a-z0-9._-]+$/);
     expect(cfg.human).toBeUndefined();
     expect(cfg.agent).toBeUndefined();
-    expect(cfg.vaultPath).toBe(join(HOME, "config", "vault.runner.json"));
+    expect(cfg.vaultPath).toBe(join(DIRS.config, "vault.runner.json"));
     expect(cfg.unlock).toMatchObject({ policy: "window", pollMs: 2_000, idleLockMs: 0 });
     expect(cfg.personal).toBe(false);
     expect(cfg.mail).toMatchObject({
@@ -35,7 +37,7 @@ describe("runner configuration", () => {
     expect(cfg.health).toEqual({
       host: "127.0.0.1",
       port: DEFAULT_HEALTH_PORT,
-      readyFile: join(HOME, "runtime", "runner-ready.json"),
+      readyFile: join(DIRS.runtime, "runner-ready.json"),
     });
     expect(cfg.pcOnlineMs).toBe(DEFAULT_PC_ONLINE_MS);
     expect(cfg.commandPollMs).toBe(DEFAULT_COMMAND_POLL_MS);
