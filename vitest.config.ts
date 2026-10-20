@@ -21,6 +21,8 @@ export default defineConfig({
           exclude: ["**/*.integration.test.ts", "**/node_modules/**", "**/dist/**"],
           environment: "node",
           testTimeout: 20_000,
+          // Suites that compose the whole runtime in beforeAll have exceeded the 10 s default on cold Windows runners.
+          hookTimeout: 60_000,
         },
       },
       {
