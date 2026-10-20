@@ -61,9 +61,16 @@ jobs:
       - name: Emulator UI and sync tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          # An automated-test-device image on API 30 boots in minutes on the 2-core hosted
+          # runner; the API 34 google_apis image never reached boot_completed in 10 minutes.
+          api-level: 30
           arch: x86_64
-          target: google_apis
+          target: aosp_atd
+          ram-size: 3072M
+          disk-size: 4096M
+          emulator-boot-timeout: 1200
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics -camera-back none -camera-front none
+          disable-animations: true
           script: pnpm --filter @forerunner/mobile test:emulator
       - uses: actions/upload-artifact@v4
         with:
