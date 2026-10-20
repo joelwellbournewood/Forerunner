@@ -26,6 +26,15 @@ with their milestone.
   clean), push with `--force-with-lease` only when asked and never on the default branch,
   changed files, log. HTTPS auth uses an `http.extraheader` config argument so the token never
   touches disk; error output is redacted.
+- `PrTaskExecutor` (`pr-executor.ts`) wraps any task executor in the branch-and-PR flow: clone
+  or fetch into a per-task worktree, branch from the base (or the existing PR branch), run the
+  inner executor inside the worktree, commit, rebase onto the base, push and open a pull
+  request whose body carries the outcome and acceptance criteria; a second run on the same
+  task updates the PR. A rebase conflict becomes a blocking human request with options and the
+  task outcome `needs_human`; no changes means `failed`; tasks without a repository run the
+  inner executor directly.
+- `MemoryGitHost` (`memory.ts`) is an in-memory implementation of the contract for unit tests
+  of callers.
 
 ## How it works
 

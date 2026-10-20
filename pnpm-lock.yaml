@@ -179,6 +179,9 @@ importers:
       '@forerunner/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@forerunner/state':
+        specifier: workspace:*
+        version: link:../state
       '@forerunner/vault':
         specifier: workspace:*
         version: link:../vault

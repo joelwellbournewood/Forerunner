@@ -56,8 +56,14 @@ export class GitOps {
   }
 
   private async git(args: string[], extra: Partial<RunOptions> = {}): Promise<RunResult> {
+    // Every command runs inside opts.cwd; only clone/init may run before it exists. Never fall
+    // back to the process working directory (that could touch an unrelated repository).
+    const creates = args[0] === "clone" || args[0] === "init";
+    if (!creates && !existsSync(join(this.opts.cwd, ".git"))) {
+      throw new ForerunnerError("not_found", `not a git worktree: ${this.opts.cwd}`);
+    }
     const r = await run([...this.base(), ...args], {
-      cwd: existsSync(this.opts.cwd) ? this.opts.cwd : undefined,
+      cwd: creates ? undefined : this.opts.cwd,
       timeoutMs: this.opts.timeoutMs ?? 5 * 60 * 1000,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", GCM_INTERACTIVE: "never" },
       allowFailure: true,

@@ -20,7 +20,8 @@
     "nodemailer": "^10.1.7",
     "imapflow": "^2.5.8",
     "mailparser": "^3.10.0",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "@forerunner/state": "workspace:*"
   },
   "devDependencies": {
     "@types/nodemailer": "^7.0.0",
