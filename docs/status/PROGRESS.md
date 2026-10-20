@@ -7,8 +7,8 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | Phase | Name | Status | Gate evidence |
 | --- | --- | --- | --- |
 | 0 | Foundations | CI green on both OS (run 39352102564); fresh-install timing pending the install scripts | gates.md § Phase 0 |
-| 1 | Single agent that does real work | gate passed on the fake provider (10 tasks via PRs, overspend blocked, kill under 2 s); live subscription/API checks blocked on credentials; minimal UI pages pending | gates.md § Phase 1 |
-| 2 | Two agents, one project | not started | |
+| 1 | Single agent that does real work | gate passed on the fake provider (10 tasks via PRs, overspend blocked, kill under 2 s); daemon API and `fr daemon` done; live subscription/API checks blocked on credentials; minimal UI pages in progress | gates.md § Phase 1 |
+| 2 | Two agents, one project | claims, PR flow with rebase, human requests, peer feed and overlap detection done; state service, realtime inbox and GitHub mirror in progress | |
 | 3 | Critic and quality loop | not started | |
 | 4 | Memory, docs and learning | not started | |
 | 5 | Human experience and voice | not started | |
@@ -17,6 +17,18 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | 8 | Full integration and release 1.0 | not started | |
 
 ## Log
+
+### 2026-10-20 (daemon and waves 2-3)
+- Local daemon API (ADR 0011): composition root, Hono server on 127.0.0.1 with a bearer token
+  in `daemon.json`, SSE streams, `fr daemon`; smoke-tested end to end with the fake provider.
+- Snapshot of finished agent work: specialist registry and eval sets, voice pipeline (ADR 0012),
+  testenv mail server and GitHub stand-in. CI green on both OS (run 39355978010).
+- Peer activity feed and overlap detection in the session runner; PR executor reports changed
+  files for it.
+- Waves in flight: phase-1 UI, state service, critic, memory, commands (wave 2); email,
+  browser, injection suite (3a); updates, extensions, notifications, Cloudflare (3b); model
+  watch and estimates, GitHub Projects mirror, desktop control, data assets (3c).
+- Progress report 2 posted to the contact issue.
 
 ### 2026-10-20 (later)
 - Sessions: startup checklist, state brief, planner, claims, executor, scheduler, state ports.
