@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Sign in</title></head>
+<body>
+  <main>
+    <h1>Sign in to Acme</h1>
+    <form id="login" action="/login" method="post">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password">
+      <label for="otp">One-time code</label>
+      <input id="otp" name="otp" type="text" autocomplete="one-time-code" inputmode="numeric">
+      <button type="submit" id="sign-in">Sign in</button>
+    </form>
+    <form id="search" action="/search" method="get">
+      <input name="q" type="search" placeholder="Search products">
+      <button type="submit" id="search-button">Search</button>
+    </form>
+  </main>
+</body>
+</html>

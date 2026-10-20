@@ -20,7 +20,7 @@ missing item, see BLOCKERS.md), **failed** (with the failing evidence and the fi
 | --- | --- | --- | --- | --- | --- |
 | One agent plans and completes 10 tasks via PRs without exceeding any cap | **passed** (fake provider, local bare repo) | `pnpm vitest run --project integration packages/capabilities/test/phase1-gate.integration.test.ts` | 2026-10-20 | 10 PRs opened, 10 tasks in review, all runs under task cap, session under cap, no denied audit entries (commit c989eed) | CI run 39352827893 (integration step) |
 | Deliberate overspend blocked by code | **passed** | `packages/runtime/test/hooks.test.ts` ("blocks a deliberate overspend before the call is made"), `packages/runtime/test/loop.test.ts` ("stops a run that tries to overspend"), gate test "blocks a deliberate overspend in code and the session stops cleanly with a handoff" | 2026-10-20 | run outcome budget_exceeded under the run cap; session stops with handoff; no PR opened | CI run 39352827893 |
-| Kill switch stops everything within 2 s | pending | `packages/runtime/test/killswitch.test.ts` | | | |
+| Kill switch stops everything within 2 s | **passed** | `packages/runtime/test/killswitch.test.ts` (40 runs and 3 processes stopped under 2 s); gate test "the kill switch stops a running session within 2 seconds and releases claims" in `packages/capabilities/test/phase1-gate.integration.test.ts`; daemon test "kill works" | 2026-10-20 | session status killed and claims released under 2 s of simulated and wall time; `POST /kill` freezes new work and `/kill/resume` lifts it | https://github.com/joelwellbournewood/Forerunner/actions/runs/39358262200 |
 | Same session once on subscription and once on API key with correct usage | blocked | needs tokens | | | |
 | Text chat first token under 1 s median | **partial**: measured under simulated latency (250 ms) in the gate test; live median blocked until an API key exists | gate test "text chat answers with a measured first token" | 2026-10-20 | ttft recorded per turn by `ConversationAgent`; live run pending | pending |
 
@@ -45,6 +45,6 @@ Filled in as each phase is reached.
 | 4 | No open P0/P1; P2 listed | pending | |
 | 5 | Security suite passes | pending | |
 | 6 | Response-time targets met | pending | |
-| 7 | Fresh install < 15 min on both | pending | |
+| 7 | Fresh install < 15 min on both | pending for the final build (measured on fresh runners: Linux 89 s, Windows 200 s) | https://github.com/joelwellbournewood/Forerunner/actions/runs/39357536106 |
 | 8 | Docs handover test passes | pending | |
 | 9 | This file has evidence for all of the above | pending | |

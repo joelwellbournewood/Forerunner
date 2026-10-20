@@ -28,6 +28,26 @@ The runtime is the same code in every run mode; only the storage adapter and the
 | Test environment | `testenv` | Fake provider, simulated clock, fake git host, mail server with DKIM, fake Cloudflare, simulated users |
 | Evals | `evals` | Golden task sets, eval runner, registry content (synced to `forerunner-registry`) |
 
+## Daemon and shells
+
+The runtime runs as one `fr daemon` process per install (ADR 0026). It binds the local daemon
+API (ADR 0011) on 127.0.0.1 with a bearer token in `<runtime dir>/daemon.json`; the desktop
+shell reads that file, starts the daemon when it is missing, and injects the address and token
+into the shared UI (ADR 0025). The Android app never talks to the daemon: it pairs with the
+state service (ADR 0009) and sends remote commands that the PC's daemon executes. The cloud
+runner composes the same runtime headless against the shared Postgres state. Updates are
+staged by the runtime itself (ADR 0015); "Update and restart" ends the daemon with exit code
+75 and the shell or user service restarts it.
+
+| Piece | Code | Doc |
+| --- | --- | --- |
+| Composition root and daemon API | `packages/runtime/src/daemon` | runtime.md § Local daemon |
+| Extensions registry and MCP connectors | `packages/runtime/src/extensions` | extensions.md |
+| Sandboxes | `packages/runtime/src/sandbox` | sandbox.md |
+| Updates | `packages/runtime/src/update` | updates.md |
+| Model watch and estimates | `packages/runtime/src/models`, `src/estimates` | model-watch.md |
+| GitHub Projects mirror | `packages/capabilities/src/githost/projects-mirror.ts` | capabilities.md |
+
 ## Data flow of one session
 
 1. A trigger (manual, schedule, inbox event, CI result, PR comment, verified email, remote command from

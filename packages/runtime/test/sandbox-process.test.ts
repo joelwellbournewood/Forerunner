@@ -134,7 +134,7 @@ describe("ProcessSandbox", () => {
       const script = [
         "const u = new URL(process.env.HTTP_PROXY);",
         "const auth = 'Basic ' + Buffer.from(decodeURIComponent(u.username) + ':' + decodeURIComponent(u.password)).toString('base64');",
-        "require('http').request({ host: u.hostname, port: u.port, path: 'http://example.com/', headers: { 'proxy-authorization': auth } }, (res) => { console.log(res.statusCode); process.exit(0); }).on('error', (e) => { console.error(e.message); process.exit(2); }).end();",
+        "require('http').request({ host: u.hostname, port: u.port, path: 'http://example.com/', headers: { 'proxy-authorization': auth } }, (res) => { console.log(String(res.statusCode)); process.exit(0); }).on('error', (e) => { console.error(e.message); process.exit(2); }).end();",
       ].join("\n");
       const r = await sb.run([NODE, "-e", script]);
       expect(r.stdout.trim()).toBe("403");

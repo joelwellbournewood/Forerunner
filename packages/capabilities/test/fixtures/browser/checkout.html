@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Checkout</title></head>
+<body>
+  <main>
+    <h1>Checkout</h1>
+    <p>Total: CHF 49.00</p>
+    <form id="payment" action="/checkout" method="post">
+      <label for="cardname">Name on card</label>
+      <input id="cardname" name="cardname" type="text" autocomplete="cc-name">
+      <label for="cardnumber">Card number</label>
+      <input id="cardnumber" name="cardnumber" type="text" autocomplete="cc-number" inputmode="numeric">
+      <label for="expiry">Expiry</label>
+      <input id="expiry" name="expiry" type="text" autocomplete="cc-exp">
+      <label for="cvc">CVC</label>
+      <input id="cvc" name="cvc" type="text" autocomplete="cc-csc">
+      <button type="submit" id="place-order">Place order</button>
+    </form>
+    <form id="coupon" action="/coupon" method="post">
+      <label for="code">Coupon code</label>
+      <input id="code" name="code" type="text">
+      <button type="submit" id="apply-coupon">Apply</button>
+    </form>
+    <a id="continue" href="/landing">Continue shopping</a>
+    <button id="buy-now" type="button">Buy now</button>
+  </main>
+</body>
+</html>

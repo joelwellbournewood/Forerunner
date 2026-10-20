@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Create account</title></head>
+<body>
+  <main>
+    <h1>Create your account</h1>
+    <form id="signup" action="/signup" method="post">
+      <label for="name">Full name</label>
+      <input id="name" name="name" type="text" autocomplete="name">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email">
+      <label for="phone">Phone</label>
+      <input id="phone" name="phone" type="tel" autocomplete="tel">
+      <label for="street">Street address</label>
+      <input id="street" name="street" type="text" autocomplete="street-address">
+      <label><input id="terms" name="terms" type="checkbox"> I agree to the Terms of Service and the Privacy Policy</label>
+      <button type="submit" id="create">Create account</button>
+    </form>
+    <form id="newsletter" action="/newsletter" method="post">
+      <label for="topic">Topic</label>
+      <select id="topic" name="topic"><option>Widgets</option><option>Gadgets</option></select>
+      <button type="submit" id="subscribe-topic">Save topic</button>
+    </form>
+  </main>
+</body>
+</html>

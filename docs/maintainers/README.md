@@ -25,3 +25,10 @@ fails a PR that changes a module without touching its doc.
 | security.md | threat model and the injection test suite |
 | testing.md | test environment, stand-ins, the nine scenarios |
 | troubleshooting.md | common failures and fixes |
+| sandbox.md | Docker/Podman container adapter, process stand-in, worktree mounts, egress |
+| extensions.md | extensions registry, MCP connector review and approval, live revocation |
+| updates.md | release feeds, signed manifests, staged install, health check, rollback |
+| model-watch.md | weekly model watch and estimate learning (written with the model watch) |
+| notifications.md | channels, quiet hours, digest (written with the notifications module) |
+| data.md | files, folders, datasets, imports (written with the data module) |
+| email.md, browser.md, desktop-control.md, cloudflare.md | one file per capability |
