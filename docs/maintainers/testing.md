@@ -3,8 +3,9 @@
 The internal test environment: every real dependency has a stand-in so the agent proves
 everything itself, repeatably, on Windows and Linux. Vitest runs three projects
 (`vitest.config.ts`): `unit` (fake provider, no network), `integration` (local Postgres, mail
-server, fake git host) and `e2e` (the nine scenarios with live models). This file has one
-subsection per stand-in under each heading.
+server, fake git host) and `e2e` (the nine release scenarios on the scenario world and the
+phase gate harnesses, fake provider; live-model runs are the opt-in `tests/live` suite). This
+file has one subsection per stand-in under each heading.
 
 ## Purpose
 
@@ -47,7 +48,14 @@ webhook deliveries with GitHub's headers. The real adapter
 at `host.baseUrl`; the final checks against a real org with `fr-test-` repos stay as the spec
 says. Everything is exported from `@forerunner/testenv` (`testenv/src/githost/index.ts`).
 
-Other stand-ins (simulated clock usage, fake Cloudflare, simulated users, the nine scenarios): to be filled by the testenv items that build them.
+### Scenario world
+
+`tests/e2e/src/scenario-world.ts` is the world the nine release scenarios run in (spec, Phase 8):
+two humans with one principal agent each on two installs that share one state store, a sample
+project in the fake git host with a plan, the real session runner, PR executor, critic loop and
+memory loop per install, a scheduler per install, the fake mail server and a simulated clock.
+See "Scenarios" below. Other stand-ins (fake Cloudflare, simulated users beyond the two humans):
+to be filled by the testenv items that build them.
 
 ## How it works
 
@@ -943,11 +951,10 @@ run on Windows and Linux (paths through `@forerunner/platform`, worktrees under 
   and are recorded as 0 proposals.
 - Decisions the spec leaves open (what a repeat is, the arrival schedule, the budgets, the
   marker rule, the no-memory control) are recorded in this section; no ADR number was reserved
-  for the harness task (0039 is the next free number at the time of writing), so they move to
-  an ADR once one is assigned.
-- The live calibration has not run yet: the key is in the build box's `.env.build`, but the
-  build session's permission system refused the spend as a real-money action, so a human
-  starts the command above and records the result.
+  for the harness task, so they move to an ADR once one is assigned.
+- The live calibration now runs from `tests/live` ("Live runs" below, ADR 0040), which meters
+  every call through the spend ledger; the `FORERUNNER_E2E_LIVE` opt-in in this file is the
+  older, uncapped-across-runs path and should be retired in favour of it.
 
 ### Requirement IDs covered
 
@@ -958,3 +965,526 @@ G.3 and N.4 (retrieval into the principal's and the specialist's brief under the
 budgets, measured independently), G.4 (weekly consolidation through the inbox), B.4 (every
 sent-back task resolved its finding before closing), S.1 (every tool call audited, none denied
 by the hooks because the grant was right).
+
+## Live runs
+
+Package: `tests/live` (`@forerunner/live`), ADR 0040. The only place live model calls happen
+in the test suite. Everything else runs on the fake provider; the nine release scenarios
+(`tests/e2e`) will run live through the same gate when they land.
+
+### Purpose
+
+The live halves of three gates on the real provider, under a budget enforced in code before
+every call: the phase 1 "same session on an API key with correct usage recorded" half (the
+subscription half is pending a `claude setup-token`, BLOCKERS.md) with the kill switch repeated
+live, the phase 3 critic calibration on the real tier 1 critic, and the response-time table of
+spec D.8 to D.15 (median and p90 time to first token per tier). It also exists so a live run can
+never spend more than its caps however it goes: a refused call fails the test with the reason
+and the ledger total, and the spend ledger is committed with the numbers.
+
+Files: `src/env.ts` (`.env.build` parser and `loadBuildEnv`, values returned and never logged),
+`src/ledger.ts` (`SpendLedger` over `tests/live/spend.json`), `src/budget.ts` (`LiveBudget`:
+caps from `FORERUNNER_LIVE_BUDGET_USD` and `FORERUNNER_LIVE_RUN_CAP_USD`, `reserve`/`settle`,
+the 80% warning line, `LiveBudgetError`), `src/metered.ts` (`MeteredProvider`, the gate in
+front of any `ModelProvider`), `src/registry.ts` (the registry copy with the coder on the
+built-in file tools), `src/harness.ts` (`liveProvider()`, `composeLive()` through
+`composeRuntime`, the fake git host, the audit sink), `src/dry-run.ts` (fake credentials and
+the fake ladder priced like the real one), `src/stats.ts`, `src/report.ts`; the tests under
+`test/`: `env`, `budget`, `metered`, `harness` (the dry run; on under the package's own `test`
+script, which no CI job invokes yet, see Known issues) and the three `live-*.live.test.ts`
+files (opt-in).
+
+### How it works
+
+**Credentials.** `loadBuildEnv()` takes `FORERUNNER_ANTHROPIC_KEY` (and
+`FORERUNNER_ANTHROPIC_WORKSPACE_ID`) from the process environment, else from `.env.build` at
+the repository root (`FORERUNNER_ENV_BUILD` points elsewhere). The parser handles `KEY=value`,
+`export`, quotes (a `#` inside the quotes is kept, a ` # comment` after the closing quote is
+dropped), comments and CRLF, in a few lines and with no dependency. The values go into the
+Anthropic adapter and into a `MemoryVault` under the usual secret names, nowhere else;
+`describeCredentials` says only where they came from, and `redactCredentials` is applied by
+the metered provider to every error text (an error event's message, a thrown error's message)
+before it reaches a call record, a ledger note or an audit row. The adapter sends the
+workspace id as the `anthropic-workspace-id` default header, as the daemon does for a
+user-scoped key.
+
+**The ledger** (`tests/live/spend.json`, committed) is `{ "rows": [...] }`, one row per live
+call: `date` (UTC day), `run`, `model` (the id the provider answered with), `tokensIn`,
+`tokensOut`, `cacheRead`, `cacheWrite`, `usd` (six decimals, priced from the billing table in
+micro-USD arithmetic) and an optional `note` for anything but a plain success. Appends are
+read-modify-write through a temp file and a rename; a malformed file is an error, never read as
+empty. The ledger is the memory of the budget across runs and machines.
+
+**The budget** (`LiveBudget`). Before a call the metered provider asks for a reservation sized
+by a conservative estimate: the adapter's local token count of the whole input (system,
+messages, tools) at the model's cache-write price (its dearest input rate, 1.25x the input
+price) plus `max_tokens` at the output price; the hooks' own estimate uses the plain input
+price, so this one is never below it. The call may start only if the ledger total
+plus the reservations in flight plus the estimate stay at or under the live budget
+(`FORERUNNER_LIVE_BUDGET_USD`, default 100) and the run's rows plus in flight plus the estimate
+stay at or under the per-run cap (`FORERUNNER_LIVE_RUN_CAP_USD`, default 15; never above the
+budget). Otherwise `LiveBudgetError` (`code: budget_exceeded`) names the reason, the ledger
+total, the run total and what is in flight, the refusal is recorded (`budget.refusals`, an audit
+row `live.model_call` with `allowed: false`) and nothing is sent. Once per `LiveBudget` a
+warning line prints at 80% of either cap (each test file builds its own, so a run that crosses
+the line prints it up to three times). After the call, success or not, `settle` prices the usage
+the provider reported and appends the row; an error or an abort adds a `note`, and when the
+provider reported nothing the row is `0/0` tokens with `no usage reported` (the Anthropic
+adapter yields usage only on `message_end`, so the billed input tokens of an aborted call are
+not visible to the harness; the per-run margin covers that under-count).
+
+**A run** is one vitest invocation: `vitest.config.ts` mints `FORERUNNER_LIVE_RUN` once (ISO
+time, or the value already in the environment) and hands it to every file; files run one after
+another in path order (`live-1-phase1`, `live-2-timing`, `live-3-phase3`), so the cheap halves
+come first and the ledger is never written from two workers at once. `--mode live` (the
+`test:live` script) sets `FORERUNNER_LIVE=1` for the workers; without it every live case is
+`it.skipIf`'d and the describe title carries the reason. The config also honours
+`FORERUNNER_LIVE=1` already exported in the shell, so with that variable set a plain
+`pnpm --filter @forerunner/live test` runs live too (by design: the variable is the opt-in, the
+script is the convenience).
+
+**The harness** (`composeLive`). The real runtime through `composeRuntime` with the metered
+provider injected, `sqlite::memory:`, a `MemoryVault` holding the key and the fake host's
+token by their usual names (so the first billing source is an `api_key` source and every run
+charges it), `FakeGitHost` from testenv behind the capabilities `GitHubHost` (the PR executor
+clones and pushes over git smart HTTP with the classic token), `FORERUNNER_HOME` under a temp
+root, the process sandbox stand-in (`engine: "none"`), `startServices: false`, notifications
+without the OS notifier. The registry is copied to the temp root and the coder's frontmatter
+rewritten to `allowed_tools: read_file, write_file, list_dir`, `max_budget_usd 0.5`,
+`max_turns 12`, `timeout_minutes 5`, `requires_sandbox false` (ADR 0040 item 5: the registry's
+`cc:*` tools are the Agent SDK driver's; the in-process loop driver offers only the tools whose
+names match, so without the copy a registry coder has no tools; that mapping is a runtime
+follow-up). `harness.grant()` is the daemon's session grant (every built-in tool, the worktrees
+root, the host's name, the GitHub token by reference). Every live call leaves an audit row in
+the store through `AuditSink`.
+
+**Phase 1 half** (`live-1-phase1.live.test.ts`): (1) the ladder's Haiku and Sonnet ids are
+listed by the provider (a free call); (2) the usage half: one session on a project with three
+small coder tasks (greet, clamp, changelog) on a seeded repository, task cap 0.40 USD, session
+cap 3 USD: the session runs to its end, every task is worked and opens a PR on the fake host,
+no run exceeds its cap, no call is refused, the store's cost ledger for the session carries
+the same tokens the provider reported, the runs charge the `api_key` source; (2b) the gate
+case on its own: `completed + inReview === 3` and nothing sent back by the critic, so the
+tier 1 escalate-at-confidence-0.5 defect (gates.md, phase 3 row) fails that case and no
+other, with the verdicts in the message; (3) text chat on Haiku through the composed
+`ConversationAgent` with its measured `ttftMs`; (4) a fourth, long task started and stopped
+with `kill.stop("all")` 0.5 s after its first model call: the session ends `killed` in under
+2 s of wall time, the claim is released, no call starts after the stop, and when a call was in
+flight at the stop (read from the budget's reservations at that moment) it is settled as
+aborted in the ledger. Everything measured goes to `phase1-live.json` in the report directory.
+
+**Timing** (`live-2-timing.live.test.ts`): ten requests per tier (Haiku, Sonnet) with
+`max_tokens 16` through `provider.complete`, time to first token and total time from the
+adapter's streaming, `median`/`p90` (nearest rank) per tier; the Haiku median against the text
+chat target is asserted (the phase 1 gate's own line), the rest is recorded
+(`timing-live.json`).
+
+**Phase 3 half** (`live-3-phase3.live.test.ts`): `gateWorld` from `tests/e2e` with the metered
+provider as the critic's provider (`pricingFor` for the real prices), `calibrate()` at tier 1
+over the first ten coder tasks (ten clean + ten seeded reviews) with a 120 s review timeout
+(the 30 s target is reported, not enforced), the e2e session budget set to the run's
+remaining allowance so the hooks cap it too; then the full 40-task run only when the subset's
+measured cost per review times 80 times 1.5 fits the remaining allowance, else the skip and
+its numbers are recorded. Timing is measured by the harness itself, because the calibration
+world runs on a `SimulatedClock` and the critic's own `durationMs` reads 0 there: wall time per
+task pair (clean and seeded review plus the eval runner's checks, from `calibrate`'s `onTask`
+callbacks, `taskPairWallMs`) and the duration of every critic model call from the metered
+provider (`modelCallMs`), both as `n`, min, median, p90, max and mean. Reports:
+`calibration-<date>.json` from the critic package and `phase3-live.json` (which also carries
+every metered call with its `at` and `durationMs`, so any other derivation can be recomputed).
+
+### Measured on 2026-10-20
+
+Three runs, USD 3.428238 over 342 ledger rows, no refusal, no 80% warning; every figure in
+`docs/status/gates.md` and `docs/status/COST.md` names its run.
+
+Run 1, `2026-10-20T17:07:09Z` (all three files, 1166 s, 29 cases passed, 2 failed on the
+phase 3 pass rate, USD 2.658426). Phase 1 half: the session completed in 62.3 s with 3 PRs on
+the fake host, 18 calls, USD 0.1169 under a USD 3 session cap and a USD 0.40 task cap, the
+store's cost ledger equal to the spend ledger, one task accepted (93) and two sent back as
+`escalate` (88, confidence 0.5); chat on Haiku answered with a 1505 ms first token on one turn;
+the kill switch ended a live session 28 ms after `stop()`, the aborted call settled with `no
+usage reported`. Timing: Haiku first token median 687 ms, p90 1211 ms, total median 693 ms;
+Sonnet first token median 1168 ms, p90 1459 ms. Phase 3: subset defects caught 10/10, clean
+accepted 7/10 (70%, gate FAIL), USD 0.5278; full set caught 40/40, clean accepted 15/40 (37.5%,
+gate FAIL), USD 2.0095, 80 reviews in 850 s; every miss an `escalate` at confidence 0.5 (the
+tier 1 critic discounts the runner's passing checks; researcher evidence lacks the source
+fixtures); fix tasks filed. The phase 3 file of that run recorded the critic's own
+`durationMs` (0 under the `SimulatedClock`), so the review timing of run 1 is derived from the
+200 metered calls' `at` and `durationMs` in its `phase3-live.json` (two calls per review,
+`tool_use` then `end_turn`): per review, first call start to second call end, median 9.7 s
+(subset, n=20) and 10.4 s (full set, n=80), p90 11.8 s and 11.6 s, max 12.5 s and 13.7 s; the
+calls themselves median 4.8 s, mean 5.1 s, p90 8.0 s, max 10.5 s. Found on the way: the Run
+rows of that session stayed `running` with cost 0 (`ttft_ms` written as a fraction into an
+int column, the error swallowed; fixed in the runtime since: runs 2 and 3 have complete Run
+rows with cost and duration).
+
+Run 2, `2026-10-20T17:52:18Z` (the harness after its review, `-t '^(?!.*full 40-task run)'`,
+330 s, USD 0.662703). Timing: Haiku first token median 821 ms, p90 927 ms, total median
+832 ms; Sonnet first token median 1111 ms, p90 1411 ms; the composed chat turn 807 ms. Phase 3
+subset: defects caught 10/10, clean accepted 9/10 (90%, gate ok; coder-005 `escalate` at
+confidence 0.5), USD 0.5431, 225.7 s, measured by the harness itself: wall time per task pair
+median 21.7 s, p90 25.0 s, max 26.8 s (n=10), the 41 critic calls median 5.1 s, p90 7.3 s,
+max 9.5 s. Phase 1: the session ran as in run 1 (55.7 s, USD 0.1161, 1 accept and 2 escalate)
+but two cases failed on harness assumptions the runtime had outgrown: the hooks' cost ledger
+entries no longer carry a `specialist` (the per-task coder spend is now read from the Run
+rows, which carry cost), and the kill landed 1.5 s in, after a 1515 ms call had already
+answered (the case now reads what is in flight at the stop and asserts the abort only then);
+the new gate case failed as designed on the two `escalate` verdicts.
+
+Run 3, `2026-10-20T17:58:04Z` (the phase 1 file alone after those corrections, 69 s,
+USD 0.107109): 4 of 5 cases passed; the session completed in 54.3 s, 3 PRs, 18 calls,
+USD 0.1066, coder runs USD 0.0178, 0.0245, 0.0121 (8.9 s, 12.3 s, 8.0 s) under the task cap,
+cost ledger equal to the spend ledger on the `api_key` source, verdicts accept 93 and escalate
+88 twice; chat first token 2453 ms on one turn; the kill switch stopped a call in flight 36 ms
+after `stop()`, the aborted call settled. The gate case failed with those verdicts in its
+message, as it should until the critic fix lands.
+
+### How to run
+
+```
+pnpm --filter @forerunner/live test            # unit tests and the dry run; every live case skipped, visibly
+pnpm --filter @forerunner/live test:live       # the live run: reads .env.build, writes tests/live/spend.json
+FORERUNNER_LIVE_REPORT_DIR=<dir> pnpm --filter @forerunner/live test:live   # keeps the JSON evidence files
+FORERUNNER_LIVE_BUDGET_USD=100 FORERUNNER_LIVE_RUN_CAP_USD=15 ...            # the caps (these are the defaults)
+pnpm --filter @forerunner/live test:live -t '^(?!.*full 40-task run)'      # everything but the 2 USD full calibration
+pnpm --filter @forerunner/live typecheck       # tsc over the package alone (the root tsconfig.node.json globs it too)
+```
+
+The key is read from `.env.build` at the repository root (`FORERUNNER_ANTHROPIC_KEY`,
+`FORERUNNER_ANTHROPIC_WORKSPACE_ID`), or from the environment. `FORERUNNER_ANTHROPIC_API`
+overrides the API base; the SDK's `ANTHROPIC_*` variables are dropped from the composed
+runtime's environment. After a run: commit `spend.json`, copy the numbers into
+`docs/status/gates.md` and `docs/status/COST.md`. Never live in CI: `FORERUNNER_LIVE` is never
+set there (today `ci.yml` does not invoke the package at all; the step the orchestrator adds
+is `pnpm --filter @forerunner/live test`, which skips every live case).
+
+### How to change it
+
+- A new live case: put it in a `test/live-N-<name>.live.test.ts` file, build everything on
+  `liveProvider()` or `composeLive()` so every call is metered, and `it.skipIf(!liveEnabled())`
+  it with the reason in the describe title. Write the evidence with `writeReport` before the
+  assertions so a failed gate still leaves its numbers.
+- The caps: `FORERUNNER_LIVE_BUDGET_USD`, `FORERUNNER_LIVE_RUN_CAP_USD` (ADR 0040; the
+  defaults in `src/budget.ts`). The estimate (`LiveBudget.estimateFor`) prices from the
+  billing package's table; a new model needs a price row there before it can run live (an
+  unknown model is refused by the price lookup).
+- The coder's live tool set and caps: `LIVE_CODER_OVERRIDES` in `src/registry.ts`.
+- The dry run: `test/harness.test.ts` scripts the coder and the critic with the e2e world's
+  helpers and prices the fake ladder like the real one (`DRY_RUN_PRICING`).
+
+### Tests
+
+`pnpm --filter @forerunner/live test`: 26 unit tests over 4 files (parser, quoted values with
+trailing comments, and credential sources; ledger round trip and validation; cap decisions,
+the estimate at the cache-write price, per-run cap with calls in flight, 80% warning once,
+settling failed and aborted calls, dated and unknown model ids; the metered provider on a
+scripted `FakeProvider`: rows per call, refusal before anything is sent, error and abort rows,
+credentials redacted from an error event and from a thrown error before the record, the note
+and the audit row, no credential-looking value in the ledger or the records; the dry run
+through `composeRuntime`: `api_key` billing source, one task through a PR on the fake host,
+spend ledger = store cost ledger = audit rows, and a refusal that surfaces as a failed task).
+The 9 live cases in the three `live-*` files are reported as skipped without
+`FORERUNNER_LIVE=1`. No network, no Docker, no Postgres; Windows and Linux (paths through
+`@forerunner/platform`, temp roots under `os.tmpdir()`). The script runs in no CI job yet (see
+Known issues); until it does, run it locally before a change to this package.
+
+### Known issues
+
+- Not in CI yet: the root vitest `unit` project globs `packages/*`, `services/*`, `testenv`,
+  `evals` and `scripts`, and `ci.yml` never runs `pnpm --filter @forerunner/live test`, so the
+  package's always-on tests (ledger, caps, metered provider, the dry-run composition) run only
+  when someone runs them. The orchestrator owns both files; the step to add is
+  `pnpm --filter @forerunner/live test` in the unit and integration jobs on both OS (every live
+  case skips visibly there), or `tests/live/test/**/*.test.ts` in the root unit include.
+- The aborted-call blind spot: the adapter reports usage only at `message_end`, so a killed
+  call's billed input tokens are not in the ledger (row with `no usage reported`). The runtime
+  adapter would have to surface `message_start` usage to close it.
+- The overshoot bound: the pre-call estimate counts the input with the adapter's local
+  heuristic (about four characters per token), which can undercount what the provider bills
+  (tool definitions and JSON tokenise denser than prose), so one call can end above the cap it
+  was admitted under by its own under-estimate; the real usage is recorded and the next call
+  is refused. With `max_tokens` priced in full and the input at the cache-write rate the
+  estimate is otherwise well above the bill (a typical critic call in run
+  `2026-10-20T17:07:09Z` was admitted at an estimate of USD 0.0879 and billed USD 0.0153).
+- A crash between the ledger's temp-file write and its rename leaves
+  `tests/live/.spend.json.<pid>.tmp` beside the ledger; `tests/live/.gitignore` keeps it out
+  of git, the next write replaces it.
+- `tests/live` is in `pnpm-workspace.yaml` and `pnpm-lock.yaml` carries its importer
+  (`pnpm install --frozen-lockfile` in CI needs that importer to be committed with the
+  package).
+- The calibration world runs on a `SimulatedClock`, so the critic's own `durationMs` reads 0
+  there; the harness measures wall time per task pair and per model call itself
+  (`taskPairWallMs`, `modelCallMs` in `phase3-live.json`, exercised live in run 2).
+- The hooks' cost ledger entries carry no `specialist` in this build (`StateLedger.record` in
+  `packages/runtime/src/wiring/state-ports.ts` passes none), so a breakdown by specialist
+  reads `unknown`; the harness reads per-task coder spend from the Run rows and records the
+  breakdown as evidence only. A runtime follow-up.
+- The subscription half of the phase 1 gate cannot run until a `claude setup-token` exists.
+- The phase 1 gate case (all three tasks completed) fails live on the tier 1 critic's
+  escalate-at-confidence-0.5 verdicts until the critic fix lands; the usage case before it
+  passes. The phase 3 live gate fails on the pass rate for the same reason (see "Measured");
+  both are critic prompt and evidence findings, not harness ones, and the rows in gates.md
+  say so.
+- A registry specialist on the daemon's loop driver has no tools (`cc:*` names are not mapped
+  to the built-ins); the harness works around it with a patched copy, the fix belongs in
+  `packages/runtime`.
+
+### Requirement IDs covered
+
+I.1 and I.5 (the live budget and the per-run cap enforced in code before each call, the 80%
+warning), D.9 (text chat first token measured live on Haiku), D.10, D.11, D.14 (measured
+totals against their targets), D.12 (coder run durations and costs under the task budget),
+D.19 (time to first token and total time recorded per run), H.7 (calibration on the live
+critic), E.5 (session end with usage recorded), S.1 and S.3 (every live call audited; the key
+by reference in the vault, never in a log, a report or the ledger), V.6 (the measured
+response-time rows in gates.md).
+
+## Scenarios
+
+Package: `tests/e2e` (`@forerunner/e2e`). The nine release scenarios of the spec ("Phase 8 — Full
+integration and release 1.0") are `tests/e2e/scenarios/NN-<name>.scenario.test.ts`, one file per
+scenario, every one on the fake provider with no network beyond 127.0.0.1, deterministic, under
+90 s, asserting the spec's sentence clause by clause on state rows, audit rows, events, messages
+and the git host (never on log text). Where the real thing cannot run here (OS audio devices,
+the Android emulator, a human's eyes) a scenario drives the same code through its ports and
+says so in a comment and in `gates.md`.
+
+### The world
+
+`tests/e2e/src/scenario-world.ts`, `scenarioWorld(options)`; its API is documented at the top
+of the file. What it assembles, and why this way:
+
+- **One shared store** (`sqlite::memory:`), the local mode of the shared state, as the phase 2
+  gate does. Two humans (J with Alice, M with Bob; names, emails, time zones and git logins are
+  options) each get their own *install*: their own `TokenIssuer`, `KillSwitch`,
+  `EnforcementHooks` over the store's ledger, audit log and approvals (`statePorts`), a
+  `LoopAgentDriver`, a critic agent row and `CriticLoop` (the real `GitDiffPort` over the
+  install's worktrees), a `MemoryLoop` on its own root, a `PrTaskExecutor` with a
+  `LoopTaskExecutor` inside (the registry's coder prompt and caps, the built-in file tools), a
+  `SessionRunner` and a `Scheduler`. It is the composition `composeRuntime` makes for a daemon,
+  assembled by hand because `composeRuntime` binds an install to the store's first human; a
+  two-human world on one store needs two identities (see Known issues).
+- **The git host** is `FakeGitHost` from testenv: both humans are users, the project's org has
+  both as members, one classic `repo` token per human; each install talks REST through the
+  real `GitHubHost` adapter and pushes over git HTTP with the token as a header (the bare
+  repository on disk is the fallback when `git http-backend` is missing). The sample repository
+  is created with `options.project.files`; the project row names it in `repos`; one milestone
+  is the plan container and `addTask` adds ready tasks to it.
+- **The fake provider** runs in script mode with `onNoMatch: "throw"` (a gap in a script fails
+  the scenario); scenarios push replies per task with the helpers in
+  `tests/e2e/src/scenario-scripts.ts` (`coderWrites`, `coderRunaway`, `criticAccepts`), which
+  match a coder by the task title in its brief. The installs call it through `GatedProvider`,
+  which can *hold* requests matching a predicate until the scenario releases them
+  (`holdModelCalls`): that is how a session is frozen mid-task without sleeping or racing.
+  `holdPlan` does the same at the install's planner, after the plan is made from the ready
+  tasks the runner read, so two sessions can plan the same task on purpose. Holds and event
+  waits (`waitForEvent`) time out in real time (60 s by default) so a broken scenario fails
+  instead of hanging. `setEstimate(taskId, usdMicro)` overrides a plan item's estimate.
+- **The clock** is a `SimulatedClock`; `advanceTo(iso)` moves it in scheduler ticks (60 s by
+  default), so a schedule added with `schedule(install, { time: "06:00" })` fires through the
+  real `Scheduler` in the human's time zone, and claim renewals, the budget's wall clock and the
+  specialists' timeouts all run on it. Sessions the schedulers start are in `world.scheduled`;
+  `scheduledResult(install)` awaits the latest. Nothing in a session waits on the clock while
+  the scenario is not advancing it, so a started session runs to its end in real time while the
+  simulated time stands still.
+- **Reading back**: `inbox(humanOrInstall)`, `humanRequests(human)`, `changeLog()`,
+  `auditRows(filter)`, `eventsOf(sessionId)`, the live `events` and `runEvents` (the loop
+  driver's model and tool events per task), `briefs` (the planner's brief text per session),
+  `pullRequests()`, `fileOnHost(path, ref)`, `provider.calls`, `mail` and `mailboxes` (a mailbox
+  per human and per agent on one local domain, DKIM key generated at start). `gitTokenValue`
+  on an install exists only for the leak assertion (no row, event, message or brief contains it).
+- **Pricing** is flat (one token is one micro-USD, `flatPricing` from `world.ts`), the session
+  cap defaults to the spec's CHF 5 (`sessionCapFromSettings` applies a project's setting or a
+  command's temporary override exactly as the daemon does), specialists run with the registry's
+  caps (coder: 3 USD, 80 turns, 45 min) unless `options.specialist` narrows them.
+
+### The scenarios
+
+| # | File | Spec sentence | How the world drives it |
+| --- | --- | --- | --- |
+| 1 | `01-good-day.scenario.test.ts` | Notes left at night, a scheduled session runs, the peer's changes are picked up, work is reviewed, PRs open, a summary and questions arrive by morning | Clock at 00:00 Zurich. Bob runs a late session (one task, PR), M merges it; J leaves two queue items and adds four tasks. Schedules: Bob daily 05:45, Alice 06:00. `advanceTo` 05:45: Bob's scheduled session finishes one task and is held at the first model call of the next (online, claim held, files in flight). `advanceTo` 06:00: Alice's scheduled session acts on Bob's handoff, reads the peer feed (Bob online, 1 claim, files in flight), raises the `files` overlap on the task that touches Bob's file and warns him, does the task on a branch on top of the merged change, has it reviewed (tier 1 accept, `fake-sonnet`), does the tier 3 task (critic verdict `human` on `fake-opus`, a blocking sign-off request to J), opens PRs; the hold is released and Bob finishes. Assertions: queue rows at night and in Alice's brief; session rows with `trigger: schedule` at the scheduled minute and the scheduler's log; receipts on the handoff; `peers.feed`, `peer.overlap`, `inbox.acted`, `critic.verdict`, `session.ended` events; review rows per task; PR rows and `pull_request opened` host events; the summary message and the open human request in J's inbox before 07:00; claims released; every tool call audited (file tools and the critic's `submit_review`), none denied; no git token in any row |
+| 2 | `02-email-task.scenario.test.ts` | J emails a task with both PCs off. The cloud runner acknowledges it, does it, and replies with results | Clock at 22:00 Zurich; no desktop device row was ever seen and no PC session runs. `agentMailbox` (`scenario-mail.ts`) configures Alice's mailbox on the world's mail server (mode `read_only`, commands on, J's address registered, the private marker) and `scenarioCloudRunner` (`scenario-cloud-runner.ts`) composes the cloud runner's parts on the world's store: its `device` row (kind `runner`), the `PcPresence` rule, the cloud runner's own `EmailWatch` (production gate, handler and policy, the header verifier trusting the world's mail host, push delivery) and the `StartCloudSessionPort` that starts an email session with runner `cloud`, the runner's device, the per-email cap and the email autonomy level, planned on that task only (the runner's `FocusedPlanner` rule) and run by the install's executor, critic and memory. J sends from his mailbox through the signed submission path with the marker; the scenario advances the clock a second at a time until the handler reports the outcome, awaits the session, then injects a spoofed copy (same From, subject and words, bogus DKIM, from the internet). Assertions: no desktop rows and `pcOnline: false`; the `email.command` audit row (verdict, auth, interpretation, result, `ackLatencyMs`), the ack in J's mailbox within the minute and in the thread; the session row (`email`, `cloud`, device, cap, `completed`) and its events; the task row, the coder run, the critic review, the PR and the file on the host, the ledger on Alice's source; the completion mail in the thread with the PR link and the cost, the sent log, the summary message; the spoof's `allowed: false` row with `ignored: dkim_fail`, the command audit, no new task, session, reply or outbox entry; no token in any row or mail |
+| 4 | `04-collision.scenario.test.ts` | Both agents try to take the same task. One wins the claim, the other messages and moves on | Two ready tasks. Both sessions start at once with their planners held after planning (both plans name the same first task); Alice is released and claims it (`task.started`), then Bob is released: his overlap check sees her claim (`peer.overlap` `task_claimed`), his claim fails `held_by`, he sends the info message to the holder and starts the second task; Alice's specialist is held until then. Assertions: one coder run and one PR per task, each by one agent, both tasks `done`; Bob's `task.skipped` with the holder; the message read at Alice's inbox check between tasks; Alice skips the second task; both sessions `completed` with handoffs, claims released, audit rows with no denial |
+| 5 | `05-budget.scenario.test.ts` | A session hits its cap mid-task and stops cleanly with a handoff | Cap 0.15 USD, three tasks. The second has no estimate (`setEstimate(id, 0)`), so its allowance is the session's remaining budget (the executor caps every run at the session's remaining budget: with an estimate the task's share binds first, which is the phase 1 overspend gate); its specialist keeps calling `read_file` with 4,000-character replies until `SessionBudget.precheck` in `EnforcementHooks.beforeModelCall` refuses the next call. Assertions: run outcome `budget_exceeded`, the ledger's session total under the cap and above 80% of it, the refused call would have crossed it (last estimate plus the tokens it added), the 80% warning run event, every `read_file` audited and allowed, `task.finished` and `session.ended` events, session `stopped` with `handoff.stop_reason`, the handoff message to Bob and the summary to J, the third task never started, the task `needs_human` with the claim released and `needs_human -> ready` allowed; then J sets it back to ready and a second session with more budget completes it (two coder runs on the task: `budget_exceeded`, `completed`) |
+| 6 | `06-injection.scenario.test.ts` | A web page and an email both try to hijack an agent. Both are reported and ignored | Two sites on the loopback interface told apart by hostname: the vendor's page on `127.0.0.1` (the run's allowlist) hides instructions in a `display: none` block and an HTML comment; the attacker's collector on `localhost` is not allowed. A spoofed email claiming to be J carries the same instructions (change the goal, email the token, open the collector with the token, raise autonomy); Alice's mailbox watcher (`scenarioCloudRunner`) handles it first. `researchInstall` (`scenario-capabilities.ts`) builds Alice's research stack: file tools, the real `BrowserSessionManager` over Playwright's Chromium with the production inbox port for its guards (or the static stand-in, see Known issues), the agent email tools over the watcher's policy, the install's hooks, driver, critic and memory inside its `PrTaskExecutor`, a `SessionRunner`, and the notifier (`scenario-notify.ts`: the production `Notifier` with a recording desktop channel) raised on every `injection_flagged` run event. Two research tasks (researcher): the scripted model reads the page (navigate, read) and the email (read), then obeys with five calls (`write_file` outside the worktree, `email_send` to the attacker, `browser_navigate` to the collector, `run_command`, `browser_fill_secret`), then writes its summary. Assertions: the watcher's `email.command` `allowed: false` `ignored: dkim_fail` and `email.inbound_flagged` rows; `injection_flagged` events with the rules on both reads and the run rows' `injectionReports`; the browser's own `browser_read` audit row (hidden passages, injection suspected); every attempt an audit row `allowed: false` with the rule and a `tool_denied` event matched to its call; attacker 0 requests, vendor only the page, outbox and sent log empty, no file outside the worktree, autonomy and extension rows unchanged, no human request, `ALWAYS_HUMAN` classes `approval_required` at autonomy 4; two urgent `injection_flagged` records delivered, two `notification` session events, two `notify.desktop` audit rows; both tasks `done` with PRs holding the summaries only; no token or secret reference in any row, hit or mail |
+| 7 | `07-bad-update.scenario.test.ts` | A broken release installs, fails its health check and rolls back | `releaseFeedOnHost` (`scenario-update.ts`) creates the app's release repository on the world's fake git host (owner: J's login) and publishes releases as the publish job does: a stored zip per platform (`storedZip`, no dependency), the Ed25519-signed manifest as the `forerunner-release.json` asset. `scenarioUpdater` builds the production `UpdateManager` over the world's store with the GitHub releases feed against the fake host, the verifier with the build's key, the production `HumanRequestUpdatePort` (inbox rows), a shell stand-in that records restart requests and "boots" the requested version (and raises the daemon's `update_applied` notification through the notifier), and `StagedDoctorProbe`: the staged build's own `app/doctor.mjs` run through the real `DoctorHealthProbe` as an argv array. The clock moves a minute between steps. 1.0.0 (healthy doctor) installs from the packaged 0.9.0 and passes; 1.1.0 (doctor exits 1 with the crash reason) installs, the shell restarts into it, the startup health check rolls back. Assertions: the feed's check and the staged files; the pointer before and after (`pending_health_check`, then `current 1.0.0`, `lastRollback.automatic`); release rows with health verdicts; the audit trail by step and the rollback row; the restarter's requests and the running version; the updater's `info` inbox row and the absence of any `approval` or `decision` row or answer; the notifier record; `previously_rejected` on the next check and on an explicit apply; prune; no publish token or signing key in any row |
+| 3 | `03-voice.scenario.test.ts` | J asks for status by voice, approves a request by voice, and hears the read-back | Clock at 09:00 Zurich. Alice runs one task (PR open); one approval request is seeded in J's inbox. `voiceBridge` (`scenario-voice.ts`) wires the real `VoiceLoop` (push-to-talk, the voice package's `FakeStt` and `FakeTts`, a collecting sink) to the `ConversationAgent` of Alice's install over a `CommandLoop` (`scenario-commands.ts`); every delay runs on the simulated clock and `say(text)` steps it until the reply has been played. Turn 1 "What is the status?" goes to the model (one scripted reply) with the session summary and the request in its context; turn 2 "Give it 20 francs tonight." is parsed deterministically into a medium-risk `budget.set`, read back in full and filed as a pending request; turn 3 "Yes, but what does it cost?" is refused by `expectYes` (a question) and the card is read again; turn 4 "Yes, go ahead." is approved and forwarded as the yes. Assertions: the spoken texts per turn (`heard`), the TTS calls per sentence, the model call's context, the pending request row with its card, the project's override after the yes, the change log row (`budget.set`, source `voice`, words used, undoable, expiry), the inbox sentence, the conversation events (`chat.human` with source, `chat.confirmed` with the words, `change`, two `voice.approval` rows with the exact lines, four `voice.turn` rows), no audit row behind the hooks, four latency reports with every stage measured and within target, the 8-line transcript with no audio stored |
+| 8 | `08-handover.scenario.test.ts` | A fresh agent with only the repo and docs fixes a seeded bug | The world's repository is `SEEDED_REPO` (`scenario-handover.ts`: the standard doc set, a defect in `src/clamp.js`, a failing `node:test` file) and the project setting `checks` names the test. `freshInstall` composes a NEW principal agent row for J with its own token issuer, kill switch, hooks, driver, git host client, critic loop, memory loop on an empty root, PR executor and runner (the world's `makeInstall`, for an agent that did not exist). `runSeededTest` runs the test with node on a copy of the files: it fails before the fix. The specialist is `coderReadsDocsThenWrites`: one `read_file` per doc and source file in order, then the fix, then a report with two "Lesson:" lines; `criticAccepts`. Assertions: the agent row and the empty memory before; `memory.lessons 0` and no lessons section in the brief; the audit rows name the reads in docs-first order and the one write, none denied; the tier 2 review on `fake-opus` with `ran: tests -> pass` in its evidence; the task done, the PR open with the fixed file on the branch and the defect still on main, the fixed file passing with node; the handoff to both peers and the summary to J; `session.ended.lessonsRecorded 2`, `memory.recorded`, the two lessons in the agent's private memory |
+| 9 | `09-phone.scenario.test.ts` | On the Android app J says "switch to the game, give it 15 francs until tomorrow and start a session on my PC". He gets one change card, confirms, the PC starts, and the change log shows it with undo | Clock at 14:00 Zurich; a second project "Space game" with its own repository and one task; the PC's own `desktop` device row; a `CommandLoop` for Alice and a conversation session; the real state service (`stateServiceFor`: `createApp` over the world's store, in process) and a phone paired through its pairing routes (`pairPhone`: Ed25519 key, proof, signed mutations). The phone side is the app's own code loaded at run time (`loadAppMobile`): `parseIntent` gives the three commands, `buildPlanCard` the one card; `phoneConfirmsAndSends` posts the plan envelope (ADR 0032 item 4) as ONE signed `POST /remote/commands`. The PC side is the daemon's `RemoteCommandWatcher` (`pcWatcherFor`: the install's kill switch, scheduler and registry) polled on the clock. Assertions: the parse and the card (3 parts, medium, expiry 06:00), one remote command row, the watcher's result and audit row, the card's request row answered by the tap, no open request, the active project, the override at the billing rate, the session row (`trigger remote`, cap 18.75 USD) with its scheduler log entry and the PR on the game repository, the change log row with the three commands and sentences, the inbox and conversation log, the phone's read-back of `done`, the undo from the log; no key, token or git token in any row |
+
+Every scenario has its own file on the same world. Helper modules
+`tests/e2e/src/scenario-<name>.ts` hold what a scenario needs beyond the world:
+`scenario-support.ts` (real-time bounded waits, clock stepping), `scenario-mail.ts` (an
+install's agent mailbox on the world's mail server: settings, `TestMailbox`, the header
+verifier, the classifier reply), `scenario-cloud-runner.ts` (the cloud runner's parts on the
+world's store: runner device, `PcPresence`, `EmailWatch`, the email session port),
+`scenario-notify.ts` (the production `Notifier` with a recording desktop channel and the
+bound producers), `scenario-capabilities.ts` (the research install: file, browser and email
+tools behind the install's hooks, the Chromium probe, loopback sites, the static browser
+stand-in), `scenario-update.ts` (the release repository and publish steps on the fake git host,
+`storedZip`, the install's updater with the doctor probe and the shell stand-in),
+`scenario-commands.ts` (a `CommandLoop` and a `ConversationAgent` for an install, as the daemon
+composes them, plus predicates for scripting the agent's model calls), `scenario-voice.ts`
+(the voice bridge), `scenario-handover.ts` (the seeded repository, `freshInstall`, the
+read-then-write specialist script, the node test runner) and `scenario-phone.ts` (the state
+service in process, the phone client, the app's parser and card, the envelope, the daemon's
+watcher for an install).
+
+### How to run
+
+```
+pnpm exec vitest run --project e2e tests/e2e/scenarios/01-good-day.scenario.test.ts
+pnpm exec vitest run --project e2e tests/e2e/scenarios/04-collision.scenario.test.ts
+pnpm exec vitest run --project e2e tests/e2e/scenarios/05-budget.scenario.test.ts
+pnpm exec vitest run --project e2e tests/e2e/scenarios/02-email-task.scenario.test.ts
+pnpm exec vitest run --project e2e tests/e2e/scenarios/06-injection.scenario.test.ts
+pnpm exec vitest run --project e2e tests/e2e/scenarios/07-bad-update.scenario.test.ts
+pnpm exec vitest run --project e2e tests/e2e/scenarios/03-voice.scenario.test.ts
+pnpm exec vitest run --project e2e tests/e2e/scenarios/08-handover.scenario.test.ts
+pnpm exec vitest run --project e2e tests/e2e/scenarios/09-phone.scenario.test.ts
+pnpm exec vitest run --project e2e tests/e2e/scenarios      # every scenario and the gate harnesses
+```
+
+No Postgres, no Docker, no network; git is the only external tool. Each file builds its own
+world in `beforeAll` and removes its temp root in `afterAll`. Measured on 2026-10-20 (Linux,
+fake provider): scenario 1 about 5 s, scenario 4 about 2 s, scenario 5 about 4 s, scenario 3
+about 2 s, scenario 8 about 3 s (it runs `node --test` twice), scenario 9 about 2 s of test
+time (the vitest file time adds the imports). Scenario 8 needs `node` on PATH (it is, wherever
+pnpm runs); scenario 9 needs nothing beyond the world.
+
+### How to add one
+
+1. Create `tests/e2e/scenarios/NN-<name>.scenario.test.ts` with the spec sentence in the header
+   and one `it` per sentence (or one per clause when a clause needs its own world).
+2. Build the world in `beforeAll` (`scenarioWorld({ start, project, ... })`), close it in
+   `afterAll`. Keep the clock start in the human's night or morning as the sentence says and
+   mind the daily schedules: a schedule whose time has passed on the start day fires at the
+   first tick (the scheduler's catch-up), so start before the time or after midnight.
+3. Script the specialists per task (`coderWrites`, `coderRunaway`) and the critic
+   (`criticAccepts`, or `submitReview` from `world.ts` for findings); push them with
+   `world.provider.pushReplies`. A request nothing matches throws, which is what you want.
+4. Make timing deterministic with holds, never with sleeps: `holdModelCalls` to freeze a
+   session mid-task, `holdPlan` to line up two plans, `waitForEvent` for the moment to release.
+5. Assert on rows and events: `store.*`, `eventsOf`, `runEvents`, `auditRows`, `inbox`,
+   `humanRequests`, `pullRequests`, `fileOnHost`. Compare ISO timestamps as the store writes
+   them (`new Date(x).toISOString()`), and compare strings with `<`, not `toBeLessThan`.
+6. What needs more than the world (a fake STT/TTS pair, the state service, a cloud runner)
+   goes into `tests/e2e/src/scenario-<name>.ts` as a function that takes the world; export it
+   from `tests/e2e/src/index.ts`.
+7. Add the gate row to `docs/status/gates.md` (Phase 8) with the command, the date, the
+   result and the runs still pending, and the row in the table above.
+
+### Tests
+
+The scenarios are the tests (one each). They prove each other's seams too: scenario 1 runs the
+scheduler and the peer feed, scenario 4 the claims, scenario 5 the hooks and the ledger, all on
+the same runner, executor, critic and git host as the daemon. Scenario 3 runs the voice loop and the
+conversation agent over the registry, scenario 8 a second composition for a new agent with the
+critic running the project's checks, scenario 9 the state service, the daemon's remote watcher
+and the registry's session port into the scheduler.
+
+Scenarios 2, 6 and 7 add: T.2 (the mailbox watch on push delivery), T.3 and T.4 (the gate obeys
+J's signed, aligned, SPF-passing mail with the marker and logs the spoof as data), T.7, T.10,
+T.12 to T.14 (the task, the ack within a minute and the completion in the thread, the per-email
+cap and the email autonomy level as the session's, the runner's billing source, the command
+audit), S.15 and S.17 (the agent's own mailbox; read-only mode still replies to the owner), S.25
+and S.2 (inbound mail and page content are data: reported, never executed), S.1, S.3 and S.6
+(every hijack attempt refused by the hooks against the run's token; the always-human classes),
+S.9 (an audit row per refusal and per delivery), L.2 (the browser's site allowlist on a
+127.0.0.1 page, hidden text listed apart), M.3 and M.4 (signed releases from the host's feed,
+the staged install, the health check on restart, the automatic rollback, the inbox notice),
+V.5 (the injection half of the security suite end to end), V.3 (six of nine scenarios).
+
+Requirements covered: V.3 (the scenarios themselves, three of nine), E.1 (schedule trigger),
+E.2 (the checklist brief with the queue), E.3 (plan within budget), E.4 (inbox re-check between
+tasks), E.5 (session end: handoff, summary, ledger), F.2 (receipts), F.4 (claim-before-work),
+F.5 (branches and PRs), F.6 (peer feed and overlap check), F.7 (handoff note), H.1 to H.3 (the
+critic in the loop, tiers, output), I.1, I.2, I.4, I.5 (caps enforced before each call, the
+reserve, the 80% rule), J.2 (next-session queue), J.3 (human requests), B.3 (the task workflow's
+side exit and return). Scenario 3 adds O.1 to O.3 (voice with the conversation agent, the
+loop), O.5 (every latency stage measured and recorded), O.7 (read-back, the spoken yes logged
+with the transcript line), O.10 (transcripts kept, no audio), Q.2 to Q.7 and Q.10 to Q.12 (a
+spoken sentence into a command, the card, confirmation by risk, the sentence and the change
+log). Scenario 8 adds P ("Handover test": a fresh agent from the repo and docs alone), G.1 and
+G.2 (lessons into the agent's private memory), H.2 (tier 2 with the project's checks run), F.5.
+Scenario 9 adds R.2 (pairing with a device key), R.3 (the shared state service), R.4 (remote
+control picked up by the PC within one poll), R.5 and R.8 (natural-language control from the
+phone, the work on the PC), R.7 (signed requests, no secret on the phone), Q.4 to Q.7, Q.9
+(one card for a plan), Q.10, Q.11 (undo from the log), Q.12 (the registry re-plans the phone's
+plan), I.3 (a temporary budget in CHF at the day's rate).
+
+### Known issues
+
+- `composeRuntime` attaches an install to the first human in the store, so the world assembles
+  the daemon's composition by hand; a change to `composeRuntime` that adds a seam (for
+  example the identity the install binds to) does not reach the world until it is mirrored
+  here. The `RuntimeApp` shape is the reference; keep the world's install in step with it.
+- `@forerunner/capabilities` is not declared in `tests/e2e/package.json`, so the world imports
+  `GitHubHost` and `PrTaskExecutor` by relative path (`../../../packages/capabilities/src/githost/index.ts`);
+  declare the dependency with the lockfile and switch to the workspace specifier.
+- The next-session queue is read into the brief but the runner never marks the items
+  consumed (`store.queue.consume` is unused by `SessionRunner`); scenario 1 asserts the notes
+  reached the brief and stay `queued`, and the runtime package owes the consume step.
+- The session cap reaches a run through the task's allowance (`LoopTaskExecutor` caps the run
+  at the session's remaining budget); a task with an estimate stops at its own share first.
+  Scenario 5 uses a task without an estimate so the session cap is the one that binds.
+- The e2e vitest project is not in CI yet; the gate rows cite local runs. The Windows and
+  Android runs of the scenarios wait for the final build; scenario 9 drives the phone through
+  the app's parser and card builder, not through the Android emulator or the screens.
+- The shell has no voice wiring to the conversation agent yet (the daemon has no voice route;
+  the `VoiceLoop` is used only by its own tests), so the bridge between the loop and the agent
+  lives in `scenario-voice.ts`: the `converse` port over `ConversationAgent.chat` with
+  `source: "voice"`, the spoken approval rules (`expectYes`) in front of a pending card, the
+  `voice.approval` and `voice.turn` rows. When the shell gets that wiring, move the bridge
+  there and point the scenario at it.
+- A registry command whose static risk is high (`budget.set`, `request.answer`, every `limit`
+  command) is offered to the model as a `permission_change` tool, and the enforcement hooks
+  hold such a call for a typed human approval at every autonomy level (`ALWAYS_HUMAN`), before
+  the registry's own risk policy sees it: a spoken "approve the merge request" through the
+  model path ends in an audit row `approval_required: pending` and a blocking request, not in
+  the registry's card. Scenario 3 therefore approves a change the parser understands without
+  a model (`budget.set` from "give it 20 francs tonight"), which is spec O.7 exactly; answering
+  an inbox request by voice needs either an intent pattern for `request.answer` or a tool
+  action class that defers to the registry's dynamic risk (a runtime decision, outside the
+  scenarios).
+- The session handoff (`session.handoff`, the handoff message) does not list what the session
+  learned; the evidence of the learning is `session.ended.lessonsRecorded`, the
+  `memory.recorded` event and the lesson rows in the agent's private memory, which scenario 8
+  asserts. Carrying the lessons into the handoff note is a runtime change.
+- `apps/ui/src/mobile/intent.ts` and `change-card.ts` import types from the app's state client,
+  which is typed against the browser's WebCrypto, so they cannot join the node type check;
+  `scenario-phone.ts` loads them at run time (`loadAppMobile`) and types them by mirrored
+  shapes. A declared workspace dependency with a node-safe entry point would let the scenario
+  import them statically. `verbForPlan` is mirrored there for the same reason.
+- `freshInstall` (scenario 8) and `pcWatcherFor` (scenario 9) compose the daemon's pieces for
+  an install by hand, like the world does; a new seam in `composeRuntime` or in the watcher's
+  deps must be mirrored there.
+- `startCloudRunner` opens the shared state by URL and the world's store is `sqlite::memory:`,
+  which a second connection cannot reach, so scenario 2 composes the cloud runner's parts on the
+  world's store (`scenario-cloud-runner.ts`: the runner's device row, `PcPresence`, the cloud
+  runner's `EmailWatch`, the email session port with the runner's `FocusedPlanner` rule);
+  `services/cloud-runner/src/runner.ts` is the reference, keep the helper in step with it. A
+  `store` seam on `startCloudRunner` (as `composeUpdateManager` has) would let the scenario run
+  the real composition root.
+- `composeRuntime` registers neither the browser tools nor the agent email tools in the daemon's
+  tool registry, and nothing in the daemon calls `producers.injectionFlagged` on the loop's
+  `injection_flagged` run event; `researchInstall` (`scenario-capabilities.ts`) does both for
+  scenario 6 the way the daemon should. The runtime package owes that wiring.
+- Scenario 6 runs Playwright's Chromium when `resolveChromiumExecutable` finds one and a launch
+  succeeds (the pinned revision on the build box and in CI); otherwise the two read tools run on
+  `staticBrowserTools` (an HTTP fetch after the same `SitePolicy.assert`, the static half of the
+  same extractor), the test logs `browser mode`, and the gate row says which mode produced the
+  evidence. The enforcement around the tools is the same code in both modes.
+- `zod` and `adm-zip` are not resolvable from `tests/e2e` (not declared, `shamefully-hoist` off),
+  so the stand-in browser tools reuse the real specs' schemas and the release zip is built by
+  hand (`storedZip`); `@forerunner/vault` and the cloud runner modules are imported by relative
+  path like `@forerunner/capabilities` (declared in `package.json` meanwhile, not yet in the
+  lockfile).
+- `newId` has no monotonic counter within one millisecond, so rows written in the same simulated
+  millisecond carry no order between them (`ORDER BY created_at, id` ties break arbitrarily).
+  Scenarios compare such rows as sets, or move the clock between steps (scenario 7 advances a
+  minute per step); scenario 6 waits for the notifier (`settled()`) before reading its records.
+- Phase 8 decisions the spec leaves open (the hold mechanism in place of sleeps, the per-install
+  composition on one store, the session-cap reading in scenario 5) are recorded here; no ADR
+  number was reserved for this work.

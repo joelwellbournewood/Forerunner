@@ -5,3 +5,4 @@ packages:
   - "testenv"
   - "evals"
   - "tests/e2e"
+  - "tests/live"

@@ -18,6 +18,23 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-20 (live model runs, wiring passes, phase 3 and 4 harnesses landed)
+- Credits restored (API key with a workspace id for live runs, build credits). Snapshots since
+  the last report: voice and sandbox fixes, reviews of model watch, desktop control, data assets
+  and sandbox applied, notifications and Cloudflare wired (ADR 0038), adopted model settings,
+  desktop control and data assets wired (ADR 0039, c8c709b), workspace-scoped key support in
+  setup and the daemon, phase 3 and 4 gate harnesses on the fake provider in CI, cloud runner on
+  Hono with the billing router, release workflow signs an update manifest when the key secret is
+  present. CI green on both OS at run 67.
+- First live model run (ADR 0040, `tests/live`, USD 2.66 of the 100 cap): phase 1 API-key half
+  passed (3 PRs, kill switch 28 ms), response-time table measured (Haiku first token median
+  687 ms), critic tier 1 timing met (100 reviews, max 13.7 s). Phase 3 live gate failed on the
+  pass rate (clean work accepted 37.5%, catch 100%); fix wave running. Bugs found live: fractional
+  `ttft_ms` into an integer column (run rows lost), registry `cc:*` tools unmapped on the loop
+  driver, queue items never consumed. All in the fix wave.
+- Running: remote command owner filter and PC pickup, install record and sync gate, nine
+  scenario harnesses (world and scenarios 1, 4, 5 done), live harness review.
+
 ### 2026-10-20 (core loop, Android, cloud runner, UI phase 2 landed; credits out again)
 - Snapshots 3f9b436 (cloud runner, phase 6 gate rows), 2560623 (core loop closed per ADR 0036,
   Android app per ADR 0032, UI phase 2 pages, notifications, Cloudflare, update and extension

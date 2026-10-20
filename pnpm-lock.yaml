@@ -524,6 +524,9 @@ importers:
 
   tests/e2e:
     dependencies:
+      '@forerunner/capabilities':
+        specifier: workspace:*
+        version: link:../../packages/capabilities
       '@forerunner/critic':
         specifier: workspace:*
         version: link:../../packages/critic
@@ -548,6 +551,39 @@ importers:
       playwright:
         specifier: ^1.64.1
         version: 1.64.1
+
+  tests/live:
+    dependencies:
+      '@forerunner/billing':
+        specifier: workspace:*
+        version: link:../../packages/billing
+      '@forerunner/capabilities':
+        specifier: workspace:*
+        version: link:../../packages/capabilities
+      '@forerunner/critic':
+        specifier: workspace:*
+        version: link:../../packages/critic
+      '@forerunner/e2e':
+        specifier: workspace:*
+        version: link:../e2e
+      '@forerunner/evals':
+        specifier: workspace:*
+        version: link:../../evals
+      '@forerunner/platform':
+        specifier: workspace:*
+        version: link:../../packages/platform
+      '@forerunner/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@forerunner/state':
+        specifier: workspace:*
+        version: link:../../packages/state
+      '@forerunner/testenv':
+        specifier: workspace:*
+        version: link:../../testenv
+      '@forerunner/vault':
+        specifier: workspace:*
+        version: link:../../packages/vault
 
 packages:
 

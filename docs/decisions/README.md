@@ -28,7 +28,6 @@ Status: accepted | superseded by NNNN
 | 0007 | Sandbox: Docker/Podman adapter with a process sandbox stand-in when no daemon exists |
 | 0008 | Money: USD micro-units in the ledger, CHF at a daily rate, plan usage as a share |
 | 0009 | Device identity and auth for the state service: Ed25519 device keys, scoped tokens |
-| 0010 | Test environment: fake provider with recorded replies, simulated clock, fake git host |
 | 0011 | Local daemon API between the shells and the runtime |
 | 0012 | Voice pipeline: PCM contract, local helpers over stdio, latency anchors |
 | 0013 | Agent email: settings and sent log storage, the verification chain for email commands |
@@ -54,3 +53,4 @@ Status: accepted | superseded by NNNN
 | 0037 | UI screens: proposed routes, the "route not available" state, mirrored schemas, charts and the settings command path |
 | 0038 | Daemon wiring of notifications and Cloudflare deploys: producers on the real sources, shell detection and the OS notifier, preference writes, the email sender, tools behind the hooks and gate, structural routes |
 | 0039 | Daemon wiring of adopted model settings, desktop control and data assets: the tables in force swapped on adopt, the desktop binding and the unavailable adapter, the indicator as a bus event, data under the install's data dir |
+| 0040 | Live-model harness: the committed spend ledger, the live budget and per-run cap enforced before every call, one vitest invocation as a run, the real runtime behind the metered provider, the coder on the built-in tools from a patched registry copy, calibration subset first |

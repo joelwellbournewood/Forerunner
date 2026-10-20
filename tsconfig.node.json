@@ -12,6 +12,9 @@
     "evals/test/**/*.ts",
     "tests/e2e/src/**/*.ts",
     "tests/e2e/scenarios/**/*.ts",
+    "tests/live/src/**/*.ts",
+    "tests/live/test/**/*.ts",
+    "tests/live/vitest.config.ts",
     "scripts/**/*.ts",
     "vitest.config.ts"
   ],

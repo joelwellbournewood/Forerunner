@@ -13,6 +13,7 @@
     "test:gates": "pnpm -w exec vitest run --project e2e tests/e2e/scenarios/phase3-gate.integration.test.ts tests/e2e/scenarios/phase4-gate.integration.test.ts"
   },
   "dependencies": {
+    "@forerunner/capabilities": "workspace:*",
     "@forerunner/critic": "workspace:*",
     "@forerunner/evals": "workspace:*",
     "@forerunner/memory": "workspace:*",

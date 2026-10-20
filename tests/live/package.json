@@ -1,0 +1,29 @@
+{
+  "name": "@forerunner/live",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Live-model harness: the phase 1 and phase 3 gates and the response-time table on the real provider, under a committed spend ledger and caps enforced in code. Opt-in with FORERUNNER_LIVE=1 (or `test:live`); never runs in CI.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:live": "vitest run --mode live",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@forerunner/billing": "workspace:*",
+    "@forerunner/capabilities": "workspace:*",
+    "@forerunner/critic": "workspace:*",
+    "@forerunner/e2e": "workspace:*",
+    "@forerunner/evals": "workspace:*",
+    "@forerunner/platform": "workspace:*",
+    "@forerunner/runtime": "workspace:*",
+    "@forerunner/state": "workspace:*",
+    "@forerunner/testenv": "workspace:*",
+    "@forerunner/vault": "workspace:*"
+  },
+  "devDependencies": {}
+}
