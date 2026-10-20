@@ -1,4 +1,5 @@
 export * from "./agent/loop.ts";
+export * from "./agent/sdk.ts";
 export * from "./agent/tools.ts";
 export * from "./brief.ts";
 export * from "./enforcement/autonomy.ts";
@@ -9,4 +10,6 @@ export * from "./enforcement/ports.ts";
 export * from "./enforcement/token.ts";
 export * from "./injection/scan.ts";
 export * from "./models/ladder.ts";
+export * from "./provider/anthropic.ts";
+export * from "./provider/registry.ts";
 export * from "./provider/types.ts";
