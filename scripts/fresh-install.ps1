@@ -18,7 +18,7 @@ Usage:
 
 Environment:
   FORERUNNER_REPO_URL                git URL to clone when the script is not run from a checkout
-  FORERUNNER_INSTALL_DIR             where to clone (default: $env:USERPROFILE\forerunner)
+  FORERUNNER_INSTALL_DIR             where to clone (default: <home>\forerunner)
   FORERUNNER_INSTALL_BUDGET_SECONDS  time budget (default 900)
   FORERUNNER_HOME                    overrides the application directories (see platform-notes.md)
 
@@ -65,6 +65,15 @@ function Get-Elapsed([DateTime]$Since) {
 
 function Say([string]$Text) {
   Write-Host "      $Text"
+}
+
+# Home directory on Windows PowerShell 5.1, pwsh on Windows and pwsh on Linux/macOS (USERPROFILE
+# is empty there; the test suite runs this script under pwsh wherever it exists).
+function Get-HomeDir {
+  if ($env:USERPROFILE) { return $env:USERPROFILE }
+  if ($env:HOME) { return $env:HOME }
+  if ($HOME) { return $HOME }
+  return (Get-Location).Path
 }
 
 function Test-Command([string]$Name) {
@@ -145,7 +154,9 @@ function Write-Summary {
   $mode = ""
   if ($DryRun) { $mode = ", dry run" }
   Write-Host ""
-  Write-Host ("Forerunner fresh install summary (windows {0}{1})" -f $env:PROCESSOR_ARCHITECTURE, $mode)
+  $os = if ($IsLinux) { "linux" } elseif ($IsMacOS) { "macos" } else { "windows" }
+  $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
+  Write-Host ("Forerunner fresh install summary ({0} {1}{2})" -f $os, $arch, $mode)
   Write-Host ("  {0,-48} {1,6}  {2}" -f "step", "secs", "status")
   foreach ($row in $script:Summary) {
     Write-Host ("  {0,-48} {1,5}s  {2}" -f $row.Step, $row.Seconds, $row.Status)
@@ -252,7 +263,7 @@ try {
   $scriptDir = Split-Path -Parent $PSCommandPath
   $candidate = Split-Path -Parent $scriptDir
   $installDir = $env:FORERUNNER_INSTALL_DIR
-  if (-not $installDir) { $installDir = Join-Path $env:USERPROFILE "forerunner" }
+  if (-not $installDir) { $installDir = Join-Path (Get-HomeDir) "forerunner" }
   $top = $null
   if (Test-Command git) {
     try { $top = (& git rev-parse --show-toplevel 2>$null) } catch { $top = $null }
