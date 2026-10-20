@@ -697,11 +697,11 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     milestones: (projectId, signal) =>
       get(proposedPath("milestones", { id: projectId }), MilestoneList, undefined, signal),
     dataAssets: (projectId, signal) =>
-      get(proposedPath("dataAssets", { id: projectId }), DataAssetList, undefined, signal),
+      get(routePath("dataAssets", { id: projectId }), DataAssetList, undefined, signal),
     registerDataAsset: (projectId, body) =>
-      post(proposedPath("registerDataAsset", { id: projectId }), DataAssetViewSchema, body),
+      post(routePath("registerDataAsset", { id: projectId }), DataAssetViewSchema, body),
     removeDataAsset: async (id) => {
-      await del(proposedPath("removeDataAsset", { id }), OkView);
+      await del(routePath("removeDataAsset", { id }), OkView);
     },
     importProject: (projectId, body) =>
       post(proposedPath("importProject", { id: projectId }), ImportResultViewSchema, body),
