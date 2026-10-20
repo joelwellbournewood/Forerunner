@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { errorMessage, ForerunnerError, join, log, osFacts } from "@forerunner/platform";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import type { ZodType } from "zod";
 import { writeKillRequest } from "../enforcement/killfile.ts";
@@ -41,6 +42,27 @@ export interface DaemonServerOptions {
   port?: number;
 }
 
+/** Origins the shells and the dev server use; anything else gets no CORS headers. */
+export function isLocalOrigin(origin: string | undefined): boolean {
+  if (!origin) return false;
+  if (origin === "tauri://localhost" || origin === "null") return true;
+  try {
+    const u = new URL(origin);
+    const host = u.hostname;
+    return (
+      (u.protocol === "http:" || u.protocol === "https:" || u.protocol === "tauri:") &&
+      (host === "localhost" ||
+        host === "127.0.0.1" ||
+        host === "[::1]" ||
+        host === "::1" ||
+        host === "tauri.localhost" ||
+        host.endsWith(".localhost"))
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function createDaemonApp(
   rt: RuntimeApp,
   opts: DaemonServerOptions = {},
@@ -64,20 +86,48 @@ export function createDaemonApp(
               : err.code === "provider_auth"
                 ? 503
                 : 500;
-      return c.json({ code: err.code, message: err.message, details: err.details }, status);
+      // ADR 0025: a stale version or a lost claim is reported as "conflict"; the runtime's own
+      // code stays in the details for the log.
+      const code = status === 409 ? "conflict" : err.code;
+      return c.json(
+        { code, message: err.message, details: { ...(err.details ?? {}), cause: err.code } },
+        status,
+      );
     }
     logger.error("unhandled", { error: errorMessage(err) });
     return c.json({ code: "internal", message: errorMessage(err) }, 500);
   });
 
+  // The shells run the UI from another origin (the dev server, Playwright, tauri://localhost):
+  // allow local origins only, with the headers the client sends (ADR 0025).
+  app.use(
+    "*",
+    cors({
+      origin: (origin) => (isLocalOrigin(origin) ? origin : ""),
+      allowHeaders: ["Authorization", "Content-Type", "Accept"],
+      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      maxAge: 600,
+    }),
+  );
+
+  // Bearer token on every route. EventSource cannot set headers, so the two SSE routes also
+  // accept the token as a query parameter; nothing else does, and query strings of those
+  // routes are never logged.
   app.use("*", async (c, next) => {
-    if (c.req.path === "/health") return next();
+    if (c.req.path === "/health" || c.req.method === "OPTIONS") return next();
     const header = c.req.header("authorization") ?? "";
-    const got = header.startsWith("Bearer ") ? header.slice(7) : (c.req.query("token") ?? "");
+    const sseRoute =
+      c.req.method === "GET" &&
+      (c.req.path === "/events" || /^\/sessions\/[^/]+\/events$/.test(c.req.path));
+    const got = header.startsWith("Bearer ")
+      ? header.slice(7)
+      : sseRoute
+        ? (c.req.query("token") ?? "")
+        : "";
     const a = Buffer.from(got);
     const b = Buffer.from(token);
     if (a.length !== b.length || !timingSafeEqual(a, b))
-      return c.json({ code: "provider_auth", message: "missing or invalid daemon token" }, 401);
+      return c.json({ code: "unauthorized", message: "missing or invalid daemon token" }, 401);
     return next();
   });
 
@@ -375,6 +425,7 @@ export function createDaemonApp(
   app.post("/kill", async (c) => {
     const body = await parse(c, KillBody);
     const report = await rt.kill.stop(body.scope, body.reason ?? "kill switch from the app");
+    const killActive = rt.kill.isFrozen({ agentId: rt.agent.id });
     writeKillRequest(
       {
         scope: body.scope,
@@ -385,11 +436,12 @@ export function createDaemonApp(
       rt.dirs.runtime,
     );
     rt.events.emit("session", { type: "kill", payload: report });
-    return c.json(report);
+    return c.json({ killActive, ...report });
   });
   app.post("/kill/resume", async (c) => {
     rt.kill.resume();
-    return c.json({ ok: true });
+    rt.events.emit("session", { type: "kill.resumed", payload: {} });
+    return c.json({ killActive: rt.kill.isFrozen({ agentId: rt.agent.id }), ok: true });
   });
 
   app.get("/inbox", async (c) => {
@@ -478,14 +530,25 @@ export function createDaemonApp(
       throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
     const conv = rt.conversation;
     return streamSSE(c, async (stream) => {
-      const r = await conv.chat({
-        humanId: body.humanId,
-        agentId: body.agentId,
-        projectId: body.projectId,
-        text: body.text,
-        source: body.source,
-        onToken: (t) => void stream.writeSSE({ event: "token", data: t }),
-      });
+      let r: Awaited<ReturnType<typeof conv.chat>>;
+      try {
+        r = await conv.chat({
+          humanId: body.humanId,
+          agentId: body.agentId,
+          projectId: body.projectId,
+          text: body.text,
+          source: body.source,
+          onToken: (t) =>
+            void stream.writeSSE({ event: "token", data: JSON.stringify({ text: t }) }),
+        });
+      } catch (e) {
+        const code = e instanceof ForerunnerError ? e.code : "internal";
+        await stream.writeSSE({
+          event: "error",
+          data: JSON.stringify({ code, message: errorMessage(e) }),
+        });
+        return;
+      }
       await stream.writeSSE({
         event: "reply",
         data: JSON.stringify({

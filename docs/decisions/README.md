@@ -31,3 +31,5 @@ Status: accepted | superseded by NNNN
 | 0010 | Test environment: fake provider with recorded replies, simulated clock, fake git host |
 | 0011 | Local daemon API between the shells and the runtime |
 | 0012 | Voice pipeline: PCM contract, local helpers over stdio, latency anchors |
+| 0024 | State service shape: direct Postgres for runtimes, a thin service for devices, realtime, remote commands and the mirror |
+| 0025 | UI conventions over the daemon API: config source, SSE auth, chat stream frames, open shapes |

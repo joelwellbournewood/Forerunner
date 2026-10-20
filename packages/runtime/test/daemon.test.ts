@@ -179,6 +179,107 @@ describe("local daemon", () => {
     expect(num((costs.totals as Json).usdMicro)).toBeGreaterThanOrEqual(0);
   });
 
+  it("follows the UI conventions (ADR 0025): CORS for local origins, ?token only on the SSE routes, JSON chat frames, conflict code, killActive", async () => {
+    // CORS preflight from the dev server origin is answered with the allowed headers; a foreign
+    // origin gets no allow-origin header.
+    const pre = await app.request("/projects", {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://localhost:5173",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "authorization,content-type",
+      },
+    });
+    expect(pre.status).toBeLessThan(300);
+    expect(pre.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
+    expect(pre.headers.get("access-control-allow-headers")?.toLowerCase()).toContain(
+      "authorization",
+    );
+    const foreign = await app.request("/health", { headers: { origin: "https://evil.example" } });
+    expect(foreign.headers.get("access-control-allow-origin")).toBeNull();
+    const tauri = await app.request("/health", { headers: { origin: "tauri://localhost" } });
+    expect(tauri.headers.get("access-control-allow-origin")).toBe("tauri://localhost");
+
+    // The token in the query string opens the EventSource routes and nothing else.
+    expect((await app.request(`/me?token=${token}`)).status).toBe(401);
+    const ac = new AbortController();
+    const ev = await app.request(`/events?token=${token}`, {
+      headers: { accept: "text/event-stream" },
+      signal: ac.signal,
+    });
+    expect(ev.status).toBe(200);
+    expect(ev.headers.get("content-type")).toContain("text/event-stream");
+    ac.abort();
+
+    // Chat stream frames: token frames carry {text}, the last frame is the full reply.
+    const res = await req("/chat/stream", {
+      method: "POST",
+      body: JSON.stringify({ text: "hello", humanId: rt.human.id, agentId: rt.agent.id }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const frames = text
+      .split("\n\n")
+      .filter((f) => f.includes("event:"))
+      .map((f) => {
+        const event = /event: (\S+)/.exec(f)?.[1] ?? "";
+        const data = f
+          .split("\n")
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).trim())
+          .join("");
+        return { event, data: JSON.parse(data) as Record<string, unknown> };
+      });
+    expect(frames.at(-1)?.event).toBe("reply");
+    expect(typeof frames.at(-1)?.data.reply).toBe("string");
+    for (const f of frames.slice(0, -1)) {
+      expect(f.event).toBe("token");
+      expect(typeof f.data.text).toBe("string");
+    }
+
+    // A stale version is a 409 with code "conflict"; the runtime's code stays in the details.
+    const created = await json(
+      await req("/projects", {
+        method: "POST",
+        body: JSON.stringify({ name: "Conv", goal: "Conventions project for the test" }),
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const task = await json(
+      await req(`/projects/${str(created.id)}/tasks`, {
+        method: "POST",
+        body: JSON.stringify({
+          title: "A task",
+          outcome: "done",
+          acceptanceCriteria: ["x"],
+        }),
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const stale = await req(`/tasks/${str(task.id)}/transition`, {
+      method: "POST",
+      body: JSON.stringify({ version: 999, to: "cancelled", reason: "stale" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(stale.status).toBe(409);
+    const body = await json(stale);
+    expect(body.code).toBe("conflict");
+    expect((body.details as { cause: string }).cause).toBe("version_conflict");
+
+    // Kill and resume report the switch state.
+    const killed = await json(
+      await req("/kill", {
+        method: "POST",
+        body: JSON.stringify({ scope: { all: true }, reason: "test" }),
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    expect(killed.killActive).toBe(true);
+    const resumed = await json(await req("/kill/resume", { method: "POST" }));
+    expect(resumed.killActive).toBe(false);
+  });
+
   it("streams events over SSE", async () => {
     const res = await req("/events", { headers: { accept: "text/event-stream" } });
     expect(res.status).toBe(200);

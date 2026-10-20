@@ -42,6 +42,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: UI unit tests
         run: pnpm --filter @forerunner/ui test
+      - name: Playwright browser (Chromium) for the UI tests
+        run: pnpm --filter @forerunner/ui exec playwright install chromium ${{ runner.os == 'Linux' && '--with-deps' || '' }}
       - name: Playwright UI tests
         run: pnpm --filter @forerunner/ui test:ui
       - name: Tauri build (unsigned unless secrets are present)
