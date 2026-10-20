@@ -15,9 +15,11 @@
     "@forerunner/platform": "workspace:*",
     "@forerunner/state": "workspace:*",
     "@forerunner/runtime": "workspace:*",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "@forerunner/billing": "workspace:*"
   },
   "devDependencies": {
-    "@forerunner/testenv": "workspace:*"
+    "@forerunner/testenv": "workspace:*",
+    "@forerunner/evals": "workspace:*"
   }
 }

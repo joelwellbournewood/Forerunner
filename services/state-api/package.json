@@ -20,7 +20,9 @@
     "ws": "^8.22.0",
     "@noble/ed25519": "^3.2.0",
     "@noble/hashes": "^2.4.0",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "@forerunner/capabilities": "workspace:*",
+    "@forerunner/runtime": "workspace:*"
   },
   "devDependencies": {
     "@types/pg": "^8.15.0",

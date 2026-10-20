@@ -78,6 +78,9 @@ importers:
 
   apps/ui:
     dependencies:
+      '@forerunner/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       '@tauri-apps/api':
         specifier: ^2.12.4
         version: 2.12.4
@@ -103,6 +106,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@hono/node-server':
+        specifier: ^2.1.5
+        version: 2.1.5(hono@4.13.13)
       '@playwright/test':
         specifier: ^1.64.1
         version: 1.64.1
@@ -127,6 +133,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^5.2.0 5.2.0
         version: 5.2.0(vite@7.3.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.15))
+      hono:
+        specifier: ^4.13.13
+        version: 4.13.13
       jsdom:
         specifier: ^30.1.3
         version: 30.1.3(@noble/hashes@2.4.0)
@@ -216,6 +225,9 @@ importers:
 
   packages/commands:
     dependencies:
+      '@forerunner/billing':
+        specifier: workspace:*
+        version: link:../billing
       '@forerunner/platform':
         specifier: workspace:*
         version: link:../platform
@@ -235,6 +247,9 @@ importers:
 
   packages/critic:
     dependencies:
+      '@forerunner/billing':
+        specifier: workspace:*
+        version: link:../billing
       '@forerunner/platform':
         specifier: workspace:*
         version: link:../platform
@@ -248,6 +263,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@forerunner/evals':
+        specifier: workspace:*
+        version: link:../../evals
       '@forerunner/testenv':
         specifier: workspace:*
         version: link:../../testenv
@@ -257,6 +275,9 @@ importers:
       '@forerunner/platform':
         specifier: workspace:*
         version: link:../platform
+      '@forerunner/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@forerunner/state':
         specifier: workspace:*
         version: link:../state
@@ -378,9 +399,15 @@ importers:
 
   services/state-api:
     dependencies:
+      '@forerunner/capabilities':
+        specifier: workspace:*
+        version: link:../../packages/capabilities
       '@forerunner/platform':
         specifier: workspace:*
         version: link:../../packages/platform
+      '@forerunner/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       '@forerunner/state':
         specifier: workspace:*
         version: link:../../packages/state
