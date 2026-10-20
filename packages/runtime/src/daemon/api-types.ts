@@ -323,6 +323,38 @@ export const DecisionView = z.object({
 });
 export type DecisionView = z.infer<typeof DecisionView>;
 
+export const PeerActivityView = z.object({
+  agentId: z.string(),
+  agentName: z.string(),
+  online: z.boolean(),
+  activeClaims: z.array(
+    z.object({
+      taskId: z.string(),
+      title: z.string(),
+      status: z.string(),
+      expiresAt: z.string().nullable(),
+    }),
+  ),
+  openPullRequests: z.array(z.object({ taskId: z.string(), title: z.string(), url: z.string() })),
+  lastHandoff: z
+    .object({
+      at: z.string(),
+      summary: z.string(),
+      inFlight: z.array(z.string()),
+      blocked: z.array(z.string()),
+      next: z.array(z.string()),
+    })
+    .nullable(),
+  inFlightFiles: z.record(z.string(), z.array(z.string())),
+});
+export type PeerActivityView = z.infer<typeof PeerActivityView>;
+export const PeerFeedView = z.object({
+  generatedAt: z.string(),
+  projectId: z.string().nullable(),
+  peers: z.array(PeerActivityView),
+});
+export type PeerFeedView = z.infer<typeof PeerFeedView>;
+
 export const ErrorBody = z.object({
   code: z.string(),
   message: z.string(),
@@ -364,6 +396,7 @@ export const DAEMON_ROUTES = {
   inbox: "GET /inbox?humanId=",
   answerRequest: "POST /requests/:id/answer",
   decisions: "GET /projects/:id/decisions",
+  peers: "GET /projects/:id/peers (what the other agents on the project are doing)",
   markRead: "POST /messages/:id/read",
   chat: "POST /chat (JSON) | POST /chat/stream (SSE tokens then a final reply event)",
   costs: "GET /costs?projectId=&from=&to=",

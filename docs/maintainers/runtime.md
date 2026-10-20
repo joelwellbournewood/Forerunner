@@ -170,6 +170,13 @@ the live feed (session events, inbox, session and project changes, a heartbeat) 
 `ForerunnerError` codes to status codes (not found 404, validation and conflicts 409 or 400,
 permission 403); the body is `{ error, code, details }` with secrets redacted.
 
+Beyond the route table of ADR 0011 the daemon serves `GET /projects/:id/peers` (the peer feed,
+`PeerFeedView`) and `GET /projects/:id/decisions` (the decision log, `DecisionView[]`), and
+follows the UI conventions of ADR 0025: CORS for local and Tauri origins only, the bearer
+token accepted as `?token=` on the two EventSource routes and nowhere else, `/chat/stream`
+frames `token` (`{text}`), `reply` and `error`, a 409 with code `conflict` on a stale version,
+and `{killActive}` from the kill routes.
+
 `tools.ts` holds the file and shell tools a session gets (`read_file`, `write_file`,
 `list_dir`, `run_command`), each declaring its action class and path fields so the hooks can
 enforce containment. `fr daemon [--provider fake] [--port N]` starts the server; `fr status`

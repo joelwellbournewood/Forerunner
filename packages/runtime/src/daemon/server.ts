@@ -7,6 +7,8 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import type { ZodType } from "zod";
 import { writeKillRequest } from "../enforcement/killfile.ts";
+import { buildPeerFeed } from "../session/peers.ts";
+import { defaultPeers } from "../session/runner.ts";
 import { DecisionLog } from "../wiring/state-ports.ts";
 import {
   AnswerRequestBody,
@@ -17,6 +19,7 @@ import {
   type EventView,
   type HealthView,
   KillBody,
+  type PeerFeedView,
   StartSessionBody,
   TransitionTaskBody,
 } from "./api-types.ts";
@@ -491,6 +494,20 @@ export function createDaemonApp(
     await new DecisionLog(rt.store).recordAnswer(r, rt.human.id);
     rt.events.emit("inbox", {});
     return c.json(requestView(r, null));
+  });
+
+  app.get("/projects/:id/peers", async (c) => {
+    const projectId = c.req.param("id");
+    await rt.store.project.mustGet(projectId);
+    const peerIds = await defaultPeers(rt.store)(rt.agent.id, projectId);
+    const feed = await buildPeerFeed({
+      store: rt.store,
+      clock: rt.clock,
+      agentId: rt.agent.id,
+      projectId,
+      peerIds,
+    });
+    return c.json(feed satisfies PeerFeedView);
   });
 
   app.get("/projects/:id/decisions", async (c) => {

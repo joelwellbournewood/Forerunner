@@ -801,7 +801,7 @@ function summarize(x: {
  * otherwise every other active principal agent that has touched the project (tasks, claims,
  * sessions).
  */
-function defaultPeers(store: StateStore) {
+export function defaultPeers(store: StateStore) {
   return async (agentId: string, projectId: string | undefined): Promise<string[]> => {
     if (!projectId) return [];
     const project = await store.project.mustGet(projectId);

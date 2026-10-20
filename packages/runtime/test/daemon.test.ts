@@ -309,6 +309,48 @@ describe("local daemon", () => {
     expect(decisions[0]).toMatchObject({ question: "Which cloud region?", chosen: "eu-central" });
   });
 
+  it("exposes the peer feed of a project", async () => {
+    const card = await json(
+      await req("/projects", {
+        method: "POST",
+        body: JSON.stringify({ name: "Peers", goal: "A project with a second agent" }),
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const bob = await rt.store.agent.insert({
+      name: "Bob",
+      owner_human_id: rt.human.id,
+      model_config: {},
+      memory_location: "local",
+      status: "active",
+      kind: "principal",
+    });
+    await rt.store.project.patch(str(card.id), {
+      settings: { members: [rt.agent.id, bob.id] } as never,
+    });
+    const task = await rt.store.task.insert({
+      project_id: str(card.id),
+      title: "Bob's task",
+      outcome: "x",
+      acceptance_criteria: [],
+      risk_tier: 0,
+      status: "ready",
+      priority: 1,
+      depends_on: [],
+      budget_usd_micro: 0,
+      est_cost_usd_micro: 0,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    await rt.store.task.claim(task.id, bob.id, 60_000, rt.clock.now(), { reason: "t" });
+    const feed = await json(await req(`/projects/${str(card.id)}/peers`));
+    const peers = feed.peers as { agentName: string; activeClaims: { taskId: string }[] }[];
+    expect(peers).toHaveLength(1);
+    expect(peers[0]?.agentName).toBe("Bob");
+    expect(peers[0]?.activeClaims.map((c) => c.taskId)).toEqual([task.id]);
+  });
+
   it("streams events over SSE", async () => {
     const res = await req("/events", { headers: { accept: "text/event-stream" } });
     expect(res.status).toBe(200);
