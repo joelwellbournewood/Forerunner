@@ -79,7 +79,9 @@ export function registerRemoteRoutes(app: App, ctx: RouteContext): void {
     }
     const target = targetRaw as (typeof REMOTE_TARGETS)[number];
     const deviceId = c.req.query("deviceId") || undefined;
-    const row = await ctx.store.remoteCommand.pickUp(target, deviceId ? { deviceId } : {});
+    const ownerHumanId = c.req.query("humanId") || undefined;
+    const agentId = c.req.query("agentId") || undefined;
+    const row = await ctx.store.remoteCommand.pickUp(target, { deviceId, ownerHumanId, agentId });
     if (!row) return c.body(null, 204);
     const issuer = await ctx.store.device.get(row.device_id);
     announce(ctx, "remote_command.changed", "remote_command", row, {

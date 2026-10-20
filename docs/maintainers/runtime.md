@@ -53,6 +53,32 @@ for each tool use: `beforeToolCall` → execute with per-tool timeout → `after
 `needs_human` (approval pending), `max_turns`, `error`. Events stream to the live session view.
 `SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks.
 
+**Specialist tools on each driver (`src/registry/tools.ts`, ADR 0043).** The registry names
+Claude Code tools (`allowed_tools: cc:Read, cc:Edit, cc:Bash, ...`) for the SDK driver, which
+offers that tool set as is. The loop driver offers Forerunner's tools, so each driver maps the
+names its own way and the choice is made in `composeRuntime` next to the driver it builds
+(`specialistDriver`, "loop" today; the SDK driver has no session path yet). `specialistSpecFrom(
+registry, { driver, tools, commands, onDropped })` turns a runnable entry into the executor's
+`SpecialistSpec`: on "sdk" the `cc:` names stay as written; on "loop" `loopToolsFor` replaces
+them with the built-ins (`CLAUDE_CODE_TOOL_EQUIVALENTS`: `cc:Read`, `cc:NotebookRead` →
+`read_file`; `cc:Write`, `cc:Edit`, `cc:MultiEdit`, `cc:NotebookEdit` → `write_file`;
+`cc:Glob`, `cc:Grep`, `cc:LS` → `list_dir`; `cc:Bash` → `run_command`), resolved against
+`toolsForRun().names()` at every lookup (a bridged extension tool passes through while it is
+registered). The cap holds: nothing is added that the entry did not name, `cc:Read` never
+yields `write_file`, and `cc:Bash` yields `run_command` only when the entry has
+`requires_sandbox: true` or the composition sandboxes every command (the daemon always wires a
+`RunSandboxPort` and the executor pins `run_command` to the run's lease). `cc:WebFetch`,
+`cc:WebSearch`, `cc:Task`, `cc:TodoWrite`, an unknown `cc:Foo`, a bridged tool that has gone,
+or a command runner the policy refuses are dropped, never silently: `droppedToolAudit` writes
+one `registry.tool_unmapped` audit row per specialist and tool (`allowed: false`,
+`input_summary: "<specialist>: <tool>"`, the reason in `denied_reason`), for every runnable
+entry at compose (awaited before the first run) and for a drop a later run start discovers.
+`LoopTaskExecutor` derives the run token from the spec's `allowedTools`, so the hooks check the
+names the driver calls and a call outside the grant is `tool_not_allowed` with its own row.
+`RuntimeApp.specialistDriver` and `RuntimeApp.specialists` expose the choice and the mapped
+specs; the model watch's eval runner uses the same `loopToolsFor` (commands only with a sandbox
+port) and logs its drops. Tests: `test/registry-tools.test.ts`, `test/cc-tools-wiring.test.ts`.
+
 ### Context layer (`src/context/`, ADR 0003)
 
 Requirements covered: N.1 (compression proxy, toggle per project, savings measured), N.2
@@ -164,6 +190,16 @@ never holds a secret), `status` (directories, config, secret names only), `docto
 in the runtime directory is polled by `KillFileWatcher` in every running runtime, so the CLI,
 the tray and the app can stop sessions across processes on both platforms.
 
+Every `setup` run also writes the install record `<config>/install.json`
+(`src/setup/install-record.ts`, ADR 0026): `{ schema: 1, installDir, node? }`, where
+`installDir` is the checkout this process runs from (derived from `import.meta.url`, so a
+staged version directory records itself) and `node` is `process.execPath`; nothing in it is
+configured or hardcoded. The desktop shell (`apps/desktop/src-tauri/src/install.rs`) reads it
+after `current.json` and `FORERUNNER_INSTALL_DIR` to find `fr` without `pnpm` or `PATH`.
+`parseInstallRecord` mirrors the shell's rules (schema must be 1, `installDir` non-empty,
+`node` optional, an empty string counts as absent) and the write is atomic (temp file, fsync,
+rename). `cli.test.ts` covers the written record and the parser.
+
 `buildProgram(deps)` builds the commander program (tests inspect it; the module parses
 `process.argv` only when it is the entry point). The module commands registered on it:
 
@@ -204,6 +240,50 @@ one active session per agent; quiet hours defer non-manual triggers). `state-por
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
 approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call.
 
+**The next-session queue (spec J.2).** The checklist reads the project's `queued` items
+(`store.queue.pending`, priority first) into `brief.queue.items` with each row's `id` and
+`version`; the renderer prints kind, priority and text only. Right after the `session.brief`
+event and before the plan, `SessionRunner.consumeQueue` marks exactly those items consumed
+(`status: consumed`, `consumed_by_session` = this session) in one `store.transaction` with one
+audit row `queue.consumed` (`QUEUE_CONSUMED_AUDIT_TOOL`: the session and the item ids consumed
+and skipped, never the text) and a `queue.consumed` event (`ids`, `count`, `skipped`). Every
+item goes through `QueueRepo.consume(id, version, sessionId)`, so the workflow graph
+(`queued -> consumed`; a dismissed item is never consumed) and the version the checklist read
+are both checked in the store: an item the human dismissed or edited in the UI while the
+checklist ran (git fetch, sync and memory recall sit between the read and the consume) is
+skipped with its reason (`validation`, `version_conflict`, `not_found`), left as it is and
+named in the audit row, the event carries a warning, and an edited note reaches the next
+session once more with its new text; any other store error fails the session. An item
+enqueued after the checklist read the queue is not in the brief and stays queued for the next
+session. A session that fails before its brief is written (the checklist throws) consumes
+nothing. The decisions the spec leaves open are these: the consume happens in the runner once
+the brief exists rather than in the checklist (a checklist that is only rendered, as in tests
+and the conversation agent, must not consume), a moved item is skipped and reported rather
+than failing the session, and the audit kind is `queue.consumed`. Tests:
+`runner-queue.test.ts` (two sessions on one project: three notes before the first, one left
+while it plans, the first brief lists three and they are consumed by session one, the second
+brief lists only the fourth; dismissed before and during; edited during; a checklist that
+throws consumes nothing; no items, no row), `checklist-queue.test.ts` (id and version on the
+items, consumed and dismissed out, ids not rendered), and the state suite's queue tests on
+both dialects (version conflict, dismissed never consumed, rollback inside a transaction).
+Requirements: J.2, E.2.
+
+**The Run row.** `LoopTaskExecutor` inserts the task's Run row as `running` before the driver
+starts (model, effort, prompt version, billing source, depth) and patches it with the result
+afterwards: tokens, cost, `ttft_ms`, `duration_ms`, outcome, `timed_out`, the context numbers
+and the artifacts; a driver that throws closes it as `error` with the reason. `ttft_ms` and
+`duration_ms` are INTEGER columns and the store refuses a fraction, while `performance.now()`
+differences carry one, so every millisecond measurement is rounded where it is produced
+(`LoopAgentDriver`: `wholeMs` on each call's first-token time and on the run and tool
+durations) and again at the write (`wholeMs` on the patch): a Run row is always written with
+whole numbers. The first live run (ADR 0040) found the gap: a fractional `ttft_ms` was refused,
+the error swallowed, and every coder run stayed `running` with cost 0. A Run row the store
+still refuses never stops the session: the result reaches the runner, and the failure is an
+`error` line through the runtime logger plus an audit row `run.persist_failed`
+(`RUN_PERSIST_FAILED_AUDIT_TOOL`: the run, session, agent and human ids, the stage `end` or
+`error`, the store's message; never the prompt, the brief or the report), so a run history that
+disagrees with the cost ledger is traceable. Tests: `executor.test.ts`, `loop.test.ts`.
+
 ### Decision log (`src/wiring/state-ports.ts`, `DecisionLog`)
 
 Answered decisions are recorded per project and never asked again unless superseded (spec
@@ -235,6 +315,15 @@ it: a claim, an open PR or an in-flight entry of an online peer for the same tas
 (`task.skipped` with reason `peer_in_flight`) and a path hint in the task text that meets a file
 the peer has in flight sends a `warning` message before work starts and continues. Each
 (peer, kind, task) triple is reported once per session.
+
+The feed also carries the shared store's `schemaVersion` and, given the sync gate
+(`PeerFeedInput.schemaSync`, the runner's `SessionRunnerDeps.schemaSync`), hands it to the
+gate first and is refused (`unavailable`) while sync is paused; `SessionRunner.start` asks the
+gate before the session row exists. Spec M's "compatible version before sync resumes" is
+enforced there and in `compose.ts` (`updates.md`, "The wired gate"): the scheduler's `start`
+asks the gate for a session and for a scheduled mirror run alike, while the model watch and
+the memory consolidation, local jobs, are routed before the gate and keep running on a paused
+install.
 
 ### The core loop: critic, memory and commands (`src/loop/`, [ADR 0036, core loop integration](../decisions/0036-core-loop-integration.md))
 
@@ -374,7 +463,7 @@ already:
 | Extensions (`src/extensions`, spec K.6, L.5) | `ExtensionRegistry` over `store.extension` and `store.auditLog`, the built-in catalog plus `FORERUNNER_EXTENSION_CATALOG_URL`, `HumanRequestExtensionApprovals`, `DefaultMcpConnectorFactory` (tests inject an in-memory one), `SecretResolver` over the vault, the `TokenIssuer` as revoker, `chfPerUsd`, `ledgerCost` (ledger rows whose `specialist` is `extension:<id>`). `registry.start()` reconnects enabled connectors at compose (when `startServices` is on); `close()` closes them. | `DaemonHooks extends GatedEnforcementHooks`: the gate refuses a disabled, pending, removed or errored extension's tool before any other check, and books a bridged tool call's `costUsdMicro` on its extension in `afterToolCall` (see "Extension cost" below: bridged MCP calls carry none, so the column reads 0 today). `toolsForRun()` builds a run's `ToolRegistry` from the file tools plus `registry.bridgedTools()` at run start (revocation shows at the next run; the gate covers runs in flight); the session grant lists the bridged names. |
 | Sandbox (`src/sandbox`, ADR 0007) | `detectSandboxEngine` once (tests pass `sandboxDetection`), `DetectingSandboxPort` as the executor's `RunSandboxPort`: `createSandbox` per run with only the worktree mounted and the run token's `allowedDomains` as the egress allowlist (none → disconnected); egress decisions are audit rows (`sandbox.egress`). | `LoopTaskExecutor` replaces `run_command` with one that executes inside the lease (`withSandboxedCommands`) and destroys the sandbox after the run; a lease the port refuses (or a driver that throws) closes the Run row as `outcome: "error"` with its duration and the reason in `artifacts`, so no run stays `running`. Tier 2+ refuses the process stand-in unless the project setting `allowProcessSandbox` is on (factory). The model watch's eval runner takes the same port (below). `/health.sandbox` reports `{ kind, available, engine, reason }`. |
 | Estimates (`src/estimates`, spec I.3) | `EstimateModel.fromStore(store)` with registry defaults for the cold start; `StaticPlanner(500_000, estimates)` prices plan items; `SessionRunner.onTaskFinished` feeds actual cost and wall time back (`observe`). | `GET /costs/estimates` serves the accuracy view (`EstimateAccuracyView`). |
-| GitHub Projects mirror (`@forerunner/capabilities`) | `ProjectsMirror` over the store, the vault (`githubHostForSecretRef` resolves `settings.github_mirror.secret_ref`, default `secret:github_token`) and `DaemonMirrorApprovals` (compose.ts): the daemon's `MirrorHumanPort`, which files the approval request like `HumanRequestMirrorPort`, reuses an open one for the same project, reports which request a project waits on and wakes on `syncApprovals()` instead of waiting for the next poll; an injected `gitHost` (tests) short-circuits `hostFor`. | The scheduler's `start` is `mirrorStartHandler(mirror, startSession)`; `refreshMirrorSchedules()` registers an `every` schedule per project whose settings enable the mirror, at compose and from `PUT /projects/:id/settings`. `RuntimeApp.mirrorSync()` runs one now and answers with the run, or with the approval request as soon as the mirror asks (the run goes on in the background and finishes when the inbox answers it; a second call joins the run). |
+| GitHub Projects mirror (`@forerunner/capabilities`) | `ProjectsMirror` over the store, the vault (`githubHostForSecretRef` resolves `settings.github_mirror.secret_ref`, default `secret:github_token`) and `DaemonMirrorApprovals` (compose.ts): the daemon's `MirrorHumanPort`, which files the approval request like `HumanRequestMirrorPort`, reuses an open one for the same project, reports which request a project waits on and wakes on `syncApprovals()` instead of waiting for the next poll; an injected `gitHost` (tests) short-circuits `hostFor`. | The scheduler's `start` is `mirrorStartHandler(gatedMirror, startSession)`, where `gatedMirror.sync` asks the schema sync gate (`updates.md`) before `mirror.sync`, so a scheduled run on a paused install is refused with `unavailable` like a manual one; `refreshMirrorSchedules()` registers an `every` schedule per project whose settings enable the mirror, at compose and from `PUT /projects/:id/settings`. `RuntimeApp.mirrorSync()` runs one now and answers with the run, or with the approval request as soon as the mirror asks (the run goes on in the background and finishes when the inbox answers it; a second call joins the run). |
 | Model watch (`src/models`, spec D.6, D.21) | `ModelWatch` over the provider registry, `BUILTIN_PRICING` plus `<config>/pricing.json` and `<config>/models.json` (`FileModelSettingsStore`), `FetchPriceListSource` when `FORERUNNER_PRICE_LIST_URL` is set, else `UnconfiguredPriceListSource` (reports "no price list configured", invents nothing), `LoopEvalRunner` (below) and `StateModelWatchApprovals`. `scheduleModelWatch` registers the weekly run; `startSession` routes `isModelWatchRequest` to `modelWatch.run()`. | Routes under `/model-watch`; answers from the inbox are applied by `syncApprovals()`. |
 | Updates (`src/update`, spec M) | `composeUpdateManager({ store, dirs, clock, humanId, runningVersion, restarter })` over the daemon's own store (the `store` option was added for this; the CLI leaves it out and opens one). A malformed `update.json` is logged and ignored. | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback` with `RegistryConnectorCatalog` (connector versions from the extension catalog) and `ModelWatchUpdates` (the latest report as new models, deprecations, price changes and recommendations). `fr daemon` runs `updates.healthCheck()` once the server listens. |
 
@@ -388,10 +477,10 @@ files, tolerant schema), writes each task's fixture files into a work directory 
 (depth 0, the task's budget, only the work directory allowed, `compression: "off"`) and grades
 the mechanical checks (`file_exists`, `file_contains`, `regex`, `json_path`, `command_exit0`);
 `rubric` checks count as "needs model". The token allows only the loop driver's equivalents of
-the specialist's `allowed_tools` (`loopToolNamesFor`: `cc:Read` → `read_file`, `cc:Write`,
-`cc:Edit`, `cc:MultiEdit`, `cc:NotebookEdit` → `write_file`, `cc:Glob`, `cc:Grep`, `cc:LS` →
-`list_dir`, `cc:Bash` → `run_command`; Forerunner names pass through; anything else is
-dropped), so a researcher eval is never offered `run_command`. Nothing an eval runs executes on
+the specialist's `allowed_tools` (`loopToolsFor` from `src/registry/tools.ts`, the same table
+as the task path, see "Specialist tools on each driver" above; `run_command` only when the
+runner holds a sandbox port; every dropped name logged), so a researcher eval is never offered
+`run_command`. Nothing an eval runs executes on
 the host: the runner takes the daemon's `RunSandboxPort` and opens one lease per eval task
 (synthetic task `eval:<id>`, the work directory as the worktree, no egress, the brief's risk
 tier) whenever the specialist may run commands or the task has a `command_exit0` check; the
@@ -648,6 +737,25 @@ card was shown), `GET /commands/pending`, `POST /commands/:id/confirm` (`yes`, `
 registry's record. `ChatReplyView.pendingConfirmation` carries the commands and the decision,
 `actions[].undoToken` the change log id while undoable, and `question` the parser's question.
 
+**Remote control of the PC (`src/remote/`, spec R.4, R.8, Q.12; ADR 0032 item 4, ADR 0033
+items 8b and 9, [ADR 0041](../decisions/0041-pc-remote-commands-owner-filter-and-presence.md)).**
+On a shared state the daemon is the consumer of the phone's `target: "pc"` remote commands
+and the PC the cloud runner's PC-wins rule looks for. `composeRuntime` builds, when
+`remoteCommandsEnabled(env, stateUrl, services, opts.remote?.enabled)` says so (never without
+the background services; then the option, then `FORERUNNER_REMOTE_COMMANDS` `1`/`0`, else on
+for every state URL that is not `sqlite:`), exposed as `RuntimeApp.remote`:
+
+| Piece | What it does | Enforced where |
+| --- | --- | --- |
+| `registerDesktopDevice` | one `device` row of kind `desktop` per install for the human: the public key (a random identifier, never used to authenticate) is kept in `<config>/desktop-device.json`; the row under that key is reused (same human, not revoked), else a non-revoked row of the human named `FORERUNNER_DEVICE_NAME` (default the host name), else a fresh one | the row is what the phone can address a command to (`targetDeviceId`) |
+| `DesktopPresence` | stamps the row's `last_seen` at start and every `FORERUNNER_PRESENCE_HEARTBEAT_MS` (default 60 000; the runner's window `FORERUNNER_RUNNER_PC_ONLINE_MS` is 3 min) | `services/cloud-runner/src/presence.ts` reads it: a desktop seen within the window keeps the runner off the agent's schedules |
+| `RemoteCommandWatcher` | polls `store.remoteCommand.pickUp("pc", { deviceId, agentId })` every `FORERUNNER_REMOTE_POLL_MS` (default 500 ms; the daemon reads the shared Postgres directly, ADR 0024, so no service client is involved): the store hands over only rows whose issuing device belongs to the human who owns this agent (first line); `authorize` loads the issuing device and refuses an unknown, revoked or foreign one (`failed`, `forbidden: ...`, audit row) without acting (second line). Then: a `kind: "plan"` envelope runs through `CommandLoop.compose` as the PC (source `phone`, the daemon's desktop row as the context device, so the registry's session commands call the ports instead of enqueueing another remote command); low risk acts, the phone's tap (`confirmedAt`, counted by `isFreshTap` only within the card's own life, `DEFAULT_TAP_MAX_AGE_MS` = 10 min, plus 2 min of clock skew; a tap the outbox replayed from long ago leaves the card `needs_yes` for the inbox) answers a medium card, a high-risk card stays a `human_request` (`needs_device`) and the row completes with `status: "pending"` and the `pendingId`; a `kind: "chat"` envelope is one `ConversationAgent.chat` turn (`failed`, `provider_auth` without a model credential); plain `kill` (stop everything and freeze), `stop` (the agent's runs, freeze lifted), `start` (freeze lifted, `scheduler.request` with `trigger: "remote"`), `pause` (the registry's `session.pause`, whose daemon ports in `src/wiring/session-ports.ts` make it the graceful stop: the row reads `paused` at once and, for a session registered with the kill switch in this process, the agent gets a `pause: <reason> (session <id>)` message that the runner reads between tasks, so the task in flight finishes, no new one starts and the runner closes the session with its handoff, `paused -> stopped`, `stop_reason: stopped_by_message`, the remaining tasks in `handoff.next`; a session running elsewhere gets the status only; the undo, `resumeSession`, withdraws the unread message and puts a `paused` row back to `running`, and a closed session stays closed), and the registry's own `session.*` rows; a start or scope naming another agent is refused. `syncAnswered` (every drain) applies inbox answers to the cards still pending in the executor: an approval confirms a `needs_yes` card as a tap and a `needs_device` card as a device confirmation naming the daemon's desktop row with `biometric: false` (the state service enforced the signature and `confirm:high` on the phone's answer; the daemon's route is the human at the PC), a rejection cancels, another human's answer is ignored; an approval the executor refuses (this daemon's desktop row revoked, the risk rose since the card was shown) is not counted as applied: it is warned once, audited (`allowed: false`, input `kind: "card"` with the pending id, the decision and the command names) and the dead card is cancelled so no drain repeats it (`stats.refusedCards`), while a `version_conflict` (another answer in flight) is simply retried on the next drain. Every row ends `done` or `failed` with a result the phone reads back plus one `audit_log` row `daemon.remote_command` naming the command, the device and the plan's command names, never the parameters. A kill reaches the kill switch within one poll, so a session stops within 2 s of the tap. | the command registry's policy (ADR 0030), the kill switch, the scheduler; `RemoteCommandRepo.pickUp`'s owner filter in `packages/state` (`ownerHumanId` / `agentId`: a subquery on `device.owner_human_id`, through `agent` for the agent, both dialects) |
+
+Both stop with `close()`. The project's escalation ceiling is wired here too: `makeLoop` passes
+`projectCeiling: (settings) => criticSettingsOf(settings).ceiling` to `LoopTaskExecutor`, so
+`tierForAttempt` escalates the third retry under the project's `critic_ceiling` (a project capped
+at sonnet never runs opus) instead of the ladder's default ceiling.
+
 ### Specialist registry (`src/registry/`)
 
 The loader for `forerunner-registry` content: specialist, principal and critic definitions as
@@ -655,8 +763,9 @@ Markdown with front matter (model defaults, effort, tool allowlist, budget defau
 validated with zod, with a prompt version hash recorded on every run. `proposals.ts` writes a
 proposed specialist as a pull-request-ready file instead of editing the registry in place, so
 every new specialist goes through review. The composition root turns registry entries into
-`SpecialistSpec`s for the executor. See `adding-a-specialist.md` for the file format and the
-golden eval sets under `evals/registry/`.
+`SpecialistSpec`s for the executor, mapping their Claude Code tool names for the driver in use
+(`tools.ts`, see "Specialist tools on each driver" under Drivers, ADR 0043). See
+`adding-a-specialist.md` for the file format and the golden eval sets under `evals/registry/`.
 
 ### Models (`src/models/ladder.ts`)
 
@@ -706,10 +815,36 @@ cross-turn reference names an existing result of the same transcript by its tran
 and only lines that were sent; `executor-context.test.ts`: Run row
 fields and `headroom_used` with a proxyable versus a plain provider, cost view priced from the
 Run rows; `session-context.test.ts`: `headroom_saved_tokens` on the session and the
-`context.headroom_unavailable` event; `views.test.ts`: cost view savings money), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE with the restart event, `stop()` returning while `/events` is held open on a real socket), wiring (`wiring.test.ts`: extensions from catalog to a refused tool, model watch report and inbox decision, updates screen, mirror sync answering 202 then running on the inbox answer, estimates accuracy, sandboxed `run_command`, a refused lease closing the Run row, the eval runner keeping the model's command in the sandbox lease and offering only the specialist's tools, CLI registration and one-shot composition; `notifications-wiring.test.ts`: the notifier and its producers on the real sources through the daemon, the prefs routes and their audit row, the `notification` SSE frame, quiet hours through the route, the Telegram token never leaving the vault's reach, the email channel over the agent mailbox; `packages/capabilities/test/cloudflare-wiring.test.ts`: the Cloudflare tools and routes through the daemon's hooks, gate and bearer token; `model-config-wiring.test.ts`: `models.json` applied at compose to the chat rung, a session on the built-in rung and effort, the model watch proposing a switch and a lower effort on a fake eval runner, the human's adopt through the inbox swapping the tables so the next session runs the adopted rung at the adopted effort and the critic reviews on the adopted rung without a restart, a malformed file ignored with an audit row and its content kept out of the log; `packages/capabilities/test/desktop-wiring.test.ts`: the six desktop tools behind the daemon's hooks and gate, off until installed, the allowlist and status routes, an app outside the allowlist refused and put to the human, an allowlisted app run through the fake adapter with the indicator on the bus and as the `desktop.indicator` frame on `/events` (on with the app, off at `endRun`), a panel toggle revoking live; `desktop-wiring.test.ts` (runtime): the guarded allowlist file, a file that is not JSON or not an allowlist answering `validation` naming the file on the routes and on every tool call with a `desktop_allowlist.read` audit row and the parser's snippet kept out of the error, the audit log and the log, a fixed file read at the next call; `data-wiring.test.ts`: a folder import through the daemon route in the registry and the project's listing, the data tools behind the hooks, a zip-slip archive refused whole, a path outside the run's roots refused as a capability grant), hooks (overspend, steps, wall clock, kill, allowlist, schema,
+`context.headroom_unavailable` event; `views.test.ts`: cost view savings money), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler; the next-session queue consumed per brief in `runner-queue.test.ts` and `checklist-queue.test.ts`), executor (brief, derived token, Run row; a fractional first-token time and duration stored as integers on the real store; a refused Run row write as a `run.persist_failed` audit row and a log line that name the run and never the prompt), receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE with the restart event, `stop()` returning while `/events` is held open on a real socket), wiring (`wiring.test.ts`: extensions from catalog to a refused tool, model watch report and inbox decision, updates screen, mirror sync answering 202 then running on the inbox answer, estimates accuracy, sandboxed `run_command`, a refused lease closing the Run row, the eval runner keeping the model's command in the sandbox lease and offering only the specialist's tools, CLI registration and one-shot composition; `cc-tools-wiring.test.ts`: the composition on a registry copy whose coder names `cc:Read`, `cc:Edit`, `cc:Glob`, the executor's spec carrying `read_file`, `write_file`, `list_dir` with the registry untouched, one task through the `LoopTaskExecutor` with `read_file` and `write_file` allowed and `run_command` refused by the hooks, the audit rows of each, and a `cc:WebFetch` dropped at compose with one `registry.tool_unmapped` row per specialist and tool; `registry-tools.test.ts`: the table entry by entry, an unknown `cc:Foo` dropped with its reason and its audit row, the command gate, unavailable and bridged names, order and duplicates, the "sdk" and no-option branches keeping the names as written; `notifications-wiring.test.ts`: the notifier and its producers on the real sources through the daemon, the prefs routes and their audit row, the `notification` SSE frame, quiet hours through the route, the Telegram token never leaving the vault's reach, the email channel over the agent mailbox; `packages/capabilities/test/cloudflare-wiring.test.ts`: the Cloudflare tools and routes through the daemon's hooks, gate and bearer token; `model-config-wiring.test.ts`: `models.json` applied at compose to the chat rung, a session on the built-in rung and effort, the model watch proposing a switch and a lower effort on a fake eval runner, the human's adopt through the inbox swapping the tables so the next session runs the adopted rung at the adopted effort and the critic reviews on the adopted rung without a restart, a malformed file ignored with an audit row and its content kept out of the log; `packages/capabilities/test/desktop-wiring.test.ts`: the six desktop tools behind the daemon's hooks and gate, off until installed, the allowlist and status routes, an app outside the allowlist refused and put to the human, an allowlisted app run through the fake adapter with the indicator on the bus and as the `desktop.indicator` frame on `/events` (on with the app, off at `endRun`), a panel toggle revoking live; `desktop-wiring.test.ts` (runtime): the guarded allowlist file, a file that is not JSON or not an allowlist answering `validation` naming the file on the routes and on every tool call with a `desktop_allowlist.read` audit row and the parser's snippet kept out of the error, the audit log and the log, a fixed file read at the next call; `data-wiring.test.ts`: a folder import through the daemon route in the registry and the project's listing, the data tools behind the hooks, a zip-slip archive refused whole, a path outside the run's roots refused as a capability grant), hooks (overspend, steps, wall clock, kill, allowlist, schema,
 paths, domains, secrets, autonomy, injection), ladder, brief, loop driver (completion, overspend
 blocked, step cap, kill mid-run, timeout with partial output, inline denials, needs-human pause,
-injection flagged).
+injection flagged, whole-millisecond first-token time and durations, `wholeMs`), remote control
+of the PC (`remote-watcher.test.ts`: the store never hands another human's command over and a
+row forced through is refused and audited, a revoked device refused visibly, a low-risk plan
+acting through the registry with the audit row naming commands only, the phone's tap answering
+a medium card and a card without it waiting for the inbox's yes, a tap replayed from long ago
+leaving the card `needs_yes` while one inside the window still counts (`isFreshTap` pinned to
+the executor's `PENDING_TTL_MS`), a high-risk step filing a change card that the inbox's
+approval applies as the desktop row with `biometric: false` and a rejection cancels while
+another human's answer is ignored, an approval the executor refuses (desktop row revoked) not
+applied but warned, audited and dropped with nothing repeated on later drains, a refused plan
+and a malformed envelope ending `failed`, a kill from the phone stopping a registered run within
+one 500 ms poll on the simulated clock, the plain verbs and the registry's own `session.*` rows,
+a start or stop for another agent refused, pause through the registry, chat as one conversation
+turn run as the PC and `provider_auth` without a model; `remote-pause.test.ts`: the pause ports
+over the store and the kill switch's registry, the message body round trip and the runner's
+stop-word match, a registered session marked `paused` with the message and nothing aborted, a
+session elsewhere by status only, the undo withdrawing the message of that session alone and a
+closed session left closed, `session.pause` and its undo through the registry;
+`remote-presence.test.ts`: the desktop row registered once and reused through the identity file
+or by name, never revoked or another human's, `last_seen` stamped at start and on every
+interval and no more after `stop()`; `remote-wiring.test.ts`: the composed daemon registering
+its desktop row and heartbeating it on the interval, `remoteCommandsEnabled`, a project ceiling
+of sonnet never escalating the third retry to opus while the default ceiling does, a kill from
+the phone stopping a running session within 2 s, a pause from the phone ending a running
+two-task session at the task boundary (the task in flight finishes, the second never starts,
+`stopped_by_message` with the second task in `handoff.next`), both stopping with `close()`;
+`executor-ceiling.test.ts`: `projectCeiling` on the executor).
 
 ## Requirements covered by the daemon wiring
 
@@ -718,6 +853,9 @@ sandbox with only the worktree and the token's domains), I.3 (estimate error tra
 back to the planner), D.6 and D.21 (weekly model watch scheduled, decided in the inbox), M.3,
 M.4 and M.5 (updates screen, apply, rollback, restart contract, health check on start), S.9
 (every outward action of these modules is an audit row). Test: `test/wiring.test.ts`.
+C.4, S.1 and S.3 for specialist tools on the loop driver (the registry's `cc:` names mapped
+to the built-ins the token carries, nothing widened, every dropped name an audit row, ADR
+0043). Tests: `test/cc-tools-wiring.test.ts`, `test/registry-tools.test.ts`.
 R.6, E.5, O.8, S.8 and K.8's desktop notifications (the human is told about requests, finished
 sessions, budget stops, kill switch, updates and escalations, with quiet hours, through the
 channels the daemon wires). Test: `test/notifications-wiring.test.ts`. J.9, J.10, S.5, S.6 and
@@ -734,16 +872,28 @@ does not read refusing every action as `validation` naming the file). Tests:
 (ZIP and folder), K.2's Data tab
 and U.4's data assets (import, listing, describe and sample through the daemon; the data tools
 behind the hooks; a path outside the run's roots as a capability grant). Test:
-`test/data-wiring.test.ts`.
+`test/data-wiring.test.ts`. D.5 and D.19 for the Run row (every specialist run stores model,
+effort, prompt version, tokens, cost, first-token time and total time, as whole milliseconds;
+a row the store refuses is an audit row and a log line, never silent). Tests:
+`test/executor.test.ts`, `test/loop.test.ts`. R.4 and R.8 for the PC (the phone's `target:
+"pc"` commands picked up within one 500 ms poll and executed on the PC through the command
+registry, the scheduler and the kill switch, a kill within 2 s; the phone only controls), Q.12
+(the phone's plan with the same enforcement as the settings screen), Q.8 (a high-risk step
+stays a card the phone confirms with its biometric through the state service), S.9 and S.14
+(one audit row per command; only the human's own devices reach this PC, in the store and in
+the watcher), D.3 (the project's ceiling caps the retry ladder). Tests:
+`test/remote-watcher.test.ts`, `test/remote-pause.test.ts`, `test/remote-wiring.test.ts`,
+`test/remote-presence.test.ts`, `test/executor-ceiling.test.ts`, `packages/state/test/suite.ts`
+(the owner filter on both dialects).
 
 ## Known issues
 
 - The SDK driver's live behaviour is only verified when a credential is present (see
   `gates.md`); without one the integration test skips with a visible reason.
-- `LoopTaskExecutor` derives a run token with the registry's `allowed_tools` as written
-  (`cc:` names for the SDK driver), so an in-process run of a registry specialist through the
-  loop driver is offered no built-in file tool; only the eval runner maps them
-  (`loopToolNamesFor`). Decide whether the executor should map the same way.
+- Specialist tools are mapped for the loop driver in `composeRuntime` (ADR 0043); the cloud
+  runner (`services/cloud-runner/src/runner.ts`) still composes its own executor with
+  `specialistSpecFrom(rt.registry)` without options, so there the registry's `cc:` names reach
+  the token as written. It should take `rt.specialists` from the composed runtime.
 - Connector cost reads 0 (see "Extension cost"); a weekly eval of a tier 2+ task on an install
   without a container engine fails as `error` because the process stand-in is refused for it,
   exactly as for a task run.
@@ -790,3 +940,13 @@ behind the hooks; a path outside the run's roots as a capability grant). Test:
   gitignore guard runs only for callers that pass a worktree; the UI's data tab registers by
   locator only and no `fr` command targets the import route yet, so imports go through
   `POST /projects/:id/data/import` from a client.
+- Remote control: a pause reaches only a session running in this process (the runner reads
+  the pause message between tasks; a session on the cloud runner gets the row's status until
+  that runner honours it), a pause message the runner never read because the task in flight was
+  the last one is consumed at the next session's start like any unread message, and an undo
+  after the runner already read the message does not keep the session going; a pending
+  high-risk card is dropped by a daemon restart (ADR 0030 item 3) and the human asks again; `/health` does not report the watcher or
+  the presence row (`RuntimeApp.remote` does); the cloud runner's watcher does not pass the
+  owner filter to `pickUp` yet (one option in `services/cloud-runner/src/remote.ts`); no
+  end-to-end test drives the real phone client through the state service to the daemon yet
+  (the watcher is covered against the store, which is what the service writes).

@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { type EvalTask, EvalTaskSchema, expectedOutputDriver, runEvalSet } from "@forerunner/evals";
-import { join } from "@forerunner/platform";
+import { basename, join } from "@forerunner/platform";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   CALIBRATION_THRESHOLDS,
@@ -11,6 +11,7 @@ import {
   evidenceFor,
   formatCalibrationReport,
   renderFilesAsDiff,
+  WORK_DIR_PLACEHOLDER,
 } from "../src/calibration.ts";
 import { closingReply, submitReply, world } from "./helpers.ts";
 
@@ -252,8 +253,19 @@ describe("calibration against the eval set (H.7, phase 3 gate)", () => {
             evidence: 'out.txt: "done" not found',
             durationMs: 1,
           },
+          {
+            kind: "command_exit0",
+            label: "node test exits 0",
+            status: "fail",
+            evidence: "node test -> exit 1 in 3 ms",
+            detail: `not ok 1\n  at ${join(dir, "test.ts")}:1 (${basename(dir)})`,
+            durationMs: 3,
+          },
         ],
-        evidence: ["[fail] out.txt contains done"],
+        evidence: [
+          "[fail] out.txt contains done",
+          "expected-output driver (seeded_defect) wrote 1 file(s)",
+        ],
         finalText: "done!",
         costUsdMicro: 0,
         durationMs: 0,
@@ -268,10 +280,115 @@ describe("calibration against the eval set (H.7, phase 3 gate)", () => {
         output: 'out.txt: "done" not found',
         required: true,
       },
+      {
+        name: "node test exits 0",
+        passed: false,
+        // The work directory, whose name carries the variant, never reaches the critic.
+        output: `node test -> exit 1 in 3 ms\nnot ok 1\n  at ${join(WORK_DIR_PLACEHOLDER, "test.ts")}:1 (${WORK_DIR_PLACEHOLDER})`,
+        required: true,
+      },
     ]);
     expect(ev.acceptanceCriteria).toEqual(["out.txt contains done"]);
     expect(ev.diff).toBe("--- /dev/null\n+++ b/out.txt\n@@ -0,0 +1,1 @@\n+nope");
     expect(ev.brief).toContain("# Task brief");
+    // The fixtures the worker was given, in full; the driver's notes (which name the variant) dropped.
+    expect(ev.inputFiles).toEqual([{ path: "in.txt", content: "input\n" }]);
+    expect(ev.artifacts).toBeUndefined();
+    expect(ev.testOutput).toBeUndefined();
+    expect(JSON.stringify(ev)).not.toContain("seeded_defect");
     expect(renderFilesAsDiff(dir, ["missing.txt"])).toBe("");
+  });
+
+  describe("the escalate default on the eval set (ADR 0042)", () => {
+    /**
+     * A critic that answers like the live tier 1 model did: clean work gets `escalate` at
+     * medium confidence with no finding and no ground ("I did not run the tests myself"), a
+     * failed check gets the verdict in the row with a major finding.
+     */
+    const cases: { name: string; seededVerdict: "revise" | "escalate" }[] = [
+      { name: "seeded defect answered revise with a major finding", seededVerdict: "revise" },
+      { name: "seeded defect answered escalate with a major finding", seededVerdict: "escalate" },
+    ];
+    for (const c of cases) {
+      it(`${c.name}: the clean escalate-without-ground becomes accept, the defect is still caught`, async () => {
+        const w = await world({
+          replies: [
+            submitReply(
+              {
+                grade: 20,
+                confidence: "high",
+                verdict: c.seededVerdict,
+                summary: "The check failed.",
+                findings: [
+                  { severity: "major", what: "out.txt does not say done", where: "out.txt" },
+                ],
+              },
+              { when: { lastUserIncludes: "[FAIL]" }, times: Number.POSITIVE_INFINITY },
+            ),
+            submitReply(
+              {
+                grade: 86,
+                confidence: "medium",
+                verdict: "escalate",
+                summary: "Correct by reading; I could not run the check myself.",
+              },
+              { when: { lastUserIncludes: "# Review request" }, times: Number.POSITIVE_INFINITY },
+            ),
+            closingReply(),
+          ],
+        });
+        try {
+          const tasks = [evalTask(1), evalTask(2)];
+          const report = await calibrate({
+            evalSet: tasks,
+            tier: 1,
+            critic: w.critic,
+            ctx: w.ctx(),
+            evals: { runEvalSet, expectedOutputDriver },
+            clock: w.clock,
+            write: false,
+          });
+          expect(report.counts).toEqual({
+            tasks: 2,
+            cleanReviewed: 2,
+            cleanAccepted: 2,
+            seededReviewed: 2,
+            defectsCaught: 2,
+          });
+          expect(report.gate).toEqual({ catchOk: true, passOk: true, ok: true });
+          for (const row of report.tasks) {
+            expect(row.clean).toMatchObject({ verdict: "accept", grade: 86, findings: 0 });
+            expect(row.clean.confidence).toBeGreaterThanOrEqual(0.6);
+            // The model's major finding plus the high finding the code adds for the failed check.
+            expect(row.seeded).toMatchObject({ verdict: c.seededVerdict, findings: 2 });
+          }
+          // What the critic read: the brief, the fixture, the files as a diff, the verified
+          // checks, the closing "nothing missing" section; never the variant or the work dir.
+          const users = w.provider.calls
+            .filter((call) => call.request.messages.length === 1)
+            .map((call) => String(call.request.messages[0]?.content));
+          expect(users).toHaveLength(4);
+          for (const user of users) {
+            expect(user).toContain(
+              "## Input files given to the worker (data)\n### in.txt\n```text\ninput\n```",
+            );
+            expect(user).toContain("## Check results (run by the runtime: verified)");
+            expect(user).toContain("a pass is verified evidence, not a claim of the worker");
+            expect(user).toContain("+++ b/out.txt");
+            expect(user).toContain(
+              "## Evidence not available\n(nothing: every section above is complete.",
+            );
+            expect(user).not.toContain("seeded_defect");
+            expect(user).not.toContain("expected-output driver");
+            expect(user).not.toMatch(/coder-00\d-clean-\d/);
+          }
+          expect(users.filter((u) => u.includes("[FAIL]"))).toHaveLength(2);
+          expect(users.filter((u) => u.includes("[pass]"))).toHaveLength(2);
+          expect(await w.store.review.count()).toBe(0);
+        } finally {
+          await w.close();
+        }
+      });
+    }
   });
 });

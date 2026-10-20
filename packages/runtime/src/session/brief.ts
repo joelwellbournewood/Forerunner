@@ -80,7 +80,15 @@ export interface StateBrief {
     claimedByOthers: BriefTask[];
   };
   peers: { agentId: string; agentName: string; activeClaims: number; lastHandoff: string | null }[];
-  queue: { items: { kind: string; text: string; priority: number }[]; count: number };
+  /**
+   * The project's queued next-session items by priority (spec J.2). `id` and `version` are
+   * for the runner, which consumes exactly these once the brief is written; the renderer
+   * prints kind, priority and text only.
+   */
+  queue: {
+    items: { id: string; version: number; kind: string; text: string; priority: number }[];
+    count: number;
+  };
   warnings: string[];
 }
 

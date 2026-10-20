@@ -166,9 +166,9 @@ describe("remote commands from the shared state", () => {
     expect(audit[0]?.denied_reason).toMatch(/pause/);
   });
 
-  it("refuses commands from another human's device and a start for another agent; the runner's run survives", async () => {
-    // Human B with an agent and a phone on the same shared state. The store's pickUp is keyed
-    // on the target only, so B's commands land on A's runner; the watcher must refuse them.
+  it("leaves another human's commands pending, refuses a start for another agent; the runner's run survives", async () => {
+    // Human B with an agent and a phone on the same shared state. pickUp carries the runner's
+    // owner, so B's commands are never taken by A's runner (they wait for B's own runner).
     const humanB = await store.human.insert({
       name: "B",
       email: "b@example.test",
@@ -214,14 +214,14 @@ describe("remote commands from the shared state", () => {
       command: "start",
       params: { agentId: agentB.id },
     });
-    expect(await w.drain()).toBe(3);
+    expect(await w.drain()).toBe(1);
     expect(controller.signal.aborted).toBe(false);
     expect(kill.isFrozen({ agentId: seed.agent.id })).toBe(false);
     expect(started).toHaveLength(0);
     for (const id of [startB.id, killB.id]) {
       const row = await store.remoteCommand.mustGet(id);
-      expect(row.status).toBe("failed");
-      expect(row.result).toMatchObject({ error: "forbidden: device of another human" });
+      expect(row.status).toBe("pending");
+      expect(row.picked_up_at).toBeNull();
     }
     const other = await store.remoteCommand.mustGet(startOtherAgent.id);
     expect(other.status).toBe("failed");
@@ -229,10 +229,10 @@ describe("remote commands from the shared state", () => {
       /forbidden: agent .* is not this runner's agent/,
     );
     const audit = await store.auditLog.list({ tool: REMOTE_AUDIT_TOOL });
-    expect(audit).toHaveLength(3);
+    expect(audit).toHaveLength(1);
     for (const row of audit) {
       expect(row.allowed).toBe(false);
-      expect(row.denied_reason).toMatch(/^forbidden: /);
+      expect(row.denied_reason).toMatch(/^forbidden: agent /);
       expect(row.human_id).toBe(seed.human.id);
     }
   });

@@ -75,6 +75,30 @@ describe("remote commands", () => {
     ).toBe(200);
   });
 
+  it("the owner and agent filters leave another human's command for that human's runner", async () => {
+    const bobPhone = await h.pairDevice(h.seed.bob.id);
+    const bobs = await json<{ id: string }>(
+      await bobPhone.post("/remote/commands", { target: "pc", command: "kill", params: {} }),
+    );
+    // Ada's runtime asks for Ada's commands only: Bob's stays pending.
+    expect(
+      (await h.admin.get(`/remote/commands/pending?target=pc&humanId=${h.seed.ada.id}`)).status,
+    ).toBe(204);
+    expect(
+      (
+        await h.admin.get(
+          `/remote/commands/pending?target=pc&humanId=${h.seed.bob.id}&agentId=${h.seed.alice.id}`,
+        )
+      ).status,
+    ).toBe(204);
+    const picked = await json<{ id: string; status: string }>(
+      await h.admin.get(
+        `/remote/commands/pending?target=pc&humanId=${h.seed.bob.id}&agentId=${h.seed.bobAgent.id}`,
+      ),
+    );
+    expect(picked).toMatchObject({ id: bobs.id, status: "picked_up" });
+  });
+
   it("failure is recorded; illegal lifecycle moves are 400; devices cannot pick up or complete", async () => {
     const created = await json<{ id: string }>(
       await phone.post("/remote/commands", { target: "pc", command: "kill", params: {} }),

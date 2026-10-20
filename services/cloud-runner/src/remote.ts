@@ -12,10 +12,11 @@ import { z } from "zod";
  * audit row and a `done` / `failed` result the device can read back.
  *
  * Only the runner's own human may command it (S.14: the vault and the billing source behind
- * every command are that human's). `pickUp` is keyed on the target, so in a shared state another
- * human's device can enqueue `{ target: "cloud" }` with no target device and this runner takes
- * the row; `authorize` refuses it (`failed`, reason `forbidden: ...`, audit row) without acting,
- * and a `start` may name no agent but the runner's. ADR 0033 records the rule.
+ * every command are that human's). `pickUp` is called with the runner's device and
+ * `ownerHumanId`, so a command another human's device enqueued (`{ target: "cloud" }` with no
+ * target device) is never taken by this runner and stays pending for that human's own runner
+ * (ADR 0041); `authorize` still refuses, on the picked-up row, a `start` naming any agent but
+ * the runner's (`failed`, reason `forbidden: ...`, audit row). ADR 0033 records the rule.
  */
 export const KillParams = z.object({
   scope: z
@@ -89,6 +90,7 @@ export class RemoteCommandWatcher {
     for (;;) {
       const row = await this.deps.store.remoteCommand.pickUp("cloud", {
         deviceId: this.deps.runnerDeviceId,
+        ownerHumanId: this.deps.humanId,
       });
       if (!row) return n;
       n++;

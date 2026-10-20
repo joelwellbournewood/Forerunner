@@ -55,7 +55,7 @@ value.
 | `description` | string | One line, shown in the extensions panel. |
 | `default_tier` | `haiku\|sonnet\|opus\|fable` | Starting rung; the runtime applies the project ceiling and `startingTier` from the ladder. The loader does not check the ceiling. |
 | `default_effort`, `max_effort` | `low\|medium\|high\|xhigh\|max` | `default_effort` must not exceed `max_effort`. The runtime raises effort by tier (coder: high at tier 2+) and the project slider, never above `max_effort`. |
-| `allowed_tools` | string[] | The ceiling of tools a token for this specialist may contain. Forerunner tool names (validated against `ToolRegistry.names()` when the loader is given them) or Claude Code tools as `cc:Read`, `cc:Edit`, `cc:Bash` (validated against `KNOWN_CLAUDE_CODE_TOOLS`). `*` is rejected anywhere. |
+| `allowed_tools` | string[] | The ceiling of tools a token for this specialist may contain. Forerunner tool names (validated against `ToolRegistry.names()` when the loader is given them) or Claude Code tools as `cc:Read`, `cc:Edit`, `cc:Bash` (validated against `KNOWN_CLAUDE_CODE_TOOLS`). `*` is rejected anywhere. The names are the Agent SDK driver's; on the loop driver each `cc:` name becomes its built-in equivalent or is dropped with an audit row (see "How `allowed_tools` reach a run", ADR 0043). |
 | `allowed_domains` | string[] | Hosts the specialist always needs (`api.example.com`, `*.example.com`). Project grants add to this; `*` is rejected. |
 | `max_budget_usd` | number > 0 | Cap per run; the runtime takes `min(brief budget, this, parent remaining)`. |
 | `max_turns` | integer | Model-call cap per run (defence in depth under the session step cap). |
@@ -112,6 +112,34 @@ otherwise `appDirs().data/registry` (`app`), the bundled copy the installer and
 `readSpecialistFile` and `readPromptDefFile` are exported for tools that validate one file;
 `validateSpecialistText(text, file, registryDir, location, opts)` runs the same checks on
 content that is not on disk yet (proposals use it before writing).
+
+### How `allowed_tools` reach a run (`src/registry/tools.ts`, ADR 0043)
+
+The registry is driver-neutral and names Claude Code tools because the Agent SDK driver (ADR
+0004) offers that tool set as is. The daemon's session path runs specialists on the in-process
+loop driver, whose tools are Forerunner's own (`read_file`, `write_file`, `list_dir`,
+`run_command`, bridged extension tools), so `composeRuntime` decides the driver next to the one
+it builds (`specialistDriver`, "loop" today) and `specialistSpecFrom(registry, { driver, tools,
+commands, onDropped })` maps each runnable entry's `allowed_tools` accordingly:
+
+| Registry name | Loop driver (`CLAUDE_CODE_TOOL_EQUIVALENTS`) | SDK driver |
+| --- | --- | --- |
+| `cc:Read`, `cc:NotebookRead` | `read_file` | as written |
+| `cc:Write`, `cc:Edit`, `cc:MultiEdit`, `cc:NotebookEdit` | `write_file` | as written |
+| `cc:Glob`, `cc:Grep`, `cc:LS` | `list_dir` | as written |
+| `cc:Bash` | `run_command`, only when `requires_sandbox: true` or the composition sandboxes every command (the daemon always does) | as written |
+| `cc:WebFetch`, `cc:WebSearch`, `cc:Task`, `cc:TodoWrite` | dropped (`unmapped`) | as written |
+| a Forerunner name (`ext:<id>:<tool>`, `run_command`, ...) | itself while the tool is registered at the lookup, else dropped (`unavailable`) | itself |
+
+`loopToolsFor(allowedTools, { available, commands })` returns `{ tools, dropped }`; order follows
+the entry, duplicates collapse, and nothing is added that the entry did not name (`cc:Read`
+never yields `write_file`). Every dropped name is an audit row `registry.tool_unmapped` naming
+the specialist and the tool, once per pair for the life of the composition: for every runnable
+entry at compose, and for a bridged tool that has gone at a later run start. The run token
+carries the mapped names, so the hooks check what the driver calls. The eval runner uses the
+same function (`run_command` only with a sandbox port) and logs its drops. A specialist that
+needs the web on the loop driver must name a bridged fetch tool by its Forerunner name; its
+`cc:WebFetch` is dropped there and offered on the SDK driver only.
 
 ### prompt_version: what every run records
 
@@ -267,6 +295,21 @@ agree across platforms.
   `maxPromptLines`) is refused with nothing on disk and the name free afterwards, an existing
   file is `claim_conflict` and never overwritten, a stale `proposal.json` makes the call take
   back its own file, and a description with a carriage return round-trips.
+- `packages/runtime/test/registry-tools.test.ts` (22): `loopToolsFor` entry by entry (every
+  known Claude Code tool mapped or listed as one without an equivalent), the read tools never
+  yielding a write tool, an unknown `cc:Foo` dropped with its reason, the command gate for
+  `cc:Bash` and `run_command`, bridged names while registered, order and duplicates;
+  `specialistSpecFrom` on a registry copy whose widget names `cc:Foo` (loop: built-ins and the
+  drop reported; sdk and no options: names as written; `requires_sandbox` deciding
+  `run_command`); `droppedToolAudit` writing one `registry.tool_unmapped` row per pair and
+  turning a failed write into a warning.
+- `packages/runtime/test/cc-tools-wiring.test.ts` (3): `composeRuntime` on a registry copy whose
+  coder names `cc:Read`, `cc:Edit`, `cc:Glob`: the executor's spec carries `read_file`,
+  `write_file`, `list_dir` with the registry untouched, one task through the
+  `LoopTaskExecutor` with the fake provider calling `read_file`, `write_file` and
+  `run_command` (the first two allowed, the command refused by the hooks, an audit row each),
+  and the researcher's and a widget's `cc:WebFetch` dropped at compose with one audit row per
+  specialist and tool.
 - `evals/test/checks.test.ts` (8): every check kind, flags, final-text targets, JSON pointer
   edge cases, command runs via argv in the task directory, injected runner, escaping paths.
 - `evals/test/runner.test.ts` (10): summary math, task status derivation, fixture and grader
@@ -286,8 +329,10 @@ Run: `pnpm vitest run --project unit packages/runtime/test/registry.test.ts eval
 - Only coder and researcher have eval sets. tester, reviewer, science-evaluator, designer,
   writer-marketing, data-analyst, migration-specialist and ops-deploy are active by spec
   decision with `evalTaskCount: 0`; each needs a set before its prompt is changed.
-- `packages/runtime/src/index.ts` does not yet re-export `./registry/index.ts`; import from
-  `@forerunner/runtime/registry/index` (or the sub-files) until it does.
+- The cloud runner (`services/cloud-runner/src/runner.ts`) composes its own executor with
+  `specialistSpecFrom(rt.registry)` without options, so on that path the `cc:` names reach the
+  token as written and a registry coder has no built-in tools; it should take `rt.specialists`
+  from the composed runtime (ADR 0043).
 - The approval command (human approval, moving `proposed/<name>` to `specialists/`, recording
   the eval result in `proposal.json`) lands with phase 3; `proposeSpecialist` only writes the
   proposal and returns the required steps. Until it exists, a pending proposal (valid or
@@ -320,6 +365,9 @@ Run: `pnpm vitest run --project unit packages/runtime/test/registry.test.ts eval
   runtime on an agent's request) is reported in `invalidProposals` and left out. Proposals
   are validated as the exact bytes before the write and claimed with an exclusive create, so
   a model can neither brick the registry nor lock a name with an invalid proposal.
+- The registry names Claude Code tools and each driver maps them (ADR 0043): the loop driver's
+  table in `src/registry/tools.ts`, the choice of driver in the composition root, `run_command`
+  only under a sandbox promise, every dropped name an audit row.
 
 ## Requirement IDs covered
 
@@ -328,4 +376,6 @@ phase 3), C.6 (depth and parent budget stated in the PM prompt; enforced by the 
 D.4 (per-specialist defaults), D.5 and U.7 (prompt_version), D.11, D.12, D.13, D.14, D.15
 (defaults in the registry files), D.6 and D.21 (eval sets the model watch will use), H.1 to
 H.4 and H.6 (critic prompt), H.7 (seeded-defect variants and the expected-output driver),
-P.7 (this file), P.14 (doc drift check in the critic prompt).
+P.7 (this file), P.14 (doc drift check in the critic prompt), S.1 and S.3 (the `cc:` names
+mapped to the tools the run token carries, nothing widened, every dropped name an audit row;
+`packages/runtime/test/registry-tools.test.ts`, `packages/runtime/test/cc-tools-wiring.test.ts`).

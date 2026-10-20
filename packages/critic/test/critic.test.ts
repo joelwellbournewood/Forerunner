@@ -2,6 +2,8 @@ import { ForerunnerError } from "@forerunner/platform";
 import { ContextPipeline, type RunEvent, type SignedToken } from "@forerunner/runtime";
 import { textReply, toolReply } from "@forerunner/testenv";
 import { describe, expect, it, vi } from "vitest";
+import { VERDICT_ADJUSTED_AUDIT_TOOL } from "../src/critic.ts";
+import { ESCALATE_RULE } from "../src/rules.ts";
 import { SUBMIT_REVIEW_TOOL } from "../src/schema.ts";
 import type { CheckCommand, CheckRunner } from "../src/tier0.ts";
 import type { ReviewEvidence, ReviewInput } from "../src/types.ts";
@@ -208,17 +210,128 @@ describe("CriticService: checks run at tier 2+ (H.2)", () => {
 });
 
 describe("CriticService: rules in code", () => {
-  it("medium confidence never accepts: the verdict becomes escalate and the change is recorded", async () => {
+  it("medium confidence accepts a clean result (ADR 0042); the stored confidence sits above the H.4 line", async () => {
     const w = await world({
       replies: [submitReply({ confidence: "medium", grade: 95 }), closingReply()],
     });
     try {
       const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
-      expect(out.verdict).toBe("escalate");
-      expect(out.confidence).toBeLessThan(0.6);
-      expect(out.adjustments.map((a) => a.rule)).toEqual(["low_confidence"]);
+      expect(out.verdict).toBe("accept");
+      expect(out.confidence).toBeGreaterThanOrEqual(0.6);
+      expect(out.adjustments).toEqual([]);
       const review = await w.store.review.latestForTask(w.ids.task);
-      expect(review?.verdict).toBe("escalate");
+      expect(review?.verdict).toBe("accept");
+      expect(await w.store.auditLog.list({ tool: VERDICT_ADJUSTED_AUDIT_TOOL })).toEqual([]);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("an escalate with no named ground on clean work becomes accept, with a critic.verdict_adjusted audit row and the adjustment on the event", async () => {
+    const w = await world({
+      replies: [
+        submitReply({
+          confidence: "medium",
+          grade: 86,
+          verdict: "escalate",
+          summary: "Correct against all five criteria by reading; I did not run the tests myself.",
+        }),
+        closingReply(),
+      ],
+    });
+    try {
+      const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      expect(out.verdict).toBe("accept");
+      expect(out.findings).toEqual([]);
+      expect(out.adjustments).toEqual([
+        expect.objectContaining({ rule: ESCALATE_RULE, from: "escalate", to: "accept" }),
+      ]);
+      expect(out.adjustments[0]?.reason).toContain("no escalation reason was given");
+      expect(out.evidence.some((l) => l.startsWith("escalate not qualified:"))).toBe(true);
+      const review = await w.store.review.latestForTask(w.ids.task);
+      expect(review?.verdict).toBe("accept");
+      expect(await w.store.finding.openFor(w.ids.task)).toEqual([]);
+      const audit = await w.store.auditLog.list({ tool: VERDICT_ADJUSTED_AUDIT_TOOL });
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({
+        session_id: w.ids.session,
+        run_id: out.runId,
+        agent_id: w.ids.critic,
+        human_id: w.ids.human,
+        allowed: true,
+        result_summary: "verdict accept (model said escalate)",
+      });
+      const summary = JSON.parse(audit[0]?.input_summary ?? "{}") as {
+        reviewId: string;
+        adjustments: { rule: string; from: string; to: string }[];
+      };
+      expect(summary.reviewId).toBe(review?.id);
+      expect(summary.adjustments).toEqual([
+        expect.objectContaining({ rule: ESCALATE_RULE, from: "escalate", to: "accept" }),
+      ]);
+      // The evidence never enters the audit row.
+      expect(audit[0]?.input_summary).not.toContain("export function clamp");
+      const events = await w.store.event.list(w.ids.session);
+      const ev = events.find((e) => e.type === "critic.review");
+      expect(ev?.payload).toMatchObject({
+        verdict: "accept",
+        adjustments: [{ rule: ESCALATE_RULE, from: "escalate", to: "accept" }],
+      });
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("an escalate that names an item the evidence lists as unavailable stands; one that names present material does not", async () => {
+    const w = await world({
+      replies: [
+        submitReply(
+          {
+            confidence: "medium",
+            grade: 80,
+            verdict: "escalate",
+            escalation: { reason: "evidence_missing", detail: "the test output" },
+          },
+          { when: { lastUserIncludes: "# Review request" } },
+        ),
+        submitReply(
+          {
+            confidence: "medium",
+            grade: 80,
+            verdict: "escalate",
+            escalation: { reason: "evidence_missing", detail: "the fixture text" },
+          },
+          { when: { lastUserIncludes: "# Review request" } },
+        ),
+        closingReply(),
+      ],
+    });
+    try {
+      const listed = await w.critic.review(
+        taskInput(
+          w.ids.task,
+          1,
+          baseEvidence({
+            testOutput: undefined,
+            unavailable: [{ name: "test output", reason: "the runner's log was rotated" }],
+          }),
+        ),
+        w.ctx(),
+      );
+      expect(listed.verdict).toBe("escalate");
+      expect(listed.adjustments).toEqual([]);
+      expect(listed.evidence).toContain("escalate: evidence not available: test output");
+      const sent = String(w.provider.calls[0]?.request.messages[0]?.content);
+      expect(sent).toContain(
+        "## Evidence not available\n- test output: the runner's log was rotated",
+      );
+
+      const task2 = await w.newTask();
+      const complete = await w.critic.review(taskInput(task2.id), w.ctx());
+      expect(complete.verdict).toBe("accept");
+      expect(complete.adjustments.map((a) => a.rule)).toEqual([ESCALATE_RULE]);
+      expect(complete.adjustments[0]?.reason).toContain('"the fixture text" as missing');
+      expect(complete.adjustments[0]?.reason).toContain("the evidence is complete");
     } finally {
       await w.close();
     }
@@ -337,18 +450,74 @@ describe("CriticService: rules in code", () => {
   it("a revise or escalate from the model with no named finding still leaves one thing to act on", async () => {
     const w = await world({
       replies: [
-        submitReply({ verdict: "escalate", grade: 40, summary: "Wrong approach entirely." }),
+        submitReply(
+          { verdict: "escalate", grade: 40, summary: "Wrong approach entirely." },
+          { when: { lastUserIncludes: "# Review request" } },
+        ),
+        submitReply(
+          { verdict: "revise", grade: 60, summary: "Needs another pass." },
+          { when: { lastUserIncludes: "# Review request" } },
+        ),
         closingReply(),
       ],
     });
     try {
+      // An escalate with no finding and no ground is the verdict the findings and the grade
+      // justify: revise (grade 40 cannot accept), with the summary as the thing to act on.
       const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
-      expect(out.verdict).toBe("escalate");
-      expect(out.adjustments).toEqual([]);
+      expect(out.verdict).toBe("revise");
+      expect(out.adjustments.map((a) => a.rule)).toEqual([
+        ESCALATE_RULE,
+        "grade_verdict_consistency",
+      ]);
       expect(out.findings).toEqual([
         expect.objectContaining({ severity: "medium", description: "Wrong approach entirely." }),
       ]);
       expect(await w.store.finding.openFor(w.ids.task)).toHaveLength(1);
+      const task2 = await w.newTask();
+      const revise = await w.critic.review(taskInput(task2.id), w.ctx());
+      expect(revise.verdict).toBe("revise");
+      expect(revise.adjustments).toEqual([]);
+      expect(revise.findings).toEqual([
+        expect.objectContaining({ severity: "medium", description: "Needs another pass." }),
+      ]);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("an escalate on a major finding stands, and so does one at low confidence (H.4), each with its ground in the evidence", async () => {
+    const w = await world({
+      replies: [
+        submitReply(
+          {
+            verdict: "escalate",
+            grade: 50,
+            confidence: "high",
+            findings: [{ severity: "major", what: "The migration is incomplete" }],
+          },
+          { when: { lastUserIncludes: "# Review request" } },
+        ),
+        submitReply(
+          { verdict: "escalate", grade: 90, confidence: "low", summary: "Unsure." },
+          { when: { lastUserIncludes: "# Review request" } },
+        ),
+        closingReply(),
+      ],
+    });
+    try {
+      const major = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      expect(major.verdict).toBe("escalate");
+      expect(major.adjustments).toEqual([]);
+      expect(major.evidence).toContain("escalate: a high finding is open");
+      const task2 = await w.newTask();
+      const low = await w.critic.review(taskInput(task2.id), w.ctx());
+      expect(low.verdict).toBe("escalate");
+      expect(low.adjustments).toEqual([]);
+      expect(low.findings).toEqual([]);
+      expect(low.evidence.some((l) => l.startsWith("escalate: confidence 0.20 is below"))).toBe(
+        true,
+      );
     } finally {
       await w.close();
     }

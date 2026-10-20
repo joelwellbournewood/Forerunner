@@ -29,6 +29,7 @@ import {
   PrTaskExecutor,
   scheduleMirror,
 } from "@forerunner/capabilities";
+import { criticSettingsOf } from "@forerunner/critic";
 import {
   type AppDirs,
   appDirs,
@@ -38,12 +39,15 @@ import {
   ForerunnerError,
   join,
   log,
+  osFacts,
   type Platform,
   safeSegment,
   systemClock,
 } from "@forerunner/platform";
 import {
+  type DeviceRow,
   type JsonValue,
+  type NewAuditLog,
   openStore,
   REVIEW_VERDICTS,
   type ReviewVerdict,
@@ -119,7 +123,16 @@ import {
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
 import { ProviderRegistry } from "../provider/registry.ts";
 import type { ModelProvider, ModelTier } from "../provider/types.ts";
-import { loadRegistry, type Registry, resolveRegistryDir } from "../registry/index.ts";
+import {
+  type DroppedTool,
+  loadRegistry,
+  loopToolsFor,
+  type Registry,
+  resolveRegistryDir,
+  type SpecialistDef,
+  type SpecialistDriver,
+} from "../registry/index.ts";
+import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
 import { detectSandboxEngine, type EngineDetection } from "../sandbox/detect.ts";
 import type { RunFn, WhichFn } from "../sandbox/types.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
@@ -131,6 +144,7 @@ import { composeUpdateManager } from "../update/compose.ts";
 import { readUpdateConfig, UpdateConfig } from "../update/config.ts";
 import type { UpdateManager } from "../update/install.ts";
 import type { Restarter } from "../update/ports.ts";
+import { SchemaSync } from "../update/sync.ts";
 import { pricingFor, StateLedgerStore, stateSources } from "../wiring/billing-ports.ts";
 import {
   BusIndicator,
@@ -144,6 +158,7 @@ import {
   notificationEmailPort,
   SecretCheckedChannel,
 } from "../wiring/notification-ports.ts";
+import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
 import { DetectingSandboxPort } from "./sandbox-port.ts";
@@ -235,6 +250,28 @@ export interface ComposeOptions {
     projectsRoot?: string;
     limits?: Partial<DataLimits>;
   };
+  /**
+   * The schema sync gate's view of this install (tests): the schema version the code ships
+   * (default `MIGRATIONS.length`) and the oldest one the release supports (default 1).
+   */
+  schemaSync?: {
+    localSchemaVersion?: number;
+    minSchema?: number;
+  };
+  /**
+   * Remote commands from paired devices and the PC's presence row (spec R.4, R.8; ADR 0041).
+   * `enabled` overrides `remoteCommandsEnabled` (on when the background services run and the
+   * state is shared, i.e. not a `sqlite:` URL; `FORERUNNER_REMOTE_COMMANDS=1|0` overrides too);
+   * `pollMs` (`FORERUNNER_REMOTE_POLL_MS`, default 500) is the command poll, `heartbeatMs`
+   * (`FORERUNNER_PRESENCE_HEARTBEAT_MS`, default 60 000) the desktop heartbeat, `deviceName`
+   * (`FORERUNNER_DEVICE_NAME`, default the host name) names the daemon's device row.
+   */
+  remote?: {
+    enabled?: boolean;
+    pollMs?: number;
+    heartbeatMs?: number;
+    deviceName?: string;
+  };
 }
 
 /** The runtime bus's `session` events as `startSession` emits them. */
@@ -262,6 +299,27 @@ export function osNotifierEnabled(
   return config !== null;
 }
 
+/**
+ * Whether the daemon consumes `target: "pc"` remote commands and heartbeats its desktop row:
+ * only when the background services run; then `override` (tests), else
+ * `FORERUNNER_REMOTE_COMMANDS` ("1" on, "0" off), else on exactly when the state is shared (a
+ * phone reaches the daemon only through the state service over a shared Postgres; a local
+ * `sqlite:` state has no remote devices).
+ */
+export function remoteCommandsEnabled(
+  env: NodeJS.ProcessEnv,
+  stateUrl: string,
+  services: boolean,
+  override?: boolean,
+): boolean {
+  if (!services) return false;
+  if (override !== undefined) return override;
+  const flag = env.FORERUNNER_REMOTE_COMMANDS?.trim();
+  if (flag === "1") return true;
+  if (flag === "0") return false;
+  return !stateUrl.trim().toLowerCase().startsWith("sqlite");
+}
+
 /** What a manual mirror sync came back with: the run, or the approval it waits on. */
 export type MirrorSyncOutcome =
   | { state: "done"; result: MirrorRunResult }
@@ -280,6 +338,10 @@ export interface RuntimeApp {
   providers: ProviderRegistry;
   provider: ModelProvider | null;
   registry: Registry;
+  /** The driver specialists run on; decides how the registry's `cc:` tool names are mapped (ADR 0043). */
+  specialistDriver: SpecialistDriver;
+  /** A runnable registry entry as the executor sees it: `allowed_tools` mapped for `specialistDriver`. */
+  specialists: (name: string) => SpecialistSpec | undefined;
   tools: ToolRegistry;
   executor: TaskExecutor;
   runner: SessionRunner;
@@ -312,6 +374,13 @@ export interface RuntimeApp {
   updates: UpdateManager;
   updateConfig: UpdateConfig;
   restarter: Restarter;
+  /**
+   * The schema sync gate (spec M, last bullet): evaluated at compose, by every peer feed and
+   * after an update's health check; a session start, `syncApprovals`, `mirrorSync`, the
+   * scheduler's mirror runs and the peer feed are refused (`unavailable`) while it is paused.
+   * The model watch and the memory consolidation are local jobs and are not held.
+   */
+  schemaSync: SchemaSync;
   /** Weekly model watch (spec D) on the registered providers. */
   modelWatch: ModelWatch;
   /**
@@ -354,6 +423,17 @@ export interface RuntimeApp {
    * `shells.ts` says which do); the desktop channel falls back to the OS notifier at zero.
    */
   shells: ShellPresence;
+  /**
+   * Remote control of this PC (spec R.4, R.8; ADR 0041): the daemon's own `desktop` device
+   * row, the watcher that executes the phone's `target: "pc"` commands and the heartbeat the
+   * cloud runner's PC-wins rule reads. All null when `remoteCommandsEnabled` said no.
+   */
+  remote: {
+    enabled: boolean;
+    device: DeviceRow | null;
+    watcher: RemoteCommandWatcher | null;
+    presence: DesktopPresence | null;
+  };
   /** The tool registry a run starts with: built-in tools plus the bridged extension tools. */
   toolsForRun(): ToolRegistry;
   /**
@@ -379,24 +459,115 @@ export interface RuntimeApp {
 
 const DEFAULT_SESSION_CAP_USD_MICRO = 6_250_000; // CHF 5 at 0.8 CHF/USD
 
+/**
+ * How `specialistSpecFrom` turns a registry entry's `allowed_tools` into the names a run token
+ * carries (ADR 0043). The registry names Claude Code tools (`cc:Read`, ...) for the Agent SDK
+ * driver; on the loop driver the token gets their built-in equivalents (`loopToolsFor`),
+ * resolved against the tools registered at the moment of the lookup (bridged extension tools
+ * come and go), so the hooks check the names the driver actually calls.
+ */
+export interface SpecialistSpecOptions {
+  /** The driver the executor runs specialists on: "sdk" keeps `cc:` names as written. */
+  driver: SpecialistDriver;
+  /** The loop driver's tool names right now (`toolsForRun().names()`). */
+  tools: () => readonly string[];
+  /** Whether the entry may get `run_command` (`cc:Bash`); default: when it requires a sandbox. */
+  commands?: (d: SpecialistDef) => boolean;
+  /** Told at every lookup about each name the loop driver will not offer; never silent. */
+  onDropped?: (specialist: string, drop: DroppedTool) => void;
+}
+
+/**
+ * The registry's runnable entries as the executor's `SpecialistSpec`s. Without options the
+ * tools are the registry's names as written (the SDK driver's form); with them, the driver
+ * named decides (see `SpecialistSpecOptions`).
+ */
 export function specialistSpecFrom(
   registry: Registry,
+  opts?: SpecialistSpecOptions,
 ): (name: string) => SpecialistSpec | undefined {
   return (name) => {
     const d = registry.specialists.get(name);
     if (!d?.runnable) return undefined;
+    let allowedTools = [...d.allowed_tools];
+    if (opts?.driver === "loop") {
+      const mapping = loopToolsFor(d.allowed_tools, {
+        available: opts.tools(),
+        commands: opts.commands ? opts.commands(d) : d.requires_sandbox,
+      });
+      for (const drop of mapping.dropped) opts.onDropped?.(d.name, drop);
+      allowedTools = mapping.tools;
+    }
     return {
       name: d.name,
       prompt: d.prompt,
       promptVersion: d.promptVersion,
       defaultTier: d.default_tier,
       defaultEffort: d.default_effort,
-      allowedTools: d.allowed_tools,
+      allowedTools,
       allowedDomains: d.allowed_domains,
       maxBudgetUsdMicro: Math.round(d.max_budget_usd * 1_000_000),
       maxTurns: d.max_turns,
       timeoutMs: d.timeout_minutes * 60_000,
     };
+  };
+}
+
+/** The audit row kind for a registry tool the loop driver will not offer (ADR 0043). */
+export const TOOL_UNMAPPED_AUDIT = "registry.tool_unmapped";
+
+/**
+ * Audit rows for the names `specialistSpecFrom` drops: one row per specialist and tool for the
+ * life of the composition (a later lookup that drops a name already on record adds nothing),
+ * each naming the specialist and the tool, `allowed: false`, the reason as `denied_reason`.
+ * `flush()` waits for the rows in flight; compose calls it after looking every runnable entry
+ * up once, so every drop is on record before the first run.
+ */
+export function droppedToolAudit(deps: {
+  audit: { append(row: NewAuditLog): Promise<unknown> };
+  agentId: string;
+  humanId: string;
+  warn?: (message: string, context: Record<string, unknown>) => void;
+}): { onDropped: (specialist: string, drop: DroppedTool) => void; flush: () => Promise<void> } {
+  const seen = new Set<string>();
+  const pending: Promise<void>[] = [];
+  const onDropped = (specialist: string, drop: DroppedTool): void => {
+    const key = `${specialist}\n${drop.tool}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    deps.warn?.("specialist tool not offered on the loop driver", {
+      specialist,
+      tool: drop.tool,
+      reason: drop.reason,
+    });
+    pending.push(
+      deps.audit
+        .append({
+          agent_id: deps.agentId,
+          human_id: deps.humanId,
+          tool: TOOL_UNMAPPED_AUDIT,
+          input_summary: `${specialist}: ${drop.tool}`,
+          result_summary: `dropped (${drop.reason})`,
+          allowed: false,
+          denied_reason: `tool_not_allowed: ${drop.message}`,
+        })
+        .then(
+          () => undefined,
+          (e: unknown) => {
+            deps.warn?.("could not record the dropped tool", {
+              specialist,
+              tool: drop.tool,
+              error: errorMessage(e),
+            });
+          },
+        ),
+    );
+  };
+  return {
+    onDropped,
+    flush: async () => {
+      await Promise.all(pending.splice(0));
+    },
   };
 }
 
@@ -500,6 +671,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       status: "active",
       kind: "critic",
     }));
+
+  // Schema compatibility with the shared state (spec M): the store's applied migration version
+  // against the one this code ships. A mismatch pauses every sync below from here on, audits
+  // it and files one inbox item; the peer feed and the update health check re-evaluate.
+  const schemaSync = new SchemaSync({
+    store,
+    clock,
+    humanId: human.id,
+    localSchemaVersion: opts.schemaSync?.localSchemaVersion,
+    minSchema: opts.schemaSync?.minSchema,
+  });
+  await schemaSync.refresh("startup");
 
   // Model provider: injected, else Anthropic from the vault, else none (chat and sessions refuse).
   const providers = new ProviderRegistry();
@@ -715,6 +898,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   };
   const hooks = new DaemonHooks(hookDeps, gate, extensions);
   const driver = new LoopAgentDriver({ hooks, kill, clock });
+  // The driver specialists run on (ADR 0004, ADR 0043). The executor runs the in-process loop
+  // driver built above; the Agent SDK driver (the subscription path) has no session path yet.
+  // The registry names Claude Code tools and each driver maps them, so the choice is made
+  // here, next to the driver, and `specialistSpecFrom` follows it: "loop" maps `cc:` names to
+  // the built-ins, "sdk" passes them through unchanged.
+  const specialistDriver: SpecialistDriver = "loop";
 
   // Registry and tools. A run starts with the built-in tools plus whatever the enabled
   // connectors bridge at that moment; the gate covers runs already in flight.
@@ -797,7 +986,6 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   desktopController.attachExtensionRegistry(extensions);
   desktop.registerDesktopTools(tools, desktopController);
   const registry = loadRegistry(registryDir, { toolNames: tools.names() });
-  const specialists = specialistSpecFrom(registry);
   const toolsForRun = (): ToolRegistry => {
     const out = new ToolRegistry();
     for (const name of tools.names()) {
@@ -826,6 +1014,29 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       run: opts.sandboxRun,
       which: opts.sandboxWhich,
     });
+
+  // Specialists (ADR 0043): the registry entries as the executor's `SpecialistSpec`s, their
+  // `allowed_tools` mapped for the driver in use against the tools registered at each run
+  // start. `cc:Bash` yields `run_command` when the entry requires a sandbox or because every
+  // run with a worktree opens a lease on the sandbox port above and the executor pins
+  // `run_command` to it (`withSandboxedCommands`). Every name the loop driver will not offer
+  // is an audit row (`registry.tool_unmapped`) naming the specialist and the tool: once per
+  // pair, for every runnable entry before the first run, and for a bridged tool that is gone
+  // at a later run start.
+  const droppedTools = droppedToolAudit({
+    audit: store.auditLog,
+    agentId: agent.id,
+    humanId: human.id,
+    warn: (message, context) => logger.warn(message, context),
+  });
+  const specialists = specialistSpecFrom(registry, {
+    driver: specialistDriver,
+    tools: () => toolsForRun().names(),
+    commands: (d) => d.requires_sandbox || Boolean(sandboxPort),
+    onDropped: droppedTools.onDropped,
+  });
+  for (const d of registry.runnableSpecialists()) specialists(d.name);
+  await droppedTools.flush();
 
   // Estimates (spec I): learned from finished tasks in the store; cold start from the registry.
   const estimates = await EstimateModel.fromStore(store, {
@@ -895,6 +1106,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       specialists,
       memory,
       modelConfig: () => modelConfig.get(),
+      // The project's escalation ceiling (`critic_ceiling`, spec D.3): a retry climbs the
+      // ladder under it, never under the default ceiling.
+      projectCeiling: (settings) => criticSettingsOf(settings).ceiling,
       ...(worktree ? { worktreeFor: async () => worktree } : {}),
       onEvent: (taskId, ev) => {
         events.emit("run", { taskId, ev });
@@ -932,6 +1146,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     context,
     critic,
     memory,
+    schemaSync,
     // Actual versus estimate at task.finished feeds the next plan (spec I).
     onTaskFinished: ({ task, item, result, durationMs }) => {
       const planned = estimates.estimate({
@@ -972,6 +1187,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     projectId: string,
     o: { full?: boolean } = {},
   ): Promise<MirrorSyncOutcome> => {
+    await schemaSync.assertCanSync("mirror.sync");
     let running = mirrorRuns.get(projectId);
     if (!running) {
       running = mirror.sync(projectId, {
@@ -1207,8 +1423,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     ...(projectId ? {} : {}),
   });
   const startSession = async (req: StartRequest) => {
+    // The model watch and the memory consolidation are local jobs (this install's providers
+    // and this human's memory); only a session syncs with peers, so only it waits on the gate.
     if (isModelWatchRequest(req)) return modelWatch.run();
     if (isMemoryConsolidationRequest(req)) return memory.propose();
+    await schemaSync.assertCanSync("session.start");
     if (!provider)
       throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
     const project = req.projectId ? await store.project.mustGet(req.projectId) : null;
@@ -1250,9 +1469,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     return result;
   };
   // Mirror requests run the mirror, the model watch its weekly check, everything else a session.
+  // The scheduler's mirror runs go through the gate like `mirrorSync` (same audit site): a
+  // paused install keeps its schedules but no run reads the shared state or pushes to GitHub.
+  const gatedMirror: Pick<ProjectsMirror, "sync"> = {
+    sync: async (projectId, o) => {
+      await schemaSync.assertCanSync("mirror.sync");
+      return mirror.sync(projectId, o);
+    },
+  };
   const scheduler = new Scheduler({
     clock,
-    start: mirrorStartHandler(mirror, startSession, { agentId: agent.id }),
+    start: mirrorStartHandler(gatedMirror, startSession, { agentId: agent.id }),
   });
   scheduleModelWatch(scheduler, { timezone: human.timezone });
   // Weekly memory consolidation (spec G.4): report only; the human applies it from the inbox.
@@ -1266,6 +1493,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // session.start reports the scheduler's outcome; the undo of a start that only queued
       // drops the waiting request instead of killing the running session (ADR 0036).
       ...sessionCommandPorts({ scheduler, kill }),
+      // session.pause is the graceful stop: the row reads `paused` at once and a session
+      // running in this process ends at the next task boundary (the runner reads the pause
+      // message between tasks); its undo withdraws the message (wiring/session-ports.ts).
+      ...sessionPausePorts({ store, kill, agentId: agent.id, humanId: human.id }),
     },
   });
   const mirrorSchedules = new Set<string>();
@@ -1285,6 +1516,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     return [...mirrorSchedules];
   };
   const syncApprovals = async () => {
+    await schemaSync.assertCanSync("approvals.sync");
     const out = {
       extensions: await extensions.syncApprovals({ humanId: human.id }),
       modelWatch: await modelWatch.syncPendingAnswers(),
@@ -1317,15 +1549,66 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // Background services: the daemon starts them; a CLI one-shot (startServices: false) only
   // uses the composed objects and never connects a connector or ticks the scheduler.
   const services = opts.startServices !== false;
+  // Remote control of this PC (spec R.4, R.8; ADR 0032 item 4, ADR 0033 items 8b and 9, ADR
+  // 0041): on a shared state the daemon registers itself as a `desktop` device of the human,
+  // heartbeats that row (the cloud runner's PC-wins rule reads it) and polls the phone's
+  // `target: "pc"` commands. The store's pick-up is keyed on this agent's owner; the watcher
+  // checks the issuing device again and runs plans through the command registry, chat
+  // through the conversation agent, and the plain verbs through the kill switch and scheduler.
+  const remoteEnabled = remoteCommandsEnabled(env, stateUrl, services, opts.remote?.enabled);
+  let remoteDevice: DeviceRow | null = null;
+  let remoteWatcher: RemoteCommandWatcher | null = null;
+  let presence: DesktopPresence | null = null;
+  if (remoteEnabled) {
+    remoteDevice = await registerDesktopDevice({
+      store,
+      dirs,
+      humanId: human.id,
+      name: opts.remote?.deviceName ?? env.FORERUNNER_DEVICE_NAME?.trim() ?? osFacts(env).hostname,
+      platform: currentPlatform(),
+    });
+    presence = new DesktopPresence({
+      store,
+      clock,
+      deviceId: remoteDevice.id,
+      intervalMs: positiveMs(
+        opts.remote?.heartbeatMs ?? env.FORERUNNER_PRESENCE_HEARTBEAT_MS,
+        60_000,
+      ),
+    });
+    const pcDeviceId = remoteDevice.id;
+    remoteWatcher = new RemoteCommandWatcher({
+      store,
+      clock,
+      kill,
+      start: (req) => scheduler.request(req),
+      commands,
+      chat: conversation ? (req) => conversation.chat(req) : null,
+      conversationSessionId: () =>
+        conversation
+          ? conversation.conversationSessionId(agent.id, null)
+          : ensureConversationSession(store, clock, agent.id),
+      deviceId: pcDeviceId,
+      agentId: agent.id,
+      humanId: human.id,
+      pollMs: positiveMs(opts.remote?.pollMs ?? env.FORERUNNER_REMOTE_POLL_MS, 500),
+    });
+  }
   const killWatcher = new KillFileWatcher(kill, clock, dirs.runtime);
   if (services) killWatcher.start();
   mkdirSync(evalWorkRoot, { recursive: true });
   if (services) await extensions.start();
   // The command table and the reverts of temporary changes whose window is still open.
   await commands.start();
-  await syncApprovals();
+  // A paused install still composes (the updates screen is how it gets fixed); the answered
+  // approvals it would apply from the shared state wait for the resume.
+  if (schemaSync.paused) logger.warn("sync paused at compose", { ...schemaSync.status() });
+  else await syncApprovals();
   await refreshMirrorSchedules();
   if (services) scheduler.start();
+  // The PC's heartbeat and the phone's commands (only built when the services run).
+  presence?.start();
+  remoteWatcher?.start();
   // Quiet-hours holds and the daily digest are flushed on the clock; a one-shot sends at once
   // or holds in memory and never ticks.
   const stopNotifier = services ? notifier.start() : () => undefined;
@@ -1341,6 +1624,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     bridgedTools: extensions.bridgedTools().length,
     mirrors: mirrorSchedules.size,
     services,
+    remote: remoteEnabled ? (remoteDevice?.name ?? "on") : "off",
   });
 
   return {
@@ -1356,6 +1640,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     providers,
     provider,
     registry,
+    specialistDriver,
+    specialists,
     tools,
     executor,
     runner,
@@ -1380,6 +1666,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     updates: updates.manager,
     updateConfig,
     restarter,
+    schemaSync,
     modelWatch,
     modelConfig: () => modelConfig.get(),
     pricingTable: () => pricingTable,
@@ -1391,11 +1678,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     notifier,
     notifications,
     shells,
+    remote: {
+      enabled: remoteEnabled,
+      device: remoteDevice,
+      watcher: remoteWatcher,
+      presence,
+    },
     toolsForRun,
     syncApprovals,
     refreshMirrorSchedules,
     mirrorSync,
     async close() {
+      remoteWatcher?.stop();
+      presence?.stop();
       scheduler.stop();
       stopNotifier();
       killWatcher.stop();
@@ -1565,6 +1860,45 @@ function hostOf(url: string): string {
   } catch {
     return url;
   }
+}
+
+/** A positive integer number of milliseconds from an option or an environment value, else the default. */
+function positiveMs(value: number | string | undefined, fallback: number): number {
+  const n = typeof value === "string" ? Number(value.trim()) : value;
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+/**
+ * The principal's conversation session without a conversation agent (no model credential):
+ * the activity log a remote plan's sentence goes to. The same row `server.ts` uses.
+ */
+async function ensureConversationSession(
+  store: StateStore,
+  clock: Clock,
+  agentId: string,
+): Promise<string> {
+  const existing = await store.session.list(
+    { agent_id: agentId, trigger: "manual", summary: "conversation" } as never,
+    { limit: 1 },
+  );
+  if (existing[0]) return existing[0].id;
+  const row = await store.session.insert({
+    agent_id: agentId,
+    project_id: null,
+    trigger: "manual",
+    plan: {},
+    budget_cap_usd_micro: 0,
+    step_cap: 1_000_000,
+    spent_usd_micro: 0,
+    steps: 0,
+    started_at: clock.nowIso(),
+    status: "planned",
+    summary: "conversation",
+    handoff: {},
+    runner: "pc",
+    author_agent: agentId,
+  });
+  return row.id;
 }
 
 /**

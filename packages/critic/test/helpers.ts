@@ -24,7 +24,13 @@ import {
   type TaskRow,
   type TaskStatus,
 } from "@forerunner/state";
-import { FakeProvider, type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
+import {
+  FakeProvider,
+  type ReplyOptions,
+  type ScriptedReply,
+  textReply,
+  toolReply,
+} from "@forerunner/testenv";
 import {
   type CriticDeps,
   type CriticPromptSource,
@@ -52,7 +58,7 @@ export const CRITIC_PROMPT: CriticPromptSource = {
 /** A scripted `submit_review` call; the defaults are an unremarkable accept. */
 export function submitReply(
   input: Partial<SubmitReviewInput> = {},
-  opts: { when?: ScriptedReply["when"]; times?: number } = {},
+  opts: Pick<ReplyOptions, "when" | "times" | "ttftMs" | "totalMs"> = {},
 ): ScriptedReply {
   return toolReply(
     SUBMIT_REVIEW_TOOL,
@@ -99,6 +105,11 @@ export interface WorldOptions {
   deps?: Partial<CriticDeps>;
   /** Extra plan or summary for the session row. */
   session?: { plan?: JsonValue; summary?: string; budgetCapUsdMicro?: number };
+  /**
+   * The fake provider's latency. "none" (default) answers at once; "simulated" sleeps each
+   * reply's `ttftMs` and `totalMs` on the world's clock, so the test must `advance` it.
+   */
+  latency?: "simulated" | "none";
 }
 
 export interface World {
@@ -147,7 +158,11 @@ export async function world(opts: WorldOptions = {}): Promise<World> {
     audit,
     approvals: new AutoApprove("approved"),
   });
-  const provider = new FakeProvider({ replies: opts.replies ?? [], clock, latency: "none" });
+  const provider = new FakeProvider({
+    replies: opts.replies ?? [],
+    clock,
+    latency: opts.latency ?? "none",
+  });
   const providers = new ProviderRegistry().register(provider);
   const driver = new LoopAgentDriver({ hooks, kill, clock });
 
@@ -295,4 +310,16 @@ export function reviewOutput(over: Partial<ReviewOutput> = {}): ReviewOutput {
     lessonProposals: [],
     ...over,
   };
+}
+
+/**
+ * Polls `cond` on real timers (never the simulated clock) until it holds, for a review that
+ * must have reached the provider before the test advances the clock. Throws after about 2 s.
+ */
+export async function until(cond: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 400; i++) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(`timed out waiting for ${what}`);
 }

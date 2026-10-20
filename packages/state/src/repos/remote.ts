@@ -1,4 +1,5 @@
 import type { Clock } from "@forerunner/platform";
+import { quoteIdent } from "../db/dialect.ts";
 import type { Database } from "../db/types.ts";
 import { ENTITIES, type EntityDef } from "../schema.ts";
 import type {
@@ -53,6 +54,9 @@ export class QueueRepo extends Repository<QueueItemRow> {
   }
 }
 
+const DEVICE_TABLE = (ENTITIES.device as EntityDef).table;
+const AGENT_TABLE = (ENTITIES.agent as EntityDef).table;
+
 /** Commands from a phone or web client to a PC or cloud runner. */
 export class RemoteCommandRepo extends Repository<RemoteCommandRow> {
   constructor(db: Database, clock: Clock) {
@@ -81,29 +85,48 @@ export class RemoteCommandRepo extends Repository<RemoteCommandRow> {
   }
 
   /**
-   * Atomically take the oldest pending command for a target (optionally only ones addressed
-   * to `deviceId` or to nobody in particular). Returns undefined when the queue is empty.
+   * Atomically take the oldest pending command for a target. Options narrow the queue:
+   * `deviceId` takes only commands addressed to that device or to nobody in particular;
+   * `ownerHumanId` only commands whose issuing device belongs to that human; `agentId` only
+   * commands whose issuing device belongs to the human who owns that agent (the runner's own
+   * agent), so on a shared state another human's phone can never hand this runner a command
+   * (ADR 0033 item 8b, ADR 0041). The owner filters run in SQL on both dialects (a subquery
+   * on `device.owner_human_id`, through `agent` for `agentId`), so a command of another human
+   * stays `pending` for that human's own runner instead of being taken and failed here. A
+   * revoked device of the owner is still picked up: the runner refuses it with a visible
+   * `failed` result and an audit row rather than leaving the row pending for ever. Returns
+   * undefined when nothing matches.
    */
   async pickUp(
     target: RemoteTarget,
-    opts: { deviceId?: string; now?: string } = {},
+    opts: { deviceId?: string; ownerHumanId?: string; agentId?: string; now?: string } = {},
   ): Promise<RemoteCommandRow | undefined> {
     const now = opts.now ?? this.clock.nowIso();
-    const deviceSql = opts.deviceId
-      ? ' AND ("target_device_id" IS NULL OR "target_device_id" = ?)'
-      : "";
-    const deviceParams = opts.deviceId ? [opts.deviceId] : [];
+    let filterSql = "";
+    const filterParams: unknown[] = [];
+    if (opts.deviceId) {
+      filterSql += ' AND ("target_device_id" IS NULL OR "target_device_id" = ?)';
+      filterParams.push(opts.deviceId);
+    }
+    if (opts.ownerHumanId) {
+      filterSql += ` AND "device_id" IN (SELECT "id" FROM ${quoteIdent(DEVICE_TABLE)} WHERE "owner_human_id" = ?)`;
+      filterParams.push(opts.ownerHumanId);
+    }
+    if (opts.agentId) {
+      filterSql += ` AND "device_id" IN (SELECT "d"."id" FROM ${quoteIdent(DEVICE_TABLE)} "d" JOIN ${quoteIdent(AGENT_TABLE)} "a" ON "a"."owner_human_id" = "d"."owner_human_id" WHERE "a"."id" = ?)`;
+      filterParams.push(opts.agentId);
+    }
     for (let attempt = 0; attempt < 5; attempt++) {
       const [row] = await this.updateWhere(
         { status: "picked_up", picked_up_at: now },
-        `"id" = (SELECT "id" FROM ${this.qt} WHERE "status" = 'pending' AND "target" = ?${deviceSql}
+        `"id" = (SELECT "id" FROM ${this.qt} WHERE "status" = 'pending' AND "target" = ?${filterSql}
                  ORDER BY "created_at", "id" LIMIT 1) AND "status" = 'pending'`,
-        [target, ...deviceParams],
+        [target, ...filterParams],
       );
       if (row) return row;
       const [next] = await this.db.query<{ id: string }>(
-        `SELECT "id" FROM ${this.qt} WHERE "status" = 'pending' AND "target" = ?${deviceSql} LIMIT 1`,
-        [target, ...deviceParams],
+        `SELECT "id" FROM ${this.qt} WHERE "status" = 'pending' AND "target" = ?${filterSql} LIMIT 1`,
+        [target, ...filterParams],
       );
       if (!next) return undefined;
     }

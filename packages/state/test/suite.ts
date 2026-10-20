@@ -1254,6 +1254,61 @@ export function defineStateSuite(target: SuiteTarget): void {
         expect(await store.queue.pending(s.project.id)).toEqual([]);
       });
 
+      it("consume checks the version it was given and never takes a dismissed item; inside a transaction a refused item rolls the batch back", async () => {
+        const note = await store.queue.enqueue({
+          project_id: s.project.id,
+          human_id: s.human.id,
+          kind: "note",
+          text: "note",
+          priority: 3,
+        });
+        const gone = await store.queue.enqueue({
+          project_id: s.project.id,
+          human_id: s.human.id,
+          kind: "correction",
+          text: "gone",
+          priority: 2,
+        });
+        // A version the caller did not read (the item was edited since) is a conflict.
+        await expectCode(
+          store.queue.consume(note.id, note.version + 1, s.session.id),
+          "version_conflict",
+        );
+        expect(await store.queue.mustGet(note.id)).toMatchObject({
+          status: "queued",
+          version: 1,
+          consumed_by_session: null,
+        });
+        // Dismissed is final: the workflow graph refuses the consume before any write.
+        const dismissed = await store.queue.dismiss(gone.id, gone.version);
+        await expectCode(
+          store.queue.consume(gone.id, dismissed.version, s.session.id),
+          "validation",
+        );
+        expect(await store.queue.mustGet(gone.id)).toMatchObject({
+          status: "dismissed",
+          consumed_by_session: null,
+        });
+        // The runner consumes a brief's items in one transaction: a refused item the caller
+        // does not catch rolls the already consumed ones back.
+        await expectCode(
+          store.transaction(async (tx) => {
+            await tx.queue.consume(note.id, note.version, s.session.id);
+            await tx.queue.consume(gone.id, dismissed.version, s.session.id);
+          }),
+          "validation",
+        );
+        expect(await store.queue.mustGet(note.id)).toMatchObject({ status: "queued", version: 1 });
+        expect(await store.queue.pending(s.project.id)).toHaveLength(1);
+        const consumed = await store.queue.consume(note.id, note.version, s.session.id);
+        expect(consumed).toMatchObject({
+          status: "consumed",
+          consumed_by_session: s.session.id,
+          version: 2,
+        });
+        expect(await store.queue.pending(s.project.id)).toEqual([]);
+      });
+
       it("remote command pick-up is atomic: concurrent pickers get it exactly once", async () => {
         const key = ["pk-", "B".repeat(40)].join(""); // not-a-secret
         const phone = await store.device.register({
@@ -1334,6 +1389,81 @@ export function defineStateSuite(target: SuiteTarget): void {
         expect((await store.remoteCommand.pending("cloud")).map((c) => c.command)).toEqual([
           "session.start",
         ]);
+      });
+
+      it("pickUp with an owner filter takes only commands issued by the owner's devices (ADR 0033 8b)", async () => {
+        const key = ["pk-", "D".repeat(40)].join(""); // not-a-secret
+        const phoneA = await store.device.register({
+          owner_human_id: s.human.id,
+          name: "Ada's phone",
+          platform: "android",
+          public_key: `${key}a`,
+          kind: "phone",
+        });
+        const phoneB = await store.device.register({
+          owner_human_id: s.human2.id,
+          name: "Bob's phone",
+          platform: "android",
+          public_key: `${key}b`,
+          kind: "phone",
+        });
+        const revokedA = await store.device.register({
+          owner_human_id: s.human.id,
+          name: "Ada's old phone",
+          platform: "android",
+          public_key: `${key}r`,
+          kind: "phone",
+        });
+        await store.device.revoke(revokedA.id, revokedA.version);
+        // Bob's command is the oldest; without the filter it would be taken first.
+        const fromB = await store.remoteCommand.enqueue({
+          device_id: phoneB.id,
+          target: "pc",
+          command: "kill",
+        });
+        await clock.advance(1_000);
+        const fromA = await store.remoteCommand.enqueue({
+          device_id: phoneA.id,
+          target: "pc",
+          command: "start",
+        });
+        await clock.advance(1_000);
+        const fromRevoked = await store.remoteCommand.enqueue({
+          device_id: revokedA.id,
+          target: "pc",
+          command: "stop",
+        });
+        // By the owner: Ada's runner sees Ada's commands, Bob's stays pending for Bob's runner.
+        expect((await store.remoteCommand.pickUp("pc", { ownerHumanId: s.human.id }))?.id).toBe(
+          fromA.id,
+        );
+        // A revoked device of the owner is still handed over (the runner refuses it visibly).
+        expect((await store.remoteCommand.pickUp("pc", { ownerHumanId: s.human.id }))?.id).toBe(
+          fromRevoked.id,
+        );
+        expect(
+          await store.remoteCommand.pickUp("pc", { ownerHumanId: s.human.id }),
+        ).toBeUndefined();
+        expect((await store.remoteCommand.mustGet(fromB.id)).status).toBe("pending");
+        // By the agent: the owner is resolved through agent.owner_human_id in SQL.
+        expect(await store.remoteCommand.pickUp("pc", { agentId: s.alice.id })).toBeUndefined();
+        expect((await store.remoteCommand.pickUp("pc", { agentId: s.bob.id }))?.id).toBe(fromB.id);
+        // An unknown agent matches nothing; a device filter combines with the owner filter.
+        const later = await store.remoteCommand.enqueue({
+          device_id: phoneA.id,
+          target: "pc",
+          target_device_id: phoneB.id,
+          command: "pause",
+        });
+        expect(
+          await store.remoteCommand.pickUp("pc", { agentId: "no-such-agent" }),
+        ).toBeUndefined();
+        expect(
+          await store.remoteCommand.pickUp("pc", { ownerHumanId: s.human.id, deviceId: phoneA.id }),
+        ).toBeUndefined();
+        expect((await store.remoteCommand.pickUp("pc", { ownerHumanId: s.human.id }))?.id).toBe(
+          later.id,
+        );
       });
     });
 

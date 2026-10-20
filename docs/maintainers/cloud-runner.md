@@ -250,9 +250,10 @@ Each command gets a `done` / `failed` result the device can read back and an aud
 `denied_reason`), and nothing is stopped or started. A `start` whose `params.agentId` is not the
 runner's agent is refused the same way, and `runSession` asserts the agent id again before any
 session exists, so no path (remote, inbox, email, manual) can run another agent on this human's
-vault and billing source (S.14). The store's `pickUp` is keyed on the target only, so in a
-shared state another human's `{ target: "cloud" }` command without a target device is still
-taken by this runner and failed instead of reaching its own runner; see "Known issues".
+vault and billing source (S.14). `pickUp` is called with the runner's device and its human
+(`ownerHumanId`, ADR 0041), so in a shared state another human's `{ target: "cloud" }` command
+without a target device is never taken by this runner: it stays pending for that human's own
+runner.
 
 ### Email watch
 
@@ -384,13 +385,9 @@ on a real host and a real mailbox is pending the items in `docs/status/BLOCKERS.
 
 ## Known issues
 
-- `RemoteCommandRepo.pickUp` (packages/state) filters on the target and the target device only,
-  not on the issuing device's owner. On a shared state with several humans, a `{ target:
-  "cloud" }` command without a target device is taken by whichever runner polls first; a
-  runner of another human fails it (`forbidden: device of another human`, above) instead of
-  leaving it for the right runner, so the human sees `failed` and must address their own runner
-  device. The fix is an owner filter in `pickUp` (join `device.owner_human_id`), outside this
-  service; until then the phone should set `targetDeviceId` to its runner's device.
+- A `{ target: "cloud" }` command from a human who has no cloud runner stays `pending` for
+  ever (no runner owns it); the phone shows it as pending until the human cancels it. Refusing
+  it at enqueue needs the state service to know which humans run a cloud runner (ADR 0041).
 - The PC daemon does not yet heartbeat a `desktop` device row; until it does, an active
   `session` with `runner: "pc"` is what keeps a working PC ahead of the runner, and a PC that
   is idle between sessions looks offline. The state service stamps `last_seen` for devices

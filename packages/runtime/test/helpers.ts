@@ -29,6 +29,8 @@ export interface ScriptReply {
   tools?: { name: string; input: Record<string, unknown> }[];
   usage?: Partial<Usage>;
   ttftMs?: number;
+  /** Time to the end of the content; the remainder after `ttftMs` is slept before message_end. */
+  totalMs?: number;
   error?: string;
 }
 
@@ -71,6 +73,9 @@ export class ScriptedProvider implements ModelProvider {
       yield { type: "tool_use_start", id, name: t.name };
       yield { type: "tool_use_delta", id, partial_json: JSON.stringify(t.input) };
       yield { type: "tool_use_end", id, input: t.input };
+    }
+    if (r.totalMs !== undefined && r.totalMs > (r.ttftMs ?? 0)) {
+      await this.clock.sleep(r.totalMs - (r.ttftMs ?? 0), req.signal);
     }
     yield {
       type: "message_end",
@@ -248,4 +253,16 @@ export function registry(): ToolRegistry {
     .register(writeTool)
     .register(deleteRepoTool)
     .register(secretTool);
+}
+
+/**
+ * Polls `cond` on real timers (never the simulated clock) until it holds, for a run that must
+ * have reached the provider before the test advances the clock. Throws after about 2 s.
+ */
+export async function until(cond: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 400; i++) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(`timed out waiting for ${what}`);
 }

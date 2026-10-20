@@ -1,5 +1,12 @@
-import { type Clock, errorMessage, ForerunnerError, log, newId } from "@forerunner/platform";
-import type { SessionRow, StateStore, TaskRow } from "@forerunner/state";
+import {
+  type Clock,
+  errorMessage,
+  ForerunnerError,
+  isForerunnerError,
+  log,
+  newId,
+} from "@forerunner/platform";
+import type { AgentRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
@@ -16,6 +23,7 @@ import {
   type SessionReviewOutcome,
   type TaskReviewOutcome,
 } from "../loop/ports.ts";
+import type { SchemaSyncPort } from "../update/sync.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, runStartupChecklist } from "./checklist.ts";
 import { fileBlockedByFindingsRequest } from "./findings.ts";
@@ -45,6 +53,19 @@ export type SessionTriggerKind =
   | "email"
   | "budget_reset"
   | "remote";
+
+/**
+ * Audit row written once per session for the next-session queue items its brief carried
+ * (spec J.2): the session and the item ids consumed and skipped, never the text.
+ */
+export const QUEUE_CONSUMED_AUDIT_TOOL = "queue.consumed";
+
+/** Store errors that mean one queue item moved since the brief was built; the rest propagate. */
+const QUEUE_SKIP_CODES: ReadonlySet<string> = new Set([
+  "not_found",
+  "validation",
+  "version_conflict",
+]);
 
 /** Message types that are acted on by reading them into the plan; the rest need a reply. */
 const ACK_BY_READING: ReadonlySet<string> = new Set(["handoff", "info", "warning", "decision"]);
@@ -228,6 +249,11 @@ export interface SessionRunnerDeps {
   memory?: MemoryPort;
   /** Default retrieval budget when neither the project nor the start options set one. */
   memoryTokenBudget?: number;
+  /**
+   * The schema sync gate (spec M): a session is refused before its row exists while sync is
+   * paused, and the peer feed (start and before every task) re-evaluates and is refused too.
+   */
+  schemaSync?: SchemaSyncPort;
 }
 
 /** Lines a specialist's final report spells out as lessons. */
@@ -270,6 +296,8 @@ export class SessionRunner {
     if (this.deps.kill.isFrozen({ agentId: agent.id })) {
       throw new ForerunnerError("killed", "kill switch is active for this agent; resume it first");
     }
+    // Spec M: nothing syncs while the schema versions differ; a session is a sync.
+    await this.deps.schemaSync?.assertCanSync("session.start");
     const active = await store.session.active(agent.id);
     if (active.length > 0) {
       throw new ForerunnerError(
@@ -410,7 +438,14 @@ export class SessionRunner {
       // Peer feed: what the other agents on the project are doing (spec F).
       peerIds = await (this.deps.peersOf ?? defaultPeers(store))(agent.id, project?.id);
       const peerFeed = async () =>
-        buildPeerFeed({ store, clock, agentId: agent.id, projectId: project?.id, peerIds });
+        buildPeerFeed({
+          store,
+          clock,
+          agentId: agent.id,
+          projectId: project?.id,
+          peerIds,
+          schemaSync: this.deps.schemaSync,
+        });
       let feed = await peerFeed();
       const feedText = renderPeerFeed(feed);
       const stateText = renderStateBrief(brief);
@@ -455,6 +490,8 @@ export class SessionRunner {
         ready: brief.tasks.readyCount,
         memoryTokens: memoryLoaded?.tokens ?? 0,
       });
+      // Next-session queue (spec J.2): the items the brief carried belong to this session now.
+      await this.consumeQueue(brief, session, agent, emit);
       await emit("peers.feed", {
         peers: feed.peers.map((p) => ({
           agentId: p.agentId,
@@ -1244,6 +1281,70 @@ export class SessionRunner {
       humanRequestId,
       reused,
       escalation: true,
+    });
+  }
+
+  /**
+   * Mark the next-session queue items the brief carried consumed by this session (spec J.2):
+   * exactly those items, each at the version the checklist read them, in one store
+   * transaction with one `queue.consumed` audit row (ids and the session, never the text) and
+   * a `queue.consumed` event. Every item goes through `QueueRepo.consume`, so the workflow
+   * graph (`queued -> consumed`; a dismissed item is never consumed) and the version are
+   * checked in the store: an item the human dismissed or edited in the UI while the checklist
+   * ran fails its own check, is skipped with the reason and left as it is (an edited note
+   * reaches the next session once more, with its new text). An item enqueued after the
+   * checklist read the queue is not in the brief and stays queued for the next session. Runs
+   * after the brief is written and before the plan; a session that fails earlier never gets
+   * here, so it consumes nothing.
+   */
+  private async consumeQueue(
+    brief: StateBrief,
+    session: SessionRow,
+    agent: AgentRow,
+    emit: (type: string, payload?: Record<string, unknown>) => Promise<void>,
+  ): Promise<void> {
+    const items = brief.queue.items;
+    if (items.length === 0) return;
+    const { store, clock } = this.deps;
+    const outcome = await store.transaction(async (tx) => {
+      const consumed: string[] = [];
+      const skipped: { id: string; reason: string }[] = [];
+      for (const item of items) {
+        try {
+          await tx.queue.consume(item.id, item.version, session.id);
+          consumed.push(item.id);
+        } catch (e) {
+          if (!isForerunnerError(e) || !QUEUE_SKIP_CODES.has(e.code)) throw e;
+          skipped.push({ id: item.id, reason: e.code });
+        }
+      }
+      await tx.auditLog.append({
+        session_id: session.id,
+        agent_id: agent.id,
+        human_id: agent.owner_human_id,
+        tool: QUEUE_CONSUMED_AUDIT_TOOL,
+        input_summary: JSON.stringify({ sessionId: session.id, items: items.map((i) => i.id) }),
+        result_summary: JSON.stringify({ consumed, skipped }),
+        allowed: true,
+        cost_usd_micro: 0,
+        occurred_at: clock.nowIso(),
+      });
+      return { consumed, skipped };
+    });
+    if (outcome.skipped.length)
+      this.logger.warn("queue items moved while the checklist ran", {
+        sessionId: session.id,
+        skipped: outcome.skipped,
+      });
+    await emit("queue.consumed", {
+      ids: outcome.consumed,
+      count: outcome.consumed.length,
+      skipped: outcome.skipped,
+      ...(outcome.skipped.length
+        ? {
+            warning: `${outcome.skipped.length} queue item(s) changed while the checklist ran and stay as they are`,
+          }
+        : {}),
     });
   }
 

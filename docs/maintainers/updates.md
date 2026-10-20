@@ -20,10 +20,11 @@ or previously rolled-back release is refused by a `ForerunnerError("validation")
 `details.reason` names the cause; an agent cannot install or roll back without a human's
 approval (`approval_required`); the install can only write under `<data>/versions`
 (`path_not_allowed`); one install operation runs at a time, across processes (`version_conflict`,
-reason `in_progress`); the sync gate refuses sync calls while schema versions differ
-(`unavailable`; the gate is code in this module, its wiring into the sync path is pending, see
-Known issues). Every outward action (feed check that reaches the feed, install, rollback, health
-verdict) appends an `audit_log` row.
+reason `in_progress`); the sync gate refuses every sync with the shared state while the schema
+versions differ (`unavailable`: a session start, the peer feed, the mirror run and the
+application of answered approvals, wired through `sync.ts` into `compose.ts`, the session
+runner and the daemon). Every outward action (feed check that reaches the feed, install,
+rollback, health verdict, a sync pause, resume or refusal) appends an `audit_log` row.
 
 ## How it works
 
@@ -273,13 +274,47 @@ side has to update. `SyncGate(clock)`: `evaluate(local, peer, minSchema)` sets t
 and emits `sync_paused` / `sync_resumed` events (`on(listener)`, `events`) only on a change;
 `assertCanSync()` throws `ForerunnerError("unavailable", retryable)` while paused.
 
-This is the gate, not yet the wiring: nothing outside this module calls it today (see Known
-issues). The intended use is that the state service client (the sync layer in
-`services/state-api` / the runtime's peer feed) calls `evaluate` at startup, whenever a peer's
-schema version is learned and after every update, and `assertCanSync` before each sync call;
-until that is wired, the spec rule "sync pauses until both installs are compatible" is not
-enforced anywhere, and the installer's own `assertSchemaCompatible` (a release needs a schema
-the local store can reach) is the only schema check in force.
+### The wired gate (`sync.ts`)
+
+Installs share state by opening the same store (`stateUrl`, Postgres for two installs, SQLite
+for one), so the peer side of the comparison is the store itself: its `schema_migrations`
+table holds the highest migration any install applied. `openStore` migrates forward on open,
+so an install whose code ships more migrations than the store carries moves the store ahead
+of its peers, and an install whose code ships fewer (a peer updated first) sees the store ahead
+of itself. This install's side is `MIGRATIONS.length`, the migration count its code ships; the
+state service reports the same store version as `compatibleSchemaVersion` on `/health`.
+
+`SchemaSync({ store, clock, humanId, localSchemaVersion?, minSchema? })` holds the one
+`SyncGate` of a process (`RuntimeApp.schemaSync`). `refresh(source)` reads the store's
+version (`appliedVersions`) and `learn(peerSchemaVersion, source)` takes one that was read
+already; both go through `SyncGate.evaluate`, which pauses or resumes only on a change.
+`minSchema` defaults to 1, the oldest migration, since every release's migrations start there;
+`localSchemaVersion` is overridable for tests only (`ComposeOptions.schemaSync`).
+
+| When | Who calls | Effect |
+| --- | --- | --- |
+| compose (every daemon start and CLI one-shot) | `composeRuntime` → `refresh("startup")` | a mismatch pauses before anything else is wired |
+| every peer feed (session start, before every task, `GET /projects/:id/peers`) | `buildPeerFeed` → `learn(schemaVersion, "peer_feed")`, then `assertCanSync("peer_feed")`; the feed carries `schemaVersion` | a peer's migration is learned on the next read |
+| after an update's health check | `fr daemon` → `refresh("update")` when `healthCheck()` was pending | the new code's version against the store |
+| before each sync | `assertCanSync(what)` in `SessionRunner.start` (before the session row exists), the scheduler's `startSession`, `RuntimeApp.syncApprovals`, `RuntimeApp.mirrorSync`, the scheduler's mirror runs (`mirrorStartHandler` gets a gated `mirror.sync`, audit site `mirror.sync`), the peer feed | `ForerunnerError("unavailable", retryable)` with the compat in `details`; the daemon answers 503 |
+
+The model watch and the memory consolidation are local jobs the same scheduler starts (this
+install's providers, this human's memory); `startSession` routes them before it asks the gate,
+so a paused install still runs them.
+
+A pause is audited once (`sync.paused`, `allowed: false`, `denied_reason` the compat reason,
+the versions and the source in `input_summary`) and surfaced once as a non-blocking `info`
+request for the human (`author_agent: "sync-gate"`, `change_card.key: "sync.paused"`, `steps`
+naming which install has to update): the open item is reused on every later check and across
+daemon restarts, never repeated per tick. Each refused call site is audited once per pause
+(`sync.refused`, `input_summary.what`), not per call, so a scheduler that asks every 30 s writes
+one row. A resume (`sync.resumed`, `allowed: true`) and every compatible start withdraw the
+open item. A paused install still composes (the updates screen and `fr update` are how it gets
+fixed); it skips the approval sync at compose and logs why. `/health.sync` shows the state
+(`SyncHealth`: `paused`, `local`, `peer`, `minSchema`, `action`, `message`, `checkedAt`).
+
+The installer's own `assertSchemaCompatible` stays in force on top: a release needs a schema
+the local store can reach.
 
 ## How to change it
 
@@ -315,11 +350,14 @@ the local store can reach) is the only schema check in force.
   offers what apply cannot stage" test green.
 - **Change the health check.** Implement `HealthProbe`; keep the timeout on the injected Clock
   so the timeout test stays deterministic.
-- **Wire the sync gate.** Give the sync layer one `SyncGate`, call `evaluate(localSchema,
-  peerSchema, minSchema)` wherever a peer's schema version arrives (startup handshake, peer
-  feed, after `healthCheck()` reports `healthy`), call `assertCanSync()` in front of every sync
-  request, surface `sync_paused` as an inbox item naming `compat.action`, and add a test that a
-  sync call is refused while the versions differ and goes through once they match.
+- **Add a sync call site.** Anything new that reads from or writes to the shared state on
+  behalf of a peer (a watcher, a route, a schedule) calls
+  `await rt.schemaSync.assertCanSync("<what>")` first; `what` is the audit row's
+  `input_summary.what` and is audited once per pause. Add the site's name to the sorted list
+  the compose-level test in `sync-gate.test.ts` expects.
+- **Add a peer version source.** Where a peer's schema version arrives by another road (a
+  state service handshake, a device row), call `rt.schemaSync.learn(version, source)` with a
+  new `SchemaSyncSource`; the gate changes state only on a change, so calling it often is free.
 - **Wire the daemon and the shells.** The orchestrator mounts `createUpdateRoutes` in
   `daemon/server.ts`, registers `registerUpdateCli` in `cli/main.ts`, exports `./update/index.ts`
   from the package index, calls `healthCheck()` on daemon start, and passes a real `Restarter`
@@ -390,9 +428,29 @@ routes, `fr update` on the program and the daemon exiting with `RESTART_EXIT_COD
   `browser_download_url` and the health check passes; a private repository is refused without
   a token and listed with one.
 
+- `sync-gate.test.ts` (`pnpm vitest run --project unit packages/runtime/test/sync-gate.test.ts`):
+  on a `sqlite::memory:` store, an install whose code is one migration behind the store: sync
+  refused while schema versions differ (the peer feed and a session start answer
+  `unavailable`, no session row, one `sync.paused` audit row, one `sync.refused` row per call
+  site, one non-blocking inbox item naming "update this install", nothing added by further
+  ticks, refusals or a restart of the same install); allowed again after the update (the
+  restarted process at the store's version resumes, withdraws the item, builds the feed with
+  `schemaVersion` and runs a session); a peer's migration learned from the peer feed
+  (`sync_paused` from source `peer_feed`) and a peer rollback resuming in place
+  (`sync.resumed` row, item withdrawn, listeners never block); the other side
+  (`update_peer`, "Update the other install"); `local_below_min`. Through the composed runtime
+  on a file store: `/health.sync`, `GET /projects/:id/peers` 503 `unavailable`,
+  `syncApprovals`, `mirrorSync`, the scheduler's start and a scheduled mirror run (a `tick()` of
+  the schedule `refreshMirrorSchedules` registered) refused before a session row exists, the
+  memory consolidation the same tick fires not held,
+  the four call sites audited once, then a second compose at the store's version serving all
+  of them with the item withdrawn.
+
 Mutation checks done while writing: removing the artefact hash check fails the tamper test;
 skipping the rollback write fails the four rollback tests; moving verification after the
-approval request fails the "refused before any approval" assertion.
+approval request fails the "refused before any approval" assertion; dropping
+`assertCanSync` from the peer feed or from `SessionRunner.start` fails the "sync refused"
+cases; skipping the open-item lookup in `ensureRequest` fails the "not every tick" assertion.
 
 ## Known issues
 
@@ -408,10 +466,12 @@ approval request fails the "refused before any approval" assertion.
   when the secret is absent, so a release without the secret is unsigned and no install will
   take it. `release.md` still describes the earlier Tauri/minisign plan, which this module
   replaces with the Ed25519 manifest (ADR 0015).
-- The sync gate (`SyncGate`, `assertCanSync`, `isSchemaCompatible`) has no caller outside this
-  module and its tests: spec M's "both apps must be on a compatible version before sync
-  resumes" is not enforced in the sync path yet. `docs/requirements.md` M.6 should read "in
-  progress" until the state service client wires it ("Wire the sync gate" above).
+- The sync gate learns of a peer's migration when this install next reads the shared state
+  (a session start, a peer feed before a task, `GET /projects/:id/peers`, the health check
+  after an update); an idle daemon with no session due keeps its last verdict until then.
+  The phone and web clients of the state service have their own check (the service answers
+  `409 schema_mismatch` to a declared `x-forerunner-schema`); the gate here covers the
+  runtime's store path only.
 - `HumanRequestUpdatePort.ask` answers `pending` until the human answers from the inbox; the
   answer is consumed by the next `apply`/`rollback` with the same key, but nothing re-issues
   that call by itself: the conversation/command layer (or the agent) has to retry after the
@@ -432,7 +492,7 @@ approval request fails the "refused before any approval" assertion.
 | M.3 | signed builds from GitHub Releases; "Update available", changelog, "Update and restart" | `feed.ts`, `verify.ts`, `sign.ts`, `screen.ts` (`AppUpdateView.available.changelog`), `UpdateManager.apply` + `Restarter` |
 | M.4 | staged install, health check on restart, automatic rollback; config, memory and data untouched | `install.ts`, `pointer.ts`, `health.ts`; `protectedHashes` tests |
 | M.5 | connector and model updates on the same updates screen | `screen.ts` (`connectors`, `models`), `ExtensionCatalog`, `ModelWatchReport` |
-| M.6 (gate only) | both installs on a compatible schema version before sync resumes | `compat.ts` (`isSchemaCompatible`, `SyncGate`), `minSchema` in the manifest and `assertSchemaCompatible`; the gate is not yet called from the sync path (Known issues) |
+| M.6 | shared state schema changes use versioned migrations; both apps on a compatible version before sync resumes | `compat.ts` (`isSchemaCompatible`, `SyncGate`), `sync.ts` (`SchemaSync` over the store's `schema_migrations`), wired in `compose.ts` (sessions, approvals, manual and scheduled mirror runs), `session/runner.ts`, `session/peers.ts`, `daemon/server.ts`, `cli/main.ts`; `minSchema` in the manifest and `assertSchemaCompatible` keep a release from staging onto a store it cannot reach; `sync-gate.test.ts` |
 | K.6 (part) | Extensions panel: version and updates | `ConnectorUpdateView` |
 | R.1 (part) | updates through the same release channel on Android | `android` artefact platform, same feed and verifier |
 | S.1, S.6 | limits in code; granting/changing the installed software by an agent needs a human | `requireApproval`, refusals |

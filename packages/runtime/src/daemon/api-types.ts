@@ -310,6 +310,21 @@ export const ExtensionsHealth = z.object({
 });
 export type ExtensionsHealth = z.infer<typeof ExtensionsHealth>;
 
+/**
+ * The schema sync gate (spec M): `paused` while this install and the shared state are on
+ * different schema versions; `action` says which side has to update.
+ */
+export const SyncHealth = z.object({
+  paused: z.boolean(),
+  local: z.number().int(),
+  peer: z.number().int().nullable(),
+  minSchema: z.number().int(),
+  action: z.enum(["none", "update_local", "update_peer"]),
+  message: z.string(),
+  checkedAt: z.string().nullable(),
+});
+export type SyncHealth = z.infer<typeof SyncHealth>;
+
 export const HealthView = z.object({
   ok: z.literal(true),
   version: z.string(),
@@ -322,6 +337,7 @@ export const HealthView = z.object({
   killActive: z.boolean(),
   sandbox: SandboxHealth,
   extensions: ExtensionsHealth,
+  sync: SyncHealth.optional(),
 });
 export type HealthView = z.infer<typeof HealthView>;
 
@@ -436,6 +452,8 @@ export type PeerActivityView = z.infer<typeof PeerActivityView>;
 export const PeerFeedView = z.object({
   generatedAt: z.string(),
   projectId: z.string().nullable(),
+  /** The shared store's schema version the feed was read at (spec M, the sync gate). */
+  schemaVersion: z.number().int().optional(),
   peers: z.array(PeerActivityView),
 });
 export type PeerFeedView = z.infer<typeof PeerFeedView>;

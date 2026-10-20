@@ -122,7 +122,7 @@ biometric API succeeded for that action. Admin callers hold every scope and do n
 | `GET /projects/:id/queue`, `POST /projects/:id/queue { kind, text, priority, transcript? }` | notes, tasks, ideas for the next session |
 | `GET /projects/:id/uploads`, `POST /projects/:id/uploads` (multipart `file`, optional `kind`) | `data_asset` row; file under `<data>/uploads/<project>/<asset id>-<safe name>`; metadata only in responses |
 | `POST /remote/commands { target: pc|cloud, targetDeviceId?, command: start|pause|stop|kill, params }`, `GET /remote/commands`, `GET /remote/commands/:id` | the phone's view of its commands |
-| `GET /remote/commands/pending?target=&deviceId=` (admin) | atomic pick-up (`RemoteCommandRepo.pickUp`): 200 with the command or 204 |
+| `GET /remote/commands/pending?target=&deviceId=&humanId=&agentId=` (admin) | atomic pick-up (`RemoteCommandRepo.pickUp`): 200 with the command or 204; `humanId` restricts it to commands from that human's devices and `agentId` to commands for that agent (the runner passes its own) |
 | `POST /remote/commands/:id/complete|fail { result }` (admin) | |
 | `GET /sessions?agentId=&projectId=&status=`, `GET /sessions/:id` | `SessionView` with the current task; a device sees only sessions of its own human's agents (summaries and handoff text are that human's notes), `agentId` of another human is 403; admins see every session |
 | `GET /sessions/:id/events?afterSeq=` | JSON page, or SSE with `Accept: text/event-stream` (`session.event`, `session.changed`, heartbeat; `Last-Event-ID` = seq) |
@@ -158,12 +158,21 @@ the session log stream and the inbox fetch from the database on every wake or po
 
 ### Remote control (spec R.4)
 
-The phone enqueues a `remote_command` (issuer = its device). The PC runtime polls
-`GET /remote/commands/pending?target=pc&deviceId=<its device id>` every few seconds (or
-wakes on a `remote_command.changed` event) and gets the oldest pending command addressed to
-it or to nobody, atomically; the cloud runner does the same with `target=cloud`. It reports
-`complete` or `fail` with a result the phone can show. Two pickers never get the same command
-(tested).
+The phone enqueues a `remote_command` (issuer = its device). The PC daemon and the cloud
+runner talk to the shared Postgres directly (ADR 0024) and pick up with
+`RemoteCommandRepo.pickUp(target, { deviceId, agentId })` every 500 ms (`packages/runtime`
+`RemoteCommandWatcher` for `pc`, `services/cloud-runner` for `cloud`); a runtime that goes
+through the service instead polls `GET /remote/commands/pending?target=pc&deviceId=<its device
+id>` (or wakes on a `remote_command.changed` event). Either way the oldest pending command
+addressed to it or to nobody is taken atomically; with `ownerHumanId` or `agentId` the store
+takes only commands whose issuing device belongs to the human who owns the runtime's agent
+(ADR 0033 item 8b, ADR 0041), so another human's command stays pending for their own runtime.
+The runtime reports `complete` or `fail` with a result the phone can show (the daemon's
+watcher writes the row directly; the poller announces the change). Two pickers never get the
+same command (tested). On the PC, `stop` and `kill` go through the kill switch (the task in
+flight is aborted) and `pause` is the graceful stop (the row reads `paused` at once, the task
+in flight finishes, the session closes at the next task boundary with its handoff; `runtime.md`,
+`src/wiring/session-ports.ts`).
 
 ### GitHub mirror
 

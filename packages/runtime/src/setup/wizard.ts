@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { type AppDirs, appDirs, ForerunnerError, join, log, osFacts } from "@forerunner/platform";
 import type { Vault } from "@forerunner/vault";
+import { currentInstallRecord, type InstallRecord, writeInstallRecord } from "./install-record.ts";
 import {
   assertCredentialKind,
   CREDENTIAL_REQUESTS,
@@ -69,6 +70,9 @@ export interface SetupReport {
   dirs: AppDirs;
   configPath: string;
   config: SetupConfig;
+  /** `<config>/install.json`: where this checkout and its node binary are (read by the shell). */
+  installRecordPath: string;
+  installRecord: InstallRecord;
   results: { github?: ValidationResult; anthropic?: ValidationResult };
   stored: string[];
   skipped: string[];
@@ -220,8 +224,14 @@ export async function runSetup(vault: Vault, input: SetupInput): Promise<SetupRe
   if (complete) config.setupCompletedAt = new Date().toISOString();
   const p = configPath(dirs);
   writeFileSync(p, `${JSON.stringify(config, null, 2)}\n`);
+  // The install record (ADR 0026): on every setup run, from the running process, so the
+  // desktop shell finds this checkout and this node binary without an environment variable.
+  const installRecord = currentInstallRecord();
+  const installRecordPath = writeInstallRecord(dirs, installRecord);
   logger.info("setup written", {
     configPath: p,
+    installRecordPath,
+    installDir: installRecord.installDir,
     platform: facts.platform,
     keychain: facts.keychain,
     vault: vault.backend,
@@ -229,5 +239,15 @@ export async function runSetup(vault: Vault, input: SetupInput): Promise<SetupRe
     skipped,
     complete,
   });
-  return { dirs, configPath: p, config, results, stored, skipped, complete };
+  return {
+    dirs,
+    configPath: p,
+    config,
+    installRecordPath,
+    installRecord,
+    results,
+    stored,
+    skipped,
+    complete,
+  };
 }

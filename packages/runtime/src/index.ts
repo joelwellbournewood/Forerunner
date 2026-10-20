@@ -37,8 +37,11 @@ export * from "./provider/anthropic.ts";
 export * from "./provider/registry.ts";
 export * from "./provider/types.ts";
 export * from "./registry/index.ts";
+/** Remote commands for the PC and the desktop presence heartbeat (spec R.4, R.8; ADR 0041). */
+export * from "./remote/index.ts";
 export * from "./sandbox/index.ts";
 export * from "./session/index.ts";
+export * from "./setup/install-record.ts";
 export * from "./setup/validators.ts";
 export * from "./setup/wizard.ts";
 /** Signed updates (spec M); namespaced because its catalog port shares names with the extensions catalog. */

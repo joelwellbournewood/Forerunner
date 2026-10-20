@@ -7,4 +7,5 @@
 export * from "./frontmatter.ts";
 export * from "./loader.ts";
 export * from "./proposals.ts";
+export * from "./tools.ts";
 export * from "./types.ts";

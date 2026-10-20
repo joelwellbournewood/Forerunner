@@ -22,13 +22,41 @@ export interface CheckResultEvidence {
   required?: boolean;
 }
 
+/** A file the worker was given (a fixture, a source document), rendered to the critic in full up to the cap. */
+export interface InputFileEvidence {
+  /** Relative path, forward slashes. */
+  path: string;
+  content: string;
+}
+
+/**
+ * Material the evidence builder could not provide, by name (ADR 0042). The renderer lists it
+ * under "Evidence not available"; an `escalate` for missing evidence qualifies only when it
+ * names one of these. Everything not listed counts as complete.
+ */
+export interface UnavailableEvidence {
+  name: string;
+  reason: string;
+}
+
 export interface ReviewEvidence {
   /** Unified diff of the change under review. */
   diff?: string;
   /** Paths the change touched, relative to the repository or worktree root, forward slashes. */
   changedFiles?: string[];
+  /** Files the worker was given: the researcher's sources, the coder's starting files. */
+  inputFiles?: InputFileEvidence[];
   testOutput?: string;
   checkResults?: CheckResultEvidence[];
+  /** Check commands the tier did not run (tier 1 light read); by design, never missing evidence. */
+  checksNotRun?: string[];
+  /** Evidence the builder could not provide, by name; the only grounds for an evidence_missing escalate. */
+  unavailable?: UnavailableEvidence[];
+  /**
+   * Limit conditions the runtime recorded for the work under review (the worker's run ended
+   * with budget_exceeded or a timeout, a ceiling reached); grounds for a `limit` escalate.
+   */
+  limits?: string[];
   prUrl?: string;
   acceptanceCriteria: string[];
   /** The delegation brief as rendered for the worker (goal, constraints, criteria). */

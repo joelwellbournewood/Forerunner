@@ -1,10 +1,25 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join, run, SimulatedClock } from "@forerunner/platform";
+import {
+  appDirs,
+  isAbsolute,
+  isForerunnerError,
+  join,
+  normalize,
+  run,
+  SimulatedClock,
+} from "@forerunner/platform";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { KillFileWatcher, readKillRequest } from "../src/enforcement/killfile.ts";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
+import {
+  currentInstallRecord,
+  INSTALL_RECORD_FILE,
+  parseInstallRecord,
+  readInstallRecord,
+  writeInstallRecord,
+} from "../src/setup/install-record.ts";
 
 const GOOD_GH = ["ghp_", "goodtoken000000000000000000000000000000"].join(""); // not-a-secret
 const CLI = join(process.cwd(), "packages", "runtime", "src", "cli", "main.ts");
@@ -167,6 +182,89 @@ describe("fr CLI", { timeout: 180_000 }, () => {
     });
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("Not configured yet: github, anthropic");
+    // The install record is written whether or not a credential was given.
+    expect(existsSync(join(home3, "config", INSTALL_RECORD_FILE))).toBe(true);
+  });
+
+  it("setup writes the install record the desktop shell reads: schema 1, absolute installDir, node", async () => {
+    // Every `fr setup` above wrote it from the running process; nothing about it is configured.
+    const path = join(home, "config", INSTALL_RECORD_FILE);
+    const rec = parseInstallRecord(readFileSync(path, "utf8"));
+    expect(rec.schema).toBe(1);
+    expect(isAbsolute(rec.installDir)).toBe(true);
+    // The checkout this test runs from (derived from import.meta.url, never a configured path).
+    expect(normalize(rec.installDir)).toBe(normalize(realpathSync(process.cwd())));
+    // What install.rs checks in the directory before it runs `fr` from it.
+    expect(existsSync(join(rec.installDir, "node_modules", "tsx", "dist", "cli.mjs"))).toBe(true);
+    expect(existsSync(join(rec.installDir, "packages", "runtime", "src", "cli", "main.ts"))).toBe(
+      true,
+    );
+    // The node binary that ran setup (the CLI was spawned with this process's own).
+    expect(rec.node).toBe(process.execPath);
+    expect(isAbsolute(rec.node as string)).toBe(true);
+    // Atomic write: nothing half-written is left next to the record.
+    expect(
+      readdirSync(join(home, "config")).filter(
+        (n) => n.startsWith(INSTALL_RECORD_FILE) && n !== INSTALL_RECORD_FILE,
+      ),
+    ).toEqual([]);
+    expect(readInstallRecord(appDirs({ env: { FORERUNNER_HOME: home } }))).toEqual(rec);
+    // The setup output names it without echoing anything secret.
+    const r = await fr("setup", "--non-interactive", "--anthropic-api", api.url);
+    expect(r.stdout).toContain(`Install record: ${path}`);
+  });
+
+  it("the install record parser mirrors the shell's rules (install.rs parse_install_record)", () => {
+    expect(
+      parseInstallRecord('{"schema":1,"installDir":"/opt/fr","node":"/usr/bin/node"}'),
+    ).toEqual({ schema: 1, installDir: "/opt/fr", node: "/usr/bin/node" });
+    // node is optional and an empty string counts as absent, as in the shell.
+    expect(parseInstallRecord('{"schema":1,"installDir":"C:\\\\fr"}')).toEqual({
+      schema: 1,
+      installDir: "C:\\fr",
+    });
+    expect(parseInstallRecord('{"schema":1,"installDir":"/opt/fr","node":""}')).toEqual({
+      schema: 1,
+      installDir: "/opt/fr",
+    });
+    for (const bad of [
+      '{"schema":2,"installDir":"/opt/fr"}',
+      '{"schema":"1","installDir":"/opt/fr"}',
+      '{"schema":1}',
+      '{"schema":1,"installDir":""}',
+      '{"schema":1,"installDir":7}',
+      "nope",
+      "[]",
+      "null",
+    ]) {
+      let err: unknown = null;
+      try {
+        parseInstallRecord(bad);
+      } catch (e) {
+        err = e;
+      }
+      expect(isForerunnerError(err, "validation"), bad).toBe(true);
+    }
+    // From the running process: the checkout root and process.execPath; a node that is not an
+    // absolute path is left out rather than written for the shell to fail on.
+    const current = currentInstallRecord();
+    expect(normalize(current.installDir)).toBe(normalize(realpathSync(process.cwd())));
+    expect(current.node).toBe(process.execPath);
+    expect(currentInstallRecord({ execPath: "node" }).node).toBeUndefined();
+    // The writer refuses what the shell could not resolve.
+    const scratch = mkdtempSync(join(tmpdir(), "fr-install-record-"));
+    const dirs = appDirs({ env: { FORERUNNER_HOME: scratch } });
+    let relative: unknown = null;
+    try {
+      writeInstallRecord(dirs, { schema: 1, installDir: "relative" });
+    } catch (e) {
+      relative = e;
+    }
+    expect(isForerunnerError(relative, "validation")).toBe(true);
+    expect(existsSync(join(dirs.config, INSTALL_RECORD_FILE))).toBe(false);
+    const written = writeInstallRecord(dirs, current);
+    expect(written).toBe(join(dirs.config, INSTALL_RECORD_FILE));
+    expect(readInstallRecord(dirs)).toEqual(current);
   });
 
   it("doctor reports prerequisites", async () => {

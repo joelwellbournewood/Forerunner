@@ -8,16 +8,35 @@ import {
 } from "../src/schema.ts";
 
 describe("submit_review schema", () => {
-  it("maps the prompt's vocabulary onto the store's: medium confidence sits below the accept line", () => {
+  it("maps the prompt's vocabulary onto the store's: medium confidence sits above the accept line, low well below it (ADR 0042)", () => {
     expect(confidenceOf("high")).toBeGreaterThanOrEqual(LOW_CONFIDENCE);
-    expect(confidenceOf("medium")).toBeLessThan(LOW_CONFIDENCE);
-    expect(confidenceOf("low")).toBeLessThan(confidenceOf("medium"));
+    expect(confidenceOf("medium")).toBeGreaterThanOrEqual(LOW_CONFIDENCE);
+    expect(confidenceOf("medium")).toBeLessThan(confidenceOf("high"));
+    expect(confidenceOf("low")).toBeLessThan(LOW_CONFIDENCE);
     expect(confidenceOf(0.42)).toBe(0.42);
     expect(severityOf("blocker")).toBe("critical");
     expect(severityOf("major")).toBe("high");
     expect(severityOf("minor")).toBe("low");
     expect(severityOf("note")).toBe("info");
     expect(severityOf("medium")).toBe("medium");
+  });
+
+  it("accepts the escalation reason the prompt describes and rejects any other", () => {
+    const base = { grade: 60, confidence: "medium", verdict: "escalate", summary: "s" };
+    const ok = SubmitReviewSchema.parse({
+      ...base,
+      escalation: { reason: "evidence_missing", detail: "diff" },
+    });
+    expect(ok.escalation).toEqual({ reason: "evidence_missing", detail: "diff" });
+    expect(SubmitReviewSchema.parse(base).escalation).toBeUndefined();
+    expect(
+      SubmitReviewSchema.safeParse({ ...base, escalation: { reason: "vibes", detail: "x" } })
+        .success,
+    ).toBe(false);
+    expect(
+      SubmitReviewSchema.safeParse({ ...base, escalation: { reason: "limit", detail: "" } })
+        .success,
+    ).toBe(false);
   });
 
   it("parses the JSON object the prompt describes out of free text, or returns null", () => {

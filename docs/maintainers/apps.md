@@ -558,8 +558,6 @@ clean, `cargo test` 68 passed, 0 failed.
 - The daemon does not mount the email routes of `packages/capabilities/src/email/routes.ts`
   yet, so the tray's email item reads "Pause email (not available: the daemon has no email
   routes yet)" until the wiring lands.
-- `fr setup` does not write `<config>/install.json` yet; `FORERUNNER_INSTALL_DIR` and `PATH`
-  are the working sources today.
 - A click on an OS notification does not open the window (the notification plugin reports no
   click on desktop); the `route` field is parsed for that day.
 - Windows-only code (`creation_flags`, `node.exe`, `.cmd` shims, `http://tauri.localhost`)

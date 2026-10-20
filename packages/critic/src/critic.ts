@@ -8,6 +8,7 @@ import {
   type ModeDefault,
   type ModelTier,
   type ProviderRegistry,
+  RUN_PERSIST_FAILED_AUDIT_TOOL,
   type RunEvent,
   type RunPricing,
   type RunResult,
@@ -16,6 +17,7 @@ import {
   type TokenIssuer,
   ToolRegistry,
   type ToolSpec,
+  wholeMs,
 } from "@forerunner/runtime";
 import type {
   FindingRow,
@@ -36,7 +38,12 @@ import {
   stricterCeiling,
 } from "./model.ts";
 import { patternsFor } from "./patterns.ts";
-import { applyVerdictRules, maxSeverity, type RuledVerdict } from "./rules.ts";
+import {
+  applyVerdictRules,
+  type EscalationGrounds,
+  maxSeverity,
+  type RuledVerdict,
+} from "./rules.ts";
 import {
   confidenceOf,
   parseReviewFromText,
@@ -159,6 +166,12 @@ export interface ReviewContext {
 const SYSTEM_SUFFIX =
   "\n\n## Returning the review\n\nCall the `submit_review` tool exactly once with the complete " +
   "review. Text outside the tool is kept only as a rationale.";
+
+/**
+ * Audit row written when the rules changed what the model returned (ADR 0042): the review,
+ * the task, the tier and every adjustment (rule, from, to, reason); never the evidence.
+ */
+export const VERDICT_ADJUSTED_AUDIT_TOOL = "critic.verdict_adjusted";
 
 const RISK_OF_SEVERITY: Record<string, RiskLevel> = {
   critical: "high",
@@ -295,6 +308,18 @@ export class CriticService {
       preEvidence.push(
         `checks: ${checks.length} command(s) not run at tier 1 (light read); pass checkResults or review at tier 2`,
       );
+      // The critic is told which commands were not run and that this is the tier's design,
+      // so it grades the diff by reading instead of escalating for "missing" check results.
+      effective = {
+        ...effective,
+        evidence: {
+          ...effective.evidence,
+          checksNotRun: [
+            ...(effective.evidence.checksNotRun ?? []),
+            ...checks.map((c) => `${c.name}: ${c.argv.join(" ")}`),
+          ],
+        },
+      };
     }
 
     const rendered = renderEvidence(
@@ -373,7 +398,11 @@ export class CriticService {
           : "no_verdict"
         : runOutcomeOf(result.outcome);
 
-    const built = this.buildVerdict(effective, submitted, outcome, result, sessionCode);
+    const built = this.buildVerdict(effective, submitted, outcome, result, sessionCode, {
+      unavailable: rendered.unavailable,
+      limits: effective.evidence.limits ?? [],
+      outcome,
+    });
     const output: ReviewOutput = {
       ...built,
       model: pick.model,
@@ -418,8 +447,9 @@ export class CriticService {
         cache_read_tokens: result.usage.cache_read_input_tokens,
         cache_write_tokens: result.usage.cache_creation_input_tokens,
         cost_usd_micro: result.costUsdMicro,
-        ttft_ms: result.ttftMs[0] ?? null,
-        duration_ms: result.durationMs,
+        // Integers only: the timing columns are INTEGER and the store rejects a fraction.
+        ttft_ms: wholeMs(result.ttftMs[0]),
+        duration_ms: wholeMs(result.durationMs),
         outcome: result.outcome,
         depth: token.claims.depth,
         timed_out: result.outcome === "timeout",
@@ -428,7 +458,32 @@ export class CriticService {
         author_agent: this.deps.criticAgentId,
       });
     } catch (e) {
-      this.logger.warn("could not record the critic run", { runId, error: errorMessage(e) });
+      // The review is not lost because its Run row was refused (the first live run lost every
+      // critic Run row to a fractional `ttft_ms`, silently): the Review and Finding rows are
+      // still written below, and the failure is logged and audited with the run id and the
+      // store's message. The prompt and the evidence never enter either.
+      const error = errorMessage(e);
+      this.logger.error("critic run row not persisted", { runId, error });
+      try {
+        await store.auditLog.append({
+          session_id: parent.sessionId,
+          run_id: runId,
+          agent_id: this.deps.criticAgentId,
+          human_id: parent.ownerHumanId,
+          tool: RUN_PERSIST_FAILED_AUDIT_TOOL,
+          input_summary: JSON.stringify({ runId, specialist: "critic", tier }),
+          result_summary: error,
+          allowed: false,
+          denied_reason: error,
+          cost_usd_micro: 0,
+          occurred_at: clock.nowIso(),
+        });
+      } catch (auditError) {
+        this.logger.error("critic run persist failure not audited", {
+          runId,
+          error: errorMessage(auditError),
+        });
+      }
     }
     return this.persist(input, ctx, output, {
       openFindings,
@@ -443,6 +498,7 @@ export class CriticService {
     outcome: ReviewOutcome,
     result: RunResult,
     sessionCode: SessionChecks | null,
+    grounds: EscalationGrounds,
   ): Pick<
     ReviewOutput,
     "grade" | "confidence" | "verdict" | "findings" | "evidence" | "summary" | "adjustments"
@@ -541,7 +597,17 @@ export class CriticService {
       if (sessionCode.verdict === "human") verdict = "human";
     }
 
-    const ruled = applyVerdictRules({ grade, confidence, verdict, findings }, input.tier);
+    const ruled = applyVerdictRules(
+      { grade, confidence, verdict, findings, escalation: submitted?.escalation ?? null, grounds },
+      input.tier,
+    );
+    if (ruled.escalation) {
+      evidence.push(
+        ruled.escalation.qualifies
+          ? `escalate: ${ruled.escalation.ground}`
+          : `escalate not qualified: ${ruled.escalation.why}`,
+      );
+    }
     // A revise or escalate that names no finding would leave the retry nothing to act on, so
     // the summary becomes one. Only when the model asked for changes or a rule found the work
     // short (grade below the accept line): a clean result that a rule sends on anyway (tier 3
@@ -588,6 +654,35 @@ export class CriticService {
       summary: out.summary,
       author_agent: this.deps.criticAgentId,
     });
+    // What the code changed about the model's answer is an outward action of its own (ADR
+    // 0042): one audit row per review that carries every adjustment, never the evidence.
+    if (out.adjustments.length > 0) {
+      try {
+        await store.auditLog.append({
+          session_id: claims.sessionId,
+          run_id: out.runId ?? null,
+          agent_id: this.deps.criticAgentId,
+          human_id: claims.ownerHumanId,
+          tool: VERDICT_ADJUSTED_AUDIT_TOOL,
+          input_summary: JSON.stringify({
+            reviewId: review.id,
+            taskId,
+            tier: out.tier,
+            adjustments: out.adjustments,
+          }),
+          result_summary: `verdict ${out.verdict} (model said ${out.adjustments[0]?.from ?? out.verdict})`,
+          allowed: true,
+          denied_reason: null,
+          cost_usd_micro: 0,
+          occurred_at: clock.nowIso(),
+        });
+      } catch (e) {
+        this.logger.warn("could not audit the verdict adjustment", {
+          reviewId: review.id,
+          error: errorMessage(e),
+        });
+      }
+    }
     // An accepting review's findings are notes the critic chose not to require action on
     // (the rules keep anything medium or above from accepting); they are stored as wontfix so
     // they never block close yet still count for patterns. Everything else is open until resolved.
@@ -657,6 +752,7 @@ export class CriticService {
           confidence: out.confidence,
           verdict: out.verdict,
           findings: out.findings.length,
+          adjustments: out.adjustments.map((a) => ({ rule: a.rule, from: a.from, to: a.to })),
           model: out.model,
           costUsdMicro: out.costUsdMicro,
           durationMs: out.durationMs,
@@ -708,14 +804,18 @@ function mergeSettings(
 }
 
 /**
- * Whether a verdict with no finding needs one synthesised from the summary: revise or escalate
- * that the model chose, or that the grade rule made (the work fell short). Not a verdict that a
- * rule produced from a clean accept (low confidence) and never a human sign-off.
+ * Whether a verdict with no finding needs one synthesised from the summary: a revise the model
+ * chose, or one the grade rule made (the work fell short). Not a verdict a rule produced from a
+ * clean accept (low confidence), not an escalate that stands on its ground (a high finding is
+ * already a finding; low confidence, missing evidence or a limit say nothing is wrong with the
+ * work, and an invented open finding would block the close after the human accepts, B.4), and
+ * never a human sign-off.
  */
 export function needsFallbackFinding(
-  ruled: Pick<RuledVerdict, "verdict" | "adjustments">,
+  ruled: Pick<RuledVerdict, "verdict" | "adjustments" | "escalation">,
 ): boolean {
   if (ruled.verdict !== "revise" && ruled.verdict !== "escalate") return false;
+  if (ruled.escalation?.qualifies) return false;
   return !ruled.adjustments.some((a) => a.rule === "low_confidence");
 }
 

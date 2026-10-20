@@ -12,4 +12,5 @@ export * from "./ports.ts";
 export * from "./screen.ts";
 export * from "./semver.ts";
 export * from "./sign.ts";
+export * from "./sync.ts";
 export * from "./verify.ts";

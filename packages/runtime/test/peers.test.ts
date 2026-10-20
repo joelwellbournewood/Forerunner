@@ -1,5 +1,5 @@
 import { SimulatedClock } from "@forerunner/platform";
-import { openStore, type StateStore } from "@forerunner/state";
+import { MIGRATIONS, openStore, type StateStore } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
@@ -182,6 +182,7 @@ describe("peers: hints and overlap rules", () => {
     const feed: PeerFeed = {
       generatedAt: "2026-03-02T07:00:00Z",
       projectId: "p",
+      schemaVersion: 1,
       peers: [
         {
           agentId: "bob",
@@ -243,6 +244,8 @@ describe("peers: feed from the store and the runner", () => {
       peerIds: [w.bob, w.alice],
     });
     expect(feed.peers).toHaveLength(1);
+    // The shared store's schema version rides along (the sync gate reads it from here).
+    expect(feed.schemaVersion).toBe(MIGRATIONS.length);
     const bob = feed.peers[0] as PeerFeed["peers"][number];
     expect(bob.agentName).toBe("Bob");
     expect(bob.online).toBe(true);

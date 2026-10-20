@@ -1,9 +1,14 @@
-import { openStore } from "@forerunner/state";
-import { describe, expect, it } from "vitest";
+import { ForerunnerError, Logger, type LogRecord } from "@forerunner/platform";
+import { openStore, type StateStore } from "@forerunner/state";
+import { describe, expect, it, vi } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
-import { LoopTaskExecutor, type SpecialistSpec } from "../src/session/executor.ts";
-import { flatPricing, harness, issue, registry, ScriptedProvider } from "./helpers.ts";
+import {
+  LoopTaskExecutor,
+  RUN_PERSIST_FAILED_AUDIT_TOOL,
+  type SpecialistSpec,
+} from "../src/session/executor.ts";
+import { flatPricing, harness, issue, registry, ScriptedProvider, until } from "./helpers.ts";
 
 const coder: SpecialistSpec = {
   name: "coder",
@@ -210,5 +215,209 @@ describe("LoopTaskExecutor", () => {
       }),
     ).rejects.toMatchObject({ code: "not_found" });
     await store.close();
+  });
+});
+
+/** A human, a principal agent, a project, one task and a running session on the store. */
+async function seed(store: StateStore) {
+  const human = (
+    await store.human.insert({
+      name: "J",
+      email: "j@x.test",
+      timezone: "UTC",
+      notify_prefs: {},
+      default_autonomy: 2,
+      monthly_cap_usd_micro: 1,
+      locale: "en",
+    })
+  ).id;
+  const agent = (
+    await store.agent.insert({
+      name: "Alice",
+      owner_human_id: human,
+      model_config: {},
+      memory_location: "l",
+      status: "active",
+      kind: "principal",
+    })
+  ).id;
+  const project = (
+    await store.project.insert({
+      name: "P",
+      goal: "g",
+      repos: [],
+      stage: "s",
+      status: "active",
+      budget_usd_micro: 1,
+      autonomy_level: 2,
+      summary_cache: {},
+      data_assets: [],
+      settings: {},
+      small_project_mode: false,
+      active: true,
+    })
+  ).id;
+  const task = await store.task.insert({
+    project_id: project,
+    title: "Add health endpoint",
+    outcome: "GET /health returns 200",
+    acceptance_criteria: ["returns 200", "has a test"],
+    risk_tier: 1,
+    status: "in_progress",
+    priority: 5,
+    depends_on: [],
+    budget_usd_micro: 500_000,
+    est_cost_usd_micro: 300_000,
+    actual_cost_usd_micro: 0,
+    attempt: 0,
+    reason: "seed",
+  });
+  const session = await store.session.insert({
+    agent_id: agent,
+    project_id: project,
+    trigger: "manual",
+    plan: {},
+    budget_cap_usd_micro: 5_000_000,
+    step_cap: 100,
+    spent_usd_micro: 0,
+    steps: 0,
+    status: "running",
+    summary: "",
+    handoff: {},
+    runner: "pc",
+  });
+  return { human, agent, project, task, session };
+}
+
+/** The executor over the harness and a scripted provider, and the call that runs the seeded task. */
+function executorFor(
+  h: ReturnType<typeof harness>,
+  store: StateStore,
+  w: Awaited<ReturnType<typeof seed>>,
+  provider: ScriptedProvider,
+) {
+  const exec = new LoopTaskExecutor({
+    store,
+    clock: h.clock,
+    tokens: h.tokens,
+    driver: new LoopAgentDriver({ hooks: h.hooks, kill: h.kill, clock: h.clock }),
+    provider,
+    pricing: flatPricing,
+    tools: registry(),
+    billingSourceId: "bs",
+    specialists: (n) => (n === "coder" ? coder : undefined),
+  });
+  const token = issue(h, {
+    agentId: w.agent,
+    ownerHumanId: w.human,
+    projectId: w.project,
+    allowedTools: ["echo", "read_file"],
+    budgetUsdMicro: 5_000_000,
+    sessionId: w.session.id,
+  });
+  const budget = new SessionBudget({
+    sessionId: w.session.id,
+    budgetUsdMicro: 5_000_000,
+    stepCap: 100,
+    deadlineMs: h.clock.now() + 3_600_000,
+    reserveShare: 0.2,
+  });
+  return () =>
+    exec.execute({
+      task: w.task,
+      session: w.session,
+      token,
+      budget,
+      item: {
+        taskId: w.task.id,
+        title: w.task.title,
+        specialist: "coder",
+        estimateUsdMicro: 300_000,
+      },
+      signal: new AbortController().signal,
+    });
+}
+
+describe("LoopTaskExecutor: the Run row (D.5, D.19)", () => {
+  // The first live run (ADR 0040) measured ttft with performance.now(), 12.345-style fractions,
+  // and the store refused the row for its INTEGER column; the error was swallowed and every
+  // coder run stayed "running" with cost 0. Whole milliseconds, on the real store, no mock.
+  it("persists a run whose first-token time (12.345 ms) and duration (987.65 ms) are fractional, as integers with the outcome and the cost", async () => {
+    const h = harness();
+    const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
+    const w = await seed(store);
+    const provider = new ScriptedProvider(
+      [{ text: "Added the endpoint.", ttftMs: 12.345, totalMs: 987.65 }],
+      h.clock,
+    );
+    const p = executorFor(h, store, w, provider)();
+    await until(() => provider.calls.length === 1, "the model call");
+    await h.clock.advance(2_000);
+    const res = await p;
+    expect(res.outcome).toBe("done");
+    expect(res.costUsdMicro).toBeGreaterThan(0);
+    const runs = await store.run.forTask(w.task.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      id: res.runId,
+      outcome: "completed",
+      ttft_ms: 12,
+      cost_usd_micro: res.costUsdMicro,
+      timed_out: false,
+    });
+    expect(Number.isInteger(runs[0]?.duration_ms)).toBe(true);
+    expect(runs[0]?.duration_ms).toBeGreaterThanOrEqual(988);
+    expect(await store.auditLog.list({ tool: RUN_PERSIST_FAILED_AUDIT_TOOL })).toEqual([]);
+    await store.close();
+  });
+
+  it("keeps the session going when the Run row cannot be written, and leaves an audit row and a log line that name the run and never the prompt", async () => {
+    const h = harness();
+    const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
+    const w = await seed(store);
+    const provider = new ScriptedProvider([{ text: "Added the endpoint." }], h.clock);
+    vi.spyOn(store.run, "patch").mockRejectedValueOnce(
+      new ForerunnerError("internal", "disk full"),
+    );
+    const records: LogRecord[] = [];
+    const off = Logger.addSink((r) => records.push(r));
+    try {
+      const res = await executorFor(h, store, w, provider)();
+      // The result reaches the runner as usual.
+      expect(res.outcome).toBe("done");
+      expect(res.summary).toBe("Added the endpoint.");
+      // The honest state of the row: still running, since nothing was written.
+      expect((await store.run.forTask(w.task.id))[0]).toMatchObject({
+        id: res.runId,
+        outcome: "running",
+      });
+      // The failure is an audit row with the ids, the stage and the store's message.
+      const rows = await store.auditLog.list({ runId: res.runId });
+      const row = rows.find((r) => r.tool === RUN_PERSIST_FAILED_AUDIT_TOOL);
+      expect(row).toMatchObject({
+        allowed: false,
+        session_id: w.session.id,
+        agent_id: w.agent,
+        human_id: w.human,
+        cost_usd_micro: 0,
+      });
+      expect(row?.denied_reason).toContain("disk full");
+      expect(JSON.parse(row?.input_summary ?? "{}")).toEqual({ runId: res.runId, stage: "end" });
+      // Never the prompt, the brief or the report.
+      const text = JSON.stringify(rows);
+      expect(text).not.toContain(coder.prompt);
+      expect(text).not.toContain(w.task.outcome);
+      expect(text).not.toContain("Added the endpoint.");
+      // And a line through the runtime logger, with the same discipline.
+      const logged = records.find((r) => r.level === "error" && r.msg === "run row not persisted");
+      expect(logged?.data).toMatchObject({ runId: res.runId, stage: "end" });
+      expect(logged?.data?.error).toContain("disk full");
+      const log = JSON.stringify(records);
+      expect(log).not.toContain(coder.prompt);
+      expect(log).not.toContain(w.task.outcome);
+    } finally {
+      off();
+      await store.close();
+    }
   });
 });

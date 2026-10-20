@@ -1,7 +1,7 @@
 import { type Clock, errorMessage, ForerunnerError, log, newId } from "@forerunner/platform";
-import type { StateStore, TaskRow } from "@forerunner/state";
+import type { JsonObject, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
-import type { LoopAgentDriver, RunEvent, RunPricing } from "../agent/loop.ts";
+import { type LoopAgentDriver, type RunEvent, type RunPricing, wholeMs } from "../agent/loop.ts";
 import { ToolRegistry, type ToolSpec } from "../agent/tools.ts";
 import { type DelegationBrief, renderBrief, validateBrief } from "../brief.ts";
 import { headroomHeaders, isProxyable } from "../context/headroom.ts";
@@ -49,6 +49,21 @@ export interface SpecialistSpec {
 
 /** Name of the command tool the sandbox port replaces (declared in daemon/tools.ts). */
 export const RUN_COMMAND_TOOL = "run_command";
+
+/**
+ * Audit row `tool` for a Run row the store refused: the run id, the stage and the store's
+ * message go in the row; the prompt, the brief and the transcript never do. Written by the
+ * executor (coder runs) and the critic (review runs).
+ */
+export const RUN_PERSIST_FAILED_AUDIT_TOOL = "run.persist_failed";
+
+/** The ids an audit row for a Run row failure carries. */
+interface RunIds {
+  runId: string;
+  sessionId: string;
+  agentId: string;
+  humanId: string;
+}
 
 export interface RunSandboxLease {
   sandbox: Sandbox;
@@ -98,8 +113,14 @@ export interface LoopTaskExecutorDeps {
   context?: ContextManager;
   billingSourceId: string;
   specialists: (name: string) => SpecialistSpec | undefined;
-  /** Model ceiling for the project (spec D). */
+  /** Static model ceiling (spec D); `projectCeiling` takes precedence when it answers. */
   ceiling?: ModelTier;
+  /**
+   * The ceiling of the task's project from its settings (`critic_ceiling`, spec D.3), read at
+   * every run so `tierForAttempt` escalates under the project's cap, not the default one.
+   * Undefined for a project without the setting falls back to `ceiling`.
+   */
+  projectCeiling?: (settings: JsonObject | null | undefined) => ModelTier | undefined;
   effortOffset?: -1 | 0 | 1;
   /**
    * The ladder and effort table in force, read at every run start (spec D, ADR 0039): the
@@ -237,10 +258,14 @@ export class LoopTaskExecutor implements TaskExecutor {
       budgetUsdMicro: brief.budgetUsdMicro,
       expiresAt: new Date(clock.now() + spec.timeoutMs).toISOString(),
     });
+    // The ceiling is the project's (`critic_ceiling` in its settings, spec D.3) when the
+    // composition passes `projectCeiling`; the static `ceiling` is the fallback, then the
+    // ladder's default. A project capped at sonnet therefore never escalates a retry to opus.
+    const ceiling = this.deps.projectCeiling?.(project?.settings) ?? this.deps.ceiling;
     const tier = tierForAttempt(
-      startingTier(spec.defaultTier, brief.riskTier, this.deps.ceiling),
+      startingTier(spec.defaultTier, brief.riskTier, ceiling),
       task.attempt,
-      this.deps.ceiling,
+      ceiling,
     );
     // The rung and the effort come from the tables in force (built-ins plus the adopted
     // models.json), so an adoption by the model watch changes the next run, not the next start.
@@ -291,6 +316,12 @@ export class LoopTaskExecutor implements TaskExecutor {
       headroom_used: headroomUsed,
       author_agent: session.agent_id,
     });
+    const runIds: RunIds = {
+      runId: run.id,
+      sessionId: session.id,
+      agentId: session.agent_id,
+      humanId: token.claims.ownerHumanId,
+    };
     // The attempt count is the state workflow's (failed -> ready, spec D.2); a run does not
     // count itself, or the ladder would advance twice per failure.
     await store.task.patch(task.id, { specialist: spec.name });
@@ -341,7 +372,7 @@ export class LoopTaskExecutor implements TaskExecutor {
         onEvent: (ev) => this.deps.onEvent?.(task.id, ev),
       });
     } catch (e) {
-      await this.endRunWithError(run.id, e, startedMono);
+      await this.endRunWithError(runIds, e, startedMono);
       throw e;
     } finally {
       if (lease) {
@@ -370,8 +401,9 @@ export class LoopTaskExecutor implements TaskExecutor {
         cache_read_tokens: result.usage.cache_read_input_tokens,
         cache_write_tokens: result.usage.cache_creation_input_tokens,
         cost_usd_micro: result.costUsdMicro,
-        ttft_ms: result.ttftMs[0] ?? null,
-        duration_ms: result.durationMs,
+        // Integers only: the timing columns are INTEGER and the store rejects a fraction.
+        ttft_ms: wholeMs(result.ttftMs[0]),
+        duration_ms: wholeMs(result.durationMs),
         outcome: result.outcome,
         timed_out: result.outcome === "timeout",
         tokens_before_compression: result.context.tokensBefore,
@@ -383,8 +415,8 @@ export class LoopTaskExecutor implements TaskExecutor {
           : [],
       });
     } catch (e) {
-      // never lose the result because bookkeeping failed
-      void errorMessage(e);
+      // The result is never lost because bookkeeping failed, and the failure is on record.
+      await this.runPersistFailed(runIds, "end", e);
     }
     return {
       outcome,
@@ -416,15 +448,48 @@ export class LoopTaskExecutor implements TaskExecutor {
   }
 
   /** Close a Run row whose run threw before the driver returned (outcome "error", duration, why). */
-  private async endRunWithError(runId: string, e: unknown, startedMono: number): Promise<void> {
+  private async endRunWithError(ids: RunIds, e: unknown, startedMono: number): Promise<void> {
     try {
-      await this.deps.store.run.patch(runId, {
+      await this.deps.store.run.patch(ids.runId, {
         outcome: "error",
-        duration_ms: Math.max(0, Math.round(this.deps.clock.monotonic() - startedMono)),
+        duration_ms: wholeMs(this.deps.clock.monotonic() - startedMono),
         artifacts: [{ error: errorMessage(e) }],
       });
     } catch (patchError) {
-      this.logger.warn("could not close the run row", { runId, error: errorMessage(patchError) });
+      await this.runPersistFailed(ids, "error", patchError);
+    }
+  }
+
+  /**
+   * A Run row the store refused. The first live run (ADR 0040) wrote a fractional `ttft_ms`,
+   * the store rejected it and the error was swallowed, so every coder run stayed `running`
+   * with cost 0 and nothing said so. The session keeps its result either way; the failure is
+   * logged through the runtime logger and appended as an audit row (`run.persist_failed`)
+   * carrying the run id, the stage and the store's message, so a run history that disagrees
+   * with the cost ledger can be traced. The prompt and the brief never enter either.
+   */
+  private async runPersistFailed(ids: RunIds, stage: "end" | "error", e: unknown): Promise<void> {
+    const error = errorMessage(e);
+    this.logger.error("run row not persisted", { runId: ids.runId, stage, error });
+    try {
+      await this.deps.store.auditLog.append({
+        session_id: ids.sessionId,
+        run_id: ids.runId,
+        agent_id: ids.agentId,
+        human_id: ids.humanId,
+        tool: RUN_PERSIST_FAILED_AUDIT_TOOL,
+        input_summary: JSON.stringify({ runId: ids.runId, stage }),
+        result_summary: error,
+        allowed: false,
+        denied_reason: error,
+        cost_usd_micro: 0,
+        occurred_at: this.deps.clock.nowIso(),
+      });
+    } catch (auditError) {
+      this.logger.error("run persist failure not audited", {
+        runId: ids.runId,
+        error: errorMessage(auditError),
+      });
     }
   }
 }

@@ -125,6 +125,7 @@ export function buildProgram(deps: CliDeps = {}): Command {
           prompt,
         });
         out(`Config: ${report.configPath}`);
+        out(`Install record: ${report.installRecordPath} (${report.installRecord.installDir})`);
         out(`Vault backend: ${vault.backend}`);
         for (const [k, r] of Object.entries(report.results)) {
           out(`${k}: ${r.ok ? "ok" : "needs changes"} - ${r.summary}`);
@@ -258,7 +259,13 @@ export function buildProgram(deps: CliDeps = {}): Command {
       // failure (spec M.4). It does nothing unless current.json says one is pending.
       try {
         const health = await rt.updates.healthCheck();
-        if (health.kind !== "not_pending") out(`Update health check: ${health.kind}`);
+        if (health.kind !== "not_pending") {
+          out(`Update health check: ${health.kind}`);
+          // After an update the schema sync gate is re-evaluated against the shared state
+          // with the code that now runs (spec M: sync resumes once both sides match).
+          const compat = await rt.schemaSync.refresh("update");
+          if (!compat.compatible) out(`Sync paused: ${compat.message}`);
+        }
       } catch (e) {
         log("fr").error(`update health check failed: ${errorMessage(e)}`);
       }

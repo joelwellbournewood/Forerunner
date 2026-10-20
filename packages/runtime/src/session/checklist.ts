@@ -255,7 +255,13 @@ export async function runStartupChecklist(input: ChecklistInput): Promise<StateB
     },
     peers,
     queue: {
-      items: queue.map((q) => ({ kind: q.kind, text: q.text, priority: q.priority })),
+      items: queue.map((q) => ({
+        id: q.id,
+        version: q.version,
+        kind: q.kind,
+        text: q.text,
+        priority: q.priority,
+      })),
       count: queueCount,
     },
     warnings,

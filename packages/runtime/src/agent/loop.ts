@@ -149,6 +149,18 @@ const EMPTY_USAGE: Usage = {
   cache_creation_input_tokens: 0,
 };
 
+/**
+ * A millisecond measurement as the run table stores it: a whole, non-negative integer. The
+ * `ttft_ms` and `duration_ms` columns are INTEGER and the store rejects a fractional value;
+ * `performance.now()` differences are fractional, so every measurement is rounded where it is
+ * produced (this driver) and again where it is written (the executor, the critic). Null for
+ * anything that is not a finite number (no call was made).
+ */
+export function wholeMs(ms: number | null | undefined): number | null {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return null;
+  return Math.max(0, Math.round(ms));
+}
+
 export class LoopAgentDriver {
   private readonly logger = log("agent-loop");
 
@@ -260,14 +272,16 @@ export class LoopAgentDriver {
         const callCost = req.pricing.cost(response.usage);
         addUsage(usage, response.usage);
         cost += callCost;
-        ttfts.push(response.time_to_first_token_ms);
+        // Whole milliseconds from here on: the Run row's timing columns are integers.
+        const ttftMs = wholeMs(response.time_to_first_token_ms) ?? 0;
+        ttfts.push(ttftMs);
         await this.deps.hooks.afterModelCall(ctx, response.usage, callCost);
         emit({
           type: "model_call_end",
           turn,
           usage: response.usage,
           costUsdMicro: callCost,
-          ttftMs: response.time_to_first_token_ms,
+          ttftMs,
           stopReason: response.stop_reason,
         });
 
@@ -389,7 +403,7 @@ export class LoopAgentDriver {
             name: call.name,
             chars: content.length,
             isError: !!execResult.isError,
-            durationMs: Math.round(clock.monotonic() - t0),
+            durationMs: wholeMs(clock.monotonic() - t0) ?? 0,
           });
         }
         messages.push({ role: "user", content: results });
@@ -427,7 +441,7 @@ export class LoopAgentDriver {
       modelCalls,
       toolCalls,
       ttftMs: ttfts,
-      durationMs: Math.round(clock.monotonic() - startedMono),
+      durationMs: wholeMs(clock.monotonic() - startedMono) ?? 0,
       error,
       pending,
       injectionReports: reports,

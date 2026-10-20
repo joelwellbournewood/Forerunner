@@ -26,14 +26,32 @@ export const CONFIDENCE_WORDS = ["high", "medium", "low"] as const;
 export type ConfidenceWord = (typeof CONFIDENCE_WORDS)[number];
 
 /**
- * "medium" maps below LOW_CONFIDENCE on purpose: the prompt says accept needs high confidence
- * and medium escalates; the code rule makes that true whatever the prompt says.
+ * "medium" sits above LOW_CONFIDENCE (ADR 0042): it is the normal confidence of a light read
+ * whose checks the runtime ran, and the spec's "low confidence never accepts" (H.4) is about
+ * `low`. ADR 0028 had mapped medium to 0.5, which turned every clean tier 1 review the live
+ * model answered "medium" into an escalate (the phase 3 live run). `low` stays well under the
+ * line, so the code rule still makes H.4 true whatever the prompt says.
  */
 export const CONFIDENCE_OF_WORD: Record<ConfidenceWord, number> = {
   high: 0.9,
-  medium: 0.5,
+  medium: 0.7,
   low: 0.2,
 };
+
+/**
+ * Why the critic escalates (ADR 0042). The rules honour a reason only when the evidence backs
+ * it: `unverified_finding` needs a critical or high finding, `evidence_missing` must name an
+ * item of the "Evidence not available" section, `limit` needs a limit the runtime recorded.
+ */
+export const ESCALATION_REASONS = ["unverified_finding", "evidence_missing", "limit"] as const;
+export type EscalationReason = (typeof ESCALATION_REASONS)[number];
+
+export const SubmitEscalationSchema = z.object({
+  reason: z.enum(ESCALATION_REASONS),
+  /** The finding, the unavailable item or the limit, by name. */
+  detail: z.string().min(1),
+});
+export type SubmitEscalation = z.infer<typeof SubmitEscalationSchema>;
 
 export const SEVERITY_OF_WORD: Record<SeverityWord, Severity> = {
   info: "info",
@@ -76,6 +94,8 @@ export const SubmitReviewSchema = z.object({
   evidence: z.array(z.string()).default([]),
   /** Ids of earlier open findings this change resolved. */
   resolved: z.array(z.string()).default([]),
+  /** Required for an `escalate` verdict to stand (ADR 0042); ignored for other verdicts. */
+  escalation: SubmitEscalationSchema.optional(),
 });
 
 export type SubmitReview = z.infer<typeof SubmitReviewSchema>;
@@ -90,10 +110,14 @@ export function severityOf(word: SeverityWord): Severity {
 }
 
 export const SUBMIT_REVIEW_DESCRIPTION =
-  "Submit the review. Call it exactly once with the grade (0-100), your confidence (0-1 or " +
-  "high/medium/low), the verdict (accept, revise, escalate, human), a one-paragraph summary, " +
-  "every finding with its severity, each acceptance criterion with met true/false and the " +
-  "evidence, doc_drift, the checks you ran, and the ids of earlier findings now resolved.";
+  "Submit the review. Call it exactly once with the grade (0-100), your confidence as the word " +
+  "high, medium or low (a number 0-1 is also accepted), the verdict (accept, revise, escalate, " +
+  "human), a one-paragraph summary, every finding with its severity, each acceptance criterion " +
+  "with met true/false and the evidence, doc_drift, the checks you ran, the ids of earlier " +
+  "findings now resolved, and for an escalate verdict the escalation reason " +
+  "(unverified_finding, evidence_missing or limit) with the finding, the item listed under " +
+  "'Evidence not available' or the limit it names; an escalate without one is recorded as the " +
+  "verdict the findings justify.";
 
 /**
  * Fallback for a model that answers in text as the prompt describes ("a single JSON object

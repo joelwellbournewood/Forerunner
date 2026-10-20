@@ -20,7 +20,7 @@ import { SessionBudget } from "../enforcement/budget.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import type { ProviderRegistry } from "../provider/registry.ts";
 import type { Registry } from "../registry/index.ts";
-import { CLAUDE_CODE_PREFIX } from "../registry/types.ts";
+import { loopToolsFor } from "../registry/tools.ts";
 import {
   RUN_COMMAND_TOOL,
   type RunSandboxLease,
@@ -187,43 +187,6 @@ export interface LoopEvalRunnerDeps {
 
 type Status = "pass" | "fail" | "needs_model" | "error";
 
-/**
- * The loop driver's built-in tool each Claude Code tool a registry entry may name (`cc:Read`,
- * `cc:Bash`, ...) stands for. The SDK driver passes `cc:` names through; the in-process
- * driver offers its own file tools, so an eval grants the equivalents and nothing else.
- */
-export const CLAUDE_CODE_TOOL_EQUIVALENTS: Readonly<Record<string, string>> = {
-  Read: "read_file",
-  NotebookRead: "read_file",
-  Write: "write_file",
-  Edit: "write_file",
-  MultiEdit: "write_file",
-  NotebookEdit: "write_file",
-  Glob: "list_dir",
-  Grep: "list_dir",
-  LS: "list_dir",
-  Bash: RUN_COMMAND_TOOL,
-};
-
-/**
- * The tool names a specialist's `allowed_tools` grant among `available` (the loop driver's
- * registry): `cc:` names map to their equivalents, Forerunner names pass through, anything
- * else is dropped. Order follows the registry entry; duplicates collapse.
- */
-export function loopToolNamesFor(
-  allowedTools: readonly string[],
-  available: readonly string[],
-): string[] {
-  const out: string[] = [];
-  for (const name of allowedTools) {
-    const mapped = name.startsWith(CLAUDE_CODE_PREFIX)
-      ? CLAUDE_CODE_TOOL_EQUIVALENTS[name.slice(CLAUDE_CODE_PREFIX.length)]
-      : name;
-    if (mapped && available.includes(mapped) && !out.includes(mapped)) out.push(mapped);
-  }
-  return out;
-}
-
 function pickTools(base: ToolRegistry, names: readonly string[]): ToolRegistry {
   const out = new ToolRegistry();
   for (const name of names) {
@@ -280,9 +243,23 @@ export class LoopEvalRunner implements EvalRunnerPort {
           specialist: spec.name,
           timeoutMs,
         });
-        // The specialist's tools only; commands only inside a sandbox lease over the work dir.
+        // The specialist's tools only (the loop driver's equivalents of its `cc:` names, ADR
+        // 0043); commands only inside a sandbox lease over the work dir, so without a sandbox
+        // port `run_command` is dropped with the other names the driver cannot offer.
         const base = this.deps.tools();
-        const allowed = loopToolNamesFor(spec.allowed_tools, base.names());
+        const mapping = loopToolsFor(spec.allowed_tools, {
+          available: base.names(),
+          commands: this.deps.sandbox !== undefined,
+        });
+        for (const drop of mapping.dropped) {
+          this.logger.warn("eval: specialist tool not offered to the model", {
+            task: task.id,
+            specialist: spec.name,
+            tool: drop.tool,
+            reason: drop.reason,
+          });
+        }
+        const allowed = mapping.tools;
         const wantsCommands = allowed.includes(RUN_COMMAND_TOOL);
         const needsSandbox = wantsCommands || task.checks.some((c) => c.kind === "command_exit0");
         let tools = pickTools(
@@ -299,10 +276,6 @@ export class LoopEvalRunner implements EvalRunnerPort {
           });
           for (const w of lease.warnings) this.logger.warn(w, { task: task.id });
           if (wantsCommands) tools = withSandboxedCommands(tools, lease.sandbox);
-        } else if (wantsCommands) {
-          this.logger.warn("no sandbox: run_command is not offered to the model under eval", {
-            task: task.id,
-          });
         }
         const runId = newId(clock.now());
         const sessionId = `model-watch:${runId}`;

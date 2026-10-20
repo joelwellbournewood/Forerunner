@@ -3,6 +3,7 @@ import os from "node:os";
 import type { CheckRunner, EvalDriver, EvalTask, EvalTaskResult } from "@forerunner/evals";
 import {
   appDirs,
+  basename,
   type Clock,
   errorMessage,
   fromPosix,
@@ -162,6 +163,17 @@ function filesOf(task: EvalTask, variant: "clean" | "seeded_defect"): string[] {
   return [...names].sort();
 }
 
+/** The placeholder for the work directory in check output; its name would reveal the variant. */
+export const WORK_DIR_PLACEHOLDER = "<work dir>";
+
+/**
+ * The evidence a calibration review gets (ADR 0042): the brief as the worker saw it, the
+ * criteria plus the rubric, the files the worker was given (the researcher's sources, the
+ * coder's starting files) in full, the produced files as a new-file diff, and the runner's
+ * checks with their output. Nothing names the variant: the driver's notes and the work
+ * directory (whose name carries "clean" or "seeded_defect") never reach the critic, so a
+ * caught defect is caught from the work, not from a label.
+ */
 export function evidenceFor(
   task: EvalTask,
   variant: "clean" | "seeded_defect",
@@ -169,30 +181,36 @@ export function evidenceFor(
   workDir: string | undefined,
 ): ReviewEvidence {
   const changedFiles = filesOf(task, variant);
+  const scrub = (text: string): string => {
+    if (!workDir) return text;
+    const base = basename(workDir);
+    let out = text.split(workDir).join(WORK_DIR_PLACEHOLDER);
+    if (base) out = out.split(base).join(WORK_DIR_PLACEHOLDER);
+    return out;
+  };
   const checkResults: CheckResultEvidence[] = result.checks
     .filter((c) => c.status !== "needs_model")
     .map((c) => ({
       name: c.label,
       passed: c.status === "pass",
-      output: [c.evidence, c.detail].filter((s): s is string => !!s).join("\n"),
+      output: scrub([c.evidence, c.detail].filter((s): s is string => !!s).join("\n")),
       required: true,
     }));
   const rubric = task.checks.flatMap((c) => (c.kind === "rubric" ? c.criteria : []));
-  const testOutput = result.checks
-    .filter((c) => c.kind === "command_exit0")
-    .map((c) => `${c.label}\n${c.evidence}${c.detail ? `\n${c.detail}` : ""}`)
-    .join("\n\n");
+  const inputFiles = Object.entries(task.setup.files)
+    .map(([path, content]) => ({ path, content }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+  const diff = workDir ? renderFilesAsDiff(workDir, changedFiles) : undefined;
   return {
     brief: renderBrief({ ...task.brief, specialist: task.specialist, taskId: task.id }),
     acceptanceCriteria: [...task.brief.acceptanceCriteria, ...rubric],
     changedFiles,
+    inputFiles,
     moduleFilesTouched: [],
     docsTouched: [],
-    diff: workDir ? renderFilesAsDiff(workDir, changedFiles) : undefined,
+    ...(diff ? { diff } : {}),
     checkResults,
-    testOutput: testOutput || undefined,
     finalReport: result.finalText || undefined,
-    artifacts: result.evidence,
   };
 }
 

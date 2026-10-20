@@ -20,6 +20,7 @@ import { createNotificationRoutes } from "../notifications/routes.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { defaultPeers } from "../session/runner.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
+import type { SchemaSyncStatus } from "../update/sync.ts";
 import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring/desktop-ports.ts";
 import { DecisionLog, StateAudit } from "../wiring/state-ports.ts";
 import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
@@ -49,6 +50,7 @@ import {
   type PendingChangeView,
   PinLessonBody,
   StartSessionBody,
+  type SyncHealth,
   TransitionTaskBody,
   UpdateLessonBody,
   UpdateProjectSettingsBody,
@@ -90,6 +92,19 @@ export interface DaemonServerOptions {
  * needs a bounded stop: an attached shell holds `/events` open for as long as it runs.
  */
 export const STOP_TIMEOUT_MS = 3_000;
+
+/** The schema sync gate as `/health` reports it (spec M); the refusal counter stays internal. */
+function syncHealth(s: SchemaSyncStatus): SyncHealth {
+  return {
+    paused: s.paused,
+    local: s.local,
+    peer: s.peer,
+    minSchema: s.minSchema,
+    action: s.action,
+    message: s.message,
+    checkedAt: s.checkedAt,
+  };
+}
 
 /** Origins the shells and the dev server use; anything else gets no CORS headers. */
 export function isLocalOrigin(origin: string | undefined): boolean {
@@ -194,7 +209,7 @@ export function createDaemonApp(
             ? 409
             : err.code === "approval_required" || err.code === "autonomy_insufficient"
               ? 403
-              : err.code === "provider_auth"
+              : err.code === "provider_auth" || err.code === "unavailable"
                 ? 503
                 : 500;
       // ADR 0025: a stale version or a lost claim is reported as "conflict"; the runtime's own
@@ -274,6 +289,7 @@ export function createDaemonApp(
         enabled: extensions.filter((e) => e.status === "enabled").length,
         pending: extensions.filter((e) => e.status === "pending_approval").length,
       },
+      sync: syncHealth(rt.schemaSync.status()),
     };
     return c.json(view);
   });
@@ -732,6 +748,7 @@ export function createDaemonApp(
       agentId: rt.agent.id,
       projectId,
       peerIds,
+      schemaSync: rt.schemaSync,
     });
     return c.json(feed satisfies PeerFeedView);
   });

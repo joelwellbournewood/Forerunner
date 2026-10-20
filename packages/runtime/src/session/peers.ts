@@ -5,7 +5,8 @@
  * a message to the peer before work starts; a task a peer is actively finishing is skipped.
  */
 import type { Clock } from "@forerunner/platform";
-import type { StateStore, TaskRow } from "@forerunner/state";
+import { appliedVersions, type StateStore, type TaskRow } from "@forerunner/state";
+import type { SchemaSyncPort } from "../update/sync.ts";
 
 export interface PeerClaim {
   taskId: string;
@@ -43,6 +44,11 @@ export interface PeerActivity {
 export interface PeerFeed {
   generatedAt: string;
   projectId: string | null;
+  /**
+   * The shared store's schema version (its highest applied migration): what the peers run
+   * against. An install whose code is behind it learns so here (spec M, the sync gate).
+   */
+  schemaVersion: number;
   peers: PeerActivity[];
 }
 
@@ -54,6 +60,12 @@ export interface PeerFeedInput {
   peerIds: string[];
   /** Sessions per peer to scan for in-flight files; default 3. */
   sessionsPerPeer?: number;
+  /**
+   * The sync gate (`update/sync.ts`): the feed hands it the store's schema version first and
+   * is refused (`unavailable`) while sync is paused, so no brief is built from a store this
+   * install cannot read correctly.
+   */
+  schemaSync?: SchemaSyncPort;
 }
 
 /** Event type the session runner appends when a task reports the files it changed. */
@@ -93,6 +105,12 @@ export async function buildPeerFeed(input: PeerFeedInput): Promise<PeerFeed> {
   const { store, clock, agentId } = input;
   const projectId = input.projectId ?? null;
   const now = clock.nowIso();
+  const applied = await appliedVersions(store.db);
+  const schemaVersion = applied.length ? Math.max(...applied) : 0;
+  if (input.schemaSync) {
+    await input.schemaSync.learn(schemaVersion, "peer_feed");
+    await input.schemaSync.assertCanSync("peer_feed");
+  }
   const peers: PeerActivity[] = [];
   const projectTasks: TaskRow[] = projectId
     ? await store.task.list({ project_id: projectId } as never, { limit: 2000 })
@@ -150,7 +168,7 @@ export async function buildPeerFeed(input: PeerFeedInput): Promise<PeerFeed> {
       inFlightFiles,
     });
   }
-  return { generatedAt: now, projectId, peers };
+  return { generatedAt: now, projectId, schemaVersion, peers };
 }
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
