@@ -68,6 +68,16 @@ schemas, `layoutSystem` order (registry prompt → project brief → instruction
 `volatilePreamble` puts them in the first user message. `fitToBudget` is the greedy
 retrieval-under-budget helper used by memory. The Headroom proxy adapter lands with phase 6.
 
+### Command line and setup (`src/cli/main.ts`, `src/setup/`)
+
+`pnpm fr -- <command>` (installed as `fr`): `setup` (guided or `--non-interactive`; each
+credential is explained with what, why, scopes, where to click and how it is verified, validated
+on paste through `src/setup/validators.ts`, then stored in the vault by name; `config.json`
+never holds a secret), `status` (directories, config, secret names only), `doctor`
+(prerequisites), `kill` (writes a kill request file), `dirs`. The kill request file in the
+runtime directory is polled by `KillFileWatcher` in every running runtime, so the CLI, the
+tray and the app can stop sessions across processes on both platforms.
+
 ### Models (`src/models/ladder.ts`)
 
 Ladder haiku → sonnet → opus → fable, ceiling opus by default; mode defaults and response
