@@ -10,7 +10,15 @@ const MODULE_DOCS = [
   [/^packages\/state\//, ["docs/maintainers/data-model.md", "docs/maintainers/migrations.md"]],
   [/^packages\/vault\//, ["docs/maintainers/security.md"]],
   [/^packages\/billing\//, ["docs/maintainers/billing.md"]],
-  [/^packages\/runtime\//, ["docs/maintainers/runtime.md", "docs/maintainers/sandbox.md", "docs/maintainers/adding-a-provider.md", "docs/maintainers/adding-a-specialist.md"]],
+  [
+    /^packages\/runtime\//,
+    [
+      "docs/maintainers/runtime.md",
+      "docs/maintainers/sandbox.md",
+      "docs/maintainers/adding-a-provider.md",
+      "docs/maintainers/adding-a-specialist.md",
+    ],
+  ],
   [/^packages\/commands\//, ["docs/maintainers/runtime.md", "docs/maintainers/commands.md"]],
   [/^packages\/memory\//, ["docs/maintainers/memory.md", "docs/maintainers/migrations.md"]],
   [/^packages\/critic\//, ["docs/maintainers/critic.md"]],
