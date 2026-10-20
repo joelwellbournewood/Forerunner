@@ -42,8 +42,14 @@ export const MIRROR_SETTINGS_KEY = "github_mirror";
 export const DEFAULT_MIRROR_SECRET_REF = "secret:github_token";
 export const MIRROR_EVENT_TYPE = "mirror.sync";
 /** Bump when MIRROR_FIELDS changes so existing projects get the new fields on the next run. */
-export const MIRROR_FIELDS_VERSION = 1;
+export const MIRROR_FIELDS_VERSION = 2;
 export const DEFAULT_MIRROR_BATCH_SIZE = 25;
+/**
+ * GitHub caps a draft issue body at 65 536 characters. A longer body is cut here, with a
+ * marker at the end, instead of failing the item (the store keeps the full text anyway).
+ */
+export const MIRROR_BODY_MAX_CHARS = 60_000;
+export const MIRROR_BODY_TRUNCATED_MARKER = "\n\n_(cut here; the full text is in Forerunner)_";
 export const DEFAULT_MIRROR_EVERY_MINUTES = 15;
 
 /** Task statuses whose items are archived on the board. */
@@ -83,6 +89,7 @@ export const MIRROR_FIELD_SPECIALIST = "specialist";
 export const MIRROR_FIELD_COST = "cost";
 export const MIRROR_FIELD_PR = "pr";
 export const MIRROR_FIELD_REVIEW = "review";
+export const MIRROR_FIELD_MILESTONE = "milestone";
 
 /** The fields every mirror project carries. "Status" reuses GitHub's built-in field. */
 export const MIRROR_FIELDS: readonly ProjectFieldSpec[] = [
@@ -100,6 +107,7 @@ export const MIRROR_FIELDS: readonly ProjectFieldSpec[] = [
   { name: FORERUNNER_TASK_ID_FIELD, kind: "text" },
   { name: MIRROR_FIELD_PR, kind: "text" },
   { name: MIRROR_FIELD_REVIEW, kind: "text" },
+  { name: MIRROR_FIELD_MILESTONE, kind: "text" },
 ];
 
 // ---- settings ----------------------------------------------------------------------------------
@@ -293,6 +301,8 @@ export interface TaskMirrorExtras {
   costUsdMicro: number;
   review: ReviewRow | null;
   reviewLink: string | null;
+  /** Name of the task's milestone (from the store), or null when it has none. */
+  milestone: string | null;
 }
 
 export function formatMicro(micro: number): string {
@@ -315,6 +325,7 @@ export function taskToItem(task: TaskRow, extras: TaskMirrorExtras): ProjectItem
     [MIRROR_FIELD_COST]: cost,
     [MIRROR_FIELD_PR]: task.pr_url || null,
     [MIRROR_FIELD_REVIEW]: review,
+    [MIRROR_FIELD_MILESTONE]: extras.milestone || null,
   };
   const lines = [
     `Mirrored from Forerunner task \`${task.id}\` (one way: edits here are not synced back).`,
@@ -329,16 +340,34 @@ export function taskToItem(task: TaskRow, extras: TaskMirrorExtras): ProjectItem
     "",
     `**Status:** ${MIRROR_STATUS_LABELS[task.status]} · **Specialist:** ${task.specialist || "-"} · **Cost:** ${cost} · **Risk tier:** ${task.risk_tier}`,
   );
+  if (extras.milestone) lines.push(`**Milestone:** ${extras.milestone}`);
   if (task.pr_url) lines.push(`**PR:** ${task.pr_url}`);
   if (review) lines.push(`**Review:** ${review}`);
-  return { forerunnerTaskId: task.id, title: task.title, body: lines.join("\n"), fields };
+  return { forerunnerTaskId: task.id, title: task.title, body: capBody(lines.join("\n")), fields };
+}
+
+/** Cut a body that would exceed the host's limit; the marker says where it was cut. */
+export function capBody(body: string): string {
+  if (body.length <= MIRROR_BODY_MAX_CHARS) return body;
+  return (
+    body.slice(0, MIRROR_BODY_MAX_CHARS - MIRROR_BODY_TRUNCATED_MARKER.length) +
+    MIRROR_BODY_TRUNCATED_MARKER
+  );
 }
 
 // ---- the mirror ----------------------------------------------------------------------------------
 
 export type MirrorStore = Pick<
   StateStore,
-  "project" | "task" | "review" | "costLedger" | "event" | "session" | "agent" | "auditLog"
+  | "project"
+  | "task"
+  | "milestone"
+  | "review"
+  | "costLedger"
+  | "event"
+  | "session"
+  | "agent"
+  | "auditLog"
 >;
 
 export interface ProjectsMirrorDeps {
@@ -529,6 +558,10 @@ export class ProjectsMirror {
       counts.scanned = tasks.length;
       counts.changed = changed.length;
       counts.skipped = tasks.length - changed.length;
+      // Milestone names once per run (from the store, like everything else on the board).
+      const milestones = changed.length
+        ? new Map((await store.milestone.forProject(projectId)).map((m) => [m.id, m.name]))
+        : new Map<string, string>();
 
       // 4. Batches; the cursor is saved after each one.
       const batchSize = Math.max(1, this.deps.batchSize ?? DEFAULT_MIRROR_BATCH_SIZE);
@@ -537,14 +570,14 @@ export class ProjectsMirror {
         for (const task of batch) {
           opts.signal?.throwIfAborted();
           try {
-            const r = await this.mirrorTask(host, githubProjectId, task, actor);
+            const r = await this.mirrorTask(host, githubProjectId, task, actor, milestones);
             if (r.created) counts.created++;
             else counts.updated++;
             if (r.archived) counts.archived++;
             cursor[task.id] = task.version;
           } catch (e) {
             if (isRateLimit(e)) {
-              stopped = { reason: "rate_limit", retryAfterMs: retryAfterOf(e) };
+              stopped = { reason: "rate_limit", retryAfterMs: retryAfterOf(e, clock) };
               this.logger.warn("rate limited; stopping this run", {
                 projectId,
                 mirrored: counts.created + counts.updated,
@@ -578,7 +611,7 @@ export class ProjectsMirror {
             delete cursor[id];
           } catch (e) {
             if (isRateLimit(e)) {
-              stopped = { reason: "rate_limit", retryAfterMs: retryAfterOf(e) };
+              stopped = { reason: "rate_limit", retryAfterMs: retryAfterOf(e, clock) };
               break;
             }
             counts.errors++;
@@ -635,8 +668,9 @@ export class ProjectsMirror {
     githubProjectId: string,
     task: TaskRow,
     actor: Actor,
+    milestones: Map<string, string>,
   ): Promise<{ created: boolean; archived: boolean }> {
-    const item = await this.itemFor(task);
+    const item = await this.itemFor(task, { milestones });
     const { item: info, created } = await host.upsertItem(githubProjectId, item);
     await this.audit(
       actor,
@@ -653,10 +687,23 @@ export class ProjectsMirror {
     return { created, archived };
   }
 
-  /** Item content from the store only: the task row, its ledger sum and its latest review. */
-  async itemFor(task: TaskRow): Promise<ProjectItemInput> {
+  /**
+   * Item content from the store only: the task row, its ledger sum, its latest review and its
+   * milestone's name (`opts.milestones` is a per-run cache id -> name; absent, one lookup).
+   */
+  async itemFor(
+    task: TaskRow,
+    opts: { milestones?: Map<string, string> } = {},
+  ): Promise<ProjectItemInput> {
     const sum = await this.deps.store.costLedger.sum({ taskId: task.id });
     const review = (await this.deps.store.review.latestForTask(task.id)) ?? null;
+    let milestone: string | null = null;
+    if (task.milestone_id) {
+      milestone =
+        opts.milestones?.get(task.milestone_id) ??
+        (await this.deps.store.milestone.get(task.milestone_id))?.name ??
+        null;
+    }
     return taskToItem(task, {
       costChfMicro: sum.entries > 0 ? sum.chf_micro : null,
       costUsdMicro: sum.entries > 0 ? sum.usd_micro : task.actual_cost_usd_micro,
@@ -664,6 +711,7 @@ export class ProjectsMirror {
       reviewLink: review
         ? (this.deps.reviewLink?.(review) ?? `forerunner://reviews/${review.id}`)
         : null,
+      milestone,
     });
   }
 
@@ -802,11 +850,14 @@ function isRateLimit(e: unknown): e is ForerunnerError {
   return e instanceof ForerunnerError && e.code === "provider_rate_limit";
 }
 
-function retryAfterOf(e: ForerunnerError): number | null {
+/** How long the host asked us to wait, from `retryAfterMs` or `resetAt` (on the injected clock). */
+function retryAfterOf(e: ForerunnerError, clock: Clock): number | null {
   const v = e.details.retryAfterMs;
   if (typeof v === "number") return v;
   const at = e.details.resetAt;
-  return typeof at === "string" ? Math.max(0, new Date(at).getTime() - Date.now()) : null;
+  if (typeof at !== "string") return null;
+  const resetMs = new Date(at).getTime();
+  return Number.isFinite(resetMs) ? Math.max(0, resetMs - clock.now()) : null;
 }
 
 // ---- scheduler hook ------------------------------------------------------------------------------

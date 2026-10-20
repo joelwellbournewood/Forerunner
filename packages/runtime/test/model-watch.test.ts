@@ -13,6 +13,7 @@ import { FAKE_MODELS, FakeProvider, type ScriptedReply } from "@forerunner/teste
 import { Command } from "commander";
 import { afterEach, describe, expect, it } from "vitest";
 import { type EvalDriver, type EvalTask, runEvalSet } from "../../../evals/src/index.ts";
+import { effortForTask, modelIdFor } from "../src/models/ladder.ts";
 import {
   FetchPriceListSource,
   FixturePriceListSource,
@@ -1112,5 +1113,27 @@ describe("model settings", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("an adopted models.json changes the rung the executor picks and the effort a task runs at", () => {
+    const adopted = applyModelSettings(
+      {
+        version: 1,
+        updated_at: "2026-10-19T06:00:00.000Z",
+        ladder: { sonnet: { fake: "fake-sonnet-6" } },
+        efforts: { coder: "low" },
+        history: [],
+      },
+      builtinModelConfig(),
+    );
+    expect(modelIdFor("sonnet", "fake", adopted.ladder)).toBe("fake-sonnet-6");
+    expect(modelIdFor("sonnet", "anthropic", adopted.ladder)).toBe("claude-sonnet-5-5");
+    expect(modelIdFor("sonnet", "fake")).toBe("fake-sonnet");
+    expect(effortForTask("coder", 1, 0, adopted.modeDefaults)).toBe("low");
+    expect(effortForTask("coder", 1)).toBe("medium");
+    // Tier 2+ coding stays at high whatever was adopted; the project offset still applies.
+    expect(effortForTask("coder", 2, 0, adopted.modeDefaults)).toBe("high");
+    expect(effortForTask("coder", 1, 1, adopted.modeDefaults)).toBe("medium");
+    expect(effortForTask("planning", 1, 0, adopted.modeDefaults)).toBe("high");
   });
 });

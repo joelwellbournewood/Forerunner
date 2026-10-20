@@ -385,8 +385,20 @@ function Timeline({ rows, today }: { rows: MilestoneRow[]; today: string }) {
   );
 }
 
-/** Plan tab (spec K.2, B): milestone timeline, milestones with their tasks, dependency graph. */
-export function PlanTab({ projectId, project }: { projectId: string; project: ProjectCard }) {
+/**
+ * Plan tab (spec K.2, B): milestone timeline, milestones with their tasks, dependency graph.
+ * `now` (epoch ms) places today's tick; it defaults to the wall clock and tests inject it,
+ * the same way `lib/time.ts` takes `now`.
+ */
+export function PlanTab({
+  projectId,
+  project,
+  now = Date.now(),
+}: {
+  projectId: string;
+  project: ProjectCard;
+  now?: number;
+}) {
   const client = useClient();
   const tasks = useAsync(
     (signal) => client.tasks(projectId, { limit: 500 }, signal),
@@ -403,16 +415,19 @@ export function PlanTab({ projectId, project }: { projectId: string; project: Pr
         : milestonesFromTasks(project, tasks.data ?? []),
     [milestones.data, project, tasks.data],
   );
-  const today = new Date().toISOString();
+  const today = new Date(now).toISOString();
+  // The timeline draws the route's milestones, or, on a daemon without the route, the derived
+  // ones (the card's dated next milestone on the axis, the ids the tasks reference after it).
+  const showTimeline = milestones.data !== null || (milestones.routeMissing && tasks.data !== null);
 
   return (
     <div className="space-y-5" data-testid="plan">
       <section>
         <h2 className="font-semibold">Timeline</h2>
         {milestones.routeMissing ? (
-          <RouteMissing route="milestones" what="the milestone timeline">
+          <RouteMissing route="milestones" what="milestone status and success criteria">
             <p className="mt-1">
-              Milestones below are derived from the tasks and the project card.
+              The timeline and the milestones below are derived from the tasks and the project card.
             </p>
           </RouteMissing>
         ) : null}
@@ -422,7 +437,7 @@ export function PlanTab({ projectId, project }: { projectId: string; project: Pr
         {(milestones.loading || tasks.loading) && !milestones.data && !tasks.data ? (
           <Loading what="milestones" />
         ) : null}
-        {milestones.data ? <Timeline rows={rows} today={today} /> : null}
+        {showTimeline ? <Timeline rows={rows} today={today} /> : null}
       </section>
 
       <section>

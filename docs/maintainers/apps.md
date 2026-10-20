@@ -8,7 +8,7 @@ notifications, restart, deep links).
 
 ## Purpose
 
-The screens of spec module K against the local daemon API (ADR 0011, ADR 0025, ADR 0032):
+The screens of spec module K against the local daemon API (ADR 0011, ADR 0025, ADR 0037):
 Home, the Project page with its eight tabs (Summary with the next-session queue, the peers
 feed and the decision log; Plan with the milestone timeline and the dependency graph; Tasks;
 Docs; Reviews with the grade trend; Costs with savings and cost per accepted task; Data with
@@ -83,7 +83,7 @@ apps/ui/
 | `/` | Home: project cards (stage, next milestone, health, spend vs budget, waiting-on-you, latest critic grade), New project dialog | store (`GET /projects`), `POST /projects` |
 | `/projects/:id/:tab?` | Project page; tabs `summary`, `plan`, `tasks`, `docs`, `reviews`, `costs`, `data`, `chat` (default `summary`); opening a project makes it active | `GET /projects/:id` and the tab routes below |
 | `summary` tab | the cached one-screen summary with Read aloud; **Next session** (queue items by priority with type badges, add note/task/correction/idea with a priority, dismiss; consumed items collapsed); **Peers** (per agent: online, active claims with expiry, open PRs, last handoff done/in flight/blocked/next, files in flight); **Decisions** (question, chosen option, the others, rationale, who, supersedes) | `GET /projects/:id/summary`, `GET /projects/:id/queue`, `POST /projects/:id/queue`, `POST /queue/:id/dismiss` (proposed), `GET /projects/:id/peers`, `GET /projects/:id/decisions` |
-| `plan` tab | milestone **timeline** (SVG: dated milestones on a time axis with today's tick, undated ones after), milestones with status, success criteria and their tasks, the task **dependency graph** (layered SVG, a task after everything it depends on); without a milestones route the list is derived from the tasks and the card behind a route-missing notice | `GET /projects/:id/tasks`, `GET /projects/:id/milestones` (proposed) |
+| `plan` tab | milestone **timeline** (SVG: dated milestones on a time axis with today's tick, undated ones after), milestones with status, success criteria and their tasks, the task **dependency graph** (layered SVG, a task after everything it depends on); without a milestones route the timeline and the list are derived from the tasks and the card (the card's dated next milestone on the axis, the ids the tasks reference after it) behind a route-missing notice; today's tick comes from a `now` prop (wall clock by default, injected in tests) | `GET /projects/:id/tasks`, `GET /projects/:id/milestones` (proposed) |
 | `tasks` tab | task log table with filters, transitions with a reason, New task dialog | `GET /projects/:id/tasks`, `/runs`, `POST /projects/:id/tasks`, `POST /tasks/:id/transition` |
 | `docs` tab | the standard doc set with present/missing/drift state, size and date; a document opens in a reader | `GET /projects/:id/docs`, `GET /projects/:id/docs/:path` (proposed) |
 | `reviews` tab | counts (reviews, open findings, average grade, verdicts), the grade trend chart with the accept line, every review newest first (grade, verdict, tier, confidence, model, task, session link, summary, evidence, findings with severity and status), verdict filter | `GET /projects/:id/reviews` |
@@ -92,7 +92,7 @@ apps/ui/
 | `chat` tab | quick chat with streaming, read-back confirmation, make-this-a-task | `POST /chat/stream` |
 | `/sessions/:id` | Live session view: header (status, agent, current task + specialist, steps/stepCap, spent/cap bar, Stop), event stream with level chips, raw JSON toggle, follow/auto-scroll | `GET /sessions/:id`, `GET /sessions/:id/events` (JSON backlog, then SSE), `POST /sessions/:id/stop` |
 | `/inbox` | Requests (blocking first, newest first) with option buttons and a free-text answer, messages with read marking; reloads when the install stream reports a blocking count the page has not seen | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /messages/:id/read` |
-| `/memory` | one view per principal agent (the human's own first, then the peers' as listed-but-not-readable), the critic, shared lessons, each with active and pinned counts; search (debounced); per lesson: pin, tags, confidence, uses, last used, source, project, file; edit text and tags, delete (two clicks); consolidation proposals with merged/contradictions/retired and "Run now" | `GET /memory/scopes`, `GET /memory?scope=&agentId=&q=`, `PUT /memory/lessons/:id`, `POST /memory/lessons/:id/pin`, `DELETE /memory/lessons/:id`, `GET /memory/consolidation`, `POST /memory/consolidation/run` |
+| `/memory` | one view per principal agent (the human's own first, then the peers' as listed-but-not-readable), the critic, shared lessons, each with active and pinned counts; search (debounced); per lesson: pin, tags, confidence, uses, last used, source, project, file; edit text and tags, delete (two clicks); consolidation proposals with merged/contradictions/retired and "Run now" (its own route-missing notice, under the Consolidation heading, when the daemon lacks the consolidation routes) | `GET /memory/scopes`, `GET /memory?scope=&agentId=&q=`, `PUT /memory/lessons/:id`, `POST /memory/lessons/:id/pin`, `DELETE /memory/lessons/:id`, `GET /memory/consolidation`, `POST /memory/consolidation/run` |
 | `/extensions` | grouped by kind (connectors and MCP servers, skills, specialists, capabilities, model providers): name, version, status, connected, cost, description, permissions summary with the full list behind details; On/Off switch; Remove (two clicks); pending rows show the review (stage, risk, summary, tools, requested permissions) with Approve/Deny; Add dialog: catalog with search and kind filter, or an MCP server URL; reloads on every `extension.changed` frame | `GET /extensions`, `GET /extensions/catalog`, `POST /extensions` (201 or 202), `POST /extensions/:id/toggle`, `/approve`, `/deny`, `DELETE /extensions/:id` |
 | `/changes` | the change log newest first: source, scope, project, undo state, who asked and when, the sentence, the words used, revert time, commands / before / after behind details, Undo while undoable; project filter and "undoable only" | `GET /changes?projectId=&undoable=`, `POST /changes/:id/undo` |
 | `/performance` | per mode: target (first token / first audio / total / by task), samples, first-token p50/p95, total p50/p95, within-target share, a bar of the p95 against the target (met/missed in words); recent runs; estimate accuracy (overall and per specialist and kind); project filter | `GET /performance?projectId=` (proposed), `GET /costs/estimates` |
@@ -128,7 +128,7 @@ fixtures with both sides and compares key sets so drift fails before a screen do
 
 ### Commands from the UI
 
-The settings screen is a client of the command registry (spec Q.1, ADR 0032):
+The settings screen is a client of the command registry (spec Q.1, ADR 0037):
 `commandForSetting(row)` maps `project.autonomy` to `autonomy.set`, `project.budget` and
 `human.monthly_cap` to `budget.set`, and the keys of `SETTING_SPECS` to `settings.set`; the
 dialog posts `executeCommands({ commands: [one], wordsUsed: "Settings: <key> to <value>" })`,
@@ -208,8 +208,9 @@ the peer feed, milestones, docs and performance are served read-only) and
 pending with the fixtures). It requires the bearer token on every route (and accepts `?token=`
 on the two SSE routes), answers CORS, records every POST/PUT/DELETE at `GET /__test/calls`,
 resets at `POST /__test/reset`, can push an event with `POST /__test/emit`, can hide routes
-(`missingRoutes` option or `POST /__test/missing`: a path and its children answer 404 "no
-route" like the daemon's catch-all) and can fail exact routes with a status and body
+(`missingRoutes` option or `POST /__test/missing`: a path and its children answer a typed 404
+"no route"; the real daemon registers no `notFound` handler and answers Hono's plain-text 404,
+which `isRouteMissing` reads the same way) and can fail exact routes with a status and body
 (`failing` option or `POST /__test/fail`). `POST /sessions` starts a scripted run (six events
 including a warning and an escalation, `eventDelayMs` apart, then `completed`);
 `/chat/stream` streams word tokens and scripts a read-back confirmation when the text contains
@@ -277,20 +278,22 @@ cd apps/ui && pnpm test:ui        # Playwright, headless Chromium, fake daemon +
 
 Unit tests (`test/*.test.ts[x]`): `client` (config resolution, route paths, token header,
 contract validation rejects malformed bodies, `/health` with its sandbox and extensions
-sections, decisions and peers, phase-1 mutations, a missing route vs a typed not_found, round
-trips for reviews / memory / commands / the change log, the proposed routes, extensions /
-updates / model watch), `contracts` (two-sided parse of the extension, updates and estimate
-fixtures with key-set comparison, proposed routes vs `DAEMON_ROUTES`, `parseChangeCard`),
-`money`, `sse` (parser, every event name incl. `extension.changed` and `restart.requested`,
-EventSource path, polling fallback, chat stream), `store` (persistence, restart, extensions
-version), `app`, `home`, `project` (summary, derived milestones fallback, costs, every tab
-filled), `project-tabs` (graph layout incl. a cut cycle, timeline positions, timeline and graph
-render, derived milestones when the route is missing, docs with drift and a reader, data
-register / remove / import, queue add / dismiss, peers, decisions, solo project and missing
-queue route, cost per accepted), `reviews` (tones, trend, newest first, findings, verdict
-filter, missing route), `tasks`, `session`, `inbox`, `chat`, `memory` (view order, pinned
-first, search, critic and shared views, a peer's agent not readable, edit / pin / delete,
-consolidation, missing route), `extensions` (permission summary, every kind with status and
+sections, decisions and peers, phase-1 mutations, a missing route vs a typed not_found incl.
+the real daemon's plain-text and empty-body 404, round trips for reviews / memory / commands /
+the change log, the proposed routes, extensions / updates / model watch), `contracts`
+(two-sided parse of the extension, updates and estimate fixtures with key-set comparison,
+proposed routes vs `DAEMON_ROUTES`, `parseChangeCard`), `money`, `sse` (parser, every event
+name incl. `extension.changed` and `restart.requested`, EventSource path, polling fallback,
+chat stream), `store` (persistence, restart, extensions version), `app`, `home`, `project`
+(summary, derived milestones fallback, costs, every tab filled), `project-tabs` (graph layout
+incl. a cut cycle, timeline positions, timeline and graph render, the timeline and derived
+milestones when the route is missing, today's tick from an injected `now`, docs with drift
+and a reader, data register / remove / import, queue add / dismiss, peers, decisions, solo
+project and missing queue route, cost per accepted), `reviews` (tones, trend, newest first,
+findings, verdict filter, missing route), `tasks`, `session`, `inbox`, `chat`, `memory` (view
+order, pinned first, search, critic and shared views, a peer's agent not readable, edit / pin
+/ delete, consolidation, missing memory routes with both notices, missing consolidation route
+alone), `extensions` (permission summary, every kind with status and
 review, toggle and remove, add from the catalog then approve, add from a URL then deny, reload
 on `extension.changed`), `updates` (states, available release with changelog, apply with the
 restart banner, rollback, model watch adopt and run, feed failure fallback), `performance`
@@ -318,10 +321,15 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
 
 - The UI has so far only been run against the fake daemon. The first run against the real
   one should confirm the shapes end to end and goes into `docs/status/gates.md`.
+- The real daemon registers no `notFound` handler (`packages/runtime/src/daemon/server.ts`),
+  so a route it lacks answers Hono's plain-text 404 while the fake answers a typed
+  `not_found` "no route" body. `isRouteMissing` accepts both (untyped 404/405/501, or a typed
+  one saying "no route"), so the pages degrade the same way against either; an `app.notFound`
+  in `server.ts` matching the fake would make the two identical and belongs to the daemon.
 - Proposed routes the daemon does not serve yet (the pages show "route not available" until
   it does): `GET/POST /projects/:id/queue`, `POST /queue/:id/dismiss`,
-  `GET /projects/:id/milestones` (the Plan tab derives milestones meanwhile),
-  `GET/POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/import`,
+  `GET /projects/:id/milestones` (the Plan tab derives the timeline and the milestones
+  meanwhile), `GET/POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/import`,
   `GET /projects/:id/docs[/:path]`, `GET /performance`. Shapes are in `contracts.ts` and the
   fixtures.
 - `POST /commands/execute` takes `source: text | voice | phone` only, so a change made from

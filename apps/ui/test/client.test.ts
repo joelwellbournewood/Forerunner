@@ -235,6 +235,27 @@ describe("daemon client", () => {
     const plain = new ApiError("ui.http_error", "404: Not Found", 404);
     expect(isRouteMissing(plain)).toBe(true);
     expect(isRouteMissing(new ApiError("ui.http_error", "500: boom", 500))).toBe(false);
+    // The real daemon registers no notFound handler, so a route it lacks answers Hono's
+    // plain-text 404 rather than the fake's typed "no route" body: the client must read that
+    // as a missing route too.
+    const honoDefault = createClient(
+      testConfig(),
+      async () =>
+        new Response("404 Not Found", { status: 404, headers: { "content-type": "text/plain" } }),
+    );
+    const untyped = await honoDefault.performance().catch((e: unknown) => e);
+    expect(untyped).toMatchObject({
+      code: "ui.http_error",
+      status: 404,
+      message: "404: 404 Not Found",
+    });
+    expect(isRouteMissing(untyped)).toBe(true);
+    // An untyped 404 with an empty body (statusText only) reads the same way.
+    const empty = createClient(
+      testConfig(),
+      async () => new Response(null, { status: 404, statusText: "Not Found" }),
+    );
+    expect(isRouteMissing(await empty.performance().catch((e: unknown) => e))).toBe(true);
   });
 
   it("round-trips reviews, memory, commands and the change log against the fake daemon", async () => {

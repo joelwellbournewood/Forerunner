@@ -242,7 +242,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     return next();
   });
-  // A daemon that does not serve a route answers like the real one's catch-all.
+  // A hidden route answers a typed 404 "no route ..." body. The real daemon registers no
+  // notFound handler (packages/runtime/src/daemon/server.ts), so a route it lacks answers
+  // Hono's plain-text 404 instead; `isRouteMissing` reads both as a missing route
+  // (`client.test.ts` covers the plain-text shape) and the pages degrade the same way.
   app.use("*", async (c, next) => {
     if (
       c.req.method !== "OPTIONS" &&

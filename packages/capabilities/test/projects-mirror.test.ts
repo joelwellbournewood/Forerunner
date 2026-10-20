@@ -1,18 +1,28 @@
 import { ForerunnerError, SimulatedClock } from "@forerunner/platform";
 import { Scheduler, type StartRequest } from "@forerunner/runtime";
-import { openStore, type StateStore, TASK_STATUSES, type TaskRow } from "@forerunner/state";
+import {
+  type JsonObject,
+  openStore,
+  type StateStore,
+  TASK_STATUSES,
+  type TaskRow,
+} from "@forerunner/state";
 import { MemoryVault } from "@forerunner/vault";
 import { describe, expect, it } from "vitest";
 import { GitHubHost } from "../src/githost/github.ts";
 import { MemoryGitHost } from "../src/githost/memory.ts";
 import {
+  capBody,
   githubHostForSecretRef,
   HumanRequestMirrorPort,
   isMirrorRequest,
   MIRROR_APPROVE_OPTION,
+  MIRROR_BODY_MAX_CHARS,
+  MIRROR_BODY_TRUNCATED_MARKER,
   MIRROR_DENY_OPTION,
   MIRROR_EVENT_TYPE,
   MIRROR_FIELDS,
+  MIRROR_FIELDS_VERSION,
   MIRROR_SETTINGS_KEY,
   MIRROR_STATUS_LABELS,
   type MirrorApprovalRequest,
@@ -119,6 +129,39 @@ async function items(host: MemoryGitHost, w: World) {
   return host.listProjectItems(s?.project_id ?? "");
 }
 
+/** A task row for the pure mapping tests (no store). */
+function taskRow(overrides: Partial<TaskRow> = {}): TaskRow {
+  return {
+    id: "t",
+    created_at: "",
+    updated_at: "",
+    author_agent: null,
+    author_human: null,
+    version: 1,
+    project_id: "p",
+    milestone_id: null,
+    title: "T",
+    outcome: "",
+    acceptance_criteria: [],
+    status: "ready",
+    risk_tier: 2,
+    priority: 0,
+    claimed_by: null,
+    claim_expires: null,
+    depends_on: [],
+    budget_usd_micro: 0,
+    est_cost_usd_micro: 0,
+    actual_cost_usd_micro: 1_234_567,
+    owner_agent_id: null,
+    specialist: null,
+    attempt: 0,
+    pr_url: null,
+    branch: null,
+    reason: "",
+    ...overrides,
+  };
+}
+
 describe("ProjectsMirror", () => {
   it("creates the board and fields, mirrors title, status, specialist, cost in CHF, PR and review, and records event and audit rows", async () => {
     const w = await world();
@@ -176,7 +219,7 @@ describe("ProjectsMirror", () => {
     const s = await w.settings();
     expect(s?.project_id).toBe(r.githubProjectId);
     expect(s?.cursor).toEqual({ [t1]: 1, [t2]: 1 });
-    expect(s?.fields_version).toBe(1);
+    expect(s?.fields_version).toBe(MIRROR_FIELDS_VERSION);
 
     const list = await items(w.host, w);
     const i1 = list.find((i) => i.forerunnerTaskId === t1);
@@ -598,49 +641,111 @@ describe("ProjectsMirror", () => {
   });
 
   it("taskToItem maps every status to a label and falls back to USD when the ledger has no CHF", () => {
-    const base: Omit<TaskRow, "status"> = {
-      id: "t",
-      created_at: "",
-      updated_at: "",
-      author_agent: null,
-      author_human: null,
-      version: 1,
-      project_id: "p",
-      milestone_id: null,
-      title: "T",
-      outcome: "",
-      acceptance_criteria: [],
-      risk_tier: 2,
-      priority: 0,
-      claimed_by: null,
-      claim_expires: null,
-      depends_on: [],
-      budget_usd_micro: 0,
-      est_cost_usd_micro: 0,
-      actual_cost_usd_micro: 1_234_567,
-      owner_agent_id: null,
-      specialist: null,
-      attempt: 0,
-      pr_url: null,
-      branch: null,
-      reason: "",
-    };
     for (const status of TASK_STATUSES) {
-      const item = taskToItem(
-        { ...base, status },
-        {
-          costChfMicro: null,
-          costUsdMicro: base.actual_cost_usd_micro,
-          review: null,
-          reviewLink: null,
-        },
-      );
+      const item = taskToItem(taskRow({ status }), {
+        costChfMicro: null,
+        costUsdMicro: 1_234_567,
+        review: null,
+        reviewLink: null,
+        milestone: null,
+      });
       expect(item.fields?.Status).toBe(MIRROR_STATUS_LABELS[status]);
       expect(item.fields?.cost).toBe("USD 1.23");
       expect(item.fields?.review).toBeNull();
+      expect(item.fields?.milestone).toBeNull();
       expect(item.forerunnerTaskId).toBe("t");
     }
     expect(new Set(Object.values(MIRROR_STATUS_LABELS)).size).toBe(TASK_STATUSES.length);
+  });
+
+  it("caps a draft body at the host's limit and says where it was cut", () => {
+    const extras = {
+      costChfMicro: null,
+      costUsdMicro: 0,
+      review: null,
+      reviewLink: null,
+      milestone: "M1",
+    };
+    const short = taskToItem(taskRow({ acceptance_criteria: ["one"] }), extras);
+    expect(short.body?.length).toBeLessThan(MIRROR_BODY_MAX_CHARS);
+    expect(short.body).not.toContain(MIRROR_BODY_TRUNCATED_MARKER);
+    expect(short.body).toContain("**Milestone:** M1");
+    expect(short.fields?.milestone).toBe("M1");
+
+    const criteria = Array.from({ length: 2_000 }, (_, i) => `criterion ${i} ${"x".repeat(60)}`);
+    const long = taskToItem(taskRow({ acceptance_criteria: criteria }), extras);
+    expect(long.body?.length).toBe(MIRROR_BODY_MAX_CHARS);
+    expect(long.body?.endsWith(MIRROR_BODY_TRUNCATED_MARKER)).toBe(true);
+    expect(long.body?.startsWith("Mirrored from Forerunner task")).toBe(true);
+    expect(capBody("tiny")).toBe("tiny");
+    expect(capBody("y".repeat(MIRROR_BODY_MAX_CHARS))).toHaveLength(MIRROR_BODY_MAX_CHARS);
+    expect(capBody("y".repeat(MIRROR_BODY_MAX_CHARS + 1))).toHaveLength(MIRROR_BODY_MAX_CHARS);
+  });
+
+  it("mirrors the milestone name from the store and re-ensures the fields of a board set up by an older field set", async () => {
+    const w = await world();
+    const ms = await w.store.milestone.insert({ project_id: w.projectId, name: "Launch" });
+    const t1 = await w.addTask("With milestone", { milestone_id: ms.id });
+    const t2 = await w.addTask("Without milestone");
+    await w.mirror.sync(w.projectId);
+    const list = await items(w.host, w);
+    expect(list.find((i) => i.forerunnerTaskId === t1)).toMatchObject({
+      fields: { milestone: "Launch" },
+    });
+    expect(list.find((i) => i.forerunnerTaskId === t1)?.body).toContain("**Milestone:** Launch");
+    expect(list.find((i) => i.forerunnerTaskId === t2)?.fields.milestone ?? null).toBeNull();
+    const fields = await w.host.ensureFields((await w.settings())?.project_id ?? "", []);
+    expect(fields.find((f) => f.name === "milestone")?.kind).toBe("text");
+
+    // A milestone edit does not bump the task's version: the cursor hides it until the task
+    // changes or a full run re-asserts the board (documented; the board is informational).
+    await w.store.milestone.update(ms.id, ms.version, { name: "Launch v2" });
+    const quiet = await w.mirror.sync(w.projectId);
+    expect(quiet).toMatchObject({ changed: 0, skipped: 2 });
+    const full = await w.mirror.sync(w.projectId, { full: true });
+    expect(full).toMatchObject({ changed: 2, updated: 2 });
+    expect((await items(w.host, w)).find((i) => i.forerunnerTaskId === t1)?.fields.milestone).toBe(
+      "Launch v2",
+    );
+
+    // Settings written by an older build (fields_version behind): the next run ensures the
+    // fields again on the same board, once, and records the current version.
+    const p = await w.store.project.mustGet(w.projectId);
+    const existing = p.settings[MIRROR_SETTINGS_KEY] as JsonObject;
+    await w.store.project.update(p.id, p.version, {
+      settings: {
+        ...p.settings,
+        [MIRROR_SETTINGS_KEY]: { ...existing, fields_version: MIRROR_FIELDS_VERSION - 1 },
+      },
+    });
+    const before = w.host.projectCalls.length;
+    await w.mirror.sync(w.projectId);
+    expect(w.host.projectCalls.slice(before).map((c) => c.op)).toEqual(["ensureFields"]);
+    expect((await w.settings())?.fields_version).toBe(MIRROR_FIELDS_VERSION);
+    const again = w.host.projectCalls.length;
+    await w.mirror.sync(w.projectId);
+    expect(w.host.projectCalls.length).toBe(again);
+  });
+
+  it("computes the retry delay of a resetAt rate limit on the injected clock, not the wall clock", async () => {
+    const inner = new MemoryGitHost("alice");
+    let resetAt = "";
+    const limited: GitHost = Object.assign(Object.create(Object.getPrototypeOf(inner)), inner, {
+      async upsertItem(): Promise<UpsertItemResult> {
+        throw new ForerunnerError("provider_rate_limit", "rate limited", {
+          retryable: true,
+          details: { resetAt },
+        });
+      },
+    });
+    const w = await world({ host: limited });
+    // The simulated clock sits in April 2026; a wall-clock subtraction would give 0 here.
+    resetAt = new Date(w.clock.now() + 90_000).toISOString();
+    await w.addTask("a");
+    const r = await w.mirror.sync(w.projectId);
+    expect(r.stopped).toEqual({ reason: "rate_limit", retryAfterMs: 90_000 });
+    expect(r).toMatchObject({ created: 0, updated: 0, errors: 0 });
+    expect((await w.settings())?.cursor).toEqual({});
   });
 
   it("end to end over GraphQL: the mirror drives the GitHub adapter with the expected operations", async () => {

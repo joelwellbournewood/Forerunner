@@ -97,15 +97,18 @@ result and the event, and the next run continues where it stopped without creati
 | Board field | Type | Value |
 | --- | --- | --- |
 | title | draft issue | `task.title` |
-| body | draft issue | outcome, acceptance criteria, status, specialist, cost, risk tier, PR and review links, and the sentence that edits here are not synced back |
+| body | draft issue | outcome, acceptance criteria, status, specialist, cost, risk tier, milestone, PR and review links, and the sentence that edits here are not synced back; cut at `MIRROR_BODY_MAX_CHARS` (60 000, under GitHub's 65 536 cap) with `MIRROR_BODY_TRUNCATED_MARKER` at the end (`capBody`) |
 | `Status` | single-select (GitHub's built-in field, options added) | `MIRROR_STATUS_LABELS[task.status]`: Draft, Ready, Claimed, In Progress, In Review, Needs Human, Done, Failed, Cancelled (title case so GitHub's own "In Progress" and "Done" options are reused) |
 | `specialist` | text | `task.specialist`, cleared when null |
 | `cost` | text | `CHF x.xx` from the cost ledger sum for the task (`chf_micro`); `USD x.xx` from `actual_cost_usd_micro` when the ledger has no entry (ADR 0008: CHF is the display currency) |
 | `forerunner_task_id` | text | `task.id`; the idempotency key, written once on creation |
 | `pr` | text | `task.pr_url` |
 | `review` | text | `<verdict> <grade>/100 <link>` of the latest review (`deps.reviewLink`, default `forerunner://reviews/<id>`) |
+| `milestone` | text | name of the task's milestone (`store.milestone`, loaded once per run), cleared when the task has none (added in field set version 2) |
 
 Archived: `task.status` in `CLOSED_TASK_STATUSES` (`done`, `cancelled`) or the task row is gone.
+Milestones are mirrored as a field on each task, not as items of their own: a board groups by
+`milestone` the way it groups by `Status`.
 
 ### Cursor and settings
 
@@ -118,7 +121,14 @@ Archived: `task.status` in `CLOSED_TASK_STATUSES` (`done`, `cancelled`) or the t
 two installs writing the same Postgres cannot hide a change, and a run after no changes makes
 zero host calls. Settings are written with optimistic concurrency and retried on
 `version_conflict`; the cursor is persisted after every batch, so a crash mid-run redoes at most
-one batch (upserts are idempotent anyway).
+one batch (upserts are idempotent anyway). The cursor follows the task row only: a change that
+lives elsewhere (a milestone renamed, a new ledger entry, a new review) reaches the board when
+the task next changes or on `fr mirror sync --full`. `fields_version` records which field set
+(`MIRROR_FIELDS_VERSION`) a board was last ensured with; a board set up by an older build gets
+the new fields on its next run.
+
+Rate-limit arithmetic (`retryAfterMs`, or `resetAt` minus now) runs on the injected `Clock`,
+never on the wall clock, so the stop reason in the event is right under a simulated clock too.
 
 ### Scopes
 
@@ -186,26 +196,35 @@ one-way guarantee with a tampered board and a `full` re-assert; rate-limit stop 
 per-batch cursor and continuation without twins; not-enabled refusal and owner derivation;
 approval port deny/approve asked once; `HumanRequestMirrorPort` answer and timeout; scheduler
 hook; CLI registration and commands; host from a vault reference; `taskToItem` for every
-status; end-to-end run over GraphQL). Run: `pnpm vitest run --project unit packages/capabilities/test/github-projects.test.ts packages/capabilities/test/projects-mirror.test.ts`.
+status; body cap with the cut marker; milestone name on the item, a milestone rename reaching
+the board only through a task change or a full run, and a board with an older `fields_version`
+getting its fields ensured again once; `resetAt` retry delay computed on the simulated clock;
+end-to-end run over GraphQL). Run: `pnpm vitest run --project unit packages/capabilities/test/github-projects.test.ts packages/capabilities/test/projects-mirror.test.ts`
+(25 tests).
 
 ### Known issues
 
 - The GitHub adapter's item index is per process; two processes mirroring the same board at
   the same time could each create an item for a task created between their listings. Run the
   mirror from one place (the scheduler) per project.
-- Draft issue bodies are plain markdown; GitHub caps them at 65k characters (long acceptance
-  criteria lists are not truncated yet).
-- Milestones are not mirrored yet (the spec mentions "tasks and milestones"); a milestone
-  single-select field is the natural next step.
+- A milestone rename, a new ledger entry or a new review does not bump the task's version, so
+  the cursor hides it until the task changes or a `--full` run; the board is informational, so
+  this is accepted rather than widening the cursor to those rows.
+- Milestones are a text field, not a single-select: option ids would have to be kept in sync
+  with milestone rows (creates, renames, deletes); a text field needs no reconciliation.
+- The fake git host in `testenv` speaks classic (REST) projects only; the GraphQL stand-in
+  lives in this package's test helpers and is not shared with other packages.
 
 ### Requirements
 
 No row in `docs/requirements.md` names the mirror (it sits under "Source of truth rules" in
-the Architecture section, outside the A-V scheme). It contributes to: B.7 (task log with cost,
-verdict and links to PR and review, reproduced on the board), S.1 (enabled flag, approval and
-field checks enforced in code), S.4 (token by reference, value only in the header), S.5
-(scopes documented and insufficient scopes surfaced), S.6 (creating the board can be routed
-through a human), S.9 (audit row per outward action), U.9 (run event with counts on a session).
+the Architecture section, outside the A-V scheme). It contributes to: B.1 (milestones and
+tasks of a project, shown on the board), B.3 (every workflow status and side exit has exactly
+one board option), B.7 (task log with cost, verdict and links to PR and review, reproduced on
+the board), S.1 (enabled flag, approval and field checks enforced in code), S.4 (token by
+reference, value only in the header), S.5 (scopes documented and insufficient scopes
+surfaced), S.6 (creating the board can be routed through a human), S.9 (audit row per outward
+action), U.9 (run event with counts on a session).
 
 ## How it works
 

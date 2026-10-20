@@ -132,8 +132,31 @@ describe("Memory page", () => {
 
   it("degrades to a visible route-missing state on a daemon without memory routes", async () => {
     renderApp("/memory", createHarness({ missingRoutes: ["/memory"] }));
-    const missing = await screen.findByTestId("route-missing");
-    expect(missing).toHaveTextContent("Route not available on this daemon");
-    expect(missing).toHaveTextContent("GET /memory");
+    // Both the lessons and the consolidation section say which route is missing: nothing
+    // on the page disappears silently.
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByTestId("route-missing")
+          .map((m) => m.dataset.route)
+          .sort(),
+      ).toEqual(["consolidation", "memory"]),
+    );
+    const lessons = screen
+      .getAllByTestId("route-missing")
+      .find((m) => m.dataset.route === "memory");
+    expect(lessons).toHaveTextContent("Route not available on this daemon");
+    expect(lessons).toHaveTextContent("GET /memory");
+  });
+
+  it("keeps the lessons and names the missing route when only consolidation is absent", async () => {
+    renderApp("/memory", createHarness({ missingRoutes: ["/memory/consolidation"] }));
+    const section = await screen.findByTestId("consolidation");
+    const missing = await within(section).findByTestId("route-missing");
+    expect(missing).toHaveAttribute("data-route", "consolidation");
+    expect(missing).toHaveTextContent("GET /memory/consolidation");
+    expect(within(section).queryByTestId("consolidation-run")).not.toBeInTheDocument();
+    expect(await screen.findAllByTestId("lesson")).toHaveLength(2);
+    expect(screen.getAllByTestId("route-missing")).toHaveLength(1);
   });
 });

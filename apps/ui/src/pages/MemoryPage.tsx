@@ -282,7 +282,24 @@ function ConsolidationSection() {
     }
   };
 
-  if (proposals.routeMissing) return null;
+  // A daemon without the consolidation routes gets the same visible "route not available"
+  // state as every other panel (ADR 0032), never a section that silently disappears.
+  if (proposals.routeMissing) {
+    return (
+      <section
+        className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+        data-testid="consolidation"
+        aria-labelledby="consolidation-title"
+      >
+        <h2 id="consolidation-title" className="font-semibold">
+          Consolidation
+        </h2>
+        <div className="mt-2">
+          <RouteMissing route="consolidation" what="consolidation proposals" />
+        </div>
+      </section>
+    );
+  }
   return (
     <section
       className="rounded border border-neutral-200 p-3 dark:border-neutral-800"

@@ -36,6 +36,8 @@ Status: accepted | superseded by NNNN
 | 0015 | Updates: pointer-file install layout and the trust model for signed releases |
 | 0016 | How MCP tools map to ToolSpecs and action classes |
 | 0017 | Notifications: channel fallback order and what counts as urgent |
+| 0019 | Model watch: recommendation thresholds and the estimate model |
+| 0021 | Desktop control: adapters per OS, the allowlist gate and what the agent never does |
 | 0024 | State service shape: direct Postgres for runtimes, a thin service for devices, realtime, remote commands and the mirror |
 | 0025 | UI conventions over the daemon API: config source, SSE auth, chat stream frames, open shapes |
 | 0026 | Daemon lifecycle: one `fr daemon` per install, shells attach to it |
@@ -49,3 +51,4 @@ Status: accepted | superseded by NNNN
 | 0034 | Approvals web: session from a one-time link, per-tab device key, re-entered code for high-risk answers, chat as a remote command |
 | 0035 | Cloudflare deploys: plan before deploy, staging first, production above autonomy level 3 only with a change card |
 | 0036 | Core loop integration: critic, memory and commands inside the session runner and the conversation agent |
+| 0037 | UI screens: proposed routes, the "route not available" state, mirrored schemas, charts and the settings command path |

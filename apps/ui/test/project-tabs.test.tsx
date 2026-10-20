@@ -2,9 +2,22 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { costPerAccepted } from "../src/pages/project/CostsTab.tsx";
-import { layoutGraph, milestoneRows, timelineLayout } from "../src/pages/project/PlanTab.tsx";
-import { MILESTONES, TASKS } from "./fixtures.ts";
-import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
+import {
+  layoutGraph,
+  milestoneRows,
+  PlanTab,
+  timelineLayout,
+} from "../src/pages/project/PlanTab.tsx";
+import { MILESTONES, PROJECTS, TASKS } from "./fixtures.ts";
+import { createHarness, postedCalls, renderApp, renderWith } from "./helpers.tsx";
+
+/** The x of an SVG element's attribute, as the timeline wrote it. */
+function svgNumber(element: Element | null | undefined, attribute: string): number {
+  const value = element?.getAttribute(attribute);
+  if (value === null || value === undefined)
+    throw new Error(`no ${attribute} on ${element?.tagName}`);
+  return Number.parseFloat(value);
+}
 
 describe("Plan tab: timeline and dependency graph", () => {
   it("lays tasks out in dependency layers and drops edges to unknown tasks", () => {
@@ -72,7 +85,43 @@ describe("Plan tab: timeline and dependency graph", () => {
     expect(await screen.findByTestId("route-missing")).toHaveAttribute("data-route", "milestones");
     const list = screen.getByTestId("milestone-list");
     await waitFor(() => expect(within(list).getByText("Search works")).toBeInTheDocument());
+    // The timeline stays: the dated next milestone from the card on the axis, the milestone
+    // ids the tasks reference after it, and today's tick.
+    const timeline = await screen.findByTestId("milestone-timeline");
+    await waitFor(() =>
+      expect(
+        within(timeline)
+          .getAllByTestId("timeline-milestone")
+          .map((m) => m.dataset.milestoneId),
+      ).toContain("ms_search"),
+    );
+    expect(within(timeline).getByTestId("timeline-today")).toBeInTheDocument();
     expect(await screen.findByTestId("dependency-graph")).toBeInTheDocument();
+  });
+
+  it("places today's tick from the clock it is given, not the wall clock", async () => {
+    const atlas = PROJECTS.find((p) => p.id === "proj_atlas");
+    if (!atlas) throw new Error("no proj_atlas fixture");
+    // Milestones span 2026-10-15 to 2026-12-01 (47 days); 2026-11-20 is day 36 of that span.
+    renderWith(<PlanTab projectId="proj_atlas" project={atlas} now={Date.UTC(2026, 10, 20)} />);
+    const timeline = await screen.findByTestId("milestone-timeline");
+    await waitFor(() =>
+      expect(within(timeline).getAllByTestId("timeline-milestone")).toHaveLength(3),
+    );
+    const todayX = svgNumber(
+      within(timeline).getByTestId("timeline-today").querySelector("line"),
+      "x1",
+    );
+    const cx = Object.fromEntries(
+      within(timeline)
+        .getAllByTestId("timeline-milestone")
+        .map((m) => [m.dataset.milestoneId, svgNumber(m.querySelector("circle"), "cx")]),
+    );
+    expect(todayX).toBeGreaterThan(cx.ms_search ?? Number.NaN);
+    expect(todayX).toBeLessThan(cx.ms_launch ?? Number.NaN);
+    // The axis is 640 wide with 16 px margins and 1.3 units long (undated milestones sit
+    // in the last 0.3); today is 36/47 of the dated span.
+    expect(todayX).toBeCloseTo(16 + (36 / 47) * ((640 - 32) / 1.3), 1);
   });
 });
 
