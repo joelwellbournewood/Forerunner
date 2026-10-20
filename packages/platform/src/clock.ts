@@ -110,12 +110,13 @@ export class SimulatedClock implements Clock {
       this.mono += next.at - this.current;
       this.current = next.at;
       next.fn();
-      // Let promise continuations run before the next timer.
-      await Promise.resolve();
+      // Let every promise continuation triggered by the timer settle before the next timer
+      // (a macrotask turn drains the whole microtask queue).
+      await new Promise<void>((r) => setImmediate(r));
     }
     this.mono += target - this.current;
     this.current = target;
-    await Promise.resolve();
+    await new Promise<void>((r) => setImmediate(r));
   }
 
   /** Jump to an absolute time (never backwards). */

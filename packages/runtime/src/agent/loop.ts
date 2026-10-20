@@ -47,6 +47,8 @@ export interface RunRequest {
   onEvent?: (ev: RunEvent) => void;
   approvals?: Set<string>;
   label?: string;
+  /** The human's own channel: survives scoped and global stops. */
+  protected?: boolean;
 }
 
 export type RunOutcome =
@@ -131,6 +133,7 @@ export class LoopAgentDriver {
       sessionId: claims.sessionId,
       controller,
       label: req.label ?? `run ${claims.runId}`,
+      protected: req.protected,
     });
     const runDeadlineMs = clock.now() + req.timeoutMs;
     const cancelTimeout = clock.setTimeout(

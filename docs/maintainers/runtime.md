@@ -101,6 +101,19 @@ one active session per agent; quiet hours defer non-manual triggers). `state-por
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
 approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call.
 
+### Conversation agent (`src/conversation/agent.ts`)
+
+The fast channel for text and voice (spec O): Haiku at low effort, a stable cached system
+prompt (project summaries) and a volatile first message (time, active project, unread count,
+open requests, running sessions). Tools: take a note into the next-session queue, create a
+draft task, answer a human request, start a session (budget above the confirm threshold is
+read back and waits for "yes"; "no" cancels), stop sessions at once (kill switch), hand real
+work to the principal agent through the inbox, switch the active project. Each turn runs
+through the loop driver with its own small budget and a token at autonomy 4 (the human is
+giving instructions); the run is registered as protected so scoped and global stops never
+cut the human's channel. Transcripts are events on a per-agent conversation session; spoken
+confirmations are logged with the words used.
+
 ### Models (`src/models/ladder.ts`)
 
 Ladder haiku → sonnet → opus → fable, ceiling opus by default; mode defaults and response

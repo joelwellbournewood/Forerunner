@@ -18,6 +18,8 @@ interface Registration {
   controller?: AbortController;
   child?: ChildProcess;
   label: string;
+  /** The human's own channel (conversation): never stopped, never frozen. */
+  protected?: boolean;
 }
 
 export interface KillReport {
@@ -34,6 +36,7 @@ export class KillSwitch {
   private readonly logger = log("killswitch");
   private frozen: KillScope | "all" | null = null;
   private listeners = new Set<(report: KillReport) => void>();
+  private readonly protectedSessions = new Set<string>();
 
   constructor(
     private readonly tokens?: TokenIssuer,
@@ -44,7 +47,8 @@ export class KillSwitch {
   register(reg: Omit<Registration, "id">): () => void {
     const id = this.nextId++;
     this.regs.set(id, { ...reg, id });
-    if (this.isFrozen({ agentId: reg.agentId, sessionId: reg.sessionId })) {
+    if (reg.protected) this.protectedSessions.add(reg.sessionId);
+    if (!reg.protected && this.isFrozen({ agentId: reg.agentId, sessionId: reg.sessionId })) {
       // Stopped scope: abort immediately so nothing new starts.
       reg.controller?.abort(new Error("kill switch active"));
     }
@@ -60,6 +64,7 @@ export class KillSwitch {
 
   isFrozen(scope: KillScope): boolean {
     if (this.frozen === null) return false;
+    if (scope.sessionId && this.protectedSessions.has(scope.sessionId)) return false;
     if (this.frozen === "all") return true;
     if (this.frozen.sessionId && this.frozen.sessionId === scope.sessionId) return true;
     if (this.frozen.agentId && !this.frozen.sessionId && this.frozen.agentId === scope.agentId)
@@ -81,7 +86,7 @@ export class KillSwitch {
     let stoppedRuns = 0;
     let killedProcesses = 0;
     for (const r of [...this.regs.values()]) {
-      if (!matches(r)) continue;
+      if (r.protected || !matches(r)) continue;
       if (r.controller && !r.controller.signal.aborted) {
         r.controller.abort(new Error(reason));
         stoppedRuns++;
@@ -96,9 +101,10 @@ export class KillSwitch {
     if (this.tokens) {
       revokedTokens = this.tokens.revokeWhere(
         (c) =>
-          scope === "all" ||
-          ((scope.sessionId ? c.sessionId === scope.sessionId : true) &&
-            (scope.agentId ? c.agentId === scope.agentId : true)),
+          !this.protectedSessions.has(c.sessionId) &&
+          (scope === "all" ||
+            ((scope.sessionId ? c.sessionId === scope.sessionId : true) &&
+              (scope.agentId ? c.agentId === scope.agentId : true))),
       ).length;
     }
     this.frozen = scope;
