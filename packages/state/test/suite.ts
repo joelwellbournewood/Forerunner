@@ -1309,6 +1309,75 @@ export function defineStateSuite(target: SuiteTarget): void {
         expect(await store.queue.pending(s.project.id)).toEqual([]);
       });
 
+      it("a queue item is its human's: pending filters by human and consume refuses another human's item before any write", async () => {
+        const mine = await store.queue.enqueue({
+          project_id: s.project.id,
+          human_id: s.human.id,
+          kind: "note",
+          text: "mine",
+          priority: 1,
+        });
+        const theirs = await store.queue.enqueue({
+          project_id: s.project.id,
+          human_id: s.human2.id,
+          kind: "note",
+          text: "theirs",
+          priority: 9,
+        });
+        // Per project every item; per human only that human's, in the same order.
+        expect((await store.queue.pending(s.project.id)).map((q) => q.id)).toEqual([
+          theirs.id,
+          mine.id,
+        ]);
+        expect(
+          (await store.queue.pending(s.project.id, { humanId: s.human.id })).map((q) => q.id),
+        ).toEqual([mine.id]);
+        expect(
+          (await store.queue.pending(s.project.id, { humanId: s.human2.id })).map((q) => q.id),
+        ).toEqual([theirs.id]);
+        expect(
+          await store.queue.count({
+            project_id: s.project.id,
+            status: "queued",
+            human_id: s.human.id,
+          } as never),
+        ).toBe(1);
+        // Ada's session cannot consume Bob's item (ADR 0044): refused with the reason, the row
+        // untouched and still queued for Bob's own agent.
+        const refused = await expectCode(
+          store.queue.consume(theirs.id, theirs.version, s.session.id, { humanId: s.human.id }),
+          "validation",
+        );
+        expect(refused.details).toMatchObject({ reason: "other_human", id: theirs.id });
+        expect(await store.queue.mustGet(theirs.id)).toMatchObject({
+          status: "queued",
+          version: 1,
+          consumed_by_session: null,
+        });
+        // Inside the runner's transaction the refusal rolls the batch back like any other.
+        await expectCode(
+          store.transaction(async (tx) => {
+            await tx.queue.consume(mine.id, mine.version, s.session.id, { humanId: s.human.id });
+            await tx.queue.consume(theirs.id, theirs.version, s.session.id, {
+              humanId: s.human.id,
+            });
+          }),
+          "validation",
+        );
+        expect(await store.queue.mustGet(mine.id)).toMatchObject({ status: "queued", version: 1 });
+        // The owner consumes it; without a human the call is unscoped (the store suite's own
+        // callers and admin paths).
+        expect(
+          await store.queue.consume(theirs.id, theirs.version, s.session.id, {
+            humanId: s.human2.id,
+          }),
+        ).toMatchObject({ status: "consumed", consumed_by_session: s.session.id });
+        expect(
+          await store.queue.consume(mine.id, mine.version, s.session.id, { humanId: s.human.id }),
+        ).toMatchObject({ status: "consumed" });
+        expect(await store.queue.pending(s.project.id)).toEqual([]);
+      });
+
       it("remote command pick-up is atomic: concurrent pickers get it exactly once", async () => {
         const key = ["pk-", "B".repeat(40)].join(""); // not-a-secret
         const phone = await store.device.register({

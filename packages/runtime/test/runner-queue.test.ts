@@ -17,7 +17,9 @@ import {
  * The next-session queue through the runner (spec J.2): the notes a session's brief carries
  * are consumed by that session, exactly those, once, with an audit row; what the human
  * leaves after the brief was built waits for the next session. Without the consume step the
- * same notes would be fed into every later session.
+ * same notes would be fed into every later session. On a shared project a note is for the
+ * agent of the human who queued it (ADR 0044): a co-worker's agent neither briefs nor
+ * consumes it, whichever session runs first.
  */
 interface World {
   store: StateStore;
@@ -70,6 +72,33 @@ async function world(): Promise<World> {
   return { store, clock, human, alice, project };
 }
 
+/** A second human on the same project with their own principal agent (a shared project). */
+async function coworker(w: World): Promise<{ human: string; agent: string }> {
+  const human = (
+    await w.store.human.insert({
+      name: "M",
+      email: "m@example.test",
+      timezone: "Europe/Zurich",
+      notify_prefs: {},
+      default_autonomy: 2,
+      monthly_cap_usd_micro: 150_000_000,
+      locale: "en",
+    })
+  ).id;
+  const agent = (
+    await w.store.agent.insert({
+      name: "Bob",
+      owner_human_id: human,
+      model_config: {},
+      memory_location: "local",
+      status: "active",
+      kind: "principal",
+    })
+  ).id;
+  await w.store.project.patch(w.project, { settings: { members: [w.alice, agent] } as never });
+  return { human, agent };
+}
+
 /** These sessions plan no tasks; the executor must never be reached. */
 const neverRuns: TaskExecutor = {
   async execute() {
@@ -111,9 +140,14 @@ interface Captured {
   payload: Record<string, unknown>;
 }
 
-async function start(w: World, r: SessionRunner, events: Captured[] = []) {
+async function start(
+  w: World,
+  r: SessionRunner,
+  events: Captured[] = [],
+  agentId: string = w.alice,
+) {
   const res = await r.start({
-    agentId: w.alice,
+    agentId,
     projectId: w.project,
     trigger: "manual",
     budgetCapUsdMicro: 5_000_000,
@@ -126,6 +160,26 @@ async function start(w: World, r: SessionRunner, events: Captured[] = []) {
 
 async function consumedAudit(w: World, sessionId: string) {
   return w.store.auditLog.list({ sessionId, tool: QUEUE_CONSUMED_AUDIT_TOOL });
+}
+
+/**
+ * A store whose queue reads ignore the human filter, as a checklist without ADR 0044 would:
+ * every queued item of the project lands in the brief. The consume step still runs on the
+ * real repository, so the store's own guard is what the test exercises.
+ */
+function storeWithUnfilteredQueue(w: World): StateStore {
+  const queue = new Proxy(w.store.queue, {
+    get(target, prop, receiver) {
+      if (prop === "pending")
+        return (projectId: string, opts: { humanId?: string; limit?: number } = {}) => {
+          const { humanId: _ignored, ...rest } = opts;
+          return target.pending(projectId, rest);
+        };
+      const v: unknown = Reflect.get(target, prop, receiver);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+  return { ...w.store, queue };
 }
 
 /**
@@ -155,48 +209,132 @@ describe("session runner: next-session queue", () => {
   });
   afterEach(() => w.store.close());
 
-  it("briefs and consumes only its own human's notes; a co-worker's note on the same project stays queued", async () => {
-    const mine = await leave(w, "check the CSV export", 3);
-    const other = (
-      await w.store.human.insert({
-        name: "M",
-        email: "m@example.test",
-        timezone: "Europe/Zurich",
-        notify_prefs: {},
-        default_autonomy: 2,
-        monthly_cap_usd_micro: 150_000_000,
-        locale: "en",
-      })
-    ).id;
-    const theirs = await w.store.queue.enqueue({
+  it("a note is for its human's agent: the co-worker's session neither briefs nor consumes it, the owner's next session does (ADR 0044)", async () => {
+    const { human: m, agent: bob } = await coworker(w);
+    // J (Alice's owner) leaves a note; so does M (Bob's owner), with a higher priority.
+    const js = await leave(w, "keep the health endpoint tiny", 2);
+    const ms = await w.store.queue.enqueue({
       project_id: w.project,
-      human_id: other,
+      human_id: m,
+      kind: "correction",
+      text: "rotate the staging key",
+      priority: 9,
+    });
+    const briefs: { agentId: string; text: string }[] = [];
+    const planner: Planner = {
+      async plan(ctx) {
+        briefs.push({ agentId: ctx.brief.agent.id, text: ctx.briefText });
+        return new StaticPlanner().plan(ctx);
+      },
+    };
+    const r = runner(w, { planner });
+
+    // Bob's session runs first: M's note only, in the brief and in the consume step.
+    const bobEvents: Captured[] = [];
+    const bobRun = await start(w, r, bobEvents, bob);
+    expect(bobRun.status).toBe("completed");
+    expect(bobRun.brief.agent.id).toBe(bob);
+    expect(bobRun.brief.human.id).toBe(m);
+    expect(bobRun.brief.queue.count).toBe(1);
+    expect(bobRun.brief.queue.items.map((i) => i.id)).toEqual([ms.id]);
+    expect(briefs[0]?.text).toContain(ms.text);
+    expect(briefs[0]?.text).not.toContain(js.text);
+    expect(await w.store.queue.mustGet(ms.id)).toMatchObject({
+      status: "consumed",
+      consumed_by_session: bobRun.sessionId,
+    });
+    expect(await w.store.queue.mustGet(js.id)).toMatchObject({
+      status: "queued",
+      consumed_by_session: null,
+      version: 1,
+    });
+    expect(bobEvents.find((e) => e.type === "queue.consumed")?.payload).toMatchObject({
+      ids: [ms.id],
+      count: 1,
+      skipped: [],
+    });
+    const bobAudit = await consumedAudit(w, bobRun.sessionId);
+    expect(bobAudit).toHaveLength(1);
+    expect(bobAudit[0]).toMatchObject({ agent_id: bob, human_id: m, allowed: true });
+    expect(JSON.parse(bobAudit[0]?.input_summary ?? "")).toEqual({
+      sessionId: bobRun.sessionId,
+      items: [ms.id],
+    });
+    // J's note still waits for J's agent, and only there.
+    expect(await w.store.queue.pending(w.project, { humanId: w.human })).toHaveLength(1);
+    expect(await w.store.queue.pending(w.project, { humanId: m })).toEqual([]);
+
+    // Alice's next session briefs and consumes J's note; M's consumed one is gone for good.
+    const aliceEvents: Captured[] = [];
+    const aliceRun = await start(w, r, aliceEvents);
+    expect(aliceRun.status).toBe("completed");
+    expect(aliceRun.brief.human.id).toBe(w.human);
+    expect(aliceRun.brief.queue.count).toBe(1);
+    expect(aliceRun.brief.queue.items.map((i) => i.id)).toEqual([js.id]);
+    expect(briefs[1]?.agentId).toBe(w.alice);
+    expect(briefs[1]?.text).toContain(js.text);
+    expect(briefs[1]?.text).not.toContain(ms.text);
+    expect(await w.store.queue.mustGet(js.id)).toMatchObject({
+      status: "consumed",
+      consumed_by_session: aliceRun.sessionId,
+      version: 2,
+    });
+    expect((await w.store.queue.mustGet(ms.id)).consumed_by_session).toBe(bobRun.sessionId);
+    expect(aliceEvents.find((e) => e.type === "queue.consumed")?.payload).toMatchObject({
+      ids: [js.id],
+      count: 1,
+    });
+    expect(
+      JSON.parse((await consumedAudit(w, aliceRun.sessionId))[0]?.input_summary ?? ""),
+    ).toEqual({ sessionId: aliceRun.sessionId, items: [js.id] });
+    expect(await w.store.queue.pending(w.project)).toEqual([]);
+  });
+
+  it("never consumes another human's item even when the brief carries it: the store refuses it and it waits for its own agent", async () => {
+    const { human: m, agent: bob } = await coworker(w);
+    const js = await leave(w, "check the CSV export", 3);
+    const ms = await w.store.queue.enqueue({
+      project_id: w.project,
+      human_id: m,
       kind: "note",
       text: "rotate the staging key",
       priority: 9,
     });
-    const briefs: string[] = [];
-    const planner: Planner = {
-      async plan(ctx) {
-        briefs.push(ctx.briefText);
-        return new StaticPlanner().plan(ctx);
-      },
-    };
-    const first = await start(w, runner(w, { planner }));
-    expect(first.status).toBe("completed");
-    expect(first.brief.queue.count).toBe(1);
-    expect(first.brief.queue.items.map((i) => i.id)).toEqual([mine.id]);
-    expect(briefs[0]).toContain(mine.text);
-    expect(briefs[0]).not.toContain(theirs.text);
-    expect(await w.store.queue.mustGet(mine.id)).toMatchObject({
+    // A checklist without the owner filter lists both; the consume step is the second line.
+    const events: Captured[] = [];
+    const res = await start(w, runner(w, { store: storeWithUnfilteredQueue(w) }), events);
+    expect(res.status).toBe("completed");
+    expect(res.brief.queue.items.map((i) => i.id)).toEqual([ms.id, js.id]);
+    expect(await w.store.queue.mustGet(js.id)).toMatchObject({
       status: "consumed",
-      consumed_by_session: first.sessionId,
+      consumed_by_session: res.sessionId,
     });
-    expect(await w.store.queue.mustGet(theirs.id)).toMatchObject({
+    expect(await w.store.queue.mustGet(ms.id)).toMatchObject({
       status: "queued",
       consumed_by_session: null,
+      version: 1,
     });
-    expect(await w.store.queue.pending(w.project, { humanId: other })).toHaveLength(1);
+    const audit = await consumedAudit(w, res.sessionId);
+    expect(audit).toHaveLength(1);
+    expect(JSON.parse(audit[0]?.result_summary ?? "")).toEqual({
+      consumed: [js.id],
+      skipped: [{ id: ms.id, reason: "other_human" }],
+    });
+    const consumed = events.find((e) => e.type === "queue.consumed");
+    expect(consumed?.payload).toMatchObject({
+      ids: [js.id],
+      count: 1,
+      skipped: [{ id: ms.id, reason: "other_human" }],
+    });
+    expect(consumed?.payload.warning).toContain("1 queue item(s)");
+
+    // M's own agent gets it next, untouched.
+    const bobRun = await start(w, runner(w), [], bob);
+    expect(bobRun.brief.queue.items.map((i) => i.id)).toEqual([ms.id]);
+    expect(await w.store.queue.mustGet(ms.id)).toMatchObject({
+      status: "consumed",
+      consumed_by_session: bobRun.sessionId,
+    });
   });
 
   it("consumes exactly the items its brief listed; a note left during the session waits for the next one", async () => {

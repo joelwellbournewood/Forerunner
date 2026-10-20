@@ -60,12 +60,21 @@ export type SessionTriggerKind =
  */
 export const QUEUE_CONSUMED_AUDIT_TOOL = "queue.consumed";
 
-/** Store errors that mean one queue item moved since the brief was built; the rest propagate. */
+/**
+ * Store errors that mean one queue item moved since the brief was built, or is not this
+ * agent's owner's to consume (`validation` with `details.reason = "other_human"`, ADR 0044);
+ * the rest propagate.
+ */
 const QUEUE_SKIP_CODES: ReadonlySet<string> = new Set([
   "not_found",
   "validation",
   "version_conflict",
 ]);
+
+/** The audit and event reason of a skipped queue item: the store's own reason when it names one. */
+function queueSkipReason(e: ForerunnerError): string {
+  return typeof e.details.reason === "string" ? e.details.reason : e.code;
+}
 
 /** Message types that are acted on by reading them into the plan; the rest need a reply. */
 const ACK_BY_READING: ReadonlySet<string> = new Set(["handoff", "info", "warning", "decision"]);
@@ -1294,14 +1303,16 @@ export class SessionRunner {
    * Mark the next-session queue items the brief carried consumed by this session (spec J.2):
    * exactly those items, each at the version the checklist read them, in one store
    * transaction with one `queue.consumed` audit row (ids and the session, never the text) and
-   * a `queue.consumed` event. Every item goes through `QueueRepo.consume`, so the workflow
-   * graph (`queued -> consumed`; a dismissed item is never consumed) and the version are
-   * checked in the store: an item the human dismissed or edited in the UI while the checklist
-   * ran fails its own check, is skipped with the reason and left as it is (an edited note
-   * reaches the next session once more, with its new text). An item enqueued after the
-   * checklist read the queue is not in the brief and stays queued for the next session. Runs
-   * after the brief is written and before the plan; a session that fails earlier never gets
-   * here, so it consumes nothing.
+   * a `queue.consumed` event. Every item goes through `QueueRepo.consume` with this agent's
+   * owner, so the workflow graph (`queued -> consumed`; a dismissed item is never consumed),
+   * the version and the addressee are checked in the store: an item the human dismissed or
+   * edited in the UI while the checklist ran fails its own check, is skipped with the reason
+   * and left as it is (an edited note reaches the next session once more, with its new text),
+   * and an item another human queued (ADR 0044: the checklist never lists one, but a brief is
+   * data) is skipped as `other_human` and stays queued for that human's own agent. An item
+   * enqueued after the checklist read the queue is not in the brief and stays queued for the
+   * next session. Runs after the brief is written and before the plan; a session that fails
+   * earlier never gets here, so it consumes nothing.
    */
   private async consumeQueue(
     brief: StateBrief,
@@ -1317,11 +1328,13 @@ export class SessionRunner {
       const skipped: { id: string; reason: string }[] = [];
       for (const item of items) {
         try {
-          await tx.queue.consume(item.id, item.version, session.id);
+          await tx.queue.consume(item.id, item.version, session.id, {
+            humanId: agent.owner_human_id,
+          });
           consumed.push(item.id);
         } catch (e) {
           if (!isForerunnerError(e) || !QUEUE_SKIP_CODES.has(e.code)) throw e;
-          skipped.push({ id: item.id, reason: e.code });
+          skipped.push({ id: item.id, reason: queueSkipReason(e) });
         }
       }
       await tx.auditLog.append({

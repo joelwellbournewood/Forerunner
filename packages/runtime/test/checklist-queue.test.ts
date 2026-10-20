@@ -76,6 +76,42 @@ describe("startup checklist: next-session queue", () => {
     expect(text).not.toContain(high.id);
   });
 
+  it("lists and counts only the items the agent's own human queued; a co-worker's stay out of the brief (ADR 0044)", async () => {
+    const other = (await w.store.human.insert({ name: "M", email: "m@example.test" })).id;
+    const mine = await w.store.queue.enqueue({
+      project_id: w.project,
+      human_id: w.human,
+      kind: "note",
+      text: "keep the health endpoint tiny",
+      priority: 2,
+    });
+    const theirs = await w.store.queue.enqueue({
+      project_id: w.project,
+      human_id: other,
+      kind: "correction",
+      text: "rotate the staging key",
+      priority: 9,
+    });
+    const brief = await runStartupChecklist({
+      store: w.store,
+      clock: w.clock,
+      agentId: w.agent,
+      projectId: w.project,
+      appVersion: "0.1.0",
+      sessionCapUsdMicro: 5_000_000,
+    });
+    expect(brief.human.id).toBe(w.human);
+    expect(brief.queue.count).toBe(1);
+    expect(brief.queue.items.map((i) => i.id)).toEqual([mine.id]);
+    const text = renderStateBrief(brief);
+    expect(text).toContain("## Next-session queue (1)");
+    expect(text).toContain(mine.text);
+    expect(text).not.toContain(theirs.text);
+    // The co-worker's item is untouched and still waits for their own agent.
+    expect(await w.store.queue.mustGet(theirs.id)).toMatchObject({ status: "queued", version: 1 });
+    expect(await w.store.queue.pending(w.project, { humanId: other })).toHaveLength(1);
+  });
+
   it("without a project the queue is empty", async () => {
     const brief = await runStartupChecklist({
       store: w.store,

@@ -13,13 +13,11 @@
  * 3 handed to J for sign-off), opens PRs, and J's inbox holds the summary and the question
  * before 07:00. Every clause is asserted on state rows, audit rows, events and the git host.
  *
- * The notes: the runner consumes exactly the queue items a session's brief carried (spec J.2:
- * `queue.consumed` event and audit row, the rows `consumed` by that session). The checklist
- * reads the queue per project, so today the first scheduled session on the project after the
- * notes takes them (Bob's at 05:45); when the runtime scopes the queue to the agent's owner
- * (a runtime finding, testing.md "Scenarios" > "Known issues") it is Alice's at 06:00. The
- * clause is asserted on the consuming session, whichever it is, and on the queue being
- * consumed exactly once.
+ * The notes: a queue item is for the agent of the human who queued it (ADR 0044), so J's notes
+ * reach Alice's 06:00 session and not Bob's at 05:45, although Bob's runs first on the same
+ * project. The runner consumes exactly the queue items a session's brief carried (spec J.2:
+ * `queue.consumed` event and audit row, the rows `consumed` by that session), so the clause is
+ * asserted on Alice's session, on Bob's briefing none, and on the queue being consumed once.
  *
  * Windows and Android: the same code runs on both (paths and processes through
  * @forerunner/platform); the final-build runs are recorded in gates.md.
@@ -174,41 +172,42 @@ describe("scenario 1: the good day", () => {
     });
 
     // --- Clause: notes left at night reached the morning session ----------------------------
-    // Both items were consumed by one scheduled session of the morning (started after the
-    // notes, before 07:00), whose brief carried them in priority order; that session wrote the
-    // `queue.consumed` event and audit row (ids, never the text). See the header for which
-    // session that is today and why the consumer is derived rather than named.
+    // J's notes are for J's agent (ADR 0044): Alice's scheduled session, started after the
+    // notes and before 07:00, carried both in its brief in priority order and consumed them,
+    // with the `queue.consumed` event and audit row (ids, never the text). Bob's 05:45 session
+    // on the same project ran first and briefed none of them.
     const noteRows = await Promise.all([note, idea].map((q) => w.store.queue.mustGet(q.id)));
-    for (const q of noteRows) expect(q.status).toBe("consumed");
-    const consumerId = noteRows[0]?.consumed_by_session;
-    if (!consumerId) throw new Error("the note was not consumed by a session");
-    expect(noteRows[1]?.consumed_by_session).toBe(consumerId);
-    expect([alice.sessionId, bob.sessionId]).toContain(consumerId);
-    const consumer = await w.store.session.mustGet(consumerId);
-    expect(consumer.trigger).toBe("schedule");
-    expect((consumer.started_at ?? "") > NOTES_AT).toBe(true);
-    expect((consumer.started_at ?? "z") < MORNING).toBe(true);
-    const consumed = consumerId === alice.sessionId ? alice : bob;
-    expect(consumed.brief.queue.count).toBe(2);
-    expect(consumed.brief.queue.items.map((i) => i.text)).toEqual([note.text, idea.text]);
-    expect(consumed.brief.queue.items.map((i) => i.kind)).toEqual(["note", "idea"]);
-    const consumerBrief = w.briefs.find((b) => b.sessionId === consumerId);
-    expect(consumerBrief?.text).toContain(note.text);
-    expect(consumerBrief?.text).toContain(idea.text);
-    const consumedEvent = (await w.eventsOf(consumerId)).find((e) => e.type === "queue.consumed");
+    for (const q of noteRows) {
+      expect(q.status).toBe("consumed");
+      expect(q.consumed_by_session).toBe(alice.sessionId);
+    }
+    expect((aliceSession.started_at ?? "") > NOTES_AT).toBe(true);
+    expect((aliceSession.started_at ?? "z") < MORNING).toBe(true);
+    expect(alice.brief.human.id).toBe(w.j.id);
+    expect(alice.brief.queue.count).toBe(2);
+    expect(alice.brief.queue.items.map((i) => i.text)).toEqual([note.text, idea.text]);
+    expect(alice.brief.queue.items.map((i) => i.kind)).toEqual(["note", "idea"]);
+    const aliceBrief = w.briefs.find((b) => b.sessionId === alice.sessionId);
+    expect(aliceBrief?.text).toContain(note.text);
+    expect(aliceBrief?.text).toContain(idea.text);
+    const consumedEvent = aliceEvents.find((e) => e.type === "queue.consumed");
     expect(consumedEvent?.payload).toMatchObject({
       ids: [note.id, idea.id],
       count: 2,
       skipped: [],
     });
     const consumedAudit = await w.auditRows({
-      sessionId: consumerId,
+      sessionId: alice.sessionId,
       tool: QUEUE_CONSUMED_AUDIT_TOOL,
     });
     expect(consumedAudit).toHaveLength(1);
-    expect(consumedAudit[0]).toMatchObject({ allowed: true, agent_id: consumer.agent_id });
+    expect(consumedAudit[0]).toMatchObject({
+      allowed: true,
+      agent_id: w.alice.agent.id,
+      human_id: w.j.id,
+    });
     expect(JSON.parse(consumedAudit[0]?.input_summary ?? "{}")).toMatchObject({
-      sessionId: consumerId,
+      sessionId: alice.sessionId,
       items: [note.id, idea.id],
     });
     expect(JSON.parse(consumedAudit[0]?.result_summary ?? "{}")).toEqual({
@@ -219,16 +218,18 @@ describe("scenario 1: the good day", () => {
       expect(row.input_summary).not.toContain(note.text);
       expect(row.result_summary).not.toContain(idea.text);
     }
-    // Consumed once: the other morning session's brief carried no queue item and nothing is
-    // left queued on the project.
-    const other = consumerId === alice.sessionId ? bob : alice;
-    expect(other.brief.queue.count).toBe(0);
-    expect(other.brief.queue.items).toEqual([]);
-    expect((await w.eventsOf(other.sessionId)).some((e) => e.type === "queue.consumed")).toBe(
-      false,
-    );
+    // Consumed once, by J's agent only: Bob's brief carried no queue item, his session wrote
+    // no consume event or audit row, and nothing is left queued on the project.
+    expect(bob.brief.queue.count).toBe(0);
+    expect(bob.brief.queue.items).toEqual([]);
+    const bobBrief = w.briefs.find((b) => b.sessionId === bob.sessionId);
+    expect(bobBrief?.text).not.toContain(note.text);
+    expect(bobBrief?.text).not.toContain(idea.text);
+    expect((await w.eventsOf(bob.sessionId)).some((e) => e.type === "queue.consumed")).toBe(false);
+    expect(
+      await w.auditRows({ sessionId: bob.sessionId, tool: QUEUE_CONSUMED_AUDIT_TOOL }),
+    ).toEqual([]);
     expect(await w.store.queue.pending(w.project.id)).toEqual([]);
-    const aliceBrief = w.briefs.find((b) => b.sessionId === alice.sessionId);
 
     // --- Clause: the peer's changes are picked up --------------------------------------------
     // Bob's handoff from the night was delivered, read and acted on at Alice's start.

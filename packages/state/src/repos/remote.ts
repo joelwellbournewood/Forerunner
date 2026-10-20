@@ -1,4 +1,4 @@
-import type { Clock } from "@forerunner/platform";
+import { type Clock, ForerunnerError } from "@forerunner/platform";
 import { quoteIdent } from "../db/dialect.ts";
 import type { Database } from "../db/types.ts";
 import { ENTITIES, type EntityDef } from "../schema.ts";
@@ -50,8 +50,26 @@ export class QueueRepo extends Repository<QueueItemRow> {
     );
   }
 
-  async consume(id: string, expectedVersion: number, sessionId: string): Promise<QueueItemRow> {
+  /**
+   * Mark one item consumed by a session, at the version the caller read it. With `humanId`
+   * the item must have been queued by that human: a session consumes only the items of its
+   * agent's owner (ADR 0044), and another human's item is refused with `validation` and
+   * `details.reason = "other_human"` before any write, whatever brief named it.
+   */
+  async consume(
+    id: string,
+    expectedVersion: number,
+    sessionId: string,
+    opts: { humanId?: string } = {},
+  ): Promise<QueueItemRow> {
     const current = await this.mustGet(id);
+    if (opts.humanId && current.human_id !== opts.humanId) {
+      throw new ForerunnerError(
+        "validation",
+        `queue_item ${id} was queued by another human; a session consumes only its own human's items`,
+        { details: { reason: "other_human", id, humanId: opts.humanId } },
+      );
+    }
     assertTransition(QUEUE_ITEM_TRANSITIONS, "queue_item", current.status, "consumed");
     return this.update(id, expectedVersion, { status: "consumed", consumed_by_session: sessionId });
   }

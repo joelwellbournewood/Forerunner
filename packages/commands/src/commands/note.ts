@@ -26,7 +26,8 @@ export const noteAdd: CommandDef<NoteAddParams> = {
   undoStrategy: "dismiss the queued item",
   async plan(p, ctx) {
     const { project, usedActive } = await resolveProject(ctx, p.project);
-    const pending = await ctx.store.queue.pending(project.id);
+    // The human's own queued items: a co-worker's notes on the project are not theirs (ADR 0044).
+    const pending = await ctx.store.queue.pending(project.id, { humanId: ctx.humanId });
     return buildCard({
       command: "note.add",
       what: `the next-session queue of ${project.name}`,

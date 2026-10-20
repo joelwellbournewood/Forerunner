@@ -34,6 +34,11 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   driver, queue items never consumed. All in the fix wave.
 - Running: remote command owner filter and PC pickup, install record and sync gate, nine
   scenario harnesses (world and scenarios 1, 4, 5 done), live harness review.
+- Scenario 1's runtime finding closed (ADR 0044): a next-session queue item is for the agent
+  of the human who queued it; the checklist and the count filter by the agent's owner, the
+  store refuses another human's item at consume time and the runner skips it as
+  `other_human`; scenario 1 names Alice's session as the consumer. The one-shot claim renewal
+  (same finding) re-arms until the task ends, with a test on the simulated clock.
 
 ### 2026-10-20 (core loop, Android, cloud runner, UI phase 2 landed; credits out again)
 - Snapshots 3f9b436 (cloud runner, phase 6 gate rows), 2560623 (core loop closed per ADR 0036,

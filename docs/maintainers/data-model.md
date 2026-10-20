@@ -52,6 +52,14 @@ same agent, or `claim_expires` is in the past, and the task is `ready`, `claimed
 claimed or in-progress tasks to `ready`. Another agent cannot start a claimed task; it gets
 `{ ok: false, reason: "held_by" }` and can only message about it.
 
+### Next-session queue
+
+A `queue_item` is for the agent of the human who queued it (`human_id`, ADR 0044).
+`QueueRepo.pending(projectId, { humanId })` lists one human's queued items of a project and
+`consume(id, version, sessionId, { humanId })` refuses another human's item with
+`ForerunnerError("validation")` and `details.reason = "other_human"` before any write; the
+session runner passes its agent's owner to both.
+
 ### Findings block close
 
 `task.transition(..., "done")` is refused with `ForerunnerError("findings_open")` while the task

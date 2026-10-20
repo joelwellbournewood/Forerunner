@@ -231,7 +231,7 @@ claimed tasks, peer claims, next-session queue) and renders a `StateBrief` under
 (`StaticPlanner` = ready tasks by priority; a model planner uses the principal prompt); plans
 over the work budget (cap minus the review reserve) are cut before starting. Autonomy 0 and
 unapproved level 1 turn the plan into a HumanRequest and pause. Execution claims each task
-(atomic, renewed every ttl/6), transitions it to in progress, runs the `TaskExecutor`
+(atomic, renewed every ttl/6 for as long as the task runs), transitions it to in progress, runs the `TaskExecutor`
 (`LoopTaskExecutor`: validated brief, derived narrower token, specialist prompt and model from
 the registry, Run row recorded), then moves it to done (tier 0 with checks passed), in review,
 needs human or failed; the inbox is re-checked between tasks and a human "stop" ends the
@@ -244,33 +244,47 @@ one active session per agent; quiet hours defer non-manual triggers). `state-por
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
 approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call.
 
-**The next-session queue (spec J.2).** The checklist reads the project's `queued` items
-(`store.queue.pending`, priority first) into `brief.queue.items` with each row's `id` and
-`version`; the renderer prints kind, priority and text only. Right after the `session.brief`
-event and before the plan, `SessionRunner.consumeQueue` marks exactly those items consumed
-(`status: consumed`, `consumed_by_session` = this session) in one `store.transaction` with one
-audit row `queue.consumed` (`QUEUE_CONSUMED_AUDIT_TOOL`: the session and the item ids consumed
-and skipped, never the text) and a `queue.consumed` event (`ids`, `count`, `skipped`). Every
-item goes through `QueueRepo.consume(id, version, sessionId)`, so the workflow graph
-(`queued -> consumed`; a dismissed item is never consumed) and the version the checklist read
-are both checked in the store: an item the human dismissed or edited in the UI while the
-checklist ran (git fetch, sync and memory recall sit between the read and the consume) is
-skipped with its reason (`validation`, `version_conflict`, `not_found`), left as it is and
-named in the audit row, the event carries a warning, and an edited note reaches the next
-session once more with its new text; any other store error fails the session. An item
-enqueued after the checklist read the queue is not in the brief and stays queued for the next
-session. A session that fails before its brief is written (the checklist throws) consumes
-nothing. The decisions the spec leaves open are these: the consume happens in the runner once
-the brief exists rather than in the checklist (a checklist that is only rendered, as in tests
-and the conversation agent, must not consume), a moved item is skipped and reported rather
-than failing the session, and the audit kind is `queue.consumed`. Tests:
-`runner-queue.test.ts` (two sessions on one project: three notes before the first, one left
-while it plans, the first brief lists three and they are consumed by session one, the second
-brief lists only the fourth; dismissed before and during; edited during; a checklist that
-throws consumes nothing; no items, no row), `checklist-queue.test.ts` (id and version on the
-items, consumed and dismissed out, ids not rendered), and the state suite's queue tests on
-both dialects (version conflict, dismissed never consumed, rollback inside a transaction).
-Requirements: J.2, E.2.
+**The next-session queue (spec J.2).** A queue item is for the agent of the human who queued
+it (`human_id`, ADR 0044), never for the project's first session. The checklist reads the
+`queued` items of the project that the agent's owner left (`store.queue.pending(projectId, {
+humanId: human.id })`, priority first) into `brief.queue.items` with each row's `id` and
+`version`, and counts with the same filter, so on a shared project a co-worker's notes are
+neither in the brief nor in the count; the renderer prints kind, priority and text only.
+Right after the `session.brief` event and before the plan, `SessionRunner.consumeQueue` marks
+exactly those items consumed (`status: consumed`, `consumed_by_session` = this session) in
+one `store.transaction` with one audit row `queue.consumed` (`QUEUE_CONSUMED_AUDIT_TOOL`: the
+session and the item ids consumed and skipped, never the text) and a `queue.consumed` event
+(`ids`, `count`, `skipped`). Every item goes through `QueueRepo.consume(id, version,
+sessionId, { humanId: agent.owner_human_id })`, so the workflow graph (`queued -> consumed`;
+a dismissed item is never consumed), the version the checklist read and the addressee are all
+checked in the store: an item the human dismissed or edited in the UI while the checklist ran
+(git fetch, sync and memory recall sit between the read and the consume) is skipped with its
+reason (`validation`, `version_conflict`, `not_found`), left as it is and named in the audit
+row, the event carries a warning, and an edited note reaches the next session once more with
+its new text; an item another human queued, which the checklist never lists but a brief is
+data, is refused by the store before any write and skipped as `other_human` (the store's
+`details.reason`), so it stays queued for that human's own agent; any other store error fails
+the session. An item enqueued after the checklist read the queue is not in the brief and
+stays queued for the next session. A session that fails before its brief is written (the
+checklist throws) consumes nothing. The decisions the spec leaves open are these: the item's
+addressee is its human's agent (ADR 0044; a project-wide note would be a new kind or flag with
+its own ADR), the consume happens in the runner once the brief exists rather than in the
+checklist (a checklist that is only rendered, as in tests and the conversation agent, must
+not consume), a moved or foreign item is skipped and reported rather than failing the
+session, and the audit kind is `queue.consumed`. `note.add`'s change card counts the human's
+own queued items the same way. Tests: `runner-queue.test.ts` (two humans with one agent each
+on one project: M's agent runs first and briefs and consumes M's note only, J's note stays
+queued and is consumed by J's agent's next session; a brief built without the owner filter
+has the foreign item refused by the store, skipped as `other_human` and consumed by its own
+agent next; two sessions on one project: three notes before the first, one left while it
+plans, the first brief lists three and they are consumed by session one, the second brief
+lists only the fourth; dismissed before and during; edited during; a checklist that throws
+consumes nothing; no items, no row), `checklist-queue.test.ts` (id and version on the items,
+consumed and dismissed out, ids not rendered, a co-worker's items out of the list and the
+count), the state suite's queue tests on both dialects (`pending` per human, `consume`
+refusing another human's item before any write and rolling a batch back, version conflict,
+dismissed never consumed) and scenario 1 (J's notes consumed by Alice's session, Bob's earlier
+session on the project briefing none). Requirements: J.2, E.2.
 
 **The Run row.** `LoopTaskExecutor` inserts the task's Run row as `running` before the driver
 starts (model, effort, prompt version, billing source, depth) and patches it with the result
