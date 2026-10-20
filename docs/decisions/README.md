@@ -33,3 +33,4 @@ Status: accepted | superseded by NNNN
 | 0012 | Voice pipeline: PCM contract, local helpers over stdio, latency anchors |
 | 0024 | State service shape: direct Postgres for runtimes, a thin service for devices, realtime, remote commands and the mirror |
 | 0025 | UI conventions over the daemon API: config source, SSE auth, chat stream frames, open shapes |
+| 0026 | Daemon lifecycle: one `fr daemon` per install, shells attach to it |
