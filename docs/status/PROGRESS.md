@@ -7,16 +7,25 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | Phase | Name | Status | Gate evidence |
 | --- | --- | --- | --- |
 | 0 | Foundations | CI green on both OS (run 39352102564); fresh-install timing pending the install scripts | gates.md § Phase 0 |
-| 1 | Single agent that does real work | gate passed on the fake provider (10 tasks via PRs, overspend blocked, kill under 2 s); daemon API and `fr daemon` done; live subscription/API checks blocked on credentials; minimal UI pages in progress | gates.md § Phase 1 |
-| 2 | Two agents, one project | claims, PR flow with rebase, human requests, peer feed and overlap detection done; state service, realtime inbox and GitHub mirror in progress | |
-| 3 | Critic and quality loop | not started | |
-| 4 | Memory, docs and learning | not started | |
-| 5 | Human experience and voice | not started | |
-| 6 | Capabilities | not started | |
-| 7 | Self-improvement and model economics | not started | |
+| 1 | Single agent that does real work | gate passed on the fake provider (10 tasks via PRs, overspend blocked, kill under 2 s); daemon API, `fr daemon` and the phase-1 UI (home, project tabs, live session, inbox, settings, chat) done and tested against a fake daemon; live subscription/API checks blocked on credentials | gates.md § Phase 1 |
+| 2 | Two agents, one project | local half of the gate passed (two agents, five sessions each); state service with device auth and realtime, receipts, decision log, GitHub Projects mirror done; offline-48-hours half pending the sync test | gates.md § Phase 2 |
+| 3 | Critic and quality loop | critic service (tiers, findings, verdicts, calibration), eval sets, retry ladder built and unit-tested; gate needs a live model (blocked on credentials); reviews tab pending | gates.md § Phase 3 |
+| 4 | Memory, docs and learning | memory package (three scopes, retrieval under budget, consolidation, promotion) built and unit-tested; four-week simulation and memory UI pending | |
+| 5 | Human experience and voice | voice pipeline, natural-language commands with change cards and undo built; notifications, Android app, desktop shell, imports in progress | |
+| 6 | Capabilities | extensions registry with live revocation, sandboxed browser, agent email with the five modes and email commands, sandboxes, context savings done; injection suite, Cloudflare, desktop control, cloud runner in progress | |
+| 7 | Self-improvement and model economics | signed updates with staged install and rollback, model watch, estimate learning built and wired; Forerunner-as-a-project and the update-and-restart shell side pending | |
 | 8 | Full integration and release 1.0 | not started | |
 
 ## Log
+
+### 2026-10-20 (waves 2 and 4a landed)
+- Snapshots: email and browser capabilities (8367764); daemon wiring of extensions, updates,
+  model watch, estimates, mirror and sandboxes, context savings per ADR 0003, requirement
+  statuses 72 done / 128 in progress / 28 todo (42c69b3); critic, memory, commands and the
+  state service after tier-2 review (b29605d). CI green on both OS for each.
+- Started: desktop shell and Android app (wave 4b), cloud runner and approvals web (wave 4c).
+  Injection suite still building; notifications, Cloudflare, desktop control, data assets
+  resume next.
 
 ### 2026-10-20 (snapshot after the usage-limit stop)
 - Every background build wave stopped on an account usage limit at about 02:20 UTC (reset

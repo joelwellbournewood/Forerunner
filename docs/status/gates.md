@@ -31,7 +31,21 @@ missing item, see BLOCKERS.md), **failed** (with the failing evidence and the fi
 | Alice and Bob each run 5 sessions on the same project, overlapping and not: zero duplicate tasks, zero lost commits, every ack-required message acknowledged | **passed** (local shared store, fake provider, local bare repository) | `pnpm vitest run --project integration packages/capabilities/test/phase2-gate.integration.test.ts` | 2026-10-20 | 10 sessions (rounds 1, 3, 5 concurrent); 14 tasks executed once each, one run and one PR per task, claim collisions reported to the holder; every PR branch present in the shared repository with its task commit and main untouched; every handoff delivered, read and acted on by the recipient's next session (only the final round's two handoffs open) | CI integration step on the next green run |
 | Either install can be offline for 48 simulated hours without breaking the other | pending | needs two stores joined by the shared state service (`services/state-api`, in progress) | | | |
 
-## Phases 3–7
+## Phase 3 — Critic and quality loop
+
+| Check | Status | Command | Date | Result | CI |
+| --- | --- | --- | --- | --- | --- |
+| Critic catches at least 80% of seeded defects and passes at least 90% of clean work on the eval set | blocked (needs a live model: no API key, see BLOCKERS.md); the calibration harness and the gate arithmetic are verified on synthetic tasks with the fake provider | `calibrate()` in `packages/critic/src/calibration.ts` over `evals/registry/evals/{coder,researcher}`; `packages/critic/test/calibration.test.ts` | 2026-10-20 | harness: report written, rates and the 0.8 / 0.9 gate computed, passes when every seeded defect is caught | CI unit step (run 39398xxxxx on b29605d) |
+| Escalation never exceeds the ceiling | **passed** (unit) | `packages/critic/test/followup.test.ts` (retry ladder up to the ceiling, then the human; project ceiling honoured) | 2026-10-20 | ladder stops at the ceiling in code | CI unit step |
+
+## Phase 4 — Memory, docs and learning
+
+| Check | Status | Command | Date | Result | CI |
+| --- | --- | --- | --- | --- | --- |
+| Repeat-finding rate drops over 4 simulated weeks on the eval projects | pending (integration of critic and memory into the session loop first) | planned: `tests/e2e` four-week simulation | | | |
+| Memory loaded per session stays under the set token budget | **passed** (unit) | `packages/memory/test/retrieval.test.ts` (budgeted retrieval never exceeds the budget) | 2026-10-20 | retrieval cuts to the budget | CI unit step |
+
+## Phases 5–7
 
 Filled in as each phase is reached.
 
