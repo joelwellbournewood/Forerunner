@@ -167,6 +167,8 @@ export async function validateGitHubToken(
 export interface AnthropicValidationOptions {
   key: string;
   apiBase?: string;
+  /** Workspace the key must act in: user-scoped keys (sk-ant-usr-…) are refused without it. */
+  workspaceId?: string;
   fetchImpl?: typeof fetch;
 }
 
@@ -179,6 +181,7 @@ export async function validateAnthropicKey(
   const headers: Record<string, string> = { "anthropic-version": "2023-06-01" };
   if (isOauth) headers.Authorization = `Bearer ${opts.key}`;
   else headers["x-api-key"] = opts.key;
+  if (opts.workspaceId) headers["anthropic-workspace-id"] = opts.workspaceId;
   let res: Response;
   try {
     res = await f(`${base}/v1/models?limit=100`, { headers });

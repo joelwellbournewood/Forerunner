@@ -28,6 +28,8 @@ export interface SetupConfig {
   timezone: string;
   githubApiBase: string;
   anthropicApiBase: string;
+  /** Sent as anthropic-workspace-id with every request; required for user-scoped keys. Not a secret. */
+  anthropicWorkspaceId?: string;
   repos: string[];
   credentials: { github: boolean; anthropic: boolean; anthropicSubscription: boolean };
   stateUrl: string;
@@ -43,6 +45,7 @@ export interface SetupInput {
   repos?: string[];
   githubApiBase?: string;
   anthropicApiBase?: string;
+  anthropicWorkspaceId?: string;
   stateUrl?: string;
   nonInteractive: boolean;
   /** Prompt function for interactive mode; returns "" when the user skips. */
@@ -107,6 +110,10 @@ export async function runSetup(vault: Vault, input: SetupInput): Promise<SetupRe
       env.FORERUNNER_ANTHROPIC_API ??
       existing?.anthropicApiBase ??
       "https://api.anthropic.com",
+    anthropicWorkspaceId:
+      input.anthropicWorkspaceId ??
+      env.FORERUNNER_ANTHROPIC_WORKSPACE_ID ??
+      existing?.anthropicWorkspaceId,
     repos: input.repos ?? existing?.repos ?? [],
     credentials: existing?.credentials ?? {
       github: false,
@@ -175,6 +182,7 @@ export async function runSetup(vault: Vault, input: SetupInput): Promise<SetupRe
     results.anthropic = await validateAnthropicKey({
       key: ak,
       apiBase: config.anthropicApiBase,
+      workspaceId: config.anthropicWorkspaceId,
       fetchImpl: input.fetchImpl,
     });
     if (results.anthropic.ok) {

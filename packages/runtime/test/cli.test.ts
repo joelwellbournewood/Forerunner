@@ -23,6 +23,10 @@ function fakeApis(): Promise<{ server: Server; url: string }> {
         return auth === `Bearer ${GOOD_GH}` ? send(200, { login: "j" }) : send(401, {});
       if (req.url?.startsWith("/repos/o/r"))
         return send(200, { permissions: { pull: true, push: true } });
+      if (req.url?.startsWith("/v1/models") && apiKey === "sk-ant-usr-wskey")
+        return req.headers["anthropic-workspace-id"] === "wrkspc_test"
+          ? send(200, { data: [{ id: "claude-haiku-5-5" }, { id: "claude-sonnet-5-5" }] })
+          : send(400, { error: { type: "invalid_request_error", message: "workspace header" } });
       if (req.url?.startsWith("/v1/models"))
         return apiKey === "sk-ant-api03-goodkey"
           ? send(200, { data: [{ id: "claude-haiku-5-5" }, { id: "claude-sonnet-5-5" }] })
@@ -101,6 +105,25 @@ describe("fr CLI", { timeout: 180_000 }, () => {
     expect(s.stdout).toContain("github_token");
     expect(s.stdout).toContain("anthropic_api_key");
     expect(s.stdout).not.toContain("goodkey");
+  });
+
+  it("a user-scoped key is validated and stored with its workspace id, which is sent on every call", async () => {
+    const r = await fr(
+      "setup",
+      "--non-interactive",
+      "--anthropic-key",
+      "sk-ant-usr-wskey",
+      "--anthropic-workspace",
+      "wrkspc_test",
+      "--anthropic-api",
+      api.url,
+    );
+    expect(r.stderr).toBe("");
+    expect(r.code).toBe(0);
+    const cfg = JSON.parse(readFileSync(join(home, "config", "config.json"), "utf8"));
+    expect(cfg.anthropicWorkspaceId).toBe("wrkspc_test");
+    expect(cfg.credentials.anthropic).toBe(true);
+    expect(JSON.stringify(cfg)).not.toContain("wskey");
   });
 
   it("rejects a bad token in non-interactive mode with a clear message and no partial store", async () => {

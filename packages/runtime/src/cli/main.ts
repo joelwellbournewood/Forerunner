@@ -89,6 +89,10 @@ export function buildProgram(deps: CliDeps = {}): Command {
     .option("--repos <list>", "comma separated owner/name repositories to verify access to")
     .option("--github-api <url>", "GitHub API base (fake git host in tests)")
     .option("--anthropic-api <url>", "Anthropic API base")
+    .option(
+      "--anthropic-workspace <id>",
+      "Anthropic workspace id for a user-scoped key (or FORERUNNER_ANTHROPIC_WORKSPACE_ID)",
+    )
     .option("--state-url <url>", "sqlite:<path> or postgres://...")
     .action(async (opts) => {
       const profile: string = opts.profile ?? readConfig()?.profile ?? "default";
@@ -116,6 +120,7 @@ export function buildProgram(deps: CliDeps = {}): Command {
             : undefined,
           githubApiBase: opts.githubApi,
           anthropicApiBase: opts.anthropicApi,
+          anthropicWorkspaceId: opts.anthropicWorkspace,
           stateUrl: opts.stateUrl,
           prompt,
         });

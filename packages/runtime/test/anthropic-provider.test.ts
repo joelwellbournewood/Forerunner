@@ -55,6 +55,29 @@ const happyEvents = [
 ];
 
 describe("AnthropicMessagesProvider", () => {
+  it("sends the configured default headers, such as the workspace id, on every request", async () => {
+    let seen: Headers | null = null;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      seen = new Headers(init?.headers);
+      return sse(happyEvents);
+    };
+    const p = new AnthropicMessagesProvider({
+      apiKey: "k",
+      defaultHeaders: { "anthropic-workspace-id": "wrkspc_test" },
+      fetch: fetchImpl,
+      maxRetries: 0,
+    });
+    await p.complete({
+      model: "claude-haiku-5-5",
+      system: "sys",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 10,
+    });
+    expect(seen).not.toBeNull();
+    expect((seen as unknown as Headers).get("anthropic-workspace-id")).toBe("wrkspc_test");
+    expect((seen as unknown as Headers).get("x-api-key")).toBe("k");
+  });
+
   it("maps the request (effort, caching, no temperature) and the streamed response", async () => {
     let captured: { url: string; body: Record<string, unknown>; headers: Headers } | null = null;
     const fetchImpl: typeof fetch = async (input, init) => {

@@ -1,7 +1,9 @@
 # Cost
 
-All spend by milestone and by model. No build budget was provided (see BLOCKERS.md), so no live
-model calls have been made from the build; the fake provider has zero cost. The build agent's
+All spend by milestone and by model. The Anthropic key arrived on 2026-10-20 (see BLOCKERS.md)
+with 100 USD of credit on it: the live-run budget is 100 USD (`FORERUNNER_LIVE_BUDGET_USD`),
+warning at 80%. Split: evals and critic calibration 30 USD, nine scenarios 50 USD, reserve
+20 USD. No live model call has been made yet; the fake provider has zero cost. The build agent's
 own token use in the build container is recorded below as the only cost so far; its price is
 not known to the agent and is shown as tokens.
 

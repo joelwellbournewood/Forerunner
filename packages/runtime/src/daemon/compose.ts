@@ -373,6 +373,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         apiKey: key ?? undefined,
         authToken: key ? undefined : (oauth ?? undefined),
         baseURL: config?.anthropicApiBase,
+        defaultHeaders: config?.anthropicWorkspaceId
+          ? { "anthropic-workspace-id": config.anthropicWorkspaceId }
+          : undefined,
         clock,
       });
     }
