@@ -34,8 +34,11 @@ Node runtime ships and who starts it.
   the runtime against the shared Postgres state, unlocks its vault blob with the key the
   human's device releases, and watches the agent mailbox for email commands.
 - **Restart contract.** "Update and restart" writes `<runtime dir>/restart.json` and the daemon
-  exits with code 75; the shell (or the user service on a headless install) restarts it with
-  the new `current.json` pointer (ADR 0015). The user service is optional: `fr daemon --install-service`
+  exits with the restart code; the shell (or the user service on a headless install) restarts it
+  with the new `current.json` pointer (ADR 0015). The code is **86** (`RESTART_EXIT_CODE` in
+  `packages/runtime/src/daemon/restart.ts`, ADR 0029) and `restart.json` carries it as
+  `exitCode`, so a shell follows the file rather than a constant; the 75 this ADR first named
+  was never implemented, and the desktop shell accepts both when the file carries none (ADR 0031). The user service is optional: `fr daemon --install-service`
   registers a systemd user unit on Linux and a Scheduled Task on Windows; both only run `fr
   daemon`.
 

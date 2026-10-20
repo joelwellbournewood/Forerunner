@@ -3,5 +3,11 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [react()],
-  test: { environment: "jsdom", include: ["test/**/*.test.tsx"], passWithNoTests: true },
+  test: {
+    environment: "jsdom",
+    include: ["test/**/*.test.tsx", "test/**/*.test.ts"],
+    setupFiles: ["./test/setup.ts"],
+    passWithNoTests: true,
+    testTimeout: 20_000,
+  },
 });

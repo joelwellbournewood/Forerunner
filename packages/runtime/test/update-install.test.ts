@@ -9,12 +9,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { isForerunnerError, join, sep } from "@forerunner/platform";
+import { MemoryVault } from "@forerunner/vault";
 import { Command } from "commander";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { registerUpdateCli } from "../src/update/cli.ts";
 import { GitHubReleasesFeed, MemoryReleaseFeed } from "../src/update/feed.ts";
 import { StaticHealthProbe } from "../src/update/health.ts";
 import { assertSafeZipEntry, detectArtifactPlatform, unpackZip } from "../src/update/install.ts";
+import { ReleaseManifest } from "../src/update/manifest.ts";
 import {
   type CurrentPointer,
   cleanStalePointerTemps,
@@ -25,7 +27,7 @@ import {
   writePointer,
 } from "../src/update/pointer.ts";
 import { generateSigningKeyPair, signManifest } from "../src/update/sign.ts";
-import { ReleaseVerifier, refusalReason } from "../src/update/verify.ts";
+import { ReleaseVerifier, refusalReason, sha256Hex } from "../src/update/verify.ts";
 import {
   buildRelease,
   FakeReleaseServer,
@@ -217,6 +219,15 @@ describe("trust refusals on the wire", () => {
           expect(existsSync(join(versionsRoot(h.dirs), v))).toBe(false);
         }
         expect(readPointer(h.dirs)).toBeNull();
+        // trust is checked before a human is asked: an agent's request for a refused release
+        // never becomes an approval item in the inbox
+        const agentErr = await h.manager
+          .apply({ by: { kind: "agent", id: "alice" }, version: "2.0.0" })
+          .catch((err: unknown) => err);
+        expect(refusalReason(agentErr)).toBe("unsigned");
+        expect(h.human.asks).toEqual([]);
+        const denied = await h.store.auditLog.list({ tool: "update.apply", allowed: false });
+        expect(denied.at(-1)).toMatchObject({ agent_id: "alice", denied_reason: "unsigned" });
       } finally {
         await h.close();
       }
@@ -702,6 +713,136 @@ describe("fr update CLI", () => {
         ),
       ).toBe("untrusted_key");
       void MemoryReleaseFeed;
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("manifest computes hashes and sizes from the built artefacts; sign --key-secret reads the key from the vault by reference", async () => {
+    const h = await harness();
+    const lines: string[] = [];
+    const vault = new MemoryVault();
+    await vault.set("update_signing_key", testKey().privateKey);
+    const p = new Command();
+    p.exitOverride();
+    registerUpdateCli(p, {
+      manager: async () => ({ manager: h.manager, close: async () => undefined }),
+      vault: async () => vault,
+      out: (l) => lines.push(l),
+      err: (l) => lines.push(`ERR ${l}`),
+    });
+    const fr = (...args: string[]) => p.parseAsync(["node", "fr", "update", ...args]);
+    const dir = mkdtempSync(join(tmpdir(), "fr-manifest-"));
+    try {
+      const linux = makeZip({ "app/VERSION": "2.0.0" });
+      const windows = makeZip({ "app/VERSION": "2.0.0", "app/forerunner.exe": "MZ" });
+      writeFileSync(join(dir, "forerunner-2.0.0-linux-x64.zip"), linux);
+      writeFileSync(join(dir, "forerunner-2.0.0-windows-x64.zip"), windows);
+      writeFileSync(join(dir, "notes.md"), "## 2.0.0\n- two\n");
+      await fr(
+        "manifest",
+        "--version",
+        "v2.0.0",
+        "--notes-file",
+        join(dir, "notes.md"),
+        "--min-schema",
+        "1",
+        "--base-url",
+        "https://example.invalid/releases/download/v2.0.0/",
+        "--artifact",
+        `linux-x64:${join(dir, "forerunner-2.0.0-linux-x64.zip")}`,
+        "--artifact",
+        `windows-x64:${join(dir, "forerunner-2.0.0-windows-x64.zip")}`,
+        "--published-at",
+        "2026-10-20T10:00:00.000Z",
+        "--out",
+        join(dir, "manifest.json"),
+      );
+      expect(lines.join("\n")).toContain("Manifest for 2.0.0 (stable, 2 artefact(s))");
+      const manifest = ReleaseManifest.parse(
+        JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")),
+      );
+      expect(manifest.version).toBe("2.0.0");
+      expect(manifest.notes).toBe("## 2.0.0\n- two\n");
+      expect(manifest.artifacts).toEqual([
+        {
+          platform: "linux-x64",
+          name: "forerunner-2.0.0-linux-x64.zip",
+          url: "https://example.invalid/releases/download/v2.0.0/forerunner-2.0.0-linux-x64.zip",
+          sha256: sha256Hex(linux),
+          size: linux.length,
+        },
+        {
+          platform: "windows-x64",
+          name: "forerunner-2.0.0-windows-x64.zip",
+          url: "https://example.invalid/releases/download/v2.0.0/forerunner-2.0.0-windows-x64.zip",
+          sha256: sha256Hex(windows),
+          size: windows.length,
+        },
+      ]);
+      // bad specs are refused before anything is written
+      lines.length = 0;
+      await fr(
+        "manifest",
+        "--version",
+        "2.0.1",
+        "--notes-file",
+        join(dir, "notes.md"),
+        "--min-schema",
+        "1",
+        "--base-url",
+        "https://example.invalid/d/",
+        "--artifact",
+        `macos-arm64:${join(dir, "forerunner-2.0.0-linux-x64.zip")}`,
+        "--out",
+        join(dir, "bad.json"),
+      );
+      expect(lines.at(-1)).toMatch(/ERR error \[validation\].*<platform>:<file>/);
+      expect(existsSync(join(dir, "bad.json"))).toBe(false);
+      process.exitCode = 0;
+      // sign by secret reference: the key never appears in the output or the signed file
+      lines.length = 0;
+      await fr(
+        "sign",
+        "--manifest",
+        join(dir, "manifest.json"),
+        "--key-secret",
+        "secret:update_signing_key",
+        "--out",
+        join(dir, "signed.json"),
+      );
+      expect(lines.join("\n")).toContain(`Signed 2.0.0 with key ${testKey().keyId}`);
+      const signedText = readFileSync(join(dir, "signed.json"), "utf8");
+      expect(signedText).not.toContain(testKey().privateKey);
+      expect(lines.join("\n")).not.toContain(testKey().privateKey);
+      expect(
+        new ReleaseVerifier([{ publicKey: testKey().publicKey }]).verifyManifest(
+          JSON.parse(signedText),
+        ).keyId,
+      ).toBe(testKey().keyId);
+      // a missing secret or both key sources are refused
+      lines.length = 0;
+      await fr(
+        "sign",
+        "--manifest",
+        join(dir, "manifest.json"),
+        "--key-secret",
+        "secret:nope",
+        "--out",
+        join(dir, "signed2.json"),
+      );
+      expect(lines.at(-1)).toMatch(/ERR error \[secret_not_granted\]/);
+      expect(existsSync(join(dir, "signed2.json"))).toBe(false);
+      lines.length = 0;
+      await fr(
+        "sign",
+        "--manifest",
+        join(dir, "manifest.json"),
+        "--out",
+        join(dir, "signed3.json"),
+      );
+      expect(lines.at(-1)).toMatch(/one of --key-file or --key-secret/);
+      process.exitCode = 0;
     } finally {
       await h.close();
     }

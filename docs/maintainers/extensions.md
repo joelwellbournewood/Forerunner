@@ -26,7 +26,7 @@ Disabling or removing revokes live. ADR 0016 covers how MCP tools become ToolSpe
 | `catalog.ts`, `catalog.json` | the built-in catalog, `CatalogEntry`/`CatalogFile` schemas, `ConnectorTransport` (stdio argv or http), remote catalog fetch and `ExtensionCatalog` |
 | `mcp.ts` | `McpConnector` (connect, list tools and resources, `review()`, `bridgeTools()`, `callTool()`, `close()`), class and field inference, `DefaultMcpConnectorFactory` |
 | `approvals.ts` | `HumanRequestExtensionApprovals` (production port over `HumanRequestRepo`) and `MemoryExtensionApprovals` (tests) |
-| `registry.ts` | `ExtensionRegistry`: list, get, add from catalog or URL, approve/deny, toggle, remove, updatePermissions, recordCost, start/close, bridged tools, tool index |
+| `registry.ts` | `ExtensionRegistry`: list, get, add from catalog or URL, approve/deny, toggle, remove, updatePermissions, recordCost, start/close, bridged tools, tool index; `extensionCostKey()` and `ledgerCostByExtension()` for the cost column |
 | `gate.ts` | `ExtensionGate.check()`, `GatedEnforcementHooks` (hooks with the gate in front of `beforeToolCall`), `gateTool()` |
 | `routes.ts` | `createExtensionsRoutes(deps)`: the Hono sub-app for the panel |
 
@@ -111,8 +111,12 @@ output is redacted with the same resolver. A missing vault value puts the extens
 
 `extension.cost_usd_micro` is the counter; `recordCost(id, usdMicro)` increments it (call it
 from `afterToolCall` with `result.costUsdMicro` for bridged tools, or from a capability
-module). `ExtensionRegistryDeps.ledgerCost` adds a ledger query when charges are recorded by
-extension elsewhere. Views show `{ usdMicro, chfMicro }` at `chfPerUsd()`.
+module). `cost_ledger` has no extension column: a capability module that charges through the
+ledger on behalf of an extension writes `specialist = extensionCostKey(id)` (`extension:<id>`),
+and `ledgerCostByExtension(store.costLedger)` is the `ExtensionRegistryDeps.ledgerCost` that
+sums those rows into the view. Views show `{ usdMicro, chfMicro }` (counter plus ledger) at
+`chfPerUsd()`. Bridged MCP calls carry no price of their own, so a connector's cost stays 0
+until a capability module charges through the ledger.
 
 ### Catalog format
 
@@ -155,7 +159,7 @@ const registry = new ExtensionRegistry({
   extensions: store.extension, audit: store.auditLog, clock, catalog,
   approvals: new HumanRequestExtensionApprovals(store.humanRequest),
   connectors: new DefaultMcpConnectorFactory(), secrets: secretResolver, tokens: tokenIssuer,
-  events: (e) => sse.broadcast(e), chfPerUsd,
+  events: (e) => sse.broadcast(e), chfPerUsd, ledgerCost: ledgerCostByExtension(store.costLedger),
 });
 await registry.start();                       // reconnect enabled connectors
 const gate = new ExtensionGate({ registry, clock, audit: store.auditLog });
@@ -194,8 +198,8 @@ streamable-HTTP server on 127.0.0.1, `sqlite::memory:` store, `SimulatedClock`,
 - `extensions-registry.test.ts`: install pending before yes with the review in the request;
   yes enables, connects and bridges; no deletes; capability install with scopes; disable revokes
   tokens that list its tools and closes the connection, re-enable needs no approval; remove;
-  narrowing applies at once; widening pends, deny keeps the old grant; cost in CHF; connect
-  error → `error`; `start()` reconnects; add from URL (manifest and live HTTP MCP endpoint);
+  narrowing applies at once; widening pends, deny keeps the old grant; cost in CHF, counter
+  plus the ledger rows charged to the extension; connect error → `error`; `start()` reconnects; add from URL (manifest and live HTTP MCP endpoint);
   `HumanRequestExtensionApprovals` round trip; audit rows and events for every change; no
   secret value in rows, requests or logs.
 - `extensions-gate.test.ts`: approved tool runs through `GatedEnforcementHooks` and is wrapped
@@ -211,8 +215,9 @@ Run: `pnpm vitest run --project unit packages/runtime/test/extensions-*.test.ts`
 - Discovery spawns a stdio server before approval (ADR 0016); a catalog entry is still a
   command the human chose, but a remote catalog can point at any command. Treat remote
   catalogs as trusted configuration.
-- `cost_ledger` has no extension column; cost is the row counter plus the optional
-  `ledgerCost` query. Bridged MCP calls report no price of their own.
+- `cost_ledger` has no extension column; cost is the row counter plus the ledger rows that
+  name the extension in `specialist` (see "Cost"). Bridged MCP calls report no price of their
+  own. `list()` runs the ledger breakdown once per row; fine for a panel, not for a hot path.
 - Revocation is per token: a run that holds a token listing the extension's tool stops
   entirely (its token is revoked), not only for that tool. This is deliberate for a live
   revocation; the session can be resumed with a new token.

@@ -2,21 +2,12 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// Tauri expects a fixed port and no HMR surprises; the same build serves desktop and Android.
+// Built as a relative bundle so the state service can serve `dist/` from any path (ADR 0024).
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  base: "./",
   clearScreen: false,
-  server: {
-    port: 1430,
-    strictPort: true,
-    host: process.env.TAURI_DEV_HOST || false,
-    watch: { ignored: ["**/src-tauri/**"] },
-  },
-  envPrefix: ["VITE_", "TAURI_ENV_*"],
-  build: {
-    target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
-    minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
-    sourcemap: !!process.env.TAURI_ENV_DEBUG,
-    outDir: "dist",
-  },
+  server: { port: 1430, strictPort: true },
+  envPrefix: ["VITE_"],
+  build: { target: "es2022", outDir: "dist", sourcemap: false },
 });

@@ -1,19 +1,43 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { errorMessage, isForerunnerError, resolve } from "@forerunner/platform";
+import {
+  basename,
+  errorMessage,
+  ForerunnerError,
+  isForerunnerError,
+  resolve,
+  systemClock,
+} from "@forerunner/platform";
+import { openVault, type Vault } from "@forerunner/vault";
 import type { Command } from "commander";
 import { type ComposedUpdate, composeUpdateManager } from "./compose.ts";
 import type { UpdateManager } from "./install.ts";
-import { ReleaseManifest, type SignedManifest } from "./manifest.ts";
-import { generateSigningKeyPair, signManifest } from "./sign.ts";
+import {
+  ARTIFACT_PLATFORMS,
+  type ArtifactPlatform,
+  ReleaseManifest,
+  type SignedManifest,
+  UPDATE_CHANNELS,
+  type UpdateChannel,
+} from "./manifest.ts";
+import {
+  buildReleaseManifest,
+  generateSigningKeyPair,
+  type ManifestArtifactInput,
+  signManifest,
+  signManifestWithSecret,
+} from "./sign.ts";
 
 /**
- * `fr update check|apply|rollback|status|health` for the user, `fr update keygen|sign` for
- * whoever cuts a release. The manager factory is injectable so the commands are testable
- * without a feed or a database; the default composes from this install's configuration.
+ * `fr update check|apply|rollback|status|health` for the user, `fr update keygen|manifest|sign`
+ * for whoever cuts a release. The manager factory and the vault are injectable so the commands
+ * are testable without a feed, a database or an OS keyring; the defaults compose from this
+ * install's configuration.
  */
 export interface UpdateCliDeps {
   /** Returns a manager and a close function; the default opens the configured store. */
   manager: () => Promise<{ manager: UpdateManager; close(): Promise<void> }>;
+  /** The vault that holds the signing key for `sign --key-secret`; the default is this install's. */
+  vault: () => Promise<Pick<Vault, "get">>;
   out: (line: string) => void;
   err: (line: string) => void;
 }
@@ -21,8 +45,31 @@ export interface UpdateCliDeps {
 function defaultDeps(): UpdateCliDeps {
   return {
     manager: async (): Promise<ComposedUpdate> => composeUpdateManager(),
+    vault: () => openVault(),
     out: (line) => console.log(line),
     err: (line) => console.error(line),
+  };
+}
+
+/** `<platform>:<file>`; the split is on the first colon so Windows drive letters survive. */
+export function parseArtifactSpec(spec: string, baseUrl: string): ManifestArtifactInput {
+  const colon = spec.indexOf(":");
+  const platform = colon > 0 ? spec.slice(0, colon) : "";
+  const file = colon > 0 ? spec.slice(colon + 1) : "";
+  if (!(ARTIFACT_PLATFORMS as readonly string[]).includes(platform) || !file) {
+    throw new ForerunnerError(
+      "validation",
+      `--artifact must be <platform>:<file> with platform one of ${ARTIFACT_PLATFORMS.join(", ")}`,
+      { details: { spec: spec.slice(0, 80) } },
+    );
+  }
+  const resolved = resolve(file);
+  const name = basename(resolved);
+  return {
+    platform: platform as ArtifactPlatform,
+    file: resolved,
+    url: `${baseUrl.replace(/\/$/, "")}/${encodeURIComponent(name)}`,
+    name,
   };
 }
 
@@ -204,31 +251,105 @@ export function registerUpdateCli(
     });
 
   update
+    .command("manifest")
+    .description(
+      "Write the unsigned release manifest: hashes and sizes are computed from the built artefacts",
+    )
+    .requiredOption("--version <semver>", "release version (the git tag without v)")
+    .option("--channel <stable|beta>", "release channel", "stable")
+    .requiredOption("--notes-file <file>", "changelog section for this release (Markdown)")
+    .requiredOption("--min-schema <n>", "oldest state schema this release can start from")
+    .requiredOption(
+      "--base-url <url>",
+      "where the artefacts will be downloadable (the Release's download URL prefix)",
+    )
+    .requiredOption(
+      "--artifact <platform:file>",
+      "built artefact per platform (windows-x64, linux-x64, android); repeatable",
+      (value: string, prev: string[] = []) => [...prev, value],
+    )
+    .option("--published-at <iso>", "publication time (ISO-8601 UTC); default now")
+    .requiredOption("--out <file>", "where to write the unsigned manifest")
+    .action(
+      (opts: {
+        version: string;
+        channel: string;
+        notesFile: string;
+        minSchema: string;
+        baseUrl: string;
+        artifact: string[];
+        publishedAt?: string;
+        out: string;
+      }) => {
+        try {
+          if (!(UPDATE_CHANNELS as readonly string[]).includes(opts.channel))
+            throw new ForerunnerError("validation", "--channel must be stable or beta");
+          const minSchema = Number(opts.minSchema);
+          if (!Number.isInteger(minSchema) || minSchema < 0)
+            throw new ForerunnerError("validation", "--min-schema must be a non-negative integer");
+          const manifest = buildReleaseManifest({
+            version: opts.version,
+            channel: opts.channel as UpdateChannel,
+            publishedAt: opts.publishedAt ?? systemClock.nowIso(),
+            notes: readFileSync(resolve(opts.notesFile), "utf8"),
+            minSchema,
+            artifacts: opts.artifact.map((spec) => parseArtifactSpec(spec, opts.baseUrl)),
+          });
+          writeFileSync(resolve(opts.out), `${JSON.stringify(manifest, null, 2)}\n`);
+          deps.out(
+            `Manifest for ${manifest.version} (${manifest.channel}, ${manifest.artifacts.length} artefact(s)) -> ${resolve(opts.out)}`,
+          );
+          for (const a of manifest.artifacts)
+            deps.out(`  ${a.platform.padEnd(12)} ${a.name} ${a.size} bytes sha256 ${a.sha256}`);
+        } catch (e) {
+          fail(deps, e);
+        }
+      },
+    );
+
+  update
     .command("sign")
     .description(
-      "Sign a release manifest with the private key in --key-file (the release workflow step)",
+      "Sign a release manifest with the private key from --key-file or the vault secret --key-secret (the release workflow step)",
     )
     .requiredOption("--manifest <file>", "unsigned manifest JSON")
-    .requiredOption(
+    .option(
       "--key-file <file>",
       "private key file from keygen (or a CI secret written to a temp file)",
     )
+    .option(
+      "--key-secret <ref>",
+      "vault reference of the private key, e.g. secret:update_signing_key",
+    )
     .requiredOption("--out <file>", "where to write the signed manifest")
-    .action((opts: { manifest: string; keyFile: string; out: string }) => {
-      try {
-        const manifest = ReleaseManifest.parse(
-          JSON.parse(readFileSync(resolve(opts.manifest), "utf8")),
-        );
-        const key = readFileSync(resolve(opts.keyFile), "utf8");
-        const signed: SignedManifest = signManifest(manifest, key);
-        writeFileSync(resolve(opts.out), `${JSON.stringify(signed, null, 2)}\n`);
-        deps.out(
-          `Signed ${manifest.version} with key ${signed.signature?.keyId ?? "?"} -> ${resolve(opts.out)}`,
-        );
-      } catch (e) {
-        fail(deps, e);
-      }
-    });
+    .action(
+      async (opts: { manifest: string; keyFile?: string; keySecret?: string; out: string }) => {
+        try {
+          if (!opts.keyFile && !opts.keySecret)
+            throw new ForerunnerError(
+              "validation",
+              "one of --key-file or --key-secret is required",
+            );
+          if (opts.keyFile && opts.keySecret)
+            throw new ForerunnerError("validation", "--key-file and --key-secret are exclusive");
+          const manifest = ReleaseManifest.parse(
+            JSON.parse(readFileSync(resolve(opts.manifest), "utf8")),
+          );
+          let signed: SignedManifest;
+          if (opts.keySecret) {
+            signed = await signManifestWithSecret(manifest, opts.keySecret, await deps.vault());
+          } else {
+            signed = signManifest(manifest, readFileSync(resolve(opts.keyFile as string), "utf8"));
+          }
+          writeFileSync(resolve(opts.out), `${JSON.stringify(signed, null, 2)}\n`);
+          deps.out(
+            `Signed ${manifest.version} with key ${signed.signature?.keyId ?? "?"} -> ${resolve(opts.out)}`,
+          );
+        } catch (e) {
+          fail(deps, e);
+        }
+      },
+    );
 
   return update;
 }

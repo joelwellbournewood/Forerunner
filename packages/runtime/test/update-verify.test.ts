@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, isForerunnerError, join } from "@forerunner/platform";
@@ -18,7 +19,9 @@ import {
   sortVersionsDesc,
 } from "../src/update/semver.ts";
 import {
+  buildReleaseManifest,
   generateSigningKeyPair,
+  hashFileSync,
   privateKeyFrom,
   signManifest,
   signManifestWithSecret,
@@ -194,6 +197,69 @@ describe("signing and verification (Ed25519, node:crypto)", () => {
 
   it("validates the schema of trusted keys", () => {
     expect(() => new ReleaseVerifier([{ publicKey: "AAAA" }])).toThrow(/32 raw bytes/);
+  });
+
+  it("buildReleaseManifest hashes the built files and refuses duplicates, empty sets and bad fields", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fr-build-manifest-"));
+    const bytes = Buffer.alloc(3 * 1024 * 1024 + 17, 7); // longer than one read buffer
+    writeFileSync(join(dir, "forerunner-1.4.0-linux-x64.zip"), bytes);
+    writeFileSync(join(dir, "forerunner-1.4.0.apk"), "apk");
+    expect(hashFileSync(join(dir, "forerunner-1.4.0-linux-x64.zip"))).toEqual({
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      size: bytes.length,
+    });
+    const m = buildReleaseManifest({
+      version: "v1.4.0",
+      channel: "beta",
+      publishedAt: "2026-10-20T10:00:00.000Z",
+      notes: "beta notes",
+      minSchema: 2,
+      artifacts: [
+        {
+          platform: "linux-x64",
+          file: join(dir, "forerunner-1.4.0-linux-x64.zip"),
+          url: "https://example.invalid/d/forerunner-1.4.0-linux-x64.zip",
+        },
+        {
+          platform: "android",
+          file: join(dir, "forerunner-1.4.0.apk"),
+          url: "https://example.invalid/d/forerunner-1.4.0.apk",
+          name: "app.apk",
+        },
+      ],
+    });
+    expect(m.version).toBe("1.4.0");
+    expect(m.artifacts.map((a) => [a.platform, a.name, a.size])).toEqual([
+      ["linux-x64", "forerunner-1.4.0-linux-x64.zip", bytes.length],
+      ["android", "app.apk", 3],
+    ]);
+    // the signed manifest is accepted by the verifier as any other
+    expect(verifier.verifyManifest(signManifest(m, key.privateKey)).manifest.minSchema).toBe(2);
+    const base = {
+      version: "1.4.0",
+      channel: "stable" as const,
+      publishedAt: "2026-10-20T10:00:00.000Z",
+      notes: "",
+      minSchema: 1,
+    };
+    const one = {
+      platform: "android" as const,
+      file: join(dir, "forerunner-1.4.0.apk"),
+      url: "https://example.invalid/d/forerunner-1.4.0.apk",
+    };
+    expect(() => buildReleaseManifest({ ...base, artifacts: [] })).toThrow(/at least one/);
+    expect(() => buildReleaseManifest({ ...base, artifacts: [one, one] })).toThrow(
+      /two artefacts for platform android/,
+    );
+    expect(() => buildReleaseManifest({ ...base, version: "1.4", artifacts: [one] })).toThrow(
+      /semantic version/,
+    );
+    expect(() => buildReleaseManifest({ ...base, artifacts: [{ ...one, url: "nope" }] })).toThrow(
+      /url/i,
+    );
+    expect(() =>
+      buildReleaseManifest({ ...base, artifacts: [{ ...one, file: join(dir, "missing.apk") }] }),
+    ).toThrow(/ENOENT|no such file/i);
   });
 });
 

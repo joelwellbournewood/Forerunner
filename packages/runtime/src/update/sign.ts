@@ -1,17 +1,23 @@
 import {
+  createHash,
   createPrivateKey,
   createPublicKey,
   sign as cryptoSign,
   generateKeyPairSync,
   type KeyObject,
 } from "node:crypto";
-import { ForerunnerError } from "@forerunner/platform";
+import { closeSync, openSync, readSync } from "node:fs";
+import { basename, ForerunnerError } from "@forerunner/platform";
 import { parseSecretRef, type Vault } from "@forerunner/vault";
 import {
+  type ArtifactPlatform,
+  MANIFEST_SCHEMA_VERSION,
   type ManifestSignature,
   manifestBytes,
+  type ReleaseArtifact,
   ReleaseManifest,
   type SignedManifest,
+  type UpdateChannel,
 } from "./manifest.ts";
 import { ED25519_PUBLIC_KEY_BYTES, keyIdOf } from "./verify.ts";
 
@@ -99,6 +105,77 @@ export function signManifest(
     signature: Buffer.from(sig).toString("base64"),
   };
   return { manifest: checked, signature };
+}
+
+/** SHA-256 and size of a file, streamed in 1 MiB reads so release artefacts never sit in memory. */
+export function hashFileSync(file: string): { sha256: string; size: number } {
+  const hash = createHash("sha256");
+  const buf = Buffer.allocUnsafe(1024 * 1024);
+  let size = 0;
+  const fd = openSync(file, "r");
+  try {
+    for (;;) {
+      const n = readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      hash.update(buf.subarray(0, n));
+      size += n;
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return { sha256: hash.digest("hex"), size };
+}
+
+export interface ManifestArtifactInput {
+  platform: ArtifactPlatform;
+  /** Local path of the built artefact; its basename becomes the artefact name unless `name` is set. */
+  file: string;
+  /** Where the installer will download it from (the Release asset URL). */
+  url: string;
+  name?: string;
+}
+
+export interface BuildManifestInput {
+  version: string;
+  channel: UpdateChannel;
+  /** ISO-8601 UTC. */
+  publishedAt: string;
+  notes: string;
+  minSchema: number;
+  artifacts: ManifestArtifactInput[];
+}
+
+/**
+ * The release workflow's first step: an unsigned manifest whose artefact hashes and sizes are
+ * computed from the built files on disk (never typed by hand). Validated by the zod schema.
+ */
+export function buildReleaseManifest(input: BuildManifestInput): ReleaseManifest {
+  if (input.artifacts.length === 0)
+    throw new ForerunnerError("validation", "a release manifest needs at least one artefact");
+  const seen = new Set<ArtifactPlatform>();
+  const artifacts: ReleaseArtifact[] = input.artifacts.map((a) => {
+    if (seen.has(a.platform))
+      throw new ForerunnerError("validation", `two artefacts for platform ${a.platform}`);
+    seen.add(a.platform);
+    const { sha256, size } = hashFileSync(a.file);
+    return { platform: a.platform, name: a.name ?? basename(a.file), url: a.url, sha256, size };
+  });
+  const parsed = ReleaseManifest.safeParse({
+    schema: MANIFEST_SCHEMA_VERSION,
+    version: input.version.replace(/^v/, ""),
+    channel: input.channel,
+    publishedAt: input.publishedAt,
+    notes: input.notes,
+    minSchema: input.minSchema,
+    artifacts,
+  });
+  if (!parsed.success) {
+    throw new ForerunnerError(
+      "validation",
+      `release manifest: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+    );
+  }
+  return parsed.data;
 }
 
 /**

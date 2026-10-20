@@ -81,3 +81,28 @@ seam.
 - Database triggers for NOTIFY: cleaner than polling, but they would change the shared
   schema and still miss nothing the poll does not already see; revisit with the migration
   that moves the JSON files into tables.
+
+## Mirror details decided during the build (2026-10-20)
+
+- **The service process hosts the issues mirror.** `main.ts` builds `GitHubHost` with the
+  token resolved by reference (`FORERUNNER_MIRROR_TOKEN_REF`, injected by the runner as
+  `FORERUNNER_SECRET_<NAME>`, the same path as the admin token), a `GitHubMirror` and a
+  `MirrorScheduler` that syncs every active project every `FORERUNNER_MIRROR_INTERVAL_MS`.
+  The service needs no vault dependency for this; secret injection into service processes
+  is by environment reference, as for every other service secret. The runtime's own
+  `ProjectsMirror` (`@forerunner/capabilities`, GitHub Projects V2 board, scheduled by the
+  daemon per project, never reads back) is a separate, board-shaped mirror; an operator
+  enables either or both. Only one service instance should run the issues mirror per repo.
+- **Board as labels, not a classic project.** GitHub retired classic projects for new
+  organisations and the `GitHost` contract has no classic-board endpoints, so the "board" of
+  the issues mirror is the label set `fr:task`, `fr:tier-N`, `fr:status:<status>`,
+  `fr:milestone:<slug>`, and milestones are issues labelled `fr:milestone` listing their
+  criteria and task issues. When `MemoryGitHost` implements the Projects V2 calls, the push
+  can additionally place each task issue on a board with a Status field; the pick
+  `MirrorHost` keeps that change additive.
+- **Task to issue mapping in `mirror.json`, not on the task row.** `task` has no
+  `mirrored_url` column (only `message` does), and the schema is not changed by this
+  service. The mapping (issue number, URL, content hash, issue state, last comment id) lives
+  in the service's JSON state under `<data>/state-api/mirror.json`, written atomically. A
+  migration adding `task.mirrored_url` would let the UI link to the issue and move the
+  mapping into Postgres; the `JsonState` seam is where that swap happens.

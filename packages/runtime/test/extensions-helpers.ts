@@ -17,7 +17,7 @@ import {
   loadBuiltinCatalog,
 } from "../src/extensions/catalog.ts";
 import { DefaultMcpConnectorFactory, type TransportMeta } from "../src/extensions/mcp.ts";
-import { ExtensionRegistry } from "../src/extensions/registry.ts";
+import { ExtensionRegistry, ledgerCostByExtension } from "../src/extensions/registry.ts";
 import type { ExtensionEvent, GrantOutcome } from "../src/extensions/types.ts";
 
 /** Built by concatenation so the secret scan never sees a credential shape. */
@@ -142,7 +142,13 @@ export interface RegistryHarness {
 }
 
 export async function registryHarness(
-  opts: { approval?: GrantOutcome; catalog?: ExtensionCatalog; fetch?: typeof fetch } = {},
+  opts: {
+    approval?: GrantOutcome;
+    catalog?: ExtensionCatalog;
+    fetch?: typeof fetch;
+    /** Wire `ledgerCost` to the store's cost ledger (the daemon does). */
+    ledgerCost?: boolean;
+  } = {},
 ): Promise<RegistryHarness> {
   const clock = new SimulatedClock("2026-10-20T08:00:00Z");
   const store = await openStore({ url: "sqlite::memory:", clock });
@@ -170,6 +176,7 @@ export async function registryHarness(
     events: (e) => events.push(e),
     fetch: opts.fetch,
     chfPerUsd: () => 0.8,
+    ledgerCost: opts.ledgerCost ? ledgerCostByExtension(store.costLedger) : undefined,
   });
   return {
     store,

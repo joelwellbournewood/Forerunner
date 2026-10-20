@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { HumanRequestExtensionApprovals } from "../src/extensions/approvals.ts";
+import { extensionCostKey } from "../src/extensions/registry.ts";
 import { widens } from "../src/extensions/types.ts";
 import {
   FAKE_CATALOG_ID,
@@ -280,6 +281,31 @@ describe("ExtensionRegistry: toggle, remove, permissions", () => {
     await h.registry.recordCost(ext.id, -5);
     const view = await h.registry.get(ext.id);
     expect(view.cost).toEqual({ usdMicro: 2_000_000, chfMicro: 1_600_000 });
+  });
+
+  it("adds ledger charges recorded against the extension to its cost, not other charges", async () => {
+    h = await registryHarness({ approval: "approved", ledgerCost: true });
+    const ext = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human);
+    expect(extensionCostKey(ext.id)).toBe(`extension:${ext.id}`);
+    await h.store.costLedger.record({
+      human_id: "h-1",
+      kind: "api",
+      usd_micro: 250_000,
+      model: "fake-haiku",
+      specialist: extensionCostKey(ext.id),
+    });
+    await h.store.costLedger.record({
+      human_id: "h-1",
+      kind: "api",
+      usd_micro: 999,
+      model: "fake-haiku",
+      specialist: "coder",
+    });
+    await h.registry.recordCost(ext.id, 100_000);
+    const view = await h.registry.get(ext.id);
+    expect(view.cost).toEqual({ usdMicro: 350_000, chfMicro: 280_000 });
+    const listed = (await h.registry.list()).find((e) => e.id === ext.id);
+    expect(listed?.cost.usdMicro).toBe(350_000);
   });
 
   it("marks a connector that fails to connect as error, without an approval", async () => {

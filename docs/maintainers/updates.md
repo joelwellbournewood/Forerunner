@@ -77,10 +77,14 @@ or failing feed is `ForerunnerError("unavailable", retryable)`; a malformed docu
   - `assertArtifactMatches(artifact, size, sha256)` → `tampered`.
   `refusalReason(error)` returns the reason string of any of these (`VerifyRefusal`).
 - `sign.ts` is the release workflow's half: `generateSigningKeyPair()` (base64 raw public key,
-  base64 32-byte seed), `signManifest(manifest, privateKeyValue, { keyId? })`,
-  `signManifestWithSecret(manifest, "secret:update_signing_key", vault)` which reads the key by
-  reference, signs and drops it. Key-reading errors never include the input (OpenSSL messages
-  are replaced), and `Logger` redaction covers PEM blocks should one ever be logged.
+  base64 32-byte seed), `buildReleaseManifest({ version, channel, publishedAt, notes,
+  minSchema, artifacts: [{ platform, file, url, name? }] })` which hashes the built files on
+  disk (`hashFileSync`, streamed in 1 MiB reads) so sizes and SHA-256s are never typed by hand
+  and refuses duplicate platforms or an empty set, `signManifest(manifest, privateKeyValue,
+  { keyId? })`, and `signManifestWithSecret(manifest, "secret:update_signing_key", vault)` which
+  reads the key by reference, signs and drops it. Key-reading errors never include the input
+  (OpenSSL messages are replaced), and `Logger` redaction covers PEM blocks should one ever be
+  logged.
 
 ### Configuration (`config.ts`)
 
@@ -139,7 +143,7 @@ localSchemaVersion, platform?, fetchImpl?, humanId? }`:
 | --- | --- |
 | `check(by?)` → `UpdateCheck` | lists the channel, walks newest-first, stops at the first release that is not newer than `installedVersion()` (the pointer's current, else the running version); the first candidate that verifies, is schema-compatible and was not rolled back or failed here before becomes `available`; the ones skipped are `rejected: [{ version, reason, message }]`. Audits `update.check`. |
 | `stage(signed)` → `StagedInstall` | verifies the manifest, picks the artefact for `platform` (`detectArtifactPlatform()`: windows-x64, linux-x64, android), streams the download to the staging directory while hashing (more bytes than the manifest says is `tampered` at once), checks size and SHA-256, unpacks a `.zip` with `unpackZip` (refuses `..` segments, absolute and drive-letter names, backslashes, NUL, symlink entries, and any entry that resolves outside the target) or keeps a non-zip artefact as one file, writes `release.json`, renames the staging directory into place. Any failure removes the staging directory. |
-| `apply({ by, version? })` → `ApplyResult` | an agent actor first needs `human.ask(approval)` to answer `approved` (`pending` or `denied` → `approval_required`, audited as denied); then refuses a release that rolled back or failed here before; stages; inserts the `release` row (`status: published`, changelog, signature, artefacts) or reuses it; writes the pointer `{ current: version, previous: <old current or running version>, state: pending_health_check }`; audits `update.apply`; calls `restarter.restart({ reason: "update", targetVersion, fromVersion })`. |
+| `apply({ by, version? })` → `ApplyResult` | trust first: the manifest is verified (signature, downgrade, schema) and a release that rolled back or failed here before is refused, each audited as denied, before anyone is asked; then an agent actor needs `human.ask(approval)` to answer `approved` (`pending` or `denied` → `approval_required`, audited as denied), so no refused release ever becomes an inbox item; then stages; inserts the `release` row (`status: published`, changelog, signature, artefacts) or reuses it; writes the pointer `{ current: version, previous: <old current or running version>, state: pending_health_check }`; audits `update.apply`; calls `restarter.restart({ reason: "update", targetVersion, fromVersion })`. |
 | `healthCheck()` → `HealthOutcome` | the first-start check, see below. |
 | `rollback({ by, reason? })` → `RollbackResult` | manual rollback to `previous` (`not_found` when there is none; agents need approval): pointer `{ current: previous, previous: null, state: installed, lastRollback: {automatic: false} }`, release row → `rolled_back`, audit `update.rollback`, `human.notify(warning)`, restart. |
 | `status()` → `UpdateStatus` | running version, channel, platform, pointer, version directories on disk, trusted key ids. No network. |
@@ -217,11 +221,17 @@ action is attributed to `humanId`.
 
 ### CLI (`cli.ts`)
 
-`registerUpdateCli(program, { manager?, out?, err? })` adds `fr update` with `check`, `apply
-[--version]`, `rollback [--reason]`, `status`, `health` (exit 1 after a rollback; the shells call
-it after a relaunch), `keygen --out <file>` (private key to an owner-only file, public key and
-key id printed, refuses to overwrite) and `sign --manifest --key-file --out`. All take `--json`
-where output matters. The default manager is `composeUpdateManager()`.
+`registerUpdateCli(program, { manager?, vault?, out?, err? })` adds `fr update` with `check`,
+`apply [--version]`, `rollback [--reason]`, `status`, `health` (exit 1 after a rollback; the
+shells call it after a relaunch), `keygen --out <file>` (private key to an owner-only file,
+public key and key id printed, refuses to overwrite), `manifest --version --channel
+--notes-file --min-schema --base-url --artifact <platform>:<file> [--artifact ...]
+[--published-at] --out` (the unsigned manifest with hashes and sizes computed from the built
+files; the artefact URL is `<base-url>/<file basename>`; `parseArtifactSpec` splits on the
+first colon so Windows drive letters survive) and `sign --manifest (--key-file <file> |
+--key-secret secret:<name>) --out`. `--key-secret` reads the key from the vault by reference
+(`vault` dep, default `openVault()`); the key never appears in the output or the signed file.
+All take `--json` where output matters. The default manager is `composeUpdateManager()`.
 
 ### Schema compatibility and the sync gate (`compat.ts`)
 
@@ -241,13 +251,20 @@ service client calls `evaluate` at startup, from the peer feed and after every u
   file's content in the vault (`secret:update_signing_key`) or as the CI secret
   `UPDATE_SIGNING_KEY`, and put the printed public key into every install's `update.json`
   (`trustedKeys`) or the shell's compiled-in default. Per release, after `release.yml` built the
-  artefacts and `SHA256SUMS.txt`: write the unsigned manifest (version, channel, notes from the
-  changelog section, `minSchema` = the oldest schema the release's migrations can upgrade from,
-  one artefact per platform with the Release asset URL, size and sha256), then
-  `fr update sign --manifest manifest.json --key-file <secret written to a temp file> --out
-  forerunner-release.json` (or `signManifestWithSecret` in a script) and upload
-  `forerunner-release.json` as a Release asset. The CI step must never print the key; the signed
-  manifest contains no secret. Pre-releases carry `channel: beta`.
+  artefacts and `SHA256SUMS.txt`:
+  1. `fr update manifest --version <tag without v> --channel stable|beta --notes-file
+     <changelog section> --min-schema <oldest schema the release's migrations can upgrade from>
+     --base-url https://<host>/<owner>/<repo>/releases/download/<tag> --artifact
+     windows-x64:<msi or zip> --artifact linux-x64:<appimage or zip> --artifact android:<apk>
+     --out manifest.json` (hashes and sizes come from the files; the URL of each artefact is
+     the base URL plus the file name, which is what the Release asset upload produces);
+  2. `fr update sign --manifest manifest.json --key-secret secret:update_signing_key --out
+     forerunner-release.json` on a machine whose vault holds the key, or `--key-file <the CI
+     secret written to a temp file>` in the workflow (or `signManifestWithSecret` in a script);
+  3. upload `forerunner-release.json` as a Release asset next to the artefacts.
+  The CI step must never print the key; the signed manifest contains no secret. Pre-releases
+  carry `channel: beta`. The fake git host test (`update-githost.test.ts`) performs exactly
+  these API calls and then installs from the result.
 - **Rotate the signing key.** Add the new public key to `trustedKeys` in a release signed with
   the old key, ship it, then sign later releases with the new key and drop the old one.
 - **Add a platform.** Extend `ARTIFACT_PLATFORMS` (manifest), `detectArtifactPlatform`
@@ -266,37 +283,55 @@ service client calls `evaluate` at startup, from the peer feed and after every u
 
 ## Tests
 
-`packages/runtime/test/update-*.test.ts` (40 tests, `pnpm vitest run --project unit
+`packages/runtime/test/update-*.test.ts` (49 tests, `pnpm vitest run --project unit
 packages/runtime/test/update-verify.test.ts packages/runtime/test/update-install.test.ts
-packages/runtime/test/update-screen.test.ts`), all against a fake release server on 127.0.0.1
-(`node:http`, `update-helpers.ts`: GitHub-shaped release list, assets, `releases.json`,
-byte overrides for tampering, a hand-built zip writer for zip-slip and symlink entries), a
-`sqlite::memory:` store, a `SimulatedClock`, a test key generated per process and a harness
-whose restarter "boots" into the staged version.
+packages/runtime/test/update-screen.test.ts packages/runtime/test/update-health.test.ts
+packages/runtime/test/update-githost.test.ts`), all against stand-ins on 127.0.0.1: a fake
+release server (`node:http`, `update-helpers.ts`: GitHub-shaped release list, assets,
+`releases.json`, byte overrides for tampering, a hand-built zip writer for zip-slip and symlink
+entries), the testenv `FakeGitHost`, a `sqlite::memory:` store, a `SimulatedClock`, a test key
+generated per process and a harness whose restarter "boots" into the staged version.
+`packages/runtime/test/wiring.test.ts` (the orchestrator's) covers the daemon side: the mounted
+routes, `fr update` on the program and the daemon exiting with `RESTART_EXIT_CODE` on apply.
 
 - `update-verify.test.ts`: semver precedence; canonical JSON; sign/verify round trip (base64
   and PEM keys, key ids); refusals unsigned, untrusted key, forged key id, tampered artefact
   hash, edited notes, malformed, bad signature bytes; downgrade, already installed, schema too
-  old, artefact mismatch; signing by secret reference without echoing the key; both feeds over
-  the fake server (channels, drafts, unreadable manifests, unavailable); configuration file and
-  env overrides.
+  old, artefact mismatch; signing by secret reference without echoing the key;
+  `buildReleaseManifest` and `hashFileSync` (multi-buffer file, duplicate platform, empty set,
+  bad version or URL, missing file); both feeds over the fake server (channels, drafts,
+  unreadable manifests, unavailable); configuration file and env overrides.
 - `update-install.test.ts`: `check`; the staged layout, pointer, release row, audit row,
   restart request, no symlinks and config/memory/data hashes unchanged; health pass; status and
   prune; downgrade refused and allowed; not found; unsigned/wrong-key/tampered/schema-too-old
-  releases rejected on the wire and nothing left behind; artefact bytes or size mismatch
-  refused; zip-slip and symlink entries refused (unit and through `apply`); agent approval
-  denied/pending/approved; automatic rollback with row, notification, audit, restart and
-  unchanged protected directories; timeout on the simulated clock; running-version mismatch;
-  no previous version; manual rollback and its approval; pointer crash simulation between temp
-  write and rename, stale temp cleanup, corrupt pointer, unsafe version names; platform
-  detection; the CLI commands including keygen (private key never printed) and sign.
+  releases rejected on the wire and nothing left behind, and an agent's request for one is
+  refused before any approval is asked; artefact bytes or size mismatch refused; zip-slip and
+  symlink entries refused (unit and through `apply`); agent approval denied/pending/approved;
+  automatic rollback with row, notification, audit, restart and unchanged protected
+  directories; timeout on the simulated clock; running-version mismatch; no previous version;
+  manual rollback and its approval; pointer crash simulation between temp write and rename,
+  stale temp cleanup, corrupt pointer, unsafe version names; platform detection; the CLI
+  commands including keygen (private key never printed), manifest (hashes from files, bad
+  spec refused) and sign by file and by secret reference (key never printed, missing secret
+  refused).
 - `update-screen.test.ts`: the three sections on one screen validated by the zod view;
   connector update rule; pending, rolled back, rejected and unknown states; routes (GET, apply,
   rollback, already installed, not found); `isSchemaCompatible` matrix; `SyncGate` pause,
   block, resume and listeners; pointer contains no path separators.
+- `update-health.test.ts`: `DaemonHealthProbe` against a fake `/health` on 127.0.0.1 (missing
+  or unreadable `daemon.json`, ok, version mismatch, not ok, 503, unreachable, timeout on the
+  simulated clock aborting the request); `DoctorHealthProbe` running `node -e` (all ok, a
+  failing check, `required` subset, non-zero exit, unparsable output); `DefaultHealthProbe`
+  selection; `probeWithTimeout` with a throwing probe and timer cleanup.
+- `update-githost.test.ts`: the release workflow's API calls against the testenv fake git host
+  (create release, upload the artefact and the signed manifest as assets), then
+  `GitHubReleasesFeed` lists the manifest, the manager stages from the host's
+  `browser_download_url` and the health check passes; a private repository is refused without
+  a token and listed with one.
 
 Mutation checks done while writing: removing the artefact hash check fails the tamper test;
-skipping the rollback write fails the four rollback tests.
+skipping the rollback write fails the four rollback tests; moving verification after the
+approval request fails the "refused before any approval" assertion.
 
 ## Known issues
 
@@ -308,15 +343,17 @@ skipping the rollback write fails the four rollback tests.
   CLI stages and asks the user to restart.
 - `release.yml` does not yet build the signed `forerunner-release.json` asset; `release.md`
   describes the Tauri/minisign plan, which this module replaces with the Ed25519 manifest
-  (ADR 0015). The workflow step is: write the manifest, `fr update sign`, upload.
+  (ADR 0015). The workflow steps are `fr update manifest`, `fr update sign --key-file` (the
+  CI secret written to a temp file), upload; both commands exist and are tested, the workflow
+  change is pending.
 - `HumanRequestUpdatePort.ask` always answers `pending` (the inbox answers asynchronously); an
   agent-initiated update therefore needs a second `apply` after the human approved, driven by
   the conversation/command layer.
 - Android installs through the system package installer; the staged layout stores the APK and
   the shell has to hand it over. Rollback on Android keeps the previous APK in `versions/`.
-- `docs-check` maps `packages/runtime/` to `runtime.md`, `sandbox.md`, `adding-a-provider.md`
-  and `adding-a-specialist.md`; this file must be added to that mapping in
-  `scripts/docs-check.mjs` and to `docs/maintainers/README.md`.
+- `GitHubReleasesFeed` fetches one manifest asset per release on every `list`; with many
+  releases on the channel that is one request each (bounded by `perPage`, default 30). A
+  cache keyed by release id would remove the repeat fetches.
 
 ## Requirements covered
 

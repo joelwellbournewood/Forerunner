@@ -483,10 +483,24 @@ export class UpdateManager {
       if (!signed) throw new ForerunnerError("not_found", "no update available");
     }
     const target = signed.manifest.version;
+    // Trust first, then the human: nobody is asked to approve a release that would be refused.
+    try {
+      this.verifyCandidate(signed);
+      await this.assertNotRejectedBefore(signed.manifest);
+    } catch (e) {
+      await this.audit(
+        "update.apply",
+        by,
+        false,
+        `install ${target}`,
+        errorMessage(e),
+        refusalReason(e) ?? "error",
+      );
+      throw e;
+    }
     await this.requireApproval(by, `install update ${target}`, signed.manifest.notes.slice(0, 200));
     let staged: StagedInstall;
     try {
-      await this.assertNotRejectedBefore(signed.manifest);
       staged = await this.stage(signed);
     } catch (e) {
       await this.audit(

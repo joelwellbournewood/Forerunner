@@ -36,7 +36,9 @@ function fakeApis(): Promise<{ server: Server; url: string }> {
   });
 }
 
-describe("fr CLI", () => {
+// Each case spawns the CLI through tsx, whose cold compile of the runtime can exceed the
+// default 20 s on a loaded runner; the spawn itself is capped at 60 s per call.
+describe("fr CLI", { timeout: 180_000 }, () => {
   let api: { server: Server; url: string };
   let home: string;
   const env = () => ({

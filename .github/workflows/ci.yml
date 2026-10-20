@@ -51,6 +51,8 @@ jobs:
         run: pnpm typecheck
       - name: Unit tests (fake provider, no network)
         run: pnpm test:unit
+      - name: App tests (UI and approvals web, jsdom)
+        run: pnpm --filter @forerunner/ui test && pnpm --filter @forerunner/approvals-web test
       - name: Integration tests (stand-ins)
         run: pnpm test:integration
       - name: Prompt-injection suite (browser and email paths)

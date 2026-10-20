@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
-  "windows": ["main"],
+  "description": "The UI window only needs the core IPC; every plugin (tray, notifications, dialogs, deep links, opener) is driven from Rust, so no plugin command is exposed to the webview.",
+  "windows": ["main", "splash"],
   "permissions": ["core:default"]
 }

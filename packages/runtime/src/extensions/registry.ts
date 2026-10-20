@@ -6,7 +6,13 @@ import {
   log,
   newId,
 } from "@forerunner/platform";
-import type { AuditLogRepo, ExtensionRepo, ExtensionRow, JsonObject } from "@forerunner/state";
+import type {
+  AuditLogRepo,
+  CostLedgerRepo,
+  ExtensionRepo,
+  ExtensionRow,
+  JsonObject,
+} from "@forerunner/state";
 import { z } from "zod";
 import type { SecretsPort } from "../enforcement/ports.ts";
 import type { CapabilityClaims } from "../enforcement/token.ts";
@@ -77,6 +83,28 @@ export interface ExtensionRegistryDeps {
   chfPerUsd?: () => number;
   /** Cost recorded elsewhere for this extension (a ledger query), added to the row counter. */
   ledgerCost?: (extensionId: string) => Promise<number>;
+}
+
+/**
+ * `cost_ledger` has no extension column. A capability module that charges through the ledger
+ * on behalf of an extension writes `specialist = extension:<id>`; `ledgerCostByExtension`
+ * sums those rows for the panel's cost column, on top of the row counter `recordCost` keeps.
+ */
+export const EXTENSION_COST_KEY_PREFIX = "extension:";
+
+export function extensionCostKey(extensionId: string): string {
+  return `${EXTENSION_COST_KEY_PREFIX}${extensionId}`;
+}
+
+/** `ExtensionRegistryDeps.ledgerCost` over the cost ledger (micro-USD charged to the extension). */
+export function ledgerCostByExtension(
+  ledger: Pick<CostLedgerRepo, "breakdown">,
+): (extensionId: string) => Promise<number> {
+  return async (extensionId) => {
+    const key = extensionCostKey(extensionId);
+    const buckets = await ledger.breakdown("specialist");
+    return buckets.find((b) => b.key === key)?.usd_micro ?? 0;
+  };
 }
 
 const ExtensionConfig = z

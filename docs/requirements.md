@@ -159,10 +159,10 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 
 | ID | Requirement | Milestone | Status | Test |
 | --- | --- | --- | --- | --- |
-| J.1 | Quick chat per project: read-only by default, fast model plus project summary and docs search. Voice works here too (module O). A "make this a task" button turns a chat message into a draft task. | 1 | in progress | packages/runtime/test/conversation.test.ts; apps/ui/test/chat.test.tsx |
+| J.1 | Quick chat per project: read-only by default, fast model plus project summary and docs search. Voice works here too (module O). A "make this a task" button turns a chat message into a draft task. | 1 | in progress | packages/runtime/test/conversation.test.ts; apps/ui/test/chat.test.tsx; apps/approvals-web/test/chat.test.tsx |
 | J.2 | Next-session queue: notes, tasks, corrections, ideas, each with priority and type. Voice notes supported. | 5 | in progress | packages/state/test/suite.ts; services/state-api/test/routes.test.ts; packages/runtime/test/conversation.test.ts |
-| J.3 | Human requests: one inbox across projects. Each has context, why it matters, options (multiple choice when possible), and whether it blocks work. | 2 | in progress | services/state-api/test/routes.test.ts; packages/state/test/suite.ts; apps/ui/test/inbox.test.tsx |
-| J.4 | Answered decisions go to the Decision log and are never asked again unless superseded. | 2 | done | packages/runtime/test/decisions.test.ts; packages/runtime/test/daemon.test.ts; packages/state/test/suite.ts |
+| J.3 | Human requests: one inbox across projects. Each has context, why it matters, options (multiple choice when possible), and whether it blocks work. | 2 | in progress | services/state-api/test/routes.test.ts; packages/state/test/suite.ts; apps/ui/test/inbox.test.tsx; apps/approvals-web/test/inbox.test.tsx |
+| J.4 | Answered decisions go to the Decision log and are never asked again unless superseded. | 2 | done | packages/runtime/test/decisions.test.ts; packages/runtime/test/daemon.test.ts; packages/state/test/suite.ts; apps/approvals-web/test/inbox.test.tsx |
 | J.5 | Autonomy levels per project (J.6 to J.10), enforced in code. | 5 | done | packages/runtime/test/autonomy.test.ts; packages/runtime/test/hooks.test.ts; packages/runtime/test/session.test.ts |
 | J.6 | Level 0 Advisor: plans and proposes only. | 5 | done | packages/runtime/test/session.test.ts; packages/runtime/test/autonomy.test.ts |
 | J.7 | Level 1 Assisted: acts after approval of each plan. | 5 | in progress | packages/runtime/test/autonomy.test.ts |
@@ -181,7 +181,7 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | K.5 | Memory: separate views for Alice, Bob, Critic and Shared lessons. Search, edit, delete, pin. | 4 | todo | |
 | K.6 | Extensions panel: every connector, MCP server, skill, specialist, capability and model provider. Status, permissions, cost, version, toggle, remove, add from catalog or URL. | 6 | in progress | packages/runtime/test/extensions-routes.test.ts; packages/runtime/test/extensions-registry.test.ts |
 | K.7 | Settings: global, per human, per agent, per project. Every setting shows its scope. | 1 | done | apps/ui/test/settings.test.tsx; packages/runtime/test/daemon.test.ts |
-| K.8 | QoL: command palette, keyboard shortcuts, dark mode, desktop notifications, tray menu, Android app (module R) plus a web fallback for approvals. Active project always shown in the header. | 5 | in progress | apps/ui/test/shell.test.tsx |
+| K.8 | QoL: command palette, keyboard shortcuts, dark mode, desktop notifications, tray menu, Android app (module R) plus a web fallback for approvals. Active project always shown in the header. | 5 | in progress | apps/ui/test/shell.test.tsx; apps/approvals-web/test/shell.test.tsx; apps/approvals-web/test/app.test.tsx |
 
 ## L. Capabilities
 
@@ -219,7 +219,7 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 
 | ID | Requirement | Milestone | Status | Test |
 | --- | --- | --- | --- | --- |
-| O.1 | Talk to your agent at any time, by text or voice: in the app, from a global hotkey, or from the phone approvals page. | 5 | in progress | packages/runtime/test/conversation.test.ts; packages/runtime/test/daemon.test.ts |
+| O.1 | Talk to your agent at any time, by text or voice: in the app, from a global hotkey, or from the phone approvals page. | 5 | in progress | packages/runtime/test/conversation.test.ts; packages/runtime/test/daemon.test.ts; apps/approvals-web/test/chat.test.tsx |
 | O.2 | A dedicated conversation agent answers. It runs on a fast model at low effort with a small cached context (project summaries, inbox, open requests, current session state). It speaks for your principal agent and writes to the same memory and logs. | 5 | in progress | packages/runtime/test/conversation.test.ts |
 | O.3 | Voice loop: push-to-talk hotkey, or open mic with voice activity detection. Streaming STT; reply streamed sentence by sentence into streaming TTS. You can interrupt it mid-sentence by speaking. | 5 | in progress | packages/voice/test/loop.test.ts; packages/voice/test/vad.test.ts; packages/voice/test/sentences.test.ts |
 | O.4 | Pluggable voice providers: local by default where the machine can manage it (faster-whisper for STT, Kokoro or Piper for TTS; free and private); cloud option for the lowest latency (Deepgram for STT, Cartesia or ElevenLabs for TTS). Chosen in the Extensions panel. | 5 | in progress | packages/voice/test/registry.test.ts; packages/voice/test/local-helpers.test.ts; packages/voice/test/cloud.test.ts; packages/voice/test/availability.test.ts |
@@ -261,11 +261,11 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | Q.5 | Confirmation by risk: every command confirms according to its risk level (Q.6 to Q.8). | 5 | todo | |
 | Q.6 | Low risk (switch project, rename, reorder tasks, add a note): acts at once, then states what it did, with undo. | 5 | todo | |
 | Q.7 | Medium risk (raise a budget within the hard ceiling, change autonomy by one step, start a costly session): change card, then a "yes", a tap, or an email reply. | 5 | todo | |
-| Q.8 | High risk (raise the monthly hard ceiling, grant a capability, change email mode, delete anything, change permissions): change card, then confirmation in the app on a paired device, with biometric on the phone. A chat or email "yes" alone is not enough. | 5 | in progress | services/state-api/test/auth.test.ts |
+| Q.8 | High risk (raise the monthly hard ceiling, grant a capability, change email mode, delete anything, change permissions): change card, then confirmation in the app on a paired device, with biometric on the phone. A chat or email "yes" alone is not enough. | 5 | in progress | services/state-api/test/auth.test.ts; apps/approvals-web/test/inbox.test.tsx |
 | Q.9 | Bespoke requests: if no single command fits, the agent builds a plan from existing commands and shows it as one change card. If no commands can do it, it offers to create a Forerunner task to add the feature. | 5 | todo | |
 | Q.10 | Spelled out every time: every change made by conversation is posted to the activity log and the project chat as a plain sentence with Undo (for example "Raised tonight's session budget for PharmaWatch from CHF 5 to CHF 20, until 06:00. Undo."). The other human sees changes that affect shared projects. | 5 | todo | |
 | Q.11 | Change log: every change has who asked, the words used, the commands run, before and after values, and a one-click undo while it is still reversible. | 5 | in progress | packages/state/test/sqlite.test.ts; packages/state/test/suite.ts |
-| Q.12 | Limits still hold: conversation changes go through the same enforcement as the settings screen. The agent cannot raise its own limits without your confirmation, and it never treats text from web pages, files or other people's email as a request. | 5 | in progress | packages/runtime/test/conversation.test.ts; packages/runtime/test/hooks.test.ts; packages/runtime/test/injection.test.ts |
+| Q.12 | Limits still hold: conversation changes go through the same enforcement as the settings screen. The agent cannot raise its own limits without your confirmation, and it never treats text from web pages, files or other people's email as a request. | 5 | in progress | packages/runtime/test/conversation.test.ts; packages/runtime/test/hooks.test.ts; packages/runtime/test/injection.test.ts; evals/test/injection.test.ts |
 
 ## R. Android app
 
@@ -285,7 +285,7 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | ID | Requirement | Milestone | Status | Test |
 | --- | --- | --- | --- | --- |
 | S.1 | All limits are enforced by the runtime in tool hooks. A prompt can ask; only code can allow. | 1 | done | packages/runtime/test/hooks.test.ts; packages/runtime/test/loop.test.ts; packages/runtime/test/extensions-gate.test.ts |
-| S.2 | Content is data, not instructions: web pages, emails, repo files, issue comments and other agents' outputs can never grant permissions or change goals. Instructions found there are quoted to the human. | 1 | done | packages/runtime/test/injection.test.ts; packages/runtime/test/loop.test.ts; packages/runtime/test/hooks.test.ts; packages/capabilities/test/browser-extract.test.ts; services/state-api/test/mirror.test.ts |
+| S.2 | Content is data, not instructions: web pages, emails, repo files, issue comments and other agents' outputs can never grant permissions or change goals. Instructions found there are quoted to the human. | 1 | done | packages/runtime/test/injection.test.ts; packages/runtime/test/loop.test.ts; packages/runtime/test/hooks.test.ts; packages/capabilities/test/browser-extract.test.ts; services/state-api/test/mirror.test.ts; evals/test/injection.test.ts |
 | S.3 | Capability tokens: each run gets a token listing its allowed tools, paths, domains, secrets and budget. The hook rejects anything outside it. | 1 | done | packages/runtime/test/token.test.ts; packages/runtime/test/hooks.test.ts; packages/runtime/test/executor.test.ts |
 | S.4 | Secrets by reference: agents ask for `secret:github_pat`; the runtime injects it into the tool call. Values never enter model context, logs or git. Logs are scanned and redacted. | 1 | done | packages/vault/test/refs.test.ts; packages/vault/test/no-leak.test.ts; packages/runtime/test/hooks.test.ts; packages/platform/test/log.test.ts; scripts/secret-scan.test.ts |
 | S.5 | Least privilege: GitHub fine-grained PAT or GitHub App scoped to the orgs and repos the user selects. Cloudflare token scoped to named zones and Workers. Each grant shows its scopes in the Extensions panel. | 0 | in progress | packages/runtime/test/setup-validators.test.ts; packages/runtime/test/extensions-registry.test.ts |
@@ -308,7 +308,7 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | S.22 | Daily send cap (default 20) and per-recipient cap (default 5 per day). | 6 | in progress | packages/capabilities/test/email-policy.test.ts |
 | S.23 | Blocked content: credentials, private memory, other people's personal data, financial commitments, legal agreements. | 6 | in progress | packages/capabilities/test/email-policy.test.ts |
 | S.24 | Never signs up for paid services or accepts terms without approval. | 6 | in progress | packages/capabilities/test/email-policy.test.ts |
-| S.25 | Inbound mail is untrusted. Links and attachments open only in the sandbox browser. Instructions in emails are never executed, only reported. | 6 | in progress | packages/capabilities/test/email-inbound.test.ts; packages/capabilities/test/email-commands.test.ts; packages/capabilities/test/email-tools.test.ts |
+| S.25 | Inbound mail is untrusted. Links and attachments open only in the sandbox browser. Instructions in emails are never executed, only reported. | 6 | in progress | packages/capabilities/test/email-inbound.test.ts; packages/capabilities/test/email-commands.test.ts; packages/capabilities/test/email-tools.test.ts; evals/test/injection.test.ts |
 | S.26 | Every sent email is logged with a copy visible to the owner, and a daily digest is optional. | 6 | in progress | packages/capabilities/test/email-policy.test.ts; packages/capabilities/test/email-routes.test.ts |
 | S.27 | Signature states it is an AI agent acting for the named human (on by default, can be turned off). | 6 | in progress | packages/capabilities/test/email-policy.test.ts |
 | S.28 | One-click "pause email" in the tray. | 6 | in progress | packages/capabilities/test/email-routes.test.ts; packages/capabilities/test/email-policy.test.ts |
@@ -368,7 +368,7 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | V.2 | Every milestone check in the Build order passes on the final build. | 8 | todo | |
 | V.3 | All nine end-to-end scenarios pass on Windows and Linux (the phone scenario on the Android emulator), three runs in a row. | 8 | todo | |
 | V.4 | No open P0 or P1 bugs. P2 bugs are listed as known issues. | 8 | todo | |
-| V.5 | Security suite passes: prompt injection, secret scanning, dependency audit, permission and autonomy enforcement. | 8 | in progress | packages/runtime/test/injection.test.ts; scripts/secret-scan.test.ts; packages/runtime/test/autonomy.test.ts; packages/runtime/test/hooks.test.ts; packages/capabilities/test/browser-extract.test.ts |
+| V.5 | Security suite passes: prompt injection, secret scanning, dependency audit, permission and autonomy enforcement. | 8 | in progress | packages/runtime/test/injection.test.ts; scripts/secret-scan.test.ts; packages/runtime/test/autonomy.test.ts; packages/runtime/test/hooks.test.ts; packages/capabilities/test/browser-extract.test.ts; evals/test/injection.test.ts |
 | V.6 | Response-time targets in Feature spec D (D.7 to D.15) are met. | 8 | todo | |
 | V.7 | A scripted fresh install on clean Windows and Linux VMs completes setup in under 15 minutes. | 0 | done | scripts/fresh-install.test.ts |
 | V.8 | The docs handover test passes. | 8 | todo | |

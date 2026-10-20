@@ -33,6 +33,8 @@ Status: accepted | superseded by NNNN
 | 0012 | Voice pipeline: PCM contract, local helpers over stdio, latency anchors |
 | 0013 | Agent email: settings and sent log storage, the verification chain for email commands |
 | 0014 | Sandboxed browser: policy enforcement points and what the browser never does |
+| 0015 | Updates: pointer-file install layout and the trust model for signed releases |
+| 0016 | How MCP tools map to ToolSpecs and action classes |
 | 0024 | State service shape: direct Postgres for runtimes, a thin service for devices, realtime, remote commands and the mirror |
 | 0025 | UI conventions over the daemon API: config source, SSE auth, chat stream frames, open shapes |
 | 0026 | Daemon lifecycle: one `fr daemon` per install, shells attach to it |
@@ -40,3 +42,5 @@ Status: accepted | superseded by NNNN
 | 0028 | Critic independence and verdict rules in code |
 | 0029 | Daemon wiring of the phase 6 and 7 modules: extensions, updates, model watch, estimates, mirror, sandbox |
 | 0030 | Command registry: risk resolution, confirmations, change log and undo |
+| 0031 | Desktop shell: its own `/events` subscription, tray behaviour, restart handling, deep links |
+| 0034 | Approvals web: session from a one-time link, per-tab device key, re-entered code for high-risk answers, chat as a remote command |

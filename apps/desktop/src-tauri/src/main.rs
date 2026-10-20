@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-  forerunner_desktop_lib::run();
+    forerunner_desktop_lib::run();
 }

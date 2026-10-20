@@ -10,17 +10,8 @@
     "beforeBuildCommand": "pnpm --filter @forerunner/ui build"
   },
   "app": {
-    "windows": [
-      {
-        "title": "Forerunner",
-        "width": 1200,
-        "height": 800,
-        "resizable": true,
-        "fullscreen": false,
-        "minWidth": 900,
-        "minHeight": 600
-      }
-    ],
+    "windows": [],
+    "withGlobalTauri": false,
     "security": {
       "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*"
     }
@@ -36,5 +27,11 @@
       "icons/icon.ico"
     ]
   },
-  "plugins": {}
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["fr"]
+      }
+    }
+  }
 }

@@ -21,5 +21,17 @@ tauri-build = { version = "2.7.3" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.12.4" }
+tauri = { version = "2.12.4", features = ["tray-icon"] }
 tauri-plugin-log = "2"
+# Plugins pinned to the releases of 2026-09-26 (the last ones before 2026-10); all need tauri ^2.12.
+tauri-plugin-notification = "=2.5.0"
+tauri-plugin-dialog = "=2.8.0"
+tauri-plugin-deep-link = "=2.5.0"
+tauri-plugin-single-instance = { version = "=2.5.0", features = ["deep-link"] }
+tauri-plugin-opener = "=2.6.0"
+# The daemon is plain http on 127.0.0.1: no TLS stack is compiled in.
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream"] }
+tokio = { version = "1", features = ["time", "sync", "macros", "rt"] }
+futures-util = { version = "0.3", default-features = false }
+uuid = { version = "1", features = ["v4"] }
+url = "2"
