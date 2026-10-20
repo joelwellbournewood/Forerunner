@@ -176,6 +176,13 @@ budget and reason) that the PC or the cloud runner picks up through the state se
 sentence says so ("the PC picks it up in seconds"); undo fails the row while it is still
 pending and otherwise stops the session through the kill switch.
 
+The other direction is the PC daemon running a plan the phone sent as one remote command
+(ADR 0032, `packages/runtime/src/daemon/remote-watcher.ts`): the context then carries
+`remoteDeviceId` (the phone) and no `deviceId`, so `session.start` calls the port and records
+the phone as the session's device with trigger `remote`. The `startSession` port answers
+`{ sessionId?, result? }`: the id once the runner recorded the session, the scheduler's verdict
+(`started`, `queued`, `deferred`) when the port goes through one.
+
 ### Understanding (`src/intent.ts`)
 
 `IntentParser.parse(text, ctx) -> {commands, question?, matched, unmatched}`. The guard runs
@@ -235,15 +242,18 @@ not prototype lookups), so the UI and the parser can only reach what is listed.
 **Change the risk table.** `ConfirmationPolicy.decide` and the risk functions of the commands;
 `confirmation.test.ts` holds the matrix.
 
-**Wire it in.** At daemon start: `registry = defaultRegistry(); await registry.persist(store);
-executor = new CommandExecutor({registry, store, clock}); await executor.resumeScheduled(ctxFor)`.
-Build a `CommandContext` per request (`activeProjectOf(store, humanId)` for the active project,
-the human's `timezone`, the device from the device token, the conversation session id for the
-activity log). Replace the conversation agent's tools with `toToolSpecs(registry, {execute:
-executor.execute, ctxFor})`; the settings screen calls `executor.execute` with
-`confirmation: {kind: "tap"}` after showing `renderChangeCard(await executor.plan(...))`; the
-phone answers high-risk requests with `executor.confirmFromDevice`; email replies carry the
-token into `confirmByToken`.
+**Wire it in.** The daemon does this in `packages/runtime/src/daemon/compose.ts`:
+`registry = defaultRegistry(); await registry.persist(store); executor = new
+CommandExecutor({registry, store, clock}); await executor.resumeScheduled(ctxFor)`, exposed as
+`RuntimeApp.commands`, `commandPorts` (scheduler start, kill switch, CHF rate) and
+`commandContext()` (`activeProjectOf(store, humanId)` for the active project, the human's
+`timezone`, the device from the device token, the conversation session id for the activity
+log). The remote command watcher runs the phone's plans through it (runtime.md). Still to do:
+replace the conversation agent's tools with `toToolSpecs(registry, {execute: executor.execute,
+ctxFor})`; the settings screen calls `executor.execute` with `confirmation: {kind: "tap"}`
+after showing `renderChangeCard(await executor.plan(...))`; email replies carry the token into
+`confirmByToken`. The phone answers high-risk requests through the state service, which
+records the device on the request; the watcher turns that into `executor.confirmFromDevice`.
 
 ## Tests
 

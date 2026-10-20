@@ -126,5 +126,14 @@ describe("remote commands", () => {
         })
       ).status,
     ).toBe(201);
+    // Quick chat from the approvals web or the phone is a `chat` command (ADR 0034 item 5).
+    const chat = await json<{ command: string; params: Record<string, unknown> }>(
+      await phone.post("/remote/commands", {
+        target: "pc",
+        command: "chat",
+        params: { text: "what's next?", projectId: h.seed.project.id },
+      }),
+    );
+    expect(chat).toMatchObject({ command: "chat", params: { text: "what's next?" } });
   });
 });

@@ -330,6 +330,115 @@ describe("state service routes", () => {
     expect((await bobPhone.get(`/requests/${r.id}`)).status).toBe(403);
   });
 
+  it("a device's answer to a command confirmation records the device and the biometric flag; other answers stay raw", async () => {
+    // The command executor's pending change: an approval whose card carries the decision.
+    const card = (decision: string, risk: "medium" | "high") => ({
+      command: "budget.set",
+      what: "the monthly ceiling",
+      impact: { risk },
+      decision,
+    });
+    const high = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      project_id: h.seed.project.id,
+      kind: "approval",
+      why: "the monthly ceiling",
+      options: ["approve on device", "reject"],
+      risk: "high",
+      change_card: card("needs_device", "high"),
+    });
+    const highAnswer = await json<{ status: string; answer: unknown }>(
+      await phone.post(
+        `/requests/${high.id}/answer`,
+        { version: high.version, answer: "approve on device" },
+        { biometric: true },
+      ),
+    );
+    expect(highAnswer.status).toBe("answered");
+    expect(highAnswer.answer).toEqual({
+      choice: "approve on device",
+      kind: "device",
+      by: h.seed.ada.id,
+      device_id: phone.deviceId,
+      biometric: true,
+    });
+
+    const medium = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      kind: "approval",
+      why: "tonight's session budget",
+      options: ["yes", "no"],
+      risk: "medium",
+      change_card: card("needs_yes", "medium"),
+    });
+    const mediumAnswer = await json<{ answer: unknown }>(
+      await phone.post(`/requests/${medium.id}/answer`, { version: medium.version, answer: "yes" }),
+    );
+    expect(mediumAnswer.answer).toEqual({
+      choice: "yes",
+      kind: "device",
+      by: h.seed.ada.id,
+      device_id: phone.deviceId,
+      biometric: false,
+    });
+
+    // A decision, or an approval that is not a command confirmation, keeps the raw answer;
+    // so does the runtime's own (admin) answer to a command confirmation.
+    const decision = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      kind: "decision",
+      why: "Pick a database",
+      options: ["postgres", "sqlite"],
+      risk: "low",
+    });
+    expect(
+      (
+        await json<{ answer: unknown }>(
+          await phone.post(`/requests/${decision.id}/answer`, {
+            version: decision.version,
+            answer: "postgres",
+          }),
+        )
+      ).answer,
+    ).toBe("postgres");
+    const plain = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      kind: "approval",
+      why: "Run the deploy?",
+      options: ["yes", "no"],
+      risk: "medium",
+      change_card: { key: "deploy:1", tool: "deploy" },
+    });
+    expect(
+      (
+        await json<{ answer: unknown }>(
+          await phone.post(`/requests/${plain.id}/answer`, {
+            version: plain.version,
+            answer: "yes",
+          }),
+        )
+      ).answer,
+    ).toBe("yes");
+    const byRuntime = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      kind: "approval",
+      why: "the session budget",
+      options: ["yes", "no"],
+      risk: "medium",
+      change_card: card("needs_yes", "medium"),
+    });
+    expect(
+      (
+        await json<{ answer: unknown }>(
+          await h.admin.post(`/requests/${byRuntime.id}/answer`, {
+            version: byRuntime.version,
+            answer: "yes",
+          }),
+        )
+      ).answer,
+    ).toBe("yes");
+  });
+
   it("records and lists decisions, with supersede", async () => {
     const first = await json<{ id: string; chosen: string; decidedBy: string }>(
       await phone.post(`/projects/${h.seed.project.id}/decisions`, {

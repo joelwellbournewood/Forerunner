@@ -69,8 +69,14 @@ export interface KillReportLike {
 export interface CommandPorts {
   /** CHF per USD at the day's rate (the billing RateSource). */
   chfPerUsd(dateIso: string): Promise<number>;
-  /** Starts a session for the principal agent (the scheduler in production). */
-  startSession?(req: SessionStartPortRequest): Promise<{ sessionId?: string } | undefined>;
+  /**
+   * Starts a session for the principal agent (the scheduler in production). `sessionId` is
+   * known once the runner recorded the session; `result` is the scheduler's verdict
+   * (started, queued, deferred) when the port goes through one.
+   */
+  startSession?(
+    req: SessionStartPortRequest,
+  ): Promise<{ sessionId?: string; result?: string } | undefined>;
   /** The kill switch: stops runs for one agent, one session or everyone. */
   kill?(scope: KillScope | "all", reason: string): Promise<KillReportLike | undefined>;
   pauseSession?(sessionId: string, reason: string): Promise<void>;
@@ -98,6 +104,12 @@ export interface CommandContext {
   timezone: string;
   /** The device the request came from (a paired phone routes session commands remotely). */
   deviceId?: string | null;
+  /**
+   * The paired device whose remote command this run serves when the command executes here,
+   * on the PC, on that device's behalf (ADR 0032). Session commands record it as the session's
+   * device with trigger `remote`; unlike `deviceId` it never reroutes the command.
+   */
+  remoteDeviceId?: string | null;
   /** Session whose event log receives the spoken sentence (the conversation session). */
   sessionId?: string | null;
 }

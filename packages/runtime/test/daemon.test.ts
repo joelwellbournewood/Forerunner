@@ -64,7 +64,10 @@ describe("local daemon", () => {
       version: "0.1.0-test",
       vaultBackend: "memory",
       killActive: false,
+      // No state service configured: the remote command watcher is off (ADR 0032).
+      remoteCommands: { enabled: false, handled: 0, waiting: 0 },
     });
+    expect(rt.remote).toBeNull();
     expect((await req("/me", {}, false)).status).toBe(401);
     expect((await app.request("/me", { headers: { authorization: "Bearer wrong" } })).status).toBe(
       401,

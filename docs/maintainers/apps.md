@@ -256,6 +256,13 @@ workflow runs `pnpm --filter @forerunner/ui test:ui` after `playwright install c
   in which case the button is disabled with a tooltip saying so.
 - The project page tab bar scrolls horizontally on narrow screens; a proper mobile layout for
   the Tasks table (cards instead of a table) comes with the Android work in phase 5.
+- The Android client's own UI and state client (a mobile store that posts `POST /remote/commands`
+  with `target: "pc"`, a change log fed by the command's `status` and `result`) are not in this
+  repository yet, although `docs/requirements.md` rows R.2 to R.8 already name their tests. The
+  PC side exists: the daemon's `RemoteCommandWatcher` (runtime.md, ADR 0032) consumes the plan
+  and chat envelopes and the bare verbs, so a client that speaks them gets scenario 9 against
+  the real stack; `services/state-api/test/pc-remote.integration.test.ts` is the signed phone
+  stand-in and the contract to build against.
 - Desktop notifications and the tray menu (K.8) live in the desktop shell (next section); the
   UI itself raises no OS notification.
 - The nested `apps/ui/biome.json` exists only because the root config disables Biome's Tailwind
@@ -629,9 +636,11 @@ replaced by the code per ADR 0034), Q.8 partial (high risk never from a plain "y
 - The state service has no `POST /confirm/challenge` and no confirmation check in
   `answerRequestAs` yet; high-risk answers from the web fail with the explanation until it
   lands (ADR 0034 item 4).
-- `REMOTE_COMMANDS` in the service has no `chat`, and the daemon consumes no remote commands
-  yet, so chat and the kill switch only complete against the fake; against the real service
-  chat shows "does not relay chat yet" and kill stays "pending" (ADR 0034 items 5 and 6).
+- The service accepts `chat` and the PC daemon consumes `chat` and `kill` remote commands
+  (ADR 0032, runtime.md), so chat and the kill switch complete against the real stack when a
+  PC daemon with a configured state service is up; the page's `pcOnline` signals still rely on
+  sessions and command pick-ups because the daemon registers no `desktop` device (ADR 0034
+  item 7).
 - Nothing issues the link yet (no daemon route or Settings button calls `POST /pairing/start`
   with `kind: "web"`), and the daemon does not register as a `desktop` device, so presence
   relies on sessions and command pick-ups.

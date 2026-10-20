@@ -9,7 +9,7 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
-    "test": "vitest run --project unit --dir test"
+    "test": "vitest run --project unit --root ../.. packages/commands/test"
   },
   "dependencies": {
     "@forerunner/platform": "workspace:*",

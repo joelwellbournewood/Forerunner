@@ -222,6 +222,7 @@ export class SessionRunner {
       opts.onEvent?.(type, payload);
     };
     await emit("session.started", {
+      sessionId: session.id,
       trigger: opts.trigger,
       budgetCapUsdMicro: opts.budgetCapUsdMicro,
       stepCap,

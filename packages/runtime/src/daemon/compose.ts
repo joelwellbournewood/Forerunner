@@ -26,6 +26,13 @@ import {
   scheduleMirror,
 } from "@forerunner/capabilities";
 import {
+  activeProjectOf,
+  type CommandContext,
+  CommandExecutor,
+  type CommandPorts,
+  defaultRegistry,
+} from "@forerunner/commands";
+import {
   type AppDirs,
   appDirs,
   type Clock,
@@ -49,7 +56,7 @@ import { ContextManager } from "../context/manager.ts";
 import { contextSettingsFrom } from "../context/pipeline.ts";
 import { ConversationAgent } from "../conversation/agent.ts";
 import type { EnforcementHooks, HookDeps, RunContext } from "../enforcement/hooks.ts";
-import { KillFileWatcher } from "../enforcement/killfile.ts";
+import { KillFileWatcher, writeKillRequest } from "../enforcement/killfile.ts";
 import { KillSwitch } from "../enforcement/killswitch.ts";
 import type { CapDecision, CapScope, CapsPort } from "../enforcement/ports.ts";
 import { TokenIssuer } from "../enforcement/token.ts";
@@ -94,6 +101,12 @@ import type { UpdateManager } from "../update/install.ts";
 import type { Restarter } from "../update/ports.ts";
 import { pricingFor, StateLedgerStore, stateSources } from "../wiring/billing-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
+import {
+  DEFAULT_REMOTE_POLL_MS,
+  HttpRemoteCommandQueue,
+  RemoteCommandWatcher,
+  type RemoteStartFn,
+} from "./remote-watcher.ts";
 import { DaemonRestarter, processExit } from "./restart.ts";
 import { DetectingSandboxPort } from "./sandbox-port.ts";
 import { fileTools } from "./tools.ts";
@@ -109,6 +122,17 @@ export interface ComposeOptions {
   config?: SetupConfig | null;
   clock?: Clock;
   stateUrl?: string;
+  /** Postgres schema of the shared state (FORERUNNER_STATE_SCHEMA); undefined is the default. */
+  stateSchema?: string;
+  /**
+   * The shared state service the phone talks to (ADR 0032): URL and admin token. Default:
+   * FORERUNNER_STATE_API_URL (or config.stateApiUrl) with the token from
+   * FORERUNNER_STATE_API_ADMIN_TOKEN or the vault secret `state_api_admin_token`; null keeps
+   * the remote command watcher off.
+   */
+  stateApi?: { url: string; adminToken: string } | null;
+  /** Poll interval of the remote command watcher; default FORERUNNER_REMOTE_POLL_MS or 500 ms. */
+  remotePollMs?: number;
   vault?: Vault;
   /** Injected model provider (tests); otherwise Anthropic from the vault credential. */
   provider?: ModelProvider;
@@ -173,6 +197,18 @@ export interface RuntimeApp {
   runner: SessionRunner;
   scheduler: Scheduler;
   conversation: ConversationAgent | null;
+  /** The command registry's executor (spec Q) over this store with the daemon's live ports. */
+  commands: CommandExecutor;
+  commandPorts: CommandPorts;
+  /** A command context for this install's human (the settings screen, the remote watcher). */
+  commandContext(over?: Partial<CommandContext>): Promise<CommandContext>;
+  /**
+   * Remote commands from paired devices through the state service (spec R.4, ADR 0032); null
+   * when no state service is configured.
+   */
+  remote: RemoteCommandWatcher | null;
+  /** Start a session through the scheduler; resolves with its id once the runner recorded it. */
+  startSession: RemoteStartFn;
   gitHost: GitHost;
   human: { id: string; name: string; timezone: string };
   agent: { id: string; name: string };
@@ -298,7 +334,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     env.FORERUNNER_STATE_URL ??
     config?.stateUrl ??
     `sqlite:${join(dirs.data, "state.sqlite")}`;
-  const store = await openStore({ url: stateUrl, clock });
+  const stateSchema = opts.stateSchema ?? env.FORERUNNER_STATE_SCHEMA ?? config?.stateSchema;
+  const store = await openStore({
+    url: stateUrl,
+    clock,
+    ...(stateSchema ? { schema: stateSchema } : {}),
+  });
   const vault = opts.vault ?? (await openVault({ profile: config?.profile ?? "default", env }));
   const events = new EventEmitter();
   events.setMaxListeners(100);
@@ -755,25 +796,50 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     maxDepth: 2,
     ...(projectId ? {} : {}),
   });
+  // A start resolves when the session ends; whoever asked (the command port, the remote
+  // watcher) wants the session id as soon as the runner recorded it, or the failure that
+  // stopped it from starting. One deferred per agent, set before the first await.
+  const startWatchers = new Map<string, Deferred<string | null>>();
   const startSession = async (req: StartRequest) => {
     if (isModelWatchRequest(req)) return modelWatch.run();
-    if (!provider)
-      throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
-    const project = req.projectId ? await store.project.mustGet(req.projectId) : null;
-    const cap =
-      (project?.settings as { session_cap_usd_micro?: number } | null)?.session_cap_usd_micro ??
-      DEFAULT_SESSION_CAP_USD_MICRO;
-    const budgetUsdMicro = (req as { budgetUsdMicro?: number }).budgetUsdMicro ?? cap;
-    return runner.start({
-      agentId: req.agentId,
-      projectId: req.projectId,
-      trigger: req.trigger,
-      budgetCapUsdMicro: budgetUsdMicro,
-      appVersion,
-      grant: sessionGrant(req.projectId),
-      onEvent: (type, payload) =>
-        events.emit("session", { type, payload, agentId: req.agentId, projectId: req.projectId }),
-    });
+    const started = new Deferred<string | null>();
+    startWatchers.set(req.agentId, started);
+    try {
+      if (!provider)
+        throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
+      const project = req.projectId ? await store.project.mustGet(req.projectId) : null;
+      const cap =
+        (project?.settings as { session_cap_usd_micro?: number } | null)?.session_cap_usd_micro ??
+        DEFAULT_SESSION_CAP_USD_MICRO;
+      const extra = req as { budgetUsdMicro?: number; deviceId?: string };
+      const budgetUsdMicro = extra.budgetUsdMicro ?? cap;
+      return await runner.start({
+        agentId: req.agentId,
+        projectId: req.projectId,
+        trigger: req.trigger,
+        budgetCapUsdMicro: budgetUsdMicro,
+        appVersion,
+        grant: sessionGrant(req.projectId),
+        ...(extra.deviceId ? { deviceId: extra.deviceId } : {}),
+        onEvent: (type, payload) => {
+          if (type === "session.started" && typeof payload.sessionId === "string")
+            started.resolve(payload.sessionId);
+          events.emit("session", { type, payload, agentId: req.agentId, projectId: req.projectId });
+        },
+      });
+    } catch (e) {
+      started.reject(e);
+      throw e;
+    } finally {
+      started.resolve(null);
+      if (startWatchers.get(req.agentId) === started) startWatchers.delete(req.agentId);
+    }
+  };
+  const startSessionTracked: RemoteStartFn = async (req) => {
+    const result = await scheduler.request(req as StartRequest);
+    if (result !== "started") return { result, sessionId: null };
+    const watcher = startWatchers.get(req.agentId);
+    return { result, sessionId: watcher ? await watcher.promise : null };
   };
   // Mirror requests run the mirror, the model watch its weekly check, everything else a session.
   const scheduler = new Scheduler({
@@ -806,6 +872,57 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     mirrorApprovals.wake();
     return out;
   };
+  // Commands (spec Q, ADR 0030): the registry over this store, the daemon's live ports behind
+  // it. The settings screen, the conversation agent and the remote watcher all run through it.
+  const commandRegistry = defaultRegistry();
+  await commandRegistry.persist(store);
+  const commands = new CommandExecutor({ registry: commandRegistry, store, clock });
+  const commandPorts: CommandPorts = {
+    chfPerUsd: async () => chfPerUsd(),
+    startSession: async (req) => {
+      const r = await startSessionTracked({
+        agentId: req.agentId,
+        projectId: req.projectId,
+        trigger: req.trigger,
+        reason: req.reason,
+        ...(req.budgetUsdMicro ? { budgetUsdMicro: req.budgetUsdMicro } : {}),
+        ...(req.deviceId ? { deviceId: req.deviceId } : {}),
+      });
+      return { ...(r.sessionId ? { sessionId: r.sessionId } : {}), result: r.result };
+    },
+    kill: async (scope, reason) => {
+      const report = await kill.stop(scope, reason);
+      // Stopping one agent's or one session's work leaves the PC free for new sessions; "all"
+      // is the kill switch and stays frozen until the human resumes it.
+      if (scope !== "all") kill.resume();
+      return report;
+    },
+  };
+  const commandContext = async (over: Partial<CommandContext> = {}): Promise<CommandContext> => {
+    const h = await store.human.mustGet(over.humanId ?? human.id);
+    return {
+      actor: { kind: "human", id: h.id },
+      humanId: h.id,
+      agentId: agent.id,
+      activeProjectId: await activeProjectOf(store, h.id),
+      store,
+      clock,
+      ports: commandPorts,
+      source: "ui",
+      wordsUsed: "",
+      timezone: h.timezone,
+      deviceId: null,
+      sessionId: null,
+      ...over,
+    };
+  };
+  await commands.resumeScheduled((row) =>
+    commandContext({
+      humanId: row.human_id ?? human.id,
+      agentId: row.agent_id ?? agent.id,
+      source: row.source,
+    }),
+  );
   const conversation = provider
     ? new ConversationAgent({
         store,
@@ -821,11 +938,49 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         modelId: chatModelFor(provider),
       })
     : null;
+  // Remote commands from paired devices (spec R.4, ADR 0032): on only when the shared state
+  // service is configured, since the phone cannot reach a PC without it.
+  const stateApi = await resolveStateApi(opts, env, config, vault);
+  let remote: RemoteCommandWatcher | null = null;
+  if (stateApi) {
+    remote = new RemoteCommandWatcher({
+      queue: new HttpRemoteCommandQueue({
+        baseUrl: stateApi.url,
+        adminToken: stateApi.adminToken,
+        fetchImpl: opts.fetchImpl,
+        installId: human.id,
+      }),
+      store,
+      clock,
+      humanId: human.id,
+      agentId: agent.id,
+      commands,
+      ports: commandPorts,
+      conversation,
+      kill,
+      start: startSessionTracked,
+      onKill: (scope, reason, report) => {
+        writeKillRequest(
+          { scope, reason, requestedAt: clock.nowIso(), requestedBy: "daemon" },
+          dirs.runtime,
+        );
+        events.emit("session", { type: "kill", payload: { ...report } });
+      },
+      onActiveProject: (humanId, projectId) => conversation?.setActiveProject(humanId, projectId),
+      pollMs: opts.remotePollMs ?? Number(env.FORERUNNER_REMOTE_POLL_MS ?? DEFAULT_REMOTE_POLL_MS),
+    });
+  } else {
+    logger.info("remote command watcher off: no state service configured", {
+      hint: "set FORERUNNER_STATE_API_URL and the admin token to take commands from the phone",
+    });
+  }
+
   // Background services: the daemon starts them; a CLI one-shot (startServices: false) only
   // uses the composed objects and never connects a connector or ticks the scheduler.
   const services = opts.startServices !== false;
   const killWatcher = new KillFileWatcher(kill, clock, dirs.runtime);
   if (services) killWatcher.start();
+  if (services) remote?.start();
   mkdirSync(evalWorkRoot, { recursive: true });
   if (services) await extensions.start();
   await syncApprovals();
@@ -841,6 +996,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     sandbox: sandboxDetection.engine,
     bridgedTools: extensions.bridgedTools().length,
     mirrors: mirrorSchedules.size,
+    remoteCommands: remote ? "on" : "off",
     services,
   });
 
@@ -862,6 +1018,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     runner,
     scheduler,
     conversation,
+    commands,
+    commandPorts,
+    commandContext,
+    remote,
+    startSession: startSessionTracked,
     gitHost,
     human: { id: human.id, name: human.name, timezone: human.timezone },
     agent: { id: agent.id, name: agent.name },
@@ -887,6 +1048,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     mirrorSync,
     async close() {
       scheduler.stop();
+      remote?.stop();
+      commands.stop();
       killWatcher.stop();
       context.close();
       managedHeadroom?.stop();
@@ -1083,4 +1246,58 @@ function unavailableProvider(): ModelProvider {
     },
     complete: async () => fail(),
   };
+}
+
+/** A promise settled from the outside, at most once; late settles are ignored. */
+class Deferred<T> {
+  readonly promise: Promise<T>;
+  private settled = false;
+  private res!: (v: T) => void;
+  private rej!: (e: unknown) => void;
+  constructor() {
+    this.promise = new Promise<T>((resolve, reject) => {
+      this.res = resolve;
+      this.rej = reject;
+    });
+    // A rejection nobody awaits (a scheduled start that failed) must not crash the process.
+    this.promise.catch(() => undefined);
+  }
+  resolve(v: T): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.res(v);
+  }
+  reject(e: unknown): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.rej(e);
+  }
+}
+
+/**
+ * The state service for remote commands: injected, else FORERUNNER_STATE_API_URL (or the
+ * setup config) with the admin token from the environment or the vault. A URL without a
+ * token is reported once and leaves the watcher off; nothing is guessed.
+ */
+async function resolveStateApi(
+  opts: ComposeOptions,
+  env: NodeJS.ProcessEnv,
+  config: SetupConfig | null,
+  vault: Vault,
+): Promise<{ url: string; adminToken: string } | null> {
+  if (opts.stateApi === null) return null;
+  if (opts.stateApi) return opts.stateApi;
+  const url = env.FORERUNNER_STATE_API_URL || config?.stateApiUrl;
+  if (!url) return null;
+  const adminToken =
+    env.FORERUNNER_STATE_API_ADMIN_TOKEN || (await vault.get(SECRET_NAMES.stateApiAdmin)) || "";
+  if (!adminToken) {
+    log("compose").warn("state service configured without an admin token; remote commands off", {
+      url,
+      secret: SECRET_NAMES.stateApiAdmin,
+      env: "FORERUNNER_STATE_API_ADMIN_TOKEN",
+    });
+    return null;
+  }
+  return { url, adminToken };
 }

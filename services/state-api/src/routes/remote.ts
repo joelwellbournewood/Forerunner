@@ -5,7 +5,8 @@ import { ApiError, forbidden, notFound } from "../errors.ts";
 import { type App, announce, intParam, parseBody, principal, type RouteContext } from "../http.ts";
 import { remoteCommandView } from "../views.ts";
 
-export const REMOTE_COMMANDS = ["start", "pause", "stop", "kill"] as const;
+/** The verbs a device may enqueue; `chat` is ADR 0034 item 5 (quick chat answered by the PC). */
+export const REMOTE_COMMANDS = ["start", "pause", "stop", "kill", "chat"] as const;
 
 const RemoteCommandBody = z.object({
   target: z.enum(REMOTE_TARGETS),

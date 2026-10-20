@@ -362,6 +362,70 @@ once `POST /requests/:id/answer` approves it and `project.changed` follows). `/h
 the route is unauthenticated but loopback-only); `/events` also streams `extension.changed` and
 `restart.requested`. Each sub-app keeps its module's error mapping.
 
+### Remote commands from the phone (`src/daemon/remote-watcher.ts`, ADR 0032)
+
+Spec R.4 and scenario 9: the phone enqueues a `remote_command` with `target: "pc"` through the
+shared state service, and the PC daemon picks it up "in seconds". `RemoteCommandWatcher` is the
+daemon's consumer. It polls `GET /remote/commands/pending?target=pc` on the configured service
+with the runtime's admin token (`HttpRemoteCommandQueue`: bearer, `X-Forerunner-Schema`,
+`X-Forerunner-Install`) every `FORERUNNER_REMOTE_POLL_MS` (500 ms, at least 100), executes
+what it took and reports `POST /remote/commands/:id/complete|fail` with a result the phone
+shows; going through the service rather than the store means the pick-up and the result reach
+the phone's realtime stream at once. Every command ends with an audit row
+(`daemon.remote_command`, `allowed` false with the `denied_reason` on a refusal).
+
+**Configuration.** `FORERUNNER_STATE_API_URL` (or `stateApiUrl` in `config.json`) names the
+service; the admin token comes from `FORERUNNER_STATE_API_ADMIN_TOKEN` or the vault secret
+`state_api_admin_token` (`SECRET_NAMES.stateApiAdmin`). Without a URL the watcher is off and
+compose logs "remote command watcher off: no state service configured" once; a URL without a
+token is a warning and the watcher stays off. `ComposeOptions.stateApi` injects both (tests);
+`null` forces it off. `/health.remoteCommands` reports `{ enabled, handled, waiting }`.
+`FORERUNNER_STATE_SCHEMA` (or `ComposeOptions.stateSchema`) names the Postgres schema the
+daemon shares with the service.
+
+**Authorization (ADR 0033 item 8b, again).** The store's pick-up filters on the target only,
+so on a shared state another human's phone can enqueue for "pc". Before anything runs the
+watcher loads the issuing device and refuses one that is unknown, revoked or owned by another
+human, a command addressed to another device (`target_device_id`; the daemon has no device row
+of its own yet, see Known issues) and a `start` naming another agent. Refusals are `failed`
+with `forbidden: ...`.
+
+**What it runs** (`src/daemon/remote-envelope.ts` holds the zod schemas):
+
+| `params` | Action | Result |
+| --- | --- | --- |
+| `{ v: 1, kind: "plan", plan: [{ name, params }], wordsUsed, card?, clientId?, confirmedAt?, undoOf?, source? }` | the plan through the command registry (below); `undoOf` runs `executor.undo` on that change-log row and ignores `plan` | `{ executed, changeLogId, undoOf, undoToken, sentence, status, sessionId?, confirmedBy? }` |
+| `{ v: 1, kind: "chat", text, projectId?, clientId? }`, or the bare verb `chat { text, projectId? }` (ADR 0034) | `conversation.chat` with `source: "phone"` | `{ reply, actions, transcriptId, activeProjectId, ttftMs, pendingConfirmation? }`; `provider_auth` when no model credential exists |
+| `kill { scope?: "all" \| { agentId?, sessionId? }, reason? }` | `KillSwitch.stop`; the daemon writes `kill.json` and emits `kill` on `/events` | `{ stoppedRuns, killedProcesses, revokedTokens, killDurationMs, killActive }` |
+| `stop` / `session.stop { scope?: all \| agent \| session \| {...}, session?, agentId?, reason? }` | stop, then lift the freeze (the PC stays free to start new work) | `{ stoppedRuns, killedProcesses, killDurationMs }` |
+| `start` / `session.start { agentId?, projectId?, budgetUsdMicro?, reason? }` | lifts the freeze and asks the scheduler (trigger `remote`) | `{ result: started \| queued \| deferred, sessionId }` |
+| `pause` / `session.pause`, a plan step `session.pause` | refused: the runtime cannot pause a session yet | `failed`, `not_supported` |
+
+A `v` the daemon does not know, or a malformed envelope, fails with `validation`; every
+result carries `durationMs`; a failure's result is `{ error, code }`.
+
+**Plans: the card is never trusted.** The daemon now composes the command registry
+(`defaultRegistry()`, persisted into the `command` table, a `CommandExecutor` over the store)
+with live ports: `startSession` through the scheduler, `kill` through the kill switch (a
+scope other than "all" is followed by `resume()`), the CHF rate. `RuntimeApp.commands`,
+`commandPorts` and `commandContext()` expose them; `resumeScheduled` re-arms temporary
+changes at compose. For a plan the watcher builds a context for the PC's human (active project
+from `human.notify_prefs`, the human's time zone, `source` from the envelope, `deviceId` null
+and `remoteDeviceId` = the phone, so `session.start` starts here with the phone as the
+session's device instead of enqueueing another remote command), plans the composed card on the
+real state, asks `ConfirmationPolicy.decide` for the real risk and only then acts: low runs;
+medium takes `confirmedAt` as the human's tap (the device signed the enqueue) and otherwise
+files the executor's `needs_yes` request; high always files the executor's `needs_device`
+request. A command whose plan is pending stays `picked_up` and is checked every poll (and at
+once when `POST /requests/:id/answer` lands, through `remote.wake()`): the service records a
+device's answer to a command confirmation as `{ choice, kind: "device", by, device_id,
+biometric }`, the watcher hands device and flag to `executor.confirmFromDevice` (the policy
+enforces "biometric on a phone" in code), a raw `yes` on the request is enough for medium risk
+only, a rejection, an expired request (the executor's ten minutes) or a refused answer fails
+the command and closes the pending entry so the human asks again. `session.started` events now
+carry `sessionId`, and `RuntimeApp.startSession` resolves with it as soon as the runner recorded
+the row, which is how a plan's result names the session the phone then watches.
+
 ### Specialist registry (`src/registry/`)
 
 The loader for `forerunner-registry` content: specialist, principal and critic definitions as
@@ -420,7 +484,7 @@ cross-turn reference names an existing result of the same transcript by its tran
 and only lines that were sent; `executor-context.test.ts`: Run row
 fields and `headroom_used` with a proxyable versus a plain provider, cost view priced from the
 Run rows; `session-context.test.ts`: `headroom_saved_tokens` on the session and the
-`context.headroom_unavailable` event; `views.test.ts`: cost view savings money), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE with the restart event, `stop()` returning while `/events` is held open on a real socket), wiring (`wiring.test.ts`: extensions from catalog to a refused tool, model watch report and inbox decision, updates screen, mirror sync answering 202 then running on the inbox answer, estimates accuracy, sandboxed `run_command`, a refused lease closing the Run row, the eval runner keeping the model's command in the sandbox lease and offering only the specialist's tools, CLI registration and one-shot composition), hooks (overspend, steps, wall clock, kill, allowlist, schema,
+`context.headroom_unavailable` event; `views.test.ts`: cost view savings money), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE with the restart event, `stop()` returning while `/events` is held open on a real socket, the remote watcher off without a state service), remote watcher (`remote-watcher.test.ts`, against a fake state service serving the three routes over the daemon's store: the scenario-9 plan ends `done` with the session started on the game with the phone as its device and the change log holding the words, `undoOf` stops it and restores budget and project, a lying card never lowers the risk (high risk files the device confirmation and waits; biometric answer completes, no biometric / rejection / expiry fail), a medium-risk plan waits for a yes from the inbox, registry refusals, chat envelope and verb, kill within one poll, stop lifts the freeze, start asks the scheduler, pause refused, another human's or a revoked device and a command addressed to another PC refused with the cloud queue untouched, a failing service retried, `readAnswer` shapes, and the whole thing through `composeRuntime` with a real session), wiring (`wiring.test.ts`: extensions from catalog to a refused tool, model watch report and inbox decision, updates screen, mirror sync answering 202 then running on the inbox answer, estimates accuracy, sandboxed `run_command`, a refused lease closing the Run row, the eval runner keeping the model's command in the sandbox lease and offering only the specialist's tools, CLI registration and one-shot composition), hooks (overspend, steps, wall clock, kill, allowlist, schema,
 paths, domains, secrets, autonomy, injection), ladder, brief, loop driver (completion, overspend
 blocked, step cap, kill mid-run, timeout with partial output, inline denials, needs-human pause,
 injection flagged).
@@ -462,3 +526,10 @@ M.4 and M.5 (updates screen, apply, rollback, restart contract, health check on 
   session event store is undecided.
 - Path containment resolves symlinks only when the target exists; the sandbox adapter mounts
   only the worktree so escapes cannot reach the host anyway.
+- Remote commands (ADR 0032): the daemon registers no `desktop` device row yet, so the watcher
+  polls without a `deviceId` and refuses (visibly, `failed`) a command addressed to a specific
+  device; the runtime cannot pause a session, so `pause` and `session.pause` from the phone fail
+  with `not_supported`; the watcher polls (500 ms) instead of subscribing to the service's
+  `remote_command.changed` events; quick chat from the phone runs the conversation agent with
+  its usual tools, not the read-only turn ADR 0034 wished for the web. The settings screen still
+  does not call `RuntimeApp.commands` (no daemon route for commands yet).

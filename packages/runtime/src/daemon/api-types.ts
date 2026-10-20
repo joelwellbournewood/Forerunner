@@ -287,6 +287,14 @@ export const ExtensionsHealth = z.object({
 });
 export type ExtensionsHealth = z.infer<typeof ExtensionsHealth>;
 
+/** The remote command watcher (spec R.4): off when no state service is configured. */
+export const RemoteCommandsHealth = z.object({
+  enabled: z.boolean(),
+  handled: z.number().int(),
+  waiting: z.number().int(),
+});
+export type RemoteCommandsHealth = z.infer<typeof RemoteCommandsHealth>;
+
 export const HealthView = z.object({
   ok: z.literal(true),
   version: z.string(),
@@ -299,6 +307,7 @@ export const HealthView = z.object({
   killActive: z.boolean(),
   sandbox: SandboxHealth,
   extensions: ExtensionsHealth,
+  remoteCommands: RemoteCommandsHealth.optional(),
 });
 export type HealthView = z.infer<typeof HealthView>;
 

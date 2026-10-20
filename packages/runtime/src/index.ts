@@ -7,6 +7,8 @@ export * from "./conversation/agent.ts";
 export * from "./daemon/adapters.ts";
 export * from "./daemon/api-types.ts";
 export * from "./daemon/compose.ts";
+export * from "./daemon/remote-envelope.ts";
+export * from "./daemon/remote-watcher.ts";
 export * from "./daemon/restart.ts";
 export * from "./daemon/sandbox-port.ts";
 export * from "./enforcement/autonomy.ts";

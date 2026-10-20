@@ -60,6 +60,11 @@ async function assertAddressee(ctx: RouteContext, p: Principal, m: MessageRow): 
   if (human !== p.humanId) throw forbidden("only the addressee acknowledges a message");
 }
 
+/** A pending change of the command executor: an approval whose card names the policy's decision. */
+export function isCommandConfirmation(r: HumanRequestRow): boolean {
+  return r.kind === "approval" && typeof r.change_card?.decision === "string";
+}
+
 /** A device acts only on requests addressed to its human; unaddressed ones are the runtime's. */
 function assertRequestOwner(p: Principal, r: HumanRequestRow): void {
   if (p.kind === "device" && r.human_id !== p.humanId) throw forbidden("not your request");
@@ -141,7 +146,21 @@ export async function answerRequestAs(
       : null;
   if (current.risk === "high" || cardRisk === "high") requireScope(p, "confirm:high");
   const by = p.kind === "device" ? p.humanId : (current.human_id ?? "runtime");
-  const row = await ctx.store.humanRequest.answer(id, version, answer as never, by);
+  // A command confirmation (the executor's pending change, ADR 0030; its card carries the
+  // `decision`) answered from a device records which device answered and whether the biometric
+  // flag was on, in the shape the executor writes itself, so the PC daemon can verify the
+  // device before it runs the change (ADR 0032). Every other request keeps the raw answer.
+  const recorded =
+    p.kind === "device" && isCommandConfirmation(current)
+      ? {
+          choice: answer,
+          kind: "device",
+          by: p.humanId,
+          device_id: p.deviceId,
+          biometric: p.biometric,
+        }
+      : answer;
+  const row = await ctx.store.humanRequest.answer(id, version, recorded as never, by);
   announce(ctx, "human_request.changed", "human_request", row, {
     humanId: row.human_id,
     projectId: row.project_id,

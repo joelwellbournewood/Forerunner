@@ -47,7 +47,12 @@ missing item, see BLOCKERS.md), **failed** (with the failing evidence and the fi
 
 ## Phase 5 — Human experience and voice
 
-Filled in as the phase is reached.
+| Check | Status | Command | Date | Result | CI |
+| --- | --- | --- | --- | --- | --- |
+| From the Android app, a simulated user switches project, raises a budget and starts a session on his PC (scenario 9) | **passed** (local: real state service over HTTP on Postgres, PC daemon on the same schema, fake provider, a paired phone stand-in signing its requests); the Android emulator run is pending the app's own client (BLOCKERS.md, "Android client sources") | `FORERUNNER_TEST_PG=… pnpm vitest run --project integration services/state-api/test/pc-remote.integration.test.ts`; `pnpm vitest run --project unit packages/runtime/test/remote-watcher.test.ts` | 2026-10-20 | 3 integration tests: the plan envelope ("switch to the game, give it 15 francs until tomorrow and start a session on my PC") ends `done` with a running session on Game (budget CHF 15 = USD 18.75, trigger `remote`, the phone as device) and the change log holding the words; an `undoOf` plan kills it and restores budget and active project; a high-risk plan waits for the phone's biometric answer through the inbox (the unflagged answer is 403). 14 unit tests on the watcher (ADR 0032) | integration step of the CI run for the commit that adds the test (pending at the time of writing) |
+| Every settings change can be made by voice, chat or the UI, and each produces the same change log entry | **passed** (unit) | `packages/commands/test/scenario.test.ts` ("budget.set by ui, chat and voice logs the same commands, before, after and sentence") | 2026-10-20 | three rows equal apart from `source` and `words_used` | CI unit step |
+| Simulated users run a full simulated week only through the UI and the Android emulator | pending (Android client) | | | | |
+| Voice replies reach first audio in under 1.2 s median on both platforms | blocked (voice keys, see BLOCKERS.md); local providers measured in `packages/voice` tests | | | | |
 
 ## Phase 6 — Capabilities
 

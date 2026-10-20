@@ -148,14 +148,15 @@ export const sessionStart: CommandDef<SessionStartParams> = {
     if (!ctx.ports.startSession) {
       throw new ForerunnerError("not_supported", "session start is not available here");
     }
+    const fromDevice = ctx.deviceId ?? ctx.remoteDeviceId ?? null;
     const started = await ctx.ports.startSession({
       agentId,
       projectId: s.resolved.project.id,
-      trigger: ctx.deviceId ? "remote" : "manual",
+      trigger: fromDevice ? "remote" : "manual",
       reason,
       budgetUsdMicro: s.budgetUsd,
       runner: s.runner,
-      ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {}),
+      ...(fromDevice ? { deviceId: fromDevice } : {}),
     });
     const sessionId =
       started && typeof started === "object" && typeof started.sessionId === "string"

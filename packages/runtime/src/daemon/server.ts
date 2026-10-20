@@ -228,6 +228,9 @@ export function createDaemonApp(
         enabled: extensions.filter((e) => e.status === "enabled").length,
         pending: extensions.filter((e) => e.status === "pending_approval").length,
       },
+      remoteCommands: rt.remote
+        ? { enabled: true, handled: rt.remote.stats.handled, waiting: rt.remote.stats.waiting }
+        : { enabled: false, handled: 0, waiting: 0 },
     };
     return c.json(view);
   });
@@ -575,6 +578,8 @@ export function createDaemonApp(
     await new DecisionLog(rt.store).recordAnswer(r, rt.human.id);
     // An answered extension grant or model watch decision is applied at once.
     await rt.syncApprovals();
+    // A remote command waiting for this confirmation settles now, not at its next poll.
+    void rt.remote?.wake();
     rt.events.emit("inbox", {});
     return c.json(requestView(r, null));
   });

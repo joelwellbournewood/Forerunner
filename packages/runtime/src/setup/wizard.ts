@@ -19,6 +19,8 @@ export const SECRET_NAMES = {
   github: "github_token",
   anthropic: "anthropic_api_key",
   anthropicOauth: "anthropic_subscription_token",
+  /** The shared state service's admin token (the phone's remote commands, ADR 0032). */
+  stateApiAdmin: "state_api_admin_token",
 } as const;
 
 export interface SetupConfig {
@@ -31,6 +33,10 @@ export interface SetupConfig {
   repos: string[];
   credentials: { github: boolean; anthropic: boolean; anthropicSubscription: boolean };
   stateUrl: string;
+  /** Postgres schema of the shared state, when not the connection's default. */
+  stateSchema?: string;
+  /** The shared state service (ADR 0024) the phone talks to; the daemon takes its remote commands from it. */
+  stateApiUrl?: string;
   setupCompletedAt?: string;
 }
 

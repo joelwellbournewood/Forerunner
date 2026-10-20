@@ -117,11 +117,11 @@ biometric API succeeded for that action. Admin callers hold every scope and do n
 | `GET /projects`, `GET /projects/:id`, `GET /projects/:id/milestones` | `ProjectCard` with spend, budget, waiting count, health, next milestone, latest critic grade |
 | `GET /projects/:id/tasks?status=&limit=&offset=`, `GET /tasks/:id`, `POST /tasks/:id/transition { version, to, reason }` | workflow graph and version check from `TaskRepo.transition` |
 | `GET /inbox?humanId=|agentId=&unreadOnly=1`, `GET /messages/:id`, `POST /messages`, `POST /messages/:id/receipt { state: delivered|read|acted }` | receipts are monotonic, first wins, and come only from the addressee (the human, or the owner of the agent addressed): the sender's device may read its message but never acknowledge it, so a `requires_ack` handoff cannot be self-acknowledged |
-| `GET /requests?humanId=&projectId=`, `GET /requests/:id`, `POST /requests/:id/answer { version, answer }` | 409 on a stale version; a device reads and answers only requests addressed to its human; a request with no human (`human_id` null) belongs to the runtime (admin) and is 403 for devices |
+| `GET /requests?humanId=&projectId=`, `GET /requests/:id`, `POST /requests/:id/answer { version, answer }` | 409 on a stale version; a device reads and answers only requests addressed to its human; a request with no human (`human_id` null) belongs to the runtime (admin) and is 403 for devices. A device's answer to a command confirmation (an `approval` whose `change_card.decision` is set, ADR 0030) is stored as `{ choice, kind: "device", by, device_id, biometric }` so the PC daemon can verify the device before it runs the change (ADR 0032); every other answer is stored as sent |
 | `GET /projects/:id/decisions?all=1`, `POST /projects/:id/decisions { question, options, chosen, rationale, supersedes? }` | |
 | `GET /projects/:id/queue`, `POST /projects/:id/queue { kind, text, priority, transcript? }` | notes, tasks, ideas for the next session |
 | `GET /projects/:id/uploads`, `POST /projects/:id/uploads` (multipart `file`, optional `kind`) | `data_asset` row; file under `<data>/uploads/<project>/<asset id>-<safe name>`; metadata only in responses |
-| `POST /remote/commands { target: pc|cloud, targetDeviceId?, command: start|pause|stop|kill, params }`, `GET /remote/commands`, `GET /remote/commands/:id` | the phone's view of its commands |
+| `POST /remote/commands { target: pc|cloud, targetDeviceId?, command: start|pause|stop|kill|chat, params }`, `GET /remote/commands`, `GET /remote/commands/:id` | the phone's view of its commands; `params` carries the PC envelopes of ADR 0032 (`{ v: 1, kind: "plan" | "chat", ... }`) or the bare verb's parameters; `chat` is ADR 0034 item 5 |
 | `GET /remote/commands/pending?target=&deviceId=` (admin) | atomic pick-up (`RemoteCommandRepo.pickUp`): 200 with the command or 204 |
 | `POST /remote/commands/:id/complete|fail { result }` (admin) | |
 | `GET /sessions?agentId=&projectId=&status=`, `GET /sessions/:id` | `SessionView` with the current task; a device sees only sessions of its own human's agents (summaries and handoff text are that human's notes), `agentId` of another human is 403; admins see every session |
@@ -164,6 +164,14 @@ wakes on a `remote_command.changed` event) and gets the oldest pending command a
 it or to nobody, atomically; the cloud runner does the same with `target=cloud`. It reports
 `complete` or `fail` with a result the phone can show. Two pickers never get the same command
 (tested).
+
+The PC side is `RemoteCommandWatcher` in `packages/runtime` (ADR 0032, runtime.md): it polls
+this route with the admin token, runs the phone's plan envelope through the command registry,
+answers `chat` through the conversation agent and executes the bare verbs, and completes or
+fails the command through the routes above. A high-risk plan files the executor's device
+confirmation as a `human_request`; the phone answers it through `POST /requests/:id/answer`
+with the biometric flag, and the recorded `device_id` and `biometric` are what the daemon
+checks. `pc-remote.integration.test.ts` runs the whole path on Postgres.
 
 ### GitHub mirror
 
@@ -269,8 +277,8 @@ Environment:
 | File | Covers |
 | --- | --- |
 | `auth.test.ts` | canonical signature, scopes, pairing (single use, proof, expiry), token expiry, revocation within one request, signature window both ways, replayed mutation refused (re-signed retry and signed reads pass; guard swept after the window), query string inside the signature, scope 403s, high-risk needs signed + biometric (a forged flag is a signature failure), admin token (no prefix match), rate limit 429 and recovery, admin bucket per `X-Forerunner-Install`, `X-Forwarded-For` trusted only behind a declared proxy, bucket cap / sweep / poller tick, schema mismatch 409, CORS only for the configured origin, 413 |
-| `routes.test.ts` | health, 404 shape, project cards, task list / get / transition (409, 400 illegal, 404), inbox and receipts (monotonic, first wins, other humans 403, the sender's device cannot receipt a message to another human or agent while it may still read it, also through the outbox), sessions scoped to the device's human's agents, unaddressed requests 403 for devices, agent inbox, requests (answer, 409, 404), decisions and supersede, queue, costs (own human only), reviews (comment → message, approve → request answered), sessions and the JSON event page, uploads (metadata only, safe name, cap, missing file, written under the harness temp dir) |
-| `remote.test.ts` | enqueue, atomic pick-up (two pickers, one wins on SQLite; the Postgres race is in the integration test), per-device addressing, complete / fail lifecycle, device cannot pick up, validation |
+| `routes.test.ts` | health, 404 shape, project cards, task list / get / transition (409, 400 illegal, 404), inbox and receipts (monotonic, first wins, other humans 403, the sender's device cannot receipt a message to another human or agent while it may still read it, also through the outbox), sessions scoped to the device's human's agents, unaddressed requests 403 for devices, agent inbox, requests (answer, 409, 404; a device's answer to a command confirmation records the device and the biometric flag, other answers stay raw), decisions and supersede, queue, costs (own human only), reviews (comment → message, approve → request answered), sessions and the JSON event page, uploads (metadata only, safe name, cap, missing file, written under the harness temp dir) |
+| `remote.test.ts` | enqueue, atomic pick-up (two pickers, one wins on SQLite; the Postgres race is in the integration test), per-device addressing, complete / fail lifecycle, device cannot pick up, validation, `chat` accepted |
 | `realtime.test.ts` | `ChangeBus` buffer / resume / dedupe / filter, poller `onTick`; over a real server with `fetch` and a `ReadableStream` reader: event after a write, per-human filtering, polling fallback for direct store writes, `Last-Event-ID` resume, `resync` when the id fell out of a one-entry buffer, heartbeat on the simulated clock, session log stream with `afterSeq`, 401, public limiter keyed by the socket over a real server |
 | `mirror.test.ts` | rendering, idempotent push, label and state updates, comment sync back (quoted, once, marker ignored), close sync back (done when allowed, cancelled otherwise, ignored with open findings), reopen on GitHub is undone; `MirrorScheduler` on the simulated clock (active projects only, unchanged second pass, stop), a failing project reported without stopping the others |
 | `outbox.test.ts` | `flushOutbox` ordering, rejection, transport failure; `IdempotencyStore` persistence, TTL and `run()` under overlapping calls; `/sync/outbox` batch, duplicates, two batches in flight with one clientId apply once, scope per action, end to end |
@@ -281,7 +289,13 @@ Environment:
 (LISTEN/NOTIFY delivery across instances, polling fallback), races two instances for one
 remote command five times (exactly one 200 per round: `RemoteCommandRepo.pickUp` relies on
 Postgres re-checking the predicate after the row lock) and the 48-hour offline scenario.
-Skipped visibly without the variable. Unit tests never write outside a per-harness temp
+`pc-remote.integration.test.ts` is scenario 9 through the real stack: the service over HTTP on
+Postgres, the PC daemon (`composeRuntime`) on the same schema with a model provider that holds
+every call, a paired phone signing its requests (`PhoneClient`, the stand-in for the Android
+client's state client); the plan envelope ends with a running session on the game project and
+`done` on the command, an `undoOf` plan kills it and restores budget and active project, and
+a high-risk plan waits for the phone's biometric answer through `/requests/:id/answer` (the
+unsigned-flag answer is refused). Both are skipped visibly without the variable. Unit tests never write outside a per-harness temp
 directory (`helpers.ts` sets `uploadsDir` and `serviceStateDir`; `close()` removes it).
 
 ## Known issues

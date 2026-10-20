@@ -11,12 +11,25 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | 2 | Two agents, one project | local half of the gate passed (two agents, five sessions each); state service with device auth and realtime, receipts, decision log, GitHub Projects mirror, approvals web fallback done; offline-48-hours half pending the sync test | gates.md § Phase 2 |
 | 3 | Critic and quality loop | critic service (tiers, findings, verdicts, calibration), eval sets, retry ladder built and unit-tested; gate needs a live model (blocked on credentials); reviews tab pending | gates.md § Phase 3 |
 | 4 | Memory, docs and learning | memory package (three scopes, retrieval under budget, consolidation, promotion) built and unit-tested; four-week simulation and memory UI pending | |
-| 5 | Human experience and voice | voice pipeline, natural-language commands with change cards and undo, desktop shell (tray, notifications, restart, deep links) built; notifications, Android app, imports in progress | |
+| 5 | Human experience and voice | voice pipeline, natural-language commands with change cards and undo, desktop shell (tray, notifications, restart, deep links) built; the PC daemon consumes the phone's remote commands and scenario 9 passes against the real stack with a phone stand-in; notifications, Android app, imports in progress | gates.md § Phase 5 |
 | 6 | Capabilities | extensions registry with live revocation, sandboxed browser, agent email with the five modes and email commands, sandboxes, context savings done; injection suite, Cloudflare, desktop control, cloud runner in progress | |
 | 7 | Self-improvement and model economics | signed updates with staged install and rollback, model watch, estimate learning built and wired; Forerunner-as-a-project and the update-and-restart shell side pending | |
 | 8 | Full integration and release 1.0 | not started | |
 
 ## Log
+
+### 2026-10-20 (PC daemon consumes the phone's remote commands)
+- `packages/runtime` gained `RemoteCommandWatcher` (ADR 0032): the daemon polls the state
+  service for `target: "pc"` commands with the admin token, authorizes the issuing device like
+  the cloud runner, runs plan envelopes through the command registry (now composed into the
+  daemon with live ports; the card from the phone is never trusted, high risk waits for the
+  device's biometric answer), answers chat through the conversation agent, executes the bare
+  verbs and reports `done` / `failed` with an audit row. The state service accepts `chat` and
+  records the answering device on command confirmations.
+- Scenario 9 passes against the real stack (service on Postgres, daemon on the same schema,
+  signed phone stand-in): first phase-5 gate rows recorded in gates.md. The Android client's own
+  sources turned out to be missing from the repository; logged in BLOCKERS.md with the
+  integration test as the contract to build against.
 
 ### 2026-10-20 (approvals web and desktop shell landed)
 - Credits restored; the four cut-off waves resumed with a note to continue from their partial

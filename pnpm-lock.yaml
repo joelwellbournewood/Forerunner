@@ -311,6 +311,9 @@ importers:
       '@forerunner/capabilities':
         specifier: workspace:*
         version: link:../capabilities
+      '@forerunner/commands':
+        specifier: workspace:*
+        version: link:../commands
       '@forerunner/platform':
         specifier: workspace:*
         version: link:../platform
@@ -454,9 +457,15 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@forerunner/commands':
+        specifier: workspace:*
+        version: link:../../packages/commands
       '@forerunner/testenv':
         specifier: workspace:*
         version: link:../../testenv
+      '@forerunner/vault':
+        specifier: workspace:*
+        version: link:../../packages/vault
       '@types/pg':
         specifier: ^8.15.0
         version: 8.23.1

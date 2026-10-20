@@ -43,5 +43,6 @@ Status: accepted | superseded by NNNN
 | 0029 | Daemon wiring of the phase 6 and 7 modules: extensions, updates, model watch, estimates, mirror, sandbox |
 | 0030 | Command registry: risk resolution, confirmations, change log and undo |
 | 0031 | Desktop shell: its own `/events` subscription, tray behaviour, restart handling, deep links |
+| 0032 | Remote commands from the phone to the PC daemon: envelopes, consumer, confirmations |
 | 0033 | Cloud runner: the vault unlock protocol and the PC-wins precedence rule |
 | 0034 | Approvals web: session from a one-time link, per-tab device key, re-entered code for high-risk answers, chat as a remote command |
