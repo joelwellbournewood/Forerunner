@@ -40,24 +40,8 @@ import type { StartRequest } from "../session/triggers.ts";
  * acting. A `start` may name no agent but this daemon's. Every command ends `done` or `failed`
  * with a result the phone reads back, plus one `audit_log` row (`daemon.remote_command`).
  * A kill reaches the kill switch within one poll, so a session stops within 2 s of the tap.
- *
- * One tap acts once. The phone's outbox POSTs an envelope until it is acknowledged, and the
- * state service dedupes per device and `clientId`; as the second line, an envelope whose
- * (issuing device, clientId) this daemon already handled (in this process, or in an audit
- * row of the last `duplicateWindowMs`) is refused (`failed`, `status: "duplicate"`, the first
- * row's id as `duplicateOf`, an audit row) without composing anything, so a copy that slipped
- * past the service (two services, a restored backup, a row older than the service's week)
- * never starts a second session or raises a budget twice.
  */
 export const REMOTE_AUDIT_TOOL = "daemon.remote_command";
-/**
- * How far back the watcher reads audit rows for an earlier handling of the same (device,
- * clientId) when its own memory has none: a month, well beyond the service's seven-day
- * idempotency record, so a replay that outlived the service's memory is still refused.
- */
-export const DEFAULT_DUPLICATE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-/** How many (device, clientId) pairs this process remembers before the oldest is forgotten. */
-const SEEN_MAX = 5_000;
 export const PC_REMOTE_TARGET = "pc" as const;
 export const DEFAULT_REMOTE_POLL_MS = 500;
 /**
@@ -182,8 +166,6 @@ export interface RemoteCommandDeps {
   pollMs?: number;
   /** How old the phone's `confirmedAt` may be to count as a tap (default: the card's TTL). */
   tapMaxAgeMs?: number;
-  /** How far back audit rows are read for a replayed envelope (default: 30 days). */
-  duplicateWindowMs?: number;
   /** Called after every handled command (tests). */
   onHandled?: (row: RemoteCommandRow, result: JsonObject) => void;
 }
@@ -197,26 +179,20 @@ export class RemoteCommandWatcher {
   private readonly logger = log("daemon:remote");
   private readonly pollMs: number;
   private readonly tapMaxAgeMs: number;
-  private readonly duplicateWindowMs: number;
-  /** (device, clientId) -> the id of the row that handled the envelope, in this process. */
-  private readonly seen = new Map<string, string>();
   private cancel: (() => void) | null = null;
   private handled = 0;
   private refusedCards = 0;
-  private duplicates = 0;
   private lastKill: KillReport | null = null;
   private draining: Promise<number> | null = null;
 
   constructor(private readonly deps: RemoteCommandDeps) {
     this.pollMs = Math.max(100, deps.pollMs ?? DEFAULT_REMOTE_POLL_MS);
     this.tapMaxAgeMs = Math.max(0, deps.tapMaxAgeMs ?? DEFAULT_TAP_MAX_AGE_MS);
-    this.duplicateWindowMs = Math.max(0, deps.duplicateWindowMs ?? DEFAULT_DUPLICATE_WINDOW_MS);
   }
 
   get stats(): {
     handled: number;
     refusedCards: number;
-    duplicates: number;
     lastKill: KillReport | null;
     running: boolean;
     pollMs: number;
@@ -224,7 +200,6 @@ export class RemoteCommandWatcher {
     return {
       handled: this.handled,
       refusedCards: this.refusedCards,
-      duplicates: this.duplicates,
       lastKill: this.lastKill,
       running: this.cancel !== null,
       pollMs: this.pollMs,
@@ -301,7 +276,6 @@ export class RemoteCommandWatcher {
       });
     }
     await this.audit(row, outcome.ok, result);
-    this.remember(row, result);
     this.handled++;
     this.logger.info("remote command handled", {
       id: row.id,
@@ -333,13 +307,9 @@ export class RemoteCommandWatcher {
   private async run(row: RemoteCommandRow): Promise<Outcome> {
     const params = row.params ?? {};
     const plan = PlanEnvelope.safeParse(params);
-    if (plan.success) {
-      return (await this.replayOf(row, plan.data.clientId)) ?? this.runPlan(plan.data);
-    }
+    if (plan.success) return this.runPlan(plan.data);
     const chat = ChatEnvelope.safeParse(params);
-    if (chat.success) {
-      return (await this.replayOf(row, chat.data.clientId)) ?? this.runChat(row, chat.data);
-    }
+    if (chat.success) return this.runChat(row, chat.data);
     const kind = (params as { kind?: unknown }).kind;
     if (kind === "plan" || kind === "chat") {
       const issues = (kind === "plan" ? plan : chat).success
@@ -363,75 +333,6 @@ export class RemoteCommandWatcher {
 
   // -------------------------------------------------------------------------------------
   // The phone's envelopes
-
-  /**
-   * The failed outcome of a replayed envelope, or null when this (issuing device, clientId)
-   * is new. Defence in depth behind the state service's per-device idempotency on
-   * `POST /remote/commands`: the first handling is looked up in this process's memory, then
-   * in the audit rows of the last `duplicateWindowMs` (every handled envelope's row names
-   * its device and clientId), so a duplicate row that two services or a restored backup let
-   * through fails with the first row's id instead of acting a second time. The lookup runs
-   * before anything is composed; nothing in a refused replay reaches the registry.
-   */
-  private async replayOf(
-    row: RemoteCommandRow,
-    clientId: string | undefined,
-  ): Promise<Outcome | null> {
-    if (!clientId) return null;
-    const first = await this.handledBefore(row.device_id, clientId);
-    if (!first || first === row.id) return null;
-    this.duplicates++;
-    this.logger.warn("replayed envelope refused: it was already handled", {
-      id: row.id,
-      duplicateOf: first,
-      clientId,
-    });
-    return {
-      ok: false,
-      result: {
-        kind: envelopeKind(row.params),
-        status: "duplicate",
-        error: `duplicate: envelope ${clientId} from device ${row.device_id} was already handled as command ${first}`,
-        code: "duplicate",
-        duplicateOf: first,
-        clientId,
-      },
-    };
-  }
-
-  /** The id of the row that already handled (device, clientId), or null. */
-  private async handledBefore(deviceId: string, clientId: string): Promise<string | null> {
-    const local = this.seen.get(seenKey(deviceId, clientId));
-    if (local) return local;
-    const from = new Date(this.deps.clock.now() - this.duplicateWindowMs).toISOString();
-    const rows = await this.deps.store.auditLog.list({
-      tool: REMOTE_AUDIT_TOOL,
-      agentId: this.deps.agentId,
-      from,
-    });
-    for (const a of rows) {
-      if (!a.input_summary.includes(clientId)) continue;
-      const input = parseAuditInput(a.input_summary);
-      if (input?.deviceId === deviceId && input.clientId === clientId) {
-        return typeof input.commandId === "string" ? input.commandId : a.id;
-      }
-    }
-    return null;
-  }
-
-  /** Remember a handled envelope's (device, clientId) under the row that handled it first. */
-  private remember(row: RemoteCommandRow, result: JsonObject): void {
-    const clientId = envelopeClientId(row.params);
-    if (!clientId) return;
-    const key = seenKey(row.device_id, clientId);
-    if (this.seen.has(key)) return;
-    const first = typeof result.duplicateOf === "string" ? result.duplicateOf : row.id;
-    this.seen.set(key, first);
-    if (this.seen.size > SEEN_MAX) {
-      const oldest = this.seen.keys().next().value;
-      if (oldest !== undefined) this.seen.delete(oldest);
-    }
-  }
 
   private async runPlan(env: PlanEnvelope): Promise<Outcome> {
     const calls = env.plan.map((s) => ({ name: s.name, params: s.params }));
@@ -738,8 +639,6 @@ export class RemoteCommandWatcher {
         command: row.command,
         deviceId: row.device_id,
         kind: envelopeKind(row.params),
-        // The envelope's outbox key: what `handledBefore` finds a replay by.
-        clientId: envelopeClientId(row.params),
         commands: planNames(row.params),
       },
       result,
@@ -796,26 +695,6 @@ function codeOf(e: unknown): string {
 function envelopeKind(params: JsonObject | null | undefined): string | null {
   const kind = params?.kind;
   return typeof kind === "string" ? kind : null;
-}
-
-/** The envelope's `clientId` (plan and chat envelopes carry one; the plain verbs do not). */
-function envelopeClientId(params: JsonObject | null | undefined): string | null {
-  const id = params?.clientId;
-  return typeof id === "string" && id.length > 0 ? id : null;
-}
-
-function seenKey(deviceId: string, clientId: string): string {
-  return `${deviceId}\n${clientId}`;
-}
-
-/** The audit row's input as `appendAudit` wrote it; null when it is not ours to read. */
-function parseAuditInput(summary: string): JsonObject | null {
-  try {
-    const v: unknown = JSON.parse(summary);
-    return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as JsonObject) : null;
-  } catch {
-    return null;
-  }
 }
 
 /** The command names a change card covers (its parts, else the one command). */
