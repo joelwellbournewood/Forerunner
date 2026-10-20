@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -5,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,17 +17,32 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { registerUpdateCli } from "../src/update/cli.ts";
 import { GitHubReleasesFeed, MemoryReleaseFeed } from "../src/update/feed.ts";
 import { StaticHealthProbe } from "../src/update/health.ts";
-import { assertSafeZipEntry, detectArtifactPlatform, unpackZip } from "../src/update/install.ts";
+import {
+  assertSafeZipEntry,
+  detectArtifactPlatform,
+  UpdateManager,
+  unpackZip,
+} from "../src/update/install.ts";
+import {
+  installLockPath,
+  isPidAlive,
+  readInstallLock,
+  withInstallLock,
+} from "../src/update/lock.ts";
 import { ReleaseManifest } from "../src/update/manifest.ts";
 import {
   type CurrentPointer,
   cleanStalePointerTemps,
+  hasVersionDir,
+  POINTER_STATES,
   pointerPath,
   readPointer,
   versionDir,
   versionsRoot,
   writePointer,
 } from "../src/update/pointer.ts";
+import { HumanRequestUpdatePort } from "../src/update/ports.ts";
+import { isReleaseVersion } from "../src/update/semver.ts";
 import { generateSigningKeyPair, signManifest } from "../src/update/sign.ts";
 import { ReleaseVerifier, refusalReason, sha256Hex } from "../src/update/verify.ts";
 import {
@@ -36,6 +53,7 @@ import {
   makeZip,
   protectedHashes,
   rawZip,
+  signRaw,
   testKey,
 } from "./update-helpers.ts";
 
@@ -381,8 +399,10 @@ describe("health check and automatic rollback", () => {
         to: "1.0.0",
         reason: "daemon answered 500",
       });
+      // the packaged 1.0.0 has no directory under versions/: the pointer says so (current null)
       const p = readPointer(h.dirs);
-      expect(p).toMatchObject({ current: "1.0.0", previous: null, state: "installed" });
+      expect(p).toMatchObject({ current: null, previous: null, state: "installed" });
+      expect(h.manager.installedVersion()).toBe("1.0.0");
       expect(p?.lastRollback).toMatchObject({
         from: "1.2.0",
         to: "1.0.0",
@@ -432,7 +452,8 @@ describe("health check and automatic rollback", () => {
       expect(o.kind).toBe("rolled_back");
       if (o.kind === "rolled_back") expect(o.reason).toMatch(/timed out after 30000 ms/);
       expect(probe.calls[0]?.signal.aborted).toBe(true);
-      expect(readPointer(h.dirs)?.current).toBe("1.0.0");
+      expect(readPointer(h.dirs)?.lastRollback?.to).toBe("1.0.0");
+      expect(h.manager.installedVersion()).toBe("1.0.0");
     } finally {
       await h.close();
     }
@@ -502,10 +523,11 @@ describe("manual rollback", () => {
       });
       expect(r).toMatchObject({ from: "1.2.0", to: "1.0.0" });
       expect(readPointer(h.dirs)).toMatchObject({
-        current: "1.0.0",
+        current: null, // the packaged build runs again
         previous: null,
         state: "installed",
       });
+      expect(h.manager.installedVersion()).toBe("1.0.0");
       expect(readPointer(h.dirs)?.lastRollback).toMatchObject({
         automatic: false,
         reason: "voice is broken",
@@ -845,6 +867,328 @@ describe("fr update CLI", () => {
       process.exitCode = 0;
     } finally {
       await h.close();
+    }
+  });
+});
+
+describe("versions that cannot be a directory (build metadata, leading v)", () => {
+  function manifestFor(version: string) {
+    return {
+      schema: 1,
+      version,
+      channel: "stable",
+      publishedAt: "2026-10-20T10:00:00.000Z",
+      notes: `Release ${version}`,
+      minSchema: 1,
+      artifacts: [
+        {
+          platform: "linux-x64",
+          name: `forerunner-${version}-linux-x64.zip`,
+          url: "https://example.invalid/d/forerunner-linux-x64.zip",
+          sha256: sha256Hex("x"),
+          size: 1,
+        },
+      ],
+    };
+  }
+
+  it("check() never offers a release that apply() could not stage; both refuse it with the same reason", async () => {
+    const feed = new MemoryReleaseFeed([
+      signRaw(manifestFor("1.2.0+build.7")),
+      signRaw(manifestFor("v1.1.5")),
+    ]);
+    const h = await harness({ feed });
+    try {
+      const c = await h.manager.check();
+      expect(c.available).toBeNull();
+      expect(c.rejected.map((r) => [r.version, r.reason])).toEqual([
+        ["1.2.0+build.7", "malformed"],
+        ["v1.1.5", "malformed"],
+      ]);
+      expect(c.rejected[0]?.message).toMatch(/build metadata|directory name/);
+      for (const v of ["1.2.0+build.7", "v1.1.5"]) {
+        const e = await h.manager
+          .apply({ by: { kind: "human", id: "human-j" }, version: v })
+          .catch((err: unknown) => err);
+        expect(refusalReason(e)).toBe("malformed");
+      }
+      const denied = await h.store.auditLog.list({ tool: "update.apply", allowed: false });
+      expect(denied.map((d) => d.denied_reason)).toEqual(["malformed", "malformed"]);
+      expect(readPointer(h.dirs)).toBeNull();
+      expect(h.restarter.requests).toEqual([]);
+      expect(
+        (existsSync(versionsRoot(h.dirs)) ? readdirSync(versionsRoot(h.dirs)) : []).filter(
+          (n) => n !== "current.json",
+        ),
+      ).toEqual([]);
+      // the directory rule and the manifest rule are one rule
+      expect(() => versionDir(h.dirs, "1.2.0+build.7")).toThrow(/safe directory name/);
+      expect(() => versionDir(h.dirs, "v1.1.5")).toThrow(/safe directory name/);
+      expect(isReleaseVersion("1.2.0+build.7")).toBe(false);
+      expect(isReleaseVersion("v1.1.5")).toBe(false);
+      expect(isReleaseVersion("1.2.0-rc.1")).toBe(true);
+      expect(isReleaseVersion("1.2.0")).toBe(true);
+    } finally {
+      await h.close();
+    }
+  });
+});
+
+describe("one install operation at a time", () => {
+  it("two parallel apply() calls: one stages and restarts, the other is refused as in progress", async () => {
+    const s = new FakeReleaseServer();
+    await s.start();
+    try {
+      buildRelease(s, { version: "1.1.0" });
+      const h = await harness({
+        feed: new GitHubReleasesFeed({ owner: "owner", repo: "repo", apiBase: s.url }),
+      });
+      try {
+        const by = { kind: "human" as const, id: "human-j" };
+        const results = await Promise.all([
+          h.manager.apply({ by }).then(
+            () => "ok",
+            (e: unknown) => e,
+          ),
+          h.manager.apply({ by }).then(
+            () => "ok",
+            (e: unknown) => e,
+          ),
+        ]);
+        const errors = results.filter((r) => r !== "ok");
+        expect(results.filter((r) => r === "ok")).toHaveLength(1);
+        expect(errors).toHaveLength(1);
+        expect(isForerunnerError(errors[0], "version_conflict")).toBe(true);
+        expect(isForerunnerError(errors[0]) && errors[0].details.reason).toBe("in_progress");
+        expect(isForerunnerError(errors[0]) && errors[0].retryable).toBe(true);
+        expect(h.restarter.requests).toHaveLength(1);
+        expect(await h.store.release.list({ release_version: "1.1.0" })).toHaveLength(1);
+        expect(readPointer(h.dirs)).toMatchObject({
+          current: "1.1.0",
+          previous: "1.0.0",
+          state: "pending_health_check",
+        });
+        // the lock is released afterwards and the refusal was audited
+        expect(existsSync(installLockPath(h.dirs))).toBe(false);
+        expect(readInstallLock(h.dirs)).toBeNull();
+        const denied = await h.store.auditLog.list({ tool: "update.apply", allowed: false });
+        expect(denied).toHaveLength(1);
+        expect(denied[0]?.denied_reason).toBe("in_progress");
+      } finally {
+        await h.close();
+      }
+    } finally {
+      await s.stop();
+    }
+  });
+
+  it("a lock held by a live process blocks rollback, health check and prune; a lock left by a dead process is cleared", async () => {
+    const h = await harness();
+    try {
+      await withInstallLock(h.dirs, { operation: "apply", clock: h.clock }, async () => {
+        const lock = readInstallLock(h.dirs);
+        expect(lock).toMatchObject({ pid: process.pid, operation: "apply" });
+        const calls: Array<() => unknown> = [
+          () => h.manager.rollback({ by: { kind: "human", id: "human-j" } }),
+          () => h.manager.healthCheck(),
+          () => h.manager.prune(),
+        ];
+        for (const call of calls) {
+          const e = await Promise.resolve()
+            .then(call)
+            .catch((err: unknown) => err);
+          expect(isForerunnerError(e, "version_conflict")).toBe(true);
+          expect(isForerunnerError(e) && e.details).toMatchObject({
+            reason: "in_progress",
+            operation: "apply",
+          });
+        }
+      });
+      expect(existsSync(installLockPath(h.dirs))).toBe(false);
+      // a dead process's lock does not block forever
+      const dead = spawnSync(process.execPath, ["-e", ""]);
+      expect(dead.status).toBe(0);
+      mkdirSync(versionsRoot(h.dirs), { recursive: true });
+      writeFileSync(
+        installLockPath(h.dirs),
+        JSON.stringify({ pid: dead.pid, operation: "apply", startedAt: h.clock.nowIso() }),
+      );
+      expect(isPidAlive(dead.pid)).toBe(false);
+      expect(isPidAlive(process.pid)).toBe(true);
+      expect((await h.manager.healthCheck()).kind).toBe("not_pending");
+      expect(existsSync(installLockPath(h.dirs))).toBe(false);
+      // an unreadable lock written just now (another process between create and write) is
+      // treated as held; one older than a few seconds on the injected clock is stale
+      writeFileSync(installLockPath(h.dirs), "{broken");
+      const fresh = new Date(h.clock.now());
+      utimesSync(installLockPath(h.dirs), fresh, fresh);
+      const e = await h.manager.healthCheck().catch((err: unknown) => err);
+      expect(isForerunnerError(e, "version_conflict")).toBe(true);
+      const old = new Date(h.clock.now() - 60 * 60 * 1000);
+      utimesSync(installLockPath(h.dirs), old, old);
+      expect((await h.manager.healthCheck()).kind).toBe("not_pending");
+      expect(existsSync(installLockPath(h.dirs))).toBe(false);
+    } finally {
+      await h.close();
+    }
+  });
+});
+
+describe("rollback to the packaged build (launcher contract)", () => {
+  it("writes current: null when the previous version has no directory, so the pointer never names a missing install", async () => {
+    const s = new FakeReleaseServer();
+    await s.start();
+    try {
+      buildRelease(s, { version: "1.1.0" });
+      buildRelease(s, { version: "1.2.0" });
+      const h = await harness({
+        feed: new GitHubReleasesFeed({ owner: "owner", repo: "repo", apiBase: s.url }),
+        probe: new StaticHealthProbe({ ok: false, detail: "broken" }),
+      });
+      try {
+        const by = { kind: "human" as const, id: "human-j" };
+        // the first staged update fails: back to the packaged 1.0.0, which has no directory
+        await h.manager.apply({ by, version: "1.1.0" });
+        const o = await h.manager.healthCheck();
+        expect(o).toMatchObject({ kind: "rolled_back", from: "1.1.0", to: "1.0.0" });
+        let p = readPointer(h.dirs);
+        expect(p).toMatchObject({ current: null, previous: null, state: "installed" });
+        expect(p?.lastRollback).toMatchObject({ from: "1.1.0", to: "1.0.0", automatic: true });
+        expect(hasVersionDir(h.dirs, "1.0.0")).toBe(false);
+        expect(h.manager.installedVersion()).toBe("1.0.0");
+        expect(h.restarter.requests.at(-1)).toEqual({
+          reason: "rollback",
+          targetVersion: "1.0.0",
+          fromVersion: "1.1.0",
+        });
+        expect(h.manager.prune()).toEqual(["1.1.0"]);
+        // the next update is staged against the packaged version again
+        await h.manager.apply({ by, version: "1.2.0" });
+        p = readPointer(h.dirs);
+        expect(p).toMatchObject({ current: "1.2.0", previous: "1.0.0" });
+        // a manual rollback to the packaged build is the same contract
+        h.probe = new StaticHealthProbe({ ok: true, detail: "fine" });
+        const h2 = new UpdateManager({ ...h.deps, probe: h.probe });
+        await h2.healthCheck();
+        const r = await h2.rollback({ by, reason: "voice is broken" });
+        expect(r).toMatchObject({ from: "1.2.0", to: "1.0.0" });
+        p = readPointer(h.dirs);
+        expect(p).toMatchObject({ current: null, previous: null });
+        for (const v of [p?.current, p?.previous])
+          if (v) expect(hasVersionDir(h.dirs, v)).toBe(true);
+        expect(POINTER_STATES).not.toContain("rolled_back");
+      } finally {
+        await h.close();
+      }
+    } finally {
+      await s.stop();
+    }
+  });
+
+  it("keeps the previous version's name when its directory exists", async () => {
+    const s = new FakeReleaseServer();
+    await s.start();
+    try {
+      buildRelease(s, { version: "1.1.0" });
+      buildRelease(s, { version: "1.2.0" });
+      const h = await harness({
+        feed: new GitHubReleasesFeed({ owner: "owner", repo: "repo", apiBase: s.url }),
+      });
+      try {
+        const by = { kind: "human" as const, id: "human-j" };
+        await h.manager.apply({ by, version: "1.1.0" });
+        await h.manager.healthCheck();
+        await h.manager.apply({ by, version: "1.2.0" });
+        expect(readPointer(h.dirs)).toMatchObject({ current: "1.2.0", previous: "1.1.0" });
+        const broken = new UpdateManager({
+          ...h.deps,
+          probe: new StaticHealthProbe({ ok: false, detail: "no daemon" }),
+        });
+        expect((await broken.healthCheck()).kind).toBe("rolled_back");
+        const p = readPointer(h.dirs);
+        expect(p).toMatchObject({ current: "1.1.0", previous: null, state: "installed" });
+        expect(hasVersionDir(h.dirs, "1.1.0")).toBe(true);
+        expect(h.manager.installedVersion()).toBe("1.1.0");
+      } finally {
+        await h.close();
+      }
+    } finally {
+      await s.stop();
+    }
+  });
+});
+
+describe("HumanRequestUpdatePort", () => {
+  it("answers pending with an inbox row, then approved or denied from the same row; expired rows are asked again", async () => {
+    const s = new FakeReleaseServer();
+    await s.start();
+    try {
+      buildRelease(s, { version: "1.1.0" });
+      const h = await harness({
+        feed: new GitHubReleasesFeed({ owner: "owner", repo: "repo", apiBase: s.url }),
+      });
+      try {
+        // inbox rows reference the human who answers them
+        await h.store.human.insert({ id: "human-j", name: "J", email: "j@example.test" });
+        const port = new HumanRequestUpdatePort(h.store.humanRequest, "human-j");
+        const m = new UpdateManager({ ...h.deps, human: port });
+        const by = { kind: "agent" as const, id: "alice" };
+        let e = await m.apply({ by }).catch((err: unknown) => err);
+        expect(isForerunnerError(e, "approval_required")).toBe(true);
+        let rows = await h.store.humanRequest.list({ kind: "approval" });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          human_id: "human-j",
+          blocking: true,
+          risk: "high",
+          status: "open",
+          author_agent: "updater",
+        });
+        expect(rows[0]?.why).toContain("1.1.0");
+        // asking again while the row is open does not add a second one
+        e = await m.apply({ by }).catch((err: unknown) => err);
+        expect(isForerunnerError(e, "approval_required")).toBe(true);
+        expect(isForerunnerError(e) && e.details.requestId).toBe(rows[0]?.id);
+        rows = await h.store.humanRequest.list({ kind: "approval" });
+        expect(rows).toHaveLength(1);
+        // the human says no from the inbox
+        const first = rows[0] as (typeof rows)[number];
+        await h.store.humanRequest.answer(first.id, first.version, "no", "human-j");
+        e = await m.apply({ by }).catch((err: unknown) => err);
+        expect(isForerunnerError(e, "approval_required")).toBe(true);
+        expect(isForerunnerError(e) && e.details.outcome).toBe("denied");
+        expect(await h.store.humanRequest.list({ kind: "approval" })).toHaveLength(1);
+        // a withdrawn answer means the question is open again: a new row
+        await h.store.humanRequest.withdraw(first.id, first.version + 1).catch(() => undefined);
+        // (an answered row cannot be withdrawn; expire a fresh one instead)
+        const second = await h.store.humanRequest.insert({
+          kind: "approval",
+          why: "placeholder",
+          author_agent: "updater",
+          change_card: { key: "update.apply:1.1.0" },
+        });
+        await h.store.humanRequest.expire(second.id, second.version);
+        e = await m.apply({ by }).catch((err: unknown) => err);
+        expect(isForerunnerError(e, "approval_required")).toBe(true);
+        rows = await h.store.humanRequest.list({ kind: "approval" });
+        expect(rows.map((r) => r.status).sort()).toEqual(["answered", "expired", "open"]);
+        const open = rows.find((r) => r.status === "open") as (typeof rows)[number];
+        // the human says yes: the same apply now goes through, no new row
+        await h.store.humanRequest.answer(open.id, open.version, { choice: "approve" }, "human-j");
+        const r = await m.apply({ by });
+        expect(r.version).toBe("1.1.0");
+        expect(r.release.author_agent).toBe("alice");
+        expect(await h.store.humanRequest.list({ kind: "approval" })).toHaveLength(3);
+        // notifications are non-blocking info rows
+        await port.notify({ title: "t", body: "b", severity: "warning" });
+        const infos = await h.store.humanRequest.list({ kind: "info" });
+        expect(infos).toHaveLength(1);
+        expect(infos[0]).toMatchObject({ blocking: false, risk: "medium", human_id: "human-j" });
+      } finally {
+        await h.close();
+      }
+    } finally {
+      await s.stop();
     }
   });
 });

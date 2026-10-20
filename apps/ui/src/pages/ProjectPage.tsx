@@ -5,8 +5,10 @@ import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import { ChatTab } from "./project/ChatTab.tsx";
 import { CostsTab } from "./project/CostsTab.tsx";
-import { PlaceholderTab } from "./project/PlaceholderTab.tsx";
+import { DataTab } from "./project/DataTab.tsx";
+import { DocsTab } from "./project/DocsTab.tsx";
 import { PlanTab } from "./project/PlanTab.tsx";
+import { ReviewsTab } from "./project/ReviewsTab.tsx";
 import { StartSessionDialog } from "./project/StartSessionDialog.tsx";
 import { SummaryTab } from "./project/SummaryTab.tsx";
 import { TasksTab } from "./project/TasksTab.tsx";
@@ -106,23 +108,10 @@ export function ProjectPage() {
         {tab === "summary" ? <SummaryTab projectId={id} /> : null}
         {tab === "plan" ? <PlanTab projectId={id} project={view} /> : null}
         {tab === "tasks" ? <TasksTab projectId={id} reference={view.budget} /> : null}
-        {tab === "docs" ? (
-          <PlaceholderTab title="Docs" phase={4}>
-            The standard doc set (README, overview, architecture, status, decisions, runbook, data,
-            testing) kept by the agent and checked by the critic.
-          </PlaceholderTab>
-        ) : null}
-        {tab === "reviews" ? (
-          <PlaceholderTab title="Reviews" phase={3}>
-            Critic verdicts, findings and the grade trend.
-          </PlaceholderTab>
-        ) : null}
+        {tab === "docs" ? <DocsTab projectId={id} /> : null}
+        {tab === "reviews" ? <ReviewsTab projectId={id} /> : null}
         {tab === "costs" ? <CostsTab projectId={id} /> : null}
-        {tab === "data" ? (
-          <PlaceholderTab title="Data" phase={5}>
-            Uploads, linked folders and large datasets registered by path or URI.
-          </PlaceholderTab>
-        ) : null}
+        {tab === "data" ? <DataTab projectId={id} /> : null}
         {tab === "chat" ? <ChatTab projectId={id} reference={view.budget} /> : null}
       </div>
       <StartSessionDialog

@@ -155,7 +155,9 @@ describe("LoopTaskExecutor", () => {
       effort: "medium",
     });
     expect(runs[0]?.cost_usd_micro).toBe(res.costUsdMicro);
-    expect((await store.task.mustGet(task.id)).attempt).toBe(1);
+    // A run records the specialist but never counts an attempt: the state workflow does, on
+    // failed -> ready, so the retry ladder advances once per failure (spec D.2, ADR 0034).
+    expect(await store.task.mustGet(task.id)).toMatchObject({ attempt: 0, specialist: "coder" });
     const brief = provider.calls[0]?.messages[0]?.content as string;
     expect(brief).toContain("Acceptance criteria");
     expect(brief).toContain("returns 200");

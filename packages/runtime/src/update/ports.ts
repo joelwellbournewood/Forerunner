@@ -1,4 +1,5 @@
-import type { HumanRequestRepo, RiskLevel } from "@forerunner/state";
+import type { HumanRequestRepo, HumanRequestRow, RiskLevel } from "@forerunner/state";
+import { isYes } from "../wiring/state-ports.ts";
 
 /**
  * Ports the updater needs from the outside: a human (approval of an agent-initiated update,
@@ -7,6 +8,11 @@ import type { HumanRequestRepo, RiskLevel } from "@forerunner/state";
  */
 export interface UpdateHumanAsk {
   kind: "approval" | "decision" | "info";
+  /**
+   * Stable identity of the question (e.g. `update.apply:1.2.0`): the production port answers
+   * a repeated ask from the row it created before instead of inserting another one.
+   */
+  key?: string;
   why: string;
   steps?: string[];
   options?: string[];
@@ -36,23 +42,51 @@ export interface UpdateHumanPort {
   notify(note: UpdateNotification): Promise<void>;
 }
 
-/** Production port: every ask and notification becomes a human_request row (inbox item). */
+export const UPDATE_REQUEST_AUTHOR = "updater";
+
+/**
+ * Production port: asks and notifications are human_request rows (inbox items). An ask with a
+ * `key` is answered from the newest row the updater created for that key: `answered` with a
+ * yes is `approved`, any other answer `denied`, an `open` row stays `pending` without a
+ * duplicate; an expired or withdrawn row means the question is asked again. So an agent's
+ * apply that was refused as pending goes through on the retry after the human said yes.
+ */
 export class HumanRequestUpdatePort implements UpdateHumanPort {
   constructor(
-    private readonly repo: Pick<HumanRequestRepo, "insert">,
+    private readonly repo: Pick<HumanRequestRepo, "insert" | "list">,
     private readonly defaultHumanId: string | null = null,
   ) {}
 
+  private async existing(key: string): Promise<HumanRequestRow | undefined> {
+    const rows = await this.repo.list(
+      { kind: "approval", author_agent: UPDATE_REQUEST_AUTHOR },
+      { orderBy: [{ column: "created_at", direction: "desc" }], limit: 200 },
+    );
+    return rows.find((r) => (r.change_card as { key?: unknown } | null)?.key === key);
+  }
+
   async ask(req: UpdateHumanAsk): Promise<UpdateHumanAnswer> {
+    if (req.key && req.kind === "approval") {
+      const same = await this.existing(req.key);
+      if (same?.status === "answered") {
+        return {
+          outcome: isYes(same.answer) ? "approved" : "denied",
+          requestId: same.id,
+          detail: `answered by ${same.answered_by ?? "a human"} at ${same.answered_at ?? "?"}`,
+        };
+      }
+      if (same?.status === "open") return { outcome: "pending", requestId: same.id };
+    }
     const row = await this.repo.insert({
       human_id: req.humanId ?? this.defaultHumanId,
       kind: req.kind,
       why: req.why,
       steps: req.steps ?? [],
-      options: req.options ?? [],
+      options: req.options ?? ["yes", "no"],
       blocking: req.blocking,
       risk: req.risk,
-      author_agent: "updater",
+      change_card: req.key ? { key: req.key } : null,
+      author_agent: UPDATE_REQUEST_AUTHOR,
     });
     // A human answers from the inbox; the caller treats "pending" as not approved.
     return { outcome: "pending", requestId: row.id };
@@ -67,7 +101,7 @@ export class HumanRequestUpdatePort implements UpdateHumanPort {
       options: [],
       blocking: false,
       risk: note.severity === "error" ? "high" : note.severity === "warning" ? "medium" : "low",
-      author_agent: "updater",
+      author_agent: UPDATE_REQUEST_AUTHOR,
     });
   }
 }

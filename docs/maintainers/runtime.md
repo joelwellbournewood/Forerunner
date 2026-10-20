@@ -236,18 +236,123 @@ it: a claim, an open PR or an in-flight entry of an online peer for the same tas
 the peer has in flight sends a `warning` message before work starts and continues. Each
 (peer, kind, task) triple is reported once per session.
 
+### The core loop: critic, memory and commands (`src/loop/`, [ADR 0036, core loop integration](../decisions/0036-core-loop-integration.md))
+
+Phase 3 of the build order closes the loop: a task's run is reviewed by the critic at its
+tier, the verdict moves it through the state workflow and the retry ladder, lessons flow in
+at session start and out at session end, and every change by chat, voice, the UI or the phone
+runs the same command. The runner, the executor and the conversation agent reach the three
+packages only through the ports in `src/loop/ports.ts` (`CriticPort`, `MemoryPort`,
+`ConversationCommands`); `src/loop/critic.ts`, `memory.ts` and `commands.ts` implement them
+over `@forerunner/critic`, `@forerunner/memory` and `@forerunner/commands`, and `compose.ts`
+wires them (`RuntimeApp.critic`, `memory`, `commands`, `criticAgent`). Tests run the runner
+with fakes of the ports (`test/loop-memory.test.ts`) and with the real implementations on the
+fake provider (`test/loop-critic.test.ts`, `test/conversation.test.ts`, `test/loop-routes.test.ts`,
+`test/loop-commands.test.ts`).
+
+**Critic (`CriticLoop`, spec H, B.4, D.2, D.3).** After `TaskExecutor.execute` returns
+`done` or `in_review` for a task above tier 0, the runner moves it to `in_review` and calls
+`reviewTask` with the task, the session token and budget, the plan item and the result. The
+loop assembles the evidence (the diff from the task's worktree through `GitDiffPort`, or the
+executor's `changedFiles`; the project's `settings.checks` as argv commands the critic runs at
+tiers 2 and 3; the standard-doc drift at tier 2+ as a non-required check; the final report as
+claims; the attempt and the specialist as artifacts), runs `CriticService.review` at
+`task.risk_tier` with the project's `critic_ceiling` and `speed_quality_offset` (read from the
+project row), and applies the verdict with `applyVerdict`:
+
+| Verdict | What the runner sees | Task |
+| --- | --- | --- |
+| accept | `decision: "accepted"`, the earlier findings resolved against the run | `done` (`SessionResult.completed`) |
+| accept with a foreign open finding | `decision: "blocked_by_findings"` (the store threw `findings_open`), `task.blocked_by_findings` event with the blocking request's id | stays `in_review` (`blockedByFindings`) until the human answers the request |
+| revise | `decision: "revise"`, `attempt + 1`, a `request` message to the owner | `ready` (`retried`) |
+| escalate | `decision: "retry"` with `retry` = `improve_brief` / `split_or_change_specialist` / `escalate` (`nextTier` under the ceiling), or `human` after the ladder | `ready` or `needs_human` |
+| human, or revise after the last rung | `decision: "human"` with the blocking sign-off request | `needs_human` |
+
+The retry ladder is derived from `task.attempt` (counted by the store on `failed -> ready`;
+a run never counts itself): `LoopTaskExecutor` puts the open findings and the rung into the
+brief's constraints (`retryConstraints`) and runs attempt 3 one model rung up when the
+ceiling allows (`tierForAttempt`). Tier 0 tasks keep the mechanical path (checks only, no
+critic); the store still refuses to close one with an open finding and the runner surfaces
+it. Both blocked paths end with the human (`src/session/findings.ts`): the runner files one
+blocking request per task (`change_card.key = "findings:blocked"`, options `rework` /
+`accept` / `cancel`, reused while open) and `syncBlockedByFindings`, run from
+`RuntimeApp.syncApprovals()` after every inbox answer, applies it: `rework` goes
+`failed -> ready` with the findings as the next brief's constraints, `accept` resolves the
+open findings against the run and closes the task, `cancel` cancels it; the card records
+`applied_at` and the outcome. At session end `reviewSession` runs the critic's honesty, plan and cost checks on the
+stored summary (tier 0 by default, `SessionRunnerDeps.sessionReviewTier`), persisted as a
+review with `session_id` set; `critic.session_review` carries the grade and a `human` verdict
+as an escalation. Lesson proposals (repeat findings) are recorded in critic memory through the
+memory port. Events: `critic.review_started`, `critic.verdict`, `critic.review_failed`
+(the task stays in review), `critic.session_review`, `task.blocked_by_findings`.
+
+**Memory (`MemoryLoop`, spec G, E.5, N.4).** At session start the runner asks `recall` with
+the state brief as the query under `settings.memory_token_budget` (default
+`DEFAULT_MEMORY_TOKEN_BUDGET`, 1,500 tokens); the block joins the planner's brief as data
+after the peer feed. The grant is issued from the agent kind (`grantFor`): a principal reads
+its own private scope and shared, the critic reads critic and shared, a specialist nothing.
+The budget is enforced in code twice (the package cuts to it, the runner drops a block over
+it: `memory.over_budget`). `LoopTaskExecutor` loads lessons for the task text under
+`settings.task_memory_token_budget` (default 400) into the specialist's brief, tagged with
+the specialist's name. At session end `record` stores, in the agent's private memory, the
+`Lesson: ...` lines of the specialists' reports (`lessonsFromReport`), the critic findings
+the rework resolved (the finding row's description and required action), and the decisions
+the human answered since the last session; the package merges near duplicates. Every
+candidate first passes the injection gate (`src/session/lessons.ts`, `screenLessons`: the
+general scanner plus lesson rules for a shell pipe, an order to skip a guard, an operator's
+note, a standing order, a direct address, a URL to execute); the executor, the runner, the
+critic loop and `MemoryLoop.record` itself all run it, a rejected candidate is never stored,
+`memory.lessons_rejected` names its rules, `memory.recorded` counts it (`rejected`,
+`quarantined`), and the human gets a `warning` message quoting it. Weekly consolidation is a
+scheduler entry (`scheduleMemoryConsolidation`, `MEMORY_CONSOLIDATION_AGENT_ID`;
+`startSession` routes it to `memory.propose()`): a report-only run per scope files one
+approval request (`change_card.key = "memory:consolidation"`, options `apply`/`skip`);
+`syncApprovals()` re-reports each scope and applies an answered one with `apply: true` only
+when the same lessons would still be merged, flagged and retired (`sameProposals`); a drifted
+scope is marked `stale` on the card and proposed again. The memory views (`list`, `edit`,
+`pin`, `remove`) back the daemon's `/memory` routes and stop at the human boundary: a private
+scope or row of another human's agent answers `not_found`; `remove` retires the row and
+deletes its file. Events: `memory.loaded`, `memory.over_budget`, `memory.load_failed`,
+`memory.recorded`, `memory.lessons_rejected`, `memory.record_failed`.
+
+**Commands (`CommandLoop`, spec Q).** The registry (`defaultRegistry`), the executor and the
+intent parser behind one object. `contextFor(turn)` builds the `CommandContext` for every
+caller: the human as actor, the principal, the active project (`activeProjectOf`), the
+human's time zone, the paired device, the conversation session for the activity event, and
+the source (`chat` for text and the phone, `voice` for voice). The conversation agent calls
+`parse` (deterministic; `matched: "none"` means the model answers), `compose` (one card, one
+change log row for a combined request), `tools` (the command tools for the model path),
+`confirmByText` and `undo`; the daemon calls `execute`, `confirm`, `cancel`, `pending`,
+`changeLog` and `undo`. `start()` persists the command table and re-arms the reverts of
+temporary changes after a restart; `stop()` cancels the timers. `sessionCapFromSettings` is
+how the scheduler's `startSession` reads the cap the registry wrote (a temporary override
+while its window is open, else `session_cap_usd_micro`), so a session started by the
+scheduler honours "give it 20 francs tonight" (spec Q.12). `sessionCommandPorts` builds the
+registry's `startSession` and `kill` ports over the scheduler and the kill switch:
+`session.start` answers `{ outcome: started | queued | deferred }` (the session id is never
+known synchronously), and its undo (a kill of the agent's scope with
+`SESSION_START_UNDO_REASON`) drops a waiting request (`Scheduler.cancelPending`) instead of
+stopping the session the agent is running; a start that ran is stopped as before.
+
 ### Conversation agent (`src/conversation/agent.ts`)
 
-The fast channel for text and voice (spec O): Haiku at low effort, a stable cached system
-prompt (project summaries) and a volatile first message (time, active project, unread count,
-open requests, running sessions). Tools: take a note into the next-session queue, create a
-draft task, answer a human request, start a session (budget above the confirm threshold is
-read back and waits for "yes"; "no" cancels), stop sessions at once (kill switch), hand real
-work to the principal agent through the inbox, switch the active project. Each turn runs
-through the loop driver with its own small budget and a token at autonomy 4 (the human is
-giving instructions); the run is registered as protected so scoped and global stops never
-cut the human's channel. Transcripts are events on a per-agent conversation session; spoken
-confirmations are logged with the words used.
+The fast channel for text and voice (spec O, J, Q): Haiku at low effort, a stable cached
+system prompt (project summaries) and a volatile first message (time, active project, unread
+count, open requests, running sessions). It has no tools of its own: what the human says is
+parsed into commands first (no model call), a combined request becomes one change card read
+back in the reply (`pendingConfirmation` with the commands and whether a yes or the paired
+device confirms), a plain "yes"/"ja" or "no" answers the card without a model call, "undo"
+undoes the latest undoable change, the parser's questions (an ambiguous project, a budget
+without a time) are asked with options (`question`), text that is data (the envelope) is
+refused without a model call, and only a sentence no pattern understands goes to the model,
+which is offered the registry's command tools and nothing else. Every change lands in the
+change log with the words used and the undo token (`actions[].undoToken`). Each model turn
+runs through the loop driver with its own small budget and a token at autonomy 4 (the human
+is giving instructions; the registry's confirmation policy guards by risk); the run is
+registered as protected so scoped and global stops never cut the human's channel.
+Transcripts are events on a per-agent conversation session (`chat.human`, `chat.reply`,
+`chat.confirmed`, `chat.cancelled`, and the executor's `change` events). Without a command
+port the chat is read-only.
 
 ### Local daemon (`src/daemon/`, ADR 0011)
 
@@ -335,7 +440,8 @@ the live feed (session events, inbox, session and project changes, a heartbeat) 
 permission 403); the body is `{ error, code, details }` with secrets redacted.
 
 Beyond the route table of ADR 0011 the daemon serves `GET /projects/:id/peers` (the peer feed,
-`PeerFeedView`) and `GET /projects/:id/decisions` (the decision log, `DecisionView[]`), and
+`PeerFeedView`), `GET /projects/:id/decisions` (the decision log, `DecisionView[]`), the core
+loop's data (below: the Reviews tab, the memory views, the commands and the change log), and
 follows the UI conventions of ADR 0025: CORS for local and Tauri origins only, the bearer
 token accepted as `?token=` on the two EventSource routes and nowhere else, `/chat/stream`
 frames `token` (`{text}`), `reply` and `error`, a 409 with code `conflict` on a stale version,
@@ -361,6 +467,27 @@ once `POST /requests/:id/answer` approves it and `project.changed` follows). `/h
 `sandbox` and `extensions: { enabled, pending }` (`sandbox.reason` is the engine probe's text;
 the route is unauthenticated but loopback-only); `/events` also streams `extension.changed` and
 `restart.requested`. Each sub-app keeps its module's error mapping.
+
+**Core loop routes (ADR 0036, all in `DAEMON_ROUTES`).** Reviews tab (spec K.2):
+`GET /projects/:id/reviews` and `GET /tasks/:id/reviews` answer `ReviewsView` (every review
+with its findings, the open finding count, verdict counts, the grade trend oldest first and
+the average grade; `views.ts#reviewsView`). Memory views (spec K.5): `GET /memory/scopes` (one
+view per principal, the critic and shared, with counts), `GET /memory?scope=&agentId=&q=&tag=&status=`
+(`MemoryView`; `agentId` is required for `agent_private`), `PUT /memory/lessons/:id`
+(text, tags, confidence, pinned; the lint rules apply), `POST /memory/lessons/:id/pin`,
+`DELETE /memory/lessons/:id` (all four answer 404 for another human's agent or private row),
+`GET /memory/consolidation` (`ConsolidationProposalView[]`) and
+`POST /memory/consolidation/run` (report only; files the approval request; the inbox answer
+applies it through `syncApprovals`, which also applies the `rework`/`accept`/`cancel` answers
+of tasks blocked by findings). Commands (spec Q): `GET /commands` (the registry),
+`POST /commands/parse` (nothing runs), `POST /commands/execute` (one or several commands as one
+change card and one change log row; `confirm: "tap"` is the settings-screen path after the
+card was shown), `GET /commands/pending`, `POST /commands/:id/confirm` (`yes`, `no`, `tap`, or
+`device` with `deviceId` and `biometric`; a chat yes on a high-risk card is refused), `POST
+/commands/:id/cancel`, `GET /changes?projectId=&undoable=` (`ChangeLogView[]`) and
+`POST /changes/:id/undo`. Results are `CommandResultViewSchema`; `/me.activeProjectId` is the
+registry's record. `ChatReplyView.pendingConfirmation` carries the commands and the decision,
+`actions[].undoToken` the change log id while undoable, and `question` the parser's question.
 
 ### Specialist registry (`src/registry/`)
 

@@ -10,15 +10,9 @@ import {
   rmSync,
   writeSync,
 } from "node:fs";
-import {
-  type AppDirs,
-  ForerunnerError,
-  isInside,
-  join,
-  newId,
-  safeSegment,
-} from "@forerunner/platform";
+import { type AppDirs, ForerunnerError, isInside, join, newId } from "@forerunner/platform";
 import { z } from "zod";
+import { isReleaseVersion } from "./semver.ts";
 
 /**
  * The install layout (ADR 0015): every release lives in its own directory under
@@ -27,22 +21,24 @@ import { z } from "zod";
  * the same directory, fsynced and renamed over the old one, so a crash at any moment leaves
  * either the old or the new pointer, never a torn file. No symlinks or junctions: the shells
  * read the pointer and launch the named directory, which works the same on Windows and Linux.
+ *
+ * Launcher contract: `current: null` means the packaged build runs (before the first staged
+ * install, and after a rollback to the packaged build, whose version has no directory under
+ * versions/). A launcher must also treat a `current` whose directory is missing as the
+ * packaged build and fall through; the runtime never writes such a pointer, but a copied or
+ * hand-edited data directory could.
  */
 export const POINTER_FILE = "current.json";
 export const VERSIONS_DIR = "versions";
 const TEMP_SUFFIX = ".tmp";
 
-export const POINTER_STATES = [
-  "installed",
-  "pending_health_check",
-  "rolled_back",
-  "failed",
-] as const;
+/** State of the version `current` names; a rollback is recorded in `lastRollback`, not here. */
+export const POINTER_STATES = ["installed", "pending_health_check", "failed"] as const;
 export type PointerState = (typeof POINTER_STATES)[number];
 
 export const CurrentPointer = z.object({
   schema: z.literal(1),
-  /** Version to launch; null before the first staged install (the packaged build runs). */
+  /** Version to launch; null when the packaged build runs (no staged install, or rolled back to it). */
   current: z.string().nullable(),
   /** Known-good version to fall back to, if any. */
   previous: z.string().nullable(),
@@ -68,15 +64,34 @@ export function pointerPath(dirs: AppDirs): string {
   return join(versionsRoot(dirs), POINTER_FILE);
 }
 
-/** Directory of one installed version; the version is sanitised to a single path segment. */
+/**
+ * Directory of one installed version. The version must be a release version (`isReleaseVersion`:
+ * bare semver, no build metadata, a safe single path segment), the same rule the manifest
+ * schema applies, so nothing the feed offers is refused only here.
+ */
 export function versionDir(dirs: AppDirs, version: string): string {
-  const seg = safeSegment(version, "");
-  if (!seg || seg !== version.replace(/^v/, "")) {
-    throw new ForerunnerError("validation", `version is not a safe directory name: ${version}`, {
-      details: { version },
-    });
+  if (!isReleaseVersion(version)) {
+    throw new ForerunnerError(
+      "validation",
+      `version is not a safe directory name: ${version.slice(0, 60)}`,
+      { details: { version: version.slice(0, 60) } },
+    );
   }
-  return join(versionsRoot(dirs), seg);
+  return join(versionsRoot(dirs), version);
+}
+
+/** True when a staged install of `version` exists on disk (false for an unsafe name). */
+export function hasVersionDir(dirs: AppDirs, version: string): boolean {
+  if (!isReleaseVersion(version)) return false;
+  return existsSync(versionDir(dirs, version));
+}
+
+/**
+ * What a rollback writes as `current`: the previous version when its directory exists, else
+ * null, which tells the launcher to run the packaged build (ADR 0015 launcher contract).
+ */
+export function rollbackCurrent(dirs: AppDirs, to: string): string | null {
+  return hasVersionDir(dirs, to) ? to : null;
 }
 
 /** The install may write only under <data>/versions; config, memory and the rest of data never. */

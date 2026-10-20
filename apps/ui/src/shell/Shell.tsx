@@ -16,6 +16,9 @@ const NAV = [
   { to: "/inbox", label: "Inbox", end: false },
   { to: "/memory", label: "Memory", end: false },
   { to: "/extensions", label: "Extensions", end: false },
+  { to: "/changes", label: "Changes", end: false },
+  { to: "/performance", label: "Performance", end: false },
+  { to: "/updates", label: "Updates", end: false },
   { to: "/settings", label: "Settings", end: false },
 ];
 
@@ -117,6 +120,15 @@ export function Shell() {
           break;
         case "go.extensions":
           navigate("/extensions");
+          break;
+        case "go.changes":
+          navigate("/changes");
+          break;
+        case "go.performance":
+          navigate("/performance");
+          break;
+        case "go.updates":
+          navigate("/updates");
           break;
         case "go.project":
           if (state.activeProjectId) {
@@ -317,6 +329,15 @@ export function Shell() {
               data-testid="kill-banner"
             >
               Kill switch active: no session runs until you press Resume.
+            </output>
+          ) : null}
+          {state.restart ? (
+            <output
+              className="w-full rounded bg-blue-50 px-2 py-1 text-xs text-blue-900 dark:bg-blue-950 dark:text-blue-200"
+              data-testid="restart-banner"
+            >
+              Daemon restarting ({state.restart.reason}): {state.restart.fromVersion} →{" "}
+              {state.restart.targetVersion}. The app reconnects on its own.
             </output>
           ) : null}
         </header>

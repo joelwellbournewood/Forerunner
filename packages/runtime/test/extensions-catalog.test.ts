@@ -11,6 +11,8 @@ import {
 } from "../src/extensions/catalog.ts";
 import { fakeCatalogEntry, startHttpFixture } from "./extensions-helpers.ts";
 
+const BIG = { pad: "x".repeat(50_000) };
+
 describe("extension catalog", () => {
   it("ships a valid built-in catalog with the capabilities this repo provides", () => {
     const file = loadBuiltinCatalog();
@@ -79,7 +81,9 @@ describe("extension catalog", () => {
       const r = await catalog.refresh();
       expect(r).toEqual({ remote: 1, skipped: ["browser"] });
       expect(catalog.get("remote-one")?.name).toBe("remote-one");
+      expect(catalog.isBuiltin("remote-one")).toBe(false);
       expect(catalog.get("browser")?.name).toBe("browser");
+      expect(catalog.isBuiltin("browser")).toBe(true);
       expect(catalog.entries().some((e) => e.id === "remote-one")).toBe(true);
       await expect(fetchCatalog(http.url("/missing.json"))).rejects.toMatchObject({
         code: "unavailable",
@@ -96,5 +100,41 @@ describe("extension catalog", () => {
       "https://catalog.example/x.json",
     );
     expect(() => new ExtensionCatalog().mustGet("nope")).toThrow(/not found/);
+  });
+
+  it("fetchJson stops reading past the size cap: by content-length before any byte, and chunk by chunk when streamed", async () => {
+    let streamedChunks = 0;
+    const http = await startHttpFixture(
+      { "/big.json": BIG },
+      {
+        "/stream.json": (_req, res) => {
+          // chunked (no content-length): the cap must cut the stream, not buffer it
+          res.writeHead(200, { "content-type": "application/json" });
+          const write = () => {
+            if (res.destroyed || res.writableEnded) return;
+            streamedChunks++;
+            res.write(streamedChunks === 1 ? '{"pad":"' : "x".repeat(8_192));
+            if (streamedChunks < 1_000) setTimeout(write, 1);
+            else res.end('"}');
+          };
+          write();
+        },
+      },
+    );
+    try {
+      await expect(fetchJson(http.url("/big.json"), { maxBytes: 10_000 })).rejects.toMatchObject({
+        code: "validation",
+        message: "document too large",
+        details: { maxBytes: 10_000 },
+      });
+      expect(await fetchJson(http.url("/big.json"), { maxBytes: 100_000 })).toEqual(BIG);
+      await expect(
+        fetchJson(http.url("/stream.json"), { maxBytes: 20_000, timeoutMs: 10_000 }),
+      ).rejects.toMatchObject({ code: "validation", message: "document too large" });
+      // the reader cancelled early: nowhere near the 1 000 chunks were consumed
+      expect(streamedChunks).toBeLessThan(200);
+    } finally {
+      await http.close();
+    }
   });
 });

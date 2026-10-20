@@ -35,6 +35,7 @@ Status: accepted | superseded by NNNN
 | 0014 | Sandboxed browser: policy enforcement points and what the browser never does |
 | 0015 | Updates: pointer-file install layout and the trust model for signed releases |
 | 0016 | How MCP tools map to ToolSpecs and action classes |
+| 0017 | Notifications: channel fallback order and what counts as urgent |
 | 0024 | State service shape: direct Postgres for runtimes, a thin service for devices, realtime, remote commands and the mirror |
 | 0025 | UI conventions over the daemon API: config source, SSE auth, chat stream frames, open shapes |
 | 0026 | Daemon lifecycle: one `fr daemon` per install, shells attach to it |
@@ -43,5 +44,8 @@ Status: accepted | superseded by NNNN
 | 0029 | Daemon wiring of the phase 6 and 7 modules: extensions, updates, model watch, estimates, mirror, sandbox |
 | 0030 | Command registry: risk resolution, confirmations, change log and undo |
 | 0031 | Desktop shell: its own `/events` subscription, tray behaviour, restart handling, deep links |
+| 0032 | Android app: one bundle under `/m`, Keystore-wrapped device key, remote plan envelope, offline scope, push stand-in |
 | 0033 | Cloud runner: the vault unlock protocol and the PC-wins precedence rule |
 | 0034 | Approvals web: session from a one-time link, per-tab device key, re-entered code for high-risk answers, chat as a remote command |
+| 0035 | Cloudflare deploys: plan before deploy, staging first, production above autonomy level 3 only with a change card |
+| 0036 | Core loop integration: critic, memory and commands inside the session runner and the conversation agent |

@@ -8,22 +8,32 @@ notifications, restart, deep links).
 
 ## Purpose
 
-Phase-1 screens of spec module K against the local daemon API (ADR 0011, ADR 0025): Home,
-Project page with tabs, Live session view, Inbox, Settings, Memory and Extensions placeholders,
-plus the shell with the active project, kill switch, inbox badge, command palette, keyboard
-shortcuts and dark mode. Quick chat per project with streaming replies, read-back
-confirmations and "make this a task" (module J, partial). The UI never touches the database:
-everything goes through the daemon client, every response is validated with the zod schemas
-from `packages/runtime/src/daemon/api-types.ts`, and money is shown in CHF only.
+The screens of spec module K against the local daemon API (ADR 0011, ADR 0025, ADR 0032):
+Home, the Project page with its eight tabs (Summary with the next-session queue, the peers
+feed and the decision log; Plan with the milestone timeline and the dependency graph; Tasks;
+Docs; Reviews with the grade trend; Costs with savings and cost per accepted task; Data with
+registration and imports; Chat), the Live session view, Inbox, Memory (one view per agent,
+the critic, shared lessons; search, edit, delete, pin; consolidation), Extensions (every
+connector, MCP server, skill, specialist, capability and model provider with status,
+permissions, cost, version, toggle, remove, add from the catalog or a URL), Settings (every
+setting with its scope; changes run through the command registry), the change log with undo,
+the Performance view and the Updates screen; plus the shell with the active project, kill
+switch, inbox badge, restart banner, command palette, keyboard shortcuts and dark mode. The UI
+never touches the database: everything goes through the daemon client, every response is
+validated with the zod schemas from `packages/runtime/src/daemon/api-types.ts` (or the
+mirrors in `src/api/contracts.ts`), and money is shown in CHF only.
 
-Requirements covered (phase-1 clauses; see `docs/requirements.md`): K.1 (home cards), K.2
-(project tabs: Summary, Plan without timeline/graph, Tasks/log, Costs, Chat; Docs, Reviews and
-Data as placeholders naming their phase), K.3 (live session view), K.4 (inbox, blocking first),
-K.7 (settings with scope on every row, read-only), K.8 partial (command palette, shortcuts,
-dark mode, active project in the header; notifications, tray and Android come later), J.1
-partial (quick chat, streaming, make-this-a-task; voice comes with module O), J.3 partial
-(requests with options and blocking flag), D.18 (replies stream; progress states are never a
-silent spinner), D.19 partial (time to first token shown against the 1 s target in chat).
+Requirements covered (see `docs/requirements.md`): K.1, K.2, K.3, K.4, K.5, K.6, K.7, K.8
+(palette, shortcuts, dark mode, active project; notifications and the tray are the desktop
+shell's), B.1 and B.7 (plan and task log), D.7 and D.19 (Performance view per mode against
+target), D.6 and M.5 (model watch and model updates on the Updates screen), F.6 (peers feed),
+G.1, G.2, G.4 and G.5 (memory views, consolidation, the doc set with drift), H.3 and H.5
+(reviews, findings, patterns), I.3, I.6 and I.7 (estimate accuracy, allocation with cost per
+accepted task, savings apart), J.1 (quick chat), J.2 (next-session queue), J.3 and J.4 (inbox,
+decisions), L.1 (data by path or URI, imports), L.5 (connectors reviewed on install), M.3 and
+M.4 (update available, changelog, "Update and restart", rollback), Q.1, Q.4 to Q.8, Q.10, Q.11
+and Q.12 (the settings screen runs the same commands as chat and voice: change card,
+confirmation by risk, the sentence, the change log with undo).
 
 ## How it works
 
@@ -34,25 +44,34 @@ apps/ui/
   index.html, vite.config.ts, vitest.config.ts, playwright.config.ts, biome.json (nested:
   enables Biome's Tailwind CSS parser for this app only)
   src/
-    main.tsx, App.tsx (client + store from the globals, BrowserRouter), routes.tsx (AppRoutes)
+    main.tsx, App.tsx (client + store from the globals, BrowserRouter; the Android shell and
+                       the /m path mount src/mobile instead), routes.tsx (AppRoutes)
     styles.css           Tailwind 4; dark variant bound to <html data-theme="dark">
     api/config.ts        DaemonConfig resolution (shell injection > Vite env > default)
-    api/client.ts        createClient(): typed fetch client over DAEMON_ROUTES (phase-1 routes,
-                         decisions, peers; the rest is listed under Known issues)
+    api/client.ts        createClient(): one typed method per DAEMON_ROUTES entry, plus the
+                         proposed routes of contracts.ts; ApiError, isRouteMissing, describeError
+    api/contracts.ts     mirrors of runtime schemas the browser cannot import (extensions,
+                         updates, model watch, estimates), the change card, and PROPOSED_ROUTES
+                         with their view schemas (queue, milestones, data, docs, performance)
     api/sse.ts           EventSource subscriptions with polling fallback; SseParser for fetch streams
     api/chat-stream.ts   streamChat(): POST /chat/stream tokens -> final reply
     store/store.ts       reducer + subscribe/getSnapshot (projects, active project, inbox count,
-                         connection, kill state, theme); persistence of two keys per install
+                         connection, kill state, theme, restart announcement, extensions version)
     store/context.tsx    AppProvider (bootstrap: /health, /me, /agents, /projects, /inbox, then
                          the /events stream), useClient, useUiState, useIdentity
     store/theme.ts       prefers-color-scheme + stored override -> data-theme
-    lib/                 money (CHF formatting), time, storage, use-async, task-transitions
-    components/          ui.tsx (Button, Badge, SpendBar, Money, Loading, ErrorBanner,
-                         Placeholder, Field), Dialog.tsx (native <dialog>)
+    lib/                 money (CHF formatting), time, format (bytes, ms, shares), storage,
+                         use-async (data, error, routeMissing, errorStatus), task-transitions
+    components/          ui.tsx (Button, Badge, SpendBar, Money, Loading, ErrorBanner, Field),
+                         Dialog.tsx (native <dialog>), RouteMissing.tsx, charts.tsx (TrendLine,
+                         TargetBar), ChangeCardDialog.tsx (ChangeCard, CommandResult)
     shell/               Shell.tsx (header, nav, switcher, kill switch, banners), CommandPalette,
                          commands.ts, shortcuts.ts (sequence matcher), ShortcutsHelp, ShellContext
-    pages/               HomePage, NewProjectDialog, ProjectPage (+ project/*Tab, NewTaskDialog,
-                         StartSessionDialog), SessionPage, InboxPage, SettingsPage, PlaceholderPages
+    pages/               HomePage, NewProjectDialog, ProjectPage (+ project/*Tab, *Section,
+                         NewTaskDialog, StartSessionDialog), SessionPage, InboxPage, MemoryPage,
+                         ExtensionsPage, ChangesPage, PerformancePage, UpdatesPage, SettingsPage,
+                         PlaceholderPages (NotFound only)
+    mobile/              the phone screens (module R; its own doc section, not covered here)
   test/                  Vitest + Testing Library (jsdom); fixtures.ts, fake-daemon.ts, helpers.tsx
   e2e/                   Playwright specs against the fake daemon
 ```
@@ -62,39 +81,63 @@ apps/ui/
 | Route | Page | Data |
 | --- | --- | --- |
 | `/` | Home: project cards (stage, next milestone, health, spend vs budget, waiting-on-you, latest critic grade), New project dialog | store (`GET /projects`), `POST /projects` |
-| `/projects/:id/:tab?` | Project page; tabs `summary`, `plan`, `tasks`, `docs`, `reviews`, `costs`, `data`, `chat` (default `summary`); opening a project makes it active | `GET /projects/:id`, `/summary`, `/tasks`, `/runs`, `GET /costs?projectId=`, `POST /projects/:id/tasks`, `POST /tasks/:id/transition`, `POST /sessions`, `POST /chat/stream` |
+| `/projects/:id/:tab?` | Project page; tabs `summary`, `plan`, `tasks`, `docs`, `reviews`, `costs`, `data`, `chat` (default `summary`); opening a project makes it active | `GET /projects/:id` and the tab routes below |
+| `summary` tab | the cached one-screen summary with Read aloud; **Next session** (queue items by priority with type badges, add note/task/correction/idea with a priority, dismiss; consumed items collapsed); **Peers** (per agent: online, active claims with expiry, open PRs, last handoff done/in flight/blocked/next, files in flight); **Decisions** (question, chosen option, the others, rationale, who, supersedes) | `GET /projects/:id/summary`, `GET /projects/:id/queue`, `POST /projects/:id/queue`, `POST /queue/:id/dismiss` (proposed), `GET /projects/:id/peers`, `GET /projects/:id/decisions` |
+| `plan` tab | milestone **timeline** (SVG: dated milestones on a time axis with today's tick, undated ones after), milestones with status, success criteria and their tasks, the task **dependency graph** (layered SVG, a task after everything it depends on); without a milestones route the list is derived from the tasks and the card behind a route-missing notice | `GET /projects/:id/tasks`, `GET /projects/:id/milestones` (proposed) |
+| `tasks` tab | task log table with filters, transitions with a reason, New task dialog | `GET /projects/:id/tasks`, `/runs`, `POST /projects/:id/tasks`, `POST /tasks/:id/transition` |
+| `docs` tab | the standard doc set with present/missing/drift state, size and date; a document opens in a reader | `GET /projects/:id/docs`, `GET /projects/:id/docs/:path` (proposed) |
+| `reviews` tab | counts (reviews, open findings, average grade, verdicts), the grade trend chart with the accept line, every review newest first (grade, verdict, tier, confidence, model, task, session link, summary, evidence, findings with severity and status), verdict filter | `GET /projects/:id/reviews` |
+| `costs` tab | totals, by model / specialist / task with accepted share and cost per accepted task, savings apart | `GET /costs?projectId=` |
+| `data` tab | registered datasets (name, kind, size, locator, sample, who), register by path or URI, remove (two clicks), import from zip/folder/repo with the result | `GET /projects/:id/data`, `POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/import` (proposed) |
+| `chat` tab | quick chat with streaming, read-back confirmation, make-this-a-task | `POST /chat/stream` |
 | `/sessions/:id` | Live session view: header (status, agent, current task + specialist, steps/stepCap, spent/cap bar, Stop), event stream with level chips, raw JSON toggle, follow/auto-scroll | `GET /sessions/:id`, `GET /sessions/:id/events` (JSON backlog, then SSE), `POST /sessions/:id/stop` |
-| `/inbox` | Requests (blocking first, newest first) with option buttons and a free-text answer, messages with read marking; reloads itself when the install stream reports a blocking count the page has not seen (an answer given on another device) | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /messages/:id/read` |
-| `/settings` | Theme override, daemon connection status (version, profile, platform, uptime, state URL, vault, sessions, sandbox kind and engine, extensions enabled and pending), every setting grouped by scope with the scope badge on each row ("edit via chat" hint) | `GET /settings`, `GET /health` from the store |
-| `/memory`, `/extensions` | Placeholders naming phase 4 and phase 6 | none |
-
-Placeholders render `<Placeholder phase={n}>` so the phase is visible in the UI
-(`data-testid="placeholder" data-phase="n"`); the Plan tab's timeline/dependency-graph area says
-"coming with phase 5" and derives milestones from the card's `nextMilestone` plus the tasks'
-`milestoneId`s until a milestones route exists.
+| `/inbox` | Requests (blocking first, newest first) with option buttons and a free-text answer, messages with read marking; reloads when the install stream reports a blocking count the page has not seen | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /messages/:id/read` |
+| `/memory` | one view per principal agent (the human's own first, then the peers' as listed-but-not-readable), the critic, shared lessons, each with active and pinned counts; search (debounced); per lesson: pin, tags, confidence, uses, last used, source, project, file; edit text and tags, delete (two clicks); consolidation proposals with merged/contradictions/retired and "Run now" | `GET /memory/scopes`, `GET /memory?scope=&agentId=&q=`, `PUT /memory/lessons/:id`, `POST /memory/lessons/:id/pin`, `DELETE /memory/lessons/:id`, `GET /memory/consolidation`, `POST /memory/consolidation/run` |
+| `/extensions` | grouped by kind (connectors and MCP servers, skills, specialists, capabilities, model providers): name, version, status, connected, cost, description, permissions summary with the full list behind details; On/Off switch; Remove (two clicks); pending rows show the review (stage, risk, summary, tools, requested permissions) with Approve/Deny; Add dialog: catalog with search and kind filter, or an MCP server URL; reloads on every `extension.changed` frame | `GET /extensions`, `GET /extensions/catalog`, `POST /extensions` (201 or 202), `POST /extensions/:id/toggle`, `/approve`, `/deny`, `DELETE /extensions/:id` |
+| `/changes` | the change log newest first: source, scope, project, undo state, who asked and when, the sentence, the words used, revert time, commands / before / after behind details, Undo while undoable; project filter and "undoable only" | `GET /changes?projectId=&undoable=`, `POST /changes/:id/undo` |
+| `/performance` | per mode: target (first token / first audio / total / by task), samples, first-token p50/p95, total p50/p95, within-target share, a bar of the p95 against the target (met/missed in words); recent runs; estimate accuracy (overall and per specialist and kind); project filter | `GET /performance?projectId=` (proposed), `GET /costs/estimates` |
+| `/updates` | app: running and installed version, channel, state, the available release with changelog, size and "Update and restart", previous version with "Roll back and restart", last rollback, rejected releases, last error; connector updates (installed vs available); model updates; model watch: latest report with recommendations to adopt/ignore/remind, "Run now", recent reports. Asks the feed first and falls back to the local state with a banner | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback`, `GET /model-watch/reports`, `/latest`, `POST /model-watch/run`, `POST /model-watch/reports/:id/answer` |
+| `/settings` | theme override, daemon connection status (with links to Updates and Extensions), every setting grouped by scope with the scope badge; rows that map to a command have Change: a dialog with the current value, the change card from the daemon, Yes/No (a tap; a high-risk card asks this paired device), the sentence with Undo, a link to Changes; other rows say read-only | `GET /settings`, `POST /commands/execute`, `POST /commands/:id/confirm`, `POST /changes/:id/undo` |
 
 ### API client
 
-`createClient(config, fetchImpl?)` returns a `DaemonClient` with one method per phase-1 route
-(`health, me, agents, projects, createProject, project, projectSummary, tasks, createTask,
-transitionTask, runs, decisions, peers, sessions, startSession, session, sessionEvents,
-stopSession, kill, resume, inbox, answerRequest, markRead, chat, costs, settings`) plus `url()`
-and `raw()` for the stream helpers. `decisions` (`DecisionView[]`) and `peers` (`PeerFeedView`)
-have no page yet; they are there so the project page can show them in phase 2 without touching
-the client. Routes the table gained after phase 1 (estimates, project settings, mirror,
-extensions, updates, model watch) have no method yet; see Known issues. Paths come from `routePath(name, params)` over `DAEMON_ROUTES`, URL-encoded; the
-client sends `Authorization: Bearer <token>` and validates every JSON body with the contract's
-zod schema. Failures are `ApiError { code, status, details }`: the daemon's `ErrorBody.code`
-when it sent one, else `ui.network`, `ui.http_error`, `ui.invalid_response`, `ui.aborted`.
-`describeError()` turns one into a banner line without leaking the token. Types the contract
-exports only as schemas (`HumanView`, `AgentView`, `SettingView`, request bodies) are derived in
-`client.ts` with `z.infer`.
+`createClient(config, fetchImpl?)` returns a `DaemonClient` with one method per entry of
+`DAEMON_ROUTES` (phase-1 routes, decisions, peers, project settings and the mirror, estimates,
+extensions, updates, model watch, reviews, memory and consolidation, commands and the change
+log) plus the proposed routes (`queue`, `enqueue`, `dismissQueueItem`, `milestones`,
+`dataAssets`, `registerDataAsset`, `removeDataAsset`, `importProject`, `docs`, `doc`,
+`performance`) and `url()` / `raw()` for the stream helpers. Paths come from `routePath(name,
+params)` over `DAEMON_ROUTES` or `proposedPath(name, params)` over `PROPOSED_ROUTES` (which
+follows the daemon's entry as soon as one exists), URL-encoded; the client sends
+`Authorization: Bearer <token>` and validates every JSON body with the contract's zod schema.
+Failures are `ApiError { code, status, details }`: the daemon's `ErrorBody.code` when it sent
+one, else `ui.network`, `ui.http_error`, `ui.invalid_response`, `ui.aborted`.
+`isRouteMissing(error)` is true for a 404/405/501 that is not a typed `not_found` about an
+entity; `useAsync` exposes it as `routeMissing` and the pages render `<RouteMissing>` (ADR
+0032). `describeError()` turns an error into a banner line without leaking the token (a typed
+403 keeps its message, an untyped one is the token). Types the contract exports only as
+schemas are derived in `client.ts` with `z.infer`.
 
 Config (`api/config.ts`): `window.__FORERUNNER__` from the shell, else
 `import.meta.env.VITE_DAEMON_URL/_TOKEN`, else `http://127.0.0.1:8787` with no token; the Shell
 shows a "Not connected" banner until `/health` answers. The import is
 `@forerunner/runtime/daemon/api-types` (browser-safe); never import the runtime package index
-from the UI.
+from the UI. `contracts.ts` mirrors the schemas of `extensions/types.ts`, `update/screen.ts`,
+`models/watch.ts` and `estimates/view.ts` field for field; `test/contracts.test.ts` parses the
+fixtures with both sides and compares key sets so drift fails before a screen does.
+
+### Commands from the UI
+
+The settings screen is a client of the command registry (spec Q.1, ADR 0032):
+`commandForSetting(row)` maps `project.autonomy` to `autonomy.set`, `project.budget` and
+`human.monthly_cap` to `budget.set`, and the keys of `SETTING_SPECS` to `settings.set`; the
+dialog posts `executeCommands({ commands: [one], wordsUsed: "Settings: <key> to <value>" })`,
+shows the daemon's card through `CommandResult`, answers `needs_yes` with `{ answer: "tap" }`
+and `needs_device` with `{ answer: "device", deviceId: <installId> }` (the daemon checks the
+device), and shows the sentence with Undo (`POST /changes/:id/undo`). `ChangeCard` renders the
+spec Q.4 card (what, old → new, scope, duration, impact, undo hint, the parts of a plan) from
+the daemon's `card` through `parseChangeCard` (lenient: unknown fields kept, missing ones
+defaulted).
 
 ### Realtime and streaming
 
@@ -102,60 +145,83 @@ from the UI.
 sessionId, handlers, { afterSeq })` open an `EventSource` on `/events` or
 `/sessions/:id/events` with the token as `?token=` (EventSource cannot send headers, ADR
 0025). Events are parsed with `parseDaemonEvent` (`session.event`, `inbox.changed`,
-`session.changed`, `project.changed`, `heartbeat`; unknown or malformed frames are dropped).
-When `EventSource` is missing (jsdom) or closes, the helper polls every 5 s and retries SSE
-every 30 s; `onMode` reports `connecting | sse | polling | closed` and the session header shows
-"live" or "polling every 5 s". Chat uses `streamChat()` over `POST /chat/stream`: `token`
-frames build the reply as they arrive, the `reply` frame finishes it, `error` frames become
-`ApiError`; a plain JSON `ChatReplyView` is accepted as well.
+`session.changed`, `project.changed`, `extension.changed`, `restart.requested`, `heartbeat`;
+unknown or malformed frames are dropped). `extension.changed` bumps `extensionsVersion` in the
+store so the Extensions panel reloads; `restart.requested` sets `restart` (the shell shows a
+banner on every page) until a heartbeat arrives from a daemon on the target version. When
+`EventSource` is missing (jsdom) or closes, the helper polls every 5 s and retries SSE every
+30 s; `onMode` reports `connecting | sse | polling | closed`. Chat uses `streamChat()` over
+`POST /chat/stream`: `token` frames build the reply as they arrive, the `reply` frame finishes
+it, `error` frames become `ApiError`; a plain JSON `ChatReplyView` is accepted as well.
 
 ### State
 
 `createStore(config, storage)` holds `UiState` (`connection`, `me`, `agents`, `projects`,
-`activeProjectId`, `blockingCount`, `killActive`, `theme`); React reads it with
-`useUiState(selector)` over `useSyncExternalStore` (selectors must return stable values: the
-state itself, a primitive, or a memoised object). `activeProject` and `theme` persist in
-`localStorage` under `forerunner.ui.<installId>.<name>` (`lib/storage.ts`, wrapped in try/catch;
-`memoryStorage()` in tests). Page data (tasks, events, inbox, costs) stays in the page through
-`useAsync(loader, deps)` which aborts stale loads.
+`activeProjectId`, `blockingCount`, `killActive`, `theme`, `restart`, `extensionsVersion`);
+React reads it with `useUiState(selector)` over `useSyncExternalStore` (selectors must return
+stable values). `activeProject` and `theme` persist in `localStorage` under
+`forerunner.ui.<installId>.<name>` (`lib/storage.ts`, wrapped in try/catch; `memoryStorage()`
+in tests). Page data stays in the page through `useAsync(loader, deps)` (`data`, `error`,
+`routeMissing`, `errorStatus`, `loading`, `reload`, `setData`), which aborts stale loads.
 
 ### Money
 
 `lib/money.ts` formats `chfMicro` as "CHF 12.34" (half-up, ties away from zero, Swiss `'`
 grouping) and never prints USD except in `moneyTooltip`. `SpendBar` shows spent vs cap with the
 percentage and colours at 80 % and 100 %. CHF inputs convert with `chfMicroToUsdMicro(chf,
-referenceMoney)` at the rate implied by a Money pair (default 0.80, ADR 0008).
+referenceMoney)` at the rate implied by a Money pair (default 0.80, ADR 0008). A setting whose
+value is a Money pair renders as CHF.
+
+### Charts
+
+`components/charts.tsx` draws the two charts in SVG without a library: `TrendLine` (one series,
+2 px line, 8 px markers with a hover title, a dashed reference line, recessive grid, text in
+the text tokens, "No data yet" when empty) for the grade trend, and `TargetBar` (one thin bar
+for the measured p95, a tick for the target, emerald/red only for met/missed and always with
+the word beside it; blue when there is no target) for the Performance view. Both follow
+`data-theme` for dark mode; the numbers always stand in a table next to the chart.
 
 ### Shell, palette, shortcuts, theme
 
 The header always shows the active project (button opens a switcher listing every project and
-"+ New project"), the nav (Home, Inbox with the blocking badge, Memory, Extensions, Settings;
-collapses behind a menu button under 768 px), the connection badge, the palette button and the
-kill switch (`POST /kill {scope:"all"}`; the button then reads "Resume" and posts
-`/kill/resume`). `Ctrl/Cmd+K` opens the palette (`shell/commands.ts` builds navigation,
-"Switch project: …", New project, Stop all/Resume, theme and shortcuts commands;
-`filterCommands` matches every word). Shortcuts (`shell/shortcuts.ts`): `g h` Home, `g i` Inbox,
-`g s` Settings, `g p` active project, `g m` Memory, `g e` Extensions, `?` help, `Escape` closes;
-sequences are ignored inside text fields, chords with a modifier are not. Theme: `system |
-light | dark`, resolved to `<html data-theme>` and `color-scheme`; `styles.css` binds Tailwind's
-`dark:` variant to that attribute with `@custom-variant`.
+"+ New project"), the nav (Home, Inbox with the blocking badge, Memory, Extensions, Changes,
+Performance, Updates, Settings; collapses behind a menu button under 768 px), the connection
+badge, the palette button and the kill switch (`POST /kill {scope:"all"}`; the button then
+reads "Resume" and posts `/kill/resume`), plus the kill banner and the restart banner.
+`Ctrl/Cmd+K` opens the palette (`shell/commands.ts` builds navigation, "Switch project: …", New
+project, Stop all/Resume, theme and shortcuts commands; `filterCommands` matches every word).
+Shortcuts (`shell/shortcuts.ts`): `g h` Home, `g i` Inbox, `g s` Settings, `g p` active
+project, `g m` Memory, `g e` Extensions, `g c` Changes, `g t` Performance, `g u` Updates, `?`
+help, `Escape` closes; sequences are ignored inside text fields, chords with a modifier are
+not. Theme: `system | light | dark`, resolved to `<html data-theme>` and `color-scheme`;
+`styles.css` binds Tailwind's `dark:` variant to that attribute with `@custom-variant`.
 
 ### Fake daemon
 
 `test/fake-daemon.ts` exports `createFakeDaemon(options)` (a Hono app over `test/fixtures.ts`
-with mutable state: projects, tasks, sessions, events, requests, messages, kill flag, pending chat
-confirmation; decisions and the peer feed are served read-only from `DECISIONS` and `PEERS`) and
+with mutable state: projects, tasks, sessions, events, requests, messages, kill flag, pending
+chat confirmation, extensions, the daemon version, model watch reports, reviews, lessons,
+consolidation proposals, the change log, pending commands, the queue, data assets; decisions,
+the peer feed, milestones, docs and performance are served read-only) and
 `startFakeDaemon({ port })` (`@hono/node-server` on 127.0.0.1). Its `/health` answer is the
-`HEALTH` fixture, which must carry every field of `HealthView`, `sandbox` (the process stand-in,
-no engine) and `extensions` included: when the contract gains a field, this fixture is the first
-thing that fails (`pnpm typecheck`), before every page test does. It requires
-the bearer token on every route (and accepts `?token=` on the two SSE routes), answers CORS,
-records every POST at `GET /__test/calls`, resets at `POST /__test/reset`, and can push an event
-with `POST /__test/emit`. `POST /sessions` starts a scripted run (six events including a warning
-and an escalation, `eventDelayMs` apart, then `completed`); `/chat/stream` streams word tokens
-and scripts a read-back confirmation when the text contains "start a session", answered by
-"yes"/"no". Run directly (`pnpm exec tsx test/fake-daemon.ts`) it reads `FAKE_DAEMON_PORT`,
-`FAKE_DAEMON_TOKEN` and `FAKE_DAEMON_EVENT_DELAY_MS`.
+`HEALTH` fixture with the extension counts derived from the extension state (3 enabled, 1
+pending with the fixtures). It requires the bearer token on every route (and accepts `?token=`
+on the two SSE routes), answers CORS, records every POST/PUT/DELETE at `GET /__test/calls`,
+resets at `POST /__test/reset`, can push an event with `POST /__test/emit`, can hide routes
+(`missingRoutes` option or `POST /__test/missing`: a path and its children answer 404 "no
+route" like the daemon's catch-all) and can fail exact routes with a status and body
+(`failing` option or `POST /__test/fail`). `POST /sessions` starts a scripted run (six events
+including a warning and an escalation, `eventDelayMs` apart, then `completed`);
+`/chat/stream` streams word tokens and scripts a read-back confirmation when the text contains
+"start a session", answered by "yes"/"no". The extension routes file a `capability_grant`
+request in the inbox for pending installs (answering it approves or denies), widen permissions
+into `pending_approval`, and emit `extension.changed`; `POST /updates/apply` emits
+`restart.requested` and bumps the version `/health` reports; the command routes mirror the
+daemon (one card and one change log row per request, low risk acts, medium needs a yes or a
+tap, high needs `{ answer: "device" }`, `confirm: "tap"` runs a medium change at once, the
+`SOURCE_OF` mapping `text → chat`, `voice → voice`, `phone → chat`, undo rows). Run directly
+(`pnpm exec tsx test/fake-daemon.ts`) it reads `FAKE_DAEMON_PORT`, `FAKE_DAEMON_TOKEN` and
+`FAKE_DAEMON_EVENT_DELAY_MS`.
 
 ### What the Tauri shells inject
 
@@ -163,8 +229,9 @@ Before the bundle runs, a shell may set `window.__FORERUNNER__ = { daemonUrl, da
 installId, platform, shellVersion }` (type `ShellInjection` in `api/config.ts`). The desktop
 shell reads `daemon.json` from the runtime directory (ADR 0011) and injects the URL and token
 through an origin-guarded initialization script (see "Desktop shell" below); `installId`
-namespaces the two persisted conveniences; `platform` and `shellVersion` show in Settings. The Android shell does not reach the daemon directly (spec R): it will inject the
-state-service relay address instead once phase 5 lands; the same `DaemonConfig` shape applies.
+namespaces the two persisted conveniences and is the device id the settings screen offers for
+a high-risk confirmation; `platform` and `shellVersion` show in Settings. The Android shell
+does not reach the daemon directly (spec R): it injects `stateUrl` and mounts `src/mobile`.
 The desktop CSP (`apps/desktop/src-tauri/tauri.conf.json`) already allows
 `http://127.0.0.1:*`.
 
@@ -174,19 +241,25 @@ The desktop CSP (`apps/desktop/src-tauri/tauri.conf.json`) already allows
   in `shell/Shell.tsx` (`NAV`) if it belongs in the header, a palette command in
   `shell/commands.ts` and, if it gets a shortcut, an entry in `shell/shortcuts.ts` (`SHORTCUTS`)
   and a case in the Shell's key handler. Load data with `useAsync` and the client; render
-  `<Loading what=…>` while waiting and `<ErrorBanner>` on failure. Add a unit test in `test/`
-  (render with `renderApp(route)` from `test/helpers.tsx`) and, for a user flow, a spec in
-  `e2e/`.
+  `<Loading what=…>` while waiting, `<ErrorBanner>` on failure and `<RouteMissing route=…>`
+  when `routeMissing` is set. Add a unit test in `test/` (render with `renderApp(route)` from
+  `test/helpers.tsx`) and, for a user flow, a spec in `e2e/`.
 - **Add a route to the client**: the contract changes first (`api-types.ts`, ADR); then add the
   method to `DaemonClient` in `api/client.ts` using `routePath` and the schema, the fixture in
   `test/fixtures.ts`, the handler in `test/fake-daemon.ts`, a round-trip assertion plus a
-  malformed-body rejection in `test/client.test.ts`, and the method name in the list above.
+  malformed-body rejection in `test/client.test.ts`. A route the daemon does not serve yet goes
+  into `PROPOSED_ROUTES` with its schema in `contracts.ts` and `proposedPath`; when the daemon
+  gains it, `test/contracts.test.ts` fails until the proposal is removed and the page uses the
+  daemon's shape.
+- **Mirror a runtime schema** the browser cannot import: copy it into `contracts.ts`, add the
+  fixture to the two-sided parse in `test/contracts.test.ts`.
+- **A new command from a screen**: build the body for `executeCommands`, show the result with
+  `CommandResult` and confirm through `confirmCommand`; never bypass the card.
+- **A new setting the UI can change**: extend `commandForSetting` in `SettingsPage.tsx` (and
+  `SETTING_KEYS` when `SETTING_SPECS` in `@forerunner/commands` gains a key) and the fake's
+  `SETTING_RISK`.
 - **Links that look like buttons**: use `buttonClassName(variant)` from `components/ui.tsx` on
   the `<Link>`; never put a `<Button>` inside a link (invalid HTML, double tab stop).
-- **Fill a placeholder tab** (Docs phase 4, Reviews phase 3, Data phase 5, Plan graph phase 5,
-  Memory phase 4, Extensions phase 6): replace the `<PlaceholderTab>` / `<Placeholder>` in
-  `ProjectPage.tsx` or `PlaceholderPages.tsx`; the tests that assert `data-phase` must change
-  with it.
 - **Change money display**: `lib/money.ts` and its test; keep USD out of any visible string.
 - **Change the dark-mode binding**: `styles.css` (`@custom-variant dark`) and `store/theme.ts`.
 - **Task transition buttons**: `lib/task-transitions.ts` mirrors `packages/state/src/workflow.ts`;
@@ -203,59 +276,71 @@ cd apps/ui && pnpm test:ui        # Playwright, headless Chromium, fake daemon +
 ```
 
 Unit tests (`test/*.test.ts[x]`): `client` (config resolution, route paths, token header,
-contract validation rejects malformed bodies, `/health` with its sandbox and extensions sections
-and rejection of a health body without them, decisions and peers round trips with malformed
-bodies rejected, error mapping, mutation round trips), `money`,
-`sse` (parser, event validation, EventSource path, polling fallback without repeats, chat
-stream incl. error frames), `store`, `app` (shell with no daemon), `home` (cards from fixtures,
-header, badge, Open is a link and not a button nested in one, New project dialog, not-connected
-state), `project` (summary + Read aloud
-disabled without speech, plan milestones and phase-5 TODO, costs, placeholders, Start session
-dialog with CHF conversion then the live view), `tasks` (transition mirror vs. state, filters,
-links, legal transition buttons posting version + reason, New task dialog), `session`
-(escalations highlighted, filters, raw toggle, stop, polling fallback visible), `inbox`
-(blocking first, option answer, free text, reload when the store's blocking count changes behind
-the page's back, mark read), `chat` (streaming, pending confirmation
-Yes/No sends "yes"/"no", make-this-a-task draft), `settings` (scope on every row, daemon
-status incl. sandbox and extensions, placeholders name their phase), `shell` (shortcut matcher, palette filter and project
-switch, g-sequences, header switcher, kill switch, persistence).
+contract validation rejects malformed bodies, `/health` with its sandbox and extensions
+sections, decisions and peers, phase-1 mutations, a missing route vs a typed not_found, round
+trips for reviews / memory / commands / the change log, the proposed routes, extensions /
+updates / model watch), `contracts` (two-sided parse of the extension, updates and estimate
+fixtures with key-set comparison, proposed routes vs `DAEMON_ROUTES`, `parseChangeCard`),
+`money`, `sse` (parser, every event name incl. `extension.changed` and `restart.requested`,
+EventSource path, polling fallback, chat stream), `store` (persistence, restart, extensions
+version), `app`, `home`, `project` (summary, derived milestones fallback, costs, every tab
+filled), `project-tabs` (graph layout incl. a cut cycle, timeline positions, timeline and graph
+render, derived milestones when the route is missing, docs with drift and a reader, data
+register / remove / import, queue add / dismiss, peers, decisions, solo project and missing
+queue route, cost per accepted), `reviews` (tones, trend, newest first, findings, verdict
+filter, missing route), `tasks`, `session`, `inbox`, `chat`, `memory` (view order, pinned
+first, search, critic and shared views, a peer's agent not readable, edit / pin / delete,
+consolidation, missing route), `extensions` (permission summary, every kind with status and
+review, toggle and remove, add from the catalog then approve, add from a URL then deny, reload
+on `extension.changed`), `updates` (states, available release with changelog, apply with the
+restart banner, rollback, model watch adopt and run, feed failure fallback), `performance`
+(formatting, target comparison, every mode with the bar, estimates, missing route),
+`changes` (rows with words / commands / before / after, undo and the undo row, filters,
+missing route), `settings` (scope on every row, command mapping, autonomy by one step: card →
+yes → sentence → undo → the change log row, high risk needs this device, cancel and refusal),
+`shell` (matcher, palette filter, g-sequences incl. `g c` / `g t` / `g u`, switcher, kill
+switch, persistence).
 
-Playwright (`e2e/*.spec.ts`, one worker, 2-minute global budget, ~25 s): home shows two
-projects and connects; kill switch; nav collapse under 768 px; open project → tasks tab lists
-tasks and filters; task transition with reason; plan/costs/reviews placeholders; Start session
-dialog posts and the live view fills over real SSE ("live" badge, escalation row, steps, spend,
-completed); Stop; inbox answer flow (blocking first, option posted with version, free text, mark
-read); chat confirmation flow and make-this-a-task; command palette switches project and the
-choice survives a reload; keyboard shortcuts and the theme override. `playwright.config.ts`
-picks two free ports and a random token once and pins them in `FORERUNNER_UI_FAKE_PORT`,
-`FORERUNNER_UI_PORT`, `FORERUNNER_UI_FAKE_TOKEN` so worker processes agree; the CI desktop
-workflow runs `pnpm --filter @forerunner/ui test:ui` after `playwright install chromium`
-(see `.github/workflows/desktop.yml`; the Linux runner needs the Playwright system packages).
+Playwright (`e2e/*.spec.ts`, one worker, 6-minute global budget): home shows two projects and
+connects; kill switch; nav collapse under 768 px; project tabs, task transition, plan timeline
+and graph, costs, reviews; Start session dialog and the live view over real SSE; Stop; inbox
+answer flow; chat confirmation and make-this-a-task; palette and shortcuts; extensions add →
+approve → toggle and deny; updates apply with the restart banner arriving over SSE and the
+new version after reload, model watch adopt; reviews list and filter; memory edit → pin →
+delete and the not-readable peer view; summary queue / peers / decisions, data register and
+import, docs reader; performance targets; a settings change → card → yes → change log → undo.
+`playwright.config.ts` picks free ports and random tokens once and pins them in
+`FORERUNNER_UI_FAKE_PORT`, `FORERUNNER_UI_PORT`, `FORERUNNER_UI_FAKE_TOKEN` (and the fake
+state service's for the phone specs) so worker processes agree; the CI desktop workflow runs
+`pnpm --filter @forerunner/ui test:ui` after `playwright install chromium`.
 
 ## Known issues
 
-- The daemon server exists (`packages/runtime/src/daemon/server.ts`, started by `fr daemon`,
-  ADR 0026) and implements the ADR 0025 conventions (CORS, `?token=` on the two SSE routes,
-  `token`/`reply`/`error` chat frames, `killActive`), but the UI has so far only been run against
-  the fake daemon. The first run against the real one should confirm the open shapes of ADR 0025
-  item 5 and the SSE frames end to end, and that run goes into `docs/status/gates.md`.
-- Routes in `DAEMON_ROUTES` without a client method or fake-daemon handler: `costEstimates`,
-  `updateProjectSettings`, `mirrorSync`, `extensions`, `extensionCatalog`, `extension`,
-  `addExtension`, `toggleExtension`, `approveExtension`, `denyExtension`, `extensionPermissions`,
-  `removeExtension`, `updates`, `updatesStatus`, `applyUpdate`, `rollbackUpdate`,
-  `modelWatchReports`, `modelWatchLatest`, `modelWatchReport`, `modelWatchRun`,
-  `modelWatchAnswer`, `modelWatchSync`. They arrive with the screens that need them (project
-  settings and mirror with phase 2, Extensions phase 6, updates and model watch phase 7),
-  each the way "Add a route to the client" describes. ADR 0025 item 9 ("serving every route")
-  reads as every route the client has.
-- The Inbox reloads on a changed blocking count only; a non-blocking request answered elsewhere
-  shows up on Refresh or with the next blocking change (the `inbox.changed` frame carries only
-  the count).
-- No milestones route: the Plan tab derives milestones from tasks and the card.
+- The UI has so far only been run against the fake daemon. The first run against the real
+  one should confirm the shapes end to end and goes into `docs/status/gates.md`.
+- Proposed routes the daemon does not serve yet (the pages show "route not available" until
+  it does): `GET/POST /projects/:id/queue`, `POST /queue/:id/dismiss`,
+  `GET /projects/:id/milestones` (the Plan tab derives milestones meanwhile),
+  `GET/POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/import`,
+  `GET /projects/:id/docs[/:path]`, `GET /performance`. Shapes are in `contracts.ts` and the
+  fixtures.
+- `POST /commands/execute` takes `source: text | voice | phone` only, so a change made from
+  the settings screen is logged with source `chat` (the daemon's `SOURCE_OF`) and the words
+  `Settings: <key> to <value>`; a `ui` source needs the daemon body and `SOURCE_OF` extended.
+- A high-risk confirmation from the desktop sends `installId` as the device id; the daemon
+  accepts it only once the desktop registers as a device (ADR 0030, item 3). Until then the
+  dialog shows the daemon's refusal as such.
+- The daemon's `GET /memory/scopes` lists the human's own principals only; the peers' agents
+  come from `GET /agents` and show the daemon's answer (403 or an empty list).
+- Permissions are shown, approved and denied; narrowing or widening them from the panel
+  (`PUT /extensions/:id/permissions`) has a client method but no control yet.
+- Connector updates are listed; applying one is remove-and-add in the Extensions panel.
+- The Inbox reloads on a changed blocking count only; a non-blocking request answered
+  elsewhere shows up on Refresh or with the next blocking change.
 - `Read aloud` uses the browser's Web Speech API; WebKitGTK (Linux Tauri) may expose no voices,
   in which case the button is disabled with a tooltip saying so.
-- The project page tab bar scrolls horizontally on narrow screens; a proper mobile layout for
-  the Tasks table (cards instead of a table) comes with the Android work in phase 5.
+- The project page tab bar scrolls horizontally on narrow screens; the phone layout is
+  `src/mobile`.
 - Desktop notifications and the tray menu (K.8) live in the desktop shell (next section); the
   UI itself raises no OS notification.
 - The nested `apps/ui/biome.json` exists only because the root config disables Biome's Tailwind
@@ -639,3 +724,236 @@ replaced by the code per ADR 0034), Q.8 partial (high risk never from a plain "y
   build` and mount the folder (relative asset paths).
 - Ed25519 in WebCrypto needs a current browser (Chrome 137+, Firefox 130+, Safari 17+); older
   ones get a plain message at sign-in.
+
+## Android app (`apps/mobile` and `apps/ui/src/mobile`)
+
+### Purpose
+
+The phone client of spec module R (ADR 0009, ADR 0024, ADR 0026, ADR 0032): the same React
+bundle as the desktop, mounted under `/m`, wrapped by a thin Tauri 2 Android shell. The phone
+never talks to a PC's daemon. It pairs with the shared state service, reads its projects and
+inbox, answers requests (high risk with the platform biometric prompt), relays quick chat and
+natural-language control to the PC as remote commands, and shows the change log with Undo.
+Heavy work stays on the PC or the cloud runner (R.8).
+
+Requirements covered: R.1 (Tauri 2 Android target sharing the UI; APK signed by
+`scripts/android-keystore.mjs`; Play track and update channel pending), R.2 (pairing by QR /
+`fr://` deep link / typed code; own key; forget here, revoke on the desktop), R.3 (state
+service client, live SSE with polling fallback, offline outbox flushed on reconnect), R.4
+(start / pause / stop / kill as remote commands with `target: "pc"`; the live session log
+screen), R.5 partial (quick chat as a remote command, natural-language control, notes to the
+next-session queue, answering requests; uploads, PR and critic review come later), R.6 partial
+(in-app notices for approvals, sessions, budget warnings and messages with quiet hours; FCM is
+a documented stand-in), R.7 (biometric assertion inside the signed string for high-risk
+answers, scoped 30-day tokens, no secret on the phone but its own wrapped key and token, lost
+phone revoked from the desktop), R.8 (the phone only controls, contributes and reviews). On
+the phone side also Q.2 to Q.4, Q.9 and Q.11 (understanding, active project in the header,
+one change card for a plan, change log with undo), K.4 and J.3 (inbox, blocking first), F.3
+(realtime), S.4 (no token or key in logs; tests assert it).
+
+### How it works
+
+```
+apps/ui/src/api/
+  state-signing.ts   canonical request string (= services/state-api/src/auth/crypto.ts), SHA-256 and
+                     Ed25519 via WebCrypto, DeviceSigner and BiometricPort ports, the simulated prompt
+  state-client.ts    typed client: pairing, /me, projects, inbox, requests, receipts, messages, queue,
+                     remote commands (RemotePlanEnvelope / RemoteChatEnvelope, verbForPlan), sessions,
+                     devices, /sync/outbox; every mutation signed, biometric flag only from an assertion
+  state-sse.ts       /events and /sessions/:id/events over fetch; live -> polling -> offline, resume
+apps/ui/src/mobile/
+  MobileApp.tsx      the /m route tree, header (active project, sync badge), bottom nav, the simulated
+                     biometric dialog (outside the shell only)
+  store.tsx          MobileController: bootstrap, pairing, refresh, change feed, outbox flush, answers,
+                     receipts, notes, planCard/sendPlan/undo, chat; MobileProvider, useMobileState
+  intent.ts          phrases -> module-Q commands (EN/DE, CHF/USD, tonight/tomorrow/until HH:MM), one
+                     question with options when unclear, refuses content envelopes
+  change-card.ts     ONE card per plan (risk, scope, duration, cost), inversePlan, renderCard
+  change-log.ts      per-install log (200 entries), remote status mapping, canUndo
+  outbox.ts          offline queue, batches to /sync/outbox, duplicates never applied twice
+  pairing.ts         fr://pair?u=&c=&h=, web link, qr JSON, bare code; buildPairingLink
+  push.ts            PushPort, PollingPush (the stand-in), quiet hours, noticeFor(feed event)
+  storage.ts         per-install localStorage keys, SecureStore (shell | browser | memory)
+  shell-bridge.ts    invoke wrappers: shell_info, device_key_*, secure_store_*, assert_biometric,
+                     push_status, barcode scan, deep links
+  screens/           Pairing, Home, Inbox, Chat, Remote, Changes, Settings, Session (live log)
+apps/mobile/
+  package.json       tauri CLI scripts; test:emulator -> e2e/run.mjs
+  e2e/run.mjs        emulator run (build, boot, install, fake service, CDP smoke); README.md has the
+                     adb / gradle commands by hand
+  src-tauri/
+    Cargo.toml, tauri.conf.json (no static window; deep-link scheme "fr"; CSP allows 127.0.0.1 and 10.0.2.2)
+    capabilities/default.json (core, deep-link, log), mobile.json (biometric, barcode-scanner; Android/iOS only)
+    src/lib.rs         run(): plugins, KeystorePlugin registration (Android), Shell state, injection
+                       script, deep links, the window
+    src/commands.rs    the invoke commands, Shell (secure files, config, info, push), build_shell,
+                       the Android KeystoreWrapper over the Kotlin plugin
+    src/keystore.rs    DeviceKey (ed25519-dalek; Debug redacts), Wrapper trait, SecureFiles (0600,
+                       atomic writes), SESSION_TOKEN_KEY
+    src/biometric.rs   BiometricOutcome; asserted() only after the platform prompt succeeded
+    src/config.rs      <config>/mobile.json (state_url, device_name, install_id), recover(), the
+                       fr://pair link parser
+    src/dirs.rs        app_dirs(): mirror of packages/platform/src/paths.ts appDirs()
+    src/push.rs        PushPort: PollingPush (shipped) and FcmPush (seam), configured(token)
+    gen/android/app/src/main/java/app/forerunner/mobile/KeystorePlugin.kt
+                       AES-256-GCM key in the Android Keystore (StrongBox when present) that wraps the
+                       seed and the token; info (model, strongBox, biometric, fcmToken when FCM exists)
+```
+
+**Boot.** The shell resolves the app directories, loads `mobile.json`, builds the secure
+files over the Keystore wrapper (Android) or the file wrapper (desktop dev builds; Settings
+says "file"), and injects `window.__FORERUNNER__ = { platform: "android", shellVersion,
+installId, stateUrl, deviceName }` before the bundle loads. `App.tsx` mounts `MobileApp`
+when `platform` is `android` or the path starts with `/m`. `MobileController.bootstrap`
+reads the saved session record (ids, scopes, expiry; never the token) and the token from the
+secure store; with both it goes to Home, refreshes `/me`, projects and inbox, opens the change
+feed and flushes the outbox; otherwise it shows Pairing. A deep link or a scan pre-fills the
+code and the service URL.
+
+**Pairing.** The desktop (admin) starts a pairing (`POST /pairing/start`); the phone posts the
+code, its public key (`device_key_public`, generated on first use) and the proof
+`sign("pair:<code>")`; the service answers with the device id and a scoped session token,
+stored through `secure_store_set` (Keystore-wrapped). The same key signs every later
+mutation (`X-Device-Signature`, `X-Device-Timestamp`, strictly increasing timestamps).
+
+**High risk.** `MobileController.answerRequest` asks the `BiometricPort` first when the
+request's `risk` or its change card's risk is `high`; only a returned assertion sets
+`biometric=1` in the signed string and the `X-Biometric-Assertion` header, and the flag is
+bound to the prompt in code (ADR 0032 item 3): a successful `assert_biometric` (Android's
+BiometricPrompt through tauri-plugin-biometric; `asserted: false` with a reason on every
+other target) issues a one-time ticket the shell keeps (`biometric::TicketBook`, 120 s),
+and `device_key_sign` signs a canonical string whose last line is `biometric=1` only against
+that ticket, consuming it. A screen that fabricates `{ asserted: true }` is refused by
+`ShellSigner` before the IPC and by the shell (`biometric ticket missing` / `unknown or
+already used`); the client reports `biometric_required` and sends nothing. Outside the shell
+the simulated dialog says it is simulated and draws its ticket from `WebCryptoSigner.tickets`,
+which applies the same rule. A cancelled prompt sends nothing. High-risk answers are never
+queued.
+
+**Remote control and the change card.** The Remote screen (and Chat, when a message is a
+change sentence) parses the words with `intent.ts`, builds one `MobileChangeCard` for the
+plan, and on Confirm sends ONE `POST /remote/commands` with the plan envelope (ADR 0032 item
+4), logs the entry, follows the command through `remote_command.changed` events (or polling)
+to `picked_up` / `done` / `failed`, and offers Undo while the entry is reversible: Undo sends
+the inverse plan with `undoOf`. The scenario-9 sentence becomes `project.switch(proj_game)`,
+`budget.set(scope session, 15 CHF, until 06:00 tomorrow, proj_game)` and
+`session.start(proj_game, runner pc)`; the controls build the same plan, plus a Pause and a
+Stop-everything control. Project names that contain a clause word ("Rock and Roll") are
+guarded before the sentence is split. The card's old values come from service data, never
+constants: project budgets from the cards, the human's monthly cap from `/me` `monthlyCap`
+when the service sends it (it does not yet: the card then says "the current cap" and treats
+a monthly change as high risk), the CHF rate from the cards' USD/CHF pairs
+(`DEFAULT_CHF_PER_USD` only when none is known).
+
+**Sync.** `subscribeStateEvents` streams `/events` with the bearer header through `fetch`
+(EventSource cannot send it) and resumes with `Last-Event-ID`; when the stream is refused or
+drops it polls the inbox and pending commands every 5 s and retries the stream every 30 s;
+when polling fails too the mode is `offline`. The header badge and Settings show
+`live / polling / offline` and the number of queued actions. An auth loss (`unauthorized`:
+revoked on the desktop, or the token expired) runs `MobileController.lostAuth`: token,
+session record and key go, the outbox and the change log stay, the notice and the pairing
+screen count the queued actions, and `pair` flushes them under the new device. Only
+`forgetDevice` ("Forget this device") clears them.
+
+**Push.** FCM is not configured (no Firebase project; `docs/status/BLOCKERS.md`). `push.rs`
+and `push.ts` keep one port; the shipped mode is `polling`: the change feed raises in-app
+notices for approvals, finished sessions, budget warnings and messages, suppressed inside
+quiet hours. The FCM wiring is listed in ADR 0032 item 6.
+
+### How to change it
+
+- **A new screen**: `src/mobile/screens/XScreen.tsx`, a `<Route>` in `MobileRoutes`, a nav
+  entry in `NAV` when it belongs in the bottom bar, a `test/mobile-x.test.tsx` that mounts
+  it through `renderMobile` in `test/mobile-helpers.tsx` against the in-process fake, and a
+  Playwright spec when it is a flow.
+- **A new phrase or command on the phone**: a matcher in `intent.ts` (keep the EN and DE
+  forms), its card in `cardFor` and its inverse in `inversePlan` (`change-card.ts`), the fake
+  PC's `executeOnPc` in `test/fake-state-service.ts`, and tests in `mobile-intent.test.ts`
+  and `mobile-change-card.test.ts`. The PC's registry (`packages/commands`) must know the
+  command; the phone never has the last word.
+- **A new shell command**: a `#[tauri::command]` in `commands.rs`, its name in
+  `generate_handler!` (`lib.rs`), a wrapper in `shell-bridge.ts`, and a unit test in the
+  Rust module. Errors cross the bridge as strings without key material. Anything that signs
+  goes through `Shell::sign`, so the biometric ticket rule applies to it too.
+- **Another prompt that may set the biometric flag**: it must issue its ticket from the same
+  book the signer redeems (`Shell::issue_biometric_ticket` in the shell,
+  `signer.tickets.issue()` on the web) and put it in the `BiometricAssertion`; nothing else
+  gets a `biometric=1` signature.
+- **Turn on FCM**: follow ADR 0032 item 6; `configured(token)` in `push.rs` already picks
+  `FcmPush` when the Kotlin `info` command returns `fcmToken`.
+- **Change where the key lives**: implement `Wrapper` in `keystore.rs` (or another Kotlin
+  plugin) and pick it in `platform_bits`; `SecureFiles` and the tests stay.
+- **Directory rules**: `dirs.rs` mirrors `packages/platform/src/paths.ts`; change both and
+  their tests together.
+
+### Tests
+
+- `apps/ui/test/state-signing.test.ts`: the canonical string is byte for byte the service's,
+  RFC 8032 vector, WebCrypto signer, the simulated biometric port is marked simulated, the
+  ticket book redeems once inside its TTL, a fabricated assertion gets no `biometric=1`
+  signature and a real one signs exactly once.
+- `apps/ui/test/state-client.test.ts`: pairing with a verified proof, scoped token, every
+  mutation signed and verified by the service's own crypto module, replay and clock-skew
+  refusals, biometric flag only with a ticketed assertion (a forged one never reaches the
+  service), revocation, contract validation, outbox.
+- `apps/ui/test/mobile-shell-signer.test.ts`: the `ShellSigner` path with the Tauri bridge
+  mocked: a literal assertion object is refused before the IPC, the ticket is forwarded to
+  `device_key_sign`, the shell's refusal maps to `biometric_required`, an outcome without a
+  ticket is no assertion.
+- `apps/ui/test/state-sse.test.ts`: frame parsing, live stream with heartbeats, per-human
+  filtering, polling and offline fallback, session log polling.
+- `apps/ui/test/mobile-*.test.ts(x)`: every screen (pairing, home, inbox, chat, remote with
+  the Pause control, changes, session with polling and live modes, settings) and the logic
+  modules (intent, including project names that contain "and"; change card, including the
+  unknown ceiling and the service rate; change log, outbox, push, store);
+  `mobile-store.test.ts` asserts the token and the key never reach state, storage or logs,
+  that an auth loss keeps the queue until the next pairing, and that the monthly cap and
+  the CHF rate come from `/me` and the project cards.
+- `apps/ui/e2e/mobile-{pairing,inbox,remote}.spec.ts`: Playwright on a Pixel 7 viewport with
+  the fake state service as a web server (real signature checks, simulated PC): pairing,
+  approve, high risk needs the prompt, scenario 9 end to end with undo.
+- `apps/mobile/src-tauri`: `cargo test` (dirs rules, config parsing and the pairing link,
+  keystore round trip with a visible wrapper and the RFC vector, injection script without
+  secrets, biometric outcomes, the ticket book, `Shell::sign` refusing a `biometric=1`
+  string without the prompt's ticket and consuming it on use, push stand-in);
+  `cargo clippy -D warnings`, `cargo fmt --check`.
+- `apps/mobile/e2e/run.mjs`: the emulator smoke (CI's Android job; skips visibly here, and
+  every skip, the release-APK one included, fails under `FR_ANDROID_REQUIRE=1`).
+
+```
+pnpm --filter @forerunner/ui test -- test/mobile- test/state-
+pnpm --filter @forerunner/ui exec playwright test e2e/mobile-
+cd apps/mobile/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+node apps/mobile/e2e/run.mjs
+```
+
+### Known issues
+
+- The PC's daemon does not consume `target: "pc"` remote commands with `kind: "plan"` or
+  `kind: "chat"` yet; scenario 9 passes against the fake service's simulated PC only. The
+  runtime side needs a watcher like the cloud runner's `RemoteCommandWatcher` that runs the
+  plan through the command registry (ADR 0030) and posts a human request for high-risk steps;
+  `docs/status/BLOCKERS.md` carries the work item, and no gate row claims the phone gate
+  until it lands.
+- The service's `/me` does not send the human's `monthlyCap` yet (`humans.monthly_cap_usd_micro`
+  exists in the schema); the phone's card says "the current cap" and treats a monthly change
+  as high risk until the route carries it (`MeView.monthlyCap` is already accepted).
+- The desktop has no "Settings → Devices → Add a phone" screen yet, so pairing starts with
+  `POST /pairing/start` (admin) by hand or from the fake's `/__test/pair`; the QR should
+  encode `buildPairingLink(serviceUrl, code, humanId)`.
+- The change log lives on the phone (per install); the service has no device-facing change
+  log route, so the desktop's log and the phone's are joined only through the remote command
+  rows and `undoOf`.
+- Push is the polling stand-in (`docs/status/BLOCKERS.md`, Firebase row); notices appear only
+  while the app is open.
+- The CI Android job's release build is the uploaded artefact; `test:emulator` then builds a
+  debug APK of its own for the smoke (x86_64, a few minutes on top), because a release
+  WebView has debugging off. Passing `--debug` in the workflow's build step would save that
+  time (the workflow is the orchestrator's file). The debug Gradle build has not run on the
+  build box (no emulator, no KVM); the Kotlin plugin compiles against the `tauri-android`
+  project the Tauri CLI generates.
+- `test/fake-state-service.ts` imports the service's `auth/crypto.ts` by relative path; a
+  workspace dependency on the service package would be cleaner once `apps/ui/package.json`
+  may change.
+- Voice on the phone (spec R.5, module O) is the phase 5 voice work; the Chat screen is text
+  only and says so.

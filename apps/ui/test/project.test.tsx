@@ -23,16 +23,12 @@ describe("Project page", () => {
     );
   });
 
-  it("derives milestones from the card and the tasks and shows the phase-5 TODO", async () => {
+  it("derives milestones from the card and the tasks (the fallback without a milestones route)", () => {
     const rows = milestonesFromTasks(PROJECTS[0] as (typeof PROJECTS)[number], TASKS.slice(0, 3));
     expect(rows.map((r) => [r.id, r.tasks.length, r.done])).toEqual([
       ["ms_search", 2, 1],
       ["__none", 1, 0],
     ]);
-    renderApp("/projects/proj_atlas/plan");
-    const list = await screen.findByTestId("milestone-list");
-    await waitFor(() => expect(within(list).getByText("Search works")).toBeInTheDocument());
-    expect(screen.getByTestId("plan-todo")).toHaveTextContent("coming with phase 5");
   });
 
   it("shows costs by model, specialist and task with savings apart", async () => {
@@ -47,13 +43,14 @@ describe("Project page", () => {
     expect(screen.getByTestId("cost-savings")).toHaveTextContent("CHF 2.30");
   });
 
-  it("names the phase for the Docs, Reviews and Data placeholders", async () => {
+  it("fills every tab: docs, reviews and data are no longer placeholders", async () => {
     renderApp("/projects/proj_atlas/docs");
-    expect(await screen.findByTestId("placeholder")).toHaveAttribute("data-phase", "4");
+    expect(await screen.findByTestId("docs")).toBeInTheDocument();
     renderApp("/projects/proj_atlas/reviews");
-    await waitFor(() =>
-      expect(screen.getAllByTestId("placeholder").some((p) => p.dataset.phase === "3")).toBe(true),
-    );
+    expect(await screen.findByTestId("reviews")).toBeInTheDocument();
+    renderApp("/projects/proj_atlas/data");
+    expect(await screen.findByTestId("data")).toBeInTheDocument();
+    expect(screen.queryByTestId("placeholder")).not.toBeInTheDocument();
   });
 
   it("starts a session from the dialog and opens the live view", async () => {

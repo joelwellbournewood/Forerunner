@@ -31,15 +31,17 @@ test("a task transition asks for a reason and posts it", async ({ page, request 
   expect(move?.body).toEqual({ version: 1, to: "claimed", reason: "taking it myself" });
 });
 
-test("the plan tab shows milestones and the phase-5 placeholder, costs show savings apart", async ({
+test("the plan tab shows the timeline, milestones and graph; the reviews tab is filled", async ({
   page,
 }) => {
   await page.goto("/projects/proj_atlas/plan");
   await expect(page.getByTestId("milestone-list")).toContainText("Search works");
-  await expect(page.getByTestId("plan-todo")).toContainText("coming with phase 5");
+  await expect(page.getByTestId("milestone-timeline")).toBeVisible();
+  await expect(page.getByTestId("dependency-graph")).toBeVisible();
   await page.getByTestId("tab-costs").click();
   await expect(page.getByTestId("cost-total")).toHaveText("CHF 25.00");
   await expect(page.getByTestId("cost-savings")).toContainText("Savings (not spend)");
   await page.getByTestId("tab-reviews").click();
-  await expect(page.getByTestId("placeholder")).toContainText("Coming with phase 3.");
+  await expect(page.getByTestId("reviews-count")).toHaveText("3 reviews");
+  await expect(page.getByTestId("placeholder")).toHaveCount(0);
 });

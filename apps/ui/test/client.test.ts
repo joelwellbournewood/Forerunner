@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, createClient, describeError, routePath } from "../src/api/client.ts";
+import {
+  ApiError,
+  createClient,
+  describeError,
+  isRouteMissing,
+  routePath,
+} from "../src/api/client.ts";
 import { DEFAULT_DAEMON_URL, resolveDaemonConfig } from "../src/api/config.ts";
 import { createFakeDaemon } from "./fake-daemon.ts";
 import { fetchFromApp, testConfig } from "./helpers.tsx";
@@ -144,7 +150,8 @@ describe("daemon client", () => {
       engine: "none",
       reason: "fake daemon",
     });
-    expect(health.extensions).toEqual({ enabled: 0, pending: 0 });
+    // Derived from the extension fixtures: four installed and enabled or disabled, one pending.
+    expect(health.extensions).toEqual({ enabled: 3, pending: 1 });
     const legacy = createClient(testConfig(), async () => {
       const { sandbox: _s, extensions: _e, ...rest } = health;
       return jsonResponse(rest);
@@ -214,6 +221,198 @@ describe("daemon client", () => {
     expect(read.readAt).not.toBeNull();
     const reply = await client.chat({ humanId: "human_alice", agentId: "agent_alice", text: "hi" });
     expect(reply.reply).toContain("hi");
+    daemon.close();
+  });
+
+  it("tells a missing route apart from a typed not_found", async () => {
+    const daemon = createFakeDaemon({ token: "tok", missingRoutes: ["/performance"] });
+    const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
+    const missing = await client.performance().catch((e: unknown) => e);
+    expect(isRouteMissing(missing)).toBe(true);
+    const typed = await client.project("proj_missing").catch((e: unknown) => e);
+    expect(typed).toMatchObject({ status: 404, code: "not_found" });
+    expect(isRouteMissing(typed)).toBe(false);
+    const plain = new ApiError("ui.http_error", "404: Not Found", 404);
+    expect(isRouteMissing(plain)).toBe(true);
+    expect(isRouteMissing(new ApiError("ui.http_error", "500: boom", 500))).toBe(false);
+  });
+
+  it("round-trips reviews, memory, commands and the change log against the fake daemon", async () => {
+    const daemon = createFakeDaemon({ token: "tok" });
+    const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
+    const reviews = await client.reviews("proj_atlas", { limit: 10 });
+    expect(reviews.reviews.map((r) => r.id)).toEqual(["rev_0", "rev_2", "rev_1"]);
+    expect(reviews.gradeTrend.map((p) => p.grade)).toEqual([82, 64, 75]);
+    expect(reviews.openFindings).toBe(1);
+    expect(reviews.verdicts).toEqual({ accept: 2, revise: 1 });
+    expect((await client.taskReviews("task_2")).reviews.map((r) => r.id)).toEqual(["rev_2"]);
+    const badReviews = createClient(testConfig(), async () =>
+      jsonResponse({ projectId: "p", reviews: [{ id: "r" }], openFindings: 0 }),
+    );
+    await expect(badReviews.reviews("p")).rejects.toMatchObject({ code: "ui.invalid_response" });
+
+    const scopes = await client.memoryScopes();
+    expect(scopes.map((s) => [s.scope, s.active, s.pinned])).toEqual([
+      ["agent_private", 2, 1],
+      ["critic", 1, 0],
+      ["shared", 1, 1],
+    ]);
+    const mine = await client.memory({
+      scope: "agent_private",
+      agentId: "agent_alice",
+      q: "windows",
+    });
+    expect(mine.lessons.map((l) => l.id)).toEqual(["les_1"]);
+    await expect(
+      client.memory({ scope: "agent_private", agentId: "agent_bob" }),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "autonomy_insufficient",
+    });
+    const edited = await client.updateLesson("les_2", { text: "Ask for criteria first, always." });
+    expect(edited.version).toBe(2);
+    expect((await client.pinLesson("les_2", true)).pinned).toBe(true);
+    expect((await client.deleteLesson("les_2")).status).toBe("retired");
+    expect(
+      (await client.memory({ scope: "agent_private", agentId: "agent_alice" })).lessons,
+    ).toHaveLength(1);
+    expect((await client.consolidation())[0]?.requestId).toBe("req_cons_1");
+    expect((await client.runConsolidation()).proposals).toBe(0);
+
+    expect((await client.commandDefs()).map((d) => d.name)).toContain("budget.set");
+    const parsed = await client.parseCommand({ text: "switch to Beacon" });
+    expect(parsed).toEqual({
+      commands: [{ name: "project.switch", params: { project: "Beacon" } }],
+      question: null,
+      matched: "pattern",
+    });
+    const low = await client.executeCommands({
+      commands: [{ name: "project.switch", params: { project: "Beacon" } }],
+      wordsUsed: "switch to Beacon",
+    });
+    expect(low.status).toBe("done");
+    expect(low.sentence).toBe("Switched to Beacon. Undo.");
+    const pending = await client.executeCommands({
+      commands: [{ name: "autonomy.set", params: { level: 2, project: "proj_beacon" } }],
+    });
+    expect(pending.status).toBe("pending");
+    expect(pending.decision).toBe("needs_yes");
+    expect((await client.pendingCommands()).map((p) => p.id)).toEqual([pending.pendingId]);
+    const confirmed = await client.confirmCommand(pending.pendingId ?? "", { answer: "yes" });
+    expect(confirmed.status).toBe("done");
+    expect(confirmed.undoToken).toBe(confirmed.changeLogId);
+    const high = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 500 } }],
+    });
+    expect(high.decision).toBe("needs_device");
+    const refused = await client.confirmCommand(high.pendingId ?? "", { answer: "yes" });
+    expect(refused).toMatchObject({ status: "refused", code: "approval_required" });
+    const cancelled = await client.cancelCommand(high.pendingId ?? "");
+    expect(cancelled.status).toBe("cancelled");
+    const tapped = await client.executeCommands({
+      commands: [{ name: "autonomy.set", params: { level: 1, project: "proj_beacon" } }],
+      confirm: "tap",
+    });
+    expect(tapped.status).toBe("done");
+    const plan = await client.executeCommands({
+      commands: [
+        { name: "project.switch", params: { project: "Atlas" } },
+        { name: "note.add", params: { text: "look at the sitemap", project: "Atlas" } },
+      ],
+    });
+    expect(plan.status).toBe("done");
+    expect(plan.commands).toEqual(["project.switch", "note.add"]);
+    const changes = await client.changes({ limit: 10 });
+    expect(changes[0]?.commands).toHaveLength(2);
+    expect(changes.filter((c) => c.undoable).length).toBeGreaterThan(0);
+    const undone = await client.undoChange(confirmed.changeLogId ?? "");
+    expect(undone.status).toBe("done");
+    expect(undone.sentence).toMatch(/^Undone: /);
+    const again = await client.undoChange(confirmed.changeLogId ?? "");
+    expect(again.status).toBe("refused");
+    expect((await client.changes({ undoable: true })).every((c) => c.undoable)).toBe(true);
+    daemon.close();
+  });
+
+  it("round-trips the proposed routes: queue, milestones, data, docs, performance", async () => {
+    const daemon = createFakeDaemon({ token: "tok" });
+    const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
+    const queued = await client.enqueue("proj_atlas", {
+      kind: "idea",
+      text: "Dark mode docs",
+      priority: 3,
+    });
+    expect(queued.status).toBe("queued");
+    expect((await client.queue("proj_atlas", { status: "queued" })).map((q) => q.id)).toContain(
+      queued.id,
+    );
+    expect((await client.dismissQueueItem(queued.id)).status).toBe("dismissed");
+    expect((await client.milestones("proj_atlas")).map((m) => m.id)).toEqual([
+      "ms_index",
+      "ms_search",
+      "ms_launch",
+    ]);
+    const asset = await client.registerDataAsset("proj_atlas", {
+      locator: "/data/x.csv",
+      kind: "csv",
+    });
+    expect(asset.name).toBe("x.csv");
+    await client.removeDataAsset(asset.id);
+    expect((await client.dataAssets("proj_atlas")).map((a) => a.id)).toEqual(["da_1"]);
+    const imported = await client.importProject("proj_atlas", {
+      source: "zip",
+      locator: "/tmp/site.zip",
+    });
+    expect(imported.status).toBe("queued");
+    expect((await client.docs("proj_atlas")).length).toBe(8);
+    expect((await client.doc("proj_atlas", "README.md")).content).toContain("# Atlas");
+    expect((await client.performance({ projectId: "proj_atlas" })).projectId).toBe("proj_atlas");
+    const badPerf = createClient(testConfig(), async () =>
+      jsonResponse({ generatedAt: "x", modes: "no" }),
+    );
+    await expect(badPerf.performance()).rejects.toMatchObject({ code: "ui.invalid_response" });
+    daemon.close();
+  });
+
+  it("round-trips extensions, updates and the model watch", async () => {
+    const daemon = createFakeDaemon({ token: "tok" });
+    const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
+    expect((await client.extensions({ kind: "connector" })).map((e) => e.id)).toEqual([
+      "ext_github",
+      "ext_slack",
+    ]);
+    expect((await client.extensionCatalog()).entries.length).toBe(4);
+    const added = await client.addExtension({ catalogId: "data-analyst" });
+    expect(added.status).toBe("enabled");
+    const pending = await client.addExtension({ url: "https://mcp.example.test/x" });
+    expect(pending.status).toBe("pending_approval");
+    await expect(client.toggleExtension(pending.id, true)).rejects.toMatchObject({ status: 403 });
+    expect((await client.approveExtension(pending.id)).enabled).toBe(true);
+    expect((await client.toggleExtension(pending.id, false)).status).toBe("disabled");
+    const widened = await client.updateExtensionPermissions(pending.id, {
+      domains: ["other.example.test"],
+    });
+    expect(widened.status).toBe("pending_approval");
+    await client.denyExtension(pending.id);
+    await client.removeExtension(added.id);
+    expect((await client.extensions()).length).toBe(5);
+
+    const feed = await client.updates();
+    expect(feed.app.available?.version).toBe("0.2.0");
+    expect((await client.updatesStatus()).app.available).toBeNull();
+    const applied = await client.applyUpdate("0.2.0");
+    expect(applied).toMatchObject({ version: "0.2.0", restarting: true });
+    expect((await client.health()).version).toBe("0.2.0");
+    expect((await client.rollbackUpdate("test")).to).toBe("0.1.0-fake");
+
+    expect((await client.modelWatchReports(5)).reports.map((r) => r.id)).toEqual(["mw_2", "mw_1"]);
+    expect((await client.modelWatchLatest()).health?.decision).toBe("pending");
+    const answered = await client.modelWatchAnswer("mw_2", {
+      decision: "ignore",
+      by: "human_alice",
+    });
+    expect(answered.decision).toBe("ignored");
+    expect((await client.modelWatchRun()).decision).toBe("nothing_to_decide");
     daemon.close();
   });
 });

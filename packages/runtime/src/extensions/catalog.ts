@@ -141,15 +141,25 @@ export interface FetchCatalogOptions {
   maxBytes?: number;
 }
 
-/** Fetch a JSON document with a timeout and a size cap; never follows to a non-http scheme. */
+/**
+ * Fetch a JSON document with a timeout and a size cap. The body is read through a reader
+ * with a running byte count and the request is aborted as soon as the cap is passed (a
+ * `content-length` above the cap is refused before any byte is read), so a hostile document
+ * never buffers past `maxBytes`. Only http(s) URLs; redirects are followed by the platform
+ * fetch. The URL is one the human typed or configured, so private and loopback addresses are
+ * allowed on purpose (see extensions.md, "Known issues").
+ */
 export async function fetchJson(url: string, opts: FetchCatalogOptions = {}): Promise<unknown> {
   const parsedUrl = HttpUrl.safeParse(url);
   if (!parsedUrl.success) {
     throw new ForerunnerError("validation", `not an http(s) URL: ${url.slice(0, 120)}`);
   }
   const fetchImpl = opts.fetch ?? globalThis.fetch;
+  const maxBytes = opts.maxBytes ?? 1_000_000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 10_000);
+  const tooLarge = (bytes: number) =>
+    new ForerunnerError("validation", "document too large", { details: { bytes, maxBytes } });
   try {
     const res = await fetchImpl(parsedUrl.data, {
       headers: { accept: "application/json" },
@@ -166,12 +176,12 @@ export async function fetchJson(url: string, opts: FetchCatalogOptions = {}): Pr
         },
       );
     }
-    const text = await res.text();
-    if (text.length > (opts.maxBytes ?? 1_000_000)) {
-      throw new ForerunnerError("validation", "document too large", {
-        details: { bytes: text.length },
-      });
+    const declared = Number(res.headers.get("content-length") ?? "");
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      controller.abort();
+      throw tooLarge(declared);
     }
+    const text = await readBounded(res, maxBytes, () => controller.abort(), tooLarge);
     try {
       return JSON.parse(text) as unknown;
     } catch {
@@ -186,6 +196,35 @@ export async function fetchJson(url: string, opts: FetchCatalogOptions = {}): Pr
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Read a response body chunk by chunk; abort and throw once more than `maxBytes` arrived. */
+async function readBounded(
+  res: Response,
+  maxBytes: number,
+  abort: () => void,
+  tooLarge: (bytes: number) => Error,
+): Promise<string> {
+  if (!res.body) {
+    const text = await res.text();
+    if (Buffer.byteLength(text, "utf8") > maxBytes) throw tooLarge(Buffer.byteLength(text));
+    return text;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      abort();
+      await reader.cancel().catch(() => undefined);
+      throw tooLarge(total);
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
 export async function fetchCatalog(
@@ -238,6 +277,15 @@ export class ExtensionCatalog {
 
   get(id: string): CatalogEntry | undefined {
     return this.builtin.get(id) ?? this.remote.get(id);
+  }
+
+  /**
+   * True for an entry shipped with this build (authored in the repository). Only such entries
+   * may be started for discovery before the human has said yes; remote catalog entries and
+   * manifests from a URL are not trusted that far (ADR 0016).
+   */
+  isBuiltin(id: string): boolean {
+    return this.builtin.has(id);
   }
 
   mustGet(id: string): CatalogEntry {

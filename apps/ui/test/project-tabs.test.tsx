@@ -1,0 +1,257 @@
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+import { costPerAccepted } from "../src/pages/project/CostsTab.tsx";
+import { layoutGraph, milestoneRows, timelineLayout } from "../src/pages/project/PlanTab.tsx";
+import { MILESTONES, TASKS } from "./fixtures.ts";
+import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
+
+describe("Plan tab: timeline and dependency graph", () => {
+  it("lays tasks out in dependency layers and drops edges to unknown tasks", () => {
+    const { nodes, edges } = layoutGraph(TASKS.slice(0, 3));
+    expect(nodes.map((n) => [n.id, n.layer, n.row])).toEqual([
+      ["task_1", 0, 0],
+      ["task_2", 1, 0],
+      ["task_3", 0, 1],
+    ]);
+    expect(edges).toEqual([{ from: "task_1", to: "task_2" }]);
+    const cyclic = layoutGraph([
+      { ...(TASKS[0] as (typeof TASKS)[number]), id: "a", dependsOn: ["b"] },
+      { ...(TASKS[0] as (typeof TASKS)[number]), id: "b", dependsOn: ["a", "zzz"] },
+    ]);
+    // The cycle a -> b -> a is cut where a repeats: b sits after a, a after b.
+    expect(cyclic.nodes.map((n) => n.layer)).toEqual([2, 1]);
+    expect(cyclic.edges).toHaveLength(2);
+  });
+
+  it("places milestones on the time axis in date order, undated ones after", () => {
+    const rows = milestoneRows(MILESTONES, TASKS);
+    expect(rows.map((r) => [r.id, r.tasks.length, r.done])).toEqual([
+      ["ms_index", 0, 0],
+      ["ms_search", 2, 1],
+      ["ms_launch", 0, 0],
+      ["__none", 2, 0],
+    ]);
+    const points = timelineLayout(rows, "2026-10-20T00:00:00.000Z");
+    expect(points.map((p) => p.id)).toEqual(["ms_index", "ms_search", "ms_launch"]);
+    const xs = points.map((p) => p.x);
+    expect(xs[0]).toBe(0);
+    expect(xs[2]).toBe(1);
+    expect(xs[1]).toBeGreaterThan(0);
+    expect(xs[1]).toBeLessThan(1);
+    const undated = timelineLayout(
+      [{ ...rows[2], targetDate: null } as (typeof rows)[number]],
+      "2026-10-20T00:00:00.000Z",
+    );
+    expect(undated[0]?.x).toBeGreaterThan(0);
+  });
+
+  it("renders the timeline, the milestones with criteria and the dependency graph", async () => {
+    renderApp("/projects/proj_atlas/plan");
+    const timeline = await screen.findByTestId("milestone-timeline");
+    expect(within(timeline).getAllByTestId("timeline-milestone")).toHaveLength(3);
+    expect(within(timeline).getByTestId("timeline-today")).toBeInTheDocument();
+    const list = screen.getByTestId("milestone-list");
+    await waitFor(() => expect(within(list).getAllByTestId("milestone")).toHaveLength(4));
+    expect(within(list).getByText("Search works")).toBeInTheDocument();
+    expect(list).toHaveTextContent("Header search returns results under 200 ms");
+    expect(list).toHaveTextContent("1 / 2 tasks done");
+    const graph = await screen.findByTestId("dependency-graph");
+    expect(within(graph).getAllByTestId("graph-node")).toHaveLength(3);
+    const edge = within(graph).getByTestId("graph-edge");
+    expect(edge).toHaveAttribute("data-from", "task_1");
+    expect(edge).toHaveAttribute("data-to", "task_2");
+    expect(screen.queryByTestId("route-missing")).not.toBeInTheDocument();
+  });
+
+  it("derives milestones from the tasks when the daemon has no milestones route", async () => {
+    renderApp(
+      "/projects/proj_atlas/plan",
+      createHarness({ missingRoutes: ["/projects/proj_atlas/milestones"] }),
+    );
+    expect(await screen.findByTestId("route-missing")).toHaveAttribute("data-route", "milestones");
+    const list = screen.getByTestId("milestone-list");
+    await waitFor(() => expect(within(list).getByText("Search works")).toBeInTheDocument());
+    expect(await screen.findByTestId("dependency-graph")).toBeInTheDocument();
+  });
+});
+
+describe("Docs tab", () => {
+  it("lists the standard doc set with drift and missing states and opens a document", async () => {
+    const user = userEvent.setup();
+    renderApp("/projects/proj_atlas/docs");
+    const docs = await screen.findByTestId("docs");
+    expect(within(docs).getByTestId("docs-present")).toHaveTextContent("7 of 8 present");
+    expect(within(docs).getByTestId("docs-drift")).toHaveTextContent("1 drifted");
+    const rows = within(docs).getAllByTestId("doc-row");
+    expect(rows).toHaveLength(8);
+    const arch = rows.find((r) => r.dataset.path === "docs/architecture.md");
+    if (!arch) throw new Error("no architecture row");
+    expect(arch).toHaveAttribute("data-drift", "true");
+    expect(arch).toHaveTextContent("src/search changed after this doc");
+    const runbook = rows.find((r) => r.dataset.path === "docs/runbook.md");
+    expect(runbook).toHaveTextContent("missing");
+    await user.click(within(arch).getByTestId("doc-open"));
+    const content = await screen.findByTestId("doc-content");
+    await waitFor(() => expect(content).toHaveTextContent("search index built at deploy time"));
+  });
+
+  it("degrades when the docs route is missing", async () => {
+    renderApp(
+      "/projects/proj_atlas/docs",
+      createHarness({ missingRoutes: ["/projects/proj_atlas/docs"] }),
+    );
+    expect(await screen.findByTestId("route-missing")).toHaveAttribute("data-route", "docs");
+  });
+});
+
+describe("Data tab", () => {
+  it("lists registered data with samples, registers a new locator and removes one", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/data", harness);
+    const rows = await screen.findAllByTestId("data-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("crawl-2026-10.parquet");
+    expect(rows[0]).toHaveTextContent("2.2 GB");
+    expect(rows[0]).toHaveTextContent("s3://example-bucket/atlas/crawl-2026-10.parquet");
+    await user.type(screen.getByTestId("data-locator"), "C:\\data\\exports\\sales.csv");
+    await user.selectOptions(screen.getByTestId("data-kind"), "csv");
+    await user.click(screen.getByTestId("data-register"));
+    await waitFor(() => expect(postedCalls(harness, "/projects/proj_atlas/data")).toHaveLength(1));
+    expect(postedCalls(harness, "/projects/proj_atlas/data")[0]?.body).toEqual({
+      locator: "C:\\data\\exports\\sales.csv",
+      kind: "csv",
+    });
+    await waitFor(() => expect(screen.getAllByTestId("data-row")).toHaveLength(2));
+    expect(screen.getAllByTestId("data-row")[0]).toHaveTextContent("sales.csv");
+    await user.click(
+      within(screen.getAllByTestId("data-row")[1] as HTMLElement).getByTestId("data-remove"),
+    );
+    await user.click(screen.getByTestId("data-remove-confirm"));
+    await waitFor(() => expect(screen.getAllByTestId("data-row")).toHaveLength(1));
+    expect(postedCalls(harness, "/data/da_1")[0]?.method).toBe("DELETE");
+  });
+
+  it("queues an import from a repository and reports the task", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/data", harness);
+    await screen.findAllByTestId("data-row");
+    await user.selectOptions(screen.getByTestId("import-source"), "repo");
+    await user.type(screen.getByTestId("import-locator"), "https://example.test/org/legacy");
+    await user.click(screen.getByTestId("import-run"));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/projects/proj_atlas/import")).toHaveLength(1),
+    );
+    expect(postedCalls(harness, "/projects/proj_atlas/import")[0]?.body).toEqual({
+      source: "repo",
+      locator: "https://example.test/org/legacy",
+    });
+    const result = await screen.findByTestId("import-result");
+    expect(result).toHaveAttribute("data-status", "queued");
+    expect(result).toHaveTextContent("migration specialist runs it on a branch");
+    expect(harness.daemon.state.tasks[0]?.title).toContain("Import repo");
+  });
+
+  it("degrades when the data route is missing", async () => {
+    renderApp(
+      "/projects/proj_atlas/data",
+      createHarness({ missingRoutes: ["/projects/proj_atlas/data"] }),
+    );
+    expect(await screen.findByTestId("route-missing")).toHaveAttribute("data-route", "dataAssets");
+  });
+});
+
+describe("Summary tab: queue, peers, decisions", () => {
+  it("shows the next-session queue by priority, adds an item and dismisses one", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/summary", harness);
+    const queue = await screen.findByTestId("queue");
+    const items = await within(queue).findAllByTestId("queue-item");
+    expect(items.map((i) => i.dataset.kind)).toEqual(["correction", "idea"]);
+    expect(within(queue).getByTestId("queue-past")).toHaveTextContent("consumed");
+    await user.selectOptions(within(queue).getByTestId("queue-kind"), "task");
+    await user.type(within(queue).getByTestId("queue-text"), "Add a sitemap");
+    await user.clear(within(queue).getByTestId("queue-priority"));
+    await user.type(within(queue).getByTestId("queue-priority"), "8");
+    await user.click(within(queue).getByTestId("queue-add"));
+    await waitFor(() => expect(postedCalls(harness, "/projects/proj_atlas/queue")).toHaveLength(1));
+    expect(postedCalls(harness, "/projects/proj_atlas/queue")[0]?.body).toEqual({
+      kind: "task",
+      text: "Add a sitemap",
+      priority: 8,
+    });
+    await waitFor(() => expect(within(queue).getAllByTestId("queue-item")).toHaveLength(3));
+    expect(within(queue).getAllByTestId("queue-item")[0]).toHaveTextContent("Add a sitemap");
+    await user.click(
+      within(within(queue).getAllByTestId("queue-item")[2] as HTMLElement).getByTestId(
+        "queue-dismiss",
+      ),
+    );
+    await waitFor(() => expect(postedCalls(harness, "/queue/q_2/dismiss")).toHaveLength(1));
+    await waitFor(() => expect(within(queue).getAllByTestId("queue-item")).toHaveLength(2));
+  });
+
+  it("shows the peers feed and the decision log", async () => {
+    renderApp("/projects/proj_atlas/summary");
+    const peer = await screen.findByTestId("peer");
+    expect(peer).toHaveAttribute("data-agent-id", "agent_bob");
+    expect(peer).toHaveAttribute("data-online", "true");
+    expect(within(peer).getByTestId("peer-claim")).toHaveTextContent(
+      "Add the search box to the header",
+    );
+    expect(within(peer).getByTestId("peer-pr")).toHaveAttribute(
+      "href",
+      "https://example.test/org/atlas/pull/12",
+    );
+    expect(within(peer).getByTestId("peer-handoff")).toHaveTextContent("PR #12 waits for review");
+    expect(within(peer).getByTestId("peer-files")).toHaveTextContent("src/header.tsx");
+    const decision = await screen.findByTestId("decision");
+    expect(decision).toHaveTextContent("Which search backend should the docs site use?");
+    expect(within(decision).getByTestId("decision-chosen")).toHaveTextContent(
+      "Static index built at deploy time",
+    );
+    expect(decision).toHaveTextContent("not: Hosted search service");
+    expect(decision).toHaveTextContent("by human_alice");
+  });
+
+  it("shows empty peers and decisions for a solo project, and a missing queue route", async () => {
+    renderApp(
+      "/projects/proj_beacon/summary",
+      createHarness({ missingRoutes: ["/projects/proj_beacon/queue"] }),
+    );
+    expect(await screen.findByTestId("peers-empty")).toHaveTextContent("solo mode");
+    expect(await screen.findByTestId("decisions-empty")).toBeInTheDocument();
+    expect(await screen.findByTestId("route-missing")).toHaveAttribute("data-route", "queue");
+  });
+});
+
+describe("Costs tab", () => {
+  it("shows the cost per accepted task next to the success rate", async () => {
+    expect(
+      costPerAccepted({
+        key: "k",
+        label: "l",
+        cost: { usdMicro: 1000, chfMicro: 800 },
+        runs: 3,
+        accepted: 2,
+      }),
+    ).toEqual({ usdMicro: 500, chfMicro: 400 });
+    expect(
+      costPerAccepted({
+        key: "k",
+        label: "l",
+        cost: { usdMicro: 1000, chfMicro: 800 },
+        runs: 3,
+        accepted: null,
+      }),
+    ).toBeNull();
+    renderApp("/projects/proj_atlas/costs");
+    const model = await screen.findByTestId("cost-by-model");
+    expect(model).toHaveTextContent("7 / 9 (78%)");
+    expect(within(model).getAllByTestId("cost-per-accepted")[0]).toHaveTextContent("CHF 3.20");
+    expect(within(model).getAllByTestId("cost-per-accepted")[1]).toHaveTextContent("—");
+  });
+});

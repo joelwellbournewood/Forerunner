@@ -1,4 +1,4 @@
-import { ForerunnerError } from "@forerunner/platform";
+import { ForerunnerError, safeSegment } from "@forerunner/platform";
 
 /**
  * Minimal semantic versioning for release manifests (no dependency). Supports
@@ -31,6 +31,20 @@ export function parseSemver(input: string): Semver | null {
 
 export function isSemver(input: string): boolean {
   return parseSemver(input) !== null;
+}
+
+/**
+ * A release version as a manifest may carry it: bare semver (no leading "v"), no build
+ * metadata (two builds of one version would compare equal and collide), and unchanged by
+ * `safeSegment`, because the version is also the install directory name under
+ * `<data>/versions/`. One rule for the manifest schema, `buildReleaseManifest` and `versionDir`,
+ * so a release that the feed offers is always one the installer can stage.
+ */
+export function isReleaseVersion(input: string): boolean {
+  const v = parseSemver(input);
+  if (!v || v.build.length > 0) return false;
+  if (input !== input.trim() || input.startsWith("v")) return false;
+  return safeSegment(input, "") === input;
 }
 
 /** Parse or throw ForerunnerError("validation"). */

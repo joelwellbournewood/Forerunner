@@ -278,13 +278,73 @@ describe("update routes", () => {
         state: "installed",
         restarting: true,
       });
-      expect(readPointer(h.dirs)?.current).toBe("1.0.0");
+      expect(readPointer(h.dirs)?.current).toBeNull(); // the packaged 1.0.0 runs again
+      expect(h.manager.installedVersion()).toBe("1.0.0");
       const missing = await app.request("/updates/apply", {
         method: "POST",
         body: JSON.stringify({ version: "4.4.4" }),
         headers: { "content-type": "application/json" },
       });
       expect(missing.status).toBe(404);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("a second apply while one is in progress answers 409", async () => {
+    const h = await makeHarness({ feed });
+    try {
+      const app = createUpdateRoutes({ manager: h.manager, clock: h.clock, humanId: "human-j" });
+      const post = () =>
+        app.request("/updates/apply", {
+          method: "POST",
+          body: "{}",
+          headers: { "content-type": "application/json" },
+        });
+      const [a, b] = await Promise.all([post(), post()]);
+      expect([a.status, b.status].sort()).toEqual([202, 409]);
+      const refused = a.status === 409 ? a : b;
+      expect(await refused.json()).toMatchObject({
+        code: "version_conflict",
+        details: { reason: "in_progress", operation: "apply" },
+      });
+      expect(h.restarter.requests).toHaveLength(1);
+    } finally {
+      await h.close();
+    }
+  });
+});
+
+describe("check results are cached for the screen", () => {
+  const feedHits = () => server.requests.filter((p) => p === "/repos/owner/repo/releases").length;
+
+  it("repeated views within the cache window neither query the feed nor append audit rows; fresh checks and state changes do", async () => {
+    const h = await makeHarness({ feed, checkCacheMs: 30_000 });
+    try {
+      const before = feedHits();
+      const v1 = await composeUpdatesView({ manager: h.manager, clock: h.clock });
+      expect(v1.app.state).toBe("available");
+      const v2 = await composeUpdatesView({ manager: h.manager, clock: h.clock });
+      expect(v2.app.checkedAt).toBe(v1.app.checkedAt);
+      expect(feedHits() - before).toBe(1);
+      expect(await h.store.auditLog.list({ tool: "update.check" })).toHaveLength(1);
+      expect((await h.manager.check()).cached).toBe(true);
+      // an explicit (CLI, scheduled) check bypasses the cache and is audited
+      expect(
+        (await h.manager.check({ kind: "human", id: "human-j" }, { fresh: true })).cached,
+      ).toBe(false);
+      expect(feedHits() - before).toBe(2);
+      expect(await h.store.auditLog.list({ tool: "update.check" })).toHaveLength(2);
+      // the window expires on the injected clock
+      await h.clock.advance(30_000);
+      await composeUpdatesView({ manager: h.manager, clock: h.clock });
+      expect(feedHits() - before).toBe(3);
+      // apply invalidates: the next view reflects the new state without waiting
+      await h.manager.apply({ by: { kind: "human", id: "human-j" } });
+      const after = await composeUpdatesView({ manager: h.manager, clock: h.clock });
+      expect(after.app.state).toBe("pending_health_check");
+      expect(after.app.available).toBeNull();
+      expect(feedHits() - before).toBeGreaterThanOrEqual(5); // apply's own fresh check + the view
     } finally {
       await h.close();
     }

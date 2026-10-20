@@ -1,44 +1,13 @@
 #!/usr/bin/env node
-// Installs the x86_64 debug APK on the running emulator and runs the UI/sync checks.
-// Filled in with the Android milestone (module R); today it verifies install + launch + the
-// shell renders, which is what the CI job asserts.
+// Kept for older invocations: the emulator run lives in e2e/run.mjs (see e2e/README.md).
+// Same behaviour as `pnpm --filter @forerunner/mobile test:emulator`.
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-function findApk(dir) {
-  if (!existsSync(dir)) return null;
-  for (const e of readdirSync(dir)) {
-    const p = join(dir, e);
-    if (statSync(p).isDirectory()) {
-      const f = findApk(p);
-      if (f) return f;
-    } else if (/\.apk$/.test(e)) return p;
-  }
-  return null;
+const runner = join(resolve(dirname(fileURLToPath(import.meta.url)), ".."), "e2e", "run.mjs");
+try {
+  execFileSync(process.execPath, [runner, ...process.argv.slice(2)], { stdio: "inherit" });
+} catch (error) {
+  process.exit(typeof error.status === "number" ? error.status : 1);
 }
-const apk = findApk(join("src-tauri", "gen", "android", "app", "build", "outputs", "apk"));
-if (!apk) {
-  console.error("emulator-tests: no APK found; run tauri android build first");
-  process.exit(1);
-}
-const adb = (...args) =>
-  execFileSync("adb", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
-adb("wait-for-device");
-adb("install", "-r", apk);
-adb("shell", "am", "start", "-n", "app.forerunner.mobile/.MainActivity");
-const t0 = Date.now();
-let ok = false;
-while (Date.now() - t0 < 60_000) {
-  const out = adb("shell", "dumpsys", "window", "windows");
-  if (/app\.forerunner\.mobile/.test(out)) {
-    ok = true;
-    break;
-  }
-  await new Promise((r) => setTimeout(r, 2000));
-}
-if (!ok) {
-  console.error("emulator-tests: app window did not appear");
-  process.exit(1);
-}
-console.log(`emulator-tests: installed ${apk} and launched the app`);

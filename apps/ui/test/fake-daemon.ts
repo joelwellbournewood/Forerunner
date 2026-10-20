@@ -1,10 +1,20 @@
 import { randomBytes } from "node:crypto";
 import type {
+  ChangeLogView,
   ChatReplyView,
+  CommandResultJson,
+  ConsolidationProposalView,
+  ConsolidationReportView,
   EventView,
   HumanRequestView,
+  LessonView,
+  MemoryScopeView,
+  MemoryView,
   MessageView,
+  PendingChangeView,
   ProjectCard,
+  ReviewsView,
+  ReviewView,
   SessionView,
   TaskView,
 } from "@forerunner/runtime/daemon/api-types";
@@ -21,23 +31,49 @@ import { serve } from "@hono/node-server";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
+import type {
+  ChangeCardView,
+  DataAssetView,
+  ExtensionPermissions,
+  ExtensionView,
+  ModelWatchReportSummary,
+  QueueItemView,
+} from "../src/api/contracts.ts";
 import {
   AGENTS,
+  CATALOG,
+  CHANGES,
+  COMMAND_DEFS,
+  CONSOLIDATION,
   COSTS,
+  DATA_ASSETS,
   DECISIONS,
+  DOC_CONTENTS,
+  DOCS,
+  ESTIMATES,
   EVENTS,
+  EXTENSIONS,
   HEALTH,
+  LESSONS,
   ME,
   MESSAGES,
+  MILESTONES,
+  MODEL_WATCH_REPORTS,
   money,
   PEERS,
+  PERFORMANCE,
   PROJECTS,
+  QUEUE,
   REQUESTS,
+  REVIEW_PROJECTS,
+  REVIEWS,
   RUNS,
   SESSIONS,
   SETTINGS,
   SUMMARIES,
   TASKS,
+  UPDATES_FEED,
+  UPDATES_STATUS,
 } from "./fixtures.ts";
 
 /**
@@ -65,6 +101,18 @@ export interface FakeDaemonOptions {
   heartbeatMs?: number;
   /** Delay between streamed chat tokens; 5 ms by default. */
   tokenDelayMs?: number;
+  /**
+   * Paths the fake answers with 404 "no route" (ADR 0032), each matching itself and its
+   * children ("/memory" covers "/memory/scopes" but "/updates" leaves "/updates/status"): a
+   * daemon without the reviews, memory, command or other routes, so the pages' degraded
+   * state is tested.
+   */
+  missingRoutes?: string[];
+  /**
+   * Exact paths the fake answers with an error body and status, e.g. the release feed being
+   * unreachable (`{"/updates": {status: 503, code: "unavailable", message: "feed down"}}`).
+   */
+  failing?: Record<string, { status: number; code: string; message: string }>;
 }
 
 type Listener = (event: string, data: unknown) => void;
@@ -83,6 +131,29 @@ export interface FakeDaemonState {
   nextChatReply: string | null;
   listeners: Set<Listener>;
   timers: Set<ReturnType<typeof setTimeout>>;
+  extensions: ExtensionView[];
+  /** The daemon's version as /health reports it; changes after an applied update. */
+  version: string;
+  modelWatchReports: ModelWatchReportSummary[];
+  reviews: ReviewView[];
+  lessons: LessonView[];
+  changes: ChangeLogView[];
+  consolidation: ConsolidationProposalView[];
+  queue: QueueItemView[];
+  dataAssets: DataAssetView[];
+  pendingCommands: Map<string, PendingCommand>;
+  missingRoutes: string[];
+  failing: Record<string, { status: number; code: string; message: string }>;
+}
+
+interface PendingCommand {
+  card: ChangeCardView;
+  decision: "needs_yes" | "needs_device";
+  apply: () => CommandResultJson;
+  createdAt: string;
+  expiresAt: string;
+  readback: string;
+  wordsUsed: string;
 }
 
 const clone = <T>(value: T): T => structuredClone(value);
@@ -112,6 +183,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     nextChatReply: null,
     listeners: new Set(),
     timers: new Set(),
+    extensions: clone(EXTENSIONS),
+    version: HEALTH.version,
+    modelWatchReports: clone(MODEL_WATCH_REPORTS),
+    reviews: clone(REVIEWS),
+    lessons: clone(LESSONS),
+    changes: clone(CHANGES),
+    consolidation: clone(CONSOLIDATION),
+    queue: clone(QUEUE),
+    dataAssets: clone(DATA_ASSETS),
+    pendingCommands: new Map(),
+    missingRoutes: [...(options.missingRoutes ?? [])],
+    failing: { ...(options.failing ?? {}) },
   };
 
   const emit = (event: string, data: unknown) => {
@@ -134,7 +217,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     cors({
       origin: (origin) => origin,
       allowHeaders: ["Authorization", "Content-Type", "Accept"],
-      allowMethods: ["GET", "POST", "OPTIONS"],
+      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     }),
   );
   // Bearer token on every route; the two EventSource routes also accept ?token= (ADR 0025).
@@ -148,14 +231,28 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return next();
   });
   app.use("*", async (c, next) => {
-    if (c.req.method === "POST") {
+    if (c.req.method === "POST" || c.req.method === "PUT" || c.req.method === "DELETE") {
       let body: unknown = null;
       try {
         body = await c.req.raw.clone().json();
       } catch {
         body = null;
       }
-      state.calls.push({ method: "POST", path: c.req.path, body });
+      state.calls.push({ method: c.req.method, path: c.req.path, body });
+    }
+    return next();
+  });
+  // A daemon that does not serve a route answers like the real one's catch-all.
+  app.use("*", async (c, next) => {
+    if (
+      c.req.method !== "OPTIONS" &&
+      state.missingRoutes.some((p) => c.req.path === p || c.req.path.startsWith(`${p}/`))
+    ) {
+      return errorBody(c, 404, "not_found", `no route ${c.req.method} ${c.req.path}`);
+    }
+    const failure = state.failing[c.req.path];
+    if (failure && c.req.method !== "OPTIONS") {
+      return c.json({ code: failure.code, message: failure.message }, failure.status as 503);
     }
     return next();
   });
@@ -172,6 +269,30 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.calls = [];
     state.pendingConfirmation = null;
     state.nextChatReply = null;
+    state.extensions = clone(EXTENSIONS);
+    state.version = HEALTH.version;
+    state.modelWatchReports = clone(MODEL_WATCH_REPORTS);
+    state.reviews = clone(REVIEWS);
+    state.lessons = clone(LESSONS);
+    state.changes = clone(CHANGES);
+    state.consolidation = clone(CONSOLIDATION);
+    state.queue = clone(QUEUE);
+    state.dataAssets = clone(DATA_ASSETS);
+    state.pendingCommands.clear();
+    state.missingRoutes = [...(options.missingRoutes ?? [])];
+    state.failing = { ...(options.failing ?? {}) };
+    return c.json({ ok: true });
+  });
+  app.post("/__test/fail", async (c) => {
+    const body = (await c.req.json()) as {
+      routes: Record<string, { status: number; code: string; message: string }>;
+    };
+    state.failing = { ...body.routes };
+    return c.json({ ok: true });
+  });
+  app.post("/__test/missing", async (c) => {
+    const body = (await c.req.json()) as { routes: string[] };
+    state.missingRoutes = [...body.routes];
     return c.json({ ok: true });
   });
   app.post("/__test/emit", async (c) => {
@@ -183,8 +304,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.get("/health", (c) =>
     c.json({
       ...HEALTH,
+      version: state.version,
       activeSessions: state.sessions.filter((s) => s.status === "running").length,
       killActive: state.killActive,
+      extensions: {
+        enabled: state.extensions.filter((e) => e.status === "enabled").length,
+        pending: state.extensions.filter((e) => e.status === "pending_approval").length,
+      },
     }),
   );
   app.get("/me", (c) => c.json(ME));
@@ -440,6 +566,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     for (const p of state.projects) {
       if (p.id === r.projectId && p.waitingOnYou > 0) p.waitingOnYou -= 1;
     }
+    if (r.kind === "capability_grant") {
+      const ext = state.extensions.find((e) => `req_${e.id}` === r.id);
+      if (ext && parsed.data.answer === "Approve") approveExtension(ext);
+      else if (ext) {
+        state.extensions = state.extensions.filter((e) => e.id !== ext.id);
+        emitExtension("extension.denied", ext);
+      }
+    }
     emit("inbox.changed", { blockingCount: blockingCount() });
     return c.json(r);
   });
@@ -454,6 +588,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const base = {
       actions: [] as ChatReplyView["actions"],
       pendingConfirmation: null as ChatReplyView["pendingConfirmation"],
+      question: null as ChatReplyView["question"],
       ttftMs: 420,
       cost: money(12_000),
       transcriptId: nextId("tr"),
@@ -485,7 +620,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       return {
         ...base,
         reply: `${readback} Say yes to confirm.`,
-        pendingConfirmation: { id, readback, estimate: money(5_000_000) },
+        pendingConfirmation: {
+          id,
+          readback,
+          estimate: money(5_000_000),
+          commands: ["session.start"],
+          decision: "needs_yes",
+        },
       };
     }
     const project = state.projects.find((p) => p.id === projectId);
@@ -525,10 +666,1294 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.get("/settings", (c) => {
     const scope = c.req.query("scope");
     const scopeId = c.req.query("scopeId");
+    // Like the daemon, the project rows read the live project (a command may have changed it).
+    const rows = SETTINGS.map((s) => {
+      if (s.key === "project.autonomy") {
+        const p = state.projects.find((x) => x.id === s.scopeId);
+        return p ? { ...s, value: p.autonomyLevel } : s;
+      }
+      return s;
+    });
     return c.json(
-      SETTINGS.filter((s) => (!scope || s.scope === scope) && (!scopeId || s.scopeId === scopeId)),
+      rows.filter((s) => (!scope || s.scope === scope) && (!scopeId || s.scopeId === scopeId)),
     );
   });
+
+  // ---------------------------------------------------------------------------------------
+  // Phase 3 to 7 routes: extensions, updates, model watch, estimates, project settings and
+  // the mirror, plus the proposed routes of ADR 0032 (reviews, memory, commands and the change
+  // log, the queue, milestones, data assets, docs, performance).
+  // ---------------------------------------------------------------------------------------
+
+  const emitExtension = (type: string, e: ExtensionView) =>
+    emit("extension.changed", { type, id: e.id, name: e.name });
+  const findExtension = (c: Context) => state.extensions.find((e) => e.id === c.req.param("id"));
+  const normalizePermissions = (p: Partial<ExtensionPermissions> | undefined) => ({
+    tools: [...(p?.tools ?? [])],
+    actionClasses: [...(p?.actionClasses ?? [])],
+    domains: [...(p?.domains ?? [])],
+    paths: [...(p?.paths ?? [])],
+    secrets: [...(p?.secrets ?? [])],
+    scopes: [...(p?.scopes ?? [])],
+  });
+  const widens = (current: ExtensionPermissions, next: ExtensionPermissions) =>
+    (Object.keys(next) as Array<keyof ExtensionPermissions>).some((k) =>
+      next[k].some((v) => !current[k].includes(v)),
+    );
+
+  app.get("/extensions", (c) => {
+    const kind = c.req.query("kind");
+    return c.json(state.extensions.filter((e) => !kind || e.kind === kind));
+  });
+  app.get("/extensions/catalog", (c) => c.json(CATALOG));
+  app.get("/extensions/:id", (c) => {
+    const e = findExtension(c);
+    return e ? c.json(e) : errorBody(c, 404, "not_found", "no such extension");
+  });
+  app.post("/extensions", async (c) => {
+    const body = (await c.req.json()) as { catalogId?: string; url?: string };
+    const now = new Date().toISOString();
+    let view: ExtensionView;
+    if (body.catalogId) {
+      const entry = CATALOG.entries.find((e) => e.id === body.catalogId);
+      if (!entry) return errorBody(c, 404, "not_found", `no catalog entry ${body.catalogId}`);
+      const pending = entry.kind === "connector";
+      view = {
+        id: nextId("ext"),
+        name: entry.name,
+        kind: entry.kind,
+        status: pending ? "pending_approval" : "enabled",
+        enabled: !pending,
+        description: entry.description,
+        permissions: pending
+          ? normalizePermissions(undefined)
+          : normalizePermissions(entry.permissions),
+        pendingPermissions: pending ? normalizePermissions(entry.permissions) : null,
+        pendingStage: pending ? "grant" : null,
+        review: pending
+          ? {
+              tools: [],
+              resources: [],
+              permissions: normalizePermissions(entry.permissions),
+              risk: entry.permissions.secrets.length > 0 ? "high" : "medium",
+              summary: [
+                `reaches ${entry.permissions.domains.join(", ") || "no domain"}`,
+                ...entry.permissions.secrets.map((s) => `needs secret:${s}`),
+              ],
+            }
+          : null,
+        cost: money(0),
+        version: entry.version,
+        source: `catalog:${entry.id}`,
+        installedAt: now,
+        updatedAt: now,
+        rowVersion: 1,
+        error: null,
+        connected: false,
+      };
+    } else if (body.url) {
+      let host = body.url;
+      try {
+        host = new URL(body.url).host;
+      } catch {
+        return errorBody(c, 400, "validation", "url must be an http(s) URL");
+      }
+      view = {
+        id: nextId("ext"),
+        name: host,
+        kind: "connector",
+        status: "pending_approval",
+        enabled: false,
+        description: `MCP server at ${body.url}`,
+        permissions: normalizePermissions(undefined),
+        pendingPermissions: normalizePermissions({ domains: [host], actionClasses: ["read"] }),
+        // A URL install is discovered first (the human allows the connector to start), then granted.
+        pendingStage: "discovery",
+        review: {
+          tools: [],
+          resources: [],
+          permissions: normalizePermissions({ domains: [host], actionClasses: ["read"] }),
+          risk: "medium",
+          summary: [`reaches ${host}`, "tools reviewed on first connection"],
+        },
+        cost: money(0),
+        version: "",
+        source: body.url,
+        installedAt: now,
+        updatedAt: now,
+        rowVersion: 1,
+        error: null,
+        connected: false,
+      };
+    } else {
+      return errorBody(c, 400, "validation", "body needs catalogId or url");
+    }
+    state.extensions.push(view);
+    emitExtension("extension.requested", view);
+    if (view.status === "pending_approval") {
+      // The registry files a capability grant request in the inbox (spec L.5); answering it
+      // approves or denies the extension.
+      state.requests.unshift({
+        id: `req_${view.id}`,
+        projectId: null,
+        projectName: null,
+        taskId: null,
+        sessionId: null,
+        kind: "capability_grant",
+        why: `Allow ${view.name}: ${view.review?.summary.join("; ") ?? ""}`,
+        steps: ["Review the permissions", "Approve or deny"],
+        options: ["Approve", "Deny"],
+        blocking: false,
+        risk: view.review?.risk ?? "medium",
+        changeCard: null,
+        status: "open",
+        answer: null,
+        createdAt: now,
+        version: 1,
+      });
+      emit("inbox.changed", { blockingCount: blockingCount() });
+    }
+    return c.json(view, view.status === "pending_approval" ? 202 : 201);
+  });
+  app.post("/extensions/:id/toggle", async (c) => {
+    const e = findExtension(c);
+    if (!e) return errorBody(c, 404, "not_found", "no such extension");
+    const body = (await c.req.json()) as { enabled?: unknown };
+    if (typeof body.enabled !== "boolean") return errorBody(c, 400, "validation", "enabled");
+    if (e.status === "pending_approval") {
+      return c.json(
+        { code: "approval_required", message: "approve the extension before enabling it" },
+        403,
+      );
+    }
+    e.enabled = body.enabled;
+    e.status = body.enabled ? "enabled" : "disabled";
+    e.connected = body.enabled && e.kind === "connector";
+    e.rowVersion += 1;
+    e.updatedAt = new Date().toISOString();
+    emitExtension(body.enabled ? "extension.enabled" : "extension.disabled", e);
+    return c.json(e);
+  });
+  const approveExtension = (e: ExtensionView) => {
+    e.status = "enabled";
+    e.enabled = true;
+    e.connected = e.kind === "connector";
+    if (e.pendingPermissions) e.permissions = e.pendingPermissions;
+    e.pendingPermissions = null;
+    e.pendingStage = null;
+    e.rowVersion += 1;
+    e.updatedAt = new Date().toISOString();
+    emitExtension("extension.approved", e);
+    const req = state.requests.find((r) => r.id === `req_${e.id}` && r.status === "open");
+    if (req) req.status = "answered";
+  };
+  app.post("/extensions/:id/approve", (c) => {
+    const e = findExtension(c);
+    if (!e) return errorBody(c, 404, "not_found", "no such extension");
+    approveExtension(e);
+    return c.json(e);
+  });
+  app.post("/extensions/:id/deny", (c) => {
+    const e = findExtension(c);
+    if (!e) return errorBody(c, 404, "not_found", "no such extension");
+    state.extensions = state.extensions.filter((x) => x.id !== e.id);
+    emitExtension("extension.denied", e);
+    return c.json({ ok: true });
+  });
+  app.put("/extensions/:id/permissions", async (c) => {
+    const e = findExtension(c);
+    if (!e) return errorBody(c, 404, "not_found", "no such extension");
+    const body = (await c.req.json()) as { permissions?: Partial<ExtensionPermissions> };
+    const next = normalizePermissions({ ...e.permissions, ...(body.permissions ?? {}) });
+    e.rowVersion += 1;
+    e.updatedAt = new Date().toISOString();
+    if (widens(e.permissions, next)) {
+      e.pendingPermissions = next;
+      e.pendingStage = "grant";
+      e.status = "pending_approval";
+      e.enabled = false;
+      emitExtension("extension.requested", e);
+      return c.json(e, 202);
+    }
+    e.permissions = next;
+    emitExtension("extension.permissions_updated", e);
+    return c.json(e);
+  });
+  app.delete("/extensions/:id", (c) => {
+    const e = findExtension(c);
+    if (!e) return errorBody(c, 404, "not_found", "no such extension");
+    state.extensions = state.extensions.filter((x) => x.id !== e.id);
+    emitExtension("extension.removed", e);
+    return c.json({ ok: true });
+  });
+
+  const updatesView = (feed: boolean) => {
+    const base = clone(feed ? UPDATES_FEED : UPDATES_STATUS);
+    if (state.version !== HEALTH.version) {
+      base.app.currentVersion = state.version;
+      base.app.runningVersion = state.version;
+      base.app.previousVersion = HEALTH.version;
+      base.app.available = null;
+      base.app.state = feed ? "up_to_date" : "unknown";
+    }
+    return base;
+  };
+  app.get("/updates", (c) => c.json(updatesView(true)));
+  app.get("/updates/status", (c) => c.json(updatesView(false)));
+  app.post("/updates/apply", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { version?: string };
+    const target = body.version ?? UPDATES_FEED.app.available?.version ?? state.version;
+    const from = state.version;
+    emit("restart.requested", {
+      reason: "update",
+      targetVersion: target,
+      fromVersion: from,
+      exitCode: 86,
+    });
+    // The fake "restarts" at once: the next /health answers with the new version.
+    state.version = target;
+    return c.json({ version: target, previous: from, state: "staged", restarting: true }, 202);
+  });
+  app.post("/updates/rollback", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { reason?: string };
+    const from = state.version;
+    const to =
+      state.version === HEALTH.version ? UPDATES_STATUS.app.previousVersion : HEALTH.version;
+    emit("restart.requested", {
+      reason: `rollback: ${body.reason ?? ""}`,
+      targetVersion: to ?? from,
+      fromVersion: from,
+      exitCode: 86,
+    });
+    if (to) state.version = to;
+    return c.json({ from, to, state: "rolled_back", restarting: true }, 202);
+  });
+
+  const reportDetail = (r: ModelWatchReportSummary) => ({
+    id: r.id,
+    generated_at: r.generated_at,
+    summary: r.summary,
+    recommendations:
+      r.recommendations > 0
+        ? [
+            {
+              id: "rec_1",
+              kind: "switch_model",
+              text: "Use haiku-5.6 for routing and quick chat.",
+            },
+            { id: "rec_2", kind: "reprice", text: "sonnet-5.5 input price -5%." },
+          ].slice(0, r.recommendations)
+        : [],
+    skipped: [],
+  });
+  const reportHealth = (r: ModelWatchReportSummary) => ({
+    decision: r.decision,
+    request_id: r.request_id,
+    decided_at: r.decided_at,
+    by: r.decided_at ? "human_alice" : null,
+    applied: [],
+    remind_at: null,
+  });
+  app.get("/model-watch/reports", (c) => {
+    const limit = Number(c.req.query("limit") ?? "20");
+    return c.json({ reports: state.modelWatchReports.slice(0, limit > 0 ? limit : 20) });
+  });
+  app.get("/model-watch/reports/latest", (c) => {
+    const r = state.modelWatchReports[0];
+    return c.json(
+      r ? { report: reportDetail(r), health: reportHealth(r) } : { report: null, health: null },
+    );
+  });
+  app.get("/model-watch/reports/:id", (c) => {
+    const r = state.modelWatchReports.find((x) => x.id === c.req.param("id"));
+    if (!r) return errorBody(c, 404, "not_found", "no such report");
+    return c.json({ report: reportDetail(r), health: reportHealth(r) });
+  });
+  app.post("/model-watch/run", (c) => {
+    const r: ModelWatchReportSummary = {
+      id: nextId("mw"),
+      generated_at: new Date().toISOString(),
+      status: "proposed",
+      decision: "nothing_to_decide",
+      request_id: null,
+      decided_at: null,
+      recommendations: 0,
+      new_models: 0,
+      retired_models: 0,
+      repriced: 0,
+      summary: "Nothing changed since the last run.",
+    };
+    state.modelWatchReports.unshift(r);
+    return c.json({ report: reportDetail(r), decision: r.decision, requestId: null, applied: [] });
+  });
+  app.post("/model-watch/reports/:id/answer", async (c) => {
+    const r = state.modelWatchReports.find((x) => x.id === c.req.param("id"));
+    if (!r) return errorBody(c, 404, "not_found", "no such report");
+    const body = (await c.req.json()) as { decision?: string; adopt?: string[]; by?: string };
+    if (!body.by || !["adopt", "ignore", "remind"].includes(body.decision ?? "")) {
+      return errorBody(c, 400, "validation", "answer body is malformed");
+    }
+    r.decision =
+      body.decision === "adopt" ? "adopted" : body.decision === "ignore" ? "ignored" : "remind";
+    r.decided_at = new Date().toISOString();
+    r.status = "resolved";
+    return c.json({
+      decision: r.decision,
+      applied: body.decision === "adopt" ? ["routing: haiku-5.6"] : [],
+      status: r.status,
+    });
+  });
+  app.post("/model-watch/sync", (c) => c.json({ resolved: 0 }));
+
+  app.get("/costs/estimates", (c) => c.json(ESTIMATES));
+
+  app.put("/projects/:id/settings", async (c) => {
+    const p = state.projects.find((x) => x.id === c.req.param("id"));
+    if (!p) return errorBody(c, 404, "not_found", "no such project");
+    const body = (await c.req.json()) as { version?: number; settings?: Record<string, unknown> };
+    if (typeof body.version !== "number") return errorBody(c, 400, "validation", "version");
+    return c.json({
+      id: p.id,
+      version: body.version + 1,
+      settings: { ...(body.settings ?? {}) },
+      mirrorScheduled: Boolean(
+        (body.settings?.mirror as { enabled?: boolean } | undefined)?.enabled,
+      ),
+    });
+  });
+  app.post("/projects/:id/mirror/sync", (c) => {
+    const p = state.projects.find((x) => x.id === c.req.param("id"));
+    if (!p) return errorBody(c, 404, "not_found", "no such project");
+    return c.json({
+      projectId: p.id,
+      githubProjectId: "PVT_1",
+      githubProjectUrl: "https://example.test/orgs/org/projects/1",
+      scanned: 3,
+      changed: 1,
+      created: 0,
+      updated: 1,
+      archived: 0,
+      deleted: 0,
+      skipped: 0,
+      errors: 0,
+      stopped: null,
+      sessionId: null,
+      eventId: null,
+      durationMs: 120,
+    });
+  });
+
+  // Reviews (spec H, K.2): the daemon's ReviewsView for a project or one task.
+  const reviewsViewFor = (
+    rows: ReviewView[],
+    filter: { projectId?: string; taskId?: string },
+  ): ReviewsView => {
+    const sorted = [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const verdicts: Record<string, number> = {};
+    let openFindings = 0;
+    for (const r of sorted) {
+      verdicts[r.verdict] = (verdicts[r.verdict] ?? 0) + 1;
+      openFindings += r.openFindings;
+    }
+    const trend = [...sorted]
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+      .map((r) => ({
+        at: r.createdAt,
+        grade: r.grade,
+        reviewId: r.id,
+        taskId: r.taskId,
+        verdict: r.verdict,
+      }));
+    return {
+      projectId: filter.projectId ?? null,
+      taskId: filter.taskId ?? null,
+      reviews: sorted,
+      openFindings,
+      gradeTrend: trend,
+      averageGrade: trend.length
+        ? Math.round((trend.reduce((a, p) => a + p.grade, 0) / trend.length) * 10) / 10
+        : null,
+      verdicts,
+    };
+  };
+  app.get("/projects/:id/reviews", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id)) {
+      return errorBody(c, 404, "not_found", "no such project");
+    }
+    const limit = Math.min(1000, Number(c.req.query("limit") ?? 200));
+    const rows = state.reviews.filter((r) => REVIEW_PROJECTS[r.id] === id);
+    return c.json(reviewsViewFor(rows.slice(0, limit > 0 ? limit : 200), { projectId: id }));
+  });
+  app.get("/tasks/:id/reviews", (c) => {
+    const id = c.req.param("id");
+    if (!state.tasks.some((t) => t.id === id))
+      return errorBody(c, 404, "not_found", "no such task");
+    return c.json(
+      reviewsViewFor(
+        state.reviews.filter((r) => r.taskId === id),
+        { taskId: id },
+      ),
+    );
+  });
+
+  // Memory (spec G, K.5): one view per scope; a peer's private memory is listed, never readable.
+  const countLessons = (scope: LessonView["scope"], owner?: string) => {
+    const rows = state.lessons.filter(
+      (l) => l.scope === scope && (!owner || l.ownerAgentId === owner),
+    );
+    return { active: rows.length, pinned: rows.filter((l) => l.pinned).length };
+  };
+  app.get("/memory/scopes", (c) => {
+    const out: MemoryScopeView[] = AGENTS.filter(
+      (a) => a.kind === "principal" && a.ownerHumanId === ME.id,
+    ).map((a) => ({
+      scope: "agent_private" as const,
+      ownerAgentId: a.id,
+      label: a.name,
+      ...countLessons("agent_private", a.id),
+    }));
+    out.push(
+      { scope: "critic", ownerAgentId: null, label: "Critic", ...countLessons("critic") },
+      { scope: "shared", ownerAgentId: null, label: "Shared", ...countLessons("shared") },
+    );
+    return c.json(out);
+  });
+  app.get("/memory", (c) => {
+    const scope = c.req.query("scope") ?? "shared";
+    if (scope !== "agent_private" && scope !== "critic" && scope !== "shared") {
+      return errorBody(c, 400, "validation", `unknown memory scope ${scope}`);
+    }
+    const owner = c.req.query("agentId") || undefined;
+    const q = (c.req.query("q") ?? "").trim().toLowerCase();
+    const tag = c.req.query("tag") || undefined;
+    const status = c.req.query("status") || "active";
+    const projectId = c.req.query("projectId") || undefined;
+    if (scope === "agent_private") {
+      if (!owner) return errorBody(c, 400, "validation", "agentId is required for agent_private");
+      const mine = AGENTS.find((a) => a.id === owner && a.ownerHumanId === ME.id);
+      if (!mine) {
+        return c.json(
+          {
+            code: "autonomy_insufficient",
+            message: `private memory of ${owner} is not readable by this install`,
+          },
+          403,
+        );
+      }
+    }
+    const rows = state.lessons.filter(
+      (l) =>
+        l.scope === scope &&
+        (!owner || l.ownerAgentId === owner) &&
+        l.status === status &&
+        (!projectId || l.projectId === projectId || l.projectId === null) &&
+        (!tag || l.tags.includes(tag)) &&
+        (!q || `${l.text} ${l.tags.join(" ")}`.toLowerCase().includes(q)),
+    );
+    const view: MemoryView = { scope, ownerAgentId: owner ?? null, query: q, lessons: rows };
+    return c.json(view);
+  });
+  app.put("/memory/lessons/:id", async (c) => {
+    const l = state.lessons.find((x) => x.id === c.req.param("id"));
+    if (!l) return errorBody(c, 404, "not_found", "no such lesson");
+    const body = (await c.req.json()) as {
+      text?: unknown;
+      tags?: unknown;
+      confidence?: unknown;
+      pinned?: unknown;
+    };
+    if (body.text !== undefined) {
+      if (typeof body.text !== "string" || body.text.trim().length === 0) {
+        return errorBody(c, 400, "validation", "text: must not be empty");
+      }
+      l.text = body.text.trim();
+    }
+    if (Array.isArray(body.tags))
+      l.tags = body.tags.filter((t): t is string => typeof t === "string");
+    if (typeof body.confidence === "number") l.confidence = body.confidence;
+    if (typeof body.pinned === "boolean") l.pinned = body.pinned;
+    l.version += 1;
+    l.updatedAt = new Date().toISOString();
+    return c.json(l);
+  });
+  app.post("/memory/lessons/:id/pin", async (c) => {
+    const l = state.lessons.find((x) => x.id === c.req.param("id"));
+    if (!l) return errorBody(c, 404, "not_found", "no such lesson");
+    const body = (await c.req.json()) as { pinned?: unknown };
+    if (typeof body.pinned !== "boolean") return errorBody(c, 400, "validation", "pinned");
+    l.pinned = body.pinned;
+    l.version += 1;
+    l.updatedAt = new Date().toISOString();
+    return c.json(l);
+  });
+  app.delete("/memory/lessons/:id", (c) => {
+    const l = state.lessons.find((x) => x.id === c.req.param("id"));
+    if (!l) return errorBody(c, 404, "not_found", "no such lesson");
+    state.lessons = state.lessons.filter((x) => x.id !== l.id);
+    const retired: LessonView = { ...l, status: "retired", version: l.version + 1 };
+    return c.json(retired);
+  });
+  app.get("/memory/consolidation", (c) => c.json(state.consolidation));
+  app.post("/memory/consolidation/run", (c) => {
+    const now = new Date().toISOString();
+    const report: ConsolidationReportView = {
+      scope: "agent_private",
+      ownerAgentId: "agent_alice",
+      ranAt: now,
+      applied: false,
+      merged: [],
+      contradictions: [],
+      retired: [],
+      proposals: [],
+    };
+    const requestId = nextId("req");
+    state.consolidation.unshift({
+      requestId,
+      status: "open",
+      createdAt: now,
+      reports: [report],
+      proposals: [],
+      appliedAt: null,
+      answer: null,
+    });
+    emit("inbox.changed", { blockingCount: blockingCount() });
+    return c.json({ requestId, proposals: 0, reports: [report] });
+  });
+
+  // Commands (spec Q): a small executor with the registry's risk rules for the commands the
+  // settings screen sends, one card and one change log row per request, confirmation by
+  // risk (medium a yes or a tap, high a paired device; the desktop app is one), undo.
+  type Risk = "low" | "medium" | "high";
+  const RISK_ORDER: Record<Risk, number> = { low: 0, medium: 1, high: 2 };
+  const SOURCE_OF: Record<string, ChangeLogView["source"]> = {
+    text: "chat",
+    voice: "voice",
+    phone: "chat",
+  };
+  const projectByRef = (ref: string | undefined) =>
+    ref
+      ? state.projects.find((p) => p.id === ref || p.name.toLowerCase() === ref.toLowerCase())
+      : state.projects.find((p) => p.active);
+  const card = (
+    input: Partial<ChangeCardView> &
+      Pick<ChangeCardView, "command" | "what" | "oldValue" | "newValue" | "scope" | "sentence">,
+    risk: Risk,
+  ): ChangeCardView => ({
+    scopeLabel:
+      input.scope === "session"
+        ? "this session"
+        : input.scope === "project"
+          ? "this project"
+          : "everything",
+    duration: input.expiresAt ? `until ${input.expiresAt}` : "permanent",
+    impact: { risk },
+    undoHint: "Say undo or tap Undo in the change log.",
+    projectId: null,
+    projectName: null,
+    usesActiveProject: false,
+    expiresAt: null,
+    reversible: true,
+    ...input,
+  });
+  interface Planned {
+    name: string;
+    params: Record<string, unknown>;
+    risk: Risk;
+    card: ChangeCardView;
+    /** Mutates the fake's state and returns the before/after values for the change log. */
+    apply: () => { before: unknown; after: unknown };
+  }
+  type PlanOutcome = Planned | { refused: { reason: string; code: string } };
+  const refuse = (reason: string, code = "validation"): PlanOutcome => ({
+    refused: { reason, code },
+  });
+  const SETTING_RISK: Record<string, Risk> = {
+    speed_quality_offset: "low",
+    small_project_mode: "low",
+    critic_ceiling: "medium",
+    session_reserve_share: "medium",
+    quiet_hours: "low",
+    shared_with: "high",
+    notify_channel: "low",
+    default_autonomy: "medium",
+    language: "low",
+  };
+  const plan = (name: string, params: Record<string, unknown>): PlanOutcome => {
+    const projectRef = typeof params.project === "string" ? params.project : undefined;
+    if (name === "autonomy.set") {
+      const level = Number(params.level);
+      const project = projectByRef(projectRef);
+      if (!project || !Number.isInteger(level) || level < 0 || level > 4) {
+        return refuse("level must be 0 to 4 and the project must exist");
+      }
+      const delta = Math.abs(level - project.autonomyLevel);
+      const risk: Risk = delta === 0 ? "low" : delta === 1 ? "medium" : "high";
+      const from = project.autonomyLevel;
+      return {
+        name,
+        params,
+        risk,
+        card: card(
+          {
+            command: name,
+            what: `autonomy for ${project.name}`,
+            oldValue: String(from),
+            newValue: String(level),
+            scope: "project",
+            sentence: `Set autonomy for ${project.name} from ${from} to ${level}. Undo.`,
+            projectId: project.id,
+            projectName: project.name,
+            usesActiveProject: projectRef === undefined,
+          },
+          risk,
+        ),
+        apply: () => {
+          project.autonomyLevel = level;
+          emit("project.changed", { id: project.id });
+          return { before: { autonomyLevel: from }, after: { autonomyLevel: level } };
+        },
+      };
+    }
+    if (name === "budget.set") {
+      const scope = typeof params.scope === "string" ? params.scope : "session";
+      const amountChf = Number(params.amountChf);
+      if (!Number.isFinite(amountChf) || amountChf <= 0) {
+        return refuse("budget.set: amountChf must be a positive number");
+      }
+      if (scope === "month") {
+        const fromChf = ME.monthlyCap.chfMicro / 1_000_000;
+        return {
+          name,
+          params,
+          risk: "high",
+          card: card(
+            {
+              command: name,
+              what: "the monthly hard ceiling",
+              oldValue: `CHF ${fromChf}`,
+              newValue: `CHF ${amountChf}`,
+              scope: "global",
+              sentence: `Raised the monthly hard ceiling from CHF ${fromChf} to CHF ${amountChf}. Undo.`,
+            },
+            "high",
+          ),
+          apply: () => ({
+            before: { monthlyCapChf: fromChf },
+            after: { monthlyCapChf: amountChf },
+          }),
+        };
+      }
+      const project = projectByRef(projectRef);
+      if (!project) return refuse("no such project");
+      if (scope === "project") {
+        const fromChf = project.budget.chfMicro / 1_000_000;
+        return {
+          name,
+          params,
+          risk: "medium",
+          card: card(
+            {
+              command: name,
+              what: `the project budget for ${project.name}`,
+              oldValue: `CHF ${fromChf}`,
+              newValue: `CHF ${amountChf}`,
+              scope: "project",
+              sentence: `Set the project budget for ${project.name} from CHF ${fromChf} to CHF ${amountChf}. Undo.`,
+              projectId: project.id,
+              projectName: project.name,
+              usesActiveProject: projectRef === undefined,
+            },
+            "medium",
+          ),
+          apply: () => {
+            project.budget = money(Math.round((amountChf * 1_000_000) / 0.8));
+            emit("project.changed", { id: project.id });
+            return { before: { budgetChf: fromChf }, after: { budgetChf: amountChf } };
+          },
+        };
+      }
+      const until = typeof params.until === "string" ? params.until : null;
+      const risk: Risk = amountChf > 1.6 ? "medium" : "low";
+      return {
+        name,
+        params,
+        risk,
+        card: card(
+          {
+            command: name,
+            what: `${until ? "tonight's" : "the"} session budget for ${project.name}`,
+            oldValue: "CHF 5",
+            newValue: `CHF ${amountChf}`,
+            scope: "session",
+            sentence: `Raised the session budget for ${project.name} from CHF 5 to CHF ${amountChf}${until ? `, until ${until}` : ""}. Undo.`,
+            projectId: project.id,
+            projectName: project.name,
+            usesActiveProject: projectRef === undefined,
+            expiresAt: until,
+          },
+          risk,
+        ),
+        apply: () => ({ before: { sessionBudgetChf: 5 }, after: { sessionBudgetChf: amountChf } }),
+      };
+    }
+    if (name === "settings.set") {
+      const key = typeof params.key === "string" ? params.key : "";
+      const risk = SETTING_RISK[key];
+      if (!risk) return refuse(`unknown setting ${key}`);
+      const project = projectByRef(projectRef);
+      return {
+        name,
+        params,
+        risk,
+        card: card(
+          {
+            command: name,
+            what: `${key}${project ? ` for ${project.name}` : ""}`,
+            oldValue: "unset",
+            newValue: JSON.stringify(params.value),
+            scope: "project",
+            sentence: `Set ${key}${project ? ` for ${project.name}` : ""} to ${JSON.stringify(params.value)}. Undo.`,
+            projectId: project?.id ?? null,
+            projectName: project?.name ?? null,
+            usesActiveProject: projectRef === undefined,
+          },
+          risk,
+        ),
+        apply: () => ({ before: { [key]: null }, after: { [key]: params.value } }),
+      };
+    }
+    if (name === "note.add") {
+      const project = projectByRef(projectRef);
+      const text = typeof params.text === "string" ? params.text : "";
+      if (!project || !text.trim()) return refuse("note.add needs text and a project");
+      return {
+        name,
+        params,
+        risk: "low",
+        card: card(
+          {
+            command: name,
+            what: `a note for ${project.name}`,
+            oldValue: "",
+            newValue: text,
+            scope: "project",
+            sentence: `Added a note to ${project.name}'s next session. Undo.`,
+            projectId: project.id,
+            projectName: project.name,
+          },
+          "low",
+        ),
+        apply: () => {
+          const item: QueueItemView = {
+            id: nextId("q"),
+            projectId: project.id,
+            humanId: ME.id,
+            kind: "note",
+            text,
+            priority: 0,
+            status: "queued",
+            consumedBySession: null,
+            createdAt: new Date().toISOString(),
+            version: 1,
+          };
+          state.queue.unshift(item);
+          return { before: null, after: { queueItem: item.id } };
+        },
+      };
+    }
+    if (name === "project.switch") {
+      const project = projectByRef(projectRef);
+      if (!project) return refuse("no such project");
+      const before = state.projects.find((p) => p.active);
+      return {
+        name,
+        params,
+        risk: "low",
+        card: card(
+          {
+            command: name,
+            what: "the active project",
+            oldValue: before?.name ?? "none",
+            newValue: project.name,
+            scope: "global",
+            sentence: `Switched to ${project.name}. Undo.`,
+            projectId: project.id,
+            projectName: project.name,
+          },
+          "low",
+        ),
+        apply: () => {
+          for (const p of state.projects) p.active = p.id === project.id;
+          return {
+            before: { activeProject: before?.id ?? null },
+            after: { activeProject: project.id },
+          };
+        },
+      };
+    }
+    if (name === "capability.grant") {
+      const target = String(params.extension ?? params.name ?? "a capability");
+      return {
+        name,
+        params,
+        risk: "high",
+        card: card(
+          {
+            command: name,
+            what: `capability ${target}`,
+            oldValue: "not granted",
+            newValue: "granted",
+            scope: "global",
+            sentence: `Granted ${target}. Undo.`,
+          },
+          "high",
+        ),
+        apply: () => ({ before: { granted: false }, after: { granted: true } }),
+      };
+    }
+    return refuse(`unknown command ${name}`, "not_found");
+  };
+  const logChange = (
+    plans: Planned[],
+    view: ChangeCardView,
+    source: ChangeLogView["source"],
+    wordsUsed: string,
+  ): ChangeLogView => {
+    const results = plans.map((p) => p.apply());
+    const entry: ChangeLogView = {
+      id: nextId("chg"),
+      humanId: ME.id,
+      agentId: "agent_alice",
+      wordsUsed,
+      commands: plans.map((p) => ({ name: p.name, params: p.params })),
+      before: results.length === 1 ? results[0]?.before : results.map((r) => r.before),
+      after: results.length === 1 ? results[0]?.after : results.map((r) => r.after),
+      scope: view.scope,
+      projectId: view.projectId,
+      expiresAt: view.expiresAt,
+      undoState: view.reversible ? "undoable" : "irreversible",
+      undoneAt: null,
+      source,
+      sentence: view.sentence,
+      undoable: view.reversible,
+      createdAt: new Date().toISOString(),
+      version: 1,
+    };
+    state.changes.unshift(entry);
+    return entry;
+  };
+  const decide = (risk: Risk) =>
+    risk === "low" ? "act" : risk === "medium" ? "needs_yes" : "needs_device";
+  const mergeCards = (plans: Planned[]): ChangeCardView => {
+    const first = plans[0]?.card;
+    if (!first) throw new Error("mergeCards: empty plan");
+    if (plans.length === 1) return first;
+    const risk = plans.map((p) => p.risk).reduce((a, b) => (RISK_ORDER[b] > RISK_ORDER[a] ? b : a));
+    return {
+      ...first,
+      what: plans.map((p) => p.card.what).join(", "),
+      impact: { ...first.impact, risk },
+      sentence: plans
+        .map((p) => p.card.sentence.replace(/ Undo\.$/, "."))
+        .join(" ")
+        .concat(" Undo."),
+      parts: plans.map((p) => p.card),
+    };
+  };
+  app.get("/commands", (c) => c.json(COMMAND_DEFS));
+  app.post("/commands/parse", async (c) => {
+    const body = (await c.req.json()) as { text?: string };
+    const text = (body.text ?? "").trim();
+    if (!text) return errorBody(c, 400, "validation", "text is required");
+    const m = /^switch to (.+)$/i.exec(text);
+    if (m) {
+      return c.json({
+        commands: [{ name: "project.switch", params: { project: m[1] } }],
+        question: null,
+        matched: "pattern",
+      });
+    }
+    return c.json({ commands: [], question: null, matched: "none" });
+  });
+  app.post("/commands/execute", async (c) => {
+    const body = (await c.req.json()) as {
+      commands?: Array<{ name?: unknown; params?: unknown }>;
+      wordsUsed?: string;
+      source?: string;
+      projectId?: string;
+      deviceId?: string;
+      confirm?: string;
+    };
+    if (!Array.isArray(body.commands) || body.commands.length === 0) {
+      return errorBody(c, 400, "validation", "commands: at least one command");
+    }
+    const names: string[] = [];
+    const plans: Planned[] = [];
+    for (const call of body.commands) {
+      if (typeof call.name !== "string") return errorBody(c, 400, "validation", "commands[].name");
+      names.push(call.name);
+      const params =
+        call.params && typeof call.params === "object"
+          ? (call.params as Record<string, unknown>)
+          : {};
+      const outcome = plan(call.name, params);
+      if ("refused" in outcome) {
+        const result: CommandResultJson = {
+          status: "refused",
+          reason: outcome.refused.reason,
+          code: outcome.refused.code,
+          card: null,
+          commands: names,
+        };
+        return c.json(result);
+      }
+      plans.push(outcome);
+    }
+    const view = mergeCards(plans);
+    const risk = view.impact.risk;
+    const source = SOURCE_OF[body.source ?? "text"] ?? "chat";
+    const wordsUsed = body.wordsUsed ?? "";
+    const runAll = (): CommandResultJson => {
+      const entry = logChange(plans, view, source, wordsUsed);
+      return {
+        status: "done",
+        sentence: view.sentence,
+        changeLogId: entry.id,
+        undoToken: entry.undoable ? entry.id : null,
+        card: view,
+        commands: names,
+      };
+    };
+    const decision = decide(risk);
+    if (decision === "act" || (decision === "needs_yes" && body.confirm === "tap")) {
+      return c.json(runAll());
+    }
+    const id = nextId("pend");
+    const now = new Date();
+    const readback = `${view.what}: ${view.oldValue || "nothing"} to ${view.newValue}. ${
+      decision === "needs_yes" ? "Say yes to confirm." : "Confirm in the app on a paired device."
+    }`;
+    state.pendingCommands.set(id, {
+      card: view,
+      decision,
+      apply: runAll,
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 10 * 60_000).toISOString(),
+      readback,
+      wordsUsed,
+    });
+    emit("inbox.changed", { blockingCount: blockingCount() });
+    const result: CommandResultJson = {
+      status: "pending",
+      readback,
+      pendingId: id,
+      decision,
+      expiresAt: new Date(now.getTime() + 10 * 60_000).toISOString(),
+      card: view,
+      commands: names,
+    };
+    return c.json(result);
+  });
+  app.get("/commands/pending", (c) => {
+    const rows: PendingChangeView[] = [...state.pendingCommands.entries()].map(([id, p]) => ({
+      id,
+      humanId: ME.id,
+      card: p.card,
+      decision: p.decision,
+      createdAt: p.createdAt,
+      expiresAt: p.expiresAt,
+      readback: p.readback,
+      wordsUsed: p.wordsUsed,
+    }));
+    return c.json(rows);
+  });
+  const noPending = (id: string): CommandResultJson => ({
+    status: "refused",
+    reason: `no pending change ${id}`,
+    code: "not_found",
+    card: null,
+    commands: [],
+  });
+  app.post("/commands/:id/confirm", async (c) => {
+    const id = c.req.param("id");
+    const body = (await c.req.json()) as {
+      answer?: string;
+      deviceId?: string;
+      biometric?: boolean;
+    };
+    if (!["yes", "no", "tap", "device"].includes(body.answer ?? "")) {
+      return errorBody(c, 400, "validation", "answer must be yes, no, tap or device");
+    }
+    const pending = state.pendingCommands.get(id);
+    if (!pending) return c.json(noPending(id));
+    const names = pending.card.parts?.map((p) => p.command) ?? [pending.card.command];
+    if (body.answer === "no") {
+      state.pendingCommands.delete(id);
+      const result: CommandResultJson = {
+        status: "cancelled",
+        pendingId: id,
+        card: pending.card,
+        commands: names,
+      };
+      return c.json(result);
+    }
+    if (body.answer === "device") {
+      if (!body.deviceId) return errorBody(c, 400, "validation", "deviceId is required");
+    } else if (pending.decision === "needs_device") {
+      const result: CommandResultJson = {
+        status: "refused",
+        reason:
+          "a yes or a tap is not enough for a high-risk change: confirm in the app on a paired device",
+        code: "approval_required",
+        card: pending.card,
+        pendingId: id,
+        commands: names,
+      };
+      return c.json(result);
+    }
+    state.pendingCommands.delete(id);
+    return c.json(pending.apply());
+  });
+  app.post("/commands/:id/cancel", (c) => {
+    const id = c.req.param("id");
+    const pending = state.pendingCommands.get(id);
+    if (!pending) return c.json(noPending(id));
+    state.pendingCommands.delete(id);
+    const result: CommandResultJson = {
+      status: "cancelled",
+      pendingId: id,
+      card: pending.card,
+      commands: pending.card.parts?.map((p) => p.command) ?? [pending.card.command],
+    };
+    return c.json(result);
+  });
+  const withUndoable = (ch: ChangeLogView, now: string): ChangeLogView => ({
+    ...ch,
+    undoable: ch.undoState === "undoable" && (!ch.expiresAt || ch.expiresAt > now),
+  });
+  app.get("/changes", (c) => {
+    const projectId = c.req.query("projectId");
+    const onlyUndoable = c.req.query("undoable") === "true";
+    const limit = Math.min(1000, Number(c.req.query("limit") ?? 100));
+    const now = new Date().toISOString();
+    const rows = state.changes
+      .map((ch) => withUndoable(ch, now))
+      .filter((ch) => (!projectId || ch.projectId === projectId) && (!onlyUndoable || ch.undoable));
+    return c.json(rows.slice(0, limit > 0 ? limit : 100));
+  });
+  app.post("/changes/:id/undo", (c) => {
+    const entry = state.changes.find((ch) => ch.id === c.req.param("id"));
+    if (!entry) return c.json(noPending(c.req.param("id")));
+    const now = new Date().toISOString();
+    if (!withUndoable(entry, now).undoable) {
+      const result: CommandResultJson = {
+        status: "refused",
+        reason: `change is ${entry.undoState}`,
+        code: "validation",
+        card: null,
+        commands: ["undo"],
+      };
+      return c.json(result);
+    }
+    // Put the value back for the commands the fake applies to its state.
+    const first = (entry.commands[0] ?? null) as { name?: string } | null;
+    const before = (Array.isArray(entry.before) ? entry.before[0] : entry.before) as Record<
+      string,
+      unknown
+    > | null;
+    const project = state.projects.find((p) => p.id === entry.projectId);
+    if (first?.name === "autonomy.set" && project && typeof before?.autonomyLevel === "number") {
+      project.autonomyLevel = before.autonomyLevel;
+      emit("project.changed", { id: project.id });
+    }
+    if (first?.name === "budget.set" && project && typeof before?.budgetChf === "number") {
+      project.budget = money(Math.round((before.budgetChf * 1_000_000) / 0.8));
+      emit("project.changed", { id: project.id });
+    }
+    entry.undoState = "undone";
+    entry.undoneAt = now;
+    entry.undoable = false;
+    entry.version += 1;
+    const sentence = `Undone: ${entry.sentence.replace(/ Undo\.$/, ".")}`;
+    const undoRow: ChangeLogView = {
+      ...entry,
+      id: nextId("chg"),
+      commands: [{ name: "undo", params: { of: entry.id } }],
+      before: entry.after,
+      after: entry.before,
+      undoState: "irreversible",
+      undoneAt: null,
+      undoable: false,
+      wordsUsed: "undo",
+      sentence,
+      createdAt: now,
+      version: 1,
+    };
+    state.changes.unshift(undoRow);
+    const result: CommandResultJson = {
+      status: "done",
+      sentence,
+      changeLogId: undoRow.id,
+      undoToken: null,
+      card: null,
+      commands: ["undo"],
+    };
+    return c.json(result);
+  });
+
+  app.get("/projects/:id/queue", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id)) {
+      return errorBody(c, 404, "not_found", "no such project");
+    }
+    const status = c.req.query("status");
+    return c.json(
+      state.queue
+        .filter((q) => q.projectId === id && (!status || q.status === status))
+        .sort((a, b) => b.priority - a.priority || b.createdAt.localeCompare(a.createdAt)),
+    );
+  });
+  app.post("/projects/:id/queue", async (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id)) {
+      return errorBody(c, 404, "not_found", "no such project");
+    }
+    const body = (await c.req.json()) as { kind?: string; text?: string; priority?: number };
+    if (
+      !body.text?.trim() ||
+      !["note", "task", "correction", "idea", "voice_note"].includes(body.kind ?? "")
+    ) {
+      return errorBody(c, 400, "validation", "kind and text are required");
+    }
+    const item: QueueItemView = {
+      id: nextId("q"),
+      projectId: id,
+      humanId: ME.id,
+      kind: body.kind as QueueItemView["kind"],
+      text: body.text.trim(),
+      priority: body.priority ?? 0,
+      status: "queued",
+      consumedBySession: null,
+      createdAt: new Date().toISOString(),
+      version: 1,
+    };
+    state.queue.unshift(item);
+    return c.json(item, 201);
+  });
+  app.post("/queue/:id/dismiss", (c) => {
+    const item = state.queue.find((q) => q.id === c.req.param("id"));
+    if (!item) return errorBody(c, 404, "not_found", "no such queue item");
+    item.status = "dismissed";
+    item.version += 1;
+    return c.json(item);
+  });
+
+  app.get("/projects/:id/milestones", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id)) {
+      return errorBody(c, 404, "not_found", "no such project");
+    }
+    return c.json(MILESTONES.filter((m) => m.projectId === id));
+  });
+
+  app.get("/projects/:id/data", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id)) {
+      return errorBody(c, 404, "not_found", "no such project");
+    }
+    return c.json(state.dataAssets.filter((a) => a.projectIds.includes(id)));
+  });
+  app.post("/projects/:id/data", async (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id)) {
+      return errorBody(c, 404, "not_found", "no such project");
+    }
+    const body = (await c.req.json()) as { locator?: string; kind?: string };
+    if (!body.locator?.trim() || !body.kind?.trim()) {
+      return errorBody(c, 400, "validation", "locator and kind are required");
+    }
+    const asset: DataAssetView = {
+      id: nextId("da"),
+      projectIds: [id],
+      locator: body.locator.trim(),
+      name: body.locator.trim().split(/[\\/]/).pop() ?? body.locator.trim(),
+      sizeBytes: 0,
+      kind: body.kind.trim(),
+      ownerDeviceId: null,
+      sample: null,
+      registeredBy: ME.id,
+      createdAt: new Date().toISOString(),
+    };
+    state.dataAssets.unshift(asset);
+    return c.json(asset, 201);
+  });
+  app.delete("/data/:id", (c) => {
+    const asset = state.dataAssets.find((a) => a.id === c.req.param("id"));
+    if (!asset) return errorBody(c, 404, "not_found", "no such data asset");
+    state.dataAssets = state.dataAssets.filter((a) => a.id !== asset.id);
+    return c.json({ ok: true });
+  });
+  app.post("/projects/:id/import", async (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id)) {
+      return errorBody(c, 404, "not_found", "no such project");
+    }
+    const body = (await c.req.json()) as { source?: string; locator?: string };
+    if (!body.locator?.trim() || !["zip", "folder", "repo"].includes(body.source ?? "")) {
+      return errorBody(c, 400, "validation", "source and locator are required");
+    }
+    const task: TaskView = {
+      id: nextId("task"),
+      projectId: id,
+      milestoneId: null,
+      title: `Import ${body.source} ${body.locator.trim()}`,
+      outcome: "The original is preserved; the migration runs on a branch.",
+      acceptanceCriteria: ["Original untouched", "Migration branch opened"],
+      riskTier: 1,
+      status: "ready",
+      priority: 6,
+      claimedBy: null,
+      claimExpires: null,
+      dependsOn: [],
+      budget: money(0),
+      estimate: money(0),
+      actual: money(0),
+      specialist: "migration",
+      attempt: 0,
+      prUrl: null,
+      branch: null,
+      reason: "import requested from the app",
+      updatedAt: new Date().toISOString(),
+      version: 1,
+    };
+    state.tasks.unshift(task);
+    return c.json(
+      {
+        status: "queued",
+        taskId: task.id,
+        requestId: null,
+        message: `Import queued as ${task.id}; the migration specialist runs it on a branch.`,
+      },
+      202,
+    );
+  });
+
+  app.get("/projects/:id/docs", (c) => {
+    const id = c.req.param("id");
+    if (!state.projects.some((p) => p.id === id)) {
+      return errorBody(c, 404, "not_found", "no such project");
+    }
+    return c.json(id === "proj_atlas" ? DOCS : []);
+  });
+  app.get("/projects/:id/docs/:path", (c) => {
+    const doc = DOC_CONTENTS[c.req.param("path")];
+    return doc ? c.json(doc) : errorBody(c, 404, "not_found", "no such doc");
+  });
+
+  app.get("/performance", (c) =>
+    c.json({ ...PERFORMANCE, projectId: c.req.query("projectId") ?? null }),
+  );
 
   app.get("/events", (c) =>
     streamSSE(c, async (stream) => {

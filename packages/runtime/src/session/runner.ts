@@ -6,8 +6,20 @@ import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
 import { type EstimatePort, planEstimateUsdMicro } from "../estimates/model.ts";
+import {
+  type CriticPort,
+  DEFAULT_MEMORY_TOKEN_BUDGET,
+  type LessonCandidate,
+  type MemoryPort,
+  type MemoryRecallResult,
+  memoryBudgetOf,
+  type SessionReviewOutcome,
+  type TaskReviewOutcome,
+} from "../loop/ports.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, runStartupChecklist } from "./checklist.ts";
+import { fileBlockedByFindingsRequest } from "./findings.ts";
+import { describeRejectedLessons, type RejectedLesson, screenLessons } from "./lessons.ts";
 import {
   buildPeerFeed,
   detectOverlap,
@@ -84,6 +96,14 @@ export interface TaskExecutionResult {
   artifacts?: unknown[];
   /** True when automated checks (tier 0) passed, so the task may close without a critic review. */
   checksPassed?: boolean;
+  /** The Run row that produced the work; the critic resolves findings against it. */
+  runId?: string;
+  /** The worktree the task ran in, for the critic's diff and checks. */
+  worktree?: string;
+  /** The specialist's final report, in full; the critic reads it as claims. */
+  finalReport?: string;
+  /** Lessons the specialist spelled out ("Lesson: ..."), recorded at session end. */
+  lessons?: LessonCandidate[];
 }
 
 export interface TaskExecutor {
@@ -123,6 +143,23 @@ export interface SessionStartOptions {
   checklist?: Partial<Pick<ChecklistInput, "git" | "sync" | "repoDirs" | "planUsageShare">>;
   /** Called for every session event (live view). */
   onEvent?: (type: string, payload: Record<string, unknown>) => void;
+  /**
+   * Token budget for the lessons loaded into the brief. The project's
+   * `settings.memory_token_budget` wins; then this; then the default (ADR 0036).
+   */
+  memoryTokenBudget?: number;
+}
+
+/** One task's critic review as the session saw it. */
+export interface SessionReviewRecord {
+  taskId: string;
+  reviewId: string | null;
+  tier: number;
+  verdict: string;
+  grade: number;
+  decision: TaskReviewOutcome["decision"];
+  retry?: TaskReviewOutcome["retry"];
+  attempt: number;
 }
 
 export interface SessionResult {
@@ -135,6 +172,15 @@ export interface SessionResult {
   failed: string[];
   skipped: string[];
   needsHuman: string[];
+  /** Tasks the critic sent back to ready (revise or a retry rung). */
+  retried: string[];
+  /** Tasks whose close was refused because a finding is still open (B.4). */
+  blockedByFindings: string[];
+  reviews: SessionReviewRecord[];
+  /** The lessons block loaded at start, or null without a memory port. */
+  memory: { tokens: number; budget: number; lessons: number } | null;
+  lessonsRecorded: number;
+  sessionReview: SessionReviewOutcome | null;
   spentUsdMicro: number;
   steps: number;
   summary: string;
@@ -168,6 +214,40 @@ export interface SessionRunnerDeps {
    * turns the proxy's counter delta into `session.headroom_saved_tokens` at the end.
    */
   context?: ContextManager;
+  /**
+   * The critic (spec H): reviews every task above tier 0 after its run and the session at its
+   * end. Without it tasks stay in review for a later reviewer (tier 0 closes mechanically).
+   */
+  critic?: CriticPort;
+  /** Session review tier (H.6). Default 0: the deterministic checks, no model call. */
+  sessionReviewTier?: 0 | 1 | 2 | 3;
+  /**
+   * Memory (spec G): lessons into the brief at start under the budget, lessons recorded at
+   * the end. Without it the session runs without lessons.
+   */
+  memory?: MemoryPort;
+  /** Default retrieval budget when neither the project nor the start options set one. */
+  memoryTokenBudget?: number;
+}
+
+/** Lines a specialist's final report spells out as lessons. */
+const LESSON_LINE = /^\s*(?:[-*]\s*)?lesson\s*:\s*(.+?)\s*$/i;
+
+/** "Lesson: ..." lines of a report, each a candidate for private memory (20 to 2000 chars). */
+export function lessonsFromReport(
+  text: string | undefined,
+  tags: string[] = [],
+): LessonCandidate[] {
+  if (!text) return [];
+  const out: LessonCandidate[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = LESSON_LINE.exec(line);
+    if (!m?.[1]) continue;
+    const body = m[1].trim();
+    if (body.length < 20 || body.length > 2000) continue;
+    out.push({ text: body, tags: ["session", ...tags], confidence: 0.5 });
+  }
+  return out;
 }
 
 export class SessionRunner {
@@ -275,6 +355,19 @@ export class SessionRunner {
     const inReview: string[] = [];
     const failed: string[] = [];
     const skipped: string[] = [];
+    const retried: string[] = [];
+    const blockedByFindings: string[] = [];
+    const reviews: SessionReviewRecord[] = [];
+    const lessonCandidates: LessonCandidate[] = [];
+    /** Lesson proposals the critic port refused as instruction-shaped (quoted to the human). */
+    const quarantinedByCritic: RejectedLesson[] = [];
+    const resolvedFindingTitles: string[] = [];
+    let memoryLoaded: MemoryRecallResult | null = null;
+    const memoryBudget = memoryBudgetOf(
+      project?.settings,
+      undefined,
+      opts.memoryTokenBudget ?? this.deps.memoryTokenBudget ?? DEFAULT_MEMORY_TOKEN_BUDGET,
+    );
     const filesByTask = new Map<string, string[]>();
     const overlapNotified = new Set<string>();
     let peerIds: string[] = [];
@@ -320,14 +413,47 @@ export class SessionRunner {
         buildPeerFeed({ store, clock, agentId: agent.id, projectId: project?.id, peerIds });
       let feed = await peerFeed();
       const feedText = renderPeerFeed(feed);
-      const briefText = feedText
-        ? `${renderStateBrief(brief)}\n\n${feedText}`
-        : renderStateBrief(brief);
+      const stateText = renderStateBrief(brief);
+      // Memory (spec G): the lessons that match this brief, under the token budget. The
+      // budget is enforced in code twice: the memory package cuts to it, and a block that
+      // still exceeds it is dropped here rather than sent.
+      let memoryText = "";
+      if (this.deps.memory) {
+        try {
+          memoryLoaded = await this.deps.memory.recall({
+            agentId: agent.id,
+            kind: "principal",
+            projectId: project?.id ?? null,
+            query: stateText,
+            maxTokens: memoryBudget,
+          });
+          if (memoryLoaded.tokens > memoryBudget) {
+            await emit("memory.over_budget", {
+              warning: `memory block of ${memoryLoaded.tokens} tokens exceeds the budget of ${memoryBudget}; dropped`,
+              tokens: memoryLoaded.tokens,
+              budget: memoryBudget,
+            });
+            memoryLoaded = { ...memoryLoaded, block: "", tokens: 0, lessonIds: [] };
+          }
+          memoryText = memoryLoaded.block;
+          await emit("memory.loaded", {
+            tokens: memoryLoaded.tokens,
+            budget: memoryBudget,
+            lessons: memoryLoaded.lessonIds.length,
+            denied: memoryLoaded.denied,
+            warnings: memoryLoaded.warnings,
+          });
+        } catch (e) {
+          await emit("memory.load_failed", { warning: errorMessage(e) });
+        }
+      }
+      const briefText = [stateText, feedText, memoryText].filter((t) => t).join("\n\n");
       await emit("session.brief", {
         tokensApprox: Math.ceil(briefText.length / 4),
         warnings: brief.warnings,
         unread: brief.inbox.unreadCount,
         ready: brief.tasks.readyCount,
+        memoryTokens: memoryLoaded?.tokens ?? 0,
       });
       await emit("peers.feed", {
         peers: feed.peers.map((p) => ({
@@ -569,9 +695,13 @@ export class SessionRunner {
               error: errorMessage(e),
             });
           }
+          lessonCandidates.push(...(result.lessons ?? []));
           const closeTier0 =
             result.outcome === "done" && task.risk_tier === 0 && result.checksPassed;
           if (closeTier0) {
+            // Tier 0 keeps the mechanical path: automated checks only, no critic. The store
+            // still refuses the close while a finding is open (B.4); that is surfaced, never
+            // worked around.
             await store.task.transition(
               task.id,
               task.version,
@@ -580,14 +710,29 @@ export class SessionRunner {
               { agentId: agent.id },
             );
             const t2 = await store.task.mustGet(task.id);
-            await store.task.transition(
-              t2.id,
-              t2.version,
-              "done",
-              "tier 0: automated checks only",
-              { agentId: agent.id },
-            );
-            completed.push(task.id);
+            try {
+              await store.task.transition(
+                t2.id,
+                t2.version,
+                "done",
+                "tier 0: automated checks only",
+                { agentId: agent.id },
+              );
+              completed.push(task.id);
+            } catch (e) {
+              if (!(e instanceof ForerunnerError && e.code === "findings_open")) throw e;
+              inReview.push(task.id);
+              blockedByFindings.push(task.id);
+              await this.blockedByFindings({
+                task: await store.task.mustGet(task.id),
+                session,
+                agentId: agent.id,
+                humanId: agent.owner_human_id,
+                runId: result.runId ?? null,
+                path: "tier0",
+                emit,
+              });
+            }
           } else if (result.outcome === "done" || result.outcome === "in_review") {
             await store.task.transition(
               task.id,
@@ -596,7 +741,87 @@ export class SessionRunner {
               result.summary.slice(0, 200),
               { agentId: agent.id },
             );
-            inReview.push(task.id);
+            // The critic (spec H): every task above tier 0 is reviewed at its tier before it
+            // can count as done; the verdict is applied through the state workflow.
+            const reviewed = this.deps.critic
+              ? await this.reviewTask({
+                  task: await store.task.mustGet(task.id),
+                  session,
+                  token,
+                  budget,
+                  item,
+                  result,
+                  agentId: agent.id,
+                  signal: controller.signal,
+                  emit,
+                })
+              : null;
+            if (!reviewed) {
+              inReview.push(task.id);
+            } else {
+              reviews.push({
+                taskId: task.id,
+                reviewId: reviewed.reviewId,
+                tier: reviewed.tier,
+                verdict: reviewed.verdict,
+                grade: reviewed.grade,
+                decision: reviewed.decision,
+                retry: reviewed.retry,
+                attempt: reviewed.attempt,
+              });
+              // A resolved finding always comes from an earlier review, so its row is loaded:
+              // the lesson says what was wrong and what fixed it, not that something was.
+              for (const id of reviewed.resolvedFindingIds) {
+                const finding = await store.finding.get(id);
+                lessonCandidates.push({
+                  text: `Critic finding resolved on "${task.title}" (${item.specialist}): ${
+                    finding
+                      ? `[${finding.severity}] ${finding.description} -> ${finding.required_action}`
+                      : `finding ${id} was resolved by the rework`
+                  }`,
+                  tags: ["critic-finding", "resolved", ...(finding ? [finding.severity] : [])],
+                  confidence: 0.6,
+                  source: `session:${session.id};review:${reviewed.reviewId ?? "none"};finding:${id}`,
+                });
+              }
+              if (reviewed.resolvedFindingIds.length) resolvedFindingTitles.push(task.title);
+              quarantinedByCritic.push(
+                ...reviewed.quarantinedLessons.map((q) => ({
+                  text: q.text,
+                  rules: q.rules,
+                  score: 0,
+                  source: "agent_output" as const,
+                  error: `instruction-like content ignored (${q.rules.join(", ")})`,
+                })),
+              );
+              switch (reviewed.decision) {
+                case "accepted":
+                  completed.push(task.id);
+                  break;
+                case "revise":
+                case "retry":
+                  retried.push(task.id);
+                  break;
+                case "human":
+                  needsHuman.push(task.id);
+                  break;
+                case "blocked_by_findings":
+                  inReview.push(task.id);
+                  blockedByFindings.push(task.id);
+                  await this.blockedByFindings({
+                    task: reviewed.task,
+                    session,
+                    agentId: agent.id,
+                    humanId: agent.owner_human_id,
+                    runId: result.runId ?? null,
+                    path: "critic_accept",
+                    emit,
+                  });
+                  break;
+                default:
+                  inReview.push(task.id);
+              }
+            }
           } else if (result.outcome === "needs_human") {
             await store.task.transition(
               task.id,
@@ -664,6 +889,8 @@ export class SessionRunner {
       failed,
       skipped,
       needsHuman,
+      retried,
+      blockedByFindings,
       spent,
       stopReason,
       plan,
@@ -675,10 +902,95 @@ export class SessionRunner {
         inReview.filter((id) => filesByTask.has(id)).map((id) => [id, filesByTask.get(id)]),
       ),
       blocked: [...needsHuman, ...failed],
+      blocked_by_findings: blockedByFindings,
+      sent_back: retried,
+      reviews: reviews.map((r) => ({
+        task_id: r.taskId,
+        review_id: r.reviewId,
+        verdict: r.verdict,
+        grade: r.grade,
+        decision: r.decision,
+      })),
       next: skipped,
       stop_reason: stopReason,
       spent_usd_micro: spent,
     };
+    // Memory (spec G, E.5): what this session learned goes into the agent's private memory:
+    // lessons the specialists spelled out, critic findings resolved by rework, and decisions
+    // the human answered since the last session. Rejections are reported, never fatal.
+    let lessonsRecorded = 0;
+    if (this.deps.memory) {
+      try {
+        const decisions = project
+          ? await this.decisionsSince(project.id, brief?.lastSession?.endedAt ?? null)
+          : [];
+        const all: LessonCandidate[] = [
+          ...lessonCandidates,
+          ...decisions.map((d) => ({
+            text: `Decision for ${project?.name ?? "the project"}: ${d.question} -> ${d.chosen}${d.rationale ? ` (${d.rationale})` : ""}`,
+            tags: ["decision", "human"],
+            confidence: 0.8,
+            source: `session:${session.id};human:${d.decided_by}`,
+          })),
+        ];
+        // The injection gate: a candidate that reads like an instruction (a specialist's
+        // report is model output over untrusted content) is dropped here and again inside the
+        // port, reported in the session log and quoted to the human, never stored.
+        const screened = screenLessons(all, "agent_output");
+        const rejectedLessons = [...screened.rejected, ...quarantinedByCritic];
+        if (rejectedLessons.length) {
+          await emit("memory.lessons_rejected", {
+            count: rejectedLessons.length,
+            warning: `${rejectedLessons.length} proposed lesson(s) read like instructions and were not stored`,
+            lessons: rejectedLessons.map((r) => ({
+              text: r.text.slice(0, 300),
+              rules: r.rules,
+            })),
+          });
+          await store.message.send({
+            from_agent_id: agent.id,
+            to_human_id: agent.owner_human_id,
+            project_id: project?.id ?? null,
+            type: "warning",
+            body: describeRejectedLessons(rejectedLessons, `session ${session.id}`),
+            requires_ack: false,
+            author_agent: agent.id,
+          });
+        }
+        if (screened.kept.length) {
+          const recorded = await this.deps.memory.record({
+            agentId: agent.id,
+            sessionId: session.id,
+            projectId: project?.id ?? null,
+            lessons: screened.kept,
+          });
+          lessonsRecorded = recorded.recorded;
+          const rejected = recorded.rejected.length + rejectedLessons.length;
+          await emit("memory.recorded", {
+            recorded: recorded.recorded,
+            merged: recorded.merged,
+            rejected,
+            quarantined:
+              rejectedLessons.length + recorded.rejected.filter((r) => r.injection).length,
+            ...(rejected
+              ? {
+                  warning: `${rejected} lesson(s) rejected: ${recorded.rejected[0]?.error ?? rejectedLessons[0]?.error ?? ""}`,
+                }
+              : {}),
+          });
+        } else if (rejectedLessons.length) {
+          await emit("memory.recorded", {
+            recorded: 0,
+            merged: 0,
+            rejected: rejectedLessons.length,
+            quarantined: rejectedLessons.length,
+            warning: `${rejectedLessons.length} lesson(s) rejected: ${rejectedLessons[0]?.error ?? ""}`,
+          });
+        }
+      } catch (e) {
+        await emit("memory.record_failed", { warning: errorMessage(e) });
+      }
+    }
     if (project) {
       await store.project.patch(project.id, {
         summary_cache: {
@@ -746,6 +1058,39 @@ export class SessionRunner {
       // already terminal (e.g. killed by the kill switch callback)
     }
     void current;
+    // Session review (H.6): the critic checks the plan, the spend and the honesty of the
+    // summary the human just received; a false count ends with the human. Runs after the
+    // summary and the task states are written, since that is what it checks.
+    let sessionReview: SessionReviewOutcome | null = null;
+    if (this.deps.critic && finalStatus !== "paused") {
+      try {
+        sessionReview = await this.deps.critic.reviewSession({
+          sessionId: session.id,
+          token,
+          budget,
+          agentId: agent.id,
+          projectId: project?.id ?? null,
+        });
+        await emit(
+          "critic.session_review",
+          {
+            reviewId: sessionReview.reviewId,
+            tier: sessionReview.tier,
+            grade: sessionReview.grade,
+            confidence: sessionReview.confidence,
+            verdict: sessionReview.verdict,
+            findings: sessionReview.findings.length,
+            summary: sessionReview.summary,
+            ...(sessionReview.verdict === "human"
+              ? { escalation: true, warning: "the session review needs the human" }
+              : {}),
+          },
+          sessionReview.costUsdMicro,
+        );
+      } catch (e) {
+        await emit("critic.session_review_failed", { warning: errorMessage(e) });
+      }
+    }
     await emit("session.ended", {
       status: finalStatus,
       stopReason,
@@ -754,6 +1099,10 @@ export class SessionRunner {
       inReview: inReview.length,
       failed: failed.length,
       skipped: skipped.length,
+      retried: retried.length,
+      blockedByFindings: blockedByFindings.length,
+      lessonsRecorded,
+      sessionReviewGrade: sessionReview?.grade ?? null,
       compressionSavedTokens: contextEnd?.compression.saved ?? 0,
       headroomSavedTokens: contextEnd?.headroomSavedTokens ?? 0,
       headroomUsed: contextEnd?.selection.headroomUsed ?? false,
@@ -768,12 +1117,143 @@ export class SessionRunner {
       failed,
       skipped,
       needsHuman,
+      retried,
+      blockedByFindings,
+      reviews,
+      memory: memoryLoaded
+        ? {
+            tokens: memoryLoaded.tokens,
+            budget: memoryBudget,
+            lessons: memoryLoaded.lessonIds.length,
+          }
+        : null,
+      lessonsRecorded,
+      sessionReview,
       spentUsdMicro: spent,
       steps: budget.snapshot().steps,
       summary,
       handoff,
       stopReason,
     };
+  }
+
+  /**
+   * One task through the critic at its tier (spec H). The port applies the verdict through the
+   * state workflow and returns the decision; a port failure keeps the task in review and is
+   * surfaced as an event, never swallowed.
+   */
+  private async reviewTask(
+    req: Parameters<CriticPort["reviewTask"]>[0] & {
+      emit: (t: string, p: Record<string, unknown>, cost?: number) => Promise<void>;
+    },
+  ): Promise<TaskReviewOutcome | null> {
+    const { emit, ...request } = req;
+    const critic = this.deps.critic;
+    if (!critic) return null;
+    await emit("critic.review_started", {
+      taskId: request.task.id,
+      tier: request.task.risk_tier,
+      attempt: request.task.attempt,
+    });
+    let outcome: TaskReviewOutcome;
+    try {
+      outcome = await critic.reviewTask(request);
+    } catch (e) {
+      await emit("critic.review_failed", {
+        taskId: request.task.id,
+        warning: `critic review failed: ${errorMessage(e)}`,
+      });
+      return null;
+    }
+    await emit(
+      "critic.verdict",
+      {
+        taskId: request.task.id,
+        reviewId: outcome.reviewId,
+        tier: outcome.tier,
+        verdict: outcome.verdict,
+        grade: outcome.grade,
+        confidence: outcome.confidence,
+        findings: outcome.findings.length,
+        openFindings: outcome.openFindings,
+        decision: outcome.decision,
+        attempt: outcome.attempt,
+        ...(outcome.retry ? { retry: outcome.retry } : {}),
+        ...(outcome.nextTier ? { nextTier: outcome.nextTier } : {}),
+        ...(outcome.humanRequestId ? { humanRequestId: outcome.humanRequestId } : {}),
+        ...(outcome.decision === "human" || outcome.retry === "escalate"
+          ? { escalation: true }
+          : {}),
+        ...(outcome.decision === "blocked_by_findings"
+          ? {
+              warning: `cannot close "${request.task.title}": ${outcome.openFindings} finding(s) from an earlier review still open`,
+            }
+          : {}),
+        summary: outcome.summary.slice(0, 400),
+      },
+      outcome.costUsdMicro,
+    );
+    return outcome;
+  }
+
+  /**
+   * A close the store refused over open findings (B.4): the task stays in review and the human
+   * gets one blocking request (rework, accept the findings as resolved, cancel); the answer
+   * is applied by `syncBlockedByFindings` from the inbox. Surfaced as an event either way.
+   */
+  private async blockedByFindings(input: {
+    task: TaskRow;
+    session: SessionRow;
+    agentId: string;
+    humanId: string;
+    runId: string | null;
+    path: "tier0" | "critic_accept";
+    emit: (t: string, p: Record<string, unknown>) => Promise<void>;
+  }): Promise<void> {
+    const { store } = this.deps;
+    const findings = await store.finding.openFor(input.task.id);
+    let humanRequestId: string | null = null;
+    let reused = false;
+    try {
+      const filed = await fileBlockedByFindingsRequest({
+        store,
+        task: input.task,
+        session: input.session,
+        humanId: input.humanId,
+        agentId: input.agentId,
+        runId: input.runId,
+        findings,
+        path: input.path,
+      });
+      humanRequestId = filed.request.id;
+      reused = filed.reused;
+    } catch (e) {
+      this.logger.warn("blocked-findings request not filed", {
+        taskId: input.task.id,
+        error: errorMessage(e),
+      });
+    }
+    await input.emit("task.blocked_by_findings", {
+      taskId: input.task.id,
+      path: input.path,
+      warning: `cannot close "${input.task.title}": ${findings.length} open critic finding(s) remain${
+        humanRequestId ? "; asked you to rework, accept or cancel" : ""
+      }`,
+      findings: findings.map((f) => f.id),
+      exit: humanRequestId ? "human_request" : "manual",
+      humanRequestId,
+      reused,
+      escalation: true,
+    });
+  }
+
+  /** Decisions the human answered on the project since the last session ended (for memory). */
+  private async decisionsSince(
+    projectId: string,
+    sinceIso: string | null,
+  ): Promise<{ question: string; chosen: string; rationale: string; decided_by: string }[]> {
+    const rows = await this.deps.store.decision.current(projectId);
+    return rows.filter((d) => !sinceIso || d.created_at > sinceIso);
   }
 
   /** Inbox re-check between tasks: a human "stop" message stops the session; questions become requests. */
@@ -839,6 +1319,8 @@ function summarize(x: {
   failed: string[];
   skipped: string[];
   needsHuman: string[];
+  retried: string[];
+  blockedByFindings: string[];
   spent: number;
   stopReason: string;
   plan: SessionPlan | null;
@@ -846,6 +1328,12 @@ function summarize(x: {
   const parts = [
     `Session ${x.stopReason === "completed" ? "completed" : `ended (${x.stopReason})`}.`,
     `Done: ${x.completed.length}. In review: ${x.inReview.length}. Needs you: ${x.needsHuman.length}. Failed: ${x.failed.length}. Not started: ${x.skipped.length} of ${x.plan?.items.length ?? 0} planned.`,
+    ...(x.retried.length ? [`Sent back by the critic: ${x.retried.length}.`] : []),
+    ...(x.blockedByFindings.length
+      ? [
+          `Blocked by open findings: ${x.blockedByFindings.length} (asked you: rework, accept or cancel).`,
+        ]
+      : []),
     `Spent $${(x.spent / 1e6).toFixed(2)}.`,
   ];
   return parts.join(" ");

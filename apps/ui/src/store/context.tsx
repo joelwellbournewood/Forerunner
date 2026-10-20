@@ -44,11 +44,29 @@ export function AppProvider({ client, store, bootstrap = true, children }: AppPr
               .project(event.data.id)
               .then((project) => store.dispatch({ type: "project.upsert", project }))
               .catch(() => {});
+          } else if (event.event === "extension.changed") {
+            store.dispatch({ type: "extension.changed" });
+          } else if (event.event === "restart.requested") {
+            store.dispatch({ type: "restart", restart: event.data });
           } else if (event.event === "heartbeat") {
             store.dispatch({
               type: "connection",
               patch: { lastHeartbeatAt: event.data.at, status: "connected", error: null },
             });
+            // While a restart is announced, every heartbeat re-reads /health: a daemon on the
+            // version the restart aimed at means it is back, and the banner goes.
+            const restart = store.getState().restart;
+            if (restart) {
+              client
+                .health()
+                .then((health) => {
+                  store.dispatch({ type: "connection", patch: { health } });
+                  if (health.version === restart.targetVersion) {
+                    store.dispatch({ type: "restart", restart: null });
+                  }
+                })
+                .catch(() => {});
+            }
           }
         },
         onMode: (mode) => store.dispatch({ type: "connection", patch: { streamMode: mode } }),

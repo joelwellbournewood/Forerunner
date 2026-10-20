@@ -1,6 +1,6 @@
 import type { AgentView, HealthView, HumanView, ProjectCard } from "../api/client.ts";
 import type { DaemonConfig } from "../api/config.ts";
-import type { StreamMode } from "../api/sse.ts";
+import type { RestartRequested, StreamMode } from "../api/sse.ts";
 import { type KeyValueStore, storageKey } from "../lib/storage.ts";
 
 /**
@@ -33,6 +33,10 @@ export interface UiState {
   blockingCount: number;
   killActive: boolean;
   theme: ThemePreference;
+  /** Set when the daemon announced a restart ("Update and restart"); cleared on reconnect. */
+  restart: RestartRequested | null;
+  /** Bumped on every `extension.changed` frame so the Extensions panel reloads. */
+  extensionsVersion: number;
 }
 
 export type UiAction =
@@ -44,7 +48,9 @@ export type UiAction =
   | { type: "activeProject"; id: string | null }
   | { type: "blockingCount"; count: number }
   | { type: "killActive"; active: boolean }
-  | { type: "theme"; theme: ThemePreference };
+  | { type: "theme"; theme: ThemePreference }
+  | { type: "restart"; restart: RestartRequested | null }
+  | { type: "extension.changed" };
 
 export const STORAGE_NAMES = { activeProject: "activeProject", theme: "theme" } as const;
 
@@ -71,6 +77,8 @@ export function initialState(config: DaemonConfig, storage: KeyValueStore): UiSt
     blockingCount: 0,
     killActive: false,
     theme: isTheme(storedTheme) ? storedTheme : "system",
+    restart: null,
+    extensionsVersion: 0,
   };
 }
 
@@ -108,6 +116,10 @@ export function reduce(state: UiState, action: UiAction): UiState {
       return state.killActive === action.active ? state : { ...state, killActive: action.active };
     case "theme":
       return state.theme === action.theme ? state : { ...state, theme: action.theme };
+    case "restart":
+      return { ...state, restart: action.restart };
+    case "extension.changed":
+      return { ...state, extensionsVersion: state.extensionsVersion + 1 };
     default:
       return state;
   }

@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Logger, type LogRecord, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
@@ -71,15 +71,22 @@ export interface SeenConnect {
   meta: TransportMeta;
 }
 
-/** Connector factory whose transport is an in-process linked pair to the fake server. */
+/**
+ * Connector factory whose transport is an in-process linked pair to the fake server. With
+ * `requireSecret`, a stdio spec whose env lacks FAKE_TOKEN refuses to start, like a server
+ * that needs its credential to boot (discovery without secrets then fails).
+ */
 export function inMemoryConnectorFactory(
-  opts: { onCall?: (name: string, args: unknown) => void } = {},
+  opts: { onCall?: (name: string, args: unknown) => void; requireSecret?: boolean } = {},
 ) {
   const seen: SeenConnect[] = [];
   const servers: McpServer[] = [];
   const factory = new DefaultMcpConnectorFactory({
     transportFactory: async (spec, meta) => {
       seen.push({ spec: structuredClone(spec), meta });
+      if (opts.requireSecret && spec.type === "stdio" && !spec.env.FAKE_TOKEN) {
+        throw new Error("FAKE_TOKEN is required to start");
+      }
       const [clientT, serverT] = InMemoryTransport.createLinkedPair();
       const server = buildFakeMcpServer(opts);
       servers.push(server);
@@ -141,6 +148,8 @@ export interface RegistryHarness {
   stopLogs: () => void;
 }
 
+export const RESERVED_TOOLS = ["read_file", "write_file", "list_dir", "run_command"] as const;
+
 export async function registryHarness(
   opts: {
     approval?: GrantOutcome;
@@ -148,6 +157,8 @@ export async function registryHarness(
     fetch?: typeof fetch;
     /** Wire `ledgerCost` to the store's cost ledger (the daemon does). */
     ledgerCost?: boolean;
+    /** The fake server refuses to start without FAKE_TOKEN in its env. */
+    requireSecret?: boolean;
   } = {},
 ): Promise<RegistryHarness> {
   const clock = new SimulatedClock("2026-10-20T08:00:00Z");
@@ -160,6 +171,7 @@ export async function registryHarness(
   const calls: { name: string; args: unknown }[] = [];
   const { factory, seen } = inMemoryConnectorFactory({
     onCall: (name, args) => calls.push({ name, args }),
+    requireSecret: opts.requireSecret,
   });
   const events: ExtensionEvent[] = [];
   const logs: LogRecord[] = [];
@@ -173,6 +185,8 @@ export async function registryHarness(
     connectors: factory,
     secrets,
     tokens,
+    kill,
+    reservedTools: () => RESERVED_TOOLS,
     events: (e) => events.push(e),
     fetch: opts.fetch,
     chfPerUsd: () => 0.8,
@@ -195,8 +209,37 @@ export async function registryHarness(
   };
 }
 
+/**
+ * A minimal stdio MCP server as a `node -e` script (plain JSON-RPC over stdin/stdout, no
+ * SDK): initialize, tools/list with one tool, resources/list, tools/call reporting whether
+ * FAKE_TOKEN is set. It ignores SIGTERM and stays alive after stdin closes, so only a kill of
+ * its process tree ends it.
+ */
+export const FAKE_STDIO_SERVER_SCRIPT = [
+  "const rl = require('node:readline').createInterface({ input: process.stdin });",
+  "const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+  "rl.on('line', (line) => {",
+  "  let msg; try { msg = JSON.parse(line); } catch { return; }",
+  "  if (msg.id === undefined) return;",
+  "  const ok = (result) => send({ jsonrpc: '2.0', id: msg.id, result });",
+  "  if (msg.method === 'initialize') ok({ protocolVersion: msg.params.protocolVersion, capabilities: { tools: {}, resources: {} }, serverInfo: { name: 'fake-stdio', version: '0.0.1' } });",
+  "  else if (msg.method === 'tools/list') ok({ tools: [{ name: 'ping_env', description: 'Says whether FAKE_TOKEN is set.', inputSchema: { type: 'object', properties: {} } }] });",
+  "  else if (msg.method === 'resources/list') ok({ resources: [] });",
+  "  else if (msg.method === 'tools/call') ok({ content: [{ type: 'text', text: 'FAKE_TOKEN:' + (process.env.FAKE_TOKEN ? 'set' : 'unset') }] });",
+  "  else if (msg.method === 'ping') ok({});",
+  "  else send({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'method not found' } });",
+  "});",
+  "process.on('SIGTERM', () => {});",
+  "setInterval(() => {}, 1000);",
+].join("\n");
+
+export type HttpHandler = (req: IncomingMessage, res: ServerResponse) => void;
+
 /** A node:http server on 127.0.0.1 serving JSON documents and a stateless MCP endpoint. */
-export async function startHttpFixture(docs: Record<string, unknown>): Promise<{
+export async function startHttpFixture(
+  docs: Record<string, unknown>,
+  handlers: Record<string, HttpHandler> = {},
+): Promise<{
   server: Server;
   url: (path: string) => string;
   close: () => Promise<void>;
@@ -223,6 +266,11 @@ export async function startHttpFixture(docs: Record<string, unknown>): Promise<{
     if (path in docs) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(docs[path]));
+      return;
+    }
+    const handler = handlers[path];
+    if (handler) {
+      handler(req, res);
       return;
     }
     res.writeHead(404, { "content-type": "text/plain" });

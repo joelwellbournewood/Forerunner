@@ -1,8 +1,23 @@
 import {
   AgentView as AgentViewSchema,
+  type ChangeLogView,
+  ChangeLogView as ChangeLogViewSchema,
   type ChatReplyView,
   ChatReplyView as ChatReplyViewSchema,
   type ChatRequestBody,
+  type CommandConfirmBody,
+  type CommandDefView,
+  CommandDefView as CommandDefViewSchema,
+  type CommandExecuteBody,
+  type CommandParseBody,
+  type CommandParseView,
+  CommandParseView as CommandParseViewSchema,
+  type CommandResultJson,
+  CommandResultViewSchema,
+  type ConsolidationProposalView,
+  ConsolidationProposalView as ConsolidationProposalViewSchema,
+  type ConsolidationRunView,
+  ConsolidationRunView as ConsolidationRunViewSchema,
   type CostView,
   CostView as CostViewSchema,
   type CreateProjectBody as CreateProjectBodySchema,
@@ -21,14 +36,27 @@ import {
   type InboxView,
   InboxView as InboxViewSchema,
   type KillBody as KillBodySchema,
+  type LessonView,
+  LessonView as LessonViewSchema,
+  type MemoryScopeView,
+  MemoryScopeView as MemoryScopeViewSchema,
+  type MemoryView,
+  MemoryView as MemoryViewSchema,
   type MessageView,
   MessageView as MessageViewSchema,
+  type MirrorSyncView,
+  MirrorSyncView as MirrorSyncViewSchema,
   type PeerFeedView,
   PeerFeedView as PeerFeedViewSchema,
+  type PendingChangeView,
+  PendingChangeView as PendingChangeViewSchema,
   type ProjectCard,
   ProjectCard as ProjectCardSchema,
   type ProjectSummary,
   ProjectSummary as ProjectSummarySchema,
+  type ReviewsView,
+  ReviewsView as ReviewsViewSchema,
+  type ReviewView,
   type RunView,
   RunView as RunViewSchema,
   type SessionView,
@@ -38,26 +66,114 @@ import {
   type TaskView,
   TaskView as TaskViewSchema,
   type TransitionTaskBody as TransitionTaskBodySchema,
+  type UpdateLessonBody,
+  type UpdateProjectSettingsBody,
 } from "@forerunner/runtime/daemon/api-types";
 import { z } from "zod";
 import type { DaemonConfig } from "./config.ts";
+import {
+  type AddExtensionInput,
+  type ApplyUpdateResult,
+  ApplyUpdateResult as ApplyUpdateResultSchema,
+  type CatalogView,
+  CatalogView as CatalogViewSchema,
+  DataAssetList,
+  type DataAssetView,
+  DataAssetView as DataAssetViewSchema,
+  type DocContentView,
+  DocContentView as DocContentViewSchema,
+  DocList,
+  type DocView,
+  type EnqueueInput,
+  type EstimateAccuracyView,
+  EstimateAccuracyView as EstimateAccuracyViewSchema,
+  ExtensionList,
+  type ExtensionView,
+  ExtensionView as ExtensionViewSchema,
+  type ImportInput,
+  type ImportResultView,
+  ImportResultView as ImportResultViewSchema,
+  MilestoneList,
+  type MilestoneView,
+  type ModelWatchAnswerInput,
+  type ModelWatchAnswerView,
+  ModelWatchAnswerView as ModelWatchAnswerViewSchema,
+  type ModelWatchReportsView,
+  ModelWatchReportsView as ModelWatchReportsViewSchema,
+  type ModelWatchReportView,
+  ModelWatchReportView as ModelWatchReportViewSchema,
+  type ModelWatchRunView,
+  ModelWatchRunView as ModelWatchRunViewSchema,
+  ModelWatchSyncView,
+  OkView,
+  type PerformanceView,
+  PerformanceView as PerformanceViewSchema,
+  type ProjectSettingsView,
+  ProjectSettingsView as ProjectSettingsViewSchema,
+  proposedPath,
+  type QueueItemView,
+  QueueItemView as QueueItemViewSchema,
+  QueueList,
+  type RegisterDataAssetInput,
+  type RollbackResult,
+  RollbackResult as RollbackResultSchema,
+  type UpdatePermissionsInput,
+  type UpdatesView,
+  UpdatesView as UpdatesViewSchema,
+} from "./contracts.ts";
 
 export type {
+  ApplyUpdateResult,
+  CatalogView,
+  ChangeLogView,
   ChatReplyView,
   ChatRequestBody,
+  CommandConfirmBody,
+  CommandDefView,
+  CommandExecuteBody,
+  CommandParseBody,
+  CommandParseView,
+  CommandResultJson,
+  ConsolidationProposalView,
+  ConsolidationRunView,
   CostView,
+  DataAssetView,
   DecisionView,
+  DocContentView,
+  DocView,
+  EstimateAccuracyView,
   EventView,
+  ExtensionView,
   HealthView,
   HumanRequestView,
+  ImportResultView,
   InboxView,
+  LessonView,
+  MemoryScopeView,
+  MemoryView,
   MessageView,
+  MilestoneView,
+  MirrorSyncView,
+  ModelWatchAnswerView,
+  ModelWatchReportsView,
+  ModelWatchReportView,
+  ModelWatchRunView,
   PeerFeedView,
+  PendingChangeView,
+  PerformanceView,
   ProjectCard,
+  ProjectSettingsView,
   ProjectSummary,
+  QueueItemView,
+  ReviewsView,
+  ReviewView,
+  RollbackResult,
   RunView,
   SessionView,
   TaskView,
+  UpdateLessonBody,
+  UpdateProjectSettingsBody,
+  UpdatesView,
 };
 
 /** Types the contract defines only as schemas. */
@@ -80,6 +196,22 @@ export const SessionList = z.array(SessionViewSchema);
 export const EventList = z.array(EventViewSchema);
 export const SettingList = z.array(SettingViewSchema);
 export const AgentList = z.array(AgentViewSchema);
+export const MemoryScopeList = z.array(MemoryScopeViewSchema);
+export const ChangeLogList = z.array(ChangeLogViewSchema);
+export const CommandDefList = z.array(CommandDefViewSchema);
+export const PendingChangeList = z.array(PendingChangeViewSchema);
+export const ConsolidationList = z.array(ConsolidationProposalViewSchema);
+
+/** Query of GET /memory; `agentId` is required for the private scope. */
+export interface MemoryFilter {
+  scope: MemoryView["scope"];
+  agentId?: string;
+  projectId?: string;
+  q?: string;
+  tag?: string;
+  status?: string;
+  limit?: number;
+}
 
 /** Request bodies are typed as what the UI sends; the daemon applies the zod defaults. */
 export type CreateTaskInput = z.input<typeof CreateTaskBodySchema>;
@@ -112,12 +244,24 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * True when the daemon has no such route (ADR 0032): a 404/405/501 that is not a typed
+ * `not_found` about an entity. Hono's default answer is plain text (`ui.http_error`); the
+ * daemon's and the fake's catch-all say "no route".
+ */
+export function isRouteMissing(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  if (error.status !== 404 && error.status !== 405 && error.status !== 501) return false;
+  if (error.code === "ui.http_error") return true;
+  return /no route/i.test(error.message);
+}
+
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 export type Query = Record<string, string | number | null | undefined>;
 
 export interface RawRequestOptions {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
   query?: Query;
   body?: unknown;
@@ -181,10 +325,100 @@ export interface DaemonClient {
     filter?: { projectId?: string; from?: string; to?: string },
     signal?: AbortSignal,
   ): Promise<CostView>;
+  /** Estimate-versus-actual accuracy (spec I.3), shown on the Performance page. */
+  costEstimates(signal?: AbortSignal): Promise<EstimateAccuracyView>;
   settings(
     filter?: { scope?: string; scopeId?: string },
     signal?: AbortSignal,
   ): Promise<SettingView[]>;
+  /** Merge a patch into a project's settings with a version check. */
+  updateProjectSettings(
+    projectId: string,
+    body: UpdateProjectSettingsBody,
+  ): Promise<ProjectSettingsView>;
+  /** One GitHub Projects mirror run; 202 while the human decides (MirrorSyncPendingView). */
+  mirrorSync(projectId: string, full?: boolean): Promise<MirrorSyncView>;
+
+  // Extensions panel (spec K.6, L.5)
+  extensions(filter?: { kind?: string }, signal?: AbortSignal): Promise<ExtensionView[]>;
+  extensionCatalog(signal?: AbortSignal): Promise<CatalogView>;
+  extension(id: string, signal?: AbortSignal): Promise<ExtensionView>;
+  /** 201 when installed at once, 202 (status `pending_approval`) while the human decides. */
+  addExtension(body: AddExtensionInput): Promise<ExtensionView>;
+  toggleExtension(id: string, enabled: boolean): Promise<ExtensionView>;
+  approveExtension(id: string): Promise<ExtensionView>;
+  denyExtension(id: string): Promise<void>;
+  updateExtensionPermissions(
+    id: string,
+    permissions: UpdatePermissionsInput,
+  ): Promise<ExtensionView>;
+  removeExtension(id: string): Promise<void>;
+
+  // Updates screen (spec M)
+  /** Asks the release feed (network). */
+  updates(signal?: AbortSignal): Promise<UpdatesView>;
+  /** What is known without the network. */
+  updatesStatus(signal?: AbortSignal): Promise<UpdatesView>;
+  /** 202: the daemon stages the version and exits with the restart code. */
+  applyUpdate(version?: string): Promise<ApplyUpdateResult>;
+  rollbackUpdate(reason?: string): Promise<RollbackResult>;
+
+  // Model watch (spec D.6, M.5)
+  modelWatchReports(limit?: number, signal?: AbortSignal): Promise<ModelWatchReportsView>;
+  modelWatchLatest(signal?: AbortSignal): Promise<ModelWatchReportView>;
+  modelWatchReport(id: string, signal?: AbortSignal): Promise<ModelWatchReportView>;
+  modelWatchRun(): Promise<ModelWatchRunView>;
+  modelWatchAnswer(id: string, body: ModelWatchAnswerInput): Promise<ModelWatchAnswerView>;
+  modelWatchSync(): Promise<unknown>;
+
+  // Reviews tab (spec H, K.2): every review with findings, the open count, the grade trend.
+  reviews(
+    projectId: string,
+    filter?: { limit?: number },
+    signal?: AbortSignal,
+  ): Promise<ReviewsView>;
+  taskReviews(taskId: string, signal?: AbortSignal): Promise<ReviewsView>;
+
+  // Memory (spec G, K.5)
+  memoryScopes(signal?: AbortSignal): Promise<MemoryScopeView[]>;
+  memory(filter: MemoryFilter, signal?: AbortSignal): Promise<MemoryView>;
+  updateLesson(id: string, body: UpdateLessonBody): Promise<LessonView>;
+  pinLesson(id: string, pinned: boolean): Promise<LessonView>;
+  /** Retires the lesson and removes its file; the retired row comes back. */
+  deleteLesson(id: string): Promise<LessonView>;
+  consolidation(signal?: AbortSignal): Promise<ConsolidationProposalView[]>;
+  runConsolidation(): Promise<ConsolidationRunView>;
+
+  // Commands and the change log (spec Q): the same registry chat and voice use.
+  commandDefs(signal?: AbortSignal): Promise<CommandDefView[]>;
+  parseCommand(body: CommandParseBody): Promise<CommandParseView>;
+  /** One change card and one change log row; medium risk comes back `pending`. */
+  executeCommands(body: CommandExecuteBody): Promise<CommandResultJson>;
+  pendingCommands(signal?: AbortSignal): Promise<PendingChangeView[]>;
+  confirmCommand(pendingId: string, body: CommandConfirmBody): Promise<CommandResultJson>;
+  cancelCommand(pendingId: string): Promise<CommandResultJson>;
+  changes(
+    filter?: { projectId?: string; undoable?: boolean; limit?: number },
+    signal?: AbortSignal,
+  ): Promise<ChangeLogView[]>;
+  undoChange(changeId: string): Promise<CommandResultJson>;
+
+  // Proposed routes (ADR 0032); pages degrade when `isRouteMissing(error)`.
+  queue(
+    projectId: string,
+    filter?: { status?: string },
+    signal?: AbortSignal,
+  ): Promise<QueueItemView[]>;
+  enqueue(projectId: string, body: EnqueueInput): Promise<QueueItemView>;
+  dismissQueueItem(id: string): Promise<QueueItemView>;
+  milestones(projectId: string, signal?: AbortSignal): Promise<MilestoneView[]>;
+  dataAssets(projectId: string, signal?: AbortSignal): Promise<DataAssetView[]>;
+  registerDataAsset(projectId: string, body: RegisterDataAssetInput): Promise<DataAssetView>;
+  removeDataAsset(id: string): Promise<void>;
+  importProject(projectId: string, body: ImportInput): Promise<ImportResultView>;
+  docs(projectId: string, signal?: AbortSignal): Promise<DocView[]>;
+  doc(projectId: string, path: string, signal?: AbortSignal): Promise<DocContentView>;
+  performance(filter?: { projectId?: string }, signal?: AbortSignal): Promise<PerformanceView>;
 }
 
 function isAbort(error: unknown): boolean {
@@ -286,6 +520,10 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     request({ method: "GET", path, query, signal }, schema);
   const post = <T>(path: string, schema: z.ZodType<T>, body?: unknown) =>
     request({ method: "POST", path, body: body ?? {} }, schema);
+  const put = <T>(path: string, schema: z.ZodType<T>, body?: unknown) =>
+    request({ method: "PUT", path, body: body ?? {} }, schema);
+  const del = <T>(path: string, schema: z.ZodType<T>) =>
+    request({ method: "DELETE", path }, schema);
 
   return {
     config,
@@ -345,11 +583,137 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         { projectId: filter?.projectId, from: filter?.from, to: filter?.to },
         signal,
       ),
+    costEstimates: (signal) =>
+      get(routePath("costEstimates"), EstimateAccuracyViewSchema, undefined, signal),
     settings: (filter, signal) =>
       get(
         routePath("settings"),
         SettingList,
         { scope: filter?.scope, scopeId: filter?.scopeId },
+        signal,
+      ),
+    updateProjectSettings: (projectId, body) =>
+      put(routePath("updateProjectSettings", { id: projectId }), ProjectSettingsViewSchema, body),
+    mirrorSync: (projectId, full) =>
+      post(routePath("mirrorSync", { id: projectId }), MirrorSyncViewSchema, full ? { full } : {}),
+
+    extensions: (filter, signal) =>
+      get(routePath("extensions"), ExtensionList, { kind: filter?.kind }, signal),
+    extensionCatalog: (signal) =>
+      get(routePath("extensionCatalog"), CatalogViewSchema, undefined, signal),
+    extension: (id, signal) =>
+      get(routePath("extension", { id }), ExtensionViewSchema, undefined, signal),
+    addExtension: (body) => post(routePath("addExtension"), ExtensionViewSchema, body),
+    toggleExtension: (id, enabled) =>
+      post(routePath("toggleExtension", { id }), ExtensionViewSchema, { enabled }),
+    approveExtension: (id) => post(routePath("approveExtension", { id }), ExtensionViewSchema, {}),
+    denyExtension: async (id) => {
+      await post(routePath("denyExtension", { id }), OkView, {});
+    },
+    updateExtensionPermissions: (id, permissions) =>
+      put(routePath("extensionPermissions", { id }), ExtensionViewSchema, { permissions }),
+    removeExtension: async (id) => {
+      await del(routePath("removeExtension", { id }), OkView);
+    },
+
+    updates: (signal) => get(routePath("updates"), UpdatesViewSchema, undefined, signal),
+    updatesStatus: (signal) =>
+      get(routePath("updatesStatus"), UpdatesViewSchema, undefined, signal),
+    applyUpdate: (version) =>
+      post(routePath("applyUpdate"), ApplyUpdateResultSchema, version ? { version } : {}),
+    rollbackUpdate: (reason) =>
+      post(routePath("rollbackUpdate"), RollbackResultSchema, reason ? { reason } : {}),
+
+    modelWatchReports: (limit, signal) =>
+      get(routePath("modelWatchReports"), ModelWatchReportsViewSchema, { limit }, signal),
+    modelWatchLatest: (signal) =>
+      get(routePath("modelWatchLatest"), ModelWatchReportViewSchema, undefined, signal),
+    modelWatchReport: (id, signal) =>
+      get(routePath("modelWatchReport", { id }), ModelWatchReportViewSchema, undefined, signal),
+    modelWatchRun: () => post(routePath("modelWatchRun"), ModelWatchRunViewSchema, {}),
+    modelWatchAnswer: (id, body) =>
+      post(routePath("modelWatchAnswer", { id }), ModelWatchAnswerViewSchema, body),
+    modelWatchSync: () => post(routePath("modelWatchSync"), ModelWatchSyncView, {}),
+
+    reviews: (projectId, filter, signal) =>
+      get(
+        routePath("reviews", { id: projectId }),
+        ReviewsViewSchema,
+        { limit: filter?.limit },
+        signal,
+      ),
+    taskReviews: (taskId, signal) =>
+      get(routePath("taskReviews", { id: taskId }), ReviewsViewSchema, undefined, signal),
+    memoryScopes: (signal) => get(routePath("memoryScopes"), MemoryScopeList, undefined, signal),
+    memory: (filter, signal) =>
+      get(
+        routePath("memory"),
+        MemoryViewSchema,
+        {
+          scope: filter.scope,
+          agentId: filter.agentId,
+          projectId: filter.projectId,
+          q: filter.q,
+          tag: filter.tag,
+          status: filter.status,
+          limit: filter.limit,
+        },
+        signal,
+      ),
+    updateLesson: (id, body) => put(routePath("updateLesson", { id }), LessonViewSchema, body),
+    pinLesson: (id, pinned) => post(routePath("pinLesson", { id }), LessonViewSchema, { pinned }),
+    deleteLesson: (id) => del(routePath("deleteLesson", { id }), LessonViewSchema),
+    consolidation: (signal) =>
+      get(routePath("consolidation"), ConsolidationList, undefined, signal),
+    runConsolidation: () => post(routePath("runConsolidation"), ConsolidationRunViewSchema, {}),
+    commandDefs: (signal) => get(routePath("commands"), CommandDefList, undefined, signal),
+    parseCommand: (body) => post(routePath("parseCommand"), CommandParseViewSchema, body),
+    executeCommands: (body) => post(routePath("executeCommands"), CommandResultViewSchema, body),
+    pendingCommands: (signal) =>
+      get(routePath("pendingCommands"), PendingChangeList, undefined, signal),
+    confirmCommand: (pendingId, body) =>
+      post(routePath("confirmCommand", { id: pendingId }), CommandResultViewSchema, body),
+    cancelCommand: (pendingId) =>
+      post(routePath("cancelCommand", { id: pendingId }), CommandResultViewSchema, {}),
+    changes: (filter, signal) =>
+      get(
+        routePath("changes"),
+        ChangeLogList,
+        {
+          projectId: filter?.projectId,
+          undoable: filter?.undoable ? "true" : undefined,
+          limit: filter?.limit,
+        },
+        signal,
+      ),
+    undoChange: (changeId) =>
+      post(routePath("undoChange", { id: changeId }), CommandResultViewSchema, {}),
+    queue: (projectId, filter, signal) =>
+      get(proposedPath("queue", { id: projectId }), QueueList, { status: filter?.status }, signal),
+    enqueue: (projectId, body) =>
+      post(proposedPath("enqueue", { id: projectId }), QueueItemViewSchema, body),
+    dismissQueueItem: (id) =>
+      post(proposedPath("dismissQueueItem", { id }), QueueItemViewSchema, {}),
+    milestones: (projectId, signal) =>
+      get(proposedPath("milestones", { id: projectId }), MilestoneList, undefined, signal),
+    dataAssets: (projectId, signal) =>
+      get(proposedPath("dataAssets", { id: projectId }), DataAssetList, undefined, signal),
+    registerDataAsset: (projectId, body) =>
+      post(proposedPath("registerDataAsset", { id: projectId }), DataAssetViewSchema, body),
+    removeDataAsset: async (id) => {
+      await del(proposedPath("removeDataAsset", { id }), OkView);
+    },
+    importProject: (projectId, body) =>
+      post(proposedPath("importProject", { id: projectId }), ImportResultViewSchema, body),
+    docs: (projectId, signal) =>
+      get(proposedPath("docs", { id: projectId }), DocList, undefined, signal),
+    doc: (projectId, path, signal) =>
+      get(proposedPath("doc", { id: projectId, path }), DocContentViewSchema, undefined, signal),
+    performance: (filter, signal) =>
+      get(
+        proposedPath("performance"),
+        PerformanceViewSchema,
+        { projectId: filter?.projectId },
         signal,
       ),
   };
@@ -359,7 +723,12 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
 export function describeError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.code === "ui.network") return "Daemon not reachable.";
-    if (error.status === 401 || error.status === 403) return "Daemon rejected the token.";
+    if (error.status === 401) return "Daemon rejected the token.";
+    // A typed 403 (a scope the human may not read, a grant that needs approval) keeps its
+    // message; an untyped one is the token.
+    if (error.status === 403 && (error.code === "ui.http_error" || error.code === "unauthorized")) {
+      return "Daemon rejected the token.";
+    }
     return error.message;
   }
   if (error instanceof Error) return error.message;

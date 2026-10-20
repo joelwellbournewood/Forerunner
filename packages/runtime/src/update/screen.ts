@@ -91,7 +91,10 @@ export interface UpdatesViewDeps {
   extensions?: Pick<ExtensionRepo, "list">;
   catalog?: ExtensionCatalog;
   modelWatch?: ModelWatchReport;
-  /** Skip the feed (status only). Default: ask the feed. */
+  /**
+   * Skip the feed (status only). Default: ask the manager, which reuses its last check for
+   * `checkCacheMs` so a screen refresh is neither a feed request nor an audit row.
+   */
   checkFeed?: boolean;
 }
 
@@ -147,7 +150,7 @@ export async function composeUpdatesView(deps: UpdatesViewDeps): Promise<Updates
   if (pointer?.state === "pending_health_check") app.state = "pending_health_check";
   else if (app.available) app.state = "available";
   else if (pointer?.state === "failed") app.state = "failed";
-  else if (pointer?.state === "rolled_back" || (pointer?.lastRollback && !app.available))
+  else if (pointer?.lastRollback && !app.available)
     app.state = app.lastError ? "unknown" : "rolled_back";
   else if (app.lastError) app.state = "unknown";
   else if (app.rejected.length) app.state = "rejected";
@@ -203,7 +206,7 @@ function statusOf(err: ForerunnerError): 400 | 403 | 404 | 409 | 500 | 503 {
     case "not_found":
       return 404;
     case "validation":
-    case "version_conflict":
+    case "version_conflict": // includes "in_progress": another update operation holds the lock
       return 409;
     case "approval_required":
     case "autonomy_insufficient":

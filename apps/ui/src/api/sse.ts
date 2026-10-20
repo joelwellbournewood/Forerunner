@@ -19,15 +19,37 @@ import { type DaemonClient, routePath } from "./client.ts";
 
 export type StreamMode = "connecting" | "sse" | "polling" | "closed";
 
+export interface ExtensionChanged {
+  type: string;
+  id: string;
+  name: string;
+}
+/** "Update and restart": the daemon is going down and comes back as `targetVersion`. */
+export interface RestartRequested {
+  reason: string;
+  targetVersion: string;
+  fromVersion: string;
+  exitCode: number;
+}
+
 export type DaemonEvent =
   | { event: "session.event"; data: EventView }
   | { event: "inbox.changed"; data: { blockingCount: number } }
   | { event: "session.changed"; data: SessionView }
   | { event: "project.changed"; data: { id: string } }
+  | { event: "extension.changed"; data: ExtensionChanged }
+  | { event: "restart.requested"; data: RestartRequested }
   | { event: "heartbeat"; data: { at: string } };
 
 const InboxChanged = z.object({ blockingCount: z.number().int() });
 const ProjectChanged = z.object({ id: z.string() });
+const ExtensionChangedSchema = z.object({ type: z.string(), id: z.string(), name: z.string() });
+const RestartRequestedSchema = z.object({
+  reason: z.string(),
+  targetVersion: z.string(),
+  fromVersion: z.string(),
+  exitCode: z.number().int(),
+});
 const Heartbeat = z.object({ at: z.string() });
 
 /** Parse one named SSE message into a typed event; null when the name or data is unknown. */
@@ -55,6 +77,14 @@ export function parseDaemonEvent(event: string, rawData: string): DaemonEvent | 
       const p = ProjectChanged.safeParse(data);
       return p.success ? { event, data: p.data } : null;
     }
+    case "extension.changed": {
+      const p = ExtensionChangedSchema.safeParse(data);
+      return p.success ? { event, data: p.data } : null;
+    }
+    case "restart.requested": {
+      const p = RestartRequestedSchema.safeParse(data);
+      return p.success ? { event, data: p.data } : null;
+    }
     case "heartbeat": {
       const p = Heartbeat.safeParse(data);
       return p.success ? { event, data: p.data } : null;
@@ -69,6 +99,8 @@ export const DAEMON_EVENT_NAMES = [
   "inbox.changed",
   "session.changed",
   "project.changed",
+  "extension.changed",
+  "restart.requested",
   "heartbeat",
 ] as const;
 

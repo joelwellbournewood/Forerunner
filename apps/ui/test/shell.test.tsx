@@ -59,6 +59,11 @@ describe("command palette commands", () => {
     });
     expect(filterCommands(commands, "switch atlas").map((c) => c.id)).toEqual(["project.p1"]);
     expect(filterCommands(commands, "go inbox").map((c) => c.id)).toEqual(["nav.inbox"]);
+    expect(filterCommands(commands, "change log").map((c) => c.id)).toEqual(["nav.changes"]);
+    expect(filterCommands(commands, "response times").map((c) => c.id)).toEqual([
+      "nav.performance",
+    ]);
+    expect(filterCommands(commands, "updates").map((c) => c.id)).toEqual(["nav.updates"]);
     expect(filterCommands(commands, "").length).toBe(commands.length);
   });
 });
@@ -88,6 +93,21 @@ describe("Shell", () => {
     expect(await screen.findByRole("heading", { name: "Projects" })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "?" });
     expect(await screen.findByTestId("shortcuts-help")).toHaveTextContent("Go to Inbox");
+  });
+
+  it("navigates to the change log, performance and updates with g c, g t and g u", async () => {
+    renderApp("/");
+    await screen.findAllByTestId("project-card");
+    fireEvent.keyDown(window, { key: "g" });
+    fireEvent.keyDown(window, { key: "c" });
+    expect(await screen.findByRole("heading", { name: "Changes" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "g" });
+    fireEvent.keyDown(window, { key: "t" });
+    expect(await screen.findByRole("heading", { name: "Performance" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "g" });
+    fireEvent.keyDown(window, { key: "u" });
+    expect(await screen.findByRole("heading", { name: "Updates" })).toBeInTheDocument();
+    expect(screen.getByTestId("main-nav")).toHaveTextContent("ChangesPerformanceUpdates");
   });
 
   it("switches project from the header dropdown", async () => {

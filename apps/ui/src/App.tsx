@@ -1,8 +1,9 @@
 import { useMemo } from "react";
 import { BrowserRouter } from "react-router";
 import { createClient, type DaemonClient } from "./api/client.ts";
-import { daemonConfigFromGlobals } from "./api/config.ts";
+import { daemonConfigFromGlobals, isMobileShell } from "./api/config.ts";
 import { browserStorage } from "./lib/storage.ts";
+import { MOBILE_BASENAME, MobileApp } from "./mobile/MobileApp.tsx";
 import { AppRoutes } from "./routes.tsx";
 import { AppProvider } from "./store/context.tsx";
 import { createStore, type UiStore } from "./store/store.ts";
@@ -18,6 +19,22 @@ export interface AppProps {
  * load from `window.__FORERUNNER__` (Tauri shells) or the Vite env (dev server, Playwright).
  */
 export function App(props: AppProps = {}) {
+  // The Android shell (spec R, ADR 0026) and the `/m` path mount the phone screens instead.
+  if (mobileRequested()) return <MobileApp />;
+  return <DesktopApp {...props} />;
+}
+
+function mobileRequested(): boolean {
+  if (typeof window === "undefined") return false;
+  const path = window.location?.pathname ?? "";
+  return (
+    isMobileShell(window.__FORERUNNER__) ||
+    path === MOBILE_BASENAME ||
+    path.startsWith(`${MOBILE_BASENAME}/`)
+  );
+}
+
+function DesktopApp(props: AppProps) {
   const { client, store } = useMemo(() => {
     const config = props.client?.config ?? daemonConfigFromGlobals();
     const c = props.client ?? createClient(config);

@@ -141,9 +141,11 @@ export function createExtensionsRoutes(deps: ExtensionsRoutesDeps): Hono {
     return c.json(await deps.registry.toggle(c.req.param("id"), b.enabled, actor(c)));
   });
 
-  app.post("/extensions/:id/approve", async (c) =>
-    c.json(await deps.registry.approve(c.req.param("id"), actor(c))),
-  );
+  // A yes at stage "discovery" runs discovery and asks for the grant: 202 while that is open.
+  app.post("/extensions/:id/approve", async (c) => {
+    const view = await deps.registry.approve(c.req.param("id"), actor(c));
+    return c.json(view, view.status === "pending_approval" ? 202 : 200);
+  });
 
   app.post("/extensions/:id/deny", async (c) => {
     await deps.registry.deny(c.req.param("id"), actor(c));

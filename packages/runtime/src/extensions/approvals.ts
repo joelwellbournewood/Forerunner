@@ -11,7 +11,9 @@ import type {
  * Granting a new capability always needs a human (spec Security). In production the question
  * is a HumanRequest of kind `approval`, risk `high`, blocking, with the review as its options;
  * the inbox answers it and the registry picks the answer up (`syncApprovals`, or the
- * orchestrator calls `approve`/`deny`). Tests use the in-memory port.
+ * orchestrator calls `approve`/`deny`). A connector that is not a built-in catalog entry asks
+ * twice: `discovery` (start it once, with the secrets it names) and then `grant`. Tests use
+ * the in-memory port.
  */
 export class HumanRequestExtensionApprovals implements ExtensionApprovalPort {
   constructor(private readonly requests: HumanRequestRepo) {}
@@ -23,12 +25,14 @@ export class HumanRequestExtensionApprovals implements ExtensionApprovalPort {
       why: req.why,
       steps: [
         `Extension: ${req.name} (${req.kind})`,
+        `Step: ${req.stage === "discovery" ? "start once for discovery (nothing granted yet)" : "grant"}`,
         ...(req.sourceUrl ? [`Source: ${req.sourceUrl}`] : []),
         ...req.review.summary,
       ],
       options: [
         {
           choice: "approve",
+          stage: req.stage,
           permissions: req.permissions as never,
           review: req.review as never,
         },
@@ -37,8 +41,9 @@ export class HumanRequestExtensionApprovals implements ExtensionApprovalPort {
       blocking: true,
       risk: "high",
       change_card: {
-        key: `extension:${req.extensionId}`,
+        key: `extension:${req.extensionId}:${req.stage}`,
         extensionId: req.extensionId,
+        stage: req.stage,
         kind: req.kind,
         name: req.name,
         permissions: req.permissions as never,

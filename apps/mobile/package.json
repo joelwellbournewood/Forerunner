@@ -8,8 +8,9 @@
     "tauri": "tauri",
     "android:init": "tauri android init --ci",
     "android:build": "tauri android build --apk --ci",
-    "test:emulator": "node scripts/emulator-tests.mjs",
-    "typecheck": "echo 'no TypeScript in the mobile shell; see @forerunner/ui'"
+    "test:emulator": "node e2e/run.mjs",
+    "typecheck": "echo 'no TypeScript in the mobile shell; see @forerunner/ui'",
+    "test:emulator:build": "node e2e/run.mjs --build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.3"

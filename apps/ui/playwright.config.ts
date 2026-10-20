@@ -19,15 +19,21 @@ function freePort(): number {
 process.env.FORERUNNER_UI_FAKE_PORT ||= String(freePort());
 process.env.FORERUNNER_UI_PORT ||= String(freePort());
 process.env.FORERUNNER_UI_FAKE_TOKEN ||= randomBytes(16).toString("hex");
+// The phone specs (e2e/mobile-*.spec.ts) run the same bundle under /m against a fake shared
+// state service (test/fake-state-service.ts) with the real request-signature checks.
+process.env.FORERUNNER_UI_FAKE_STATE_PORT ||= String(freePort());
+process.env.FORERUNNER_UI_FAKE_STATE_TOKEN ||= randomBytes(16).toString("hex");
 
 const daemonUrl = `http://127.0.0.1:${process.env.FORERUNNER_UI_FAKE_PORT}`;
+const stateUrl = `http://127.0.0.1:${process.env.FORERUNNER_UI_FAKE_STATE_PORT}`;
 const baseURL = `http://127.0.0.1:${process.env.FORERUNNER_UI_PORT}`;
 const token = process.env.FORERUNNER_UI_FAKE_TOKEN;
+const stateToken = process.env.FORERUNNER_UI_FAKE_STATE_TOKEN;
 
 export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
-  globalTimeout: 120_000,
+  globalTimeout: 360_000,
   fullyParallel: false,
   workers: 1,
   retries: 0,
@@ -46,6 +52,17 @@ export default defineConfig({
         FAKE_DAEMON_PORT: String(process.env.FORERUNNER_UI_FAKE_PORT),
         FAKE_DAEMON_TOKEN: token,
         FAKE_DAEMON_EVENT_DELAY_MS: "400",
+      },
+      reuseExistingServer: false,
+      timeout: 60_000,
+    },
+    {
+      command: "pnpm exec tsx test/fake-state-service.ts",
+      url: `${stateUrl}/health`,
+      env: {
+        FAKE_STATE_PORT: String(process.env.FORERUNNER_UI_FAKE_STATE_PORT),
+        FAKE_STATE_ADMIN_TOKEN: stateToken,
+        FAKE_STATE_PC_MS: "300",
       },
       reuseExistingServer: false,
       timeout: 60_000,

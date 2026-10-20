@@ -23,3 +23,15 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.12.4", features = [] }
 tauri-plugin-log = "2"
+# Device identity (ADR 0009, ADR 0032): Ed25519 in pure Rust; the seed is wrapped by the
+# Android Keystore (Kotlin plugin) at rest and never leaves the process.
+ed25519-dalek = { version = "=2.1.1", features = ["rand_core"] }
+rand_core = { version = "=0.6.4", features = ["getrandom"] }
+base64 = "=0.22.1"
+# fr:// pairing links (the QR the desktop shows opens the app).
+tauri-plugin-deep-link = "=2.6.0"
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+# The platform biometric prompt behind `assert_biometric`, and the QR scanner for pairing.
+tauri-plugin-biometric = "=2.4.0"
+tauri-plugin-barcode-scanner = "=2.5.0"

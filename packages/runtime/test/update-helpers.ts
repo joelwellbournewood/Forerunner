@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, sign as cryptoSign } from "node:crypto";
 import {
   lstatSync,
   mkdirSync,
@@ -24,19 +24,25 @@ import type { UpdateConfig } from "../src/update/config.ts";
 import { MemoryReleaseFeed, type ReleaseFeed } from "../src/update/feed.ts";
 import { type HealthProbe, StaticHealthProbe } from "../src/update/health.ts";
 import { UpdateManager, type UpdateManagerDeps } from "../src/update/install.ts";
-import type {
-  ArtifactPlatform,
-  ReleaseManifest,
-  SignedManifest,
-  UpdateChannel,
+import {
+  type ArtifactPlatform,
+  manifestBytes,
+  type ReleaseManifest,
+  type SignedManifest,
+  type UpdateChannel,
 } from "../src/update/manifest.ts";
 import {
   FakeUpdateHumanPort,
   RecordingRestarter,
   type RestartRequest,
 } from "../src/update/ports.ts";
-import { generateSigningKeyPair, type SigningKeyPair, signManifest } from "../src/update/sign.ts";
-import { ReleaseVerifier, sha256Hex } from "../src/update/verify.ts";
+import {
+  generateSigningKeyPair,
+  privateKeyFrom,
+  type SigningKeyPair,
+  signManifest,
+} from "../src/update/sign.ts";
+import { keyIdOf, ReleaseVerifier, sha256Hex } from "../src/update/verify.ts";
 
 /** A zip built by adm-zip (names normalised by the library). */
 export function makeZip(files: Record<string, string>): Buffer {
@@ -277,6 +283,24 @@ export function buildRelease(server: FakeReleaseServer, opts: BuildReleaseOption
   });
 }
 
+/**
+ * Sign a manifest-shaped object without the schema check `signManifest` performs: what a
+ * hand-edited or foreign release workflow could publish (a version with build metadata, a
+ * leading "v"). The signature is valid; only the installer's rules decide what happens.
+ */
+export function signRaw(manifest: Record<string, unknown>, key: SigningKeyPair = testKey()) {
+  const { key: priv, publicKeyRaw } = privateKeyFrom(key.privateKey);
+  const sig = cryptoSign(null, manifestBytes(manifest as unknown as ReleaseManifest), priv);
+  return {
+    manifest: manifest as unknown as ReleaseManifest,
+    signature: {
+      alg: "ed25519" as const,
+      keyId: keyIdOf(publicKeyRaw),
+      signature: Buffer.from(sig).toString("base64"),
+    },
+  } satisfies SignedManifest;
+}
+
 let cachedKey: SigningKeyPair | null = null;
 /** One test signing key per process (generated, never stored). */
 export function testKey(): SigningKeyPair {
@@ -326,6 +350,8 @@ export interface HarnessOptions {
   trustedKeys?: SigningKeyPair[];
   platform?: ArtifactPlatform;
   channel?: UpdateChannel;
+  /** Default 0: every check() in a test asks the feed unless the test is about the cache. */
+  checkCacheMs?: number;
 }
 
 /** Seed config, memory and data files that an update must never touch. */
@@ -413,6 +439,7 @@ export async function makeHarness(opts: HarnessOptions = {}): Promise<Harness> {
     localSchemaVersion: opts.localSchemaVersion ?? 1,
     platform: opts.platform ?? "linux-x64",
     humanId: "human-j",
+    checkCacheMs: opts.checkCacheMs ?? 0,
   };
   const manager = new UpdateManager(deps);
   return {

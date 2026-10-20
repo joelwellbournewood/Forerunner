@@ -76,13 +76,18 @@ export function effortWithOffset(effort: EffortLevel, offset: -1 | 0 | 1): Effor
   return EFFORTS[j] ?? effort;
 }
 
-/** Coding at tier 2+ runs at high effort (spec D). */
+/**
+ * Coding at tier 2+ runs at high effort (spec D). `defaults` is the effort table in force: the
+ * built-in one, or the one `applyModelSettings` produces after the model watch adopted a lower
+ * effort (`<config>/models.json`).
+ */
 export function effortForTask(
   mode: Mode,
   riskTier: 0 | 1 | 2 | 3,
   offset: -1 | 0 | 1 = 0,
+  defaults: Record<Mode, ModeDefault> = MODE_DEFAULTS,
 ): EffortLevel {
-  let base = MODE_DEFAULTS[mode].effort;
+  let base = defaults[mode].effort;
   if (mode === "coder" && riskTier >= 2) base = "high";
   if (mode === "critic_t23" && riskTier === 3) base = "max";
   return effortWithOffset(base, offset);

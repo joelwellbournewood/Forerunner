@@ -19,8 +19,11 @@ Every rule is enforced in code: an unsigned, untrusted, tampered, downgraded, sc
 or previously rolled-back release is refused by a `ForerunnerError("validation")` whose
 `details.reason` names the cause; an agent cannot install or roll back without a human's
 approval (`approval_required`); the install can only write under `<data>/versions`
-(`path_not_allowed`); sync calls are blocked while schema versions differ (`unavailable`).
-Every outward action (feed check, install, rollback, health verdict) appends an `audit_log` row.
+(`path_not_allowed`); one install operation runs at a time, across processes (`version_conflict`,
+reason `in_progress`); the sync gate refuses sync calls while schema versions differ
+(`unavailable`; the gate is code in this module, its wiring into the sync path is pending, see
+Known issues). Every outward action (feed check that reaches the feed, install, rollback, health
+verdict) appends an `audit_log` row.
 
 ## How it works
 
@@ -60,6 +63,11 @@ or failing feed is `ForerunnerError("unavailable", retryable)`; a malformed docu
 }
 ```
 
+- `version` is a *release version* (`isReleaseVersion` in `semver.ts`): bare semver without a
+  leading `v` and without build metadata, unchanged by `safeSegment`, because it is also the
+  install directory name. One rule for the manifest schema, `buildReleaseManifest` (which strips
+  a leading `v`) and `versionDir`, so the feed never offers a release the installer would refuse
+  to stage; such a manifest is `malformed`.
 - `canonicalJson(manifest)`: keys sorted at every level, no whitespace, `undefined` dropped. The
   signature is Ed25519 (`node:crypto`, no dependency) over the UTF-8 bytes of that string, so a
   change to the version, notes, an artefact hash, a URL or `minSchema` invalidates it.
@@ -109,6 +117,7 @@ then passes it in); the registry owner and repo come from the install, never fro
 ```
 <data>/versions/
   current.json                 ← the pointer (atomic: temp file + fsync + rename)
+  install.lock                 ← only while apply/rollback/health/prune runs (pid, operation, start)
   1.1.0/                       ← one directory per release
     release.json               ← the signed manifest as fetched
     app/...                    ← the unpacked zip artefact (or the single .msi/.apk file)
@@ -123,31 +132,50 @@ then passes it in); the registry owner and repo come from the install, never fro
   "updatedAt": "...", "lastRollback": { "from": "...", "to": "...", "reason": "...", "at": "...", "automatic": true } | null }
 ```
 
-States: `installed`, `pending_health_check`, `rolled_back`, `failed`. `current: null` means no
-staged install yet (the packaged build runs). The shells read the pointer and launch
-`<versions>/<current>/`; no symlink or junction is ever created, so the layout is identical on
-Windows and Linux and survives copying the data directory. `writePointer` writes
+States (of the version `current` names): `installed`, `pending_health_check`, `failed`; a
+rollback is recorded in `lastRollback`, and the screen derives its `rolled_back` state from
+that. **Launcher contract (ADR 0015):** `current: null` means the packaged build runs: before
+the first staged install, and after a rollback to the packaged build, whose version has no
+directory under `versions/` (`rollbackCurrent(dirs, to)` writes null in that case, so a
+well-formed pointer never names a missing directory; `lastRollback.to` still records the
+version). A launcher must also treat a `current` whose directory is missing as the packaged
+build and fall through (the desktop `install.rs` does: a missing staged directory is "not a
+staged version"). `UpdateManager.installedVersion()` is the pointer's `current`, else the
+running version. The shells read the pointer and launch `<versions>/<current>/`; no symlink or
+junction is ever created, so the layout is identical on Windows and Linux and survives copying
+the data directory. `writePointer` writes
 `current.json.<id>.tmp` in the same directory, `fsync`s it, runs the test hook, then
 `renameSync` over `current.json`: a crash before the rename leaves the old pointer intact and a
 stale temp file that `cleanStalePointerTemps` removes on the next write. A corrupt pointer is a
-`validation` error (never guessed around). `versionDir` refuses any version that is not a safe
-single path segment. `assertInsideVersions(dirs, path)` guards every write of the install;
-`<config>` and everything in `<data>` outside `versions/` (state database, memory, audit log)
-are never touched, by install or by rollback.
+`validation` error (never guessed around). `versionDir` refuses any version that is not a
+release version (`hasVersionDir` answers false for one). `assertInsideVersions(dirs, path)`
+guards every write of the install; `<config>` and everything in `<data>` outside `versions/`
+(state database, memory, audit log) are never touched, by install or by rollback.
+
+**One operation at a time (`lock.ts`).** `apply`, `rollback`, `healthCheck`, `stage` and
+`prune` run under `<data>/versions/install.lock` (`withInstallLock` / `withInstallLockSync`):
+the file is created exclusively (`wx`) with the holder's pid, operation and start time and
+removed when the operation ends, however it ends. A second caller, in the same process or
+another one (the daemon's route and `fr update` in a terminal), is refused at once with
+`ForerunnerError("version_conflict")`, `details.reason: "in_progress"`, `retryable`, never
+queued, and the refusal is audited for apply and rollback. A lock whose pid is gone
+(`isPidAlive`: signal 0; `EPERM` counts as alive) is stale and replaced; an unreadable lock is
+stale only when older than ten seconds on the injected clock (another process may be between
+create and write). The route maps it to 409.
 
 `UpdateManager(deps)` with `UpdateManagerDeps { dirs, clock, feed, verifier, store: { release,
 auditLog }, human, restarter, probe, config, runningVersion (string or function),
-localSchemaVersion, platform?, fetchImpl?, humanId? }`:
+localSchemaVersion, platform?, fetchImpl?, humanId?, checkCacheMs? }`:
 
 | Method | Does |
 | --- | --- |
-| `check(by?)` → `UpdateCheck` | lists the channel, walks newest-first, stops at the first release that is not newer than `installedVersion()` (the pointer's current, else the running version); the first candidate that verifies, is schema-compatible and was not rolled back or failed here before becomes `available`; the ones skipped are `rejected: [{ version, reason, message }]`. Audits `update.check`. |
+| `check(by?, { fresh? })` → `UpdateCheck` | lists the channel, walks newest-first, stops at the first release that is not newer than `installedVersion()` (the pointer's current, else the running version); the first candidate that verifies, is schema-compatible and was not rolled back or failed here before becomes `available`; the ones skipped are `rejected: [{ version, reason, message }]`. The result is reused for `checkCacheMs` (default 60 s, `DEFAULT_CHECK_CACHE_MS`; 0 disables) while the installed version is unchanged, with `cached: true`: the screen asks on every view without a feed request or an audit row. `fresh: true` (the CLI, `apply`) always asks the feed; `invalidateCheck()` runs after apply, rollback and a health verdict. Only a real feed query audits `update.check`. |
 | `stage(signed)` → `StagedInstall` | verifies the manifest, picks the artefact for `platform` (`detectArtifactPlatform()`: windows-x64, linux-x64, android), streams the download to the staging directory while hashing (more bytes than the manifest says is `tampered` at once), checks size and SHA-256, unpacks a `.zip` with `unpackZip` (refuses `..` segments, absolute and drive-letter names, backslashes, NUL, symlink entries, and any entry that resolves outside the target) or keeps a non-zip artefact as one file, writes `release.json`, renames the staging directory into place. Any failure removes the staging directory. |
-| `apply({ by, version? })` → `ApplyResult` | trust first: the manifest is verified (signature, downgrade, schema) and a release that rolled back or failed here before is refused, each audited as denied, before anyone is asked; then an agent actor needs `human.ask(approval)` to answer `approved` (`pending` or `denied` → `approval_required`, audited as denied), so no refused release ever becomes an inbox item; then stages; inserts the `release` row (`status: published`, changelog, signature, artefacts) or reuses it; writes the pointer `{ current: version, previous: <old current or running version>, state: pending_health_check }`; audits `update.apply`; calls `restarter.restart({ reason: "update", targetVersion, fromVersion })`. |
+| `apply({ by, version? })` → `ApplyResult` | under the install lock. Trust first: the manifest is verified (signature, downgrade, schema) and a release that rolled back or failed here before is refused, each audited as denied, before anyone is asked; then an agent actor needs `human.ask({ kind: approval, key: "update.apply:<version>" })` to answer `approved` (`pending` or `denied` → `approval_required`, audited as denied), so no refused release ever becomes an inbox item; then stages; inserts the `release` row (`status: published`, changelog, signature, artefacts) or reuses it; writes the pointer `{ current: version, previous: <old current or running version>, state: pending_health_check }`; audits `update.apply`; calls `restarter.restart({ reason: "update", targetVersion, fromVersion })`. |
 | `healthCheck()` → `HealthOutcome` | the first-start check, see below. |
-| `rollback({ by, reason? })` → `RollbackResult` | manual rollback to `previous` (`not_found` when there is none; agents need approval): pointer `{ current: previous, previous: null, state: installed, lastRollback: {automatic: false} }`, release row → `rolled_back`, audit `update.rollback`, `human.notify(warning)`, restart. |
+| `rollback({ by, reason? })` → `RollbackResult` | under the install lock. Manual rollback to `previous` (`not_found` when there is none; agents need approval, key `update.rollback:<from>:<to>`): pointer `{ current: previous when its directory exists else null, previous: null, state: installed, lastRollback: {automatic: false} }`, release row → `rolled_back`, audit `update.rollback`, `human.notify(warning)`, restart. |
 | `status()` → `UpdateStatus` | running version, channel, platform, pointer, version directories on disk, trusted key ids. No network. |
-| `prune()` | removes version directories that are neither current nor previous. |
+| `prune()` | under the install lock: removes version directories that are neither current nor previous. |
 
 `detectArtifactPlatform(platform, arch)` throws `not_supported` for anything else (the manager
 then reports `platform: null` and refuses to stage).
@@ -175,10 +203,11 @@ is run by the shell on **every** start and does nothing unless `current.json` is
    a timeout or a thrown probe is a failed result.
 3. Success: pointer → `installed`, release row → `installed` with `health: { ok: true, detail,
    probe, checkedAt }`, audit `update.health` allowed.
-4. Failure with a `previous`: pointer → `{ current: previous, previous: null, state: installed,
-   lastRollback: { from, to, reason, at, automatic: true } }`, release row → `rolled_back` with
-   the reason in `health`, audit `update.rollback`, `human.notify(error)` (an inbox item),
-   `restarter.restart({ reason: "rollback" })`. Outcome `rolled_back`.
+4. Failure with a `previous`: pointer → `{ current: previous (null when it has no directory:
+   the packaged build), previous: null, state: installed, lastRollback: { from, to, reason, at,
+   automatic: true } }`, release row → `rolled_back` with the reason in `health`, audit
+   `update.rollback`, `human.notify(error)` (an inbox item), `restarter.restart({ reason:
+   "rollback", targetVersion: to })`. Outcome `rolled_back`.
 5. Failure without a `previous` (first install): pointer → `failed`, row → `failed`,
    notification; outcome `failed_no_previous`.
 
@@ -189,7 +218,7 @@ on this install (`previously_rejected`): the fix is a new release.
 
 | Port | Production | Tests |
 | --- | --- | --- |
-| `UpdateHumanPort { ask(req) → { outcome: approved/denied/pending, requestId? }; notify(note) }` | `HumanRequestUpdatePort(humanRequestRepo, humanId)`: `ask` inserts a `human_request` row (kind `approval`, risk high, blocking) and answers `pending` (the human answers from the inbox; the caller treats pending as not approved); `notify` inserts a non-blocking `info` row | `FakeUpdateHumanPort(outcome)` records asks and notifications |
+| `UpdateHumanPort { ask(req) → { outcome: approved/denied/pending, requestId? }; notify(note) }` | `HumanRequestUpdatePort(humanRequestRepo, humanId)`: an ask carries a stable `key` (`update.apply:<version>`, `update.rollback:<from>:<to>`) stored in the row's `change_card`; `ask` first looks for the newest `approval` row the updater created for that key: `answered` → `approved` when the answer is a yes (`isYes`: `yes`/`approve`/`{ choice: "approve" }`…), else `denied`; `open` → `pending` with that row's id and no duplicate; none, expired or withdrawn → a new blocking `human_request` row (kind `approval`, risk high, options yes/no) and `pending`. So the agent's retry after the human answered from the inbox goes through (or is refused) without a second inbox item. `notify` inserts a non-blocking `info` row | `FakeUpdateHumanPort(outcome)` records asks and notifications |
 | `Restarter { restart({ reason, targetVersion, fromVersion }) }` | the desktop and Android shells relaunch into `current.json`'s version ("Update and restart"); the CLI uses `RecordingRestarter` and tells the user to restart | `RecordingRestarter`, and the test harness's `BootingRestarter` which "relaunches" into the target version |
 | `ExtensionCatalog { latestVersions(refs) → CatalogEntry[] }` | the registry (`forerunner-registry`) adapter, wired by the orchestrator | `StaticExtensionCatalog(entries)` |
 | `ModelWatchReport { latest() → ModelWatchEntry[] }` | the weekly model watch module (phase 7, elsewhere) | `StaticModelWatchReport(entries)` |
@@ -213,16 +242,17 @@ checkFeed? })` fills it; an unreachable feed yields `state: unknown` with `lastE
 a failed page.
 
 `createUpdateRoutes({ ...viewDeps, humanId })` is a Hono sub-app the daemon mounts behind its
-bearer-token middleware: `GET /updates` (asks the feed), `GET /updates/status` (no network),
-`POST /updates/apply { version? }` → 202 `{ version, previous, state, restarting: true }`,
-`POST /updates/rollback { reason? }` → 202. Errors map `not_found` 404, `validation` 409,
-`approval_required`/`path_not_allowed` 403, `unavailable` 503, `not_supported` 400. Every UI
-action is attributed to `humanId`.
+bearer-token middleware: `GET /updates` (the manager's check, served from its cache within
+`checkCacheMs`), `GET /updates/status` (no network), `POST /updates/apply { version? }` → 202
+`{ version, previous, state, restarting: true }`, `POST /updates/rollback { reason? }` → 202.
+Errors map `not_found` 404, `validation` and `version_conflict` (another operation in
+progress) 409, `approval_required`/`path_not_allowed` 403, `unavailable` 503, `not_supported`
+400. Every UI action is attributed to `humanId`.
 
 ### CLI (`cli.ts`)
 
-`registerUpdateCli(program, { manager?, vault?, out?, err? })` adds `fr update` with `check`,
-`apply [--version]`, `rollback [--reason]`, `status`, `health` (exit 1 after a rollback; the
+`registerUpdateCli(program, { manager?, vault?, out?, err? })` adds `fr update` with `check`
+(always a fresh feed query), `apply [--version]`, `rollback [--reason]`, `status`, `health` (exit 1 after a rollback; the
 shells call it after a relaunch), `keygen --out <file>` (private key to an owner-only file,
 public key and key id printed, refuses to overwrite), `manifest --version --channel
 --notes-file --min-schema --base-url --artifact <platform>:<file> [--artifact ...]
@@ -241,9 +271,15 @@ Migrations are forward-only, so two installs sync only when both are at the same
 `schema_migrations` version and both are at least the running release's `minSchema`; the lower
 side has to update. `SyncGate(clock)`: `evaluate(local, peer, minSchema)` sets the paused flag
 and emits `sync_paused` / `sync_resumed` events (`on(listener)`, `events`) only on a change;
-`assertCanSync()` throws `ForerunnerError("unavailable", retryable)` while paused. The state
-service client calls `evaluate` at startup, from the peer feed and after every update, and
-`assertCanSync` before each sync call.
+`assertCanSync()` throws `ForerunnerError("unavailable", retryable)` while paused.
+
+This is the gate, not yet the wiring: nothing outside this module calls it today (see Known
+issues). The intended use is that the state service client (the sync layer in
+`services/state-api` / the runtime's peer feed) calls `evaluate` at startup, whenever a peer's
+schema version is learned and after every update, and `assertCanSync` before each sync call;
+until that is wired, the spec rule "sync pauses until both installs are compatible" is not
+enforced anywhere, and the installer's own `assertSchemaCompatible` (a release needs a schema
+the local store can reach) is the only schema check in force.
 
 ## How to change it
 
@@ -271,9 +307,19 @@ service client calls `evaluate` at startup, from the peer feed and after every u
   (install) and the shells' launchers; non-zip artefacts are kept as one file for the shell's
   installer to run.
 - **Change the pointer.** Bump `schema` in `CurrentPointer`, keep `readPointer` able to read the
-  old shape (or refuse it with a clear message), and update ADR 0015.
+  old shape (or refuse it with a clear message), keep the launcher contract (`current: null` or
+  a missing directory = packaged build) and update ADR 0015 and the shells' launchers
+  (`apps/desktop/src-tauri/src/install.rs`).
+- **Change the version rule.** `isReleaseVersion` is the single rule for the manifest schema,
+  `buildReleaseManifest` and `versionDir`; change it in one place and keep the "check never
+  offers what apply cannot stage" test green.
 - **Change the health check.** Implement `HealthProbe`; keep the timeout on the injected Clock
   so the timeout test stays deterministic.
+- **Wire the sync gate.** Give the sync layer one `SyncGate`, call `evaluate(localSchema,
+  peerSchema, minSchema)` wherever a peer's schema version arrives (startup handshake, peer
+  feed, after `healthCheck()` reports `healthy`), call `assertCanSync()` in front of every sync
+  request, surface `sync_paused` as an inbox item naming `compat.action`, and add a test that a
+  sync call is refused while the versions differ and goes through once they match.
 - **Wire the daemon and the shells.** The orchestrator mounts `createUpdateRoutes` in
   `daemon/server.ts`, registers `registerUpdateCli` in `cli/main.ts`, exports `./update/index.ts`
   from the package index, calls `healthCheck()` on daemon start, and passes a real `Restarter`
@@ -283,7 +329,7 @@ service client calls `evaluate` at startup, from the peer feed and after every u
 
 ## Tests
 
-`packages/runtime/test/update-*.test.ts` (49 tests, `pnpm vitest run --project unit
+`packages/runtime/test/update-*.test.ts` (58 tests, `pnpm vitest run --project unit
 packages/runtime/test/update-verify.test.ts packages/runtime/test/update-install.test.ts
 packages/runtime/test/update-screen.test.ts packages/runtime/test/update-health.test.ts
 packages/runtime/test/update-githost.test.ts`), all against stand-ins on 127.0.0.1: a fake
@@ -294,7 +340,9 @@ generated per process and a harness whose restarter "boots" into the staged vers
 `packages/runtime/test/wiring.test.ts` (the orchestrator's) covers the daemon side: the mounted
 routes, `fr update` on the program and the daemon exiting with `RESTART_EXIT_CODE` on apply.
 
-- `update-verify.test.ts`: semver precedence; canonical JSON; sign/verify round trip (base64
+- `update-verify.test.ts`: semver precedence; the release-version rule (manifest refuses build
+  metadata, a leading `v`, an identifier `safeSegment` would change; `buildReleaseManifest`
+  strips the `v` and refuses metadata); canonical JSON; sign/verify round trip (base64
   and PEM keys, key ids); refusals unsigned, untrusted key, forged key id, tampered artefact
   hash, edited notes, malformed, bad signature bytes; downgrade, already installed, schema too
   old, artefact mismatch; signing by secret reference without echoing the key;
@@ -313,11 +361,24 @@ routes, `fr update` on the program and the daemon exiting with `RESTART_EXIT_COD
   stale temp cleanup, corrupt pointer, unsafe version names; platform detection; the CLI
   commands including keygen (private key never printed), manifest (hashes from files, bad
   spec refused) and sign by file and by secret reference (key never printed, missing secret
-  refused).
+  refused); a signed manifest with build metadata or a leading `v` (`signRaw` in the helpers
+  bypasses the schema) is `malformed` for `check` and `apply` alike, audited, nothing staged;
+  two parallel `apply` calls → one staged and restarted, the other `version_conflict`
+  `in_progress` and audited, one release row, lock released; a held lock refuses rollback,
+  health check and prune; a dead process's lock is cleared, a fresh unreadable one is held, an
+  old unreadable one is stale; rollback (automatic and manual) to the packaged build writes
+  `current: null` and never a missing directory, `installedVersion()` stays the running
+  version, the next apply records the packaged version as `previous`, a rollback to a staged
+  previous keeps its name; `HumanRequestUpdatePort` with a real `human_request` repo: pending
+  inserts one row, a repeated ask does not duplicate it, "no" denies, an expired row is asked
+  again, "approve" lets the same apply through with no new row, `notify` is a non-blocking
+  info row.
 - `update-screen.test.ts`: the three sections on one screen validated by the zod view;
   connector update rule; pending, rolled back, rejected and unknown states; routes (GET, apply,
-  rollback, already installed, not found); `isSchemaCompatible` matrix; `SyncGate` pause,
-  block, resume and listeners; pointer contains no path separators.
+  rollback, already installed, not found; a second apply during the first answers 409); the
+  check cache (two views = one feed request and one audit row, `fresh` bypasses, the window
+  expires on the injected clock, apply invalidates); `isSchemaCompatible` matrix; `SyncGate`
+  pause, block, resume and listeners; pointer contains no path separators.
 - `update-health.test.ts`: `DaemonHealthProbe` against a fake `/health` on 127.0.0.1 (missing
   or unreadable `daemon.json`, ok, version mismatch, not ok, 503, unreachable, timeout on the
   simulated clock aborting the request); `DoctorHealthProbe` running `node -e` (all ok, a
@@ -346,9 +407,17 @@ approval request fails the "refused before any approval" assertion.
   (ADR 0015). The workflow steps are `fr update manifest`, `fr update sign --key-file` (the
   CI secret written to a temp file), upload; both commands exist and are tested, the workflow
   change is pending.
-- `HumanRequestUpdatePort.ask` always answers `pending` (the inbox answers asynchronously); an
-  agent-initiated update therefore needs a second `apply` after the human approved, driven by
-  the conversation/command layer.
+- The sync gate (`SyncGate`, `assertCanSync`, `isSchemaCompatible`) has no caller outside this
+  module and its tests: spec M's "both apps must be on a compatible version before sync
+  resumes" is not enforced in the sync path yet. `docs/requirements.md` M.6 should read "in
+  progress" until the state service client wires it ("Wire the sync gate" above).
+- `HumanRequestUpdatePort.ask` answers `pending` until the human answers from the inbox; the
+  answer is consumed by the next `apply`/`rollback` with the same key, but nothing re-issues
+  that call by itself: the conversation/command layer (or the agent) has to retry after the
+  inbox item is answered.
+- The check cache is per process: `fr update apply` in a terminal changes the pointer, and the
+  daemon's cached check is reused until its window expires or the installed version differs
+  (the cache is keyed by it), at most `checkCacheMs`.
 - Android installs through the system package installer; the staged layout stores the APK and
   the shell has to hand it over. Rollback on Android keeps the previous APK in `versions/`.
 - `GitHubReleasesFeed` fetches one manifest asset per release on every `list`; with many
@@ -362,7 +431,7 @@ approval request fails the "refused before any approval" assertion.
 | M.3 | signed builds from GitHub Releases; "Update available", changelog, "Update and restart" | `feed.ts`, `verify.ts`, `sign.ts`, `screen.ts` (`AppUpdateView.available.changelog`), `UpdateManager.apply` + `Restarter` |
 | M.4 | staged install, health check on restart, automatic rollback; config, memory and data untouched | `install.ts`, `pointer.ts`, `health.ts`; `protectedHashes` tests |
 | M.5 | connector and model updates on the same updates screen | `screen.ts` (`connectors`, `models`), `ExtensionCatalog`, `ModelWatchReport` |
-| M.6 | both installs on a compatible schema version before sync resumes | `compat.ts` (`isSchemaCompatible`, `SyncGate`), `minSchema` in the manifest and `assertSchemaCompatible` |
+| M.6 (gate only) | both installs on a compatible schema version before sync resumes | `compat.ts` (`isSchemaCompatible`, `SyncGate`), `minSchema` in the manifest and `assertSchemaCompatible`; the gate is not yet called from the sync path (Known issues) |
 | K.6 (part) | Extensions panel: version and updates | `ConnectorUpdateView` |
 | R.1 (part) | updates through the same release channel on Android | `android` artefact platform, same feed and verifier |
 | S.1, S.6 | limits in code; granting/changing the installed software by an agent needs a human | `requireApproval`, refusals |

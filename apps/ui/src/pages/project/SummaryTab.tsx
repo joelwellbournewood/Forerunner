@@ -4,6 +4,24 @@ import { Badge, Button, ErrorBanner, Loading, Money } from "../../components/ui.
 import { formatDateTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
+import { DecisionsSection } from "./DecisionsSection.tsx";
+import { PeersSection } from "./PeersSection.tsx";
+import { QueueSection } from "./QueueSection.tsx";
+
+/**
+ * Summary tab: the one-screen summary, then what the next session will read (the queue),
+ * what the other agents are doing (peers, spec F.6) and the decision log (spec J.4).
+ */
+export function SummaryTab({ projectId }: { projectId: string }) {
+  return (
+    <div className="space-y-6" data-testid="summary-tab">
+      <SummaryCard projectId={projectId} />
+      <QueueSection projectId={projectId} />
+      <PeersSection projectId={projectId} />
+      <DecisionsSection projectId={projectId} />
+    </div>
+  );
+}
 
 function speechAvailable(): boolean {
   return (
@@ -13,8 +31,8 @@ function speechAvailable(): boolean {
   );
 }
 
-/** Summary tab: the daemon's cached one-screen summary with a "Read aloud" button (Web Speech). */
-export function SummaryTab({ projectId }: { projectId: string }) {
+/** The daemon's cached one-screen summary with a "Read aloud" button (Web Speech). */
+function SummaryCard({ projectId }: { projectId: string }) {
   const client = useClient();
   const summary = useAsync(
     (signal) => client.projectSummary(projectId, signal),

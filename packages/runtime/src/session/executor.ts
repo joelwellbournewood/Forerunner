@@ -7,10 +7,24 @@ import { type DelegationBrief, renderBrief, validateBrief } from "../brief.ts";
 import { headroomHeaders, isProxyable } from "../context/headroom.ts";
 import type { ContextManager } from "../context/manager.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
+import {
+  DEFAULT_TASK_MEMORY_TOKEN_BUDGET,
+  ESCALATE_AFTER_ATTEMPTS,
+  type MemoryPort,
+  memoryBudgetOf,
+  TASK_MEMORY_BUDGET_SETTING,
+  tierForAttempt,
+} from "../loop/ports.ts";
 import { effortForTask, modelIdFor, startingTier } from "../models/ladder.ts";
 import type { EffortLevel, ModelProvider, ModelTier } from "../provider/types.ts";
 import type { Sandbox } from "../sandbox/types.ts";
-import type { PlanItem, TaskExecutionResult, TaskExecutor } from "./runner.ts";
+import { screenLessons } from "./lessons.ts";
+import {
+  lessonsFromReport,
+  type PlanItem,
+  type TaskExecutionResult,
+  type TaskExecutor,
+} from "./runner.ts";
 
 /**
  * Runs one task through a specialist: validates the delegation brief, derives a narrower
@@ -89,6 +103,38 @@ export interface LoopTaskExecutorDeps {
   /** Worktree root for the task, if the executor should pin file access. */
   worktreeFor?: (task: TaskRow) => Promise<string | undefined>;
   onEvent?: (taskId: string, ev: RunEvent) => void;
+  /**
+   * Memory (spec G): lessons relevant to the task join the specialist's brief as data, under
+   * the project's `task_memory_token_budget` (default 400 tokens). The principal's grant is
+   * used: specialists have no memory of their own.
+   */
+  memory?: Pick<MemoryPort, "recall">;
+  taskMemoryTokenBudget?: number;
+}
+
+/** The constraint lines a brief carries for a retry (spec D.2): the rung and the open findings. */
+export function retryConstraints(
+  attempt: number,
+  openFindings: readonly { severity: string; description: string; required_action: string }[],
+): string[] {
+  const lines: string[] = [];
+  if (attempt >= 1) {
+    const rung =
+      attempt === 1
+        ? "retry 1 of the ladder: the brief was improved with the critic's findings below"
+        : attempt === 2
+          ? "retry 2 of the ladder: keep the scope small; split the task or hand it to another specialist if it does not fit"
+          : attempt >= ESCALATE_AFTER_ATTEMPTS
+            ? `retry ${attempt} of the ladder: this run is escalated one model rung under the project ceiling; after this the human decides`
+            : `retry ${attempt} of the ladder`;
+    lines.push(`Attempt ${attempt + 1} (${rung}).`);
+  }
+  if (openFindings.length) {
+    lines.push("Critic findings to resolve (each must be addressed with evidence):");
+    for (const f of openFindings.slice(0, 20))
+      lines.push(`- [${f.severity}] ${f.description} -> ${f.required_action}`);
+  }
+  return lines;
 }
 
 export class LoopTaskExecutor implements TaskExecutor {
@@ -106,6 +152,41 @@ export class LoopTaskExecutor implements TaskExecutor {
         `specialist ${item.specialist} is not in the registry`,
       );
 
+    // Retry ladder (spec D.2): the open findings of the task become constraints of the brief
+    // (rung 1, "improve the brief"), the rung is named, and the model rung is derived from the
+    // attempt count below (rung 3, "escalate under the ceiling").
+    const openFindings = await store.finding.openFor(task.id);
+    const project = task.project_id ? await store.project.get(task.project_id) : undefined;
+    // Memory (spec G): lessons for this task, as data, under the task budget.
+    let lessonsBlock = "";
+    const taskMemoryBudget = memoryBudgetOf(
+      project?.settings,
+      TASK_MEMORY_BUDGET_SETTING,
+      this.deps.taskMemoryTokenBudget ?? DEFAULT_TASK_MEMORY_TOKEN_BUDGET,
+    );
+    if (this.deps.memory) {
+      try {
+        const recalled = await this.deps.memory.recall({
+          agentId: session.agent_id,
+          kind: "principal",
+          projectId: task.project_id,
+          query: `${task.title}\n${task.outcome}\n${task.acceptance_criteria.join("\n")}`,
+          tags: [spec.name],
+          maxTokens: taskMemoryBudget,
+        });
+        if (recalled.tokens <= taskMemoryBudget) lessonsBlock = recalled.block;
+        else
+          this.deps.onEvent?.(task.id, {
+            type: "warning",
+            message: `lessons block of ${recalled.tokens} tokens over the task budget of ${taskMemoryBudget}; dropped`,
+          });
+      } catch (e) {
+        this.deps.onEvent?.(task.id, {
+          type: "warning",
+          message: `memory recall failed: ${errorMessage(e)}`,
+        });
+      }
+    }
     const brief: DelegationBrief = validateBrief({
       goal: `${task.title}: ${task.outcome}`,
       contextLinks: [
@@ -116,6 +197,8 @@ export class LoopTaskExecutor implements TaskExecutor {
       constraints: [
         "Stay inside the worktree and the allowed tools.",
         "Report evidence (commands and output), not claims.",
+        "End the report with one line per lesson worth keeping, as 'Lesson: ...'.",
+        ...retryConstraints(task.attempt, openFindings),
       ],
       acceptanceCriteria: task.acceptance_criteria.length
         ? task.acceptance_criteria
@@ -147,7 +230,11 @@ export class LoopTaskExecutor implements TaskExecutor {
       budgetUsdMicro: brief.budgetUsdMicro,
       expiresAt: new Date(clock.now() + spec.timeoutMs).toISOString(),
     });
-    const tier = startingTier(spec.defaultTier, brief.riskTier, this.deps.ceiling);
+    const tier = tierForAttempt(
+      startingTier(spec.defaultTier, brief.riskTier, this.deps.ceiling),
+      task.attempt,
+      this.deps.ceiling,
+    );
     const model = modelIdFor(tier, this.deps.provider.name);
     const effort = effortForTask(
       spec.name === "coder" ? "coder" : spec.name === "researcher" ? "researcher" : "coder",
@@ -193,7 +280,9 @@ export class LoopTaskExecutor implements TaskExecutor {
       headroom_used: headroomUsed,
       author_agent: session.agent_id,
     });
-    await store.task.patch(task.id, { attempt: task.attempt + 1, specialist: spec.name });
+    // The attempt count is the state workflow's (failed -> ready, spec D.2); a run does not
+    // count itself, or the ladder would advance twice per failure.
+    await store.task.patch(task.id, { specialist: spec.name });
 
     // Tools for this run; with a worktree and a sandbox port, commands run inside the sandbox
     // with only the worktree mounted and the token's domains as the egress allowlist. A lease
@@ -225,7 +314,12 @@ export class LoopTaskExecutor implements TaskExecutor {
         model,
         billingSourceId: this.deps.billingSourceId,
         system: spec.prompt,
-        messages: [{ role: "user", content: renderBrief(brief) }],
+        messages: [
+          {
+            role: "user",
+            content: lessonsBlock ? `${renderBrief(brief)}\n\n${lessonsBlock}` : renderBrief(brief),
+          },
+        ],
         tools,
         pricing: this.deps.pricing,
         timeoutMs: spec.timeoutMs,
@@ -287,7 +381,27 @@ export class LoopTaskExecutor implements TaskExecutor {
       costUsdMicro: result.costUsdMicro,
       // Checks are the critic's job from tier 1 up; tier 0 closes when the specialist finished cleanly.
       checksPassed: result.outcome === "completed",
+      runId: run.id,
+      ...(worktree ? { worktree } : {}),
+      finalReport: result.finalText,
+      lessons: this.screenedLessons(task.id, result.finalText, spec.name),
     };
+  }
+
+  /**
+   * The `Lesson: ...` lines of the report, minus the ones that read like instructions: the
+   * report is model output over untrusted content, so a planted line is dropped here (the
+   * runner and the memory port screen again) and reported as a warning on the task.
+   */
+  private screenedLessons(taskId: string, finalText: string, specialist: string) {
+    const screened = screenLessons(lessonsFromReport(finalText, [specialist]), "agent_output");
+    for (const r of screened.rejected) {
+      this.deps.onEvent?.(taskId, {
+        type: "warning",
+        message: `lesson proposal ignored as instruction-like (${r.rules.join(", ")}): "${r.text.slice(0, 200)}"`,
+      });
+    }
+    return screened.kept;
   }
 
   /** Close a Run row whose run threw before the driver returned (outcome "error", duration, why). */

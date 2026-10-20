@@ -36,6 +36,26 @@ describe("parseDaemonEvent", () => {
       data: { blockingCount: 2 },
     });
     expect(parseDaemonEvent("inbox.changed", '{"blockingCount":"two"}')).toBeNull();
+    expect(
+      parseDaemonEvent(
+        "extension.changed",
+        '{"type":"extension.enabled","id":"e","name":"GitHub"}',
+      ),
+    ).toEqual({
+      event: "extension.changed",
+      data: { type: "extension.enabled", id: "e", name: "GitHub" },
+    });
+    expect(parseDaemonEvent("extension.changed", '{"type":"x"}')).toBeNull();
+    expect(
+      parseDaemonEvent(
+        "restart.requested",
+        '{"reason":"update","targetVersion":"0.2.0","fromVersion":"0.1.0","exitCode":86}',
+      ),
+    ).toEqual({
+      event: "restart.requested",
+      data: { reason: "update", targetVersion: "0.2.0", fromVersion: "0.1.0", exitCode: 86 },
+    });
+    expect(parseDaemonEvent("restart.requested", '{"reason":"update"}')).toBeNull();
     expect(parseDaemonEvent("session.event", "not json")).toBeNull();
     expect(parseDaemonEvent("something.else", "{}")).toBeNull();
   });
@@ -180,6 +200,7 @@ describe("streamChat", () => {
         reply: "plain",
         actions: [],
         pendingConfirmation: null,
+        question: null,
         ttftMs: null,
         cost: { usdMicro: 0, chfMicro: 0 },
         transcriptId: "t",

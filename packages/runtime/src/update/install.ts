@@ -32,6 +32,7 @@ import AdmZip from "adm-zip";
 import type { UpdateConfig } from "./config.ts";
 import type { ReleaseFeed } from "./feed.ts";
 import { type HealthOutcome, type HealthProbe, runStartupHealthCheck } from "./health.ts";
+import { withInstallLock, withInstallLockSync } from "./lock.ts";
 import {
   type ArtifactPlatform,
   artifactFor,
@@ -46,6 +47,7 @@ import {
   cleanStalePointerTemps,
   listVersionDirs,
   readPointer,
+  rollbackCurrent,
   versionDir,
   versionsRoot,
   writePointer,
@@ -60,7 +62,9 @@ import { type ReleaseVerifier, refusal, refusalReason, type VerifyRefusal } from
  * manifest, unpacks zip artefacts (zip-slip and symlink entries refused), renames the staging
  * directory into place, records the release row, writes current.json atomically with the
  * health check pending, audits, and asks the shell to restart. Config, memory and the rest of
- * the data directory are never written: every path goes through assertInsideVersions.
+ * the data directory are never written: every path goes through assertInsideVersions. Apply,
+ * rollback, the health check and prune run one at a time under the install lock (lock.ts),
+ * across processes; a second caller is refused as in_progress, never queued.
  */
 export interface UpdateActor {
   kind: "human" | "agent" | "system";
@@ -84,6 +88,11 @@ export interface UpdateManagerDeps {
   platform?: ArtifactPlatform;
   fetchImpl?: typeof fetch;
   humanId?: string | null;
+  /**
+   * How long a check() result is reused (the updates screen asks on every view). Default
+   * 60 s; 0 disables. `check(by, { fresh: true })` always asks the feed.
+   */
+  checkCacheMs?: number;
 }
 
 export interface RejectedRelease {
@@ -100,6 +109,8 @@ export interface UpdateCheck {
   signed: SignedManifest | null;
   rejected: RejectedRelease[];
   checkedAt: string;
+  /** True when served from the cache: no feed request and no audit row this time. */
+  cached: boolean;
 }
 
 export interface StagedInstall {
@@ -137,6 +148,7 @@ export interface UpdateStatus {
 const logger = log("update:install");
 export const RELEASE_RECORD_FILE = "release.json";
 export const DOWNLOAD_DIR = "download";
+export const DEFAULT_CHECK_CACHE_MS = 60_000;
 
 export function detectArtifactPlatform(
   platform: Platform = currentPlatform(),
@@ -243,6 +255,7 @@ export async function downloadToFile(
 export class UpdateManager {
   readonly platform: ArtifactPlatform | null;
   private readonly f: typeof fetch;
+  private lastCheck: { result: UpdateCheck; at: number; installed: string } | null = null;
 
   constructor(private readonly deps: UpdateManagerDeps) {
     this.f = deps.fetchImpl ?? fetch;
@@ -307,14 +320,36 @@ export class UpdateManager {
     return { manifest, keyId };
   }
 
-  /** Ask the feed and report the newest release this install may take. */
-  async check(by: UpdateActor = { kind: "system", id: null }): Promise<UpdateCheck> {
+  /** Forget the cached check (after anything that changes what is installed or refused). */
+  invalidateCheck(): void {
+    this.lastCheck = null;
+  }
+
+  /**
+   * Ask the feed and report the newest release this install may take. The result is reused for
+   * `checkCacheMs` (the screen asks on every view) unless `fresh` is set; only a real feed
+   * query appends an `update.check` audit row.
+   */
+  async check(
+    by: UpdateActor = { kind: "system", id: null },
+    opts: { fresh?: boolean } = {},
+  ): Promise<UpdateCheck> {
     const channel = this.deps.config.channel;
+    const current = this.installedVersion();
+    const ttl = this.deps.checkCacheMs ?? DEFAULT_CHECK_CACHE_MS;
+    const cached = this.lastCheck;
+    if (
+      !opts.fresh &&
+      cached &&
+      cached.installed === current &&
+      this.deps.clock.now() - cached.at < ttl
+    ) {
+      return { ...cached.result, cached: true };
+    }
     const list = await this.deps.feed.list(channel);
     const rejected: RejectedRelease[] = [];
     let available: ReleaseManifest | null = null;
     let signed: SignedManifest | null = null;
-    const current = this.installedVersion();
     for (const candidate of list) {
       const version = candidate.manifest.version;
       // "Available" always means newer; downgrades are explicit (apply --version).
@@ -338,11 +373,41 @@ export class UpdateManager {
         ? `update available: ${available.version}`
         : `up to date at ${current}${rejected.length ? `; rejected ${rejected.map((r) => `${r.version} (${r.reason})`).join(", ")}` : ""}`,
     );
-    return { runningVersion: current, channel, available, signed, rejected, checkedAt: this.now() };
+    const result: UpdateCheck = {
+      runningVersion: current,
+      channel,
+      available,
+      signed,
+      rejected,
+      checkedAt: this.now(),
+      cached: false,
+    };
+    this.lastCheck = { result, at: this.deps.clock.now(), installed: current };
+    return result;
+  }
+
+  /** Run `fn` under the install lock; a refusal is audited as `tool` when one is named. */
+  private async locked<T>(
+    operation: "apply" | "rollback" | "health",
+    audit: { tool: string; by: UpdateActor; input: string } | null,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await withInstallLock(this.deps.dirs, { operation, clock: this.deps.clock }, fn);
+    } catch (e) {
+      if (audit && e instanceof ForerunnerError && e.details.reason === "in_progress") {
+        await this.audit(audit.tool, audit.by, false, audit.input, errorMessage(e), "in_progress");
+      }
+      throw e;
+    }
   }
 
   /** Download, verify and unpack into <versions>/<version>. Does not touch current.json. */
-  async stage(
+  stage(signed: SignedManifest, opts: { allowDowngrade?: boolean } = {}): Promise<StagedInstall> {
+    return this.locked("apply", null, () => this.stageUnlocked(signed, opts));
+  }
+
+  private async stageUnlocked(
     signed: SignedManifest,
     opts: { allowDowngrade?: boolean } = {},
   ): Promise<StagedInstall> {
@@ -397,10 +462,22 @@ export class UpdateManager {
     }
   }
 
-  private async requireApproval(by: UpdateActor, what: string, why: string): Promise<void> {
+  /**
+   * An agent needs a human's answer. The ask carries a stable `key` so the production port
+   * finds the inbox row it created last time: an answered "yes" lets the retried call through,
+   * "no" refuses it, and an open row is not duplicated.
+   */
+  private async requireApproval(
+    by: UpdateActor,
+    tool: "update.apply" | "update.rollback",
+    key: string,
+    what: string,
+    why: string,
+  ): Promise<void> {
     if (by.kind !== "agent") return;
     const answer = await this.deps.human.ask({
       kind: "approval",
+      key,
       why: `${what}: ${why}`,
       steps: ["Open Settings > Updates", `Review the changelog and ${what}`],
       risk: "high",
@@ -408,14 +485,7 @@ export class UpdateManager {
       humanId: this.deps.humanId ?? null,
     });
     if (answer.outcome !== "approved") {
-      await this.audit(
-        "update.apply",
-        by,
-        false,
-        what,
-        `not approved (${answer.outcome})`,
-        answer.outcome,
-      );
+      await this.audit(tool, by, false, what, `not approved (${answer.outcome})`, answer.outcome);
       throw new ForerunnerError("approval_required", `${what} needs a human's approval`, {
         details: { outcome: answer.outcome, requestId: answer.requestId ?? null },
       });
@@ -461,9 +531,19 @@ export class UpdateManager {
 
   /**
    * "Update and restart": stage the release, record it, point current.json at it with the
-   * health check pending, audit, restart. An agent needs a human's approval first.
+   * health check pending, audit, restart. An agent needs a human's approval first. Runs under
+   * the install lock; a second apply (or a rollback, health check, prune) meanwhile is refused
+   * as in_progress.
    */
-  async apply(opts: { by: UpdateActor; version?: string }): Promise<ApplyResult> {
+  apply(opts: { by: UpdateActor; version?: string }): Promise<ApplyResult> {
+    return this.locked(
+      "apply",
+      { tool: "update.apply", by: opts.by, input: `install ${opts.version ?? "latest"}` },
+      () => this.applyLocked(opts),
+    );
+  }
+
+  private async applyLocked(opts: { by: UpdateActor; version?: string }): Promise<ApplyResult> {
     const { by } = opts;
     let signed: SignedManifest | null;
     if (opts.version) {
@@ -479,7 +559,7 @@ export class UpdateManager {
         );
       }
     } else {
-      signed = (await this.check(by)).signed;
+      signed = (await this.check(by, { fresh: true })).signed;
       if (!signed) throw new ForerunnerError("not_found", "no update available");
     }
     const target = signed.manifest.version;
@@ -498,10 +578,16 @@ export class UpdateManager {
       );
       throw e;
     }
-    await this.requireApproval(by, `install update ${target}`, signed.manifest.notes.slice(0, 200));
+    await this.requireApproval(
+      by,
+      "update.apply",
+      `update.apply:${target}`,
+      `install update ${target}`,
+      signed.manifest.notes.slice(0, 200),
+    );
     let staged: StagedInstall;
     try {
-      staged = await this.stage(signed);
+      staged = await this.stageUnlocked(signed);
     } catch (e) {
       await this.audit(
         "update.apply",
@@ -526,6 +612,7 @@ export class UpdateManager {
       lastRollback: before?.lastRollback ?? null,
     };
     writePointer(this.deps.dirs, pointer);
+    this.invalidateCheck();
     await this.audit(
       "update.apply",
       by,
@@ -541,8 +628,22 @@ export class UpdateManager {
     return { version: target, previous: pointer.previous, staged, release, pointer };
   }
 
-  /** Manual rollback to the previous version named in current.json. */
-  async rollback(opts: { by: UpdateActor; reason?: string }): Promise<RollbackResult> {
+  /**
+   * Manual rollback to the previous version named in current.json. When that version has no
+   * directory (it is the packaged build) the pointer's `current` becomes null (ADR 0015).
+   */
+  rollback(opts: { by: UpdateActor; reason?: string }): Promise<RollbackResult> {
+    return this.locked(
+      "rollback",
+      { tool: "update.rollback", by: opts.by, input: `roll back: ${opts.reason ?? "manual"}` },
+      () => this.rollbackLocked(opts),
+    );
+  }
+
+  private async rollbackLocked(opts: {
+    by: UpdateActor;
+    reason?: string;
+  }): Promise<RollbackResult> {
     const { by } = opts;
     const pointer = readPointer(this.deps.dirs);
     if (!pointer?.current || !pointer.previous) {
@@ -551,18 +652,25 @@ export class UpdateManager {
       });
     }
     const reason = opts.reason ?? "manual rollback";
-    await this.requireApproval(by, `roll back ${pointer.current} to ${pointer.previous}`, reason);
     const from = pointer.current;
     const to = pointer.previous;
+    await this.requireApproval(
+      by,
+      "update.rollback",
+      `update.rollback:${from}:${to}`,
+      `roll back ${from} to ${to}`,
+      reason,
+    );
     const next: CurrentPointer = {
       schema: 1,
-      current: to,
+      current: rollbackCurrent(this.deps.dirs, to),
       previous: null,
       state: "installed",
       updatedAt: this.now(),
       lastRollback: { from, to, reason, at: this.now(), automatic: false },
     };
     writePointer(this.deps.dirs, next);
+    this.invalidateCheck();
     const [row] = await this.deps.store.release.list(
       { release_version: from },
       { orderBy: "created_at desc", limit: 1 },
@@ -580,7 +688,7 @@ export class UpdateManager {
       by,
       true,
       `roll back ${from}: ${reason}`,
-      `now ${to}; restart requested`,
+      `now ${to}${next.current === null ? " (packaged build)" : ""}; restart requested`,
     );
     await this.deps.human.notify({
       title: `Rolled back ${from} to ${to}`,
@@ -592,18 +700,22 @@ export class UpdateManager {
     return { from, to, pointer: next };
   }
 
-  /** The startup health check (health.ts) with this manager's wiring. */
+  /** The startup health check (health.ts) with this manager's wiring, under the install lock. */
   healthCheck(): Promise<HealthOutcome> {
-    return runStartupHealthCheck({
-      dirs: this.deps.dirs,
-      clock: this.deps.clock,
-      probe: this.deps.probe,
-      timeoutMs: this.deps.config.healthTimeoutMs,
-      store: this.deps.store,
-      human: this.deps.human,
-      restarter: this.deps.restarter,
-      runningVersion: this.runningVersion,
-      humanId: this.deps.humanId ?? null,
+    return this.locked("health", null, async () => {
+      const outcome = await runStartupHealthCheck({
+        dirs: this.deps.dirs,
+        clock: this.deps.clock,
+        probe: this.deps.probe,
+        timeoutMs: this.deps.config.healthTimeoutMs,
+        store: this.deps.store,
+        human: this.deps.human,
+        restarter: this.deps.restarter,
+        runningVersion: this.runningVersion,
+        humanId: this.deps.humanId ?? null,
+      });
+      if (outcome.kind !== "not_pending") this.invalidateCheck();
+      return outcome;
     });
   }
 
@@ -620,15 +732,24 @@ export class UpdateManager {
 
   /** Remove version directories that are neither current nor previous. Returns what went. */
   prune(): string[] {
-    const pointer = readPointer(this.deps.dirs);
-    const keep = new Set([pointer?.current, pointer?.previous].filter((v): v is string => !!v));
-    const removed: string[] = [];
-    for (const name of listVersionDirs(this.deps.dirs)) {
-      if (keep.has(name)) continue;
-      const dir = assertInsideVersions(this.deps.dirs, join(versionsRoot(this.deps.dirs), name));
-      rmSync(dir, { recursive: true, force: true });
-      removed.push(name);
-    }
-    return removed;
+    return withInstallLockSync(
+      this.deps.dirs,
+      { operation: "prune", clock: this.deps.clock },
+      () => {
+        const pointer = readPointer(this.deps.dirs);
+        const keep = new Set([pointer?.current, pointer?.previous].filter((v): v is string => !!v));
+        const removed: string[] = [];
+        for (const name of listVersionDirs(this.deps.dirs)) {
+          if (keep.has(name)) continue;
+          const dir = assertInsideVersions(
+            this.deps.dirs,
+            join(versionsRoot(this.deps.dirs), name),
+          );
+          rmSync(dir, { recursive: true, force: true });
+          removed.push(name);
+        }
+        return removed;
+      },
+    );
   }
 }

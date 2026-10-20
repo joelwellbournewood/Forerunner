@@ -108,7 +108,9 @@ export function registerUpdateCli(
     .option("--json", "machine readable", false)
     .action(async (opts: { json: boolean }) => {
       try {
-        const check = await withManager(deps, (m) => m.check({ kind: "human", id: null }));
+        const check = await withManager(deps, (m) =>
+          m.check({ kind: "human", id: null }, { fresh: true }),
+        );
         if (opts.json) return deps.out(JSON.stringify(check, null, 2));
         if (check.available) {
           deps.out(

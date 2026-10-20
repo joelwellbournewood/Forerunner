@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { errorMessage, ForerunnerError, join, log, osFacts } from "@forerunner/platform";
+import type { LessonStatus } from "@forerunner/state";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -9,6 +10,7 @@ import type { ZodType } from "zod";
 import { writeKillRequest } from "../enforcement/killfile.ts";
 import { estimateAccuracyView } from "../estimates/view.ts";
 import { createExtensionsRoutes } from "../extensions/routes.ts";
+import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { defaultPeers } from "../session/runner.ts";
@@ -17,32 +19,49 @@ import { DecisionLog } from "../wiring/state-ports.ts";
 import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
 import {
   AnswerRequestBody,
+  type ChatReplyView,
   ChatRequestBody,
+  CommandConfirmBody,
+  CommandExecuteBody,
+  CommandParseBody,
+  type CommandParseView,
+  type CommandResultJson,
+  type ConsolidationProposalView,
+  type ConsolidationRunView,
   CreateProjectBody,
   CreateTaskBody,
   type DecisionView,
   type EventView,
   type HealthView,
   KillBody,
+  type MemoryScopeView,
+  type MemoryView,
   type MirrorRunView,
   MirrorSyncBody,
   type MirrorSyncPendingView,
   type PeerFeedView,
+  type PendingChangeView,
+  PinLessonBody,
   StartSessionBody,
   TransitionTaskBody,
+  UpdateLessonBody,
   UpdateProjectSettingsBody,
 } from "./api-types.ts";
 import type { RuntimeApp } from "./compose.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
 import {
+  changeLogView,
+  commandDefView,
   costView,
   eventView,
+  lessonView,
   messageView,
   money,
   projectCard,
   projectSummary,
   requestView,
+  reviewsView,
   runView,
   sessionView,
   taskView,
@@ -94,6 +113,26 @@ export function createDaemonApp(
   const app = new Hono();
   const logger = log("daemon");
   const chf = () => rt.chfPerUsd();
+  const chatReplyView = (
+    r: Awaited<ReturnType<NonNullable<RuntimeApp["conversation"]>["chat"]>>,
+  ): ChatReplyView => ({
+    reply: r.reply,
+    actions: r.actions,
+    pendingConfirmation: r.pendingConfirmation
+      ? {
+          id: r.pendingConfirmation.id,
+          readback: r.pendingConfirmation.readback,
+          estimate: money(r.pendingConfirmation.costUsdMicro ?? 0, chf()),
+          commands: r.pendingConfirmation.commands,
+          decision: r.pendingConfirmation.decision ?? null,
+        }
+      : null,
+    question: r.question,
+    ttftMs: r.ttftMs,
+    cost: money(r.costUsdMicro, chf()),
+    transcriptId: r.transcriptId,
+    activeProjectId: r.activeProjectId,
+  });
 
   // Every open SSE stream registers how to end it: `server.close()` waits for in-flight
   // responses and an EventSource never finishes on its own, so a stop (and "Update and
@@ -261,7 +300,9 @@ export function createDaemonApp(
       defaultAutonomy: h.default_autonomy,
       monthlyCap: money(h.monthly_cap_usd_micro, chf()),
       agent: rt.agent,
-      activeProjectId: rt.conversation?.getActiveProject(h.id) ?? null,
+      // The registry's record wins (a switch by chat, voice or the UI all land there).
+      activeProjectId:
+        (await rt.commands.activeProject(h.id)) ?? rt.conversation?.getActiveProject(h.id) ?? null,
       provider: rt.provider?.name ?? null,
     });
   });
@@ -668,21 +709,7 @@ export function createDaemonApp(
       text: body.text,
       source: body.source,
     });
-    return c.json({
-      reply: r.reply,
-      actions: r.actions,
-      pendingConfirmation: r.pendingConfirmation
-        ? {
-            id: r.pendingConfirmation.id,
-            readback: r.pendingConfirmation.readback,
-            estimate: money(r.pendingConfirmation.estimateUsdMicro, chf()),
-          }
-        : null,
-      ttftMs: r.ttftMs,
-      cost: money(r.costUsdMicro, chf()),
-      transcriptId: r.transcriptId,
-      activeProjectId: r.activeProjectId,
-    });
+    return c.json(chatReplyView(r));
   });
 
   app.post("/chat/stream", async (c) => {
@@ -710,25 +737,212 @@ export function createDaemonApp(
         });
         return;
       }
-      await stream.writeSSE({
-        event: "reply",
-        data: JSON.stringify({
-          reply: r.reply,
-          actions: r.actions,
-          pendingConfirmation: r.pendingConfirmation
-            ? {
-                id: r.pendingConfirmation.id,
-                readback: r.pendingConfirmation.readback,
-                estimate: money(r.pendingConfirmation.estimateUsdMicro, chf()),
-              }
-            : null,
-          ttftMs: r.ttftMs,
-          cost: money(r.costUsdMicro, chf()),
-          transcriptId: r.transcriptId,
-          activeProjectId: r.activeProjectId,
-        }),
-      });
+      await stream.writeSSE({ event: "reply", data: JSON.stringify(chatReplyView(r)) });
     });
+  });
+
+  // -------------------------------------------------------------------------------------
+  // Reviews tab (spec H, K.2): findings, grades, verdicts, grade trend
+
+  app.get("/projects/:id/reviews", async (c) => {
+    const projectId = c.req.param("id");
+    await rt.store.project.mustGet(projectId);
+    const limit = Math.min(1000, Number(c.req.query("limit") ?? 200));
+    return c.json(await reviewsView(rt.store, { projectId, limit }));
+  });
+  app.get("/tasks/:id/reviews", async (c) => {
+    const taskId = c.req.param("id");
+    await rt.store.task.mustGet(taskId);
+    return c.json(await reviewsView(rt.store, { taskId }));
+  });
+
+  // -------------------------------------------------------------------------------------
+  // Memory views (spec G, K.5): per scope, search, edit, delete, pin, consolidation
+
+  app.get("/memory/scopes", async (c) => {
+    const out: MemoryScopeView[] = [];
+    const count = async (scope: "agent_private" | "critic" | "shared", owner?: string) => {
+      const rows = await rt.memory.list({ scope, ownerAgentId: owner, limit: 10_000 });
+      return { active: rows.length, pinned: rows.filter((l) => l.pinned).length };
+    };
+    for (const a of await rt.store.agent.principals(rt.human.id))
+      out.push({
+        scope: "agent_private",
+        ownerAgentId: a.id,
+        label: a.name,
+        ...(await count("agent_private", a.id)),
+      });
+    out.push({ scope: "critic", ownerAgentId: null, label: "Critic", ...(await count("critic")) });
+    out.push({ scope: "shared", ownerAgentId: null, label: "Shared", ...(await count("shared")) });
+    return c.json(out);
+  });
+
+  app.get("/memory", async (c) => {
+    const scope = c.req.query("scope") ?? "shared";
+    if (scope !== "agent_private" && scope !== "critic" && scope !== "shared")
+      throw new ForerunnerError("validation", `unknown memory scope ${scope}`);
+    const ownerAgentId = c.req.query("agentId") || undefined;
+    const projectId = c.req.query("projectId");
+    const text = c.req.query("q") || undefined;
+    const tag = c.req.query("tag");
+    const status = c.req.query("status") as LessonStatus | undefined;
+    if (status && status !== "active" && status !== "retired" && status !== "proposed")
+      throw new ForerunnerError("validation", `unknown lesson status ${status}`);
+    const rows = await rt.memory.list({
+      scope,
+      ...(ownerAgentId ? { ownerAgentId } : {}),
+      ...(projectId ? { projectId } : {}),
+      ...(text ? { text } : {}),
+      ...(tag ? { tags: [tag] } : {}),
+      ...(status ? { status } : {}),
+      limit: Math.min(1000, Number(c.req.query("limit") ?? 200)),
+    });
+    const view: MemoryView = {
+      scope,
+      ownerAgentId: ownerAgentId ?? null,
+      query: text ?? "",
+      lessons: rows.map(lessonView),
+    };
+    return c.json(view);
+  });
+
+  app.put("/memory/lessons/:id", async (c) => {
+    const body = await parse(c, UpdateLessonBody);
+    const row = await rt.memory.edit(c.req.param("id"), body, { humanId: rt.human.id });
+    return c.json(lessonView(row));
+  });
+  app.post("/memory/lessons/:id/pin", async (c) => {
+    const body = await parse(c, PinLessonBody);
+    return c.json(lessonView(await rt.memory.pin(c.req.param("id"), body.pinned)));
+  });
+  app.delete("/memory/lessons/:id", async (c) =>
+    c.json(lessonView(await rt.memory.remove(c.req.param("id")))),
+  );
+
+  app.get("/memory/consolidation", async (c) => {
+    const rows = await rt.memory.proposals({
+      limit: Math.min(200, Number(c.req.query("limit") ?? 50)),
+    });
+    return c.json(rows satisfies ConsolidationProposalView[]);
+  });
+  app.post("/memory/consolidation/run", async (c) => {
+    const run = await rt.memory.propose();
+    if (run.requestId) rt.events.emit("inbox", {});
+    return c.json(run satisfies ConsolidationRunView);
+  });
+
+  // -------------------------------------------------------------------------------------
+  // Commands (spec Q): the registry, parse, execute, confirm, the change log, undo. The UI,
+  // the palette and the phone call the same commands chat and voice do; the daemon builds
+  // the turn (the human, the principal, the active project, the device) itself.
+
+  const turnFor = async (body: {
+    source?: "text" | "voice" | "phone";
+    projectId?: string;
+    deviceId?: string;
+    wordsUsed?: string;
+  }): Promise<CommandTurn> => {
+    const active = (await rt.commands.activeProject(rt.human.id)) ?? body.projectId ?? null;
+    return {
+      humanId: rt.human.id,
+      agentId: rt.agent.id,
+      activeProjectId: body.projectId ?? active,
+      sessionId: await conversationSessionId(rt),
+      source: body.source ?? "text",
+      wordsUsed: body.wordsUsed ?? "",
+      deviceId: body.deviceId ?? null,
+    };
+  };
+  const commandResult = (r: CommandResultView): CommandResultJson => {
+    const { costUsdMicro, ...rest } = r;
+    const projectId = (r.card as { projectId?: unknown } | null | undefined)?.projectId;
+    if ((r.status === "done" || r.status === "partial") && typeof projectId === "string")
+      rt.events.emit("project", { id: projectId });
+    if (r.status === "pending") rt.events.emit("inbox", {});
+    return {
+      ...rest,
+      ...(typeof costUsdMicro === "number" ? { cost: money(costUsdMicro, chf()) } : {}),
+    };
+  };
+
+  app.get("/commands", (c) =>
+    c.json(
+      rt.commands.registry
+        .list()
+        .map((def) => commandDefView(def, rt.commands.registry.schemaJson(def.name))),
+    ),
+  );
+  app.post("/commands/parse", async (c) => {
+    const body = await parse(c, CommandParseBody);
+    const turn = await turnFor({ ...body, wordsUsed: body.text });
+    const parsed = await rt.commands.parse(body.text, turn);
+    const view: CommandParseView = {
+      commands: parsed.commands,
+      question: parsed.question ?? null,
+      matched: parsed.matched,
+    };
+    return c.json(view);
+  });
+  app.post("/commands/execute", async (c) => {
+    const body = await parse(c, CommandExecuteBody);
+    const turn = await turnFor(body);
+    const by = { kind: "human", id: rt.human.id } as const;
+    const calls = body.commands.map((cmd) => ({ name: cmd.name, params: cmd.params ?? {} }));
+    const r = await rt.commands.compose(calls, turn, {
+      ...(body.confirm === "tap" ? { confirmation: { kind: "tap", by } } : {}),
+    });
+    return c.json(commandResult(r));
+  });
+  app.get("/commands/pending", (c) => {
+    const rows: PendingChangeView[] = rt.commands.pending(rt.human.id).map((p) => ({
+      id: p.id,
+      humanId: p.humanId,
+      card: p.cardJson,
+      decision: p.decision,
+      createdAt: p.createdAt,
+      expiresAt: p.expiresAt,
+      readback: p.readback,
+      wordsUsed: p.wordsUsed,
+    }));
+    return c.json(rows);
+  });
+  app.post("/commands/:id/confirm", async (c) => {
+    const body = await parse(c, CommandConfirmBody);
+    const by = { kind: "human", id: rt.human.id } as const;
+    const id = c.req.param("id");
+    let r: CommandResultView;
+    if (body.answer === "device") {
+      if (!body.deviceId) throw new ForerunnerError("validation", "deviceId is required");
+      r = await rt.commands.confirm(id, {
+        kind: "device",
+        deviceId: body.deviceId,
+        biometric: body.biometric === true,
+        by,
+      });
+    } else {
+      r = await rt.commands.confirm(id, { kind: body.answer, by });
+    }
+    rt.events.emit("inbox", {});
+    return c.json(commandResult(r));
+  });
+  app.post("/commands/:id/cancel", async (c) => {
+    const r = await rt.commands.cancel(c.req.param("id"), { kind: "human", id: rt.human.id });
+    rt.events.emit("inbox", {});
+    return c.json(commandResult(r));
+  });
+  app.get("/changes", async (c) => {
+    const rows = await rt.commands.changeLog({
+      humanId: rt.human.id,
+      ...(c.req.query("projectId") ? { projectId: c.req.query("projectId") } : {}),
+      undoable: c.req.query("undoable") === "true",
+      limit: Math.min(1000, Number(c.req.query("limit") ?? 100)),
+    });
+    const now = rt.clock.nowIso();
+    return c.json(rows.map((row) => changeLogView(row, now)));
+  });
+  app.post("/changes/:id/undo", async (c) => {
+    const turn = await turnFor({ wordsUsed: "undo" });
+    return c.json(commandResult(await rt.commands.undo(c.req.param("id"), turn)));
   });
 
   app.get("/costs", async (c) =>
@@ -962,3 +1176,30 @@ export async function startDaemon(
 }
 
 export type { EventView };
+
+/** The principal's conversation session: the activity log of changes made outside a chat turn. */
+async function conversationSessionId(rt: RuntimeApp): Promise<string> {
+  if (rt.conversation) return rt.conversation.conversationSessionId(rt.agent.id, null);
+  const existing = await rt.store.session.list(
+    { agent_id: rt.agent.id, trigger: "manual", summary: "conversation" } as never,
+    { limit: 1 },
+  );
+  if (existing[0]) return existing[0].id;
+  const row = await rt.store.session.insert({
+    agent_id: rt.agent.id,
+    project_id: null,
+    trigger: "manual",
+    plan: {},
+    budget_cap_usd_micro: 0,
+    step_cap: 1_000_000,
+    spent_usd_micro: 0,
+    steps: 0,
+    started_at: rt.clock.nowIso(),
+    status: "planned",
+    summary: "conversation",
+    handoff: {},
+    runner: "pc",
+    author_agent: rt.agent.id,
+  });
+  return row.id;
+}

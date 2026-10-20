@@ -19,6 +19,7 @@ export * from "./enforcement/token.ts";
 export * from "./estimates/index.ts";
 export * from "./extensions/index.ts";
 export * from "./injection/scan.ts";
+export * from "./loop/index.ts";
 export * from "./models/eval-runner.ts";
 export * from "./models/ladder.ts";
 export * from "./models/price-list.ts";

@@ -22,6 +22,19 @@ export interface ShellInjection {
   platform?: string;
   /** Shell product version, shown in Settings. */
   shellVersion?: string;
+  /**
+   * Android shell only (spec R, ADR 0026): the phone never reaches a daemon; it pairs with the
+   * shared state service. The shell may inject the service URL it was built or deep-linked with;
+   * the pairing screen lets the user enter or scan one when this is empty.
+   */
+  stateUrl?: string;
+  /** Android shell only: the device's model name, suggested as the device name at pairing. */
+  deviceName?: string;
+}
+
+/** True when the shell says it is the Android app; the UI then mounts the phone screens (`/m`). */
+export function isMobileShell(injection: ShellInjection | undefined): boolean {
+  return (injection?.platform ?? "").trim().toLowerCase() === "android";
 }
 
 declare global {

@@ -5,6 +5,7 @@ export * from "./config.ts";
 export * from "./feed.ts";
 export * from "./health.ts";
 export * from "./install.ts";
+export * from "./lock.ts";
 export * from "./manifest.ts";
 export * from "./pointer.ts";
 export * from "./ports.ts";

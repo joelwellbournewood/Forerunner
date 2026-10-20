@@ -1,0 +1,2 @@
+# The Tauri template indents with two spaces; keep the shell consistent with it.
+tab_spaces = 2

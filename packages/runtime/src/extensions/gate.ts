@@ -23,8 +23,9 @@ import { parsePermissions, ROW_STATUS_ERROR, ROW_STATUS_PENDING } from "./types.
 /**
  * The extension gate: before every tool call, a tool that belongs to an extension which is
  * disabled, removed, in error or waiting for approval is refused in code, even when the run
- * token lists it. The extension's own domain and path ceilings are checked too. Tools that
- * belong to no extension pass through untouched.
+ * token lists it. The grant's action classes (what the panel shows) and the extension's own
+ * domain and path ceilings are enforced too. Tools that belong to no extension pass through
+ * untouched.
  */
 export interface ExtensionGateDeps {
   registry: ExtensionRegistry;
@@ -79,6 +80,12 @@ export class ExtensionGate {
     const perms = parsePermissions(row.permissions);
     if (perms.tools.length > 0 && !perms.tools.includes(tool.name)) {
       return deny("tool_not_allowed", `tool ${tool.name} is not granted to ${row.name}`);
+    }
+    if (perms.actionClasses.length > 0 && !perms.actionClasses.includes(tool.actionClass)) {
+      return deny(
+        "tool_not_allowed",
+        `tool ${tool.name} is ${tool.actionClass}; ${row.name} is granted ${perms.actionClasses.join(", ")} only`,
+      );
     }
     if (ctx.input === undefined) return;
     if (perms.domains.length > 0) {

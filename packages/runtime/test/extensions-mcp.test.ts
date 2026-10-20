@@ -2,44 +2,164 @@ import { Logger, type LogRecord } from "@forerunner/platform";
 import { MemoryVault, SecretResolver } from "@forerunner/vault";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NoSecrets } from "../src/enforcement/ports.ts";
+import type { ConnectorTransport } from "../src/extensions/catalog.ts";
 import {
+  assignBridgedNames,
   bridgedToolName,
   buildReview,
+  defaultTransportFactory,
   inferActionClass,
   inferFields,
   isBridgedTool,
   McpConnector,
+  ownsToolName,
+  StdioMcpTransport,
   secretRefsOf,
+  toolPrefixOf,
   transportDomains,
   transportPaths,
+  withoutSecretRefs,
   zodFromJsonSchema,
 } from "../src/extensions/mcp.ts";
 import {
+  FAKE_STDIO_SERVER_SCRIPT,
   FAKE_TOKEN_VALUE,
   fakeCatalogEntry,
   inMemoryConnectorFactory,
 } from "./extensions-helpers.ts";
 
 describe("MCP action class inference (ADR 0016)", () => {
-  const cases: [string, Record<string, boolean>, string][] = [
-    ["anything", { readOnlyHint: true }, "read"],
-    ["list_files", { destructiveHint: true }, "destructive"],
-    ["delete_issue", {}, "destructive"],
-    ["sendEmail", {}, "external_send"],
-    ["create_issue", {}, "routine_reversible"],
-    ["get_issue", {}, "read"],
-    ["search", {}, "read"],
-    ["run_command", {}, "non_routine"],
-    ["deploy_site", {}, "deploy_production"],
-    ["merge_pull_request", {}, "merge_pr"],
-    ["purchase_credits", {}, "financial"],
-    ["frobnicate", {}, "non_routine"],
+  // name, annotations, class, inferredFrom: the name decides; annotations only tighten
+  const cases: [string, Record<string, boolean>, string, string][] = [
+    ["anything", { readOnlyHint: true }, "read", "annotation:readOnlyHint"],
+    ["fetch_page", { readOnlyHint: true }, "read", "name:fetch,annotation:readOnlyHint"],
+    [
+      "list_files",
+      { destructiveHint: true },
+      "destructive",
+      "annotation:destructiveHint,name:list",
+    ],
+    ["frobnicate", { destructiveHint: true }, "destructive", "annotation:destructiveHint"],
+    // a server cannot label a severe verb read-only: class kept, conflict recorded
+    [
+      "delete_repository",
+      { readOnlyHint: true },
+      "destructive",
+      "conflict:readOnlyHint,name:delete",
+    ],
+    [
+      "create_issue",
+      { readOnlyHint: true },
+      "routine_reversible",
+      "conflict:readOnlyHint,name:create",
+    ],
+    ["pay_invoice", { readOnlyHint: true }, "financial", "conflict:readOnlyHint,name:pay"],
+    [
+      "deploy_site",
+      { readOnlyHint: true, destructiveHint: false },
+      "deploy_production",
+      "conflict:readOnlyHint,name:deploy",
+    ],
+    // destructiveHint never lowers a class that is already more severe
+    ["purchase_credits", { destructiveHint: true }, "financial", "name:purchase"],
+    ["delete_issue", {}, "destructive", "name:delete"],
+    ["sendEmail", {}, "external_send", "name:send"],
+    ["create_issue", {}, "routine_reversible", "name:create"],
+    ["get_issue", {}, "read", "name:get"],
+    ["search", {}, "read", "name:search"],
+    ["run_command", {}, "non_routine", "name:run"],
+    ["deploy_site", {}, "deploy_production", "name:deploy"],
+    ["merge_pull_request", {}, "merge_pr", "name:merge"],
+    ["purchase_credits", {}, "financial", "name:purchase"],
+    ["frobnicate", {}, "non_routine", "default"],
   ];
-  for (const [name, annotations, expected] of cases) {
-    it(`${name} -> ${expected}`, () => {
-      expect(inferActionClass({ name, annotations }).actionClass).toBe(expected);
+  for (const [name, annotations, expected, from] of cases) {
+    it(`${name} ${JSON.stringify(annotations)} -> ${expected} (${from})`, () => {
+      expect(inferActionClass({ name, annotations })).toEqual({
+        actionClass: expected,
+        inferredFrom: from,
+      });
     });
   }
+
+  it("flags a read-only claim that contradicts the name in the review summary", () => {
+    const review = buildReview({
+      extensionName: "srv",
+      transport: null,
+      tools: [
+        {
+          name: "delete_repository",
+          description: "",
+          inputSchema: {},
+          annotations: { readOnlyHint: true },
+        },
+      ],
+      resources: [],
+    });
+    expect(review.tools[0]).toMatchObject({
+      actionClass: "destructive",
+      risk: "high",
+      inferredFrom: "conflict:readOnlyHint,name:delete",
+    });
+    expect(review.risk).toBe("high");
+    expect(review.summary).toContain(
+      "tool srv.delete_repository: the server calls it read-only but its name says delete; kept destructive",
+    );
+  });
+
+  it("gives colliding server tool names distinct bridged names, deterministically", () => {
+    const tools = [
+      { name: "read_file", description: "", inputSchema: {}, annotations: {} },
+      { name: "read file", description: "", inputSchema: {}, annotations: {} },
+      { name: "read/file", description: "", inputSchema: {}, annotations: {} },
+    ];
+    const names = assignBridgedNames("coll", tools);
+    expect([...names.entries()]).toEqual([
+      ["read file", "coll.read_file"],
+      ["read/file", "coll.read_file_2"],
+      ["read_file", "coll.read_file_3"],
+    ]);
+    expect(assignBridgedNames("coll", [...tools].reverse())).toEqual(names);
+    const review = buildReview({ extensionName: "coll", transport: null, tools, resources: [] });
+    expect(review.tools.map((t) => t.bridgedName)).toEqual([
+      "coll.read_file",
+      "coll.read_file_2",
+      "coll.read_file_3",
+    ]);
+    expect(new Set(review.permissions.tools).size).toBe(3);
+    expect(review.summary).toContain(
+      'tool coll.read_file_2: server tool "read/file" (name collision, renamed)',
+    );
+  });
+
+  it("names belong to their extension: prefix helpers", () => {
+    expect(toolPrefixOf("My Server")).toBe("My_Server.");
+    expect(ownsToolName("fake", "fake.fetch_page")).toBe(true);
+    expect(ownsToolName("fake", "fake.")).toBe(false);
+    expect(ownsToolName("fake", "echo")).toBe(false);
+    expect(ownsToolName("browser", "browser.open")).toBe(true);
+    expect(ownsToolName("shadow", "browser.open")).toBe(false);
+  });
+
+  it("withoutSecretRefs drops every secret reference and resolves nothing", () => {
+    const stdio = withoutSecretRefs({
+      type: "stdio",
+      command: "x",
+      args: [],
+      env: { TOKEN: "secret:fake_token", PLAIN: "1" },
+    });
+    expect(stdio).toEqual({ type: "stdio", command: "x", args: [], env: { PLAIN: "1" } });
+    const http = withoutSecretRefs({
+      type: "http",
+      url: "https://mcp.example.net/x",
+      headers: { authorization: "secret:api", accept: "application/json" },
+    });
+    expect(http).toEqual({
+      type: "http",
+      url: "https://mcp.example.net/x",
+      headers: { accept: "application/json" },
+    });
+  });
 
   it("finds path and domain fields from the input schema", () => {
     expect(
@@ -129,7 +249,7 @@ describe("McpConnector", () => {
       actionClass: "read",
       risk: "low",
       domainFields: ["url"],
-      inferredFrom: "annotation:readOnlyHint",
+      inferredFrom: "name:fetch,annotation:readOnlyHint",
     });
     expect(post).toMatchObject({
       bridgedName: "fake.post_comment",
@@ -177,10 +297,14 @@ describe("McpConnector", () => {
     expect(result.content).toContain("page at https://example.com/x");
     expect(result.untrusted).toEqual({ source: "tool_output", origin: "mcp:fake" });
     expect(calls).toEqual([{ name: "fetch_page", args: { url: "https://example.com/x" } }]);
-    // only the tools the grant lists are bridged
+    // only the tools the grant lists are bridged, and only in the granted classes
     expect(c.bridgeTools(review, ["fake.post_comment"]).map((s) => s.name)).toEqual([
       "fake.post_comment",
     ]);
+    expect(c.bridgeTools(review, undefined, ["read"]).map((s) => s.name)).toEqual([
+      "fake.fetch_page",
+    ]);
+    expect(c.bridgeTools(review, ["fake.post_comment"], ["read"])).toEqual([]);
     await c.close();
   });
 
@@ -264,5 +388,80 @@ describe("McpConnector", () => {
         connectTimeoutMs: 2000,
       }),
     ).rejects.toMatchObject({ code: "unavailable" });
+  });
+});
+
+describe("StdioMcpTransport (platform shell, argv arrays)", () => {
+  const stdioSpec = (env: Record<string, string>): ConnectorTransport => ({
+    type: "stdio",
+    command: process.execPath,
+    args: ["-e", FAKE_STDIO_SERVER_SCRIPT],
+    env,
+  });
+
+  it("spawns the server through the platform shell, exposes its child process and lists its tools", async () => {
+    const c = await McpConnector.connect({
+      extensionId: "ext-stdio",
+      name: "stdio",
+      transport: stdioSpec({ FAKE_TOKEN: "secret:fake_token" }),
+      secrets: new SecretResolver(new MemoryVault({ fake_token: FAKE_TOKEN_VALUE })),
+      grantedSecrets: new Set(["fake_token"]),
+      connectTimeoutMs: 10_000,
+      callTimeoutMs: 10_000,
+    });
+    try {
+      expect(c.child?.pid).toBeGreaterThan(0);
+      const tools = await c.listTools();
+      expect(tools.map((t) => t.name)).toEqual(["ping_env"]);
+      const result = await c.callTool("ping_env", {});
+      expect(result.content).toBe("FAKE_TOKEN:set");
+      expect(result.untrusted).toEqual({ source: "tool_output", origin: "mcp:stdio" });
+    } finally {
+      const child = c.child;
+      await c.close();
+      // the server ignores SIGTERM and never exits on its own: close() kills the tree
+      expect(child?.exitCode !== null || child?.signalCode !== null).toBe(true);
+      expect(c.closed).toBe(true);
+    }
+  }, 20_000);
+
+  it("a secret-free discovery spec never carries the value and the server sees it unset", async () => {
+    const transport = (await defaultTransportFactory(
+      withoutSecretRefs(stdioSpec({ FAKE_TOKEN: "secret:fake_token" })),
+      { extensionId: "e", name: "n" },
+    )) as StdioMcpTransport;
+    expect(transport).toBeInstanceOf(StdioMcpTransport);
+    const c = await McpConnector.connect({
+      extensionId: "ext-stdio-2",
+      name: "stdio",
+      transport: withoutSecretRefs(stdioSpec({ FAKE_TOKEN: "secret:fake_token" })),
+      secrets: new NoSecrets(),
+      grantedSecrets: new Set(),
+      connectTimeoutMs: 10_000,
+      callTimeoutMs: 10_000,
+    });
+    try {
+      expect((await c.callTool("ping_env", {})).content).toBe("FAKE_TOKEN:unset");
+    } finally {
+      await c.close();
+    }
+  }, 20_000);
+
+  it("refuses to start a command that does not exist with a redacted, retryable error", async () => {
+    await expect(
+      McpConnector.connect({
+        extensionId: "x",
+        name: "missing",
+        transport: {
+          type: "stdio",
+          command: "forerunner-no-such-command-xyz",
+          args: [],
+          env: {},
+        },
+        secrets: new NoSecrets(),
+        grantedSecrets: new Set(),
+        connectTimeoutMs: 5000,
+      }),
+    ).rejects.toMatchObject({ code: "unavailable", retryable: true });
   });
 });

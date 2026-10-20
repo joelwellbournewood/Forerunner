@@ -9,7 +9,7 @@ import {
   run,
 } from "@forerunner/platform";
 import type { AuditLogRepo, JsonValue, ReleaseRepo, ReleaseRow } from "@forerunner/state";
-import { type CurrentPointer, readPointer, writePointer } from "./pointer.ts";
+import { type CurrentPointer, readPointer, rollbackCurrent, writePointer } from "./pointer.ts";
 import type { Restarter, UpdateHumanPort } from "./ports.ts";
 
 /**
@@ -17,6 +17,7 @@ import type { Restarter, UpdateHumanPort } from "./ports.ts";
  * Failure rolls back to the previous version named in current.json, records the release as
  * rolled_back with the reason, tells the human, and asks the shell to restart. Success marks
  * the release installed. Nothing here reads or writes config, memory or data; only the pointer.
+ * Callers take the install lock (UpdateManager.healthCheck does); this function does not.
  */
 export interface HealthCheckItem {
   name: string;
@@ -317,9 +318,10 @@ export async function runStartupHealthCheck(deps: HealthCheckDeps): Promise<Heal
   }
 
   const to = pointer.previous;
+  // `previous` without a directory is the packaged build: current becomes null (ADR 0015).
   writePointer(deps.dirs, {
     schema: 1,
-    current: to,
+    current: rollbackCurrent(deps.dirs, to),
     previous: null,
     state: "installed",
     updatedAt: now(),

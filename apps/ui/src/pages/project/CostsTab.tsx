@@ -6,6 +6,15 @@ import { useClient } from "../../store/context.tsx";
 
 type Bucket = CostView["byModel"][number];
 
+/** Cost per accepted task (spec I.6); null when nothing was accepted or acceptance is not tracked. */
+export function costPerAccepted(bucket: Bucket): Bucket["cost"] | null {
+  if (bucket.accepted === null || bucket.accepted <= 0) return null;
+  return {
+    usdMicro: Math.round(bucket.cost.usdMicro / bucket.accepted),
+    chfMicro: Math.round(bucket.cost.chfMicro / bucket.accepted),
+  };
+}
+
 function BucketTable({ title, rows, testId }: { title: string; rows: Bucket[]; testId: string }) {
   return (
     <div data-testid={testId}>
@@ -18,23 +27,34 @@ function BucketTable({ title, rows, testId }: { title: string; rows: Bucket[]; t
             <tr>
               <th className="py-1 pr-2">Name</th>
               <th className="py-1 pr-2">Runs</th>
-              <th className="py-1 pr-2">Accepted</th>
+              <th className="py-1 pr-2" title="Accepted by the critic / runs">
+                Accepted
+              </th>
+              <th className="py-1 pr-2 text-right">Per accepted</th>
               <th className="py-1 text-right">Cost</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.key} className="border-t border-neutral-100 dark:border-neutral-800">
-                <td className="py-1 pr-2">{r.label}</td>
-                <td className="py-1 pr-2">{r.runs}</td>
-                <td className="py-1 pr-2">
-                  {r.accepted === null ? "—" : `${r.accepted} / ${r.runs}`}
-                </td>
-                <td className="py-1 text-right">
-                  <Money value={r.cost} />
-                </td>
-              </tr>
-            ))}
+            {rows.map((r) => {
+              const per = costPerAccepted(r);
+              return (
+                <tr key={r.key} className="border-t border-neutral-100 dark:border-neutral-800">
+                  <td className="py-1 pr-2">{r.label}</td>
+                  <td className="py-1 pr-2">{r.runs}</td>
+                  <td className="py-1 pr-2">
+                    {r.accepted === null
+                      ? "—"
+                      : `${r.accepted} / ${r.runs} (${Math.round((r.accepted / Math.max(1, r.runs)) * 100)}%)`}
+                  </td>
+                  <td className="py-1 pr-2 text-right" data-testid="cost-per-accepted">
+                    {per ? <Money value={per} /> : "—"}
+                  </td>
+                  <td className="py-1 text-right">
+                    <Money value={r.cost} />
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

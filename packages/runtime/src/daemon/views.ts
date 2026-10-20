@@ -1,8 +1,14 @@
 import { CostLedger, FixedRateSource } from "@forerunner/billing";
+import type { CommandDef } from "@forerunner/commands";
+import { staticRisk } from "@forerunner/commands";
 import type {
+  ChangeLogRow,
   EventRow,
+  FindingRow,
   HumanRequestRow,
+  LessonRow,
   MessageRow,
+  ReviewRow,
   RunRow,
   SessionRow,
   StateStore,
@@ -10,13 +16,19 @@ import type {
 } from "@forerunner/state";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import type {
+  ChangeLogView,
+  CommandDefView,
   CostView,
   EventView,
+  FindingView,
   HumanRequestView,
+  LessonView,
   MessageView,
   Money,
   ProjectCard,
   ProjectSummary,
+  ReviewsView,
+  ReviewView,
   RunView,
   SessionView,
   TaskView,
@@ -258,6 +270,30 @@ export function describeEvent(type: string, p: Record<string, unknown>): string 
       return `You: ${s("text")}`;
     case "chat.reply":
       return `Agent: ${s("text")}`;
+    case "chat.confirmed":
+      return `Confirmed "${s("words")}": ${Array.isArray(p.commands) ? (p.commands as string[]).join(", ") : ""} (${s("status")}).`;
+    case "chat.cancelled":
+      return `Cancelled "${s("words")}".`;
+    case "change":
+      return s("sentence");
+    case "critic.review_started":
+      return `Critic review started at tier ${n("tier")} (attempt ${n("attempt") + 1}).`;
+    case "critic.verdict":
+      return `Critic verdict: ${s("verdict")} (grade ${n("grade")}, confidence ${n("confidence").toFixed(2)}, ${n("findings")} finding(s), ${n("openFindings")} open) -> ${s("decision")}${s("retry") ? ` (${s("retry")})` : ""}${s("nextTier") ? ` on ${s("nextTier")}` : ""}. ${s("summary")}`;
+    case "critic.review_failed":
+      return `Critic review failed: ${s("warning")}`;
+    case "critic.session_review":
+      return `Session review: ${s("verdict")} (grade ${n("grade")}, ${n("findings")} finding(s)). ${s("summary")}`;
+    case "task.blocked_by_findings":
+      return `Cannot close the task: ${s("warning")}`;
+    case "memory.loaded":
+      return `Memory: ${n("lessons")} lesson(s), ${n("tokens")} of ${n("budget")} tokens.`;
+    case "memory.over_budget":
+    case "memory.load_failed":
+    case "memory.record_failed":
+      return `Memory: ${s("warning")}`;
+    case "memory.recorded":
+      return `Memory: recorded ${n("recorded")} lesson(s) (${n("merged")} merged, ${n("rejected")} rejected).`;
     default:
       return `${type} ${JSON.stringify(p).slice(0, 200)}`;
   }
@@ -374,4 +410,185 @@ function savingsLedger(store: StateStore, chfPerUsd: number): Pick<CostLedger, "
     rates: new FixedRateSource(chfPerUsd),
     clock: store.clock,
   });
+}
+
+// ---------------------------------------------------------------------------------------
+// Reviews tab (spec H, K.2)
+
+export function findingView(f: FindingRow): FindingView {
+  return {
+    id: f.id,
+    reviewId: f.review_id,
+    taskId: f.task_id,
+    severity: f.severity,
+    description: f.description,
+    requiredAction: f.required_action,
+    status: f.status,
+    resolvedByRun: f.resolved_by_run,
+    fingerprint: f.fingerprint,
+    createdAt: f.created_at,
+    version: f.version,
+  };
+}
+
+export function reviewView(
+  r: ReviewRow,
+  findings: FindingRow[],
+  taskTitle: string | null,
+): ReviewView {
+  return {
+    id: r.id,
+    taskId: r.task_id,
+    taskTitle,
+    sessionId: r.session_id,
+    criticModel: r.critic_model,
+    tier: Math.min(3, Math.max(0, r.tier)) as 0 | 1 | 2 | 3,
+    grade: Math.min(100, Math.max(0, Math.round(r.grade))),
+    confidence: Math.min(1, Math.max(0, r.confidence)),
+    verdict: r.verdict,
+    evidence: r.evidence,
+    summary: r.summary,
+    findings: findings.map(findingView),
+    openFindings: findings.filter((f) => f.status === "open").length,
+    createdAt: r.created_at,
+  };
+}
+
+/**
+ * The Reviews tab data for a project or one task: every review with its findings, the open
+ * finding count, the verdict counts and the grade trend (oldest first).
+ */
+export async function reviewsView(
+  store: StateStore,
+  filter: { projectId?: string; taskId?: string; limit?: number },
+): Promise<ReviewsView> {
+  const limit = filter.limit ?? 200;
+  let rows: ReviewRow[];
+  const titles = new Map<string, string>();
+  if (filter.taskId) {
+    rows = await store.review.forTask(filter.taskId, { limit });
+    const t = await store.task.get(filter.taskId);
+    if (t) titles.set(t.id, t.title);
+  } else if (filter.projectId) {
+    const tasks = await store.task.list({ project_id: filter.projectId } as never, { limit: 5000 });
+    for (const t of tasks) titles.set(t.id, t.title);
+    const sessions = await store.session.list({ project_id: filter.projectId } as never, {
+      limit: 5000,
+    });
+    const sessionIds = new Set(sessions.map((s) => s.id));
+    rows = (
+      await store.review.list({} as never, {
+        orderBy: [{ column: "created_at", direction: "desc" }],
+        limit: 5000,
+      })
+    )
+      .filter(
+        (r) =>
+          (r.task_id && titles.has(r.task_id)) || (r.session_id && sessionIds.has(r.session_id)),
+      )
+      .slice(0, limit);
+  } else {
+    rows = await store.review.list({} as never, {
+      orderBy: [{ column: "created_at", direction: "desc" }],
+      limit,
+    });
+    for (const r of rows) {
+      if (r.task_id && !titles.has(r.task_id)) {
+        const t = await store.task.get(r.task_id);
+        if (t) titles.set(t.id, t.title);
+      }
+    }
+  }
+  const reviews: ReviewView[] = [];
+  const verdicts: Record<string, number> = {};
+  let openFindings = 0;
+  for (const r of rows) {
+    const findings = await store.finding.forReview(r.id);
+    const v = reviewView(r, findings, r.task_id ? (titles.get(r.task_id) ?? null) : null);
+    reviews.push(v);
+    verdicts[v.verdict] = (verdicts[v.verdict] ?? 0) + 1;
+    openFindings += v.openFindings;
+  }
+  const trend = [...reviews]
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+    .map((r) => ({
+      at: r.createdAt,
+      grade: r.grade,
+      reviewId: r.id,
+      taskId: r.taskId,
+      verdict: r.verdict,
+    }));
+  return {
+    projectId: filter.projectId ?? null,
+    taskId: filter.taskId ?? null,
+    reviews,
+    openFindings,
+    gradeTrend: trend,
+    averageGrade: trend.length
+      ? Math.round((trend.reduce((a, p) => a + p.grade, 0) / trend.length) * 10) / 10
+      : null,
+    verdicts,
+  };
+}
+
+// ---------------------------------------------------------------------------------------
+// Memory views (spec K.5)
+
+export function lessonView(l: LessonRow): LessonView {
+  return {
+    id: l.id,
+    scope: l.scope,
+    ownerAgentId: l.owner_agent_id,
+    projectId: l.project_id,
+    text: l.text,
+    source: l.source,
+    tags: [...l.tags],
+    confidence: l.confidence,
+    lastUsed: l.last_used,
+    hitCount: l.hit_count,
+    supersededBy: l.superseded_by,
+    pinned: l.pinned,
+    status: l.status,
+    filePath: l.file_path,
+    createdAt: l.created_at,
+    updatedAt: l.updated_at,
+    version: l.version,
+  };
+}
+
+// ---------------------------------------------------------------------------------------
+// Commands and the change log (spec Q)
+
+export function changeLogView(row: ChangeLogRow, nowIso: string): ChangeLogView {
+  return {
+    id: row.id,
+    humanId: row.human_id,
+    agentId: row.agent_id,
+    wordsUsed: row.words_used,
+    commands: row.commands,
+    before: row.before,
+    after: row.after,
+    scope: row.scope,
+    projectId: row.project_id,
+    expiresAt: row.expires_at,
+    undoState: row.undo_state,
+    undoneAt: row.undone_at,
+    source: row.source,
+    sentence: row.sentence,
+    undoable: row.undo_state === "undoable" && (!row.expires_at || row.expires_at > nowIso),
+    createdAt: row.created_at,
+    version: row.version,
+  };
+}
+
+export function commandDefView(def: CommandDef<unknown>, schema: unknown): CommandDefView {
+  return {
+    name: def.name,
+    description: def.description,
+    risk: staticRisk(def),
+    reversible: def.reversible,
+    undoStrategy: def.undoStrategy,
+    limit: def.limit === true,
+    schema,
+  };
 }

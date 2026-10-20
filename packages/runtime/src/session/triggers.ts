@@ -72,7 +72,7 @@ export class Scheduler {
   readonly log: {
     at: string;
     req: StartRequest;
-    result: "started" | "queued" | "deferred" | "error";
+    result: "started" | "queued" | "deferred" | "cancelled" | "error";
     detail?: string;
   }[] = [];
 
@@ -187,5 +187,27 @@ export class Scheduler {
 
   isActive(agentId: string): boolean {
     return this.active.has(agentId);
+  }
+
+  /** The request waiting for the agent (queued behind an active session or deferred by quiet hours). */
+  pendingFor(agentId: string): StartRequest | undefined {
+    return this.pending.get(agentId);
+  }
+
+  /**
+   * Drop the agent's waiting request (the undo of a start that only queued): nothing running
+   * is touched. Returns the dropped request, or undefined when none was waiting.
+   */
+  cancelPending(agentId: string, reason = "cancelled"): StartRequest | undefined {
+    const req = this.pending.get(agentId);
+    if (!req) return undefined;
+    this.pending.delete(agentId);
+    this.log.push({
+      at: new Date(this.deps.clock.now()).toISOString(),
+      req,
+      result: "cancelled",
+      detail: reason,
+    });
+    return req;
   }
 }

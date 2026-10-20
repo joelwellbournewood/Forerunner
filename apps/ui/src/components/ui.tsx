@@ -187,31 +187,6 @@ export function EmptyState({ children, testId }: { children: ReactNode; testId?:
   );
 }
 
-/** A tab or page that a later phase fills; the phase is visible in the UI. */
-export function Placeholder({
-  title,
-  phase,
-  children,
-}: {
-  title: string;
-  phase: number;
-  children?: ReactNode;
-}) {
-  return (
-    <section
-      className="rounded border border-dashed border-neutral-300 p-4 dark:border-neutral-700"
-      data-testid="placeholder"
-      data-phase={phase}
-    >
-      <h2 className="font-semibold">{title}</h2>
-      <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-        Coming with phase {phase}.
-      </p>
-      {children}
-    </section>
-  );
-}
-
 export function Field({
   label,
   children,

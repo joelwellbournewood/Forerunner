@@ -1,17 +1,24 @@
-import { errorMessage, ForerunnerError, isAbsolute, log } from "@forerunner/platform";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { ChildProcess } from "node:child_process";
 import {
-  getDefaultEnvironment,
-  StdioClientTransport,
-} from "@modelcontextprotocol/sdk/client/stdio.js";
+  errorMessage,
+  ForerunnerError,
+  isAbsolute,
+  killTree,
+  log,
+  spawnProcess,
+} from "@forerunner/platform";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { ToolExecutionContext, ToolResult, ToolSpec } from "../agent/tools.ts";
 import type { ActionClass } from "../enforcement/autonomy.ts";
 import { hostnameOf } from "../enforcement/hooks.ts";
 import type { SecretsPort } from "../enforcement/ports.ts";
-import type { ConnectorTransport } from "./catalog.ts";
+import type { ConnectorTransport, StdioTransport } from "./catalog.ts";
 import {
   BRIDGED_TOOL_NAME_RE,
   type ExtensionPermissions,
@@ -26,12 +33,13 @@ import {
 } from "./types.ts";
 
 /**
- * MCP connector: one client connection to an MCP server (stdio with argv arrays, streamable
- * HTTP, or any transport a factory supplies, e.g. InMemoryTransport in tests). It lists the
- * server's tools and resources, builds the PermissionReview the human approves, and bridges
- * the tools into Forerunner ToolSpecs (ADR 0016). Secret references in the transport's env or
- * headers are resolved only here, at spawn time, through the SecretsPort; values never reach
- * the review, the rows, the model context or the logs.
+ * MCP connector: one client connection to an MCP server (stdio with argv arrays through the
+ * platform shell, streamable HTTP, or any transport a factory supplies, e.g. InMemoryTransport
+ * in tests). It lists the server's tools and resources, builds the PermissionReview the human
+ * approves, and bridges the tools into Forerunner ToolSpecs (ADR 0016). Secret references in
+ * the transport's env or headers are resolved only here, at spawn time, through the
+ * SecretsPort, and only for the names the human granted; values never reach the review, the
+ * rows, the model context or the logs.
  */
 
 export interface McpToolInfo {
@@ -57,6 +65,15 @@ export interface McpResourceInfo {
 export interface TransportMeta {
   extensionId: string;
   name: string;
+}
+
+/** A transport that owns a child process (stdio servers): the kill switch registers it. */
+export interface ProcessTransport extends Transport {
+  readonly child: ChildProcess | null;
+}
+
+export function isProcessTransport(t: Transport): t is ProcessTransport {
+  return "child" in t;
 }
 
 /** Builds the transport from a spec whose secret references are already resolved. */
@@ -102,6 +119,17 @@ export function secretRefsOf(transport: ConnectorTransport): string[] {
   return uniq(names);
 }
 
+/**
+ * The same transport with every `secret:<name>` entry left out: what discovery before the
+ * human's yes may start. Nothing is resolved; the names stay in the review only.
+ */
+export function withoutSecretRefs(transport: ConnectorTransport): ConnectorTransport {
+  const strip = (o: Record<string, string>): Record<string, string> =>
+    Object.fromEntries(Object.entries(o).filter(([, v]) => !SECRET_REF_RE.test(v)));
+  if (transport.type === "stdio") return { ...transport, env: strip(transport.env) };
+  return { ...transport, headers: strip(transport.headers) };
+}
+
 /** Hosts a transport reaches by itself (the HTTP endpoint). */
 export function transportDomains(transport: ConnectorTransport): string[] {
   if (transport.type !== "http") return [];
@@ -115,15 +143,31 @@ export function transportPaths(transport: ConnectorTransport): string[] {
   return uniq(transport.args.filter((a) => isAbsolute(a)));
 }
 
+/** One line naming what starting the transport does; shown in the review, never a secret value. */
+export function describeTransport(transport: ConnectorTransport): string {
+  if (transport.type === "stdio") return `runs ${[transport.command, ...transport.args].join(" ")}`;
+  return `connects to ${transport.url}`;
+}
+
 export function safeToolName(name: string): string {
   let out = name.replace(/[^A-Za-z0-9_.-]+/g, "_");
   if (!/^[A-Za-z]/.test(out)) out = `t_${out}`;
   return out;
 }
 
+/** `<extension>.`: every tool an extension contributes carries its own sanitised name. */
+export function toolPrefixOf(extensionName: string): string {
+  return `${safeToolName(extensionName)}.`;
+}
+
+export function ownsToolName(extensionName: string, toolName: string): boolean {
+  const prefix = toolPrefixOf(extensionName);
+  return toolName.startsWith(prefix) && toolName.length > prefix.length;
+}
+
 /** `<extension>.<tool>`: the name tokens and the ToolRegistry use. */
 export function bridgedToolName(extensionName: string, toolName: string): string {
-  const name = `${safeToolName(extensionName)}.${safeToolName(toolName)}`;
+  const name = `${toolPrefixOf(extensionName)}${safeToolName(toolName)}`;
   if (!BRIDGED_TOOL_NAME_RE.test(name)) {
     throw new ForerunnerError("validation", `cannot bridge tool name ${toolName}`);
   }
@@ -160,6 +204,22 @@ const PATTERNS: { cls: ActionClass; re: RegExp }[] = [
   },
 ];
 
+/** Severity order of the classes: an annotation may only move a class up this list. */
+export const CLASS_RANK: Record<ActionClass, number> = {
+  read: 0,
+  routine_reversible: 1,
+  non_routine: 2,
+  merge_pr: 3,
+  deploy_staging: 4,
+  deploy_production: 5,
+  external_send: 6,
+  destructive: 7,
+  financial: 8,
+  credential: 9,
+  permission_change: 10,
+  capability_grant: 11,
+};
+
 export function nameWords(name: string): string[] {
   return name
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -168,27 +228,46 @@ export function nameWords(name: string): string[] {
     .map((w) => w.toLowerCase());
 }
 
+/** The class the verbs in the tool name imply, or null when no verb is recognised. */
+export function classFromName(name: string): { cls: ActionClass; verb: string } | null {
+  const words = nameWords(name);
+  for (const { cls, re } of PATTERNS) {
+    const hit = words.find((w) => re.test(w));
+    if (hit) return { cls, verb: hit };
+  }
+  return null;
+}
+
 /**
- * Action class of an MCP tool (ADR 0016): explicit annotations first (readOnlyHint → read,
- * destructiveHint → destructive), then the verbs in the tool name from the most severe
- * class down, otherwise `non_routine` (asks below autonomy 3). The human can tighten any
- * class in the review before approving; it can never be loosened by the server.
+ * Action class of an MCP tool (ADR 0016). The verbs in the tool name decide first, from the
+ * most severe class down. Server annotations can only tighten the result: `destructiveHint`
+ * raises the class to `destructive`; `readOnlyHint` confirms `read` when the name says read
+ * or nothing, and is recorded as a conflict (class kept, review flagged) when the name says
+ * otherwise. No match and no annotation → `non_routine` (asks below autonomy 3). The human
+ * can narrow any class in the review before approving; a server can never loosen one.
  */
 export function inferActionClass(tool: Pick<McpToolInfo, "name" | "annotations">): {
   actionClass: ActionClass;
   inferredFrom: string;
 } {
-  if (tool.annotations.readOnlyHint === true) {
-    return { actionClass: "read", inferredFrom: "annotation:readOnlyHint" };
+  const byName = classFromName(tool.name);
+  const a = tool.annotations;
+  if (a.destructiveHint === true && (!byName || CLASS_RANK[byName.cls] < CLASS_RANK.destructive)) {
+    return {
+      actionClass: "destructive",
+      inferredFrom: byName
+        ? `annotation:destructiveHint,name:${byName.verb}`
+        : "annotation:destructiveHint",
+    };
   }
-  if (tool.annotations.destructiveHint === true) {
-    return { actionClass: "destructive", inferredFrom: "annotation:destructiveHint" };
+  if (a.readOnlyHint === true) {
+    if (!byName) return { actionClass: "read", inferredFrom: "annotation:readOnlyHint" };
+    if (byName.cls === "read") {
+      return { actionClass: "read", inferredFrom: `name:${byName.verb},annotation:readOnlyHint` };
+    }
+    return { actionClass: byName.cls, inferredFrom: `conflict:readOnlyHint,name:${byName.verb}` };
   }
-  const words = nameWords(tool.name);
-  for (const { cls, re } of PATTERNS) {
-    const hit = words.find((w) => re.test(w));
-    if (hit) return { actionClass: cls, inferredFrom: `name:${hit}` };
-  }
+  if (byName) return { actionClass: byName.cls, inferredFrom: `name:${byName.verb}` };
   return { actionClass: "non_routine", inferredFrom: "default" };
 }
 
@@ -275,17 +354,43 @@ export interface BuildReviewInput {
   resources: McpResourceInfo[];
   /** Declared by the catalog entry or the human; merged into the review. */
   declared?: Partial<ExtensionPermissions>;
+  /** Extra lines for the approval card (e.g. why discovery has not run yet). */
+  notes?: string[];
+}
+
+/**
+ * Bridged names for a server's tools, in a deterministic order (by server name). Two server
+ * tools whose sanitised names collide (`read file` and `read_file`) get `_2`, `_3` suffixes
+ * so one approved name never stands for two server tools.
+ */
+export function assignBridgedNames(
+  extensionName: string,
+  tools: readonly Pick<McpToolInfo, "name">[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  const used = new Set<string>();
+  // code-point order, not locale order, so every machine assigns the same names
+  for (const t of [...tools].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+    if (out.has(t.name)) continue;
+    const base = bridgedToolName(extensionName, t.name);
+    let name = base;
+    for (let n = 2; used.has(name); n++) name = `${base}_${n}`;
+    used.add(name);
+    out.set(t.name, name);
+  }
+  return out;
 }
 
 /** The review the human sees: every tool with class and risk, resources, domains, secrets. */
 export function buildReview(input: BuildReviewInput): PermissionReview {
+  const names = assignBridgedNames(input.extensionName, input.tools);
   const tools: ReviewedTool[] = input.tools
     .map((t) => {
       const { actionClass, inferredFrom } = inferActionClass(t);
       const fields = inferFields(t.inputSchema);
       return {
         name: t.name,
-        bridgedName: bridgedToolName(input.extensionName, t.name),
+        bridgedName: names.get(t.name) ?? bridgedToolName(input.extensionName, t.name),
         description: t.description,
         actionClass,
         risk: riskOf(actionClass),
@@ -317,33 +422,134 @@ export function buildReview(input: BuildReviewInput): PermissionReview {
   if (permissions.secrets.length) risks.push("medium");
   if (permissions.actionClasses.some((c) => riskOf(c) === "high")) risks.push("high");
   const summary: string[] = [];
-  for (const t of tools) summary.push(`tool ${t.bridgedName}: ${t.actionClass} (${t.risk} risk)`);
+  for (const t of tools) {
+    summary.push(`tool ${t.bridgedName}: ${t.actionClass} (${t.risk} risk)`);
+    if (t.inferredFrom.startsWith("conflict:")) {
+      summary.push(
+        `tool ${t.bridgedName}: the server calls it read-only but its name says ${t.inferredFrom.slice("conflict:readOnlyHint,name:".length)}; kept ${t.actionClass}`,
+      );
+    }
+    if (t.bridgedName !== bridgedToolName(input.extensionName, t.name)) {
+      summary.push(`tool ${t.bridgedName}: server tool "${t.name}" (name collision, renamed)`);
+    }
+  }
   for (const r of resources) summary.push(`reads resource ${r.uri}`);
   for (const d of permissions.domains) summary.push(`reaches ${d}`);
   for (const p of permissions.paths) summary.push(`touches ${p}`);
   for (const s of permissions.secrets) summary.push(`uses secret:${s} (value never shown)`);
   for (const s of permissions.scopes) summary.push(`scope: ${s}`);
-  if (input.transport?.type === "stdio") {
-    summary.push(`runs ${[input.transport.command, ...input.transport.args].join(" ")}`);
-  }
+  if (input.transport) summary.push(describeTransport(input.transport));
+  for (const n of input.notes ?? []) summary.push(n);
   return { tools, resources, permissions, risk: maxRisk(risks), summary };
 }
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_CALL_TIMEOUT_MS = 60_000;
 const MAX_OUTPUT_CHARS = 200_000;
+const CLOSE_GRACE_MS = 2_000;
+const CLOSE_WAIT_MS = 5_000;
+
+/**
+ * Stdio transport over the platform shell: argv arrays, no shell string, the child process
+ * exposed so the registry can register it with the kill switch (`killTree` on stop). Messages
+ * are newline-delimited JSON-RPC, read with the SDK's buffer. stderr is drained and dropped.
+ */
+export class StdioMcpTransport implements ProcessTransport {
+  private proc: ChildProcess | null = null;
+  private readonly buffer = new ReadBuffer();
+  private started = false;
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: JSONRPCMessage) => void;
+
+  constructor(private readonly spec: StdioTransport) {}
+
+  get child(): ChildProcess | null {
+    return this.proc;
+  }
+
+  get pid(): number | null {
+    return this.proc?.pid ?? null;
+  }
+
+  async start(): Promise<void> {
+    if (this.started) throw new Error("StdioMcpTransport already started");
+    this.started = true;
+    const child = spawnProcess([this.spec.command, ...this.spec.args], {
+      cwd: this.spec.cwd,
+      env: { ...getDefaultEnvironment(), ...this.spec.env },
+    });
+    this.proc = child;
+    child.on("error", (e) => this.onerror?.(e));
+    child.on("close", () => {
+      this.proc = null;
+      this.onclose?.();
+    });
+    child.stdin?.on("error", (e) => this.onerror?.(e));
+    child.stderr?.resume();
+    child.stdout?.on("data", (chunk: Buffer) => {
+      try {
+        this.buffer.append(chunk);
+        for (;;) {
+          const message = this.buffer.readMessage();
+          if (!message) break;
+          this.onmessage?.(message);
+        }
+      } catch (e) {
+        this.onerror?.(e instanceof Error ? e : new Error(String(e)));
+      }
+    });
+    await new Promise<void>((resolve, reject) => {
+      const onSpawn = () => {
+        child.off("error", onError);
+        resolve();
+      };
+      const onError = (e: Error) => {
+        child.off("spawn", onSpawn);
+        reject(e);
+      };
+      child.once("spawn", onSpawn);
+      child.once("error", onError);
+    });
+  }
+
+  async send(message: JSONRPCMessage): Promise<void> {
+    const stdin = this.proc?.stdin;
+    if (!stdin || stdin.destroyed) throw new Error("MCP server process is not running");
+    if (!stdin.write(serializeMessage(message))) {
+      await new Promise<void>((r) => stdin.once("drain", r));
+    }
+  }
+
+  /** End stdin, give the server a moment to exit, then kill its process tree. */
+  async close(): Promise<void> {
+    const child = this.proc;
+    if (!child) return;
+    if (child.exitCode !== null || child.signalCode !== null) {
+      this.proc = null;
+      return;
+    }
+    const exited = new Promise<void>((r) => child.once("exit", () => r()));
+    try {
+      child.stdin?.end();
+    } catch {
+      // stdin already gone
+    }
+    const grace = setTimeout(() => killTree(child), CLOSE_GRACE_MS);
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // already gone
+    }
+    await Promise.race([exited, new Promise<void>((r) => setTimeout(r, CLOSE_WAIT_MS).unref?.())]);
+    clearTimeout(grace);
+    if (child.exitCode === null && child.signalCode === null) killTree(child);
+  }
+}
 
 /** Builds stdio or streamable-HTTP transports; env/headers must already be resolved. */
 export const defaultTransportFactory: TransportFactory = (spec) => {
-  if (spec.type === "stdio") {
-    return new StdioClientTransport({
-      command: spec.command,
-      args: [...spec.args],
-      env: { ...getDefaultEnvironment(), ...spec.env },
-      cwd: spec.cwd,
-      stderr: "ignore",
-    });
-  }
+  if (spec.type === "stdio") return new StdioMcpTransport(spec);
   return new StreamableHTTPClientTransport(new URL(spec.url), {
     requestInit: { headers: { ...spec.headers } },
   });
@@ -411,6 +617,11 @@ export class McpConnector {
     return this.isClosed;
   }
 
+  /** The server's child process when the transport spawned one (stdio), else null. */
+  get child(): ChildProcess | null {
+    return isProcessTransport(this.transport) ? this.transport.child : null;
+  }
+
   async listTools(): Promise<McpToolInfo[]> {
     this.assertOpen();
     const out: McpToolInfo[] = [];
@@ -455,15 +666,23 @@ export class McpConnector {
     return out;
   }
 
-  /** List tools and resources and build the review the human approves. */
-  async review(declared?: Partial<ExtensionPermissions>): Promise<PermissionReview> {
+  /**
+   * List tools and resources and build the review the human approves. `transport` lets a
+   * secret-free discovery connection describe the real transport (with its secret names).
+   */
+  async review(
+    declared?: Partial<ExtensionPermissions>,
+    opts: { transport?: ConnectorTransport; notes?: string[] } = {},
+  ): Promise<PermissionReview> {
     const [tools, resources] = await Promise.all([this.listTools(), this.listResources()]);
+    for (const t of tools) this.schemas.set(t.name, t.inputSchema);
     return buildReview({
       extensionName: this.name,
-      transport: this.opts.transport,
+      transport: opts.transport ?? this.opts.transport,
       tools,
       resources,
       declared,
+      notes: opts.notes,
     });
   }
 
@@ -506,15 +725,22 @@ export class McpConnector {
   }
 
   /**
-   * ToolSpecs for the tools the review (as approved) lists. Each carries the extension id,
-   * the class and the path/domain fields from the review, and executes through this
-   * connection; once the connection is closed every call is refused in code.
+   * ToolSpecs for the tools the review (as approved) lists: those in `allowed` (when given)
+   * whose class is in `classes` (when non-empty). Each carries the extension id, the class
+   * and the path/domain fields from the review, and executes through this connection; once
+   * the connection is closed every call is refused in code.
    */
-  bridgeTools(review: PermissionReview, allowed?: readonly string[]): BridgedToolSpec[] {
+  bridgeTools(
+    review: PermissionReview,
+    allowed?: readonly string[],
+    classes?: readonly ActionClass[],
+  ): BridgedToolSpec[] {
     const allowSet = allowed ? new Set(allowed) : null;
+    const classSet = classes?.length ? new Set(classes) : null;
     const specs: BridgedToolSpec[] = [];
     for (const t of review.tools) {
       if (allowSet && !allowSet.has(t.bridgedName)) continue;
+      if (classSet && !classSet.has(t.actionClass)) continue;
       specs.push(this.bridge(t));
     }
     return specs;
@@ -548,7 +774,7 @@ export class McpConnector {
 
   private readonly schemas = new Map<string, Record<string, unknown>>();
 
-  /** Remember input schemas so bridged tools validate the top level (called by review()). */
+  /** Remember input schemas so bridged tools validate the top level (review() does this too). */
   async rememberSchemas(): Promise<void> {
     for (const t of await this.listTools()) this.schemas.set(t.name, t.inputSchema);
   }

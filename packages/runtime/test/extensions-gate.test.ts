@@ -9,7 +9,20 @@ import {
   NoSecrets,
 } from "../src/enforcement/ports.ts";
 import { ExtensionGate, GatedEnforcementHooks, gateTool } from "../src/extensions/gate.ts";
-import { FAKE_CATALOG_ID, type RegistryHarness, registryHarness } from "./extensions-helpers.ts";
+import { DefaultMcpConnectorFactory } from "../src/extensions/mcp.ts";
+import {
+  EXTENSIONS_KILL_AGENT,
+  ExtensionRegistry,
+  extensionKillSession,
+} from "../src/extensions/registry.ts";
+import {
+  FAKE_CATALOG_ID,
+  FAKE_STDIO_SERVER_SCRIPT,
+  fakeCatalogEntry,
+  type RegistryHarness,
+  registryHarness,
+  testCatalog,
+} from "./extensions-helpers.ts";
 import { budget, echoTool } from "./helpers.ts";
 
 const human = { humanId: "h-1" };
@@ -147,8 +160,10 @@ describe("extension gate in the enforcement hooks", () => {
 
     await h.registry.toggle(ext.id, false, human);
 
-    // the token the running run holds is revoked at once: every hook refuses it
+    // the token the running run holds is revoked at once: every hook refuses it; the run's
+    // kill switch registration is untouched (revocation is per token, not a stop)
     expect(h.tokens.isRevoked(running.token.claims.id)).toBe(true);
+    expect(h.kill.activeCount({ sessionId: "sess-1" })).toBe(1);
     await expect(hooks.beforeToolCall(running.ctx, echoTool, { text: "x" })).rejects.toMatchObject({
       code: "killed",
     });
@@ -249,4 +264,120 @@ describe("extension gate in the enforcement hooks", () => {
       ForerunnerError,
     );
   });
+
+  it("narrowing the granted action classes refuses a bridged tool of another class in code", async () => {
+    h = await registryHarness({ approval: "approved" });
+    const ext = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human);
+    const { gate, hooks } = makeHooks();
+    const post = h.registry.bridgedTool("fake.post_comment");
+    const fetchPage = h.registry.bridgedTool("fake.fetch_page");
+    if (!post || !fetchPage) throw new Error("tools not bridged");
+    const before = run(["fake.post_comment", "fake.fetch_page"], "run-before");
+    expect(
+      (await hooks.beforeToolCall(before.ctx, post, { url: "https://example.com", body: "x" }))
+        .allowed,
+    ).toBe(true);
+    const view = await h.registry.updatePermissions(ext.id, { actionClasses: ["read"] }, human);
+    expect(view.permissions.actionClasses).toEqual(["read"]);
+    // what the panel shows is what the gate enforces: external_send is no longer granted
+    const after = run(["fake.post_comment", "fake.fetch_page"], "run-after");
+    await expect(
+      hooks.beforeToolCall(after.ctx, post, { url: "https://example.com", body: "x" }),
+    ).rejects.toMatchObject({
+      code: "tool_not_allowed",
+      message: expect.stringMatching(/external_send/),
+    });
+    expect(
+      (await hooks.beforeToolCall(after.ctx, fetchPage, { url: "https://example.com" })).allowed,
+    ).toBe(true);
+    expect(h.registry.bridgedTools().map((t) => t.name)).toEqual(["fake.fetch_page"]);
+    // the old spec held by a run is refused by the gate even though the token lists it
+    await expect(
+      gate.check(post, { input: { url: "https://example.com", body: "x" } }),
+    ).rejects.toMatchObject({ code: "tool_not_allowed" });
+    expect(h.calls.filter((c) => c.name === "post_comment")).toHaveLength(0);
+    before.unregister();
+    after.unregister();
+  });
+
+  it("a global stop closes every connector (abort through the kill switch); a scoped stop leaves them; start() reconnects after resume", async () => {
+    h = await registryHarness({ approval: "approved" });
+    const ext = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human);
+    expect(h.registry.isConnected(ext.id)).toBe(true);
+    expect(h.kill.activeCount({ agentId: EXTENSIONS_KILL_AGENT })).toBe(1);
+    expect(h.kill.activeCount({ sessionId: extensionKillSession(ext.id) })).toBe(1);
+    const scoped = await h.kill.stop({ agentId: "alice" }, "test");
+    expect(scoped.stoppedRuns).toBe(0);
+    expect(h.registry.isConnected(ext.id)).toBe(true);
+    h.kill.resume();
+
+    const report = await h.kill.stop("all", "test");
+    expect(report.stoppedRuns).toBe(1);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.registry.isConnected(ext.id)).toBe(false);
+    expect(h.registry.bridgedTools()).toEqual([]);
+    expect(h.kill.activeCount({ agentId: EXTENSIONS_KILL_AGENT })).toBe(0);
+    expect((await h.registry.get(ext.id)).connected).toBe(false);
+    // while the kill switch is frozen, (re)opening a connector is cut off at once
+    await h.registry.start();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.registry.isConnected(ext.id)).toBe(false);
+    h.kill.resume();
+    await h.registry.start();
+    expect(h.registry.isConnected(ext.id)).toBe(true);
+    expect(h.registry.bridgedTools()).toHaveLength(2);
+  });
+
+  it("a global stop kills a stdio connector's process tree, not only its tokens", async () => {
+    const stdio = fakeCatalogEntry({
+      id: "stdio-real",
+      name: "stdio",
+      transport: {
+        type: "stdio",
+        command: process.execPath,
+        args: ["-e", FAKE_STDIO_SERVER_SCRIPT],
+        env: {},
+      },
+      permissions: {
+        tools: [],
+        actionClasses: [],
+        domains: [],
+        paths: [],
+        secrets: [],
+        scopes: [],
+      },
+    });
+    h = await registryHarness({ approval: "approved", catalog: testCatalog([stdio]) });
+    const registry = new ExtensionRegistry({
+      extensions: h.store.extension,
+      audit: h.store.auditLog,
+      clock: h.clock,
+      catalog: h.registry.catalog,
+      approvals: h.approvals,
+      connectors: new DefaultMcpConnectorFactory({
+        connectTimeoutMs: 10_000,
+        callTimeoutMs: 10_000,
+      }),
+      secrets: h.secrets,
+      tokens: h.tokens,
+      kill: h.kill,
+    });
+    try {
+      const ext = await registry.addFromCatalog("stdio-real", human);
+      expect(ext.status).toBe("enabled");
+      expect(registry.bridgedTools().map((t) => t.name)).toEqual(["stdio.ping_env"]);
+      const report = await h.kill.stop("all", "test");
+      expect(report.killedProcesses).toBe(1);
+      expect(report.stoppedRuns).toBe(1);
+      // the server ignores SIGTERM; only the tree kill ends it, and the client side closes
+      for (let i = 0; i < 100 && registry.isConnected(ext.id); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(registry.isConnected(ext.id)).toBe(false);
+      expect(registry.bridgedTools()).toEqual([]);
+      h.kill.resume();
+    } finally {
+      await registry.close();
+    }
+  }, 30_000);
 });

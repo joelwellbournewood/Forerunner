@@ -53,6 +53,27 @@ export function buildCommands(ctx: CommandContext): Command[] {
       run: () => navigate("/extensions"),
     },
     {
+      id: "nav.changes",
+      title: "Go to Changes (change log, undo)",
+      hint: "g c",
+      group: "Navigate",
+      run: () => navigate("/changes"),
+    },
+    {
+      id: "nav.performance",
+      title: "Go to Performance (response times)",
+      hint: "g t",
+      group: "Navigate",
+      run: () => navigate("/performance"),
+    },
+    {
+      id: "nav.updates",
+      title: "Go to Updates",
+      hint: state.restart ? "restarting · g u" : "g u",
+      group: "Navigate",
+      run: () => navigate("/updates"),
+    },
+    {
       id: "nav.settings",
       title: "Go to Settings",
       hint: "g s",

@@ -26,6 +26,14 @@ export const ROW_STATUS_INSTALLED = "installed";
 export const ROW_STATUS_PENDING = "pending_approval";
 export const ROW_STATUS_ERROR = "error";
 
+/**
+ * What a pending row is waiting for. `discovery`: the human has not yet allowed the
+ * connector's command (or endpoint) to be started for discovery with the secrets it names;
+ * `grant`: the review is complete and the human decides on the capability grant itself.
+ */
+export const GRANT_STAGES = ["discovery", "grant"] as const;
+export type GrantStage = (typeof GRANT_STAGES)[number];
+
 export const ACTION_CLASSES = [
   "read",
   "routine_reversible",
@@ -149,6 +157,7 @@ export type ExtensionEventType =
   | "extension.disabled"
   | "extension.removed"
   | "extension.permissions_updated"
+  | "extension.discovered"
   | "extension.error";
 
 export interface ExtensionEvent {
@@ -169,6 +178,8 @@ export interface CapabilityGrantRequest {
   name: string;
   kind: ExtensionPanelKind;
   humanId: string | null;
+  /** `discovery`: allow the command/endpoint to be started once, with the named secrets; `grant`: the capability grant. */
+  stage: GrantStage;
   why: string;
   review: PermissionReview;
   /** The permissions that would be in force after a yes. */
@@ -205,6 +216,8 @@ export const ExtensionView = z.object({
   permissions: ExtensionPermissions,
   /** Permissions waiting for a yes (re-permissioning), or null. */
   pendingPermissions: ExtensionPermissions.nullable(),
+  /** What a pending row waits for: the discovery run, or the grant itself. */
+  pendingStage: z.enum(GRANT_STAGES).nullable(),
   review: PermissionReview.nullable(),
   cost: Money,
   version: z.string(),

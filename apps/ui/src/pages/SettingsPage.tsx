@@ -1,5 +1,19 @@
-import type { SettingView } from "../api/client.ts";
-import { Badge, EmptyState, ErrorBanner, Loading } from "../components/ui.tsx";
+import { type FormEvent, useState } from "react";
+import { Link } from "react-router";
+import { type CommandResultJson, describeError, type SettingView } from "../api/client.ts";
+import { CommandResult } from "../components/ChangeCardDialog.tsx";
+import { Dialog } from "../components/Dialog.tsx";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  INPUT_CLASS,
+  Loading,
+  Money,
+} from "../components/ui.tsx";
+import { formatAmount, type MoneyLike } from "../lib/money.ts";
 import { formatDuration } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
@@ -20,19 +34,299 @@ export function groupByScope(settings: SettingView[]): Record<Scope, SettingView
   return groups;
 }
 
+export function isMoney(value: unknown): value is MoneyLike {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as MoneyLike).usdMicro === "number" &&
+    typeof (value as MoneyLike).chfMicro === "number"
+  );
+}
+
 function renderValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "string") return value;
+  if (isMoney(value)) return `CHF ${formatAmount(value.chfMicro)}`;
   return JSON.stringify(value);
 }
 
-/** Settings (spec K.7): every setting with its scope; read-only in phase 1. */
+/** Keys `settings.set` accepts (mirror of `SETTING_SPECS` in `@forerunner/commands`). */
+export const SETTING_KEYS = [
+  "speed_quality_offset",
+  "critic_ceiling",
+  "session_reserve_share",
+  "small_project_mode",
+  "shared_with",
+  "quiet_hours",
+  "notify_channel",
+  "default_autonomy",
+  "language",
+] as const;
+
+export interface SettingCommand {
+  name: "autonomy.set" | "budget.set" | "settings.set";
+  /** Parameters for the typed value, or null when the value is not valid for this setting. */
+  params: (value: string) => Record<string, unknown> | null;
+  inputType: "number" | "text";
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
+  /** The current value as the input shows it. */
+  initial: (current: unknown) => string;
+}
+
+const asInt = (value: string): number | null => {
+  const n = Number(value);
+  return Number.isInteger(n) ? n : null;
+};
+const asChf = (value: string): number | null => {
+  const n = Number(value.replace(/'/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+const parseLoose = (value: string): unknown => {
+  const t = value.trim();
+  if (t === "true") return true;
+  if (t === "false") return false;
+  if (t !== "" && Number.isFinite(Number(t))) return Number(t);
+  return t;
+};
+const initialPlain = (current: unknown) =>
+  isMoney(current)
+    ? formatAmount(current.chfMicro).replace(/'/g, "")
+    : current === null || current === undefined
+      ? ""
+      : typeof current === "string"
+        ? current
+        : JSON.stringify(current);
+
+/**
+ * The command behind a setting row (spec Q.1: nothing is UI-only). Autonomy and budgets have
+ * their own commands; the keys of `SETTING_SPECS` go through `settings.set`; anything else is
+ * read-only here (and in chat).
+ */
+export function commandForSetting(s: SettingView): SettingCommand | null {
+  const key = s.key;
+  const leaf = key.includes(".") ? (key.split(".").pop() ?? key) : key;
+  const projectParam = s.scope === "project" && s.scopeId ? { project: s.scopeId } : {};
+  if (key === "project.autonomy" || key === "autonomy.level") {
+    return {
+      name: "autonomy.set",
+      inputType: "number",
+      min: 0,
+      max: 4,
+      step: 1,
+      initial: initialPlain,
+      params: (v) => {
+        const level = asInt(v);
+        return level === null || level < 0 || level > 4 ? null : { level, ...projectParam };
+      },
+    };
+  }
+  if (key === "project.budget") {
+    return {
+      name: "budget.set",
+      inputType: "number",
+      min: 0,
+      step: 0.5,
+      unit: "CHF",
+      initial: initialPlain,
+      params: (v) => {
+        const amountChf = asChf(v);
+        return amountChf === null ? null : { scope: "project", amountChf, ...projectParam };
+      },
+    };
+  }
+  if (key === "human.monthly_cap" || key === "budget.monthly_cap_chf") {
+    return {
+      name: "budget.set",
+      inputType: "number",
+      min: 0,
+      step: 1,
+      unit: "CHF",
+      initial: initialPlain,
+      params: (v) => {
+        const amountChf = asChf(v);
+        return amountChf === null ? null : { scope: "month", amountChf };
+      },
+    };
+  }
+  if ((SETTING_KEYS as readonly string[]).includes(leaf)) {
+    return {
+      name: "settings.set",
+      inputType: leaf === "default_autonomy" ? "number" : "text",
+      ...(leaf === "default_autonomy" ? { min: 0, max: 4, step: 1 } : {}),
+      initial: initialPlain,
+      params: (v) =>
+        v.trim() === "" ? null : { key: leaf, value: parseLoose(v), ...projectParam },
+    };
+  }
+  return null;
+}
+
+function SettingChangeDialog({
+  setting,
+  command,
+  onClose,
+  onChanged,
+}: {
+  setting: SettingView;
+  command: SettingCommand;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const client = useClient();
+  const installId = useUiState((s) => s.config.installId);
+  const [value, setValue] = useState(() => command.initial(setting.value));
+  const [result, setResult] = useState<CommandResultJson | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [undoNote, setUndoNote] = useState<string | null>(null);
+  const params = command.params(value);
+
+  const run = async (action: () => Promise<CommandResultJson>) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(await action());
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!params) return;
+    void run(() =>
+      client.executeCommands({
+        commands: [{ name: command.name, params }],
+        wordsUsed: `Settings: ${setting.key} to ${value}`,
+        ...(setting.scope === "project" && setting.scopeId ? { projectId: setting.scopeId } : {}),
+      }),
+    );
+  };
+
+  const confirm = (answer: "yes" | "no") => {
+    if (result?.status !== "pending" || !result.pendingId) return;
+    const pendingId = result.pendingId;
+    if (answer === "no") {
+      void run(() => client.confirmCommand(pendingId, { answer: "no" }));
+      return;
+    }
+    // A tap in the app answers a medium-risk card; a high-risk card needs this paired device
+    // (the desktop app is one, ADR 0030): the daemon checks the device, not this screen.
+    void run(() =>
+      result.decision === "needs_device"
+        ? client.confirmCommand(pendingId, { answer: "device", deviceId: installId ?? "desktop" })
+        : client.confirmCommand(pendingId, { answer: "tap" }),
+    );
+  };
+
+  const finish = () => {
+    onChanged();
+    onClose();
+  };
+
+  return (
+    <Dialog open onClose={finish} title={`Change ${setting.key}`} testId="setting-dialog">
+      <div className="space-y-3 text-sm">
+        <p className="text-xs text-neutral-600 dark:text-neutral-400">
+          {setting.description}. Scope: {setting.scope}
+          {setting.scopeId ? ` ${setting.scopeId}` : ""}. Runs the <code>{command.name}</code>{" "}
+          command, the same one chat and voice use, and writes the same change log entry.
+        </p>
+        {result === null ? (
+          <form onSubmit={submit} className="space-y-2">
+            <Field
+              label={`New value${command.unit ? ` (${command.unit})` : ""}`}
+              hint={`Current: ${renderValue(setting.value)}`}
+            >
+              <input
+                className={INPUT_CLASS}
+                type={command.inputType}
+                min={command.min}
+                max={command.max}
+                step={command.step}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                data-testid="setting-value"
+              />
+            </Field>
+            {error ? <ErrorBanner message={error} /> : null}
+            <div className="flex gap-2">
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={busy || !params}
+                data-testid="setting-apply"
+              >
+                Preview and apply
+              </Button>
+              <Button variant="ghost" onClick={finish}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <CommandResult
+              result={result}
+              busy={busy}
+              onConfirm={confirm}
+              onUndo={(changeLogId) => {
+                void (async () => {
+                  setBusy(true);
+                  try {
+                    const r = await client.undoChange(changeLogId);
+                    setUndoNote(
+                      r.status === "done"
+                        ? (r.sentence ?? "Undone.")
+                        : `Undo ${r.status}: ${r.reason ?? ""}`,
+                    );
+                  } catch (err) {
+                    setError(describeError(err));
+                  } finally {
+                    setBusy(false);
+                  }
+                })();
+              }}
+              onDismiss={finish}
+            />
+            {undoNote ? (
+              <output className="block text-sm" data-testid="setting-undone">
+                {undoNote}
+              </output>
+            ) : null}
+            {error ? <ErrorBanner message={error} /> : null}
+            {result.status === "done" || result.status === "partial" ? (
+              <p className="text-xs text-neutral-500">
+                Logged in{" "}
+                <Link to="/changes" className="text-blue-700 hover:underline dark:text-blue-300">
+                  Changes
+                </Link>
+                .
+              </p>
+            ) : null}
+          </>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
+/** Settings (spec K.7, Q.1): every setting with its scope; changes run through the command registry. */
 export function SettingsPage() {
   const client = useClient();
   const store = useUiStore();
   const { theme, connection, config } = useUiState((s) => s);
   const settings = useAsync((signal) => client.settings(undefined, signal), [client]);
   const groups = groupByScope(settings.data ?? []);
+  const [editing, setEditing] = useState<{ setting: SettingView; command: SettingCommand } | null>(
+    null,
+  );
 
   return (
     <section aria-labelledby="settings-title" className="space-y-5">
@@ -97,7 +391,10 @@ export function SettingsPage() {
               <dt className="text-neutral-500">Daemon</dt>
               <dd>
                 v{connection.health.version} · {connection.health.profile} ·{" "}
-                {connection.health.platform} · up {formatDuration(connection.health.uptimeMs)}
+                {connection.health.platform} · up {formatDuration(connection.health.uptimeMs)} ·{" "}
+                <Link to="/updates" className="text-blue-700 hover:underline dark:text-blue-300">
+                  updates
+                </Link>
               </dd>
               <dt className="text-neutral-500">State</dt>
               <dd>
@@ -125,7 +422,10 @@ export function SettingsPage() {
                 {connection.health.extensions.enabled} enabled
                 {connection.health.extensions.pending > 0
                   ? ` · ${connection.health.extensions.pending} waiting for your approval`
-                  : ""}
+                  : ""}{" "}
+                <Link to="/extensions" className="text-blue-700 hover:underline dark:text-blue-300">
+                  open
+                </Link>
               </dd>
             </>
           ) : null}
@@ -142,11 +442,15 @@ export function SettingsPage() {
       </div>
 
       <div>
-        <div className="flex items-baseline gap-3">
+        <div className="flex flex-wrap items-baseline gap-3">
           <h2 className="font-semibold">All settings</h2>
           <span className="text-xs text-neutral-500" data-testid="edit-hint">
-            Read-only here for now: change a value by asking in chat (natural-language control lands
-            with phase 5).
+            Change a value here or by asking in chat or voice: every route runs the same command,
+            shows the same change card and writes the same entry in{" "}
+            <Link to="/changes" className="text-blue-700 hover:underline dark:text-blue-300">
+              Changes
+            </Link>
+            .
           </span>
         </div>
         {settings.loading && !settings.data ? <Loading what="settings" /> : null}
@@ -167,45 +471,81 @@ export function SettingsPage() {
                     <th className="py-1 pr-2">Key</th>
                     <th className="py-1 pr-2">Value</th>
                     <th className="py-1 pr-2">Risk</th>
-                    <th className="py-1">Description</th>
+                    <th className="py-1 pr-2">Description</th>
+                    <th className="py-1" />
                   </tr>
                 </thead>
                 <tbody>
-                  {groups[scope].map((s) => (
-                    <tr
-                      key={`${s.scope}:${s.scopeId ?? ""}:${s.key}`}
-                      className="border-t border-neutral-100 dark:border-neutral-800"
-                      data-testid="setting-row"
-                      data-scope={s.scope}
-                    >
-                      <td className="py-1 pr-2">
-                        <Badge testId="setting-scope">
-                          {s.scope}
-                          {s.scopeId ? `: ${s.scopeId}` : ""}
-                        </Badge>
-                      </td>
-                      <td className="py-1 pr-2 font-mono text-xs">{s.key}</td>
-                      <td className="py-1 pr-2 font-mono text-xs">{renderValue(s.value)}</td>
-                      <td className="py-1 pr-2">
-                        <Badge
-                          tone={
-                            s.risk === "high" ? "bad" : s.risk === "medium" ? "warn" : "neutral"
-                          }
+                  {groups[scope].map((s) => {
+                    const command = commandForSetting(s);
+                    return (
+                      <tr
+                        key={`${s.scope}:${s.scopeId ?? ""}:${s.key}`}
+                        className="border-t border-neutral-100 dark:border-neutral-800"
+                        data-testid="setting-row"
+                        data-scope={s.scope}
+                        data-key={s.key}
+                      >
+                        <td className="py-1 pr-2">
+                          <Badge testId="setting-scope">
+                            {s.scope}
+                            {s.scopeId ? `: ${s.scopeId}` : ""}
+                          </Badge>
+                        </td>
+                        <td className="py-1 pr-2 font-mono text-xs">{s.key}</td>
+                        <td
+                          className="py-1 pr-2 font-mono text-xs"
+                          data-testid="setting-value-cell"
                         >
-                          {s.risk}
-                        </Badge>
-                      </td>
-                      <td className="py-1 text-neutral-600 dark:text-neutral-400">
-                        {s.description}
-                      </td>
-                    </tr>
-                  ))}
+                          {isMoney(s.value) ? <Money value={s.value} /> : renderValue(s.value)}
+                        </td>
+                        <td className="py-1 pr-2">
+                          <Badge
+                            tone={
+                              s.risk === "high" ? "bad" : s.risk === "medium" ? "warn" : "neutral"
+                            }
+                          >
+                            {s.risk}
+                          </Badge>
+                        </td>
+                        <td className="py-1 pr-2 text-neutral-600 dark:text-neutral-400">
+                          {s.description}
+                        </td>
+                        <td className="py-1 text-right">
+                          {command ? (
+                            <Button
+                              variant="ghost"
+                              onClick={() => setEditing({ setting: s, command })}
+                              data-testid="setting-change"
+                            >
+                              Change
+                            </Button>
+                          ) : (
+                            <span
+                              className="text-xs text-neutral-400"
+                              title="No command changes this value"
+                            >
+                              read-only
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           ),
         )}
       </div>
+      {editing ? (
+        <SettingChangeDialog
+          setting={editing.setting}
+          command={editing.command}
+          onClose={() => setEditing(null)}
+          onChanged={settings.reload}
+        />
+      ) : null}
     </section>
   );
 }

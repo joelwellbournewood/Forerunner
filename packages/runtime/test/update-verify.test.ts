@@ -11,10 +11,11 @@ import {
   updateConfigPath,
 } from "../src/update/config.ts";
 import { GitHubReleasesFeed, JsonFeed, MemoryReleaseFeed } from "../src/update/feed.ts";
-import { canonicalJson, type ReleaseManifest, SignedManifest } from "../src/update/manifest.ts";
+import { canonicalJson, ReleaseManifest, SignedManifest } from "../src/update/manifest.ts";
 import {
   compareSemver,
   isNewerVersion,
+  isReleaseVersion,
   parseSemver,
   sortVersionsDesc,
 } from "../src/update/semver.ts";
@@ -394,3 +395,51 @@ function catchErr(fn: () => unknown): unknown {
     return e;
   }
 }
+
+describe("release versions are directory names", () => {
+  it("the manifest refuses build metadata and a leading v; buildReleaseManifest strips the v and refuses metadata", () => {
+    const base = {
+      schema: 1,
+      channel: "stable",
+      publishedAt: "2026-10-20T10:00:00.000Z",
+      notes: "",
+      minSchema: 1,
+      artifacts: [
+        {
+          platform: "linux-x64",
+          name: "a.zip",
+          url: "https://example.invalid/a.zip",
+          sha256: "0".repeat(64),
+          size: 1,
+        },
+      ],
+    };
+    expect(ReleaseManifest.safeParse({ ...base, version: "1.2.0" }).success).toBe(true);
+    expect(ReleaseManifest.safeParse({ ...base, version: "1.2.0-beta.1" }).success).toBe(true);
+    for (const version of ["1.2.0+build.7", "v1.2.0", "1.2.0-rc-", "1.2", "..", "CON"]) {
+      const r = ReleaseManifest.safeParse({ ...base, version });
+      expect(r.success, version).toBe(false);
+    }
+    expect(isReleaseVersion("1.2.0+build.7")).toBe(false);
+    expect(isReleaseVersion("v1.2.0")).toBe(false);
+    expect(isReleaseVersion("1.2.0-rc.1")).toBe(true);
+    const dir = mkdtempSync(join(tmpdir(), "fr-release-version-"));
+    writeFileSync(join(dir, "a.apk"), "apk");
+    const one = {
+      platform: "android" as const,
+      file: join(dir, "a.apk"),
+      url: "https://example.invalid/a.apk",
+    };
+    const input = {
+      channel: "stable" as const,
+      publishedAt: "2026-10-20T10:00:00.000Z",
+      notes: "",
+      minSchema: 1,
+      artifacts: [one],
+    };
+    expect(buildReleaseManifest({ ...input, version: "v1.4.0" }).version).toBe("1.4.0");
+    expect(() => buildReleaseManifest({ ...input, version: "1.4.0+build.7" })).toThrow(
+      /build metadata/,
+    );
+  });
+});

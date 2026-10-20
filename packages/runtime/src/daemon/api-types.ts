@@ -213,12 +213,35 @@ export const ChatRequestBody = z.object({
 });
 export type ChatRequestBody = z.infer<typeof ChatRequestBody>;
 
+export const ChatActionView = z.object({
+  /** The command name(s) that ran ("project.switch+budget.set"), or "undo". */
+  kind: z.string(),
+  summary: z.string(),
+  /** The change log id. */
+  id: z.string().optional(),
+  /** The change log id while the change can still be undone (POST /changes/:id/undo). */
+  undoToken: z.string().nullable().optional(),
+});
+export type ChatActionView = z.infer<typeof ChatActionView>;
+
+/** The change card read back by chat or voice; the human answers with a yes, a tap or the device. */
+export const ChatPendingView = z.object({
+  /** The pending change's id (also its HumanRequest row; POST /commands/:id/confirm). */
+  id: z.string(),
+  readback: z.string(),
+  /** The card's cost impact (0 when it has none). */
+  estimate: Money,
+  commands: z.array(z.string()),
+  decision: z.enum(["needs_yes", "needs_device"]).nullable(),
+});
+export type ChatPendingView = z.infer<typeof ChatPendingView>;
+
 export const ChatReplyView = z.object({
   reply: z.string(),
-  actions: z.array(z.object({ kind: z.string(), summary: z.string(), id: z.string().optional() })),
-  pendingConfirmation: z
-    .object({ id: z.string(), readback: z.string(), estimate: Money })
-    .nullable(),
+  actions: z.array(ChatActionView),
+  pendingConfirmation: ChatPendingView.nullable(),
+  /** One short question with options when the request was unclear (spec Q.2). */
+  question: z.object({ text: z.string(), options: z.array(z.string()) }).nullable(),
   ttftMs: z.number().nullable(),
   cost: Money,
   transcriptId: z.string(),
@@ -417,6 +440,260 @@ export const PeerFeedView = z.object({
 });
 export type PeerFeedView = z.infer<typeof PeerFeedView>;
 
+// ---------------------------------------------------------------------------------------
+// Reviews tab (spec H, K.2): findings, grades, verdicts, grade trend
+
+export const FindingView = z.object({
+  id: z.string(),
+  reviewId: z.string(),
+  taskId: z.string().nullable(),
+  severity: z.string(),
+  description: z.string(),
+  requiredAction: z.string(),
+  status: z.string(),
+  resolvedByRun: z.string().nullable(),
+  fingerprint: z.string(),
+  createdAt: z.string(),
+  version: z.number().int(),
+});
+export type FindingView = z.infer<typeof FindingView>;
+
+export const ReviewView = z.object({
+  id: z.string(),
+  taskId: z.string().nullable(),
+  taskTitle: z.string().nullable(),
+  sessionId: z.string().nullable(),
+  criticModel: z.string(),
+  tier: z.number().int().min(0).max(3),
+  grade: z.number().int().min(0).max(100),
+  confidence: z.number().min(0).max(1),
+  verdict: z.string(),
+  evidence: z.array(z.unknown()),
+  summary: z.string(),
+  findings: z.array(FindingView),
+  openFindings: z.number().int(),
+  createdAt: z.string(),
+});
+export type ReviewView = z.infer<typeof ReviewView>;
+
+export const GradeTrendPoint = z.object({
+  at: z.string(),
+  grade: z.number().int(),
+  reviewId: z.string(),
+  taskId: z.string().nullable(),
+  verdict: z.string(),
+});
+export type GradeTrendPoint = z.infer<typeof GradeTrendPoint>;
+
+export const ReviewsView = z.object({
+  projectId: z.string().nullable(),
+  taskId: z.string().nullable(),
+  reviews: z.array(ReviewView),
+  openFindings: z.number().int(),
+  /** Oldest first, for the chart. */
+  gradeTrend: z.array(GradeTrendPoint),
+  averageGrade: z.number().nullable(),
+  verdicts: z.record(z.string(), z.number().int()),
+});
+export type ReviewsView = z.infer<typeof ReviewsView>;
+
+// ---------------------------------------------------------------------------------------
+// Memory views (spec G, K.5): one view per scope, search, edit, delete, pin, consolidation
+
+export const LessonView = z.object({
+  id: z.string(),
+  scope: z.enum(["agent_private", "critic", "shared"]),
+  ownerAgentId: z.string().nullable(),
+  projectId: z.string().nullable(),
+  text: z.string(),
+  source: z.string(),
+  tags: z.array(z.string()),
+  confidence: z.number(),
+  lastUsed: z.string().nullable(),
+  hitCount: z.number().int(),
+  supersededBy: z.string().nullable(),
+  pinned: z.boolean(),
+  status: z.string(),
+  filePath: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  version: z.number().int(),
+});
+export type LessonView = z.infer<typeof LessonView>;
+
+/** The memory views: one per principal (private), the critic, shared. */
+export const MemoryScopeView = z.object({
+  scope: z.enum(["agent_private", "critic", "shared"]),
+  ownerAgentId: z.string().nullable(),
+  label: z.string(),
+  active: z.number().int(),
+  pinned: z.number().int(),
+});
+export type MemoryScopeView = z.infer<typeof MemoryScopeView>;
+
+export const MemoryView = z.object({
+  scope: z.enum(["agent_private", "critic", "shared"]),
+  ownerAgentId: z.string().nullable(),
+  query: z.string(),
+  lessons: z.array(LessonView),
+});
+export type MemoryView = z.infer<typeof MemoryView>;
+
+export const UpdateLessonBody = z.object({
+  text: z.string().min(1).optional(),
+  tags: z.array(z.string()).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  pinned: z.boolean().optional(),
+});
+export type UpdateLessonBody = z.infer<typeof UpdateLessonBody>;
+
+export const PinLessonBody = z.object({ pinned: z.boolean() });
+
+export const ConsolidationReportView = z.object({
+  scope: z.enum(["agent_private", "critic", "shared"]),
+  ownerAgentId: z.string().nullable(),
+  ranAt: z.string(),
+  applied: z.boolean(),
+  merged: z.array(
+    z.object({
+      keptId: z.string(),
+      retiredIds: z.array(z.string()),
+      cosine: z.number(),
+      projectId: z.string().nullable(),
+    }),
+  ),
+  contradictions: z.array(
+    z.object({ a: z.string(), b: z.string(), reason: z.string(), cosine: z.number() }),
+  ),
+  retired: z.array(z.string()),
+  proposals: z.array(z.string()),
+});
+export type ConsolidationReportView = z.infer<typeof ConsolidationReportView>;
+
+/** A consolidation proposal (one approval request in the inbox) and what became of it. */
+export const ConsolidationProposalView = z.object({
+  requestId: z.string(),
+  status: z.string(),
+  createdAt: z.string(),
+  reports: z.array(ConsolidationReportView),
+  proposals: z.array(z.string()),
+  appliedAt: z.string().nullable(),
+  answer: z.unknown().nullable(),
+});
+export type ConsolidationProposalView = z.infer<typeof ConsolidationProposalView>;
+
+export const ConsolidationRunView = z.object({
+  requestId: z.string().nullable(),
+  proposals: z.number().int(),
+  reports: z.array(ConsolidationReportView),
+});
+export type ConsolidationRunView = z.infer<typeof ConsolidationRunView>;
+
+// ---------------------------------------------------------------------------------------
+// Commands (spec Q): the registry, parse, execute, confirm, the change log, undo
+
+export const CommandDefView = z.object({
+  name: z.string(),
+  description: z.string(),
+  risk: z.enum(["low", "medium", "high"]),
+  reversible: z.boolean(),
+  undoStrategy: z.string(),
+  limit: z.boolean(),
+  schema: z.unknown(),
+});
+export type CommandDefView = z.infer<typeof CommandDefView>;
+
+export const CommandCallBody = z.object({
+  name: z.string().min(1),
+  params: z.unknown().optional(),
+});
+
+export const CommandParseBody = z.object({
+  text: z.string().min(1),
+  source: z.enum(["text", "voice", "phone"]).optional(),
+  projectId: z.string().optional(),
+  deviceId: z.string().optional(),
+});
+export type CommandParseBody = z.infer<typeof CommandParseBody>;
+
+export const CommandParseView = z.object({
+  commands: z.array(z.object({ name: z.string(), params: z.unknown() })),
+  question: z.object({ text: z.string(), options: z.array(z.string()) }).nullable(),
+  matched: z.enum(["pattern", "model", "none"]),
+});
+export type CommandParseView = z.infer<typeof CommandParseView>;
+
+export const CommandExecuteBody = z.object({
+  /** One command, or several as one change card and one change log row (spec Q.9). */
+  commands: z.array(CommandCallBody).min(1),
+  wordsUsed: z.string().optional(),
+  source: z.enum(["text", "voice", "phone"]).optional(),
+  projectId: z.string().optional(),
+  deviceId: z.string().optional(),
+  /** The settings screen showed the card and got a tap: run without a pending card. */
+  confirm: z.enum(["tap"]).optional(),
+});
+export type CommandExecuteBody = z.infer<typeof CommandExecuteBody>;
+
+export const CommandResultViewSchema = z.object({
+  status: z.enum(["done", "partial", "pending", "cancelled", "refused"]),
+  sentence: z.string().optional(),
+  readback: z.string().optional(),
+  pendingId: z.string().optional(),
+  decision: z.enum(["needs_yes", "needs_device"]).optional(),
+  expiresAt: z.string().optional(),
+  changeLogId: z.string().optional(),
+  undoToken: z.string().nullable().optional(),
+  reason: z.string().optional(),
+  code: z.string().optional(),
+  card: z.unknown().nullable().optional(),
+  cost: Money.optional(),
+  commands: z.array(z.string()),
+});
+export type CommandResultJson = z.infer<typeof CommandResultViewSchema>;
+
+export const CommandConfirmBody = z.object({
+  answer: z.enum(["yes", "no", "tap", "device"]),
+  /** For `device`: the paired device that confirms; a phone also needs `biometric: true`. */
+  deviceId: z.string().optional(),
+  biometric: z.boolean().optional(),
+});
+export type CommandConfirmBody = z.infer<typeof CommandConfirmBody>;
+
+export const PendingChangeView = z.object({
+  id: z.string(),
+  humanId: z.string(),
+  card: z.unknown(),
+  decision: z.enum(["needs_yes", "needs_device"]),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+  readback: z.string(),
+  wordsUsed: z.string(),
+});
+export type PendingChangeView = z.infer<typeof PendingChangeView>;
+
+export const ChangeLogView = z.object({
+  id: z.string(),
+  humanId: z.string().nullable(),
+  agentId: z.string().nullable(),
+  wordsUsed: z.string(),
+  commands: z.array(z.unknown()),
+  before: z.unknown(),
+  after: z.unknown(),
+  scope: z.enum(["session", "project", "global"]),
+  projectId: z.string().nullable(),
+  expiresAt: z.string().nullable(),
+  undoState: z.enum(["undoable", "undone", "expired", "irreversible"]),
+  undoneAt: z.string().nullable(),
+  source: z.string(),
+  sentence: z.string(),
+  /** True while POST /changes/:id/undo would work. */
+  undoable: z.boolean(),
+  createdAt: z.string(),
+  version: z.number().int(),
+});
+export type ChangeLogView = z.infer<typeof ChangeLogView>;
+
 export const ErrorBody = z.object({
   code: z.string(),
   message: z.string(),
@@ -492,6 +769,29 @@ export const DAEMON_ROUTES = {
   modelWatchRun: "POST /model-watch/run",
   modelWatchAnswer: "POST /model-watch/reports/:id/answer { decision, adopt?, by }",
   modelWatchSync: "POST /model-watch/sync",
+  reviews:
+    "GET /projects/:id/reviews?limit= (Reviews tab: ReviewsView with findings, verdicts, grade trend)",
+  taskReviews: "GET /tasks/:id/reviews (ReviewsView for one task)",
+  memoryScopes: "GET /memory/scopes (one view per principal, the critic and shared, with counts)",
+  memory:
+    "GET /memory?scope=&agentId=&projectId=&q=&tag=&status=&limit= (MemoryView; agentId required for agent_private)",
+  updateLesson: "PUT /memory/lessons/:id { text?, tags?, confidence?, pinned? } (LessonView)",
+  pinLesson: "POST /memory/lessons/:id/pin { pinned } (LessonView)",
+  deleteLesson: "DELETE /memory/lessons/:id (retires the row and removes its file)",
+  consolidation: "GET /memory/consolidation (ConsolidationProposalView[], newest first)",
+  runConsolidation:
+    "POST /memory/consolidation/run (report only; files the approval request the inbox answers; ConsolidationRunView)",
+  commands: "GET /commands (the registry: CommandDefView[])",
+  parseCommand:
+    "POST /commands/parse { text, source?, projectId?, deviceId? } (CommandParseView; nothing runs)",
+  executeCommands:
+    "POST /commands/execute { commands, wordsUsed?, source?, projectId?, deviceId?, confirm? } (CommandResultView: one change card, one change log row; medium risk comes back pending, high needs the device)",
+  pendingCommands: "GET /commands/pending (PendingChangeView[])",
+  confirmCommand:
+    "POST /commands/:id/confirm { answer: yes|no|tap|device, deviceId?, biometric? } (CommandResultView)",
+  cancelCommand: "POST /commands/:id/cancel (CommandResultView)",
+  changes: "GET /changes?projectId=&undoable=&limit= (ChangeLogView[], newest first)",
+  undoChange: "POST /changes/:id/undo (CommandResultView; only while the row is undoable)",
   events:
     "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, heartbeat)",
 } as const;

@@ -18,13 +18,34 @@ story for connector or model updates on the same screen. The data model already 
 
 **Layout.** Every release is unpacked into its own directory `<data>/versions/<version>/`
 (`release.json` beside the files). One pointer file `<data>/versions/current.json` names
-`current`, `previous`, a `state` (`installed`, `pending_health_check`, `rolled_back`, `failed`)
-and the last rollback. The shells read the pointer and launch `<versions>/<current>`; the
-packaged build runs while `current` is null. The pointer is written as a temp file in the same
-directory, fsynced and renamed over the old one; a crash leaves the old or the new pointer,
-never a torn one. No symlinks or junctions anywhere. The install may write only under
-`<data>/versions`; `<config>` and the rest of `<data>` (state database, memory, audit log) are
-checked by hash in the tests before and after install and rollback.
+`current`, `previous`, a `state` of the current version (`installed`, `pending_health_check`,
+`failed`) and the last rollback (`lastRollback`; a rollback is an event on the pointer, not a
+state). The pointer is written as a temp file in the same directory, fsynced and renamed over
+the old one; a crash leaves the old or the new pointer, never a torn one. No symlinks or
+junctions anywhere. The install may write only under `<data>/versions`; `<config>` and the rest
+of `<data>` (state database, memory, audit log) are checked by hash in the tests before and
+after install and rollback.
+
+**Launcher contract.** The shells read the pointer and launch `<versions>/<current>`.
+`current: null` means the packaged build runs: before the first staged install, and after a
+rollback to the packaged build, whose version has no directory under `versions/` (the runtime
+writes null then, so a well-formed pointer never names a missing directory; `lastRollback.to`
+keeps the version). A launcher must also treat a `current` whose directory is missing, or that
+is not a safe directory name, as the packaged build and fall through to its other locators; the
+desktop `install.rs` does this, and the Android shell must do the same.
+
+**Version rule.** A manifest version is bare semver: no leading `v`, no build metadata
+(`1.2.0+build.7` would compare equal to `1.2.0` and collide), unchanged by `safeSegment`,
+because it is the directory name. The manifest schema, the release workflow's
+`buildReleaseManifest` and `versionDir` share this one rule (`isReleaseVersion`), so the feed
+never offers a release the installer would then refuse to stage.
+
+**One operation at a time.** Apply, rollback, the startup health check and prune take
+`<data>/versions/install.lock` (created exclusively, holding pid, operation and start time,
+removed when the operation ends). A second caller, in the same process or another (the daemon's
+route and `fr update` in a terminal), is refused at once as `version_conflict` /
+`in_progress` (HTTP 409), never queued. A lock whose process is gone is stale; an unreadable
+one is stale only when it is older than a few seconds.
 
 **Trust.** A release is a `SignedManifest`: a manifest (semver, channel, notes, `publishedAt`,
 `minSchema`, one artefact per platform with URL, size and SHA-256) and an Ed25519 signature
@@ -49,14 +70,19 @@ and restarts. Success marks the pointer and the row `installed`. A release that 
 never offered again on that install; the fix is a new release.
 
 **Humans and agents.** A human applies or rolls back from the UI or CLI directly. An agent
-needs a human's approval through the `UpdateHumanPort` (a `human_request` row); `pending` or
-`denied` is `approval_required`. Every check, apply, rollback and health verdict is an audit
-row.
+needs a human's approval through the `UpdateHumanPort` (a `human_request` row keyed by the
+operation and version); `pending` or `denied` is `approval_required`, and the agent's retry
+after the inbox answer is served from that row, so one question is asked once. Every feed
+query, apply, rollback, refused concurrent attempt and health verdict is an audit row; the
+updates screen reuses the last check for a short window instead of querying and auditing on
+every view.
 
 **Schema compatibility.** `minSchema` in the manifest is the oldest state schema the release's
 migrations can upgrade from. Between installs, sync is gated: compatible only when both are at
 the same `schema_migrations` version and at least `minSchema`; the lower side must update, and
-`SyncGate` blocks sync calls and emits pause/resume events.
+`SyncGate` blocks sync calls and emits pause/resume events. The gate is code in the update
+module; wiring it into the state service client's sync path is a separate, pending step
+(`updates.md`, Known issues).
 
 ## Consequences
 
@@ -65,9 +91,12 @@ the same `schema_migrations` version and at least `minSchema`; the lower side mu
 - The release workflow gains one step: write the manifest, sign it with the key held by secret
   reference (`fr update sign`), upload it as a release asset. The Tauri updater plugin is not
   used; its pubkey/endpoint configuration in `release.md` is superseded by this ADR.
-- The shells need a small launcher that reads `current.json` and starts the named directory,
-  and a `Restarter` implementation; until they exist `fr update apply` stages and asks for a
-  manual restart.
+- The shells need a small launcher that reads `current.json`, starts the named directory and
+  falls back to the packaged build when `current` is null or its directory is missing, and a
+  `Restarter` implementation; until they exist `fr update apply` stages and asks for a manual
+  restart.
+- A rollback to the packaged build leaves `current: null`; `installedVersion()` then reports
+  the running build's version, and the next update records that version as `previous`.
 - Downgrades are a deliberate, flagged action; the UI never offers one as "available".
 - Migrations stay forward-only; a rollback across a migration restores the pre-migration
   database copy as `release.md` describes, outside this module.

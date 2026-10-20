@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isSemver } from "./semver.ts";
+import { isReleaseVersion } from "./semver.ts";
 
 /**
  * The release manifest: what a signed release says about itself. The feed (GitHub Releases or
@@ -27,7 +27,13 @@ export type ReleaseArtifact = z.infer<typeof ReleaseArtifact>;
 
 export const ReleaseManifest = z.object({
   schema: z.literal(MANIFEST_SCHEMA_VERSION),
-  version: z.string().refine(isSemver, "version must be a semantic version"),
+  /** Bare semver, no build metadata: it is also the install directory name (isReleaseVersion). */
+  version: z
+    .string()
+    .refine(
+      isReleaseVersion,
+      "version must be a semantic version without build metadata or a leading v (it names the install directory)",
+    ),
   channel: z.enum(UPDATE_CHANNELS),
   /** ISO-8601 UTC. */
   publishedAt: z.string().min(1),

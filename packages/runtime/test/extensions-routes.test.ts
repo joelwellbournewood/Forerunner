@@ -149,4 +149,40 @@ describe("extensions routes", () => {
       await http.close();
     }
   });
+
+  it("approve answers 202 after a discovery yes (the grant is still open) and 200 once granted", async () => {
+    const http = await startHttpFixture({
+      "/m.json": fakeCatalogEntry({ id: "two-step", name: "two-step" }),
+    });
+    try {
+      h = await registryHarness({ approval: "pending" });
+      const a = app();
+      const res = await a.fetch(json("POST", "/extensions", { url: http.url("/m.json") }));
+      expect(res.status).toBe(202);
+      const view = ExtensionView.parse(await res.json());
+      expect(view.pendingStage).toBe("discovery");
+      expect(h.seen).toEqual([]);
+      const discovery = await a.fetch(json("POST", `/extensions/${view.id}/approve`));
+      expect(discovery.status).toBe(202);
+      const discovered = ExtensionView.parse(await discovery.json());
+      expect(discovered.status).toBe("pending_approval");
+      expect(discovered.pendingStage).toBe("grant");
+      expect(discovered.permissions.tools).toEqual([
+        "two-step.fetch_page",
+        "two-step.post_comment",
+      ]);
+      const grant = await a.fetch(json("POST", `/extensions/${view.id}/approve`));
+      expect(grant.status).toBe(200);
+      expect(ExtensionView.parse(await grant.json()).status).toBe("enabled");
+      const ops = (await h.store.auditLog.list()).map((r) => r.tool);
+      expect(ops).toEqual([
+        "extensions.add",
+        "extensions.approve_discovery",
+        "extensions.discovered",
+        "extensions.approve",
+      ]);
+    } finally {
+      await http.close();
+    }
+  });
 });

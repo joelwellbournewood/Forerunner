@@ -63,6 +63,13 @@ import {
   type McpConnectorFactory,
 } from "../extensions/mcp.ts";
 import { ExtensionRegistry } from "../extensions/registry.ts";
+import { CommandLoop, sessionCapFromSettings, sessionCommandPorts } from "../loop/commands.ts";
+import { CriticLoop } from "../loop/critic.ts";
+import {
+  isMemoryConsolidationRequest,
+  MemoryLoop,
+  scheduleMemoryConsolidation,
+} from "../loop/memory.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
 import {
   FetchPriceListSource,
@@ -85,6 +92,7 @@ import { loadRegistry, type Registry, resolveRegistryDir } from "../registry/ind
 import { detectSandboxEngine, type EngineDetection } from "../sandbox/detect.ts";
 import type { RunFn, WhichFn } from "../sandbox/types.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
+import { type BlockedSyncResult, syncBlockedByFindings } from "../session/findings.ts";
 import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
 import { Scheduler, type StartRequest } from "../session/triggers.ts";
 import { readConfig, SECRET_NAMES, type SetupConfig } from "../setup/wizard.ts";
@@ -188,6 +196,14 @@ export interface RuntimeApp {
   /** Extensions panel backend; its gate sits in front of every tool call. */
   extensions: ExtensionRegistry;
   gate: ExtensionGate;
+  /** The critic in the loop (spec H): task reviews at their tier, the session review. */
+  critic: CriticLoop;
+  /** The critic AgentRow (kind `critic`): author of reviews, findings and critic lessons. */
+  criticAgent: { id: string; name: string };
+  /** Memory in the loop (spec G): recall under budget, lessons at session end, consolidation, views. */
+  memory: MemoryLoop;
+  /** The command registry (spec Q): the only way chat, voice, the UI and the phone change state. */
+  commands: CommandLoop;
   /** Signed updates (spec M) over this process's store. */
   updates: UpdateManager;
   updateConfig: UpdateConfig;
@@ -201,10 +217,15 @@ export interface RuntimeApp {
   sandbox: { port: RunSandboxPort; detection: EngineDetection };
   /** The tool registry a run starts with: built-in tools plus the bridged extension tools. */
   toolsForRun(): ToolRegistry;
-  /** Apply answered human requests: extension grants and model watch decisions. */
+  /**
+   * Apply answered human requests: extension grants, model watch decisions, memory
+   * consolidations, and the rework/accept/cancel answers for tasks blocked by open findings.
+   */
   syncApprovals(): Promise<{
     extensions: { approved: string[]; denied: string[] };
     modelWatch: number;
+    memory: { applied: number; skipped: number };
+    findings: BlockedSyncResult;
   }>;
   /** Add or drop mirror schedules after a project's settings changed. */
   refreshMirrorSchedules(): Promise<string[]>;
@@ -326,6 +347,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       memory_location: join(dirs.data, "memory", "agents"),
       status: "active",
       kind: "principal",
+    }));
+  // The critic is its own agent (spec H.1): a clean context, its own token, its own rows.
+  const criticAgent =
+    (
+      await store.agent.list({ owner_human_id: human.id, kind: "critic" } as never, { limit: 1 })
+    )[0] ??
+    (await store.agent.insert({
+      name: "Critic",
+      owner_human_id: human.id,
+      model_config: {},
+      memory_location: join(dirs.data, "memory", "critic"),
+      status: "active",
+      kind: "critic",
     }));
 
   // Model provider: injected, else Anthropic from the vault, else none (chat and sessions refuse).
@@ -561,6 +595,36 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       ? new GitHubHost({ token: ghToken, baseUrl: config?.githubApiBase, clock })
       : new MemoryGitHost(human.name));
   const appVersion = opts.appVersion ?? env.FORERUNNER_VERSION ?? "0.1.0";
+
+  // Memory (spec G): one root under the data directory; lessons per agent, critic and shared.
+  const memory = new MemoryLoop({
+    store,
+    clock,
+    root: join(dirs.data, "memory"),
+    humanId: human.id,
+  });
+  // The critic (spec H): the registry critic prompt, the task's tier, the project's ceiling,
+  // the diff from the task's worktree, the project's check commands, the session pipeline for
+  // the compression bypass, critic memory for repeat findings.
+  const critic = new CriticLoop({
+    store,
+    clock,
+    tokens,
+    driver,
+    providers,
+    providerName: provider?.name ?? "none",
+    prompt: {
+      prompt: registry.critic.prompt,
+      promptVersion: registry.critic.promptVersion,
+      max_effort: registry.critic.max_effort,
+    },
+    pricing: (modelId) => pricingForProvider(provider, modelId),
+    billingSourceId,
+    criticAgentId: criticAgent.id,
+    context,
+    memory,
+    worktreeRoot: dirs.worktrees,
+  });
   const makeLoop = (worktree?: string) =>
     new LoopTaskExecutor({
       store,
@@ -577,6 +641,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       context,
       billingSourceId,
       specialists,
+      memory,
       ...(worktree ? { worktreeFor: async () => worktree } : {}),
       onEvent: (taskId, ev) => events.emit("run", { taskId, ev }),
     });
@@ -605,6 +670,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     planner: new StaticPlanner(500_000, estimates),
     executor,
     context,
+    critic,
+    memory,
     // Actual versus estimate at task.finished feeds the next plan (spec I).
     onTaskFinished: ({ task, item, result, durationMs }) => {
       const planned = estimates.estimate({
@@ -757,12 +824,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   });
   const startSession = async (req: StartRequest) => {
     if (isModelWatchRequest(req)) return modelWatch.run();
+    if (isMemoryConsolidationRequest(req)) return memory.propose();
     if (!provider)
       throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
     const project = req.projectId ? await store.project.mustGet(req.projectId) : null;
-    const cap =
-      (project?.settings as { session_cap_usd_micro?: number } | null)?.session_cap_usd_micro ??
-      DEFAULT_SESSION_CAP_USD_MICRO;
+    // The cap the command registry wrote (a temporary override while its window is open, else
+    // the permanent setting), so a session the scheduler starts honours "give it 20 francs
+    // tonight" exactly as one started by the command (spec Q.12).
+    const cap = sessionCapFromSettings(
+      project?.settings,
+      clock.now(),
+      DEFAULT_SESSION_CAP_USD_MICRO,
+    ).usdMicro;
     const budgetUsdMicro = (req as { budgetUsdMicro?: number }).budgetUsdMicro ?? cap;
     return runner.start({
       agentId: req.agentId,
@@ -781,6 +854,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     start: mirrorStartHandler(mirror, startSession, { agentId: agent.id }),
   });
   scheduleModelWatch(scheduler, { timezone: human.timezone });
+  // Weekly memory consolidation (spec G.4): report only; the human applies it from the inbox.
+  scheduleMemoryConsolidation(scheduler, { timezone: human.timezone });
+  // The command registry (spec Q): every change by chat, voice, the UI or the phone runs here.
+  const commands = new CommandLoop({
+    store,
+    clock,
+    ports: {
+      chfPerUsd: async () => chfPerUsd(),
+      // session.start reports the scheduler's outcome; the undo of a start that only queued
+      // drops the waiting request instead of killing the running session (ADR 0036).
+      ...sessionCommandPorts({ scheduler, kill }),
+    },
+  });
   const mirrorSchedules = new Set<string>();
   const refreshMirrorSchedules = async (): Promise<string[]> => {
     const projects = await store.project.list({}, { limit: 1000 });
@@ -801,6 +887,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     const out = {
       extensions: await extensions.syncApprovals({ humanId: human.id }),
       modelWatch: await modelWatch.syncPendingAnswers(),
+      memory: await memory.syncApprovals(),
+      findings: await syncBlockedByFindings({ store, clock, humanId: human.id, agentId: agent.id }),
     };
     // A mirror run waiting on its approval re-reads the request now, not at the next poll.
     mirrorApprovals.wake();
@@ -819,6 +907,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         startSession: (req) => scheduler.request(req),
         prompt: registry.principals.get("conversation-agent")?.prompt,
         modelId: chatModelFor(provider),
+        commands,
       })
     : null;
   // Background services: the daemon starts them; a CLI one-shot (startServices: false) only
@@ -828,6 +917,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   if (services) killWatcher.start();
   mkdirSync(evalWorkRoot, { recursive: true });
   if (services) await extensions.start();
+  // The command table and the reverts of temporary changes whose window is still open.
+  await commands.start();
   await syncApprovals();
   await refreshMirrorSchedules();
   if (services) scheduler.start();
@@ -838,6 +929,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     registry: registryDir,
     human: human.name,
     agent: agent.name,
+    critic: criticAgent.name,
     sandbox: sandboxDetection.engine,
     bridgedTools: extensions.bridgedTools().length,
     mirrors: mirrorSchedules.size,
@@ -869,6 +961,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     chfPerUsd,
     context,
     costLedger,
+    critic,
+    criticAgent: { id: criticAgent.id, name: criticAgent.name },
+    memory,
+    commands,
     events,
     appVersion,
     startedAt: clock.now(),
@@ -888,6 +984,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     async close() {
       scheduler.stop();
       killWatcher.stop();
+      commands.stop();
       context.close();
       managedHeadroom?.stop();
       await extensions.close();

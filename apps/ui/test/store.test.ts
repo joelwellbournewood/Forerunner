@@ -61,6 +61,24 @@ describe("ui store", () => {
     expect(store.getState().projects).toHaveLength(2);
   });
 
+  it("keeps the restart announcement and counts extension changes", () => {
+    const store = createStore(testConfig(), memoryStorage());
+    expect(store.getState().restart).toBeNull();
+    const restart = {
+      reason: "update",
+      targetVersion: "0.2.0",
+      fromVersion: "0.1.0",
+      exitCode: 86,
+    };
+    store.dispatch({ type: "restart", restart });
+    expect(store.getState().restart).toEqual(restart);
+    store.dispatch({ type: "restart", restart: null });
+    expect(store.getState().restart).toBeNull();
+    store.dispatch({ type: "extension.changed" });
+    store.dispatch({ type: "extension.changed" });
+    expect(store.getState().extensionsVersion).toBe(2);
+  });
+
   it("resolves and cycles the theme", () => {
     expect(resolveTheme("system", true)).toBe("dark");
     expect(resolveTheme("system", false)).toBe("light");

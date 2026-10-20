@@ -311,6 +311,15 @@ importers:
       '@forerunner/capabilities':
         specifier: workspace:*
         version: link:../capabilities
+      '@forerunner/commands':
+        specifier: workspace:*
+        version: link:../commands
+      '@forerunner/critic':
+        specifier: workspace:*
+        version: link:../critic
+      '@forerunner/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@forerunner/platform':
         specifier: workspace:*
         version: link:../platform

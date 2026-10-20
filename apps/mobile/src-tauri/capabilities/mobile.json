@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "Android and iOS builds only: the platform biometric prompt behind high-risk confirmations (spec R.7) and the camera QR scanner for pairing (spec R.2). Desktop dev builds of the shell have neither.",
+  "platforms": ["android", "iOS"],
+  "windows": ["main"],
+  "permissions": ["biometric:default", "barcode-scanner:default"]
+}
