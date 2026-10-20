@@ -53,6 +53,8 @@ jobs:
         run: pnpm test:unit
       - name: Integration tests (stand-ins)
         run: pnpm test:integration
+      - name: Prompt-injection suite (browser and email paths)
+        run: pnpm test:injection
       - name: Secret scan (repo and test logs)
         run: pnpm secrets:scan && pnpm secrets:scan --logs
       - name: Docs check
@@ -108,6 +110,8 @@ jobs:
         run: pnpm test:unit
       - name: Integration tests (stand-ins)
         run: pnpm test:integration
+      - name: Prompt-injection suite (browser and email paths)
+        run: pnpm test:injection
       - name: Secret scan (repo and test logs)
         run: pnpm secrets:scan && pnpm secrets:scan --logs
       - name: Upload test logs
