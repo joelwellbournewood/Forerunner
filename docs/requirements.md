@@ -82,7 +82,7 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | D.5 | Every run stores model, version, settings and prompt version. | 1 | todo | |
 | D.6 | Weekly model watch: checks provider model lists and pricing, runs the eval set on new candidates, proposes a switch with measured quality and cost deltas. Human approves. | 7 | todo | |
 | D.7 | Effort rule: the lowest effort that passes the task's checks. Each mode has a response-time target that the UI measures and shows (D.8 to D.15). | 1 | todo | |
-| D.8 | Voice chat: default Haiku 5.5, effort low, first audio under 1.2 s. | 5 | todo | |
+| D.8 | Voice chat: default Haiku 5.5, effort low, first audio under 1.2 s. | 5 | in progress | packages/voice/test/loop.test.ts; packages/voice/test/latency.test.ts |
 | D.9 | Text chat: default Haiku 5.5 (Sonnet 5.5 if the question needs it), effort low, first token under 1 s. | 1 | todo | |
 | D.10 | Routing, triage, summaries: default Haiku 5.5, effort low, response under 3 s. | 1 | todo | |
 | D.11 | Session planning (PM): default Sonnet 5.5 (Opus 5.5 on large projects), effort high, response under 60 s. | 1 | todo | |
@@ -192,7 +192,7 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | L.3 | Email: follows the rules and user options of module S (agent email) and module T (email commands). | 6 | todo | |
 | L.4 | Desktop control: off by default. Per-app allowlist. Screenshots logged. Always requires autonomy 3+. | 6 | todo | |
 | L.5 | Connectors: MCP servers installed from a catalog or URL, each reviewed and permissioned on install. | 6 | todo | |
-| L.6 | Voice: TTS for summaries and alerts, STT for voice notes. Pluggable provider. | 5 | todo | |
+| L.6 | Voice: TTS for summaries and alerts, STT for voice notes. Pluggable provider. | 5 | in progress | packages/voice/test/sentences.test.ts; packages/voice/test/registry.test.ts |
 
 ## M. Self-improvement and updates
 
@@ -221,14 +221,14 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | --- | --- | --- | --- | --- |
 | O.1 | Talk to your agent at any time, by text or voice: in the app, from a global hotkey, or from the phone approvals page. | 5 | todo | |
 | O.2 | A dedicated conversation agent answers. It runs on a fast model at low effort with a small cached context (project summaries, inbox, open requests, current session state). It speaks for your principal agent and writes to the same memory and logs. | 5 | todo | |
-| O.3 | Voice loop: push-to-talk hotkey, or open mic with voice activity detection. Streaming STT; reply streamed sentence by sentence into streaming TTS. You can interrupt it mid-sentence by speaking. | 5 | todo | |
-| O.4 | Pluggable voice providers: local by default where the machine can manage it (faster-whisper for STT, Kokoro or Piper for TTS; free and private); cloud option for the lowest latency (Deepgram for STT, Cartesia or ElevenLabs for TTS). Chosen in the Extensions panel. | 5 | todo | |
-| O.5 | Latency budget: end of turn about 0.2 s, final transcript about 0.3 s, model first token about 0.5 s, first audio about 0.2 s. Target under 1.2 s to first audio. Each part is measured and shown. | 5 | todo | |
+| O.3 | Voice loop: push-to-talk hotkey, or open mic with voice activity detection. Streaming STT; reply streamed sentence by sentence into streaming TTS. You can interrupt it mid-sentence by speaking. | 5 | in progress | packages/voice/test/loop.test.ts; packages/voice/test/vad.test.ts; packages/voice/test/sentences.test.ts |
+| O.4 | Pluggable voice providers: local by default where the machine can manage it (faster-whisper for STT, Kokoro or Piper for TTS; free and private); cloud option for the lowest latency (Deepgram for STT, Cartesia or ElevenLabs for TTS). Chosen in the Extensions panel. | 5 | in progress | packages/voice/test/registry.test.ts; packages/voice/test/local-helpers.test.ts; packages/voice/test/cloud.test.ts; packages/voice/test/availability.test.ts |
+| O.5 | Latency budget: end of turn about 0.2 s, final transcript about 0.3 s, model first token about 0.5 s, first audio about 0.2 s. Target under 1.2 s to first audio. Each part is measured and shown. | 5 | in progress | packages/voice/test/latency.test.ts; packages/voice/test/loop.test.ts |
 | O.6 | What it can do: answer questions, take notes into the next-session queue, create draft tasks, answer human requests, and start, pause or stop sessions. | 5 | todo | |
-| O.7 | What needs a confirm step: approving anything above routine, and starting work over a set cost. It reads back the action and estimated cost and waits for "yes". Spoken approvals are logged with the transcript line. | 5 | todo | |
+| O.7 | What needs a confirm step: approving anything above routine, and starting work over a set cost. It reads back the action and estimated cost and waits for "yes". Spoken approvals are logged with the transcript line. | 5 | in progress | packages/voice/test/approval.test.ts; packages/voice/test/loop.test.ts |
 | O.8 | Handoff: if a question needs real work, it says so, queues it for the principal agent, and the answer comes back through the inbox or a notification. | 5 | todo | |
 | O.9 | During a live session, what you say reaches the principal agent at the next step boundary. Stopping is immediate. | 5 | todo | |
-| O.10 | Transcripts are kept in session history. Audio is not stored unless turned on. | 5 | todo | |
+| O.10 | Transcripts are kept in session history. Audio is not stored unless turned on. | 5 | in progress | packages/voice/test/loop.test.ts |
 
 ## P. Maintainer documentation
 

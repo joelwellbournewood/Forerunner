@@ -35,18 +35,21 @@ Headroom was studied at commit `fbf7bc3` (2026-10-17, `headroom-ai` 0.41.0). Wha
   drops messages (`wiki/transforms.md` "Context management").
 - Transforms (`headroom/transforms/`): SmartCrusher for JSON arrays (keep first/last, errors, > 2σ
   outliers, BM25-relevant items, sample the rest), LogCompressor, SearchCompressor, TextCrusher,
-  `cross_turn_dedup.py`, `dense_line_elider.py`, `lossless_compaction.py`, `read_lifecycle.py`,
-  `tool_schema_compaction.py`, a detector-only CacheAligner (`cache_aligner.py`: it warns about UUIDs,
-  ISO timestamps, JWTs and hashes in the system prompt and never rewrites it), and opt-in ML
-  (Kompress/ModernBERT) and AST (tree-sitter) compressors.
+  `cross_turn_dedup.py`, `dense_line_elider.py`, `lossless_compaction.py`, `read_lifecycle.py`, a
+  detector-only CacheAligner (`cache_aligner.py`: it warns about UUIDs, ISO timestamps, JWTs and hashes
+  in the system prompt and never rewrites it), and opt-in ML (Kompress/ModernBERT) and AST (tree-sitter)
+  compressors. Tool-schema compaction lives on the proxy side (`headroom/proxy/tool_schema_compaction.py`).
 - CCR (`headroom/ccr/`): originals are cached, a `headroom_retrieve` tool is injected and the proxy
   answers the model's retrieval calls itself, invisible to the client (`wiki/ccr.md`). `--no-ccr` and
   `--lossless` turn this off (`cli/proxy.py`).
 - Measured results (`wiki/benchmarks.md`, `README.md` "Proof"): JSON arrays 83–91 %, build logs 94 %,
-  grep output and source code 0 %, realistic agent sessions 21–57 %; blocks under ~300 tokens pass through.
-  Savings are tokens before/after counted with the provider tokenizer; dollar figures are priced at write
-  time into an append-only JSONL ledger that keeps compression and tool-schema savings apart and records
-  the cache read/write mix (`headroom/savings_ledger.py`).
+  grep output and source code 0 %, realistic agent sessions 21–57 %. The router skips any message under
+  `min_tokens_to_compress` (`headroom/transforms/content_router.py` ~5808, ~6399; the proxy passes
+  `min_tokens_to_crush = 200` from `headroom/config.py` ~765), and the benchmarks observe that short
+  messages under 300 tokens are where overhead exceeds savings (`wiki/benchmarks.md` "What Headroom Does
+  NOT Compress"). Savings are tokens before/after counted with the provider tokenizer; dollar figures
+  are priced at write time into an append-only JSONL ledger that keeps compression and tool-schema savings
+  apart and records the cache read/write mix (`headroom/savings_ledger.py`).
 - The npm `headroom-ai` package is only an HTTP client for `/v1/compress` ("No compression logic runs in
   Node.js", `wiki/typescript-sdk.md`); its Anthropic adapter converts content blocks to OpenAI format.
 
@@ -59,7 +62,7 @@ always on, and treats a Headroom proxy as an accelerator that is used when prese
 
 | Concern | Decision |
 | --- | --- |
-| Install | Listed in the Extensions panel (module L) as "Headroom proxy (optional)". `fr context install-headroom` runs `["uv","tool","install","--python","3.13","headroom-ai[proxy]"]` through `run()` from `@forerunner/platform` when `which("uv")` finds uv, otherwise it prints the per-OS steps from `wiki/quickstart.md` (`winget install astral-sh.uv` on Windows, the uv installer on Linux) and does nothing else. No shell strings, no pipe-to-shell. |
+| Install | Listed in the Extensions panel (module L) as "Headroom proxy (optional)". `fr context install-headroom` runs `["uv","tool","install","--python","3.13","headroom-ai[proxy]"]` through `run()` from `@forerunner/platform` when `which("uv")` finds uv, otherwise it prints Headroom's documented alternative, `pip install "headroom-ai[proxy]"` (`wiki/quickstart.md` "Python project / virtualenv"), with a pointer to uv's own installer for the user's OS, and does nothing else. Headroom documents no Windows package-manager step (the only `winget` line, `README.md` ~534, installs Rustup for source builds; prebuilt `win_amd64` wheels avoid it). No shell strings, no pipe-to-shell. |
 | Start | Two supported shapes. (a) User-managed: `headroom install apply --preset persistent-service` (on Windows Headroom maps this to a scheduled task, `headroom/install/planner.py` ~174) and Forerunner only probes. (b) Forerunner-managed, when `FORERUNNER_HEADROOM_MANAGED=1`: `spawnProcess(["headroom","proxy","--host","127.0.0.1","--port",port,"--mode","cache","--no-ccr","--lossless","--no-cache"])`, stdout/stderr to `appDirs().logs`, stopped with `killTree` on app exit and on the kill switch. `--no-ccr --lossless`: no injected tool and no hidden extra upstream calls outside our enforcement hooks. `--no-cache`: Headroom's semantic response cache would answer calls without the model, which would falsify the cost ledger and the critic's independence. `HEADROOM_TELEMETRY` stays at its off default; `--log-messages` is never passed. |
 | Detect | `HeadroomAdapter.probe()` in `packages/runtime/src/context/headroom.ts`: `GET /health` on `FORERUNNER_HEADROOM_URL` if set, else `http://127.0.0.1:${FORERUNNER_HEADROOM_PORT ?? 8787}` (Headroom's own default, `headroom/cli/port_discovery.py`). Available only if `status === "healthy"` and `ready === true`, with a 500 ms timeout. Probed at app start, at every session start and every 60 s during a session via the session's `Clock`; `which("headroom")` separately yields "installed, not running" for the panel. Never a port scan. |
 | Use | Only when the project's policy is `headroom` (section 4) and the probe passed. SDK driver: the subprocess env gets `ANTHROPIC_BASE_URL=<proxy>` and `ANTHROPIC_CUSTOM_HEADERS="X-Headroom-Project: <project_id>"`. Own Anthropic adapter: the client's `baseURL` is the proxy and the same header is sent. Our baseline still runs in front of it; the two layers compose because both only touch the live zone. |
@@ -83,10 +86,10 @@ truncate` (lossless first, lossy last).
 | `logs.ts` whitespace and log collapsing (lossless) | Normalise CRLF to LF; strip ANSI SGR `ESC[...m`; drop trailing whitespace; keep only the last segment of a line that contains `\r` (progress bars); collapse 3+ consecutive identical lines to one line plus `... (repeated N times)`; collapse 3+ blank lines to one. | `lossless_compaction.py` `strip_ansi`, `collapse_runs` |
 | `dense.ts` dense-line elision | A line is dense if length ≥ 300, spaces < 6 % of chars, no tab, and not JSON-shaped (`{`/`[` first and `}`/`]` last). Only if dense lines total ≥ 2,000 chars: keep 160 head and 80 tail chars, replace the middle with `...[N chars elided]...`. Catches minified JS, base64, bundles. | `dense_line_elider.py` (same constants) |
 | `dedup.ts` repeated-block dedup | (a) Within a block: rolling hash of 3–64-line windows; a window seen earlier in the same block becomes `... (repeats N lines from M lines back)`. (b) Across tool results in a session: index `hash(line) → (turn, lineNo)` for emitted results; a contiguous span of ≥ 8 lines and ≥ 200 chars present verbatim in a strictly earlier result becomes `[same as tool result #k lines a–b]`. The earliest occurrence is never rewritten and matching looks only backwards, so appending a turn never changes an earlier one. Lines under 4 chars or in a trivial set (`}`, `return`, `pass`, …) cannot anchor a match. | `lossless_compaction.py` `fold_repeated_blocks`; `cross_turn_dedup.py` (prefix-monotonic, keep-earliest) |
-| `json.ts` JSON array thinning | Parse; for every array of ≥ 30 objects (recursing to depth 5): keep the first 3 and last 2, every item with an error signal (`status`/`level`/`severity`/`error` field in an error set, or any string field matching the error regex), numeric outliers (> 2σ on a numeric field present in ≥ 80 % of items), then an even sample up to 25 items total, in original order, plus a final `{"_omitted": N, "_of": total}` item. No relevance scoring in 1.0. Not applied to a block whose tool profile says `skip`. | SmartCrusher (`wiki/transforms.md`, `LIMITATIONS.md` "JSON Compression Constraints") without BM25 and without the `[N]{schema}` CSV densification |
+| `json.ts` JSON array thinning | Parse; for every array of ≥ 30 objects (recursing to depth 5): keep the first 3 and last 2, every item with an error signal (`status`/`level`/`severity`/`error` field in an error set, or any string field matching the error regex), numeric outliers (> 2σ on a numeric field present in ≥ 80 % of items), then an even sample up to 25 items total, in original order, plus a final `{"_omitted": N, "_of": total}` item. No relevance scoring in 1.0. Not applied to a block whose tool profile says `skip`. | SmartCrusher (`wiki/transforms.md`, `wiki/LIMITATIONS.md` "JSON Compression Constraints") without BM25 and without the `[N]{schema}` CSV densification |
 | `truncate.ts` head/tail truncation with error retention | If tokens > the cap (`maxToolResultTokens`, default 4,000; `read_file`-class tools 16,000): collect up to 20 lines matching `/\b(error|fatal|exception|traceback|failed|panic|assert|denied|timeout)\b/i` with 2 lines of context each, plus pytest/npm/cargo/vitest summary lines; emit head (60 % of the char budget), then `[... N lines, ~M tokens omitted; original <hash>]`, then the error block, then tail (40 %). A `FATAL` at line 67 of 100 survives. | `log_compressor.py` config (`max_errors`, `error_context_lines`, `keep_summary_lines`), `error_detection.py` keyword set |
 | `summarise.ts` old-turn summarisation | When the in-process transcript exceeds `compactAtTokens` (default 60 % of the model's context window) or at session end: turns older than the last `keepRecentTurns` (8) are replaced by one `[state brief]` user block written by the cheap tier at low effort under its own budget line from a fixed template (goal, done, files touched with hashes, open questions, decisions, next steps; ≤ 1,500 tokens) plus a deterministic list of the tool calls it replaces. Superseded file reads (same path read again, or edited after the read) are dropped from the summarised range outright. The brief is cached by hash of the range so a retry never pays twice. A deliberate, rare prefix change (once per tens of thousands of tokens) after which the new prefix is cached. SDK-driven sessions rely on the SDK's own compaction plus the startup state brief from the checklist (spec E). | Deliberately not Headroom (it never drops messages); Headroom's `read_lifecycle.py` for stale/superseded reads |
-| `cache-layout.ts` cache-aligned prefix layout | Requests are assembled in a fixed order: `tools` (schema-compacted: drop `$schema $id $comment title examples example deprecated readOnly writeOnly markdownDescription`, collapse description whitespace, memoised by hash of the tool set), `system` = registry prompt → project brief → scope `instructions.md` and pinned lessons (static), then messages = state brief → budgeted retrieved lessons → history. `cache: { system: true, tools: true }` is set and the Anthropic adapter marks the last tool and the last static system block with `cache_control: {type: "ephemeral"}`. Anything volatile (date, time, session id, budget left, inbox count) goes into the first user message. `assertStablePrefix(system)` rejects ISO timestamps, UUIDs, JWTs and 32/40/64-hex hashes in `system` (a `validation` error in tests, a warning event in production). | `tool_schema_compaction.py` `TOOL_SCHEMA_DROP_KEYS`; `cache_aligner.py` detector classes |
+| `cache-layout.ts` cache-aligned prefix layout | Requests are assembled in a fixed order: `tools` (schema-compacted: drop `$schema $id $comment title examples example deprecated readOnly writeOnly markdownDescription`, collapse description whitespace, memoised by hash of the tool set), `system` = registry prompt → project brief → scope `instructions.md` and pinned lessons (static), then messages = state brief → budgeted retrieved lessons → history. `cache: { system: true, tools: true }` is set and the Anthropic adapter marks the last tool and the last static system block with `cache_control: {type: "ephemeral"}`. Anything volatile (date, time, session id, budget left, inbox count) goes into the first user message. `assertStablePrefix(system)` rejects ISO timestamps, UUIDs, JWTs and 32/40/64-hex hashes in `system` (a `validation` error in tests, a warning event in production). | `headroom/proxy/tool_schema_compaction.py` `TOOL_SCHEMA_DROP_KEYS`; `cache_aligner.py` detector classes |
 | `budget.ts` retrieval under a token budget | `fitToBudget(items, maxTokens, countTokens)`: greedy by rank, whole items only, returns kept items and tokens used; the memory package ([ADR 0002](0002-operator-memory.md)) calls it for lessons and docs. | Spec G and N |
 
 Tool profiles (per project, section 4) default to `read_file`-class tools: `maxTokens: 16000`, no `json`;
@@ -102,16 +105,27 @@ output shaping (`HEADROOM_OUTPUT_SHAPER`: we set effort ourselves, spec D), thin
   `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`.
 - Three savings are kept apart, as Headroom's ledger does: `compression_saved_tokens =
   tokens_before - tokens_after` (labelled *estimated*, it is counterfactual); `cache_saved_tokens =
-  0.9 × cache_read_input_tokens` (labelled *measured*; Anthropic reads cost 10 % of input,
-  `prefix_tracker.py` `_PROVIDER_READ_DISCOUNT`), with `cache_write_tokens` shown beside it because writes
-  cost 1.25×; `headroom_saved_tokens` from the proxy's `/stats` `projects[<project_id>].tokens_saved`
-  delta between session start and end (the SDK calls the proxy directly, so per-call attribution is not
-  possible there; the proxy sets no per-response savings header).
-- Storage: the Run gains `tokens_before`, `tokens_after`, `cache_read_tokens`, `cache_write_tokens`,
-  `context_transforms`, `headroom_used`; the Session gains `headroom_saved_tokens`. Money follows
-  ADR 0008: saved tokens × the model's input price → USD micro-units plus CHF at the day's rate, written as a `cost_ledger` row of kind `saving` so the allocation view can sum by project,
-  specialist and model. The cost view shows "Saved by compression (estimated)", "Saved by caching
-  (measured)" and "Saved by Headroom" as separate lines, never netted against spend.
+  cache_read_input_tokens`, valued at `input price − cache read price` per token (`cacheSavingsUsdMicro`,
+  [pricing.ts](../../packages/billing/src/pricing.ts); 90 % of input on Anthropic list prices, which is
+  Headroom's `_PROVIDER_READ_DISCOUNT` in `prefix_tracker.py`; labelled *measured*), with
+  `cache_write_tokens` shown beside it because writes cost 1.25×; `headroom_saved_tokens` from the proxy's
+  `/stats` `projects[<project_id>].tokens_saved` delta between session start and end (the SDK calls the
+  proxy directly, so per-call attribution is not possible there; the proxy sets no per-response savings
+  header).
+- Storage: savings are fields on the Run and the Session, never ledger rows. The Run already carries
+  `tokens_before_compression`, `tokens_after_compression`, `cache_read_tokens` and `cache_write_tokens`
+  ([schema.ts](../../packages/state/src/schema.ts) `run`); a migration adds `context_transforms` (json)
+  and `headroom_used` (bool) to the Run and `headroom_saved_tokens` (int) to the Session. `cost_ledger`
+  stays spend-only: its `kind` enum (`api`, `subscription`, `plan_credits`,
+  [0001-initial.ts](../../packages/state/src/migrations/0001-initial.ts)) gains no `saving` kind, so every
+  existing `SUM` over it (caps, billing sink, allocation view) keeps meaning money spent, and ADR 0008 is
+  unchanged. Money is computed at read time by `BillingLedger.savings()`
+  ([ledger.ts](../../packages/billing/src/ledger.ts)) from the Run rows with ADR 0008 arithmetic: saved
+  tokens × the model's input price in USD micro-units, CHF at the `rate_chf_per_usd` of the Run's own
+  ledger entry (`cost_ledger.run_id`); the allocation view sums the same Run fields by project, specialist
+  and model. A counterfactual may be re-priced when a price row is corrected; that is why it is not a
+  ledger entry. The cost view shows "Saved by compression (estimated)", "Saved by caching (measured)" and
+  "Saved by Headroom" as separate lines, never netted against spend.
 - A `context.compressed` event per call carries the numbers into the live log; nothing in it contains
   block content.
 
@@ -145,11 +159,13 @@ output shaping (`HEADROOM_OUTPUT_SHAPER`: we set effort ourselves, spec D), thin
   and skips visibly otherwise. The Phase 6 gate adds a replayed eval set: ≥ 30 % compression savings on
   tool-heavy transcripts with no golden task failing.
 - Maintainer docs: [runtime.md](../maintainers/runtime.md) gets a "Context layer" section,
-  [billing.md](../maintainers/billing.md) the savings lines, the data model regenerates with the new Run
-  and Session fields.
+  [billing.md](../maintainers/billing.md) the savings lines (its known issue about missing
+  `tokens_before_compression` columns on `cost_ledger` closes: `savings()` reads Runs, not ledger rows),
+  the data model regenerates with the new Run and Session fields.
 - Known trade-offs: `summarise` is a deliberate cache miss; `json` without relevance scoring can drop the
   one item the agent needed (the original is one click away and a re-read tool call away);
-  `tokens_before` is an estimate, so the cost view says so.
+  `tokens_before` is an estimate, so the cost view says so; savings money is priced at read time, so a
+  price correction changes past savings figures (never past spend).
 
 ## Alternatives considered
 
@@ -166,3 +182,6 @@ output shaping (`HEADROOM_OUTPUT_SHAPER`: we set effort ourselves, spec D), thin
   that busts the prefix. Used only at compaction points.
 - A rolling window that drops old turns silently: Headroom removed its own (`wiki/transforms.md`); we
   replace turns with a brief and keep the originals on disk.
+- A `saving` kind in `cost_ledger`: the caps read that table as the truth for spend, every existing sum
+  over it would count counterfactual savings unless filtered, and ADR 0008 would need amending. Rejected;
+  savings stay on the Run and the Session.

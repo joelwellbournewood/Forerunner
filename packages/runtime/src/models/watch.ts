@@ -1,0 +1,1494 @@
+/**
+ * Weekly model watch (spec D: "checks provider model lists and pricing, runs the eval set on new
+ * candidates, proposes a switch with measured quality and cost deltas. Human approves." and
+ * "also tests lower effort levels"; spec M: model updates surface in the updates screen).
+ *
+ * One run:
+ *   1. asks every registered ModelProvider for its model list and the PriceListSource for the
+ *      current prices (never assumed: a model without a known price is reported, not tested);
+ *   2. diffs both against the effective ladder and pricing table: new, retired, repriced;
+ *   3. runs the eval sets (through the EvalRunnerPort, which the orchestrator backs with
+ *      @forerunner/evals) on every priced new candidate and on one effort step below the
+ *      current default of every eval target, under a hard eval budget enforced in code;
+ *   4. writes a ModelWatchReport (zod) with recommendations and a pricing.json proposal,
+ *      persists it as a `release` row on channel "model_watch" (what the updates screen lists),
+ *      appends audit rows, and opens a decision for the human through the approval port.
+ *
+ * Nothing changes the ladder, the effort defaults or the pricing without a recorded "adopt"
+ * answered by a human: adopt() refuses anything else with ForerunnerError("approval_required").
+ * On adopt it writes <config>/pricing.json and <config>/models.json through the settings store.
+ * Thresholds are ADR 0019.
+ */
+import {
+  BUILTIN_PRICING,
+  CACHE_READ_SHARE,
+  CACHE_WRITE_SHARE,
+  canonicalModelId,
+  mergePricing,
+  type PricingOverrides,
+  type PricingTable,
+} from "@forerunner/billing";
+import { type Clock, errorMessage, ForerunnerError, log, newId } from "@forerunner/platform";
+import type { HumanRequestRow, JsonValue, ReleaseRow, StateStore } from "@forerunner/state";
+import { z } from "zod";
+import type { ProviderRegistry } from "../provider/registry.ts";
+import type { EffortLevel, ModelRef, ModelTier } from "../provider/types.ts";
+import type { Schedule, Scheduler, StartRequest } from "../session/triggers.ts";
+import type { LadderRung, Mode } from "./ladder.ts";
+import type { PriceList, PriceListSource } from "./price-list.ts";
+import {
+  applyModelSettings,
+  builtinModelConfig,
+  EFFORT_VALUES,
+  type EffectiveModelConfig,
+  MODE_VALUES,
+  type ModelSettings,
+  type ModelSettingsStore,
+  TIER_VALUES,
+} from "./settings.ts";
+
+const logger = log("model-watch");
+
+export const MODEL_WATCH_CHANNEL = "model_watch";
+export const MODEL_WATCH_AGENT_ID = "model-watch";
+export const MODEL_WATCH_SCHEDULE_ID = "model-watch-weekly";
+export const WEEK_MINUTES = 7 * 24 * 60;
+
+// ---------------------------------------------------------------------------------------
+// Thresholds (ADR 0019)
+// ---------------------------------------------------------------------------------------
+
+export interface WatchThresholds {
+  /** A cheaper candidate is recommended when its eval cost is at least this much lower. */
+  minCostSavingPct: number;
+  /** A pricier candidate is recommended when it passes at least this many points more ... */
+  minQualityGainPoints: number;
+  /** ... and costs at most this much more. */
+  maxCostIncreasePct: number;
+  /** How many pass-rate points a recommendation may lose against the baseline (0: none). */
+  qualityTolerancePoints: number;
+  /** A lower effort is recommended when it passes and saves at least this much. */
+  minEffortSavingPct: number;
+  /** Eval sets smaller than this produce observations but never recommendations. */
+  minEvalTasks: number;
+  /** A price change below this is noise, not a repricing. */
+  repriceMinDeltaPct: number;
+  /** Hard cap on what one watch run may spend on evals, in micro-USD. Enforced in code. */
+  evalBudgetUsdMicro: number;
+}
+
+export const DEFAULT_WATCH_THRESHOLDS: WatchThresholds = Object.freeze({
+  minCostSavingPct: 10,
+  minQualityGainPoints: 5,
+  maxCostIncreasePct: 25,
+  qualityTolerancePoints: 0,
+  minEffortSavingPct: 5,
+  minEvalTasks: 3,
+  repriceMinDeltaPct: 0.5,
+  evalBudgetUsdMicro: 5_000_000,
+});
+
+// ---------------------------------------------------------------------------------------
+// Ports
+// ---------------------------------------------------------------------------------------
+
+export interface EvalTarget {
+  /** Specialist whose eval set is run (registry `eval_set`). */
+  specialist: string;
+  /** The mode whose default model and effort the specialist runs at (spec D effort table). */
+  mode: Mode;
+}
+
+export const DEFAULT_EVAL_TARGETS: readonly EvalTarget[] = Object.freeze([
+  { specialist: "coder", mode: "coder" },
+  { specialist: "researcher", mode: "researcher" },
+]);
+
+export interface EvalRunInput {
+  specialist: string;
+  provider: string;
+  model: string;
+  effort: EffortLevel;
+  /** The pricing table to cost the runs with: the effective table plus the report's proposal, so a candidate is priced. */
+  pricing: PricingTable;
+  signal?: AbortSignal;
+}
+
+export interface EvalRunOutcome {
+  total: number;
+  passed: number;
+  failed: number;
+  /** Tasks left to the critic (rubric checks); counted neither way. */
+  needsModel: number;
+  /** passed / (passed + failed); 0 when nothing was decided. */
+  passRate: number;
+  costUsdMicro: number;
+  durationMs: number;
+}
+
+/** Runs one specialist's eval set on one model and effort. Backed by @forerunner/evals in production. */
+export interface EvalRunnerPort {
+  run(input: EvalRunInput): Promise<EvalRunOutcome>;
+}
+
+export type ModelWatchDecision = "adopt" | "ignore" | "remind";
+
+export interface ModelWatchAnswer {
+  decision: ModelWatchDecision;
+  /** Recommendation ids to adopt; omitted means every recommendation in the report. */
+  adopt?: string[];
+  /** Human id that answered. Required for "adopt". */
+  by?: string;
+}
+
+export interface ModelWatchApprovalRequest {
+  reportId: string;
+  humanId: string;
+  summary: string;
+  options: readonly ModelWatchDecision[];
+  recommendations: Recommendation[];
+  pricingProposal: PricingOverrides;
+  /** Text lines for the inbox card. */
+  steps: string[];
+}
+
+export type ModelWatchApprovalOutcome =
+  | { status: "answered"; answer: ModelWatchAnswer }
+  | { status: "pending"; requestId: string | null };
+
+/** Anything that needs a human goes through here: a HumanRequest in production, a fake in tests. */
+export interface ModelWatchApprovalPort {
+  ask(req: ModelWatchApprovalRequest): Promise<ModelWatchApprovalOutcome>;
+}
+
+// ---------------------------------------------------------------------------------------
+// Report (zod)
+// ---------------------------------------------------------------------------------------
+
+const Tier = z.enum(TIER_VALUES);
+const Effort = z.enum(EFFORT_VALUES);
+const ModeSchema = z.enum(MODE_VALUES);
+const nonNegative = z.number().finite().nonnegative();
+
+export const PriceRowSchema = z.object({
+  input_per_mtok_usd: nonNegative,
+  output_per_mtok_usd: nonNegative,
+  cache_read_per_mtok_usd: nonNegative,
+  cache_write_per_mtok_usd: nonNegative,
+  as_of: z.string(),
+  source: z.enum(["list", "assumed", "override"]),
+});
+export type PriceRow = z.infer<typeof PriceRowSchema>;
+
+/** One row of the pricing.json proposal; the same shape the billing package accepts. */
+export const PricingProposalRowSchema = z
+  .object({
+    input_per_mtok_usd: nonNegative.optional(),
+    output_per_mtok_usd: nonNegative.optional(),
+    cache_read_per_mtok_usd: nonNegative.optional(),
+    cache_write_per_mtok_usd: nonNegative.optional(),
+    source: z.enum(["list", "assumed", "override"]).optional(),
+    as_of: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    notes: z.string().max(500).optional(),
+  })
+  .strict();
+export type PricingProposalRow = z.infer<typeof PricingProposalRowSchema>;
+
+export const EvalObservationSchema = z.object({
+  specialist: z.string(),
+  mode: ModeSchema,
+  provider: z.string(),
+  model: z.string(),
+  tier: Tier,
+  effort: Effort,
+  role: z.enum(["baseline", "candidate", "lower_effort"]),
+  total: z.number().int().nonnegative(),
+  passed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  needs_model: z.number().int().nonnegative(),
+  pass_rate: z.number().min(0).max(1),
+  cost_usd_micro: z.number().int().nonnegative(),
+  duration_ms: z.number().int().nonnegative(),
+  /** Set when the eval did not run (budget exhausted, provider error, no rung model). */
+  skipped_reason: z.string().nullable(),
+});
+export type EvalObservation = z.infer<typeof EvalObservationSchema>;
+
+export const SwitchModelRecommendationSchema = z.object({
+  id: z.string(),
+  kind: z.literal("switch_model"),
+  provider: z.string(),
+  rung: Tier,
+  from: z.string(),
+  to: z.string(),
+  /** Mean pass-rate difference across eval targets, in points (+3 = three points better). */
+  quality_delta_points: z.number(),
+  /** Lowest per-target pass-rate difference, in points. */
+  min_quality_delta_points: z.number(),
+  /** Eval cost difference in percent (-20 = a fifth cheaper); null when the baseline cost nothing. */
+  cost_delta_pct: z.number().nullable(),
+  evidence: z.array(z.string()),
+  text: z.string(),
+});
+export const LowerEffortRecommendationSchema = z.object({
+  id: z.string(),
+  kind: z.literal("lower_effort"),
+  mode: ModeSchema,
+  specialist: z.string(),
+  provider: z.string(),
+  model: z.string(),
+  from: Effort,
+  to: Effort,
+  pass_rate: z.number(),
+  baseline_pass_rate: z.number(),
+  cost_delta_pct: z.number().nullable(),
+  evidence: z.array(z.string()),
+  text: z.string(),
+});
+export const RepriceRecommendationSchema = z.object({
+  id: z.string(),
+  kind: z.literal("reprice"),
+  model: z.string(),
+  changes: z.array(
+    z.object({
+      field: z.enum([
+        "input_per_mtok_usd",
+        "output_per_mtok_usd",
+        "cache_read_per_mtok_usd",
+        "cache_write_per_mtok_usd",
+      ]),
+      before: z.number().nullable(),
+      after: z.number(),
+      delta_pct: z.number().nullable(),
+    }),
+  ),
+  text: z.string(),
+});
+export const RecommendationSchema = z.discriminatedUnion("kind", [
+  SwitchModelRecommendationSchema,
+  LowerEffortRecommendationSchema,
+  RepriceRecommendationSchema,
+]);
+export type Recommendation = z.infer<typeof RecommendationSchema>;
+export type SwitchModelRecommendation = z.infer<typeof SwitchModelRecommendationSchema>;
+export type LowerEffortRecommendation = z.infer<typeof LowerEffortRecommendationSchema>;
+export type RepriceRecommendation = z.infer<typeof RepriceRecommendationSchema>;
+
+export const ModelWatchReportSchema = z.object({
+  version: z.literal(1),
+  id: z.string(),
+  generated_at: z.string(),
+  price_list: z.object({
+    source: z.string(),
+    as_of: z.string().nullable(),
+    models: z.number().int().nonnegative(),
+    error: z.string().nullable(),
+  }),
+  providers: z.array(
+    z.object({
+      name: z.string(),
+      listed: z.array(z.object({ id: z.string(), tier: Tier })),
+      error: z.string().nullable(),
+    }),
+  ),
+  diff: z.object({
+    new_models: z.array(
+      z.object({
+        provider: z.string(),
+        id: z.string(),
+        tier: Tier,
+        priced: z.boolean(),
+        price_origin: z.enum(["table", "price_list", "none"]),
+        price: PriceRowSchema.nullable(),
+      }),
+    ),
+    retired_models: z.array(
+      z.object({ provider: z.string(), id: z.string(), tier: Tier, rung_affected: z.boolean() }),
+    ),
+    repriced: z.array(RepriceRecommendationSchema.omit({ id: true, kind: true, text: true })),
+    unpriced: z.array(z.object({ provider: z.string(), id: z.string(), tier: Tier })),
+  }),
+  evals: z.array(EvalObservationSchema),
+  recommendations: z.array(RecommendationSchema),
+  pricing_proposal: z.record(z.string(), PricingProposalRowSchema),
+  eval_cost_usd_micro: z.number().int().nonnegative(),
+  eval_budget_usd_micro: z.number().int().nonnegative(),
+  skipped: z.array(z.string()),
+  summary: z.string(),
+});
+export type ModelWatchReport = z.infer<typeof ModelWatchReportSchema>;
+
+/** What the updates screen lists (spec M.5). */
+export const ModelWatchReportSummarySchema = z.object({
+  id: z.string(),
+  generated_at: z.string(),
+  status: z.string(),
+  decision: z.string(),
+  request_id: z.string().nullable(),
+  decided_at: z.string().nullable(),
+  recommendations: z.number().int().nonnegative(),
+  new_models: z.number().int().nonnegative(),
+  retired_models: z.number().int().nonnegative(),
+  repriced: z.number().int().nonnegative(),
+  summary: z.string(),
+});
+export type ModelWatchReportSummary = z.infer<typeof ModelWatchReportSummarySchema>;
+
+/** What the release row's `health` column carries for a model watch report. */
+export interface ModelWatchHealth {
+  decision: "pending" | "nothing_to_decide" | "adopted" | "ignored" | "remind";
+  request_id: string | null;
+  decided_at: string | null;
+  by: string | null;
+  applied: string[];
+  remind_at: string | null;
+}
+
+// ---------------------------------------------------------------------------------------
+// Pure maths (exported for tests and for the report renderer)
+// ---------------------------------------------------------------------------------------
+
+/** Percent change from `before` to `after`; null when `before` is 0 (nothing to compare against). */
+export function pctDelta(before: number, after: number): number | null {
+  if (!(before > 0)) return null;
+  return round2(((after - before) / before) * 100);
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function round6(n: number): number {
+  return Math.round(n * 1e6) / 1e6;
+}
+
+function signed(n: number | null, unit: string): string {
+  if (n === null) return "n/a";
+  return `${n > 0 ? "+" : ""}${round2(n)}${unit}`;
+}
+
+export function effortBelow(effort: EffortLevel): EffortLevel | null {
+  const i = EFFORT_VALUES.indexOf(effort);
+  return i > 0 ? (EFFORT_VALUES[i - 1] ?? null) : null;
+}
+
+export interface PriceDiff {
+  repriced: Omit<RepriceRecommendation, "id" | "kind" | "text">[];
+  proposal: Record<string, PricingProposalRow>;
+}
+
+const PRICE_FIELDS = [
+  "input_per_mtok_usd",
+  "output_per_mtok_usd",
+  "cache_read_per_mtok_usd",
+  "cache_write_per_mtok_usd",
+] as const;
+
+/** Price changes between the effective table and the price list, and the override rows that fix them. */
+export function diffPrices(
+  table: PricingTable,
+  list: PriceList,
+  thresholds: WatchThresholds = DEFAULT_WATCH_THRESHOLDS,
+): PriceDiff {
+  const repriced: PriceDiff["repriced"] = [];
+  const proposal: Record<string, PricingProposalRow> = {};
+  for (const [id, entry] of Object.entries(list.models)) {
+    const existing = table[id];
+    if (!existing) continue;
+    const changes: PriceDiff["repriced"][number]["changes"] = [];
+    for (const field of PRICE_FIELDS) {
+      const after = entry[field];
+      if (after === undefined) continue;
+      const before = existing[field];
+      const delta = pctDelta(before, after);
+      const changed =
+        delta === null ? after !== before : Math.abs(delta) >= thresholds.repriceMinDeltaPct;
+      if (changed) changes.push({ field, before, after, delta_pct: delta });
+    }
+    if (changes.length === 0) continue;
+    repriced.push({ model: id, changes });
+    const row: PricingProposalRow = {
+      as_of: list.as_of,
+      source: "list",
+      notes: `model watch: price list${list.source ? ` ${list.source}` : ""} as of ${list.as_of}`,
+    };
+    for (const c of changes) row[c.field] = c.after;
+    proposal[id] = row;
+  }
+  return { repriced, proposal };
+}
+
+/** A full price row for a model the price list knows and the table does not. Cache prices follow the list multipliers. */
+export function priceRowFromList(list: PriceList, modelId: string): PriceRow | null {
+  const entry = list.models[canonicalModelId(modelId)];
+  if (!entry) return null;
+  return {
+    input_per_mtok_usd: entry.input_per_mtok_usd,
+    output_per_mtok_usd: entry.output_per_mtok_usd,
+    cache_read_per_mtok_usd:
+      entry.cache_read_per_mtok_usd ?? round6(entry.input_per_mtok_usd * CACHE_READ_SHARE),
+    cache_write_per_mtok_usd:
+      entry.cache_write_per_mtok_usd ?? round6(entry.input_per_mtok_usd * CACHE_WRITE_SHARE),
+    as_of: list.as_of,
+    source: "list",
+  };
+}
+
+export interface ModelDiff {
+  new_models: ModelWatchReport["diff"]["new_models"];
+  retired_models: ModelWatchReport["diff"]["retired_models"];
+  unpriced: ModelWatchReport["diff"]["unpriced"];
+}
+
+/** New and retired models per provider against the ladder; prices from the table or the list, never assumed. */
+export function diffModels(
+  listed: Record<string, ModelRef[]>,
+  ladder: LadderRung[],
+  table: PricingTable,
+  list: PriceList | null,
+): ModelDiff {
+  const out: ModelDiff = { new_models: [], retired_models: [], unpriced: [] };
+  for (const [provider, models] of Object.entries(listed)) {
+    const onLadder = new Set(
+      ladder.map((r) => r.models[provider]).filter((m): m is string => typeof m === "string"),
+    );
+    const ids = new Set(models.map((m) => m.id));
+    for (const m of models) {
+      if (onLadder.has(m.id)) continue;
+      const key = canonicalModelId(m.id);
+      const tableRow = table[key];
+      if (tableRow) {
+        out.new_models.push({
+          provider,
+          id: m.id,
+          tier: m.tier,
+          priced: true,
+          price_origin: "table",
+          price: {
+            input_per_mtok_usd: tableRow.input_per_mtok_usd,
+            output_per_mtok_usd: tableRow.output_per_mtok_usd,
+            cache_read_per_mtok_usd: tableRow.cache_read_per_mtok_usd,
+            cache_write_per_mtok_usd: tableRow.cache_write_per_mtok_usd,
+            as_of: tableRow.as_of,
+            source: tableRow.source,
+          },
+        });
+        continue;
+      }
+      const listRow = list ? priceRowFromList(list, m.id) : null;
+      if (listRow) {
+        out.new_models.push({
+          provider,
+          id: m.id,
+          tier: m.tier,
+          priced: true,
+          price_origin: "price_list",
+          price: listRow,
+        });
+        continue;
+      }
+      out.new_models.push({
+        provider,
+        id: m.id,
+        tier: m.tier,
+        priced: false,
+        price_origin: "none",
+        price: null,
+      });
+      out.unpriced.push({ provider, id: m.id, tier: m.tier });
+    }
+    for (const rung of ladder) {
+      const id = rung.models[provider];
+      if (id && !ids.has(id)) {
+        out.retired_models.push({ provider, id, tier: rung.tier, rung_affected: true });
+      }
+    }
+  }
+  return out;
+}
+
+export interface SwitchPair {
+  target: EvalTarget;
+  baseline: EvalObservation;
+  candidate: EvalObservation;
+}
+
+/** The switch_model rule (ADR 0019). Null when the candidate does not earn a recommendation. */
+export function recommendSwitch(
+  input: {
+    id: string;
+    provider: string;
+    rung: ModelTier;
+    from: string;
+    to: string;
+    pairs: SwitchPair[];
+  },
+  thresholds: WatchThresholds = DEFAULT_WATCH_THRESHOLDS,
+): SwitchModelRecommendation | null {
+  const usable = input.pairs.filter(
+    (p) =>
+      p.baseline.skipped_reason === null &&
+      p.candidate.skipped_reason === null &&
+      p.baseline.total >= thresholds.minEvalTasks &&
+      p.candidate.total >= thresholds.minEvalTasks,
+  );
+  if (usable.length === 0) return null;
+  const deltas = usable.map((p) => round2((p.candidate.pass_rate - p.baseline.pass_rate) * 100));
+  const minQuality = Math.min(...deltas);
+  const meanQuality = round2(deltas.reduce((s, d) => s + d, 0) / deltas.length);
+  const costBase = usable.reduce((s, p) => s + p.baseline.cost_usd_micro, 0);
+  const costCand = usable.reduce((s, p) => s + p.candidate.cost_usd_micro, 0);
+  const costDelta = pctDelta(costBase, costCand);
+  if (minQuality < -thresholds.qualityTolerancePoints) return null;
+  const cheaper = costDelta !== null && costDelta <= -thresholds.minCostSavingPct;
+  const better =
+    meanQuality >= thresholds.minQualityGainPoints &&
+    (costDelta === null || costDelta <= thresholds.maxCostIncreasePct);
+  if (!cheaper && !better) return null;
+  const evidence = usable.map(
+    (p) =>
+      `${p.target.specialist}: ${p.candidate.passed}/${p.candidate.total} passed at ${p.candidate.effort} vs ${p.baseline.passed}/${p.baseline.total} on ${p.baseline.model}; cost ${signed(pctDelta(p.baseline.cost_usd_micro, p.candidate.cost_usd_micro), "%")}`,
+  );
+  return {
+    id: input.id,
+    kind: "switch_model",
+    provider: input.provider,
+    rung: input.rung,
+    from: input.from,
+    to: input.to,
+    quality_delta_points: meanQuality,
+    min_quality_delta_points: minQuality,
+    cost_delta_pct: costDelta,
+    evidence,
+    text: `Switch rung ${input.rung} on ${input.provider} from ${input.from} to ${input.to}: quality ${signed(meanQuality, " points")}, cost ${signed(costDelta, "%")}`,
+  };
+}
+
+/** The lower_effort rule (ADR 0019): the lower effort must pass as well as the baseline and save cost. */
+export function recommendLowerEffort(
+  input: { id: string; target: EvalTarget; baseline: EvalObservation; lower: EvalObservation },
+  thresholds: WatchThresholds = DEFAULT_WATCH_THRESHOLDS,
+): LowerEffortRecommendation | null {
+  const { baseline, lower } = input;
+  if (baseline.skipped_reason !== null || lower.skipped_reason !== null) return null;
+  if (baseline.total < thresholds.minEvalTasks || lower.total < thresholds.minEvalTasks)
+    return null;
+  const passes =
+    lower.pass_rate * 100 >= baseline.pass_rate * 100 - thresholds.qualityTolerancePoints;
+  const costDelta = pctDelta(baseline.cost_usd_micro, lower.cost_usd_micro);
+  const saves = costDelta !== null && costDelta <= -thresholds.minEffortSavingPct;
+  if (!passes || !saves) return null;
+  return {
+    id: input.id,
+    kind: "lower_effort",
+    mode: input.target.mode,
+    specialist: input.target.specialist,
+    provider: lower.provider,
+    model: lower.model,
+    from: baseline.effort,
+    to: lower.effort,
+    pass_rate: lower.pass_rate,
+    baseline_pass_rate: baseline.pass_rate,
+    cost_delta_pct: costDelta,
+    evidence: [
+      `${input.target.specialist}: ${lower.passed}/${lower.total} passed at ${lower.effort} vs ${baseline.passed}/${baseline.total} at ${baseline.effort} on ${lower.model}`,
+    ],
+    text: `Lower effort for mode ${input.target.mode} from ${baseline.effort} to ${lower.effort}: passes ${Math.round(lower.pass_rate * 100)}% at ${signed(costDelta, "%")} cost`,
+  };
+}
+
+// ---------------------------------------------------------------------------------------
+// The watch
+// ---------------------------------------------------------------------------------------
+
+export interface ModelWatchDeps {
+  clock: Clock;
+  store: StateStore;
+  providers: ProviderRegistry;
+  priceList: PriceListSource;
+  evals: EvalRunnerPort;
+  approvals: ModelWatchApprovalPort;
+  settings: ModelSettingsStore;
+  /** Human who owns this install and decides on proposals. */
+  humanId: string;
+  agentId?: string | null;
+  /** Base pricing table; overrides from the settings store are merged on top. Default BUILTIN_PRICING. */
+  pricing?: PricingTable;
+  /** Built-in ladder and effort table; adopted settings are applied on top. Default: spec D. */
+  baseConfig?: EffectiveModelConfig;
+  evalTargets?: readonly EvalTarget[];
+  /** Provider whose rung models are the baseline and run the lower-effort probes. Default: first with ladder entries. */
+  evalProvider?: string;
+  /** Providers the watch ignores (e.g. "fake" in production). */
+  ignoreProviders?: readonly string[];
+  thresholds?: Partial<WatchThresholds>;
+}
+
+export interface ModelWatchRunResult {
+  report: ModelWatchReport;
+  release: ReleaseRow;
+  decision: ModelWatchHealth["decision"];
+  requestId: string | null;
+  /** Human-readable descriptions of what was changed (only after an adopt). */
+  applied: string[];
+}
+
+export interface ModelWatchResolveResult {
+  release: ReleaseRow;
+  decision: ModelWatchHealth["decision"];
+  applied: string[];
+}
+
+export class ModelWatch {
+  readonly thresholds: WatchThresholds;
+
+  constructor(private readonly deps: ModelWatchDeps) {
+    this.thresholds = { ...DEFAULT_WATCH_THRESHOLDS, ...(deps.thresholds ?? {}) };
+    for (const [k, v] of Object.entries(this.thresholds)) {
+      if (!Number.isFinite(v) || v < 0) {
+        throw new ForerunnerError("validation", `model watch threshold ${k} must be >= 0`, {
+          details: { threshold: k, value: String(v) },
+        });
+      }
+    }
+  }
+
+  /** The ladder and effort table in force: built-ins plus adopted settings. */
+  async effectiveConfig(): Promise<{ config: EffectiveModelConfig; settings: ModelSettings }> {
+    const settings = await this.deps.settings.readModelSettings();
+    const config = applyModelSettings(settings, this.deps.baseConfig ?? builtinModelConfig());
+    return { config, settings };
+  }
+
+  /** The pricing table in force: base plus the overrides file. */
+  async effectivePricing(): Promise<PricingTable> {
+    const overrides = await this.deps.settings.readPricingOverrides();
+    return mergePricing(this.deps.pricing ?? BUILTIN_PRICING, overrides);
+  }
+
+  /** One weekly run. Never throws for a provider or price list failure: those land in the report. */
+  async run(opts: { signal?: AbortSignal } = {}): Promise<ModelWatchRunResult> {
+    const { clock, store } = this.deps;
+    const id = newId(clock.now());
+    const skipped: string[] = [];
+    const { config } = await this.effectiveConfig();
+    const pricing = await this.effectivePricing();
+
+    // 1. Price list and provider listings.
+    let priceList: PriceList | null = null;
+    let priceListError: string | null = null;
+    try {
+      priceList = await this.deps.priceList.fetch(opts.signal);
+      await this.audit("model_watch.price_list", `source ${this.deps.priceList.name}`, {
+        result: `${Object.keys(priceList.models).length} model(s) as of ${priceList.as_of}`,
+      });
+    } catch (e) {
+      priceListError = errorMessage(e);
+      skipped.push(`price list: ${priceListError}`);
+      await this.audit("model_watch.price_list", `source ${this.deps.priceList.name}`, {
+        result: priceListError,
+        allowed: false,
+      });
+    }
+    const ignore = new Set(this.deps.ignoreProviders ?? []);
+    const providers: ModelWatchReport["providers"] = [];
+    const listed: Record<string, ModelRef[]> = {};
+    for (const name of this.deps.providers.names()) {
+      if (ignore.has(name)) continue;
+      try {
+        const models = await this.deps.providers.get(name).listModels();
+        listed[name] = models;
+        providers.push({
+          name,
+          listed: models.map((m) => ({ id: m.id, tier: m.tier })),
+          error: null,
+        });
+      } catch (e) {
+        providers.push({ name, listed: [], error: errorMessage(e) });
+        skipped.push(`provider ${name}: ${errorMessage(e)}`);
+      }
+    }
+
+    // 2. Diffs.
+    const modelDiff = diffModels(listed, config.ladder, pricing, priceList);
+    const priceDiff = priceList
+      ? diffPrices(pricing, priceList, this.thresholds)
+      : { repriced: [], proposal: {} };
+    const pricingProposal: Record<string, PricingProposalRow> = { ...priceDiff.proposal };
+    for (const m of modelDiff.new_models) {
+      if (m.price_origin === "price_list" && m.price) {
+        pricingProposal[canonicalModelId(m.id)] = {
+          input_per_mtok_usd: m.price.input_per_mtok_usd,
+          output_per_mtok_usd: m.price.output_per_mtok_usd,
+          cache_read_per_mtok_usd: m.price.cache_read_per_mtok_usd,
+          cache_write_per_mtok_usd: m.price.cache_write_per_mtok_usd,
+          as_of: m.price.as_of,
+          source: "list",
+          notes: `model watch: new model on ${m.provider}, price list as of ${m.price.as_of}`,
+        };
+      }
+    }
+
+    // 3. Evals under a hard budget. Candidates are costed with their proposed price rows.
+    const evalPricing = mergePricing(pricing, pricingProposal);
+    const evals: EvalObservation[] = [];
+    let evalSpent = 0;
+    const cache = new Map<string, EvalObservation>();
+    const observe = async (
+      base: Omit<
+        EvalObservation,
+        | "total"
+        | "passed"
+        | "failed"
+        | "needs_model"
+        | "pass_rate"
+        | "cost_usd_micro"
+        | "duration_ms"
+        | "skipped_reason"
+      >,
+    ): Promise<EvalObservation> => {
+      const key = `${base.specialist}|${base.provider}|${base.model}|${base.effort}`;
+      const hit = cache.get(key);
+      if (hit) return { ...hit, role: base.role, mode: base.mode, tier: base.tier };
+      let obs: EvalObservation;
+      try {
+        this.guardEvalBudget(evalSpent, `${base.specialist} on ${base.model} at ${base.effort}`);
+        const out = await this.deps.evals.run({
+          specialist: base.specialist,
+          provider: base.provider,
+          model: base.model,
+          effort: base.effort,
+          pricing: evalPricing,
+          signal: opts.signal,
+        });
+        evalSpent += Math.max(0, Math.round(out.costUsdMicro));
+        obs = {
+          ...base,
+          total: out.total,
+          passed: out.passed,
+          failed: out.failed,
+          needs_model: out.needsModel,
+          pass_rate: out.passRate,
+          cost_usd_micro: Math.max(0, Math.round(out.costUsdMicro)),
+          duration_ms: Math.max(0, Math.round(out.durationMs)),
+          skipped_reason: null,
+        };
+        await this.audit(
+          "model_watch.eval",
+          `${base.specialist} on ${base.provider}/${base.model} at ${base.effort} (${base.role})`,
+          {
+            result: `${out.passed}/${out.total} passed`,
+            cost: obs.cost_usd_micro,
+          },
+        );
+      } catch (e) {
+        const code = e instanceof ForerunnerError ? e.code : "internal";
+        const reason = `${code}: ${errorMessage(e)}`;
+        obs = {
+          ...base,
+          total: 0,
+          passed: 0,
+          failed: 0,
+          needs_model: 0,
+          pass_rate: 0,
+          cost_usd_micro: 0,
+          duration_ms: 0,
+          skipped_reason: reason,
+        };
+        skipped.push(`eval ${base.specialist} on ${base.model} at ${base.effort}: ${reason}`);
+      }
+      cache.set(key, obs);
+      evals.push(obs);
+      return obs;
+    };
+
+    const targets = this.deps.evalTargets ?? DEFAULT_EVAL_TARGETS;
+    const evalProvider =
+      this.deps.evalProvider ??
+      Object.keys(listed).find((p) => config.ladder.some((r) => r.models[p] !== undefined)) ??
+      null;
+    const rungModel = (tier: ModelTier, provider: string): string | null =>
+      config.ladder.find((r) => r.tier === tier)?.models[provider] ?? null;
+
+    const recommendations: Recommendation[] = [];
+    let seq = 0;
+    const nextId = (kind: string) => `${kind}-${++seq}`;
+
+    // 3a. Baselines and lower-effort probes per target.
+    const baselines = new Map<string, EvalObservation>();
+    if (evalProvider) {
+      for (const target of targets) {
+        const md = config.modeDefaults[target.mode];
+        const model = rungModel(md.tier, evalProvider);
+        if (!model) {
+          skipped.push(`target ${target.specialist}: no ${md.tier} model on ${evalProvider}`);
+          continue;
+        }
+        const baseline = await observe({
+          specialist: target.specialist,
+          mode: target.mode,
+          provider: evalProvider,
+          model,
+          tier: md.tier,
+          effort: md.effort,
+          role: "baseline",
+        });
+        baselines.set(`${target.specialist}|${md.tier}|${evalProvider}`, baseline);
+        const lowerEffort = effortBelow(md.effort);
+        if (!lowerEffort) continue;
+        const lower = await observe({
+          specialist: target.specialist,
+          mode: target.mode,
+          provider: evalProvider,
+          model,
+          tier: md.tier,
+          effort: lowerEffort,
+          role: "lower_effort",
+        });
+        const rec = recommendLowerEffort(
+          { id: nextId("lower-effort"), target, baseline, lower },
+          this.thresholds,
+        );
+        if (rec) recommendations.push(rec);
+      }
+    } else {
+      skipped.push("evals: no provider with ladder entries is registered");
+    }
+
+    // 3b. Candidates: every priced new model, on every target, against the same rung's model.
+    for (const cand of modelDiff.new_models) {
+      if (!cand.priced) continue;
+      const from = rungModel(cand.tier, cand.provider);
+      if (!from) {
+        skipped.push(`candidate ${cand.id}: no ${cand.tier} rung model on ${cand.provider}`);
+        continue;
+      }
+      const pairs: SwitchPair[] = [];
+      for (const target of targets) {
+        const md = config.modeDefaults[target.mode];
+        const bKey = `${target.specialist}|${cand.tier}|${cand.provider}`;
+        let baseline = baselines.get(bKey);
+        if (!baseline) {
+          baseline = await observe({
+            specialist: target.specialist,
+            mode: target.mode,
+            provider: cand.provider,
+            model: from,
+            tier: cand.tier,
+            effort: md.effort,
+            role: "baseline",
+          });
+          baselines.set(bKey, baseline);
+        }
+        const candidate = await observe({
+          specialist: target.specialist,
+          mode: target.mode,
+          provider: cand.provider,
+          model: cand.id,
+          tier: cand.tier,
+          effort: md.effort,
+          role: "candidate",
+        });
+        pairs.push({ target, baseline, candidate });
+      }
+      const rec = recommendSwitch(
+        {
+          id: nextId("switch"),
+          provider: cand.provider,
+          rung: cand.tier,
+          from,
+          to: cand.id,
+          pairs,
+        },
+        this.thresholds,
+      );
+      if (rec) recommendations.push(rec);
+    }
+
+    // 3c. Repricing is always proposed, never applied.
+    for (const r of priceDiff.repriced) {
+      recommendations.push({
+        id: nextId("reprice"),
+        kind: "reprice",
+        model: r.model,
+        changes: r.changes,
+        text: `Reprice ${r.model}: ${r.changes
+          .map((c) => `${c.field} ${c.before ?? "n/a"} -> ${c.after} (${signed(c.delta_pct, "%")})`)
+          .join(", ")}`,
+      });
+    }
+
+    // 4. Report, persistence, decision.
+    const report: ModelWatchReport = ModelWatchReportSchema.parse({
+      version: 1,
+      id,
+      generated_at: clock.nowIso(),
+      price_list: {
+        source: this.deps.priceList.name,
+        as_of: priceList?.as_of ?? null,
+        models: priceList ? Object.keys(priceList.models).length : 0,
+        error: priceListError,
+      },
+      providers,
+      diff: {
+        new_models: modelDiff.new_models,
+        retired_models: modelDiff.retired_models,
+        repriced: priceDiff.repriced,
+        unpriced: modelDiff.unpriced,
+      },
+      evals,
+      recommendations,
+      pricing_proposal: pricingProposal,
+      eval_cost_usd_micro: evalSpent,
+      eval_budget_usd_micro: this.thresholds.evalBudgetUsdMicro,
+      skipped,
+      summary: "",
+    });
+    report.summary = summarizeReport(report);
+
+    const needsDecision =
+      report.recommendations.length > 0 || Object.keys(report.pricing_proposal).length > 0;
+    let health: ModelWatchHealth = {
+      decision: needsDecision ? "pending" : "nothing_to_decide",
+      request_id: null,
+      decided_at: null,
+      by: null,
+      applied: [],
+      remind_at: null,
+    };
+    let release = await store.release.insert({
+      release_version: report.id,
+      channel: MODEL_WATCH_CHANNEL,
+      changelog: report.summary,
+      signature: "",
+      status: "draft",
+      artifacts: [report as unknown as JsonValue],
+      published_at: null,
+      health: health as unknown as JsonValue,
+      author_agent: this.deps.agentId ?? null,
+      author_human: null,
+    });
+    await this.audit("model_watch.report", `report ${report.id}`, {
+      result: report.summary,
+      cost: evalSpent,
+    });
+    release = await store.release.setStatus(
+      release.id,
+      release.version,
+      "published",
+      health as unknown as JsonValue,
+    );
+    if (!needsDecision) {
+      return { report, release, decision: health.decision, requestId: null, applied: [] };
+    }
+
+    const outcome = await this.deps.approvals.ask({
+      reportId: report.id,
+      humanId: this.deps.humanId,
+      summary: report.summary,
+      options: ["adopt", "ignore", "remind"],
+      recommendations: report.recommendations,
+      pricingProposal: report.pricing_proposal,
+      steps: proposalSteps(report),
+    });
+    await this.audit("model_watch.request", `report ${report.id}`, {
+      result:
+        outcome.status === "pending" ? `pending (${outcome.requestId ?? "no id"})` : "answered",
+    });
+    if (outcome.status === "pending") {
+      health = { ...health, request_id: outcome.requestId };
+      release = await store.release.patch(release.id, { health: health as unknown as JsonValue });
+      return { report, release, decision: "pending", requestId: outcome.requestId, applied: [] };
+    }
+    const resolved = await this.resolve(report.id, outcome.answer);
+    return {
+      report,
+      release: resolved.release,
+      decision: resolved.decision,
+      requestId: null,
+      applied: resolved.applied,
+    };
+  }
+
+  /**
+   * Apply a human's answer to a report. "adopt" writes the pricing overrides and the model
+   * settings; "ignore" and "remind" only record the decision. A report that was already
+   * adopted cannot be decided again.
+   */
+  async resolve(reportId: string, answer: ModelWatchAnswer): Promise<ModelWatchResolveResult> {
+    const { store, clock } = this.deps;
+    const release = await this.releaseFor(reportId);
+    const report = reportFromRelease(release);
+    const health = healthOf(release);
+    if (health.decision === "adopted") {
+      throw new ForerunnerError(
+        "validation",
+        `model watch report ${reportId} was already adopted`,
+        {
+          details: { reportId },
+        },
+      );
+    }
+    const now = clock.nowIso();
+    let next: ModelWatchHealth;
+    let applied: string[] = [];
+    if (answer.decision === "adopt") {
+      applied = await this.applyAdoption(report, answer);
+      next = {
+        ...health,
+        decision: "adopted",
+        decided_at: now,
+        by: answer.by ?? null,
+        applied,
+        remind_at: null,
+      };
+    } else if (answer.decision === "ignore") {
+      next = { ...health, decision: "ignored", decided_at: now, by: answer.by ?? null };
+    } else if (answer.decision === "remind") {
+      next = {
+        ...health,
+        decision: "remind",
+        decided_at: now,
+        by: answer.by ?? null,
+        remind_at: new Date(clock.now() + WEEK_MINUTES * 60_000).toISOString(),
+      };
+    } else {
+      throw new ForerunnerError(
+        "validation",
+        `unknown model watch decision "${String(answer.decision)}"`,
+      );
+    }
+    let updated: ReleaseRow;
+    if (answer.decision === "adopt") {
+      const current = await store.release.mustGet(release.id);
+      updated = await store.release.setStatus(
+        current.id,
+        current.version,
+        "installed",
+        next as unknown as JsonValue,
+      );
+    } else {
+      updated = await store.release.patch(release.id, { health: next as unknown as JsonValue });
+    }
+    await this.audit("model_watch.decision", `report ${reportId}: ${answer.decision}`, {
+      result: applied.length ? applied.join("; ") : answer.decision,
+      humanId: answer.by,
+    });
+    return { release: updated, decision: next.decision, applied };
+  }
+
+  /**
+   * Close the loop for reports whose HumanRequest was answered since the last check (the
+   * production approval port returns "pending"). Returns the number of reports resolved.
+   */
+  async syncPendingAnswers(): Promise<number> {
+    const { store } = this.deps;
+    const rows = await store.release.list(
+      { channel: MODEL_WATCH_CHANNEL, status: "published" },
+      { orderBy: "created_at desc", limit: 50 },
+    );
+    let resolved = 0;
+    for (const row of rows) {
+      const health = healthOf(row);
+      if (health.decision !== "pending" || !health.request_id) continue;
+      const req = await store.humanRequest.get(health.request_id);
+      if (req?.status !== "answered") continue;
+      const answer = answerFromHumanRequest(req);
+      if (!answer) {
+        logger.warn("unreadable model watch answer", { requestId: req.id });
+        continue;
+      }
+      await this.resolve(row.release_version, answer);
+      resolved += 1;
+    }
+    return resolved;
+  }
+
+  /** Reports newest first, as the updates screen shows them. */
+  async listReports(opts: { limit?: number } = {}): Promise<ModelWatchReportSummary[]> {
+    const rows = await this.deps.store.release.list(
+      { channel: MODEL_WATCH_CHANNEL },
+      { orderBy: "created_at desc", limit: opts.limit ?? 20 },
+    );
+    return rows.map(summaryFromRelease);
+  }
+
+  async getReport(
+    reportId: string,
+  ): Promise<{ report: ModelWatchReport; health: ModelWatchHealth; release: ReleaseRow }> {
+    const release = await this.releaseFor(reportId);
+    return { report: reportFromRelease(release), health: healthOf(release), release };
+  }
+
+  async latestReport(): Promise<{
+    report: ModelWatchReport;
+    health: ModelWatchHealth;
+    release: ReleaseRow;
+  } | null> {
+    const [row] = await this.deps.store.release.list(
+      { channel: MODEL_WATCH_CHANNEL },
+      { orderBy: "created_at desc", limit: 1 },
+    );
+    if (!row) return null;
+    return { report: reportFromRelease(row), health: healthOf(row), release: row };
+  }
+
+  // -- internals ------------------------------------------------------------------------
+
+  private guardEvalBudget(spent: number, what: string): void {
+    const cap = this.thresholds.evalBudgetUsdMicro;
+    if (spent >= cap) {
+      throw new ForerunnerError(
+        "budget_exceeded",
+        `model watch eval budget exhausted (${spent} of ${cap} micro-USD) before ${what}`,
+        { details: { spent, cap, what } },
+      );
+    }
+  }
+
+  /** The only code path that changes pricing, ladder or efforts. Refuses anything but a human's "adopt". */
+  private async applyAdoption(
+    report: ModelWatchReport,
+    answer: ModelWatchAnswer,
+  ): Promise<string[]> {
+    if (answer.decision !== "adopt" || !answer.by) {
+      throw new ForerunnerError(
+        "approval_required",
+        "model watch changes need a human's recorded 'adopt' answer",
+        { details: { reportId: report.id, decision: answer.decision } },
+      );
+    }
+    const wanted = answer.adopt ? new Set(answer.adopt) : null;
+    const chosen = report.recommendations.filter((r) => !wanted || wanted.has(r.id));
+    if (wanted) {
+      const known = new Set(report.recommendations.map((r) => r.id));
+      const unknown = [...wanted].filter((id) => !known.has(id));
+      if (unknown.length) {
+        throw new ForerunnerError(
+          "validation",
+          `unknown recommendation id(s): ${unknown.join(", ")}`,
+          {
+            details: { reportId: report.id, unknown },
+          },
+        );
+      }
+    }
+    const applied: string[] = [];
+    const { clock, settings } = this.deps;
+
+    // Pricing: repricings chosen, plus the price rows of adopted new models.
+    const pricingRows: PricingOverrides = {};
+    for (const rec of chosen) {
+      if (rec.kind === "reprice") {
+        const row = report.pricing_proposal[rec.model];
+        if (row) pricingRows[rec.model] = row;
+      } else if (rec.kind === "switch_model") {
+        const row = report.pricing_proposal[canonicalModelId(rec.to)];
+        if (row) pricingRows[canonicalModelId(rec.to)] = row;
+      }
+    }
+    if (!wanted) {
+      // "adopt everything" also takes price rows that have no recommendation of their own.
+      for (const [model, row] of Object.entries(report.pricing_proposal)) pricingRows[model] = row;
+    }
+    if (Object.keys(pricingRows).length > 0) {
+      const existing = await settings.readPricingOverrides();
+      const merged: PricingOverrides = { ...existing };
+      for (const [model, row] of Object.entries(pricingRows)) {
+        merged[model] = { ...(existing[model] ?? {}), ...row };
+      }
+      // Validate the result against the base table before anything is written.
+      mergePricing(this.deps.pricing ?? BUILTIN_PRICING, merged);
+      await settings.writePricingOverrides(merged);
+      const names = Object.keys(pricingRows).sort();
+      applied.push(`pricing overrides written for ${names.join(", ")}`);
+      await this.audit("model_watch.write_pricing", settings.describe().pricing, {
+        result: names.join(", "),
+        humanId: answer.by,
+      });
+    }
+
+    // Ladder and effort settings.
+    const switches = chosen.filter(
+      (r): r is SwitchModelRecommendation => r.kind === "switch_model",
+    );
+    const efforts = chosen.filter((r): r is LowerEffortRecommendation => r.kind === "lower_effort");
+    if (switches.length || efforts.length) {
+      const current = await settings.readModelSettings();
+      const next: ModelSettings = structuredClone(current);
+      const changes: string[] = [];
+      for (const s of switches) {
+        const rung = { ...(next.ladder[s.rung] ?? {}) };
+        rung[s.provider] = s.to;
+        next.ladder[s.rung] = rung;
+        changes.push(`ladder ${s.rung}/${s.provider}: ${s.from} -> ${s.to}`);
+      }
+      for (const e of efforts) {
+        next.efforts[e.mode] = e.to;
+        changes.push(`effort ${e.mode}: ${e.from} -> ${e.to}`);
+      }
+      next.updated_at = clock.nowIso();
+      next.history.push({
+        at: clock.nowIso(),
+        report_id: report.id,
+        by: answer.by,
+        changes,
+      });
+      await settings.writeModelSettings(next);
+      applied.push(...changes);
+      await this.audit("model_watch.write_settings", settings.describe().models, {
+        result: changes.join("; "),
+        humanId: answer.by,
+      });
+    }
+    return applied;
+  }
+
+  private async releaseFor(reportId: string): Promise<ReleaseRow> {
+    const [row] = await this.deps.store.release.list(
+      { channel: MODEL_WATCH_CHANNEL, release_version: reportId },
+      { limit: 1 },
+    );
+    if (!row) {
+      throw new ForerunnerError("not_found", `model watch report ${reportId} not found`, {
+        details: { reportId },
+      });
+    }
+    return row;
+  }
+
+  private async audit(
+    tool: string,
+    inputSummary: string,
+    opts: { result: string; cost?: number; allowed?: boolean; humanId?: string | undefined },
+  ): Promise<void> {
+    await this.deps.store.auditLog.append({
+      session_id: null,
+      run_id: null,
+      agent_id: this.deps.agentId ?? null,
+      human_id: opts.humanId ?? this.deps.humanId,
+      tool,
+      input_summary: inputSummary.slice(0, 500),
+      result_summary: opts.result.slice(0, 1000),
+      allowed: opts.allowed ?? true,
+      denied_reason: null,
+      cost_usd_micro: opts.cost ?? 0,
+      token_id: null,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// Release row <-> report
+// ---------------------------------------------------------------------------------------
+
+export function reportFromRelease(row: ReleaseRow): ModelWatchReport {
+  const raw = row.artifacts[0];
+  const parsed = ModelWatchReportSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ForerunnerError(
+      "validation",
+      `release ${row.id} does not carry a model watch report`,
+      {
+        details: { releaseId: row.id, issues: parsed.error.issues.map((i) => i.message) },
+      },
+    );
+  }
+  return parsed.data;
+}
+
+export function healthOf(row: ReleaseRow): ModelWatchHealth {
+  const h = (row.health ?? {}) as unknown as Partial<ModelWatchHealth>;
+  return {
+    decision: h.decision ?? "pending",
+    request_id: h.request_id ?? null,
+    decided_at: h.decided_at ?? null,
+    by: h.by ?? null,
+    applied: Array.isArray(h.applied) ? h.applied : [],
+    remind_at: h.remind_at ?? null,
+  };
+}
+
+export function summaryFromRelease(row: ReleaseRow): ModelWatchReportSummary {
+  const report = reportFromRelease(row);
+  const health = healthOf(row);
+  return ModelWatchReportSummarySchema.parse({
+    id: report.id,
+    generated_at: report.generated_at,
+    status: row.status,
+    decision: health.decision,
+    request_id: health.request_id,
+    decided_at: health.decided_at,
+    recommendations: report.recommendations.length,
+    new_models: report.diff.new_models.length,
+    retired_models: report.diff.retired_models.length,
+    repriced: report.diff.repriced.length,
+    summary: report.summary,
+  });
+}
+
+/** The lines a human reads in the inbox card. */
+export function proposalSteps(report: ModelWatchReport): string[] {
+  const steps: string[] = [];
+  for (const r of report.recommendations) steps.push(r.text);
+  const priced = Object.keys(report.pricing_proposal);
+  if (priced.length) steps.push(`pricing.json rows proposed for: ${priced.sort().join(", ")}`);
+  for (const u of report.diff.unpriced)
+    steps.push(
+      `${u.provider}/${u.id} (${u.tier}) has no known price: add one to pricing.json to test it`,
+    );
+  for (const r of report.diff.retired_models)
+    steps.push(`${r.provider}/${r.id} is no longer listed; rung ${r.tier} needs a replacement`);
+  return steps;
+}
+
+export function summarizeReport(report: ModelWatchReport): string {
+  const d = report.diff;
+  const parts = [
+    `Model watch ${report.generated_at.slice(0, 10)}: ${d.new_models.length} new, ${d.retired_models.length} retired, ${d.repriced.length} repriced, ${d.unpriced.length} unpriced model(s).`,
+    `${report.evals.filter((e) => e.skipped_reason === null).length} eval run(s) for USD ${(report.eval_cost_usd_micro / 1e6).toFixed(4)}.`,
+    report.recommendations.length
+      ? `${report.recommendations.length} recommendation(s): ${report.recommendations.map((r) => r.text).join(" | ")}`
+      : "No recommendation.",
+  ];
+  if (report.price_list.error) parts.push(`Price list unavailable: ${report.price_list.error}.`);
+  if (report.skipped.length) parts.push(`${report.skipped.length} item(s) skipped.`);
+  return parts.join(" ");
+}
+
+/** One-screen text rendering for the CLI and progress reports. */
+export function formatModelWatchReport(
+  report: ModelWatchReport,
+  health?: ModelWatchHealth,
+): string {
+  const lines = [report.summary];
+  if (health) lines.push(`Decision: ${health.decision}${health.by ? ` by ${health.by}` : ""}`);
+  for (const p of report.providers)
+    lines.push(
+      `  provider ${p.name}: ${p.error ? `error ${p.error}` : `${p.listed.length} model(s)`}`,
+    );
+  for (const m of report.diff.new_models)
+    lines.push(
+      `  new      ${m.provider}/${m.id} (${m.tier}) ${m.priced ? `priced from ${m.price_origin}` : "UNPRICED"}`,
+    );
+  for (const m of report.diff.retired_models)
+    lines.push(`  retired  ${m.provider}/${m.id} (${m.tier})`);
+  for (const r of report.diff.repriced)
+    lines.push(
+      `  repriced ${r.model}: ${r.changes.map((c) => `${c.field} ${c.before ?? "n/a"} -> ${c.after}`).join(", ")}`,
+    );
+  for (const e of report.evals)
+    lines.push(
+      `  eval     ${e.role.padEnd(12)} ${e.specialist} ${e.provider}/${e.model} @${e.effort}: ${e.skipped_reason ? `skipped (${e.skipped_reason})` : `${e.passed}/${e.total} passed, USD ${(e.cost_usd_micro / 1e6).toFixed(4)}`}`,
+    );
+  for (const r of report.recommendations) lines.push(`  => [${r.id}] ${r.text}`);
+  for (const s of report.skipped) lines.push(`  skipped: ${s}`);
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------------------
+// Production approval port: a HumanRequest in the inbox
+// ---------------------------------------------------------------------------------------
+
+export const MODEL_WATCH_REQUEST_PREFIX = "model_watch:";
+
+/** Parse a human's answer on a model watch HumanRequest; null when it is not readable. */
+export function answerFromHumanRequest(row: HumanRequestRow): ModelWatchAnswer | null {
+  const by = row.answered_by ?? undefined;
+  const raw = row.answer;
+  const decisionOf = (s: string): ModelWatchDecision | null => {
+    const t = s.trim().toLowerCase();
+    if (/^(adopt|yes|approve|approved|ok)\b/.test(t)) return "adopt";
+    if (/^(ignore|no|reject|dismiss)\b/.test(t)) return "ignore";
+    if (/^(remind|later|next week|snooze)\b/.test(t)) return "remind";
+    return null;
+  };
+  if (typeof raw === "string") {
+    const decision = decisionOf(raw);
+    return decision ? { decision, by } : null;
+  }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const o = raw as { decision?: unknown; choice?: unknown; answer?: unknown; adopt?: unknown };
+    const chosen = o.decision ?? o.choice ?? o.answer;
+    if (typeof chosen !== "string") return null;
+    const decision = decisionOf(chosen);
+    if (!decision) return null;
+    const adopt = Array.isArray(o.adopt)
+      ? o.adopt.filter((x): x is string => typeof x === "string")
+      : undefined;
+    return { decision, by, ...(adopt ? { adopt } : {}) };
+  }
+  return null;
+}
+
+/** Opens a non-blocking decision request; the answer arrives later through syncPendingAnswers(). */
+export class StateModelWatchApprovals implements ModelWatchApprovalPort {
+  constructor(
+    private readonly store: StateStore,
+    private readonly opts: { agentId?: string | null } = {},
+  ) {}
+
+  async ask(req: ModelWatchApprovalRequest): Promise<ModelWatchApprovalOutcome> {
+    const row = await this.store.humanRequest.insert({
+      human_id: req.humanId,
+      project_id: null,
+      task_id: null,
+      session_id: null,
+      kind: "decision",
+      why: req.summary,
+      steps: req.steps,
+      options: [...req.options],
+      blocking: false,
+      risk: "medium",
+      change_card: {
+        key: `${MODEL_WATCH_REQUEST_PREFIX}${req.reportId}`,
+        report_id: req.reportId,
+        recommendations: req.recommendations as unknown as JsonValue,
+        pricing_proposal: req.pricingProposal as unknown as JsonValue,
+      },
+      author_agent: this.opts.agentId ?? null,
+    });
+    return { status: "pending", requestId: row.id };
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// Scheduling
+// ---------------------------------------------------------------------------------------
+
+export interface ScheduleModelWatchOptions {
+  /** Pseudo agent id the scheduler keys the schedule on. Default MODEL_WATCH_AGENT_ID. */
+  agentId?: string;
+  timezone?: string;
+  /** Default: weekly. */
+  everyMinutes?: number;
+  enabled?: boolean;
+}
+
+/**
+ * Register the weekly trigger with the session Scheduler. The scheduler calls its `start`
+ * callback with a StartRequest for MODEL_WATCH_AGENT_ID; the orchestrator routes such requests
+ * (isModelWatchRequest) to ModelWatch.run() instead of starting a session.
+ */
+export function scheduleModelWatch(
+  scheduler: Scheduler,
+  opts: ScheduleModelWatchOptions = {},
+): Schedule {
+  const schedule: Schedule = {
+    id: MODEL_WATCH_SCHEDULE_ID,
+    agentId: opts.agentId ?? MODEL_WATCH_AGENT_ID,
+    kind: "every",
+    everyMinutes: opts.everyMinutes ?? WEEK_MINUTES,
+    timezone: opts.timezone ?? "UTC",
+    enabled: opts.enabled ?? true,
+  };
+  scheduler.add(schedule);
+  return schedule;
+}
+
+export function isModelWatchRequest(
+  req: StartRequest,
+  agentId: string = MODEL_WATCH_AGENT_ID,
+): boolean {
+  return req.agentId === agentId && req.trigger === "schedule";
+}

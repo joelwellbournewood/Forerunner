@@ -24,8 +24,9 @@ model download or an audio device, on Windows and Linux.
    Piper runs one process per sentence with `--output-raw`. The Node side is tested against
    node scripts that speak the same protocol, so the framing, lifetime and cancellation paths are
    covered on every machine; the real engines are an integration test gated on their presence.
-3. **Latency anchors.** `endOfTurnMs` = last speech to detection (VAD hangover, or PTT last chunk
-   to release); `finalTranscriptMs` = detection to STT final; `modelFirstTokenMs` = STT final to
+3. **Latency anchors.** `endOfTurnMs` = last speech to detection, measured on the clock in both
+   modes (open mic: arrival of the chunk holding the last loud frame to the VAD's `speech_end`,
+   so capture and delivery delays count; PTT: last chunk to release); `finalTranscriptMs` = detection to STT final; `modelFirstTokenMs` = STT final to
    first delta; `firstAudioMs` = first delta to first audio chunk (so waiting for the first full
    sentence counts against the budget); the total is the sum of the four. Unreached stages are
    `null` and never "within target".
@@ -34,6 +35,10 @@ model download or an audio device, on Windows and Linux.
    entry is marked `interrupted` with `text` = sentences whose playback started and
    `unspokenText` = the rest; the next capture opens immediately with a 300 ms pre-roll. The model
    stream is raced against the abort so a `converse()` that ignores its signal cannot hold the loop.
+   A failure anywhere in the turn (the model stream, a TTS call, playback) aborts the same signal,
+   so a paid model stream never runs on after its turn has failed; the turn ends (`error`, then
+   `turn_end`, then `idle`) only once every worker has finished. When nothing was heard, no
+   assistant entry is written and the generated text travels on `turn_end.unspokenText`.
 5. **Selection policy** in `VoiceProviderRegistry`: the Extensions choice if available, else the
    first available local provider, else the first cloud provider whose secret reference has a
    value, else the fake provider; the reason is returned for the panel.
@@ -41,8 +46,12 @@ model download or an audio device, on Windows and Linux.
    With `storeAudio: true` the loop writes one WAV per turn and side under
    `appDirs().data/voice/<session>/` next to a `RETENTION.md`; the user WAV is written in the
    background so disk IO never delays the model call.
-7. **Spoken approvals** are decided by `expectYes()` (affirmatives in seven languages; any
-   negation or stop word wins) and logged through `spokenApprovalRecord()` with the exact line.
+7. **Spoken approvals** are decided by `expectYes()` conservatively: affirmatives in seven
+   languages; any negation, hesitation or stop word wins; a question (question mark, interrogative
+   lead, "what/which/how much" anywhere) or a qualifier ("but", "aber", "mais", "pero") refuses;
+   words that also start instructions ("correct", "fine", "sure", "ok", "ja") count only in lines
+   of at most three words. A false "no" costs one repeated question; a false "yes" costs money.
+   Decisions are logged through `spokenApprovalRecord()` with the exact line and the reason.
 8. **Cloud keys** are secret references resolved at connect time and sent only in headers; a
    Cartesia `keyInQuery` opt-in exists because its documented WebSocket auth is a query parameter.
 

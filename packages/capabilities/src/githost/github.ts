@@ -1,14 +1,39 @@
 import { type Clock, ForerunnerError, systemClock } from "@forerunner/platform";
-import type {
-  CheckRunInfo,
-  CommentInfo,
-  FileContent,
-  GitHost,
-  IssueInfo,
-  PullRequestInfo,
-  ReleaseInfo,
-  RepoInfo,
-  RepoRef,
+import {
+  buildSetFieldsMutation,
+  DEFAULT_OPTION_COLOR,
+  type FieldWrite,
+  fieldKindOf,
+  GQL_ADD_DRAFT,
+  GQL_ARCHIVE_ITEM,
+  GQL_CREATE_FIELD,
+  GQL_CREATE_PROJECT,
+  GQL_FIELDS,
+  GQL_ITEMS,
+  GQL_OWNER_PROJECTS,
+  GQL_UNARCHIVE_ITEM,
+  GQL_UPDATE_DRAFT,
+  GQL_UPDATE_FIELD_OPTIONS,
+  graphqlUrlFor,
+} from "./github-graphql.ts";
+import {
+  type CheckRunInfo,
+  type CommentInfo,
+  type FileContent,
+  FORERUNNER_TASK_ID_FIELD,
+  type GitHost,
+  type IssueInfo,
+  type ProjectFieldInfo,
+  type ProjectFieldSpec,
+  type ProjectInfo,
+  type ProjectItemFields,
+  type ProjectItemInfo,
+  type ProjectItemInput,
+  type PullRequestInfo,
+  type ReleaseInfo,
+  type RepoInfo,
+  type RepoRef,
+  type UpsertItemResult,
 } from "./types.ts";
 
 /**
@@ -25,21 +50,48 @@ export interface GitHubOptions {
   userAgent?: string;
   /** Max seconds to wait for a rate-limit reset before giving up. Default 120. */
   maxRateLimitWaitSec?: number;
+  /** GraphQL endpoint (projects). Default: derived from baseUrl (`/graphql`, or `/api/graphql` on GHES). */
+  graphqlUrl?: string;
 }
 
 type Json = Record<string, unknown>;
 
+interface GraphqlError {
+  type?: string;
+  message?: string;
+  path?: (string | number)[];
+}
+
+/** What the host remembers about one mirrored item, keyed by Forerunner task id. */
+interface ItemRef {
+  itemId: string;
+  contentId: string | null;
+  kind: ProjectItemInfo["kind"];
+  title: string;
+  body: string;
+  archived: boolean;
+  fields: ProjectItemFields;
+}
+
 export class GitHubHost implements GitHost {
   readonly kind = "github" as const;
   readonly baseUrl: string;
+  readonly graphqlUrl: string;
   private readonly f: typeof fetch;
   private readonly clock: Clock;
   private readonly headers: Record<string, string>;
   private readonly maxWait: number;
+  /** projectId -> field name (lower case) -> field. */
+  private readonly fieldCache = new Map<string, Map<string, ProjectFieldInfo>>();
+  /** projectId -> Forerunner task id -> item. Filled by one listing, kept up to date by writes. */
+  private readonly itemIndex = new Map<string, Map<string, ItemRef>>();
+  /** projectId -> items without a Forerunner task id (issues humans added); never written to. */
+  private readonly unindexed = new Map<string, ItemRef[]>();
 
   constructor(opts: GitHubOptions) {
     if (!opts.token) throw new ForerunnerError("provider_auth", "GitHub adapter needs a token");
     this.baseUrl = (opts.baseUrl ?? "https://api.github.com").replace(/\/$/, "");
+    this.graphqlUrl = opts.graphqlUrl ?? graphqlUrlFor(this.baseUrl);
     this.f = opts.fetchImpl ?? fetch;
     this.clock = opts.clock ?? systemClock;
     this.maxWait = opts.maxRateLimitWaitSec ?? 120;
@@ -380,6 +432,405 @@ export class GitHubHost implements GitHost {
       resetAt: new Date(Number(core.reset ?? 0) * 1000).toISOString(),
     };
   }
+
+  // ---- GraphQL transport (projects) --------------------------------------------------------
+
+  /** How long a rate-limited response asks us to wait, or null when it is not a rate limit. */
+  private rateLimitWaitMs(res: Response): number | null {
+    const retryAfter = res.headers.get("retry-after");
+    if (retryAfter !== null && /^\d+$/.test(retryAfter.trim()))
+      return Number(retryAfter.trim()) * 1000;
+    if (res.headers.get("x-ratelimit-remaining") === "0") {
+      const reset = Number(res.headers.get("x-ratelimit-reset") ?? 0) * 1000;
+      return Math.max(0, reset - this.clock.now());
+    }
+    return null;
+  }
+
+  /**
+   * POST a GraphQL document. Rate limits (429, 403 with Retry-After or an exhausted
+   * X-RateLimit, and RATE_LIMITED errors in a 200 body) wait for the announced time
+   * (bounded by maxRateLimitWaitSec) and retry; 5xx retries with backoff; GraphQL errors map
+   * to ForerunnerError codes. The token is only ever a header: never part of an error.
+   */
+  async graphql<T extends Json>(query: string, variables: Record<string, unknown>): Promise<T> {
+    const opName = /^\s*(?:query|mutation)\s+([A-Za-z0-9_]+)/.exec(query)?.[1] ?? "anonymous";
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await this.f(this.graphqlUrl, {
+        method: "POST",
+        headers: { ...this.headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ query, variables, operationName: opName }),
+      });
+      if (res.status === 429 || res.status === 403) {
+        const waitMs = this.rateLimitWaitMs(res);
+        if (waitMs !== null) {
+          if (attempt < 2 && waitMs <= this.maxWait * 1000) {
+            await this.clock.sleep(waitMs + 50);
+            continue;
+          }
+          throw new ForerunnerError("provider_rate_limit", "GitHub GraphQL rate limit exceeded", {
+            retryable: true,
+            details: { operation: opName, retryAfterMs: waitMs },
+          });
+        }
+      }
+      if (res.status >= 500 && attempt < 2) {
+        await this.clock.sleep(250 * 2 ** attempt);
+        continue;
+      }
+      if (!res.ok) {
+        let message = `graphql ${opName} -> ${res.status}`;
+        try {
+          const j = (await res.json()) as { message?: string };
+          if (j.message) message += `: ${j.message}`;
+        } catch {
+          // no body
+        }
+        const code =
+          res.status === 401
+            ? "provider_auth"
+            : res.status === 403
+              ? "tool_not_allowed"
+              : res.status === 404
+                ? "not_found"
+                : "provider_error";
+        throw new ForerunnerError(code, message, {
+          details: { status: res.status, operation: opName },
+        });
+      }
+      const payload = (await res.json()) as { data?: T; errors?: GraphqlError[] };
+      const errors = payload.errors ?? [];
+      if (errors.length) {
+        const types = errors.map((e) => String(e.type ?? ""));
+        if (types.includes("RATE_LIMITED")) {
+          const waitMs = this.rateLimitWaitMs(res) ?? 60_000;
+          if (attempt < 2 && waitMs <= this.maxWait * 1000) {
+            await this.clock.sleep(waitMs + 50);
+            continue;
+          }
+          throw new ForerunnerError("provider_rate_limit", "GitHub GraphQL rate limit exceeded", {
+            retryable: true,
+            details: { operation: opName, retryAfterMs: waitMs },
+          });
+        }
+        const message = `graphql ${opName}: ${errors.map((e) => e.message ?? e.type ?? "error").join("; ")}`;
+        const code = types.includes("NOT_FOUND")
+          ? "not_found"
+          : types.includes("FORBIDDEN") || types.includes("INSUFFICIENT_SCOPES")
+            ? "tool_not_allowed"
+            : types.includes("UNPROCESSABLE")
+              ? "validation"
+              : "provider_error";
+        throw new ForerunnerError(code, message, { details: { operation: opName, types } });
+      }
+      if (!payload.data) {
+        throw new ForerunnerError("provider_error", `graphql ${opName}: empty response`, {
+          retryable: true,
+        });
+      }
+      return payload.data;
+    }
+    throw new ForerunnerError("provider_error", `GitHub GraphQL failed after retries: ${opName}`, {
+      retryable: true,
+    });
+  }
+
+  // ---- projects ------------------------------------------------------------------------------
+
+  async ensureProject(owner: string, title: string): Promise<ProjectInfo> {
+    const found = await this.graphql<{
+      repositoryOwner: { id: string; projectsV2?: { nodes: Json[] } } | null;
+    }>(GQL_OWNER_PROJECTS, { login: owner, query: title });
+    const ownerNode = found.repositoryOwner;
+    if (!ownerNode) throw new ForerunnerError("not_found", `GitHub owner ${owner} not found`);
+    const existing = (ownerNode.projectsV2?.nodes ?? [])
+      .map(toProject)
+      .find((p) => p.title === title && !p.closed);
+    if (existing) return existing;
+    const created = await this.graphql<{ createProjectV2: { projectV2: Json } }>(
+      GQL_CREATE_PROJECT,
+      { ownerId: ownerNode.id, title },
+    );
+    return toProject(created.createProjectV2.projectV2);
+  }
+
+  private async loadFields(projectId: string): Promise<Map<string, ProjectFieldInfo>> {
+    const r = await this.graphql<{ node: { fields?: { nodes: Json[] } } | null }>(GQL_FIELDS, {
+      projectId,
+    });
+    if (!r.node) throw new ForerunnerError("not_found", `GitHub project ${projectId} not found`);
+    const map = new Map<string, ProjectFieldInfo>();
+    for (const n of r.node.fields?.nodes ?? []) {
+      if (!n.id) continue;
+      map.set(String(n.name).toLowerCase(), {
+        id: String(n.id),
+        name: String(n.name),
+        kind: fieldKindOf(n.dataType),
+        options: ((n.options as Json[]) ?? []).map((o) => ({
+          id: String(o.id),
+          name: String(o.name),
+        })),
+      });
+    }
+    this.fieldCache.set(projectId, map);
+    return map;
+  }
+
+  private async fields(projectId: string): Promise<Map<string, ProjectFieldInfo>> {
+    return this.fieldCache.get(projectId) ?? this.loadFields(projectId);
+  }
+
+  async ensureFields(projectId: string, specs: ProjectFieldSpec[]): Promise<ProjectFieldInfo[]> {
+    let fields = await this.loadFields(projectId);
+    let changed = false;
+    for (const spec of specs) {
+      const current = fields.get(spec.name.toLowerCase());
+      const options = (spec.options ?? []).map((o) => ({
+        name: o.name,
+        color: o.color ?? DEFAULT_OPTION_COLOR,
+        description: o.description ?? "",
+      }));
+      if (!current) {
+        await this.graphql(GQL_CREATE_FIELD, {
+          projectId,
+          name: spec.name,
+          dataType: spec.kind === "single_select" ? "SINGLE_SELECT" : "TEXT",
+          options: spec.kind === "single_select" ? options : null,
+        });
+        changed = true;
+        continue;
+      }
+      if (spec.kind === "single_select") {
+        if (current.kind !== "single_select") {
+          throw new ForerunnerError(
+            "validation",
+            `project field "${current.name}" exists with type ${current.kind}, expected single_select`,
+          );
+        }
+        const have = new Set(current.options.map((o) => o.name.toLowerCase()));
+        const missing = options.filter((o) => !have.has(o.name.toLowerCase()));
+        if (missing.length) {
+          // Existing options keep their ids (and the items that use them); new ones are appended.
+          const merged = [
+            ...current.options.map((o) => {
+              const spec = options.find((s) => s.name.toLowerCase() === o.name.toLowerCase());
+              return {
+                name: o.name,
+                color: spec?.color ?? DEFAULT_OPTION_COLOR,
+                description: spec?.description ?? "",
+              };
+            }),
+            ...missing,
+          ];
+          await this.graphql(GQL_UPDATE_FIELD_OPTIONS, { fieldId: current.id, options: merged });
+          changed = true;
+        }
+      } else if (current.kind !== "text") {
+        throw new ForerunnerError(
+          "validation",
+          `project field "${current.name}" exists with type ${current.kind}, expected text`,
+        );
+      }
+    }
+    if (changed) fields = await this.loadFields(projectId);
+    return [...fields.values()];
+  }
+
+  private async loadItems(projectId: string): Promise<Map<string, ItemRef>> {
+    const index = new Map<string, ItemRef>();
+    const all: ItemRef[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < 1000; page++) {
+      const r: { node: { items?: { pageInfo: Json; nodes: Json[] } } | null } = await this.graphql(
+        GQL_ITEMS,
+        { projectId, after },
+      );
+      if (!r.node) throw new ForerunnerError("not_found", `GitHub project ${projectId} not found`);
+      for (const n of r.node.items?.nodes ?? []) all.push(toItemRef(n));
+      const info = r.node.items?.pageInfo ?? {};
+      if (!info.hasNextPage) break;
+      after = String(info.endCursor ?? "");
+      if (!after) break;
+    }
+    for (const ref of all) {
+      const tid = ref.fields[FORERUNNER_TASK_ID_FIELD];
+      if (tid) index.set(tid, ref);
+    }
+    this.itemIndex.set(projectId, index);
+    this.unindexed.set(
+      projectId,
+      all.filter((i) => !i.fields[FORERUNNER_TASK_ID_FIELD]),
+    );
+    return index;
+  }
+
+  private async items(projectId: string): Promise<Map<string, ItemRef>> {
+    return this.itemIndex.get(projectId) ?? this.loadItems(projectId);
+  }
+
+  async listProjectItems(projectId: string): Promise<ProjectItemInfo[]> {
+    const index = await this.loadItems(projectId);
+    return [...index.values(), ...(this.unindexed.get(projectId) ?? [])].map(toItemInfo);
+  }
+
+  async findItem(projectId: string, forerunnerTaskId: string): Promise<ProjectItemInfo | null> {
+    const ref = (await this.items(projectId)).get(forerunnerTaskId);
+    return ref ? toItemInfo(ref) : null;
+  }
+
+  async upsertItem(projectId: string, input: ProjectItemInput): Promise<UpsertItemResult> {
+    const index = await this.items(projectId);
+    const body = input.body ?? "";
+    let ref = index.get(input.forerunnerTaskId);
+    let created = false;
+    let fields: ProjectItemFields = { ...(input.fields ?? {}) };
+    if (!ref) {
+      const r = await this.graphql<{
+        addProjectV2DraftIssue: { projectItem: { id: string; content?: { id?: string } | null } };
+      }>(GQL_ADD_DRAFT, { projectId, title: input.title, body });
+      ref = {
+        itemId: r.addProjectV2DraftIssue.projectItem.id,
+        contentId: r.addProjectV2DraftIssue.projectItem.content?.id ?? null,
+        kind: "draft",
+        title: input.title,
+        body,
+        archived: false,
+        fields: {},
+      };
+      index.set(input.forerunnerTaskId, ref);
+      created = true;
+      fields = { [FORERUNNER_TASK_ID_FIELD]: input.forerunnerTaskId, ...fields };
+    } else {
+      if (ref.archived) {
+        await this.graphql(GQL_UNARCHIVE_ITEM, { projectId, itemId: ref.itemId });
+        ref.archived = false;
+      }
+      if (
+        ref.kind === "draft" &&
+        ref.contentId &&
+        (ref.title !== input.title || ref.body !== body)
+      ) {
+        await this.graphql(GQL_UPDATE_DRAFT, {
+          draftIssueId: ref.contentId,
+          title: input.title,
+          body,
+        });
+        ref.title = input.title;
+        ref.body = body;
+      }
+      // Only send values that differ from what the host holds (cheap repeated runs).
+      for (const [k, v] of Object.entries(fields)) {
+        if ((ref.fields[k] ?? null) === (v ?? null)) delete fields[k];
+      }
+    }
+    if (Object.keys(fields).length) await this.setItemFields(projectId, ref.itemId, fields);
+    return { item: toItemInfo(ref), created };
+  }
+
+  async setItemFields(projectId: string, itemId: string, values: ProjectItemFields): Promise<void> {
+    const fields = await this.fields(projectId);
+    const writes: FieldWrite[] = [];
+    for (const [name, value] of Object.entries(values)) {
+      const field = fields.get(name.toLowerCase());
+      if (!field) {
+        throw new ForerunnerError("validation", `project field "${name}" does not exist`, {
+          details: { projectId, field: name },
+        });
+      }
+      if (value === null) {
+        writes.push({ fieldId: field.id, value: null });
+      } else if (field.kind === "single_select") {
+        const option = field.options.find((o) => o.name.toLowerCase() === value.toLowerCase());
+        if (!option) {
+          throw new ForerunnerError(
+            "validation",
+            `project field "${field.name}" has no option "${value}"`,
+            { details: { projectId, field: field.name, value } },
+          );
+        }
+        writes.push({ fieldId: field.id, value: { singleSelectOptionId: option.id } });
+      } else if (field.kind === "text") {
+        writes.push({ fieldId: field.id, value: { text: value } });
+      } else {
+        throw new ForerunnerError(
+          "validation",
+          `project field "${field.name}" is ${field.kind}; the mirror writes text and single-select fields only`,
+        );
+      }
+    }
+    if (!writes.length) return;
+    const m = buildSetFieldsMutation(writes);
+    await this.graphql(m.query, { ...m.variables, projectId, itemId });
+    const ref = [...(this.itemIndex.get(projectId) ?? new Map<string, ItemRef>()).values()].find(
+      (i) => i.itemId === itemId,
+    );
+    if (ref) {
+      for (const [k, v] of Object.entries(values)) {
+        const canonical = fields.get(k.toLowerCase())?.name ?? k;
+        if (v === null) delete ref.fields[canonical];
+        else ref.fields[canonical] = v;
+      }
+    }
+  }
+
+  async archiveItem(projectId: string, itemId: string): Promise<void> {
+    await this.graphql(GQL_ARCHIVE_ITEM, { projectId, itemId });
+    const ref = [...(this.itemIndex.get(projectId) ?? new Map<string, ItemRef>()).values()].find(
+      (i) => i.itemId === itemId,
+    );
+    if (ref) ref.archived = true;
+  }
+}
+
+function toProject(r: Json): ProjectInfo {
+  return {
+    id: String(r.id),
+    number: Number(r.number ?? 0),
+    title: String(r.title ?? ""),
+    url: String(r.url ?? ""),
+    closed: Boolean(r.closed),
+  };
+}
+
+function toItemRef(n: Json): ItemRef {
+  const content = (n.content as Json | null) ?? null;
+  const typename = String(content?.__typename ?? "");
+  const kind: ProjectItemInfo["kind"] =
+    typename === "DraftIssue"
+      ? "draft"
+      : typename === "Issue"
+        ? "issue"
+        : typename === "PullRequest"
+          ? "pull_request"
+          : "other";
+  const fields: ProjectItemFields = {};
+  for (const fv of ((n.fieldValues as Json)?.nodes as Json[]) ?? []) {
+    const name = (fv.field as Json)?.name;
+    if (!name) continue;
+    if (typeof fv.text === "string") fields[String(name)] = fv.text;
+    else if (typeof fv.name === "string") fields[String(name)] = fv.name;
+  }
+  return {
+    itemId: String(n.id),
+    contentId: content?.id ? String(content.id) : null,
+    kind,
+    title: String(content?.title ?? ""),
+    body: String(content?.body ?? ""),
+    archived: Boolean(n.isArchived),
+    fields,
+  };
+}
+
+function toItemInfo(ref: ItemRef): ProjectItemInfo {
+  return {
+    id: ref.itemId,
+    forerunnerTaskId: ref.fields[FORERUNNER_TASK_ID_FIELD] ?? null,
+    title: ref.title,
+    body: ref.body,
+    archived: ref.archived,
+    fields: { ...ref.fields },
+    kind: ref.kind,
+  };
 }
 
 function toRepo(r: Json): RepoInfo {

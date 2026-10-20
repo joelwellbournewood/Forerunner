@@ -15,6 +15,11 @@ const MODULE_DOCS = [
     [
       "docs/maintainers/runtime.md",
       "docs/maintainers/sandbox.md",
+      "docs/maintainers/extensions.md",
+      "docs/maintainers/updates.md",
+      "docs/maintainers/notifications.md",
+      "docs/maintainers/model-watch.md",
+      "docs/maintainers/data.md",
       "docs/maintainers/adding-a-provider.md",
       "docs/maintainers/adding-a-specialist.md",
     ],
@@ -32,6 +37,10 @@ const MODULE_DOCS = [
       "docs/maintainers/adding-a-connector.md",
       "docs/maintainers/security.md",
       "docs/maintainers/capabilities.md",
+      "docs/maintainers/email.md",
+      "docs/maintainers/browser.md",
+      "docs/maintainers/desktop-control.md",
+      "docs/maintainers/cloudflare.md",
     ],
   ],
   [

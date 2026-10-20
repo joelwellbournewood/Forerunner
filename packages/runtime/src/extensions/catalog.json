@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "browser",
+      "kind": "capability",
+      "name": "browser",
+      "description": "Sandboxed browser (Playwright, isolated profile per agent). Site allowlist per project; purchases and credential entry always need approval.",
+      "version": "1.0.0",
+      "module": "@forerunner/capabilities/browser",
+      "permissions": {
+        "tools": [
+          "browser.open",
+          "browser.read",
+          "browser.click",
+          "browser.type",
+          "browser.screenshot"
+        ],
+        "actionClasses": ["read", "routine_reversible", "external_send"],
+        "domains": [],
+        "paths": [],
+        "secrets": [],
+        "scopes": ["browse allowlisted sites in an isolated profile", "screenshots are logged"]
+      },
+      "tags": ["web"]
+    },
+    {
+      "id": "email",
+      "kind": "capability",
+      "name": "email",
+      "description": "The agent's own mailbox (never the human's). Mode per agent: off, read only, draft only, allowlist, full discretion; daily and per-recipient caps always on.",
+      "version": "1.0.0",
+      "module": "@forerunner/capabilities/email",
+      "permissions": {
+        "tools": ["email.read", "email.draft", "email.send"],
+        "actionClasses": ["read", "routine_reversible", "external_send"],
+        "domains": [],
+        "paths": [],
+        "secrets": ["agent_mailbox_password"],
+        "scopes": ["read the agent mailbox", "send within the mode and caps set in Settings"]
+      },
+      "tags": ["mail"]
+    },
+    {
+      "id": "desktop-control",
+      "kind": "capability",
+      "name": "desktop-control",
+      "description": "Desktop control: off by default, needs autonomy 3+, per-app allowlist, visible on-screen indicator while active, screenshots logged.",
+      "version": "1.0.0",
+      "module": "@forerunner/capabilities/desktop",
+      "requiresAutonomy": 3,
+      "permissions": {
+        "tools": ["desktop.screenshot", "desktop.click", "desktop.type", "desktop.open_app"],
+        "actionClasses": ["read", "non_routine"],
+        "domains": [],
+        "paths": [],
+        "secrets": [],
+        "scopes": ["control allowlisted applications on this machine"]
+      },
+      "tags": ["desktop"]
+    },
+    {
+      "id": "cloudflare",
+      "kind": "capability",
+      "name": "cloudflare",
+      "description": "Cloudflare deploys (Workers, Pages, DNS) with a token scoped to named zones and Workers.",
+      "version": "1.0.0",
+      "module": "@forerunner/capabilities/cloudflare",
+      "permissions": {
+        "tools": ["cloudflare.deploy", "cloudflare.list_zones", "cloudflare.purge_cache"],
+        "actionClasses": ["read", "deploy_staging", "deploy_production"],
+        "domains": ["api.cloudflare.com"],
+        "paths": [],
+        "secrets": ["cloudflare_api_token"],
+        "scopes": ["deploy to the zones and Workers the token is scoped to"]
+      },
+      "tags": ["deploy"]
+    },
+    {
+      "id": "voice-local",
+      "kind": "capability",
+      "name": "voice-local",
+      "description": "Local voice: faster-whisper for STT, Kokoro or Piper for TTS. Free and private; runs on this machine.",
+      "version": "1.0.0",
+      "module": "@forerunner/voice/local",
+      "permissions": {
+        "tools": [],
+        "actionClasses": ["read"],
+        "domains": [],
+        "paths": [],
+        "secrets": [],
+        "scopes": ["microphone and speaker on this machine"]
+      },
+      "tags": ["voice"]
+    },
+    {
+      "id": "voice-deepgram",
+      "kind": "capability",
+      "name": "voice-deepgram",
+      "description": "Cloud STT through Deepgram for the lowest latency.",
+      "version": "1.0.0",
+      "module": "@forerunner/voice/deepgram",
+      "permissions": {
+        "tools": [],
+        "actionClasses": ["read"],
+        "domains": ["api.deepgram.com"],
+        "paths": [],
+        "secrets": ["deepgram_api_key"],
+        "scopes": ["send voice audio to Deepgram for transcription"]
+      },
+      "tags": ["voice"]
+    },
+    {
+      "id": "voice-cartesia",
+      "kind": "capability",
+      "name": "voice-cartesia",
+      "description": "Cloud TTS through Cartesia.",
+      "version": "1.0.0",
+      "module": "@forerunner/voice/cartesia",
+      "permissions": {
+        "tools": [],
+        "actionClasses": ["read"],
+        "domains": ["api.cartesia.ai"],
+        "paths": [],
+        "secrets": ["cartesia_api_key"],
+        "scopes": ["send summary text to Cartesia for speech"]
+      },
+      "tags": ["voice"]
+    },
+    {
+      "id": "voice-elevenlabs",
+      "kind": "capability",
+      "name": "voice-elevenlabs",
+      "description": "Cloud TTS through ElevenLabs.",
+      "version": "1.0.0",
+      "module": "@forerunner/voice/elevenlabs",
+      "permissions": {
+        "tools": [],
+        "actionClasses": ["read"],
+        "domains": ["api.elevenlabs.io"],
+        "paths": [],
+        "secrets": ["elevenlabs_api_key"],
+        "scopes": ["send summary text to ElevenLabs for speech"]
+      },
+      "tags": ["voice"]
+    },
+    {
+      "id": "anthropic",
+      "kind": "model_provider",
+      "name": "anthropic",
+      "description": "Anthropic Messages API (API key) or a Claude subscription token.",
+      "version": "1.0.0",
+      "module": "@forerunner/runtime/provider/anthropic",
+      "permissions": {
+        "tools": [],
+        "actionClasses": [],
+        "domains": ["api.anthropic.com"],
+        "paths": [],
+        "secrets": ["anthropic_api_key"],
+        "scopes": ["model calls billed to the selected billing source"]
+      },
+      "tags": ["model"]
+    },
+    {
+      "id": "mcp-filesystem",
+      "kind": "connector",
+      "name": "filesystem",
+      "description": "Reference MCP filesystem server. Add the directories it may see as arguments; the runtime still checks every path against the run token.",
+      "version": "latest",
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+        "env": {}
+      },
+      "permissions": {
+        "tools": [],
+        "actionClasses": [],
+        "domains": [],
+        "paths": [],
+        "secrets": [],
+        "scopes": []
+      },
+      "tags": ["files"]
+    },
+    {
+      "id": "mcp-fetch",
+      "kind": "connector",
+      "name": "fetch",
+      "description": "Reference MCP fetch server: reads web pages as markdown. Domains are limited by the run token's allowlist.",
+      "version": "latest",
+      "homepage": "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch",
+      "transport": {
+        "type": "stdio",
+        "command": "uvx",
+        "args": ["mcp-server-fetch"],
+        "env": {}
+      },
+      "permissions": {
+        "tools": [],
+        "actionClasses": [],
+        "domains": [],
+        "paths": [],
+        "secrets": [],
+        "scopes": []
+      },
+      "tags": ["web"]
+    },
+    {
+      "id": "mcp-github",
+      "kind": "connector",
+      "name": "github",
+      "description": "GitHub MCP server over a fine-grained token stored in the vault as github_pat (scoped to the repositories you select).",
+      "version": "latest",
+      "homepage": "https://github.com/github/github-mcp-server",
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "secret:github_pat" }
+      },
+      "permissions": {
+        "tools": [],
+        "actionClasses": [],
+        "domains": ["api.github.com"],
+        "paths": [],
+        "secrets": ["github_pat"],
+        "scopes": ["the token's repository scopes"]
+      },
+      "tags": ["git"]
+    }
+  ]
+}

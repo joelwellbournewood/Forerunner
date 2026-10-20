@@ -81,6 +81,81 @@ export interface FileContent {
   encoding: "utf8";
 }
 
+/**
+ * Projects (GitHub Projects V2, the one-way task mirror target). A project belongs to a user
+ * or organisation, has typed fields and holds items. Items the mirror creates are draft
+ * issues tagged with the Forerunner task id in a text field so every write is idempotent.
+ */
+export const FORERUNNER_TASK_ID_FIELD = "forerunner_task_id";
+
+export interface ProjectInfo {
+  /** Host node id (GraphQL id on GitHub). */
+  id: string;
+  number: number;
+  title: string;
+  url: string;
+  closed: boolean;
+}
+
+export type ProjectFieldKind = "text" | "single_select" | "number" | "date" | "iteration" | "other";
+
+export type ProjectOptionColor =
+  | "GRAY"
+  | "BLUE"
+  | "GREEN"
+  | "YELLOW"
+  | "ORANGE"
+  | "RED"
+  | "PINK"
+  | "PURPLE";
+
+export interface ProjectFieldOption {
+  name: string;
+  color?: ProjectOptionColor;
+  description?: string;
+}
+
+/** What a field must look like; `ensureFields` creates it or adds missing options. */
+export interface ProjectFieldSpec {
+  name: string;
+  kind: "text" | "single_select";
+  /** Single-select options in display order. Existing options are kept, missing ones added. */
+  options?: ProjectFieldOption[];
+}
+
+export interface ProjectFieldInfo {
+  id: string;
+  name: string;
+  kind: ProjectFieldKind;
+  options: { id: string; name: string }[];
+}
+
+/** Field values by field name; a single-select value is the option name; null clears. */
+export type ProjectItemFields = Record<string, string | null>;
+
+export interface ProjectItemInput {
+  forerunnerTaskId: string;
+  title: string;
+  body?: string;
+  fields?: ProjectItemFields;
+}
+
+export interface ProjectItemInfo {
+  id: string;
+  forerunnerTaskId: string | null;
+  title: string;
+  body: string;
+  archived: boolean;
+  fields: ProjectItemFields;
+  /** Item type on the host: a draft the mirror owns, or an issue / PR a human added. */
+  kind: "draft" | "issue" | "pull_request" | "other";
+}
+
+export interface UpsertItemResult {
+  item: ProjectItemInfo;
+  created: boolean;
+}
+
 export interface GitHost {
   readonly kind: "github" | "gitlab" | "git";
   readonly baseUrl: string;
@@ -148,4 +223,21 @@ export interface GitHost {
   ): Promise<{ name: string; downloadUrl: string }>;
   getLatestRelease(repo: RepoRef): Promise<ReleaseInfo | null>;
   rateLimit(): Promise<{ limit: number; remaining: number; resetAt: string }>;
+  // ---- projects (one-way task mirror) ---------------------------------------------------------
+  /** Find the open project with this exact title under `owner` (user or org) or create it. */
+  ensureProject(owner: string, title: string): Promise<ProjectInfo>;
+  /** Create missing fields and missing single-select options; returns every field of the project. */
+  ensureFields(projectId: string, fields: ProjectFieldSpec[]): Promise<ProjectFieldInfo[]>;
+  /** Every item of the project, archived ones included. */
+  listProjectItems(projectId: string): Promise<ProjectItemInfo[]>;
+  /** The item carrying this Forerunner task id, or null. */
+  findItem(projectId: string, forerunnerTaskId: string): Promise<ProjectItemInfo | null>;
+  /**
+   * Create or update the item for `forerunnerTaskId` (idempotent): a new draft issue gets the
+   * id field set; an existing one gets its title, body and fields updated and is unarchived.
+   */
+  upsertItem(projectId: string, item: ProjectItemInput): Promise<UpsertItemResult>;
+  /** Set field values by name (single-select by option name; null clears). Unknown names throw `validation`. */
+  setItemFields(projectId: string, itemId: string, fields: ProjectItemFields): Promise<void>;
+  archiveItem(projectId: string, itemId: string): Promise<void>;
 }

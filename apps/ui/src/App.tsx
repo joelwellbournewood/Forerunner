@@ -1,21 +1,34 @@
-import { BrowserRouter, Route, Routes } from "react-router";
-import { HomePage } from "./pages/HomePage.tsx";
-import { Shell } from "./shell/Shell.tsx";
+import { useMemo } from "react";
+import { BrowserRouter } from "react-router";
+import { createClient, type DaemonClient } from "./api/client.ts";
+import { daemonConfigFromGlobals } from "./api/config.ts";
+import { browserStorage } from "./lib/storage.ts";
+import { AppRoutes } from "./routes.tsx";
+import { AppProvider } from "./store/context.tsx";
+import { createStore, type UiStore } from "./store/store.ts";
+
+export interface AppProps {
+  /** Injected by tests; the app builds them from the globals otherwise. */
+  client?: DaemonClient;
+  store?: UiStore;
+}
 
 /**
- * One UI for desktop and Android. Routes mirror the spec's Interface module (K): home,
- * project pages, live session, inbox, memory, extensions, settings. Pages are filled in by
- * their milestones; the shell (header with the active project, navigation, kill switch) is
- * always present.
+ * One UI for desktop and Android. The daemon client and the store are created once per page
+ * load from `window.__FORERUNNER__` (Tauri shells) or the Vite env (dev server, Playwright).
  */
-export function App() {
+export function App(props: AppProps = {}) {
+  const { client, store } = useMemo(() => {
+    const config = props.client?.config ?? daemonConfigFromGlobals();
+    const c = props.client ?? createClient(config);
+    const s = props.store ?? createStore(config, browserStorage());
+    return { client: c, store: s };
+  }, [props.client, props.store]);
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route element={<Shell />}>
-          <Route index element={<HomePage />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <AppProvider client={client} store={store}>
+      <BrowserRouter>
+        <AppRoutes />
+      </BrowserRouter>
+    </AppProvider>
   );
 }
