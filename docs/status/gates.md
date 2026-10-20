@@ -24,7 +24,14 @@ missing item, see BLOCKERS.md), **failed** (with the failing evidence and the fi
 | Same session once on subscription and once on API key with correct usage | blocked | needs tokens | | | |
 | Text chat first token under 1 s median | **partial**: measured under simulated latency (250 ms) in the gate test; live median blocked until an API key exists | gate test "text chat answers with a measured first token" | 2026-10-20 | ttft recorded per turn by `ConversationAgent`; live run pending | pending |
 
-## Phases 2–7
+## Phase 2 — Two agents, one project
+
+| Check | Status | Command | Date | Result | CI |
+| --- | --- | --- | --- | --- | --- |
+| Alice and Bob each run 5 sessions on the same project, overlapping and not: zero duplicate tasks, zero lost commits, every ack-required message acknowledged | **passed** (local shared store, fake provider, local bare repository) | `pnpm vitest run --project integration packages/capabilities/test/phase2-gate.integration.test.ts` | 2026-10-20 | 10 sessions (rounds 1, 3, 5 concurrent); 14 tasks executed once each, one run and one PR per task, claim collisions reported to the holder; every PR branch present in the shared repository with its task commit and main untouched; every handoff delivered, read and acted on by the recipient's next session (only the final round's two handoffs open) | CI integration step on the next green run |
+| Either install can be offline for 48 simulated hours without breaking the other | pending | needs two stores joined by the shared state service (`services/state-api`, in progress) | | | |
+
+## Phases 3–7
 
 Filled in as each phase is reached.
 

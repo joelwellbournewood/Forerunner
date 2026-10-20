@@ -101,6 +101,15 @@ one active session per agent; quiet hours defer non-manual triggers). `state-por
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
 approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call.
 
+### Message receipts (spec F)
+
+Every message carries delivered, read and acted-on timestamps. The runner marks what the brief
+shows as delivered and read at session start and between tasks. An ack-required handoff,
+warning, decision or info message is acted on by being read into the plan; an ack-required
+question or request is acted on only when this agent has replied to it (`reply_to`), checked
+at session end. Messages this agent sent that nobody acted on resurface at its next session
+as an `inbox.unacknowledged` event and as a count in the brief.
+
 ### Peer awareness (`src/session/peers.ts`)
 
 At startup and again before every task the runner builds a peer feed from the store: for each
@@ -197,7 +206,7 @@ the human; it is never acted on.
 
 `packages/runtime/test/*.test.ts` (unit, fake provider, no network): tokens, autonomy, kill
 switch timing, budget rules, context transforms (golden cases, idempotence, FATAL-at-line-67,
-stable-prefix lint, bypass), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE), hooks (overspend, steps, wall clock, kill, allowlist, schema,
+stable-prefix lint, bypass), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, receipts (acked by reading, acked by reply, resurfacing), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE), hooks (overspend, steps, wall clock, kill, allowlist, schema,
 paths, domains, secrets, autonomy, injection), ladder, brief, loop driver (completion, overspend
 blocked, step cap, kill mid-run, timeout with partial output, inline denials, needs-human pause,
 injection flagged).

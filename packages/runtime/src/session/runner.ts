@@ -32,6 +32,9 @@ export type SessionTriggerKind =
   | "budget_reset"
   | "remote";
 
+/** Message types that are acted on by reading them into the plan; the rest need a reply. */
+const ACK_BY_READING: ReadonlySet<string> = new Set(["handoff", "info", "warning", "decision"]);
+
 export interface PlanItem {
   taskId: string;
   title: string;
@@ -307,10 +310,29 @@ export class SessionRunner {
         })),
       });
 
-      // Mark inbox as read/delivered now that the agent has seen it.
+      // Receipts (spec F): seen messages are delivered and read; ack-required messages that carry
+      // information (handoffs, warnings, decisions, info) are acted on by taking them into the
+      // plan. Questions and requests count as acted on only once a reply exists (checked at the
+      // end of the session). Messages this agent sent that nobody acted on resurface here.
       for (const m of brief.inbox.unread) {
         await store.message.markDelivered(m.id);
         await store.message.markRead(m.id);
+        if (m.requiresAck && ACK_BY_READING.has(m.type)) {
+          await store.message.markActed(m.id);
+          await emit("inbox.acted", { id: m.id, type: m.type });
+        }
+      }
+      const unacked = await store.message.unacknowledged(agent.id, { limit: 50 });
+      if (unacked.length) {
+        await emit("inbox.unacknowledged", {
+          count: unacked.length,
+          messages: unacked.slice(0, 20).map((m) => ({
+            id: m.id,
+            to: m.to_agent_id ?? m.to_human_id,
+            type: m.type,
+            createdAt: m.created_at,
+          })),
+        });
       }
 
       // 2. Plan within budget. Plans over budget are cut before starting.
@@ -589,6 +611,7 @@ export class SessionRunner {
     }
 
     // 4. Session end: summary, project summary cache, handoff to peers, notify human.
+    await this.ackAnswered(agent.id, emit);
     const spent = (await store.costLedger.sum({ sessionId: session.id })).usd_micro;
     const summary = summarize({
       completed,
@@ -714,8 +737,28 @@ export class SessionRunner {
       await this.deps.store.message.markRead(m.id);
       if (/^\s*(stop|halt|pause)\b/i.test(m.body) && m.type !== "handoff") stop = true;
       await emit("inbox.message", { id: m.id, type: m.type, from: m.from_agent_id, sessionId });
+      if (m.requires_ack && ACK_BY_READING.has(m.type)) {
+        await this.deps.store.message.markActed(m.id);
+        await emit("inbox.acted", { id: m.id, type: m.type });
+      }
     }
     return stop ? "stop" : "continue";
+  }
+
+  /** Questions and requests are acted on once this agent replied to them. */
+  private async ackAnswered(
+    agentId: string,
+    emit: (t: string, p: Record<string, unknown>) => Promise<void>,
+  ): Promise<void> {
+    const received = await this.deps.store.message.inbox({ agentId }, { limit: 200 });
+    for (const m of received) {
+      if (!m.requires_ack || m.acted_at || ACK_BY_READING.has(m.type)) continue;
+      const replies = await this.deps.store.message.replies(m.id);
+      if (replies.some((r) => r.from_agent_id === agentId)) {
+        await this.deps.store.message.markActed(m.id);
+        await emit("inbox.acted", { id: m.id, type: m.type, replied: true });
+      }
+    }
   }
 }
 
