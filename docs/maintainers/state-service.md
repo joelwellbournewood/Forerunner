@@ -3,7 +3,8 @@
 `services/state-api`: the thin HTTP service in front of the shared Postgres. Device pairing
 and auth, the realtime channel, remote commands, the phone and approvals-web API, the
 one-way GitHub mirror and the health / schema check. ADR 0009 (device identity and auth)
-and ADR 0013 (service shape) record the decisions; ADR 0011 the view shapes it reuses.
+and ADR 0024 (service shape, mirror details) record the decisions; ADR 0011 the view
+shapes it reuses.
 
 ## Purpose
 
@@ -39,14 +40,16 @@ mirror, status and comments sync back), phase 2 gate (48 simulated hours offline
 | `src/auth/crypto.ts` | Ed25519 keys, canonical signed string, token hashing, pairing codes |
 | `src/auth/tokens.ts` | `SessionTokenStore`: hashed scoped tokens, 30-day expiry, revoke per device |
 | `src/auth/pairing.ts` | `PairingService`: one-time codes, proof of key possession, device row |
-| `src/auth/principal.ts` | `authenticate()`: admin or device, signature window, revocation; `requireScope`, `requireSigned` |
+| `src/auth/principal.ts` | `authenticate()`: admin (with its install id) or device, signature window, replay check, revocation; `requireScope`, `requireSigned` |
+| `src/auth/replay.ts` | `ReplayGuard`: a signed mutation's signature is accepted once inside the window |
 | `src/auth/scopes.ts` | the scope list and per-kind defaults |
-| `src/ratelimit.ts` | token bucket per device / admin / public |
+| `src/ratelimit.ts` | token bucket per device / admin install / client address, bounded and swept |
 | `src/realtime.ts` | `ChangeBus` (buffer, resume), `PostgresNotifier` (LISTEN/NOTIFY), `ChangePoller` (2 s fallback) |
 | `src/sse.ts` | one SSE loop: initial batch, wake on push, poll, heartbeat, abort |
 | `src/routes/*.ts` | health, devices and pairing, projects / tasks / decisions / queue / uploads, inbox and requests, remote commands, sessions and live log, `/events`, costs, reviews, `/sync/outbox` |
 | `src/views.ts` | row to view mapping (`ProjectCard`, `TaskView`, `MessageView`, ... from ADR 0011) |
 | `src/mirror/github.ts` | `GitHubMirror`: push tasks and milestones to issues, pull comments and closes |
+| `src/mirror/scheduler.ts` | `MirrorScheduler`: one pass over every active project on the clock; started by `main.ts` |
 | `src/outbox.ts` | the client outbox contract, `MemoryOutbox`, `flushOutbox`, the service's `IdempotencyStore` |
 | `src/state-file.ts` | `JsonState` (atomic JSON files under `<data>/state-api/`) |
 | `src/errors.ts` | `ApiError`, `ForerunnerError` code to HTTP status mapping |
@@ -55,7 +58,16 @@ mirror, status and comments sync back), phase 2 gate (48 simulated hours offline
 
 Request id → CORS (only when `FORERUNNER_STATE_API_CORS_ORIGIN` names the approvals web
 origin; otherwise no CORS headers at all) → body limit (256 KB JSON, upload cap on
-`/projects/:id/uploads`) → authentication → rate limit → schema check → route. Errors are
+`/projects/:id/uploads`) → authentication → rate limit → schema check → route.
+
+Rate limits are token buckets: one per device (`FORERUNNER_STATE_API_RATE_LIMIT`, 60/min),
+one per admin install (ten times that; the runtime and the cloud runner send
+`X-Forerunner-Install: <id>` so one chatty install cannot starve the others, and share one
+`default` bucket without it), and one per client address for the unauthenticated
+`POST /pairing/complete` (one sixth). The client address is the socket's; `X-Forwarded-For`
+is used only when `FORERUNNER_STATE_API_TRUST_PROXY=1` declares a reverse proxy, because any
+client can set that header. Bucket maps are bounded (10,000 public keys, least recently used
+evicted) and idle buckets are swept on every change-poller tick. Errors are
 `{ code, message, details }`: `not_found` 404, `version_conflict` / `claim_conflict` /
 `findings_open` 409, `validation` 400, `forbidden` 403, `unauthorized` / `bad_signature` 401,
 `biometric_required` 403, `rate_limited` 429 with `Retry-After`, `payload_too_large` 413,
@@ -73,7 +85,11 @@ never includes headers (the platform logger redacts anyway).
    shown once; the service stores its SHA-256 only. A public key can pair once.
 3. From then on: `Authorization: Bearer <token>`; mutations add `X-Device-Signature`
    (Ed25519 over `METHOD\npath?query\nsha256(body)\ntimestamp\nbiometric=0|1`) and
-   `X-Device-Timestamp` (±5 minutes). `GET /me` shows the principal, scopes and expiry.
+   `X-Device-Timestamp` (±5 minutes). A mutation signature is accepted once: the same
+   signed request sent again inside the window is refused (`401 bad_signature`, "replayed"),
+   so a retry must sign again with a fresh timestamp (the outbox makes the retry itself
+   idempotent). Signed reads are not replay-checked. `GET /me` shows the principal, scopes
+   and expiry (and the install id for admin callers).
 4. Lost phone: desktop `POST /devices/:id/revoke` → `DeviceRepo.revoke` plus token deletion;
    the next request of that device is refused (`401 unauthorized`).
 
@@ -100,15 +116,15 @@ biometric API succeeded for that action. Admin callers hold every scope and do n
 | `GET /devices?humanId=`, `GET /devices/:id`, `POST /devices/:id/revoke` | devices see their own human's; revoke is admin |
 | `GET /projects`, `GET /projects/:id`, `GET /projects/:id/milestones` | `ProjectCard` with spend, budget, waiting count, health, next milestone, latest critic grade |
 | `GET /projects/:id/tasks?status=&limit=&offset=`, `GET /tasks/:id`, `POST /tasks/:id/transition { version, to, reason }` | workflow graph and version check from `TaskRepo.transition` |
-| `GET /inbox?humanId=|agentId=&unreadOnly=1`, `GET /messages/:id`, `POST /messages`, `POST /messages/:id/receipt { state: delivered|read|acted }` | receipts are monotonic, first wins; a device touches only messages to or from its human's agents |
-| `GET /requests?humanId=&projectId=`, `GET /requests/:id`, `POST /requests/:id/answer { version, answer }` | 409 on a stale version |
+| `GET /inbox?humanId=|agentId=&unreadOnly=1`, `GET /messages/:id`, `POST /messages`, `POST /messages/:id/receipt { state: delivered|read|acted }` | receipts are monotonic, first wins, and come only from the addressee (the human, or the owner of the agent addressed): the sender's device may read its message but never acknowledge it, so a `requires_ack` handoff cannot be self-acknowledged |
+| `GET /requests?humanId=&projectId=`, `GET /requests/:id`, `POST /requests/:id/answer { version, answer }` | 409 on a stale version; a device reads and answers only requests addressed to its human; a request with no human (`human_id` null) belongs to the runtime (admin) and is 403 for devices |
 | `GET /projects/:id/decisions?all=1`, `POST /projects/:id/decisions { question, options, chosen, rationale, supersedes? }` | |
 | `GET /projects/:id/queue`, `POST /projects/:id/queue { kind, text, priority, transcript? }` | notes, tasks, ideas for the next session |
 | `GET /projects/:id/uploads`, `POST /projects/:id/uploads` (multipart `file`, optional `kind`) | `data_asset` row; file under `<data>/uploads/<project>/<asset id>-<safe name>`; metadata only in responses |
 | `POST /remote/commands { target: pc|cloud, targetDeviceId?, command: start|pause|stop|kill, params }`, `GET /remote/commands`, `GET /remote/commands/:id` | the phone's view of its commands |
 | `GET /remote/commands/pending?target=&deviceId=` (admin) | atomic pick-up (`RemoteCommandRepo.pickUp`): 200 with the command or 204 |
 | `POST /remote/commands/:id/complete|fail { result }` (admin) | |
-| `GET /sessions?agentId=&projectId=&status=`, `GET /sessions/:id` | `SessionView` with the current task |
+| `GET /sessions?agentId=&projectId=&status=`, `GET /sessions/:id` | `SessionView` with the current task; a device sees only sessions of its own human's agents (summaries and handoff text are that human's notes), `agentId` of another human is 403; admins see every session |
 | `GET /sessions/:id/events?afterSeq=` | JSON page, or SSE with `Accept: text/event-stream` (`session.event`, `session.changed`, heartbeat; `Last-Event-ID` = seq) |
 | `GET /events` | SSE change feed, see Realtime |
 | `GET /costs?projectId=&humanId=&from=&to=` | `CostView`; devices only for their own human |
@@ -164,8 +180,18 @@ owned by the configured or first human) to the task's owner or claimant, quoted 
 and marked as data; an issue closed on GitHub moves the task to `done` when the workflow
 allows it, else to `cancelled` when allowed, else nothing. `MessageRow.mirrored_url` makes
 comment import idempotent. Configure with `FORERUNNER_MIRROR_REPO=owner/name` and
-`FORERUNNER_MIRROR_TOKEN_REF`; `main.ts` wires the mirror when both are set (scheduled every
-`FORERUNNER_MIRROR_INTERVAL_MS`, default 60 s) — see Known issues for the current status.
+`FORERUNNER_MIRROR_TOKEN_REF` (a vault name; the runner injects it as
+`FORERUNNER_SECRET_<NAME>`, exactly like the admin token) and optionally
+`FORERUNNER_MIRROR_API_URL` for GitHub Enterprise or a stand-in host. `main.ts` then builds a
+`GitHubHost` with the resolved token, a `GitHubMirror` whose mapping is `mirror.json` under the
+service state directory, and a `MirrorScheduler` that runs one pass (`sync` for every active
+project, paused and archived ones skipped) every `FORERUNNER_MIRROR_INTERVAL_MS` (default
+60 s), the first pass one interval after start. A project whose sync fails is logged and
+counted in the pass report; the others and the loop continue. `GET /health` reports
+`mirror { enabled, repo }`. A missing token reference or a malformed repo refuses to start; no
+repo means the mirror is off. The runtime's own GitHub Projects V2 mirror
+(`ProjectsMirror` in `@forerunner/capabilities`, scheduled by the daemon per project) is a
+separate, board-shaped mirror; the two are configured independently (ADR 0024).
 
 ### Offline story (phase 2 gate)
 
@@ -208,13 +234,14 @@ Environment:
 | `FORERUNNER_STATE_API_HOST` / `_PORT` | `127.0.0.1` / `8788` | bind address |
 | `FORERUNNER_STATE_API_ADMIN_TOKEN` or `_ADMIN_TOKEN_REF` | required (one of) | shared secret for runtimes; the ref names a vault secret injected as `FORERUNNER_SECRET_<NAME>` by the runner |
 | `FORERUNNER_STATE_API_CORS_ORIGIN` | off | approvals web origin |
+| `FORERUNNER_STATE_API_TRUST_PROXY` | off | `1` when a reverse proxy sets `X-Forwarded-For` (used for the pairing rate limit only) |
 | `FORERUNNER_STATE_API_RATE_LIMIT` | 60 | requests per minute per device |
 | `FORERUNNER_STATE_API_BODY_LIMIT` / `_UPLOAD_MAX_BYTES` | 256 KB / 25 MB | body caps |
 | `FORERUNNER_STATE_API_TOKEN_TTL_MS` / `_SIGNATURE_WINDOW_MS` | 30 days / 5 min | auth windows |
 | `FORERUNNER_STATE_API_POLL_MS` / `_HEARTBEAT_MS` | 2000 / 15000 | realtime timers |
 | `FORERUNNER_STATE_API_MIGRATE` | unset | `1` applies pending migrations on start (an empty database is always migrated; a newer database refuses to start) |
 | `FORERUNNER_CHF_PER_USD` | ledger rate | fallback conversion for USD-only figures |
-| `FORERUNNER_MIRROR_REPO` / `_TOKEN_REF` / `_INTERVAL_MS` | off | GitHub mirror |
+| `FORERUNNER_MIRROR_REPO` / `_TOKEN_REF` / `_INTERVAL_MS` / `_API_URL` | off | GitHub mirror: `owner/name`, vault name of the token, pass interval (60 s), API base URL (api.github.com) |
 
 ## How to change it
 
@@ -241,18 +268,21 @@ Environment:
 
 | File | Covers |
 | --- | --- |
-| `auth.test.ts` | canonical signature, scopes, pairing (single use, proof, expiry), token expiry, revocation within one request, signature window both ways, query string inside the signature, scope 403s, high-risk needs signed + biometric (a forged flag is a signature failure), admin token (no prefix match), rate limit 429 and recovery, schema mismatch 409, CORS only for the configured origin, 413 |
-| `routes.test.ts` | health, 404 shape, project cards, task list / get / transition (409, 400 illegal, 404), inbox and receipts (monotonic, first wins, other humans 403), agent inbox, requests (answer, 409, 404), decisions and supersede, queue, costs (own human only), reviews (comment → message, approve → request answered), sessions and the JSON event page, uploads (metadata only, safe name, cap, missing file) |
-| `remote.test.ts` | enqueue, atomic pick-up (two pickers, one wins), per-device addressing, complete / fail lifecycle, device cannot pick up, validation |
-| `realtime.test.ts` | `ChangeBus` buffer / resume / dedupe / filter; over a real server with `fetch` and a `ReadableStream` reader: event after a write, per-human filtering, polling fallback for direct store writes, `Last-Event-ID` resume, heartbeat on the simulated clock, session log stream with `afterSeq`, 401 |
-| `mirror.test.ts` | rendering, idempotent push, label and state updates, comment sync back (quoted, once, marker ignored), close sync back (done when allowed, cancelled otherwise, ignored with open findings), reopen on GitHub is undone |
-| `outbox.test.ts` | `flushOutbox` ordering, rejection, transport failure; `IdempotencyStore` persistence and TTL; `/sync/outbox` batch, duplicates, scope per action, end to end |
-| `main.test.ts` | config defaults and validation, admin token by env or reference, `startService` boot / health / stop, refuses a newer schema |
+| `auth.test.ts` | canonical signature, scopes, pairing (single use, proof, expiry), token expiry, revocation within one request, signature window both ways, replayed mutation refused (re-signed retry and signed reads pass; guard swept after the window), query string inside the signature, scope 403s, high-risk needs signed + biometric (a forged flag is a signature failure), admin token (no prefix match), rate limit 429 and recovery, admin bucket per `X-Forerunner-Install`, `X-Forwarded-For` trusted only behind a declared proxy, bucket cap / sweep / poller tick, schema mismatch 409, CORS only for the configured origin, 413 |
+| `routes.test.ts` | health, 404 shape, project cards, task list / get / transition (409, 400 illegal, 404), inbox and receipts (monotonic, first wins, other humans 403, the sender's device cannot receipt a message to another human or agent while it may still read it, also through the outbox), sessions scoped to the device's human's agents, unaddressed requests 403 for devices, agent inbox, requests (answer, 409, 404), decisions and supersede, queue, costs (own human only), reviews (comment → message, approve → request answered), sessions and the JSON event page, uploads (metadata only, safe name, cap, missing file, written under the harness temp dir) |
+| `remote.test.ts` | enqueue, atomic pick-up (two pickers, one wins on SQLite; the Postgres race is in the integration test), per-device addressing, complete / fail lifecycle, device cannot pick up, validation |
+| `realtime.test.ts` | `ChangeBus` buffer / resume / dedupe / filter, poller `onTick`; over a real server with `fetch` and a `ReadableStream` reader: event after a write, per-human filtering, polling fallback for direct store writes, `Last-Event-ID` resume, `resync` when the id fell out of a one-entry buffer, heartbeat on the simulated clock, session log stream with `afterSeq`, 401, public limiter keyed by the socket over a real server |
+| `mirror.test.ts` | rendering, idempotent push, label and state updates, comment sync back (quoted, once, marker ignored), close sync back (done when allowed, cancelled otherwise, ignored with open findings), reopen on GitHub is undone; `MirrorScheduler` on the simulated clock (active projects only, unchanged second pass, stop), a failing project reported without stopping the others |
+| `outbox.test.ts` | `flushOutbox` ordering, rejection, transport failure; `IdempotencyStore` persistence, TTL and `run()` under overlapping calls; `/sync/outbox` batch, duplicates, two batches in flight with one clientId apply once, scope per action, end to end |
+| `main.test.ts` | config defaults and validation, admin token by env or reference, `startService` boot / health / stop, refuses a newer schema; mirror wiring from `FORERUNNER_MIRROR_*` with the token by reference (`/health`, a pass on the interval against `MemoryGitHost`, `runOnce`, stops with the service), refuses a missing token reference or a malformed repo |
 
 `pnpm vitest run --project integration services/state-api/test` with `FORERUNNER_TEST_PG`:
 `state-api.integration.test.ts` runs two service instances on one Postgres schema
-(LISTEN/NOTIFY delivery across instances, polling fallback) and the 48-hour offline scenario.
-Skipped visibly without the variable.
+(LISTEN/NOTIFY delivery across instances, polling fallback), races two instances for one
+remote command five times (exactly one 200 per round: `RemoteCommandRepo.pickUp` relies on
+Postgres re-checking the predicate after the row lock) and the 48-hour offline scenario.
+Skipped visibly without the variable. Unit tests never write outside a per-harness temp
+directory (`helpers.ts` sets `uploadsDir` and `serviceStateDir`; `close()` removes it).
 
 ## Known issues
 
@@ -265,12 +295,13 @@ Skipped visibly without the variable.
   `MemoryGitHost` implements it, `GitHubMirror.push` can add every task issue to a project
   with a Status field. The mirror depends only on the `MirrorHost` pick (issues and issue
   comments), so that change is additive.
-- `main.ts` does not yet construct the mirror: it needs a `GitHubHost` whose token comes from
-  the vault by reference, and the service has no vault dependency. The runtime (which has
-  the vault) can host the mirror loop with `GitHubMirror` directly; wiring it into the
-  service process is a follow-up once secret injection for services is decided.
-- Pairing codes and the SSE resume buffer are per instance; several instances need sticky
-  sessions. Session tokens and idempotency keys are JSON files, so they are per instance too
-  unless the volume is shared.
+- Pairing codes, the SSE resume buffer and the replay guard are per instance; several
+  instances need sticky sessions. Session tokens, idempotency keys and the mirror mapping are
+  JSON files, so they are per instance too unless the volume is shared; two instances with
+  the mirror enabled against one repo would create duplicate issues, so enable it on one.
+- The mirror has no "sync now" route yet; `StartedService.mirror.runOnce()` exists for an
+  embedder, and a pass runs at most every `FORERUNNER_MIRROR_INTERVAL_MS`.
+- Signed mutations are single use, which means a client library that resends a cached
+  request verbatim on timeout gets `401`; the outbox client re-signs every attempt.
 - `cost_ledger` is not polled (sums are computed on request); a `cost_ledger.changed`
   event exists in the type union for a future opt-in.

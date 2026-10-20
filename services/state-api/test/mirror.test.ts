@@ -9,9 +9,11 @@ import {
   LABEL_TASK,
   MIRROR_AGENT_ID,
   MIRROR_COMMENT_MARKER,
+  type MirrorHost,
   renderTaskIssue,
   slug,
 } from "../src/mirror/github.ts";
+import { MirrorScheduler } from "../src/mirror/scheduler.ts";
 import { MemoryJsonState } from "../src/state-file.ts";
 import { type Seed, START, seed } from "./helpers.ts";
 
@@ -202,5 +204,98 @@ describe("GitHub mirror", () => {
     expect(done.status).toBe("done");
     expect(done.reason).toContain("closed on GitHub");
     expect(done.author_agent).toBe(MIRROR_AGENT_ID);
+  });
+});
+
+describe("MirrorScheduler", () => {
+  let store: StateStore;
+  let s: Seed;
+  let host: MemoryGitHost;
+  let clock: SimulatedClock;
+
+  beforeEach(async () => {
+    clock = new SimulatedClock(START);
+    store = await openStore({ url: "sqlite::memory:", clock });
+    s = await seed(store);
+    host = new MemoryGitHost("forerunner-bot");
+    await host.createRepo({ owner: repo.owner, name: repo.name, private: true });
+  });
+  afterEach(() => store.close());
+
+  it("syncs every active project on the clock, skips paused ones, and stops cleanly", async () => {
+    const second = await store.project.insert({ name: "Second", goal: "g" });
+    await store.task.insert({
+      project_id: second.id,
+      title: "Second task",
+      outcome: "o",
+      status: "ready",
+    });
+    const paused = await store.project.insert({ name: "Paused", goal: "g", status: "paused" });
+    await store.task.insert({
+      project_id: paused.id,
+      title: "Paused task",
+      outcome: "o",
+      status: "ready",
+    });
+    const mirror = new GitHubMirror({ host, repo, store, clock, ownerHumanId: s.ada.id });
+    const scheduler = new MirrorScheduler({ mirror, store, clock, intervalMs: 60_000 });
+    scheduler.start();
+    expect(scheduler.runs).toBe(0);
+    await clock.advance(59_999);
+    expect(scheduler.runs).toBe(0);
+    await clock.advance(1);
+    await scheduler.settle();
+    expect(scheduler.runs).toBe(1);
+    expect(scheduler.lastReport).toMatchObject({
+      projects: 2,
+      failed: 0,
+      push: { created: 4, updated: 0, unchanged: 0 },
+    });
+    const titles = (await host.listIssues(repo, { state: "all" })).map((i) => i.title).sort();
+    expect(titles).toEqual([
+      "Milestone: First cut",
+      "Second task",
+      "Write the docs",
+      "Write the parser",
+    ]);
+    await clock.advance(60_000);
+    await scheduler.settle();
+    expect(scheduler.runs).toBe(2);
+    expect(scheduler.lastReport?.push).toEqual({ created: 0, updated: 0, unchanged: 4 });
+    await scheduler.stop();
+    await clock.advance(120_000);
+    expect(scheduler.runs).toBe(2);
+  });
+
+  it("a project whose sync fails is reported and does not stop the others or the loop", async () => {
+    const broken = await store.project.insert({ name: "Broken", goal: "g" });
+    await store.task.insert({
+      project_id: broken.id,
+      title: "boom",
+      outcome: "o",
+      status: "ready",
+    });
+    const failing: MirrorHost = {
+      createIssue: async (r, input) => {
+        if (input.title === "boom") throw new Error("api down");
+        return host.createIssue(r, input);
+      },
+      updateIssue: (r, n, patch) => host.updateIssue(r, n, patch),
+      listIssues: (r, q) => host.listIssues(r, q),
+      listPullRequestComments: (r, n) => host.listPullRequestComments(r, n),
+      commentOnIssue: (r, n, body) => host.commentOnIssue(r, n, body),
+    };
+    const mirror = new GitHubMirror({ host: failing, repo, store, clock, ownerHumanId: s.ada.id });
+    const scheduler = new MirrorScheduler({ mirror, store, clock, intervalMs: 1_000 });
+    const report = await scheduler.runOnce();
+    expect(report.projects).toBe(2);
+    expect(report.failed).toBe(1);
+    expect(report.errors).toEqual([{ projectId: broken.id, error: "api down" }]);
+    expect(report.push.created).toBe(3);
+    scheduler.start();
+    await clock.advance(1_000);
+    await scheduler.settle();
+    expect(scheduler.runs).toBe(2);
+    await scheduler.stop();
   });
 });

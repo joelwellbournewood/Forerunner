@@ -19,6 +19,11 @@ export interface StateApiConfig {
   adminTokenRef: string | undefined;
   /** Approvals web origin allowed by CORS; undefined disables CORS entirely. */
   corsOrigin: string | undefined;
+  /**
+   * True when a reverse proxy in front of the service sets X-Forwarded-For; only then is
+   * that header used to key the public rate limiter. Otherwise the socket address is used.
+   */
+  trustProxy: boolean;
   /** Requests per minute per device (token bucket). */
   rateLimitPerMinute: number;
   /** Max JSON body size in bytes. */
@@ -41,6 +46,8 @@ export interface StateApiConfig {
   mirrorRepo: string | undefined;
   /** Vault reference or env var holding the GitHub token for the mirror. */
   mirrorTokenRef: string | undefined;
+  /** GitHub API base URL for the mirror (GitHub Enterprise or a stand-in); undefined = api.github.com. */
+  mirrorApiUrl: string | undefined;
   /** How often the mirror pulls comments and status edits back. */
   mirrorIntervalMs: number;
   /** Service version, from package.json. */
@@ -70,6 +77,22 @@ function intEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number 
   return n;
 }
 
+function boolEnv(env: NodeJS.ProcessEnv, name: string): boolean {
+  const raw = (env[name] ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
+/** `owner/name` for the mirror repository; a validation error otherwise. */
+export function parseMirrorRepo(value: string): { owner: string; name: string } {
+  const m = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(value.trim());
+  if (!m?.[1] || !m[2]) {
+    throw new ForerunnerError("validation", "FORERUNNER_MIRROR_REPO must be owner/name", {
+      details: { value },
+    });
+  }
+  return { owner: m[1], name: m[2] };
+}
+
 export function packageVersion(): string {
   try {
     const raw = readFileSync(new URL("../package.json", import.meta.url), "utf8");
@@ -94,6 +117,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): StateApiConfig
     adminToken: env.FORERUNNER_STATE_API_ADMIN_TOKEN || undefined,
     adminTokenRef: env.FORERUNNER_STATE_API_ADMIN_TOKEN_REF || undefined,
     corsOrigin: env.FORERUNNER_STATE_API_CORS_ORIGIN || undefined,
+    trustProxy: boolEnv(env, "FORERUNNER_STATE_API_TRUST_PROXY"),
     rateLimitPerMinute: intEnv(
       env,
       "FORERUNNER_STATE_API_RATE_LIMIT",
@@ -109,6 +133,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): StateApiConfig
     heartbeatMs: intEnv(env, "FORERUNNER_STATE_API_HEARTBEAT_MS", DEFAULT_HEARTBEAT_MS),
     mirrorRepo: env.FORERUNNER_MIRROR_REPO || undefined,
     mirrorTokenRef: env.FORERUNNER_MIRROR_TOKEN_REF || undefined,
+    mirrorApiUrl: env.FORERUNNER_MIRROR_API_URL || undefined,
     mirrorIntervalMs: intEnv(env, "FORERUNNER_MIRROR_INTERVAL_MS", DEFAULT_MIRROR_INTERVAL_MS),
     version: packageVersion(),
   };

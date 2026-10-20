@@ -83,6 +83,11 @@ function parsePayload<K extends keyof typeof payloads>(
   return result.data as z.infer<(typeof payloads)[K]>;
 }
 
+/** Devices are their own idempotency space; admin callers are split by install (ADR 0009). */
+export function idempotencyKeyOf(p: Principal): string {
+  return p.kind === "device" ? p.deviceId : `admin:${p.installId ?? "default"}`;
+}
+
 /** Apply one queued action with the same checks as the direct route. */
 export async function applyOutboxAction(
   ctx: RouteContext,
@@ -176,30 +181,29 @@ export function registerSyncRoutes(app: App, ctx: RouteContext): void {
     const p = principal(c);
     requireSigned(p);
     const body = await parseBody(c, BatchBody);
-    const deviceKey = p.kind === "device" ? p.deviceId : "admin";
+    const deviceKey = idempotencyKeyOf(p);
     const results: OutboxResult[] = [];
     for (const action of body.actions) {
-      const seen = ctx.idempotency.get(deviceKey, action.clientId);
-      if (seen) {
-        results.push({ ...seen, status: seen.status === "rejected" ? "rejected" : "duplicate" });
-        continue;
-      }
-      let result: OutboxResult;
-      try {
-        const applied = await applyOutboxAction(ctx, p, action);
-        result = { clientId: action.clientId, status: "applied", result: applied };
-      } catch (e) {
-        const err = toApiError(e);
-        if (err.status >= 500) throw err;
-        result = {
-          clientId: action.clientId,
-          status: "rejected",
-          code: err.code,
-          message: err.message,
-        };
-      }
-      await ctx.idempotency.put(deviceKey, action.clientId, result);
-      results.push(result);
+      // The key is reserved before the action runs: a second batch carrying the same
+      // clientId while this one is in flight waits for this result instead of applying again.
+      const { result, fresh } = await ctx.idempotency.run(deviceKey, action.clientId, async () => {
+        try {
+          const applied = await applyOutboxAction(ctx, p, action);
+          return { clientId: action.clientId, status: "applied", result: applied };
+        } catch (e) {
+          const err = toApiError(e);
+          if (err.status >= 500) throw err;
+          return {
+            clientId: action.clientId,
+            status: "rejected",
+            code: err.code,
+            message: err.message,
+          };
+        }
+      });
+      results.push(
+        fresh || result.status === "rejected" ? result : { ...result, status: "duplicate" },
+      );
     }
     return c.json({ results });
   });

@@ -1,4 +1,6 @@
-import { SimulatedClock } from "@forerunner/platform";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, SimulatedClock } from "@forerunner/platform";
 import {
   openStore,
   type StateStore,
@@ -13,6 +15,7 @@ import {
   signRequest,
 } from "../src/auth/crypto.ts";
 import type { Scope } from "../src/auth/scopes.ts";
+import { ChangeBus } from "../src/realtime.ts";
 
 silenceSqliteExperimentalWarning();
 
@@ -209,20 +212,46 @@ export interface Harness {
   seed: Seed;
   admin: Client;
   anonymous: Client;
+  /** Per-harness temp directory holding uploads and the service's JSON state; removed by close(). */
+  dir: string;
   pairDevice(humanId: string, kind?: "phone" | "web", scopes?: Scope[]): Promise<DeviceClient>;
   close(): Promise<void>;
 }
 
-export async function harness(overrides: Partial<AppDeps> = {}): Promise<Harness> {
+export interface HarnessOptions {
+  /** Size of the realtime resume buffer (default 2,000; small values test `resync`). */
+  busBufferSize?: number;
+}
+
+/**
+ * An app over an in-memory SQLite store with a simulated clock. Every file the service may
+ * write (uploads, tokens, idempotency, mirror mapping) goes under a fresh temp directory,
+ * never the developer's real data directory, and is removed by `close()`.
+ */
+export async function harness(
+  overrides: Partial<AppDeps> = {},
+  options: HarnessOptions = {},
+): Promise<Harness> {
   const clock = new SimulatedClock(START);
+  const dir = await mkdtemp(join(tmpdir(), "fr-state-api-test-"));
   const store = await openStore({ url: "sqlite::memory:", clock });
   const s = await seed(store);
   const api = createApp({
     store,
     clock,
     startPoller: false,
-    config: { adminToken: ADMIN_TOKEN, rateLimitPerMinute: 1000, uploadMaxBytes: 64 * 1024 },
+    ...(options.busBufferSize !== undefined
+      ? { bus: new ChangeBus(clock, options.busBufferSize) }
+      : {}),
     ...overrides,
+    config: {
+      adminToken: ADMIN_TOKEN,
+      rateLimitPerMinute: 1000,
+      uploadMaxBytes: 64 * 1024,
+      uploadsDir: join(dir, "uploads"),
+      serviceStateDir: join(dir, "state-api"),
+      ...(overrides.config ?? {}),
+    },
   });
   const admin = new Client(api.app, ADMIN_TOKEN);
   const pairDevice = async (humanId: string, kind: "phone" | "web" = "phone", scopes?: Scope[]) => {
@@ -254,10 +283,12 @@ export async function harness(overrides: Partial<AppDeps> = {}): Promise<Harness
     seed: s,
     admin,
     anonymous: new Client(api.app, undefined),
+    dir,
     pairDevice,
     close: async () => {
       await api.close();
       await store.close();
+      await rm(dir, { recursive: true, force: true });
     },
   };
 }

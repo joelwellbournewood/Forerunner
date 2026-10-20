@@ -1,4 +1,10 @@
-export { type AppDeps, createApp, HEADER_SCHEMA_VERSION, type StateApiApp } from "./app.ts";
+export {
+  type AppDeps,
+  clientKey,
+  createApp,
+  HEADER_SCHEMA_VERSION,
+  type StateApiApp,
+} from "./app.ts";
 export * from "./auth/crypto.ts";
 export {
   type CompletePairingInput,
@@ -12,12 +18,15 @@ export {
   ALL_SCOPES,
   authenticate,
   HEADER_BIOMETRIC,
+  HEADER_INSTALL,
   HEADER_SIGNATURE,
   HEADER_TIMESTAMP,
+  installIdOf,
   type Principal,
   requireScope,
   requireSigned,
 } from "./auth/principal.ts";
+export { ReplayGuard } from "./auth/replay.ts";
 export {
   DEFAULT_SCOPES,
   ISSUABLE_SCOPES,
@@ -39,8 +48,10 @@ export { ApiError, type ApiErrorCode, toApiError } from "./errors.ts";
 export {
   envSecretResolver,
   resolveAdminToken,
+  resolveMirrorToken,
   type SecretResolver,
   type StartedService,
+  type StartHooks,
   startService,
 } from "./main.ts";
 export {
@@ -59,8 +70,13 @@ export {
   renderMilestoneIssue,
   renderTaskIssue,
 } from "./mirror/github.ts";
+export {
+  type MirrorRunReport,
+  MirrorScheduler,
+  type MirrorSchedulerOptions,
+} from "./mirror/scheduler.ts";
 export * from "./outbox.ts";
-export { TokenBucketLimiter } from "./ratelimit.ts";
+export { DEFAULT_MAX_KEYS, TokenBucketLimiter, type TokenBucketOptions } from "./ratelimit.ts";
 export {
   ChangeBus,
   type ChangeEvent,

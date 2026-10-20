@@ -1,5 +1,5 @@
 import { SESSION_STATUSES, type SessionRow, type SessionStatus } from "@forerunner/state";
-import { requireScope } from "../auth/principal.ts";
+import { type Principal, requireScope } from "../auth/principal.ts";
 import { ApiError, forbidden, notFound } from "../errors.ts";
 import { type App, agentName, intParam, principal, type RouteContext } from "../http.ts";
 import type { ChangeEvent } from "../realtime.ts";
@@ -18,10 +18,28 @@ async function toView(ctx: RouteContext, s: SessionRow, rate: number) {
   return sessionView(s, await agentName(ctx.store, s.agent_id), rate, await currentTaskOf(ctx, s));
 }
 
+/**
+ * A device sees the sessions of its own human's agents only: summaries, plans and handoff
+ * text are that human's working notes (spec: shared projects "without merging identities or
+ * memories"). The runtime (admin) sees every session. Returns the agent ids a device may
+ * read, or undefined for an admin.
+ */
+async function visibleAgentIds(ctx: RouteContext, p: Principal): Promise<string[] | undefined> {
+  if (p.kind === "admin") return undefined;
+  return (await ctx.store.agent.forOwner(p.humanId)).map((a) => a.id);
+}
+
+async function assertOwnSession(ctx: RouteContext, p: Principal, s: SessionRow): Promise<void> {
+  if (p.kind === "admin") return;
+  const agent = await ctx.store.agent.get(s.agent_id);
+  if (agent?.owner_human_id !== p.humanId) throw forbidden("not your agent's session");
+}
+
 /** Sessions and the live log (spec R.4 "watch the live session log"). */
 export function registerSessionRoutes(app: App, ctx: RouteContext): void {
   app.get("/sessions", async (c) => {
-    requireScope(principal(c), "read");
+    const p = principal(c);
+    requireScope(p, "read");
     const statusRaw = c.req.query("status");
     const statuses = statusRaw
       ? statusRaw
@@ -29,7 +47,15 @@ export function registerSessionRoutes(app: App, ctx: RouteContext): void {
           .filter((s): s is SessionStatus => (SESSION_STATUSES as readonly string[]).includes(s))
       : undefined;
     const filter: Record<string, unknown> = {};
-    if (c.req.query("agentId")) filter.agent_id = c.req.query("agentId");
+    const mine = await visibleAgentIds(ctx, p);
+    const agentId = c.req.query("agentId");
+    if (agentId) {
+      if (mine && !mine.includes(agentId)) throw forbidden("not your agent");
+      filter.agent_id = agentId;
+    } else if (mine) {
+      if (mine.length === 0) return c.json({ sessions: [] });
+      filter.agent_id = mine;
+    }
     if (c.req.query("projectId")) filter.project_id = c.req.query("projectId");
     if (statuses?.length) filter.status = statuses;
     const rows = await ctx.store.session.list(filter as never, {
@@ -43,9 +69,11 @@ export function registerSessionRoutes(app: App, ctx: RouteContext): void {
   });
 
   app.get("/sessions/:id", async (c) => {
-    requireScope(principal(c), "read");
+    const p = principal(c);
+    requireScope(p, "read");
     const s = await ctx.store.session.get(c.req.param("id"));
     if (!s) throw notFound("session", c.req.param("id"));
+    await assertOwnSession(ctx, p, s);
     return c.json(await toView(ctx, s, await currentChfRate(ctx.store, ctx.chfPerUsd)));
   });
 
@@ -56,10 +84,7 @@ export function registerSessionRoutes(app: App, ctx: RouteContext): void {
     const sessionId = c.req.param("id");
     const session = await ctx.store.session.get(sessionId);
     if (!session) throw notFound("session", sessionId);
-    if (p.kind === "device") {
-      const agent = await ctx.store.agent.get(session.agent_id);
-      if (agent?.owner_human_id !== p.humanId) throw forbidden("not your agent's session");
-    }
+    await assertOwnSession(ctx, p, session);
     const afterSeqRaw = c.req.query("afterSeq");
     let afterSeq = afterSeqRaw ? Number(afterSeqRaw) : 0;
     if (!Number.isInteger(afterSeq) || afterSeq < 0) {

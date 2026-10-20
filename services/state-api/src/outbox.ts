@@ -192,13 +192,48 @@ export function migrateIdempotency(raw: unknown): IdempotencyFile {
 
 export const IDEMPOTENCY_TTL_MS = 7 * 24 * 3600 * 1000;
 
-/** Remembers (device, clientId) -> result for a week so retried batches are safe. */
+/**
+ * Remembers (device, clientId) -> result for a week so retried batches are safe. `run()` is
+ * the whole contract: the key is reserved before the action is applied, so two batches in
+ * flight at once (a retry fired before the first answer arrived) apply it once and both get
+ * the same result.
+ */
 export class IdempotencyStore {
+  private readonly inFlight = new Map<string, Promise<OutboxResult>>();
+
   constructor(
     private readonly state: JsonState<IdempotencyFile> = new MemoryJsonState(emptyIdempotency()),
     private readonly clock: Clock,
     private readonly ttlMs = IDEMPOTENCY_TTL_MS,
   ) {}
+
+  /**
+   * Apply `fn` once per key. A stored result is returned as is; a concurrent call with the
+   * same key waits for the first and gets its result; `fresh` is true for the caller whose
+   * `fn` ran. When `fn` throws (a 5xx) the key is released so a later retry can apply.
+   */
+  async run(
+    deviceKey: string,
+    clientId: string,
+    fn: () => Promise<OutboxResult>,
+  ): Promise<{ result: OutboxResult; fresh: boolean }> {
+    const stored = this.get(deviceKey, clientId);
+    if (stored) return { result: stored, fresh: false };
+    const key = this.key(deviceKey, clientId);
+    const pending = this.inFlight.get(key);
+    if (pending) return { result: await pending, fresh: false };
+    const task = (async () => {
+      const result = await fn();
+      await this.put(deviceKey, clientId, result);
+      return result;
+    })();
+    this.inFlight.set(key, task);
+    try {
+      return { result: await task, fresh: true };
+    } finally {
+      this.inFlight.delete(key);
+    }
+  }
 
   private key(deviceKey: string, clientId: string): string {
     return `${deviceKey}:${clientId}`;

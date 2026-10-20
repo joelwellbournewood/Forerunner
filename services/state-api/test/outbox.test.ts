@@ -64,6 +64,32 @@ describe("client outbox", () => {
     expect(items.find((i) => i.clientId === "c1")?.attempts).toBe(1);
   });
 
+  it("run() applies a key once even when calls overlap, and releases the key when the apply fails", async () => {
+    const clock = new SimulatedClock("2026-03-01T09:00:00.000Z");
+    const store = new IdempotencyStore(undefined, clock);
+    let applied = 0;
+    const apply = async (): Promise<OutboxResult> => {
+      applied += 1;
+      await new Promise((r) => setTimeout(r, 5));
+      return { clientId: "c1", status: "applied", result: { n: applied } };
+    };
+    const [a, b] = await Promise.all([store.run("d", "c1", apply), store.run("d", "c1", apply)]);
+    expect(applied).toBe(1);
+    expect([a.fresh, b.fresh].sort()).toEqual([false, true]);
+    expect(a.result).toEqual(b.result);
+    const later = await store.run("d", "c1", apply);
+    expect(later.fresh).toBe(false);
+    expect(applied).toBe(1);
+    expect(store.get("d", "c1")?.status).toBe("applied");
+    await expect(
+      store.run("d", "c2", async () => {
+        throw new Error("db down");
+      }),
+    ).rejects.toThrow("db down");
+    const retry = await store.run("d", "c2", async () => ({ clientId: "c2", status: "applied" }));
+    expect(retry.fresh).toBe(true);
+  });
+
   it("the idempotency store remembers results for a week and persists to a JSON file", async () => {
     const dir = await mkdtemp(join(tmpdir(), "fr-state-api-"));
     try {
@@ -169,7 +195,8 @@ describe("POST /sync/outbox (service side)", () => {
     expect(await h.store.queue.pending(h.seed.project.id)).toHaveLength(1);
     expect(await h.store.remoteCommand.pending("pc")).toHaveLength(1);
 
-    // The same batch again (response lost): nothing is applied twice.
+    // The same batch again (response lost, re-signed by the client): nothing is applied twice.
+    await h.clock.advance(1);
     const again = await json<{ results: OutboxResult[] }>(
       await phone.post("/sync/outbox", { actions }),
     );
@@ -185,6 +212,25 @@ describe("POST /sync/outbox (service side)", () => {
     expect(await h.store.queue.pending(h.seed.project.id)).toHaveLength(1);
     expect(await h.store.remoteCommand.pending("pc")).toHaveLength(1);
     expect(await h.store.decision.current(h.seed.project.id)).toHaveLength(1);
+  });
+
+  it("two batches in flight with the same clientId apply once (a retry fired before the first answer)", async () => {
+    const actions = [
+      action("33333333-1", "queue.enqueue", {
+        projectId: h.seed.project.id,
+        kind: "note",
+        text: "exactly once",
+      }),
+    ];
+    const [a, b] = await Promise.all([
+      phone.post("/sync/outbox", { actions }),
+      phone.post("/sync/outbox", { actions }, { timestamp: String(h.clock.now() + 1) }),
+    ]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    const ra = (await json<{ results: OutboxResult[] }>(a)).results[0];
+    const rb = (await json<{ results: OutboxResult[] }>(b)).results[0];
+    expect([ra?.status, rb?.status].sort()).toEqual(["applied", "duplicate"]);
+    expect(await h.store.queue.pending(h.seed.project.id)).toHaveLength(1);
   });
 
   it("needs a signed request, respects scopes per action and rejects malformed batches", async () => {

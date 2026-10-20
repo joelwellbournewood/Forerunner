@@ -6,7 +6,7 @@ import type { Scope } from "./scopes.ts";
 /**
  * Scoped session tokens for paired devices. Only the SHA-256 of a token is stored; the raw
  * token is returned once at pairing and lives in the phone's OS keystore. Records persist
- * in the service's JSON state (ADR 0013: a future migration may move them to a table).
+ * in the service's JSON state (ADR 0024: a future migration may move them to a table).
  */
 export interface SessionTokenRecord {
   tokenHash: string;

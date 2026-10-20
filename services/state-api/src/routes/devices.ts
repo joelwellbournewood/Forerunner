@@ -74,7 +74,13 @@ export function registerDeviceRoutes(app: App, ctx: RouteContext, publicApp: App
   app.get("/me", async (c) => {
     const p = principal(c);
     if (p.kind === "admin") {
-      return c.json({ principal: "admin", scopes: p.scopes, humanId: null, deviceId: null });
+      return c.json({
+        principal: "admin",
+        scopes: p.scopes,
+        humanId: null,
+        deviceId: null,
+        installId: p.installId,
+      });
     }
     const human = await ctx.store.human.get(p.humanId);
     return c.json({

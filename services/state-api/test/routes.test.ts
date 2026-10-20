@@ -173,6 +173,104 @@ describe("state service routes", () => {
     expect((await phone.post("/messages/missing/receipt", { state: "read" })).status).toBe(404);
   });
 
+  it("receipts come only from the addressee: the sender's device is refused, reads stay allowed", async () => {
+    const bobPhone = await h.pairDevice(h.seed.bob.id);
+    // Ada's phone sends Alice -> Bob with requires_ack; Ada's phone must not acknowledge it herself.
+    const sent = await json<{ id: string }>(
+      await phone.post("/messages", {
+        fromAgentId: h.seed.alice.id,
+        toHumanId: h.seed.bob.id,
+        type: "handoff",
+        body: "over to you",
+        requiresAck: true,
+      }),
+    );
+    for (const state of ["delivered", "read", "acted"] as const) {
+      const forged = await phone.post(`/messages/${sent.id}/receipt`, { state });
+      expect(forged.status).toBe(403);
+    }
+    const untouched = await h.store.message.mustGet(sent.id);
+    expect(untouched.delivered_at).toBeNull();
+    expect(untouched.acted_at).toBeNull();
+    // The sender may still read what it sent.
+    expect((await phone.get(`/messages/${sent.id}`)).status).toBe(200);
+    // The same rule applies through the offline outbox.
+    const batch = await json<{ results: { status: string; code?: string }[] }>(
+      await phone.post("/sync/outbox", {
+        actions: [
+          {
+            clientId: "forge-receipt-1",
+            kind: "message.receipt",
+            payload: { id: sent.id, state: "read" },
+            createdAt: h.clock.nowIso(),
+          },
+        ],
+      }),
+    );
+    expect(batch.results[0]).toMatchObject({ status: "rejected", code: "forbidden" });
+    // The addressee's phone acknowledges.
+    expect((await bobPhone.post(`/messages/${sent.id}/receipt`, { state: "acted" })).status).toBe(
+      200,
+    );
+    // A message to Bob's agent: only Bob's devices (or the runtime) may receipt it.
+    const toAgent = await json<{ id: string }>(
+      await phone.post("/messages", {
+        fromAgentId: h.seed.alice.id,
+        toAgentId: h.seed.bobAgent.id,
+        body: "to bobby",
+      }),
+    );
+    expect(
+      (await phone.post(`/messages/${toAgent.id}/receipt`, { state: "delivered" })).status,
+    ).toBe(403);
+    expect(
+      (await bobPhone.post(`/messages/${toAgent.id}/receipt`, { state: "delivered" })).status,
+    ).toBe(200);
+    expect((await h.admin.post(`/messages/${toAgent.id}/receipt`, { state: "read" })).status).toBe(
+      200,
+    );
+  });
+
+  it("sessions are scoped to the device's human's agents; unaddressed requests are the runtime's", async () => {
+    const bobPhone = await h.pairDevice(h.seed.bob.id);
+    const bobs = await json<{ sessions: unknown[] }>(await bobPhone.get("/sessions"));
+    expect(bobs.sessions).toEqual([]);
+    expect((await bobPhone.get(`/sessions/${h.seed.session.id}`)).status).toBe(403);
+    expect((await bobPhone.get(`/sessions?agentId=${h.seed.alice.id}`)).status).toBe(403);
+    const adas = await json<{ sessions: { id: string }[] }>(await phone.get("/sessions"));
+    expect(adas.sessions.map((s) => s.id)).toEqual([h.seed.session.id]);
+    expect((await phone.get(`/sessions/${h.seed.session.id}`)).status).toBe(200);
+    const all = await json<{ sessions: { id: string }[] }>(await h.admin.get("/sessions"));
+    expect(all.sessions.map((s) => s.id)).toEqual([h.seed.session.id]);
+
+    const unaddressed = await h.store.humanRequest.insert({
+      human_id: null,
+      project_id: h.seed.project.id,
+      kind: "decision",
+      why: "anyone?",
+      options: ["a", "b"],
+    });
+    expect((await phone.get(`/requests/${unaddressed.id}`)).status).toBe(403);
+    const list = await json<{ requests: { id: string }[] }>(await phone.get("/requests"));
+    expect(list.requests.map((r) => r.id)).not.toContain(unaddressed.id);
+    expect(
+      (
+        await phone.post(`/requests/${unaddressed.id}/answer`, {
+          version: unaddressed.version,
+          answer: "a",
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await h.admin.post(`/requests/${unaddressed.id}/answer`, {
+          version: unaddressed.version,
+          answer: "a",
+        })
+      ).status,
+    ).toBe(200);
+  });
+
   it("agent inbox for the runtime and unacknowledged handoffs", async () => {
     await h.admin.post("/messages", {
       fromAgentId: h.seed.bobAgent.id,
@@ -435,6 +533,9 @@ describe("state service routes", () => {
     expect(asset.kind).toBe("csv");
     expect(asset.name).not.toContain("..");
     expect(JSON.stringify(asset)).not.toContain(h.api.config.uploadsDir);
+    // The harness writes under its own temp directory, never the developer's data directory.
+    expect(h.api.config.uploadsDir.startsWith(h.dir)).toBe(true);
+    expect(h.api.config.serviceStateDir.startsWith(h.dir)).toBe(true);
     const row = await h.store.dataAsset.mustGet(asset.id);
     expect(row.owner_device_id).toBe(phone.deviceId);
     const files = await readdir(join(h.api.config.uploadsDir, h.seed.project.id));

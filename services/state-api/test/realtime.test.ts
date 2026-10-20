@@ -2,7 +2,7 @@ import type { AddressInfo } from "node:net";
 import { SimulatedClock } from "@forerunner/platform";
 import { serve } from "@hono/node-server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ChangeBus, filterForHuman } from "../src/realtime.ts";
+import { ChangeBus, ChangePoller, filterForHuman } from "../src/realtime.ts";
 import { ADMIN_TOKEN, type DeviceClient, type Harness, harness, readSse } from "./helpers.ts";
 
 type SseEvent = { event: string; data: unknown; id?: string };
@@ -49,6 +49,32 @@ describe("ChangeBus", () => {
     expect(bus.ingest(remote)).toBeUndefined();
     expect(bus.ingest({ ...remote, payload: { id: "m1", version: 2 } })).toBeDefined();
     expect(seen).toHaveLength(2);
+  });
+
+  it("the poller calls onTick after every pass, scheduled or direct", async () => {
+    const h = await harness();
+    try {
+      let ticks = 0;
+      const poller = new ChangePoller({
+        store: h.store,
+        bus: h.api.bus,
+        clock: h.clock,
+        intervalMs: 2_000,
+        onTick: () => {
+          ticks += 1;
+        },
+      });
+      await poller.pollOnce();
+      expect(ticks).toBe(1);
+      poller.start();
+      await h.clock.advance(2_000);
+      expect(ticks).toBe(2);
+      await poller.stop();
+      await h.clock.advance(4_000);
+      expect(ticks).toBe(2);
+    } finally {
+      await h.close();
+    }
   });
 
   it("filters per human: private events of others are hidden, project-wide ones pass", () => {
@@ -187,14 +213,72 @@ describe("SSE over a real server", () => {
     expect(replay.filter((e) => e.event === "message.changed")).toHaveLength(2);
     expect(replay.some((e) => e.event === "resync")).toBe(false);
 
-    const tooOld = await open("/events", phone.token as string, { "last-event-id": "0" });
-    const small = new ChangeBus(h.clock, 1);
-    expect(small.since(0)).toBeDefined();
-    const reader3 = (tooOld.body as ReadableStream<Uint8Array>).getReader();
-    const r3 = await readSse(reader3, (es) =>
-      es.some((e) => e.event === "message.changed" || e.event === "resync"),
+    // Id 0 is still inside the 2,000-entry buffer: a full replay, no resync.
+    const fromStart = await open("/events", phone.token as string, { "last-event-id": "0" });
+    const reader3 = (fromStart.body as ReadableStream<Uint8Array>).getReader();
+    const r3 = await readSse(
+      reader3,
+      (es) => es.filter((e) => e.event === "message.changed").length >= 3,
     );
     expect(r3.some((e) => e.event === "ready")).toBe(true);
+    expect(r3.some((e) => e.event === "resync")).toBe(false);
+  });
+
+  it("tells a client whose Last-Event-ID fell out of the buffer to resync", async () => {
+    // A separate harness with a one-entry buffer: after three writes only seq 3 is kept.
+    const tiny = await harness({}, { busBufferSize: 1 });
+    const tinyServer = serve({ fetch: tiny.app.fetch, hostname: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve) => tinyServer.once("listening", () => resolve()));
+    const tinyBase = `http://127.0.0.1:${(tinyServer.address() as AddressInfo).port}`;
+    const controller = new AbortController();
+    try {
+      const tinyPhone = await tiny.pairDevice(tiny.seed.ada.id);
+      for (const text of ["one", "two", "three"]) {
+        const res = await tiny.admin.post("/messages", {
+          fromAgentId: tiny.seed.alice.id,
+          toHumanId: tiny.seed.ada.id,
+          body: text,
+        });
+        expect(res.status).toBe(201);
+      }
+      expect(tiny.api.bus.currentSeq).toBeGreaterThanOrEqual(3);
+      const res = await fetch(`${tinyBase}/events`, {
+        headers: {
+          authorization: `Bearer ${tinyPhone.token}`,
+          accept: "text/event-stream",
+          "last-event-id": "1",
+        },
+        signal: controller.signal,
+      });
+      expect(res.status).toBe(200);
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+      const frames = await readSse(reader, (es) => es.some((e) => e.event === "resync"));
+      expect(frames[0]?.event).toBe("ready");
+      const resync = frames.find((e) => e.event === "resync") as SseEvent;
+      expect(resync).toBeDefined();
+      expect((resync.data as { reason: string }).reason).toContain("too old");
+      expect(frames.some((e) => e.event === "message.changed")).toBe(false);
+    } finally {
+      controller.abort();
+      await new Promise<void>((resolve) => tinyServer.close(() => resolve()));
+      await tiny.close();
+    }
+  });
+
+  it("keys the public pairing limiter by the socket address over a real server", async () => {
+    // 1000 per minute per device in the harness => 166 per minute for pairing completions.
+    const statuses: number[] = [];
+    for (let i = 0; i < 170; i++) {
+      const res = await fetch(`${base}/pairing/complete`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": `198.51.100.${i % 250}` },
+        body: JSON.stringify({ code: "nope" }),
+      });
+      statuses.push(res.status);
+      await res.arrayBuffer();
+    }
+    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+    expect(statuses.some((s) => s >= 500)).toBe(false);
   });
 
   it("sends a heartbeat every 15 simulated seconds", async () => {

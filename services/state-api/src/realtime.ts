@@ -340,6 +340,8 @@ export interface ChangePollerOptions {
   intervalMs: number;
   /** Start reading from this time instead of "now" (tests). */
   since?: string;
+  /** Called after every pass (scheduled or `pollOnce`); the service sweeps its limiters here. */
+  onTick?: () => void;
 }
 
 /**
@@ -410,6 +412,11 @@ export class ChangePoller {
         this.opts.bus.publish(event);
       }
       this.marks.set(w.table, newest);
+    }
+    try {
+      this.opts.onTick?.();
+    } catch (e) {
+      logger.warn("tick hook failed", { error: String(e) });
     }
   }
 

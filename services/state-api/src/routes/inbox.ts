@@ -39,7 +39,7 @@ export async function messageHuman(ctx: RouteContext, m: MessageRow): Promise<st
   return null;
 }
 
-/** A device may touch messages addressed to its human or to its human's agents. */
+/** A device may read messages addressed to its human or to its human's agents, and those its human's agents sent. */
 async function assertCanSee(ctx: RouteContext, p: Principal, m: MessageRow): Promise<void> {
   if (p.kind === "admin") return;
   const human = await messageHuman(ctx, m);
@@ -47,6 +47,22 @@ async function assertCanSee(ctx: RouteContext, p: Principal, m: MessageRow): Pro
     const from = await ctx.store.agent.get(m.from_agent_id);
     if (from?.owner_human_id !== p.humanId) throw forbidden("not your message");
   }
+}
+
+/**
+ * Receipts come from the addressee only (spec F.2: delivered, read, acted on are the
+ * receiver's facts). The sender's device may read its message but never acknowledge it, or
+ * a `requires_ack` handoff could be self-acknowledged and vanish from the other inbox.
+ */
+async function assertAddressee(ctx: RouteContext, p: Principal, m: MessageRow): Promise<void> {
+  if (p.kind === "admin") return;
+  const human = await messageHuman(ctx, m);
+  if (human !== p.humanId) throw forbidden("only the addressee acknowledges a message");
+}
+
+/** A device acts only on requests addressed to its human; unaddressed ones are the runtime's. */
+function assertRequestOwner(p: Principal, r: HumanRequestRow): void {
+  if (p.kind === "device" && r.human_id !== p.humanId) throw forbidden("not your request");
 }
 
 export async function sendMessageAs(
@@ -91,7 +107,7 @@ export async function applyReceipt(
 ): Promise<MessageRow> {
   const current = await ctx.store.message.get(messageId);
   if (!current) throw notFound("message", messageId);
-  await assertCanSee(ctx, p, current);
+  await assertAddressee(ctx, p, current);
   const row =
     state === "delivered"
       ? await ctx.store.message.markDelivered(messageId)
@@ -117,9 +133,7 @@ export async function answerRequestAs(
 ): Promise<HumanRequestRow> {
   const current = await ctx.store.humanRequest.get(id);
   if (!current) throw notFound("request", id);
-  if (p.kind === "device" && current.human_id && current.human_id !== p.humanId) {
-    throw forbidden("not your request");
-  }
+  assertRequestOwner(p, current);
   // Spec R.7 / Q.8: high-risk confirmations need the device signature plus biometric.
   const cardRisk =
     current.change_card && typeof current.change_card.risk === "string"
@@ -223,8 +237,7 @@ export function registerInboxRoutes(app: App, ctx: RouteContext): void {
     requireScope(p, "read");
     const r = await ctx.store.humanRequest.get(c.req.param("id"));
     if (!r) throw notFound("request", c.req.param("id"));
-    if (p.kind === "device" && r.human_id && r.human_id !== p.humanId)
-      throw forbidden("not your request");
+    assertRequestOwner(p, r);
     const project = r.project_id ? await ctx.store.project.get(r.project_id) : undefined;
     return c.json(humanRequestView(r, project?.name ?? null));
   });

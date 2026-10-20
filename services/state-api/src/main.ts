@@ -1,25 +1,41 @@
 import { mkdirSync } from "node:fs";
+import { GitHubHost } from "@forerunner/capabilities/githost/github";
+import type { RepoRef } from "@forerunner/capabilities/githost/types";
 import { ForerunnerError, log, osFacts, systemClock } from "@forerunner/platform";
 import { appliedVersions, MIGRATIONS, migrate, openStore } from "@forerunner/state";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
 import { migrateTokenState, SessionTokenStore } from "./auth/tokens.ts";
-import { assertStartable, readConfig, type StateApiConfig } from "./config.ts";
+import { assertStartable, parseMirrorRepo, readConfig, type StateApiConfig } from "./config.ts";
+import {
+  emptyMirrorMapping,
+  GitHubMirror,
+  type MirrorHost,
+  migrateMirrorMapping,
+} from "./mirror/github.ts";
+import { type MirrorRunReport, MirrorScheduler } from "./mirror/scheduler.ts";
 import { IdempotencyStore, migrateIdempotency } from "./outbox.ts";
 import { PostgresNotifier } from "./realtime.ts";
 import { FileJsonState } from "./state-file.ts";
 
 /**
  * `pnpm state-api`: read the environment, resolve the admin token, open the store, check the
- * schema, start the LISTEN bridge and the HTTP server, stop cleanly on SIGINT / SIGTERM.
+ * schema, build the GitHub mirror when configured, start the LISTEN bridge and the HTTP
+ * server, stop cleanly on SIGINT / SIGTERM.
  *
- * Secrets by reference: FORERUNNER_STATE_API_ADMIN_TOKEN_REF names a vault secret. The
- * service has no vault of its own (the keychain belongs to the desktop); the runner that
- * starts it injects vault values into the environment as FORERUNNER_SECRET_<NAME>, which is
- * what `resolveSecretRef` reads. A `SecretResolver` can be passed in by whoever embeds the
- * service in a process that holds a vault.
+ * Secrets by reference: FORERUNNER_STATE_API_ADMIN_TOKEN_REF and FORERUNNER_MIRROR_TOKEN_REF
+ * name vault secrets. The service has no vault of its own (the keychain belongs to the
+ * desktop); the runner that starts it injects vault values into the environment as
+ * FORERUNNER_SECRET_<NAME>, which is what `envSecretResolver` reads. A `SecretResolver` can
+ * be passed in by whoever embeds the service in a process that holds a vault.
  */
 export type SecretResolver = (name: string) => Promise<string | undefined>;
+
+/** Seams for tests and embedders. */
+export interface StartHooks {
+  /** Build the mirror's git host; default `GitHubHost` with the resolved token. */
+  mirrorHost?: (opts: { token: string; repo: RepoRef; apiUrl: string | undefined }) => MirrorHost;
+}
 
 const logger = log("state-api");
 
@@ -49,19 +65,53 @@ export async function resolveAdminToken(
   throw new ForerunnerError("validation", "no admin token configured");
 }
 
+/** The mirror token by reference; undefined when the mirror is not configured. */
+export async function resolveMirrorToken(
+  cfg: StateApiConfig,
+  resolve: SecretResolver,
+): Promise<string | undefined> {
+  if (!cfg.mirrorRepo) return undefined;
+  if (!cfg.mirrorTokenRef) {
+    throw new ForerunnerError(
+      "validation",
+      "FORERUNNER_MIRROR_REPO needs FORERUNNER_MIRROR_TOKEN_REF (vault name of the GitHub token)",
+    );
+  }
+  const value = await resolve(cfg.mirrorTokenRef);
+  if (value) return value;
+  throw new ForerunnerError(
+    "secret_not_granted",
+    `mirror token reference ${cfg.mirrorTokenRef} resolved to nothing`,
+  );
+}
+
 export interface StartedService {
   config: StateApiConfig;
   url: string;
+  /** Present when FORERUNNER_MIRROR_REPO is set: the scheduled one-way GitHub mirror. */
+  mirror:
+    | {
+        repo: string;
+        /** Passes completed so far. */
+        readonly runs: number;
+        lastReport: MirrorRunReport | undefined;
+        /** Sync every active project now (also what the schedule does). */
+        runOnce(): Promise<MirrorRunReport>;
+      }
+    | undefined;
   stop(): Promise<void>;
 }
 
 export async function startService(
   env: NodeJS.ProcessEnv = process.env,
   resolve: SecretResolver = envSecretResolver(env),
+  hooks: StartHooks = {},
 ): Promise<StartedService> {
   const cfg = readConfig(env);
   assertStartable(cfg);
   const adminToken = await resolveAdminToken(cfg, resolve);
+  const mirrorRepo = cfg.mirrorRepo ? parseMirrorRepo(cfg.mirrorRepo) : undefined;
+  const mirrorToken = await resolveMirrorToken(cfg, resolve);
   const store = await openStore({
     url: cfg.stateUrl,
     migrate: false,
@@ -113,17 +163,49 @@ export async function startService(
     systemClock,
   );
 
-  const { app, bus, close } = await (async () => {
-    const built = createApp({
+  // GitHub mirror (ADR 0024): the host token comes by reference like the admin token; the
+  // issue mapping lives in mirror.json next to the other service state.
+  let mirror: GitHubMirror | undefined;
+  let scheduler: MirrorScheduler | undefined;
+  if (mirrorRepo && mirrorToken) {
+    const repoName = `${mirrorRepo.owner}/${mirrorRepo.name}`;
+    const host =
+      hooks.mirrorHost?.({ token: mirrorToken, repo: mirrorRepo, apiUrl: cfg.mirrorApiUrl }) ??
+      new GitHubHost({
+        token: mirrorToken,
+        ...(cfg.mirrorApiUrl ? { baseUrl: cfg.mirrorApiUrl } : {}),
+        clock: systemClock,
+        userAgent: `forerunner-state-api/${cfg.version}`,
+      });
+    mirror = new GitHubMirror({
+      host,
+      repo: mirrorRepo,
       store,
       clock: systemClock,
-      config: { ...cfg, adminToken },
-      tokens,
-      idempotency,
-      chfPerUsd: env.FORERUNNER_CHF_PER_USD ? Number(env.FORERUNNER_CHF_PER_USD) : undefined,
+      state: new FileJsonState({
+        dir: cfg.serviceStateDir,
+        name: "mirror",
+        initial: () => emptyMirrorMapping(repoName),
+        migrate: migrateMirrorMapping,
+      }),
     });
-    return built;
-  })();
+    scheduler = new MirrorScheduler({
+      mirror,
+      store,
+      clock: systemClock,
+      intervalMs: Math.max(1, cfg.mirrorIntervalMs),
+    });
+  }
+
+  const { app, bus, close } = createApp({
+    store,
+    clock: systemClock,
+    config: { ...cfg, adminToken },
+    tokens,
+    idempotency,
+    mirror,
+    chfPerUsd: env.FORERUNNER_CHF_PER_USD ? Number(env.FORERUNNER_CHF_PER_USD) : undefined,
+  });
 
   let notifier: PostgresNotifier | undefined;
   if (store.dialect === "postgres") {
@@ -146,11 +228,13 @@ export async function startService(
     },
   );
   const url = `http://${cfg.host}:${port}`;
+  scheduler?.start();
   logger.info("state service listening", {
     url,
     dialect: store.dialect,
     schemaVersion: codeVersion,
     version: cfg.version,
+    mirror: scheduler?.repo ?? null,
     ...osFacts(env),
   });
 
@@ -160,12 +244,31 @@ export async function startService(
     stopping = true;
     logger.info("state service stopping");
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    await scheduler?.stop();
     await close();
     await notifier?.stop();
     await store.close();
     logger.info("state service stopped");
   };
-  return { config: { ...cfg, adminToken: "[set]" }, url, stop };
+  return {
+    config: { ...cfg, adminToken: "[set]" },
+    url,
+    mirror: scheduler ? mirrorHandle(scheduler) : undefined,
+    stop,
+  };
+}
+
+function mirrorHandle(scheduler: MirrorScheduler): NonNullable<StartedService["mirror"]> {
+  return {
+    repo: scheduler.repo,
+    get runs() {
+      return scheduler.runs;
+    },
+    get lastReport() {
+      return scheduler.lastReport;
+    },
+    runOnce: () => scheduler.runOnce(),
+  };
 }
 
 const isMain =

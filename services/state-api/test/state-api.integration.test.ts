@@ -173,6 +173,40 @@ describe.skipIf(!PG)(
       }
     });
 
+    it("two pickers racing on Postgres for one remote command: exactly one wins", async () => {
+      // Two service instances on two pools, so the UPDATEs run on different connections.
+      const a = await instance(storeA);
+      const b = await instance(storeB);
+      try {
+        const adminA = new Client(a.api.app, ADMIN_TOKEN);
+        const adminB = new Client(b.api.app, ADMIN_TOKEN);
+        for (let round = 0; round < 5; round++) {
+          const created = await adminA.post("/remote/commands", {
+            target: "cloud",
+            command: "stop",
+            params: { round },
+            deviceId: s.desktop.id,
+          });
+          expect(created.status).toBe(201);
+          const [x, y] = await Promise.all([
+            adminA.get("/remote/commands/pending?target=cloud"),
+            adminB.get("/remote/commands/pending?target=cloud"),
+          ]);
+          expect([x.status, y.status].sort()).toEqual([200, 204]);
+          const winner = x.status === 200 ? x : y;
+          const picked = (await winner.json()) as { id: string; status: string };
+          expect(picked.status).toBe("picked_up");
+          expect((await adminA.post(`/remote/commands/${picked.id}/complete`, {})).status).toBe(
+            200,
+          );
+        }
+        expect(await storeA.remoteCommand.pending("cloud")).toHaveLength(0);
+      } finally {
+        await a.stop();
+        await b.stop();
+      }
+    });
+
     it("48 simulated hours offline: the other install keeps working and the returning one sees everything", async () => {
       // Install A = Ada's PC (storeA), install B = Bob's PC (storeB). Both talk to Postgres directly.
       const project = await storeA.project.insert({ name: "Shared", goal: "offline gate" });

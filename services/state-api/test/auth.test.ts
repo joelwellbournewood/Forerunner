@@ -1,3 +1,4 @@
+import { SimulatedClock } from "@forerunner/platform";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.ts";
 import {
@@ -8,7 +9,8 @@ import {
   verifyRequestSignature,
 } from "../src/auth/crypto.ts";
 import { resolveScopes } from "../src/auth/scopes.ts";
-import { ADMIN_TOKEN, Client, type Harness, harness, json } from "./helpers.ts";
+import { TokenBucketLimiter } from "../src/ratelimit.ts";
+import { ADMIN_TOKEN, Client, type Harness, harness, json, START } from "./helpers.ts";
 
 describe("device identity primitives", () => {
   it("signs and verifies the canonical request, and the biometric flag is inside the signature", () => {
@@ -206,6 +208,29 @@ describe("request signatures", () => {
     expect((await phone.get("/projects", { corruptSignature: true })).status).toBe(401);
   });
 
+  it("refuses a replayed signed mutation inside the window; a re-signed retry and signed reads pass", async () => {
+    const phone = await h.pairDevice(h.seed.ada.id);
+    const first = await phone.post("/messages", body());
+    expect(first.status).toBe(201);
+    // The identical request (same timestamp, same signature) captured and sent again.
+    const replay = await phone.post("/messages", body());
+    expect(replay.status).toBe(401);
+    const err = await json<{ code: string; message: string }>(replay);
+    expect(err.code).toBe("bad_signature");
+    expect(err.message).toMatch(/replay/i);
+    // A client that re-signs with a fresh timestamp is a new request.
+    expect(
+      (await phone.post("/messages", body(), { timestamp: String(h.clock.now() + 1) })).status,
+    ).toBe(201);
+    // Signed reads change nothing and may repeat.
+    expect((await phone.get("/me")).status).toBe(200);
+    expect((await phone.get("/me")).status).toBe(200);
+    // Once the window has passed the signature is stale anyway and the guard has forgotten it.
+    await h.clock.advance(5 * 60_000 + 1);
+    await h.api.poller.pollOnce();
+    expect(h.api.replay.size()).toBe(0);
+  });
+
   it("signs the query string: a replay on a different query fails", async () => {
     const phone = await h.pairDevice(h.seed.ada.id);
     const headers = (
@@ -313,6 +338,90 @@ describe("admin token, rate limit and schema compatibility", () => {
       expect(limited.headers.get("retry-after")).toBeTruthy();
       await h.clock.advance(13_000);
       expect((await phone.get("/me")).status).toBe(200);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("keys the admin limiter per install when X-Forerunner-Install is sent", async () => {
+    // Admin budget is ten times the device budget: 10 per minute here.
+    const h = await harness({ config: { adminToken: ADMIN_TOKEN, rateLimitPerMinute: 1 } });
+    try {
+      const a = { headers: { "x-forerunner-install": "pc-ada" } };
+      const b = { headers: { "x-forerunner-install": "cloud-runner-1" } };
+      for (let i = 0; i < 10; i++) expect((await h.admin.get("/me", a)).status).toBe(200);
+      expect((await h.admin.get("/me", a)).status).toBe(429);
+      expect((await h.admin.get("/me", b)).status).toBe(200);
+      expect((await json<{ installId: string }>(await h.admin.get("/me", b))).installId).toBe(
+        "cloud-runner-1",
+      );
+      // A malformed install id is ignored (shared default bucket), never an error.
+      const odd = await h.admin.get("/me", { headers: { "x-forerunner-install": "a b/c" } });
+      expect([200, 429]).toContain(odd.status);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("trusts X-Forwarded-For for the public pairing limiter only behind a declared proxy", async () => {
+    // 60 per minute per device => 10 per minute for unauthenticated pairing completions.
+    const attempt = (h: Harness, i: number) =>
+      h.anonymous.post(
+        "/pairing/complete",
+        { code: "nope" },
+        { headers: { "x-forwarded-for": `203.0.113.${i}` } },
+      );
+    const direct = await harness({ config: { adminToken: ADMIN_TOKEN, rateLimitPerMinute: 60 } });
+    try {
+      const statuses: number[] = [];
+      for (let i = 1; i <= 12; i++) statuses.push((await attempt(direct, i)).status);
+      // Spoofed addresses share one bucket (the socket), so the 11th request is limited.
+      expect(statuses.filter((s) => s === 429).length).toBe(2);
+      expect(statuses.filter((s) => s === 400).length).toBe(10);
+    } finally {
+      await direct.close();
+    }
+    const proxied = await harness({
+      config: { adminToken: ADMIN_TOKEN, rateLimitPerMinute: 60, trustProxy: true },
+    });
+    try {
+      const statuses: number[] = [];
+      for (let i = 1; i <= 12; i++) statuses.push((await attempt(proxied, i)).status);
+      expect(statuses.every((s) => s === 400)).toBe(true);
+      // The same forwarded address is limited as one client.
+      const same: number[] = [];
+      for (let i = 0; i < 12; i++) same.push((await attempt(proxied, 7)).status);
+      expect(same.filter((s) => s === 429).length).toBeGreaterThan(0);
+    } finally {
+      await proxied.close();
+    }
+  });
+
+  it("the token bucket forgets idle buckets on sweep, caps its keys, and the poller tick sweeps", async () => {
+    const clock = new SimulatedClock(START);
+    const limiter = new TokenBucketLimiter(clock, 60, { maxKeys: 3 });
+    for (const k of ["a", "b", "c"]) limiter.take(k);
+    expect(limiter.size()).toBe(3);
+    limiter.take("a"); // most recently used
+    limiter.take("d"); // over the cap: the least recently used key ("b") goes
+    expect(limiter.size()).toBe(3);
+    expect(limiter.has("b")).toBe(false);
+    expect(limiter.has("a")).toBe(true);
+    await clock.advance(11 * 60_000);
+    limiter.sweep();
+    expect(limiter.size()).toBe(0);
+
+    const h = await harness();
+    try {
+      const phone = await h.pairDevice(h.seed.ada.id);
+      expect((await phone.get("/me")).status).toBe(200);
+      expect(h.api.limiters.device.size()).toBe(1);
+      expect(h.api.limiters.admin.size()).toBe(1);
+      await h.clock.advance(11 * 60_000);
+      await h.api.poller.pollOnce();
+      expect(h.api.limiters.device.size()).toBe(0);
+      expect(h.api.limiters.admin.size()).toBe(0);
+      expect(h.api.limiters.public.size()).toBe(0);
     } finally {
       await h.close();
     }

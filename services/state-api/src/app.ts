@@ -1,15 +1,17 @@
 import { randomBytes } from "node:crypto";
 import { type Clock, log, systemClock } from "@forerunner/platform";
 import { MIGRATIONS, type StateStore } from "@forerunner/state";
+import { getConnInfo } from "@hono/node-server/conninfo";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { PairingService } from "./auth/pairing.ts";
-import { authenticate } from "./auth/principal.ts";
+import { authenticate, HEADER_INSTALL } from "./auth/principal.ts";
+import { ReplayGuard } from "./auth/replay.ts";
 import { SessionTokenStore } from "./auth/tokens.ts";
 import { readConfig, type StateApiConfig } from "./config.ts";
 import { ApiError, toApiError } from "./errors.ts";
-import type { App, Env, RouteContext } from "./http.ts";
+import type { App, Ctx, Env, RouteContext } from "./http.ts";
 import type { GitHubMirror } from "./mirror/github.ts";
 import { IdempotencyStore } from "./outbox.ts";
 import { TokenBucketLimiter } from "./ratelimit.ts";
@@ -54,6 +56,10 @@ export interface StateApiApp {
   poller: ChangePoller;
   tokens: SessionTokenStore;
   pairing: PairingService;
+  /** Per-device, per-install (admin) and public (pairing) token buckets; swept on every poller tick. */
+  limiters: { device: TokenBucketLimiter; admin: TokenBucketLimiter; public: TokenBucketLimiter };
+  /** Signed mutations seen inside the signature window. */
+  replay: ReplayGuard;
   /** Stop timers and the LISTEN connection (the store is the caller's). */
   close(): Promise<void>;
 }
@@ -63,10 +69,26 @@ export const HEADER_SCHEMA_VERSION = "x-forerunner-schema";
 const logger = log("state-api:http");
 const PUBLIC_PATHS = new Set(["/health", "/pairing/complete"]);
 const ADMIN_RATE_MULTIPLIER = 10;
+/** Public buckets are keyed by client address; a flood of addresses must not grow memory. */
+const PUBLIC_MAX_KEYS = 10_000;
 
-function clientKey(c: { req: { header(name: string): string | undefined } }): string {
-  const forwarded = c.req.header("x-forwarded-for");
-  if (forwarded) return `ip:${forwarded.split(",")[0]?.trim() ?? "unknown"}`;
+/**
+ * Rate-limit key for unauthenticated requests: the socket address, or the first
+ * X-Forwarded-For entry only when the operator declared a trusted proxy in front
+ * (`FORERUNNER_STATE_API_TRUST_PROXY`), since any client can set that header itself.
+ */
+export function clientKey(c: Ctx, trustProxy: boolean): string {
+  if (trustProxy) {
+    const forwarded = c.req.header("x-forwarded-for");
+    const first = forwarded?.split(",")[0]?.trim();
+    if (first) return `ip:${first.slice(0, 64)}`;
+  }
+  try {
+    const address = getConnInfo(c).remote.address;
+    if (address) return `ip:${address}`;
+  } catch {
+    // Not served by @hono/node-server (tests call app.request()): one shared bucket.
+  }
   return "ip:local";
 }
 
@@ -76,12 +98,6 @@ export function createApp(deps: AppDeps): StateApiApp {
   const tokens = deps.tokens ?? new SessionTokenStore(undefined, clock, config.sessionTokenTtlMs);
   const pairing = new PairingService(deps.store, tokens, clock);
   const bus = deps.bus ?? new ChangeBus(clock);
-  const poller = new ChangePoller({
-    store: deps.store,
-    bus,
-    clock,
-    intervalMs: config.pollIntervalMs,
-  });
   const limiter = new TokenBucketLimiter(clock, config.rateLimitPerMinute);
   const adminLimiter = new TokenBucketLimiter(
     clock,
@@ -90,7 +106,21 @@ export function createApp(deps: AppDeps): StateApiApp {
   const publicLimiter = new TokenBucketLimiter(
     clock,
     Math.max(10, Math.floor(config.rateLimitPerMinute / 6)),
+    { maxKeys: PUBLIC_MAX_KEYS },
   );
+  const replay = new ReplayGuard(clock, config.signatureWindowMs);
+  const poller = new ChangePoller({
+    store: deps.store,
+    bus,
+    clock,
+    intervalMs: config.pollIntervalMs,
+    onTick: () => {
+      limiter.sweep();
+      adminLimiter.sweep();
+      publicLimiter.sweep();
+      replay.sweep();
+    },
+  });
 
   const ctx: RouteContext = {
     store: deps.store,
@@ -164,6 +194,7 @@ export function createApp(deps: AppDeps): StateApiApp {
           "X-Device-Signature",
           "X-Device-Timestamp",
           "X-Biometric-Assertion",
+          HEADER_INSTALL,
           HEADER_SCHEMA_VERSION,
         ],
         exposeHeaders: ["Retry-After"],
@@ -196,7 +227,7 @@ export function createApp(deps: AppDeps): StateApiApp {
   app.use("*", async (c, next) => {
     if (PUBLIC_PATHS.has(c.req.path)) {
       if (c.req.method !== "GET") {
-        const decision = publicLimiter.take(clientKey(c));
+        const decision = publicLimiter.take(clientKey(c, config.trustProxy));
         if (!decision.allowed) {
           throw new ApiError(429, "rate_limited", "too many requests", {
             retryAfterSec: decision.retryAfterSec,
@@ -218,6 +249,7 @@ export function createApp(deps: AppDeps): StateApiApp {
         clock,
         adminToken: config.adminToken,
         signatureWindowMs: config.signatureWindowMs,
+        replay,
       },
       {
         method: c.req.method,
@@ -227,7 +259,10 @@ export function createApp(deps: AppDeps): StateApiApp {
       },
     );
     c.set("principal", p);
-    const decision = p.kind === "admin" ? adminLimiter.take("admin") : limiter.take(p.deviceId);
+    const decision =
+      p.kind === "admin"
+        ? adminLimiter.take(`admin:${p.installId ?? "default"}`)
+        : limiter.take(p.deviceId);
     if (!decision.allowed) {
       throw new ApiError(429, "rate_limited", "too many requests", {
         retryAfterSec: decision.retryAfterSec,
@@ -273,6 +308,8 @@ export function createApp(deps: AppDeps): StateApiApp {
     poller,
     tokens,
     pairing,
+    limiters: { device: limiter, admin: adminLimiter, public: publicLimiter },
+    replay,
     async close() {
       await poller.stop();
       await deps.notifier?.stop();

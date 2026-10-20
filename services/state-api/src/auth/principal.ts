@@ -2,6 +2,7 @@ import type { Clock } from "@forerunner/platform";
 import type { DeviceRow, StateStore } from "@forerunner/state";
 import { ApiError, forbidden, unauthorized } from "../errors.ts";
 import { constantTimeEqual, verifyRequestSignature } from "./crypto.ts";
+import type { ReplayGuard } from "./replay.ts";
 import type { Scope } from "./scopes.ts";
 import type { SessionTokenRecord, SessionTokenStore } from "./tokens.ts";
 
@@ -11,7 +12,17 @@ import type { SessionTokenRecord, SessionTokenStore } from "./tokens.ts";
  * channel). Device = a paired phone or approvals web page with a scoped session token.
  */
 export type Principal =
-  | { kind: "admin"; scopes: readonly Scope[]; humanId: null; deviceId: null }
+  | {
+      kind: "admin";
+      scopes: readonly Scope[];
+      humanId: null;
+      deviceId: null;
+      /**
+       * Which install is calling (`X-Forerunner-Install`), so each PC runtime and the cloud
+       * runner get their own rate-limit bucket and idempotency space; null without the header.
+       */
+      installId: string | null;
+    }
   | {
       kind: "device";
       deviceId: string;
@@ -37,6 +48,17 @@ export const ALL_SCOPES: readonly Scope[] = [
 export const HEADER_SIGNATURE = "x-device-signature";
 export const HEADER_TIMESTAMP = "x-device-timestamp";
 export const HEADER_BIOMETRIC = "x-biometric-assertion";
+export const HEADER_INSTALL = "x-forerunner-install";
+
+const INSTALL_ID = /^[A-Za-z0-9._:-]{1,64}$/;
+const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** The install id an admin caller declares, or null when absent or malformed (never an error). */
+export function installIdOf(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const value = raw.trim();
+  return INSTALL_ID.test(value) ? value : null;
+}
 
 export interface AuthDeps {
   store: StateStore;
@@ -44,6 +66,8 @@ export interface AuthDeps {
   clock: Clock;
   adminToken: string | undefined;
   signatureWindowMs: number;
+  /** Refuses a signed mutation presented twice inside the window; optional for embedders. */
+  replay?: ReplayGuard;
 }
 
 export interface IncomingRequest {
@@ -74,7 +98,13 @@ export async function authenticate(deps: AuthDeps, req: IncomingRequest): Promis
   const token = m[1];
 
   if (deps.adminToken && constantTimeEqual(token, deps.adminToken)) {
-    return { kind: "admin", scopes: ALL_SCOPES, humanId: null, deviceId: null };
+    return {
+      kind: "admin",
+      scopes: ALL_SCOPES,
+      humanId: null,
+      deviceId: null,
+      installId: installIdOf(req.headers.get(HEADER_INSTALL)),
+    };
   }
 
   const record = deps.tokens.lookup(token);
@@ -111,6 +141,18 @@ export async function authenticate(deps: AuthDeps, req: IncomingRequest): Promis
       biometric,
     });
     if (!ok) throw new ApiError(401, "bad_signature", "device signature does not verify");
+    // A verified mutation signature is single use inside the window (ADR 0009 amendment).
+    if (
+      deps.replay &&
+      !READ_METHODS.has(req.method.toUpperCase()) &&
+      !deps.replay.accept(signature)
+    ) {
+      throw new ApiError(
+        401,
+        "bad_signature",
+        "signed request replayed; sign again with a fresh timestamp",
+      );
+    }
     signed = true;
   }
   return {

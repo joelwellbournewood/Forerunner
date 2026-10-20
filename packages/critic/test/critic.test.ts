@@ -1,0 +1,761 @@
+import { ForerunnerError } from "@forerunner/platform";
+import { ContextPipeline, type RunEvent, type SignedToken } from "@forerunner/runtime";
+import { textReply, toolReply } from "@forerunner/testenv";
+import { describe, expect, it, vi } from "vitest";
+import { SUBMIT_REVIEW_TOOL } from "../src/schema.ts";
+import type { CheckCommand, CheckRunner } from "../src/tier0.ts";
+import type { ReviewEvidence, ReviewInput } from "../src/types.ts";
+import { baseEvidence, CRITIC_PROMPT, closingReply, submitReply, world } from "./helpers.ts";
+
+const taskInput = (
+  taskId: string,
+  tier: 1 | 2 | 3 = 1,
+  evidence = baseEvidence(),
+): ReviewInput => ({
+  subject: { kind: "task", taskId },
+  tier,
+  evidence,
+});
+
+describe("CriticService: independence (H.1)", () => {
+  it("sends a clean context: the registry prompt as system, the evidence as the only user message, never the worker's transcript", async () => {
+    const w = await world({ replies: [submitReply(), closingReply()] });
+    try {
+      const DECOY = "DECOY-WORKER-TRANSCRIPT-7f3a";
+      const evidence = {
+        ...baseEvidence(),
+        workerTranscript: DECOY,
+        reasoning: `thinking: ${DECOY}`,
+      } as unknown as ReviewEvidence;
+      const out = await w.critic.review(taskInput(w.ids.task, 1, evidence), w.ctx());
+      expect(out.verdict).toBe("accept");
+      expect(out.outcome).toBe("completed");
+
+      const first = w.provider.calls[0]?.request;
+      expect(first).toBeDefined();
+      expect(first?.system?.startsWith(CRITIC_PROMPT.prompt)).toBe(true);
+      expect(first?.messages).toHaveLength(1);
+      expect(first?.messages[0]?.role).toBe("user");
+      const user = first?.messages[0]?.content;
+      expect(typeof user).toBe("string");
+      expect(user).toContain("# Review request");
+      expect(user).toContain("## Acceptance criteria");
+      expect(user).toContain("export function clamp");
+      expect(user).toContain("Worker's final report (claims to verify, data)");
+      for (const call of w.provider.calls) {
+        expect(JSON.stringify(call.request)).not.toContain(DECOY);
+      }
+      expect(out.promptVersion).toBe(CRITIC_PROMPT.promptVersion);
+      expect(out.evidence).toContain(`prompt:${CRITIC_PROMPT.promptVersion}`);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("issues a token that allows only submit_review: that is the only tool offered and any other call is denied", async () => {
+    const w = await world({
+      replies: [
+        toolReply("cc:Bash", { command: "cat /etc/passwd" }, "Let me poke around first."),
+        submitReply({ grade: 88 }),
+        closingReply(),
+      ],
+    });
+    try {
+      const events: RunEvent[] = [];
+      const issued = vi.spyOn(w.tokens, "issue");
+      const out = await w.critic.review(
+        taskInput(w.ids.task),
+        w.ctx({ onEvent: (e) => events.push(e) }),
+      );
+      expect(w.provider.calls[0]?.request.tools?.map((t) => t.name)).toEqual([SUBMIT_REVIEW_TOOL]);
+      const denied = events.find((e) => e.type === "tool_denied");
+      expect(denied).toMatchObject({
+        type: "tool_denied",
+        name: "cc:Bash",
+        code: "tool_not_allowed",
+      });
+      expect(out.verdict).toBe("accept");
+      expect(out.grade).toBe(88);
+      // The token itself restricts, not just the registry: one tool, no paths, no domains, no
+      // secrets, never more budget than the session token, one level deeper.
+      const parent = w.sessionToken.claims;
+      const criticTokens = issued.mock.results
+        .map((r) => (r.value as SignedToken).claims)
+        .filter((c) => c.agentId === w.ids.critic);
+      expect(criticTokens).toHaveLength(1);
+      expect(criticTokens[0]).toMatchObject({
+        runId: out.runId,
+        sessionId: w.ids.session,
+        ownerHumanId: w.ids.human,
+        projectId: w.ids.project,
+        taskId: w.ids.task,
+        allowedTools: [SUBMIT_REVIEW_TOOL],
+        allowedPaths: [],
+        allowedDomains: [],
+        grantedSecrets: [],
+        depth: parent.depth + 1,
+        maxDepth: parent.maxDepth,
+      });
+      expect(criticTokens[0]?.budgetUsdMicro).toBeLessThanOrEqual(parent.budgetUsdMicro);
+      expect(new Date(criticTokens[0]?.expiresAt as string).getTime()).toBeLessThanOrEqual(
+        new Date(parent.expiresAt).getTime(),
+      );
+      const start = events.find((e) => e.type === "run_start");
+      expect(start).toMatchObject({ type: "run_start", runId: out.runId });
+      // The critic ran as its own agent, at depth 1, on the session's budget.
+      expect(
+        w.ledger.entries.every((e) => e.agentId === w.ids.critic && e.sessionId === w.ids.session),
+      ).toBe(true);
+      expect(w.ledger.entries.length).toBeGreaterThan(0);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("bypasses context compression for the evidence: every block is recorded uncompressed", async () => {
+    const pipeline = new ContextPipeline();
+    const noisy = `${"same line of log\n".repeat(400)}ERROR real\n`;
+    const w = await world({
+      replies: [submitReply(), closingReply()],
+      deps: { context: pipeline },
+    });
+    try {
+      const run = vi.spyOn(w.driver, "run");
+      const out = await w.critic.review(
+        taskInput(w.ids.task, 1, baseEvidence({ testOutput: noisy, diff: noisy })),
+        w.ctx(),
+      );
+      expect(pipeline.records.length).toBeGreaterThanOrEqual(2);
+      for (const r of pipeline.records) {
+        expect(r.transforms).toEqual([]);
+        expect(r.tokensAfter).toBe(r.tokensBefore);
+      }
+      expect(out.evidence.some((e) => e.includes("sent uncompressed"))).toBe(true);
+      const user = w.provider.calls[0]?.request.messages[0]?.content as string;
+      expect(user).toContain("ERROR real");
+      // ADR 0003: the critic sets compression "off" on its run and uses the session pipeline,
+      // so the loop's own tool-result compression is bypassed too, not only the evidence.
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run.mock.calls[0]?.[0]).toMatchObject({ compression: "off", phase: "review" });
+      expect(run.mock.calls[0]?.[0]?.context).toBe(pipeline);
+      const run0 = (await w.store.run.forTask(w.ids.task))[0];
+      expect(run0?.tokens_before_compression).toBe(run0?.tokens_after_compression);
+    } finally {
+      await w.close();
+    }
+  });
+});
+
+describe("CriticService: checks run at tier 2+ (H.2)", () => {
+  const unit: CheckCommand = { name: "unit", argv: ["pnpm", "test"] };
+
+  it("tier 2 runs the task's check commands in the worktree before the model reads; a failed check is a finding", async () => {
+    const seen: { cmd: CheckCommand; cwd?: string }[] = [];
+    const checkRunner: CheckRunner = {
+      async run(cmd, o) {
+        seen.push({ cmd, cwd: o.cwd });
+        return { name: cmd.name, passed: false, output: "1 failing\n  clamp > upper bound" };
+      },
+    };
+    const w = await world({
+      replies: [submitReply({ grade: 95 }), closingReply()],
+      deps: { checkRunner },
+    });
+    try {
+      const out = await w.critic.review(
+        taskInput(w.ids.task, 2, baseEvidence({ checkResults: [] })),
+        w.ctx({ checks: [unit], cwd: "/work/tree" }),
+      );
+      expect(seen).toEqual([{ cmd: unit, cwd: "/work/tree" }]);
+      // The model saw the result the critic ran, as data.
+      const user = w.provider.calls[0]?.request.messages[0]?.content as string;
+      expect(user).toContain("## Check results");
+      expect(user).toContain("[FAIL] unit");
+      expect(user).toContain("1 failing");
+      expect(out.verdict).toBe("revise");
+      expect(out.findings).toContainEqual(
+        expect.objectContaining({ severity: "high", description: "Check failed: unit" }),
+      );
+      expect(out.evidence).toContain("ran: unit -> fail (1 failing)");
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("tier 1 is a light read: commands are not run and the evidence says so", async () => {
+    const checkRunner: CheckRunner = {
+      async run() {
+        throw new Error("tier 1 must not run commands");
+      },
+    };
+    const w = await world({
+      replies: [submitReply(), closingReply()],
+      deps: { checkRunner },
+    });
+    try {
+      const out = await w.critic.review(
+        taskInput(w.ids.task, 1),
+        w.ctx({ checks: [unit], cwd: "/work/tree" }),
+      );
+      expect(out.verdict).toBe("accept");
+      expect(out.evidence).toContain(
+        "checks: 1 command(s) not run at tier 1 (light read); pass checkResults or review at tier 2",
+      );
+    } finally {
+      await w.close();
+    }
+  });
+});
+
+describe("CriticService: rules in code", () => {
+  it("medium confidence never accepts: the verdict becomes escalate and the change is recorded", async () => {
+    const w = await world({
+      replies: [submitReply({ confidence: "medium", grade: 95 }), closingReply()],
+    });
+    try {
+      const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      expect(out.verdict).toBe("escalate");
+      expect(out.confidence).toBeLessThan(0.6);
+      expect(out.adjustments.map((a) => a.rule)).toEqual(["low_confidence"]);
+      const review = await w.store.review.latestForTask(w.ids.task);
+      expect(review?.verdict).toBe("escalate");
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a blocker finding cannot accept: it is stored as critical and the task keeps an open finding", async () => {
+    const w = await world({
+      replies: [
+        submitReply({
+          verdict: "accept",
+          findings: [
+            { severity: "blocker", what: "The test file was deleted", where: "test/math.test.ts" },
+          ],
+        }),
+        closingReply(),
+      ],
+    });
+    try {
+      const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      expect(out.verdict).toBe("revise");
+      expect(out.findings[0]).toMatchObject({
+        severity: "critical",
+        description: "The test file was deleted",
+      });
+      expect(out.adjustments[0]?.rule).toBe("blocking_finding");
+      const open = await w.store.finding.openFor(w.ids.task);
+      expect(open).toHaveLength(1);
+      expect(open[0]?.fingerprint).toBe(out.findings[0]?.fingerprint);
+      await expect(
+        w.store.task.transition(
+          w.ids.task,
+          (await w.store.task.mustGet(w.ids.task)).version,
+          "done",
+          "try",
+        ),
+      ).rejects.toMatchObject({ code: "findings_open" });
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("grade and verdict must agree: accept at grade 60 becomes revise", async () => {
+    const w = await world({ replies: [submitReply({ grade: 60 }), closingReply()] });
+    try {
+      const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      expect(out.verdict).toBe("revise");
+      expect(out.grade).toBe(60);
+      expect(out.adjustments[0]?.rule).toBe("grade_verdict_consistency");
+      // A revise with no named finding still leaves something to act on.
+      expect(out.findings).toHaveLength(1);
+      expect((await w.store.finding.openFor(w.ids.task)).length).toBe(1);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("tier 3 ends in a human verdict with a blocking sign-off request that carries the summary", async () => {
+    const w = await world({
+      replies: [submitReply({ grade: 97, summary: "Flawless migration." }), closingReply()],
+    });
+    try {
+      const out = await w.critic.review(taskInput(w.ids.task, 3), w.ctx());
+      expect(out.verdict).toBe("human");
+      expect(out.model).toBe("fake-opus");
+      expect(out.adjustments.at(-1)?.rule).toBe("tier3_human_signoff");
+      expect(out.humanRequestId).toBeDefined();
+      const req = await w.store.humanRequest.mustGet(out.humanRequestId as string);
+      expect(req).toMatchObject({
+        kind: "approval",
+        blocking: true,
+        status: "open",
+        human_id: w.ids.human,
+        task_id: w.ids.task,
+        project_id: w.ids.project,
+      });
+      expect(req.why).toContain("Flawless migration.");
+      expect(req.why).toContain("tier 3");
+      expect(req.options).toEqual(["accept", "revise", "cancel"]);
+      const run = (await w.store.run.forTask(w.ids.task))[0];
+      expect(run).toMatchObject({
+        specialist: "critic",
+        model: "fake-opus",
+        effort: "max",
+        prompt_version: CRITIC_PROMPT.promptVersion,
+      });
+      // A clean tier 3 result names nothing wrong: no finding is invented for the sign-off, so
+      // nothing blocks the close once the human accepts (B.4), and the request has no steps.
+      expect(out.grade).toBe(97);
+      expect(out.findings).toEqual([]);
+      expect(out.findingIds).toEqual([]);
+      expect(await w.store.finding.openFor(w.ids.task)).toEqual([]);
+      expect(req.steps).toEqual([]);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a clean review at low confidence escalates without inventing a finding", async () => {
+    const w = await world({
+      replies: [
+        submitReply({ confidence: "low", grade: 95, summary: "Looks fine." }),
+        closingReply(),
+      ],
+    });
+    try {
+      const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      expect(out.verdict).toBe("escalate");
+      expect(out.adjustments.map((a) => a.rule)).toEqual(["low_confidence"]);
+      expect(out.findings).toEqual([]);
+      expect(await w.store.finding.openFor(w.ids.task)).toEqual([]);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a revise or escalate from the model with no named finding still leaves one thing to act on", async () => {
+    const w = await world({
+      replies: [
+        submitReply({ verdict: "escalate", grade: 40, summary: "Wrong approach entirely." }),
+        closingReply(),
+      ],
+    });
+    try {
+      const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      expect(out.verdict).toBe("escalate");
+      expect(out.adjustments).toEqual([]);
+      expect(out.findings).toEqual([
+        expect.objectContaining({ severity: "medium", description: "Wrong approach entirely." }),
+      ]);
+      expect(await w.store.finding.openFor(w.ids.task)).toHaveLength(1);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a failed required check blocks accept at tier 1 whatever the model said (B.4)", async () => {
+    const w = await world({ replies: [submitReply({ grade: 96 }), closingReply()] });
+    try {
+      const out = await w.critic.review(
+        taskInput(
+          w.ids.task,
+          1,
+          baseEvidence({
+            checkResults: [{ name: "pnpm test", passed: false, output: "2 failing" }],
+          }),
+        ),
+        w.ctx(),
+      );
+      expect(out.verdict).toBe("revise");
+      expect(out.findings).toContainEqual(
+        expect.objectContaining({
+          severity: "high",
+          description: "Check failed: pnpm test",
+          where: "2 failing",
+        }),
+      );
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("an unmet acceptance criterion becomes a high finding", async () => {
+    const w = await world({
+      replies: [
+        submitReply({
+          criteria: [
+            { text: "src/math.ts exports clamp", met: true, evidence: "diff line 3" },
+            { text: "tests pass", met: false, evidence: "no test output for clamp" },
+          ],
+        }),
+        closingReply(),
+      ],
+    });
+    try {
+      const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      expect(out.verdict).toBe("revise");
+      expect(out.findings[0]).toMatchObject({
+        severity: "high",
+        description: "Acceptance criterion not met: tests pass",
+      });
+      expect(out.evidence).toContain("[met] src/math.ts exports clamp — diff line 3");
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("no structured verdict is a conservative escalate with a 'did not complete' finding", async () => {
+    const w = await world({ replies: [textReply("I would rather not say.")] });
+    try {
+      const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      expect(out.outcome).toBe("no_verdict");
+      expect(out.verdict).toBe("escalate");
+      expect(out.grade).toBe(0);
+      expect(out.findings[0]?.description).toContain("did not complete");
+      expect(out.summary).toContain("no structured verdict");
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("rejects an invalid tier or subject before touching a model", async () => {
+    const w = await world();
+    try {
+      await expect(
+        w.critic.review({ ...taskInput(w.ids.task), tier: 4 as unknown as 1 }, w.ctx()),
+      ).rejects.toBeInstanceOf(ForerunnerError);
+      expect(w.provider.calls).toHaveLength(0);
+    } finally {
+      await w.close();
+    }
+  });
+});
+
+describe("CriticService: doc drift at tier 2+ (P.14)", () => {
+  const drifting = () =>
+    baseEvidence({
+      changedFiles: ["packages/critic/src/rules.ts"],
+      moduleFilesTouched: ["packages/critic/src/rules.ts"],
+      docsTouched: [],
+    });
+
+  it("adds a medium finding when a module changed without its maintainer doc; tier 1 does not check", async () => {
+    const w = await world({
+      replies: [submitReply(), closingReply(), submitReply(), closingReply()],
+    });
+    try {
+      const t2 = await w.critic.review(taskInput(w.ids.task, 2, drifting()), w.ctx());
+      expect(t2.verdict).toBe("revise");
+      expect(t2.findings[0]).toMatchObject({
+        severity: "medium",
+        where: "packages/critic/src/rules.ts",
+      });
+      expect(t2.findings[0]?.description).toContain(
+        "packages/critic changed without its maintainer doc (docs/maintainers/critic.md)",
+      );
+      expect(t2.evidence).toContain("docs: 1 module(s) without their doc");
+      const t1 = await w.critic.review(taskInput(w.ids.task, 1, drifting()), w.ctx());
+      expect(t1.verdict).toBe("accept");
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("no finding when the doc changed too or the PR body waives it", async () => {
+    const w = await world({
+      replies: [submitReply(), closingReply(), submitReply(), closingReply()],
+    });
+    try {
+      const withDoc = await w.critic.review(
+        taskInput(
+          w.ids.task,
+          2,
+          baseEvidence({ ...drifting(), docsTouched: ["docs/maintainers/critic.md"] }),
+        ),
+        w.ctx(),
+      );
+      expect(withDoc.verdict).toBe("accept");
+      expect(withDoc.evidence).toContain("docs: no drift");
+      const waived = await w.critic.review(
+        taskInput(
+          w.ids.task,
+          2,
+          baseEvidence({ ...drifting(), docsWaiver: "docs: none needed: constants only" }),
+        ),
+        w.ctx(),
+      );
+      expect(waived.verdict).toBe("accept");
+      expect(waived.evidence).toContain("docs: waived by the PR body");
+    } finally {
+      await w.close();
+    }
+  });
+});
+
+describe("CriticService: persistence, resolution and patterns (H.3, H.5)", () => {
+  it("persists the review, its findings with fingerprints, the critic run and an event", async () => {
+    const w = await world({
+      replies: [
+        submitReply({
+          verdict: "revise",
+          grade: 55,
+          summary: "Two problems.",
+          findings: [
+            {
+              severity: "major",
+              what: "Tests were weakened in test/math.test.ts:4",
+              required_action: "Restore the assertions",
+            },
+            { severity: "minor", what: "Unrelated formatting change", where: "src/other.ts" },
+          ],
+          evidence: ["diff:src/math.ts#L3"],
+          checks_run: ["node --test -> exit 1"],
+        }),
+        closingReply(),
+      ],
+    });
+    try {
+      const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      expect(out.reviewId).toBeDefined();
+      const review = await w.store.review.mustGet(out.reviewId as string);
+      expect(review).toMatchObject({
+        task_id: w.ids.task,
+        session_id: w.ids.session,
+        verdict: "revise",
+        grade: 55,
+        tier: 1,
+        critic_model: "fake-sonnet",
+        author_agent: w.ids.critic,
+      });
+      expect(review.evidence).toContain("diff:src/math.ts#L3");
+      expect(review.evidence).toContain("ran: node --test -> exit 1");
+      const findings = await w.store.finding.forReview(review.id);
+      expect(findings).toHaveLength(2);
+      expect(findings.map((f) => f.status)).toEqual(["open", "open"]);
+      expect(findings.map((f) => f.severity).sort()).toEqual(["high", "low"]);
+      expect(findings.every((f) => /^[0-9a-f]{16}$/.test(f.fingerprint))).toBe(true);
+      expect(findings.find((f) => f.severity === "high")?.required_action).toBe(
+        "Restore the assertions",
+      );
+      expect(out.findingIds).toEqual(findings.map((f) => f.id));
+      const runs = await w.store.run.forSession(w.ids.session);
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({
+        id: out.runId,
+        specialist: "critic",
+        task_id: w.ids.task,
+        provider: "fake",
+        effort: "medium",
+      });
+      expect(runs[0]?.cost_usd_micro).toBe(out.costUsdMicro);
+      expect(out.costUsdMicro).toBeGreaterThan(0);
+      const events = await w.store.event.list(w.ids.session);
+      expect(events.map((e) => e.type)).toContain("critic.review");
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("an accepting re-review resolves the task's earlier open findings with the run that fixed them", async () => {
+    const w = await world({
+      replies: [
+        submitReply({
+          verdict: "revise",
+          grade: 50,
+          findings: [{ severity: "major", what: "Off by one in clamp" }],
+        }),
+        closingReply(),
+        submitReply({ grade: 93 }),
+        closingReply(),
+      ],
+    });
+    try {
+      const first = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      const openBefore = await w.store.finding.openFor(w.ids.task);
+      expect(openBefore).toHaveLength(1);
+      const fix = await w.store.run.insert({
+        session_id: w.ids.session,
+        task_id: w.ids.task,
+        specialist: "coder",
+        model: "fake-sonnet",
+      });
+      const second = await w.critic.review(
+        taskInput(w.ids.task, 1, baseEvidence({ runId: fix.id })),
+        w.ctx(),
+      );
+      // The second call saw the earlier finding in its evidence.
+      const user = w.provider.calls[2]?.request.messages[0]?.content as string;
+      expect(user).toContain("Open findings from earlier reviews");
+      expect(user).toContain("Off by one in clamp");
+      expect(second.verdict).toBe("accept");
+      expect(second.resolvedFindingIds).toEqual(first.findingIds);
+      const resolved = await w.store.finding.mustGet(first.findingIds?.[0] as string);
+      expect(resolved).toMatchObject({ status: "resolved", resolved_by_run: fix.id });
+      expect(await w.store.finding.openFor(w.ids.task)).toEqual([]);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("the same finding in two sessions is a pattern and yields a lesson proposal", async () => {
+    const finding = (where: string) => ({
+      severity: "major" as const,
+      what: `Tests were weakened: assertions removed in ${where}`,
+    });
+    const w = await world({
+      replies: [
+        submitReply({ verdict: "revise", grade: 40, findings: [finding("test/a.test.ts:10")] }),
+        closingReply(),
+        submitReply({
+          verdict: "revise",
+          grade: 45,
+          findings: [finding("packages/x/test/b.test.ts:99")],
+        }),
+        closingReply(),
+      ],
+    });
+    try {
+      const first = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      expect(first.patterns).toEqual([]);
+      expect(first.lessonProposals).toEqual([]);
+
+      const session2 = await w.newSession();
+      const task2 = await w.newTask();
+      const second = await w.critic.review(
+        taskInput(task2.id),
+        w.ctx({ sessionToken: w.tokenFor(session2, task2.id) }),
+      );
+      expect(second.findings[0]?.fingerprint).toBe(first.findings[0]?.fingerprint);
+      expect(second.patterns).toEqual([
+        { fingerprint: first.findings[0]?.fingerprint, total: 2, sessions: 2, tasks: 2 },
+      ]);
+      expect(second.lessonProposals).toHaveLength(1);
+      expect(second.lessonProposals[0]).toMatchObject({
+        scope: "critic",
+        tags: ["critic", "pattern", "high"],
+        source: `critic:pattern:${first.findings[0]?.fingerprint}`,
+      });
+      expect(second.lessonProposals[0]?.text).toContain("2 times in 2 sessions");
+      expect(second.lessonProposals[0]?.text).toContain("Tests were weakened");
+      expect(await w.store.finding.repeated(2)).toHaveLength(1);
+      // Proposals are returned, never written: the critic does not touch the lesson table.
+      expect(await w.store.lesson.count()).toBe(0);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("the model follows the tier and the ceiling the context gives, and the run row records it", async () => {
+    const w = await world({
+      replies: [submitReply(), closingReply(), submitReply(), closingReply()],
+    });
+    try {
+      const capped = await w.critic.review(
+        taskInput(w.ids.task, 2),
+        w.ctx({ projectSettings: { critic_ceiling: "sonnet" } }),
+      );
+      expect(capped.model).toBe("fake-sonnet");
+      const free = await w.critic.review(taskInput(w.ids.task, 2), w.ctx());
+      expect(free.model).toBe("fake-opus");
+      expect(w.provider.calls[0]?.request.model).toBe("fake-sonnet");
+      expect(w.provider.calls[0]?.request.effort).toBe("high");
+      expect(w.provider.calls[2]?.request.model).toBe("fake-opus");
+      const runs = await w.store.run.forTask(w.ids.task);
+      expect(runs.map((r) => r.model).sort()).toEqual(["fake-opus", "fake-sonnet"]);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("the project's critic_ceiling is read from the store when the context gives no settings, and the stricter ceiling wins (D.3)", async () => {
+    const w = await world({
+      replies: [submitReply(), closingReply(), submitReply(), closingReply()],
+      projectSettings: { critic_ceiling: "sonnet" },
+    });
+    try {
+      // A plain context: the project row alone caps a tier 2 review at sonnet.
+      const plain = await w.critic.review(taskInput(w.ids.task, 2), w.ctx());
+      expect(plain.model).toBe("fake-sonnet");
+      expect(w.provider.calls[0]?.request.model).toBe("fake-sonnet");
+      // A caller cannot raise the critic above the project's ceiling.
+      const raised = await w.critic.review(taskInput(w.ids.task, 2), w.ctx({ ceiling: "opus" }));
+      expect(raised.model).toBe("fake-sonnet");
+      expect(w.provider.calls[2]?.request.model).toBe("fake-sonnet");
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a session subject's review event goes to the subject session, not the token's", async () => {
+    const w = await world({
+      replies: [submitReply({ summary: "Quiet session." }), closingReply()],
+    });
+    try {
+      const subject = await w.newSession({ summary: "Done: 0.", status: "completed" });
+      const out = await w.critic.review(
+        {
+          subject: { kind: "session", sessionId: subject },
+          tier: 1,
+          evidence: { acceptanceCriteria: [] },
+        },
+        w.ctx(),
+      );
+      expect(out.verdict).toBe("accept");
+      const review = await w.store.review.mustGet(out.reviewId as string);
+      expect(review.session_id).toBe(subject);
+      const onSubject = (await w.store.event.list(subject)).filter(
+        (e) => e.type === "critic.review",
+      );
+      expect(onSubject).toHaveLength(1);
+      expect(onSubject[0]?.payload).toMatchObject({ reviewId: out.reviewId });
+      const onToken = (await w.store.event.list(w.ids.session)).filter(
+        (e) => e.type === "critic.review",
+      );
+      expect(onToken).toEqual([]);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a session subject at tier 1 adds the model's read to the deterministic checks and a lie ends with the human", async () => {
+    const w = await world({
+      replies: [submitReply({ grade: 90, summary: "Great session." }), closingReply()],
+    });
+    try {
+      const done = await w.newTask({ status: "done", title: "done one" });
+      const open = await w.newTask({ status: "in_progress", title: "open one" });
+      await w.store.session.patch(w.ids.session, {
+        plan: {
+          items: [
+            { taskId: done.id, title: done.title, estimateUsdMicro: 1000 },
+            { taskId: open.id, title: open.title, estimateUsdMicro: 1000 },
+          ],
+          estimateUsdMicro: 2000,
+          summary: "",
+        },
+        summary: "Done: 2 tasks. Cost: USD 0.0020.",
+      });
+      const out = await w.critic.review(
+        {
+          subject: { kind: "session", sessionId: w.ids.session },
+          tier: 1,
+          evidence: { acceptanceCriteria: [] },
+        },
+        w.ctx(),
+      );
+      expect(out.verdict).toBe("human");
+      expect(
+        out.findings.some((f) => f.description.startsWith("Summary claims 2 task(s) done but 1")),
+      ).toBe(true);
+      expect(out.grade).toBeLessThanOrEqual(70);
+      const review = (await w.store.review.forSession(w.ids.session))[0];
+      expect(review).toMatchObject({ session_id: w.ids.session, task_id: null, verdict: "human" });
+      const user = w.provider.calls[0]?.request.messages[0]?.content as string;
+      expect(user).toContain("## Session");
+      expect(user).toContain("Done: 2 tasks");
+    } finally {
+      await w.close();
+    }
+  });
+});
