@@ -17,7 +17,8 @@ API so the Anthropic adapter (`provider/anthropic.ts`) is a thin mapping and the
 - Streams emit `message_start`, `text_delta`, `thinking_delta`, `tool_use_start/delta/end`,
   `message_end` with `usage`, or `error` with a stable code (`provider_auth`,
   `provider_rate_limit`, `provider_error`) and a `retryable` flag. `collectStream` turns a stream
-  into a `ModelResponse` with time to first token and duration.
+  into a `ModelResponse` with time to first token and duration, both rounded to whole
+  milliseconds (the Run row stores them in integer columns; `performance.now()` is fractional).
 - Effort is a first-class request field; temperature is only honoured by providers that accept it
   (Anthropic adapters drop it).
 

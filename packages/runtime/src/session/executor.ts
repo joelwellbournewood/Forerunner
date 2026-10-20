@@ -364,14 +364,17 @@ export class LoopTaskExecutor implements TaskExecutor {
                 ? "killed"
                 : "failed";
     try {
+      // `ttft_ms` and `duration_ms` are integer columns: a fractional clock delta would make
+      // the codec refuse the whole patch and leave the row "running" at cost 0.
+      const ttft = result.ttftMs[0];
       await store.run.patch(run.id, {
         tokens_in: result.usage.input_tokens,
         tokens_out: result.usage.output_tokens,
         cache_read_tokens: result.usage.cache_read_input_tokens,
         cache_write_tokens: result.usage.cache_creation_input_tokens,
         cost_usd_micro: result.costUsdMicro,
-        ttft_ms: result.ttftMs[0] ?? null,
-        duration_ms: result.durationMs,
+        ttft_ms: ttft === undefined ? null : Math.round(ttft),
+        duration_ms: Math.round(result.durationMs),
         outcome: result.outcome,
         timed_out: result.outcome === "timeout",
         tokens_before_compression: result.context.tokensBefore,
@@ -383,8 +386,19 @@ export class LoopTaskExecutor implements TaskExecutor {
           : [],
       });
     } catch (e) {
-      // never lose the result because bookkeeping failed
-      void errorMessage(e);
+      // Never lose the result because bookkeeping failed, and never hide the failure either:
+      // the row would read "running" with no cost or timing, so it is logged and put on the
+      // task as a warning (the daemon forwards run events to the UI's live log).
+      const error = errorMessage(e);
+      this.logger.error("could not record the run result", {
+        runId: run.id,
+        taskId: task.id,
+        error,
+      });
+      this.deps.onEvent?.(task.id, {
+        type: "warning",
+        message: `run ${run.id} finished but its Run row could not be updated: ${error}`,
+      });
     }
     return {
       outcome,

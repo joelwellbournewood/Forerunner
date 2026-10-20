@@ -134,7 +134,12 @@ grade 97 review leaves no open finding row and a sign-off request with no steps.
 ### Persistence (H.3, H.5)
 
 `CriticService.review` writes, through the state repositories: a `Run` row for the critic call
-(model, effort, prompt version, tokens, cost, timing, outcome); a `Review` row (task or session,
+(model, effort, prompt version, tokens, cost, timing, outcome; `ttft_ms` and `duration_ms` are
+integer columns, so both are rounded to whole milliseconds before the insert: on the real
+provider the clock's `performance.now()` deltas are fractional, the codec refused the insert
+and the critic's run was never recorded while the fake provider at `latency: "none"`, which
+measures 0 ms, hid it; an insert that still fails is logged at error level and the review goes
+on); a `Review` row (task or session,
 model, tier, grade, confidence, verdict, evidence, summary); one `Finding` row per finding with
 its `fingerprint` (`fingerprint.ts`: sha256 of the normalised description with paths, line
 numbers, numbers, quotes and case removed, so the same defect hashes the same in another
@@ -259,6 +264,7 @@ network):
   escalate without an invented finding, model revise with no finding getting one, failed
   required check, unmet criteria, no verdict, checks run at tier 2 and noted at tier 1, doc
   drift at tier 2 and not at tier 1, waiver, persistence of review, findings, run and event,
+  the critic Run row with a whole-millisecond `ttft_ms` under a clock that measures fractions,
   resolution of earlier findings, patterns to lesson proposals across two sessions, model by
   tier and context ceiling, the project row's ceiling from the store with a caller unable to
   raise it, session subject at tier 1, session review event on the subject session.

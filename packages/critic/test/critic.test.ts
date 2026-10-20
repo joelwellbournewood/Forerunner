@@ -1,5 +1,13 @@
-import { ForerunnerError } from "@forerunner/platform";
-import { ContextPipeline, type RunEvent, type SignedToken } from "@forerunner/runtime";
+import { ForerunnerError, type SimulatedClock } from "@forerunner/platform";
+import {
+  ContextPipeline,
+  collectStream,
+  type ModelProvider,
+  type ModelRequest,
+  type RunEvent,
+  type SignedToken,
+  type StreamEvent,
+} from "@forerunner/runtime";
 import { textReply, toolReply } from "@forerunner/testenv";
 import { describe, expect, it, vi } from "vitest";
 import { SUBMIT_REVIEW_TOOL } from "../src/schema.ts";
@@ -16,6 +24,45 @@ const taskInput = (
   tier,
   evidence,
 });
+
+/**
+ * A provider whose first content event lands `ttftMs` monotonic milliseconds after the call
+ * started. On the real provider the system clock's `performance.now()` deltas are fractional;
+ * the fake provider at `latency: "none"` reports the first token at 0 ms and never shows it.
+ */
+function fractionalFirstToken(
+  inner: ModelProvider,
+  clock: SimulatedClock,
+  ttftMs: number,
+): ModelProvider {
+  async function* stream(req: ModelRequest): AsyncIterable<StreamEvent> {
+    let first = true;
+    for await (const ev of inner.stream(req)) {
+      if (
+        first &&
+        (ev.type === "text_delta" || ev.type === "thinking_delta" || ev.type === "tool_use_start")
+      ) {
+        clock.tickMonotonic(ttftMs);
+        first = false;
+      }
+      yield ev;
+    }
+  }
+  return {
+    name: inner.name,
+    listModels: () => inner.listModels(),
+    countTokens: (text) => inner.countTokens(text),
+    stream,
+    complete: (req) => {
+      const t0 = clock.monotonic();
+      return collectStream(
+        stream(req),
+        () => t0,
+        () => clock.monotonic(),
+      );
+    },
+  };
+}
 
 describe("CriticService: independence (H.1)", () => {
   it("sends a clean context: the registry prompt as system, the evidence as the only user message, never the worker's transcript", async () => {
@@ -552,6 +599,31 @@ describe("CriticService: persistence, resolution and patterns (H.3, H.5)", () =>
       expect(out.costUsdMicro).toBeGreaterThan(0);
       const events = await w.store.event.list(w.ids.session);
       expect(events.map((e) => e.type)).toContain("critic.review");
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("records the critic run with a whole-millisecond first-token time when the clock measures fractions (D.5, D.19)", async () => {
+    const w = await world({ replies: [submitReply(), closingReply()] });
+    try {
+      // 12.5 ms to the first token, as a performance.now() delta reads on the real provider. The
+      // Run row's ttft_ms is an integer column: unrounded, the codec refused the insert and the
+      // critic's run was never recorded (the review itself was).
+      w.providers.register(fractionalFirstToken(w.provider, w.clock, 12.5));
+      const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
+      expect(out.outcome).toBe("completed");
+      const runs = await w.store.run.forSession(w.ids.session);
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({
+        id: out.runId,
+        specialist: "critic",
+        outcome: "completed",
+        ttft_ms: 13,
+      });
+      expect(Number.isInteger(runs[0]?.duration_ms)).toBe(true);
+      expect(runs[0]?.cost_usd_micro).toBe(out.costUsdMicro);
+      expect(out.costUsdMicro).toBeGreaterThan(0);
     } finally {
       await w.close();
     }

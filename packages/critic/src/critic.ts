@@ -402,6 +402,9 @@ export class CriticService {
     if (!persist) return output;
 
     // A Run row for the critic call (spec D: every run stores model, settings, prompt version).
+    // `ttft_ms` and `duration_ms` are integer columns: a fractional clock delta would make the
+    // codec refuse the insert and the critic's run would never be recorded.
+    const ttft = result.ttftMs[0];
     try {
       await store.run.insert({
         id: runId,
@@ -418,8 +421,8 @@ export class CriticService {
         cache_read_tokens: result.usage.cache_read_input_tokens,
         cache_write_tokens: result.usage.cache_creation_input_tokens,
         cost_usd_micro: result.costUsdMicro,
-        ttft_ms: result.ttftMs[0] ?? null,
-        duration_ms: result.durationMs,
+        ttft_ms: ttft === undefined ? null : Math.round(ttft),
+        duration_ms: Math.round(result.durationMs),
         outcome: result.outcome,
         depth: token.claims.depth,
         timed_out: result.outcome === "timeout",
@@ -428,7 +431,7 @@ export class CriticService {
         author_agent: this.deps.criticAgentId,
       });
     } catch (e) {
-      this.logger.warn("could not record the critic run", { runId, error: errorMessage(e) });
+      this.logger.error("could not record the critic run", { runId, error: errorMessage(e) });
     }
     return this.persist(input, ctx, output, {
       openFindings,

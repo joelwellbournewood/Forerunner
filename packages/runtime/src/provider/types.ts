@@ -102,8 +102,12 @@ export interface ModelResponse {
   content: ContentBlock[];
   stop_reason: StopReason;
   usage: Usage;
-  /** Milliseconds from request start to first streamed token. */
+  /**
+   * Whole milliseconds from request start to the first streamed token. Rounded: the Run row
+   * stores it in an integer column, and `performance.now()` deltas are fractional.
+   */
   time_to_first_token_ms: number;
+  /** Whole milliseconds from request start to the end of the stream (rounded likewise). */
   duration_ms: number;
 }
 
@@ -119,13 +123,18 @@ export interface ModelProvider {
   countTokens(text: string): number;
 }
 
-/** Collects a stream into a ModelResponse. Shared by every adapter. */
+/**
+ * Collects a stream into a ModelResponse. Shared by every adapter. Timings are whole
+ * milliseconds: `now()` is `performance.now()` on the system clock, and `ttft_ms` and
+ * `duration_ms` on the Run row are integer columns that refuse a fraction.
+ */
 export async function collectStream(
   stream: AsyncIterable<StreamEvent>,
   startedAt: () => number,
   now: () => number,
 ): Promise<ModelResponse> {
   const t0 = startedAt();
+  const elapsed = () => Math.round(now() - t0);
   let ttft = -1;
   let model = "";
   const content: ContentBlock[] = [];
@@ -154,7 +163,7 @@ export async function collectStream(
       ttft < 0 &&
       (ev.type === "text_delta" || ev.type === "tool_use_start" || ev.type === "thinking_delta")
     ) {
-      ttft = now() - t0;
+      ttft = elapsed();
     }
     switch (ev.type) {
       case "message_start":
@@ -192,8 +201,8 @@ export async function collectStream(
           content,
           stop_reason: "error",
           usage,
-          time_to_first_token_ms: ttft < 0 ? now() - t0 : ttft,
-          duration_ms: now() - t0,
+          time_to_first_token_ms: ttft < 0 ? elapsed() : ttft,
+          duration_ms: elapsed(),
         };
     }
   }
@@ -203,7 +212,7 @@ export async function collectStream(
     content,
     stop_reason: stop,
     usage,
-    time_to_first_token_ms: ttft < 0 ? now() - t0 : ttft,
-    duration_ms: now() - t0,
+    time_to_first_token_ms: ttft < 0 ? elapsed() : ttft,
+    duration_ms: elapsed(),
   };
 }
