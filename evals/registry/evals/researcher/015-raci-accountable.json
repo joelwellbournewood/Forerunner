@@ -1,0 +1,74 @@
+{
+  "id": "researcher-015",
+  "specialist": "researcher",
+  "title": "Who is accountable for production deploys",
+  "brief": {
+    "goal": "From docs/raci.md: who is accountable for production deploys, and who is responsible?",
+    "contextLinks": ["docs/raci.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md names Dana as accountable and Priya as responsible for production deploys",
+      "the two roles are not swapped",
+      "the RACI table is cited"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/raci.md": "# Atlas RACI\n\n| Activity | Responsible | Accountable | Consulted | Informed |\n| --- | --- | --- | --- | --- |\n| Production deploys | Priya | Dana | Tomas | all |\n| Schema migrations | Tomas | Dana | Priya | all |\n| Release notes | Dana | Dana | Priya | all |\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "Dana is accountable|accountable[^\\n]*Dana"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "Priya is responsible|responsible[^\\n]*Priya"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "Priya is accountable",
+      "expect": "no_match"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/raci\\.md"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nDana is accountable for production deploys; Priya is responsible (does the work), with Tomas consulted.\n\n## Claims\n\n- Production deploys: Responsible Priya, Accountable Dana, Consulted Tomas, Informed all (docs/raci.md)\n\n## Uncertainty\n\n- The table does not define escalation when Dana is unavailable. Confidence: high.\n\n## Sources read\n\n- `docs/raci.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "Roles read correctly from the table columns.",
+  "seeded_defect": {
+    "description": "Responsible and accountable are swapped: Priya is reported as accountable.",
+    "how_to_detect": "\"Priya is accountable\" appears.",
+    "files": {
+      "answer.md": "# Answer\n\nPriya is accountable for production deploys; Dana is responsible.\n\n## Claims\n\n- Production deploys: Priya is accountable, Dana is responsible (docs/raci.md)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/raci.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["tables", "roles"]
+}

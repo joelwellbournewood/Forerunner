@@ -1,0 +1,80 @@
+{
+  "id": "coder-020",
+  "specialist": "coder",
+  "title": "Add the test script to package.json and document it",
+  "brief": {
+    "goal": "Add a \"test\" script to package.json that runs `node --experimental-strip-types --test test/sum.test.ts`, and add a \"## Testing\" section to README.md that shows `npm test`. Change nothing else in package.json.",
+    "contextLinks": ["package.json", "README.md", "src/sum.ts", "test/sum.test.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "package.json scripts.test equals \"node --experimental-strip-types --test test/sum.test.ts\"",
+      "package.json name, type and private are unchanged",
+      "README.md has a \"## Testing\" heading followed by the npm test command",
+      "the test script actually passes"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+      "README.md": "# fixture\n\nA tiny module with a sum function.\n",
+      "src/sum.ts": "export function sum(xs: readonly number[]): number {\n  return xs.reduce((a, b) => a + b, 0);\n}\n",
+      "test/sum.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { sum } from \"../src/sum.ts\";\n\ntest(\"sum\", () => {\n  assert.equal(sum([1, 2, 3]), 6);\n});\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "json_path",
+      "path": "package.json",
+      "pointer": "/scripts/test",
+      "equals": "node --experimental-strip-types --test test/sum.test.ts"
+    },
+    {
+      "kind": "json_path",
+      "path": "package.json",
+      "pointer": "/name",
+      "equals": "fixture"
+    },
+    {
+      "kind": "json_path",
+      "path": "package.json",
+      "pointer": "/type",
+      "equals": "module"
+    },
+    {
+      "kind": "json_path",
+      "path": "package.json",
+      "pointer": "/private",
+      "equals": true
+    },
+    {
+      "kind": "regex",
+      "path": "README.md",
+      "pattern": "^## Testing\\s*\\n[\\s\\S]*npm test",
+      "flags": "m"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/sum.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "expected_files": {
+    "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test test/sum.test.ts\"\n  }\n}\n",
+    "README.md": "# fixture\n\nA tiny module with a sum function.\n\n## Testing\n\nRun the unit tests with:\n\n```\nnpm test\n```\n"
+  },
+  "expected_clean_output": "scripts.test added, README Testing section added, nothing else changed.",
+  "seeded_defect": {
+    "description": "The script was added under the key \"tests\" instead of \"test\", so `npm test` finds nothing.",
+    "how_to_detect": "json_path /scripts/test is absent; /scripts/tests exists.",
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"tests\": \"node --experimental-strip-types --test test/sum.test.ts\"\n  }\n}\n"
+    }
+  },
+  "tags": ["json", "docs", "config"]
+}

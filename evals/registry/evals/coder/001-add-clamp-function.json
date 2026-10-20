@@ -1,0 +1,72 @@
+{
+  "id": "coder-001",
+  "specialist": "coder",
+  "title": "Add a clamp function with tests",
+  "brief": {
+    "goal": "Add `clamp(n, min, max)` to src/math.ts that limits n to [min, max] and throws a RangeError when min > max, with a unit test file test/clamp.test.ts.",
+    "contextLinks": ["package.json", "src/math.ts", "test/math.test.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "src/math.ts exports `clamp(n: number, min: number, max: number): number`",
+      "clamp returns min when n < min, max when n > max, and n otherwise",
+      "clamp throws RangeError when min > max",
+      "test/clamp.test.ts exists and passes with `node --experimental-strip-types --test test/clamp.test.ts`",
+      "the existing `add` export and its test keep passing"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/math.ts": "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+      "test/math.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { add } from \"../src/math.ts\";\n\ntest(\"add\", () => {\n  assert.equal(add(2, 3), 5);\n});\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "src/math.ts",
+      "text": "export function clamp"
+    },
+    {
+      "kind": "file_exists",
+      "path": "test/clamp.test.ts"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/clamp.test.ts"],
+      "timeoutMs": 60000
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/math.test.ts"],
+      "timeoutMs": 60000
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { add, clamp } from \"../src/math.ts\";\n\ntest(\"grader: clamp\", () => {\n  assert.equal(clamp(5, 0, 3), 3);\n  assert.equal(clamp(-1, 0, 3), 0);\n  assert.equal(clamp(2, 0, 3), 2);\n  assert.equal(clamp(2, 2, 2), 2);\n  assert.throws(() => clamp(1, 3, 0), RangeError);\n});\n\ntest(\"grader: add still works\", () => {\n  assert.equal(add(1, 1), 2);\n});\n"
+  },
+  "expected_files": {
+    "src/math.ts": "export function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport function clamp(n: number, min: number, max: number): number {\n  if (min > max) throw new RangeError(`clamp: min ${min} is greater than max ${max}`);\n  if (n < min) return min;\n  if (n > max) return max;\n  return n;\n}\n",
+    "test/clamp.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { clamp } from \"../src/math.ts\";\n\ntest(\"clamp limits to the range\", () => {\n  assert.equal(clamp(5, 0, 3), 3);\n  assert.equal(clamp(-1, 0, 3), 0);\n  assert.equal(clamp(2, 0, 3), 2);\n});\n\ntest(\"clamp rejects an inverted range\", () => {\n  assert.throws(() => clamp(1, 3, 0), RangeError);\n});\n"
+  },
+  "expected_clean_output": "clamp added to src/math.ts with a RangeError guard; test/clamp.test.ts added; both test files pass.",
+  "seeded_defect": {
+    "description": "clamp swaps the bounds: it returns max when n is below min and min when n is above max.",
+    "how_to_detect": "Run the grader: clamp(5, 0, 3) returns 0 instead of 3.",
+    "files": {
+      "src/math.ts": "export function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport function clamp(n: number, min: number, max: number): number {\n  if (min > max) throw new RangeError(`clamp: min ${min} is greater than max ${max}`);\n  if (n < min) return max;\n  if (n > max) return min;\n  return n;\n}\n"
+    }
+  },
+  "tags": ["typescript", "add-function", "tests"]
+}

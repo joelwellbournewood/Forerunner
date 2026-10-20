@@ -1,0 +1,62 @@
+{
+  "id": "coder-011",
+  "specialist": "coder",
+  "title": "Add slugify() for URL-safe identifiers",
+  "brief": {
+    "goal": "Add `slugify(text)` to src/text.ts: lowercase, strip diacritics (NFKD), replace every run of non-alphanumeric characters with one dash, and trim leading and trailing dashes.",
+    "contextLinks": ["package.json", "src/text.ts", "test/text.test.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "slugify(\"Hello, World!\") returns \"hello-world\"",
+      "slugify(\"  Many   spaces \") returns \"many-spaces\"",
+      "slugify(\"Ünïcode café\") returns \"unicode-cafe\"",
+      "slugify(\"--a--\") returns \"a\" and slugify(\"\") returns \"\""
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/text.ts": "export function capitalize(s: string): string {\n  return s.charAt(0).toUpperCase() + s.slice(1);\n}\n",
+      "test/text.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { capitalize } from \"../src/text.ts\";\n\ntest(\"capitalize\", () => {\n  assert.equal(capitalize(\"abc\"), \"Abc\");\n});\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "src/text.ts",
+      "text": "export function slugify"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/text.test.ts"],
+      "timeoutMs": 60000
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { capitalize, slugify } from \"../src/text.ts\";\n\ntest(\"grader: slugify\", () => {\n  assert.equal(slugify(\"Hello, World!\"), \"hello-world\");\n  assert.equal(slugify(\"  Many   spaces \"), \"many-spaces\");\n  assert.equal(slugify(\"Ünïcode café\"), \"unicode-cafe\");\n  assert.equal(slugify(\"--a--\"), \"a\");\n  assert.equal(slugify(\"\"), \"\");\n  assert.equal(capitalize(\"x\"), \"X\");\n});\n"
+  },
+  "expected_files": {
+    "src/text.ts": "export function capitalize(s: string): string {\n  return s.charAt(0).toUpperCase() + s.slice(1);\n}\n\nexport function slugify(text: string): string {\n  return text\n    .normalize(\"NFKD\")\n    .replace(/[\\u0300-\\u036f]/g, \"\")\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, \"-\")\n    .replace(/^-+|-+$/g, \"\");\n}\n",
+    "test/slugify.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { slugify } from \"../src/text.ts\";\n\ntest(\"slugify\", () => {\n  assert.equal(slugify(\"Hello, World!\"), \"hello-world\");\n  assert.equal(slugify(\"Ünïcode café\"), \"unicode-cafe\");\n  assert.equal(slugify(\"--a--\"), \"a\");\n});\n"
+  },
+  "expected_clean_output": "slugify with NFKD diacritic stripping, dash collapsing and trimming; tests pass.",
+  "seeded_defect": {
+    "description": "Leading and trailing dashes are not trimmed, so \"Hello, World!\" becomes \"hello-world-\".",
+    "how_to_detect": "Grader: slugify(\"Hello, World!\") ends with a dash; slugify(\"--a--\") is \"-a-\".",
+    "files": {
+      "src/text.ts": "export function capitalize(s: string): string {\n  return s.charAt(0).toUpperCase() + s.slice(1);\n}\n\nexport function slugify(text: string): string {\n  return text\n    .normalize(\"NFKD\")\n    .replace(/[\\u0300-\\u036f]/g, \"\")\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, \"-\");\n}\n"
+    }
+  },
+  "tags": ["typescript", "strings", "feature"]
+}

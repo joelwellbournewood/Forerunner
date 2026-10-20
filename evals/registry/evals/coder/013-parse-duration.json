@@ -1,0 +1,55 @@
+{
+  "id": "coder-013",
+  "specialist": "coder",
+  "title": "Parse duration strings like 1h30m into milliseconds",
+  "brief": {
+    "goal": "Add `parseDuration(text)` to src/duration.ts accepting units ms, s, m, h in any combination without spaces (e.g. \"1h30m\", \"45s\", \"500ms\") and returning milliseconds; invalid or empty input throws an Error.",
+    "contextLinks": ["package.json", "src/duration.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "parseDuration(\"1h30m\") returns 5400000 and parseDuration(\"1h5m3s\") returns 3903000",
+      "parseDuration(\"500ms\") returns 500 and parseDuration(\"45s\") returns 45000",
+      "parseDuration(\"\") and parseDuration(\"abc\") throw"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/duration.ts": "export const UNITS_MS = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 } as const;\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "src/duration.ts",
+      "text": "export function parseDuration"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { parseDuration } from \"../src/duration.ts\";\n\ntest(\"grader: parseDuration\", () => {\n  assert.equal(parseDuration(\"1h30m\"), 5_400_000);\n  assert.equal(parseDuration(\"1h5m3s\"), 3_903_000);\n  assert.equal(parseDuration(\"500ms\"), 500);\n  assert.equal(parseDuration(\"45s\"), 45_000);\n  assert.equal(parseDuration(\"2h\"), 7_200_000);\n  assert.throws(() => parseDuration(\"\"));\n  assert.throws(() => parseDuration(\"abc\"));\n  assert.throws(() => parseDuration(\"5x\"));\n});\n"
+  },
+  "expected_files": {
+    "src/duration.ts": "export const UNITS_MS = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 } as const;\n\nconst TOKEN = /(\\d+)(ms|s|m|h)/g;\n\nexport function parseDuration(text: string): number {\n  const t = text.trim();\n  if (t === \"\") throw new Error(\"empty duration\");\n  let total = 0;\n  let consumed = 0;\n  for (const m of t.matchAll(TOKEN)) {\n    total += Number(m[1]) * UNITS_MS[m[2] as keyof typeof UNITS_MS];\n    consumed += m[0].length;\n  }\n  if (consumed !== t.length) throw new Error(`invalid duration: ${text}`);\n  return total;\n}\n",
+    "test/duration.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { parseDuration } from \"../src/duration.ts\";\n\ntest(\"parseDuration\", () => {\n  assert.equal(parseDuration(\"1h30m\"), 5_400_000);\n  assert.equal(parseDuration(\"500ms\"), 500);\n  assert.throws(() => parseDuration(\"abc\"));\n});\n"
+  },
+  "expected_clean_output": "Token-based parser with strict full-consumption check; grader passes.",
+  "seeded_defect": {
+    "description": "Minutes are multiplied by 60 instead of 60000, so \"1h30m\" is 3601800 ms.",
+    "how_to_detect": "Grader: parseDuration(\"1h30m\") is not 5400000.",
+    "files": {
+      "src/duration.ts": "export const UNITS_MS = { ms: 1, s: 1000, m: 60, h: 3_600_000 } as const;\n\nconst TOKEN = /(\\d+)(ms|s|m|h)/g;\n\nexport function parseDuration(text: string): number {\n  const t = text.trim();\n  if (t === \"\") throw new Error(\"empty duration\");\n  let total = 0;\n  let consumed = 0;\n  for (const m of t.matchAll(TOKEN)) {\n    total += Number(m[1]) * UNITS_MS[m[2] as keyof typeof UNITS_MS];\n    consumed += m[0].length;\n  }\n  if (consumed !== t.length) throw new Error(`invalid duration: ${text}`);\n  return total;\n}\n"
+    }
+  },
+  "tags": ["typescript", "parsing", "feature"]
+}

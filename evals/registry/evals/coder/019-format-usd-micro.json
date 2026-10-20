@@ -1,0 +1,56 @@
+{
+  "id": "coder-019",
+  "specialist": "coder",
+  "title": "Format USD micro-units as money with correct rounding",
+  "brief": {
+    "goal": "Add `formatUsdMicro(micro)` to src/money.ts rendering an integer number of micro-dollars as \"USD d.dd\": round half up to cents, always two decimals, a leading minus for negative amounts, and no floating-point arithmetic on the amount.",
+    "contextLinks": ["package.json", "src/money.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "formatUsdMicro(1234567) returns \"USD 1.23\" and formatUsdMicro(1235000) returns \"USD 1.24\"",
+      "formatUsdMicro(1500000) returns \"USD 1.50\" and formatUsdMicro(0) returns \"USD 0.00\"",
+      "formatUsdMicro(-500000) returns \"USD -0.50\"",
+      "a non-integer input throws a TypeError"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/money.ts": "export const MICRO_PER_USD = 1_000_000;\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "src/money.ts",
+      "text": "export function formatUsdMicro"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { formatUsdMicro } from \"../src/money.ts\";\n\ntest(\"grader: formatUsdMicro\", () => {\n  assert.equal(formatUsdMicro(1_234_567), \"USD 1.23\");\n  assert.equal(formatUsdMicro(1_235_000), \"USD 1.24\");\n  assert.equal(formatUsdMicro(1_500_000), \"USD 1.50\");\n  assert.equal(formatUsdMicro(0), \"USD 0.00\");\n  assert.equal(formatUsdMicro(-500_000), \"USD -0.50\");\n  assert.equal(formatUsdMicro(999_999), \"USD 1.00\");\n  assert.throws(() => formatUsdMicro(1.5), TypeError);\n});\n"
+  },
+  "expected_files": {
+    "src/money.ts": "export const MICRO_PER_USD = 1_000_000;\n\nexport function formatUsdMicro(micro: number): string {\n  if (!Number.isInteger(micro)) throw new TypeError(\"amount must be an integer number of micro-units\");\n  const sign = micro < 0 ? \"-\" : \"\";\n  const abs = Math.abs(micro);\n  const cents = Math.floor((abs + 5_000) / 10_000);\n  const dollars = Math.floor(cents / 100);\n  const rest = cents % 100;\n  return `USD ${sign}${dollars}.${String(rest).padStart(2, \"0\")}`;\n}\n",
+    "test/money.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { formatUsdMicro } from \"../src/money.ts\";\n\ntest(\"formatUsdMicro\", () => {\n  assert.equal(formatUsdMicro(1_234_567), \"USD 1.23\");\n  assert.equal(formatUsdMicro(1_235_000), \"USD 1.24\");\n  assert.equal(formatUsdMicro(-500_000), \"USD -0.50\");\n});\n"
+  },
+  "expected_clean_output": "Integer arithmetic with half-up rounding and two-decimal padding; grader passes.",
+  "seeded_defect": {
+    "description": "Cents are truncated instead of rounded half up, so 1235000 renders as \"USD 1.23\".",
+    "how_to_detect": "Grader: formatUsdMicro(1235000) and formatUsdMicro(999999) are off by one cent.",
+    "files": {
+      "src/money.ts": "export const MICRO_PER_USD = 1_000_000;\n\nexport function formatUsdMicro(micro: number): string {\n  if (!Number.isInteger(micro)) throw new TypeError(\"amount must be an integer number of micro-units\");\n  const sign = micro < 0 ? \"-\" : \"\";\n  const abs = Math.abs(micro);\n  const cents = Math.floor(abs / 10_000);\n  const dollars = Math.floor(cents / 100);\n  const rest = cents % 100;\n  return `USD ${sign}${dollars}.${String(rest).padStart(2, \"0\")}`;\n}\n"
+    }
+  },
+  "tags": ["typescript", "money", "feature"]
+}

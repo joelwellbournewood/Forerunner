@@ -1,0 +1,78 @@
+{
+  "id": "researcher-005",
+  "specialist": "researcher",
+  "title": "How many engineers are on the team when the sources disagree",
+  "brief": {
+    "goal": "From docs/staffing-plan.md and docs/standup-2026-06-08.md: how many engineers are on the Atlas team?",
+    "contextLinks": ["docs/staffing-plan.md", "docs/standup-2026-06-08.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md gives two engineers as the current number, based on the newer standup note",
+      "answer.md says the two sources conflict and explains why (mobile engineer left 2026-05-31)",
+      "both sources are cited"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/staffing-plan.md": "# Atlas staffing plan\n\nVersion 1, 2026-01-15.\n\nThe team for the first half of 2026 has three engineers (two backend, one mobile) and one\npart-time designer.\n",
+      "docs/standup-2026-06-08.md": "# Standup notes, 2026-06-08\n\n- Mobile engineer left on 2026-05-31; the role is not being backfilled this quarter.\n- Team is now two engineers, both backend. Mobile work is paused.\n- Designer unchanged.\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "conflict|contradict|disagree|differ"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "\\b(two|2) engineers"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "2026-05-31"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/staffing-plan\\.md"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/standup-2026-06-08\\.md"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nThe sources conflict. The January staffing plan lists three engineers; the newer standup note of 2026-06-08 says the team is now two engineers (both backend) after the mobile engineer left on 2026-05-31. The current number is two.\n\n## Claims\n\n- The staffing plan (version 1, 2026-01-15) lists three engineers: two backend, one mobile (docs/staffing-plan.md)\n- The standup note of 2026-06-08 says the mobile engineer left on 2026-05-31 and the team is now two engineers, both backend (docs/standup-2026-06-08.md)\n- The role is not being backfilled this quarter (docs/standup-2026-06-08.md)\n\n## Uncertainty\n\n- The two documents contradict each other; the standup note is newer and describes a change, so it is taken as current. Nothing after 2026-06-08 is available. Confidence: medium-high.\n\n## Sources read\n\n- `docs/staffing-plan.md`\n- `docs/standup-2026-06-08.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "Flags the conflict, prefers the newer note, cites both.",
+  "seeded_defect": {
+    "description": "The answer reports three engineers from the old plan and never mentions that the standup note contradicts it.",
+    "how_to_detect": "No conflict is flagged; the newer source is not cited; the number is stale.",
+    "files": {
+      "answer.md": "# Answer\n\nThe Atlas team has three engineers: two backend and one mobile.\n\n## Claims\n\n- The staffing plan lists three engineers (docs/staffing-plan.md)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/staffing-plan.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["conflict", "recency", "citation"]
+}

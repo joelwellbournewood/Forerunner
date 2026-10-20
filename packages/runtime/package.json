@@ -12,20 +12,22 @@
     "test": "vitest run --project unit --dir test"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.304",
+    "@anthropic-ai/sdk": "^0.135.0",
+    "@forerunner/billing": "workspace:*",
+    "@forerunner/capabilities": "workspace:*",
     "@forerunner/platform": "workspace:*",
     "@forerunner/state": "workspace:*",
     "@forerunner/vault": "workspace:*",
-    "@forerunner/billing": "workspace:*",
-    "@anthropic-ai/claude-agent-sdk": "^0.3.304",
-    "@anthropic-ai/sdk": "^0.135.0",
+    "@hono/node-server": "^2.1.5",
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "zod": "^4.6.7",
+    "adm-zip": "^0.6.1",
     "commander": "^15.0.0",
-    "@forerunner/capabilities": "workspace:*",
     "hono": "^4.13.13",
-    "@hono/node-server": "^2.1.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@forerunner/testenv": "workspace:*"
+    "@forerunner/testenv": "workspace:*",
+    "@types/adm-zip": "^0.6.0"
   }
 }

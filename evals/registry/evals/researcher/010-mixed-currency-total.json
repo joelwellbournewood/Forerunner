@@ -1,0 +1,72 @@
+{
+  "id": "researcher-010",
+  "specialist": "researcher",
+  "title": "Total open invoices in CHF without an exchange rate",
+  "brief": {
+    "goal": "From docs/invoices.md: what is the total of open invoices in CHF?",
+    "contextLinks": ["docs/invoices.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md gives CHF 550.00 for the CHF-denominated invoices",
+      "answer.md says the USD 300.00 invoice cannot be converted because no rate is given",
+      "the answer does not add 300 to the CHF total"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/invoices.md": "# Open invoices, Atlas, July 2026\n\n| Invoice | Vendor | Amount |\n| --- | --- | --- |\n| 2026-071 | Meridian | CHF 400.00 |\n| 2026-072 | Harbor | USD 300.00 |\n| 2026-073 | Printshop | CHF 150.00 |\n\nNo exchange rate is agreed for USD invoices; finance converts at payment date.\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "550"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "exchange rate|no rate|cannot be converted|not determinable"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "\\b850\\b",
+      "expect": "no_match"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/invoices\\.md"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nThe CHF-denominated open invoices total CHF 550.00 (400.00 + 150.00). The USD 300.00 Harbor invoice cannot be converted: no exchange rate is agreed, finance converts at payment date. The full total in CHF is therefore not determinable from this document.\n\n## Claims\n\n- Invoices 2026-071 (CHF 400.00) and 2026-073 (CHF 150.00) sum to CHF 550.00 (docs/invoices.md)\n- Invoice 2026-072 is USD 300.00 (docs/invoices.md)\n- No exchange rate is agreed for USD invoices; finance converts at payment date (docs/invoices.md)\n\n## Uncertainty\n\n- The CHF value of the USD invoice is unknown until payment. Confidence: high for the CHF subtotal, none for a grand total.\n\n## Sources read\n\n- `docs/invoices.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "CHF subtotal 550, USD invoice kept separate with the reason.",
+  "seeded_defect": {
+    "description": "USD 300 is added to the CHF amounts as if it were CHF, giving CHF 850.",
+    "how_to_detect": "850 appears; the missing exchange rate is not mentioned.",
+    "files": {
+      "answer.md": "# Answer\n\nOpen invoices total CHF 850.00.\n\n## Claims\n\n- The three invoices sum to CHF 850.00 (docs/invoices.md)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/invoices.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["units", "arithmetic", "uncertainty"]
+}

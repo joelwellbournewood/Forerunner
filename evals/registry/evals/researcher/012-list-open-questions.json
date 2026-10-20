@@ -1,0 +1,80 @@
+{
+  "id": "researcher-012",
+  "specialist": "researcher",
+  "title": "List the open questions from a meeting note",
+  "brief": {
+    "goal": "From docs/meeting-2026-07-02.md: list the open questions and who owns each.",
+    "contextLinks": ["docs/meeting-2026-07-02.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md lists exactly three open questions: export retention period, Android release date, billing fallback",
+      "owners Dana, Priya and Tomas are attached to the right items",
+      "the logo refresh is not listed as an open question"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/meeting-2026-07-02.md": "# Atlas planning meeting, 2026-07-02\n\nAttendees: Dana, Priya, Tomas.\n\n- Decided: exports ship as ZIP (see proposal v2).\n- OPEN: retention period for exports (10 or 30?) — Dana to check with legal.\n- Decided: pilot customers are Nordwind and Kestrel.\n- OPEN: Android release date depends on the mobile hire — Priya.\n- OPEN: billing fallback when the subscription quota is exhausted — Tomas to draft.\n- Note: the logo refresh is out of scope for this quarter.\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "retention period"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "android release"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "billing fallback"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "OPEN:[^\\n]*logo|open question[^\\n]*logo",
+      "expect": "no_match"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/meeting-2026-07-02\\.md"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nThree open questions: the retention period for exports (10 or 30; Dana, with legal), the Android release date (depends on the mobile hire; Priya), and the billing fallback when the subscription quota is exhausted (Tomas to draft).\n\n## Claims\n\n- OPEN: retention period for exports, 10 or 30, owned by Dana who checks with legal (docs/meeting-2026-07-02.md)\n- OPEN: Android release date depends on the mobile hire, owned by Priya (docs/meeting-2026-07-02.md)\n- OPEN: billing fallback when the subscription quota is exhausted, Tomas to draft (docs/meeting-2026-07-02.md)\n- The logo refresh is a note marking it out of scope, not an open question (docs/meeting-2026-07-02.md)\n\n## Uncertainty\n\n- The note gives no due dates. The unit of the retention period (days?) is not stated. Confidence: high.\n\n## Sources read\n\n- `docs/meeting-2026-07-02.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "Exactly the three OPEN items with owners; the note is not promoted to a question.",
+  "seeded_defect": {
+    "description": "The billing fallback question is missing and the logo refresh is listed as an open question.",
+    "how_to_detect": "\"billing fallback\" is absent; an OPEN item mentions the logo.",
+    "files": {
+      "answer.md": "# Answer\n\nThree open questions: the retention period for exports (Dana), the Android release date (Priya), and the logo refresh (unassigned).\n\n## Claims\n\n- OPEN: retention period for exports, owned by Dana (docs/meeting-2026-07-02.md)\n- OPEN: Android release date, owned by Priya (docs/meeting-2026-07-02.md)\n- OPEN: logo refresh, unassigned (docs/meeting-2026-07-02.md)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/meeting-2026-07-02.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["extraction", "precision"]
+}

@@ -1,0 +1,71 @@
+{
+  "id": "researcher-006",
+  "specialist": "researcher",
+  "title": "Total the May spend from a CSV",
+  "brief": {
+    "goal": "From data/spend.csv: what was the total spend in CHF for May 2026, and which rows make it up?",
+    "contextLinks": ["data/spend.csv"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md gives CHF 220.45 as the May total",
+      "the three May rows are listed; the June row is excluded",
+      "data/spend.csv is cited"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "data/spend.csv": "date,vendor,amount_chf,category\n2026-05-02,Meridian,120.50,identity\n2026-05-11,Harbor,80.00,storage\n2026-05-27,Printshop,19.95,office\n2026-06-03,Harbor,50.00,storage\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "220\\.45"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "data/spend\\.csv"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "270\\.45",
+      "expect": "no_match"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "19\\.95"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nMay 2026 spend was CHF 220.45: Meridian 120.50 (2026-05-02), Harbor 80.00 (2026-05-11) and Printshop 19.95 (2026-05-27). The Harbor row of 2026-06-03 (50.00) is June and is excluded.\n\n## Claims\n\n- Three rows are dated May 2026: 120.50, 80.00 and 19.95 CHF (data/spend.csv)\n- Their sum is 220.45 CHF (data/spend.csv)\n- The 2026-06-03 Harbor row (50.00) falls in June (data/spend.csv)\n\n## Uncertainty\n\n- The file has no header note on whether amounts include VAT. Confidence: high for the arithmetic.\n\n## Sources read\n\n- `data/spend.csv`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "Correct filter by month, correct sum, rows listed.",
+  "seeded_defect": {
+    "description": "All four rows are summed, giving 270.45, so a June row is counted as May.",
+    "how_to_detect": "270.45 appears and 220.45 does not.",
+    "files": {
+      "answer.md": "# Answer\n\nMay 2026 spend was CHF 270.45 across four rows.\n\n## Claims\n\n- The four rows sum to 270.45 CHF (data/spend.csv)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `data/spend.csv`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["csv", "arithmetic", "filtering"]
+}

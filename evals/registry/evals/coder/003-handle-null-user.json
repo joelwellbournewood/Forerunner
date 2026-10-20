@@ -1,0 +1,62 @@
+{
+  "id": "coder-003",
+  "specialist": "coder",
+  "title": "Handle null and missing fields in formatName()",
+  "brief": {
+    "goal": "formatName in src/format.ts must return an empty string for null or undefined input and must not print 'undefined' when the last name is missing.",
+    "contextLinks": ["package.json", "src/format.ts", "test/format.test.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "formatName(null) and formatName(undefined) return \"\"",
+      "formatName({ first: \"Ada\" }) returns \"Ada\" with no trailing space",
+      "formatName({ first: \"Ada\", last: \"Lovelace\" }) returns \"Ada Lovelace\"",
+      "formatName({ first: \"\", last: \"X\" }) returns \"X\"",
+      "the function signature accepts `User | null | undefined`"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/format.ts": "export interface User {\n  first: string;\n  last?: string;\n}\n\nexport function formatName(user: User): string {\n  return `${user.first} ${user.last}`;\n}\n",
+      "test/format.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { formatName } from \"../src/format.ts\";\n\ntest(\"full name\", () => {\n  assert.equal(formatName({ first: \"Ada\", last: \"Lovelace\" }), \"Ada Lovelace\");\n});\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "src/format.ts",
+      "pattern": "User \\| null \\| undefined"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/format.test.ts"],
+      "timeoutMs": 60000
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { formatName } from \"../src/format.ts\";\n\ntest(\"grader: formatName\", () => {\n  assert.equal(formatName(null), \"\");\n  assert.equal(formatName(undefined), \"\");\n  assert.equal(formatName({ first: \"Ada\" }), \"Ada\");\n  assert.equal(formatName({ first: \"Ada\", last: \"Lovelace\" }), \"Ada Lovelace\");\n  assert.equal(formatName({ first: \"\", last: \"X\" }), \"X\");\n});\n"
+  },
+  "expected_files": {
+    "src/format.ts": "export interface User {\n  first: string;\n  last?: string;\n}\n\nexport function formatName(user: User | null | undefined): string {\n  if (!user) return \"\";\n  return [user.first, user.last]\n    .filter((part): part is string => typeof part === \"string\" && part.length > 0)\n    .join(\" \");\n}\n"
+  },
+  "expected_clean_output": "formatName accepts null/undefined, joins only the present non-empty parts; existing test and grader pass.",
+  "seeded_defect": {
+    "description": "Null is handled but a missing last name still produces a trailing space (\"Ada \").",
+    "how_to_detect": "Grader: formatName({ first: \"Ada\" }) is \"Ada \" not \"Ada\".",
+    "files": {
+      "src/format.ts": "export interface User {\n  first: string;\n  last?: string;\n}\n\nexport function formatName(user: User | null | undefined): string {\n  if (!user) return \"\";\n  return `${user.first} ${user.last ?? \"\"}`;\n}\n"
+    }
+  },
+  "tags": ["typescript", "null-handling", "bugfix"]
+}

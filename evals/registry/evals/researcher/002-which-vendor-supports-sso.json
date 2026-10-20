@@ -1,0 +1,79 @@
+{
+  "id": "researcher-002",
+  "specialist": "researcher",
+  "title": "Which evaluated vendor supports SAML single sign-on today",
+  "brief": {
+    "goal": "From docs/vendor-meridian.md and docs/vendor-harbor.md: which vendor supports SAML single sign-on today, and what is the status at the other?",
+    "contextLinks": ["docs/vendor-meridian.md", "docs/vendor-harbor.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md says Meridian supports SAML today and Harbor does not (planned for 2027)",
+      "both vendor notes are cited",
+      "the answer does not claim that both vendors support SAML"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/vendor-meridian.md": "# Vendor note: Meridian Identity\n\nEvaluated 2026-06-10.\n\n- Single sign-on: SAML 2.0 and OIDC supported today; tested with our staging IdP.\n- SCIM provisioning: supported.\n- Audit log export: CSV, daily.\n- Price: not disclosed in this note.\n",
+      "docs/vendor-harbor.md": "# Vendor note: Harbor Access\n\nEvaluated 2026-06-12.\n\n- Single sign-on: not available. SAML support is on their roadmap, \"planned for 2027\".\n- SCIM provisioning: not available.\n- Audit log export: JSON via API.\n- Price: not disclosed in this note.\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "Meridian"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "planned for 2027|not available"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/vendor-meridian\\.md"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/vendor-harbor\\.md"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "both vendors support",
+      "expect": "no_match"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nOnly Meridian Identity supports SAML single sign-on today (SAML 2.0 and OIDC, tested with the staging IdP). Harbor Access has no SSO; SAML is on its roadmap, \"planned for 2027\".\n\n## Claims\n\n- Meridian supports SAML 2.0 and OIDC today, tested with the staging IdP (docs/vendor-meridian.md)\n- Harbor has no single sign-on available; SAML is \"planned for 2027\" (docs/vendor-harbor.md)\n\n## Uncertainty\n\n- Neither note gives a price. The Harbor roadmap date is the vendor's statement, not a commitment. Confidence: high for the SSO status as of the evaluation dates (June 2026).\n\n## Sources read\n\n- `docs/vendor-meridian.md`\n- `docs/vendor-harbor.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "Meridian yes, Harbor no with the roadmap note, both cited.",
+  "seeded_defect": {
+    "description": "The answer states that both vendors support SAML today, contradicting the Harbor note.",
+    "how_to_detect": "The phrase \"both vendors support\" appears and Harbor's \"planned for 2027\" status is missing.",
+    "files": {
+      "answer.md": "# Answer\n\nBoth vendors support SAML single sign-on today.\n\n## Claims\n\n- Meridian supports SAML 2.0 and OIDC (docs/vendor-meridian.md)\n- Harbor supports SAML (docs/vendor-harbor.md)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/vendor-meridian.md`\n- `docs/vendor-harbor.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["comparison", "citation"]
+}

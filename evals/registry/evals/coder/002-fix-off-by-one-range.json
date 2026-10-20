@@ -1,0 +1,61 @@
+{
+  "id": "coder-002",
+  "specialist": "coder",
+  "title": "Fix the off-by-one in range()",
+  "brief": {
+    "goal": "range(start, end) in src/range.ts must return the integers from start up to but not including end; the existing test in test/range.test.ts currently fails.",
+    "contextLinks": ["package.json", "src/range.ts", "test/range.test.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "range(0, 3) returns [0, 1, 2]",
+      "range(2, 2) returns []",
+      "range(-2, 1) returns [-2, -1, 0]",
+      "test/range.test.ts passes without being changed"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/range.ts": "export function range(start: number, end: number): number[] {\n  const out: number[] = [];\n  for (let i = start; i <= end; i++) out.push(i);\n  return out;\n}\n",
+      "test/range.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { range } from \"../src/range.ts\";\n\ntest(\"range excludes the end\", () => {\n  assert.deepEqual(range(0, 3), [0, 1, 2]);\n  assert.deepEqual(range(2, 2), []);\n});\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "test/range.test.ts",
+      "text": "test(\"range excludes the end\""
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/range.test.ts"],
+      "timeoutMs": 60000
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { range } from \"../src/range.ts\";\n\ntest(\"grader: range\", () => {\n  assert.deepEqual(range(0, 3), [0, 1, 2]);\n  assert.deepEqual(range(2, 2), []);\n  assert.deepEqual(range(-2, 1), [-2, -1, 0]);\n  assert.deepEqual(range(5, 6), [5]);\n});\n"
+  },
+  "expected_files": {
+    "src/range.ts": "export function range(start: number, end: number): number[] {\n  const out: number[] = [];\n  for (let i = start; i < end; i++) out.push(i);\n  return out;\n}\n"
+  },
+  "expected_clean_output": "Loop condition changed from <= to <; the existing test and the grader pass.",
+  "seeded_defect": {
+    "description": "Over-corrected: the loop stops at end - 1, so range(5, 6) returns [] and range(0, 3) returns [0, 1].",
+    "how_to_detect": "Run test/range.test.ts or the grader: range(0, 3) is [0, 1].",
+    "files": {
+      "src/range.ts": "export function range(start: number, end: number): number[] {\n  const out: number[] = [];\n  for (let i = start; i < end - 1; i++) out.push(i);\n  return out;\n}\n"
+    }
+  },
+  "tags": ["typescript", "bugfix", "off-by-one"]
+}

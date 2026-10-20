@@ -1,0 +1,55 @@
+{
+  "id": "coder-014",
+  "specialist": "coder",
+  "title": "Add groupBy() returning a Map in insertion order",
+  "brief": {
+    "goal": "Add `groupBy(items, keyOf)` to src/collections.ts returning a Map from key to the items with that key, keys in first-seen order, items in input order.",
+    "contextLinks": ["package.json", "src/collections.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "the result is a Map instance",
+      "groupBy([1,2,3,4], n => n % 2) has keys [1, 0] in that order with values [[1,3],[2,4]]",
+      "an empty input returns an empty Map"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/collections.ts": "export function unique<T>(items: readonly T[]): T[] {\n  return [...new Set(items)];\n}\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "src/collections.ts",
+      "text": "export function groupBy"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { groupBy, unique } from \"../src/collections.ts\";\n\ntest(\"grader: groupBy\", () => {\n  const g = groupBy([1, 2, 3, 4], (n) => n % 2);\n  assert.ok(g instanceof Map);\n  assert.deepEqual([...g.keys()], [1, 0]);\n  assert.deepEqual(g.get(1), [1, 3]);\n  assert.deepEqual(g.get(0), [2, 4]);\n  assert.equal(groupBy([], (n: number) => n).size, 0);\n  assert.deepEqual(unique([1, 1, 2]), [1, 2]);\n});\n"
+  },
+  "expected_files": {
+    "src/collections.ts": "export function unique<T>(items: readonly T[]): T[] {\n  return [...new Set(items)];\n}\n\nexport function groupBy<T, K>(items: readonly T[], keyOf: (item: T) => K): Map<K, T[]> {\n  const out = new Map<K, T[]>();\n  for (const item of items) {\n    const k = keyOf(item);\n    const bucket = out.get(k);\n    if (bucket) bucket.push(item);\n    else out.set(k, [item]);\n  }\n  return out;\n}\n",
+    "test/collections.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { groupBy } from \"../src/collections.ts\";\n\ntest(\"groupBy\", () => {\n  const g = groupBy([1, 2, 3, 4], (n) => n % 2);\n  assert.deepEqual([...g.keys()], [1, 0]);\n  assert.deepEqual(g.get(1), [1, 3]);\n});\n"
+  },
+  "expected_clean_output": "Map-based groupBy preserving insertion order; grader passes.",
+  "seeded_defect": {
+    "description": "groupBy returns a plain object keyed by String(key) instead of a Map, losing key types and order guarantees.",
+    "how_to_detect": "Grader: `g instanceof Map` is false and g.keys is not a function.",
+    "files": {
+      "src/collections.ts": "export function unique<T>(items: readonly T[]): T[] {\n  return [...new Set(items)];\n}\n\nexport function groupBy<T, K>(items: readonly T[], keyOf: (item: T) => K): Record<string, T[]> {\n  const out: Record<string, T[]> = {};\n  for (const item of items) {\n    const k = String(keyOf(item));\n    (out[k] ??= []).push(item);\n  }\n  return out;\n}\n"
+    }
+  },
+  "tags": ["typescript", "collections", "feature"]
+}

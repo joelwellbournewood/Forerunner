@@ -1,0 +1,56 @@
+{
+  "id": "coder-015",
+  "specialist": "coder",
+  "title": "Add chunk(array, size) with validation",
+  "brief": {
+    "goal": "Add `chunk(items, size)` to src/collections.ts splitting an array into consecutive pieces of `size`, with the last piece shorter when needed; size < 1 or non-integer throws a RangeError; the input is not mutated.",
+    "contextLinks": ["package.json", "src/collections.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "chunk([1,2,3,4,5], 2) returns [[1,2],[3,4],[5]]",
+      "chunk([], 2) returns []",
+      "chunk([1], 0) throws a RangeError",
+      "the input array is unchanged"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/collections.ts": "export function unique<T>(items: readonly T[]): T[] {\n  return [...new Set(items)];\n}\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "src/collections.ts",
+      "text": "export function chunk"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { chunk } from \"../src/collections.ts\";\n\ntest(\"grader: chunk\", () => {\n  const input = [1, 2, 3, 4, 5];\n  assert.deepEqual(chunk(input, 2), [[1, 2], [3, 4], [5]]);\n  assert.deepEqual(input, [1, 2, 3, 4, 5]);\n  assert.deepEqual(chunk([], 2), []);\n  assert.deepEqual(chunk([1, 2, 3], 3), [[1, 2, 3]]);\n  assert.throws(() => chunk([1], 0), RangeError);\n  assert.throws(() => chunk([1], 1.5), RangeError);\n});\n"
+  },
+  "expected_files": {
+    "src/collections.ts": "export function unique<T>(items: readonly T[]): T[] {\n  return [...new Set(items)];\n}\n\nexport function chunk<T>(items: readonly T[], size: number): T[][] {\n  if (!Number.isInteger(size) || size < 1) throw new RangeError(\"chunk size must be a positive integer\");\n  const out: T[][] = [];\n  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));\n  return out;\n}\n",
+    "test/chunk.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { chunk } from \"../src/collections.ts\";\n\ntest(\"chunk\", () => {\n  assert.deepEqual(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);\n  assert.throws(() => chunk([1], 0), RangeError);\n});\n"
+  },
+  "expected_clean_output": "chunk with RangeError validation and a shorter final piece; grader passes.",
+  "seeded_defect": {
+    "description": "The final partial chunk is dropped: chunk([1,2,3,4,5], 2) returns [[1,2],[3,4]].",
+    "how_to_detect": "Grader: the result has two chunks instead of three.",
+    "files": {
+      "src/collections.ts": "export function unique<T>(items: readonly T[]): T[] {\n  return [...new Set(items)];\n}\n\nexport function chunk<T>(items: readonly T[], size: number): T[][] {\n  if (!Number.isInteger(size) || size < 1) throw new RangeError(\"chunk size must be a positive integer\");\n  const out: T[][] = [];\n  for (let i = 0; i + size <= items.length; i += size) out.push(items.slice(i, i + size));\n  return out;\n}\n"
+    }
+  },
+  "tags": ["typescript", "collections", "feature"]
+}

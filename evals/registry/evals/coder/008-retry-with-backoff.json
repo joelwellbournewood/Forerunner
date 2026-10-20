@@ -1,0 +1,66 @@
+{
+  "id": "coder-008",
+  "specialist": "coder",
+  "title": "Add retry() with exponential backoff and an injected sleep",
+  "brief": {
+    "goal": "Add `retry(fn, { attempts, baseMs, sleep })` to src/retry.ts: call fn up to `attempts` times, waiting baseMs * 2^(n-1) between attempts via the injected sleep, and throw the last error when every attempt fails. Never sleep after the final attempt.",
+    "contextLinks": ["package.json", "src/retry.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "a function that fails twice then succeeds returns its value after exactly two sleeps of 100 and 200 ms",
+      "a function that always fails throws its last error after `attempts` calls and attempts - 1 sleeps",
+      "attempts < 1 throws a RangeError before calling fn"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/retry.ts": "export interface RetryOptions {\n  attempts: number;\n  baseMs: number;\n  sleep: (ms: number) => Promise<void>;\n}\n\n// TODO: implement retry\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "src/retry.ts",
+      "text": "export async function retry"
+    },
+    {
+      "kind": "regex",
+      "path": "src/retry.ts",
+      "pattern": "TODO",
+      "expect": "no_match"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/retry.test.ts"],
+      "timeoutMs": 60000
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { retry } from \"../src/retry.ts\";\n\ntest(\"grader: backoff and give-up\", async () => {\n  const delays: number[] = [];\n  let calls = 0;\n  const r = await retry(\n    async () => {\n      calls++;\n      if (calls < 3) throw new Error(\"flaky\");\n      return 42;\n    },\n    { attempts: 5, baseMs: 100, sleep: async (ms) => void delays.push(ms) },\n  );\n  assert.equal(r, 42);\n  assert.deepEqual(delays, [100, 200]);\n\n  const d2: number[] = [];\n  let c2 = 0;\n  await assert.rejects(\n    retry(\n      async () => {\n        c2++;\n        throw new Error(`fail ${c2}`);\n      },\n      { attempts: 3, baseMs: 10, sleep: async (ms) => void d2.push(ms) },\n    ),\n    /fail 3/,\n  );\n  assert.equal(c2, 3);\n  assert.deepEqual(d2, [10, 20]);\n  await assert.rejects(retry(async () => 1, { attempts: 0, baseMs: 1, sleep: async () => {} }), RangeError);\n});\n"
+  },
+  "expected_files": {
+    "src/retry.ts": "export interface RetryOptions {\n  attempts: number;\n  baseMs: number;\n  sleep: (ms: number) => Promise<void>;\n}\n\nexport async function retry<T>(fn: () => Promise<T>, opts: RetryOptions): Promise<T> {\n  if (opts.attempts < 1) throw new RangeError(\"attempts must be at least 1\");\n  let lastError: unknown;\n  for (let n = 1; n <= opts.attempts; n++) {\n    try {\n      return await fn();\n    } catch (e) {\n      lastError = e;\n      if (n < opts.attempts) await opts.sleep(opts.baseMs * 2 ** (n - 1));\n    }\n  }\n  throw lastError;\n}\n",
+    "test/retry.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { retry } from \"../src/retry.ts\";\n\ntest(\"retry succeeds after failures\", async () => {\n  const delays: number[] = [];\n  let calls = 0;\n  const result = await retry(\n    async () => {\n      calls++;\n      if (calls < 3) throw new Error(\"flaky\");\n      return \"ok\";\n    },\n    { attempts: 5, baseMs: 100, sleep: async (ms) => void delays.push(ms) },\n  );\n  assert.equal(result, \"ok\");\n  assert.deepEqual(delays, [100, 200]);\n});\n"
+  },
+  "expected_clean_output": "retry with exponential backoff, injected sleep, no sleep after the last attempt; tests pass.",
+  "seeded_defect": {
+    "description": "The implementation sleeps after the final failed attempt as well, so a 3-attempt failure sleeps three times.",
+    "how_to_detect": "Grader: delays after giving up are [10, 20, 40] instead of [10, 20].",
+    "files": {
+      "src/retry.ts": "export interface RetryOptions {\n  attempts: number;\n  baseMs: number;\n  sleep: (ms: number) => Promise<void>;\n}\n\nexport async function retry<T>(fn: () => Promise<T>, opts: RetryOptions): Promise<T> {\n  if (opts.attempts < 1) throw new RangeError(\"attempts must be at least 1\");\n  let lastError: unknown;\n  for (let n = 1; n <= opts.attempts; n++) {\n    try {\n      return await fn();\n    } catch (e) {\n      lastError = e;\n      await opts.sleep(opts.baseMs * 2 ** (n - 1));\n    }\n  }\n  throw lastError;\n}\n"
+    }
+  },
+  "tags": ["typescript", "async", "feature"]
+}

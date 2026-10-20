@@ -1,0 +1,75 @@
+{
+  "id": "researcher-011",
+  "specialist": "researcher",
+  "title": "Current session cap when two versions of a document exist",
+  "brief": {
+    "goal": "From docs/limits-2025.md and docs/limits-2026.md: what is the current session cap, and what changed?",
+    "contextLinks": ["docs/limits-2025.md", "docs/limits-2026.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md gives CHF 5 as the current session cap from the 2026 version",
+      "answer.md says the 2026 document supersedes the 2025 one and that the cap changed from CHF 3",
+      "both versions are cited"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/limits-2025.md": "# Atlas spending limits\n\nEffective 2025-09-01.\n\n- Monthly cap per person: CHF 100\n- Session cap: CHF 3\n",
+      "docs/limits-2026.md": "# Atlas spending limits\n\nEffective 2026-04-01. Supersedes the 2025-09-01 version.\n\n- Monthly cap per person: CHF 150\n- Session cap: CHF 5\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "session cap is CHF 5\\b|CHF 5\\b[^\\n]*session|session[^\\n]*CHF 5\\b"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "supersed"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/limits-2026\\.md"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "current session cap is CHF 3\\b",
+      "expect": "no_match"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nThe current session cap is CHF 5, per the limits effective 2026-04-01, which supersede the 2025-09-01 version. The cap changed from CHF 3 to CHF 5; the monthly cap changed from CHF 100 to CHF 150.\n\n## Claims\n\n- The 2026 limits set the session cap at CHF 5 and the monthly cap at CHF 150, effective 2026-04-01 (docs/limits-2026.md)\n- The 2026 document states that it supersedes the 2025-09-01 version (docs/limits-2026.md)\n- The 2025 limits were CHF 3 per session and CHF 100 per month (docs/limits-2025.md)\n\n## Uncertainty\n\n- No version newer than 2026-04-01 is present. Confidence: high.\n\n## Sources read\n\n- `docs/limits-2025.md`\n- `docs/limits-2026.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "Newest version used, supersession noted, change described.",
+  "seeded_defect": {
+    "description": "The stale 2025 document is used: the current session cap is reported as CHF 3.",
+    "how_to_detect": "\"current session cap is CHF 3\" appears; the 2026 document is not cited.",
+    "files": {
+      "answer.md": "# Answer\n\nThe current session cap is CHF 3.\n\n## Claims\n\n- The session cap is CHF 3 (docs/limits-2025.md)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/limits-2025.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["recency", "versions"]
+}

@@ -1,0 +1,75 @@
+{
+  "id": "coder-004",
+  "specialist": "coder",
+  "title": "Rename fetchUsr to fetchUser across the module",
+  "brief": {
+    "goal": "Rename the exported function `fetchUsr` in src/api.ts to `fetchUser` and update every caller so the existing test keeps passing. No other behaviour changes.",
+    "contextLinks": ["package.json", "src/api.ts", "src/index.ts", "test/index.test.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "src/api.ts exports `fetchUser` and no longer mentions `fetchUsr`",
+      "src/index.ts imports and uses `fetchUser`; no file still references `fetchUsr`",
+      "test/index.test.ts passes unchanged",
+      "getUserName keeps returning the same values"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/api.ts": "const USERS: Record<number, { id: number; name: string }> = {\n  1: { id: 1, name: \"Ada\" },\n  2: { id: 2, name: \"Grace\" },\n};\n\nexport function fetchUsr(id: number): { id: number; name: string } | undefined {\n  return USERS[id];\n}\n",
+      "src/index.ts": "import { fetchUsr } from \"./api.ts\";\n\nexport function getUserName(id: number): string {\n  return fetchUsr(id)?.name ?? \"unknown\";\n}\n",
+      "test/index.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { getUserName } from \"../src/index.ts\";\n\ntest(\"getUserName\", () => {\n  assert.equal(getUserName(1), \"Ada\");\n  assert.equal(getUserName(9), \"unknown\");\n});\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "src/api.ts",
+      "pattern": "fetchUsr",
+      "expect": "no_match"
+    },
+    {
+      "kind": "regex",
+      "path": "src/index.ts",
+      "pattern": "fetchUsr",
+      "expect": "no_match"
+    },
+    {
+      "kind": "file_contains",
+      "path": "src/api.ts",
+      "text": "export function fetchUser("
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/index.test.ts"],
+      "timeoutMs": 60000
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { fetchUser } from \"../src/api.ts\";\nimport { getUserName } from \"../src/index.ts\";\n\ntest(\"grader: rename\", () => {\n  assert.equal(fetchUser(2)?.name, \"Grace\");\n  assert.equal(getUserName(1), \"Ada\");\n  assert.equal(getUserName(9), \"unknown\");\n});\n"
+  },
+  "expected_files": {
+    "src/api.ts": "const USERS: Record<number, { id: number; name: string }> = {\n  1: { id: 1, name: \"Ada\" },\n  2: { id: 2, name: \"Grace\" },\n};\n\nexport function fetchUser(id: number): { id: number; name: string } | undefined {\n  return USERS[id];\n}\n",
+    "src/index.ts": "import { fetchUser } from \"./api.ts\";\n\nexport function getUserName(id: number): string {\n  return fetchUser(id)?.name ?? \"unknown\";\n}\n"
+  },
+  "expected_clean_output": "Both files renamed; no fetchUsr left; existing test and grader pass.",
+  "seeded_defect": {
+    "description": "Only src/api.ts was renamed; src/index.ts still imports fetchUsr, so the module fails to load.",
+    "how_to_detect": "grep fetchUsr finds src/index.ts; test/index.test.ts fails with a missing export.",
+    "files": {
+      "src/index.ts": "import { fetchUsr } from \"./api.ts\";\n\nexport function getUserName(id: number): string {\n  return fetchUsr(id)?.name ?? \"unknown\";\n}\n"
+    }
+  },
+  "tags": ["typescript", "rename", "refactor"]
+}

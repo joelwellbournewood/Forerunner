@@ -1,0 +1,89 @@
+{
+  "id": "researcher-020",
+  "specialist": "researcher",
+  "title": "Synthesise goal, deadline and budget with a source per claim",
+  "brief": {
+    "goal": "From docs/charter.md, docs/budget.md and docs/schedule.md: summarise the project's goal, release deadline and budget. Every claim must cite its file.",
+    "contextLinks": ["docs/charter.md", "docs/budget.md", "docs/schedule.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md states the goal, the 2026-11-30 deadline and the CHF 20,000 budget with the CHF 6,000 model reserve",
+      "every bullet under Claims ends with a citation of one of the three files",
+      "no claim appears that is not in the three files"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/charter.md": "# Atlas charter\n\nGoal: let a small team run shared projects with AI agents without merging their identities.\nSponsor: Dana.\n",
+      "docs/budget.md": "# Atlas budget 2026\n\nApproved budget for 2026: CHF 20,000, of which CHF 6,000 is reserved for model usage.\n",
+      "docs/schedule.md": "# Atlas schedule\n\nRelease 1.0 deadline: 2026-11-30. Beta: 2026-09-15.\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "2026-11-30"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "CHF 20,?000"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "CHF 6,?000"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/charter\\.md"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/budget\\.md"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/schedule\\.md"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "label": "every Claims bullet carries a (docs/...) citation",
+      "pattern": "## Claims\\n\\n(?:- [^\\n]*\\(docs/[^)]*\\)[^\\n]*\\n)*- (?![^\\n]*\\(docs/)",
+      "expect": "no_match"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nAtlas aims to let a small team run shared projects with AI agents without merging their identities. Release 1.0 is due 2026-11-30 (beta 2026-09-15). The approved 2026 budget is CHF 20,000, of which CHF 6,000 is reserved for model usage.\n\n## Claims\n\n- Goal: let a small team run shared projects with AI agents without merging their identities; sponsor Dana (docs/charter.md)\n- Release 1.0 deadline is 2026-11-30; beta is 2026-09-15 (docs/schedule.md)\n- Approved 2026 budget is CHF 20,000, with CHF 6,000 reserved for model usage (docs/budget.md)\n\n## Uncertainty\n\n- Team size and headcount are not in these three files. Confidence: high.\n\n## Sources read\n\n- `docs/charter.md`\n- `docs/budget.md`\n- `docs/schedule.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "Three claims, three citations, nothing uncited.",
+  "seeded_defect": {
+    "description": "A claim about a team of four engineers is added without a citation; no file mentions team size.",
+    "how_to_detect": "A Claims bullet has no (docs/...) citation; the figure is in none of the fixtures.",
+    "files": {
+      "answer.md": "# Answer\n\nAtlas aims to let a small team run shared projects with AI agents without merging their identities. Release 1.0 is due 2026-11-30. The approved 2026 budget is CHF 20,000, with CHF 6,000 reserved for model usage. The team has four engineers.\n\n## Claims\n\n- Goal: let a small team run shared projects with AI agents without merging their identities (docs/charter.md)\n- Release 1.0 deadline is 2026-11-30 (docs/schedule.md)\n- Approved 2026 budget is CHF 20,000, with CHF 6,000 reserved for model usage (docs/budget.md)\n- The team has four engineers\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/charter.md`\n- `docs/budget.md`\n- `docs/schedule.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["synthesis", "citation"]
+}

@@ -13,19 +13,20 @@
   },
   "dependencies": {
     "@forerunner/platform": "workspace:*",
-    "@forerunner/vault": "workspace:*",
     "@forerunner/runtime": "workspace:*",
+    "@forerunner/state": "workspace:*",
+    "@forerunner/vault": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "playwright": "^1.64.1",
-    "nodemailer": "^10.1.7",
     "imapflow": "^2.5.8",
+    "mailauth": "^8.0.1",
     "mailparser": "^3.10.0",
-    "zod": "^4.6.7",
-    "@forerunner/state": "workspace:*"
+    "nodemailer": "^10.1.7",
+    "playwright": "^1.64.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/nodemailer": "^7.0.0",
+    "@forerunner/testenv": "workspace:*",
     "@types/mailparser": "^3.4.6",
-    "@forerunner/testenv": "workspace:*"
+    "@types/nodemailer": "^7.0.0"
   }
 }

@@ -1,0 +1,56 @@
+{
+  "id": "coder-012",
+  "specialist": "coder",
+  "title": "Implement deepMerge without mutation or prototype pollution",
+  "brief": {
+    "goal": "Add `deepMerge(a, b)` to src/merge.ts returning a new object: nested plain objects merge recursively, arrays and other values from b replace a's, neither input is mutated, and the keys __proto__, constructor and prototype are ignored.",
+    "contextLinks": ["package.json", "src/merge.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "deepMerge({a:{b:1,c:2}},{a:{b:9},d:[1]}) returns {a:{b:9,c:2},d:[1]}",
+      "arrays are replaced, not concatenated",
+      "merging JSON.parse('{\"__proto__\":{\"polluted\":true}}') leaves Object.prototype untouched",
+      "both inputs are unchanged after the call"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/merge.ts": "export type Plain = Record<string, unknown>;\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "src/merge.ts",
+      "text": "export function deepMerge"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { deepMerge } from \"../src/merge.ts\";\n\ntest(\"grader: deepMerge\", () => {\n  const a = { a: { b: 1, c: 2 }, x: [1, 2] };\n  const b = { a: { b: 9 }, d: [1], x: [3] };\n  const r = deepMerge(a, b);\n  assert.deepEqual(r, { a: { b: 9, c: 2 }, d: [1], x: [3] });\n  assert.deepEqual(a, { a: { b: 1, c: 2 }, x: [1, 2] });\n  assert.deepEqual(b, { a: { b: 9 }, d: [1], x: [3] });\n  deepMerge({}, JSON.parse('{\"__proto__\":{\"polluted\":true}}'));\n  assert.equal(({} as Record<string, unknown>).polluted, undefined);\n});\n"
+  },
+  "expected_files": {
+    "src/merge.ts": "export type Plain = Record<string, unknown>;\n\nconst UNSAFE = new Set([\"__proto__\", \"constructor\", \"prototype\"]);\n\nfunction isPlain(v: unknown): v is Plain {\n  return v !== null && typeof v === \"object\" && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;\n}\n\nexport function deepMerge(a: Plain, b: Plain): Plain {\n  const out: Plain = {};\n  for (const k of Object.keys(a)) {\n    if (UNSAFE.has(k)) continue;\n    const v = a[k];\n    out[k] = isPlain(v) ? deepMerge(v, {}) : Array.isArray(v) ? [...v] : v;\n  }\n  for (const k of Object.keys(b)) {\n    if (UNSAFE.has(k)) continue;\n    const v = b[k];\n    const cur = out[k];\n    if (isPlain(v) && isPlain(cur)) out[k] = deepMerge(cur, v);\n    else out[k] = isPlain(v) ? deepMerge(v, {}) : Array.isArray(v) ? [...v] : v;\n  }\n  return out;\n}\n",
+    "test/merge.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { deepMerge } from \"../src/merge.ts\";\n\ntest(\"deepMerge\", () => {\n  assert.deepEqual(deepMerge({ a: { b: 1, c: 2 } }, { a: { b: 9 }, d: [1] }), { a: { b: 9, c: 2 }, d: [1] });\n});\n"
+  },
+  "expected_clean_output": "Pure recursive merge, arrays replaced, unsafe keys skipped; grader passes.",
+  "seeded_defect": {
+    "description": "The merge writes into the first argument instead of a fresh object, mutating the caller's data.",
+    "how_to_detect": "Grader: after deepMerge(a, b), a.a.b is 9.",
+    "files": {
+      "src/merge.ts": "export type Plain = Record<string, unknown>;\n\nconst UNSAFE = new Set([\"__proto__\", \"constructor\", \"prototype\"]);\n\nfunction isPlain(v: unknown): v is Plain {\n  return v !== null && typeof v === \"object\" && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;\n}\n\nexport function deepMerge(a: Plain, b: Plain): Plain {\n  for (const k of Object.keys(b)) {\n    if (UNSAFE.has(k)) continue;\n    const v = b[k];\n    const cur = a[k];\n    if (isPlain(v) && isPlain(cur)) a[k] = deepMerge(cur, v);\n    else a[k] = v;\n  }\n  return a;\n}\n"
+    }
+  },
+  "tags": ["typescript", "objects", "security"]
+}

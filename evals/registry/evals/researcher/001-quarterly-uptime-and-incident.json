@@ -1,0 +1,77 @@
+{
+  "id": "researcher-001",
+  "specialist": "researcher",
+  "title": "Report Q2 uptime and the cause of the longest incident",
+  "brief": {
+    "goal": "From docs/status-q2.md: what was the measured Q2 uptime of the public API, and what caused the longest incident of the quarter?",
+    "contextLinks": ["docs/status-q2.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md states the uptime as 99.91% exactly",
+      "answer.md names the expired TLS certificate as the cause of the longest incident (2026-05-14, 47 min)",
+      "every claim cites docs/status-q2.md",
+      "no figure that is not in the fixture appears in the answer"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/status-q2.md": "# Atlas service status, Q2 2026\n\nPrepared 2026-07-03 by the ops rotation.\n\n## Availability\n\nMeasured uptime for the public API in Q2 was 99.91% (target 99.9%).\nQ1 was 99.95% for comparison.\n\n## Incidents\n\n| Date | Duration | Severity | Cause |\n| --- | --- | --- | --- |\n| 2026-04-22 | 9 min | SEV3 | Deploy rolled back after a failed health check |\n| 2026-05-14 | 47 min | SEV1 | Expired TLS certificate on the edge load balancer |\n| 2026-06-30 | 12 min | SEV2 | Database connection pool exhausted during backup |\n\nThe May incident was the longest of the quarter. The certificate renewal job had been disabled\nduring the March migration and never re-enabled.\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_exists",
+      "path": "answer.md"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "99\\.91\\s?%"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "certificate"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/status-q2\\.md"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "99\\.99",
+      "expect": "no_match"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nQ2 2026 uptime for the public API was 99.91%, against a 99.9% target. The longest incident (2026-05-14, 47 minutes, SEV1) was caused by an expired TLS certificate on the edge load balancer.\n\n## Claims\n\n- Measured Q2 uptime was 99.91% with a 99.9% target (docs/status-q2.md)\n- The longest incident was on 2026-05-14 and lasted 47 minutes at SEV1 (docs/status-q2.md)\n- Its cause was an expired TLS certificate on the edge load balancer; the renewal job had been disabled during the March migration (docs/status-q2.md)\n\n## Uncertainty\n\n- The report does not say how uptime was measured or whether the 47 minutes were full or partial outage. Confidence: high for the figures quoted, since they are stated directly.\n\n## Sources read\n\n- `docs/status-q2.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "answer.md quotes 99.91% and the expired TLS certificate, cites the fixture, states what is not said.",
+  "seeded_defect": {
+    "description": "The answer rounds uptime up to 99.99% and attributes the incident to a database failover, neither of which is in the fixture.",
+    "how_to_detect": "99.91% is missing and 99.99% appears; the fixture names a TLS certificate, not a failover.",
+    "files": {
+      "answer.md": "# Answer\n\nQ2 2026 uptime for the public API was 99.99%. The longest incident on 2026-05-14 was caused by a database failover.\n\n## Claims\n\n- Measured Q2 uptime was 99.99% (docs/status-q2.md)\n- The longest incident was on 2026-05-14 and was caused by a database failover (docs/status-q2.md)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/status-q2.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["extraction", "figures", "citation"]
+}

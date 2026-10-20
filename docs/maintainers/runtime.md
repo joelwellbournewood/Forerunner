@@ -143,6 +143,16 @@ permission 403); the body is `{ error, code, details }` with secrets redacted.
 enforce containment. `fr daemon [--provider fake] [--port N]` starts the server; `fr status`
 reads `daemon.json` and reports health.
 
+### Specialist registry (`src/registry/`)
+
+The loader for `forerunner-registry` content: specialist, principal and critic definitions as
+Markdown with front matter (model defaults, effort, tool allowlist, budget defaults, eval set),
+validated with zod, with a prompt version hash recorded on every run. `proposals.ts` writes a
+proposed specialist as a pull-request-ready file instead of editing the registry in place, so
+every new specialist goes through review. The composition root turns registry entries into
+`SpecialistSpec`s for the executor. See `adding-a-specialist.md` for the file format and the
+golden eval sets under `evals/registry/`.
+
 ### Models (`src/models/ladder.ts`)
 
 Ladder haiku → sonnet → opus → fable, ceiling opus by default; mode defaults and response

@@ -1,0 +1,84 @@
+{
+  "id": "researcher-017",
+  "specialist": "researcher",
+  "title": "Summarise what an ADR decided and what it rejected",
+  "brief": {
+    "goal": "From docs/decisions/0003-storage.md: what was decided, which alternatives were rejected, and why?",
+    "contextLinks": ["docs/decisions/0003-storage.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md says Postgres was chosen for shared state, with code and docs in git",
+      "answer.md says SQLite-only (git sync) was rejected because claims need atomic updates, and the hosted store for cost and lock-in",
+      "the ADR is cited"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/decisions/0003-storage.md": "# 0003 — Shared state storage\n\nDate: 2026-02-20\nStatus: accepted\n\n## Context\n\nTwo or more agents claim tasks concurrently and need receipts for messages.\n\n## Decision\n\nUse Postgres for shared state. Code and docs stay in git.\n\n## Alternatives considered\n\n- SQLite only, synced through git: rejected because claims need atomic updates across\n  machines and git merges cannot provide them.\n- A hosted document store: rejected for cost and vendor lock-in.\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "Postgres"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "SQLite"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "atomic"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "lock-in"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "decided[^\\n]*SQLite only|decision: SQLite",
+      "expect": "no_match"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/decisions/0003-storage\\.md"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nADR 0003 (2026-02-20, accepted) decided to use Postgres for shared state while code and docs stay in git. SQLite-only synced through git was rejected because claims need atomic updates across machines that git merges cannot provide; a hosted document store was rejected for cost and vendor lock-in.\n\n## Claims\n\n- Decision: Postgres for shared state; code and docs stay in git (docs/decisions/0003-storage.md)\n- Rejected: SQLite only synced through git, because claims need atomic updates across machines (docs/decisions/0003-storage.md)\n- Rejected: a hosted document store, for cost and vendor lock-in (docs/decisions/0003-storage.md)\n\n## Uncertainty\n\n- The ADR names no Postgres version or hosting. Confidence: high.\n\n## Sources read\n\n- `docs/decisions/0003-storage.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "Decision, both rejected alternatives and their reasons.",
+  "seeded_defect": {
+    "description": "The decision is inverted: SQLite is reported as chosen and Postgres as rejected.",
+    "how_to_detect": "\"Decision: SQLite\" appears; the atomicity reason is missing.",
+    "files": {
+      "answer.md": "# Answer\n\nADR 0003 decided to use SQLite synced through git; Postgres was rejected for cost.\n\n## Claims\n\n- Decision: SQLite only, synced through git (docs/decisions/0003-storage.md)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/decisions/0003-storage.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["summary", "decisions"]
+}

@@ -1,0 +1,55 @@
+{
+  "id": "coder-006",
+  "specialist": "coder",
+  "title": "Make parseCsv handle quoted fields, escaped quotes and CRLF",
+  "brief": {
+    "goal": "parseCsv in src/csv.ts splits on commas only; make it handle double-quoted fields containing commas, doubled quotes (\"\") as an escaped quote, CRLF line endings and a trailing newline.",
+    "contextLinks": ["package.json", "src/csv.ts", "test/csv.test.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "parseCsv('a,b\\r\\n\"x, y\",\"he said \"\"hi\"\"\"\\n') returns [[\"a\",\"b\"],[\"x, y\",'he said \"hi\"']]",
+      "a trailing newline does not produce an empty final row",
+      "the simple case in test/csv.test.ts keeps passing"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/csv.ts": "export function parseCsv(text: string): string[][] {\n  return text.split(\"\\n\").map((line) => line.split(\",\"));\n}\n",
+      "test/csv.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { parseCsv } from \"../src/csv.ts\";\n\ntest(\"simple rows\", () => {\n  assert.deepEqual(parseCsv(\"a,b\\n1,2\"), [[\"a\", \"b\"], [\"1\", \"2\"]]);\n});\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/csv.test.ts"],
+      "timeoutMs": 60000
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { parseCsv } from \"../src/csv.ts\";\n\ntest(\"grader: quoted fields\", () => {\n  assert.deepEqual(parseCsv('a,b\\r\\n\"x, y\",\"he said \"\"hi\"\"\"\\n'), [\n    [\"a\", \"b\"],\n    [\"x, y\", 'he said \"hi\"'],\n  ]);\n  assert.deepEqual(parseCsv(\"a,b\\n1,2\"), [[\"a\", \"b\"], [\"1\", \"2\"]]);\n  assert.deepEqual(parseCsv(\"a,b\\n\"), [[\"a\", \"b\"]]);\n});\n"
+  },
+  "expected_files": {
+    "src/csv.ts": "export function parseCsv(text: string): string[][] {\n  const rows: string[][] = [];\n  let row: string[] = [];\n  let field = \"\";\n  let quoted = false;\n  const src = text.replace(/\\r\\n?/g, \"\\n\");\n  for (let i = 0; i < src.length; i++) {\n    const ch = src[i] as string;\n    if (quoted) {\n      if (ch === '\"') {\n        if (src[i + 1] === '\"') {\n          field += '\"';\n          i++;\n        } else quoted = false;\n      } else field += ch;\n      continue;\n    }\n    if (ch === '\"') quoted = true;\n    else if (ch === \",\") {\n      row.push(field);\n      field = \"\";\n    } else if (ch === \"\\n\") {\n      row.push(field);\n      rows.push(row);\n      row = [];\n      field = \"\";\n    } else field += ch;\n  }\n  if (field !== \"\" || row.length > 0) {\n    row.push(field);\n    rows.push(row);\n  }\n  return rows;\n}\n"
+  },
+  "expected_clean_output": "A small state machine parses quotes, escaped quotes and CRLF; both tests pass.",
+  "seeded_defect": {
+    "description": "Quoted commas work but a doubled quote inside a field ends the field instead of producing a literal quote.",
+    "how_to_detect": "Grader: 'he said \"\"hi\"\"' parses as 'he said ' plus stray fields.",
+    "files": {
+      "src/csv.ts": "export function parseCsv(text: string): string[][] {\n  const rows: string[][] = [];\n  let row: string[] = [];\n  let field = \"\";\n  let quoted = false;\n  const src = text.replace(/\\r\\n?/g, \"\\n\");\n  for (let i = 0; i < src.length; i++) {\n    const ch = src[i] as string;\n    if (quoted) {\n      if (ch === '\"') quoted = false;\n      else field += ch;\n      continue;\n    }\n    if (ch === '\"') quoted = true;\n    else if (ch === \",\") {\n      row.push(field);\n      field = \"\";\n    } else if (ch === \"\\n\") {\n      row.push(field);\n      rows.push(row);\n      row = [];\n      field = \"\";\n    } else field += ch;\n  }\n  if (field !== \"\" || row.length > 0) {\n    row.push(field);\n    rows.push(row);\n  }\n  return rows;\n}\n"
+    }
+  },
+  "tags": ["typescript", "parsing", "csv"]
+}

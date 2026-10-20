@@ -1,0 +1,55 @@
+{
+  "id": "coder-009",
+  "specialist": "coder",
+  "title": "Normalise relative paths for both Windows and Linux",
+  "brief": {
+    "goal": "Add `toPortablePath(p)` to src/paths.ts: convert backslashes to forward slashes, collapse `./` and repeated slashes, strip a trailing slash, and throw an Error for absolute paths (leading slash or drive letter) or any `..` segment.",
+    "contextLinks": ["package.json", "src/paths.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "toPortablePath(\"src\\\\lib\\\\a.ts\") returns \"src/lib/a.ts\"",
+      "toPortablePath(\"./src//a.ts\") returns \"src/a.ts\" and \"src/\" returns \"src\"",
+      "toPortablePath(\"../x\"), toPortablePath(\"C:\\\\x\") and toPortablePath(\"/etc\") throw"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/paths.ts": "// path helpers for fixture files\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "src/paths.ts",
+      "text": "export function toPortablePath"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { toPortablePath } from \"../src/paths.ts\";\n\ntest(\"grader: toPortablePath\", () => {\n  assert.equal(toPortablePath(\"src\\\\lib\\\\a.ts\"), \"src/lib/a.ts\");\n  assert.equal(toPortablePath(\"./src//a.ts\"), \"src/a.ts\");\n  assert.equal(toPortablePath(\"src/\"), \"src\");\n  assert.equal(toPortablePath(\"a/./b\"), \"a/b\");\n  assert.throws(() => toPortablePath(\"../x\"));\n  assert.throws(() => toPortablePath(\"a/../b\"));\n  assert.throws(() => toPortablePath(\"C:\\\\x\"));\n  assert.throws(() => toPortablePath(\"/etc\"));\n});\n"
+  },
+  "expected_files": {
+    "src/paths.ts": "// path helpers for fixture files\n\nexport function toPortablePath(p: string): string {\n  const slashed = p.replace(/\\\\/g, \"/\");\n  if (slashed.startsWith(\"/\") || /^[A-Za-z]:/.test(slashed)) {\n    throw new Error(`absolute paths are not allowed: ${p}`);\n  }\n  const parts = slashed.split(\"/\").filter((s) => s !== \"\" && s !== \".\");\n  if (parts.some((s) => s === \"..\")) throw new Error(`parent segments are not allowed: ${p}`);\n  return parts.join(\"/\");\n}\n",
+    "test/paths.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { toPortablePath } from \"../src/paths.ts\";\n\ntest(\"toPortablePath\", () => {\n  assert.equal(toPortablePath(\"src\\\\lib\\\\a.ts\"), \"src/lib/a.ts\");\n  assert.equal(toPortablePath(\"./src//a.ts\"), \"src/a.ts\");\n  assert.equal(toPortablePath(\"src/\"), \"src\");\n  assert.throws(() => toPortablePath(\"../x\"));\n  assert.throws(() => toPortablePath(\"C:\\\\x\"));\n  assert.throws(() => toPortablePath(\"/etc\"));\n});\n"
+  },
+  "expected_clean_output": "toPortablePath normalises separators and segments and rejects absolute and parent paths.",
+  "seeded_defect": {
+    "description": "Backslashes are not converted, so Windows-style input comes back unchanged.",
+    "how_to_detect": "Grader: toPortablePath(\"src\\\\lib\\\\a.ts\") returns \"src\\\\lib\\\\a.ts\".",
+    "files": {
+      "src/paths.ts": "// path helpers for fixture files\n\nexport function toPortablePath(p: string): string {\n  if (p.startsWith(\"/\") || /^[A-Za-z]:/.test(p)) {\n    throw new Error(`absolute paths are not allowed: ${p}`);\n  }\n  const parts = p.split(\"/\").filter((s) => s !== \"\" && s !== \".\");\n  if (parts.some((s) => s === \"..\")) throw new Error(`parent segments are not allowed: ${p}`);\n  return parts.join(\"/\");\n}\n"
+    }
+  },
+  "tags": ["typescript", "paths", "cross-platform"]
+}

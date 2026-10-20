@@ -1,0 +1,61 @@
+{
+  "id": "coder-016",
+  "specialist": "coder",
+  "title": "Add once() to the event emitter",
+  "brief": {
+    "goal": "Add `once(event, handler)` to the Emitter class in src/emitter.ts: the handler runs for the next emit only and is then removed; once() returns an unsubscribe function that works before the event fires.",
+    "contextLinks": ["package.json", "src/emitter.ts", "test/emitter.test.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "a once handler runs exactly one time across two emits",
+      "the unsubscribe returned by once() prevents the handler from running",
+      "existing on()/off()/emit() behaviour and test are unchanged"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/emitter.ts": "type Handler = (payload: unknown) => void;\n\nexport class Emitter {\n  private readonly handlers = new Map<string, Set<Handler>>();\n\n  on(event: string, handler: Handler): () => void {\n    let set = this.handlers.get(event);\n    if (!set) {\n      set = new Set();\n      this.handlers.set(event, set);\n    }\n    set.add(handler);\n    return () => this.off(event, handler);\n  }\n\n  off(event: string, handler: Handler): void {\n    this.handlers.get(event)?.delete(handler);\n  }\n\n  emit(event: string, payload?: unknown): void {\n    for (const h of [...(this.handlers.get(event) ?? [])]) h(payload);\n  }\n}\n",
+      "test/emitter.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { Emitter } from \"../src/emitter.ts\";\n\ntest(\"on/emit/off\", () => {\n  const e = new Emitter();\n  const seen: unknown[] = [];\n  const off = e.on(\"x\", (p) => seen.push(p));\n  e.emit(\"x\", 1);\n  off();\n  e.emit(\"x\", 2);\n  assert.deepEqual(seen, [1]);\n});\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "src/emitter.ts",
+      "pattern": "\\bonce\\("
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/emitter.test.ts"],
+      "timeoutMs": 60000
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { Emitter } from \"../src/emitter.ts\";\n\ntest(\"grader: once\", () => {\n  const e = new Emitter();\n  const seen: unknown[] = [];\n  e.once(\"x\", (p) => seen.push(p));\n  e.emit(\"x\", 1);\n  e.emit(\"x\", 2);\n  assert.deepEqual(seen, [1]);\n  const off = e.once(\"y\", (p) => seen.push(p));\n  off();\n  e.emit(\"y\", 3);\n  assert.deepEqual(seen, [1]);\n  e.on(\"z\", (p) => seen.push(p));\n  e.emit(\"z\", 4);\n  e.emit(\"z\", 5);\n  assert.deepEqual(seen, [1, 4, 5]);\n});\n"
+  },
+  "expected_files": {
+    "src/emitter.ts": "type Handler = (payload: unknown) => void;\n\nexport class Emitter {\n  private readonly handlers = new Map<string, Set<Handler>>();\n\n  on(event: string, handler: Handler): () => void {\n    let set = this.handlers.get(event);\n    if (!set) {\n      set = new Set();\n      this.handlers.set(event, set);\n    }\n    set.add(handler);\n    return () => this.off(event, handler);\n  }\n\n  once(event: string, handler: Handler): () => void {\n    const wrapped: Handler = (payload) => {\n      this.off(event, wrapped);\n      handler(payload);\n    };\n    return this.on(event, wrapped);\n  }\n\n  off(event: string, handler: Handler): void {\n    this.handlers.get(event)?.delete(handler);\n  }\n\n  emit(event: string, payload?: unknown): void {\n    for (const h of [...(this.handlers.get(event) ?? [])]) h(payload);\n  }\n}\n",
+    "test/once.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { Emitter } from \"../src/emitter.ts\";\n\ntest(\"once\", () => {\n  const e = new Emitter();\n  let n = 0;\n  e.once(\"x\", () => n++);\n  e.emit(\"x\");\n  e.emit(\"x\");\n  assert.equal(n, 1);\n});\n"
+  },
+  "expected_clean_output": "once() wraps the handler, removes itself before calling through; grader passes.",
+  "seeded_defect": {
+    "description": "once() registers the handler with on() but never removes it, so it fires on every emit.",
+    "how_to_detect": "Grader: seen is [1, 2] after two emits.",
+    "files": {
+      "src/emitter.ts": "type Handler = (payload: unknown) => void;\n\nexport class Emitter {\n  private readonly handlers = new Map<string, Set<Handler>>();\n\n  on(event: string, handler: Handler): () => void {\n    let set = this.handlers.get(event);\n    if (!set) {\n      set = new Set();\n      this.handlers.set(event, set);\n    }\n    set.add(handler);\n    return () => this.off(event, handler);\n  }\n\n  once(event: string, handler: Handler): () => void {\n    return this.on(event, (payload) => {\n      handler(payload);\n    });\n  }\n\n  off(event: string, handler: Handler): void {\n    this.handlers.get(event)?.delete(handler);\n  }\n\n  emit(event: string, payload?: unknown): void {\n    for (const h of [...(this.handlers.get(event) ?? [])]) h(payload);\n  }\n}\n"
+    }
+  },
+  "tags": ["typescript", "events", "feature"]
+}

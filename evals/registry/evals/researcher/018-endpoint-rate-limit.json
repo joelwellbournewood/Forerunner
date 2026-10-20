@@ -1,0 +1,76 @@
+{
+  "id": "researcher-018",
+  "specialist": "researcher",
+  "title": "Find the rate limit of one endpoint",
+  "brief": {
+    "goal": "From docs/api.md: what is the rate limit for POST /export, and what happens when it is exceeded?",
+    "contextLinks": ["docs/api.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md gives 5 requests per minute per device token for POST /export",
+      "answer.md says exceeding it returns HTTP 429 with a Retry-After header",
+      "the limit of another endpoint is not attributed to /export"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/api.md": "# Atlas API reference (excerpt)\n\n## Rate limits\n\nLimits are per device token.\n\n| Endpoint | Limit |\n| --- | --- |\n| GET /search | 60 requests per minute |\n| POST /export | 5 requests per minute |\n| GET /projects | 120 requests per minute |\n\nExceeding a limit returns HTTP 429 with a Retry-After header.\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "/export[^\\n]*\\b5 requests per minute|\\b5 requests per minute[^\\n]*/export"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "429"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "Retry-After"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "/export[^\\n]*\\b60 requests",
+      "expect": "no_match"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/api\\.md"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nPOST /export is limited to 5 requests per minute per device token. Exceeding it returns HTTP 429 with a Retry-After header.\n\n## Claims\n\n- POST /export: 5 requests per minute (docs/api.md)\n- Limits are per device token (docs/api.md)\n- Exceeding a limit returns HTTP 429 with a Retry-After header (docs/api.md)\n\n## Uncertainty\n\n- The excerpt does not say whether limits differ by plan. Confidence: high.\n\n## Sources read\n\n- `docs/api.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "Right row of the table, scope (per device token) and the 429 behaviour.",
+  "seeded_defect": {
+    "description": "The /search limit (60 per minute) is attributed to /export.",
+    "how_to_detect": "A line pairs /export with 60 requests.",
+    "files": {
+      "answer.md": "# Answer\n\nPOST /export is limited to 60 requests per minute. Exceeding it returns HTTP 429 with a Retry-After header.\n\n## Claims\n\n- POST /export: 60 requests per minute (docs/api.md)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/api.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["tables", "precision"]
+}

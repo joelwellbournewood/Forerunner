@@ -1,0 +1,63 @@
+{
+  "id": "coder-007",
+  "specialist": "coder",
+  "title": "Add debounce(fn, ms) with cancel()",
+  "brief": {
+    "goal": "Add `debounce` to src/timing.ts: the returned function calls fn once with the latest arguments after ms milliseconds without further calls; it exposes cancel() to drop a pending call.",
+    "contextLinks": ["package.json", "src/timing.ts", "test/timing.test.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test",
+      "Use setTimeout/clearTimeout so the test can use node:test mock timers",
+      "No new dependencies"
+    ],
+    "acceptanceCriteria": [
+      "calling the debounced function twice within ms results in one call with the last arguments",
+      "no call happens before ms has elapsed",
+      "cancel() prevents a pending call",
+      "the existing throttle test keeps passing"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/timing.ts": "export function throttle<A extends unknown[]>(fn: (...args: A) => void, ms: number, now: () => number): (...args: A) => void {\n  let last = -Infinity;\n  return (...args: A) => {\n    const t = now();\n    if (t - last >= ms) {\n      last = t;\n      fn(...args);\n    }\n  };\n}\n",
+      "test/timing.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { throttle } from \"../src/timing.ts\";\n\ntest(\"throttle\", () => {\n  let t = 0;\n  const calls: number[] = [];\n  const f = throttle((n: number) => calls.push(n), 100, () => t);\n  f(1);\n  t = 50;\n  f(2);\n  t = 100;\n  f(3);\n  assert.deepEqual(calls, [1, 3]);\n});\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "src/timing.ts",
+      "text": "export function debounce"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/timing.test.ts"],
+      "timeoutMs": 60000
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { mock, test } from \"node:test\";\nimport { debounce } from \"../src/timing.ts\";\n\ntest(\"grader: debounce\", () => {\n  mock.timers.enable({ apis: [\"setTimeout\"] });\n  try {\n    const calls: number[] = [];\n    const d = debounce((n: number) => calls.push(n), 100);\n    d(1);\n    d(2);\n    mock.timers.tick(99);\n    assert.deepEqual(calls, []);\n    mock.timers.tick(1);\n    assert.deepEqual(calls, [2]);\n    d(3);\n    d.cancel();\n    mock.timers.tick(200);\n    assert.deepEqual(calls, [2]);\n  } finally {\n    mock.timers.reset();\n  }\n});\n"
+  },
+  "expected_files": {
+    "src/timing.ts": "export function throttle<A extends unknown[]>(fn: (...args: A) => void, ms: number, now: () => number): (...args: A) => void {\n  let last = -Infinity;\n  return (...args: A) => {\n    const t = now();\n    if (t - last >= ms) {\n      last = t;\n      fn(...args);\n    }\n  };\n}\n\nexport interface Debounced<A extends unknown[]> {\n  (...args: A): void;\n  cancel(): void;\n}\n\nexport function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number): Debounced<A> {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  const debounced = ((...args: A) => {\n    if (timer !== undefined) clearTimeout(timer);\n    timer = setTimeout(() => {\n      timer = undefined;\n      fn(...args);\n    }, ms);\n  }) as Debounced<A>;\n  debounced.cancel = () => {\n    if (timer !== undefined) clearTimeout(timer);\n    timer = undefined;\n  };\n  return debounced;\n}\n"
+  },
+  "expected_clean_output": "debounce with trailing-edge semantics and cancel(); mock-timer grader passes.",
+  "seeded_defect": {
+    "description": "The debounced function fires on the leading edge as well, so fn runs immediately on the first call.",
+    "how_to_detect": "Grader: calls is [1] before any time has passed.",
+    "files": {
+      "src/timing.ts": "export function throttle<A extends unknown[]>(fn: (...args: A) => void, ms: number, now: () => number): (...args: A) => void {\n  let last = -Infinity;\n  return (...args: A) => {\n    const t = now();\n    if (t - last >= ms) {\n      last = t;\n      fn(...args);\n    }\n  };\n}\n\nexport interface Debounced<A extends unknown[]> {\n  (...args: A): void;\n  cancel(): void;\n}\n\nexport function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number): Debounced<A> {\n  let timer: ReturnType<typeof setTimeout> | undefined;\n  const debounced = ((...args: A) => {\n    if (timer === undefined) fn(...args);\n    else clearTimeout(timer);\n    timer = setTimeout(() => {\n      timer = undefined;\n      fn(...args);\n    }, ms);\n  }) as Debounced<A>;\n  debounced.cancel = () => {\n    if (timer !== undefined) clearTimeout(timer);\n    timer = undefined;\n  };\n  return debounced;\n}\n"
+    }
+  },
+  "tags": ["typescript", "timing", "feature"]
+}

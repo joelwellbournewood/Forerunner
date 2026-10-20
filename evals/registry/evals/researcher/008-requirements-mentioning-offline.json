@@ -1,0 +1,78 @@
+{
+  "id": "researcher-008",
+  "specialist": "researcher",
+  "title": "Which requirements mention offline mode",
+  "brief": {
+    "goal": "From docs/requirements.md: which requirement IDs mention offline mode? List them with their text.",
+    "contextLinks": ["docs/requirements.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md lists exactly R3 and R7",
+      "no other requirement is attributed to offline mode",
+      "the requirements file is cited"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/requirements.md": "# Atlas requirements (excerpt)\n\n| ID | Requirement |\n| --- | --- |\n| R1 | Users sign in with their organisation account. |\n| R2 | Projects can be archived and restored. |\n| R3 | The mobile app shows cached project cards in offline mode. |\n| R4 | Exports are delivered as ZIP files. |\n| R5 | Notifications can be muted per project. |\n| R6 | Budgets are shown in the user's currency. |\n| R7 | Notes written in offline mode sync when the device reconnects. |\n| R8 | Admins can revoke a device. |\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "\\bR3\\b"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "\\bR7\\b"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "im",
+      "pattern": "^- R5\\b",
+      "expect": "no_match"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "excerpt"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/requirements\\.md"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nTwo requirements mention offline mode: R3 (cached project cards in the mobile app) and R7 (notes written offline sync on reconnect).\n\n## Claims\n\n- R3: the mobile app shows cached project cards in offline mode (docs/requirements.md)\n- R7: notes written in offline mode sync when the device reconnects (docs/requirements.md)\n- None of R1, R2, R4, R5, R6 or R8 mentions offline mode (docs/requirements.md)\n\n## Uncertainty\n\n- The file is an excerpt; requirements outside it are unknown. Confidence: high within the excerpt.\n\n## Sources read\n\n- `docs/requirements.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "R3 and R7 only, with the excerpt caveat.",
+  "seeded_defect": {
+    "description": "R5 (notification muting) is listed as an offline requirement and the excerpt caveat is dropped.",
+    "how_to_detect": "A claim bullet starts with R5; the file does not mention offline mode in R5.",
+    "files": {
+      "answer.md": "# Answer\n\nThree requirements mention offline mode: R3, R5 and R7.\n\n## Claims\n\n- R3: the mobile app shows cached project cards in offline mode (docs/requirements.md)\n- R5: notifications can be muted per project while offline (docs/requirements.md)\n- R7: notes written in offline mode sync when the device reconnects (docs/requirements.md)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/requirements.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["search", "precision"]
+}

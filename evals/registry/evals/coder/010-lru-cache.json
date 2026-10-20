@@ -1,0 +1,55 @@
+{
+  "id": "coder-010",
+  "specialist": "coder",
+  "title": "Implement an LRU cache",
+  "brief": {
+    "goal": "Implement `LruCache<K, V>` in src/lru.ts with get, set, has and size; capacity is given to the constructor; the least recently used entry is evicted when a new key exceeds capacity; get and set both count as use.",
+    "contextLinks": ["package.json", "src/lru.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "with capacity 2: set a, set b, get a, set c evicts b (has(b) is false, has(a) is true)",
+      "set on an existing key updates its value and marks it most recently used",
+      "a capacity below 1 throws a RangeError"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/lru.ts": "// LRU cache goes here\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "src/lru.ts",
+      "text": "export class LruCache"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { LruCache } from \"../src/lru.ts\";\n\ntest(\"grader: lru\", () => {\n  const c = new LruCache<string, number>(2);\n  c.set(\"a\", 1);\n  c.set(\"b\", 2);\n  assert.equal(c.get(\"a\"), 1);\n  c.set(\"c\", 3);\n  assert.equal(c.has(\"b\"), false);\n  assert.equal(c.has(\"a\"), true);\n  assert.equal(c.size, 2);\n  c.set(\"a\", 10);\n  c.set(\"d\", 4);\n  assert.equal(c.has(\"c\"), false);\n  assert.equal(c.get(\"a\"), 10);\n  assert.throws(() => new LruCache<string, number>(0), RangeError);\n});\n"
+  },
+  "expected_files": {
+    "src/lru.ts": "export class LruCache<K, V> {\n  private readonly map = new Map<K, V>();\n  private readonly capacity: number;\n\n  constructor(capacity: number) {\n    if (!Number.isInteger(capacity) || capacity < 1) throw new RangeError(\"capacity must be a positive integer\");\n    this.capacity = capacity;\n  }\n\n  get size(): number {\n    return this.map.size;\n  }\n\n  has(key: K): boolean {\n    return this.map.has(key);\n  }\n\n  get(key: K): V | undefined {\n    if (!this.map.has(key)) return undefined;\n    const value = this.map.get(key) as V;\n    this.map.delete(key);\n    this.map.set(key, value);\n    return value;\n  }\n\n  set(key: K, value: V): this {\n    if (this.map.has(key)) this.map.delete(key);\n    this.map.set(key, value);\n    if (this.map.size > this.capacity) {\n      const oldest = this.map.keys().next().value as K;\n      this.map.delete(oldest);\n    }\n    return this;\n  }\n}\n",
+    "test/lru.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { LruCache } from \"../src/lru.ts\";\n\ntest(\"evicts least recently used\", () => {\n  const c = new LruCache<string, number>(2);\n  c.set(\"a\", 1).set(\"b\", 2);\n  assert.equal(c.get(\"a\"), 1);\n  c.set(\"c\", 3);\n  assert.equal(c.has(\"b\"), false);\n  assert.equal(c.has(\"a\"), true);\n});\n"
+  },
+  "expected_clean_output": "Map-backed LRU with recency refresh on get and set; grader passes.",
+  "seeded_defect": {
+    "description": "get() does not refresh recency, so a recently read key is evicted first.",
+    "how_to_detect": "Grader: after set a, set b, get a, set c the cache has lost a instead of b.",
+    "files": {
+      "src/lru.ts": "export class LruCache<K, V> {\n  private readonly map = new Map<K, V>();\n  private readonly capacity: number;\n\n  constructor(capacity: number) {\n    if (!Number.isInteger(capacity) || capacity < 1) throw new RangeError(\"capacity must be a positive integer\");\n    this.capacity = capacity;\n  }\n\n  get size(): number {\n    return this.map.size;\n  }\n\n  has(key: K): boolean {\n    return this.map.has(key);\n  }\n\n  get(key: K): V | undefined {\n    return this.map.get(key);\n  }\n\n  set(key: K, value: V): this {\n    if (this.map.has(key)) this.map.delete(key);\n    this.map.set(key, value);\n    if (this.map.size > this.capacity) {\n      const oldest = this.map.keys().next().value as K;\n      this.map.delete(oldest);\n    }\n    return this;\n  }\n}\n"
+    }
+  },
+  "tags": ["typescript", "data-structure", "feature"]
+}

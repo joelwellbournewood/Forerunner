@@ -1,0 +1,91 @@
+{
+  "id": "researcher-004",
+  "specialist": "researcher",
+  "title": "List the milestones with their dates in chronological order",
+  "brief": {
+    "goal": "From docs/notes.md: list the four milestones (kickoff, design freeze, beta, launch) with their dates, in chronological order.",
+    "contextLinks": ["docs/notes.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "the four dates are copied exactly: 2026-02-03, 2026-03-17, 2026-05-05, 2026-06-30",
+      "the design freeze is dated 2026-03-17, not the superseded 03-10",
+      "the answer notes the launch depends on the security review"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/notes.md": "# Atlas notes, assorted\n\n- Beta opens to invited users on 2026-05-05.\n- The design freeze was agreed for 2026-03-17 (moved from 03-10).\n- Public launch: 2026-06-30, pending the security review.\n- Kickoff happened on 2026-02-03 with the full team.\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "kickoff[^\\n]*2026-02-03"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "design freeze[^\\n]*2026-03-17"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "beta[^\\n]*2026-05-05"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "launch[^\\n]*2026-06-30"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "security review"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/notes\\.md"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "2026-04-05",
+      "expect": "no_match"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nIn order: kickoff 2026-02-03, design freeze 2026-03-17, beta 2026-05-05, public launch 2026-06-30 (pending the security review).\n\n## Claims\n\n- Kickoff was on 2026-02-03 (docs/notes.md)\n- Design freeze was agreed for 2026-03-17, moved from 03-10 (docs/notes.md)\n- Beta opens on 2026-05-05 (docs/notes.md)\n- Public launch is 2026-06-30, pending the security review (docs/notes.md)\n\n## Uncertainty\n\n- The launch date is conditional on the security review; the notes do not say when that review is. Confidence: high for the dates.\n\n## Sources read\n\n- `docs/notes.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "Four dates in order, superseded date ignored, launch condition kept.",
+  "seeded_defect": {
+    "description": "The beta date is given as 2026-04-05 instead of 2026-05-05 and the launch condition is dropped.",
+    "how_to_detect": "2026-04-05 appears and the beta line no longer carries 2026-05-05.",
+    "files": {
+      "answer.md": "# Answer\n\nIn order: kickoff 2026-02-03, design freeze 2026-03-17, beta 2026-04-05, public launch 2026-06-30.\n\n## Claims\n\n- Kickoff was on 2026-02-03 (docs/notes.md)\n- Design freeze was agreed for 2026-03-17 (docs/notes.md)\n- Beta opens on 2026-04-05 (docs/notes.md)\n- Public launch is 2026-06-30 (docs/notes.md)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/notes.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["extraction", "dates", "ordering"]
+}

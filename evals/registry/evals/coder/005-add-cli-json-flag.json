@@ -1,0 +1,62 @@
+{
+  "id": "coder-005",
+  "specialist": "coder",
+  "title": "Add a --json flag to the CLI argument parser",
+  "brief": {
+    "goal": "Extend parseArgs in src/cli.ts so `--json` anywhere in argv sets `json: true` and is removed from `words`; unknown `--flags` throw an Error; render() prints `{\"words\":[...]}` when json is set.",
+    "contextLinks": ["package.json", "src/cli.ts", "test/cli.test.ts"],
+    "constraints": [
+      "Change only the files named in the goal; no new dependencies",
+      "Keep TypeScript strict; relative imports use explicit .ts extensions",
+      "Tests use node:test and node:assert/strict and run with node --experimental-strip-types --test"
+    ],
+    "acceptanceCriteria": [
+      "parseArgs([\"a\", \"--json\", \"b\"]) returns { json: true, words: [\"a\", \"b\"] }",
+      "parseArgs([\"a\"]) returns { json: false, words: [\"a\"] }",
+      "parseArgs([\"--nope\"]) throws an Error mentioning the flag",
+      "render({ json: true, words: [\"a\", \"b\"] }) returns '{\"words\":[\"a\",\"b\"]}'",
+      "render({ json: false, words: [\"a\", \"b\"] }) returns \"a b\" as before"
+    ],
+    "budgetUsdMicro": 500000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "package.json": "{\n  \"name\": \"fixture\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --experimental-strip-types --test \\\"test/*.test.ts\\\"\"\n  }\n}\n",
+      "src/cli.ts": "export interface Args {\n  words: string[];\n}\n\nexport function parseArgs(argv: string[]): Args {\n  return { words: [...argv] };\n}\n\nexport function render(args: Args): string {\n  return args.words.join(\" \");\n}\n",
+      "test/cli.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { parseArgs, render } from \"../src/cli.ts\";\n\ntest(\"plain words\", () => {\n  assert.equal(render(parseArgs([\"a\", \"b\"])), \"a b\");\n});\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "file_contains",
+      "path": "src/cli.ts",
+      "text": "--json"
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/cli.test.ts"],
+      "timeoutMs": 60000
+    },
+    {
+      "kind": "command_exit0",
+      "argv": ["node", "--experimental-strip-types", "--test", "test/grader.test.ts"],
+      "timeoutMs": 60000
+    }
+  ],
+  "grader_files": {
+    "test/grader.test.ts": "import assert from \"node:assert/strict\";\nimport { test } from \"node:test\";\nimport { parseArgs, render } from \"../src/cli.ts\";\n\ntest(\"grader: --json flag\", () => {\n  assert.deepEqual(parseArgs([\"a\", \"--json\", \"b\"]), { json: true, words: [\"a\", \"b\"] });\n  assert.deepEqual(parseArgs([\"a\"]), { json: false, words: [\"a\"] });\n  assert.throws(() => parseArgs([\"--nope\"]), /nope/);\n  assert.equal(render({ json: true, words: [\"a\", \"b\"] }), '{\"words\":[\"a\",\"b\"]}');\n  assert.equal(render({ json: false, words: [\"a\", \"b\"] }), \"a b\");\n});\n"
+  },
+  "expected_files": {
+    "src/cli.ts": "export interface Args {\n  json: boolean;\n  words: string[];\n}\n\nexport function parseArgs(argv: string[]): Args {\n  const args: Args = { json: false, words: [] };\n  for (const a of argv) {\n    if (a === \"--json\") args.json = true;\n    else if (a.startsWith(\"--\")) throw new Error(`unknown flag: ${a}`);\n    else args.words.push(a);\n  }\n  return args;\n}\n\nexport function render(args: Args): string {\n  if (args.json) return JSON.stringify({ words: args.words });\n  return args.words.join(\" \");\n}\n"
+  },
+  "expected_clean_output": "parseArgs handles --json in any position, rejects unknown flags; render emits JSON when asked.",
+  "seeded_defect": {
+    "description": "The flag is only recognised as the first argument; `a --json b` keeps \"--json\" as a word.",
+    "how_to_detect": "Grader: parseArgs([\"a\", \"--json\", \"b\"]).json is false and words contain \"--json\".",
+    "files": {
+      "src/cli.ts": "export interface Args {\n  json: boolean;\n  words: string[];\n}\n\nexport function parseArgs(argv: string[]): Args {\n  const json = argv[0] === \"--json\";\n  const rest = json ? argv.slice(1) : argv;\n  for (const a of rest) if (a.startsWith(\"--\") && a !== \"--json\") throw new Error(`unknown flag: ${a}`);\n  return { json, words: rest };\n}\n\nexport function render(args: Args): string {\n  if (args.json) return JSON.stringify({ words: args.words });\n  return args.words.join(\" \");\n}\n"
+    }
+  },
+  "tags": ["typescript", "cli", "feature"]
+}

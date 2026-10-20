@@ -1,14 +1,583 @@
 # Testing
 
-> Status: skeleton. Filled in by the PR that builds this area. CI fails a PR that changes the
-> module without touching this file.
+The internal test environment: every real dependency has a stand-in so the agent proves
+everything itself, repeatably, on Windows and Linux. Vitest runs three projects
+(`vitest.config.ts`): `unit` (fake provider, no network), `integration` (local Postgres, mail
+server, fake git host) and `e2e` (the nine scenarios with live models). This file has one
+subsection per stand-in under each heading.
 
 ## Purpose
 
+### Fake provider
+
+`testenv/src/provider/` replaces the model vendor in unit and integration tests. It implements
+the runtime's `ModelProvider` contract exactly, so the agent loop, the billing router, the
+critic and the voice loop run against it unchanged. It gives deterministic replies (scripted,
+echoed or recorded), simulates latency through the injected `Clock` so time-to-first-token and
+timeouts are testable without waiting, and never touches the network. Everything is exported
+from `@forerunner/testenv` (`testenv/src/provider/index.ts`).
+
+### Mail server
+
+`testenv/src/mail/` stands in for the agent mailboxes' mail host and for the DKIM/SPF
+verification a real provider does on the way in. Two SMTP listeners run in-process on
+127.0.0.1 (inbound "MX" and authenticated submission), mail is DKIM-signed with
+`node:crypto` only, SPF comes from an in-memory policy, delivery is pushed to listeners (the
+stand-in for IMAP IDLE / Gmail push), and anything addressed to the internet lands in an
+`outbox` list instead of leaving the machine. Helpers build the forwarded, spoofed and quoted
+messages the email-command rules must ignore, and `stripQuotedText`, `extractCommandMarker`
+and `isReplyToThread` are the client-side checks the cloud runner's mail watcher uses.
+Everything is exported from `@forerunner/testenv` (`testenv/src/mail/index.ts`); no external
+daemon, no Docker, same code on Windows and Linux.
+
+### Fake git host
+
+`testenv/src/githost/` is an in-process GitHub stand-in: the REST API in GitHub's shapes
+(snake_case, `id`, `node_id`, `number`, `html_url`, `Link` pagination, GitHub's error bodies),
+git smart HTTP for clone and push, tokens with classic scopes or fine-grained permissions,
+rate limits, webhooks with HMAC signatures, classic Projects, releases with assets and the
+GitHub App installation-token endpoint. The spec names "local Gitea for integration"; this
+stand-in replaces it on purpose: no binary download or daemon to manage, identical on Windows
+and Linux (git is the only dependency and the repo already needs it), deterministic (ids,
+timestamps and rate-limit windows come from the injected `Clock`), and it simulates what Gitea
+cannot: GitHub's permission model (404 for repos a token cannot see, 403 for a missing
+permission, `X-OAuth-Scopes`), rate-limit exhaustion and reset, installation tokens and
+webhook deliveries with GitHub's headers. The real adapter
+(`packages/capabilities/src/githost/github.ts`) runs against it unchanged by pointing `baseUrl`
+at `host.baseUrl`; the final checks against a real org with `fr-test-` repos stay as the spec
+says. Everything is exported from `@forerunner/testenv` (`testenv/src/githost/index.ts`).
+
+Other stand-ins (simulated clock usage, fake Cloudflare, simulated users, the nine scenarios): to be filled by the testenv items that build them.
+
 ## How it works
+
+### Fake provider
+
+**Contract.** `testenv/src/provider/types.ts` re-exports the runtime's provider types with a
+type-only relative import (`import type ... from "../../../packages/runtime/src/provider/types.ts"`).
+`verbatimModuleSyntax` erases it, so testenv has no runtime dependency on `@forerunner/runtime`
+(it is not declared in `testenv/package.json`), nothing is copied, and `tsc` fails the build if
+the fake ever drifts from the real `ModelProvider`. The stream collector is mirrored in
+`collect.ts` (`collectFakeStream`) because the runtime's `collectStream` is a function, not a
+type; the provider test checks the two agree on the same stream.
+
+**Modes** (`FakeProvider`, `fake-provider.ts`; `new FakeProvider({ mode, ... })`):
+
+| Mode | Reply comes from | Needs |
+| --- | --- | --- |
+| `script` (default) | the first matching `ScriptedReply` in `replies`, consumed per `times` | `replies` |
+| `echo` | the last user message, verbatim (`echoReply`) | nothing |
+| `replay` | `RecordingStore.load(requestHash(req))` | `store` |
+| `record` | the `inner` provider; its reply is saved to the store, then returned | `inner`, `store` |
+
+**Script matching.** `ScriptedReply = { when?, reply, times? }`. `when` is a predicate
+`(req) => boolean` or a matcher `{ systemIncludes?, lastUserIncludes?, toolAvailable?, model? }`
+where every set field must hold (substring checks; `lastUserIncludes` looks at the last
+user-role message, which includes tool results; `model` is exact). Entries are tried in order;
+the first match answers and its `times` (default 1, `Infinity` for "always") is decremented;
+at zero the entry is removed. Nothing matches: `onNoMatch: "echo"` (default) echoes the last
+user message, `"throw"` throws `ForerunnerError("not_found")`. `pushReplies()` appends at
+runtime, `reset()` restores the constructor script and clears calls. Every request is kept in
+`provider.calls` as a `FakeCall` (`index, at, mode, hash, request` without `signal`, and once
+resolved `source` and `reply`); `provider.lastCall` is the most recent.
+
+**Streaming.** `stream()` emits `message_start`, then `thinking_delta` chunks, `text_delta`
+chunks of about 5 tokens (`chunkChars` 20, extended up to 30 to end on whitespace, so 4-8
+tokens), then per tool call `tool_use_start` (id `toolu_fake_<call>_<n>`, or the recorded id),
+several `tool_use_delta` events carrying 16-character slices of the input JSON (realistic:
+a single slice does not parse), `tool_use_end` with the parsed input, and finally
+`message_end` with `stop_reason` (`reply.stopReason`, else `tool_use` when there are tool
+calls, else `end_turn`) and `usage`. Usage is computed unless overridden field by field:
+`input_tokens = countTokens(system + every message + tool definitions)`, `output_tokens =
+countTokens(thinking + text + each tool name and input JSON)`, cache fields 0; `countTokens` is
+`ceil(chars / 4)` like the Anthropic adapter.
+
+**Latency.** Every wait goes through the injected `Clock` (`systemClock` by default). The
+first content event is due at `reply.ttftMs` (default `defaultTtftMs`, 300) after the request
+started; the last at `reply.totalMs` (default ttft + 40 ms per further chunk); the rest are
+spread evenly. Deadlines are absolute (`startedWall + offset`), so a clock that already jumped
+past a deadline costs no extra sleep. `latency: "none"` skips every sleep, whatever the script
+says; use it in tests that do not measure time. The pattern with a `SimulatedClock` is: start
+the consumer, then advance, then await:
+
+```ts
+const clock = new SimulatedClock(0);
+const provider = new FakeProvider({ clock, replies: [textReply("...", { ttftMs: 250, totalMs: 1000 })] });
+const pending = provider.complete(req);   // starts the stream; nothing moves yet
+await clock.advance(250);                 // first token lands: TTFT measures exactly 250
+await clock.advance(750);                 // the rest streams up to totalMs
+const res = await pending;                // res.time_to_first_token_ms === 250, duration_ms === 1000
+```
+
+Advance to the TTFT first and then the rest: a single big jump delivers the first token when
+the clock is already further on, and the measured TTFT is the jump, not the script.
+`req.signal` is honoured at every wait and between chunks: the stream emits
+`{ type: "error", code: "aborted" }` and stops; `complete()` then returns the partial response
+with `stop_reason: "aborted"`.
+
+**Errors.** `reply.error = { code, message, retryable? }` makes the stream emit `message_start`,
+wait `ttftMs`, then one `error` event with the code mapped (`rate_limit` →
+`provider_rate_limit`, `auth` → `provider_auth`, anything else → `provider_error`; already
+mapped codes pass through) and `retryable` (default: true for rate limits). `complete()` throws
+`ForerunnerError` with that code and flag; this differs from the runtime's `collectStream`,
+which returns `stop_reason: "error"`, so loop tests can assert on the thrown code.
+
+**Recordings** (`hash.ts`, `recording-store.ts`). `requestHash(req)` is 32 hex characters of
+SHA-256 over the canonical JSON (sorted keys) of `{ model, system, messages, tools: names
+sorted }`; `max_tokens`, `effort`, `temperature`, `cache`, `metadata` and `signal` are left
+out because they do not change what was asked. `RecordingStore({ suite, root? })` keeps
+`<root>/<suite>/<hash>.json` (root defaults to `testenv/recordings`, resolved from the module
+so the working directory does not matter; the suite name is sanitised with `safeSegment`).
+Files are `canonicalJson(rec, 2)` with LF endings and a final newline: version 1, `hash`,
+`suite`, `recordedAt`, `provider`, `request` fingerprint and `reply` in the same `ReplyBody`
+shape scripts use, including the measured `ttftMs`/`totalMs` so replay reproduces the live
+timing. A missing recording throws `not_found` naming the hash, the expected path and the
+record-mode call to make it. Record mode never stores a provider error or an abort: replaying
+transient failures would make tests flaky; script them with `errorReply` instead.
+
+**Helpers** (`replies.ts`, `usage-source.ts`): `textReply(text, opts?)`,
+`toolReply(name, input, text?, opts?)`, `errorReply(code, message?, opts?)`,
+`seqReplies([...])` (strings, bodies or entries, each `times: 1` unless set), and
+`FakeUsageSource(planUsageShare, clock?)` with `set()` and `status()`, structurally a billing
+`BillingSourceProbe` for routing-cap tests.
+
+**Fixtures** (`agentloop-fixtures.ts`, each a factory returning a fresh script, also by name
+through `agentLoopFixture(name)`): `coder-does-three-tool-calls-then-finishes` (read, write,
+read, then a report; proves step counting and dispatch order), `overspend-attempt` (asks for an
+expensive tool forever with 50k output tokens per call; only a limit enforced in code can stop
+it) and `injection-page` (`INJECTION_PAGE_TEXT` returned by the test's fetch tool contains
+instructions; the matching reply quotes them and makes no further tool call). Each has a README
+comment with what to assert.
+
+**Models.** `listModels()` returns the fake ladder `fake-haiku`, `fake-sonnet`, `fake-opus`,
+`fake-fable` with tiers, the same ids as `DEFAULT_LADDER` in the runtime.
+
+### Mail server
+
+**Files.** `dkim.ts` (RFC 6376 sign/verify), `spf.ts` (policy stand-in), `auth-results.ts`
+(RFC 8601 header format and parser), `message.ts` (raw-message helpers, `buildRawMessage` over
+nodemailer's `MailComposer`), `smtp-client.ts` (a 100-line SMTP submission client over
+`node:net`), `server.ts` (`LocalMailServer`, `Mailbox`), `helpers.ts` (`forwardedCopy`,
+`spoofedFrom`, `quotedReply`), `commands.ts` (`extractCommandMarker`, `isReplyToThread`,
+`stripQuotedText`).
+
+**DKIM.** `signDkim({ privateKeyPem, domain, selector, headers?, canonicalization?, algorithm?,
+timestamp?, expires? }, raw)` prepends a folded `DKIM-Signature` header (rsa-sha256,
+`relaxed/relaxed` by default, `h=from:to:subject:date:message-id`); it refuses to sign without
+`from`. `verifyDkim(raw, resolvePublicKey, { now? })` returns `{ pass, domain, selector,
+reason, alignedWithFrom, fromDomain, signedHeaders }`. `resolvePublicKey(selector, domain)`
+stands in for the DNS lookup of `<selector>._domainkey.<domain>` and returns a PEM (or null);
+`dkimDnsRecord` / `publicKeyFromDnsRecord` convert to and from the TXT form a real zone holds.
+Both canonicalizations of RFC 6376 section 3.4 are implemented (`canonicalizeHeaderRelaxed`,
+`canonicalizeBodyRelaxed`, and the simple variants); input line endings are normalised to CRLF
+first, so LF, CRLF and re-folded headers hash identically. Signed headers are selected bottom-up
+per name as the RFC says, the `b=` value is removed before hashing, `l=` and `x=` are honoured.
+Security choices: a message with two `From` headers fails outright (header-insertion attack),
+and `alignedWithFrom` is relaxed DMARC alignment (equal, or one a subdomain of the other), so
+"signed for domain A, From at domain B" is `pass: true, alignedWithFrom: false`. The runner
+must require both.
+
+**SPF.** `checkSpf({ ip, mailFromDomain, policy })` returns `pass | fail | softfail | neutral |
+none` from `SpfPolicy = { [domain]: { allowedIps: string[], all: "fail" | "softfail" |
+"neutral" } }` (exact IPs, IPv4 CIDR, IPv4-mapped IPv6 normalised). Production never evaluates
+SPF itself; it reads the receiving provider's `Authentication-Results`, which
+`parseAuthenticationResults` understands in the Gmail shape (`header.i=@domain`, comments) and
+the Microsoft shape (no authserv-id, trailing semicolon). The stand-in exists so tests can craft
+every verdict.
+
+**Server.** `LocalMailServer.start({ domains, dkim: { selector, privateKeyPem, publicKeyPem },
+clock, smtpPort?, submissionPort?, host?, spfPolicy?, publicIp?, maxMessageBytes? })` (or
+`new` + `start()`); ports default to 0 = ephemeral, host to 127.0.0.1. `address()` gives the
+bound ports. The *inbound* listener (`smtp-server`, AUTH and STARTTLS disabled, no reverse
+lookup) accepts any sender for an existing local mailbox (550 unknown mailbox, 554 relay), and
+the *submission* listener requires AUTH PLAIN/LOGIN with the mailbox password
+(`allowInsecureAuth`, plain text on loopback), enforces MAIL FROM and the `From` header equal
+to the authenticated mailbox (553), signs for the local domain, delivers local recipients and
+captures the rest as an `OutboxEntry` (`onOutbound(cb)` fires). Every delivery path (`inbound`,
+`submission`, `inject`) goes through one `receive` pipeline: `verifyDkim` with the server's key
+registry, `checkSpf` with the connecting address, a `Received` and an `Authentication-Results`
+header prepended, `mailparser.simpleParser`, then one `StoredMessage` per recipient mailbox
+(`{ id, raw, parsed, receivedAt, read, authResults: { dkim, dkimDomain, dkimSelector,
+dkimReason, aligned, spf, spfDomain, dmarc, fromDomain }, fromIp, envelope, via, mailbox }`).
+Time comes from the injected `Clock` (ids, `Date` headers, `receivedAt`, `sentAt`).
+
+**The IP model.** The inbound listener *is* the internet: a loopback connection to it carries
+`fromIp 127.0.0.1`, which no default policy allows, so unsigned mail claiming a local `From`
+gets `dkim=none, spf=fail`. Local domains' default SPF policy designates only `publicIp`
+(`DEFAULT_PUBLIC_IP`, TEST-NET 192.0.2.25); submission-originated mail is recorded as coming
+from `publicIp`, so owner mail sent through submission is `dkim=pass, aligned, spf=pass`
+without special-casing. `inject()` defaults to `DEFAULT_INJECT_IP` (192.0.2.100, "somewhere
+else") and takes `fromIp` to simulate any origin; `setSpfPolicy(domain, policy)` adds or
+overrides a domain; `spfPolicy` is the effective merge.
+
+**Keys.** The configured key signs the local domains and is published under its selector.
+`dkimKeyFor(domain)` lazily generates and publishes a 2048-bit pair (selector `testenv`) for any
+other domain, so `inject({ from: "carol@partner.test", ... })` verifies like a legitimately
+signed external sender. `registerDkimKey(domain, selector, pem)` publishes extra keys;
+`server.resolvePublicKey` is the resolver tests pass to `verifyDkim` for outbox mail.
+
+**Mailboxes and sending.** `createMailbox(address, password)` (local domain only, non-empty
+password) returns a `Mailbox` with `messages`, `unread()`, `get(id)`, `markRead(id)`,
+`delete(id)`, `onNew(cb)` (returns an unsubscribe; a throwing listener is logged and skipped)
+and `nextMessage(predicate?)`. `inject(rawOrOptions, { fromIp?, skipSigning?, dkimAs?, rcptTo?,
+mailFrom? })` delivers without SMTP; a message is signed for its `From` domain unless
+`skipSigning` (spoof) or `dkimAs` (valid but unaligned). `sendFrom(address, { to, cc?, subject,
+text?, html?, inReplyTo?, references?, attachments?, headers? })` builds the message, submits it
+over SMTP with the mailbox credentials via `smtpSubmit`, and returns `{ messageId, delivered,
+outbox }`.
+
+**Helpers.** `forwardedCopy(message, byAddress, { to?, text?, clock?, date? })` is a Gmail-style
+forward (new From, `Fwd:` subject, `---------- Forwarded message ---------` block, original
+quoted with `>`; the original signature is gone). `spoofedFrom(address, { to, subject?, text,
+bogusSignature?, selector? })` claims the address with no signature or with one whose `b=` is
+random (correct body hash, so the failure is the signature). `quotedReply(message, text, {
+from?, to? })` threads In-Reply-To/References and quotes under `On <date>, <from> wrote:`.
+`stripQuotedText(body)` removes `>` lines, `On ... wrote:` attributions (also wrapped over two
+lines, and German/French/Spanish/Italian/Dutch forms), and cuts at `-----Original Message-----`
+and its translations, `---------- Forwarded message ---------`, `Begin forwarded message:`,
+Outlook's underscore rule and bare `From:/Sent:/To:/Subject:` blocks; an attribution not
+followed by `>` lines is a hard cut (Outlook mobile), while interleaved answers between `>`
+lines are kept. `extractCommandMarker(subject, marker)` requires the bracketed form
+(`[FR-7k2q]`, whitespace tolerant, case-sensitive); `isReplyToThread(message, ids)` compares
+In-Reply-To and References with angle brackets stripped.
+
+### Fake git host
+
+**Files.** `fake-git-host.ts` (the `FakeGitHost` class: server, middleware, admin API),
+`store.ts` (in-memory records and every JSON serializer), `ops.ts` (`RepoOps`: operations that
+touch git and the store together: repo creation, commits, ref changes with their events, PR
+mergeability and merges), `git.ts` (`BareRepo`: git plumbing over bare repos, plus
+`locateHttpBackend`), `cgi.ts` (git smart HTTP through `git http-backend` as CGI), `auth.ts`
+(tokens, scopes, permissions, `RateLimiter`), `webhooks.ts` (`WebhookDispatcher`), `http.ts`
+(Hono env, `HttpError`, `requireRepo`, `paginate`, body helpers) and `routes-*.ts` (repos,
+pulls, issues, releases, checks, projects, app).
+
+**Lifecycle.** `await FakeGitHost.start({ rootDir, clock?, rateLimit?: { perHour } })` binds
+127.0.0.1 on an ephemeral port (`host.baseUrl`). Bare repositories live at
+`<rootDir>/<owner>/<name>.git` (use a temp dir and remove it after `stop()`). `stop()` first
+`settle()`s (waits for post-push processing and in-flight webhook deliveries) and then closes
+the server. Nothing is persisted: users, tokens, issues, PRs, releases, hooks and projects are
+in memory; commits and refs are in the bare repos.
+
+**Admin API** (direct method calls, never HTTP): `createUser({ login, name?, email? })`,
+`createOrg({ login, members? })`, `addMember(org, login)`, `addCollaborator("owner/name",
+login)`, `createToken(...)` (below), `createApp({ slug, owner })`, `createInstallation({ appId,
+account, repos | "all", permissions })`, `await createRepo({ owner, name, private?,
+defaultBranch?, description?, initialFiles? })`, `await seedCommit(repo, files, message,
+branch?)` (files are POSIX path to string/bytes, `null` deletes; a missing branch is created
+from the default branch; emits `push`), `repo(fullName)`, `cloneUrl(fullName, token?)`
+(`http://x-access-token:<token>@127.0.0.1:<port>/o/r.git`), `events()`, `deliveries()`,
+`requests()`, `settle()`, `gitHttpAvailable`.
+
+**Tokens and permissions** (`auth.ts`). `Authorization: Bearer <t>`, `token <t>` and `Basic`
+(token as password, as git sends it) are accepted; an unknown or expired token is
+`401 Bad credentials`. `createToken({ owner, kind: "classic", scopes })` returns `ghp_…`;
+`kind: "fine_grained"` with `permissions: { contents: "write", issues: "read", … }` and `repos:
+["name" | "owner/name" | "owner/*" | "*"]` returns `github_pat_…`; `kind: "app_installation"`
+returns `ghs_…` for a seeded installation (the same as
+`POST /app/installations/:id/access_tokens`). Every repo route names the permission it needs
+(`requireRepo(c, store, "pull_requests", "write")`); `checkRepoAccess` decides in this order:
+visibility (private repo and the token cannot see it: `404 Not Found`, exactly like GitHub),
+then permission (`403 Resource not accessible by personal access token` / `… by
+integration`), anonymous writes `401 Requires authentication`. Classic tokens see a private
+repo when they own it, are an org member or a collaborator and carry `repo`; `public_repo`
+writes to public repos; `admin:repo_hook`/`write:repo_hook`/`read:repo_hook` cover hooks,
+`project`/`read:project` projects, `repo:status` statuses, `delete_repo` deletion (all also
+granted by `repo`). Fine-grained tokens must list the repo and have `permission: read|write`
+(`metadata` is implicit); a public repo outside the allowlist is readable like an anonymous
+client. Installation tokens use the installation's repos and permissions, optionally narrowed
+in the request body (a wider request is 422), and expire after one hour on the clock. Classic
+tokens get `X-OAuth-Scopes` on every response.
+
+**Rate limit.** One fixed one-hour window per token (or per anonymous client), `perHour`
+requests (default 5000). Every API response carries `X-RateLimit-Limit/Remaining/Reset/Used`
+(`Reset` is Unix seconds, from the clock). When exhausted: `403` with `"API rate limit
+exceeded …"` and `Retry-After`; the window reopens when the clock passes `Reset`.
+`GET /rate_limit` is not counted. Git over HTTP is not rate limited.
+
+**REST subset.** Users: `GET /user`, `/users/:login`, `/orgs/:org`, `/user/orgs`. Repos:
+`GET /user/repos`, `/orgs/:org/repos`, `/users/:u/repos`, `/installation/repositories`,
+`POST /user/repos` and `/orgs/:org/repos` (`auto_init` writes a README),
+`GET|PATCH|DELETE /repos/:o/:r`. Branches and refs: `GET /branches`, `/branches/<name>`,
+`GET /git/refs`, `/git/refs/<prefix>`, `/git/ref/<ref>`, `POST /git/refs`,
+`PATCH|DELETE /git/refs/<ref>` (fast-forward unless `force`). Commits: `GET /commits?sha=&path=`,
+`/commits/<ref>` (with `files` and `stats`), `/commits/<ref>/check-runs`, `/statuses`,
+`/status`; `<ref>` may contain slashes, raw or percent-encoded. Contents:
+`GET /contents/<path>?ref=` (file as base64, directory as a list, `Accept:
+application/vnd.github.raw` for bytes), `PUT` (create 201 / update 200, `sha` required to
+update, 409 on mismatch), `DELETE`. Pulls: `GET|POST /pulls`, `GET|PATCH /pulls/:n`,
+`PUT /pulls/:n/merge`, `GET /pulls/:n/merge`, `/files`, `/commits`, `GET|POST /reviews`,
+`PUT /update-branch`. Issues: `GET|POST /issues` (PRs included with a `pull_request` field),
+`GET|PATCH /issues/:n`, `GET|POST /issues/:n/comments` (PR numbers too),
+`GET|PATCH|DELETE /issues/comments/:id`, labels (`/labels`, `/labels/:name`,
+`/issues/:n/labels[/:name]`). Releases: `GET|POST /releases`, `/releases/latest` (newest
+non-draft non-prerelease), `/releases/tags/:tag`, `GET|PATCH|DELETE /releases/:id`,
+`POST /releases/:id/assets?name=&label=` (any body; the asset JSON carries `digest:
+"sha256:…"`), `GET /releases/assets/:id` (JSON, or bytes with `Accept:
+application/octet-stream`), `browser_download_url` on the "web" side. Checks and statuses:
+`POST /check-runs`, `PATCH|GET /check-runs/:id`, `POST /statuses/:sha`. Hooks:
+`GET|POST /hooks`, `GET|PATCH|DELETE /hooks/:id`, `/hooks/:id/pings`, `/hooks/:id/deliveries`.
+Projects (classic): `GET|POST /repos/:o/:r/projects`, `GET|PATCH|DELETE /projects/:id`,
+`GET|POST /projects/:id/columns`, `GET|PATCH|DELETE /projects/columns/:id`, `/moves`,
+`GET|POST /projects/columns/:id/cards`, `GET|PATCH|DELETE /projects/columns/cards/:id`,
+`POST …/cards/:id/moves` (a `column_id` on `PATCH` also moves, as an extension). App:
+`GET /app`, `/app/installations`, `POST /app/installations/:id/access_tokens` (needs
+`Bearer <jwt>` whose `iss` is the app id or slug; the signature is not verified).
+`GET /rate_limit`, `GET /meta`, `GET /zen`. Unknown routes answer GitHub's
+`{ "message": "Not Found", "documentation_url" }`.
+
+**Git over HTTP** (`cgi.ts`, `FakeGitHost.handleGit`). Every request under
+`/:owner/:repo.git/*` spawns `git http-backend` (located next to `git --exec-path`, with or
+without `.exe`) with the CGI environment (`GIT_PROJECT_ROOT=rootDir`, `GIT_HTTP_EXPORT_ALL=1`,
+`PATH_INFO`, `REQUEST_METHOD`, `QUERY_STRING`, `CONTENT_TYPE`, `CONTENT_LENGTH`, `REMOTE_USER`
+for the authenticated login, `HTTP_*` for the other headers, so gzip-encoded pushes work),
+pipes the buffered body to stdin, parses the CGI header block (`Status:`, `Content-Type`, …)
+and streams the rest as the response body. Authorization is checked before the backend runs:
+anonymous reads of public repos pass; otherwise `401` with `WWW-Authenticate: Basic` (so git
+sends the token), `404` for repos the token cannot see, `403 Write access to repository not
+granted.` for `git-receive-pack` without `contents: write`. For a receive-pack the refs are
+snapshotted before and after the backend exits and the diff goes through
+`RepoOps.applyRefChanges`, the same path the API and `seedCommit` use: a `push` event per
+changed ref (`before`, `after`, `created`, `deleted`, `forced`, `commits` new to the repo
+oldest first, `head_commit`, `pusher`), `create`/`delete` events, open PRs whose head is the
+branch get the new `head.sha`, recomputed mergeability and a `pull_request` `synchronize`
+event (a deleted head closes the PR), PRs whose base moved are recomputed silently. Call
+`await host.settle()` after a `git push` before asserting on events.
+
+**Mergeability and merges** (`ops.ts`, `git.ts`). `mergeable` is `git merge-tree --write-tree
+<base> <head>`: exit 0 is `true`/`clean`, exit 1 is `false`/`dirty`; it is recomputed on every
+`GET /pulls/:n`, at creation and after ref changes. `PUT /pulls/:n/merge` refuses with `405
+Pull Request is not mergeable` when the PR is closed, merged or conflicting, `409` when `sha`
+does not match the head. `merge` commits the merge-tree result with two parents (`Merge pull
+request #n from owner/branch`), `squash` with one parent (`title (#n)` plus the body, author =
+PR author), `rebase` cherry-picks each head-only commit through `merge-tree --merge-base` and
+keeps the original author and message. Nothing needs a worktree: commits are built through a
+temporary index file (`BareRepo.commitFiles`) and `commit-tree`; on git older than 2.40 the
+same operations run in a temporary clone (`mergeViaClone`). Merging emits `pull_request`
+`closed` with `merged: true` and the base branch's `push`.
+
+**Webhooks** (`webhooks.ts`). `POST /hooks` with `config.url`, `config.secret`,
+`events` (default `["push"]`, `"*"` for all) registers a hook and sends a `ping`. Every
+emitted event (`push`, `create`, `delete`, `pull_request` opened/synchronize/closed/edited/
+reopened, `pull_request_review` submitted, `issues` opened/edited/closed/reopened/labeled/
+unlabeled, `issue_comment` created/edited/deleted, `check_run` created/completed/rerequested,
+`status`, `release` published/edited, `ping`) is recorded in `host.events()` with its full
+payload (`action`, the object, `repository`, `sender`) whether or not a hook exists; for each
+subscribed active hook it is POSTed with `X-GitHub-Event`, `X-GitHub-Delivery` (UUID),
+`X-GitHub-Hook-ID`, `Content-Type: application/json` (or form-encoded `payload=`),
+`X-Hub-Signature: sha1=…` and `X-Hub-Signature-256: sha256=…` (HMAC of the raw body with the
+secret; absent without one). Deliveries are asynchronous, timeout after 10 s, never retry, and
+are recorded on the event and in `host.deliveries()` (`status`, `responseStatus`, `error`,
+`signature256`). `signPayload(secret, body, "sha256")` is exported for assertions.
+
+**Request log.** `host.requests()` lists every request (`method`, `path`, `query`, `status`,
+`auth: { kind, login, tokenId } | null`, `durationMs`); token values are never stored or
+logged (the logger redacts `ghp_`/`ghs_`/`github_pat_` shapes anyway).
+
+**Ids and URLs.** One counter gives every entity an integer `id`; `node_id` is base64 of
+`Type:id`; issue and PR numbers share one sequence per repo like GitHub. All `url`/`html_url`/
+`clone_url` values point at `host.baseUrl` (there is no separate web host), release
+`upload_url` is `…/releases/:id/assets{?name,label}` so the adapter's template handling is
+exercised.
 
 ## How to change it
 
+### Fake provider
+
+- New matcher field: add it to `ReplyMatcher` and `matchesRequest` in `replies.ts`, with a case
+  in the matching test.
+- New reply feature (for example cache token simulation): extend `ReplyBody`, emit it in
+  `FakeProvider.emit`/`usageOf`, and carry it through `replyFromResponse` so record mode keeps
+  it. If the file shape changes, bump `RECORDING_FORMAT_VERSION`; `load()` refuses other
+  versions, so re-record.
+- Changing what goes into `requestHash` invalidates every recording. The test pins the hash of
+  a fixed request to a constant on purpose; update the constant only together with the
+  recordings.
+- New fixture: add a factory with a README comment to `agentloop-fixtures.ts`, register it in
+  `AGENT_LOOP_FIXTURES`, and drive it through the tiny loop in
+  `testenv/test/agentloop-fixtures.test.ts`.
+- Recording a suite: with a credential in the vault, wrap the live provider:
+  `new FakeProvider({ mode: "record", inner: anthropic, store: new RecordingStore({ suite }) })`,
+  run the test once, commit `testenv/recordings/<suite>/*.json` (the secret scan covers them),
+  then switch the suite to `mode: "replay"`.
+- The runtime contract is the source of truth; `pnpm typecheck` fails here first when it
+  changes.
+
+### Mail server
+
+- A new client quoting style: add a regex to `HARD_CUT_LINES` or `ATTRIBUTION_LINES` in
+  `commands.ts` and a fixture to `testenv/test/mail-commands.test.ts` with the exact text the
+  client produces (copy it from a real message; the tests are the catalogue).
+- Another DKIM algorithm (ed25519-sha256): extend `DkimAlgorithm`, the `a=` check in
+  `verifyOne` and the `cryptoSign`/`cryptoVerify` calls; keep the `From`-required and
+  multiple-`From` rules.
+- A different verdict shape from a provider: extend `parseAuthenticationResults` and add the
+  literal header to `testenv/test/mail-auth-results.test.ts`.
+- Listener behaviour (size limits, extra SMTP checks): both listeners are built in
+  `LocalMailServer.start`; the delivery pipeline is `receive`, keep every path going through it
+  so `authResults` stays comparable across `inbound`, `submission` and `inject`.
+- The runner's real watcher should import `stripQuotedText`, `extractCommandMarker`,
+  `isReplyToThread` and `parseAuthenticationResults` from here rather than re-implementing them;
+  if they move to a runtime package, leave re-exports in `testenv/src/mail/commands.ts`.
+- Decisions taken here (candidates for an ADR): SPF is a policy map, not DNS; the IP model above
+  (loopback = internet, `publicIp` = our outbound); two `From` headers fail DKIM; alignment is
+  relaxed in both directions; `sendFrom` uses an own `node:net` client so `nodemailer` is only
+  used to build messages (and to submit in tests).
+
+### Fake git host
+
+- New endpoint: add it to the matching `routes-*.ts`, start with `requireRepo(c, store,
+  <permission>, <level>)` (or `guardRepo` for objects reached through another id), read the
+  body with `readJson`/`str`/`bool`/`num`/`strList`, throw `HttpError`/`validationFailed` for
+  GitHub-style errors, render through a `store.*Json` serializer and emit changes with
+  `store.emit(repo, event, action, payload, login)`. Keep the shape aligned with what
+  `packages/capabilities/src/githost/github.ts` reads; its tests run against this host.
+- New permission: extend `RepoPermission` in `types.ts` and the classic scope mapping
+  (`CLASSIC_SPECIAL`) in `auth.ts`; fine-grained tokens pick it up automatically.
+- New webhook event: extend `WebhookEventName`, emit it, and document it above; hooks
+  subscribe by name or `"*"`.
+- Git behaviour lives in `BareRepo` (`git.ts`); keep both the plumbing path and
+  `mergeViaClone` working, or raise the minimum git version in `supportsMergeTree`.
+- Everything that changes a ref must go through `RepoOps.applyRefChanges` so push events and
+  PR synchronisation stay consistent between the API, `seedCommit` and git over HTTP.
+- Time only through `store.clock`; ids only through `store.nextId()`.
+
+Other stand-ins: to be filled by the testenv items that build them.
+
 ## Tests
 
+### Fake provider
+
+`pnpm vitest run --project unit testenv/test` (41 tests; with Vitest's project config,
+`--dir` does not narrow the run, a path filter does):
+
+- `testenv/test/fake-provider.test.ts`: script queue and consumption, every matcher, `times`,
+  `pushReplies`/`reset`, `.calls`, echo mode, event order and chunk sizes, partial JSON, thinking,
+  `complete()` equal to the runtime's `collectStream`, usage and overrides, TTFT and duration on
+  a `SimulatedClock`, the 300 ms default, chunk spreading, `latency: "none"`, abort between
+  chunks and during a sleep, error mapping for the three codes, `retryable` override, the model
+  ladder, the reply helpers, `FakeUsageSource`, constructor validation.
+- `testenv/test/recording-store.test.ts`: hash pinned to a constant and insensitive to
+  `max_tokens`/`effort`/`signal`/tool order/key order, store round trip in a temp directory with
+  LF, sorted keys and a trailing newline, corrupt and mismatched files, replay's missing-recording
+  error text, record then replay reproducing content, usage and ids, latency kept in the recording,
+  failures never recorded.
+- `testenv/test/agentloop-fixtures.test.ts`: each fixture driven by a minimal agent loop.
+
+### Mail server
+
+`pnpm vitest run --project unit testenv/test/mail` (71 tests, no network beyond loopback, no
+Postgres, so they run in the `unit` project on Windows and Linux):
+
+- `mail-dkim.test.ts` (20): key generation and DNS record round trip, relaxed and simple
+  canonicalization edge cases (trailing WSP, WSP runs, trailing empty lines, empty body, folded
+  headers, LF vs CRLF), sign/verify, modified body, modified header, unsigned headers added in
+  transit, domain A signature on domain B From (pass but not aligned), subdomain alignment,
+  unknown selector, no signature, From not covered, two From headers, LF input, re-folding and
+  trailing whitespace in transit, refolded `b=`, `x=` expiry on a supplied clock, simple/simple
+  and `l=`.
+- `mail-spf.test.ts` (5): exact, CIDR, fail/softfail/neutral, none, IPv4-mapped IPv6, malformed
+  CIDR.
+- `mail-auth-results.test.ts` (4): round trip, Gmail shape, Microsoft shape, unknown verdicts.
+- `mail-server.test.ts` (19): ephemeral ports on 127.0.0.1 and stop, mailbox validation,
+  inbound delivery with `onNew` push and the exact `Authentication-Results` text, relay and
+  unknown-mailbox refusal, SMTP spoof (`dkim=none, spf=fail`), submission without auth (530),
+  wrong password (535, and `provider_auth` from `smtpSubmit`), sender/From mismatch (553),
+  outbox capture with a signature that verifies against `server.resolvePublicKey`,
+  local-to-local on a `SimulatedClock` with the header parsing back to `authResults`, mixed
+  recipients, `inject` default signing, `skipSigning`, `dkimAs`, SPF by `fromIp` and policy and
+  envelope domain, validation errors, `spoofedFrom` plain and bogus, `forwardedCopy`
+  authenticating as the forwarder with the forwarded block stripped, `quotedReply` over SMTP
+  with `isReplyToThread` and `stripQuotedText` yielding only "yes", mailbox state, throwing
+  listeners.
+- `mail-helpers.test.ts` (6): forward structure, `Fwd:` not doubled, spoof without and with a
+  bogus signature, reply threading and quoting, References accumulation.
+- `mail-commands.test.ts` (17): marker matching and rejection, thread detection, and the
+  quoting catalogue: Gmail (plain and wrapped attribution), Outlook desktop, Outlook web/mobile,
+  bare header block, Apple Mail reply and forward, Thunderbird German and Outlook German,
+  Thunderbird forward, French Apple Mail and Outlook, Gmail forward, interleaved answers, Outlook
+  mobile hard cut, untouched text, ordinary sentences starting with "On"/"From".
+
+Tests use nodemailer's SMTP transport as a second, independent client against both listeners.
+
+### Fake git host
+
+`pnpm vitest run --project unit testenv/test/githost.test.ts` (30 tests, about 6 s; needs
+`git` on PATH, and the three git-over-HTTP tests skip with a visible reason when
+`git http-backend` is not found next to `git --exec-path`). The suite uses a `SimulatedClock`
+and a temp `rootDir`, and covers: `GET /user` with `X-OAuth-Scopes`, bad and missing
+credentials, the `token`/`Basic` schemes; repo JSON shape, `POST /user/repos` and
+`/orgs/:org/repos` with `auto_init`, duplicates (422); branches, refs (`create`/`delete`
+events, fast-forward rule), commits with slash and percent-encoded refs, `Link` pagination;
+contents read (base64, directory, raw, 404) and write (201/200, missing `sha` 422, stale `sha`
+409, push payload `modified`); PRs: open, duplicate 422, `mergeable`/`mergeable_state`,
+`files` with patches, merge with a two-parent commit, 405 after merge, `GET /merge` 204,
+conflict → `mergeable: false` and 405, resolution push → `synchronize` and `mergeable: true`,
+squash (one parent, message `title (#n)`), rebase (linear history), list filters, reviews,
+edit/close, `update-branch`; issues with labels, comments, label endpoints, close with
+`closed_at` from the clock, PRs through the issues endpoints; releases with tag creation,
+asset upload with `digest`, download bytes via `browser_download_url` and the API, `latest`
+ignoring prereleases, `tags/:tag`; check runs (create, complete, list per commit, `completed`
+event, bad sha 422) and statuses (combined state); webhooks: `ping` then subscribed events
+only, valid `X-Hub-Signature-256`, delivery records and `/deliveries`, failed delivery
+recorded; classic scopes (no `repo` → private 404, public read ok, write 403, `public_repo`
+write ok, hooks 403); fine-grained allowlist 404 and `/user/repos` filtering, permission 403
+messages, foreign user 404, collaborator access; app installation tokens (JWT `iss` check,
+`ghs_` token, `expires_at`, narrowed permissions, outside-installation 404, 422 for wider
+permissions, expiry on the clock); projects columns and cards with both move forms and a 403
+without `projects`; the request log never containing a token value; rate limiting (headers,
+403 when exhausted, `Retry-After`, `/rate_limit` uncounted, per-token windows, reset after an
+hour on the clock); git over HTTP: clone with a token, push a branch (branch listed, `push`
+event with `created`, `pusher`, `commits[].added`, request log entry), push to a PR head
+(`head.sha`, `synchronize`, `commits`), rebase merge visible in a fresh clone, anonymous
+`ls-remote` on a private repo rejected, read-only token push rejected (403), other user 404.
+
+Other stand-ins: to be filled by the testenv items that build them.
+
 ## Known issues
+
+### Fake provider
+
+- Prompt caching is not simulated: `cache_read_input_tokens` and `cache_creation_input_tokens`
+  are 0 unless a reply overrides them.
+- With the default `latency: "simulated"` on the system clock a script waits 300 ms of real
+  time per call; unit tests pass a `SimulatedClock` or `latency: "none"`.
+- `complete()` throws on provider errors while the runtime's `collectStream` returns
+  `stop_reason: "error"`; code that only ever uses `stream()` sees the same events either way.
+- No recordings are committed yet; `testenv/recordings/` appears with the first recorded suite.
+
+### Mail server
+
+- Raw messages are handled as UTF-8 strings end to end; 8-bit bodies in another charset would
+  not round-trip byte-exact (MailComposer encodes non-ASCII as quoted-printable or base64, so
+  nothing built here is affected).
+- No TLS: both listeners are plain text on loopback (`allowInsecureAuth`). The real provider
+  path uses TLS; nothing here tests it.
+- No IMAP: `Mailbox.onNew` / `nextMessage` stand in for IMAP IDLE and `unread()` for polling.
+  The watcher's IMAP client is tested against a real mailbox only when one is provided
+  (`docs/status/BLOCKERS.md`).
+- DMARC in `authResults.dmarc` is a stand-in verdict (DKIM aligned, or SPF pass for the From
+  domain); no policy record, no `p=` handling.
+- `stripQuotedText` is a catalogue, not a parser; a client format not in the tests may leak a
+  quoted line through. Quoted text is still never an instruction: the runner must also check
+  the marker and the thread, and quoting an instruction does not sign it.
+- The server logs at info through `log("testenv:mail")`; set `FORERUNNER_LOG_LEVEL=warn` for
+  quiet test output.
+
+### Fake git host
+
+- Not modelled: GraphQL, Projects v2, search, line-level review comments, branch protection,
+  forks, tarballs/zipballs, ETags/conditional requests, secondary rate limits, webhook
+  retries and redeliveries, the collaborators REST endpoints (admin API only), org-level
+  fine-grained restrictions beyond membership, and signature verification of App JWTs (the
+  `iss` and `exp` claims are checked, the signature is not).
+- Git over HTTP needs `git http-backend`; without it `gitHttpAvailable` is false, the routes
+  answer 503 and the tests skip. Request bodies for git are buffered in memory (fine for test
+  repos). `git merge-tree --write-tree` needs git >= 2.40; older git takes the temporary-clone
+  path, which is slower but gives the same answers.
+- All URLs, including `html_url` and `browser_download_url`, point at the API host; a private
+  repo's download URL needs the same token as the API.
+- Webhook deliveries use real `fetch` and real time (10 s timeout), not the injected clock.
+- Logs go through `log("testenv:githost")`; set `FORERUNNER_LOG_LEVEL=warn` for quiet output.
+
+Other stand-ins: to be filled by the testenv items that build them.

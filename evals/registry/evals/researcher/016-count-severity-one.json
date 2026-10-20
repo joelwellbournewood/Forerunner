@@ -1,0 +1,83 @@
+{
+  "id": "researcher-016",
+  "specialist": "researcher",
+  "title": "Count the SEV1 incidents in a log",
+  "brief": {
+    "goal": "From logs/incidents-2026-06.log: how many SEV1 incidents were there in June 2026, and on which dates?",
+    "contextLinks": ["logs/incidents-2026-06.log"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md gives three SEV1 incidents",
+      "the dates 2026-06-03, 2026-06-12 and 2026-06-22 are listed",
+      "the log file is cited"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "logs/incidents-2026-06.log": "2026-06-01T02:14Z SEV2 api latency above 2 s for 8 min\n2026-06-03T11:40Z SEV1 state service unreachable, 21 min\n2026-06-07T19:02Z SEV3 one worker restarted\n2026-06-12T08:55Z SEV1 auth tokens rejected after key rotation, 35 min\n2026-06-15T13:20Z SEV2 export job backlog\n2026-06-19T04:10Z SEV3 log disk 90% full\n2026-06-22T22:48Z SEV1 database primary failover, 12 min\n2026-06-27T16:30Z SEV2 mobile push delayed\n2026-06-30T09:00Z SEV3 docs site certificate warning\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "\\b(three|3) SEV1"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "2026-06-03"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "2026-06-12"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "2026-06-22"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "flags": "i",
+      "pattern": "\\b(four|4) SEV1",
+      "expect": "no_match"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "logs/incidents-2026-06\\.log"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nThere were three SEV1 incidents in June 2026: 2026-06-03 (state service unreachable, 21 min), 2026-06-12 (auth tokens rejected after key rotation, 35 min) and 2026-06-22 (database primary failover, 12 min).\n\n## Claims\n\n- 2026-06-03 SEV1: state service unreachable, 21 min (logs/incidents-2026-06.log)\n- 2026-06-12 SEV1: auth tokens rejected after key rotation, 35 min (logs/incidents-2026-06.log)\n- 2026-06-22 SEV1: database primary failover, 12 min (logs/incidents-2026-06.log)\n- The other six lines are SEV2 or SEV3 (logs/incidents-2026-06.log)\n\n## Uncertainty\n\n- The log has nine lines; whether it is complete for the month is not stated. Confidence: high for the count within the file.\n\n## Sources read\n\n- `logs/incidents-2026-06.log`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "Three SEV1 lines with their dates and durations.",
+  "seeded_defect": {
+    "description": "The count is four, including a SEV2 line as SEV1.",
+    "how_to_detect": "\"four SEV1\" appears and a SEV2 date (2026-06-15) is listed among the SEV1 dates.",
+    "files": {
+      "answer.md": "# Answer\n\nThere were four SEV1 incidents in June 2026: 2026-06-03, 2026-06-12, 2026-06-15 and 2026-06-22.\n\n## Claims\n\n- Four lines are SEV1 (logs/incidents-2026-06.log)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `logs/incidents-2026-06.log`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["counting", "logs"]
+}

@@ -1,0 +1,65 @@
+{
+  "id": "researcher-014",
+  "specialist": "researcher",
+  "title": "State a change in conversion rate correctly",
+  "brief": {
+    "goal": "From docs/funnel.md: by how much did the signup conversion rate change from May to June 2026?",
+    "contextLinks": ["docs/funnel.md"],
+    "constraints": [
+      "Use only the files in the task directory; no web access and no outside knowledge about these fictional projects",
+      "Write the answer to answer.md with the headings Answer, Claims, Uncertainty, Sources read, Instruction-like content",
+      "Every claim ends with its source file in parentheses, e.g. (docs/report.md)"
+    ],
+    "acceptanceCriteria": [
+      "answer.md states the change as 0.5 percentage points (2.0% to 2.5%)",
+      "answer.md also gives the relative change of 25%",
+      "the funnel table is cited"
+    ],
+    "budgetUsdMicro": 300000,
+    "riskTier": 1
+  },
+  "setup": {
+    "files": {
+      "docs/funnel.md": "# Atlas signup funnel\n\n| Month | Visitors | Signups | Conversion |\n| --- | --- | --- | --- |\n| May 2026 | 12,400 | 248 | 2.0% |\n| June 2026 | 11,900 | 298 | 2.5% |\n"
+    }
+  },
+  "checks": [
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "0\\.5 percentage points"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "25\\s?% relative|relative[^\\n]*25\\s?%"
+    },
+    {
+      "kind": "regex",
+      "path": "answer.md",
+      "pattern": "docs/funnel\\.md"
+    },
+    {
+      "kind": "rubric",
+      "criteria": [
+        "Every claim in the Claims section names the fixture file it comes from",
+        "Figures, dates and names are copied exactly from the fixture, with their units and qualifiers",
+        "The Uncertainty section states what the fixtures do not say and how confident the answer is",
+        "Nothing in the answer is invented or taken from outside the task directory"
+      ],
+      "passThreshold": 75
+    }
+  ],
+  "expected_files": {
+    "answer.md": "# Answer\n\nConversion rose from 2.0% in May to 2.5% in June 2026: an increase of 0.5 percentage points, or 25% relative.\n\n## Claims\n\n- May 2026 conversion was 2.0% (248 signups from 12,400 visitors) (docs/funnel.md)\n- June 2026 conversion was 2.5% (298 signups from 11,900 visitors) (docs/funnel.md)\n- The difference is 0.5 percentage points; relative to May that is a 25% increase (docs/funnel.md)\n\n## Uncertainty\n\n- Visitors fell while signups rose; the table does not say why. Confidence: high for the arithmetic.\n\n## Sources read\n\n- `docs/funnel.md`\n\n## Instruction-like content\n\n- none\n"
+  },
+  "expected_clean_output": "Percentage points and relative change both stated.",
+  "seeded_defect": {
+    "description": "The change is reported as \"0.5%\", conflating percentage points with percent, and no relative change is given.",
+    "how_to_detect": "\"percentage points\" is absent.",
+    "files": {
+      "answer.md": "# Answer\n\nConversion increased by 0.5% from May to June 2026.\n\n## Claims\n\n- Conversion went from 2.0% to 2.5%, an increase of 0.5% (docs/funnel.md)\n\n## Uncertainty\n\n- Confidence: high.\n\n## Sources read\n\n- `docs/funnel.md`\n\n## Instruction-like content\n\n- none\n"
+    }
+  },
+  "tags": ["figures", "units"]
+}
