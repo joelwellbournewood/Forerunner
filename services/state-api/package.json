@@ -9,7 +9,7 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
-    "test": "vitest run --project unit --root ../.. services/state-api/test"
+    "test": "pnpm -w exec vitest run --project unit services/state-api/test"
   },
   "dependencies": {
     "@forerunner/platform": "workspace:*",
