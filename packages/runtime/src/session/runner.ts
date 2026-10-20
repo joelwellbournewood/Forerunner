@@ -662,12 +662,18 @@ export class SessionRunner {
             specialist: item.specialist,
             estimateUsdMicro: item.estimateUsdMicro,
           });
-          const renew = clock.setTimeout(
-            function tick() {
+          // The claim is renewed every sixth of its TTL for as long as the task runs: a
+          // one-shot timer would let a long task's claim lapse and a peer take the task.
+          const renewEveryMs = Math.max(1000, Math.floor(claimTtlMs / 6));
+          let cancelRenew: () => void = () => undefined;
+          const scheduleRenew = () => {
+            cancelRenew = clock.setTimeout(function tick() {
               void store.task.renewClaim(task.id, agent.id, claimTtlMs).catch(() => undefined);
-            },
-            Math.max(1000, Math.floor(claimTtlMs / 6)),
-          );
+              scheduleRenew();
+            }, renewEveryMs);
+          };
+          scheduleRenew();
+          const renew = () => cancelRenew();
           let result: TaskExecutionResult;
           const execStarted = clock.monotonic();
           try {

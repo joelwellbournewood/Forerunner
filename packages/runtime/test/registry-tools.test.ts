@@ -78,7 +78,9 @@ describe("loopToolsFor: the loop driver's equivalents of the registry's Claude C
   );
 
   it("maps every known Claude Code tool or lists it as one with no loop equivalent", () => {
-    const without = KNOWN_CLAUDE_CODE_TOOLS.filter((t) => !(t in CLAUDE_CODE_TOOL_EQUIVALENTS));
+    const without = KNOWN_CLAUDE_CODE_TOOLS.filter(
+      (t) => !Object.hasOwn(CLAUDE_CODE_TOOL_EQUIVALENTS, t),
+    );
     expect(without).toEqual(["WebFetch", "WebSearch", "Task", "TodoWrite"]);
     for (const t of without) {
       expect(loopToolsFor([`cc:${t}`], { available: BUILT_INS })).toEqual({
@@ -109,6 +111,30 @@ describe("loopToolsFor: the loop driver's equivalents of the registry's Claude C
         message: expect.stringContaining("cc:Foo has no equivalent on the loop driver"),
       },
     ]);
+  });
+
+  it("a name that is only an Object prototype member is unmapped, not a lookup through the prototype chain", () => {
+    // Only the table's own entries map; `cc:constructor` must not resolve to Object's
+    // constructor and leak its source text into the reason.
+    for (const name of [
+      "cc:constructor",
+      "cc:__proto__",
+      "cc:toString",
+      "cc:hasOwnProperty",
+      "cc:valueOf",
+      "cc:",
+    ]) {
+      const m = loopToolsFor([name], { available: BUILT_INS });
+      expect(m.tools).toEqual([]);
+      expect(m.dropped).toEqual([
+        {
+          tool: name,
+          reason: "unmapped",
+          message: `${name} has no equivalent on the loop driver; it is offered on the Agent SDK driver only`,
+        },
+      ]);
+      expect(m.dropped[0]?.message).not.toContain("native code");
+    }
   });
 
   it("refuses run_command when commands are not allowed, however the entry spelled it", () => {
@@ -182,7 +208,7 @@ describe("specialistSpecFrom: each driver maps the registry's names its own way"
     expect(drops).toHaveLength(1);
   });
 
-  it("on the SDK driver, and without options, the cc: names stay as the registry wrote them", () => {
+  it("on the SDK driver the cc: names stay as the registry wrote them; the driver is always named", () => {
     const registry = registryWith(["cc:Read", "cc:Foo"]);
     const drops: string[] = [];
     const sdk = specialistSpecFrom(registry, {
@@ -191,8 +217,12 @@ describe("specialistSpecFrom: each driver maps the registry's names its own way"
       onDropped: (_s, d) => drops.push(d.tool),
     });
     expect(sdk("widget")?.allowedTools).toEqual(["cc:Read", "cc:Foo"]);
-    expect(specialistSpecFrom(registry)("widget")?.allowedTools).toEqual(["cc:Read", "cc:Foo"]);
     expect(drops).toEqual([]);
+    // No silent default: a caller that names no driver is a type error, so a loop-driver
+    // executor can never be handed the SDK form by omission (the cloud runner takes
+    // `rt.specialists` from the composed runtime).
+    // @ts-expect-error the options are required
+    expect(() => specialistSpecFrom(registry)).toThrow(/driver/);
   });
 
   it("cc:Bash yields run_command only for an entry that requires a sandbox unless the caller's policy allows commands", () => {

@@ -579,3 +579,67 @@ describe("scheduler", () => {
     expect(await s.request({ agentId: "a", trigger: "manual", reason: "me" })).toBe("started");
   });
 });
+
+describe("claim renewal", () => {
+  let w: World;
+  beforeEach(async () => {
+    w = await world();
+  });
+  afterEach(() => w.store.close());
+
+  it("renews the claim every sixth of its TTL for as long as the task runs, then stops", async () => {
+    await addTask(w, "long task");
+    let begun: () => void = () => undefined;
+    let release: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      begun = resolve;
+    });
+    const exec: TaskExecutor = {
+      async execute({ task }) {
+        begun();
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return {
+          outcome: "done",
+          summary: `${task.title}: done`,
+          costUsdMicro: 0,
+          checksPassed: true,
+        };
+      },
+    };
+    let renewals = 0;
+    const original = w.store.task.renewClaim.bind(w.store.task);
+    w.store.task.renewClaim = async (...args: Parameters<typeof original>) => {
+      renewals++;
+      return original(...args);
+    };
+    const ttl = 6 * 60_000;
+    const r = new SessionRunner({
+      store: w.store,
+      clock: w.clock,
+      tokens: new TokenIssuer({ now: () => w.clock.now() }),
+      kill: new KillSwitch(),
+      planner: new StaticPlanner(),
+      executor: exec,
+    });
+    const run = r.start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: 2_000_000,
+      grant,
+      claimTtlMs: ttl,
+    });
+    await started;
+    // Three renew intervals pass while the task is still running: three renewals, not one.
+    await w.clock.advance((ttl / 6) * 3 + 1);
+    expect(renewals).toBe(3);
+    release();
+    const res = await run;
+    expect(res.status).toBe("completed");
+    // Nothing fires once the task is over.
+    await w.clock.advance(ttl * 2);
+    expect(renewals).toBe(3);
+  });
+});

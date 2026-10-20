@@ -18,6 +18,7 @@ import {
 import { effortForTask, modelIdFor, startingTier } from "../models/ladder.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
 import type { EffortLevel, ModelProvider, ModelTier } from "../provider/types.ts";
+import { RUN_COMMAND_TOOL } from "../registry/tools.ts";
 import type { Sandbox } from "../sandbox/types.ts";
 import { screenLessons } from "./lessons.ts";
 import {
@@ -47,8 +48,8 @@ export interface SpecialistSpec {
   timeoutMs: number;
 }
 
-/** Name of the command tool the sandbox port replaces (declared in daemon/tools.ts). */
-export const RUN_COMMAND_TOOL = "run_command";
+/** Name of the command tool the sandbox port replaces (declared in daemon/tools.ts); re-exported for the executor's callers. */
+export { RUN_COMMAND_TOOL };
 
 /**
  * Audit row `tool` for a Run row the store refused: the run id, the stage and the store's

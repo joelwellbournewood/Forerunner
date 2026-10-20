@@ -173,9 +173,14 @@ export async function runStartupChecklist(input: ChecklistInput): Promise<StateB
       lastHandoff: handoffs[0]?.body ?? null,
     });
   }
-  const queue = project ? await store.queue.pending(project.id, { limit }) : [];
+  // Only this human's notes: a co-worker's queue on the same project is their agent's.
+  const queue = project ? await store.queue.pending(project.id, { limit, humanId: human.id }) : [];
   const queueCount = project
-    ? await store.queue.count({ project_id: project.id, status: "queued" } as never)
+    ? await store.queue.count({
+        project_id: project.id,
+        status: "queued",
+        human_id: human.id,
+      } as never)
     : 0;
 
   const brief: StateBrief = {

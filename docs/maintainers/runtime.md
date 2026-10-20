@@ -59,15 +59,19 @@ offers that tool set as is. The loop driver offers Forerunner's tools, so each d
 names its own way and the choice is made in `composeRuntime` next to the driver it builds
 (`specialistDriver`, "loop" today; the SDK driver has no session path yet). `specialistSpecFrom(
 registry, { driver, tools, commands, onDropped })` turns a runnable entry into the executor's
-`SpecialistSpec`: on "sdk" the `cc:` names stay as written; on "loop" `loopToolsFor` replaces
+`SpecialistSpec`; the options are required, a call without a driver is a `validation` error,
+and an executor built elsewhere (the cloud runner) takes `RuntimeApp.specialists`, never the
+registry's names by omission. On "sdk" the `cc:` names stay as written; on "loop" `loopToolsFor` replaces
 them with the built-ins (`CLAUDE_CODE_TOOL_EQUIVALENTS`: `cc:Read`, `cc:NotebookRead` →
 `read_file`; `cc:Write`, `cc:Edit`, `cc:MultiEdit`, `cc:NotebookEdit` → `write_file`;
 `cc:Glob`, `cc:Grep`, `cc:LS` → `list_dir`; `cc:Bash` → `run_command`), resolved against
 `toolsForRun().names()` at every lookup (a bridged extension tool passes through while it is
-registered). The cap holds: nothing is added that the entry did not name, `cc:Read` never
-yields `write_file`, and `cc:Bash` yields `run_command` only when the entry has
-`requires_sandbox: true` or the composition sandboxes every command (the daemon always wires a
-`RunSandboxPort` and the executor pins `run_command` to the run's lease). `cc:WebFetch`,
+registered; only the table's own entries map, so `cc:constructor` is an unknown name). The cap
+holds: nothing is added that the entry did not name, `cc:Read` never yields `write_file`, and
+`cc:Bash` yields `run_command` only when the entry has `requires_sandbox: true` or the
+composition sandboxes every command (the daemon does: it always wires a `RunSandboxPort`, the
+executor pins `run_command` to the run's lease and a lease the port refuses ends the run before
+any command, so `composeRuntime` passes `commands: () => true`). `cc:WebFetch`,
 `cc:WebSearch`, `cc:Task`, `cc:TodoWrite`, an unknown `cc:Foo`, a bridged tool that has gone,
 or a command runner the policy refuses are dropped, never silently: `droppedToolAudit` writes
 one `registry.tool_unmapped` audit row per specialist and tool (`allowed: false`,
@@ -855,7 +859,8 @@ M.4 and M.5 (updates screen, apply, rollback, restart contract, health check on 
 (every outward action of these modules is an audit row). Test: `test/wiring.test.ts`.
 C.4, S.1 and S.3 for specialist tools on the loop driver (the registry's `cc:` names mapped
 to the built-ins the token carries, nothing widened, every dropped name an audit row, ADR
-0043). Tests: `test/cc-tools-wiring.test.ts`, `test/registry-tools.test.ts`.
+0043). Tests: `test/cc-tools-wiring.test.ts`, `test/registry-tools.test.ts`,
+`services/cloud-runner/test/runner.test.ts` (the cloud runner's executor on `rt.specialists`).
 R.6, E.5, O.8, S.8 and K.8's desktop notifications (the human is told about requests, finished
 sessions, budget stops, kill switch, updates and escalations, with quiet hours, through the
 channels the daemon wires). Test: `test/notifications-wiring.test.ts`. J.9, J.10, S.5, S.6 and
@@ -890,10 +895,6 @@ the watcher), D.3 (the project's ceiling caps the retry ladder). Tests:
 
 - The SDK driver's live behaviour is only verified when a credential is present (see
   `gates.md`); without one the integration test skips with a visible reason.
-- Specialist tools are mapped for the loop driver in `composeRuntime` (ADR 0043); the cloud
-  runner (`services/cloud-runner/src/runner.ts`) still composes its own executor with
-  `specialistSpecFrom(rt.registry)` without options, so there the registry's `cc:` names reach
-  the token as written. It should take `rt.specialists` from the composed runtime.
 - Connector cost reads 0 (see "Extension cost"); a weekly eval of a tier 2+ task on an install
   without a container engine fails as `error` because the process stand-in is refused for it,
   exactly as for a task run.

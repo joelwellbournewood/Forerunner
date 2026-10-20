@@ -155,6 +155,50 @@ describe("session runner: next-session queue", () => {
   });
   afterEach(() => w.store.close());
 
+  it("briefs and consumes only its own human's notes; a co-worker's note on the same project stays queued", async () => {
+    const mine = await leave(w, "check the CSV export", 3);
+    const other = (
+      await w.store.human.insert({
+        name: "M",
+        email: "m@example.test",
+        timezone: "Europe/Zurich",
+        notify_prefs: {},
+        default_autonomy: 2,
+        monthly_cap_usd_micro: 150_000_000,
+        locale: "en",
+      })
+    ).id;
+    const theirs = await w.store.queue.enqueue({
+      project_id: w.project,
+      human_id: other,
+      kind: "note",
+      text: "rotate the staging key",
+      priority: 9,
+    });
+    const briefs: string[] = [];
+    const planner: Planner = {
+      async plan(ctx) {
+        briefs.push(ctx.briefText);
+        return new StaticPlanner().plan(ctx);
+      },
+    };
+    const first = await start(w, runner(w, { planner }));
+    expect(first.status).toBe("completed");
+    expect(first.brief.queue.count).toBe(1);
+    expect(first.brief.queue.items.map((i) => i.id)).toEqual([mine.id]);
+    expect(briefs[0]).toContain(mine.text);
+    expect(briefs[0]).not.toContain(theirs.text);
+    expect(await w.store.queue.mustGet(mine.id)).toMatchObject({
+      status: "consumed",
+      consumed_by_session: first.sessionId,
+    });
+    expect(await w.store.queue.mustGet(theirs.id)).toMatchObject({
+      status: "queued",
+      consumed_by_session: null,
+    });
+    expect(await w.store.queue.pending(w.project, { humanId: other })).toHaveLength(1);
+  });
+
   it("consumes exactly the items its brief listed; a note left during the session waits for the next one", async () => {
     const fix = await leave(w, "fix the flaky clock test first", 9, "correction");
     const idea = await leave(w, "try the new renderer on the sample page", 5, "idea");

@@ -1,5 +1,11 @@
-import { RUN_COMMAND_TOOL } from "../session/executor.ts";
 import { CLAUDE_CODE_PREFIX } from "./types.ts";
+
+/**
+ * Name of the command tool (declared in `daemon/tools.ts`, replaced per run by the sandboxed
+ * runner in `session/executor.ts`). It lives in this leaf module so the registry's mapping
+ * and the session layer share one constant without the registry depending on the session.
+ */
+export const RUN_COMMAND_TOOL = "run_command";
 
 /**
  * How a registry entry's `allowed_tools` reach a run (ADR 0043). The registry names Claude
@@ -17,9 +23,11 @@ export type SpecialistDriver = "loop" | "sdk";
  * The loop driver's built-in tool each Claude Code tool a registry entry may name stands for.
  * Read-only tools map to read-only tools; every editing tool maps to `write_file`; the
  * search tools map to `list_dir` (the model reads what it finds); `Bash` maps to the sandboxed
- * command runner. `WebFetch`, `WebSearch`, `Task`, `TodoWrite` have no equivalent here.
+ * command runner. `WebFetch`, `WebSearch`, `Task`, `TodoWrite` have no equivalent here. Only
+ * the table's own entries count (`Object.hasOwn`): `cc:constructor` or `cc:__proto__` is an
+ * unknown name, never a lookup through Object's prototype.
  */
-export const CLAUDE_CODE_TOOL_EQUIVALENTS: Readonly<Record<string, string>> = {
+export const CLAUDE_CODE_TOOL_EQUIVALENTS: Readonly<Record<string, string>> = Object.freeze({
   Read: "read_file",
   NotebookRead: "read_file",
   Write: "write_file",
@@ -30,7 +38,14 @@ export const CLAUDE_CODE_TOOL_EQUIVALENTS: Readonly<Record<string, string>> = {
   Grep: "list_dir",
   LS: "list_dir",
   Bash: RUN_COMMAND_TOOL,
-};
+});
+
+/** The loop driver's built-in for one Claude Code tool name (without the prefix), if any. */
+function equivalentOf(ccTool: string): string | undefined {
+  return Object.hasOwn(CLAUDE_CODE_TOOL_EQUIVALENTS, ccTool)
+    ? CLAUDE_CODE_TOOL_EQUIVALENTS[ccTool]
+    : undefined;
+}
 
 export type DroppedToolReason = "unmapped" | "unavailable" | "commands_not_allowed";
 
@@ -76,8 +91,8 @@ export function loopToolsFor(
   for (const name of allowedTools) {
     let mapped: string;
     if (name.startsWith(CLAUDE_CODE_PREFIX)) {
-      const equivalent = CLAUDE_CODE_TOOL_EQUIVALENTS[name.slice(CLAUDE_CODE_PREFIX.length)];
-      if (!equivalent) {
+      const equivalent = equivalentOf(name.slice(CLAUDE_CODE_PREFIX.length));
+      if (equivalent === undefined) {
         dropped.push({
           tool: name,
           reason: "unmapped",

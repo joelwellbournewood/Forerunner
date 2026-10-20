@@ -3421,6 +3421,2006 @@
       "cacheWrite": 0,
       "usd": 0,
       "note": "no usage reported; aborted: provider_error: Request was aborted."
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2283,
+      "tokensOut": 815,
+      "cacheRead": 0,
+      "cacheWrite": 3147,
+      "usd": 0.020584
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3129,
+      "tokensOut": 231,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009197
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2847,
+      "tokensOut": 970,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.016023
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3854,
+      "tokensOut": 265,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010987
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1565,
+      "tokensOut": 661,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010369
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2251,
+      "tokensOut": 238,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007511
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2232,
+      "tokensOut": 911,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014203
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3176,
+      "tokensOut": 483,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011811
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1720,
+      "tokensOut": 821,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012279
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2572,
+      "tokensOut": 189,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007663
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1989,
+      "tokensOut": 1031,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014917
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3059,
+      "tokensOut": 308,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009827
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1986,
+      "tokensOut": 684,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011441
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2696,
+      "tokensOut": 149,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007511
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2676,
+      "tokensOut": 907,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.015051
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3618,
+      "tokensOut": 290,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010765
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1923,
+      "tokensOut": 826,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012735
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2779,
+      "tokensOut": 276,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008947
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2307,
+      "tokensOut": 976,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.015003
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3316,
+      "tokensOut": 319,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010451
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1870,
+      "tokensOut": 886,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013229
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2783,
+      "tokensOut": 263,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008825
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2257,
+      "tokensOut": 934,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014483
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3226,
+      "tokensOut": 354,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010621
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2112,
+      "tokensOut": 733,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012183
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2873,
+      "tokensOut": 232,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008695
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2428,
+      "tokensOut": 988,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.015365
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3453,
+      "tokensOut": 368,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011215
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2077,
+      "tokensOut": 805,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012833
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2909,
+      "tokensOut": 366,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010107
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2352,
+      "tokensOut": 1075,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.016083
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3461,
+      "tokensOut": 351,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011061
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1763,
+      "tokensOut": 762,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011775
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2552,
+      "tokensOut": 293,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008663
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2074,
+      "tokensOut": 963,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014407
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3067,
+      "tokensOut": 389,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010653
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1779,
+      "tokensOut": 758,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011767
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2567,
+      "tokensOut": 182,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007583
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2000,
+      "tokensOut": 1181,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.016439
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3216,
+      "tokensOut": 293,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009991
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2283,
+      "tokensOut": 785,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013045
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3098,
+      "tokensOut": 150,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008325
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2847,
+      "tokensOut": 970,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.016023
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3853,
+      "tokensOut": 250,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010835
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1565,
+      "tokensOut": 764,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011399
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2357,
+      "tokensOut": 222,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007563
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2232,
+      "tokensOut": 888,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013973
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3152,
+      "tokensOut": 345,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010383
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1720,
+      "tokensOut": 794,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012009
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2544,
+      "tokensOut": 215,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007867
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1989,
+      "tokensOut": 987,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014477
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3011,
+      "tokensOut": 391,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010561
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1986,
+      "tokensOut": 652,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011121
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2664,
+      "tokensOut": 286,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008817
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2676,
+      "tokensOut": 873,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014711
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3583,
+      "tokensOut": 255,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010345
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1923,
+      "tokensOut": 821,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012685
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2774,
+      "tokensOut": 299,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009167
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2307,
+      "tokensOut": 1093,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.016173
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3435,
+      "tokensOut": 281,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010309
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1870,
+      "tokensOut": 889,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013259
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2788,
+      "tokensOut": 21,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.006415
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2257,
+      "tokensOut": 1024,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.015383
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3316,
+      "tokensOut": 356,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010821
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2112,
+      "tokensOut": 690,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011753
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2829,
+      "tokensOut": 252,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008807
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2428,
+      "tokensOut": 986,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.015345
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3450,
+      "tokensOut": 398,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011509
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2077,
+      "tokensOut": 732,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012103
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2835,
+      "tokensOut": 283,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009129
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2353,
+      "tokensOut": 927,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014605
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3315,
+      "tokensOut": 329,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010549
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1763,
+      "tokensOut": 766,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011815
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2553,
+      "tokensOut": 304,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008775
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2074,
+      "tokensOut": 916,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013937
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3019,
+      "tokensOut": 222,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008887
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1779,
+      "tokensOut": 743,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011617
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2550,
+      "tokensOut": 207,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007799
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2000,
+      "tokensOut": 1250,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.017129
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3282,
+      "tokensOut": 313,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010323
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1879,
+      "tokensOut": 991,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014297
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2914,
+      "tokensOut": 299,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009447
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2177,
+      "tokensOut": 982,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014803
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3203,
+      "tokensOut": 322,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010255
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1911,
+      "tokensOut": 903,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013481
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2845,
+      "tokensOut": 357,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009889
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2193,
+      "tokensOut": 1198,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.016995
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3432,
+      "tokensOut": 317,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010663
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1703,
+      "tokensOut": 820,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012235
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2551,
+      "tokensOut": 181,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007541
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2000,
+      "tokensOut": 1020,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014829
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3054,
+      "tokensOut": 332,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010057
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1543,
+      "tokensOut": 822,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011935
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2394,
+      "tokensOut": 313,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008547
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1802,
+      "tokensOut": 928,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013513
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2764,
+      "tokensOut": 328,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009437
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1558,
+      "tokensOut": 878,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012525
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2468,
+      "tokensOut": 258,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008145
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1973,
+      "tokensOut": 855,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013125
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2862,
+      "tokensOut": 386,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010213
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2280,
+      "tokensOut": 820,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013389
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3127,
+      "tokensOut": 311,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009993
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2565,
+      "tokensOut": 1012,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.015879
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3615,
+      "tokensOut": 398,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011839
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1723,
+      "tokensOut": 818,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012255
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2570,
+      "tokensOut": 282,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008589
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1908,
+      "tokensOut": 983,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014275
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2923,
+      "tokensOut": 361,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010085
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1532,
+      "tokensOut": 693,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010623
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2254,
+      "tokensOut": 216,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007297
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1856,
+      "tokensOut": 980,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014141
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2875,
+      "tokensOut": 395,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010329
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1766,
+      "tokensOut": 947,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013631
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2745,
+      "tokensOut": 243,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008549
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2083,
+      "tokensOut": 955,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014345
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3073,
+      "tokensOut": 325,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010025
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1682,
+      "tokensOut": 635,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010343
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2344,
+      "tokensOut": 273,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008047
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1664,
+      "tokensOut": 760,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011557
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2455,
+      "tokensOut": 224,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007779
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1849,
+      "tokensOut": 1006,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014387
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2889,
+      "tokensOut": 232,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008727
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1705,
+      "tokensOut": 1422,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.018259
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3179,
+      "tokensOut": 288,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009867
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1795,
+      "tokensOut": 909,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013309
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2739,
+      "tokensOut": 241,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008517
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1658,
+      "tokensOut": 1413,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.018075
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3123,
+      "tokensOut": 401,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010885
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1503,
+      "tokensOut": 696,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010595
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2231,
+      "tokensOut": 129,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.006381
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1415,
+      "tokensOut": 1115,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014609
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2574,
+      "tokensOut": 329,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009067
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1807,
+      "tokensOut": 869,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012933
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2708,
+      "tokensOut": 245,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008495
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1759,
+      "tokensOut": 1220,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.016347
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3024,
+      "tokensOut": 315,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009827
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1807,
+      "tokensOut": 989,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014133
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2833,
+      "tokensOut": 321,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009505
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1545,
+      "tokensOut": 1033,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014049
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2619,
+      "tokensOut": 294,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008807
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1458,
+      "tokensOut": 960,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013145
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2456,
+      "tokensOut": 237,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007911
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1285,
+      "tokensOut": 1180,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014999
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2510,
+      "tokensOut": 345,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009099
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1512,
+      "tokensOut": 902,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012673
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2449,
+      "tokensOut": 289,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008417
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1417,
+      "tokensOut": 1410,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.017563
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2877,
+      "tokensOut": 362,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010003
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1574,
+      "tokensOut": 1092,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014697
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2703,
+      "tokensOut": 244,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008475
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1514,
+      "tokensOut": 1099,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014647
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2654,
+      "tokensOut": 361,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009547
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1637,
+      "tokensOut": 923,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013133
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2597,
+      "tokensOut": 308,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008903
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1438,
+      "tokensOut": 1223,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.015735
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2706,
+      "tokensOut": 217,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008211
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1627,
+      "tokensOut": 1033,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014213
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2695,
+      "tokensOut": 232,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008339
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1412,
+      "tokensOut": 1264,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.016093
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2724,
+      "tokensOut": 265,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008727
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1697,
+      "tokensOut": 1160,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.015623
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2895,
+      "tokensOut": 223,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008649
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1480,
+      "tokensOut": 1175,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.015339
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2702,
+      "tokensOut": 308,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009113
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1812,
+      "tokensOut": 952,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013773
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2799,
+      "tokensOut": 299,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009217
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1694,
+      "tokensOut": 1198,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.015997
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2938,
+      "tokensOut": 342,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009925
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1692,
+      "tokensOut": 988,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013893
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2716,
+      "tokensOut": 236,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008421
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1519,
+      "tokensOut": 1268,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.016347
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2834,
+      "tokensOut": 293,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009227
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1452,
+      "tokensOut": 866,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012193
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2352,
+      "tokensOut": 182,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007153
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1306,
+      "tokensOut": 1126,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014501
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2474,
+      "tokensOut": 249,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008067
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1430,
+      "tokensOut": 831,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011799
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2296,
+      "tokensOut": 272,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007941
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1394,
+      "tokensOut": 1086,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014277
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2521,
+      "tokensOut": 267,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008341
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1881,
+      "tokensOut": 875,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013141
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2788,
+      "tokensOut": 213,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008335
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1681,
+      "tokensOut": 1171,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.015701
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2897,
+      "tokensOut": 374,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010163
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1791,
+      "tokensOut": 814,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.012351
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2637,
+      "tokensOut": 347,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009373
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1619,
+      "tokensOut": 1099,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014857
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2759,
+      "tokensOut": 352,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.009667
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1590,
+      "tokensOut": 796,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011769
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2419,
+      "tokensOut": 229,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007757
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1516,
+      "tokensOut": 1142,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.015081
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2699,
+      "tokensOut": 267,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008697
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1534,
+      "tokensOut": 823,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.011927
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2390,
+      "tokensOut": 201,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.007419
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1402,
+      "tokensOut": 1145,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.014883
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2592,
+      "tokensOut": 291,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008723
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1940,
+      "tokensOut": 901,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.013519
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 2874,
+      "tokensOut": 227,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.008647
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 1944,
+      "tokensOut": 1296,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.017477
+    },
+    {
+      "date": "2026-10-20",
+      "run": "2026-10-20T18:17:27.641Z",
+      "model": "claude-sonnet-5-5",
+      "tokensIn": 3286,
+      "tokensOut": 349,
+      "cacheRead": 3147,
+      "cacheWrite": 0,
+      "usd": 0.010691
     }
   ]
 }

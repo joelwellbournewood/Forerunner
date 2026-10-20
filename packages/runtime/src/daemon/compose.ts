@@ -478,19 +478,27 @@ export interface SpecialistSpecOptions {
 }
 
 /**
- * The registry's runnable entries as the executor's `SpecialistSpec`s. Without options the
- * tools are the registry's names as written (the SDK driver's form); with them, the driver
- * named decides (see `SpecialistSpecOptions`).
+ * The registry's runnable entries as the executor's `SpecialistSpec`s, their `allowed_tools`
+ * in the form of the driver the options name (see `SpecialistSpecOptions`). The driver is
+ * never defaulted: a caller that names none gets an error at the call, not the SDK form on a
+ * loop-driver executor. Executors built outside `composeRuntime` take `RuntimeApp.specialists`.
  */
 export function specialistSpecFrom(
   registry: Registry,
-  opts?: SpecialistSpecOptions,
+  opts: SpecialistSpecOptions,
 ): (name: string) => SpecialistSpec | undefined {
+  const driver: SpecialistDriver | undefined = opts?.driver;
+  if (driver !== "loop" && driver !== "sdk") {
+    throw new ForerunnerError(
+      "validation",
+      'specialistSpecFrom needs the driver the executor runs specialists on ("loop" or "sdk")',
+    );
+  }
   return (name) => {
     const d = registry.specialists.get(name);
     if (!d?.runnable) return undefined;
     let allowedTools = [...d.allowed_tools];
-    if (opts?.driver === "loop") {
+    if (driver === "loop") {
       const mapping = loopToolsFor(d.allowed_tools, {
         available: opts.tools(),
         commands: opts.commands ? opts.commands(d) : d.requires_sandbox,
@@ -1017,12 +1025,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
 
   // Specialists (ADR 0043): the registry entries as the executor's `SpecialistSpec`s, their
   // `allowed_tools` mapped for the driver in use against the tools registered at each run
-  // start. `cc:Bash` yields `run_command` when the entry requires a sandbox or because every
-  // run with a worktree opens a lease on the sandbox port above and the executor pins
-  // `run_command` to it (`withSandboxedCommands`). Every name the loop driver will not offer
-  // is an audit row (`registry.tool_unmapped`) naming the specialist and the tool: once per
-  // pair, for every runnable entry before the first run, and for a bridged tool that is gone
-  // at a later run start.
+  // start. Every name the loop driver will not offer is an audit row
+  // (`registry.tool_unmapped`) naming the specialist and the tool: once per pair, for every
+  // runnable entry before the first run, and for a bridged tool that is gone at a later run
+  // start.
   const droppedTools = droppedToolAudit({
     audit: store.auditLog,
     agentId: agent.id,
@@ -1032,7 +1038,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const specialists = specialistSpecFrom(registry, {
     driver: specialistDriver,
     tools: () => toolsForRun().names(),
-    commands: (d) => d.requires_sandbox || Boolean(sandboxPort),
+    // The daemon sandboxes every command, so `cc:Bash` yields `run_command` whether or not
+    // the entry says `requires_sandbox`: `makeLoop` below hands the executor `sandboxPort`,
+    // a run with a worktree opens a lease on it and pins `run_command` to that sandbox
+    // (`withSandboxedCommands`; a lease the port refuses, a tier 2+ task with no engine and no
+    // `allowProcessSandbox`, ends the run before any command), and without a worktree the
+    // daemon's `run_command` refuses to run with no working directory. No command reaches the
+    // host either way, which is the promise `commands` stands for.
+    commands: () => true,
     onDropped: droppedTools.onDropped,
   });
   for (const d of registry.runnableSpecialists()) specialists(d.name);

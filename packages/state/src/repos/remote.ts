@@ -27,16 +27,25 @@ export class QueueRepo extends Repository<QueueItemRow> {
     return this.insert(input);
   }
 
-  pending(projectId: string, opts: ListOptions = {}): Promise<QueueItemRow[]> {
+  /**
+   * Queued items of a project, highest priority first. With `humanId` only the items that
+   * human left: a session briefs and consumes its own human's notes, never a co-worker's on
+   * the same project (spec J.2).
+   */
+  pending(
+    projectId: string,
+    opts: ListOptions & { humanId?: string } = {},
+  ): Promise<QueueItemRow[]> {
+    const { humanId, ...listOpts } = opts;
     return this.list(
-      { project_id: projectId, status: "queued" },
+      { project_id: projectId, status: "queued", ...(humanId ? { human_id: humanId } : {}) },
       {
         orderBy: [
           { column: "priority", direction: "desc" },
           { column: "created_at" },
           { column: "id" },
         ],
-        ...opts,
+        ...listOpts,
       },
     );
   }

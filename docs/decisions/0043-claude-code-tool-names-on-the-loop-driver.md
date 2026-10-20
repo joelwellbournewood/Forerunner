@@ -29,22 +29,29 @@ names, what `cc:Bash` may yield, and what happens to a name with no equivalent.
    subscription path, has no session path yet). `specialistSpecFrom(registry, { driver, tools,
    commands, onDropped })` follows it: on "sdk" the `cc:` names stay as written (the SDK driver
    strips the prefix itself); on "loop" `loopToolsFor` (`src/registry/tools.ts`) replaces
-   them. Without options the names stay as written (the SDK form).
+   them. The options are required and the driver is never defaulted (a call without one is a
+   type error and a `validation` error at runtime), so no executor is handed the SDK form by
+   omission; an executor built outside `composeRuntime` (the cloud runner) takes
+   `RuntimeApp.specialists`, which carries the composition's choice.
 3. **The loop driver's table** (`CLAUDE_CODE_TOOL_EQUIVALENTS`): `Read`, `NotebookRead` →
    `read_file`; `Write`, `Edit`, `MultiEdit`, `NotebookEdit` → `write_file`; `Glob`, `Grep`,
    `LS` → `list_dir`; `Bash` → `run_command`. `WebFetch`, `WebSearch`, `Task` and `TodoWrite`
    have no equivalent and are dropped. Order follows the entry; duplicates collapse; nothing is
    added that the entry did not name (`cc:Read` cannot yield `write_file`; `cc:Bash` yields
-   `run_command` and nothing else). Forerunner names pass through while the tool is registered
-   at the moment of the lookup (bridged extension tools come and go), so the mapping is resolved
-   at every run start against `toolsForRun()`.
+   `run_command` and nothing else). Only the table's own entries map (`Object.hasOwn`): a name
+   such as `cc:constructor` or `cc:__proto__` is unknown, never a lookup through Object's
+   prototype. Forerunner names pass through while the tool is registered at the moment of the
+   lookup (bridged extension tools come and go), so the mapping is resolved at every run start
+   against `toolsForRun()`.
 4. **`run_command` only under a sandbox promise.** `cc:Bash`, or `run_command` by name, is
    granted only when the entry has `requires_sandbox: true` or the composition sandboxes every
    command: the daemon always wires a `RunSandboxPort` (a container or the process stand-in,
-   ADR 0007) and the executor pins `run_command` to the run's lease, so in the daemon the policy
-   allows it; the eval runner passes whether it holds a sandbox port, so an eval without one is
-   never offered a command runner. Otherwise the name is dropped with reason
-   `commands_not_allowed`.
+   ADR 0007) and the executor pins `run_command` to the run's lease (a lease the port refuses, a
+   tier 2+ task with no engine and no `allowProcessSandbox`, ends the run before any command;
+   without a worktree the daemon's `run_command` refuses to run), so `composeRuntime` passes
+   `commands: () => true` and says why; the eval runner passes whether it holds a sandbox port,
+   so an eval without one is never offered a command runner. Otherwise the name is dropped with
+   reason `commands_not_allowed`.
 5. **A dropped name is never silent.** Every name the loop driver will not offer is an audit row
    `registry.tool_unmapped` (`allowed: false`, `input_summary: "<specialist>: <tool>"`,
    `denied_reason: "tool_not_allowed: <why>"`, the agent and human of the install), once per
@@ -65,9 +72,12 @@ names, what `cc:Bash` may yield, and what happens to a name with no equivalent.
   stay.
 - The SDK branch is a seam: when the subscription path lands, compose sets `specialistDriver`
   to "sdk" for it and nothing else changes.
-- The cloud runner composes its own executor with `specialistSpecFrom(rt.registry)` (no
-  options) and keeps the registry's names; it should take `rt.specialists` from the composed
-  runtime instead. That is a follow-up outside this change.
+- The cloud runner (`services/cloud-runner/src/runner.ts`) builds its own `LoopTaskExecutor`
+  and takes `rt.specialists` from the composed runtime, so its coder is offered the same
+  built-ins (`services/cloud-runner/test/runner.test.ts` asserts the names the fake provider
+  was offered).
+- `RUN_COMMAND_TOOL` is declared in `src/registry/tools.ts` (a leaf) and re-exported by
+  `src/session/executor.ts`, so the registry does not depend on the session layer.
 - A researcher on the loop driver loses `cc:WebFetch` and `cc:WebSearch`; the audit log says
   so. Web research on the loop path needs a fetch tool bridged by an extension and named in the
   registry by its Forerunner name.

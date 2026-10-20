@@ -204,6 +204,20 @@ describe("cloud runner", () => {
       project_id: w.seed.project.id,
     });
     expect((await w.store.task.list({ project_id: w.seed.project.id }))[0]?.status).toBe("done");
+    // The runner's executor takes the composed runtime's specialists (ADR 0043): the coder was
+    // offered the loop driver's built-ins for its `cc:` names, never the names as written.
+    const coder = w.runner.rt.specialists("coder");
+    expect(coder?.allowedTools).toEqual(["read_file", "write_file", "run_command", "list_dir"]);
+    const coderCalls = w.provider.calls.filter((c) => c.request.system === coder?.prompt);
+    expect(coderCalls.length).toBeGreaterThan(0);
+    for (const c of coderCalls) {
+      expect(c.request.tools?.map((t) => t.name).sort()).toEqual([
+        "list_dir",
+        "read_file",
+        "run_command",
+        "write_file",
+      ]);
+    }
     const ledger = await w.store.costLedger.list({ session_id: session.id });
     expect(ledger.length).toBeGreaterThan(0);
     for (const e of ledger) {

@@ -42,7 +42,6 @@ import {
   type SessionTriggerKind,
   type StartRequest,
   StaticPlanner,
-  specialistSpecFrom,
 } from "@forerunner/runtime";
 import {
   type AgentRow,
@@ -458,7 +457,9 @@ export async function startCloudRunner(deps: CloudRunnerDeps): Promise<CloudRunn
     : { estimate: () => 0, cost: () => 0 };
   const ghToken = await vault.get(SECRET_NAMES.github).catch(() => null);
   const githubApiBase = env.FORERUNNER_GITHUB_API_BASE || "https://api.github.com";
-  const specialists = specialistSpecFrom(rt.registry);
+  // The composed runtime's specialists: the registry's `cc:` tool names mapped for the driver
+  // the runtime runs them on (ADR 0043), so the loop executor below offers the built-ins.
+  const specialists = rt.specialists;
   const makeLoop = (worktree?: string) =>
     new LoopTaskExecutor({
       store,

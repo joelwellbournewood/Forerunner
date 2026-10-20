@@ -372,6 +372,32 @@ and `.../researcher`; the result and the report path go to `docs/status/gates.md
 
 ## Known issues
 
+### Measured
+
+- 2026-10-20, first live run (run `2026-10-20T17:07:09Z`, `critic@1.0.0+219813d0`, Sonnet
+  tier 1): defects caught 40/40, clean accepted 15/40 (37.5%, the 10-task subset 7/10), the
+  gate failed on the pass rate. Every miss was `escalate` at grade 80 to 88 and confidence
+  "medium" (0.5 then) with no finding: the critic discounted the runner's passing checks it had
+  not run itself, and the researcher evidence lacked the source fixtures.
+- 2026-10-20, after ADR 0042 (run `2026-10-20T18:17:27.641Z`, `critic@1.1.0+7661cc6c`,
+  `claude-sonnet-5-5` tier 1, one run): subset defects caught 10/10, clean accepted 10/10
+  (100%), 20 reviews, USD 0.4733, 197 s; full set defects caught 40/40, clean accepted 40/40
+  (100%), 80 reviews, USD 1.8459, 783 s. All 40 clean reviews (20 coder, 20 researcher)
+  `accept` at grades 88 to 96 with confidence 0.9 (the model answered `high`, so no
+  `escalate_needs_reason` downgrade fired on the live model); all 40 seeded reviews `revise` at
+  grades 0 to 30. Critic model calls (160): median 4.1 s, p90 7.8 s, max 9.5 s; wall time per
+  task pair median 19.4 s, max 22.9 s. Run totals 200 ledger rows, USD 2.3192, no refusal. Gate
+  row and report paths in `docs/status/gates.md`; the ledger is `tests/live/spend.json`.
+
+### Open
+
+- The runtime's `CriticLoop` passes no `inputFiles`, `unavailable` or `limits` yet (ADR 0042):
+  a production tier 1 review grades the diff with the project's check commands listed under
+  "Checks not run at this tier" and the "nothing missing" close. Wiring the worker's run outcome
+  into `limits` and the worktree's starting state into `inputFiles` is a runtime follow-up.
+- The escalate ground `evidence_missing` is matched by name containment; a model that names an
+  item vaguely ("some files") does not qualify and is downgraded with the reason recorded. If
+  that proves too strict on a later run, the match lives in one function (`namesUnavailable`).
 - At tiers 2 and 3 the service runs `ctx.checks` itself before the model reads; the critic
   token still allows no commands, so the model cannot run anything beyond those checks. A
   sandboxed read-only command tool for the critic is a later addition. With no `ctx.checks` and

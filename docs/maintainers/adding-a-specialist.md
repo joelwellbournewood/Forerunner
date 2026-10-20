@@ -132,8 +132,11 @@ commands, onDropped })` maps each runnable entry's `allowed_tools` accordingly:
 | a Forerunner name (`ext:<id>:<tool>`, `run_command`, ...) | itself while the tool is registered at the lookup, else dropped (`unavailable`) | itself |
 
 `loopToolsFor(allowedTools, { available, commands })` returns `{ tools, dropped }`; order follows
-the entry, duplicates collapse, and nothing is added that the entry did not name (`cc:Read`
-never yields `write_file`). Every dropped name is an audit row `registry.tool_unmapped` naming
+the entry, duplicates collapse, only the table's own entries map (`cc:constructor` is unknown,
+not Object's constructor), and nothing is added that the entry did not name (`cc:Read` never
+yields `write_file`). `specialistSpecFrom`'s options are required: a call that names no driver
+is a type error and a `validation` error, so an executor built outside `composeRuntime` (the
+cloud runner) takes `RuntimeApp.specialists` instead. Every dropped name is an audit row `registry.tool_unmapped` naming
 the specialist and the tool, once per pair for the life of the composition: for every runnable
 entry at compose, and for a bridged tool that has gone at a later run start. The run token
 carries the mapped names, so the hooks check what the driver calls. The eval runner uses the
@@ -329,10 +332,6 @@ Run: `pnpm vitest run --project unit packages/runtime/test/registry.test.ts eval
 - Only coder and researcher have eval sets. tester, reviewer, science-evaluator, designer,
   writer-marketing, data-analyst, migration-specialist and ops-deploy are active by spec
   decision with `evalTaskCount: 0`; each needs a set before its prompt is changed.
-- The cloud runner (`services/cloud-runner/src/runner.ts`) composes its own executor with
-  `specialistSpecFrom(rt.registry)` without options, so on that path the `cc:` names reach the
-  token as written and a registry coder has no built-in tools; it should take `rt.specialists`
-  from the composed runtime (ADR 0043).
 - The approval command (human approval, moving `proposed/<name>` to `specialists/`, recording
   the eval result in `proposal.json`) lands with phase 3; `proposeSpecialist` only writes the
   proposal and returns the required steps. Until it exists, a pending proposal (valid or

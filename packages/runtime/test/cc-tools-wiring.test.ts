@@ -206,7 +206,11 @@ describe("cc:* tools on the daemon's loop path", () => {
           tools: [
             { name: "read_file", input: { path: "README.md" } },
             { name: "write_file", input: { path: "notes.txt", content: "hello" } },
-            { name: "run_command", input: { argv: ["echo", "hi"] } },
+            // Would leave `hi` in the worktree if it ran (argv array, no shell; node on both OSes).
+            {
+              name: "run_command",
+              input: { argv: ["node", "-e", "require('node:fs').writeFileSync('hi', 'x')"] },
+            },
           ],
         },
         { text: "Wrote notes.txt. Lesson: none." },
@@ -223,6 +227,9 @@ describe("cc:* tools on the daemon's loop path", () => {
       pricing: flatPricing,
       tools: rt.tools,
       toolsFor: rt.toolsForRun,
+      // As compose's `makeLoop` wires it: the run opens a lease on the daemon's sandbox port
+      // (the process stand-in here, no engine) and `run_command` is pinned to it.
+      sandbox: rt.sandbox.port,
       billingSourceId: rt.billingSourceId,
       specialists: rt.specialists,
       worktreeFor: async () => worktree,
@@ -261,6 +268,11 @@ describe("cc:* tools on the daemon's loop path", () => {
       /^tool_not_allowed: tool "run_command" is not in this run's allowlist/,
     );
     expect(rows.every((r) => r.agent_id === rt.agent.id && r.human_id === rt.human.id)).toBe(true);
+    // The run held a sandbox lease (the stand-in's warning reached the events), and the
+    // refused command never ran: the file it would have written is absent.
+    expect(events.filter((e) => e.type === "warning")).toEqual([
+      expect.objectContaining({ message: expect.stringMatching(/process/i) }),
+    ]);
     expect(existsSync(join(worktree, "hi"))).toBe(false);
     rmSync(worktree, { recursive: true, force: true });
   });
