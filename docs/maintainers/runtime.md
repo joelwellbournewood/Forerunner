@@ -78,6 +78,29 @@ never holds a secret), `status` (directories, config, secret names only), `docto
 runtime directory is polled by `KillFileWatcher` in every running runtime, so the CLI, the
 tray and the app can stop sessions across processes on both platforms.
 
+### Sessions (`src/session/`, `src/wiring/state-ports.ts`)
+
+`SessionRunner.start` owns one working period (spec E): it creates the session row, runs the
+startup checklist as code (`checklist.ts`: version check, git fetch, shared-state pull, inbox,
+open human requests, open critic findings, budget, diff since the last session, ready and
+claimed tasks, peer claims, next-session queue) and renders a `StateBrief` under 2,000 tokens
+(`brief.ts`, lists shrink until it fits). The `Planner` port produces a `SessionPlan`
+(`StaticPlanner` = ready tasks by priority; a model planner uses the principal prompt); plans
+over the work budget (cap minus the review reserve) are cut before starting. Autonomy 0 and
+unapproved level 1 turn the plan into a HumanRequest and pause. Execution claims each task
+(atomic, renewed every ttl/6), transitions it to in progress, runs the `TaskExecutor`
+(`LoopTaskExecutor`: validated brief, derived narrower token, specialist prompt and model from
+the registry, Run row recorded), then moves it to done (tier 0 with checks passed), in review,
+needs human or failed; the inbox is re-checked between tasks and a human "stop" ends the
+session; at 80% of the budget or a mid-task cap no new task starts. Session end writes the
+project summary cache, sends a handoff (requires ack) to the project's peers
+(`settings.members` or agents that touched the project), notifies the human and records the
+session summary, handoff and spend. `triggers.ts` is the scheduler (daily, weekdays, every N
+minutes in the human's time zone; message, CI, PR comment, email, remote and manual requests;
+one active session per agent; quiet hours defer non-manual triggers). `state-ports.ts` adapts
+the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
+approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call.
+
 ### Models (`src/models/ladder.ts`)
 
 Ladder haiku → sonnet → opus → fable, ceiling opus by default; mode defaults and response
@@ -109,7 +132,7 @@ the human; it is never acted on.
 
 `packages/runtime/test/*.test.ts` (unit, fake provider, no network): tokens, autonomy, kill
 switch timing, budget rules, context transforms (golden cases, idempotence, FATAL-at-line-67,
-stable-prefix lint, bypass), Anthropic adapter mapping, SDK driver options and hooks, hooks (overspend, steps, wall clock, kill, allowlist, schema,
+stable-prefix lint, bypass), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, hooks (overspend, steps, wall clock, kill, allowlist, schema,
 paths, domains, secrets, autonomy, injection), ladder, brief, loop driver (completion, overspend
 blocked, step cap, kill mid-run, timeout with partial output, inline denials, needs-human pause,
 injection flagged).
