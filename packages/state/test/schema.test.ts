@@ -1,0 +1,413 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join, normalizeNewlines, SimulatedClock } from "@forerunner/platform";
+import { describe, expect, it } from "vitest";
+import {
+  jsonArrayContains,
+  sqlLiteral,
+  sqlType,
+  toPositional,
+  upsertSql,
+} from "../src/db/dialect.ts";
+import { openSqlite } from "../src/db/sqlite.ts";
+import { renderDataModelDoc, schemaSummary } from "../src/docs.ts";
+import { monotonicId } from "../src/ids.ts";
+import { MIGRATION_0001 } from "../src/migrations/0001-initial.ts";
+import {
+  generateInitialMigration,
+  generateSchemaSql,
+  renderMigrationModule,
+} from "../src/migrations/generate.ts";
+import {
+  appliedVersions,
+  MIGRATIONS,
+  migrate,
+  pendingMigrations,
+} from "../src/migrations/index.ts";
+import { decodeRow, encodePatch } from "../src/repos/codec.ts";
+import { allColumns, COMMON_COLUMNS, ENTITIES, type EntityDef, tableOrder } from "../src/schema.ts";
+import { parseStoreUrl } from "../src/store.ts";
+import {
+  assertTransition,
+  canTransition,
+  STATUS_GRAPHS,
+  TASK_TRANSITIONS,
+} from "../src/workflow.ts";
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+describe("schema", () => {
+  it("has the fourteen core entities, the supporting tables and the migrations table", () => {
+    const core = [
+      "human",
+      "agent",
+      "project",
+      "milestone",
+      "task",
+      "run",
+      "session",
+      "event",
+      "message",
+      "decision",
+      "human_request",
+      "review",
+      "finding",
+      "lesson",
+    ];
+    const supporting = [
+      "command",
+      "change_log",
+      "device",
+      "source",
+      "cost_ledger",
+      "secret_ref",
+      "extension",
+      "data_asset",
+      "release",
+      "audit_log",
+      "queue_item",
+      "remote_command",
+      "billing_source",
+      "budget_window",
+      "schema_migrations",
+    ];
+    for (const t of [...core, ...supporting]) expect(ENTITIES[t]?.table, t).toBe(t);
+    expect(Object.keys(ENTITIES)).toHaveLength(core.length + supporting.length);
+  });
+
+  it("gives every entity the common envelope and every column a description", () => {
+    expect(COMMON_COLUMNS.map((c) => c.name)).toEqual([
+      "id",
+      "created_at",
+      "updated_at",
+      "author_agent",
+      "author_human",
+      "version",
+    ]);
+    for (const e of Object.values(ENTITIES)) {
+      expect(e.description.length, e.table).toBeGreaterThan(10);
+      const names = allColumns(e).map((c) => c.name);
+      expect(new Set(names).size, `${e.table} duplicate columns`).toBe(names.length);
+      if (e.envelope) expect(names.slice(0, 6)).toEqual(COMMON_COLUMNS.map((c) => c.name));
+      for (const c of allColumns(e)) {
+        expect(c.description.trim().length, `${e.table}.${c.name}`).toBeGreaterThan(3);
+        if (c.references)
+          expect(
+            ENTITIES[c.references.table],
+            `${e.table}.${c.name} -> ${c.references.table}`,
+          ).toBeDefined();
+        if (c.enum && c.default !== undefined) expect(c.enum).toContain(c.default);
+      }
+      for (const idx of e.indexes)
+        for (const col of idx.columns) expect(names, `${e.table} index ${col}`).toContain(col);
+    }
+  });
+
+  it("orders tables so every referenced table comes first", () => {
+    const order = tableOrder();
+    expect(order).toHaveLength(Object.keys(ENTITIES).length);
+    for (const [i, table] of order.entries()) {
+      for (const c of (ENTITIES[table] as EntityDef).columns) {
+        if (c.references && c.references.table !== table)
+          expect(order.indexOf(c.references.table), `${table}.${c.name}`).toBeLessThan(i);
+      }
+    }
+    const broken: Record<string, EntityDef> = {
+      a: {
+        table: "a",
+        description: "a",
+        envelope: true,
+        indexes: [],
+        columns: [
+          {
+            name: "b_id",
+            type: "text",
+            nullable: false,
+            description: "x",
+            references: { table: "b", column: "id" },
+          },
+        ],
+      },
+      b: {
+        table: "b",
+        description: "b",
+        envelope: true,
+        indexes: [],
+        columns: [
+          {
+            name: "a_id",
+            type: "text",
+            nullable: false,
+            description: "x",
+            references: { table: "a", column: "id" },
+          },
+        ],
+      },
+    };
+    expect(() => tableOrder(broken)).toThrow(/cycle/);
+    expect(() => tableOrder({ a: broken.a as EntityDef })).toThrow(/unknown table/);
+  });
+});
+
+describe("migration v1 snapshot", () => {
+  it("equals the generator output for both dialects (a schema change needs a new migration file)", () => {
+    const generated = generateInitialMigration();
+    expect(MIGRATION_0001.version).toBe(1);
+    expect(MIGRATION_0001.up.sqlite).toEqual(generated.sqlite);
+    expect(MIGRATION_0001.up.postgres).toEqual(generated.postgres);
+    expect(MIGRATIONS[0]).toBe(MIGRATION_0001);
+    expect(MIGRATIONS.map((m) => m.version)).toEqual(MIGRATIONS.map((_, i) => i + 1));
+  });
+
+  it("renders a module that round-trips through the generator text", () => {
+    const text = renderMigrationModule({
+      version: 1,
+      name: "initial",
+      up: generateInitialMigration(),
+    });
+    expect(text.startsWith("// GENERATED")).toBe(true);
+    expect(text).toContain("export const MIGRATION_0001");
+    expect(text.endsWith("\n")).toBe(true);
+    expect(text).not.toMatch(/\r/);
+  });
+
+  it("emits dialect-specific types, enum checks, foreign keys, indexes and append-only triggers", () => {
+    const sqlite = generateSchemaSql("sqlite").join("\n");
+    const pg = generateSchemaSql("postgres").join("\n");
+    expect(sqlite).toContain('"small_project_mode" INTEGER NOT NULL DEFAULT 0');
+    expect(pg).toContain('"small_project_mode" BOOLEAN NOT NULL DEFAULT FALSE');
+    expect(sqlite).toContain("\"settings\" TEXT NOT NULL DEFAULT '{}'");
+    expect(pg).toContain("\"settings\" JSONB NOT NULL DEFAULT '{}'");
+    expect(pg).toContain('"budget_usd_micro" BIGINT');
+    expect(sqlite).toContain('"budget_usd_micro" INTEGER');
+    expect(sqlite).toContain(`CHECK ("status" IN ('draft', 'ready', 'claimed'`);
+    expect(pg).toContain('REFERENCES "project" ("id")');
+    expect(pg).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "event_session_id_seq_idx"');
+    expect(sqlite).toContain("RAISE(ABORT, 'append_only: audit_log')");
+    expect(pg).toContain("CREATE OR REPLACE FUNCTION forerunner_append_only()");
+    expect(pg).toContain('"audit_log_append_only" BEFORE UPDATE OR DELETE ON "audit_log"');
+  });
+
+  it("applies pending migrations once and records them, in order, with the clock's time", async () => {
+    const db = await openSqlite(":memory:");
+    try {
+      const clock = new SimulatedClock("2026-05-05T05:05:05.000Z");
+      const extra = [
+        ...MIGRATIONS,
+        {
+          version: 2,
+          name: "probe",
+          up: {
+            sqlite: ['CREATE TABLE "probe" ("id" TEXT PRIMARY KEY)'],
+            postgres: ['CREATE TABLE "probe" ("id" TEXT PRIMARY KEY)'],
+          },
+        },
+      ];
+      expect(await pendingMigrations(db, extra)).toHaveLength(2);
+      const first = await migrate(db, { clock, migrations: extra });
+      expect(first).toEqual({ applied: [1, 2], version: 2 });
+      const rows = await db.query<{ version: number; applied_at: string }>(
+        'SELECT * FROM "schema_migrations" ORDER BY "version"',
+      );
+      expect(rows.map((r) => r.applied_at)).toEqual([
+        "2026-05-05T05:05:05.000Z",
+        "2026-05-05T05:05:05.000Z",
+      ]);
+      expect(await migrate(db, { clock, migrations: extra })).toEqual({ applied: [], version: 2 });
+      expect(await appliedVersions(db)).toEqual([1, 2]);
+      await expect(
+        migrate(db, {
+          migrations: [{ version: 3, name: "gap", up: { sqlite: [], postgres: [] } }],
+        }),
+      ).rejects.toThrow(/contiguous/);
+      await expect(
+        migrate(db, {
+          migrations: [
+            ...extra,
+            { version: 3, name: "bad", up: { sqlite: ["THIS IS NOT SQL"], postgres: [] } },
+          ],
+        }),
+      ).rejects.toThrow();
+      expect(await appliedVersions(db)).toEqual([1, 2]);
+    } finally {
+      await db.close();
+    }
+  });
+});
+
+describe("generated data-model doc", () => {
+  it("is current: docs/maintainers/data-model.md equals the renderer output", () => {
+    const target = join(here, "..", "..", "..", "docs", "maintainers", "data-model.md");
+    const onDisk = normalizeNewlines(readFileSync(target, "utf8"));
+    expect(onDisk).toBe(renderDataModelDoc());
+  });
+
+  it("is deterministic, LF-only, sorted, and documents every table, column and status graph", () => {
+    const a = renderDataModelDoc();
+    const b = renderDataModelDoc();
+    expect(a).toBe(b);
+    expect(a).not.toMatch(/\r/);
+    expect(a.endsWith("\n")).toBe(true);
+    expect(a.endsWith("\n\n")).toBe(false);
+    expect(a.startsWith("# Data model\n\n> Generated by `pnpm docs:schema`")).toBe(true);
+    const headings = [...a.matchAll(/^### ([a-z_]+)$/gm)]
+      .map((m) => m[1])
+      .filter((h) => ENTITIES[h as string]);
+    expect(headings).toEqual([...headings].sort());
+    expect(headings).toHaveLength(Object.keys(ENTITIES).length);
+    for (const e of Object.values(ENTITIES))
+      for (const c of e.columns) expect(a, `${e.table}.${c.name}`).toContain(`| \`${c.name}\` |`);
+    for (const key of Object.keys(STATUS_GRAPHS)) expect(a).toContain(`\`${key}\`:`);
+    expect(a).toContain("### Claims");
+    expect(a).toContain("### Append-only tables");
+    expect(schemaSummary().find((s) => s.table === "task")?.columns).toBe(
+      allColumns(ENTITIES.task as EntityDef).length,
+    );
+  });
+});
+
+describe("dialect helpers", () => {
+  it("rewrites ? to $n outside quotes and dollar-quoted bodies", () => {
+    expect(toPositional("SELECT ? , ?")).toBe("SELECT $1 , $2");
+    expect(toPositional(`SELECT '?' AS q, "a?b", ? FROM t WHERE x = ?`)).toBe(
+      `SELECT '?' AS q, "a?b", $1 FROM t WHERE x = $2`,
+    );
+    expect(toPositional("SELECT 'it''s ?', ?")).toBe("SELECT 'it''s ?', $1");
+    expect(toPositional("CREATE FUNCTION f() AS $$ SELECT '?' ? $$ LANGUAGE sql; SELECT ?")).toBe(
+      "CREATE FUNCTION f() AS $$ SELECT '?' ? $$ LANGUAGE sql; SELECT $1",
+    );
+  });
+
+  it("maps column types and literals per dialect", () => {
+    expect(sqlType("json", "sqlite")).toBe("TEXT");
+    expect(sqlType("json", "postgres")).toBe("JSONB");
+    expect(sqlType("money", "postgres")).toBe("BIGINT");
+    expect(sqlType("real", "postgres")).toBe("DOUBLE PRECISION");
+    expect(sqlLiteral(true, "bool", "sqlite")).toBe("1");
+    expect(sqlLiteral(false, "bool", "postgres")).toBe("FALSE");
+    expect(sqlLiteral("it's", "text", "sqlite")).toBe("'it''s'");
+    expect(sqlLiteral({ a: [1] }, "json", "postgres")).toBe(`'{"a":[1]}'`);
+    expect(jsonArrayContains('"tags"', "sqlite")).toContain("json_each");
+    expect(jsonArrayContains('"tags"', "postgres")).toContain("@>");
+    expect(upsertSql("t", ["id", "n"], ["id"], ["n"])).toBe(
+      `INSERT INTO "t" ("id", "n") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "n" = excluded."n" RETURNING *`,
+    );
+  });
+});
+
+describe("codec", () => {
+  const task = ENTITIES.task as EntityDef;
+
+  it("decodes SQLite and Postgres raw rows to the same JS shape", () => {
+    const fromSqlite = decodeRow<Record<string, unknown>>(
+      task,
+      {
+        small: 1,
+        depends_on: '["a"]',
+        budget_usd_micro: 5,
+        risk_tier: "2",
+        status: "ready",
+      },
+      "sqlite",
+    );
+    const fromPg = decodeRow<Record<string, unknown>>(
+      task,
+      {
+        depends_on: ["a"],
+        budget_usd_micro: 5,
+        risk_tier: 2,
+        status: "ready",
+      },
+      "postgres",
+    );
+    expect(fromSqlite.depends_on).toEqual(["a"]);
+    expect(fromPg.depends_on).toEqual(["a"]);
+    expect(fromSqlite.risk_tier).toBe(2);
+    expect(
+      decodeRow<Record<string, unknown>>(ENTITIES.project as EntityDef, { active: 0 }, "sqlite")
+        .active,
+    ).toBe(false);
+    expect(
+      decodeRow<Record<string, unknown>>(
+        ENTITIES.project as EntityDef,
+        { active: true },
+        "postgres",
+      ).active,
+    ).toBe(true);
+  });
+
+  it("encodes booleans and JSON per dialect and rejects bad input", () => {
+    expect(
+      encodePatch(ENTITIES.project as EntityDef, { active: true, repos: ["r"] }, "sqlite"),
+    ).toEqual({ columns: ["active", "repos"], values: [1, '["r"]'] });
+    expect(
+      encodePatch(ENTITIES.project as EntityDef, { active: true, repos: ["r"] }, "postgres"),
+    ).toEqual({ columns: ["active", "repos"], values: [true, '["r"]'] });
+    expect(() => encodePatch(task, { nope: 1 }, "sqlite")).toThrow(/unknown column/);
+    expect(() => encodePatch(task, { title: null }, "sqlite")).toThrow(/cannot be null/);
+    expect(() => encodePatch(task, { status: "flying" }, "sqlite")).toThrow(/invalid value/);
+    expect(() => encodePatch(task, { priority: 1.5 }, "sqlite")).toThrow(/integer/);
+    expect(() => encodePatch(task, { budget_usd_micro: 2 ** 53 + 2 }, "sqlite")).toThrow(/2\^53/);
+    expect(() => encodePatch(task, { claim_expires: 12 }, "sqlite")).toThrow(/ISO-8601/);
+    expect(
+      encodePatch(task, { claim_expires: new Date("2026-01-01T00:00:00Z") }, "sqlite").values,
+    ).toEqual(["2026-01-01T00:00:00.000Z"]);
+  });
+});
+
+describe("workflow graphs", () => {
+  it("encodes the task graph from the spec", () => {
+    expect(canTransition(TASK_TRANSITIONS, "draft", "ready")).toBe(true);
+    expect(canTransition(TASK_TRANSITIONS, "in_review", "done")).toBe(true);
+    expect(canTransition(TASK_TRANSITIONS, "done", "ready")).toBe(false);
+    for (const active of ["ready", "claimed", "in_progress", "in_review"] as const) {
+      for (const exit of ["needs_human", "failed", "cancelled"] as const)
+        expect(canTransition(TASK_TRANSITIONS, active, exit), `${active}->${exit}`).toBe(true);
+    }
+    expect(canTransition(TASK_TRANSITIONS, "needs_human", "ready")).toBe(true);
+    expect(canTransition(TASK_TRANSITIONS, "failed", "ready")).toBe(true);
+    expect(() => assertTransition(TASK_TRANSITIONS, "task", "draft", "done")).toThrow(
+      /illegal transition/,
+    );
+    for (const graph of Object.values(STATUS_GRAPHS)) {
+      for (const [from, targets] of Object.entries(graph))
+        for (const to of targets) expect(graph[to], `${from}->${to}`).toBeDefined();
+    }
+  });
+});
+
+describe("store urls", () => {
+  it("parses sqlite and postgres urls and rejects others without leaking credentials", () => {
+    expect(parseStoreUrl("sqlite::memory:")).toEqual({ dialect: "sqlite", location: ":memory:" });
+    expect(parseStoreUrl("sqlite:/tmp/x.db")).toEqual({ dialect: "sqlite", location: "/tmp/x.db" });
+    expect(parseStoreUrl("sqlite:C:\\data\\x.db")).toEqual({
+      dialect: "sqlite",
+      location: "C:\\data\\x.db",
+    });
+    expect(parseStoreUrl("postgresql://u:p@h/d")).toEqual({
+      dialect: "postgres",
+      url: "postgresql://u:p@h/d",
+    });
+    expect(() => parseStoreUrl("sqlite:")).toThrow(/path/);
+    let caught: unknown;
+    try {
+      parseStoreUrl("mysql://user:hunter2@host/db");
+    } catch (e) {
+      caught = e;
+    }
+    expect(String((caught as { details: { url: string } }).details.url)).not.toContain("hunter2");
+  });
+});
+
+describe("monotonic ids", () => {
+  it("are valid UUIDv7, unique and sorted in creation order within one millisecond", () => {
+    const ids = Array.from({ length: 3000 }, () => monotonicId(1_700_000_000_000));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect([...ids].sort()).toEqual(ids);
+    for (const id of ids.slice(0, 50))
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    const later = monotonicId(1_700_000_000_000 + 60_000);
+    expect(later > (ids[ids.length - 1] as string)).toBe(true);
+    expect(monotonicId(1)).toMatch(/^[0-9a-f]{8}-/); // time never runs backwards: reuses the last ms
+  });
+});

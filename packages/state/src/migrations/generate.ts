@@ -1,0 +1,141 @@
+import { quoteIdent, quoteString, sqlLiteral, sqlType } from "../db/dialect.ts";
+import type { Dialect } from "../db/types.ts";
+import {
+  allColumns,
+  type ColumnDef,
+  ENTITIES,
+  type EntityDef,
+  primaryKeyOf,
+  tableOrder,
+} from "../schema.ts";
+import type { Migration } from "./types.ts";
+
+/**
+ * Generates DDL from the declarative schema. Migration v1 is this generator's output,
+ * snapshotted into 0001-initial.ts; a test asserts they are equal so a schema change
+ * forces a new migration file instead of a silent edit of v1.
+ */
+
+export const APPEND_ONLY_FUNCTION = "forerunner_append_only";
+
+function columnDdl(col: ColumnDef, dialect: Dialect): string {
+  const parts = [quoteIdent(col.name), sqlType(col.type, dialect)];
+  if (!col.nullable) parts.push("NOT NULL");
+  if (col.default !== undefined)
+    parts.push(`DEFAULT ${sqlLiteral(col.default, col.type, dialect)}`);
+  if (col.references) {
+    parts.push(
+      `REFERENCES ${quoteIdent(col.references.table)} (${quoteIdent(col.references.column)})`,
+    );
+  }
+  return parts.join(" ");
+}
+
+export function createTableSql(entity: EntityDef, dialect: Dialect): string {
+  const lines: string[] = [];
+  for (const col of allColumns(entity)) lines.push(columnDdl(col, dialect));
+  lines.push(`PRIMARY KEY (${quoteIdent(primaryKeyOf(entity))})`);
+  for (const col of allColumns(entity)) {
+    if (col.enum) {
+      const values = col.enum.map((v) => quoteString(v)).join(", ");
+      lines.push(
+        `CONSTRAINT ${quoteIdent(`${entity.table}_${col.name}_enum`)} CHECK (${quoteIdent(col.name)} IN (${values}))`,
+      );
+    }
+    if (col.check) {
+      lines.push(
+        `CONSTRAINT ${quoteIdent(`${entity.table}_${col.name}_check`)} CHECK (${col.check})`,
+      );
+    }
+  }
+  return `CREATE TABLE IF NOT EXISTS ${quoteIdent(entity.table)} (\n  ${lines.join(",\n  ")}\n)`;
+}
+
+export function indexName(entity: EntityDef, columns: string[]): string {
+  return `${entity.table}_${columns.join("_")}_idx`;
+}
+
+export function createIndexSql(entity: EntityDef, _dialect: Dialect): string[] {
+  return entity.indexes.map((idx) => {
+    const unique = idx.unique ? "UNIQUE " : "";
+    const cols = idx.columns.map(quoteIdent).join(", ");
+    const where = idx.where ? ` WHERE ${idx.where}` : "";
+    return `CREATE ${unique}INDEX IF NOT EXISTS ${quoteIdent(indexName(entity, idx.columns))} ON ${quoteIdent(entity.table)} (${cols})${where}`;
+  });
+}
+
+/** Statements that make a table append-only (triggers refusing UPDATE and DELETE). */
+export function appendOnlySql(entity: EntityDef, dialect: Dialect): string[] {
+  if (!entity.appendOnly) return [];
+  const t = quoteIdent(entity.table);
+  if (dialect === "sqlite") {
+    const msg = quoteString(`append_only: ${entity.table}`);
+    return [
+      `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(`${entity.table}_append_only_update`)} BEFORE UPDATE ON ${t} BEGIN SELECT RAISE(ABORT, ${msg}); END`,
+      `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(`${entity.table}_append_only_delete`)} BEFORE DELETE ON ${t} BEGIN SELECT RAISE(ABORT, ${msg}); END`,
+    ];
+  }
+  return [
+    `CREATE OR REPLACE TRIGGER ${quoteIdent(`${entity.table}_append_only`)} BEFORE UPDATE OR DELETE ON ${t} FOR EACH ROW EXECUTE FUNCTION ${APPEND_ONLY_FUNCTION}()`,
+  ];
+}
+
+/** Postgres needs one trigger function shared by every append-only table. */
+export function appendOnlyFunctionSql(dialect: Dialect): string[] {
+  if (dialect === "sqlite") return [];
+  return [
+    `CREATE OR REPLACE FUNCTION ${APPEND_ONLY_FUNCTION}() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'append_only: %', TG_TABLE_NAME; END $$ LANGUAGE plpgsql`,
+  ];
+}
+
+/** Full DDL for a schema in one dialect: tables in dependency order, then indexes, then triggers. */
+export function generateSchemaSql(
+  dialect: Dialect,
+  entities: Record<string, EntityDef> = ENTITIES,
+): string[] {
+  const byTable = new Map(Object.values(entities).map((e) => [e.table, e]));
+  const order = tableOrder(entities).map((t) => byTable.get(t) as EntityDef);
+  const out: string[] = [];
+  for (const e of order) out.push(createTableSql(e, dialect));
+  for (const e of order) out.push(...createIndexSql(e, dialect));
+  if (order.some((e) => e.appendOnly)) out.push(...appendOnlyFunctionSql(dialect));
+  for (const e of order) out.push(...appendOnlySql(e, dialect));
+  return out;
+}
+
+/** The `up` of migration v1, generated from ENTITIES. */
+export function generateInitialMigration(
+  entities: Record<string, EntityDef> = ENTITIES,
+): Migration["up"] {
+  return {
+    sqlite: generateSchemaSql("sqlite", entities),
+    postgres: generateSchemaSql("postgres", entities),
+  };
+}
+
+/** Render a migration as a TypeScript module (used to snapshot v1). */
+export function renderMigrationModule(migration: Migration): string {
+  const list = (stmts: string[]) => stmts.map((s) => `    ${JSON.stringify(s)},`).join("\n");
+  return [
+    "// GENERATED by packages/state/scripts/write-initial-migration.ts from src/schema.ts.",
+    "// Do not edit. A schema change needs a new migration file; test/schema.test.ts fails",
+    "// when this snapshot no longer matches the generator output.",
+    'import type { Migration } from "./types.ts";',
+    "",
+    `export const MIGRATION_${String(migration.version).padStart(4, "0")}: Migration = {`,
+    `  version: ${migration.version},`,
+    `  name: ${JSON.stringify(migration.name)},`,
+    "  up: {",
+    "    sqlite: [",
+    list(migration.up.sqlite),
+    "    ],",
+    "    postgres: [",
+    list(migration.up.postgres),
+    "    ],",
+    "  },",
+    "};",
+    "",
+  ]
+    .join("\n")
+    .replace(/\n {4}\],\n {4}\],/g, "\n    ],\n    ],");
+}

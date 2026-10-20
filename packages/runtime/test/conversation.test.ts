@@ -1,4 +1,3 @@
-import { SimulatedClock } from "@forerunner/platform";
 import { openStore } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
