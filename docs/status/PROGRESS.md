@@ -8,15 +8,27 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | --- | --- | --- | --- |
 | 0 | Foundations | CI green on both OS (run 39352102564); fresh-install timing pending the install scripts | gates.md § Phase 0 |
 | 1 | Single agent that does real work | gate passed on the fake provider (10 tasks via PRs, overspend blocked, kill under 2 s); daemon API, `fr daemon` and the phase-1 UI (home, project tabs, live session, inbox, settings, chat) done and tested against a fake daemon; live subscription/API checks blocked on credentials | gates.md § Phase 1 |
-| 2 | Two agents, one project | local half of the gate passed (two agents, five sessions each); state service with device auth and realtime, receipts, decision log, GitHub Projects mirror done; offline-48-hours half pending the sync test | gates.md § Phase 2 |
+| 2 | Two agents, one project | local half of the gate passed (two agents, five sessions each); state service with device auth and realtime, receipts, decision log, GitHub Projects mirror, approvals web fallback done; offline-48-hours half pending the sync test | gates.md § Phase 2 |
 | 3 | Critic and quality loop | critic service (tiers, findings, verdicts, calibration), eval sets, retry ladder built and unit-tested; gate needs a live model (blocked on credentials); reviews tab pending | gates.md § Phase 3 |
 | 4 | Memory, docs and learning | memory package (three scopes, retrieval under budget, consolidation, promotion) built and unit-tested; four-week simulation and memory UI pending | |
-| 5 | Human experience and voice | voice pipeline, natural-language commands with change cards and undo built; notifications, Android app, desktop shell, imports in progress | |
+| 5 | Human experience and voice | voice pipeline, natural-language commands with change cards and undo, desktop shell (tray, notifications, restart, deep links) built; notifications, Android app, imports in progress | |
 | 6 | Capabilities | extensions registry with live revocation, sandboxed browser, agent email with the five modes and email commands, sandboxes, context savings done; injection suite, Cloudflare, desktop control, cloud runner in progress | |
 | 7 | Self-improvement and model economics | signed updates with staged install and rollback, model watch, estimate learning built and wired; Forerunner-as-a-project and the update-and-restart shell side pending | |
 | 8 | Full integration and release 1.0 | not started | |
 
 ## Log
+
+### 2026-10-20 (approvals web and desktop shell landed)
+- Credits restored; the four cut-off waves resumed with a note to continue from their partial
+  files (core loop, UI phase 2, phase 3 and 4 gate harnesses; desktop shell fixes and Android;
+  cloud runner and approvals web fixes; notifications, Cloudflare and the update and extension
+  critics).
+- Snapshot 9f367b3: approvals web (46 tests, ADR 0034), desktop shell (ADR 0031), update CLI
+  (`fr update manifest|sign`) and extension cost helpers, ADR 0009/0024 amendments, ADR 0026
+  restart code reconciled with the runtime (86). CI gained the UI and approvals-web test step
+  and failed once on timing only (daemon test setup on Windows, first SSE event wait on
+  Linux); both waits lengthened in the next commit, which also carries the shell and
+  approvals fix passes (68 cargo tests with fmt and clippy clean; 49 approvals tests).
 
 ### 2026-10-20 (waves 2 and 4a landed)
 - Snapshots: email and browser capabilities (8367764); daemon wiring of extensions, updates,

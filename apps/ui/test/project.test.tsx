@@ -77,8 +77,9 @@ describe("Project page", () => {
     });
     const header = await screen.findByTestId("session-header");
     expect(header).toHaveTextContent(/Session sess_/);
+    // The first event arrives over SSE after the session page mounts; CI runners have needed more than 4 s.
     await waitFor(() => expect(screen.getAllByTestId("event-row").length).toBeGreaterThan(0), {
-      timeout: 4000,
+      timeout: 15_000,
     });
   });
 });

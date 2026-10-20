@@ -266,7 +266,7 @@ workflow runs `pnpm --filter @forerunner/ui test:ui` after `playwright install c
 ### Purpose
 
 The Tauri 2 shell for Windows and Linux that attaches the shared UI to the local daemon
-(ADR 0026, ADR 0034): it resolves the app directories exactly as `appDirs()` does, reads
+(ADR 0026, ADR 0031): it resolves the app directories exactly as `appDirs()` does, reads
 `<runtime>/daemon.json`, checks `/health`, starts `fr daemon` when nothing healthy is there,
 injects the daemon address and token into the webview before the UI loads, keeps a tray with
 the kill switch, "pause email", "Update and restart" and Quit, shows OS notifications for the
@@ -302,7 +302,8 @@ apps/desktop/src-tauri/
     window_state.rs   <config>/window-state.json, placement() against the monitors
     state.rs          ShellState (shared), tray_view(): what the tray shows, derived from facts
     actions.rs        bootstrap() attach-or-start, attached(), handle_daemon_exit(), kill switch,
-                      resume, probe_email(), email toggle, update_and_restart()
+                      resume, probe_email(), email toggle, update_and_restart(),
+                      watch_external_restart() for a daemon the shell did not start
     events.rs         the Rust /events subscription and the 10 s /health monitor
     tray.rs           tray icon, menu items, refresh() from tray_view, menu dispatch
     windows.rs        main window (build/rebuild with the injection), splash, deep-link navigation
@@ -324,9 +325,13 @@ is allowed, show the splash window (served by the shell's own `frshell://` proto
 scripts), locate `fr` (`install::locate_fr`), spawn it with an argv array (`… daemon`),
 detached (own process group on Unix, `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` on
 Windows), stdout and stderr appended to `<logs>/daemon-shell.log`, then poll every 250 ms for a
-`daemon.json` with the child's pid that answers `/health` (60 s budget; the child exiting
-first is a failure). Failures end in a native dialog with the log path; the tray stays and
-"Open" tries again. The daemon is never killed by the shell.
+`daemon.json` that is fresh and answers `/health` (60 s budget; the child exiting first is a
+failure). Fresh (`daemon::is_fresh`) means a different `pid` or `startedAt` than the file on
+disk before the spawn (else the last file attached to; any file when there was none). The pid
+the shell spawned is accepted too but never required: `node …/tsx/dist/cli.mjs` runs the CLI
+in a child node process and `fr.cmd` runs under `cmd.exe`, so the daemon records a grandchild
+pid. Failures end in a native dialog with the log path; the tray stays and "Open" tries
+again. The daemon is never killed by the shell.
 
 **Injection (`inject.rs`).** The main window is built in Rust (not from `tauri.conf.json`)
 with an initialization script that defines a frozen, non-configurable
@@ -340,8 +345,9 @@ so `windows::ensure_main` rebuilds the window when the url or token changed.
 **Tray (`tray.rs`, `state::tray_view`).** Open Forerunner; Kill switch: stop everything
 (confirm dialog → `POST /kill { scope: "all" }`; then disabled, "Resume" enabled →
 `POST /kill/resume`); Pause email / Resume email (one item; `POST /agents/<id>/email/pause|resume`
-where `<id>` is `/me`'s `agent.id`; enabled only after `GET /agents/<id>/email` answered 200,
-disabled with the reason in its text otherwise, since menu items have no tooltips); Update and
+where `<id>` is `/me`'s `agent.id`; enabled only after `GET /agents/<id>/email/settings`
+answered 200, disabled with the reason in its text otherwise, since menu items have no
+tooltips; a test reads `emailRouteTable()`'s source so a route rename fails it); Update and
 restart (confirm dialog → `POST /updates/apply {}`; 202 expected); Quit (the daemon keeps
 running). The icon tooltip reads "Forerunner <version> — N running sessions[, M waiting on
 you][; kill switch active][; email paused]". Left-click opens the window. Closing the window
@@ -353,10 +359,12 @@ header, 60 s read timeout, backoff 1→15 s) and shows an OS notification (notif
 for every `notification` event: `{ title, body?, level?, route? }`, title required, truncated
 at 200/1000 characters, `route` kept only when `is_safe_route` accepts it. Quiet hours are the
 daemon's: the shell shows what it receives. `inbox.changed` updates the tooltip,
-`restart.requested` marks the next exit as expected. The `/health` monitor (10 s) refreshes
-the tray; after three misses the daemon counts as unreachable and, when the daemon was not
-the shell's own process and no restart is expected, the shell looks for a new `daemon.json`
-without starting one.
+`restart.requested` marks the next exit as expected and, for a daemon the shell did not start
+that nothing watches yet (`state::needs_external_watch`: the human pressed "Update and
+restart" in the UI, not the tray), starts `actions::watch_external_restart`. The `/health`
+monitor (10 s) refreshes the tray; after three misses the daemon counts as unreachable and,
+when the daemon was not the shell's own process and no restart is expected, the shell looks
+for a new `daemon.json` without starting one.
 
 **Restart (`restart.rs`, `actions::handle_daemon_exit`).** When the daemon the shell started
 exits: read `<runtime>/restart.json`; the exit matches the request when it equals the file's
@@ -367,8 +375,15 @@ dialog). The restart counter resets once the daemon has been healthy for 30 s. O
 request file is removed, the splash says "Restarting…", the shell waits 3 s for a user service
 to bring a fresh `daemon.json`, else runs `bootstrap` again; `locate_fr` prefers the version
 `<data>/versions/current.json` names when its directory is a runnable install. For a daemon
-the shell did not start, "Update and restart" watches `/health` until it fails and then applies
-the same path with the request's exit code.
+the shell did not start (tray or UI request alike), `watch_external_restart` probes `/health`
+every second for up to 90 s and applies the same path once `restart::external_daemon_gone`
+says the daemon is gone: a pid the OS reports dead (Linux `/proc`) after any miss; a pid
+reported alive is waited for however many probes it misses (it may be staging the update);
+without a pid signal (Windows), three consecutive misses together with `restart.json`, or ten
+misses on their own. One missed probe alone never relaunches, so two daemons never write
+`daemon.json` side by side. The exit code fed to `decide_after_exit` is the request's
+(`external_exit_code`; `None`, a crash, when the daemon left no request); `restart.json` is
+removed only when a relaunch is decided.
 
 **Deep links (`deeplink.rs`).** Scheme `fr`, registered by the bundler on Windows and Linux
 (`tauri.conf.json` → `plugins.deep-link.desktop.schemes`) and at start with `register_all()`
@@ -400,11 +415,16 @@ struct that carries it. `node scripts/secret-scan.mjs apps/desktop` is clean.
 - **A directory rule change**: change `packages/platform/src/paths.ts`, then `dirs.rs` and its
   fixture table in the same PR.
 - **A new deep-link route**: add the root and its segment budget to `deeplink::ROOTS` and a
-  case to the tests; document it in ADR 0034's list.
+  case to the tests; document it in ADR 0031's list.
 - **Another way to find `fr`**: add a step to `install::locate_fr` (keep the order of ADR 0026)
   with a `FakeFs` test.
 - **The restart budget**: `restart::MAX_RESTARTS`, `STABLE_AFTER_SECS` and
-  `decide_after_exit`; the tests enumerate every branch.
+  `decide_after_exit`; the tests enumerate every branch. The "gone" rule for a daemon the
+  shell did not start is `restart::external_daemon_gone` and `MISSES_WITHOUT_REQUEST`; a
+  test in `actions` pins that the misses fit the 90 s budget.
+- **The email routes move**: change `actions::email_settings_path` / `email_action_path`;
+  `actions::tests::email_paths_match_the_route_table_source` fails until they match
+  `packages/capabilities/src/email/routes.ts` again.
 
 ### Tests
 
@@ -419,18 +439,24 @@ Unit tests live next to the code (`#[cfg(test)]`): `dirs` (override on every pla
 relative `FORERUNNER_HOME`, empty override ignored, the Windows/XDG cases of `paths.test.ts`,
 the full fixture table per platform, home fallback, app name); `daemon` (the file
 `startDaemon` writes, missing/bad JSON/bad shape, off-machine URL refused, stale pid, attach vs
-start, freshness, daemon error bodies, client `Debug` hides the token); `install` (install dir
-→ node argv, Windows `node.exe` and `.cmd` shims, fall-through to PATH, the tried list,
-`install.json` parsing and reading, staged version first); `restart` (file parsing, exit-code
-matching, one restart then give up, rollback's extra relaunch, crash/stop, file round trip);
-`inject` (every field, JSON escaping, dev origin added once, `Debug` hides the token); `sse`
-(frames across chunks and CRLF, comments, blank frames, notification validation and
+start, freshness as a changed file, a grandchild pid written after the spawn attaches, daemon
+error bodies, client `Debug` hides the token); `install` (install dir → node argv, Windows
+`node.exe` and `.cmd` shims, fall-through to PATH, the tried list, `install.json` parsing and
+reading, staged version first); `restart` (file parsing, exit-code matching, one restart then
+give up, rollback's extra relaunch, crash/stop, file round trip, the external "gone" rule per
+signal, the external exit code); `actions` (email paths against the route table's source,
+the external watch budget); `inject` (every field, JSON escaping, dev origin added once,
+`Debug` hides the token); `sse` (frames across chunks and CRLF, bytes split inside a
+character, invalid bytes, the line cap, comments, blank frames, notification validation and
 truncation, restart/inbox/heartbeat/unknown); `deeplink` (documented links, rejections,
 safe routes, navigate script, navigation policy); `window_state` (monitor check, minimum size,
 file round trip); `state` (tray view for unreachable, kill/resume, email availability and
-toggle, busy, `Debug` hides the token); `supervisor` (log path, spawn failure logged);
+toggle, busy, when a restart announcement starts the external watch, `Debug` hides the
+token); `supervisor` (log path, spawn failure logged); `events` (reconnect backoff);
 `secret`; `env`; `lib` (install id persisted, 0600). The Tauri glue (window building, tray
-wiring, dialogs) is exercised by `tauri dev` and the CI build, not by unit tests.
+wiring, dialogs) is exercised by `tauri dev` and the CI build, not by unit tests. Last run
+2026-10-20 on Linux: `cargo fmt --check` clean, `cargo clippy --all-targets -- -D warnings`
+clean, `cargo test` 68 passed, 0 failed.
 
 ### Known issues
 
@@ -450,6 +476,14 @@ wiring, dialogs) is exercised by `tauri dev` and the CI build, not by unit tests
   the icon is invisible but the window and the daemon work.
 - The first run against the real daemon end to end (attach, restart, deep link) is not yet
   recorded in `docs/status/gates.md`.
+- `.github/workflows/desktop.yml` only runs `tauri build`; the three Rust checks above
+  (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, each with
+  `working-directory: apps/desktop/src-tauri`) still have to be added before the build step
+  on both matrix OSes so the Windows fixture cases run in CI. The workflow is outside the
+  desktop item's paths; the orchestrator owns `.github/`.
+- `docs/requirements.md` rows K.8, S.8, S.28, M.3 and M.4 do not list the shell's test
+  modules (`apps/desktop/src-tauri/src/{state,restart,sse,dirs,daemon,actions}.rs`) yet; same
+  ownership.
 
 ## Approvals web
 
@@ -532,14 +566,24 @@ apps/approvals-web/
 | Screen | What it does | Routes used |
 | --- | --- | --- |
 | Sign-in | states: exchanging, error in plain words (used or expired link, unreachable service, unsupported browser), idle ("open this page from the link") | `POST /pairing/complete` |
-| Header (Shell) | active project always shown (`<select>`, remembered per tab; defaults to the stored choice, else a blocked project, else the first), Inbox with the blocking badge, Chat, feed badge (live / polling / connecting), kill switch (confirm dialog → `kill {scope:"all"}` to `pc`, and `cloud` when it runs sessions; pick-up and outcome shown), Sign out | `GET /projects`, `GET /devices`, `GET /sessions?status=running,paused`, `GET /remote/commands`, `POST /remote/commands`, `GET /remote/commands/:id`, `GET /events` |
+| Header (Shell) | active project always shown (`<select>`, remembered per tab; defaults to the stored choice, else a blocked project, else the first), Inbox with the blocking badge, Chat, feed badge (live / polling / connecting), kill switch (confirm dialog → `kill {scope:"all"}` to every runner that is present: `pc` when a PC is online, `cloud` when it runs sessions; enabled when either is there, so cloud-only work can be stopped from the web; one request per target, a refusal shown next to the other target's status; pick-up and outcome shown), Sign out | `GET /projects`, `GET /devices`, `GET /sessions?status=running,paused`, `GET /remote/commands`, `POST /remote/commands`, `GET /remote/commands/:id`, `GET /events` |
 | Inbox | requests blocking first (then newest), each with kind, project, "Blocks work" / "Does not block", "High risk" badge, why it matters, context (steps), option buttons or a free-text field; answer posts `{ version, answer }`; `409` shows "changed on another device" with Reload; answered requests leave the list and are not asked again (the service lists open ones; the runtime records the decision, spec J.4); messages with Mark read; reloads on `human_request.changed` / `message.changed` and on polls | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /confirm/challenge`, `POST /messages/:id/receipt` |
-| Chat | read-only quick chat for the active project relayed as `chat` remote command; the reply arrives through the command's result (`{ reply }`); "answering…", "not picked up yet", failures in plain words; disabled with the reason when the link has no `write:remote`, when no PC is online, or when there is no project | `POST /remote/commands`, `GET /remote/commands/:id` |
+| Chat | read-only quick chat for the active project relayed as `chat` remote command; the reply arrives through the command's result (`{ reply }`); "answering…", "not picked up yet", failures in plain words; disabled with the reason when the link has no `write:remote`, when no PC is online, or when there is no project (the kill switch, by contrast, stays usable for a cloud runner alone) | `POST /remote/commands`, `GET /remote/commands/:id` |
 
 Presence (`lib/presence.ts`): a PC counts as online when a `desktop` device was seen within
 five minutes, a session runs or pauses on the `pc` runner, or a runner touched a remote
 command within five minutes; cloud sessions set `cloudActive` for the kill switch. Refreshed on
 `device.changed`, `session.changed`, `remote_command.changed` and every poll.
+
+Catch-up rule for remote commands (Shell and Chat): the feed does not poll in live mode, and
+a command's `remote_command.changed` events can arrive before the screen knows the command
+(the POST response is still in flight, or the banner's subscription starts only after every
+target answered). So the screen never relies on the event beating it: the kill banner fetches
+each command once right after subscribing, the chat tracks the command id in a ref the moment
+the POST answers and fetches the command once after adding the entry, and a fetched view
+replaces the shown one only when its `version` is newer (two fetches overtaking each other
+cannot roll a `done` back to `picked up`). Keep this when adding another command-driven
+screen; `test/harness.tsx` `delayingFetch` reproduces the slow-response case.
 
 ### Tests
 
@@ -549,8 +593,9 @@ cd apps/approvals-web && pnpm test        # Vitest, jsdom, fake state service on
 ```
 
 Testing Library and Hono are not among this app's dependencies, so `test/harness.tsx` mounts
-the page with `react-dom/client`, drives it with `act()` and a `waitFor`, and
-`test/fake-state-service.ts` is a `node:http` server: pairing codes, hashed tokens, Ed25519
+the page with `react-dom/client`, drives it with `act()` and a `waitFor`, can replace the
+page's fetch (`delayingFetch`, `remoteCommandPost`: hold one response after the fake answered,
+to reproduce races against the feed), and `test/fake-state-service.ts` is a `node:http` server: pairing codes, hashed tokens, Ed25519
 signature verification (`node:crypto`, SPKI prefix), the five-minute window and replay guard,
 scope checks, version conflicts, the high-risk rule with the `/confirm/challenge` stand-in, a
 scripted PC that picks commands up and answers chat, SSE with `Last-Event-ID` replay, and a
@@ -566,8 +611,8 @@ behave like the state service does today.
 | `presence.test.ts` | each signal, stale/revoked/phone devices, cloud flag |
 | `app.test.tsx` | exchange from the link, fragment stripped, token in `sessionStorage` only and never in cookie / `localStorage` / console / URLs / address bar, reload reuses the session without a second exchange, foreign session ignored, sign out, used or unknown code |
 | `inbox.test.tsx` | blocking first with why / steps / options / flags, answer with version and signature then gone for good, free text, credential notice, 409 → Reload → answer with the new version, high-risk code flow (wrong code, right code, `biometric` header never sent), service without the route, mark read, reload on another device's answer, read-only link |
-| `chat.test.tsx` | relay as `chat` command with project and text, reply shown, disabled without a PC (and enabled when a session appears), disabled without `write:remote`, service without chat, failed answer |
-| `shell.test.tsx` | active project shown and remembered, kill switch confirm/cancel/confirm → command with `scope: all`, outcome shown, disabled without scope or PC |
+| `chat.test.tsx` | relay as `chat` command with project and text, reply shown, a reply the feed announced before the POST response arrived is still shown in live mode (regression), disabled without a PC (and enabled when a session appears), disabled without `write:remote`, service without chat, failed answer |
+| `shell.test.tsx` | active project shown and remembered, kill switch confirm/cancel/confirm → command with `scope: all`, outcome shown, PC status kept next to a cloud refusal, PC outcome still shown when the cloud POST answers late in live mode (regression), cloud-only kill when no PC is online (only `cloud` is posted), disabled without scope or without any runner |
 
 ### Requirement IDs covered
 

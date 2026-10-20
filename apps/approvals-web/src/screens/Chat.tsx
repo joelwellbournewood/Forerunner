@@ -9,6 +9,13 @@ import { useApp } from "../store/AppContext.tsx";
  * 0026): the desktop runtime's conversation agent answers read-only and completes the
  * command with its reply. Nothing runs here. The screen is disabled, with the reason, when
  * the link has no `write:remote` scope or when no PC is online to pick commands up.
+ *
+ * The reply arrives through `remote_command.changed`, and the feed does not poll in live
+ * mode, so a reply must never depend on the event beating this screen: the command id is
+ * tracked in a ref the moment the service answers the POST (not on the next render), and the
+ * command is fetched once right after its entry is added, which covers an event that went by
+ * while the POST response was in flight. A view only replaces the entry's state when its
+ * version is newer, so a slow fetch cannot roll a `done` back to `picked up`.
  */
 export interface ChatEntry {
   id: string;
@@ -16,6 +23,8 @@ export interface ChatEntry {
   text: string;
   status?: RemoteCommandView["status"];
   commandId?: string;
+  /** Version of the command view the entry shows; older views are ignored. */
+  version?: number;
   sentAt?: number;
 }
 
@@ -39,6 +48,8 @@ export function Chat() {
   const [sending, setSending] = useState(false);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
+  /** Ids of the commands this screen sent, known the moment the POST answered. */
+  const commandIds = useRef(new Set<string>());
 
   const canRemote = app.client.hasScope("write:remote");
   const pcOnline = app.presence?.pcOnline ?? false;
@@ -56,18 +67,13 @@ export function Chat() {
   const applyCommand = useCallback((c: RemoteCommandView) => {
     setEntries((list) =>
       list.map((e) => {
-        if (e.commandId !== c.id) return e;
-        if (c.status === "done")
-          return { ...e, status: c.status, text: replyText(c.result) || "(empty reply)" };
+        if (e.commandId !== c.id || (e.version ?? 0) > c.version) return e;
+        const next = { ...e, status: c.status, version: c.version };
+        if (c.status === "done") return { ...next, text: replyText(c.result) || "(empty reply)" };
         if (c.status === "failed")
-          return {
-            ...e,
-            status: c.status,
-            text: replyText(c.result) || "The PC could not answer.",
-          };
-        if (c.status === "picked_up")
-          return { ...e, status: c.status, text: "Your PC is answering…" };
-        return { ...e, status: c.status };
+          return { ...next, text: replyText(c.result) || "The PC could not answer." };
+        if (c.status === "picked_up") return { ...next, text: "Your PC is answering…" };
+        return next;
       }),
     );
   }, []);
@@ -98,7 +104,7 @@ export function Chat() {
     const offChange = app.onChange((e) => {
       if (e.type !== "remote_command.changed") return;
       const id = changedId(e);
-      if (id && entriesRef.current.some((x) => x.commandId === id)) {
+      if (id && commandIds.current.has(id)) {
         void app.client
           .remoteCommand(id)
           .then(applyCommand)
@@ -124,6 +130,7 @@ export function Chat() {
         command: "chat",
         params: { projectId: project.id, text: value },
       });
+      commandIds.current.add(command.id);
       const sentAt = app.clock.now();
       setEntries((list) => [
         ...list,
@@ -134,10 +141,17 @@ export function Chat() {
           text: "Waiting for your PC…",
           status: command.status,
           commandId: command.id,
+          version: command.version,
           sentAt,
         },
       ]);
       setText("");
+      // The PC may have picked the command up, or answered, while the POST response was in
+      // flight; the entry is queued above, so this fetch lands on it whatever the feed did.
+      void app.client
+        .remoteCommand(command.id)
+        .then(applyCommand)
+        .catch(() => undefined);
     } catch (err) {
       setError(
         err instanceof ApiError && err.code === "validation"

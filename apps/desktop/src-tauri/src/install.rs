@@ -517,8 +517,21 @@ mod tests {
             assert!(is_safe_version_segment(ok), "{ok:?}");
         }
         for bad in [
-            "", ".", "..", "...", ".hidden", "trailing.", "-lead", "trail-", "0.2.0 ", "a/b",
-            "a\\b", "ü", "aux", "COM1", "nul",
+            "",
+            ".",
+            "..",
+            "...",
+            ".hidden",
+            "trailing.",
+            "-lead",
+            "trail-",
+            "0.2.0 ",
+            "a/b",
+            "a\\b",
+            "ü",
+            "aux",
+            "COM1",
+            "nul",
         ] {
             assert!(!is_safe_version_segment(bad), "{bad:?}");
         }

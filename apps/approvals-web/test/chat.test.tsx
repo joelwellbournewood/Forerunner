@@ -4,9 +4,11 @@ import {
   $$,
   click,
   createHarness,
+  delayingFetch,
   type Harness,
   must,
   openFromLink,
+  remoteCommandPost,
   type,
   waitFor,
 } from "./harness.tsx";
@@ -24,12 +26,11 @@ describe("quick chat", () => {
 
   it("relays a message to the PC as a chat remote command and shows the reply", async () => {
     await openFromLink(h, { scopes: REMOTE, route: "/chat" });
-    await waitFor(
-      () =>
-        $("chat-disabled") === null && !(must("chat-send") as HTMLButtonElement).disabled === false,
-      "presence",
-    );
+    // Enabled once the presence check saw the desktop device; the input is usable, the send
+    // button waits for text.
     await waitFor(() => $("chat-disabled") === null, "enabled");
+    expect((must("chat-input") as HTMLInputElement).disabled).toBe(false);
+    expect((must("chat-send") as HTMLButtonElement).disabled).toBe(true);
     expect(document.body.textContent).toMatch(/PharmaWatch/);
     await type(must("chat-input") as HTMLInputElement, "What is next?");
     await click(must("chat-send"));
@@ -44,6 +45,30 @@ describe("quick chat", () => {
     await waitFor(() => must("chat-agent").dataset.status === "done", "reply");
     expect(must("chat-agent").textContent).toMatch(/Echo: What is next\?/);
     expect((must("chat-input") as HTMLInputElement).value).toBe("");
+  });
+
+  it("shows a reply the feed announced before the send response arrived (live mode)", async () => {
+    // Regression: the fake's PC answers within ~25 ms, so when the POST response is slow both
+    // `remote_command.changed` events reach the page before it knows the command id. In live
+    // mode nothing polls; the reply has to be caught up by the page itself.
+    await openFromLink(h, {
+      scopes: REMOTE,
+      route: "/chat",
+      fetchImpl: delayingFetch(remoteCommandPost(), 200),
+    });
+    await waitFor(() => must("feed-mode").textContent === "live", "live");
+    await waitFor(() => $("chat-disabled") === null, "enabled");
+    await type(must("chat-input") as HTMLInputElement, "Still there?");
+    await click(must("chat-send"));
+    await waitFor(() => $("chat-agent") !== null, "entry");
+    // The command was done long before the entry appeared, and the feed never left live mode.
+    expect(h.fake.state.commands[0]?.status).toBe("done");
+    expect(must("feed-mode").textContent).toBe("live");
+    await waitFor(() => must("chat-agent").dataset.status === "done", "reply", {
+      timeoutMs: 3000,
+    });
+    expect(must("chat-agent").textContent).toMatch(/Echo: Still there\?/);
+    expect(must("feed-mode").textContent).toBe("live");
   });
 
   it("is disabled with an explanation when no PC is online", async () => {

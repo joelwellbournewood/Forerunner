@@ -16,7 +16,7 @@ use crate::actions::{self, shared};
 use crate::restart::STABLE_AFTER_SECS;
 use crate::secret::redact;
 use crate::sse::{DaemonEvent, SseParser, parse_daemon_event};
-use crate::state::{StreamMode, lock};
+use crate::state::{StreamMode, lock, needs_external_watch};
 use crate::tray;
 
 pub const MONITOR_INTERVAL: Duration = Duration::from_secs(10);
@@ -146,8 +146,18 @@ fn handle_event(app: &AppHandle, event: DaemonEvent) {
         } => {
             log::info!("daemon announced a restart ({reason} to {target_version})");
             let state = shared(app);
-            let mut s = lock(&state);
-            s.restart.expected = true;
+            let watch = {
+                let mut s = lock(&state);
+                s.restart.expected = true;
+                needs_external_watch(s.child_pid, s.busy)
+            };
+            if watch {
+                // Not the shell's process and nobody is watching it (the request came from
+                // the UI, not the tray): watch it go away and apply the restart contract, so
+                // the window is rebuilt with the relaunched daemon's token instead of
+                // keeping a stale one until Quit.
+                tauri::async_runtime::spawn(actions::watch_external_restart(app.clone()));
+            }
         }
         DaemonEvent::InboxChanged { blocking_count } => {
             let state = shared(app);

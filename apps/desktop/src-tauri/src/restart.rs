@@ -169,6 +169,13 @@ pub fn external_daemon_gone(
     }
 }
 
+/// The exit code to feed `decide_after_exit` for a daemon the shell did not start and so
+/// never saw exit: the code its restart request names (the runtime's constant when the file
+/// has none), or `None` when it left no request, which reads as a crash without a code.
+pub fn external_exit_code(request: Option<&RestartRequest>) -> Option<i32> {
+    request.map(|r| r.exit_code.unwrap_or(RESTART_EXIT_CODES[0]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,17 +229,58 @@ mod tests {
     fn external_daemon_needs_a_definitive_signal_before_it_counts_as_gone() {
         assert!(!external_daemon_gone(1, None, false));
         assert!(!external_daemon_gone(1, None, true));
-        assert!(!external_daemon_gone(FAILURES_BEFORE_UNREACHABLE - 1, None, true));
-        assert!(external_daemon_gone(FAILURES_BEFORE_UNREACHABLE, None, true));
-        assert!(!external_daemon_gone(FAILURES_BEFORE_UNREACHABLE, None, false));
-        assert!(!external_daemon_gone(MISSES_WITHOUT_REQUEST - 1, None, false));
+        assert!(!external_daemon_gone(
+            FAILURES_BEFORE_UNREACHABLE - 1,
+            None,
+            true
+        ));
+        assert!(external_daemon_gone(
+            FAILURES_BEFORE_UNREACHABLE,
+            None,
+            true
+        ));
+        assert!(!external_daemon_gone(
+            FAILURES_BEFORE_UNREACHABLE,
+            None,
+            false
+        ));
+        assert!(!external_daemon_gone(
+            MISSES_WITHOUT_REQUEST - 1,
+            None,
+            false
+        ));
         assert!(external_daemon_gone(MISSES_WITHOUT_REQUEST, None, false));
         // A process known alive is waited for, however many probes it misses.
-        assert!(!external_daemon_gone(MISSES_WITHOUT_REQUEST * 2, Some(true), true));
+        assert!(!external_daemon_gone(
+            MISSES_WITHOUT_REQUEST * 2,
+            Some(true),
+            true
+        ));
         // A process known dead is gone after the first miss, request or not.
         assert!(external_daemon_gone(1, Some(false), false));
         assert!(external_daemon_gone(1, Some(false), true));
         assert!(!external_daemon_gone(0, Some(false), true), "no miss yet");
+    }
+
+    /// Once an external daemon is gone, the request's code drives the same contract as a
+    /// child's real exit: relaunch on the first request, crash without a request.
+    #[test]
+    fn external_exit_code_follows_the_request_and_feeds_the_contract() {
+        let req = request("update", Some(86));
+        assert_eq!(external_exit_code(Some(&req)), Some(86));
+        let bare = request("update", None);
+        assert_eq!(external_exit_code(Some(&bare)), Some(RESTART_EXIT_CODES[0]));
+        assert_eq!(external_exit_code(None), None);
+        assert_eq!(
+            decide_after_exit(external_exit_code(Some(&req)), Some(&req), 0),
+            ExitAction::Restart {
+                reason: "update".into()
+            }
+        );
+        assert_eq!(
+            decide_after_exit(external_exit_code(None), None, 0),
+            ExitAction::Crashed { code: None }
+        );
     }
 
     #[test]

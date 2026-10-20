@@ -3,15 +3,22 @@ import { NavLink } from "react-router";
 import { type ApiError, describeError } from "../api/client.ts";
 import { changedId, type RemoteCommandView, type RemoteTarget } from "../api/types.ts";
 import { Badge, Banner, Button, Dialog } from "../components/ui.tsx";
+import type { Presence } from "../lib/presence.ts";
 import { useApp } from "../store/AppContext.tsx";
 
 /**
  * Header with the active project (spec K.8: always shown), the two screens, the feed
  * status, sign out and the kill switch (spec S.8): a confirm dialog, then a `kill` remote
- * command to the PC (and to the cloud runner when it has sessions), whose pick-up and
- * outcome are shown as they arrive. The targets are sent independently: a command the
- * service accepted stays on the screen with its status even when the other target was
- * refused, so the human always sees whether the PC stopped.
+ * command to every runner that is there to pick it up: the PC when it is online, the cloud
+ * runner when it has sessions (ADR 0034 item 6). The targets are sent independently: a
+ * command the service accepted stays on the screen with its status even when the other
+ * target was refused, so the human always sees whether the PC stopped.
+ *
+ * Pick-up and outcome arrive through `remote_command.changed`. The subscription can only
+ * start once the commands are on the screen, after every POST answered, and the feed does
+ * not poll in live mode; so right after subscribing the banner fetches each command once,
+ * which covers any event that went by in between. A fetched view replaces the shown one only
+ * when its version is newer, so two fetches overtaking each other cannot roll a `done` back.
  */
 interface KillFailure {
   target: RemoteTarget;
@@ -32,45 +39,84 @@ const MODE_LABEL = {
   closed: "disconnected",
 } as const;
 
+const TARGET_NAME: Record<RemoteTarget, string> = { pc: "your PC", cloud: "the cloud runner" };
+
+/** The runners a kill goes to: only those present, so nothing waits for an offline PC. */
+export function killTargets(presence: Pick<Presence, "pcOnline" | "cloudActive"> | null) {
+  const targets: RemoteTarget[] = [];
+  if (presence?.pcOnline) targets.push("pc");
+  if (presence?.cloudActive) targets.push("cloud");
+  return targets;
+}
+
+export function describeTargets(targets: readonly RemoteTarget[]): string {
+  return targets.map((t) => TARGET_NAME[t]).join(" and ");
+}
+
+/** Shown commands updated from fetched views; an older version never replaces a newer one. */
+export function mergeCommands(
+  shown: readonly RemoteCommandView[],
+  fetched: readonly RemoteCommandView[],
+): RemoteCommandView[] {
+  return shown.map((c) => {
+    const next = fetched.find((f) => f.id === c.id);
+    return next && next.version >= c.version ? next : c;
+  });
+}
+
 export function Shell({ children }: { children: ReactNode }) {
   const app = useApp();
+  const { client, onChange, onPoll } = app;
   const [kill, setKill] = useState<KillState>({ kind: "idle" });
-  const canRemote = app.client.hasScope("write:remote");
-  const pcOnline = app.presence?.pcOnline ?? false;
+  const canRemote = client.hasScope("write:remote");
+  const targets = killTargets(app.presence);
+  // The effect keys on the command ids, not on the state object: every refresh produces a
+  // new state object, and keying on it would resubscribe and refetch without end.
+  const sentIds = kill.kind === "sent" ? kill.commands.map((c) => c.id).join("\n") : "";
 
   useEffect(() => {
-    if (kill.kind !== "sent") return;
-    const ids = new Set(kill.commands.map((c) => c.id));
+    if (sentIds === "") return;
+    const ids = sentIds.split("\n");
+    let cancelled = false;
     const refresh = async () => {
-      const updated = await Promise.all(
-        kill.commands.map((c) => app.client.remoteCommand(c.id).catch(() => c)),
+      const fetched = await Promise.all(
+        ids.map((id) => client.remoteCommand(id).catch(() => null)),
       );
-      setKill((current) => (current.kind === "sent" ? { ...current, commands: updated } : current));
+      if (cancelled) return;
+      const views = fetched.filter((c): c is RemoteCommandView => c !== null);
+      setKill((current) =>
+        current.kind === "sent"
+          ? { ...current, commands: mergeCommands(current.commands, views) }
+          : current,
+      );
     };
-    const offChange = app.onChange((e) => {
-      if (e.type === "remote_command.changed" && ids.has(changedId(e) ?? "")) void refresh();
+    const offChange = onChange((e) => {
+      if (e.type === "remote_command.changed" && ids.includes(changedId(e) ?? "")) void refresh();
     });
-    const offPoll = app.onPoll(() => void refresh());
+    const offPoll = onPoll(() => void refresh());
+    // Whatever changed between the POST responses and this subscription is caught up now.
+    void refresh();
     return () => {
+      cancelled = true;
       offChange();
       offPoll();
     };
-  }, [kill, app]);
+  }, [sentIds, client, onChange, onPoll]);
 
   async function sendKill() {
     setKill({ kind: "sending" });
-    const targets: RemoteTarget[] = ["pc"];
-    if (app.presence?.cloudActive) targets.push("cloud");
+    // Presence is derived and may be stale; with nothing present the PC is tried anyway.
+    const sendTo: RemoteTarget[] = targets.length > 0 ? targets : ["pc"];
     // Every target gets its own request; one refusal must not hide a command already sent.
     const results = await Promise.allSettled(
-      targets.map((target) =>
-        app.client.sendRemoteCommand({ target, command: "kill", params: { scope: "all" } }),
+      sendTo.map((target) =>
+        client.sendRemoteCommand({ target, command: "kill", params: { scope: "all" } }),
       ),
     );
     const commands: RemoteCommandView[] = [];
     const failures: KillFailure[] = [];
     results.forEach((result, i) => {
-      const target = targets[i] ?? "pc";
+      const target = sendTo[i] ?? "pc";
       if (result.status === "fulfilled") commands.push(result.value);
       else failures.push({ target, message: describeError(result.reason as ApiError) });
     });
@@ -89,9 +135,9 @@ export function Shell({ children }: { children: ReactNode }) {
 
   const killTitle = !canRemote
     ? "This link was issued without remote control, so it cannot stop your PC."
-    : !pcOnline
-      ? "No PC is online to receive the kill command."
-      : "Stop every session on your PC";
+    : targets.length === 0
+      ? "No PC or cloud runner is online to receive the kill command."
+      : `Stop every session on ${describeTargets(targets)}`;
 
   return (
     <div className="min-h-full">
@@ -147,7 +193,7 @@ export function Shell({ children }: { children: ReactNode }) {
               variant="danger"
               data-testid="kill-switch"
               title={killTitle}
-              disabled={!canRemote || !pcOnline || kill.kind === "sending"}
+              disabled={!canRemote || targets.length === 0 || kill.kind === "sending"}
               onClick={() => setKill({ kind: "confirm" })}
             >
               Kill switch
@@ -197,9 +243,9 @@ export function Shell({ children }: { children: ReactNode }) {
         testId="kill-dialog"
       >
         <p className="text-sm">
-          This sends a kill command to your PC
-          {app.presence?.cloudActive ? " and the cloud runner" : ""}: every session stops, run
-          tokens are revoked and claims are frozen. Work in progress is lost.
+          This sends a kill command to {describeTargets(targets.length > 0 ? targets : ["pc"])}:
+          every session stops, run tokens are revoked and claims are frozen. Work in progress is
+          lost.
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <Button onClick={() => setKill({ kind: "idle" })}>Cancel</Button>

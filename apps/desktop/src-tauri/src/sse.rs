@@ -102,7 +102,8 @@ impl SseParser {
     }
 
     /// Bytes held while waiting for a newline or the rest of a character; bounded by
-    /// `MAX_LINE` plus one character.
+    /// `MAX_LINE` plus one character. Test-only: the tests pin the bound.
+    #[cfg(test)]
     pub fn buffered_bytes(&self) -> usize {
         self.buffer.len() + self.pending.len()
     }
@@ -284,13 +285,17 @@ mod tests {
     /// did exactly that).
     #[test]
     fn bytes_split_inside_a_multibyte_character_are_decoded_whole() {
-        let frame = "event: notification\ndata: {\"title\":\"Überprüfen\",\"body\":\"CHF 1’200…\"}\n\n";
+        let event_line = "event: notification\n";
+        let frame =
+            format!("{event_line}data: {{\"title\":\"Überprüfen\",\"body\":\"CHF 1’200…\"}}\n\n");
         let bytes = frame.as_bytes();
         let cut = frame.find('Ü').expect("umlaut") + 1; // between the two bytes of 'Ü'
         let mut p = SseParser::new();
         let mut frames = p.feed_bytes(&bytes[..cut]);
         assert!(frames.is_empty());
-        assert_eq!(p.buffered_bytes(), cut);
+        // The complete `event:` line was consumed; what waits is the unfinished `data:` line
+        // plus the one pending byte of 'Ü'.
+        assert_eq!(p.buffered_bytes(), cut - event_line.len());
         frames.extend(p.feed_bytes(&bytes[cut..]));
         assert_eq!(frames.len(), 1);
         match parse_daemon_event(&frames[0]) {

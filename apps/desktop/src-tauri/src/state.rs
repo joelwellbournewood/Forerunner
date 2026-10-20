@@ -20,7 +20,8 @@ pub enum EmailAction {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EmailState {
-    /// The daemon exposes `/agents/:id/email` (the routes of `packages/capabilities/src/email`).
+    /// The daemon answered `GET /agents/:id/email/settings` (the routes of
+    /// `packages/capabilities/src/email`).
     pub available: bool,
     pub agent_id: Option<String>,
     pub paused: Option<bool>,
@@ -130,6 +131,14 @@ pub struct TrayView {
     pub email_action: Option<EmailAction>,
     pub update_text: String,
     pub update_enabled: bool,
+}
+
+/// Whether a `restart.requested` event must start the shell's own watch for the daemon to
+/// go away (`actions::watch_external_restart`): only for a daemon the shell did not start (a
+/// child reports its exit to the supervisor thread) and only when nothing is watching it
+/// already ("Update and restart" from the tray sets `Busy::Updating` before it posts).
+pub fn needs_external_watch(child_pid: Option<u32>, busy: Option<Busy>) -> bool {
+    child_pid.is_none() && busy.is_none()
 }
 
 pub fn tray_view(s: &ShellState) -> TrayView {
@@ -334,6 +343,17 @@ mod tests {
         s.busy = Some(Busy::Starting);
         assert!(!tray_view(&s).update_enabled);
         assert_eq!(tray_view(&s).tooltip, "Forerunner — starting the daemon…");
+    }
+
+    /// A restart announced over `/events` for a daemon the shell did not start (the human
+    /// pressed "Update and restart" in the UI) needs the shell to watch it go away; a child
+    /// is watched by the supervisor thread, and the tray's own update already watches.
+    #[test]
+    fn restart_announcements_start_a_watch_only_for_an_unwatched_external_daemon() {
+        assert!(needs_external_watch(None, None));
+        assert!(!needs_external_watch(Some(10), None));
+        assert!(!needs_external_watch(None, Some(Busy::Updating)));
+        assert!(!needs_external_watch(None, Some(Busy::Starting)));
     }
 
     #[test]

@@ -196,16 +196,22 @@ pub fn decide(file: DaemonFile, health: Result<Health, String>) -> AttachDecisio
     }
 }
 
-/// A daemon.json is "fresh" when it was written by the child the shell just started (same
-/// pid), or, when the shell is waiting for someone else's daemon, when it differs from the
-/// file seen before (new pid or start time).
-pub fn is_fresh(file: &DaemonFile, child_pid: Option<u32>, previous: Option<&DaemonFile>) -> bool {
-    match child_pid {
-        Some(p) => file.pid == Some(p),
-        None => match previous {
-            None => true,
-            Some(prev) => prev.pid != file.pid || prev.started_at != file.started_at,
-        },
+/// A daemon.json is "fresh" when it is not the file that was there before: a different pid
+/// or start time than `before` (the file read before the spawn or the last one attached to),
+/// or any file at all when there was none. The pid the shell spawned is accepted as well,
+/// but never required: an install directory runs through `node …/tsx/dist/cli.mjs`, which
+/// runs the CLI in a child node process, and `fr.cmd` on Windows runs under `cmd.exe`, so
+/// the pid the daemon records is a grandchild of the shell's, not `child_pid`. Freshness is
+/// only the first gate; the caller still requires `/health` to answer.
+pub fn is_fresh(file: &DaemonFile, child_pid: Option<u32>, before: Option<&DaemonFile>) -> bool {
+    if let (Some(p), Some(f)) = (child_pid, file.pid)
+        && p == f
+    {
+        return true;
+    }
+    match before {
+        None => true,
+        Some(prev) => prev.pid != file.pid || prev.started_at != file.started_at,
     }
 }
 
@@ -453,15 +459,39 @@ mod tests {
     }
 
     #[test]
-    fn freshness_follows_the_child_pid_or_a_changed_file() {
+    fn freshness_is_a_changed_file_not_the_spawned_pid() {
         let a = parse_daemon_file(&good_file()).expect("parses");
         let mut b = a.clone();
         b.pid = Some(4343);
-        assert!(is_fresh(&b, Some(4343), Some(&a)));
-        assert!(!is_fresh(&a, Some(4343), None));
-        assert!(is_fresh(&b, None, Some(&a)));
+        // The direct child wrote it: fresh even against an identical earlier file.
+        assert!(is_fresh(&b, Some(4343), Some(&b)));
+        // The file that was there before the spawn, untouched, is never fresh.
+        assert!(!is_fresh(&a, Some(4343), Some(&a)));
         assert!(!is_fresh(&a, None, Some(&a)));
+        // Nothing was there before: the first file that answers /health is the daemon.
+        assert!(is_fresh(&a, Some(4343), None));
         assert!(is_fresh(&a, None, None));
+        // Someone else's daemon with a new pid or a new start time.
+        assert!(is_fresh(&b, None, Some(&a)));
+        let mut restarted = a.clone();
+        restarted.started_at = Some("2026-10-20T11:00:00.000Z".into());
+        assert!(is_fresh(&restarted, None, Some(&a)));
+    }
+
+    /// `node …/tsx/dist/cli.mjs main.ts daemon` runs the daemon in a child node process (and
+    /// `fr.cmd` under cmd.exe), so the pid in daemon.json is the shell's grandchild. The
+    /// shell spawned 15422; the daemon wrote 15436; the file must still attach.
+    #[test]
+    fn a_grandchild_pid_written_after_the_spawn_attaches() {
+        let before = parse_daemon_file(&good_file()).expect("parses");
+        let mut written = before.clone();
+        written.pid = Some(15436);
+        written.started_at = Some("2026-10-20T12:00:00.000Z".into());
+        assert!(is_fresh(&written, Some(15422), Some(&before)));
+        // Same grandchild pid, no file before the spawn (first run).
+        assert!(is_fresh(&written, Some(15422), None));
+        // A stale file (dead pid) that the new daemon has not replaced yet is not fresh.
+        assert!(!is_fresh(&before, Some(15422), Some(&before)));
     }
 
     #[test]

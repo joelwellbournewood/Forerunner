@@ -50,9 +50,10 @@ describe("local daemon", () => {
       appVersion: "0.1.0-test",
     });
     ({ app, token } = createDaemonApp(rt));
-  });
+    // Composing the whole runtime on a cold Windows runner has exceeded the default 10 s hook timeout.
+  }, 120_000);
   afterAll(async () => {
-    await rt.close();
+    await rt?.close();
   });
 
   it("serves health without auth and refuses everything else without the token", async () => {

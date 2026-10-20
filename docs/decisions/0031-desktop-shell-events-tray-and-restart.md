@@ -35,8 +35,10 @@ state lives.
    and enabled flag is derived in one pure function (`state::tray_view`) from facts the daemon
    reported: the kill switch needs `/health` to answer and `killActive: false`; Resume needs
    `killActive: true`; the email item needs the daemon to have answered
-   `GET /agents/<principal>/email` with 200 (a 404 disables it and the item says why, since a
-   menu item has no tooltip); Update needs a reachable daemon and no update in flight. The
+   `GET /agents/<principal>/email/settings` with 200, the GET of `emailRouteTable()` in
+   `packages/capabilities/src/email/routes.ts` (a 404 disables it and the item says why, since
+   a menu item has no tooltip; a shell test reads that file's source so a rename there fails
+   the test); Update needs a reachable daemon and no update in flight. The
    kill switch and the update confirm with a native dialog. Left-click on the icon opens the
    window. Closing the window hides it to the tray; Quit ends the shell and leaves the daemon
    running; the shell never kills the daemon.
@@ -52,6 +54,19 @@ state lives.
    fresh `daemon.json` so two daemons never start. A relaunched daemon has a new token, so the
    main window is rebuilt with a new initialization script (the UI's per-install storage
    survives; the page reloads).
+   For a daemon the shell did not start (a user service's, or one left from an earlier shell)
+   there is no exit code to observe. The shell watches it instead, whether the request came
+   from the tray or from the UI (announced as `restart.requested` on `/events`): `/health`
+   every second for at most 90 s, and the daemon counts as gone only on a definitive signal
+   (`restart::external_daemon_gone`): a pid the OS reports dead after any missed probe; a pid
+   reported alive is waited for, however many probes it misses, because staging an update
+   (download, verify, unpack) makes the daemon slow before it exits; where the OS gives no pid
+   signal (Windows), three consecutive misses together with the `restart.json` the daemon
+   writes right before exiting, or ten misses on their own. A single missed probe never
+   relaunches: a second `fr daemon` beside a slow one would leave two processes writing
+   `daemon.json`. Once gone, the contract above runs with the exit code the request names
+   (a crash without a code when it left none); `restart.json` is removed only when a relaunch
+   is decided.
 5. **Attach order and the `fr` entry.** `fr` is located, in order: the staged version of
    `current.json`, `FORERUNNER_INSTALL_DIR`, `<config>/install.json`
    (`{ "schema": 1, "installDir": "...", "node"?: "..." }`, to be written by `fr setup`),
@@ -60,6 +75,13 @@ state lives.
    never through `pnpm` or a shell. A `daemon.json` whose pid is known to be dead (Linux
    `/proc`) is stale and skipped without a probe; otherwise `/health` with a 1.5 s timeout
    decides. A `daemon.json` that does not point at loopback `http://` is refused.
+   A daemon the shell spawned counts as up when `daemon.json` is fresh and answers `/health`.
+   Fresh is "not the file that was there before": a different `pid` or `startedAt` than the
+   file on disk before the spawn (else the last file attached to; any file when there was
+   none). Equality with the spawned pid is accepted but never required, because the pid in
+   the file is the shell's grandchild: `tsx`'s CLI runs the script in a child node process
+   and `fr.cmd` runs under `cmd.exe`. Requiring pid equality would leave a cold start waiting
+   60 s next to a healthy daemon and then report that it did not start.
 6. **Injection is origin-guarded.** The initialization script sets the frozen, non-writable
    `window.__FORERUNNER__` only when the document's origin is the app's own
    (`tauri://localhost`, `http(s)://tauri.localhost`, the dev server); the main window's
@@ -101,3 +123,10 @@ state lives.
 - Treating 75 alone as the restart code (the ADR 0026 text): the runtime exits with 86 and
   writes the code into `restart.json`; following the file is the only choice that stays
   correct if the constant moves again.
+- Judging a spawned daemon's `daemon.json` by pid equality with the child: definitive when it
+  matches, but it never matches through `tsx` or `fr.cmd`; reading the parent pid from
+  `/proc/<pid>/stat` would fix Linux only. The changed-file rule plus `/health` works on both
+  platforms and for a user service's daemon alike.
+- Treating one missed `/health` probe as the external daemon's exit: fast, but a daemon that
+  is staging an update misses probes while it is still alive, and relaunching beside it would
+  start a second daemon.

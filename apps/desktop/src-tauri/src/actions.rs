@@ -2,7 +2,7 @@
 //! actions (kill switch, resume, pause email, update and restart). Every action talks to the
 //! daemon through `DaemonClient`; nothing here enforces a limit on its own, the daemon does.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager};
@@ -16,12 +16,20 @@ use crate::daemon::{
 use crate::dirs::Platform;
 use crate::env::ProcessEnv;
 use crate::install::{RealFs, locate_fr};
-use crate::restart::{ExitAction, decide_after_exit, read_restart_request, remove_restart_request};
+use crate::restart::{
+    ExitAction, decide_after_exit, external_daemon_gone, external_exit_code, read_restart_request,
+    remove_restart_request,
+};
 use crate::state::{Busy, EmailAction, SharedState, StreamMode, lock};
 use crate::supervisor::{
     EXTERNAL_GRACE, daemon_log_path, spawn_daemon, wait_for_daemon, wait_for_external, watch_exit,
 };
 use crate::{events, tray, windows};
+
+/// How long "Update and restart" waits for a daemon the shell did not start to go away.
+pub const EXTERNAL_RESTART_BUDGET: Duration = Duration::from_secs(90);
+/// Pause between `/health` probes while waiting for that daemon.
+pub const EXTERNAL_PROBE_PAUSE: Duration = Duration::from_secs(1);
 
 pub fn shared(app: &AppHandle) -> SharedState {
     app.state::<SharedState>().inner().clone()
@@ -55,7 +63,7 @@ pub fn fail_dialog(app: &AppHandle, title: &str, message: &str) {
 /// one and wait for it. Runs once at a time; a second call while one is in flight returns.
 pub async fn bootstrap(app: AppHandle, allow_start: bool) {
     let state = shared(&app);
-    let (dirs, previous) = {
+    let (dirs, last_attached) = {
         let mut s = lock(&state);
         if s.busy == Some(Busy::Starting) {
             return;
@@ -67,6 +75,9 @@ pub async fn bootstrap(app: AppHandle, allow_start: bool) {
     tray::refresh(&app);
 
     let file = read_daemon_file(&daemon_file_path(&dirs.runtime));
+    // What a spawned daemon must replace before it counts as up: the file on disk now (a
+    // stale or unhealthy daemon's), else the last file the shell attached to.
+    let before = file.as_ref().ok().cloned().or(last_attached);
     let alive = file
         .as_ref()
         .ok()
@@ -139,7 +150,7 @@ pub async fn bootstrap(app: AppHandle, allow_start: bool) {
                 &dirs.runtime,
                 &mut spawned.child,
                 spawned.pid,
-                previous.as_ref(),
+                before.as_ref(),
             )
             .await;
             // A child that already exited is reported once, by the dialog below; only a
@@ -219,7 +230,9 @@ pub async fn attached(app: &AppHandle, file: DaemonFile, health: Health) {
     probe_email(app.clone()).await;
 }
 
-/// The daemon process the shell started has ended: apply the restart contract.
+/// The daemon has ended: apply the restart contract. For the process the shell started the
+/// supervisor thread reports the real exit code; for a daemon started by something else
+/// `watch_external_restart` reports the code its restart request named (`None` without one).
 pub fn handle_daemon_exit(app: AppHandle, code: Option<i32>) {
     tauri::async_runtime::spawn(async move {
         let state = shared(&app);
@@ -230,6 +243,8 @@ pub fn handle_daemon_exit(app: AppHandle, code: Option<i32>) {
             s.status.reachable = false;
             s.stream = StreamMode::Off;
             s.busy = None;
+            // The expected exit happened (or a crash took its place); nothing is pending.
+            s.restart.expected = false;
             (s.dirs.clone(), s.restart.consecutive, s.last_file.clone())
         };
         tray::refresh(&app);
@@ -290,8 +305,9 @@ pub fn handle_daemon_exit(app: AppHandle, code: Option<i32>) {
                     "The Forerunner daemon stopped unexpectedly",
                     &format!(
                         "Exit {}.\n\nDaemon log: {}\n\nUse Open in the tray to start it again.",
-                        code.map(|c| format!("code {c}"))
-                            .unwrap_or_else(|| "by a signal".into()),
+                        code.map(|c| format!("code {c}")).unwrap_or_else(|| {
+                            "without an exit code (a signal, or a daemon the shell did not start that left no restart request)".into()
+                        }),
                         log_path.display()
                     ),
                 );
@@ -386,8 +402,9 @@ pub async fn resume(app: AppHandle) {
 
 /// The email routes the tray uses, as `emailRouteTable()` in
 /// `packages/capabilities/src/email/routes.ts` names them (`:agentId` filled in). The probe
-/// reads the settings route; pause and resume are the toggle. A test checks these paths
-/// against the route table's source so a rename there breaks the shell's build, not the tray.
+/// reads the settings route; pause and resume are the toggle.
+/// `tests::email_paths_match_the_route_table_source` reads that file's source, so a rename
+/// there fails the shell's tests rather than the tray at runtime.
 pub fn email_settings_path(agent_id: &str) -> String {
     format!("/agents/{agent_id}/email/settings")
 }
@@ -508,7 +525,8 @@ pub async fn email_toggle(app: AppHandle, action: EmailAction) {
 
 /// Tray: "Update and restart" (spec M). Confirms, `POST /updates/apply`, then waits for the
 /// daemon to exit with the restart contract. A daemon the shell started reports its exit to
-/// `handle_daemon_exit`; a daemon started by something else is watched through `/health`.
+/// `handle_daemon_exit`; a daemon started by something else is watched by
+/// `watch_external_restart`.
 pub fn update_and_restart(app: AppHandle) {
     let app2 = app.clone();
     app.dialog()
@@ -529,14 +547,14 @@ pub fn update_and_restart(app: AppHandle) {
 
 async fn apply_update(app: AppHandle) {
     let state = shared(&app);
-    let (client, is_child, dirs) = {
+    let (client, is_child) = {
         let mut s = lock(&state);
         let Some(c) = s.client.clone() else {
             return;
         };
         s.busy = Some(Busy::Updating);
         s.restart.expected = true;
-        (c, s.child_pid.is_some(), s.dirs.clone())
+        (c, s.child_pid.is_some())
     };
     tray::refresh(&app);
     match client.post_json("/updates/apply", &json!({})).await {
@@ -551,32 +569,7 @@ async fn apply_update(app: AppHandle) {
                 // handle_daemon_exit takes over when the process ends.
                 return;
             }
-            // Not our process: wait for it to go away, then apply the same contract with the
-            // exit code the request names.
-            let started = Instant::now();
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                if client.health().await.is_err() {
-                    let code = read_restart_request(&dirs.runtime)
-                        .and_then(|r| r.exit_code)
-                        .or(Some(crate::restart::RESTART_EXIT_CODES[0]));
-                    handle_daemon_exit(app.clone(), code);
-                    return;
-                }
-                if started.elapsed() > std::time::Duration::from_secs(90) {
-                    {
-                        let mut s = lock(&state);
-                        s.busy = None;
-                        s.restart.expected = false;
-                    }
-                    fail_dialog(
-                        &app,
-                        "Update did not restart the daemon",
-                        "The daemon accepted the update but kept running for 90 s. Check the updates screen and the daemon log.",
-                    );
-                    return;
-                }
-            }
+            watch_external_restart(app.clone()).await;
         }
         Ok((status, v)) => {
             {
@@ -594,5 +587,113 @@ async fn apply_update(app: AppHandle) {
             }
             fail_dialog(&app, "Update not applied", &e);
         }
+    }
+}
+
+/// Watch a daemon the shell did not start go away after a restart was requested ("Update
+/// and restart" from the tray, or from the UI, announced over `/events`), then apply the
+/// restart contract with the exit code its request names (ADR 0031 §4).
+/// `restart::external_daemon_gone` decides when it is gone: one missed `/health` probe is
+/// not an exit (the daemon may be staging the update: download, verify, unpack), a pid the
+/// OS reports dead is, and without a pid signal (Windows) several consecutive misses
+/// together with the request file the daemon writes right before it exits. The shell is
+/// busy for the duration so the monitor never re-attaches underneath, and `restart.json` is
+/// only removed by `handle_daemon_exit` once a relaunch is decided.
+pub async fn watch_external_restart(app: AppHandle) {
+    let state = shared(&app);
+    let (client, dirs, pid) = {
+        let mut s = lock(&state);
+        let Some(c) = s.client.clone() else {
+            return;
+        };
+        if s.child_pid.is_some() {
+            // The supervisor thread reports a child's exit; nothing to watch here.
+            return;
+        }
+        s.busy = Some(Busy::Updating);
+        s.restart.expected = true;
+        (c, s.dirs.clone(), s.last_file.as_ref().and_then(|f| f.pid))
+    };
+    tray::refresh(&app);
+    let started = Instant::now();
+    let mut misses = 0u32;
+    loop {
+        tokio::time::sleep(EXTERNAL_PROBE_PAUSE).await;
+        misses = if client.health().await.is_ok() {
+            0
+        } else {
+            misses + 1
+        };
+        let request = read_restart_request(&dirs.runtime);
+        let alive = pid.and_then(daemon::pid_alive);
+        if external_daemon_gone(misses, alive, request.is_some()) {
+            log::info!(
+                "the daemon the shell did not start is gone after {misses} missed probe(s) (pid alive: {alive:?}, restart request: {})",
+                request.is_some()
+            );
+            handle_daemon_exit(app.clone(), external_exit_code(request.as_ref()));
+            return;
+        }
+        if started.elapsed() > EXTERNAL_RESTART_BUDGET {
+            {
+                let mut s = lock(&state);
+                s.busy = None;
+                s.restart.expected = false;
+            }
+            fail_dialog(
+                &app,
+                "Update did not restart the daemon",
+                &format!(
+                    "The daemon accepted the update but kept running for {} s. Check the updates screen and the daemon log.",
+                    EXTERNAL_RESTART_BUDGET.as_secs()
+                ),
+            );
+            return;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The route table the daemon mounts (`emailRouteTable()`), read at compile time: a
+    /// rename there fails this test instead of the tray at runtime.
+    const ROUTES_TS: &str = include_str!("../../../../packages/capabilities/src/email/routes.ts");
+
+    #[test]
+    fn email_paths_match_the_route_table_source() {
+        assert!(
+            ROUTES_TS.contains("export function emailRouteTable("),
+            "packages/capabilities/src/email/routes.ts no longer defines emailRouteTable()"
+        );
+        for (path, template) in [
+            (
+                email_settings_path("a-1"),
+                "/agents/:agentId/email/settings",
+            ),
+            (
+                email_action_path("a-1", EmailAction::Pause),
+                "/agents/:agentId/email/pause",
+            ),
+            (
+                email_action_path("a-1", EmailAction::Resume),
+                "/agents/:agentId/email/resume",
+            ),
+        ] {
+            assert!(
+                ROUTES_TS.contains(&format!("path: \"{template}\"")),
+                "{template} is not in emailRouteTable()"
+            );
+            assert_eq!(path, template.replace(":agentId", "a-1"));
+        }
+    }
+
+    #[test]
+    fn external_watch_budget_outlasts_the_misses_it_needs() {
+        // Ten misses at (pause + health timeout) each must fit inside the budget, or the
+        // Windows path (no pid signal, no request) could never decide "gone".
+        let per_probe = EXTERNAL_PROBE_PAUSE + daemon::HEALTH_TIMEOUT;
+        assert!(per_probe * crate::restart::MISSES_WITHOUT_REQUEST < EXTERNAL_RESTART_BUDGET);
     }
 }

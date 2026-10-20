@@ -54,7 +54,7 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | B.1 | Projects hold stages, milestones and tasks with dependencies and priorities. | 1 | done | packages/state/test/sqlite.test.ts; packages/state/test/suite.ts |
 | B.2 | Each task has an outcome, acceptance criteria, risk tier, budget and owner. | 1 | done | packages/state/test/schema.test.ts; packages/state/test/sqlite.test.ts; packages/state/test/suite.ts |
 | B.3 | Workflow: draft → ready → claimed → in progress → in review → done. Side exits: needs human, failed, cancelled. | 1 | done | packages/state/test/sqlite.test.ts; packages/state/test/suite.ts; packages/state/test/schema.test.ts; apps/ui/test/tasks.test.tsx |
-| B.4 | A task cannot close with open findings or failed required checks. | 3 | in progress | packages/state/test/sqlite.test.ts; packages/state/test/suite.ts; packages/critic/test/followup.test.ts |
+| B.4 | A task cannot close with open findings or failed required checks. | 3 | done | packages/state/test/sqlite.test.ts; packages/state/test/suite.ts; packages/critic/test/followup.test.ts; packages/runtime/test/loop-critic.test.ts |
 | B.5 | Every change to plan, task or milestone is versioned with author and reason. | 1 | in progress | packages/state/test/sqlite.test.ts; packages/state/test/suite.ts |
 | B.6 | Small-project mode: one milestone, flat task list, critic tier 0 by default. | 1 | todo | |
 | B.7 | A clear task log per project: filterable table of every task and run with who did it, cost, verdict, and links to PR and review. | 1 | done | apps/ui/test/tasks.test.tsx; packages/runtime/test/daemon.test.ts |
@@ -76,8 +76,8 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | ID | Requirement | Milestone | Status | Test |
 | --- | --- | --- | --- | --- |
 | D.1 | Model ladder per provider, ranked by capability and cost; tasks get a starting rung from their tier. | 1 | done | packages/runtime/test/ladder.test.ts; packages/runtime/test/registry.test.ts |
-| D.2 | Retry policy: 1st failure → improve brief and add context; 2nd → split task or change specialist; 3rd → escalate one rung, if under the ceiling; then human. | 3 | in progress | packages/runtime/test/ladder.test.ts; packages/critic/test/followup.test.ts |
-| D.3 | Escalation ceiling and per-escalation cost cap set per project. | 3 | in progress | packages/runtime/test/ladder.test.ts; packages/critic/test/model.test.ts |
+| D.2 | Retry policy: 1st failure → improve brief and add context; 2nd → split task or change specialist; 3rd → escalate one rung, if under the ceiling; then human. | 3 | done | packages/runtime/test/ladder.test.ts; packages/critic/test/followup.test.ts; packages/runtime/test/loop-critic.test.ts |
+| D.3 | Escalation ceiling and per-escalation cost cap set per project. | 3 | done | packages/runtime/test/ladder.test.ts; packages/critic/test/model.test.ts; packages/runtime/test/loop-critic.test.ts |
 | D.4 | Settings per agent and specialist: model, effort, max tokens, speed mode, timeout, with the defaults from the effort table (D.8 to D.15). Temperature appears only for providers that accept it. | 1 | in progress | packages/runtime/test/registry.test.ts; packages/runtime/test/anthropic-provider.test.ts |
 | D.5 | Every run stores model, version, settings and prompt version. | 1 | done | packages/runtime/test/executor.test.ts; packages/state/test/suite.ts |
 | D.6 | Weekly model watch: checks provider model lists and pricing, runs the eval set on new candidates, proposes a switch with measured quality and cost deltas. Human approves. | 7 | done | packages/runtime/test/model-watch.test.ts; packages/runtime/test/wiring.test.ts |
@@ -102,10 +102,10 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | ID | Requirement | Milestone | Status | Test |
 | --- | --- | --- | --- | --- |
 | E.1 | Session triggers: manual start, schedule, new message or human answer, CI result, PR comment, verified email from the owner (module T). | 1 | in progress | packages/runtime/test/session.test.ts; packages/runtime/test/daemon.test.ts; packages/capabilities/test/email-commands.test.ts |
-| E.2 | Fixed startup checklist run by code, not the model: version check, git fetch, pull shared state, inbox, open human requests, critic findings, budget, diff since last session. Output is a compact state brief handed to the agent. | 1 | in progress | packages/runtime/test/session.test.ts |
+| E.2 | Fixed startup checklist run by code, not the model: version check, git fetch, pull shared state, inbox, open human requests, critic findings, budget, diff since last session. Output is a compact state brief handed to the agent. | 1 | done | packages/runtime/test/session.test.ts; packages/runtime/test/loop-memory.test.ts |
 | E.3 | Agent writes a session plan with cost estimate before acting. Plans over budget are cut before starting. | 1 | done | packages/runtime/test/session.test.ts |
 | E.4 | Inbox re-checked between every task and before any write to shared state. | 2 | in progress | packages/runtime/test/session.test.ts |
-| E.5 | Session end: update docs, task states, memory, project summary and cost ledger; send handoff message to peer; notify human. | 1 | in progress | packages/runtime/test/session.test.ts; packages/runtime/test/acks.test.ts |
+| E.5 | Session end: update docs, task states, memory, project summary and cost ledger; send handoff message to peer; notify human. | 1 | done | packages/runtime/test/session.test.ts; packages/runtime/test/acks.test.ts; packages/runtime/test/loop-memory.test.ts; packages/runtime/test/loop-critic.test.ts |
 
 ## F. Collaboration, messaging and sync
 
@@ -123,11 +123,11 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 
 | ID | Requirement | Milestone | Status | Test |
 | --- | --- | --- | --- | --- |
-| G.1 | Three memory scopes: private agent memory, critic memory, shared lessons. Plus project docs in git. Never mixed. | 4 | in progress | packages/memory/test/scopes.test.ts |
+| G.1 | Three memory scopes: private agent memory, critic memory, shared lessons. Plus project docs in git. Never mixed. | 4 | done | packages/memory/test/scopes.test.ts; packages/runtime/test/loop-memory.test.ts |
 | G.2 | Memory unit is a Lesson with source, tags, confidence and usage count. | 4 | in progress | packages/memory/test/record.test.ts; packages/memory/test/files.test.ts |
-| G.3 | Retrieval by relevance (tags + vector search), capped at a token budget per session. | 4 | in progress | packages/memory/test/retrieval.test.ts |
-| G.4 | Weekly consolidation job merges duplicates, flags contradictions, retires unused lessons. Changes are shown to the human for review. | 4 | in progress | packages/memory/test/consolidation.test.ts |
-| G.5 | Standard project doc set: `README`, `docs/overview.md`, `architecture.md`, `status.md`, `decisions/` (ADRs), `runbook.md`, `data.md`, `testing.md`. PM keeps them current; critic checks drift. | 4 | in progress | packages/memory/test/docs.test.ts |
+| G.3 | Retrieval by relevance (tags + vector search), capped at a token budget per session. | 4 | done | packages/memory/test/retrieval.test.ts; packages/runtime/test/loop-memory.test.ts |
+| G.4 | Weekly consolidation job merges duplicates, flags contradictions, retires unused lessons. Changes are shown to the human for review. | 4 | done | packages/memory/test/consolidation.test.ts; packages/runtime/test/loop-memory.test.ts; packages/runtime/test/loop-routes.test.ts |
+| G.5 | Standard project doc set: `README`, `docs/overview.md`, `architecture.md`, `status.md`, `decisions/` (ADRs), `runbook.md`, `data.md`, `testing.md`. PM keeps them current; critic checks drift. | 4 | in progress | packages/memory/test/docs.test.ts; packages/critic/test/docs-drift.test.ts; packages/runtime/test/loop-critic.test.ts |
 | G.6 | Cross-project sharing: lessons tagged as general are promoted to the shared store after critic approval and offered to other projects. | 4 | in progress | packages/memory/test/promotion.test.ts |
 | G.7 | Reference design: aerovato/operator-memory, studied in sprint 1 with an ADR on what to adopt. | 0 | in progress | packages/memory/test/retrieval.test.ts |
 
@@ -135,12 +135,12 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 
 | ID | Requirement | Milestone | Status | Test |
 | --- | --- | --- | --- | --- |
-| H.1 | Independent reviewer: a different model, or at least a clean context with no access to the worker's reasoning. | 3 | in progress | packages/critic/test/critic.test.ts |
-| H.2 | Risk tiers set review depth: 0 = automated checks only, 1 = light read, 2 = full review with tests run, 3 = deep review plus human sign-off. | 3 | in progress | packages/critic/test/critic.test.ts; packages/critic/test/tier0.test.ts; packages/critic/test/rules.test.ts |
-| H.3 | Output: grade 0–100, confidence, findings with severity, verdict, evidence links. | 3 | in progress | packages/critic/test/critic.test.ts; packages/critic/test/schema.test.ts |
+| H.1 | Independent reviewer: a different model, or at least a clean context with no access to the worker's reasoning. | 3 | done | packages/critic/test/critic.test.ts; packages/runtime/test/loop-critic.test.ts |
+| H.2 | Risk tiers set review depth: 0 = automated checks only, 1 = light read, 2 = full review with tests run, 3 = deep review plus human sign-off. | 3 | done | packages/critic/test/critic.test.ts; packages/critic/test/tier0.test.ts; packages/critic/test/rules.test.ts; packages/runtime/test/loop-critic.test.ts |
+| H.3 | Output: grade 0–100, confidence, findings with severity, verdict, evidence links. | 3 | done | packages/critic/test/critic.test.ts; packages/critic/test/schema.test.ts; packages/runtime/test/loop-routes.test.ts |
 | H.4 | Low confidence never becomes accept. It becomes escalate or human. | 3 | in progress | packages/critic/test/rules.test.ts; packages/critic/test/critic.test.ts |
-| H.5 | Findings are tracked to resolution. Repeat findings across sessions are flagged as patterns and turned into lessons. | 3 | in progress | packages/critic/test/critic.test.ts; packages/critic/test/fingerprint.test.ts; packages/state/test/suite.ts |
-| H.6 | Session-level review grades plan quality, cost efficiency and honesty of the summary to the human. | 3 | in progress | packages/critic/test/session-review.test.ts |
+| H.5 | Findings are tracked to resolution. Repeat findings across sessions are flagged as patterns and turned into lessons. | 3 | done | packages/critic/test/critic.test.ts; packages/critic/test/fingerprint.test.ts; packages/state/test/suite.ts; packages/runtime/test/loop-critic.test.ts |
+| H.6 | Session-level review grades plan quality, cost efficiency and honesty of the summary to the human. | 3 | done | packages/critic/test/session-review.test.ts; packages/runtime/test/loop-critic.test.ts |
 | H.7 | Calibration: the critic grades the golden eval set monthly so drift is visible. | 3 | in progress | packages/critic/test/calibration.test.ts |
 
 ## I. Budget and cost
@@ -178,10 +178,10 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | K.2 | Project page tabs: Summary, Plan (milestone timeline + dependency graph), Tasks/log, Docs, Reviews, Costs, Data, Chat. | 1 | in progress | apps/ui/test/project.test.tsx |
 | K.3 | Live session view: readable event stream, current task and specialist, step count, running cost vs cap, escalations highlighted. Raw output behind a toggle. | 1 | done | apps/ui/test/session.test.tsx |
 | K.4 | Inbox: human requests and agent messages, sorted by blocking first. | 2 | done | apps/ui/test/inbox.test.tsx; packages/runtime/test/daemon.test.ts; packages/state/test/suite.ts |
-| K.5 | Memory: separate views for Alice, Bob, Critic and Shared lessons. Search, edit, delete, pin. | 4 | todo | |
+| K.5 | Memory: separate views for Alice, Bob, Critic and Shared lessons. Search, edit, delete, pin. | 4 | in progress | packages/runtime/test/loop-memory.test.ts; packages/runtime/test/loop-routes.test.ts |
 | K.6 | Extensions panel: every connector, MCP server, skill, specialist, capability and model provider. Status, permissions, cost, version, toggle, remove, add from catalog or URL. | 6 | in progress | packages/runtime/test/extensions-routes.test.ts; packages/runtime/test/extensions-registry.test.ts |
 | K.7 | Settings: global, per human, per agent, per project. Every setting shows its scope. | 1 | done | apps/ui/test/settings.test.tsx; packages/runtime/test/daemon.test.ts |
-| K.8 | QoL: command palette, keyboard shortcuts, dark mode, desktop notifications, tray menu, Android app (module R) plus a web fallback for approvals. Active project always shown in the header. | 5 | in progress | apps/ui/test/shell.test.tsx; apps/approvals-web/test/shell.test.tsx; apps/approvals-web/test/app.test.tsx |
+| K.8 | QoL: command palette, keyboard shortcuts, dark mode, desktop notifications, tray menu, Android app (module R) plus a web fallback for approvals. Active project always shown in the header. | 5 | in progress | apps/ui/test/shell.test.tsx; apps/approvals-web/test/shell.test.tsx; apps/approvals-web/test/app.test.tsx; apps/desktop/src-tauri/src/state.rs; apps/desktop/src-tauri/src/sse.rs; apps/desktop/src-tauri/src/dirs.rs |
 
 ## L. Capabilities
 
@@ -200,8 +200,8 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | --- | --- | --- | --- | --- |
 | M.1 | Forerunner is a project in Forerunner. Feature requests and bugs go into its task list like any other. | 7 | todo | |
 | M.2 | Changes go through PR, tests in Docker, critic tier 2+, human approval. | 7 | in progress | packages/runtime/test/sandbox-container.test.ts; packages/capabilities/test/pr-executor.test.ts; packages/critic/test/critic.test.ts |
-| M.3 | Release channel: signed builds published to GitHub Releases. App shows "Update available", changelog, "Update and restart". | 7 | in progress | packages/runtime/test/update-verify.test.ts; packages/runtime/test/update-screen.test.ts; packages/runtime/test/update-install.test.ts |
-| M.4 | Staged install, health check on restart, automatic rollback on failure. Config, memory and data untouched by updates. | 7 | in progress | packages/runtime/test/update-install.test.ts |
+| M.3 | Release channel: signed builds published to GitHub Releases. App shows "Update available", changelog, "Update and restart". | 7 | in progress | packages/runtime/test/update-verify.test.ts; packages/runtime/test/update-screen.test.ts; packages/runtime/test/update-install.test.ts; apps/desktop/src-tauri/src/restart.rs; apps/desktop/src-tauri/src/state.rs |
+| M.4 | Staged install, health check on restart, automatic rollback on failure. Config, memory and data untouched by updates. | 7 | in progress | packages/runtime/test/update-install.test.ts; apps/desktop/src-tauri/src/restart.rs; apps/desktop/src-tauri/src/daemon.rs |
 | M.5 | Connector and model updates surface in the same updates screen. | 7 | in progress | packages/runtime/test/update-screen.test.ts; packages/runtime/test/wiring.test.ts |
 | M.6 | Shared state schema changes use versioned migrations; both apps must be on a compatible version before sync resumes. | 2 | done | packages/state/test/schema.test.ts; services/state-api/test/auth.test.ts; services/state-api/test/main.test.ts; packages/runtime/test/update-screen.test.ts |
 
@@ -212,7 +212,7 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | N.1 | Context compression proxy (Headroom or similar), toggle per project, savings measured. | 6 | done | packages/runtime/test/headroom.test.ts; packages/runtime/test/context.test.ts; packages/runtime/test/context-manager.test.ts; packages/runtime/test/session-context.test.ts; packages/runtime/test/executor-context.test.ts |
 | N.2 | Prompt caching for stable system prompts and project briefs. | 1 | done | packages/runtime/test/context.test.ts; packages/runtime/test/anthropic-provider.test.ts |
 | N.3 | State brief instead of raw history at session start. | 1 | done | packages/runtime/test/session.test.ts |
-| N.4 | Retrieval over memory and docs with a token budget. | 4 | in progress | packages/memory/test/retrieval.test.ts; packages/runtime/test/context.test.ts |
+| N.4 | Retrieval over memory and docs with a token budget. | 4 | done | packages/memory/test/retrieval.test.ts; packages/runtime/test/context.test.ts; packages/runtime/test/loop-memory.test.ts |
 | N.5 | Cheap model for summaries, routing and quick chat. | 1 | in progress | packages/runtime/test/conversation.test.ts; packages/runtime/test/ladder.test.ts |
 
 ## O. Real-time conversation
@@ -254,18 +254,18 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 
 | ID | Requirement | Milestone | Status | Test |
 | --- | --- | --- | --- | --- |
-| Q.1 | One command registry: every action is a typed command with parameters, validation, a risk level and an undo (`project.switch`, `budget.set`, `autonomy.set`, `session.start`, `capability.grant`, `specialist.add`, and so on). Buttons, the command palette, the API, chat, voice and email all call these, so nothing is chat-only and nothing is UI-only. | 5 | todo | |
-| Q.2 | Understanding: the conversation agent turns what you say into one or more commands ("Work on the supplement site now and give it 20 francs tonight" becomes `project.switch` plus a temporary `budget.set` that reverts at 06:00). If something is unclear, it asks one short question with options. | 5 | todo | |
-| Q.3 | Context: there is always an active project, shown in the header on every screen. "Switch to PharmaWatch", "go back" and "what was I doing on the game?" work. Commands without a named project apply to the active one, and the confirmation says so. | 5 | todo | |
-| Q.4 | Change card: before any change, it shows a card and says it out loud in voice mode: what changes, old value → new value, scope (this session, this project, everything), how long (until reverted, until a time, permanent), cost or risk impact, and how to undo. | 5 | todo | |
-| Q.5 | Confirmation by risk: every command confirms according to its risk level (Q.6 to Q.8). | 5 | todo | |
-| Q.6 | Low risk (switch project, rename, reorder tasks, add a note): acts at once, then states what it did, with undo. | 5 | todo | |
-| Q.7 | Medium risk (raise a budget within the hard ceiling, change autonomy by one step, start a costly session): change card, then a "yes", a tap, or an email reply. | 5 | todo | |
-| Q.8 | High risk (raise the monthly hard ceiling, grant a capability, change email mode, delete anything, change permissions): change card, then confirmation in the app on a paired device, with biometric on the phone. A chat or email "yes" alone is not enough. | 5 | in progress | services/state-api/test/auth.test.ts; apps/approvals-web/test/inbox.test.tsx |
-| Q.9 | Bespoke requests: if no single command fits, the agent builds a plan from existing commands and shows it as one change card. If no commands can do it, it offers to create a Forerunner task to add the feature. | 5 | todo | |
-| Q.10 | Spelled out every time: every change made by conversation is posted to the activity log and the project chat as a plain sentence with Undo (for example "Raised tonight's session budget for PharmaWatch from CHF 5 to CHF 20, until 06:00. Undo."). The other human sees changes that affect shared projects. | 5 | todo | |
-| Q.11 | Change log: every change has who asked, the words used, the commands run, before and after values, and a one-click undo while it is still reversible. | 5 | in progress | packages/state/test/sqlite.test.ts; packages/state/test/suite.ts |
-| Q.12 | Limits still hold: conversation changes go through the same enforcement as the settings screen. The agent cannot raise its own limits without your confirmation, and it never treats text from web pages, files or other people's email as a request. | 5 | in progress | packages/runtime/test/conversation.test.ts; packages/runtime/test/hooks.test.ts; packages/runtime/test/injection.test.ts; evals/test/injection.test.ts |
+| Q.1 | One command registry: every action is a typed command with parameters, validation, a risk level and an undo (`project.switch`, `budget.set`, `autonomy.set`, `session.start`, `capability.grant`, `specialist.add`, and so on). Buttons, the command palette, the API, chat, voice and email all call these, so nothing is chat-only and nothing is UI-only. | 5 | done | packages/commands/test/registry.test.ts; packages/runtime/test/conversation.test.ts; packages/runtime/test/loop-routes.test.ts |
+| Q.2 | Understanding: the conversation agent turns what you say into one or more commands ("Work on the supplement site now and give it 20 francs tonight" becomes `project.switch` plus a temporary `budget.set` that reverts at 06:00). If something is unclear, it asks one short question with options. | 5 | done | packages/commands/test/intent.test.ts; packages/runtime/test/conversation.test.ts |
+| Q.3 | Context: there is always an active project, shown in the header on every screen. "Switch to PharmaWatch", "go back" and "what was I doing on the game?" work. Commands without a named project apply to the active one, and the confirmation says so. | 5 | done | packages/commands/test/commands.test.ts; packages/runtime/test/conversation.test.ts; packages/runtime/test/loop-routes.test.ts |
+| Q.4 | Change card: before any change, it shows a card and says it out loud in voice mode: what changes, old value → new value, scope (this session, this project, everything), how long (until reverted, until a time, permanent), cost or risk impact, and how to undo. | 5 | done | packages/commands/test/change-card.test.ts; packages/runtime/test/conversation.test.ts |
+| Q.5 | Confirmation by risk: every command confirms according to its risk level (Q.6 to Q.8). | 5 | done | packages/commands/test/confirmation.test.ts; packages/runtime/test/conversation.test.ts; packages/runtime/test/loop-routes.test.ts |
+| Q.6 | Low risk (switch project, rename, reorder tasks, add a note): acts at once, then states what it did, with undo. | 5 | done | packages/commands/test/executor.test.ts; packages/runtime/test/conversation.test.ts |
+| Q.7 | Medium risk (raise a budget within the hard ceiling, change autonomy by one step, start a costly session): change card, then a "yes", a tap, or an email reply. | 5 | done | packages/commands/test/executor.test.ts; packages/runtime/test/conversation.test.ts; packages/runtime/test/loop-routes.test.ts |
+| Q.8 | High risk (raise the monthly hard ceiling, grant a capability, change email mode, delete anything, change permissions): change card, then confirmation in the app on a paired device, with biometric on the phone. A chat or email "yes" alone is not enough. | 5 | in progress | services/state-api/test/auth.test.ts; apps/approvals-web/test/inbox.test.tsx; packages/runtime/test/conversation.test.ts; packages/runtime/test/loop-routes.test.ts |
+| Q.9 | Bespoke requests: if no single command fits, the agent builds a plan from existing commands and shows it as one change card. If no commands can do it, it offers to create a Forerunner task to add the feature. | 5 | done | packages/commands/test/executor.test.ts; packages/commands/test/scenario.test.ts; packages/runtime/test/conversation.test.ts |
+| Q.10 | Spelled out every time: every change made by conversation is posted to the activity log and the project chat as a plain sentence with Undo (for example "Raised tonight's session budget for PharmaWatch from CHF 5 to CHF 20, until 06:00. Undo."). The other human sees changes that affect shared projects. | 5 | done | packages/commands/test/executor.test.ts; packages/commands/test/commands.test.ts; packages/runtime/test/conversation.test.ts |
+| Q.11 | Change log: every change has who asked, the words used, the commands run, before and after values, and a one-click undo while it is still reversible. | 5 | done | packages/state/test/sqlite.test.ts; packages/state/test/suite.ts; packages/commands/test/executor.test.ts; packages/runtime/test/loop-routes.test.ts |
+| Q.12 | Limits still hold: conversation changes go through the same enforcement as the settings screen. The agent cannot raise its own limits without your confirmation, and it never treats text from web pages, files or other people's email as a request. | 5 | done | packages/runtime/test/conversation.test.ts; packages/runtime/test/hooks.test.ts; packages/runtime/test/injection.test.ts; evals/test/injection.test.ts; packages/commands/test/intent.test.ts; packages/runtime/test/loop-routes.test.ts |
 
 ## R. Android app
 
@@ -291,7 +291,7 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | S.5 | Least privilege: GitHub fine-grained PAT or GitHub App scoped to the orgs and repos the user selects. Cloudflare token scoped to named zones and Workers. Each grant shows its scopes in the Extensions panel. | 0 | in progress | packages/runtime/test/setup-validators.test.ts; packages/runtime/test/extensions-registry.test.ts |
 | S.6 | Always needs a human, at any autonomy level: deleting repos or data, force-pushing to main, spending real money, sharing secrets, changing permissions, granting a new capability, sending money, entering passwords on third-party sites. | 1 | done | packages/runtime/test/autonomy.test.ts; packages/runtime/test/hooks.test.ts; packages/capabilities/test/git.test.ts; packages/capabilities/test/browser-guards.test.ts |
 | S.7 | Sandboxing: code runs in Docker with only the task's worktree mounted and a network allowlist. | 1 | done | packages/runtime/test/sandbox-container.test.ts; packages/runtime/test/sandbox-egress.test.ts; packages/runtime/test/sandbox-factory.test.ts; packages/runtime/test/sandbox.integration.test.ts |
-| S.8 | Kill switch: tray and UI button stops all sessions for one agent or everyone, revokes run tokens, and freezes claims. | 1 | in progress | packages/runtime/test/killswitch.test.ts; packages/runtime/test/cli.test.ts; packages/runtime/test/daemon.test.ts; apps/ui/test/shell.test.tsx |
+| S.8 | Kill switch: tray and UI button stops all sessions for one agent or everyone, revokes run tokens, and freezes claims. | 1 | in progress | packages/runtime/test/killswitch.test.ts; packages/runtime/test/cli.test.ts; packages/runtime/test/daemon.test.ts; apps/ui/test/shell.test.tsx; apps/desktop/src-tauri/src/state.rs |
 | S.9 | Audit log: append-only record of every tool call (who, what, when, cost, result). Exportable. | 1 | in progress | packages/state/test/suite.ts; packages/runtime/test/hooks.test.ts |
 | S.10 | Privacy between collaborators: your agent cannot read the other person's private memory, vault, local files or email. Shared means project data only. | 2 | in progress | packages/billing/test/router.test.ts; services/state-api/test/routes.test.ts; packages/state/test/suite.ts; packages/memory/test/scopes.test.ts |
 | S.11 | Vault, local app: OS keychain (macOS Keychain, Windows Credential Manager, libsecret), unlocked by OS login. | 0 | done | packages/vault/test/keyring.test.ts; packages/vault/test/open.test.ts |
@@ -311,7 +311,7 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | S.25 | Inbound mail is untrusted. Links and attachments open only in the sandbox browser. Instructions in emails are never executed, only reported. | 6 | in progress | packages/capabilities/test/email-inbound.test.ts; packages/capabilities/test/email-commands.test.ts; packages/capabilities/test/email-tools.test.ts; evals/test/injection.test.ts |
 | S.26 | Every sent email is logged with a copy visible to the owner, and a daily digest is optional. | 6 | in progress | packages/capabilities/test/email-policy.test.ts; packages/capabilities/test/email-routes.test.ts |
 | S.27 | Signature states it is an AI agent acting for the named human (on by default, can be turned off). | 6 | in progress | packages/capabilities/test/email-policy.test.ts |
-| S.28 | One-click "pause email" in the tray. | 6 | in progress | packages/capabilities/test/email-routes.test.ts; packages/capabilities/test/email-policy.test.ts |
+| S.28 | One-click "pause email" in the tray. | 6 | in progress | packages/capabilities/test/email-routes.test.ts; packages/capabilities/test/email-policy.test.ts; apps/desktop/src-tauri/src/state.rs; apps/desktop/src-tauri/src/actions.rs |
 | S.29 | Full discretion is available as requested. The setup screen explains plainly that the agent can then email strangers on your behalf. | 6 | in progress | packages/capabilities/test/email-settings.test.ts; packages/capabilities/test/email-policy.test.ts |
 | S.30 | Browser runs in its own profile, never the human's main one. Logins for agent-owned accounts come from the vault. | 6 | done | packages/capabilities/test/browser-profile.test.ts; packages/capabilities/test/browser-tools.test.ts; packages/capabilities/test/browser.integration.test.ts |
 | S.31 | Form submissions with personal data and accepting terms need approval below autonomy 4. Purchases always need approval. | 6 | done | packages/capabilities/test/browser-guards.test.ts; packages/capabilities/test/browser.integration.test.ts |

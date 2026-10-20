@@ -83,13 +83,15 @@ pub fn spawn_daemon(cmd: &FrCommand, logs_dir: &Path) -> Result<Spawned, String>
     Ok(Spawned { child, pid })
 }
 
-/// Poll for the `daemon.json` the child writes and a healthy `/health`, or fail when the
-/// child exits first or `START_TIMEOUT` passes.
+/// Poll for a `daemon.json` that is not `before` (the file on disk before the spawn, if it
+/// parsed) and answers `/health`, or fail when the child exits first or `START_TIMEOUT`
+/// passes. The daemon's pid is usually a grandchild of `pid` (tsx, `fr.cmd`), so the file
+/// is judged by `daemon::is_fresh`, not by pid equality.
 pub async fn wait_for_daemon(
     runtime_dir: &Path,
     child: &mut Child,
     pid: u32,
-    previous: Option<&DaemonFile>,
+    before: Option<&DaemonFile>,
 ) -> Result<(DaemonFile, Health, DaemonClient), String> {
     let started = Instant::now();
     let path = daemon_file_path(runtime_dir);
@@ -104,7 +106,7 @@ pub async fn wait_for_daemon(
             ));
         }
         if let Ok(file) = read_daemon_file(&path)
-            && is_fresh(&file, Some(pid), previous)
+            && is_fresh(&file, Some(pid), before)
             && let Ok(client) = DaemonClient::from_file(&file)
             && let Ok(health) = client.health().await
         {

@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router";
 import { vi } from "vitest";
 import { App } from "../src/App.tsx";
 import type { WebConfig } from "../src/api/config.ts";
-import { SESSION_KEY } from "../src/api/session.ts";
+import { type FetchLike, SESSION_KEY } from "../src/api/session.ts";
 import { browserClock, type Clock } from "../src/lib/clock.ts";
 import { type KeyValueStore, sessionStore } from "../src/lib/storage.ts";
 import {
@@ -84,6 +84,8 @@ export interface MountOptions {
   code?: string;
   route?: string;
   feed?: { pollIntervalMs?: number; retryMs?: number };
+  /** Replaces the page's fetch (see `delayingFetch`) to shape timing without touching the fake. */
+  fetchImpl?: FetchLike;
 }
 
 /** Mount the page. With `code`, the address bar carries `#code=...` as the issued link does. */
@@ -102,6 +104,7 @@ export async function mountApp(h: Harness, options: MountOptions = {}): Promise<
           storage={h.storage}
           clock={h.clock}
           feedOptions={{ pollIntervalMs: 100, retryMs: 200, ...options.feed }}
+          {...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {})}
         />
       </MemoryRouter>,
     );
@@ -208,6 +211,30 @@ export async function waitFor<T>(
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * A fetch that holds the response of every matching request for `ms` after the fake has
+ * answered it: the service (and its scripted PC) proceeds, the feed keeps delivering, but the
+ * page learns the outcome of that request late. Reproduces a slow network on one call.
+ */
+export function delayingFetch(
+  matches: (url: string, init?: RequestInit) => boolean,
+  ms: number,
+): FetchLike {
+  return async (url, init) => {
+    const res = await fetch(url, init);
+    if (matches(url, init)) await sleep(ms);
+    return res;
+  };
+}
+
+/** Matches the page's `POST /remote/commands` whose JSON body contains `fragment`. */
+export function remoteCommandPost(fragment = ""): (url: string, init?: RequestInit) => boolean {
+  return (url, init) =>
+    init?.method === "POST" &&
+    url.endsWith("/remote/commands") &&
+    (typeof init.body === "string" ? init.body : "").includes(fragment);
 }
 
 /** The token the page holds (read the way the page stores it), for leak assertions. */

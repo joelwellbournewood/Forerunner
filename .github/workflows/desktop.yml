@@ -31,6 +31,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
@@ -48,6 +50,15 @@ jobs:
         run: pnpm --filter @forerunner/ui exec playwright install chromium ${{ runner.os == 'Linux' && '--with-deps' || '' }}
       - name: Playwright UI tests
         run: pnpm --filter @forerunner/ui test:ui
+      - name: Rust format (desktop shell)
+        working-directory: apps/desktop/src-tauri
+        run: cargo fmt --check
+      - name: Rust lint (desktop shell)
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Rust unit tests (desktop shell)
+        working-directory: apps/desktop/src-tauri
+        run: cargo test
       - name: Tauri build (unsigned unless secrets are present)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

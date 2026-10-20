@@ -64,13 +64,19 @@ PC when the page cannot run anything.
    service's `validation` refusal as "does not relay chat yet". Chat needs `write:remote`,
    which the web default scope set does not include: the issuer adds it when the human should
    be able to chat and stop work from the web; without it the screen is disabled and says why.
-6. **The kill switch is the `kill` remote command** with `params: { scope: "all" }` to `pc`,
-   and to `cloud` as well when a session runs on the cloud runner, after a confirm dialog.
-   The page shows pick-up and outcome as they arrive.
+6. **The kill switch is the `kill` remote command** with `params: { scope: "all" }` to every
+   runner that is present: `pc` when a PC is online, `cloud` when a session runs on the cloud
+   runner; after a confirm dialog. It is enabled when either is there (work running only on
+   the cloud runner can be stopped from the web); nothing is queued for an offline PC, which
+   would otherwise execute a stale kill when it next came up. Each target is its own request,
+   so a refusal for one never hides the other's status. The page shows pick-up and outcome as
+   they arrive, and fetches each command once right after subscribing to the feed, since the
+   events can precede the subscription and the feed does not poll in live mode.
 7. **"A PC is online" is derived, not declared.** Any of: a `desktop` device seen in the last
    five minutes, a session running or paused on the `pc` runner, or a remote command a runner
-   touched in the last five minutes. Chat and the kill switch are disabled, with the reason,
-   when none holds. The daemon should register itself as a `desktop` device and bump
+   touched in the last five minutes. Chat is disabled, with the reason, when none holds; the
+   kill switch when neither a PC nor the cloud runner is present (item 6). The daemon should
+   register itself as a `desktop` device and bump
    `last_seen` while it runs so the first signal becomes the normal one.
 8. **Realtime without a query token.** `EventSource` cannot send headers and the service takes
    no `?token=`, so the page reads `GET /events` with `fetch` and a stream reader, resumes with
