@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { KillFileWatcher, readKillRequest } from "../src/enforcement/killfile.ts";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 
+const GOOD_GH = ["ghp_", "goodtoken000000000000000000000000000000"].join(""); // not-a-secret
 const CLI = join(process.cwd(), "packages", "runtime", "src", "cli", "main.ts");
 const TSX = join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
 
@@ -19,9 +20,7 @@ function fakeApis(): Promise<{ server: Server; url: string }> {
         res.end(JSON.stringify(body));
       };
       if (req.url === "/user")
-        return auth === "Bearer ghp_goodtoken000000000000000000000000000000"
-          ? send(200, { login: "j" })
-          : send(401, {});
+        return auth === `Bearer ${GOOD_GH}` ? send(200, { login: "j" }) : send(401, {});
       if (req.url?.startsWith("/repos/o/r"))
         return send(200, { permissions: { pull: true, push: true } });
       if (req.url?.startsWith("/v1/models"))
@@ -69,12 +68,11 @@ describe("fr CLI", () => {
   });
 
   it("non-interactive setup validates and stores credentials without echoing them", async () => {
-    const good = ["ghp_", "goodtoken000000000000000000000000000000"].join(""); // not-a-secret
     const r = await fr(
       "setup",
       "--non-interactive",
       "--github-token",
-      good,
+      GOOD_GH,
       "--anthropic-key",
       "sk-ant-api03-goodkey",
       "--repos",
