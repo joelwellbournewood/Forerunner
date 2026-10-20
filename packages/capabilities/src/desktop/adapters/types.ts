@@ -12,6 +12,12 @@ export const MOUSE_BUTTONS: readonly MouseButton[] = ["left", "middle", "right"]
 
 export interface AdapterCallOptions {
   signal?: AbortSignal;
+  /**
+   * For long actions done in bounded steps (typing in chunks): called after each step with how
+   * many of `total` characters reached the application, so an interruption can be audited with
+   * what was typed.
+   */
+  onProgress?: (done: number, total: number) => void;
 }
 
 export interface ScreenshotResult {
@@ -25,6 +31,7 @@ export interface DesktopAdapter {
   activeWindow(opts?: AdapterCallOptions): Promise<WindowInfo | null>;
   /** Bring a window to the front; `app` names an executable or class, or is a listed window. */
   focus(app: string | WindowInfo, opts?: AdapterCallOptions): Promise<WindowInfo>;
+  /** Type into the active window, in bounded chunks that each honour `signal`; see onProgress. */
   typeText(text: string, opts?: AdapterCallOptions): Promise<void>;
   pressKey(key: string, opts?: AdapterCallOptions): Promise<void>;
   click(x: number, y: number, opts?: AdapterCallOptions & { button?: MouseButton }): Promise<void>;

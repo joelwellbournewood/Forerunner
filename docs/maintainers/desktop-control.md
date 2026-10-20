@@ -42,24 +42,33 @@ window that is active *now*, read from the adapter before each action: when the 
 alt-tabs to an application outside the allowlist, the next keystroke is refused, not typed
 into the wrong window.
 
+Typing is done in chunks of at most `TYPE_CHUNK_CHARS` (2000) characters, one process per
+chunk, each with a timeout that scales with its length (`typingBudgetMs`: twice the keystroke
+time plus 5 s, never under 30 s). A fixed 30 s limit would cut 20 000 characters at 12 ms each
+after a tenth of them. The signal is checked between chunks and passed to every process, and
+`desktop_type`'s tool timeout is the budget for `MAX_TEXT_LENGTH`, so the runtime's limit and
+the adapter's agree. When typing is cut short (tool timeout, revoke, kill) the error and the
+audit row say `typed N of M characters, then ...` (`details.typedChars`), so partial input is
+never silent.
+
 ## Files
 
 | File | What it holds |
 | --- | --- |
 | `types.ts` | `WindowInfo`, `DesktopAction`, `DesktopRunBinding` (enabled, autonomy, allowlist, screenshotsToModel, tokenId), `DesktopBindingResolver`, `DesktopDenyReason`, `DESKTOP_MIN_AUTONOMY` |
 | `gate.ts` | `DesktopGate` (`checkStatic`, `check`, `revoke`, `resume`), `desktopDenial`, `isDesktopDenial` |
-| `allowlist.ts` | entry format, `windowAllowed`, `appMatches`, zod schemas, `MemoryAllowlistStore`, `FileAllowlistStore` |
+| `allowlist.ts` | entry format, `windowAllowed`, `appMatches`, `splitWmClass`, zod schemas, `MemoryAllowlistStore`, `FileAllowlistStore` |
 | `approvals.ts` | `DesktopApprovalPort` (allow an app for this session), `HumanRequestDesktopApprovals` (production), `FakeDesktopApprovals` |
 | `indicator.ts` | `Indicator` port, `RecordingIndicator`, `LogIndicator` (fallback), `CompositeIndicator` |
-| `keys.ts` | key grammar (`parseKey`), `validateText`, limits |
-| `adapters/types.ts` | `DesktopAdapter` contract, `Runner`, `Which`, click validation |
-| `adapters/linux.ts` | `LinuxDesktopAdapter` (xdotool, wmctrl, import / scrot / gnome-screenshot), `linuxArgv`, `detectLinuxTools`, `parseWmctrlLine` |
+| `keys.ts` | key grammar (`parseKey`), `validateText`, limits, the typing budget (`typingBudgetMs`, `chunkText`, `TYPE_CHUNK_CHARS`) |
+| `adapters/types.ts` | `DesktopAdapter` contract (`onProgress` for chunked actions), `Runner`, `Which`, click validation |
+| `adapters/linux.ts` | `LinuxDesktopAdapter` (xdotool, wmctrl, import / scrot / gnome-screenshot), `linuxArgv`, `detectLinuxTools`, `parseWmctrlLine`, `readLinuxExe` |
 | `adapters/windows.ts` | `WindowsDesktopAdapter` (PowerShell scripts as files), `WINDOWS_SCRIPTS`, `windowsArgv`, `escapeSendKeys`, `toSendKeys` |
 | `adapters/fake.ts` | `FakeDesktopAdapter`: records calls, `hold()`/`release()` to simulate a slow desktop, writes a tiny PNG |
 | `adapters/detect.ts` | `detectAdapter()`: platform, display server, the adapter or what is missing |
 | `controller.ts` | `DesktopController`: binding, gate, indicator, audit, serialisation, revoke, kill switch and registry attachment, screenshots |
 | `tools.ts` | the six `DesktopToolSpec`s, `registerDesktopTools` |
-| `routes.ts` | `createDesktopRoutes`: status, allowlist get/put, revoke, resume |
+| `routes.ts` | `createDesktopRoutes`: status, allowlist get/put (a human's own list only), revoke (open), resume (signed-in human) |
 
 ## The gate
 
@@ -114,6 +123,18 @@ browser. `FileAllowlistStore` keeps `<config>/desktop-allowlist.json` as `{ "<hu
 [entries] }`; `MemoryAllowlistStore` is for tests. The routes validate with `AllowlistSchema`
 (at most 200 entries, each needs `app`, `exe` or `windowClass`).
 
+wmctrl joins the pair with a dot, so a dotted half is ambiguous. `splitWmClass` resolves it:
+GTK applications report their app id in both halves (`org.gnome.Nautilus.Org.gnome.Nautilus`),
+and when the segments mirror each other the split is in the middle, so `class:org.gnome.Nautilus`
+matches and a fragment such as `org` or `gnome` does not (a short plain entry never unlocks
+every `org.*` application). Any other pair with a dotted half (`foo.bar.Baz`) matches either
+half of the first-dot split or of the last-dot split, since wmctrl does not say which half
+holds the dot. The whole string always matches.
+
+The allowlist is the per-human permission boundary the gate relies on, so the routes let a
+signed-in human read and change only their own list (`GET`/`PUT /desktop/allowlist/:humanId`
+answer 403 for another human's id) when the daemon identifies humans (`humanFor`).
+
 ## Platform tools needed
 
 Nothing is installed by Forerunner; `detectAdapter()` reports what is missing and the status
@@ -123,9 +144,9 @@ route shows it.
 
 | Tool | Used for |
 | --- | --- |
-| `xdotool` | active window, focus (`windowactivate --sync`), typing (`type --clearmodifiers --delay N -- <text>`), keys (`key --clearmodifiers -- <combo>`), clicks (`mousemove --sync X Y click N`) |
-| `wmctrl` | window list with pid and class (`wmctrl -l -p -x`); the executable comes from `/proc/<pid>/comm` |
-| one of `import` (ImageMagick), `scrot`, `gnome-screenshot` | screenshots of one window (`import -window <id>`, `scrot --focused`, `gnome-screenshot --window`); detection prefers them in that order |
+| `xdotool` | active window, focus (`windowactivate --sync`), typing (`type --clearmodifiers --delay N -- <chunk>`, one process per chunk of at most 2000 characters), keys (`key --clearmodifiers -- <combo>`), clicks (`mousemove --sync X Y click N`) |
+| `wmctrl` | window list with pid and class (`wmctrl -l -p -x`); the executable is the base name of `/proc/<pid>/exe` (`readLinuxExe`), with `/proc/<pid>/comm` as the fallback when the link is unreadable (another user's process): the kernel cuts comm to 15 characters, so `gnome-terminal-server` reads `gnome-terminal-` there and only the `exe` link matches `exe:gnome-terminal-server` |
+| one of `import` (ImageMagick), `scrot`, `gnome-screenshot` | screenshots of the active window's screen region (`import -window <id>`, `scrot --focused`, `gnome-screenshot --window`); detection prefers them in that order |
 | `DISPLAY` | must be set; without it there is no adapter |
 
 Under Wayland the tools reach XWayland windows only; native Wayland windows cannot be listed
@@ -138,7 +159,8 @@ adapter writes its five scripts (`WINDOWS_SCRIPTS`) once into a private director
 temp dir and runs `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File
 <script> <args>`. The scripts use `Get-Process` plus `user32` (`GetForegroundWindow`,
 `GetClassName`) for the window list, `WScript.Shell.AppActivate` with a `SetForegroundWindow`
-fallback for focus, `System.Windows.Forms.SendKeys.SendWait` for typing and keys, `user32`
+fallback for focus, `System.Windows.Forms.SendKeys.SendWait` for typing (one process per chunk
+of at most 2000 characters, escaped per chunk so no `{...}` token is cut) and keys, `user32`
 (`SetCursorPos`, `mouse_event`) for clicks and `System.Drawing` (`CopyFromScreen` of the
 window rectangle from `GetWindowRect`) for screenshots. Text, key strings and paths reach the
 script base64-encoded, so a value starting with `-` can never be read as a parameter and
@@ -160,15 +182,20 @@ action, `indicator:off` last). `LogIndicator` is the fallback when no shell is a
 
 ## Screenshots
 
-`desktop_screenshot` captures the active (allowed) window only, never the whole screen, so
-other applications' content stays out of the file. The PNG goes to
-`desktopScreenshotDir(agentId)` = `<data>/desktop/<safeSegment(agent)>/screenshots/
-<timestamp>-<run>-<seq>[-<label>].png` (the orchestrator may pass another sandbox dir), checked
-with `isInside` before writing. Every screenshot is an audit row with its path (tool
-`desktop_screenshot`). The bytes never enter git (the directory is under the app data dir,
-not a worktree) and reach the model only when the call set `includeInContext: true` *and* the
-binding's `screenshotsToModel` is true; otherwise the tool returns the path and says the image
-was withheld.
+`desktop_screenshot` captures the active allowed window's screen region, never the whole
+screen. It is a region, not the window's own backing store: `import -window <id>`,
+`scrot --focused` and `CopyFromScreen` of the `GetWindowRect` rectangle all read the screen,
+so anything overlapping that rectangle (another application's popup, a password prompt) is in
+the file. The PNG goes to `desktopScreenshotDir(agentId)` =
+`<data>/desktop/<safeSegment(agent)>/screenshots/<timestamp>-<run>-<seq>[-<label>].png` (the
+orchestrator may pass another sandbox dir), checked with `isInside` before writing. Every
+screenshot is an audit row with its path (tool `desktop_screenshot`). The bytes never enter git
+(the directory is under the app data dir, not a worktree) and reach the result only when the
+call set `includeInContext: true` *and* the binding's `screenshotsToModel` is true; otherwise
+the tool returns the path and says the image was withheld. When both flags allow it the PNG is
+in `ToolResult.artifacts.image` (base64) and the content says so and names the path; it does
+not claim the model can see it, because the runtime does not yet forward image artifacts to
+the provider (see Known issues).
 
 ## Audit
 
@@ -176,7 +203,8 @@ Every action, allowed or refused, is one `AuditPort` row: `tool` `desktop_<kind>
 (session, run, agent, human, token id), a bounded `inputSummary` (never the typed text, only
 its length), `resultSummary` (focused window, screenshot path, ...), `allowed`, and
 `deniedReason` as `<code>: <message>`. Revocations are audited on the interrupted and dropped
-runs; the routes audit allowlist changes (`desktop_allowlist`), revoke and resume.
+runs; a typing action cut short carries `typed N of M characters` in its denial. The routes
+audit allowlist changes (`desktop_allowlist`), revoke and resume (with the human who resumed).
 
 ## Wiring (the orchestrator's part)
 
@@ -205,7 +233,9 @@ app.route("/", createDesktopRoutes({ controller, allowlist, clock, audit, detect
 
 The catalog entry `desktop-control` in `packages/runtime/src/extensions/catalog.json` must
 list the six tool names above so the panel shows them and `revokeLive` revokes tokens that
-carry them. `DesktopController.endRun(runId)` belongs in the run's teardown.
+carry them. `DesktopController.endRun(runId)` belongs in the run's teardown. `humanFor` must be
+set from the daemon's auth whenever the daemon identifies humans: without it the allowlist and
+resume routes have no human to bind to (single-user daemon only).
 
 ## How to change it
 
@@ -227,28 +257,37 @@ carry them. `DesktopController.endRun(runId)` belongs in the run's teardown.
 - `desktop-gate.test.ts`: the matrix (disabled, autonomy 0-2 refused and 3-4 allowed, app not
   allowed with the allowed apps named, killed, revoked until resume, list_windows static-only,
   no target), the approval port (approved remembered per session, pending and denied refuse,
-  no port refuses), allowlist matching and parsing, the memory and file stores,
-  `HumanRequestDesktopApprovals` against a `sqlite::memory:` store (one blocking request per
-  app, yes approves, no denies).
+  no port refuses), allowlist matching and parsing including dotted GTK app ids (`splitWmClass`,
+  fragments never match), the memory and file stores, `HumanRequestDesktopApprovals` against a
+  `sqlite::memory:` store (one blocking request per app, yes approves, no denies) and the
+  window title bounded to one line on the card.
 - `desktop-adapters.test.ts`: detection with a fake `which()` on Linux (missing tools,
   DISPLAY, Wayland note), Windows (powershell) and macOS; Linux argv construction (no shell,
   the text one argument after `--`), wmctrl parsing, id mapping, the full sequence through an
-  injected runner, validation before any process; Windows argv (`-File <temp script>`,
-  base64 arguments, scripts on disk unchanged by input, never `-Command`), SendKeys escaping
-  and key mapping, JSON parsing, script directory lifecycle.
+  injected runner, validation before any process, typing in bounded chunks with a runner
+  timeout that scales with the chunk (and never splits a surrogate pair), the signal honoured
+  between chunks with progress reported, `/proc/<pid>/exe` before the 15-char comm (the own
+  process on Linux, a fake proc dir elsewhere); Windows argv (`-File <temp script>`, base64
+  arguments, scripts on disk unchanged by input, never `-Command`), chunked SendKeys with a
+  scaled timeout, SendKeys escaping and key mapping, JSON parsing, script directory lifecycle.
 - `desktop-controller.test.ts`: indicator on/off order and idle timeout, off on `endRun`, off
   and refusal on revoke, live revoke interrupting an in-flight action and dropping a queued
-  one, kill switch stop and frozen state, registry disable/enable, the gate matrix never
-  reaching the adapter, active-window change refused, focus of unknown or disallowed apps,
-  human approval through the port, screenshots under the sandbox dir with the path logged and
-  the image withheld unless allowed and asked, an audit row per action, hidden windows,
+  one, typing cut short (timeout or revoke) audited with `typed N of M characters` and the
+  gate reason kept, kill switch stop and frozen state, registry disable/enable, the gate matrix
+  never reaching the adapter, active-window change refused, focus of unknown or disallowed
+  apps, human approval through the port, screenshots under the sandbox dir with the path logged
+  and the image withheld unless allowed and asked, an audit row per action, hidden windows,
   serialisation.
 - `desktop-tools.test.ts`: six tools registered with risk high and `beforeCall`, strict
-  schemas, `beforeCall` refusing at autonomy 2 without touching the adapter, `execute` gated
-  too, the six tools end to end on the fake adapter, and behind `EnforcementHooks` with a real
-  token (level 3 runs; level 2 with a human's approval of the tool call still refused).
+  schemas, `desktop_type`'s timeout covering `MAX_TEXT_LENGTH`, `beforeCall` refusing at
+  autonomy 2 without touching the adapter, `execute` gated too, the six tools end to end on the
+  fake adapter, an allowed screenshot naming the artifact and path instead of claiming it was
+  attached, and behind `EnforcementHooks` with a real token (level 3 runs; level 2 with a
+  human's approval of the tool call still refused).
 - `desktop-routes.test.ts`: status, allowlist get/put with validation and audit, signed-in
-  human required when the daemon identifies one, revoke and resume, error statuses.
+  human required when the daemon identifies one and bound to their own id (another human's id
+  answers 403), resume refused anonymously while revoke stays open, revoke and resume, error
+  statuses.
 
 No integration test drives a real desktop: CI runners have no display. A manual check on each
 platform is `fr` -> Extensions -> enable desktop control at autonomy 3, then `desktop_focus`
@@ -262,8 +301,16 @@ on an allowlisted editor and `desktop_type`; the banner must be visible while it
   Automation API (`System.Windows.Automation`) can replace SendKeys for text in a later ADR.
 - The extension catalog entry still lists the old tool names (`desktop.screenshot`, ...); it
   must be updated to the six `desktop_*` names when the orchestrator wires the module.
+- The runtime does not consume `ToolResult.artifacts` yet (only the type is declared), so an
+  allowed screenshot's PNG does not reach the model even with both flags set; the tool says
+  so. Forwarding image artifacts into the provider message builder is a runtime change.
+- Screenshots are screen regions: an overlapping window is in the file. Capturing a window's
+  own backing store (`xwd -id`, `PrintWindow` on Windows) would exclude it and is a later
+  adapter change.
 - `desktop_list_windows` returns titles of allowlisted windows as untrusted content; the
   injection scan wraps them like any tool output.
+- The ADR index row for 0021 in `docs/decisions/README.md` still carries an older title; the
+  file is `0021-desktop-control.md`.
 
 ## Requirements covered
 

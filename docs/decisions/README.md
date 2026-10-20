@@ -37,7 +37,7 @@ Status: accepted | superseded by NNNN
 | 0016 | How MCP tools map to ToolSpecs and action classes |
 | 0017 | Notifications: channel fallback order and what counts as urgent |
 | 0019 | Model watch: recommendation thresholds and the estimate model |
-| 0021 | Desktop control: adapters per OS, the allowlist gate and what the agent never does |
+| 0021 | Desktop control: platform adapters, gate placement and screenshot handling |
 | 0024 | State service shape: direct Postgres for runtimes, a thin service for devices, realtime, remote commands and the mirror |
 | 0025 | UI conventions over the daemon API: config source, SSE auth, chat stream frames, open shapes |
 | 0026 | Daemon lifecycle: one `fr daemon` per install, shells attach to it |

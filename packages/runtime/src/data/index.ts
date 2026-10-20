@@ -21,6 +21,7 @@ export {
   mergeTypes,
   mimeFor,
   objectColumns,
+  type ParsedUri,
   parseCsv,
   parseUri,
   pngDimensions,

@@ -792,16 +792,45 @@ export function folderSample(walk: WalkResult, maxEntries: number, cap: number):
 
 const URI_RE = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/i;
 
-export function parseUri(source: string): { scheme: string; host: string; name: string } | null {
+export interface ParsedUri {
+  scheme: string;
+  /** Host and port; never the userinfo. */
+  host: string;
+  /** The last path segment (the host when there is no path). */
+  name: string;
+  /** `scheme://host/path`: what gets stored, shown and audited. */
+  locator: string;
+  /** True when the source carried userinfo, a query or a fragment that `locator` drops. */
+  stripped: boolean;
+}
+
+/**
+ * Split a URI into its parts and a `locator` that keeps only `scheme://host/path`.
+ * Credentials in the authority (`user:pass@`) and the query and fragment (presigned
+ * signatures, access tokens) are dropped so they never reach the store, the audit log, an
+ * approval request or a model. Returns null for anything that is not `scheme://...`
+ * (Windows drive letters included).
+ */
+export function parseUri(source: string): ParsedUri | null {
   const m = URI_RE.exec(source.trim());
   if (!m) return null;
   const scheme = (m[1] ?? "").toLowerCase();
-  const rest = m[2] ?? "";
+  const whole = m[2] ?? "";
+  const rest = whole.split(/[?#]/, 1)[0] ?? "";
   const slash = rest.indexOf("/");
-  const host = slash === -1 ? rest : rest.slice(0, slash);
-  const tail = slash === -1 ? "" : (rest.slice(slash + 1).split(/[?#]/, 1)[0] ?? "");
-  const name = tail.split("/").filter(Boolean).pop() ?? host;
-  return { scheme, host, name: name || host || scheme };
+  const authority = slash === -1 ? rest : rest.slice(0, slash);
+  const at = authority.lastIndexOf("@");
+  const host = at === -1 ? authority : authority.slice(at + 1);
+  const path = slash === -1 ? "" : rest.slice(slash + 1);
+  const name = path.split("/").filter(Boolean).pop() ?? host;
+  const locator = `${scheme}://${host}${slash === -1 ? "" : `/${path}`}`;
+  return {
+    scheme,
+    host,
+    name: name || host || scheme,
+    locator,
+    stripped: at !== -1 || rest.length !== whole.length,
+  };
 }
 
 export function describeRemote(uri: { scheme: string; host: string }): DataMetadata {

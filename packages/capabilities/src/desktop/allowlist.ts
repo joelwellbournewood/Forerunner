@@ -4,7 +4,8 @@
  * plain string is shorthand: `"code"` matches executable or class, `"exe:code"` the executable
  * only, `"class:Navigator.firefox"` the class only. Matching is case-insensitive on the
  * executable's base name without `.exe`, and on the X11 `instance.Class` pair (either half or
- * the whole) or the Win32 class name. Titles are never matched: they are content.
+ * the whole; see `splitWmClass` for dotted GTK app ids) or the Win32 class name. Titles are
+ * never matched: they are content.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { type AppDirsOptions, appDirs, dirname, ForerunnerError, join } from "@forerunner/platform";
@@ -76,12 +77,47 @@ export function normalizeAllowlist(list: DesktopAllowlist): DesktopAllowEntry[] 
   return list.map(parseAllowEntry);
 }
 
-function classMatches(windowClass: string, wanted: string): boolean {
+/**
+ * The `instance` and `Class` halves of a WM_CLASS pair as wmctrl prints it (`instance.Class`).
+ * GTK applications report their app id in both halves (`org.gnome.Nautilus.Org.gnome.Nautilus`),
+ * so when the segments mirror each other the split is in the middle; otherwise it is the first
+ * dot (`code.Code`, `Navigator.firefox`). A string without a dot is not a pair.
+ */
+export function splitWmClass(pair: string): { instance: string; cls: string } | null {
+  const segments = pair.split(".");
+  if (segments.length < 2) return null;
+  if (segments.length % 2 === 0) {
+    const half = segments.length / 2;
+    const a = segments.slice(0, half).join(".");
+    const b = segments.slice(half).join(".");
+    if (a.toLowerCase() === b.toLowerCase()) return { instance: a, cls: b };
+  }
+  const dot = pair.indexOf(".");
+  return { instance: pair.slice(0, dot), cls: pair.slice(dot + 1) };
+}
+
+/**
+ * What a class entry may equal: the whole pair or one of its halves. For a mirrored GTK pair
+ * only the app id counts (`org` never unlocks every `org.*` application); for any other pair
+ * with a dotted half the first-dot and the last-dot splits are both offered, since wmctrl does
+ * not say which half holds the dot.
+ */
+function wmClassCandidates(windowClass: string): string[] {
   const w = normalizeClass(windowClass);
-  if (w === wanted) return true;
-  const dot = w.indexOf(".");
-  if (dot < 0) return false;
-  return w.slice(0, dot) === wanted || w.slice(dot + 1) === wanted;
+  const split = splitWmClass(w);
+  if (!split) return [w];
+  const segments = w.split(".");
+  const mirrored =
+    segments.length % 2 === 0 &&
+    segments.slice(0, segments.length / 2).join(".") ===
+      segments.slice(segments.length / 2).join(".");
+  if (mirrored) return [w, split.instance];
+  const last = w.lastIndexOf(".");
+  return [...new Set([w, split.instance, split.cls, w.slice(0, last), w.slice(last + 1)])];
+}
+
+function classMatches(windowClass: string, wanted: string): boolean {
+  return wmClassCandidates(windowClass).includes(wanted);
 }
 
 /** True when every field the entry sets matches the window. */

@@ -17,7 +17,17 @@ import {
   run as runProcess,
   ShellError,
 } from "@forerunner/platform";
-import { type NamedKey, type ParsedKey, parseKey, validateText } from "../keys.ts";
+import {
+  chunkText,
+  DEFAULT_TYPE_DELAY_MS,
+  type NamedKey,
+  type ParsedKey,
+  parseKey,
+  TYPE_CHUNK_CHARS,
+  TYPE_TIMEOUT_BASE_MS,
+  typingBudgetMs,
+  validateText,
+} from "../keys.ts";
 import type { WindowInfo } from "../types.ts";
 import {
   type AdapterCallOptions,
@@ -291,11 +301,11 @@ export class WindowsDesktopAdapter implements DesktopAdapter {
     name: WindowsScriptName,
     args: readonly string[],
     what: string,
-    opts?: AdapterCallOptions,
+    opts?: AdapterCallOptions & { timeoutMs?: number },
   ): Promise<RunResult> {
     const argv = windowsArgv(this.opts.powershell, this.scriptPath(name), args);
     const runOpts: RunOptions = {
-      timeoutMs: this.opts.timeoutMs ?? 30_000,
+      timeoutMs: opts?.timeoutMs ?? this.opts.timeoutMs ?? TYPE_TIMEOUT_BASE_MS,
       maxOutputBytes: 1024 * 1024,
       ...(this.opts.env ? { env: this.opts.env } : {}),
       ...(opts?.signal ? { signal: opts.signal } : {}),
@@ -344,9 +354,20 @@ export class WindowsDesktopAdapter implements DesktopAdapter {
     return w;
   }
 
+  /** One SendKeys process per chunk of raw text (escaped per chunk, so no `{...}` token is cut). */
   async typeText(text: string, opts?: AdapterCallOptions): Promise<void> {
-    const keys = escapeSendKeys(validateText(text));
-    await this.ps("send-keys.ps1", [base64Arg(keys)], "typing", opts);
+    const clean = validateText(text);
+    const base = this.opts.timeoutMs ?? TYPE_TIMEOUT_BASE_MS;
+    let done = 0;
+    for (const chunk of chunkText(clean, TYPE_CHUNK_CHARS)) {
+      if (opts?.signal?.aborted) throw abortError(opts.signal);
+      await this.ps("send-keys.ps1", [base64Arg(escapeSendKeys(chunk))], "typing", {
+        ...opts,
+        timeoutMs: typingBudgetMs(chunk.length, DEFAULT_TYPE_DELAY_MS, base),
+      });
+      done += chunk.length;
+      opts?.onProgress?.(done, clean.length);
+    }
   }
 
   async pressKey(key: string, opts?: AdapterCallOptions): Promise<void> {

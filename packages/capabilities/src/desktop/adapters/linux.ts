@@ -4,7 +4,7 @@
  * Every call is an argv array through the platform runner; the model's text is one argument
  * after `--`, never part of a command string.
  */
-import { readFile, stat } from "node:fs/promises";
+import { readFile, readlink, stat } from "node:fs/promises";
 import {
   ForerunnerError,
   join,
@@ -13,7 +13,17 @@ import {
   run as runProcess,
   ShellError,
 } from "@forerunner/platform";
-import { parseKey, toXdotoolKey, validateText } from "../keys.ts";
+import { splitWmClass } from "../allowlist.ts";
+import {
+  chunkText,
+  DEFAULT_TYPE_DELAY_MS,
+  parseKey,
+  TYPE_CHUNK_CHARS,
+  TYPE_TIMEOUT_BASE_MS,
+  toXdotoolKey,
+  typingBudgetMs,
+  validateText,
+} from "../keys.ts";
 import type { WindowInfo } from "../types.ts";
 import {
   type AdapterCallOptions,
@@ -142,16 +152,40 @@ export interface LinuxAdapterOptions {
   tools: LinuxTools;
   run?: Runner;
   env?: NodeJS.ProcessEnv;
-  /** Executable name for a pid; defaults to reading `/proc/<pid>/comm`. */
-  readComm?: (pid: number) => Promise<string | null>;
+  /** Executable base name for a pid; defaults to `readLinuxExe` (`/proc/<pid>/exe`, then comm). */
+  readExe?: (pid: number) => Promise<string | null>;
   /** Delay between typed characters in ms (xdotool `--delay`). */
   typeDelayMs?: number;
+  /** Process timeout for everything but typing, whose timeout scales with the text. */
   timeoutMs?: number;
 }
 
-async function defaultReadComm(pid: number): Promise<string | null> {
+/** Base name of an executable link target; `/proc` appends ` (deleted)` after an upgrade. */
+export function exeBasename(link: string): string | null {
+  const base =
+    link
+      .trim()
+      .replace(/ \(deleted\)$/, "")
+      .split(/[\\/]/)
+      .pop() ?? "";
+  return base || null;
+}
+
+/**
+ * The executable behind a pid: the base name of `/proc/<pid>/exe` (the full name), and when
+ * that link cannot be read (another user's process) `/proc/<pid>/comm`, which the kernel cuts
+ * to 15 characters (`gnome-terminal-` for `gnome-terminal-server`).
+ */
+export async function readLinuxExe(pid: number, procDir = "/proc"): Promise<string | null> {
+  const dir = join(procDir, String(pid));
   try {
-    return (await readFile(join("/proc", String(pid), "comm"), "utf8")).trim() || null;
+    const base = exeBasename(await readlink(join(dir, "exe")));
+    if (base) return base;
+  } catch {
+    // fall through to comm
+  }
+  try {
+    return (await readFile(join(dir, "comm"), "utf8")).trim() || null;
   } catch {
     return null;
   }
@@ -160,16 +194,20 @@ async function defaultReadComm(pid: number): Promise<string | null> {
 export class LinuxDesktopAdapter implements DesktopAdapter {
   readonly platform = "linux" as const;
   private readonly run: Runner;
-  private readonly readComm: (pid: number) => Promise<string | null>;
+  private readonly readExe: (pid: number) => Promise<string | null>;
 
   constructor(private readonly opts: LinuxAdapterOptions) {
     this.run = opts.run ?? runProcess;
-    this.readComm = opts.readComm ?? defaultReadComm;
+    this.readExe = opts.readExe ?? ((pid) => readLinuxExe(pid));
   }
 
-  private async exec(argv: string[], what: string, opts?: AdapterCallOptions): Promise<RunResult> {
+  private async exec(
+    argv: string[],
+    what: string,
+    opts?: AdapterCallOptions & { timeoutMs?: number },
+  ): Promise<RunResult> {
     const runOpts: RunOptions = {
-      timeoutMs: this.opts.timeoutMs ?? 30_000,
+      timeoutMs: opts?.timeoutMs ?? this.opts.timeoutMs ?? TYPE_TIMEOUT_BASE_MS,
       maxOutputBytes: 1024 * 1024,
       ...(this.opts.env ? { env: this.opts.env } : {}),
       ...(opts?.signal ? { signal: opts.signal } : {}),
@@ -199,9 +237,9 @@ export class LinuxDesktopAdapter implements DesktopAdapter {
     for (const line of r.stdout.split(/\r?\n/)) {
       const w = parseWmctrlLine(line);
       if (!w) continue;
-      const comm = await this.readComm(w.pid);
-      const instance = w.windowClass.split(".")[0] ?? "";
-      out.push({ ...w, exe: (comm ?? instance).toLowerCase() });
+      const exe = await this.readExe(w.pid);
+      const instance = splitWmClass(w.windowClass)?.instance ?? w.windowClass;
+      out.push({ ...w, exe: (exe ?? instance).toLowerCase() });
     }
     return out;
   }
@@ -209,7 +247,7 @@ export class LinuxDesktopAdapter implements DesktopAdapter {
   async activeWindow(opts?: AdapterCallOptions): Promise<WindowInfo | null> {
     const r = await this.run(linuxArgv.activeWindow(this.opts.tools.xdotool), {
       allowFailure: true,
-      timeoutMs: this.opts.timeoutMs ?? 30_000,
+      timeoutMs: this.opts.timeoutMs ?? TYPE_TIMEOUT_BASE_MS,
       ...(this.opts.env ? { env: this.opts.env } : {}),
       ...(opts?.signal ? { signal: opts.signal } : {}),
     });
@@ -237,13 +275,25 @@ export class LinuxDesktopAdapter implements DesktopAdapter {
     return w;
   }
 
+  /**
+   * One `xdotool type` process per chunk of at most `TYPE_CHUNK_CHARS`, each with a timeout
+   * that scales with its length (a 30 s limit would cut 20 000 characters at 12 ms each after
+   * a tenth of them). The signal is checked between chunks and passed to every process.
+   */
   async typeText(text: string, opts?: AdapterCallOptions): Promise<void> {
     const clean = validateText(text);
-    await this.exec(
-      linuxArgv.type(this.opts.tools.xdotool, clean, this.opts.typeDelayMs ?? 12),
-      "typing",
-      opts,
-    );
+    const delay = this.opts.typeDelayMs ?? DEFAULT_TYPE_DELAY_MS;
+    const base = this.opts.timeoutMs ?? TYPE_TIMEOUT_BASE_MS;
+    let done = 0;
+    for (const chunk of chunkText(clean, TYPE_CHUNK_CHARS)) {
+      if (opts?.signal?.aborted) throw abortError(opts.signal);
+      await this.exec(linuxArgv.type(this.opts.tools.xdotool, chunk, delay), "typing", {
+        ...opts,
+        timeoutMs: typingBudgetMs(chunk.length, delay, base),
+      });
+      done += chunk.length;
+      opts?.onProgress?.(done, clean.length);
+    }
   }
 
   async pressKey(key: string, opts?: AdapterCallOptions): Promise<void> {

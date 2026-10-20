@@ -11,11 +11,19 @@
  *
  * Persistence: the samples are the finished `task` rows with their `run` rows and the
  * `cost_ledger`; the model is a deterministic fold over them, rebuilt with fromStore() at start
- * and extended with refresh(). There is no separate table: a rebuild from the store always
+ * and extended with refresh() or, live, with observeTask() from the runner's task.finished hook.
+ * Both feeds derive the sample the same way (sampleForTask), so the state after a restart agrees
+ * with the state learned live. There is no separate table: a rebuild from the store always
  * reproduces the same state, and toJSON()/fromJSON() exist for callers that want to cache it.
+ *
+ * The fold is incremental and bounded: a cursor (the newest finish time seen) plus an overlap
+ * window. refresh() asks the store only for finished tasks updated at or after
+ * `cursor - foldOverlapMs` and remembers the ids inside that window, so a task is never counted
+ * twice however often refresh() runs, and neither the query nor the memory grows with the
+ * install's history (ADR 0019, amendment).
  */
 import { ForerunnerError } from "@forerunner/platform";
-import type { StateStore, TaskRow } from "@forerunner/state";
+import type { StateStore, TaskRow, TaskStatus } from "@forerunner/state";
 
 export interface EstimateInput {
   specialist: string | null;
@@ -98,6 +106,12 @@ export interface EstimateModelOptions {
   defaultSpecialist?: string;
   /** Recent samples kept for the accuracy view. Default 200. */
   recentLimit?: number;
+  /**
+   * Overlap window behind the cursor that refresh() re-reads and whose task ids it remembers
+   * (clock skew between writers of a shared store, and a task row finished in the store a
+   * little after its live observation). Default 15 minutes.
+   */
+  foldOverlapMs?: number;
 }
 
 export const DEFAULT_ALPHA = 0.3;
@@ -106,6 +120,11 @@ export const DEFAULT_COLD_START_BUDGET_SHARE = 0.5;
 export const DEFAULT_COLD_START_TIMEOUT_SHARE = 0.5;
 export const DEFAULT_FALLBACK_USD_MICRO = 500_000;
 export const DEFAULT_FALLBACK_WALL_MS = 20 * 60_000;
+export const DEFAULT_FOLD_OVERLAP_MS = 15 * 60_000;
+/** Task statuses the fold treats as finished. */
+export const FINISHED_TASK_STATUSES: readonly TaskStatus[] = ["done", "failed", "cancelled"];
+/** Ids per IN (...) clause when the fold lists runs (SQLite's parameter limit is far above this). */
+const RUN_LIST_CHUNK = 500;
 /** Per-sample ratio clamp: one runaway or aborted run cannot dominate. */
 export const SAMPLE_RATIO_MIN = 0.1;
 export const SAMPLE_RATIO_MAX = 10;
@@ -134,22 +153,46 @@ interface KeyState {
 }
 
 export interface EstimateModelSnapshot {
-  version: 1;
+  version: 2;
   keys: KeyState[];
   recent: EstimateSample[];
+  /** Newest finish time seen, from the store or live. */
   cursor: string | null;
-  folded: string[];
+  /** Task ids finished inside the overlap window behind the cursor, with their finish time. */
+  folded: { id: string; at: string }[];
 }
+
+/** The actual figures of a finished task, as the runner's task.finished hook knows them. */
+export interface TaskActuals {
+  usdMicro: number;
+  wallMs: number;
+  /** When the task finished (ISO); the sample time and the fold's bookkeeping key. */
+  at: string;
+}
+
+/** The task columns a sample needs; a TaskRow satisfies it. */
+export type EstimateTaskInput = Pick<
+  TaskRow,
+  "id" | "specialist" | "risk_tier" | "est_cost_usd_micro" | "budget_usd_micro"
+>;
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
+}
+
+/** `iso` minus `ms`, as ISO; an unparsable timestamp comes back unchanged. */
+function isoMinus(iso: string, ms: number): string {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? new Date(Math.max(0, t - ms)).toISOString() : iso;
 }
 
 export class EstimateModel implements EstimatePort {
   private readonly keys = new Map<string, KeyState>();
   private recent: EstimateSample[] = [];
   private cursor: string | null = null;
-  private readonly folded = new Set<string>();
+  /** Task id -> finish time, kept for the overlap window behind the cursor only. */
+  private readonly folded = new Map<string, string>();
+  private readonly foldOverlapMs: number;
   private readonly alpha: number;
   private readonly shrinkage: number;
   private readonly opts: Required<
@@ -173,6 +216,10 @@ export class EstimateModel implements EstimatePort {
     }
     if (!(this.shrinkage >= 0)) {
       throw new ForerunnerError("validation", "estimate model shrinkage must be >= 0");
+    }
+    this.foldOverlapMs = options.foldOverlapMs ?? DEFAULT_FOLD_OVERLAP_MS;
+    if (!(this.foldOverlapMs >= 0)) {
+      throw new ForerunnerError("validation", "estimate model foldOverlapMs must be >= 0");
     }
     this.opts = {
       fallbackUsdMicro: options.fallbackUsdMicro ?? DEFAULT_FALLBACK_USD_MICRO,
@@ -320,18 +367,18 @@ export class EstimateModel implements EstimatePort {
     return this.recent.map((s) => ({ ...s }));
   }
 
-  /** Newest task `updated_at` folded from the store, for incremental refresh. */
+  /** Newest finish time seen (task `updated_at` from the store, or `at` of a live observation). */
   get storeCursor(): string | null {
     return this.cursor;
   }
 
   toJSON(): EstimateModelSnapshot {
     return {
-      version: 1,
+      version: 2,
       keys: [...this.keys.values()].map((k) => ({ ...k })),
       recent: this.recentSamples(),
       cursor: this.cursor,
-      folded: [...this.folded],
+      folded: [...this.folded].map(([id, at]) => ({ id, at })),
     };
   }
 
@@ -339,7 +386,7 @@ export class EstimateModel implements EstimatePort {
     snapshot: EstimateModelSnapshot,
     options: EstimateModelOptions = {},
   ): EstimateModel {
-    if (snapshot.version !== 1) {
+    if (snapshot.version !== 2) {
       throw new ForerunnerError("validation", "unknown estimate model snapshot version", {
         details: { version: String(snapshot.version) },
       });
@@ -348,8 +395,22 @@ export class EstimateModel implements EstimatePort {
     for (const k of snapshot.keys) m.keys.set(m.keyOf(k.specialist, k.kind), { ...k });
     m.recent = snapshot.recent.map((s) => ({ ...s }));
     m.cursor = snapshot.cursor;
-    for (const id of snapshot.folded) m.folded.add(id);
+    for (const f of snapshot.folded) m.folded.set(f.id, f.at);
+    m.prune();
     return m;
+  }
+
+  /** Remember a finished task inside the window and move the cursor forward. */
+  private remember(taskId: string, at: string): void {
+    this.folded.set(taskId, at);
+    if (this.cursor === null || at > this.cursor) this.cursor = at;
+  }
+
+  /** Drop remembered ids older than the overlap window behind the cursor. */
+  private prune(): void {
+    if (this.cursor === null) return;
+    const floor = isoMinus(this.cursor, this.foldOverlapMs);
+    for (const [id, at] of this.folded) if (at < floor) this.folded.delete(id);
   }
 
   /**
@@ -366,65 +427,99 @@ export class EstimateModel implements EstimatePort {
     return m;
   }
 
-  /** Fold tasks finished since the last refresh. Returns how many samples were added. */
+  /**
+   * Fold tasks finished since the last refresh. The store returns only finished tasks updated
+   * at or after `cursor - foldOverlapMs`; ids remembered from that window are skipped, so a
+   * refresh never counts a task twice. Returns how many samples were added.
+   */
   async refresh(store: StateStore): Promise<number> {
-    const tasks = await store.task.list(
-      { status: ["done", "failed", "cancelled"] },
-      { orderBy: [{ column: "updated_at" }, { column: "id" }] },
+    const since = this.cursor === null ? null : isoMinus(this.cursor, this.foldOverlapMs);
+    const w = store.task.where({ status: [...FINISHED_TASK_STATUSES] });
+    const tasks = await store.task.rows(
+      `SELECT * FROM ${store.task.qt}${w.sql}${since === null ? "" : ' AND "updated_at" >= ?'} ORDER BY "updated_at" ASC, "id" ASC`,
+      since === null ? w.params : [...w.params, since],
     );
-    const fresh = tasks.filter(
-      (t) => !this.folded.has(t.id) && (this.cursor === null || t.updated_at >= this.cursor),
-    );
-    if (fresh.length === 0) return 0;
-    const runs = await store.run.list({ task_id: fresh.map((t) => t.id) });
-    const byTask = new Map<string, { cost: number; wall: number; finished: number }>();
-    for (const r of runs) {
-      if (!r.task_id || r.outcome === "running" || r.outcome === "") continue;
-      const acc = byTask.get(r.task_id) ?? { cost: 0, wall: 0, finished: 0 };
-      acc.cost += r.cost_usd_micro;
-      acc.wall += r.duration_ms ?? 0;
-      acc.finished += 1;
-      byTask.set(r.task_id, acc);
+    const fresh = tasks.filter((t) => !this.folded.has(t.id));
+    if (fresh.length === 0) {
+      this.prune();
+      return 0;
     }
+    const byTask = new Map<string, { cost: number; wall: number; finished: number }>();
+    for (let i = 0; i < fresh.length; i += RUN_LIST_CHUNK) {
+      const ids = fresh.slice(i, i + RUN_LIST_CHUNK).map((t) => t.id);
+      for (const r of await store.run.list({ task_id: ids })) {
+        if (!r.task_id || r.outcome === "running" || r.outcome === "") continue;
+        const acc = byTask.get(r.task_id) ?? { cost: 0, wall: 0, finished: 0 };
+        acc.cost += r.cost_usd_micro;
+        acc.wall += r.duration_ms ?? 0;
+        acc.finished += 1;
+        byTask.set(r.task_id, acc);
+      }
+    }
+    // A task's ledger rows are recorded after the task exists, so the oldest fresh task's
+    // creation (less the window, for skew) bounds the breakdown instead of the whole ledger.
+    let oldest = fresh[0]?.created_at ?? "";
+    for (const t of fresh) if (t.created_at < oldest) oldest = t.created_at;
     const ledger = new Map<string, number>();
-    for (const b of await store.costLedger.breakdown("task_id")) {
+    for (const b of await store.costLedger.breakdown("task_id", {
+      from: isoMinus(oldest, this.foldOverlapMs),
+    })) {
       if (b.key && b.entries > 0) ledger.set(b.key, b.usd_micro);
     }
     let added = 0;
     for (const t of fresh) {
-      this.folded.add(t.id);
-      if (this.cursor === null || t.updated_at > this.cursor) this.cursor = t.updated_at;
-      const sample = this.sampleFromTask(t, byTask.get(t.id), ledger.get(t.id));
-      if (sample && this.observe(sample)) added += 1;
+      this.remember(t.id, t.updated_at);
+      const runs = byTask.get(t.id);
+      if (!runs || runs.finished === 0) continue;
+      const sample = this.sampleForTask(t, {
+        usdMicro: ledger.get(t.id) ?? runs.cost,
+        wallMs: runs.wall,
+        at: t.updated_at,
+      });
+      if (this.observe(sample)) added += 1;
     }
+    this.prune();
     return added;
   }
 
-  private sampleFromTask(
-    t: TaskRow,
-    runs: { cost: number; wall: number; finished: number } | undefined,
-    ledgerUsdMicro: number | undefined,
-  ): EstimateSample | null {
-    if (!runs || runs.finished === 0) return null;
-    const specialist = t.specialist ?? this.opts.defaultSpecialist;
+  /**
+   * The sample for a finished task: the estimate is the task's own `est_cost_usd_micro` when
+   * > 0, else the cold start; the wall estimate is always the cold start. Never the figure the
+   * planner already corrected: measuring against that feeds the correction back into itself.
+   */
+  sampleForTask(task: EstimateTaskInput, actual: TaskActuals): EstimateSample {
+    const specialist = task.specialist ?? this.opts.defaultSpecialist;
     const input: EstimateInput = {
       specialist,
-      risk_tier: t.risk_tier,
-      est_cost_usd_micro: t.est_cost_usd_micro,
-      budget_usd_micro: t.budget_usd_micro,
+      risk_tier: task.risk_tier,
+      est_cost_usd_micro: task.est_cost_usd_micro,
+      budget_usd_micro: task.budget_usd_micro,
     };
     const kind = this.opts.kindOf ? this.opts.kindOf(input) : kindOfTask(input);
     const cold = this.coldStart(specialist);
     return {
       specialist,
       kind,
-      estimateUsdMicro: t.est_cost_usd_micro > 0 ? t.est_cost_usd_micro : cold.usdMicro,
-      actualUsdMicro: ledgerUsdMicro ?? runs.cost,
+      estimateUsdMicro: task.est_cost_usd_micro > 0 ? task.est_cost_usd_micro : cold.usdMicro,
+      actualUsdMicro: actual.usdMicro,
       estimateWallMs: cold.wallMs,
-      actualWallMs: runs.wall,
-      at: t.updated_at,
-      taskId: t.id,
+      actualWallMs: actual.wallMs,
+      at: actual.at,
+      taskId: task.id,
     };
+  }
+
+  /**
+   * Live feed for the runner's task.finished hook: the same sample the store fold would build,
+   * so the state learned live agrees with the state after a restart. The task is remembered so
+   * a refresh() inside the overlap window does not fold it again. Returns whether the sample
+   * was usable (see observe).
+   */
+  observeTask(task: EstimateTaskInput, actual: TaskActuals): boolean {
+    const ok = this.observe(this.sampleForTask(task, actual));
+    this.remember(task.id, actual.at);
+    this.prune();
+    return ok;
   }
 }
 

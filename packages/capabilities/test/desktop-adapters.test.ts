@@ -5,11 +5,13 @@ import { describe, expect, it } from "vitest";
 import { detectAdapter } from "../src/desktop/adapters/detect.ts";
 import {
   detectLinuxTools,
+  exeBasename,
   hexWindowId,
   LinuxDesktopAdapter,
   type LinuxTools,
   linuxArgv,
   parseWmctrlLine,
+  readLinuxExe,
 } from "../src/desktop/adapters/linux.ts";
 import {
   base64Arg,
@@ -20,7 +22,15 @@ import {
   WindowsDesktopAdapter,
   windowsArgv,
 } from "../src/desktop/adapters/windows.ts";
-import { parseKey, validateText } from "../src/desktop/keys.ts";
+import {
+  DEFAULT_TYPE_DELAY_MS,
+  MAX_TEXT_LENGTH,
+  parseKey,
+  TYPE_CHUNK_CHARS,
+  TYPE_TIMEOUT_BASE_MS,
+  typingBudgetMs,
+  validateText,
+} from "../src/desktop/keys.ts";
 
 const whichOf = (present: Record<string, string>) => async (cmd: string) => present[cmd] ?? null;
 const SHELLS = new Set(["sh", "bash", "zsh", "cmd", "cmd.exe", "/bin/sh", "/bin/bash"]);
@@ -206,7 +216,7 @@ describe("linux adapter", () => {
       const adapter = new LinuxDesktopAdapter({
         tools: linuxTools,
         run,
-        readComm: async (pid) => (pid === 11 ? "code" : null),
+        readExe: async (pid) => (pid === 11 ? "code" : null),
       });
       const windows = await adapter.listWindows();
       expect(windows).toEqual([
@@ -264,6 +274,105 @@ describe("linux adapter", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("typing: the runner timeout scales with the text, long text goes in bounded chunks in order", async () => {
+    const { calls, run } = recorder();
+    const adapter = new LinuxDesktopAdapter({ tools: linuxTools, run });
+    await adapter.typeText("hi");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.opts?.timeoutMs).toBe(TYPE_TIMEOUT_BASE_MS);
+    expect(typingBudgetMs(2, DEFAULT_TYPE_DELAY_MS)).toBe(TYPE_TIMEOUT_BASE_MS);
+    // The budget grows with the text: never less than twice the keystroke time plus a margin.
+    expect(typingBudgetMs(5000, 12)).toBeGreaterThan(typingBudgetMs(100, 12));
+    expect(typingBudgetMs(5000, 12)).toBeGreaterThanOrEqual(5000 * 12 * 2);
+    expect(typingBudgetMs(MAX_TEXT_LENGTH, DEFAULT_TYPE_DELAY_MS)).toBeGreaterThanOrEqual(
+      MAX_TEXT_LENGTH * DEFAULT_TYPE_DELAY_MS * 2,
+    );
+    calls.length = 0;
+    const long = Array.from({ length: MAX_TEXT_LENGTH }, (_, i) => String(i % 10)).join("");
+    const progress: number[] = [];
+    await adapter.typeText(long, { onProgress: (done) => progress.push(done) });
+    expect(calls).toHaveLength(Math.ceil(MAX_TEXT_LENGTH / TYPE_CHUNK_CHARS));
+    expect(calls.map((c) => c.argv.at(-1)).join("")).toBe(long);
+    for (const c of calls) {
+      const chunk = c.argv.at(-1) ?? "";
+      expect(chunk.length).toBeLessThanOrEqual(TYPE_CHUNK_CHARS);
+      expect(c.argv.slice(0, 6)).toEqual([
+        "/usr/bin/xdotool",
+        "type",
+        "--clearmodifiers",
+        "--delay",
+        "12",
+        "--",
+      ]);
+      expect(c.opts?.timeoutMs).toBe(typingBudgetMs(chunk.length, 12));
+      expect(c.opts?.timeoutMs).toBeGreaterThanOrEqual(chunk.length * 12 * 2);
+    }
+    expect(progress.at(-1)).toBe(MAX_TEXT_LENGTH);
+    expect(progress).toHaveLength(calls.length);
+    // A chunk boundary never splits a surrogate pair.
+    calls.length = 0;
+    const emoji = "😀".repeat(TYPE_CHUNK_CHARS);
+    await adapter.typeText(emoji);
+    for (const c of calls) expect(c.argv.at(-1)).toMatch(/^(😀)+$/u);
+    expect(calls.map((c) => c.argv.at(-1)).join("")).toBe(emoji);
+  });
+
+  it("typing stops between chunks when the signal aborts and reports how much was typed", async () => {
+    const ac = new AbortController();
+    const calls: string[] = [];
+    const run = async (argv: readonly string[]): Promise<RunResult> => {
+      calls.push(argv.at(-1) ?? "");
+      if (calls.length === 2) ac.abort(new Error("stop"));
+      return {
+        code: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        timedOut: false,
+        durationMs: 1,
+      };
+    };
+    const adapter = new LinuxDesktopAdapter({ tools: linuxTools, run });
+    const progress: number[] = [];
+    const e = await adapter
+      .typeText("y".repeat(TYPE_CHUNK_CHARS * 4), {
+        signal: ac.signal,
+        onProgress: (done) => progress.push(done),
+      })
+      .then(() => null)
+      .catch((err: unknown) => err);
+    expect((e as Error).message).toBe("stop");
+    expect(calls).toHaveLength(2);
+    expect(progress).toEqual([TYPE_CHUNK_CHARS, TYPE_CHUNK_CHARS * 2]);
+  });
+
+  it("resolves the executable from /proc/<pid>/exe (not the 15-char comm) with comm as the fallback", async () => {
+    expect(exeBasename("/usr/libexec/gnome-terminal-server")).toBe("gnome-terminal-server");
+    expect(exeBasename("/usr/libexec/gnome-terminal-server (deleted)")).toBe(
+      "gnome-terminal-server",
+    );
+    expect(exeBasename("")).toBeNull();
+    const proc = mkdtempSync(join(tmpdir(), "fr-desktop-proc-"));
+    try {
+      // No exe link readable (as for another user's process): comm is the fallback.
+      const { mkdirSync } = await import("node:fs");
+      mkdirSync(join(proc, "42"));
+      writeFileSync(join(proc, "42", "comm"), "gnome-terminal-\n");
+      expect(await readLinuxExe(42, proc)).toBe("gnome-terminal-");
+      expect(await readLinuxExe(43, proc)).toBeNull();
+    } finally {
+      rmSync(proc, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== "linux")(
+    "on Linux the default resolver reads this process's own exe link",
+    async () => {
+      expect(await readLinuxExe(process.pid)).toBe(exeBasename(process.execPath));
+    },
+  );
 
   it("rejects bad keys, control characters and out-of-range clicks before any process starts", async () => {
     const { calls, run } = recorder();
@@ -373,6 +482,26 @@ describe("windows adapter", () => {
       }
       await adapter.dispose();
       expect(existsSync(dir)).toBe(true); // a caller-owned scriptDir is left alone
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("types long text in bounded chunks with a timeout per chunk that scales with it", async () => {
+    const { calls, run } = recorder();
+    const dir = mkdtempSync(join(tmpdir(), "fr-desktop-win-chunks-"));
+    try {
+      const adapter = new WindowsDesktopAdapter({ powershell: ps, run, scriptDir: dir });
+      const long = "a{b}+".repeat(TYPE_CHUNK_CHARS);
+      const progress: number[] = [];
+      await adapter.typeText(long, { onProgress: (done) => progress.push(done) });
+      expect(calls).toHaveLength(Math.ceil(long.length / TYPE_CHUNK_CHARS));
+      const typed = calls.map((c) => Buffer.from(c.argv[7] ?? "", "base64").toString("utf8"));
+      expect(typed.join("")).toBe(escapeSendKeys(long));
+      for (const c of calls) {
+        expect(c.opts?.timeoutMs).toBe(typingBudgetMs(TYPE_CHUNK_CHARS, DEFAULT_TYPE_DELAY_MS));
+      }
+      expect(progress.at(-1)).toBe(long.length);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

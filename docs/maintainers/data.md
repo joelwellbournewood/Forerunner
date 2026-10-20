@@ -27,11 +27,11 @@ worktree's `.gitignore` is kept covering the data dir.
 
 | File | What it holds |
 | --- | --- |
-| `types.ts` | zod shapes (`DataAssetView`, `DataMetadata`, `DataSample`, `ImportResultView`, `StoredAssetInfo`), kinds, storage modes, `REMOTE_SCHEMES`, `DataLimits` with `DEFAULT_DATA_LIMITS` and `resolveDataLimits()`, `largeDataNote()`, `formatBytes()` |
-| `metadata.ts` | format detection (magic bytes, then extension), encoding detection, CSV parser and delimiter sniffing, type inference, JSON/JSONL shape, PNG/JPEG/GIF dimensions from headers, bounded head reads, streamed line counts, `describeFile()`, `sampleFile()`, `describeFolder()`, `parseUri()`, `describeRemote()` |
+| `types.ts` | zod shapes (`DataAssetView`, `DataMetadata`, `DataSample`, `ImportResultView`, `StoredAssetInfo`), kinds, storage modes, `REMOTE_SCHEMES`, `DataLimits` with `DEFAULT_DATA_LIMITS` and `resolveDataLimits()`, the notes `largeDataNote()`, `truncatedWalkNote()`, `URI_STRIPPED_NOTE` (all ending in `LARGE_DATA_ADVICE`), `formatBytes()` |
+| `metadata.ts` | format detection (magic bytes, then extension), encoding detection, CSV parser and delimiter sniffing, type inference, JSON/JSONL shape, PNG/JPEG/GIF dimensions from headers, bounded head reads, streamed line counts, `describeFile()`, `sampleFile()`, `describeFolder()`, `parseUri()` (returns a `ParsedUri` whose `locator` drops credentials, query and fragment), `describeRemote()` |
 | `walk.ts` | `walkFolder()`: bounded, symlink-free walk that skips `.git`, `node_modules` and friends |
 | `assets.ts` | `DataAssets`: `register`, `registerUpload`, `list`, `get`/`describe`, `sample`, `remove`, `view`, `projectDataDir`; `normalizeKind()`, `isRemoteSource()`, `safeFileName()` |
-| `import.ts` | `DataImporter.importZip()` and `importFolder()`, `checkZipEntryName()`, `isSymlinkEntry()`, `ensureDataDirIgnored()`, `WORKTREE_DATA_DIR` |
+| `import.ts` | `DataImporter.importZip()` and `importFolder()`, `checkZipEntryName()`, `isSymlinkEntry()`, `recordZipEntry()` (name-conflict table), `ensureDataDirIgnored()`, `WORKTREE_DATA_DIR` |
 | `tools.ts` | `dataTools(deps)` and `registerDataTools(registry, deps)`: the four ToolSpecs; `renderSample()` |
 | `routes.ts` | `createDataRoutes(deps)`: the Hono sub-app for the Data tab, `DATA_ROUTES`, request bodies |
 | `index.ts` | exports (the runtime's `src/index.ts` re-exports it once the daemon wires the module) |
@@ -54,12 +54,20 @@ pass through `safeSegment()`. Nothing under this tree is ever a symlink.
    `file | folder | dataset` (default: `folder` for a directory, `file` otherwise). A URI
    (`scheme://...`) must use one of `REMOTE_SCHEMES` (`s3 r2 gs az hf https http`); a local
    source must be an absolute path that exists and is not a symlink.
+   A URI is reduced by `parseUri()` to `scheme://host/path` before anything else happens:
+   userinfo (`user:pass@`), the query (presigned signatures, access tokens) and the fragment
+   never reach the stored `locator`, `metadata.host`, the audit row, an approval request or
+   a tool output. When something was dropped the row's `note` ends with `URI_STRIPPED_NOTE`
+   (keep bucket credentials in the vault as a secret reference; the run injects them).
 2. Storage decision, in code: a URI is `remote` (never fetched; `mode: "copy"` is
-   `not_supported`). A local source larger than `copyThresholdBytes`, or a folder whose walk
-   hits a limit, is `linked` whatever the caller asked and gets `largeDataNote()`. A small
-   source with `mode: "copy"` is copied to `<dataDir>/<id>-<safe name>` (folders file by
-   file) and is `copied`. A source already inside the project data dir is `copied` without
-   another copy. Everything else is `linked` at its original path.
+   `not_supported`). A local source larger than `copyThresholdBytes` is `linked` whatever the
+   caller asked and gets `largeDataNote()` (size and threshold). A folder whose walk hit a
+   limit is `linked` too and gets `truncatedWalkNote()`, which names the limit (`entries`,
+   `bytes` or `depth` with its value) and never quotes the size threshold, because the size of
+   such a folder is unknown. A small source with `mode: "copy"` is copied to
+   `<dataDir>/<id>-<safe name>` (folders file by file) and is `copied`. A source already
+   inside the project data dir is `copied` without another copy. Everything else is `linked`
+   at its original path.
 3. Metadata and a small stored sample (`storedSampleRows`, `storedSampleBytes`) are computed
    (below) and written to the row's `sample` column as a `StoredAssetInfo` (`v: 1`).
 4. The row is inserted with `project_ids = [projectId]`, `locator` (path or URI),
@@ -128,7 +136,14 @@ anything, checks every entry name with `checkZipEntryName()`: absolute names (`/
 names, `__MACOSX/`, entries deeper than `maxDepth` and symlink entries (unix mode `0xA000` in
 the external attributes) are skipped and listed. More than `maxEntries` entries or more than
 `maxTotalBytes` declared throws. Segments are sanitised for Windows (`<>:"|?*`, control
-characters, trailing dots and spaces, reserved device names). Extraction goes to
+characters, trailing dots and spaces, reserved device names). Conflicting entries throw
+`validation` as well (`conflicting entries in archive: <a> and <b>`, with `details.entry` and
+`details.conflictsWith`): a file and a folder of one name (`a` next to `a/` or `a/b.txt`),
+two entries that sanitise to the same name (`a?.txt` and `a_.txt`), or names that differ only
+by case, which collide on Windows and are therefore refused on every OS so an import behaves
+the same everywhere (`recordZipEntry()` keeps the table of seen paths and implied folders).
+All of that is pass 1, before any write, so the route answers 400 and nothing is left on
+disk; only a genuine I/O failure during extraction is `internal` (500). Extraction goes to
 `<dataDir>/imports/<zip name>-<suffix>/`, re-checked with `isInside()`; the running total of
 real bytes is checked again against `maxTotalBytes` (a zip bomb with lying headers stops and
 the destination is removed). Each extracted file is registered (`copied`) unless
@@ -170,9 +185,14 @@ data envelope and scans it (`packages/runtime/test/data-tools.test.ts` proves it
 with a planted instruction). `data_register` with a path inside the token's `allowedPaths`
 needs no approval; a path outside them or a URI calls `ApprovalPort.request()` (class
 `capability_grant`, the agent gains read access to data it could not reach) and throws
-`approval_required` while the answer is pending or when it is no. In production the port is
-`StateApprovals` (a blocking `human_request`); tests use `AutoApprove`. There is no removal
-tool: `DataAssets.remove()` throws `approval_required` for an actor without a `humanId`.
+`approval_required` while the answer is pending or when it is no. For a URI the tool reduces
+the source to `scheme://host/path` before the approval request is built, so `why`,
+`input.source`, the `approval_required` details, the stored row, the audit row and the tool's
+own output never carry credentials or a signed query (`data-tools.test.ts` registers a URI
+with a password and a signature and sweeps every one of those surfaces). In production the
+port is `StateApprovals` (a blocking `human_request`); tests use `AutoApprove`. There is no
+removal tool: `DataAssets.remove()` throws `approval_required` for an actor without a
+`humanId`.
 
 ### Routes (`createDataRoutes`)
 
@@ -222,6 +242,13 @@ No ADR number was reserved for this module, so the open points are decided here:
   `data_register` asks the human for it; inside the roots it is free.
 - The copy threshold is 50 MB and the sample cap 64 KB; both are limits, not prompt text.
 - `.forerunner-data/` is the in-worktree data folder convention the guard always ignores.
+- A registered URI is stored as `scheme://host/path` only. Userinfo, query and fragment are
+  dropped rather than redacted on output, so no copy of a presigned link or an embedded
+  password exists anywhere in the store; a URI that needs them is registered without them and
+  the credentials go to the vault.
+- An archive whose entries conflict (file against folder, duplicate after sanitising, or a
+  case-only difference) is refused whole on every OS, instead of letting the later entry win,
+  because the outcome would otherwise differ between Windows and Linux.
 
 ## How to change it
 
@@ -245,20 +272,27 @@ No ADR number was reserved for this module, so the open points are decided here:
 `SimulatedClock`, and fixture writers (`csvText`, `jsonlText`, `pngBytes`, `jpegBytes`,
 `makeZip` with raw entry names so hostile archives reach the importer).
 
-- `data-assets.test.ts`: registration kinds (file, folder, URI), copy vs link, the large-file
-  rule and note, validation, the default projects root, metadata for csv (exact and
-  estimated counts), jsonl, json, png/jpeg, encodings, sample caps, folder samples, moved
-  files, removal (human only, copies deleted, originals kept, audit), state-service rows.
+- `data-assets.test.ts`: registration kinds (file, folder, URI), a URI with a password, a
+  signed query and a fragment stored and audited without any of them, copy vs link, the
+  large-file rule and note, the truncated-walk note naming the limit instead of the threshold,
+  validation, the default projects root, metadata for csv (exact and estimated counts),
+  jsonl, json, png/jpeg, encodings, sample caps, folder samples, moved files, removal (human
+  only, copies deleted, originals kept, audit), state-service rows.
 - `data-import.test.ts`: zip extraction and registration, zip-slip and absolute entries
-  rejected before any write, symlink and `__MACOSX` entries skipped, entry and byte limits
-  with cleanup, folder import (symlinks and VCS dirs skipped, copy mode, threshold note,
-  limits), the gitignore guard (create, append, idempotent, relative pattern, via imports).
+  rejected before any write, conflicting entries (file against folder in both orders,
+  duplicates after sanitising, case-only differences) rejected before any write while a folder
+  declared explicitly and implicitly is fine, symlink and `__MACOSX` entries skipped, entry
+  and byte limits with cleanup, folder import (symlinks and VCS dirs skipped, copy mode,
+  threshold note, limits), the gitignore guard (create, append, idempotent, relative pattern,
+  via imports).
 - `data-tools.test.ts`: exactly four tools, project scoping, untrusted output, schema and
   service caps, the hooks wrapping and scanning a planted instruction, `data_register` with
-  and without approval (approved, pending, denied, URI), the large-file note.
+  and without approval (approved, pending, denied, URI), the large-file note, and a URI with
+  a password and a signature never reaching the approval text, the model-facing output of any
+  tool, the refusal details or the audit log.
 - `data-routes.test.ts`: list, JSON register, describe, sample, delete, error codes, delete
   without a human, multipart upload (sanitised name, 413), zip and folder import with the
-  gitignore guard.
+  gitignore guard, a conflicting archive answered 400 with nothing registered.
 
 Run: `pnpm vitest run --project unit packages/runtime/test/data-*.test.ts`.
 
@@ -275,6 +309,14 @@ Run: `pnpm vitest run --project unit packages/runtime/test/data-*.test.ts`.
   registration keeps its old metadata until it is registered again.
 - Multipart uploads are buffered whole by Hono before the size check; the cap keeps that
   bounded, but a client that lies about `content-length` still costs the daemon the bytes.
+- Archives with names that differ only by case are refused on Linux too, where they would
+  extract fine; the price of one behaviour on both OSes.
+- Dropping the query from a URI means a presigned link cannot be registered as such; the
+  object's plain URI is stored and the signature has to be produced again at read time.
+- The module is not yet wired into the daemon (`packages/runtime/src/index.ts`,
+  `daemon/compose.ts`, the run's tool registry) and `docs/requirements.md` still lists L.1 as
+  in progress and A.3 as todo; both are outside this module's paths and belong to the
+  orchestrator's wiring follow-up, with the decisions above as the ADR source.
 
 ## Requirement IDs covered
 

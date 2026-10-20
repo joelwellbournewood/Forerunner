@@ -1,12 +1,14 @@
-import { SimulatedClock } from "@forerunner/platform";
+import { ForerunnerError, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore, type TaskRow } from "@forerunner/state";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_COLD_START_BUDGET_SHARE,
   DEFAULT_COLD_START_TIMEOUT_SHARE,
   DEFAULT_FALLBACK_USD_MICRO,
   DEFAULT_FALLBACK_WALL_MS,
+  DEFAULT_FOLD_OVERLAP_MS,
   EstimateModel,
+  type EstimateModelSnapshot,
   type EstimatePort,
   type EstimateSample,
   kindOfTask,
@@ -134,14 +136,18 @@ describe("estimate model: learning", () => {
     ]);
   });
 
-  it("snapshots round-trip", () => {
+  it("snapshots round-trip; an older snapshot version is refused", () => {
     const m = new EstimateModel({ defaults });
     for (let i = 0; i < 7; i++) m.observe(sample({ i }));
-    const copy = EstimateModel.fromJSON(JSON.parse(JSON.stringify(m.toJSON())), { defaults });
+    const snap = m.toJSON();
+    expect(snap.version).toBe(2);
+    const copy = EstimateModel.fromJSON(JSON.parse(JSON.stringify(snap)), { defaults });
     expect(copy.estimate({ specialist: "coder", risk_tier: 1 })).toEqual(
       m.estimate({ specialist: "coder", risk_tier: 1 }),
     );
     expect(copy.recentSamples()).toHaveLength(7);
+    const stale = { ...snap, version: 1, folded: ["t1"] } as unknown as EstimateModelSnapshot;
+    expect(() => EstimateModel.fromJSON(stale, { defaults })).toThrow(ForerunnerError);
   });
 });
 
@@ -368,6 +374,99 @@ describe("estimate model: learning from run rows and the cost ledger", () => {
     const cut = cutPlanToBudget(plan, 4_000_000);
     expect(cut.items).toHaveLength(1);
     expect(cut.summary).toContain("1 item(s) cut");
+  });
+});
+
+describe("estimate model: bounded incremental refresh and live learning", () => {
+  it("a refresh reads only the overlap window behind the cursor, and the folded set stays bounded", async () => {
+    const w = await world();
+    worlds.push(w);
+    // Forty tasks a minute apart; the default window covers the last few of them only.
+    for (let i = 0; i < 40; i++)
+      await finishedTask(w, { estimate: 1_000_000, actual: 1_200_000, ledger: true });
+    const windowTasks = Math.floor(DEFAULT_FOLD_OVERLAP_MS / 60_000) + 1;
+    const m = await EstimateModel.fromStore(w.store, { defaults });
+    expect(m.stats()[0]?.samples).toBe(40);
+    expect(m.toJSON().folded.length).toBeLessThanOrEqual(windowTasks);
+    expect(m.toJSON().folded.length).toBeGreaterThan(0);
+
+    await finishedTask(w, { estimate: 1_000_000, actual: 1_200_000, ledger: true });
+    const rows = vi.spyOn(w.store.task, "rows");
+    const breakdown = vi.spyOn(w.store.costLedger, "breakdown");
+    expect(await m.refresh(w.store)).toBe(1);
+    expect(m.stats()[0]?.samples).toBe(41);
+    // The store filtered: the query returned the window plus the new task, not all 41 rows.
+    const read = (await rows.mock.results[0]?.value) as TaskRow[];
+    expect(read.length).toBeLessThanOrEqual(windowTasks + 1);
+    expect(read.length).toBeGreaterThanOrEqual(1);
+    expect(rows.mock.calls[0]?.[0]).toContain('"updated_at" >= ?');
+    // The ledger breakdown is bounded too: rows older than the fresh tasks are not read.
+    expect(breakdown.mock.calls[0]?.[1]?.from).toBeTypeOf("string");
+    expect(m.toJSON().folded.length).toBeLessThanOrEqual(windowTasks + 1);
+    expect(await m.refresh(w.store)).toBe(0);
+    rows.mockRestore();
+    breakdown.mockRestore();
+  });
+
+  it("live learning through observeTask matches the fold on restart; observing against the plan's corrected figure would not", async () => {
+    const w = await world();
+    worlds.push(w);
+    const tasks: TaskRow[] = [];
+    for (let i = 0; i < 40; i++)
+      tasks.push(
+        await finishedTask(w, { estimate: 1_000_000, actual: 2_000_000, durationMs: 600_000 }),
+      );
+    const restarted = await EstimateModel.fromStore(w.store, { defaults });
+    const live = new EstimateModel({ defaults });
+    for (const t of tasks)
+      expect(live.observeTask(t, { usdMicro: 2_000_000, wallMs: 600_000, at: t.updated_at })).toBe(
+        true,
+      );
+    expect(live.stats()).toEqual(restarted.stats());
+    const query = { specialist: "coder", risk_tier: 1, est_cost_usd_micro: 1_000_000 };
+    expect(live.estimate(query)).toEqual(restarted.estimate(query));
+    expect(live.recentSamples()).toEqual(restarted.recentSamples());
+    const truth = restarted.estimate(query).costRatio;
+    expect(truth).toBeGreaterThan(1.8);
+
+    // Feeding the planner's already-corrected figure back as the estimate measures the residual
+    // after correction, so the ratio settles near the square root of the real overrun.
+    const looped = new EstimateModel({ defaults });
+    for (const t of tasks) {
+      looped.observe({
+        specialist: "coder",
+        kind: "tier1",
+        estimateUsdMicro: planEstimateUsdMicro(looped, t),
+        actualUsdMicro: 2_000_000,
+        estimateWallMs: 600_000,
+        actualWallMs: 600_000,
+        at: t.updated_at,
+      });
+    }
+    expect(looped.estimate(query).costRatio).toBeLessThan(truth - 0.3);
+  });
+
+  it("a task observed live is not folded again by a refresh inside the overlap window", async () => {
+    const w = await world();
+    worlds.push(w);
+    for (let i = 0; i < 5; i++) await finishedTask(w, { estimate: 1_000_000, actual: 1_500_000 });
+    const m = await EstimateModel.fromStore(w.store, { defaults });
+    expect(m.stats()[0]?.samples).toBe(5);
+    const t = await finishedTask(w, { estimate: 1_000_000, actual: 1_500_000 });
+    expect(m.observeTask(t, { usdMicro: 1_500_000, wallMs: 300_000, at: w.clock.nowIso() })).toBe(
+      true,
+    );
+    expect(m.stats()[0]?.samples).toBe(6);
+    expect(await m.refresh(w.store)).toBe(0);
+    expect(m.stats()[0]?.samples).toBe(6);
+    // The sample derivation is the same one the fold uses.
+    expect(m.sampleForTask(t, { usdMicro: 1, wallMs: 1, at: t.updated_at })).toMatchObject({
+      specialist: "coder",
+      kind: "tier1",
+      estimateUsdMicro: 1_000_000,
+      estimateWallMs: Math.round(45 * 60_000 * DEFAULT_COLD_START_TIMEOUT_SHARE),
+      taskId: t.id,
+    });
   });
 });
 

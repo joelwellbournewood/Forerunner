@@ -7,7 +7,7 @@
  */
 import type { ApprovalOutcome } from "@forerunner/runtime";
 import type { HumanRequestRepo, HumanRequestRow } from "@forerunner/state";
-import type { DesktopApprovalRequest } from "./types.ts";
+import { type DesktopApprovalRequest, summarize } from "./types.ts";
 
 export interface DesktopApprovalPort {
   ask(request: DesktopApprovalRequest): Promise<ApprovalOutcome>;
@@ -68,9 +68,10 @@ export class HumanRequestDesktopApprovals implements DesktopApprovalPort {
       session_id: req.sessionId,
       kind: "approval",
       why: req.why,
+      // The exe, class and title come from the application: bounded, one line, never trusted.
       steps: [
-        `Application: ${req.app.exe} (${req.app.windowClass})`,
-        `Window: ${req.app.title}`,
+        `Application: ${summarize(req.app.exe, 80)} (${summarize(req.app.windowClass, 80)})`,
+        `Window: ${summarize(req.app.title, 120)}`,
         "Answer yes to allow this application for the rest of this session only.",
         "To allow it permanently, add it to the desktop allowlist in Settings.",
       ],

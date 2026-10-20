@@ -2,7 +2,8 @@ import { ForerunnerError, isInside, resolve } from "@forerunner/platform";
 import { z } from "zod";
 import type { ToolExecutionContext, ToolRegistry, ToolSpec } from "../agent/tools.ts";
 import type { ApprovalPort } from "../enforcement/ports.ts";
-import { type DataAssets, isRemoteSource } from "./assets.ts";
+import type { DataAssets } from "./assets.ts";
+import { parseUri } from "./metadata.ts";
 import { DATA_ASSET_KINDS, type DataAssetView, type DataSample, formatBytes } from "./types.ts";
 
 /**
@@ -163,10 +164,13 @@ export function dataTools(deps: DataToolsDeps): ToolSpec[] {
     risk: "medium",
     async execute(input, ctx) {
       const projectId = projectOf(ctx);
-      const remote = isRemoteSource(input.source);
-      let source = input.source;
+      const uri = parseUri(input.source);
+      const remote = uri !== null;
+      // A URI is reduced to scheme://host/path here, before the approval text, the row, the
+      // audit log or this tool's output can carry credentials or a signed query.
+      let source = uri ? uri.locator : input.source;
       let needsApproval = remote;
-      if (!remote) {
+      if (!uri) {
         source = ctx.cwd ? resolve(ctx.cwd, input.source) : resolve(input.source);
         needsApproval = !ctx.allowedPaths.some((root) => isInside(root, source));
       }

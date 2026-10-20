@@ -108,6 +108,46 @@ export function toXdotoolKey(k: ParsedKey): string {
 
 export const MAX_TEXT_LENGTH = 20_000;
 
+/** Delay between keystrokes in ms (xdotool `--delay`; the Windows estimate per SendKeys char). */
+export const DEFAULT_TYPE_DELAY_MS = 12;
+/** Longest text one typing process gets; longer text goes in chunks, each with its own timeout. */
+export const TYPE_CHUNK_CHARS = 2000;
+/** Floor for one typing process's timeout. */
+export const TYPE_TIMEOUT_BASE_MS = 30_000;
+/** Added to the keystroke time so tool start-up and a slow application never cut the text. */
+export const TYPE_TIMEOUT_MARGIN_MS = 5_000;
+
+/**
+ * How long typing `chars` characters may take: twice the keystroke time plus a margin, never
+ * below the base. The adapters pass it as the process timeout per chunk; `desktop_type`'s tool
+ * timeout is this for `MAX_TEXT_LENGTH`, so the two limits agree.
+ */
+export function typingBudgetMs(
+  chars: number,
+  delayMs: number = DEFAULT_TYPE_DELAY_MS,
+  baseMs: number = TYPE_TIMEOUT_BASE_MS,
+): number {
+  return Math.max(baseMs, Math.ceil(chars * delayMs * 2) + TYPE_TIMEOUT_MARGIN_MS);
+}
+
+/** Split text into chunks of at most `size` UTF-16 units without splitting a surrogate pair. */
+export function chunkText(text: string, size: number = TYPE_CHUNK_CHARS): string[] {
+  if (!Number.isInteger(size) || size < 2) {
+    throw new ForerunnerError("validation", "chunk size must be an integer of at least 2");
+  }
+  const out: string[] = [];
+  let current = "";
+  for (const cp of text) {
+    if (current.length + cp.length > size) {
+      out.push(current);
+      current = "";
+    }
+    current += cp;
+  }
+  if (current) out.push(current);
+  return out;
+}
+
 /** Text the model may type: bounded, no control characters except newline and tab. */
 export function validateText(text: string): string {
   if (typeof text !== "string" || text.length === 0) {

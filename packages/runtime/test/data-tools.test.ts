@@ -199,4 +199,35 @@ describe("data tools", () => {
       await hh2.close();
     }
   });
+
+  it("credentials and signed queries in a URI never reach the approval text, the model or the audit log", async () => {
+    h = await dataHarness();
+    const password = ["hun", "ter2"].join(""); // not-a-secret
+    const signature = ["X-Amz-", "Signature=", "abc123def"].join(""); // not-a-secret
+    const uri = `https://backup:${password}@host.example/exports/x.csv?${signature}`;
+    const clean = "https://host.example/exports/x.csv";
+    const { byName, approvals } = tools(h, new AutoApprove("approved"));
+    const registered = await byName.data_register?.execute({ source: uri }, toolCtx(h));
+    expect(registered?.content).toContain("x.csv");
+    const request = approvals.requests[0];
+    if (!request) throw new Error("data_register asked no approval for a URI");
+    expect(request.why).toContain(clean);
+    expect((request.input as { source?: string }).source).toBe(clean);
+    const listed = await byName.data_list?.execute({}, toolCtx(h));
+    const id = (await h.assets.list(h.projectId))[0]?.id ?? "";
+    const described = await byName.data_describe?.execute({ assetId: id }, toolCtx(h));
+    expect(described?.content).toContain(clean);
+    const audit = await h.store.auditLog.list({});
+    expect(audit.length).toBeGreaterThan(0);
+    const surfaced = JSON.stringify([registered, request, listed, described, audit]);
+    for (const leak of [password, "Signature", "backup"]) expect(surfaced).not.toContain(leak);
+    // A refusal names the clean locator only.
+    const denied = tools(h, new AutoApprove("denied"));
+    await expect(
+      denied.byName.data_register?.execute({ source: uri }, toolCtx(h)),
+    ).rejects.toMatchObject({
+      code: "approval_required",
+      details: { outcome: "denied", source: clean },
+    });
+  });
 });

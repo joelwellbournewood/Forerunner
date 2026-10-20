@@ -1,9 +1,16 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isForerunnerError, isInside, join, SimulatedClock } from "@forerunner/platform";
+import {
+  ForerunnerError,
+  isForerunnerError,
+  isInside,
+  join,
+  SimulatedClock,
+} from "@forerunner/platform";
 import { KillSwitch, MemoryAudit, type ToolExecutionContext } from "@forerunner/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeDesktopAdapter } from "../src/desktop/adapters/fake.ts";
+import type { AdapterCallOptions } from "../src/desktop/adapters/types.ts";
 import { FakeDesktopApprovals } from "../src/desktop/approvals.ts";
 import { DesktopController } from "../src/desktop/controller.ts";
 import { isDesktopDenial } from "../src/desktop/gate.ts";
@@ -32,13 +39,14 @@ function world(
   opts: Partial<DesktopRunBinding> & {
     active?: WindowInfo | null;
     approvals?: FakeDesktopApprovals;
+    adapterClass?: typeof FakeDesktopAdapter;
   } = {},
 ) {
-  const { active, approvals, ...binding } = opts;
+  const { active, approvals, adapterClass, ...binding } = opts;
   const clock = new SimulatedClock();
   const audit = new MemoryAudit();
   const trace: string[] = [];
-  const adapter = new FakeDesktopAdapter({
+  const adapter = new (adapterClass ?? FakeDesktopAdapter)({
     windows: [code, bank],
     active: active === undefined ? code : active,
     onCall: (c) => trace.push(`adapter:${c.method}`),
@@ -165,6 +173,41 @@ describe("DesktopController", () => {
       ["desktop_type", "r1"],
     ]);
     for (const a of denied) expect(a.deniedReason).toMatch(/revoked/);
+  });
+
+  it("typing interrupted midway is audited with how much reached the application", async () => {
+    class PartialTyper extends FakeDesktopAdapter {
+      override async typeText(text: string, opts?: AdapterCallOptions): Promise<void> {
+        opts?.onProgress?.(2000, text.length);
+        throw new ForerunnerError("timeout", "typing failed (xdotool): killed");
+      }
+    }
+    const w = world({ adapterClass: PartialTyper });
+    const e = await caught(w.controller.typeText(ctx(), "z".repeat(5000)));
+    expect(isForerunnerError(e, "timeout")).toBe(true);
+    expect((e as ForerunnerError).details).toMatchObject({ typedChars: 2000, totalChars: 5000 });
+    expect((e as Error).message).toMatch(/2000 of 5000/);
+    const row = w.audit.entries.at(-1);
+    expect(row).toMatchObject({ tool: "desktop_type", allowed: false });
+    expect(row?.deniedReason).toMatch(/timeout: .*2000 of 5000 characters/);
+    expect(row?.deniedReason).not.toContain("zzz");
+    // A revoke mid-typing keeps the denial's gate reason and adds the count.
+    class RevokedTyper extends FakeDesktopAdapter {
+      override async typeText(text: string, opts?: AdapterCallOptions): Promise<void> {
+        opts?.onProgress?.(3, text.length);
+        await super.typeText(text, opts);
+      }
+    }
+    const r = world({ adapterClass: RevokedTyper });
+    r.adapter.hold();
+    const p = r.controller.typeText(ctx(), "slow text");
+    await tick();
+    await tick();
+    await r.controller.revoke("panel");
+    const re = await caught(p);
+    expect(isDesktopDenial(re, "revoked")).toBe(true);
+    expect((re as ForerunnerError).details).toMatchObject({ typedChars: 3, totalChars: 9 });
+    expect(r.audit.entries.at(-1)?.deniedReason).toMatch(/3 of 9 characters/);
   });
 
   it("the kill switch interrupts the action and the frozen state blocks the next one", async () => {

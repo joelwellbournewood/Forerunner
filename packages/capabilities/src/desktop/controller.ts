@@ -111,6 +111,16 @@ interface Slot {
   identity: DesktopIdentity;
 }
 
+/** The same error, with how much of the text was typed before it, for the audit row. */
+function withTypedCount(err: ForerunnerError, typed: number, total: number): ForerunnerError {
+  if (typed <= 0) return err;
+  return new ForerunnerError(
+    err.code,
+    `typed ${typed} of ${total} characters, then ${err.message}`,
+    { details: { ...err.details, typedChars: typed, totalChars: total }, cause: err },
+  );
+}
+
 function matchesScope(identity: DesktopIdentity, scope: KillScope | "all"): boolean {
   if (scope === "all") return true;
   if (scope.sessionId && scope.sessionId !== identity.sessionId) return false;
@@ -168,7 +178,19 @@ export class DesktopController {
   typeText(ctx: ToolExecutionContext, text: string): Promise<void> {
     const summary = `type ${text.length} chars into the active window`;
     return this.perform(ctx, "type", { summary }, async (slot) => {
-      await this.opts.adapter.typeText(text, { signal: slot.signal });
+      // The adapter types in chunks; when it is cut short (timeout, revoke, kill) the error and
+      // the audit row say how many characters reached the application.
+      let typed = 0;
+      try {
+        await this.opts.adapter.typeText(text, {
+          signal: slot.signal,
+          onProgress: (done) => {
+            typed = done;
+          },
+        });
+      } catch (e) {
+        throw withTypedCount(this.mapError(e, slot.signal), typed, text.length);
+      }
       return {
         value: undefined,
         result: `typed ${text.length} chars into ${slot.targets[0]?.exe}`,

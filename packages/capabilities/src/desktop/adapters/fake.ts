@@ -119,7 +119,9 @@ export class FakeDesktopAdapter implements DesktopAdapter {
   }
 
   async typeText(text: string, opts?: AdapterCallOptions): Promise<void> {
-    await this.action("typeText", [validateText(text)], opts?.signal);
+    const clean = validateText(text);
+    await this.action("typeText", [clean], opts?.signal);
+    opts?.onProgress?.(clean.length, clean.length);
   }
 
   async pressKey(key: string, opts?: AdapterCallOptions): Promise<void> {

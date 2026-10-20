@@ -100,6 +100,25 @@ function humanParam(c: DesktopRouteContext): string {
 }
 
 export function desktopRouteTable(deps: DesktopRouteDeps): DesktopRoute[] {
+  /** When the daemon identifies humans, a request must come from one; returns who. */
+  const signedIn = (c: DesktopRouteContext, what: string): string | undefined => {
+    if (!deps.humanFor) return undefined;
+    const who = deps.humanFor(c);
+    if (!who) throw new ForerunnerError("approval_required", `only a signed-in human can ${what}`);
+    return who;
+  };
+  /** The allowlist is the per-human permission boundary: a human reaches only their own. */
+  const ownAllowlist = (c: DesktopRouteContext, what: string): string => {
+    const humanId = humanParam(c);
+    const who = signedIn(c, `${what} the desktop allowlist`);
+    if (who !== undefined && who !== humanId) {
+      throw new ForerunnerError(
+        "tool_not_allowed",
+        `a human can ${what} only their own desktop allowlist`,
+      );
+    }
+    return humanId;
+  };
   const statusBody = async () => {
     const detection = deps.detect ? await deps.detect() : undefined;
     return {
@@ -150,7 +169,7 @@ export function desktopRouteTable(deps: DesktopRouteDeps): DesktopRoute[] {
       method: "GET",
       path: "/desktop/allowlist/:humanId",
       handler: guard(async (c) => {
-        const humanId = humanParam(c);
+        const humanId = ownAllowlist(c, "read");
         return c.json({ humanId, entries: await deps.allowlist.get(humanId) });
       }),
     },
@@ -158,13 +177,7 @@ export function desktopRouteTable(deps: DesktopRouteDeps): DesktopRoute[] {
       method: "PUT",
       path: "/desktop/allowlist/:humanId",
       handler: guard(async (c) => {
-        const humanId = humanParam(c);
-        if (deps.humanFor && !deps.humanFor(c)) {
-          throw new ForerunnerError(
-            "approval_required",
-            "only a signed-in human can change the desktop allowlist",
-          );
-        }
+        const humanId = ownAllowlist(c, "change");
         const body = AllowlistBody.parse(await c.req.json());
         const entries = await deps.allowlist.set(humanId, body.entries);
         await audit(
@@ -193,11 +206,13 @@ export function desktopRouteTable(deps: DesktopRouteDeps): DesktopRoute[] {
       }),
     },
     {
+      // Revoke is fail-safe and stays open to any caller; resume widens, so it needs a human.
       method: "POST",
       path: "/desktop/resume",
       handler: guard(async (c) => {
+        const who = signedIn(c, "resume desktop control");
         deps.controller.resume();
-        await audit(c, "desktop_resume", "", "resumed");
+        await audit(c, "desktop_resume", "", "resumed", who);
         return c.json(await statusBody());
       }),
     },

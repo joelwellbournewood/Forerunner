@@ -178,6 +178,12 @@ The loop closes in one of three ways, all ending in `ModelWatch.resolve(reportId
   chosen switches and the efforts of the chosen lower-effort recommendations into
   `models.json`, with a `history` entry `{ at, report_id, by, changes[] }`. The release becomes
   `installed`, `health.applied` lists each change in words. A report cannot be adopted twice.
+  Last, when `ModelWatchDeps.onAdopted` is set, it is called once with
+  `{ reportId, by, applied, pricing, config }`: the pricing table (`effectivePricing()`) and
+  the ladder/effort config (`effectiveConfig().config`) now in force, so the daemon can swap
+  what it loaded at compose without a restart. The call is audited as `model_watch.reload`;
+  a hook that throws is logged, audited with `allowed=false`, and the adoption stands (the
+  files are already written; a restart applies them).
 - `ignore`: records the decision; nothing is written.
 - `remind`: records the decision and `remind_at = now + 7 days`. There is no separate timer:
   the next weekly run produces a fresh report and asks again as long as the diff still holds.
@@ -266,21 +272,42 @@ composes the runtime (`cli/main.ts`).
   option; compose passes the registry), else `fallbackUsdMicro` (0.5 USD) and `fallbackWallMs`
   (20 min).
 - **Persistence**: there is no estimate table. The samples are the finished `task` rows
-  (status `done`, `failed`, `cancelled`) that have at least one finished `run`
-  (`outcome` not `running`): actual cost from the `cost_ledger` breakdown by `task_id` (the
-  truth for caps) or, without ledger rows, the sum of the runs' `cost_usd_micro`; actual wall
-  time the sum of the runs' `duration_ms` (retries count); the estimate from
+  (`FINISHED_TASK_STATUSES`: `done`, `failed`, `cancelled`) that have at least one finished
+  `run` (`outcome` not `running`): actual cost from the `cost_ledger` breakdown by `task_id`
+  (the truth for caps) or, without ledger rows, the sum of the runs' `cost_usd_micro`; actual
+  wall time the sum of the runs' `duration_ms` (retries count); the estimate from
   `task.est_cost_usd_micro`, else the cold start (so registry defaults get calibrated too);
   the sample time `task.updated_at`. `EstimateModel.fromStore(store, options)` folds them at
-  start, `refresh(store)` folds tasks finished since (cursor on `updated_at` plus the set of
-  folded ids, so a rebuild and an incremental refresh give the same state and never double
-  count). `toJSON()` / `fromJSON()` exist for a caller that wants to cache the fold.
+  start; `refresh(store)` folds tasks finished since. The fold is bounded by a cursor (the
+  newest finish time seen) and an overlap window (`foldOverlapMs`, default 15 minutes,
+  `DEFAULT_FOLD_OVERLAP_MS`): the store query is `status IN (finished) AND updated_at >=
+  cursor - window` (hand-written through the repo's public `where`/`rows`, ordered by
+  `updated_at, id`), the run listing goes in chunks of 500 ids, the ledger breakdown is bounded
+  by `from = oldest fresh task's created_at - window` (a task's ledger rows are recorded after
+  the task exists), and the model remembers only the ids finished inside the window, pruned
+  after every fold. A rebuild and an incremental refresh give the same state and a refresh
+  never counts a task twice; neither the query nor the memory grows with the install's history.
+  The window also covers clock skew between writers of a shared store and a task row that is
+  finished in the store a little after its live observation. `toJSON()` / `fromJSON()`
+  (snapshot version 2; older versions are refused) exist for a caller that wants to cache the
+  fold.
+- **One sample derivation for both feeds**: `sampleForTask(task, { usdMicro, wallMs, at })`
+  builds the sample the fold uses, and `observeTask(task, actuals)` is the live feed for the
+  runner's `task.finished` hook: same estimate base (`task.est_cost_usd_micro` or the cold
+  start, never the figure the planner already corrected), same kind, same cold-start wall
+  estimate; it also remembers the task id so a `refresh()` inside the window skips it. The
+  base matters: observing the actual against the plan item's *learned* figure measures the
+  residual after correction and feeds the correction back into itself, so the ratio settles
+  near the square root of the real overrun (the test pins it: 1.85 learned versus below 1.55
+  looped on a 2x history) and the state after a restart disagrees with the state learned live.
 - **Wiring** (compose.ts, ADR 0029): `EstimateModel.fromStore(store, { defaults })` with the
   registry; `new StaticPlanner(500_000, estimates)` prices every plan item through
   `planEstimateUsdMicro(port, task)` before `cutPlanToBudget` cuts the plan to the work budget
-  (spec E.3); `SessionRunner.onTaskFinished` calls `observe` with the plan item's estimate, the
-  run's actual cost and wall time. `EstimatePort` is the seam: any planner that takes it gets
-  the learned figures.
+  (spec E.3); `SessionRunner.onTaskFinished` feeds the model live (see Known issues: compose
+  still calls `observe` with the plan item's figure; the intended call is
+  `estimates.observeTask(task, { usdMicro: result.costUsdMicro, wallMs: durationMs, at:
+  clock.nowIso() })`). The daemon does not call `refresh()`: it folds at start and learns live.
+  `EstimatePort` is the seam: any planner that takes it gets the learned figures.
 - **Accuracy view** (`estimates/view.ts`, `GET /costs/estimates`, the Performance page):
   `estimateAccuracyView(model, nowIso, { recentLimit? })` →
   `{ generated_at, overall: { samples, mean_abs_error_pct, bias_pct, within_25_pct_share },
@@ -312,10 +339,17 @@ composes the runtime (`cli/main.ts`).
   cold-start shares, fallbacks, `recentLimit`); the clamps are exported constants. A different
   key (say task size) is a `kindOf` function; the fold needs no change because `sampleFromTask`
   calls it.
-- **Applying adopted settings at start** (the open wiring item): read
-  `FileModelSettingsStore.readModelSettings()` at compose, `applyModelSettings(settings,
-  builtinModelConfig())`, and hand `ladder` to `modelIdFor` in `session/executor.ts` and
-  `modeDefaults` to `effortForTask` there and to the conversation agent.
+- **Applying adopted settings** (the open wiring item, outside this module): at compose,
+  `const cfg = applyModelSettings(await modelSettings.readModelSettings(),
+  builtinModelConfig())`, hand `cfg.ladder` to `modelIdFor` in `session/executor.ts` and
+  `cfg.modeDefaults` to `effortForTask` there and to `conversation/agent.ts` (which reads
+  `MODE_DEFAULTS` directly today); for a live reload pass `onAdopted: ({ pricing, config })
+  => { ... }` to `new ModelWatch(...)` and replace the pricing table the billing router holds
+  and the `cfg` the executor reads. A wiring test should assert that an adopted `models.json`
+  changes the model the executor requests.
+- **Feeding the model live from the runner**: `onTaskFinished: ({ task, result, durationMs })
+  => estimates.observeTask(task, { usdMicro: result.costUsdMicro, wallMs: durationMs, at:
+  clock.nowIso() })`; never `observe` with the plan item's figure (see Estimate learning).
 
 ## Tests
 
@@ -335,7 +369,10 @@ fails a task is not; a lower effort is recommended only when it passes the whole
 eval budget is enforced in code (later evals skipped with `budget_exceeded`, no provider call
 made); a failing provider and a failing price list land in the report; pending (release
 persisted, request opened, nothing written, ladder and effort unchanged); adopt (overrides and
-settings written, release installed, every audit row present); adopt with the file store
+settings written, release installed, every audit row present); `onAdopted` receives the
+pricing and config in force after an adopt (audited `model_watch.reload`), is never fired by
+ignore or remind, and a throwing hook leaves the files written and the release installed with
+an `allowed=false` audit row; adopt with the file store
 writes `pricing.json` and `models.json` that parse back; ignore and remind change nothing;
 adopt is refused without a human (`approval_required`), cannot be applied twice, rejects
 unknown ids, 404 for an unknown report; a partial adopt; nothing to decide opens no request;
@@ -352,8 +389,14 @@ monotone toward 1.5, then forgetting on a regime change); confidence grows with 
 falls with dispersion; per-key learning, clamps and unusable samples; snapshot round trip;
 folding from task, run and `cost_ledger` rows (ledger wins, retries sum, open and run-less tasks
 are not samples, refresh never double counts); cold-start calibration without a task estimate;
-the planner through `EstimatePort` and `cutPlanToBudget`; the accuracy view (rows, overall
-error, bias, within-25% share, schema, empty model).
+the planner through `EstimatePort` and `cutPlanToBudget`; the bounded refresh (the store query
+carries `"updated_at" >= ?` and returns only the window plus the new task, the ledger breakdown
+carries a `from` bound, the remembered id set stays within the window); live learning through
+`observeTask` equals the fold after a restart while observing against the plan's corrected
+figure settles well below the true ratio; a task observed live is not folded again by a
+refresh inside the window; `sampleForTask` matches the fold's derivation; snapshot version 2
+round-trips and version 1 is refused; the accuracy view (rows, overall error, bias, within-25%
+share, schema, empty model).
 
 `wiring.test.ts` (daemon): a model watch run through `POST /model-watch/run` on the fake
 provider with a repricing and an inbox decision, one audit row per eval; the updates screen
@@ -363,12 +406,28 @@ registration and one-shot composition.
 
 ## Known issues
 
-- **Adopted `models.json` is not yet applied at start.** `applyAdoption` writes it and
-  `ModelWatch.effectiveConfig()` reads it, but `compose.ts` does not call `applyModelSettings`
-  and `session/executor.ts` and `conversation/agent.ts` still read `DEFAULT_LADDER` /
-  `MODE_DEFAULTS` directly, so a switched rung or lowered effort takes effect only once the
-  orchestrator wires the effective config (see "How to change it"). `pricing.json` is loaded at
-  compose already.
+- **An adopted change needs the orchestrator's wiring, and today a restart.** `applyAdoption`
+  writes `models.json` and `pricing.json`, `ModelWatch.effectiveConfig()` /
+  `effectivePricing()` read them and `onAdopted` hands both to the daemon, but `compose.ts`
+  neither calls `applyModelSettings` nor passes `onAdopted`, `session/executor.ts` calls
+  `modelIdFor(tier, provider)` and `effortForTask(mode, tier, offset)` without the ladder and
+  effort table, and `conversation/agent.ts` reads `MODE_DEFAULTS` directly. So after a human
+  answers "adopt" the audit log shows the change applied while the next session still runs the
+  old rung and effort, and `pricing.json` (loaded once at compose) is used only after a
+  restart. Until "How to change it" is wired: restart the daemon after an adopt. The module's
+  side is in place (the `ladder` / `defaults` parameters, `onAdopted`, the wiring test for
+  `applyModelSettings`); the executor, agent and compose changes are outside this module.
+- **`compose.ts` feeds the estimate model the plan item's figure.** Its `onTaskFinished`
+  calls `observe` with `item.estimateUsdMicro`, which `StaticPlanner` already multiplied by
+  the learned ratio, so the live ratio settles near the square root of the real overrun and
+  disagrees with the fold after a restart (see Estimate learning). The fix is the one-line
+  switch to `observeTask` in "How to change it"; the module side and its test are done.
+- A task that finishes twice (failed, retried, done again) is two samples: the second fold
+  sees the task with a later `updated_at` and the runs of every attempt summed. A live
+  observation followed by a `refresh()` more than `foldOverlapMs` later, for a task whose row
+  finished in the store after the window, would count it twice; the daemon never calls
+  `refresh()` after start, so this is a limit for a process that polls a shared store (poll at
+  least every `foldOverlapMs`).
 - `remind` is not a timer; the next weekly run re-proposes. A reminder for a report whose
   diff has disappeared by then is silently moot.
 - Lower-effort probes exist only for modes that have an eval target (coder, researcher).
@@ -384,8 +443,9 @@ registration and one-shot composition.
   unpriced until a human adds a row.
 - The estimate model's wall-time base is always the cold start (tasks carry no wall estimate
   column); the learned wall ratio still calibrates it. The model is in memory and refolded from
-  the store at every start (one query over finished tasks); `toJSON` is not persisted anywhere
-  yet.
+  the store at every start: the first fold reads every finished task once (the cursor is
+  empty), every later `refresh()` only the overlap window; `toJSON` is not persisted anywhere
+  yet, so a start on a large install pays that one full read.
 - Eval cost is charged to the install's billing source and counts toward the monthly cap like
   any run; the `evalBudgetUsdMicro` cap is per watch run, not per week across manual runs.
 

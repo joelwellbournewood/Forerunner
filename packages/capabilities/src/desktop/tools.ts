@@ -8,8 +8,11 @@ import type { ToolExecutionContext, ToolRegistry, ToolSpec } from "@forerunner/r
 import { z } from "zod";
 import { MOUSE_BUTTONS, type MouseButton } from "./adapters/types.ts";
 import type { DesktopController } from "./controller.ts";
-import { MAX_KEY_LENGTH, MAX_TEXT_LENGTH } from "./keys.ts";
+import { DEFAULT_TYPE_DELAY_MS, MAX_KEY_LENGTH, MAX_TEXT_LENGTH, typingBudgetMs } from "./keys.ts";
 import type { DesktopActionKind } from "./types.ts";
+
+/** Long enough for the longest text the schema admits at the default keystroke delay. */
+export const DESKTOP_TYPE_TIMEOUT_MS = typingBudgetMs(MAX_TEXT_LENGTH, DEFAULT_TYPE_DELAY_MS);
 
 export const DESKTOP_TOOL_NAMES = [
   "desktop_list_windows",
@@ -84,7 +87,7 @@ export function desktopTools(controller: DesktopController): DesktopToolSpec[] {
     schema: z.object({ text: z.string().min(1).max(MAX_TEXT_LENGTH) }).strict(),
     actionClass: "non_routine",
     risk: "high",
-    timeoutMs: 120_000,
+    timeoutMs: DESKTOP_TYPE_TIMEOUT_MS,
     beforeCall: (_input, ctx) => controller.check("type", ctx),
     async execute(input, ctx) {
       await type.beforeCall(input, ctx);
@@ -150,8 +153,10 @@ export function desktopTools(controller: DesktopController): DesktopToolSpec[] {
           ? { includeInContext: input.includeInContext }
           : {}),
       });
+      // The runtime does not yet forward image artifacts to the model (ToolResult.artifacts is
+      // only declared), so the content never claims the model can see the image.
       const note = r.image
-        ? " The image is attached."
+        ? ` The PNG is in this result's image artifact (base64) and at that path; the runtime forwards image artifacts to the model context once it supports image blocks.`
         : input.includeInContext
           ? " The image was not attached: the run's token does not allow screenshots in the model context."
           : "";

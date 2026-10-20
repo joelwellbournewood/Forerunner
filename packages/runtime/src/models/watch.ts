@@ -622,6 +622,26 @@ export interface ModelWatchDeps {
   /** Providers the watch ignores (e.g. "fake" in production). */
   ignoreProviders?: readonly string[];
   thresholds?: Partial<WatchThresholds>;
+  /**
+   * Called once after a successful adopt with the pricing table and the ladder/effort config
+   * now in force, so the daemon can replace what it loaded at compose without a restart. A
+   * hook that throws is logged and audited (`model_watch.reload`, allowed=false); the adoption
+   * stands, since the files are already written.
+   */
+  onAdopted?: (event: ModelWatchAdoptedEvent) => void | Promise<void>;
+}
+
+/** What an adopt changed and the tables in force afterwards (settings store already written). */
+export interface ModelWatchAdoptedEvent {
+  reportId: string;
+  /** The human whose recorded answer was applied. */
+  by: string;
+  /** Human-readable descriptions of what was changed (same as ModelWatchResolveResult.applied). */
+  applied: string[];
+  /** Base pricing plus the overrides file as just written. */
+  pricing: PricingTable;
+  /** Built-in ladder and effort table plus the model settings as just written. */
+  config: EffectiveModelConfig;
 }
 
 export interface ModelWatchRunResult {
@@ -1074,7 +1094,36 @@ export class ModelWatch {
       result: applied.length ? applied.join("; ") : answer.decision,
       humanId: answer.by,
     });
+    if (answer.decision === "adopt" && answer.by && this.deps.onAdopted) {
+      await this.notifyAdopted({ reportId, by: answer.by, applied });
+    }
     return { release: updated, decision: next.decision, applied };
+  }
+
+  /** Hand the tables now in force to the daemon; a failing hook never undoes the adoption. */
+  private async notifyAdopted(info: { reportId: string; by: string; applied: string[] }) {
+    const hook = this.deps.onAdopted;
+    if (!hook) return;
+    try {
+      const { config } = await this.effectiveConfig();
+      const pricing = await this.effectivePricing();
+      await hook({ ...info, pricing, config });
+      await this.audit("model_watch.reload", `report ${info.reportId}`, {
+        result: "adopted pricing and model settings handed to the runtime",
+        humanId: info.by,
+      });
+    } catch (e) {
+      const message = errorMessage(e);
+      logger.warn("model watch reload hook failed; adoption stands, restart to apply", {
+        reportId: info.reportId,
+        error: message,
+      });
+      await this.audit("model_watch.reload", `report ${info.reportId}`, {
+        result: message,
+        allowed: false,
+        humanId: info.by,
+      });
+    }
   }
 
   /**

@@ -35,12 +35,15 @@ import {
  *   so a run after no changes touches GitHub zero times.
  * - Work goes out in batches; the cursor is saved after each batch. A rate limit the host
  *   could not wait out stops the run cleanly; the next run continues where it stopped.
- * - Every run writes an event with counts; every outward action writes an audit row.
+ * - Every run writes an event with counts (or, when no session can carry it, an audit row
+ *   with the same counts); every outward action writes an audit row.
  */
 
 export const MIRROR_SETTINGS_KEY = "github_mirror";
 export const DEFAULT_MIRROR_SECRET_REF = "secret:github_token";
 export const MIRROR_EVENT_TYPE = "mirror.sync";
+/** Audit tool of the run summary written when a run has no session to carry its event. */
+export const MIRROR_AUDIT_TOOL = "github.projects.sync";
 /** Bump when MIRROR_FIELDS changes so existing projects get the new fields on the next run. */
 export const MIRROR_FIELDS_VERSION = 2;
 export const DEFAULT_MIRROR_BATCH_SIZE = 25;
@@ -475,7 +478,10 @@ export class ProjectsMirror {
     let stopped: MirrorRunResult["stopped"] = null;
     let githubProjectId = settings.project_id ?? "";
     let githubProjectUrl = settings.project_url ?? "";
-    let cursor: Record<string, number> = opts.full ? {} : { ...(settings.cursor ?? {}) };
+    // The cursor as persisted by the last run. The working copy is reset under `full` so every
+    // present task is re-asserted; deleted tasks are still found through the persisted one.
+    const persisted: Record<string, number> = { ...(settings.cursor ?? {}) };
+    let cursor: Record<string, number> = opts.full ? {} : { ...persisted };
     let failure: unknown = null;
 
     try {
@@ -554,7 +560,14 @@ export class ProjectsMirror {
       );
       const changed = tasks.filter((t) => cursor[t.id] !== t.version);
       const present = new Set(tasks.map((t) => t.id));
-      const deleted = Object.keys(cursor).filter((id) => !present.has(id));
+      const deleted: string[] = [];
+      for (const [id, version] of Object.entries(persisted)) {
+        if (present.has(id)) continue;
+        deleted.push(id);
+        // Under `full` the working cursor starts empty: keep the id until its item is archived,
+        // so a run that stops early (rate limit, crash) does not forget the deleted task.
+        cursor[id] = version;
+      }
       counts.scanned = tasks.length;
       counts.changed = changed.length;
       counts.skipped = tasks.length - changed.length;
@@ -648,7 +661,8 @@ export class ProjectsMirror {
       stopped: stopped ? { ...stopped } : null,
       error: failure ? errorMessage(failure) : null,
     };
-    const eventId = await this.writeEvent(session, payload, actor);
+    const summary = runSummary(counts, stopped, failure);
+    const eventId = await this.writeEvent(session, payload, summary, actor);
     this.logger.info("mirror run", { projectId, ...counts, stopped: stopped?.reason ?? null });
     if (failure) throw failure;
     return {
@@ -795,12 +809,30 @@ export class ProjectsMirror {
     });
   }
 
+  /**
+   * The run event on the session, or, when the run has no session (no `sessionId`, no
+   * `agentId` and no active principal agent), an audit row with the same counts: a run is
+   * never silent.
+   */
   private async writeEvent(
     session: SessionRow | null,
     payload: JsonObject,
+    summary: string,
     actor: Actor,
   ): Promise<string | null> {
-    if (!session) return null;
+    if (!session) {
+      try {
+        await this.audit(
+          actor,
+          MIRROR_AUDIT_TOOL,
+          `project ${payload.project_id} (${payload.trigger}${payload.full ? ", full" : ""})`,
+          summary,
+        );
+      } catch (e) {
+        this.logger.error("could not write the mirror run audit row", { error: errorMessage(e) });
+      }
+      return null;
+    }
     try {
       const ev = await this.deps.store.event.append(session.id, MIRROR_EVENT_TYPE, payload, 0, {
         authorAgent: actor.agent_id,
@@ -813,9 +845,7 @@ export class ProjectsMirror {
             cur.id,
             cur.version,
             payload.error ? "failed" : "completed",
-            {
-              summary: `mirror: ${payload.created} created, ${payload.updated} updated, ${payload.archived} archived, ${payload.skipped} unchanged${payload.stopped ? " (stopped: rate limit)" : ""}`,
-            },
+            { summary },
           );
         }
       }
@@ -844,6 +874,21 @@ export class ProjectsMirror {
       denied_reason: extra.denied_reason ?? null,
     });
   }
+}
+
+/** One line with the counts of a run: the session summary and the audit fallback share it. */
+export function runSummary(
+  counts: MirrorRunCounts,
+  stopped: MirrorRunResult["stopped"],
+  failure: unknown = null,
+): string {
+  return (
+    `mirror: ${counts.created} created, ${counts.updated} updated, ${counts.archived} archived, ` +
+    `${counts.deleted} deleted, ${counts.skipped} unchanged` +
+    (counts.errors ? `, ${counts.errors} errors` : "") +
+    (stopped ? " (stopped: rate limit)" : "") +
+    (failure ? `; error: ${errorMessage(failure)}` : "")
+  );
 }
 
 function isRateLimit(e: unknown): e is ForerunnerError {

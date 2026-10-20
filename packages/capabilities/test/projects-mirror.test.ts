@@ -17,6 +17,7 @@ import {
   HumanRequestMirrorPort,
   isMirrorRequest,
   MIRROR_APPROVE_OPTION,
+  MIRROR_AUDIT_TOOL,
   MIRROR_BODY_MAX_CHARS,
   MIRROR_BODY_TRUNCATED_MARKER,
   MIRROR_DENY_OPTION,
@@ -59,6 +60,8 @@ async function world(
     human?: { ask(req: MirrorApprovalRequest): Promise<"approve" | "deny"> };
     batchSize?: number;
     repos?: string[];
+    /** false: the only agent is a specialist, so the mirror finds no principal for a run session. */
+    principal?: boolean;
   } = {},
 ): Promise<World> {
   const clock = new SimulatedClock("2026-04-01T08:00:00Z");
@@ -81,7 +84,7 @@ async function world(
       model_config: {},
       memory_location: "l",
       status: "active",
-      kind: "principal",
+      kind: opts.principal === false ? "specialist" : "principal",
     })
   ).id;
   const settings =
@@ -344,6 +347,82 @@ describe("ProjectsMirror", () => {
     // No second run archives anything again: nothing changed.
     const r3 = await w.mirror.sync(w.projectId);
     expect(r3).toMatchObject({ changed: 0, archived: 0, deleted: 0 });
+  });
+
+  it("a full run archives the items of tasks deleted since the last run and drops their ids from the cursor", async () => {
+    const w = await world();
+    const keep = await w.addTask("Keep");
+    const gone = await w.addTask("Gone");
+    await w.mirror.sync(w.projectId);
+    await w.store.task.delete(gone);
+
+    const r = await w.mirror.sync(w.projectId, { full: true });
+    expect(r).toMatchObject({ scanned: 1, changed: 1, updated: 1, deleted: 1, archived: 1 });
+    const list = await items(w.host, w);
+    expect(list.find((i) => i.forerunnerTaskId === gone)?.archived).toBe(true);
+    expect(list.find((i) => i.forerunnerTaskId === keep)?.archived).toBe(false);
+    expect((await w.settings())?.cursor).toEqual({ [keep]: 1 });
+    expect(w.host.projectCalls.filter((c) => c.op === "archiveItem")).toHaveLength(1);
+
+    // Nothing is left for the next incremental run: no ghost item, no second archive.
+    const r2 = await w.mirror.sync(w.projectId);
+    expect(r2).toMatchObject({ changed: 0, deleted: 0, archived: 0 });
+  });
+
+  it("a full run stopped by a rate limit keeps the ids of deleted tasks until their items are archived", async () => {
+    const inner = new MemoryGitHost("alice");
+    let limited = false;
+    const host: GitHost = Object.assign(Object.create(Object.getPrototypeOf(inner)), inner, {
+      async upsertItem(projectId: string, item: ProjectItemInput): Promise<UpsertItemResult> {
+        if (limited)
+          throw new ForerunnerError("provider_rate_limit", "rate limited", {
+            retryable: true,
+            details: { retryAfterMs: 1_000 },
+          });
+        return inner.upsertItem(projectId, item);
+      },
+    });
+    const w = await world({ host });
+    const keep = await w.addTask("Keep");
+    const gone = await w.addTask("Gone");
+    await w.mirror.sync(w.projectId);
+    await w.store.task.delete(gone);
+
+    limited = true;
+    const stopped = await w.mirror.sync(w.projectId, { full: true });
+    expect(stopped.stopped).toEqual({ reason: "rate_limit", retryAfterMs: 1_000 });
+    expect(stopped).toMatchObject({ updated: 0, deleted: 0, archived: 0 });
+    expect((await w.settings())?.cursor).toEqual({ [gone]: 1 }); // remembered, not yet archived
+
+    limited = false;
+    const r = await w.mirror.sync(w.projectId);
+    expect(r).toMatchObject({ changed: 1, updated: 1, deleted: 1, archived: 1, stopped: null });
+    const s = await w.settings();
+    expect(s?.cursor).toEqual({ [keep]: 1 });
+    const list = await inner.listProjectItems(s?.project_id ?? "");
+    expect(list.find((i) => i.forerunnerTaskId === gone)?.archived).toBe(true);
+    expect(list).toHaveLength(2);
+  });
+
+  it("without a principal agent the run has no session: the counts go to the audit log instead of an event", async () => {
+    const w = await world({ principal: false });
+    await w.addTask("x");
+    const r = await w.mirror.sync(w.projectId);
+    expect(r).toMatchObject({ created: 1, sessionId: null, eventId: null });
+    expect(await w.store.session.forProject(w.projectId)).toHaveLength(0);
+    const rows = await w.store.auditLog.list({ tool: MIRROR_AUDIT_TOOL });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ allowed: true, session_id: null });
+    expect(rows[0]?.input_summary).toContain(w.projectId);
+    expect(rows[0]?.result_summary).toContain("1 created");
+    expect(rows[0]?.result_summary).toContain("0 unchanged");
+
+    // With a session the counts are an event, not an audit row.
+    const full = await world();
+    await full.addTask("y");
+    const r2 = await full.mirror.sync(full.projectId);
+    expect(r2.eventId).toBeTruthy();
+    expect(await full.store.auditLog.list({ tool: MIRROR_AUDIT_TOOL })).toHaveLength(0);
   });
 
   it("is one way: an edit on the GitHub side never alters the store, and a full run re-asserts the store", async () => {

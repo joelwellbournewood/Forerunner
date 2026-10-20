@@ -38,6 +38,7 @@ import {
   folderSample,
   formatFromExtension,
   mimeFor,
+  type ParsedUri,
   parseUri,
   readHead,
   sampleFile,
@@ -55,6 +56,8 @@ import {
   REMOTE_SCHEMES,
   resolveDataLimits,
   StoredAssetInfo,
+  truncatedWalkNote,
+  URI_STRIPPED_NOTE,
 } from "./types.ts";
 import { walkFolder } from "./walk.ts";
 
@@ -161,7 +164,7 @@ export class DataAssets {
     }
     const uri = parseUri(source);
     const prepared = uri
-      ? this.prepareRemote(source, uri, input)
+      ? this.prepareRemote(uri, input)
       : await this.prepareLocal(projectId, source, input);
     const id = prepared.id;
     const row = await this.store.dataAsset.insert({
@@ -234,11 +237,11 @@ export class DataAssets {
     }
   }
 
-  private prepareRemote(
-    source: string,
-    uri: { scheme: string; host: string; name: string },
-    input: RegisterInput,
-  ): Prepared {
+  /**
+   * A URI is stored as `uri.locator` (`scheme://host/path`): userinfo, query and fragment
+   * never reach the row, the audit log or a model. `uri.stripped` says when that happened.
+   */
+  private prepareRemote(uri: ParsedUri, input: RegisterInput): Prepared {
     if (!(REMOTE_SCHEMES as readonly string[]).includes(uri.scheme)) {
       throw new ForerunnerError(
         "validation",
@@ -255,9 +258,12 @@ export class DataAssets {
     const kind = input.kind ?? "dataset";
     const name = input.name?.trim() || uri.name;
     const sizeBytes = Math.max(0, Math.floor(input.sizeBytes ?? 0));
+    const note =
+      "Registered by URI. The runtime never fetches it: agents see this description only. " +
+      "Large data stays at its origin (R2, S3, GCS) or in Git LFS; it never goes into git.";
     return {
       id: newId(this.clock.now()),
-      locator: source,
+      locator: uri.locator,
       kind,
       sizeBytes,
       info: {
@@ -266,9 +272,7 @@ export class DataAssets {
         storage: "remote",
         format: formatFromExtension(name) ?? "remote",
         mime: mimeFor(formatFromExtension(name) ?? "remote", name),
-        note:
-          "Registered by URI. The runtime never fetches it: agents see this description only. " +
-          "Large data stays at its origin (R2, S3, GCS) or in Git LFS; it never goes into git.",
+        note: uri.stripped ? `${note} ${URI_STRIPPED_NOTE}` : note,
         metadata: describeRemote(uri),
         sample: null,
       },
@@ -315,13 +319,21 @@ export class DataAssets {
     if (isDir) {
       const { walk, metadata, storedSample } = describeFolder(abs, this.limits);
       const sizeBytes = walk.totalBytes;
-      const large = walk.truncated || sizeBytes > this.limits.copyThresholdBytes;
       let locator = abs;
       let storage: DataStorage = alreadyInside ? "copied" : "linked";
       let note: string | null = null;
-      if (large) {
+      if (walk.truncated) {
+        // The walk never finished, so the size is unknown: linked, with the limit named.
+        const limit = walk.limit ?? "entries";
+        const value =
+          limit === "entries"
+            ? this.limits.maxEntries
+            : limit === "bytes"
+              ? this.limits.maxTotalBytes
+              : this.limits.maxDepth;
+        note = truncatedWalkNote(limit, value);
+      } else if (sizeBytes > this.limits.copyThresholdBytes) {
         note = largeDataNote(sizeBytes, this.limits.copyThresholdBytes);
-        if (walk.truncated) note += ` The folder walk stopped at the ${walk.limit} limit.`;
       } else if (input.mode === "copy" && !alreadyInside) {
         mkdirSync(dataDir, { recursive: true });
         locator = join(dataDir, `${id}-${safeFileName(name)}`);

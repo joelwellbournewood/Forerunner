@@ -20,6 +20,7 @@ import { FakeDesktopAdapter } from "../src/desktop/adapters/fake.ts";
 import { DesktopController } from "../src/desktop/controller.ts";
 import { isDesktopDenial } from "../src/desktop/gate.ts";
 import { RecordingIndicator } from "../src/desktop/indicator.ts";
+import { DEFAULT_TYPE_DELAY_MS, MAX_TEXT_LENGTH, typingBudgetMs } from "../src/desktop/keys.ts";
 import { DESKTOP_TOOL_NAMES, desktopTools, registerDesktopTools } from "../src/desktop/tools.ts";
 import type { DesktopRunBinding, WindowInfo } from "../src/desktop/types.ts";
 
@@ -83,6 +84,24 @@ describe("desktop tools", () => {
     ] as const) {
       expect(tools[name]?.actionClass, name).toBe("non_routine");
     }
+  });
+
+  it("desktop_type's timeout covers the longest text its schema admits", () => {
+    const { tools } = world();
+    const budget = typingBudgetMs(MAX_TEXT_LENGTH, DEFAULT_TYPE_DELAY_MS);
+    expect(budget).toBeGreaterThanOrEqual(MAX_TEXT_LENGTH * DEFAULT_TYPE_DELAY_MS * 2);
+    expect(tools.desktop_type?.timeoutMs).toBeGreaterThanOrEqual(budget);
+  });
+
+  it("a screenshot the token allows says where the image is instead of claiming it was attached", async () => {
+    const { tools } = world({ screenshotsToModel: true });
+    const t = tools.desktop_screenshot;
+    if (!t) throw new Error("missing tool");
+    const r = await t.execute({ includeInContext: true }, ctx());
+    expect(r.artifacts?.image).toMatchObject({ mediaType: "image/png" });
+    expect(r.content).not.toMatch(/is attached/);
+    expect(r.content).toMatch(/image artifact/);
+    expect(r.content).toContain(String(r.artifacts?.path));
   });
 
   it("validates inputs strictly", () => {

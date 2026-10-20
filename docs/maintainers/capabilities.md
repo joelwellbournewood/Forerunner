@@ -61,7 +61,7 @@ the task next changes (or `full: true` re-asserts the whole board); they never r
 | Board | `ensureProject(owner, title)` | once; the id is stored in `settings.github_mirror.project_id` |
 | Fields | `ensureFields(projectId, MIRROR_FIELDS)` | once per process per board, and again when `MIRROR_FIELDS_VERSION` moved |
 | Item | `upsertItem(projectId, taskToItem(task, ledger, review))` | every task whose `version` differs from the cursor |
-| Archive | `archiveItem(projectId, itemId)` | after the upsert of a done or cancelled task; for a task id in the cursor that no longer exists (`findItem` first) |
+| Archive | `archiveItem(projectId, itemId)` | after the upsert of a done or cancelled task; for a task id in the persisted cursor whose row no longer exists (`findItem` first), on incremental and `full` runs alike |
 
 `upsertItem` is idempotent by the `forerunner_task_id` text field: the GitHub adapter lists
 the board once per process (100 items per page) and keeps an index task id -> item; a new item
@@ -76,6 +76,10 @@ cursor -> batches of `batchSize` (default 25) upserts, cursor saved after each b
 archive deleted -> save cursor and `last_sync_at` -> event -> result. The mirror runs on a
 session of its own (trigger `manual` or `schedule`, agent = `opts.agentId` or the first active
 principal) so the run event has a home; pass `sessionId` to write into a running session instead.
+A run that can get no session (no `sessionId`, no `agentId`, no active principal agent) is not
+silent: the same counts go to the audit log as one `github.projects.sync` row
+(`MIRROR_AUDIT_TOOL`, `runSummary` builds the line the session summary also uses) and the
+result carries `sessionId: null, eventId: null`.
 
 Enforcement in code, not prompts: `sync` throws `tool_not_allowed` unless
 `project.settings.github_mirror.enabled === true` (the human's opt-in, set by `fr mirror enable`
@@ -126,6 +130,12 @@ lives elsewhere (a milestone renamed, a new ledger entry, a new review) reaches 
 the task next changes or on `fr mirror sync --full`. `fields_version` records which field set
 (`MIRROR_FIELDS_VERSION`) a board was last ensured with; a board set up by an older build gets
 the new fields on its next run.
+
+A `full` run resets only the working cursor (so every present task is re-asserted); the ids of
+tasks deleted since the last run are always computed from the cursor as persisted, and they
+stay in the working cursor until their items are archived. A full run therefore archives a
+task deleted since the previous incremental run instead of forgetting it, and a full run that
+stops early (rate limit, crash) still hands the deleted ids to the next run.
 
 Rate-limit arithmetic (`retryAfterMs`, or `resetAt` minus now) runs on the injected `Clock`,
 never on the wall clock, so the stop reason in the event is right under a simulated clock too.
@@ -199,8 +209,11 @@ hook; CLI registration and commands; host from a vault reference; `taskToItem` f
 status; body cap with the cut marker; milestone name on the item, a milestone rename reaching
 the board only through a task change or a full run, and a board with an older `fields_version`
 getting its fields ensured again once; `resetAt` retry delay computed on the simulated clock;
+a full run archiving a task deleted since the last run and dropping its id from the cursor; a
+full run stopped by a rate limit keeping the deleted ids until the next run archives them; a
+run without a principal agent writing its counts to the audit log instead of an event;
 end-to-end run over GraphQL). Run: `pnpm vitest run --project unit packages/capabilities/test/github-projects.test.ts packages/capabilities/test/projects-mirror.test.ts`
-(25 tests).
+(28 tests).
 
 ### Known issues
 
@@ -214,6 +227,13 @@ end-to-end run over GraphQL). Run: `pnpm vitest run --project unit packages/capa
   with milestone rows (creates, renames, deletes); a text field needs no reconciliation.
 - The fake git host in `testenv` speaks classic (REST) projects only; the GraphQL stand-in
   lives in this package's test helpers and is not shared with other packages.
+- A done or cancelled task that changes version while its item is already archived costs two
+  extra mutations (`upsertItem` unarchives, `mirrorTask` re-archives). Kept on purpose: an
+  archived item is read-only on GitHub until it is restored, and the API does not document
+  field writes on one, so the unarchive is what lets the update land; two cheap mutations are
+  preferred to an undocumented edge of the API.
+- The "Decisions" subsection above belongs in `docs/decisions/` as an ADR; no number was
+  reserved for this module yet, so it stays here until the orchestrator lifts it.
 
 ### Requirements
 

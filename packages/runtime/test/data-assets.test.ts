@@ -113,8 +113,62 @@ describe("data assets: registration kinds", () => {
       scheme: "gs",
       host: "bucket",
       name: "b.csv",
+      locator: "gs://bucket/a/b.csv",
+      stripped: true,
     });
+    expect(parseUri("s3://b/k.parquet")?.stripped).toBe(false);
     expect(parseUri("C:\\data\\x.csv")).toBeNull();
+  });
+
+  it("stores a remote URI without credentials, query or fragment; nothing stored names them", async () => {
+    h = await dataHarness();
+    const password = ["hun", "ter2"].join(""); // not-a-secret
+    const signature = ["X-Amz-", "Signature=", "abc123def"].join(""); // not-a-secret
+    const uri = `https://backup:${password}@host.example:8443/exports/2026/x.csv?${signature}&X-Amz-Expires=60#frag`;
+    const view = await h.assets.register({ projectId: h.projectId, source: uri }, human);
+    expect(view.locator).toBe("https://host.example:8443/exports/2026/x.csv");
+    expect(view.metadata?.host).toBe("host.example:8443");
+    expect(view.name).toBe("x.csv");
+    expect(view.note).toMatch(/dropped from the URI/);
+    const row = await h.store.dataAsset.mustGet(view.id);
+    const stored = JSON.stringify([
+      row,
+      view,
+      await h.store.auditLog.list({ tool: "data.register" }),
+    ]);
+    for (const leak of [password, "Signature", "backup", "Expires", "frag"]) {
+      expect(stored).not.toContain(leak);
+    }
+    // A clean URI is stored as given and gets no such note.
+    const clean = await h.assets.register(
+      { projectId: h.projectId, source: "s3://bucket/k.parquet" },
+      human,
+    );
+    expect(clean.locator).toBe("s3://bucket/k.parquet");
+    expect(clean.note).not.toMatch(/dropped/);
+    expect(parseUri("https://u:p@h:1/a/b.csv?x=1#f")).toEqual({
+      scheme: "https",
+      host: "h:1",
+      name: "b.csv",
+      locator: "https://h:1/a/b.csv",
+      stripped: true,
+    });
+  });
+
+  it("a folder whose walk hits a limit is linked with a note naming the limit, not the size threshold", async () => {
+    h = await dataHarness({ maxEntries: 2 });
+    const root = join(h.src, "wide");
+    for (let i = 0; i < 4; i++) writeFixture(join(root, `f${i}.txt`), "x");
+    const view = await h.assets.register(
+      { projectId: h.projectId, source: root, mode: "copy" },
+      human,
+    );
+    expect(view.storage).toBe("linked");
+    expect(view.metadata?.truncated).toBe(true);
+    expect(view.note).toMatch(/walk stopped at the entries limit \(2\)/);
+    expect(view.note).not.toMatch(/above the copy threshold/);
+    expect(view.note).toMatch(/Git LFS/);
+    expect(existsSync(h.assets.projectDataDir(h.projectId))).toBe(false);
   });
 
   it("copy mode puts a copy under <projectsRoot>/<project>/data and leaves the original untouched", async () => {

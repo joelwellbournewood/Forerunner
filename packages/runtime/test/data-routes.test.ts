@@ -181,6 +181,17 @@ describe("data routes", () => {
     expect(fres.status).toBe(200);
     expect(ImportResultView.parse(await fres.json()).destination).toBeNull();
     expect(await h.assets.list(h.projectId)).toHaveLength(2);
+    // Conflicting archive entries are a client error, not an internal one.
+    const conflict = makeZip(join(h.src, "c.zip"), [
+      { name: "a", data: "1" },
+      { name: "a/b.txt", data: "2" },
+    ]);
+    const cres = await a.fetch(
+      json("POST", `/projects/${h.projectId}/data/import`, { source: "zip", path: conflict }),
+    );
+    expect(cres.status).toBe(400);
+    expect((await read(cres)).code).toBe("validation");
+    expect(await h.assets.list(h.projectId)).toHaveLength(2);
     expect(
       (await a.fetch(json("POST", `/projects/${h.projectId}/data/import`, { source: "zip" })))
         .status,

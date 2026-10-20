@@ -97,3 +97,27 @@ next weekly run to ask again rather than on a second timer.
   on the simulated history. A richer model can replace it behind `EstimatePort`.
 - **Persisting the estimate model in its own table.** Rejected: a fold over existing rows is
   always reproducible and cannot drift from the ledger; the fold is one query at start.
+
+## Amendment 2026-10-20: one sample base, a bounded fold
+
+Review of the first build found two things the decision above left implicit.
+
+- **The sample's estimate is the raw base, never the planner's corrected figure.** A sample
+  compares the actual with `task.est_cost_usd_micro` (or the cold start), the same base the
+  multiplier is applied to. Observing the actual against the plan item's learned figure
+  (base × ratio) measures the residual after correction and feeds the correction back into
+  itself: with a constant overrun `R` the exponentially weighted mean settles at
+  `ln R / (1 + w)`, so the planner sees about `√R` instead of `R`, and the state learned live
+  disagrees with the fold after a restart. `EstimateModel.sampleForTask` is the single
+  derivation; `observeTask` is the live feed and `refresh` the store feed, both through it.
+- **The fold is bounded by a cursor and an overlap window** (`foldOverlapMs`, 15 minutes).
+  A refresh asks the store for finished tasks with `updated_at >= cursor - window` and
+  remembers only the ids inside that window; the run listing is chunked and the ledger
+  breakdown bounded by the oldest fresh task's creation. Before, every refresh listed every
+  finished task and the remembered id set grew with the install. The window is the trade-off:
+  it covers clock skew between writers of a shared store and a task row finished shortly after
+  its live observation, and a process that polls a shared store must refresh at least once
+  per window to see every task finished elsewhere. Fifteen minutes is far longer than the gap
+  between a run's end and the critic closing the task, and a window of ids is a few kilobytes.
+  The snapshot format moved to version 2 (`folded` carries the finish time); nothing had
+  persisted version 1.

@@ -149,6 +149,37 @@ describe("desktop routes", () => {
     expect(ok.status).toBe(200);
   });
 
+  it("a signed-in human reaches only their own allowlist; resume needs a human, revoke stays open", async () => {
+    const { app, allowlist, controller } = world({ humanFor: true });
+    const other = await app.call("PUT /desktop/allowlist/:humanId", {
+      params: { humanId: "h1" },
+      body: { entries: ["firefox"] },
+      human: "h2",
+    });
+    expect(other.status).toBe(403);
+    expect(await allowlist.get("h1")).toEqual([{ app: "code" }]);
+    const read = await app.call("GET /desktop/allowlist/:humanId", {
+      params: { humanId: "h1" },
+      human: "h2",
+    });
+    expect(read.status).toBe(403);
+    const own = await app.call("GET /desktop/allowlist/:humanId", {
+      params: { humanId: "h1" },
+      human: "h1",
+    });
+    expect(own.status).toBe(200);
+    // Revoke is fail-safe and open to anyone; resume widens and needs a signed-in human.
+    const revoked = await app.call("POST /desktop/revoke", { body: {} });
+    expect(revoked.status).toBe(200);
+    expect(controller.status().revoked).toBe(true);
+    const anonResume = await app.call("POST /desktop/resume");
+    expect(anonResume.status).toBe(403);
+    expect(controller.status().revoked).toBe(true);
+    const resumed = await app.call("POST /desktop/resume", { human: "h1" });
+    expect(resumed.status).toBe(200);
+    expect(controller.status().revoked).toBe(false);
+  });
+
   it("revoke stops the controller live and resume lifts it", async () => {
     const { app, controller, audit } = world();
     const r = await app.call("POST /desktop/revoke", { body: { reason: "panel" } });

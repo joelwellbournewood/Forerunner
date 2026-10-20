@@ -175,6 +175,53 @@ describe("data import: zip", () => {
     });
     await expect(h.importer.importZip(fat, "nope")).rejects.toMatchObject({ code: "not_found" });
   });
+
+  it("rejects conflicting entries (a file and a folder of one name, duplicates after sanitising) before writing", async () => {
+    h = await dataHarness();
+    // The pair named in `details` does not depend on the order adm-zip stores the entries in.
+    const conflictOf = async (zip: string): Promise<string[]> => {
+      const err = (await h.importer.importZip(zip, h.projectId).catch((e: unknown) => e)) as {
+        details?: { entry?: string; conflictsWith?: string };
+      };
+      expect(err).toMatchObject({
+        code: "validation",
+        message: expect.stringMatching(/conflicting entries/),
+      });
+      return [String(err.details?.entry), String(err.details?.conflictsWith)].sort();
+    };
+    const fileThenDir = makeZip(join(h.src, "file-then-dir.zip"), [
+      { name: "a", data: "file" },
+      { name: "a/", dir: true },
+      { name: "a/b.txt", data: "x" },
+    ]);
+    expect(await conflictOf(fileThenDir)).toEqual(["a", "a/"]);
+    const dirThenFile = makeZip(join(h.src, "dir-then-file.zip"), [
+      { name: "x/y.txt", data: "y" },
+      { name: "x", data: "file" },
+    ]);
+    expect(await conflictOf(dirThenFile)).toEqual(["x", "x/y.txt"]);
+    const sanitised = makeZip(join(h.src, "sanitised.zip"), [
+      { name: "a?.txt", data: "1" },
+      { name: "a_.txt", data: "2" },
+    ]);
+    expect(await conflictOf(sanitised)).toEqual(["a?.txt", "a_.txt"]);
+    // Names that differ only by case collide on Windows; refused on every OS so imports behave alike.
+    const caseClash = makeZip(join(h.src, "case.zip"), [
+      { name: "Readme.md", data: "1" },
+      { name: "readme.md", data: "2" },
+    ]);
+    expect(await conflictOf(caseClash)).toEqual(["Readme.md", "readme.md"]);
+    expect(existsSync(join(h.assets.projectDataDir(h.projectId), "imports"))).toBe(false);
+    expect(await h.assets.list(h.projectId)).toEqual([]);
+    // The same folder declared twice (explicit and implicit) is fine.
+    const fine = makeZip(join(h.src, "fine.zip"), [
+      { name: "d/", dir: true },
+      { name: "d/one.txt", data: "1" },
+      { name: "d/two.txt", data: "2" },
+    ]);
+    const ok = await h.importer.importZip(fine, h.projectId, { register: false });
+    expect(ok.imported.map((f) => f.rel)).toEqual(["d/one.txt", "d/two.txt"]);
+  });
 });
 
 describe("data import: folder", () => {

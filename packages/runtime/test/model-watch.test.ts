@@ -39,6 +39,7 @@ import {
   MODEL_WATCH_AGENT_ID,
   MODEL_WATCH_CHANNEL,
   ModelWatch,
+  type ModelWatchAdoptedEvent,
   type ModelWatchApprovalOutcome,
   type ModelWatchApprovalPort,
   type ModelWatchApprovalRequest,
@@ -293,6 +294,7 @@ function watchFor(
     priceList?: PriceList;
     thresholds?: Partial<typeof DEFAULT_WATCH_THRESHOLDS>;
     evals?: EvalRunnerPort;
+    onAdopted?: (event: ModelWatchAdoptedEvent) => void | Promise<void>;
   } = {},
 ): ModelWatch {
   return new ModelWatch({
@@ -308,6 +310,7 @@ function watchFor(
     pricing: PRICING,
     evalTargets: [{ specialist: "coder", mode: "coder" }],
     thresholds: over.thresholds,
+    onAdopted: over.onAdopted,
   });
 }
 
@@ -752,6 +755,69 @@ describe("model watch: proposals need a human", () => {
     ])
       expect(tools).toContain(t);
     expect(tools.filter((t) => t === "model_watch.eval")).toHaveLength(3);
+  });
+
+  it("onAdopted hands the daemon the pricing and config now in force; a failing hook is audited and the adoption stands", async () => {
+    const w = await make();
+    const seen: ModelWatchAdoptedEvent[] = [];
+    const r = await watchFor(w, {
+      approvals: new FakeApprovals({
+        status: "answered",
+        answer: { decision: "adopt", by: w.human },
+      }),
+      onAdopted: (e) => {
+        seen.push(e);
+      },
+    }).run();
+    expect(r.decision).toBe("adopted");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ reportId: r.report.id, by: w.human, applied: r.applied });
+    expect(seen[0]?.config.ladder.find((x) => x.tier === "sonnet")?.models).toEqual({
+      anthropic: "claude-sonnet-5-5",
+      fake: "fake-sonnet-6",
+    });
+    expect(seen[0]?.config.modeDefaults.coder.effort).toBe("low");
+    expect(seen[0]?.pricing["fake-sonnet-6"]?.output_per_mtok_usd).toBe(7.5);
+    expect(seen[0]?.pricing["fake-sonnet"]?.input_per_mtok_usd).toBe(2.4);
+    const reloaded = (await w.store.auditLog.list({ humanId: w.human })).find(
+      (a) => a.tool === "model_watch.reload",
+    );
+    expect(reloaded).toMatchObject({ allowed: true });
+
+    // ignore and remind never fire it.
+    const w2 = await make();
+    const fired: string[] = [];
+    await watchFor(w2, {
+      approvals: new FakeApprovals({
+        status: "answered",
+        answer: { decision: "ignore", by: w2.human },
+      }),
+      onAdopted: () => {
+        fired.push("ignore");
+      },
+    }).run();
+    expect(fired).toEqual([]);
+
+    // A hook that throws: the files stay written, the release stays installed, the failure is
+    // an audit row with allowed=false, and the caller sees the adoption.
+    const w3 = await make();
+    const r3 = await watchFor(w3, {
+      approvals: new FakeApprovals({
+        status: "answered",
+        answer: { decision: "adopt", by: w3.human },
+      }),
+      onAdopted: () => {
+        throw new Error("reload failed");
+      },
+    }).run();
+    expect(r3.decision).toBe("adopted");
+    expect(r3.release.status).toBe("installed");
+    expect((await w3.settings.readModelSettings()).efforts.coder).toBe("low");
+    const failed = (await w3.store.auditLog.list({ humanId: w3.human })).find(
+      (a) => a.tool === "model_watch.reload",
+    );
+    expect(failed).toMatchObject({ allowed: false });
+    expect(failed?.result_summary).toContain("reload failed");
   });
 
   it("adopt with the file store writes <config>/pricing.json and <config>/models.json that parse back", async () => {

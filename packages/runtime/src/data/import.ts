@@ -103,6 +103,33 @@ export function isSymlinkEntry(entry: AdmZip.IZipEntry): boolean {
   return ((attr >>> 16) & 0xf000) === 0xa000;
 }
 
+type EntryTable = Map<string, { entryName: string; kind: "file" | "dir" }>;
+
+/**
+ * Record an entry's sanitised path and the folders it implies; return the earlier entry it
+ * conflicts with: a file where a folder is needed (or the reverse), or the same file twice.
+ * Keys are lower-cased because names that differ only by case collide on Windows, so such
+ * archives are refused on every OS and an import behaves the same everywhere.
+ */
+export function recordZipEntry(
+  seen: EntryTable,
+  segments: string[],
+  isDirectory: boolean,
+  entryName: string,
+): string | null {
+  for (let i = 1; i <= segments.length; i++) {
+    const key = segments.slice(0, i).join("/").toLowerCase();
+    const kind = i < segments.length || isDirectory ? "dir" : "file";
+    const prior = seen.get(key);
+    if (!prior) {
+      seen.set(key, { entryName, kind });
+      continue;
+    }
+    if (prior.kind !== kind || kind === "file") return prior.entryName;
+  }
+  return null;
+}
+
 export class DataImporter {
   private readonly clock: Clock;
   private readonly logger = log("data:import");
@@ -135,9 +162,11 @@ export class DataImporter {
         },
       );
     }
-    // Pass 1: validate every name and the declared sizes before anything touches the disk.
+    // Pass 1: validate every name, the declared sizes and name conflicts before anything
+    // touches the disk.
     const plan: { entry: AdmZip.IZipEntry; segments: string[] }[] = [];
     const skipped: { rel: string; reason: string }[] = [];
+    const seen: EntryTable = new Map();
     let declared = 0;
     for (const entry of entries) {
       const check = checkZipEntryName(entry.entryName, limits.maxDepth);
@@ -152,6 +181,19 @@ export class DataImporter {
       if (isSymlinkEntry(entry)) {
         skipped.push({ rel: entry.entryName, reason: "symlink" });
         continue;
+      }
+      const conflictsWith = recordZipEntry(
+        seen,
+        check.segments,
+        entry.isDirectory,
+        entry.entryName,
+      );
+      if (conflictsWith !== null) {
+        throw new ForerunnerError(
+          "validation",
+          `conflicting entries in archive: ${entry.entryName} and ${conflictsWith}`,
+          { details: { entry: entry.entryName, conflictsWith } },
+        );
       }
       if (!entry.isDirectory) {
         declared += entry.header.size;

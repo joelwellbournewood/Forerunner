@@ -204,15 +204,33 @@ export const ImportResultView = z.object({
 });
 export type ImportResultView = z.infer<typeof ImportResultView>;
 
+/** Where large data belongs instead of git; appended to every "linked, not copied" note. */
+export const LARGE_DATA_ADVICE =
+  "Large data never goes into git. Keep it at its original location, put it in Git LFS " +
+  "(git lfs track), or upload it to an R2 or S3 bucket and register the r2:// or s3:// URI instead.";
+
 /** The note attached to every linked large asset. */
 export function largeDataNote(sizeBytes: number, thresholdBytes: number): string {
   return (
     `Linked in place: ${formatBytes(sizeBytes)} is above the copy threshold of ` +
-    `${formatBytes(thresholdBytes)}. Large data never goes into git. Keep it at its original ` +
-    "location, put it in Git LFS (git lfs track), or upload it to an R2 or S3 bucket and register " +
-    "the r2:// or s3:// URI instead."
+    `${formatBytes(thresholdBytes)}. ${LARGE_DATA_ADVICE}`
   );
 }
+
+/** The note attached to a linked folder whose walk a limit stopped (its size is unknown). */
+export function truncatedWalkNote(limit: "entries" | "bytes" | "depth", value: number): string {
+  const shown = limit === "bytes" ? formatBytes(value) : String(value);
+  return (
+    `Linked in place: the folder walk stopped at the ${limit} limit (${shown}), so the folder ` +
+    "is linked where it sits and never copied; the entry count and size recorded are partial. " +
+    LARGE_DATA_ADVICE
+  );
+}
+
+/** The note attached to a remote asset whose URI carried credentials, a query or a fragment. */
+export const URI_STRIPPED_NOTE =
+  "Credentials and query parameters were dropped from the URI before it was stored; keep them " +
+  "in the vault as a secret reference and let the run inject them when it reads the data.";
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
