@@ -146,6 +146,84 @@ describe("CriticService: independence (H.1)", () => {
   });
 });
 
+describe("CriticService: source files (ADR 0041)", () => {
+  const FIXTURE =
+    "# Atlas service status, Q2 2026\n\nMeasured uptime for the public API in Q2 was 99.91% (target 99.9%).\n";
+  const research = (over: Partial<ReviewEvidence> = {}): ReviewEvidence => ({
+    brief: "Report the Q2 uptime from docs/status-q2.md",
+    acceptanceCriteria: [
+      "answer.md states the uptime as 99.91% exactly",
+      "every claim cites docs/status-q2.md",
+    ],
+    changedFiles: ["answer.md"],
+    diff: "--- /dev/null\n+++ b/answer.md\n@@ -0,0 +1,1 @@\n+Q2 uptime was 99.91% (docs/status-q2.md)",
+    checkResults: [
+      { name: "answer.md matches 99\\.91", passed: true, output: "answer.md: matched" },
+    ],
+    finalReport: "answer.md written from docs/status-q2.md.",
+    ...over,
+  });
+
+  it("a research answer is reviewed with the document it cites: the source file reaches the model as data, nothing else does", async () => {
+    const w = await world({ replies: [submitReply({ grade: 93 }), closingReply()] });
+    try {
+      const DECOY = "DECOY-WORKER-TRANSCRIPT-9b1c";
+      const evidence = {
+        ...research({ sourceFiles: [{ path: "docs/status-q2.md", content: FIXTURE }] }),
+        workerTranscript: DECOY,
+      } as unknown as ReviewEvidence;
+      const out = await w.critic.review(taskInput(w.ids.task, 1, evidence), w.ctx());
+      expect(out.verdict).toBe("accept");
+      const first = w.provider.calls[0]?.request;
+      expect(first?.messages).toHaveLength(1);
+      const user = first?.messages[0]?.content as string;
+      expect(user).toContain("## Source files (data)");
+      expect(user).toContain("### docs/status-q2.md\n```text\n# Atlas service status, Q2 2026");
+      expect(user).toContain("99.91% (target 99.9%)");
+      // The inputs come before the result, so the critic reads what to check against first.
+      expect(user.indexOf("## Source files (data)")).toBeLessThan(user.indexOf("## Diff (data)"));
+      expect(user).toContain("- PASS (required) answer.md matches 99\\.91");
+      for (const call of w.provider.calls)
+        expect(JSON.stringify(call.request)).not.toContain(DECOY);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("without source files the review carries no block for them: a claim about a source the critic was not given cannot be verified", async () => {
+    // The shape the live calibration produced for every researcher task before ADR 0041: the
+    // answer and the mechanical checks, but not the fixture the answer cites.
+    const w = await world({
+      replies: [
+        submitReply({
+          confidence: "medium",
+          grade: 82,
+          summary: "The fixture text was not provided, so I could not verify the figures.",
+          criteria: [
+            {
+              text: "answer.md states the uptime as 99.91% exactly",
+              met: true,
+              evidence: "cited but the source was not given",
+            },
+          ],
+        }),
+        closingReply(),
+      ],
+    });
+    try {
+      const out = await w.critic.review(taskInput(w.ids.task, 1, research()), w.ctx());
+      const user = w.provider.calls[0]?.request.messages[0]?.content as string;
+      expect(user).not.toContain("## Source files");
+      expect(user).not.toContain("99.91% (target 99.9%)");
+      // With the required check passed and nothing found, the floor still carries the accept.
+      expect(out.verdict).toBe("accept");
+      expect(out.adjustments.map((a) => a.rule)).toEqual(["confidence_floor"]);
+    } finally {
+      await w.close();
+    }
+  });
+});
+
 describe("CriticService: checks run at tier 2+ (H.2)", () => {
   const unit: CheckCommand = { name: "unit", argv: ["pnpm", "test"] };
 
@@ -169,8 +247,8 @@ describe("CriticService: checks run at tier 2+ (H.2)", () => {
       expect(seen).toEqual([{ cmd: unit, cwd: "/work/tree" }]);
       // The model saw the result the critic ran, as data.
       const user = w.provider.calls[0]?.request.messages[0]?.content as string;
-      expect(user).toContain("## Check results");
-      expect(user).toContain("[FAIL] unit");
+      expect(user).toContain("## Checks run by the runner (data)");
+      expect(user).toContain("- FAIL (required) unit");
       expect(user).toContain("1 failing");
       expect(out.verdict).toBe("revise");
       expect(out.findings).toContainEqual(
@@ -208,17 +286,108 @@ describe("CriticService: checks run at tier 2+ (H.2)", () => {
 });
 
 describe("CriticService: rules in code", () => {
-  it("medium confidence never accepts: the verdict becomes escalate and the change is recorded", async () => {
+  it("medium confidence with every required check passed and nothing found is floored to the accept line (ADR 0041)", async () => {
+    // The shape the live calibration produced on every missed clean task: the model accepts at
+    // confidence 0.5 ("medium") because it did not run the tests itself, while the runner's
+    // required checks all passed. The runner's results are evidence; the code lifts the
+    // confidence to the line and the accept stands, with the change on record.
+    const w = await world({
+      replies: [submitReply({ confidence: "medium", grade: 88 }), closingReply()],
+    });
+    try {
+      const out = await w.critic.review(
+        taskInput(
+          w.ids.task,
+          1,
+          baseEvidence({
+            checkResults: [
+              { name: "node --test test/cli.test.ts", passed: true, output: "ok 5 tests" },
+              { name: "lint", passed: true, output: "", required: false },
+            ],
+          }),
+        ),
+        w.ctx(),
+      );
+      expect(out.verdict).toBe("accept");
+      expect(out.confidence).toBe(0.6);
+      expect(out.adjustments).toEqual([
+        expect.objectContaining({ rule: "confidence_floor", from: "0.50", to: "0.60" }),
+      ]);
+      expect(out.evidence).toContainEqual(
+        expect.stringMatching(/^confidence: floored 0\.50 -> 0\.60 \(every required check/),
+      );
+      // The model read the runner's results as PASS lines it may rely on, not as claims.
+      const user = w.provider.calls[0]?.request.messages[0]?.content as string;
+      expect(user).toContain("## Checks run by the runner (data)");
+      expect(user).toContain(
+        "1 required check(s) run by the runner before this review: 1 passed, 0 failed; 1 optional.",
+      );
+      expect(user).toContain("- PASS (required) node --test test/cli.test.ts");
+      expect(user).toContain("- PASS (optional) lint");
+      const review = await w.store.review.latestForTask(w.ids.task);
+      expect(review).toMatchObject({ verdict: "accept", confidence: 0.6 });
+      expect(await w.store.finding.openFor(w.ids.task)).toEqual([]);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("medium confidence never accepts without a passing required check behind it: the verdict becomes escalate and the change is recorded (ADR 0028)", async () => {
+    const cases: { name: string; checkResults: ReviewEvidence["checkResults"] }[] = [
+      { name: "no checks", checkResults: undefined },
+      { name: "no check ran", checkResults: [] },
+      {
+        name: "optional checks only",
+        checkResults: [{ name: "lint", passed: true, output: "", required: false }],
+      },
+    ];
+    for (const c of cases) {
+      const w = await world({
+        replies: [submitReply({ confidence: "medium", grade: 95 }), closingReply()],
+      });
+      try {
+        const out = await w.critic.review(
+          taskInput(w.ids.task, 1, baseEvidence({ checkResults: c.checkResults })),
+          w.ctx(),
+        );
+        expect(out.verdict, c.name).toBe("escalate");
+        expect(out.confidence, c.name).toBe(0.5);
+        expect(
+          out.adjustments.map((a) => a.rule),
+          c.name,
+        ).toEqual(["low_confidence"]);
+        const review = await w.store.review.latestForTask(w.ids.task);
+        expect(review?.verdict, c.name).toBe("escalate");
+      } finally {
+        await w.close();
+      }
+    }
+  });
+
+  it("a failed required check keeps the floor off: medium confidence with a failed check is a revise with the check's finding", async () => {
     const w = await world({
       replies: [submitReply({ confidence: "medium", grade: 95 }), closingReply()],
     });
     try {
-      const out = await w.critic.review(taskInput(w.ids.task), w.ctx());
-      expect(out.verdict).toBe("escalate");
-      expect(out.confidence).toBeLessThan(0.6);
-      expect(out.adjustments.map((a) => a.rule)).toEqual(["low_confidence"]);
-      const review = await w.store.review.latestForTask(w.ids.task);
-      expect(review?.verdict).toBe("escalate");
+      const out = await w.critic.review(
+        taskInput(
+          w.ids.task,
+          1,
+          baseEvidence({
+            checkResults: [
+              { name: "unit", passed: true, output: "ok" },
+              { name: "typecheck", passed: false, output: "error TS2322" },
+            ],
+          }),
+        ),
+        w.ctx(),
+      );
+      expect(out.verdict).toBe("revise");
+      expect(out.confidence).toBe(0.5);
+      expect(out.adjustments.map((a) => a.rule)).toEqual(["blocking_finding"]);
+      expect(out.findings).toContainEqual(
+        expect.objectContaining({ severity: "high", description: "Check failed: typecheck" }),
+      );
     } finally {
       await w.close();
     }

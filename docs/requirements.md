@@ -138,10 +138,10 @@ Status is changed only in the PR that merges the behaviour (see "Definition of d
 | H.1 | Independent reviewer: a different model, or at least a clean context with no access to the worker's reasoning. | 3 | done | packages/critic/test/critic.test.ts; packages/runtime/test/loop-critic.test.ts |
 | H.2 | Risk tiers set review depth: 0 = automated checks only, 1 = light read, 2 = full review with tests run, 3 = deep review plus human sign-off. | 3 | done | packages/critic/test/critic.test.ts; packages/critic/test/tier0.test.ts; packages/critic/test/rules.test.ts; packages/runtime/test/loop-critic.test.ts |
 | H.3 | Output: grade 0–100, confidence, findings with severity, verdict, evidence links. | 3 | done | packages/critic/test/critic.test.ts; packages/critic/test/schema.test.ts; packages/runtime/test/loop-routes.test.ts; apps/ui/test/reviews.test.tsx |
-| H.4 | Low confidence never becomes accept. It becomes escalate or human. | 3 | in progress | packages/critic/test/rules.test.ts; packages/critic/test/critic.test.ts |
+| H.4 | Low confidence never becomes accept. It becomes escalate or human. | 3 | in progress | packages/critic/test/rules.test.ts (rule 3 and the ADR 0041 floor: medium on all-green required checks is lifted to the line, low never); packages/critic/test/critic.test.ts |
 | H.5 | Findings are tracked to resolution. Repeat findings across sessions are flagged as patterns and turned into lessons. | 3 | done | packages/critic/test/critic.test.ts; packages/critic/test/fingerprint.test.ts; packages/state/test/suite.ts; packages/runtime/test/loop-critic.test.ts; apps/ui/test/reviews.test.tsx; tests/e2e/scenarios/phase4-gate.integration.test.ts |
 | H.6 | Session-level review grades plan quality, cost efficiency and honesty of the summary to the human. | 3 | done | packages/critic/test/session-review.test.ts; packages/runtime/test/loop-critic.test.ts |
-| H.7 | Calibration: the critic grades the golden eval set monthly so drift is visible. | 3 | in progress | packages/critic/test/calibration.test.ts; tests/e2e/scenarios/phase3-gate.integration.test.ts |
+| H.7 | Calibration: the critic grades the golden eval set monthly so drift is visible. | 3 | in progress | packages/critic/test/calibration.test.ts; packages/critic/test/evidence.test.ts; tests/e2e/scenarios/phase3-gate.integration.test.ts; tests/live (first live run 2026-10-20 on critic@1.0.0: defects caught 40/40, clean accepted 15/40, gate 90% FAIL, USD 2.54; re-run on critic@1.1.0 after ADR 0041 pending, see gates.md phase 3) |
 
 ## I. Budget and cost
 

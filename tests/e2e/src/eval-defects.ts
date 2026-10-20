@@ -114,7 +114,7 @@ export function evalCriticScript(tasks: readonly EvalTask[]): EvalCriticScript {
             if (!criticTurn(req)) return false;
             const text = lastUserText(req);
             if (marker) return evidenceShowsDefect(text, marker);
-            return text.includes(subject) && text.includes("[FAIL]");
+            return text.includes(subject) && text.includes("FAIL (required)");
           },
         },
       ),

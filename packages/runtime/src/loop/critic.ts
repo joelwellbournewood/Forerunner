@@ -1,3 +1,4 @@
+import { closeSync, openSync, readSync, statSync } from "node:fs";
 import {
   applyVerdict,
   type CheckCommand,
@@ -10,18 +11,23 @@ import {
   type ReviewEvidence,
   type ReviewOutput,
   type ReviewTier,
+  type SourceFileEvidence,
 } from "@forerunner/critic";
 import { checkDocDrift } from "@forerunner/memory";
 import {
   type Clock,
   errorMessage,
   ForerunnerError,
+  fromPosix,
+  isInside,
   join,
   log,
   type RunOptions,
   type RunResult,
+  resolve,
   run as runProcess,
   safeSegment,
+  toPosix,
 } from "@forerunner/platform";
 import type { JsonObject, StateStore, TaskRow } from "@forerunner/state";
 import { z } from "zod";
@@ -49,8 +55,9 @@ import type {
 /**
  * The critic in the loop (spec H, phase 3). For every task the runner finished above the
  * mechanical path, this port assembles the evidence (the diff of the PR branch or the
- * worktree, the changed files, the project's check commands, the standard-doc drift, the
- * specialist's final report as claims), runs `@forerunner/critic` at the task's tier under the
+ * worktree, the changed files, the unchanged files the task names read from the worktree as
+ * source files, the project's check commands, the standard-doc drift, the specialist's final
+ * report as claims), runs `@forerunner/critic` at the task's tier under the
  * project's ceiling and speed-versus-quality offset, and applies the verdict through the
  * state workflow with the retry ladder of spec D.2:
  *
@@ -111,6 +118,90 @@ export interface DiffPort {
 export const CHECKS_SETTING = "checks";
 /** A diff longer than this is cut with a marker; the files list stays complete. */
 export const MAX_DIFF_CHARS = 200_000;
+/** Caps for the source files read from the worktree into the evidence (ADR 0041). */
+export const MAX_SOURCE_FILE_BYTES = 64 * 1024;
+export const MAX_SOURCE_TOTAL_BYTES = 256 * 1024;
+/** How many path-like names a task's text may yield; the rest are ignored. */
+export const MAX_NAMED_PATHS = 32;
+
+const PATH_TOKEN_RE =
+  /(?<![\w./:-])(?:\.\/)?(?:[\w.-]+\/)*[\w-]+\.[A-Za-z][A-Za-z0-9]{0,7}(?![\w/-])/g;
+
+/**
+ * Relative file paths a text names (`src/cli.ts`, `docs/status-q2.md`, `README.md`): segments
+ * with forward slashes and a letter-led extension (so `v1.0` is not one), not inside a URL,
+ * never absolute, never `..`. Whether a name is a file is decided against the worktree by
+ * `readSourceFiles`, so a dotted word that is not one (`e.g`) costs a stat and nothing else.
+ */
+export function namedPaths(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of text.matchAll(PATH_TOKEN_RE)) {
+    const p = m[0].replace(/^\.\//, "");
+    if (p.split("/").some((seg) => seg === "" || seg === "..")) continue;
+    out.add(p);
+    if (out.size >= MAX_NAMED_PATHS) break;
+  }
+  return [...out];
+}
+
+export interface ReadSourceFilesOptions {
+  maxFileBytes?: number;
+  maxTotalBytes?: number;
+}
+
+/**
+ * The named files that exist in the worktree and the task did not change, as source evidence:
+ * a regular file inside the worktree (a path that escapes it is skipped), text (no NUL byte in
+ * its first 8 KiB), cut at the per-file cap and stopped at the total cap. A changed file is the
+ * diff's business and is never repeated here; a missing or unreadable one is skipped.
+ */
+export function readSourceFiles(
+  worktree: string,
+  paths: readonly string[],
+  changedFiles: readonly string[],
+  opts: ReadSourceFilesOptions = {},
+): SourceFileEvidence[] {
+  const maxFile = opts.maxFileBytes ?? MAX_SOURCE_FILE_BYTES;
+  const maxTotal = opts.maxTotalBytes ?? MAX_SOURCE_TOTAL_BYTES;
+  const changed = new Set(changedFiles.map((f) => toPosix(f)));
+  const out: SourceFileEvidence[] = [];
+  let total = 0;
+  for (const rel of paths) {
+    if (changed.has(rel)) continue;
+    if (total >= maxTotal) break;
+    const abs = resolve(worktree, fromPosix(rel));
+    if (!isInside(worktree, abs)) continue;
+    let size: number;
+    try {
+      const st = statSync(abs);
+      if (!st.isFile()) continue;
+      size = st.size;
+    } catch {
+      continue;
+    }
+    const take = Math.min(size, maxFile, maxTotal - total);
+    let buf: Buffer;
+    try {
+      const fd = openSync(abs, "r");
+      try {
+        buf = Buffer.alloc(take);
+        buf = buf.subarray(0, readSync(fd, buf, 0, take, 0));
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      continue;
+    }
+    if (buf.subarray(0, 8192).includes(0)) continue;
+    total += buf.length;
+    out.push({
+      path: rel,
+      content: buf.toString("utf8"),
+      ...(take < size ? { truncated: true } : {}),
+    });
+  }
+  return out;
+}
 
 const CheckSettingSchema = z.object({
   name: z.string().min(1),
@@ -250,6 +341,11 @@ export class CriticLoop implements CriticPort {
       ? result.changedFiles
       : (diff?.changedFiles ?? []);
     const { checks, invalid } = checksFromSettings(settings);
+    // Source files (ADR 0041): the unchanged files the task's own text names, read from the
+    // worktree, so the critic checks the result's claims against the inputs it cites.
+    const named = namedPaths([task.title, task.outcome, ...task.acceptance_criteria].join("\n"));
+    const sourceFiles =
+      worktree && named.length ? readSourceFiles(worktree, named, changedFiles) : [];
     const evidence: ReviewEvidence = {
       acceptanceCriteria: task.acceptance_criteria.length
         ? task.acceptance_criteria
@@ -258,6 +354,7 @@ export class CriticLoop implements CriticPort {
       finalReport: result.finalReport ?? result.summary,
       ...(diff?.diff ? { diff: diff.diff } : {}),
       ...(changedFiles.length ? { changedFiles } : {}),
+      ...(sourceFiles.length ? { sourceFiles } : {}),
       ...(result.prUrl ? { prUrl: result.prUrl } : {}),
       ...(result.runId ? { runId: result.runId } : {}),
       artifacts: [

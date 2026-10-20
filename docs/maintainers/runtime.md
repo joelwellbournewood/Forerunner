@@ -254,9 +254,14 @@ fake provider (`test/loop-critic.test.ts`, `test/conversation.test.ts`, `test/lo
 `done` or `in_review` for a task above tier 0, the runner moves it to `in_review` and calls
 `reviewTask` with the task, the session token and budget, the plan item and the result. The
 loop assembles the evidence (the diff from the task's worktree through `GitDiffPort`, or the
-executor's `changedFiles`; the project's `settings.checks` as argv commands the critic runs at
-tiers 2 and 3; the standard-doc drift at tier 2+ as a non-required check; the final report as
-claims; the attempt and the specialist as artifacts), runs `CriticService.review` at
+executor's `changedFiles`; the unchanged files the task's title, outcome and acceptance
+criteria name, read from the worktree as source files (ADR 0041: `namedPaths` picks relative
+paths with a letter-led extension, never URLs, absolute paths or `..`; `readSourceFiles` keeps
+regular text files inside the worktree that are not in `changedFiles`, 64 KiB per file and
+256 KiB in total, at most 32 names; a changed file stays in the diff); the project's
+`settings.checks` as argv commands the critic runs at tiers 2 and 3; the standard-doc drift at
+tier 2+ as a non-required check; the final report as claims; the attempt and the specialist as
+artifacts), runs `CriticService.review` at
 `task.risk_tier` with the project's `critic_ceiling` and `speed_quality_offset` (read from the
 project row), and applies the verdict with `applyVerdict`:
 

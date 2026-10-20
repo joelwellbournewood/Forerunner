@@ -118,7 +118,7 @@ content that is not on disk yet (proposals use it before writing).
 `promptVersion = "<name>@<semver>+<sha8>"`, where `sha8` is the first eight hex digits of the
 sha256 of the file with line endings normalised and a leading UTF-8 BOM removed, exactly what
 the parser sees (so Windows and Linux checkouts, and editors that add a BOM, agree). Examples:
-`coder@1.0.0+f9c5c46f`, `critic@1.0.0+219813d0`. The runtime puts it in the run record
+`coder@1.0.0+f9c5c46f`, `critic@1.1.0+9e712bfa`. The runtime puts it in the run record
 (`run.prompt_version`, U.7) and in `ModelRequest.metadata.prompt_version`; the registry
 `hash` goes into the session record so a session can be tied to the exact registry state.
 Bump `version` when the meaning of a prompt changes; the hash catches edits that forgot to.

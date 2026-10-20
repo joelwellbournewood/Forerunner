@@ -9,7 +9,7 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | 0 | Foundations | CI green on both OS (run 39352102564); fresh-install timing pending the install scripts | gates.md § Phase 0 |
 | 1 | Single agent that does real work | gate passed on the fake provider (10 tasks via PRs, overspend blocked, kill under 2 s); daemon API, `fr daemon` and the phase-1 UI (home, project tabs, live session, inbox, settings, chat) done and tested against a fake daemon; live subscription/API checks blocked on credentials | gates.md § Phase 1 |
 | 2 | Two agents, one project | local half of the gate passed (two agents, five sessions each); state service with device auth and realtime, receipts, decision log, GitHub Projects mirror, approvals web fallback done; offline-48-hours half pending the sync test | gates.md § Phase 2 |
-| 3 | Critic and quality loop | critic service (tiers, findings, verdicts, calibration), eval sets, retry ladder built and unit-tested; gate needs a live model (blocked on credentials); reviews tab pending | gates.md § Phase 3 |
+| 3 | Critic and quality loop | critic service (tiers, findings, verdicts, calibration), eval sets, retry ladder built and unit-tested; first live calibration 2026-10-20 caught 40/40 defects but accepted only 15/40 clean results (every miss an accept at confidence 0.5 escalated by the rule); ADR 0041 landed (runner's checks rendered as evidence, fixtures as source files, confidence floor on all-green checks); live re-run on critic@1.1.0 pending on the build box; reviews tab pending | gates.md § Phase 3 |
 | 4 | Memory, docs and learning | memory package (three scopes, retrieval under budget, consolidation, promotion) built and unit-tested; four-week simulation and memory UI pending | |
 | 5 | Human experience and voice | voice pipeline, natural-language commands with change cards and undo, desktop shell (tray, notifications, restart, deep links) built; notifications, Android app, imports in progress | |
 | 6 | Capabilities | extensions registry with live revocation, sandboxed browser, agent email with the five modes and email commands, sandboxes, context savings done; injection suite, Cloudflare, desktop control, cloud runner in progress | |
@@ -17,6 +17,19 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | 8 | Full integration and release 1.0 | not started | |
 
 ## Log
+
+### 2026-10-20 (first live critic calibration; ADR 0041)
+- The live harness (`tests/live`, on the build box) ran `calibrate()` at tier 1 on the real
+  Sonnet critic: defects caught 40/40, clean accepted 15/40 (gate 90% FAIL), USD 2.54 in all
+  (gates.md phase 3, COST.md). Every miss was an accept at confidence 0.5 that the
+  low-confidence rule escalated: coder tasks because the model had not run the passing checks
+  itself, researcher tasks because the fixtures were not in the evidence.
+- ADR 0041: the runner's checks are rendered as `PASS (required)` lines the prompt
+  (critic@1.1.0) says to rely on; `ReviewEvidence.sourceFiles` carries the task's fixtures
+  (calibration) or the unchanged files the task names (runtime loop); a confidence floor at 0.6
+  applies only when every required check passed and nothing medium or above is open. Rule 3 of
+  ADR 0028 unchanged. Unit tests reproduce both shapes of the misses on the fake provider; the
+  phase 3 and 4 harnesses still pass. The live re-run is pending (no key in this checkout).
 
 ### 2026-10-20 (core loop, Android, cloud runner, UI phase 2 landed; credits out again)
 - Snapshots 3f9b436 (cloud runner, phase 6 gate rows), 2560623 (core loop closed per ADR 0036,

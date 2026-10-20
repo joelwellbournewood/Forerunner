@@ -541,7 +541,15 @@ export class CriticService {
       if (sessionCode.verdict === "human") verdict = "human";
     }
 
-    const ruled = applyVerdictRules({ grade, confidence, verdict, findings }, input.tier);
+    // The runner's check results feed the confidence floor (ADR 0041); the findings handed in
+    // include the ones the code added above, so a failed check or an unmet criterion blocks it.
+    const ruled = applyVerdictRules({ grade, confidence, verdict, findings }, input.tier, {
+      checkResults: e.checkResults,
+    });
+    for (const a of ruled.adjustments) {
+      if (a.rule === "confidence_floor")
+        evidence.push(`confidence: floored ${a.from} -> ${a.to} (${a.reason})`);
+    }
     // A revise or escalate that names no finding would leave the retry nothing to act on, so
     // the summary becomes one. Only when the model asked for changes or a rule found the work
     // short (grade below the accept line): a clean result that a rule sends on anyway (tier 3

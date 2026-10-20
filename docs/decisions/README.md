@@ -54,3 +54,5 @@ Status: accepted | superseded by NNNN
 | 0037 | UI screens: proposed routes, the "route not available" state, mirrored schemas, charts and the settings command path |
 | 0038 | Daemon wiring of notifications and Cloudflare deploys: producers on the real sources, shell detection and the OS notifier, preference writes, the email sender, tools behind the hooks and gate, structural routes |
 | 0039 | Daemon wiring of adopted model settings, desktop control and data assets: the tables in force swapped on adopt, the desktop binding and the unavailable adapter, the indicator as a bus event, data under the install's data dir |
+| 0040 | Live-model harness (`tests/live`): budget cap, spend ledger, opt-in command (written with the harness on the build box; not on this branch yet) |
+| 0041 | Critic evidence: the runner's checks and the source files are evidence; a confidence floor on deterministic evidence |

@@ -22,11 +22,30 @@ export interface CheckResultEvidence {
   required?: boolean;
 }
 
+/**
+ * An input the work is checked against, as it was before the work: a fixture the brief names,
+ * a source document an answer cites, an unchanged file next to the change. The critic checks
+ * the result's claims, figures and quotes against these; without them a claim about a source
+ * cannot be verified and the review can only say so.
+ */
+export interface SourceFileEvidence {
+  /** Path relative to the task directory or the worktree root, forward slashes. */
+  path: string;
+  content: string;
+  /** True when the reader cut the file at its size cap. */
+  truncated?: boolean;
+}
+
 export interface ReviewEvidence {
   /** Unified diff of the change under review. */
   diff?: string;
   /** Paths the change touched, relative to the repository or worktree root, forward slashes. */
   changedFiles?: string[];
+  /**
+   * Inputs the work is checked against (fixtures, cited sources, unchanged files the brief
+   * names), never the work itself and never anything the worker wrote. Bounded by the renderer.
+   */
+  sourceFiles?: SourceFileEvidence[];
   testOutput?: string;
   checkResults?: CheckResultEvidence[];
   prUrl?: string;

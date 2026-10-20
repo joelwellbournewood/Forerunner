@@ -19,6 +19,7 @@ import type {
   ReviewInput,
   ReviewOutput,
   ReviewTier,
+  SourceFileEvidence,
   Verdict,
 } from "./types.ts";
 
@@ -29,6 +30,12 @@ import type {
  * how many defects the critic flagged (verdict other than accept) and how many clean results it
  * accepted, against the gate thresholds, and is written under the data directory so drift is
  * visible month over month.
+ *
+ * The evidence per variant (`evidenceFor`) is what a real task's review gets: the brief, the
+ * criteria plus the rubric's, the files on disk as a new-file diff, the runner's mechanical
+ * check results as required checks, the final text as claims, and the task's fixtures the work
+ * did not replace as source files, so a researcher's claims can be checked against the
+ * document they cite (ADR 0041).
  *
  * The eval runner lives in @forerunner/evals, which depends on this package, so it is loaded
  * on demand (or injected) instead of imported statically.
@@ -155,6 +162,23 @@ export function renderFilesAsDiff(dir: string, files: readonly string[]): string
   return parts.join("\n");
 }
 
+/**
+ * The task's fixtures the work did not replace: the inputs the result is checked against (a
+ * researcher's source documents, a coder's existing tests and manifest). A fixture the work
+ * overwrote is in the diff as its new version and is not repeated here. The renderer bounds
+ * the size (ADR 0041).
+ */
+export function sourceFilesFor(
+  task: EvalTask,
+  changedFiles: readonly string[],
+): SourceFileEvidence[] {
+  const changed = new Set(changedFiles);
+  return Object.keys(task.setup.files)
+    .filter((p) => !changed.has(p))
+    .sort()
+    .map((path) => ({ path, content: task.setup.files[path] as string }));
+}
+
 function filesOf(task: EvalTask, variant: "clean" | "seeded_defect"): string[] {
   const names = new Set(Object.keys(task.expected_files ?? {}));
   if (variant === "seeded_defect")
@@ -185,6 +209,7 @@ export function evidenceFor(
   return {
     brief: renderBrief({ ...task.brief, specialist: task.specialist, taskId: task.id }),
     acceptanceCriteria: [...task.brief.acceptanceCriteria, ...rubric],
+    sourceFiles: sourceFilesFor(task, changedFiles),
     changedFiles,
     moduleFilesTouched: [],
     docsTouched: [],

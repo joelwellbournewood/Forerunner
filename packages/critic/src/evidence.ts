@@ -1,6 +1,6 @@
 import type { CompressionRecord, ContextPipeline } from "@forerunner/runtime";
 import type { FindingRow } from "@forerunner/state";
-import type { ReviewInput, ReviewTier } from "./types.ts";
+import type { CheckResultEvidence, ReviewInput, ReviewTier } from "./types.ts";
 
 /**
  * The clean context (H.1, ADR 0028): the critic's user message is rendered from `ReviewEvidence`
@@ -13,6 +13,11 @@ import type { ReviewInput, ReviewTier } from "./types.ts";
  * output); when a ContextPipeline is given, every block passes through it with bypass "off" so
  * the session's compression records show the review was not compressed. Blocks are still
  * capped in size (head and tail kept) so a huge diff cannot push the criteria out of context.
+ *
+ * Two blocks carry what the critic may rely on without running anything itself (ADR 0041):
+ * the runner's check results, rendered as PASS or FAIL per check with the required ones
+ * counted, and the source files (fixtures, cited documents, unchanged files the brief names)
+ * the result is checked against, under their own size budget.
  */
 export const EVIDENCE_TOOL_NAME = "critic:evidence";
 
@@ -21,8 +26,15 @@ export interface RenderOptions {
   maxDiffChars?: number;
   /** Cap for each output block (tests, checks, report). Default 24 000 characters. */
   maxOutputChars?: number;
+  /** Cap for one source file. Default 24 000 characters. */
+  maxSourceFileChars?: number;
+  /** Budget for every source file together; files past it are listed by name. Default 80 000. */
+  maxSourceChars?: number;
   pipeline?: ContextPipeline;
 }
+
+export const CHECKS_SECTION = "Checks run by the runner (data)";
+export const SOURCE_FILES_SECTION = "Source files (data)";
 
 export interface RenderedEvidence {
   text: string;
@@ -50,6 +62,25 @@ export function capText(text: string, max: number): string {
 const fence = (lang: string, body: string): string =>
   `\`\`\`${lang}\n${body.replace(/\n$/, "")}\n\`\`\``;
 
+/** One line per check, unmistakable: `PASS (required) <name>` or `FAIL (optional) <name>`. */
+export function checkLine(c: Pick<CheckResultEvidence, "name" | "passed" | "required">): string {
+  return `${c.passed ? "PASS" : "FAIL"} (${c.required === false ? "optional" : "required"}) ${c.name}`;
+}
+
+/** The lead line of the checks block: what ran, how it went, and what the critic may make of it. */
+export function checksSummary(checks: readonly CheckResultEvidence[]): string {
+  const required = checks.filter((c) => c.required !== false);
+  const failed = required.filter((c) => !c.passed).length;
+  const optional = checks.length - required.length;
+  return (
+    `${required.length} required check(s) run by the runner before this review: ` +
+    `${required.length - failed} passed, ${failed} failed` +
+    (optional ? `; ${optional} optional` : "") +
+    ". A PASS is evidence you rely on at every tier without running anything yourself; " +
+    "a FAIL of a required check blocks accept. Each check's output follows it."
+  );
+}
+
 export function renderEvidence(
   input: ReviewInput,
   extras: { openFindings?: readonly FindingRow[] } = {},
@@ -57,6 +88,8 @@ export function renderEvidence(
 ): RenderedEvidence {
   const maxDiff = opts.maxDiffChars ?? 80_000;
   const maxOut = opts.maxOutputChars ?? 24_000;
+  const maxSourceFile = opts.maxSourceFileChars ?? 24_000;
+  const maxSource = opts.maxSourceChars ?? 80_000;
   const compression: CompressionRecord[] = [];
   const raw = (text: string): string => {
     if (!opts.pipeline) return text;
@@ -88,19 +121,47 @@ export function renderEvidence(
       ? e.acceptanceCriteria.map((c, i) => `${i + 1}. ${c}`).join("\n")
       : "(none given: report this as a finding)",
   );
+  if (e.sourceFiles?.length) {
+    // The inputs the work is checked against, under their own budget: a file is shown whole
+    // up to the per-file cap (head and tail kept past it); once the budget is spent the rest
+    // are listed by name so the critic knows what it was not shown.
+    let budget = maxSource;
+    const shown: string[] = [];
+    const omitted: string[] = [];
+    for (const f of e.sourceFiles) {
+      const body = capText(raw(f.content), maxSourceFile);
+      if (body.length > budget) {
+        omitted.push(`${f.path} (${f.content.length} characters)`);
+        continue;
+      }
+      budget -= body.length;
+      shown.push(
+        `### ${f.path}${f.truncated ? " (cut at the reader's size cap)" : ""}\n${fence("text", body)}`,
+      );
+    }
+    section(
+      SOURCE_FILES_SECTION,
+      "Inputs the work is checked against, as they were before the work (fixtures, cited " +
+        "documents, unchanged files the brief names). Check every figure, name and quote of the " +
+        "result against them; a claim about a source not given here is one you cannot verify, " +
+        "so say which criterion lacks evidence.\n" +
+        shown.join("\n") +
+        (omitted.length ? `\nOmitted by the critic's size cap: ${omitted.join(", ")}` : ""),
+    );
+  }
   if (e.changedFiles?.length)
     section("Changed files", e.changedFiles.map((f) => `- ${f}`).join("\n"));
   if (e.diff) section("Diff (data)", fence("diff", capText(raw(e.diff), maxDiff)));
   if (e.checkResults?.length) {
     section(
-      "Check results",
-      e.checkResults
+      CHECKS_SECTION,
+      `${checksSummary(e.checkResults)}\n${e.checkResults
         .map(
           (c) =>
-            `- [${c.passed ? "pass" : "FAIL"}]${c.required === false ? " (optional)" : ""} ${c.name}` +
+            `- ${checkLine(c)}` +
             (c.output ? `\n${fence("text", capText(raw(c.output), maxOut))}` : ""),
         )
-        .join("\n"),
+        .join("\n")}`,
     );
   }
   if (e.testOutput)

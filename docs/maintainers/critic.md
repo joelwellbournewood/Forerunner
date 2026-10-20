@@ -61,8 +61,9 @@ Independence comes from a clean context and a different tier, not a different ve
 - the system prompt is the registry critic prompt (`evals/registry/critic/critic.md`, loaded by
   the runtime's `loadRegistry`) plus a fixed suffix that names the tool to return the review in;
 - the only user message is `evidence.ts#renderEvidence(ReviewInput)`: brief, acceptance
-  criteria, changed files, diff, check results, test output, the worker's final report (labelled
-  as claims), PR, artifacts, the docs section at tier 2+, earlier open findings, the session
+  criteria, source files (the inputs the work is checked against, ADR 0041), changed files,
+  diff, the runner's check results, test output, the worker's final report (labelled as
+  claims), PR, artifacts, the docs section at tier 2+, earlier open findings, the session
   facts for a session subject. `ReviewEvidence` has no field for the worker's transcript or
   reasoning, and the renderer sends nothing outside the type; the test passes a decoy transcript
   in an extra field and asserts it never reaches the provider;
@@ -83,7 +84,8 @@ Independence comes from a clean context and a different tier, not a different ve
 ```
 ReviewInput  { subject: {kind:"task", taskId} | {kind:"session", sessionId}; tier: 0|1|2|3;
                evidence: ReviewEvidence }
-ReviewEvidence { diff?, changedFiles?, testOutput?, checkResults?: {name, passed, output, required?}[],
+ReviewEvidence { diff?, changedFiles?, sourceFiles?: {path, content, truncated?}[], testOutput?,
+               checkResults?: {name, passed, output, required?}[],
                prUrl?, acceptanceCriteria: string[], brief?, artifacts?, docsTouched?,
                moduleFilesTouched?, docsWaiver?, finalReport?, runId?,
                sessionPlan?, sessionSummary?, sessionCostUsdMicro?, sessionEstimateUsdMicro? }
@@ -97,22 +99,52 @@ The model returns the review through the `submit_review` tool (`schema.ts`, zod)
 accepts the prompt's vocabulary (confidence `high|medium|low`, severity
 `blocker|major|minor|note`) and the store's (`0-1`, `critical|high|medium|low|info`);
 `CONFIDENCE_OF_WORD` and `SEVERITY_OF_WORD` are the only mapping. `medium` confidence maps to
-0.5, below the accept line on purpose. When a model answers in text instead, the first JSON
-object in the text that parses is used; nothing at all is `outcome: "no_verdict"` and a
-conservative `escalate`. Every `evidence` line is something a human can check: criteria met or
-unmet with the evidence the critic cited, checks run, the prompt version, the run id, the
-compression bypass, the doc-drift result and, for tier 1, whether the 30 s target was met.
+0.5, below the accept line on purpose (the floor below lifts it only on deterministic
+evidence). When a model answers in text instead, the first JSON object in the text that parses
+is used; nothing at all is `outcome: "no_verdict"` and a conservative `escalate`. Every
+`evidence` line is something a human can check: criteria met or unmet with the evidence the
+critic cited, checks run, the prompt version, the run id, the compression bypass, the
+doc-drift result, the confidence floor when it applied and, for tier 1, whether the 30 s
+target was met.
+
+What the critic may rely on without running anything itself is rendered so it cannot be read
+as a claim (ADR 0041):
+
+- `Checks run by the runner (data)` (`CHECKS_SECTION`): a lead line (`checksSummary`) counting
+  the required checks run before the review, how many passed and failed and that a PASS is
+  evidence the critic relies on at every tier while a FAIL of a required check blocks accept;
+  then one line per check (`checkLine`: `PASS (required) <name>`, `FAIL (optional) <name>`)
+  with the check's output fenced under it (cap `maxOutputChars`).
+- `Source files (data)` (`SOURCE_FILES_SECTION`): the inputs the work is checked against as
+  they were before the work (fixtures, documents the answer cites, unchanged files the brief
+  names), placed between the criteria and the result, each under `### <path>` in a fence.
+  Budget: `maxSourceFileChars` per file (default 24 000; head and tail kept past it, a file the
+  reader already cut is marked) and `maxSourceChars` in total (default 80 000); files past the
+  budget are listed by name and size under "Omitted by the critic's size cap" so the critic
+  knows what it was not shown. The block is absent when no source file was given, so a review
+  without its inputs shows that.
 
 ### Rules in code (`rules.ts`)
 
 Applied to every verdict, tier 0 included, and recorded as `adjustments` so the review shows
 what the model said and what the code made of it:
 
+0. `confidence_floor` (ADR 0041), before the rules: when the model's verdict is `accept`, its
+   confidence is at least `CONFIDENCE_FLOOR_FROM` (0.5, the prompt's "medium") and below
+   `LOW_CONFIDENCE`, and the evidence is deterministic (`deterministicEvidence`: at least one
+   required check in `checkResults`, every required check passed, no finding medium or above
+   among the model's and the code's), confidence becomes `LOW_CONFIDENCE` and the review
+   carries the line `confidence: floored 0.50 -> 0.60 (...)`. A medium confidence with every
+   check green is the critic saying it did not run the checks itself; the runner did. Low
+   confidence is never lifted, nor anything with a failed or no required check, optional
+   checks only, a blocking finding, or a verdict other than accept. `applyVerdictRules(raw,
+   tier, { checkResults })`; without the option there is no floor (tier 0 passes none).
 1. `blocking_finding`: a finding of severity medium or above turns `accept` into `revise`
    (B.4). Medium counts because an accepting review's findings are stored `wontfix` (they never
    block close); a medium finding such as doc drift must stay open.
 2. `grade_verdict_consistency`: `accept` needs a grade of at least `ACCEPT_MIN_GRADE` (70).
 3. `low_confidence`: confidence below `LOW_CONFIDENCE` (0.6) never accepts; it escalates (H.4).
+   Unchanged by the floor: 0.59 without a passing required check behind it still escalates.
 4. `tier3_human_signoff`: tier 3 always ends in `human` (H.2).
 
 Before the rules run, `critic.ts#buildVerdict` adds findings the model cannot talk away: a
@@ -200,8 +232,11 @@ keeps a `human` verdict from the checks.
 `calibrate({ evalSet, tier, critic, ctx })` reviews every eval task twice through the normal
 path with `persist: false`: the clean expected output and the seeded-defect variant, both
 produced by `expectedOutputDriver` from `@forerunner/evals` (or a real driver). The eval runner
-writes the files and runs the mechanical checks; the critic receives the brief, the criteria
-(plus rubric criteria), a new-file diff of the files on disk, the check results, the final text.
+writes the files and runs the mechanical checks; the critic receives (`evidenceFor`) the brief,
+the criteria (plus rubric criteria), the task's `setup.files` the work did not replace as source
+files (`sourceFilesFor`: a researcher's cited document, a coder's existing tests and manifest;
+a fixture the work overwrote is in the diff as its new version), a new-file diff of the files
+on disk, the mechanical check results as required checks, the final text.
 The report counts `catchRate` = seeded variants with a verdict other than `accept` over seeded
 variants, and `passRate` = clean variants accepted over clean variants, evaluates the gate
 (`CALIBRATION_THRESHOLDS`: catch at least 0.8, pass at least 0.9), lists every task with both
@@ -217,9 +252,11 @@ this one, so the runner is loaded with a dynamic import (or injected through `ev
   the system prompt. Every run stores the prompt version (`critic@<semver>+<sha8>`), so a change
   shows in the calibration report. Keep the prompt under 120 lines (the registry loader enforces
   it). The prompt may ask for care; it cannot loosen a rule.
-- Thresholds: `LOW_CONFIDENCE`, `ACCEPT_MIN_GRADE`, `BLOCKING_SEVERITIES` in `rules.ts`;
-  `CALIBRATION_THRESHOLDS` in `calibration.ts` (the phase 3 gate numbers, change only with an
-  ADR); `COST_OVERRUN_RATIO`, `COST_CLAIM_TOLERANCE` in `session-review.ts`.
+- Thresholds: `LOW_CONFIDENCE`, `ACCEPT_MIN_GRADE`, `CONFIDENCE_FLOOR_FROM`,
+  `BLOCKING_SEVERITIES` in `rules.ts` (the floor's conditions are `deterministicEvidence`;
+  change them only with an ADR, as 0041 did); `CALIBRATION_THRESHOLDS` in `calibration.ts`
+  (the phase 3 gate numbers, change only with an ADR); `COST_OVERRUN_RATIO`,
+  `COST_CLAIM_TOLERANCE` in `session-review.ts`.
 - Models and effort per tier: `MODE_DEFAULTS` in `packages/runtime/src/models/ladder.ts`
   (`critic_t1`, `critic_t23`); the critic only reads them. Per project: `settings.critic_ceiling`
   and `settings.speed_quality_offset`.
@@ -228,7 +265,11 @@ this one, so the runner is loaded with a dynamic import (or injected through `ev
 - The tool schema: `schema.ts`. New fields must stay optional or defaulted so an older prompt
   still validates.
 - Evidence sections: `evidence.ts#renderEvidence`. Never add a field that carries the worker's
-  transcript; the clean-context test guards the type.
+  transcript; the clean-context test guards the type. Source files are inputs, never the
+  worker's output: the runtime loop reads only unchanged files the task names, calibration only
+  fixtures the work did not replace. Caps: `RenderOptions.maxSourceFileChars`,
+  `maxSourceChars` (`deps.render`); the loop's byte caps are `MAX_SOURCE_FILE_BYTES`,
+  `MAX_SOURCE_TOTAL_BYTES`, `MAX_NAMED_PATHS` in `packages/runtime/src/loop/critic.ts`.
 - Checks: pass `checkResults` in the evidence (pre-executed) or `ctx.checks` (argv commands
   run in `ctx.cwd` through `ProcessCheckRunner` at tiers 0, 2 and 3; timeout per command,
   output tail kept, a relative command `cwd` resolved under `ctx.cwd`). Inject a `CheckRunner`
@@ -246,7 +287,14 @@ network):
 - `tier0.test.ts`: pass-share grade, required and optional checks, missing criteria, no checks
   (low confidence), the check runner, relative and absolute command `cwd` resolution, and a
   real process with exit code and timeout.
-- `rules.test.ts`: each rule, clamps, rules only tighten.
+- `rules.test.ts`: each rule, clamps, rules only tighten; the confidence floor (lifted from
+  0.5 and 0.59 on passing required checks; never for low confidence, 0.49, no check results,
+  no check run, optional checks only, a failed required check, a medium finding or a verdict
+  other than accept) and `deterministicEvidence`.
+- `evidence.test.ts`: the checks block (PASS/FAIL lines, the required count, the output
+  fenced, absent when nothing ran) and the source files block (placed between the criteria and
+  the result, each under its path, the per-file cut and the total budget with the omitted
+  list, absent when none were given).
 - `model.test.ts`: the tier table, ceiling, offset, `max_effort`, project settings,
   `stricterCeiling`, `modelFor` (a call lowers, never raises) and `settingsFor` reading the
   project row.
@@ -255,9 +303,14 @@ network):
 - `critic.test.ts`: clean context with a decoy transcript, the issued token's claims (one tool,
   no paths, domains or secrets, budget and expiry within the parent, depth + 1) with another
   tool denied, compression bypass on the evidence and `compression: "off"` on the run, every
-  rule end to end, tier 3 sign-off with a clean result leaving no finding, low-confidence
-  escalate without an invented finding, model revise with no finding getting one, failed
-  required check, unmet criteria, no verdict, checks run at tier 2 and noted at tier 1, doc
+  rule end to end, the live run's miss (medium confidence with every required check passed
+  accepts through the floor, the review and the stored row carry it) against medium confidence
+  with no checks, no check run or optional checks only (escalate) and with a failed required
+  check (revise, no floor), tier 3 sign-off with a clean result leaving no finding,
+  low-confidence escalate without an invented finding (on passing checks: the floor never
+  lifts a low), model revise with no finding getting one, failed required check, unmet
+  criteria, no verdict, a research answer reviewed with the document it cites as a source file
+  (and without one, the block absent), checks run at tier 2 and noted at tier 1, doc
   drift at tier 2 and not at tier 1, waiver, persistence of review, findings, run and event,
   resolution of earlier findings, patterns to lesson proposals across two sessions, model by
   tier and context ceiling, the project row's ceiling from the store with a caller unable to
@@ -269,11 +322,21 @@ network):
   the retry ladder up to the ceiling and then the human, the project row's ceiling honoured
   with no ceiling in the context and with a higher or lower one.
 - `calibration.test.ts`: the rate and gate arithmetic, a full run over synthetic eval tasks
-  with the report on disk, the gate passing, evidence rendering.
+  with the report on disk, the gate passing, evidence rendering (`evidenceFor`,
+  `sourceFilesFor`), and the two shapes of the live run's misses: a clean result accepted at
+  medium confidence passing on the runner's checks while the seeded variant is still caught,
+  and a researcher task whose scripted critic can only judge with the fixture in front of it
+  (accepts the right figure, finds the wrong one, and never answers "the fixture text was not
+  provided").
 
 The phase 3 gate (catch at least 80% of seeded defects, pass at least 90% of clean work on the
 real eval sets with a live model) is run with `calibrate` over `loadEvalSet("evals/registry/evals/coder")`
-and `.../researcher`; the result and the report path go to `docs/status/gates.md`.
+and `.../researcher`; the result and the report path go to `docs/status/gates.md`. The first
+live run (2026-10-20, `claude-sonnet-5-5` at tier 1, critic@1.0.0) caught 40/40 and accepted
+15/40 clean results: every miss was an accept at confidence 0.5 that rule 3 escalated, on
+coder tasks because the model had not run the passing checks itself and on every researcher
+task because the fixtures were not in the evidence. ADR 0041 is the answer; the re-run on
+critic@1.1.0 with the floor and the source files is pending (gates.md phase 3 row).
 
 ## Known issues
 
@@ -292,6 +355,10 @@ and `.../researcher`; the result and the report path go to `docs/status/gates.md
   dynamic import.
 - The critic does not store lessons (by design); until the memory package consumes
   `lessonProposals`, patterns are visible only in `ReviewOutput` and `FindingRepo.repeated()`.
+- The runtime loop finds source files by the paths the task's own text names
+  (`namedPaths` over title, outcome and acceptance criteria); a task that names no file gets
+  none, and the executor's brief `contextLinks` (task id, PR, branch) are not file paths. A
+  task-level list of input files is a later addition to the task row.
 
 ## Requirement IDs covered
 

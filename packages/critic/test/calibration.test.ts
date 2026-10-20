@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import os from "node:os";
 import { type EvalTask, EvalTaskSchema, expectedOutputDriver, runEvalSet } from "@forerunner/evals";
 import { join } from "@forerunner/platform";
+import { lastUserText } from "@forerunner/testenv";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   CALIBRATION_THRESHOLDS,
@@ -11,6 +12,7 @@ import {
   evidenceFor,
   formatCalibrationReport,
   renderFilesAsDiff,
+  sourceFilesFor,
 } from "../src/calibration.ts";
 import { closingReply, submitReply, world } from "./helpers.ts";
 
@@ -224,8 +226,12 @@ describe("calibration against the eval set (H.7, phase 3 gate)", () => {
       const user = w.provider.calls[0]?.request.messages[0]?.content as string;
       expect(user).toContain("+++ b/out.txt");
       expect(user).toContain("+done");
-      expect(user).toContain("Check results");
+      expect(user).toContain("## Checks run by the runner (data)");
+      expect(user).toContain('- PASS (required) out.txt contains "done"');
       expect(user).toContain("Wrote out.txt with done.");
+      // The task's fixture the work did not replace is a source file (ADR 0041).
+      expect(user).toContain("## Source files (data)");
+      expect(user).toContain("### in.txt\n```text\ninput\n```");
     } finally {
       await w.close();
     }
@@ -270,8 +276,183 @@ describe("calibration against the eval set (H.7, phase 3 gate)", () => {
       },
     ]);
     expect(ev.acceptanceCriteria).toEqual(["out.txt contains done"]);
+    expect(ev.sourceFiles).toEqual([{ path: "in.txt", content: "input\n" }]);
     expect(ev.diff).toBe("--- /dev/null\n+++ b/out.txt\n@@ -0,0 +1,1 @@\n+nope");
     expect(ev.brief).toContain("# Task brief");
     expect(renderFilesAsDiff(dir, ["missing.txt"])).toBe("");
+    // A fixture the work overwrote is in the diff as its new version, not repeated as a source.
+    expect(
+      sourceFilesFor(
+        evalTask(8, { setup: { files: { "in.txt": "input\n", "out.txt": "old\n" } } }),
+        ["out.txt"],
+      ),
+    ).toEqual([{ path: "in.txt", content: "input\n" }]);
+  });
+});
+
+/**
+ * The two shapes the live calibration run of 2026-10-20 produced on every missed clean task
+ * (ADR 0041), reproduced on the fake provider with the new behaviour.
+ */
+describe("calibration: the live run's misses", () => {
+  it("a clean coder result the model accepts at medium confidence passes when every required check passed; the seeded defect is still caught", async () => {
+    // The model reports confidence 0.5 ("medium") because it did not run the tests itself,
+    // for the clean and the seeded variant alike; the runner's checks decide both.
+    const w = await world({
+      replies: [
+        submitReply(
+          { grade: 84, confidence: "medium" },
+          { when: { lastUserIncludes: "# Review request" }, times: Number.POSITIVE_INFINITY },
+        ),
+        closingReply(),
+      ],
+    });
+    try {
+      const report = await calibrate({
+        evalSet: [evalTask(1), evalTask(2)],
+        tier: 1,
+        critic: w.critic,
+        ctx: w.ctx(),
+        evals: { runEvalSet, expectedOutputDriver },
+        clock: w.clock,
+        write: false,
+      });
+      expect(report.gate).toEqual({ catchOk: true, passOk: true, ok: true });
+      for (const row of report.tasks) {
+        expect(row.clean, row.taskId).toMatchObject({
+          verdict: "accept",
+          grade: 84,
+          confidence: 0.6,
+          findings: 0,
+          mechanical: "pass",
+        });
+        expect(row.cleanPassed, row.taskId).toBe(true);
+        // The seeded variant fails the runner's check: a high finding, no floor, revise.
+        expect(row.seeded, row.taskId).toMatchObject({
+          verdict: "revise",
+          confidence: 0.5,
+          mechanical: "fail",
+        });
+        expect(row.seeded?.findings ?? 0, row.taskId).toBeGreaterThanOrEqual(1);
+        expect(row.defectCaught, row.taskId).toBe(true);
+      }
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a researcher result is reviewed with the document it cites: the fixture reaches the critic, which checks the figure against it", async () => {
+    const FIXTURE_LINE = "Measured uptime for the public API in Q2 was 99.91% (target 99.9%).";
+    const task = EvalTaskSchema.parse({
+      id: "researcher-001",
+      specialist: "researcher",
+      title: "Report the Q2 uptime figure",
+      brief: {
+        goal: "From docs/status-q2.md: what was the measured Q2 uptime of the public API?",
+        contextLinks: ["docs/status-q2.md"],
+        constraints: ["Use only the files in the task directory"],
+        acceptanceCriteria: [
+          "answer.md states the uptime as 99.91% exactly",
+          "every claim cites docs/status-q2.md",
+        ],
+        budgetUsdMicro: 1000,
+        riskTier: 1,
+      },
+      setup: { files: { "docs/status-q2.md": `# Atlas status, Q2 2026\n\n${FIXTURE_LINE}\n` } },
+      checks: [
+        { kind: "file_exists", path: "answer.md" },
+        { kind: "rubric", criteria: ["Figures are copied exactly from the fixture"] },
+      ],
+      expected_files: { "answer.md": "# Answer\n\nQ2 uptime was 99.91% (docs/status-q2.md)\n" },
+      expected_final_text: "answer.md written from docs/status-q2.md.",
+      seeded_defect: {
+        description: "rounds the uptime up to 99.99%, a figure the fixture does not contain",
+        how_to_detect: "99.99 appears in answer.md; the fixture says 99.91",
+        files: { "answer.md": "# Answer\n\nQ2 uptime was 99.99% (docs/status-q2.md)\n" },
+      },
+    });
+    // A critic that can only judge with the fixture in front of it: with the source line and
+    // the right figure it accepts, with the source line and the wrong figure it finds the
+    // defect; without the source line it can only say the fixture was not provided (the shape
+    // of every researcher review in the live run before ADR 0041).
+    const sees = (needle: string) => (req: Parameters<typeof lastUserText>[0]) =>
+      lastUserText(req).includes(FIXTURE_LINE) && lastUserText(req).includes(needle);
+    const w = await world({
+      replies: [
+        submitReply(
+          {
+            grade: 94,
+            criteria: [
+              {
+                text: "answer.md states the uptime as 99.91% exactly",
+                met: true,
+                evidence: "docs/status-q2.md: 99.91%",
+              },
+            ],
+          },
+          { when: sees("+Q2 uptime was 99.91%") },
+        ),
+        submitReply(
+          {
+            grade: 20,
+            verdict: "revise",
+            summary: "The answer says 99.99%; the fixture says 99.91%.",
+            findings: [
+              {
+                severity: "major",
+                what: "Uptime figure 99.99% is not in docs/status-q2.md, which says 99.91%",
+                where: "answer.md",
+              },
+            ],
+          },
+          { when: sees("+Q2 uptime was 99.99%") },
+        ),
+        submitReply(
+          {
+            grade: 82,
+            confidence: "medium",
+            summary: "The fixture text was not provided, so I could not verify the figures.",
+          },
+          { when: { lastUserIncludes: "# Review request" }, times: Number.POSITIVE_INFINITY },
+        ),
+        closingReply(),
+      ],
+    });
+    try {
+      const report = await calibrate({
+        evalSet: [task],
+        tier: 1,
+        critic: w.critic,
+        ctx: w.ctx(),
+        evals: { runEvalSet, expectedOutputDriver },
+        clock: w.clock,
+        write: false,
+      });
+      const row = report.tasks[0];
+      expect(row?.clean).toMatchObject({
+        verdict: "accept",
+        grade: 94,
+        confidence: 0.9,
+        mechanical: "needs_model",
+      });
+      expect(row?.clean.summary).not.toContain("not provided");
+      expect(row?.seeded).toMatchObject({ verdict: "revise", grade: 20, findings: 1 });
+      expect(row?.seeded?.summary).toContain("fixture says 99.91%");
+      expect(report.gate).toEqual({ catchOk: true, passOk: true, ok: true });
+      // Both reviews carried the fixture as a source file, never as part of the diff.
+      const firstTurns = w.provider.calls.filter((c) => c.request.messages.length === 1);
+      expect(firstTurns).toHaveLength(2);
+      for (const c of firstTurns) {
+        const user = String(c.request.messages[0]?.content);
+        expect(user).toContain("## Source files (data)");
+        expect(user).toContain(
+          `### docs/status-q2.md\n\`\`\`text\n# Atlas status, Q2 2026\n\n${FIXTURE_LINE}\n\`\`\``,
+        );
+        expect(user).not.toContain("+++ b/docs/status-q2.md");
+        expect(user).toContain("+++ b/answer.md");
+      }
+    } finally {
+      await w.close();
+    }
   });
 });

@@ -786,8 +786,11 @@ every added line also occurs in a clean fixture (coder-004's half-done rename, c
 guard dropped from a line), the marker is the longest line of the reference solution the defect
 removes, judged by its absence from the diff (`kind: "missing"`). A rule per task answers
 `revise` with a `major` finding when `evidenceShowsDefect` holds on the critic's first user
-message (the rendered evidence, which carries the diff of the files on disk), a fallback rule
-accepts, and the closing turn answers the tool result. The test asserts: 40 markers, all
+message (the rendered evidence, which carries the diff of the files on disk and, since ADR
+0041, the task's unchanged fixtures as source files and the runner's checks as `PASS (required)`
+/ `FAIL (required)` lines; a task without a marker would fall back to a `FAIL (required)` line),
+a fallback rule accepts, and the closing turn answers the tool result. Source files never show
+a defect: they are `setup.files`, which `cleanCorpus` already excludes markers from. The test asserts: 40 markers, all
 distinct, at least 38 `added`; the report counts (40 clean reviewed and accepted, 40 seeded
 reviewed and caught), the rates against `CALIBRATION_THRESHOLDS` (0.8 / 0.9) and `gate.ok`;
 per task the clean verdict `accept` with no finding and the seeded verdict `revise` with at

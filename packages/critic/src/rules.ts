@@ -1,4 +1,11 @@
-import type { ReviewFinding, ReviewTier, RuleAdjustment, Severity, Verdict } from "./types.ts";
+import type {
+  CheckResultEvidence,
+  ReviewFinding,
+  ReviewTier,
+  RuleAdjustment,
+  Severity,
+  Verdict,
+} from "./types.ts";
 
 /**
  * The verdict rules, in code (spec H, B.4, open decision "mandatory critic review"). A prompt
@@ -10,11 +17,20 @@ import type { ReviewFinding, ReviewTier, RuleAdjustment, Severity, Verdict } fro
  *   3. confidence below LOW_CONFIDENCE never accepts: it escalates (H.4);
  *   4. tier 3 always ends with a human sign-off (H.2).
  *
+ * Before the rules, one floor (ADR 0041): a model that accepts at medium confidence a result
+ * whose required checks all passed, with nothing medium or above found, is saying it did not
+ * run the checks itself. The runner did, so confidence from CONFIDENCE_FLOOR_FROM up is lifted
+ * to LOW_CONFIDENCE and the accept stands. Nothing else is lifted: not low confidence (the
+ * critic could not verify), not a result with a failed or no required check, not one with a
+ * blocking finding, not a verdict other than accept. Rule 3 itself is unchanged.
+ *
  * Every change is recorded as an adjustment so the review shows what the model said and what
  * the code made of it.
  */
 export const LOW_CONFIDENCE = 0.6;
 export const ACCEPT_MIN_GRADE = 70;
+/** The lowest confidence the floor lifts: "medium" in the prompt's vocabulary (schema.ts). */
+export const CONFIDENCE_FLOOR_FROM = 0.5;
 export const SEVERITY_ORDER: readonly Severity[] = ["info", "low", "medium", "high", "critical"];
 /** Severities that block accept and keep a task from closing. */
 export const BLOCKING_SEVERITIES: ReadonlySet<Severity> = new Set<Severity>([
@@ -37,6 +53,23 @@ export function maxSeverity(findings: readonly { severity: Severity }[]): Severi
 
 export function isBlocking(findings: readonly { severity: Severity }[]): boolean {
   return findings.some((f) => BLOCKING_SEVERITIES.has(f.severity));
+}
+
+/**
+ * Whether the evidence decides the result on its own: at least one required check ran, every
+ * required check passed, and no finding (the model's or the code's) is medium or above.
+ */
+export function deterministicEvidence(
+  checks: readonly CheckResultEvidence[] | undefined,
+  findings: readonly { severity: Severity }[],
+): boolean {
+  const required = (checks ?? []).filter((c) => c.required !== false);
+  return required.length > 0 && required.every((c) => c.passed) && !isBlocking(findings);
+}
+
+export interface VerdictRuleOptions {
+  /** The runner's check results, for the confidence floor. Absent: no floor. */
+  checkResults?: readonly CheckResultEvidence[];
 }
 
 export interface RawVerdict {
@@ -63,16 +96,37 @@ export function clampConfidence(confidence: number): number {
   return Math.min(1, Math.max(0, confidence));
 }
 
-export function applyVerdictRules(raw: RawVerdict, tier: ReviewTier): RuledVerdict {
+export function applyVerdictRules(
+  raw: RawVerdict,
+  tier: ReviewTier,
+  opts: VerdictRuleOptions = {},
+): RuledVerdict {
   const adjustments: RuleAdjustment[] = [];
   const grade = clampGrade(raw.grade);
-  const confidence = clampConfidence(raw.confidence);
+  let confidence = clampConfidence(raw.confidence);
   let verdict: Verdict = raw.verdict;
   const change = (rule: string, to: Verdict, reason: string) => {
     if (verdict === to) return;
     adjustments.push({ rule, from: verdict, to, reason });
     verdict = to;
   };
+
+  if (
+    verdict === "accept" &&
+    confidence < LOW_CONFIDENCE &&
+    confidence >= CONFIDENCE_FLOOR_FROM &&
+    deterministicEvidence(opts.checkResults, raw.findings)
+  ) {
+    adjustments.push({
+      rule: "confidence_floor",
+      from: confidence.toFixed(2),
+      to: LOW_CONFIDENCE.toFixed(2),
+      reason:
+        "every required check the runner ran passed and no finding is medium or above; " +
+        `confidence is floored at ${LOW_CONFIDENCE} (ADR 0041)`,
+    });
+    confidence = LOW_CONFIDENCE;
+  }
 
   if (verdict === "accept" && isBlocking(raw.findings)) {
     const worst = maxSeverity(raw.findings) ?? "medium";

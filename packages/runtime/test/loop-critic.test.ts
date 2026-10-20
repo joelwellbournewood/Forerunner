@@ -1,9 +1,13 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { SUBMIT_REVIEW_TOOL } from "@forerunner/critic";
+import { join } from "@forerunner/platform";
 import { FakeProvider } from "@forerunner/testenv";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { ToolRegistry } from "../src/agent/tools.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
+import { namedPaths, readSourceFiles } from "../src/loop/critic.ts";
 import { ESCALATE_AFTER_ATTEMPTS, tierForAttempt } from "../src/loop/ports.ts";
 import { LoopTaskExecutor, retryConstraints } from "../src/session/executor.ts";
 import {
@@ -623,5 +627,96 @@ describe("critic in the loop", () => {
     expect(w.provider).toBeInstanceOf(FakeProvider);
     expect(w.driver).toBeInstanceOf(LoopAgentDriver);
     await w.close();
+  });
+});
+
+/**
+ * Source files in the critic's evidence (ADR 0041): the unchanged files a task's own text
+ * names are read from the worktree so the critic checks the result's claims against its
+ * inputs; a changed file stays in the diff.
+ */
+describe("source files in the critic's evidence", () => {
+  it("namedPaths: the relative file paths a task's text names, never URLs, absolute paths or escapes", () => {
+    expect(
+      namedPaths(
+        "Report the figure from docs/status-q2.md into ./src/cli.ts, see README.md (not https://example.com/a/b.md, /etc/passwd, ../x.ts, task:abc, v1.0.0, e.g. this).",
+      ),
+    ).toEqual(["docs/status-q2.md", "src/cli.ts", "README.md", "e.g"]);
+    expect(namedPaths("nothing here")).toEqual([]);
+  });
+
+  it("readSourceFiles: named files that exist in the worktree and were not changed, inside it only, text only, within the caps", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fr-critic-src-"));
+    const worktree = join(root, "wt");
+    try {
+      await mkdir(join(worktree, "docs"), { recursive: true });
+      await mkdir(join(worktree, "src"), { recursive: true });
+      await writeFile(join(worktree, "docs", "spec.md"), "Uptime was 99.91%.\n");
+      await writeFile(join(worktree, "src", "x.ts"), "export const x = 2;\n");
+      await writeFile(join(worktree, "big.txt"), "b".repeat(4096));
+      await writeFile(join(worktree, "blob.bin"), Buffer.from([0x50, 0x4b, 0x00, 0x01, 0x02]));
+      await writeFile(join(root, "secret.md"), "outside the worktree\n");
+      const files = readSourceFiles(
+        worktree,
+        ["docs/spec.md", "src/x.ts", "big.txt", "blob.bin", "../secret.md", "missing.md", "docs"],
+        ["src/x.ts"],
+        { maxFileBytes: 1024, maxTotalBytes: 2048 },
+      );
+      expect(files).toEqual([
+        { path: "docs/spec.md", content: "Uptime was 99.91%.\n" },
+        { path: "big.txt", content: "b".repeat(1024), truncated: true },
+      ]);
+      // The total cap stops the reading: a second big file gets what is left, a third nothing.
+      await writeFile(join(worktree, "more.txt"), "m".repeat(4096));
+      await writeFile(join(worktree, "last.txt"), "l".repeat(10));
+      const capped = readSourceFiles(worktree, ["big.txt", "more.txt", "last.txt"], [], {
+        maxFileBytes: 1024,
+        maxTotalBytes: 1536,
+      });
+      expect(capped.map((f) => [f.path, f.content.length, f.truncated ?? false])).toEqual([
+        ["big.txt", 1024, true],
+        ["more.txt", 512, true],
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("the loop reads the unchanged files the task names from the worktree into the evidence; the changed file stays in the diff", async () => {
+    const worktree = await mkdtemp(join(tmpdir(), "fr-loop-wt-"));
+    const w = await loopWorld({ replies: [submitReply({ grade: 90 }), closingReply()] });
+    try {
+      await mkdir(join(worktree, "docs"), { recursive: true });
+      await mkdir(join(worktree, "src"), { recursive: true });
+      await writeFile(join(worktree, "docs", "spec.md"), "# Spec\n\nUptime was 99.91%.\n");
+      await writeFile(join(worktree, "src", "x.ts"), "export const x = 1;\n");
+      const task = await w.addTask("Report the uptime", {
+        outcome: "src/x.ts exports the uptime figure from docs/spec.md",
+        acceptance_criteria: ["src/x.ts quotes docs/spec.md exactly"],
+        risk_tier: 1,
+      });
+      const inner = doneExecutor(w);
+      const executor = {
+        execute: async (ctx: Parameters<typeof inner.execute>[0]) => ({
+          ...(await inner.execute(ctx)),
+          worktree,
+        }),
+      };
+      const result = await w.start(w.runner(executor));
+      expect(result.completed).toEqual([task.id]);
+      const call = w.provider.calls.find((c) =>
+        c.request.tools?.some((t) => t.name === SUBMIT_REVIEW_TOOL),
+      );
+      const user = String(call?.request.messages[0]?.content);
+      expect(user).toContain("## Source files (data)");
+      expect(user).toContain("### docs/spec.md\n```text\n# Spec\n\nUptime was 99.91%.\n```");
+      // src/x.ts is a changed file: in the diff, not repeated as a source file.
+      expect(user).not.toContain("### src/x.ts");
+      expect(user).toContain("+++ b/src/x.ts");
+      expect(user.indexOf("## Source files (data)")).toBeLessThan(user.indexOf("## Diff (data)"));
+    } finally {
+      await w.close();
+      await rm(worktree, { recursive: true, force: true });
+    }
   });
 });
