@@ -34,7 +34,7 @@ worktree's `.gitignore` is kept covering the data dir.
 | `import.ts` | `DataImporter.importZip()` and `importFolder()`, `checkZipEntryName()`, `isSymlinkEntry()`, `recordZipEntry()` (name-conflict table), `ensureDataDirIgnored()`, `WORKTREE_DATA_DIR` |
 | `tools.ts` | `dataTools(deps)` and `registerDataTools(registry, deps)`: the four ToolSpecs; `renderSample()` |
 | `routes.ts` | `createDataRoutes(deps)`: the Hono sub-app for the Data tab, `DATA_ROUTES`, request bodies |
-| `index.ts` | exports (the runtime's `src/index.ts` re-exports it once the daemon wires the module) |
+| `index.ts` | exports (re-exported by the runtime's `src/index.ts`) |
 
 ### Layout on disk
 
@@ -260,10 +260,14 @@ No ADR number was reserved for this module, so the open points are decided here:
 - A new URI scheme: `REMOTE_SCHEMES` in `types.ts` (keep it a list the human can read).
 - A new tool: add it in `tools.ts`, keep `untrusted` on anything that echoes file content,
   and never return more than `sampleBytes`; add it to `DATA_TOOL_NAMES` and the tests.
-- Wiring in the daemon: build `new DataAssets({ store, clock, limits })` and
-  `new DataImporter({ assets, store, clock })`, mount `createDataRoutes({ assets, importer,
-  actor, worktreeFor })`, register `dataTools({ assets, approvals })` with the run's tool
-  registry, and re-export `./data/index.ts` from `packages/runtime/src/index.ts`.
+- Wiring in the daemon (done, ADR 0039; `runtime.md` "Files and data"): `compose.ts` builds
+  `new DataAssets({ store, clock, projectsRoot: <data>/projects, limits })` and
+  `new DataImporter({ assets, store, clock })`, registers `registerDataTools(tools, { assets,
+  approvals })` with the hooks' `StateApprovals` into the built-in tool registry, and
+  `server.ts` mounts `createDataRoutes({ assets, importer, actor: () => ({ humanId }) })` at
+  the root; `ComposeOptions.data` overrides the root and the limits, `RuntimeApp.data` exposes
+  the registry and the importer. A new route or tool goes into this module and needs nothing
+  in the daemon beyond `DAEMON_ROUTES`.
 
 ## Tests
 
@@ -294,6 +298,17 @@ No ADR number was reserved for this module, so the open points are decided here:
   without a human, multipart upload (sanitised name, 413), zip and folder import with the
   gitignore guard, a conflicting archive answered 400 with nothing registered.
 
+- `data-wiring.test.ts` (the module inside `composeRuntime` and the daemon, ADR 0039): the
+  four tools registered as built-in tools and the routes listed in `DAEMON_ROUTES`, a folder
+  import through `POST /projects/:id/data/import` landing in the registry, the project's
+  `data_assets` and `GET /projects/:id/data` (with describe and sample routes behind the
+  bearer token and one `data.import` audit row), the tools behind the hooks (listing, a
+  sample under the cap, the over-cap call refused by the schema and audited), a zip-slip
+  archive answered 400 with nothing registered or written, `data_register` for a path outside
+  the run's roots refused as `approval_required` with a `capability_grant` request in the
+  inbox and nothing registered while a path inside registers freely, and removal only through
+  the route as the daemon's human.
+
 Run: `pnpm vitest run --project unit packages/runtime/test/data-*.test.ts`.
 
 ## Known issues
@@ -313,10 +328,12 @@ Run: `pnpm vitest run --project unit packages/runtime/test/data-*.test.ts`.
   extract fine; the price of one behaviour on both OSes.
 - Dropping the query from a URI means a presigned link cannot be registered as such; the
   object's plain URI is stored and the signature has to be produced again at read time.
-- The module is not yet wired into the daemon (`packages/runtime/src/index.ts`,
-  `daemon/compose.ts`, the run's tool registry) and `docs/requirements.md` still lists L.1 as
-  in progress and A.3 as todo; both are outside this module's paths and belong to the
-  orchestrator's wiring follow-up, with the decisions above as the ADR source.
+- The daemon sets no `worktreeFor`: its worktrees are per task and cloned fresh from the
+  repository, and the project data dir lies outside them, so the gitignore guard runs only
+  for a caller that hands the importer a worktree (ADR 0039 point 12). A project that keeps
+  data inside its own checkout relies on the `.forerunner-data/` convention.
+- Multipart uploads through the daemon are bounded by `uploadMaxBytes`, but the UI's data tab
+  registers by locator only (`POST /projects/:id/data` JSON); the upload form is not built.
 
 ## Requirement IDs covered
 

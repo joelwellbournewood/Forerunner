@@ -16,6 +16,7 @@ import {
   tierForAttempt,
 } from "../loop/ports.ts";
 import { effortForTask, modelIdFor, startingTier } from "../models/ladder.ts";
+import type { EffectiveModelConfig } from "../models/settings.ts";
 import type { EffortLevel, ModelProvider, ModelTier } from "../provider/types.ts";
 import type { Sandbox } from "../sandbox/types.ts";
 import { screenLessons } from "./lessons.ts";
@@ -100,6 +101,12 @@ export interface LoopTaskExecutorDeps {
   /** Model ceiling for the project (spec D). */
   ceiling?: ModelTier;
   effortOffset?: -1 | 0 | 1;
+  /**
+   * The ladder and effort table in force, read at every run start (spec D, ADR 0039): the
+   * built-ins with `<config>/models.json` applied, replaced when the model watch adopts a
+   * change. Absent: the built-in tables.
+   */
+  modelConfig?: () => EffectiveModelConfig;
   /** Worktree root for the task, if the executor should pin file access. */
   worktreeFor?: (task: TaskRow) => Promise<string | undefined>;
   onEvent?: (taskId: string, ev: RunEvent) => void;
@@ -235,11 +242,15 @@ export class LoopTaskExecutor implements TaskExecutor {
       task.attempt,
       this.deps.ceiling,
     );
-    const model = modelIdFor(tier, this.deps.provider.name);
+    // The rung and the effort come from the tables in force (built-ins plus the adopted
+    // models.json), so an adoption by the model watch changes the next run, not the next start.
+    const modelConfig = this.deps.modelConfig?.();
+    const model = modelIdFor(tier, this.deps.provider.name, modelConfig?.ladder);
     const effort = effortForTask(
       spec.name === "coder" ? "coder" : spec.name === "researcher" ? "researcher" : "coder",
       brief.riskTier,
       this.deps.effortOffset ?? 0,
+      modelConfig?.modeDefaults,
     );
     // Context layer: the session's pipeline, and the proxy only when the session selected it and
     // the provider can route through it (the fake provider cannot, so headroom_used stays false).

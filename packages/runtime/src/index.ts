@@ -11,6 +11,8 @@ export * from "./daemon/restart.ts";
 export * from "./daemon/sandbox-port.ts";
 export * from "./daemon/server.ts";
 export * from "./daemon/shells.ts";
+/** Files and data (spec L.1): the registry, importer, routes and the four data tools. */
+export * from "./data/index.ts";
 export * from "./enforcement/autonomy.ts";
 export * from "./enforcement/budget.ts";
 export * from "./enforcement/hooks.ts";
@@ -42,4 +44,6 @@ export * from "./setup/wizard.ts";
 /** Signed updates (spec M); namespaced because its catalog port shares names with the extensions catalog. */
 export * as updates from "./update/index.ts";
 export * from "./wiring/billing-ports.ts";
+export * from "./wiring/desktop-ports.ts";
+export * from "./wiring/model-config.ts";
 export * from "./wiring/state-ports.ts";

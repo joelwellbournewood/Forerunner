@@ -339,14 +339,21 @@ composes the runtime (`cli/main.ts`).
   cold-start shares, fallbacks, `recentLimit`); the clamps are exported constants. A different
   key (say task size) is a `kindOf` function; the fold needs no change because `sampleFromTask`
   calls it.
-- **Applying adopted settings** (the open wiring item, outside this module): at compose,
-  `const cfg = applyModelSettings(await modelSettings.readModelSettings(),
-  builtinModelConfig())`, hand `cfg.ladder` to `modelIdFor` in `session/executor.ts` and
-  `cfg.modeDefaults` to `effortForTask` there and to `conversation/agent.ts` (which reads
-  `MODE_DEFAULTS` directly today); for a live reload pass `onAdopted: ({ pricing, config })
-  => { ... }` to `new ModelWatch(...)` and replace the pricing table the billing router holds
-  and the `cfg` the executor reads. A wiring test should assert that an adopted `models.json`
-  changes the model the executor requests.
+- **Applying adopted settings** (wired, ADR 0039; `runtime.md` "Adopted model settings"):
+  `compose.ts` reads `models.json` into an `EffectiveModelConfigHolder`
+  (`src/wiring/model-config.ts`, `readEffectiveModelConfig`), hands `() => holder.get()` to
+  `LoopTaskExecutor` (`modelConfig` dep: `ladder` to `modelIdFor`, `modeDefaults` to
+  `effortForTask`), to `ConversationAgent` (`modelConfig` dep: the `text_chat` row) and to
+  `CriticLoop` (`modelConfig` dep: `ladder` and `modeDefaults` as accessors the critic
+  package reads at every review's pick, `critic_t1` on the sonnet rung and `critic_t23` on
+  opus, and the rung a failed run sat on for the retry ladder), and passes `onAdopted` to
+  `new ModelWatch(...)`, which swaps the holder and the pricing table the run, chat and
+  critic pricing closures read. A new consumer of a rung or an effort takes the holder's
+  getter, never `DEFAULT_LADDER` or `MODE_DEFAULTS`. A malformed file is ignored with an audit
+  row (`model_settings.read`, `allowed=false`) and the built-ins are used.
+  `packages/runtime/test/model-config-wiring.test.ts` proves an adopted `models.json` changes
+  the model and effort a session picks, the chat rung a turn uses and the rung the critic
+  reviews on, with no restart.
 - **Feeding the model live from the runner**: `onTaskFinished: ({ task, result, durationMs })
   => estimates.observeTask(task, { usdMicro: result.costUsdMicro, wallMs: durationMs, at:
   clock.nowIso() })`; never `observe` with the plan item's figure (see Estimate learning).
@@ -406,17 +413,14 @@ registration and one-shot composition.
 
 ## Known issues
 
-- **An adopted change needs the orchestrator's wiring, and today a restart.** `applyAdoption`
-  writes `models.json` and `pricing.json`, `ModelWatch.effectiveConfig()` /
-  `effectivePricing()` read them and `onAdopted` hands both to the daemon, but `compose.ts`
-  neither calls `applyModelSettings` nor passes `onAdopted`, `session/executor.ts` calls
-  `modelIdFor(tier, provider)` and `effortForTask(mode, tier, offset)` without the ladder and
-  effort table, and `conversation/agent.ts` reads `MODE_DEFAULTS` directly. So after a human
-  answers "adopt" the audit log shows the change applied while the next session still runs the
-  old rung and effort, and `pricing.json` (loaded once at compose) is used only after a
-  restart. Until "How to change it" is wired: restart the daemon after an adopt. The module's
-  side is in place (the `ladder` / `defaults` parameters, `onAdopted`, the wiring test for
-  `applyModelSettings`); the executor, agent and compose changes are outside this module.
+- **An adopt reaches the daemon it was answered in.** `onAdopted` swaps the tables the
+  daemon process holds (ADR 0039); a CLI one-shot (`fr models watch`) composes its own runtime
+  and reads the files at its start, so an adopt answered there (`watch.resolve` in the CLI
+  process) reaches a running daemon only at the daemon's next start; answers given in the
+  inbox or the updates screen go through the daemon and apply at once. The
+  `CostLedger` keeps the pricing table it was built with until the next start (it prices
+  savings views, not calls); the critic, the executor and the chat price from the table in
+  force.
 - **`compose.ts` feeds the estimate model the plan item's figure.** Its `onTaskFinished`
   calls `observe` with `item.estimateUsdMicro`, which `StaticPlanner` already multiplied by
   the learned ratio, so the live ratio settles near the square root of the real overrun and
@@ -457,4 +461,6 @@ that passes, measured on the eval set), M.5 (model updates in the updates screen
 (estimate before every run, actual after, error per specialist and task type), E.3 in part
 (learned estimates price the plan that `cutPlanToBudget` cuts). Tests:
 `packages/runtime/test/model-watch.test.ts`, `packages/runtime/test/estimates.test.ts`,
-`packages/runtime/test/wiring.test.ts`.
+`packages/runtime/test/wiring.test.ts`, `packages/runtime/test/model-config-wiring.test.ts`
+(an adopted `models.json` changes the rung and effort of the next session and the chat rung
+of the next turn without a restart; a malformed file is ignored with an audit row).

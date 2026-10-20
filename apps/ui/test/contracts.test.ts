@@ -81,6 +81,9 @@ describe("proposed routes", () => {
       "deleteLesson",
       "changes",
       "undoChange",
+      "dataAssets",
+      "registerDataAsset",
+      "removeDataAsset",
     ]) {
       expect(served in DAEMON_ROUTES).toBe(true);
       expect(served in PROPOSED_ROUTES).toBe(false);
@@ -95,7 +98,7 @@ describe("proposed routes", () => {
       "/projects/p/docs/docs%2Foverview.md",
     );
     expect(pathFromSpec("GET /performance?projectId= (PerformanceView)")).toBe("/performance");
-    expect(verbFromSpec(PROPOSED_ROUTES.removeDataAsset)).toBe("DELETE");
+    expect(verbFromSpec(DAEMON_ROUTES.removeDataAsset)).toBe("DELETE");
     expect(() => proposedPath("milestones", {})).toThrow(/missing param id/);
   });
 });

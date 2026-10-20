@@ -1,6 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { cloudflare } from "@forerunner/capabilities";
+import { cloudflare, desktop } from "@forerunner/capabilities";
 import { errorMessage, ForerunnerError, join, log, osFacts } from "@forerunner/platform";
 import type { LessonStatus } from "@forerunner/state";
 import { serve } from "@hono/node-server";
@@ -9,6 +9,7 @@ import { cors } from "hono/cors";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { ZodType } from "zod";
+import { createDataRoutes } from "../data/routes.ts";
 import { writeKillRequest } from "../enforcement/killfile.ts";
 import { estimateAccuracyView } from "../estimates/view.ts";
 import { createExtensionsRoutes } from "../extensions/routes.ts";
@@ -19,7 +20,8 @@ import { createNotificationRoutes } from "../notifications/routes.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { defaultPeers } from "../session/runner.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
-import { DecisionLog } from "../wiring/state-ports.ts";
+import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring/desktop-ports.ts";
+import { DecisionLog, StateAudit } from "../wiring/state-ports.ts";
 import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
 import {
   AnswerRequestBody,
@@ -314,6 +316,39 @@ export function createDaemonApp(
       }),
     );
   }
+  // Desktop control (spec L.4, S.32; ADR 0021, ADR 0039): status with what is installed and
+  // missing, the signed-in human's allowlist, live revoke (open to any caller) and resume (the
+  // daemon's human). Structural handlers adapted to Hono's context, as for Cloudflare.
+  for (const route of desktop.desktopRouteTable({
+    controller: rt.desktop.controller,
+    allowlist: rt.desktop.allowlist,
+    clock: rt.clock,
+    detect: rt.desktop.detect,
+    audit: new StateAudit(rt.store),
+    humanFor: () => rt.human.id,
+  })) {
+    app.on(route.method, route.path, (c) =>
+      route.handler({
+        req: {
+          param: (name) => c.req.param(name as never) as string | undefined,
+          query: (name) => c.req.query(name),
+          json: () => c.req.json(),
+          header: (name) => c.req.header(name),
+        },
+        json: (body, status) => c.json(body, (status ?? 200) as ContentfulStatusCode),
+      }),
+    );
+  }
+  // Files and data (spec L.1, A.3, K.2): the Data tab routes (list, register or upload, import,
+  // describe, sample, delete); the daemon's human is the actor, so DELETE always has one.
+  app.route(
+    "/",
+    createDataRoutes({
+      assets: rt.data.assets,
+      importer: rt.data.importer,
+      actor: () => ({ humanId: rt.human.id }),
+    }),
+  );
 
   app.get("/me", async (c) => {
     const h = await rt.store.human.mustGet(rt.human.id);
@@ -1093,6 +1128,9 @@ export function createDaemonApp(
       // as a toast, `shells.ts`) counts as attached for the channel's OS fallback.
       const onNotification = (p: NotificationEventPayload) =>
         void stream.writeSSE({ event: "notification", data: JSON.stringify(p) });
+      // The desktop control indicator (spec S.32): the shells show a banner while `on` is true.
+      const onDesktopIndicator = (p: DesktopIndicatorPayload) =>
+        void stream.writeSSE({ event: DESKTOP_INDICATOR_EVENT, data: JSON.stringify(p) });
       const detachShell = isShellStream({
         client: c.req.query("client"),
         clientHeader: c.req.header(CLIENT_HEADER),
@@ -1106,6 +1144,7 @@ export function createDaemonApp(
       rt.events.on("extension", onExtension);
       rt.events.on("restart", onRestart);
       rt.events.on("notification", onNotification);
+      rt.events.on(DESKTOP_INDICATOR_EVENT, onDesktopIndicator);
       try {
         await onInbox();
         await streamUntilClosed(stream, 15_000, async () => {
@@ -1122,6 +1161,7 @@ export function createDaemonApp(
         rt.events.off("extension", onExtension);
         rt.events.off("restart", onRestart);
         rt.events.off("notification", onNotification);
+        rt.events.off(DESKTOP_INDICATOR_EVENT, onDesktopIndicator);
         detachShell();
       }
     }),

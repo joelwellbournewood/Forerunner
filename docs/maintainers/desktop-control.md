@@ -1,10 +1,11 @@
 # Desktop control
 
-> Status: built (phase 6). The gate, the Linux and Windows adapters, the indicator port, the
-> controller, six `ToolSpec`s, the allowlist store and the routes are in
-> `packages/capabilities/src/desktop/`. Wiring into the daemon (compose, extensions panel,
-> kill switch, the shells' on-screen banner) is the orchestrator's step; this file covers the
-> module. ADR 0021 records the adapter choices.
+> Status: built and wired (phase 6). The gate, the Linux and Windows adapters, the indicator
+> port, the controller, six `ToolSpec`s, the allowlist store and the routes are in
+> `packages/capabilities/src/desktop/` (exported as the `desktop` namespace of
+> `@forerunner/capabilities`); the daemon composes them (`runtime.md` "Desktop control",
+> ADR 0039). The shells' on-screen banner reads the `desktop.indicator` frame on `/events`.
+> This file covers the module; ADR 0021 records the adapter choices.
 
 ## Purpose
 
@@ -206,36 +207,29 @@ its length), `resultSummary` (focused window, screenshot path, ...), `allowed`, 
 runs; a typing action cut short carries `typed N of M characters` in its denial. The routes
 audit allowlist changes (`desktop_allowlist`), revoke and resume (with the human who resumed).
 
-## Wiring (the orchestrator's part)
+## Wiring (the daemon, `packages/runtime/src/daemon/compose.ts` and `server.ts`; ADR 0039)
 
-```ts
-const detection = await detectAdapter();
-const controller = new DesktopController({
-  adapter: detection.adapter ?? new FakeDesktopAdapter(),   // or refuse with detection.missing
-  binding: async (ctx) => ({
-    enabled: await registry.isEnabled("capability", "desktop-control"),
-    autonomy: project.autonomy_level,
-    allowlist: await allowlist.get(ctx.humanId),
-    screenshotsToModel: task.wantsScreenshots && claims.allowScreenshots,
-    tokenId: claims.id,
-  }),
-  indicator: new CompositeIndicator([shellBanner, new LogIndicator()]),
-  audit: statePorts.audit,
-  clock,
-  kill,
-  approvals: new HumanRequestDesktopApprovals(store.humanRequest),
-});
-controller.attachKillSwitch(kill);
-controller.attachExtensionRegistry(registry);   // disabled/removed -> revoke, enabled -> resume
-registerDesktopTools(registry, controller);
-app.route("/", createDesktopRoutes({ controller, allowlist, clock, audit, detect: detectAdapter }, new Hono()));
-```
+`composeRuntime` builds one controller per daemon and registers the six tools as built-in
+tools, so every run token lists them and the runtime's hooks and extension gate apply before
+the gate in each tool:
 
-The catalog entry `desktop-control` in `packages/runtime/src/extensions/catalog.json` must
-list the six tool names above so the panel shows them and `revokeLive` revokes tokens that
-carry them. `DesktopController.endRun(runId)` belongs in the run's teardown. `humanFor` must be
-set from the daemon's auth whenever the daemon identifies humans: without it the allowlist and
-resume routes have no human to bind to (single-user daemon only).
+| Port | The daemon's implementation |
+| --- | --- |
+| `adapter` | `detectAdapter()` once at compose; when nothing usable is found, `UnavailableDesktopAdapter` (`src/wiring/desktop-ports.ts`), whose every action refuses with `not_supported` naming `detection.missing` (after the gate, so the refusal is audited like any denial). Never a fake adapter in production; tests inject `FakeDesktopAdapter` through `ComposeOptions.desktop.adapter`. |
+| `binding` | `desktopBindingResolver`: `enabled` from the `desktop-control` extension row read by name on every call (installed, enabled, neither pending nor errored, the gate's own rule), `autonomy` from the run's project (`autonomy_level`; the human's `default_autonomy` without a project), `allowlist` from `FileAllowlistStore` at `<config>/desktop-allowlist.json` behind the runtime's `GuardedAllowlistStore` (a file that is not JSON or not an allowlist is `validation` naming the file on every tool call and route, one `desktop_allowlist.read` audit row per refused read, never `internal` with the parser's message; the next call reads the file again), `screenshotsToModel: false` (see Known issues). |
+| `indicator` | `CompositeIndicator([BusIndicator, LogIndicator])`: the bus event `desktop.indicator` `{ on, agentId, sessionId, runId, humanId, app, message, at }`, streamed by `/events` to every shell, plus the log line. |
+| `audit`, `clock`, `kill`, `approvals` | the hooks' `StateAudit`, the daemon clock and kill switch, `HumanRequestDesktopApprovals(store.humanRequest)` (a blocking request in the inbox, raised as a notification like any other). |
+| teardown | `attachKillSwitch(kill)`, `attachExtensionRegistry(extensions)` (toggle off or remove revokes live, toggle on resumes), `endRun` on the executor's `run_end` event, `close()` on daemon close. |
+
+The catalog entry `desktop-control` (`packages/runtime/src/extensions/catalog.json`) names
+exactly the six `desktop_*` tools with the classes `read` and `non_routine`, so the panel shows
+them, the extension gate checks a call against the installed row, and `revokeLive` revokes the
+tokens that carry them. Routes are mounted in `server.ts` through `desktopRouteTable` with a
+small adapter over Hono's context (no Hono dependency here), `humanFor` set to the daemon's one
+human, `detect` to the compose-time detection and `audit` to the hooks' audit port; they are
+listed in `DAEMON_ROUTES` (`desktopStatus`, `desktopAllowlist`, `setDesktopAllowlist`,
+`desktopRevoke`, `desktopResume`). `RuntimeApp.desktop` exposes the controller, the allowlist
+store and detection.
 
 ## How to change it
 
@@ -289,6 +283,27 @@ resume routes have no human to bind to (single-user daemon only).
   answers 403), resume refused anonymously while revoke stays open, revoke and resume, error
   statuses.
 
+- `desktop-wiring.test.ts` (the module inside `composeRuntime` and the daemon, ADR 0039): the
+  six tools registered as built-in tools and the catalog entry naming exactly them, the
+  status and allowlist routes behind the bearer token (another human's list answers 403, a
+  write is audited), off by default (the gate refuses `disabled` through the hooks and
+  audits it, the adapter untouched), install and enable from the catalog through the inbox,
+  an application outside the allowlist refused (`app_not_allowed`), audited and put to the
+  human as a blocking request, an allowlisted application focused and typed into through the
+  fake adapter with the indicator on the bus and the typed text absent from the audit row,
+  a shell on `/events` receiving the indicator as the `desktop.indicator` frame (on with the
+  app, agent, session and run at the first action; off at `endRun`), autonomy 2 refused by
+  the hooks and by the gate alike, a panel toggle revoking live and a toggle on resuming,
+  revoke open to any caller and resume bound to the human.
+- `packages/runtime/test/desktop-wiring.test.ts` (the allowlist file in the daemon): the
+  guarded file store composed over `<config>/desktop-allowlist.json` with the unavailable
+  adapter, a file that is not JSON answering `validation` naming the file on the allowlist
+  routes and refusing every tool call the same way before the gate decides, one
+  `desktop_allowlist.read` audit row per refused read with the parser's snippet kept out of
+  the error, the audit log and the log, a fixed file read at the next call without a restart,
+  a bad entry in a write reported as the body's error and a file that parses but is no
+  allowlist refused as `validation` too.
+
 No integration test drives a real desktop: CI runners have no display. A manual check on each
 platform is `fr` -> Extensions -> enable desktop control at autonomy 3, then `desktop_focus`
 on an allowlisted editor and `desktop_type`; the banner must be visible while it types.
@@ -299,11 +314,17 @@ on an allowlisted editor and `desktop_type`; the banner must be visible while it
   (`xdg-desktop-portal` RemoteDesktop/Screenshot) is the way in and would be a fourth adapter.
 - Windows uses SendKeys and `mouse_event`, which UAC-elevated windows ignore; the UI
   Automation API (`System.Windows.Automation`) can replace SendKeys for text in a later ADR.
-- The extension catalog entry still lists the old tool names (`desktop.screenshot`, ...); it
-  must be updated to the six `desktop_*` names when the orchestrator wires the module.
 - The runtime does not consume `ToolResult.artifacts` yet (only the type is declared), so an
   allowed screenshot's PNG does not reach the model even with both flags set; the tool says
-  so. Forwarding image artifacts into the provider message builder is a runtime change.
+  so. Forwarding image artifacts into the provider message builder is a runtime change, and
+  until then the daemon's binding sets `screenshotsToModel: false` for every run (no token
+  claims it).
+- The daemon emits the indicator as the `desktop.indicator` frame on `/events`; the desktop
+  shell's banner and tray state and the approvals web page's banner that render it are not
+  built yet, so until they are the visible indicator is the log line (`LogIndicator`).
+- The binding's `tokenId` is empty: `ToolExecutionContext` carries no token id, so the
+  module's audit rows name the session, run, agent and human but not the token; the hooks'
+  own audit rows for the same call do.
 - Screenshots are screen regions: an overlapping window is in the file. Capturing a window's
   own backing store (`xwd -id`, `PrintWindow` on Windows) would exclude it and is a later
   adapter change.

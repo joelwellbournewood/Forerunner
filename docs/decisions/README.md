@@ -53,3 +53,4 @@ Status: accepted | superseded by NNNN
 | 0036 | Core loop integration: critic, memory and commands inside the session runner and the conversation agent |
 | 0037 | UI screens: proposed routes, the "route not available" state, mirrored schemas, charts and the settings command path |
 | 0038 | Daemon wiring of notifications and Cloudflare deploys: producers on the real sources, shell detection and the OS notifier, preference writes, the email sender, tools behind the hooks and gate, structural routes |
+| 0039 | Daemon wiring of adopted model settings, desktop control and data assets: the tables in force swapped on adopt, the desktop binding and the unavailable adapter, the indicator as a bus event, data under the install's data dir |

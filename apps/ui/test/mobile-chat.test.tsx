@@ -14,20 +14,22 @@ describe("Chat screen", () => {
     expect(await screen.findByTestId("m-chat-you")).toHaveTextContent(
       "What did you do last night?",
     );
-    const call = postedCalls(h, "/remote/commands")[0];
-    expect(call).toMatchObject({
-      signed: true,
-      body: {
-        target: "pc",
-        command: "start",
-        params: {
-          v: 1,
-          kind: "chat",
-          text: "What did you do last night?",
-          projectId: "proj_pharma",
+    // The bubble shows before the signed post settles: wait for the call rather than read it at once.
+    await waitFor(() =>
+      expect(postedCalls(h, "/remote/commands")[0]).toMatchObject({
+        signed: true,
+        body: {
+          target: "pc",
+          command: "start",
+          params: {
+            v: 1,
+            kind: "chat",
+            text: "What did you do last night?",
+            projectId: "proj_pharma",
+          },
         },
-      },
-    });
+      }),
+    );
     await waitFor(
       () =>
         expect(screen.getByTestId("m-chat-reply")).toHaveTextContent(

@@ -29,6 +29,7 @@ import type { LoopAgentDriver, RunPricing } from "../agent/loop.ts";
 import type { ContextManager } from "../context/manager.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import { DEFAULT_CEILING, nextRung, retryAction, tierOfModel } from "../models/ladder.ts";
+import type { EffectiveModelConfig } from "../models/settings.ts";
 import type { ProviderRegistry } from "../provider/registry.ts";
 import type { ModelTier } from "../provider/types.ts";
 import { screenLessons } from "../session/lessons.ts";
@@ -89,6 +90,12 @@ export interface CriticLoopDeps {
   sessionReviewTier?: ReviewTier;
   /** Check runner for the critic package (sandboxed executors inject one). */
   checkRunner?: CriticDeps["checkRunner"];
+  /**
+   * The ladder and effort table in force (ADR 0039), read at every review's model pick and
+   * when the rung a run sat on is looked up, never once: an adopted rung or effort reaches
+   * the next review without a restart. Absent: the built-in tables.
+   */
+  modelConfig?: () => EffectiveModelConfig;
 }
 
 export interface DiffResult {
@@ -184,7 +191,19 @@ export class CriticLoop implements CriticPort {
   private readonly diffPort: DiffPort;
 
   constructor(private readonly deps: CriticLoopDeps) {
-    this.service = new CriticService({
+    this.service = new CriticService(this.serviceDeps());
+    this.diffPort = deps.diff ?? new GitDiffPort(deps.run ?? runProcess, deps.worktreeRoot);
+  }
+
+  /**
+   * The critic package's deps. `ladder` and `modeDefaults` are accessors over the tables in
+   * force, not copies: `CriticService` reads them at every pick, so a rung or an effort a
+   * human adopted after this loop was built decides the next review (ADR 0039). Without a
+   * `modelConfig` the package's built-in tables apply.
+   */
+  private serviceDeps(context?: CriticDeps["context"]): CriticDeps {
+    const { deps } = this;
+    const base: CriticDeps = {
       store: deps.store,
       clock: deps.clock,
       tokens: deps.tokens,
@@ -195,9 +214,20 @@ export class CriticLoop implements CriticPort {
       pricing: deps.pricing,
       billingSourceId: deps.billingSourceId,
       criticAgentId: deps.criticAgentId,
+      ...(context ? { context } : {}),
       ...(deps.checkRunner ? { checkRunner: deps.checkRunner } : {}),
-    });
-    this.diffPort = deps.diff ?? new GitDiffPort(deps.run ?? runProcess, deps.worktreeRoot);
+    };
+    const modelConfig = deps.modelConfig;
+    if (!modelConfig) return base;
+    return {
+      ...base,
+      get ladder() {
+        return modelConfig().ladder;
+      },
+      get modeDefaults() {
+        return modelConfig().modeDefaults;
+      },
+    };
   }
 
   get criticAgentId(): string {
@@ -262,20 +292,7 @@ export class CriticLoop implements CriticPort {
 
     const sessionContext = await this.deps.context?.forSession(session.id, task.project_id);
     const criticService = sessionContext
-      ? new CriticService({
-          store,
-          clock: this.deps.clock,
-          tokens: this.deps.tokens,
-          driver: this.deps.driver,
-          providers: this.deps.providers,
-          providerName: this.deps.providerName,
-          prompt: this.deps.prompt,
-          pricing: this.deps.pricing,
-          billingSourceId: this.deps.billingSourceId,
-          criticAgentId: this.deps.criticAgentId,
-          context: sessionContext.pipeline,
-          ...(this.deps.checkRunner ? { checkRunner: this.deps.checkRunner } : {}),
-        })
+      ? new CriticService(this.serviceDeps(sessionContext.pipeline))
       : this.service;
     const owner = req.token.claims.ownerHumanId;
     const output: ReviewOutput = await criticService.review(
@@ -473,10 +490,13 @@ export class CriticLoop implements CriticPort {
     };
   }
 
-  /** The ladder rung the work ran on: from the Run row's model; the coder's default otherwise. */
+  /**
+   * The ladder rung the work ran on: from the Run row's model on the ladder in force (an
+   * adopted rung id is a rung too); the coder's default otherwise.
+   */
   private async tierOfRun(runId: string | undefined): Promise<ModelTier> {
     if (!runId) return DEFAULT_WORK_TIER;
     const run = await this.deps.store.run.get(runId);
-    return (run && tierOfModel(run.model)) || DEFAULT_WORK_TIER;
+    return (run && tierOfModel(run.model, this.deps.modelConfig?.().ladder)) || DEFAULT_WORK_TIER;
   }
 }

@@ -8,11 +8,13 @@ import {
   FixedRateSource,
   loadPricing,
   PRICING_FILE_NAME,
+  type PricingTable,
   type RateSource,
 } from "@forerunner/billing";
 import {
   type email as agentEmail,
   cloudflare,
+  desktop,
   type GitHost,
   GitHubHost,
   MemoryGitHost,
@@ -31,11 +33,13 @@ import {
   type AppDirs,
   appDirs,
   type Clock,
+  currentPlatform,
   errorMessage,
   ForerunnerError,
   join,
   log,
   type Platform,
+  safeSegment,
   systemClock,
 } from "@forerunner/platform";
 import {
@@ -46,7 +50,7 @@ import {
   type StateStore,
 } from "@forerunner/state";
 import { openVault, parseSecretRef, SecretResolver, type Vault } from "@forerunner/vault";
-import { LoopAgentDriver } from "../agent/loop.ts";
+import { LoopAgentDriver, type RunPricing } from "../agent/loop.ts";
 import { ToolRegistry, type ToolSpec } from "../agent/tools.ts";
 import {
   DEFAULT_HEADROOM_PORT,
@@ -57,6 +61,10 @@ import {
 import { ContextManager } from "../context/manager.ts";
 import { contextSettingsFrom } from "../context/pipeline.ts";
 import { ConversationAgent } from "../conversation/agent.ts";
+import { DataAssets } from "../data/assets.ts";
+import { DataImporter } from "../data/import.ts";
+import { registerDataTools } from "../data/tools.ts";
+import type { DataLimits } from "../data/types.ts";
 import type { EnforcementHooks, HookDeps, RunContext } from "../enforcement/hooks.ts";
 import { KillFileWatcher } from "../enforcement/killfile.ts";
 import { KillSwitch } from "../enforcement/killswitch.ts";
@@ -80,13 +88,14 @@ import {
   scheduleMemoryConsolidation,
 } from "../loop/memory.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
+import { modelIdFor } from "../models/ladder.ts";
 import {
   FetchPriceListSource,
   type PriceListSource,
   priceListUrlFromEnv,
   UnconfiguredPriceListSource,
 } from "../models/price-list.ts";
-import { FileModelSettingsStore } from "../models/settings.ts";
+import { type EffectiveModelConfig, FileModelSettingsStore } from "../models/settings.ts";
 import {
   type EvalRunnerPort,
   isModelWatchRequest,
@@ -109,7 +118,7 @@ import {
 } from "../notifications/index.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
 import { ProviderRegistry } from "../provider/registry.ts";
-import type { ModelProvider } from "../provider/types.ts";
+import type { ModelProvider, ModelTier } from "../provider/types.ts";
 import { loadRegistry, type Registry, resolveRegistryDir } from "../registry/index.ts";
 import { detectSandboxEngine, type EngineDetection } from "../sandbox/detect.ts";
 import type { RunFn, WhichFn } from "../sandbox/types.ts";
@@ -123,6 +132,13 @@ import { readUpdateConfig, UpdateConfig } from "../update/config.ts";
 import type { UpdateManager } from "../update/install.ts";
 import type { Restarter } from "../update/ports.ts";
 import { pricingFor, StateLedgerStore, stateSources } from "../wiring/billing-ports.ts";
+import {
+  BusIndicator,
+  desktopBindingResolver,
+  GuardedAllowlistStore,
+  UnavailableDesktopAdapter,
+} from "../wiring/desktop-ports.ts";
+import { readEffectiveModelConfig } from "../wiring/model-config.ts";
 import {
   AuditedNotificationHumans,
   notificationEmailPort,
@@ -200,6 +216,24 @@ export interface ComposeOptions {
     fetch?: TelegramFetch;
     mailboxFactory?: (config: agentEmail.MailboxConfig) => Promise<agentEmail.Mailbox>;
     osNotifier?: boolean;
+  };
+  /**
+   * Desktop control seams (tests): the adapter in place of platform detection (a
+   * `FakeDesktopAdapter`), the detection itself, the allowlist store (default
+   * `<config>/desktop-allowlist.json`) and an extra indicator next to the bus event.
+   * Production detects the adapter once at compose (`detectAdapter`) and, when this machine
+   * has no usable desktop, installs one that refuses every action (ADR 0039).
+   */
+  desktop?: {
+    adapter?: desktop.DesktopAdapter;
+    detect?: () => Promise<desktop.AdapterDetection>;
+    allowlist?: desktop.DesktopAllowlistStore;
+    indicator?: desktop.Indicator;
+  };
+  /** Data assets (spec L.1): the projects root (default `<data>/projects`) and limit overrides. */
+  data?: {
+    projectsRoot?: string;
+    limits?: Partial<DataLimits>;
   };
 }
 
@@ -280,8 +314,31 @@ export interface RuntimeApp {
   restarter: Restarter;
   /** Weekly model watch (spec D) on the registered providers. */
   modelWatch: ModelWatch;
+  /**
+   * The ladder and effort table in force (spec D, ADR 0039): built-ins plus the adopted
+   * `<config>/models.json`, replaced in place when the model watch adopts a change. Every
+   * run and chat turn reads it at start.
+   */
+  modelConfig: () => EffectiveModelConfig;
+  /** The pricing table in force: built-ins plus `<config>/pricing.json`, replaced on an adopt. */
+  pricingTable: () => PricingTable;
   /** Estimate-versus-actual learning the planner consumes (spec I). */
   estimates: EstimateModel;
+  /**
+   * Desktop control (spec L.4, S.32; ADR 0021): the one controller per daemon behind the six
+   * `desktop_*` tools, the per-human allowlist store and the adapter detection the status
+   * route reports.
+   */
+  desktop: {
+    controller: desktop.DesktopController;
+    allowlist: desktop.DesktopAllowlistStore;
+    detect: () => Promise<desktop.AdapterDetection>;
+  };
+  /** Files and data (spec L.1, A.3): the registry behind the Data tab routes and the data tools. */
+  data: {
+    assets: DataAssets;
+    importer: DataImporter;
+  };
   /** One-way GitHub Projects mirror. */
   mirror: ProjectsMirror;
   sandbox: { port: RunSandboxPort; detection: EngineDetection };
@@ -519,6 +576,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     () => undefined,
   );
   const ledgerStore = new StateLedgerStore(store);
+  // The pricing table in force: built-ins plus <config>/pricing.json; the model watch's
+  // onAdopted replaces it (below) so the next run is priced at the adopted rows.
+  let pricingTable: PricingTable = await loadPricing(join(dirs.config, PRICING_FILE_NAME));
   const costLedger = new CostLedger({
     sink: ledgerStore,
     query: ledgerStore,
@@ -526,7 +586,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     sessions: ledgerStore,
     rates,
     clock,
-    pricing: await loadPricing(join(dirs.config, PRICING_FILE_NAME)),
+    pricing: pricingTable,
   });
 
   // Context layer (ADR 0003): the native pipeline is always on; the Headroom proxy is probed
@@ -583,6 +643,34 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   managedHeadroom?.bindKillSwitch(kill);
   const ports = statePorts(store, { chfPerUsd });
   const secrets = new SecretResolver(vault);
+
+  // The ladder and effort table in force (spec D, ADR 0039): the built-ins with the adopted
+  // <config>/models.json applied; a malformed file is ignored with an audit row. The holder is
+  // replaced in place when the model watch adopts a change (onAdopted, below), so the next run
+  // and the next chat turn pick the adopted rung and effort without a restart.
+  const modelSettings = new FileModelSettingsStore({
+    configDir: dirs.config,
+    nowIso: () => clock.nowIso(),
+  });
+  const modelConfig = await readEffectiveModelConfig({
+    settings: modelSettings,
+    audit: store.auditLog,
+    clock,
+    humanId: human.id,
+  });
+  /**
+   * The rung model of a tier on the provider, from the tables in force; `ladder.ts` is the
+   * one source of model ids, so a provider the ladder does not know throws here as it does
+   * in the executor (the closures below call this per run, never at compose).
+   */
+  const rungModelFor = (p: ModelProvider, tier: ModelTier): string =>
+    modelIdFor(tier, p.name, modelConfig.get().ladder);
+  /** Pricing closures that follow the tables in force, so an adopted change prices the next call. */
+  const livePricing = (p: ModelProvider, modelOf: () => string): RunPricing => ({
+    estimate: (inputTokens, maxOutputTokens) =>
+      pricingForProvider(p, modelOf(), pricingTable).estimate(inputTokens, maxOutputTokens),
+    cost: (usage) => pricingForProvider(p, modelOf(), pricingTable).cost(usage),
+  });
 
   // Extensions (spec K, L): the registry behind the panel and the gate in front of every tool
   // call. A disabled, pending, removed or errored extension's tool is refused in code.
@@ -648,6 +736,66 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       fetchImpl: opts.fetchImpl,
     }),
   );
+  // Files and data (spec L.1, A.3, K.2): the registry behind the Data tab routes and the four
+  // data tools. The tools run behind the hooks like any other; `data_register` outside the
+  // run's allowed roots (or a URI) asks the human through the same approval port the hooks
+  // use. Nothing under the projects root is ever a worktree.
+  const dataAssets = new DataAssets({
+    store,
+    clock,
+    projectsRoot: opts.data?.projectsRoot ?? join(dirs.data, "projects"),
+    ...(opts.data?.limits ? { limits: opts.data.limits } : {}),
+  });
+  const dataImporter = new DataImporter({ assets: dataAssets, store, clock });
+  registerDataTools(tools, { assets: dataAssets, approvals: ports.approvals });
+  // Desktop control (spec L.4, S.32; ADR 0021, ADR 0039): one controller per daemon behind the
+  // six desktop_* tools. The gate inside every tool reads the binding per call: the
+  // `desktop-control` extension row (off until a human installs and enables it), the project's
+  // autonomy level and the human's allowlist. A machine without a usable desktop gets an
+  // adapter that refuses every action in code. The indicator is a runtime bus event the
+  // attached shells render as a banner; the log line is the fallback.
+  const desktopDetect = opts.desktop?.detect ?? (() => desktop.detectAdapter({ env }));
+  const desktopDetection = opts.desktop?.adapter ? null : await desktopDetect();
+  // The file store guarded: a hand-edited file that does not read is a `validation` error
+  // naming the file (every action refused, one audit row per refused read), never
+  // `internal` with the parser's message.
+  const desktopAllowlistFile = join(dirs.config, desktop.DESKTOP_ALLOWLIST_FILE);
+  const desktopAllowlist =
+    opts.desktop?.allowlist ??
+    new GuardedAllowlistStore(
+      new desktop.FileAllowlistStore({ path: desktopAllowlistFile }),
+      desktopAllowlistFile,
+      { audit: store.auditLog, clock },
+    );
+  const desktopController = new desktop.DesktopController({
+    adapter:
+      opts.desktop?.adapter ??
+      desktopDetection?.adapter ??
+      new UnavailableDesktopAdapter(
+        desktopDetection ?? { platform: currentPlatform(), missing: ["desktop adapter"] },
+      ),
+    binding: desktopBindingResolver({
+      extensions: store.extension,
+      projects: store.project,
+      humans: store.human,
+      allowlist: desktopAllowlist,
+    }),
+    indicator: new desktop.CompositeIndicator([
+      new BusIndicator(events),
+      ...(opts.desktop?.indicator ? [opts.desktop.indicator] : []),
+      new desktop.LogIndicator(),
+    ]),
+    audit: ports.audit,
+    clock,
+    kill,
+    approvals: new desktop.HumanRequestDesktopApprovals(store.humanRequest),
+    // Under the data dir of this install (never a worktree); `dirs` honours FORERUNNER_HOME.
+    screenshotDir: (agentId) =>
+      join(dirs.data, "desktop", safeSegment(agentId, "agent"), "screenshots"),
+  });
+  desktopController.attachKillSwitch(kill);
+  desktopController.attachExtensionRegistry(extensions);
+  desktop.registerDesktopTools(tools, desktopController);
   const registry = loadRegistry(registryDir, { toolNames: tools.names() });
   const specialists = specialistSpecFrom(registry);
   const toolsForRun = (): ToolRegistry => {
@@ -718,12 +866,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       promptVersion: registry.critic.promptVersion,
       max_effort: registry.critic.max_effort,
     },
-    pricing: (modelId) => pricingForProvider(provider, modelId),
+    pricing: (modelId) => pricingForProvider(provider, modelId, pricingTable),
     billingSourceId,
     criticAgentId: criticAgent.id,
     context,
     memory,
     worktreeRoot: dirs.worktrees,
+    // The tables in force at every review's pick (ADR 0039): an adopted sonnet or opus rung
+    // moves the tier-1 and tier-2/3 reviews with the executor and the chat.
+    modelConfig: () => modelConfig.get(),
   });
   const makeLoop = (worktree?: string) =>
     new LoopTaskExecutor({
@@ -732,8 +883,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       tokens,
       driver,
       provider: provider ?? unavailableProvider(),
+      // Priced at the sonnet rung in force; the tables follow an adopt (ADR 0039).
       pricing: provider
-        ? pricingForProvider(provider, defaultModelFor(provider))
+        ? livePricing(provider, () => rungModelFor(provider, "sonnet"))
         : { estimate: () => 0, cost: () => 0 },
       tools,
       toolsFor: toolsForRun,
@@ -742,8 +894,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       billingSourceId,
       specialists,
       memory,
+      modelConfig: () => modelConfig.get(),
       ...(worktree ? { worktreeFor: async () => worktree } : {}),
-      onEvent: (taskId, ev) => events.emit("run", { taskId, ev }),
+      onEvent: (taskId, ev) => {
+        events.emit("run", { taskId, ev });
+        // The run's teardown: the desktop indicator goes off when nothing else is active.
+        if (ev.type === "run_end")
+          desktopController.endRun(taskId).catch((e: unknown) => {
+            logger.warn("desktop indicator did not turn off", { taskId, error: errorMessage(e) });
+          });
+      },
     });
   const executor = new PrTaskExecutor({
     store,
@@ -851,11 +1011,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
 
   // Model watch (spec D): providers, pricing (built-in plus <config>/pricing.json), a price
   // list only when one is configured, the eval sets through the loop driver, decisions as
-  // human requests. Nothing changes a ladder or a price without a recorded "adopt".
-  const modelSettings = new FileModelSettingsStore({
-    configDir: dirs.config,
-    nowIso: () => clock.nowIso(),
-  });
+  // human requests. Nothing changes a ladder or a price without a recorded "adopt"; after one,
+  // `onAdopted` swaps the tables in force so the next run uses them (ADR 0039).
   const priceListUrl = opts.priceListUrl ?? priceListUrlFromEnv(env);
   const priceList: PriceListSource = priceListUrl
     ? new FetchPriceListSource({ url: priceListUrl, fetch: opts.fetchImpl })
@@ -889,6 +1046,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     agentId: agent.id,
     pricing: BUILTIN_PRICING,
     ...(provider ? { evalProvider: provider.name } : {}),
+    onAdopted: (ev) => {
+      modelConfig.adopt(ev.config);
+      pricingTable = ev.pricing;
+      logger.info("model settings adopted", { reportId: ev.reportId, applied: ev.applied });
+    },
   });
 
   // Updates (spec M) over this process's store; a bad update.json is reported, not fatal.
@@ -1140,12 +1302,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         tokens,
         kill,
         provider,
-        pricing: pricingForProvider(provider, chatModelFor(provider)),
+        // The text_chat rung in force (haiku by default); the tables follow an adopt.
+        pricing: livePricing(provider, () =>
+          rungModelFor(provider, modelConfig.get().modeDefaults.text_chat.tier),
+        ),
         billingSourceId,
         hooksDriver: driver,
         startSession: (req) => scheduler.request(req),
         prompt: registry.principals.get("conversation-agent")?.prompt,
-        modelId: chatModelFor(provider),
+        modelConfig: () => modelConfig.get(),
         commands,
       })
     : null;
@@ -1216,7 +1381,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     updateConfig,
     restarter,
     modelWatch,
+    modelConfig: () => modelConfig.get(),
+    pricingTable: () => pricingTable,
     estimates,
+    desktop: { controller: desktopController, allowlist: desktopAllowlist, detect: desktopDetect },
+    data: { assets: dataAssets, importer: dataImporter },
     mirror,
     sandbox: { port: sandboxPort, detection: sandboxDetection },
     notifier,
@@ -1233,6 +1402,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       commands.stop();
       context.close();
       managedHeadroom?.stop();
+      await desktopController.close().catch((e: unknown) => {
+        logger.warn("desktop controller did not close cleanly", { error: errorMessage(e) });
+      });
       await extensions.close();
       await updates.close();
       await store.close();
@@ -1395,21 +1567,16 @@ function hostOf(url: string): string {
   }
 }
 
-/** Real providers price from the billing table; fake providers count one micro-USD per token. */
-function pricingForProvider(p: ModelProvider | null, modelId: string) {
-  if (p && p.name === "anthropic") return pricingFor(modelId);
+/**
+ * Real providers price from the billing table in force (built-ins plus the adopted
+ * overrides); fake providers count one micro-USD per token.
+ */
+function pricingForProvider(p: ModelProvider | null, modelId: string, table?: PricingTable) {
+  if (p && p.name === "anthropic") return pricingFor(modelId, table);
   return {
     estimate: (i: number, o: number) => i + o,
     cost: (u: { input_tokens: number; output_tokens: number }) => u.input_tokens + u.output_tokens,
   };
-}
-
-/** The ladder picks tier ids per provider; sessions default to the sonnet rung. */
-function defaultModelFor(p: ModelProvider): string {
-  return p.name === "anthropic" ? "claude-sonnet-5-5" : "fake-sonnet";
-}
-function chatModelFor(p: ModelProvider): string {
-  return p.name === "anthropic" ? "claude-haiku-5-5" : "fake-haiku";
 }
 
 function unavailableProvider(): ModelProvider {

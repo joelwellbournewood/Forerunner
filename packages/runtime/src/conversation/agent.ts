@@ -13,6 +13,7 @@ import type {
   ParsedIntent,
 } from "../loop/ports.ts";
 import { MODE_DEFAULTS, modelIdFor } from "../models/ladder.ts";
+import type { EffectiveModelConfig } from "../models/settings.ts";
 import type { ModelProvider } from "../provider/types.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { isYes } from "../wiring/state-ports.ts";
@@ -44,6 +45,12 @@ export interface ConversationDeps {
   /** Per-conversation-turn budget. Default USD 0.05. */
   turnBudgetUsdMicro?: number;
   modelId?: string;
+  /**
+   * The ladder and effort table in force, read per turn (spec D, ADR 0039): the `text_chat`
+   * mode's tier, effort and target come from it, so an adopted change applies to the next
+   * turn without a restart. Absent: the built-in tables.
+   */
+  modelConfig?: () => EffectiveModelConfig;
   /** The command registry port (spec Q). Absent: read-only chat. */
   commands?: ConversationCommands;
 }
@@ -234,8 +241,11 @@ export class ConversationAgent {
     const tools = new ToolRegistry();
     for (const t of this.deps.commands?.tools(turn, (r) => results.push(r)) ?? [])
       tools.register(t);
+    // The chat mode's tier, effort and target from the tables in force (ADR 0039).
+    const modelConfig = this.deps.modelConfig?.();
+    const textChat = modelConfig?.modeDefaults.text_chat ?? MODE_DEFAULTS.text_chat;
     const model =
-      this.deps.modelId ?? modelIdFor(MODE_DEFAULTS.text_chat.tier, this.deps.provider.name);
+      this.deps.modelId ?? modelIdFor(textChat.tier, this.deps.provider.name, modelConfig?.ladder);
     const budget = new SessionBudget({
       sessionId,
       budgetUsdMicro: this.deps.turnBudgetUsdMicro ?? 50_000,
@@ -279,7 +289,7 @@ export class ConversationAgent {
       pricing: this.deps.pricing,
       timeoutMs: 30_000,
       maxTokensPerCall: 400,
-      effort: MODE_DEFAULTS.text_chat.effort,
+      effort: textChat.effort,
       maxTurns: 4,
       label: "conversation",
       protected: true,
@@ -312,10 +322,10 @@ export class ConversationAgent {
         result.outcome === "completed"
           ? "Done."
           : `I could not answer (${result.error?.message ?? result.outcome}).`;
-    if (ttft !== null && ttft > MODE_DEFAULTS.text_chat.targetMs)
+    if (ttft !== null && ttft > textChat.targetMs)
       this.logger.warn("chat first token over target", {
         ttftMs: ttft,
-        target: MODE_DEFAULTS.text_chat.targetMs,
+        target: textChat.targetMs,
       });
     await store.event.append(
       sessionId,

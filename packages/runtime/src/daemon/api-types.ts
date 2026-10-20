@@ -711,6 +711,20 @@ export type DaemonSseEvent =
       event: "restart.requested";
       data: { reason: string; targetVersion: string; fromVersion: string; exitCode: number };
     }
+  /** Desktop control's on-screen indicator (spec S.32): the shells show a banner while `on`. */
+  | {
+      event: "desktop.indicator";
+      data: {
+        on: boolean;
+        agentId?: string;
+        sessionId?: string;
+        runId?: string;
+        humanId?: string;
+        app?: string;
+        message?: string;
+        at?: string;
+      };
+    }
   | { event: "heartbeat"; data: { at: string } };
 
 /**
@@ -806,6 +820,23 @@ export const DAEMON_ROUTES = {
     "GET /cloudflare/projects/:projectId/settings (settings with the secret by reference, scope)",
   cloudflareToken:
     "GET /cloudflare/projects/:projectId/token (verifyToken: status, expiry, scopes, warnings)",
+  desktopStatus:
+    "GET /desktop/status (DesktopStatus plus detection: platform, display server, available, found, missing, notes)",
+  desktopAllowlist:
+    "GET /desktop/allowlist/:humanId ({ humanId, entries }; a human's own list only)",
+  setDesktopAllowlist:
+    "PUT /desktop/allowlist/:humanId { entries } ({ humanId, entries }; 400 validation, 403 another human's id; one audit row)",
+  desktopRevoke:
+    "POST /desktop/revoke { reason? } (live revocation: interrupts and drops desktop actions, refuses until resume; open to any caller)",
+  desktopResume: "POST /desktop/resume (the signed-in human resumes; DesktopStatus)",
+  dataAssets: "GET /projects/:id/data (DataAssetView[])",
+  registerDataAsset:
+    "POST /projects/:id/data { locator, kind?, mode?, name?, sizeBytes? } | multipart file (+ kind, name) (201 DataAssetView; 413 above the upload cap)",
+  importData:
+    "POST /projects/:id/data/import { source: zip|folder, path|locator, copy? } (ImportResultView; 400 for a hostile archive, nothing written)",
+  dataAsset: "GET /data/:id (DataAssetView)",
+  dataSample: "GET /data/:id/sample?rows=&bytes= (DataSample, capped by the data limits)",
+  removeDataAsset: "DELETE /data/:id ({ ok, id, deletedFromDisk }; needs the daemon's human)",
   events:
-    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, notification, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts)",
+    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, notification, desktop.indicator, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts)",
 } as const;

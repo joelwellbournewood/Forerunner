@@ -495,6 +495,88 @@ secret by reference, scope) and `GET /cloudflare/projects/:projectId/token` (`ve
 status, expiry, scopes, warnings). No configuration key: the account, zones, secret reference
 and API base are per project.
 
+**Adopted model settings (`src/wiring/model-config.ts`, spec D.6, D.21; ADR 0019, ADR 0039;
+`model-watch.md` has the module).** The ladder and effort table in force are one
+`EffectiveModelConfigHolder` per process: `readEffectiveModelConfig` reads
+`<config>/models.json` through `FileModelSettingsStore` at compose and applies it to
+`builtinModelConfig()` (`applyModelSettings`). Every consumer reads `holder.get()` at the
+start of a run or a turn, never once: `LoopTaskExecutor` (`modelConfig` dep) passes
+`ladder` to `modelIdFor` and `modeDefaults` to `effortForTask`, `ConversationAgent`
+(`modelConfig` dep) takes the `text_chat` tier, effort and response target from it,
+`CriticLoop` (`modelConfig` dep) hands the critic package `ladder` and `modeDefaults` as
+accessors over the holder, read at every review's pick (`pickCriticModel`) and when the rung
+a failed run sat on is looked up for the retry ladder, and the pricing closures of the
+executor, the chat and the critic (`livePricing` and the critic's `pricing` in `compose.ts`)
+price the rung in force from the pricing table in force (`loadPricing` of
+`<config>/pricing.json` over the built-ins). `ModelWatch.onAdopted` swaps both in place (`holder.adopt`, the table), so after a
+human's "adopt" in the inbox, the updates screen or `fr models` the next session runs the
+adopted rung at the adopted effort and the next chat turn uses the adopted chat rung, with no
+restart; the audit row `model_watch.reload` records the hand-over. A `models.json` that does
+not parse is ignored in favour of the built-ins with one `audit_log` row
+(`model_settings.read`, `allowed=false`, the file name and the parser's message, never the
+document's content) and a warning; a parsing file with overrides leaves one `allowed=true` row.
+`RuntimeApp.modelConfig()` and `RuntimeApp.pricingTable()` expose both; the `CostLedger`
+keeps the table it was built with until the next start (it prices savings views, not calls).
+The old hardcoded chat and session model names are gone: the rung lookup on the tables in
+force decides (`rungModelFor` in `compose.ts` is `modelIdFor` on the ladder in force, called
+per run by the pricing closures and the chat; a provider the ladder does not know throws
+there as in the executor, so `ladder.ts` stays the one source of model ids).
+
+**Desktop control (`@forerunner/capabilities` `desktop`, spec L.4, S.32; ADR 0021, ADR 0039;
+`desktop-control.md` has the module).** `composeRuntime` builds one `DesktopController` per
+daemon and registers the six `desktop_*` tools (`registerDesktopTools`) into the built-in
+`ToolRegistry` next to the file and Cloudflare tools, so every run token lists them and the
+hooks (allowlist, `read`/`non_routine` classes, autonomy, audit) and the extension gate apply
+as to any tool; the gate inside each tool then decides on the binding
+`desktopBindingResolver` (`src/wiring/desktop-ports.ts`) resolves per call: `enabled` from the
+`desktop-control` extension row read by name (installed, enabled, neither pending nor errored;
+off until a human adds it from the catalog and approves it in the inbox), `autonomy` from the
+run's project's `autonomy_level` (the human's `default_autonomy` without a project), the
+human's allowlist from `FileAllowlistStore` at `<config>/desktop-allowlist.json` behind
+`GuardedAllowlistStore` (a file that is not JSON or not an allowlist is `validation` naming
+the file on every tool call and on the routes, with one `desktop_allowlist.read` audit row
+per refused read and a warning, never `internal` carrying the parser's message; the next
+call reads the file again, so a fix needs no restart), and `screenshotsToModel: false` (the
+runtime does not forward image artifacts). The adapter is
+`detectAdapter()` once at compose; a machine without a usable desktop gets
+`UnavailableDesktopAdapter`, whose every action refuses with `not_supported` naming what is
+missing (after the gate, so the refusal is an audit row like any denial; never a fake adapter
+in production). The indicator is `CompositeIndicator([BusIndicator, LogIndicator])`:
+`BusIndicator` emits `desktop.indicator` `{ on, agentId, sessionId, runId, humanId, app,
+message, at }` on the runtime bus and `/events` streams it to every shell, which shows its
+banner while `on` is true. The kill switch (`attachKillSwitch`) and the extension registry
+(`attachExtensionRegistry`: a toggle off or a removal revokes live, a toggle on resumes) are
+attached; the executor's `run_end` event calls `controller.endRun` so the indicator goes off
+with the run. The approval port for "allow this application for this session" is
+`HumanRequestDesktopApprovals` over `store.humanRequest` (a blocking request in the inbox).
+Screenshots go to `<data>/desktop/<agent>/screenshots`. Routes (`server.ts`,
+`desktopRouteTable` adapted to Hono, in `DAEMON_ROUTES`): `GET /desktop/status` (controller
+status plus detection), `GET|PUT /desktop/allowlist/:humanId` (the daemon's human only; another
+id answers 403; a write is one audit row), `POST /desktop/revoke` (open to any caller),
+`POST /desktop/resume` (the daemon's human). The catalog entry `desktop-control` names exactly
+the six tools with the classes `read` and `non_routine`, which the gate checks against the
+installed row and `revokeLive` uses to revoke the tokens that carry them. `ComposeOptions.desktop`
+injects the adapter, detection, allowlist store and an extra indicator (tests use
+`FakeDesktopAdapter` and `MemoryAllowlistStore`); `RuntimeApp.desktop` exposes the controller,
+the allowlist store and detection; `close()` stops the controller.
+
+**Files and data (`src/data`, spec L.1, A.3, K.2, U.4; ADR 0039; `data.md` has the module).**
+`composeRuntime` builds `DataAssets` with `projectsRoot = <data>/projects` (`FORERUNNER_HOME`
+honoured through `dirs`; `ComposeOptions.data` overrides the root and the limits) and
+`DataImporter` over it, and registers `data_list`, `data_describe`, `data_sample` and
+`data_register` (`registerDataTools`) into the built-in `ToolRegistry`, so they run behind the
+hooks like any tool: their untrusted output is wrapped and scanned, `data_sample` above the
+cap is refused by the schema before the tool runs, and `data_register` for a path outside the
+run's allowed roots or a URI asks the human through the hooks' own `StateApprovals`
+(`capability_grant`, a blocking request in the inbox) and fails with `approval_required` until
+the answer. `server.ts` mounts `createDataRoutes({ assets, importer, actor: () => ({ humanId }) })`
+at the root (`GET /projects/:id/data`, `POST /projects/:id/data` JSON or multipart,
+`POST /projects/:id/data/import`, `GET /data/:id`, `GET /data/:id/sample`, `DELETE /data/:id`,
+all in `DAEMON_ROUTES`, the shapes the UI's data tab and the CLI import target); the daemon's
+human is the actor, so a delete always has one and removal never goes through a tool.
+`worktreeFor` is not set: the daemon's worktrees are per task and the data dir lies outside
+them (ADR 0039 point 12). `RuntimeApp.data` exposes the registry and the importer.
+
 `server.ts` is the HTTP surface the desktop, Android and web shells talk to. Hono, bound to
 `127.0.0.1` only; every request carries `Authorization: Bearer <token>` compared with
 `timingSafeEqual`. The token is written to `<runtime dir>/daemon.json` (mode 0600) together
@@ -535,7 +617,11 @@ human decides; the request never blocks on the approval, the run finishes in the
 once `POST /requests/:id/answer` approves it and `project.changed` follows). `/health` gained
 `sandbox` and `extensions: { enabled, pending }` (`sandbox.reason` is the engine probe's text;
 the route is unauthenticated but loopback-only); `/events` also streams `extension.changed`,
-`restart.requested` and `notification`. The notification routes (`GET|PUT /notifications/prefs`,
+`restart.requested`, `notification` and `desktop.indicator`. The desktop control routes
+(`GET /desktop/status`, `GET|PUT /desktop/allowlist/:humanId`, `POST /desktop/revoke`,
+`POST /desktop/resume`) and the Data tab routes (`GET|POST /projects/:id/data`,
+`POST /projects/:id/data/import`, `GET /data/:id`, `GET /data/:id/sample`, `DELETE /data/:id`)
+are mounted as described above. The notification routes (`GET|PUT /notifications/prefs`,
 `POST /notifications/test`, `GET /notifications/recent`, `GET /notifications/pending`) and the
 Cloudflare panel routes (`GET /cloudflare/projects/:projectId/settings|token`) are mounted the
 same way (see "Notifications" and "Cloudflare deploys" above). Each sub-app keeps its module's
@@ -620,7 +706,7 @@ cross-turn reference names an existing result of the same transcript by its tran
 and only lines that were sent; `executor-context.test.ts`: Run row
 fields and `headroom_used` with a proxyable versus a plain provider, cost view priced from the
 Run rows; `session-context.test.ts`: `headroom_saved_tokens` on the session and the
-`context.headroom_unavailable` event; `views.test.ts`: cost view savings money), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE with the restart event, `stop()` returning while `/events` is held open on a real socket), wiring (`wiring.test.ts`: extensions from catalog to a refused tool, model watch report and inbox decision, updates screen, mirror sync answering 202 then running on the inbox answer, estimates accuracy, sandboxed `run_command`, a refused lease closing the Run row, the eval runner keeping the model's command in the sandbox lease and offering only the specialist's tools, CLI registration and one-shot composition; `notifications-wiring.test.ts`: the notifier and its producers on the real sources through the daemon, the prefs routes and their audit row, the `notification` SSE frame, quiet hours through the route, the Telegram token never leaving the vault's reach, the email channel over the agent mailbox; `packages/capabilities/test/cloudflare-wiring.test.ts`: the Cloudflare tools and routes through the daemon's hooks, gate and bearer token), hooks (overspend, steps, wall clock, kill, allowlist, schema,
+`context.headroom_unavailable` event; `views.test.ts`: cost view savings money), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE with the restart event, `stop()` returning while `/events` is held open on a real socket), wiring (`wiring.test.ts`: extensions from catalog to a refused tool, model watch report and inbox decision, updates screen, mirror sync answering 202 then running on the inbox answer, estimates accuracy, sandboxed `run_command`, a refused lease closing the Run row, the eval runner keeping the model's command in the sandbox lease and offering only the specialist's tools, CLI registration and one-shot composition; `notifications-wiring.test.ts`: the notifier and its producers on the real sources through the daemon, the prefs routes and their audit row, the `notification` SSE frame, quiet hours through the route, the Telegram token never leaving the vault's reach, the email channel over the agent mailbox; `packages/capabilities/test/cloudflare-wiring.test.ts`: the Cloudflare tools and routes through the daemon's hooks, gate and bearer token; `model-config-wiring.test.ts`: `models.json` applied at compose to the chat rung, a session on the built-in rung and effort, the model watch proposing a switch and a lower effort on a fake eval runner, the human's adopt through the inbox swapping the tables so the next session runs the adopted rung at the adopted effort and the critic reviews on the adopted rung without a restart, a malformed file ignored with an audit row and its content kept out of the log; `packages/capabilities/test/desktop-wiring.test.ts`: the six desktop tools behind the daemon's hooks and gate, off until installed, the allowlist and status routes, an app outside the allowlist refused and put to the human, an allowlisted app run through the fake adapter with the indicator on the bus and as the `desktop.indicator` frame on `/events` (on with the app, off at `endRun`), a panel toggle revoking live; `desktop-wiring.test.ts` (runtime): the guarded allowlist file, a file that is not JSON or not an allowlist answering `validation` naming the file on the routes and on every tool call with a `desktop_allowlist.read` audit row and the parser's snippet kept out of the error, the audit log and the log, a fixed file read at the next call; `data-wiring.test.ts`: a folder import through the daemon route in the registry and the project's listing, the data tools behind the hooks, a zip-slip archive refused whole, a path outside the run's roots refused as a capability grant), hooks (overspend, steps, wall clock, kill, allowlist, schema,
 paths, domains, secrets, autonomy, injection), ladder, brief, loop driver (completion, overspend
 blocked, step cap, kill mid-run, timeout with partial output, inline denials, needs-human pause,
 injection flagged).
@@ -637,7 +723,18 @@ sessions, budget stops, kill switch, updates and escalations, with quiet hours, 
 channels the daemon wires). Test: `test/notifications-wiring.test.ts`. J.9, J.10, S.5, S.6 and
 S.9 for Cloudflare deploys (staging and production through the daemon's hooks and approvals,
 the token's scopes through the panel routes, every action audited). Test:
-`packages/capabilities/test/cloudflare-wiring.test.ts`.
+`packages/capabilities/test/cloudflare-wiring.test.ts`. D.6 and D.21's "human approves" and
+M.5's model updates (an adopted switch or lower effort takes effect on the next session, chat
+turn and critic review without a restart; a malformed settings file never changes a model).
+Test: `test/model-config-wiring.test.ts`. L.4 and S.32 (desktop control off by default, the
+per-app allowlist, autonomy 3+ and screenshots logged, all through the daemon's hooks, gate and
+routes; the indicator as the `desktop.indicator` frame on `/events`; an allowlist file that
+does not read refusing every action as `validation` naming the file). Tests:
+`packages/capabilities/test/desktop-wiring.test.ts`, `test/desktop-wiring.test.ts`. L.1, A.3
+(ZIP and folder), K.2's Data tab
+and U.4's data assets (import, listing, describe and sample through the daemon; the data tools
+behind the hooks; a path outside the run's roots as a capability grant). Test:
+`test/data-wiring.test.ts`.
 
 ## Known issues
 
@@ -680,3 +777,16 @@ the token's scopes through the panel routes, every action audited). Test:
   header), that rule can go and only declared shells will count.
 - Cloudflare: the session grant's domain allowlist is unchanged (the tools declare no domain
   fields); a bridged tool that should reach `api.cloudflare.com` would need the grant extended.
+- Model settings: the `CostLedger` keeps the pricing table it was built with until the next
+  start (savings views only; calls are priced from the table in force); an adopt answered in a
+  CLI one-shot (`fr models watch` composes its own runtime) reaches a running daemon at its
+  next start, answers in the inbox or the updates screen apply at once.
+- Desktop control: the shells do not render the `desktop.indicator` frame yet (the log line is
+  the visible indicator until they do); `screenshotsToModel` is always false because the
+  runtime does not forward image artifacts; the module's audit rows carry no token id
+  (`ToolExecutionContext` has none), the hooks' rows for the same call do; `/health` does not
+  report desktop availability (`GET /desktop/status` does).
+- Data: `worktreeFor` is unset (per-task worktrees, the data dir outside them), so the
+  gitignore guard runs only for callers that pass a worktree; the UI's data tab registers by
+  locator only and no `fr` command targets the import route yet, so imports go through
+  `POST /projects/:id/data/import` from a client.

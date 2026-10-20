@@ -50,12 +50,23 @@
       "module": "@forerunner/capabilities/desktop",
       "requiresAutonomy": 3,
       "permissions": {
-        "tools": ["desktop.screenshot", "desktop.click", "desktop.type", "desktop.open_app"],
+        "tools": [
+          "desktop_list_windows",
+          "desktop_focus",
+          "desktop_type",
+          "desktop_key",
+          "desktop_click",
+          "desktop_screenshot"
+        ],
         "actionClasses": ["read", "non_routine"],
         "domains": [],
         "paths": [],
         "secrets": [],
-        "scopes": ["control allowlisted applications on this machine"]
+        "scopes": [
+          "list, focus, type into, send keys to and click in applications on your desktop allowlist",
+          "screenshots of the active allowed window are saved under the app data dir and logged",
+          "only at autonomy 3 or more; a visible indicator is shown while active"
+        ]
       },
       "tags": ["desktop"]
     },
