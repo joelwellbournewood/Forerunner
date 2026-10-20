@@ -33,8 +33,9 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   commands reach the model path through the daemon's tools; a UI change names its source;
   the peer rollback wording names the shared state; the answer route writes the decision log.
   Two of three items reviewed and accepted (85, 88); the third's fix was cut off by the stop.
-- Android: four dispatches of `android.yml` built the APK; the hosted emulator never boots
-  (gates.md phase 5 row, BLOCKERS.md). The row stays pending for a machine with an emulator.
+- Android: four dispatches of `android.yml` built the APK and the emulator exited at once for
+  lack of disk space on the runner after the Tauri build (the verbose run 4 named it); the
+  workflow now frees the disk first. The emulator rows stay pending until a dispatch passes.
 - CI green on both OS at runs 84 and 85. Release criteria table filled in `gates.md`: not
   met, no release cut. Progress report 5 posted to the contact issue.
 
@@ -48,8 +49,9 @@ In this order, each item a wave of its own with the snapshot procedure in `AGENT
 3. Close the requirement rows marked "missing in code" in `BLOCKERS.md` (A.2, B.6, D.20, O.1,
    S.9, S.13, S.15/S.29, J.6/J.7) and then the "partly built" rows; each needs code, a test
    and its maintainer doc.
-4. Run the nine scenarios on a machine with an Android emulator (`node apps/mobile/e2e/run.mjs`),
-   then re-run every gate on the final build and fill the phase 8 "re-run" row.
+4. Dispatch `android.yml` (it now frees the runner's disk before the emulator starts); when the
+   emulator tests pass, record the phase 5 emulator row and scenario 9's Android run, then
+   re-run every gate on the final build and fill the phase 8 "re-run" row.
 5. Cut the release: tag `v1.0.0` (`release.yml` builds Windows, Linux and Android artefacts,
    writes the changelog section and signs the update manifest with `UPDATE_SIGNING_KEY`).
 Credentials: the API key and the subscription token used for the live runs must be revoked
