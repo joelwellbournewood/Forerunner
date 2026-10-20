@@ -12,12 +12,15 @@
     "test": "vitest run --project unit --dir test"
   },
   "dependencies": {
+    "@forerunner/billing": "workspace:*",
+    "@forerunner/capabilities": "workspace:*",
+    "@forerunner/commands": "workspace:*",
     "@forerunner/platform": "workspace:*",
     "@forerunner/runtime": "workspace:*",
     "@forerunner/state": "workspace:*",
     "@forerunner/vault": "workspace:*",
-    "@forerunner/capabilities": "workspace:*",
-    "@forerunner/commands": "workspace:*",
+    "@hono/node-server": "^2.1.5",
+    "hono": "^4.13.13",
     "zod": "^4.6.7"
   },
   "devDependencies": {

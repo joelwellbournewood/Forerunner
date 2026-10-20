@@ -3,17 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The nine release scenarios.",
+  "description": "The nine release scenarios and the phase gate harnesses (phase 3 critic calibration and escalation ceiling, phase 4 four simulated weeks of memory).",
   "exports": {
     ".": "./src/index.ts",
     "./*": "./src/*.ts"
   },
   "scripts": {
-    "test": "vitest run --project unit --dir test"
+    "test": "pnpm -w exec vitest run --project e2e tests/e2e/scenarios",
+    "test:gates": "pnpm -w exec vitest run --project e2e tests/e2e/scenarios/phase3-gate.integration.test.ts tests/e2e/scenarios/phase4-gate.integration.test.ts"
   },
   "dependencies": {
+    "@forerunner/critic": "workspace:*",
+    "@forerunner/evals": "workspace:*",
+    "@forerunner/memory": "workspace:*",
     "@forerunner/platform": "workspace:*",
     "@forerunner/runtime": "workspace:*",
+    "@forerunner/state": "workspace:*",
     "@forerunner/testenv": "workspace:*",
     "playwright": "^1.64.1"
   },

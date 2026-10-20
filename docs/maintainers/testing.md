@@ -736,3 +736,225 @@ links are references, its instructions are reported not executed), Q.12 in part 
 pages, files and other people's email is never a request and cannot raise the agent's limits),
 and V.5's prompt-injection part (the security suite's injection run, in CI's unit job and as the
 `test:injection` gate command).
+
+## Gate harnesses
+
+Package: `tests/e2e` (`@forerunner/e2e`), the same package that will hold the nine release
+scenarios. Two harnesses run the phase 3 and phase 4 gates of the build order end to end on the
+fake provider, with no network: the real session runner, the real task executor with the
+built-in file tools in a worktree per task, the real critic loop, the real memory loop, an
+in-memory SQLite store and a `SimulatedClock`. They prove the plumbing and the rules in code;
+the live-model run of the phase 3 calibration is a separate opt-in (below) and is what turns
+the gate row into "passed".
+
+Files: `tests/e2e/src/world.ts` (the world: `gateWorld()`, `WorktreeDiffPort`,
+`RecordingPlanner`, the script helpers `criticTurn`, `specialistTurn`, `submitReview`,
+`closingReply`, `lessonsSection`), `tests/e2e/src/eval-defects.ts` (the scripted critic for the
+eval sets: `defectMarker`, `evidenceShowsDefect`, `evalCriticScript`),
+`tests/e2e/src/four-weeks.ts` (`CODER_FAMILIES`, `RESEARCHER_FAMILIES`, `familyScript`,
+`runFourWeeks`, `repeatStats`, `formatFourWeeks`), and the two scenario files
+`tests/e2e/scenarios/phase3-gate.integration.test.ts` and
+`tests/e2e/scenarios/phase4-gate.integration.test.ts`. The root `vitest.config.ts` runs
+`tests/e2e/scenarios/**/*.test.ts` in the `e2e` project (30 min test timeout, no file
+parallelism); the integration project does not include `tests/e2e`.
+
+### How it works
+
+**The world** (`gateWorld`). One human (J), two principal agents (Alice, Bob) and the critic
+agent; `EnforcementHooks` over the store's ledger, audit log and approvals (`statePorts`), so
+every tool call of every run leaves an audit row; a `FakeProvider` in script mode with
+`onNoMatch: "throw"` (a gap in the script fails the run instead of echoing); the real registry
+prompts for the coder, the researcher and the critic (`loadRegistry(resolveRegistryDir().dir)`),
+the specialists narrowed to the `write_file` and `read_file` tools of
+`@forerunner/runtime/daemon/tools` with small caps; `LoopTaskExecutor` with a worktree per task
+under a temp root (the session grant allows that root, the derived run token the task's
+worktree); `CriticLoop` with `WorktreeDiffPort`, which renders every file the specialist left in
+the worktree as a new-file diff (`renderFilesAsDiff` from the critic package) in place of the
+git diff; `MemoryLoop` on a temp memory root; `SessionRunner` with a `RecordingPlanner` that
+keeps every brief text so the harness can count the lessons section itself. Pricing is flat (one
+token = one micro-USD). `startSession` tags every session event with the agent and project;
+`reviewContext(projectId, budgetUsdMicro?)` gives `calibrate()` a session token and a budget,
+and that budget is the hard cap of a live run (the hooks refuse a call past it).
+
+**Phase 3, calibration** (`phase3-gate.integration.test.ts`, first block). `calibrate()` from
+`@forerunner/critic` runs at tier 1 over the two real eval sets (`evals/registry/evals/coder`,
+`evals/registry/evals/researcher`, 20 tasks each, loaded with `loadEvalSet`). The scripted
+critic judges from the evidence it is given: for every task `defectMarker` picks the longest
+line the seeded-defect files add that the reference solution does not contain and that no clean
+fixture, brief, criterion or expected text of any task contains either (`cleanCorpus`); when
+every added line also occurs in a clean fixture (coder-004's half-done rename, coder-008's
+guard dropped from a line), the marker is the longest line of the reference solution the defect
+removes, judged by its absence from the diff (`kind: "missing"`). A rule per task answers
+`revise` with a `major` finding when `evidenceShowsDefect` holds on the critic's first user
+message (the rendered evidence, which carries the diff of the files on disk), a fallback rule
+accepts, and the closing turn answers the tool result. The test asserts: 40 markers, all
+distinct, at least 38 `added`; the report counts (40 clean reviewed and accepted, 40 seeded
+reviewed and caught), the rates against `CALIBRATION_THRESHOLDS` (0.8 / 0.9) and `gate.ok`;
+per task the clean verdict `accept` with no finding and the seeded verdict `revise` with at
+least one; coder defects also fail a mechanical check while researcher clean results wait on
+the rubric (`needs_model`); exactly one first-turn critic request per marker, carrying
+`# Review request`, `Subject: task <id>`, `+++ b/<file>` and the criteria; nothing persisted
+(calibration reviews with `persist: false`); the JSON report on disk with the gate. The world
+runs on the simulated clock but `calibrate()` is given `systemClock`: the report is evidence of
+a real run, so its `date`, `startedAt`, `durationMs` and file name carry the day it ran, not the
+simulated date (the test asserts the date is the run's day and the file is
+`calibration-<that date>.json`). The formatted report (`formatCalibrationReport`) is printed
+and, with `FORERUNNER_E2E_REPORT_DIR` set, written there as `phase3-calibration.txt` next to
+the JSON.
+
+**Phase 3, escalation ceiling** (second block). One coder task whose scripted specialist always
+writes the defective file (`familyScript([family], { alwaysDefective: true })`) and whose
+scripted critic always finds the marker in the diff and answers `revise`. Sessions run one after
+another (the clock advances an hour between them) until the task leaves the ladder. With
+`settings.critic_ceiling: "sonnet"` the decisions are `revise:improve_brief`,
+`revise:split_or_change_specialist`, then `human`: the task is `needs_human` at attempt 3 with
+one blocking request naming the ceiling, every Run row of the task (three coder runs, three
+critic runs) is on `fake-sonnet`, no `critic.verdict` event names `nextTier: "opus"` and the
+only `escalation` flag is the hand-over to the human; three reviews, three findings with one
+fingerprint, the pattern in `FindingRepo.repeated(3)` and a critic-scope lesson
+("Repeated critic finding ...") recorded through the memory port; the audit log has a row per
+tool call and no denial. With `critic_ceiling: "opus"` the third failure escalates
+(`nextTier: "opus"`), the fourth run is on `fake-opus` and the fourth verdict goes to the
+human; nothing runs on `fake-fable`.
+
+**Phase 4, four simulated weeks** (`four-weeks.ts`, `phase4-gate.integration.test.ts`). Two
+projects shaped after the eval sets ("Coder evals", Alice; "Researcher evals", Bob), with
+`memory_token_budget: 600` and `task_memory_token_budget: 300`. The work arriving each day is of
+a few recurring kinds (`DefectFamily`): seven per project, four arriving in week 1, two in week
+2, one in week 3, every kind recurring daily once it has arrived (336 tasks over 28 days). Each
+kind has one characteristic defect: the scripted specialist writes the defective file unless
+its brief carries the lesson about it, meaning the family's finding text inside the lessons
+section the executor loads from memory (`lessonsSection`, from the `# Lessons from memory` or
+`# Standing notes` header to the end), or the open finding of a retry (`Critic findings to
+resolve`). The lessons travel in the specialist's first user message, not in its system
+prompt: `LoopTaskExecutor` appends the lessons block to the rendered brief
+(`packages/runtime/src/session/executor.ts`), which is why the script reads the brief
+(`briefOf`) rather than matching on `systemIncludes`. The scripted critic answers `revise`
+with the family's finding (same wording every
+time, so the same fingerprint) when the family's marker line is in the diff, `accept`
+otherwise. One session per agent per day (`trigger: "schedule"`, Alice at +1 h, Bob at +2 h);
+at the end of every seventh day `MemoryLoop.propose()` files the consolidation proposals, the
+harness answers `apply` in the inbox and `syncApprovals()` applies them.
+
+The repeat-finding rate is computed from the store, not from the harness's bookkeeping
+(`repeatStats`): sessions in `started_at` order, a finding counts as a repeat when its
+fingerprint was produced by an earlier session, the rate of a week is repeats over task reviews
+written in that week. Memory per session is measured three ways: the runner's `memory.loaded`
+event (`tokens`, `budget`), `estimateTokens(lessonsSection(brief))` on every captured planner
+brief, and `estimateTokens(lessonsSection(first user message))` on every specialist request the
+fake provider saw. The test asserts the rate is positive in week 1, never rises week over week,
+is lower in week 4 than in week 1 and is 0 in week 4; no task reached the human and no review
+failed; every session count and every brief count is at or under the budget, the maxima are
+above half the budget (the budget is approached, not idle), and no `memory.over_budget` drop
+happened; at least one private lesson per kind and agent, at least one critic pattern lesson,
+four consolidation rounds. The same four weeks then run without the memory port as the control
+(`runFourWeeks({ memory: false })`): the rate in week 4 is at least the rate in week 1, week 1 is
+higher than with memory, and the total repeats are more than four times higher. Both reports
+(`formatFourWeeks`) are printed and written to `FORERUNNER_E2E_REPORT_DIR` when it is set.
+
+Measured on 2026-10-20 (fake provider, 76 s for both files): with memory the weekly repeat
+rates are 11.1%, 4.3%, 2.0%, 0.0% (72, 92, 102, 98 task reviews; 16, 8, 4, 0 findings; 8, 4,
+2, 0 repeats), memory per session at most 597 of 600 tokens over 56 sessions and per
+specialist brief at most 264 of 300 over 364 briefs, 14 private and 14 critic lessons, 728 audit
+rows with no denial; without memory 46.2%, 48.8%, 49.5%, 50.0% (322 repeats over 658 reviews).
+
+Why the curve has this shape: a kind's lesson is recorded at the end of the session in which
+its retry resolved the finding, one day after the defect first appeared, so each kind repeats
+its defect exactly once (the day in between) and never again; the weekly rate then falls as
+new kinds stop arriving and lessons hold. Without memory every recurrence repeats. The arrival
+schedule is fixed in the harness and is what makes the decline gradual rather than a cliff; the
+control run is what shows the decline is memory's doing.
+
+### How to run
+
+```
+pnpm exec vitest run --project e2e tests/e2e/scenarios/phase3-gate.integration.test.ts
+pnpm exec vitest run --project e2e tests/e2e/scenarios/phase4-gate.integration.test.ts
+FORERUNNER_E2E_REPORT_DIR=<dir> pnpm exec vitest run --project e2e tests/e2e/scenarios   # keeps the evidence files
+pnpm --filter @forerunner/e2e test:gates                                                  # both files
+```
+
+The live-model run of the phase 3 calibration (the gate proper) is opt-in in the same file:
+
+```
+FORERUNNER_E2E_LIVE=1 FORERUNNER_ANTHROPIC_KEY=<key> FORERUNNER_ANTHROPIC_WORKSPACE_ID=<id> \
+  FORERUNNER_E2E_CALIBRATION_BUDGET_USD=10 FORERUNNER_E2E_REPORT_DIR=<dir> \
+  pnpm exec vitest run --project e2e tests/e2e/scenarios/phase3-gate.integration.test.ts -t "live model"
+```
+
+It runs `calibrate()` over both sets on `AnthropicMessagesProvider` at tier 1 (Sonnet, the
+production pick; `ANTHROPIC_API_KEY` is accepted in place of `FORERUNNER_ANTHROPIC_KEY`), with
+the real `pricingFor`, capped in code by the session budget (`FORERUNNER_E2E_CALIBRATION_BUDGET_USD`,
+default 10 USD: the hooks refuse a call past it), prints one line per task and the formatted
+report, writes `phase3-calibration-live.txt` and the JSON report to the report directory, and
+asserts the 0.8 / 0.9 thresholds. Without `FORERUNNER_E2E_LIVE=1` and a key it is reported as
+skipped. The Anthropic SDK reads `ANTHROPIC_BASE_URL` from the environment when the adapter is
+given no base URL, so unset it for the run unless the calls are meant to go through a proxy.
+The result and the cost go to `docs/status/gates.md` and `docs/status/COST.md`.
+
+CI: `.github/workflows/ci.yml` runs the `unit` and `integration` projects; the `e2e` project
+is not in it, so the harness files run locally until the workflow adds them (the two commands
+above, no Postgres, no Docker, no network).
+
+### How to change it
+
+- A new kind of work for the four weeks: add a `DefectFamily` to `CODER_FAMILIES` or
+  `RESEARCHER_FAMILIES` with a `marker` that is one line of the defective file and never a line
+  of the clean one, a `criterion` that shares words with the `finding` (the executor ranks
+  lessons against the task's title, outcome and criteria), and an `arrivesWeek`. Keep the
+  fixture content free of `${` (the fixtures are plain strings, built with `lines()`), of
+  credential shapes and of home-directory paths (the lesson lint refuses them).
+- The budgets: `SESSION_BUDGET` and `TASK_BUDGET` in the phase 4 test (the project settings
+  `memory_token_budget`, `task_memory_token_budget`); the assertions expect the maxima above
+  half of each.
+- The repeat definition: `repeatStats` in `four-weeks.ts`. It counts across sessions, as spec
+  H.5 words it; a same-session repeat is not counted.
+- The calibration critic: `evalCriticScript`. A task whose defect neither adds nor removes a
+  distinctive line lands in `withoutMarker` and its rule falls back to `Subject: task <id>`
+  plus a failed check; the test asserts that list is empty, so a new eval task needs a
+  detectable defect.
+- A gate threshold: `CALIBRATION_THRESHOLDS` in `packages/critic/src/calibration.ts` (ADR), not
+  here.
+- The tier the live run reviews at: `tier: 1` in the live test; tier 2 picks Opus and runs the
+  project's checks, which the eval runner already ran.
+
+### Tests
+
+The harnesses are the tests: `phase3-gate.integration.test.ts` (3 tests, 1 skipped without the
+live opt-in; 30 s) and `phase4-gate.integration.test.ts` (2 tests; 45 s; the with-memory run
+is made once in `beforeAll`, so each test also stands alone under `-t`). Both leave no files
+behind (temp roots are removed in `close()`), need no Postgres, no Docker and no network, and
+run on Windows and Linux (paths through `@forerunner/platform`, worktrees under `os.tmpdir()`).
+
+### Known issues
+
+- The e2e vitest project is not in CI yet (see "How to run"); the gate rows cite local runs.
+- `WorktreeDiffPort` stands in for the git diff: the harness has no repository per task, so the
+  PR path (`PrTaskExecutor`, phase 1 and 2 gates) is not exercised here.
+- The scripted critic reads markers, not meaning: a live model is the only way to measure the
+  catch and pass rates themselves. The fake-provider run measures the plumbing and the rules.
+- The task executor's own rung for the third attempt (`tierForAttempt`) uses the executor's
+  `ceiling` dependency, which the daemon composition does not set from the project's
+  `critic_ceiling`; the critic's follow-up hands a task at the ceiling to the human before that
+  attempt runs, which is why the harness never sees a run above the ceiling, but the executor
+  should read the project row too (runtime package).
+- Weekly consolidation finds nothing to propose in the four weeks: the near-duplicate merge at
+  write time keeps each kind's lesson single and nothing is unused for 60 days. The rounds run
+  and are recorded as 0 proposals.
+- Decisions the spec leaves open (what a repeat is, the arrival schedule, the budgets, the
+  marker rule, the no-memory control) are recorded in this section; no ADR number was reserved
+  for the harness task (0039 is the next free number at the time of writing), so they move to
+  an ADR once one is assigned.
+- The live calibration has not run yet: the key is in the build box's `.env.build`, but the
+  build session's permission system refused the spend as a real-money action, so a human
+  starts the command above and records the result.
+
+### Requirement IDs covered
+
+H.5 (repeat findings across sessions become patterns and critic lessons, proven over 56
+sessions), H.7 (calibration report over the real eval sets, the gate arithmetic, the live
+opt-in), D.2 and D.3 (the ladder end to end under the project ceiling, stopping with the human),
+G.3 and N.4 (retrieval into the principal's and the specialist's brief under the project's token
+budgets, measured independently), G.4 (weekly consolidation through the inbox), B.4 (every
+sent-back task resolved its finding before closing), S.1 (every tool call audited, none denied
+by the hooks because the grant was right).

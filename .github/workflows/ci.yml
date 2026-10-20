@@ -55,6 +55,8 @@ jobs:
         run: pnpm --filter @forerunner/ui test && pnpm --filter @forerunner/approvals-web test
       - name: Integration tests (stand-ins)
         run: pnpm test:integration
+      - name: Phase 3 and 4 gate harnesses (fake provider)
+        run: pnpm exec vitest run --project e2e tests/e2e/scenarios/phase3-gate.integration.test.ts tests/e2e/scenarios/phase4-gate.integration.test.ts
       - name: Prompt-injection suite (browser and email paths)
         run: pnpm test:injection
       - name: Secret scan (repo and test logs)
@@ -112,6 +114,8 @@ jobs:
         run: pnpm test:unit
       - name: Integration tests (stand-ins)
         run: pnpm test:integration
+      - name: Phase 3 and 4 gate harnesses (fake provider)
+        run: pnpm exec vitest run --project e2e tests/e2e/scenarios/phase3-gate.integration.test.ts tests/e2e/scenarios/phase4-gate.integration.test.ts
       - name: Prompt-injection suite (browser and email paths)
         run: pnpm test:injection
       - name: Secret scan (repo and test logs)
