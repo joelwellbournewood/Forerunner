@@ -20,7 +20,8 @@ async function bareRepo(): Promise<{ bare: string; url: string }> {
   return { bare, url: bare };
 }
 
-describe("GitOps", () => {
+// Dozens of git subprocesses: the Windows runner needs well over the 20 s default under load.
+describe("GitOps", { timeout: 120_000 }, () => {
   it("clones, branches, commits, rebases and pushes; conflicts are reported and aborted", async () => {
     const { url } = await bareRepo();
     const root = mkdtempSync(join(tmpdir(), "fr-wt-"));
