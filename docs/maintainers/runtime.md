@@ -53,6 +53,21 @@ for each tool use: `beforeToolCall` → execute with per-tool timeout → `after
 `needs_human` (approval pending), `max_turns`, `error`. Events stream to the live session view.
 `SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks.
 
+### Context layer (`src/context/`, ADR 0003)
+
+Baseline compression that is always available: `collapseLogs` (CRLF, ANSI, trailing spaces,
+progress bars, repeated lines), `elideDenseLines` (minified/base64 lines), `dedupWithinBlock`
+and `CrossTurnDedup` (repeated windows inside a block and across earlier tool results, always
+keeping the earliest occurrence), `truncateWithErrors` (head/tail with error lines and test
+summaries kept, original hash noted). `ContextPipeline.compressToolResult` applies them to the
+live zone only (the newest tool result), records tokens before/after and the transforms used,
+honours per-tool profiles (`read_file` 16k cap, diffs skip dedup) and a per-call bypass (the
+critic and evals pass `"off"`). `cache-layout.ts` keeps the prefix stable: compacted tool
+schemas, `layoutSystem` order (registry prompt → project brief → instructions → pinned lessons),
+`assertStablePrefix` rejects timestamps, UUIDs, JWTs and hashes in the system prompt,
+`volatilePreamble` puts them in the first user message. `fitToBudget` is the greedy
+retrieval-under-budget helper used by memory. The Headroom proxy adapter lands with phase 6.
+
 ### Models (`src/models/ladder.ts`)
 
 Ladder haiku → sonnet → opus → fable, ceiling opus by default; mode defaults and response
@@ -83,7 +98,8 @@ the human; it is never acted on.
 ## Tests
 
 `packages/runtime/test/*.test.ts` (unit, fake provider, no network): tokens, autonomy, kill
-switch timing, budget rules, hooks (overspend, steps, wall clock, kill, allowlist, schema,
+switch timing, budget rules, context transforms (golden cases, idempotence, FATAL-at-line-67,
+stable-prefix lint, bypass), Anthropic adapter mapping, SDK driver options and hooks, hooks (overspend, steps, wall clock, kill, allowlist, schema,
 paths, domains, secrets, autonomy, injection), ladder, brief, loop driver (completion, overspend
 blocked, step cap, kill mid-run, timeout with partial output, inline denials, needs-human pause,
 injection flagged).

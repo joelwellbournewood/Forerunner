@@ -2,6 +2,7 @@ export * from "./agent/loop.ts";
 export * from "./agent/sdk.ts";
 export * from "./agent/tools.ts";
 export * from "./brief.ts";
+export * from "./context/index.ts";
 export * from "./enforcement/autonomy.ts";
 export * from "./enforcement/budget.ts";
 export * from "./enforcement/hooks.ts";
