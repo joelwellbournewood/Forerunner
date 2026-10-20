@@ -7,11 +7,13 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import type { ZodType } from "zod";
 import { writeKillRequest } from "../enforcement/killfile.ts";
+import { DecisionLog } from "../wiring/state-ports.ts";
 import {
   AnswerRequestBody,
   ChatRequestBody,
   CreateProjectBody,
   CreateTaskBody,
+  type DecisionView,
   type EventView,
   type HealthView,
   KillBody,
@@ -486,8 +488,25 @@ export function createDaemonApp(
       body.answer as never,
       rt.human.id,
     );
+    await new DecisionLog(rt.store).recordAnswer(r, rt.human.id);
     rt.events.emit("inbox", {});
     return c.json(requestView(r, null));
+  });
+
+  app.get("/projects/:id/decisions", async (c) => {
+    const rows = await new DecisionLog(rt.store).current(c.req.param("id"));
+    const views: DecisionView[] = rows.map((d) => ({
+      id: d.id,
+      projectId: d.project_id,
+      question: d.question,
+      options: (d.options as unknown as string[]) ?? [],
+      chosen: d.chosen,
+      decidedBy: d.decided_by,
+      rationale: d.rationale,
+      supersedes: d.supersedes ?? null,
+      createdAt: d.created_at,
+    }));
+    return c.json(views);
   });
 
   app.post("/messages/:id/read", async (c) => {

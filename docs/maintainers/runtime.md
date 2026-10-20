@@ -101,6 +101,16 @@ one active session per agent; quiet hours defer non-manual triggers). `state-por
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
 approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call.
 
+### Decision log (`src/wiring/state-ports.ts`, `DecisionLog`)
+
+Answered decisions are recorded per project and never asked again unless superseded (spec
+J). `DecisionLog.ask()` opens a request of kind `decision` only when the project has no
+current answer to the same question (matching is case- and whitespace-insensitive through
+`decision.question_normalised`); otherwise it returns the recorded decision and opens nothing.
+The daemon's answer route calls `recordAnswer()` for every answered decision request; a
+different answer to the same question supersedes the older row, the same answer is a no-op.
+`GET /projects/:id/decisions` lists the current decisions for the UI.
+
 ### Message receipts (spec F)
 
 Every message carries delivered, read and acted-on timestamps. The runner marks what the brief
@@ -206,7 +216,7 @@ the human; it is never acted on.
 
 `packages/runtime/test/*.test.ts` (unit, fake provider, no network): tokens, autonomy, kill
 switch timing, budget rules, context transforms (golden cases, idempotence, FATAL-at-line-67,
-stable-prefix lint, bypass), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, receipts (acked by reading, acked by reply, resurfacing), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE), hooks (overspend, steps, wall clock, kill, allowlist, schema,
+stable-prefix lint, bypass), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, receipts (acked by reading, acked by reply, resurfacing), decisions (ask once, record, supersede, approvals ignored), peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE), hooks (overspend, steps, wall clock, kill, allowlist, schema,
 paths, domains, secrets, autonomy, injection), ladder, brief, loop driver (completion, overspend
 blocked, step cap, kill mid-run, timeout with partial output, inline denials, needs-human pause,
 injection flagged).

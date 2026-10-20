@@ -310,6 +310,19 @@ export const SettingView = z.object({
   risk: z.enum(["low", "medium", "high"]),
 });
 
+export const DecisionView = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  question: z.string(),
+  options: z.array(z.string()),
+  chosen: z.string(),
+  decidedBy: z.string(),
+  rationale: z.string(),
+  supersedes: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type DecisionView = z.infer<typeof DecisionView>;
+
 export const ErrorBody = z.object({
   code: z.string(),
   message: z.string(),
@@ -350,6 +363,7 @@ export const DAEMON_ROUTES = {
   resume: "POST /kill/resume",
   inbox: "GET /inbox?humanId=",
   answerRequest: "POST /requests/:id/answer",
+  decisions: "GET /projects/:id/decisions",
   markRead: "POST /messages/:id/read",
   chat: "POST /chat (JSON) | POST /chat/stream (SSE tokens then a final reply event)",
   costs: "GET /costs?projectId=&from=&to=",

@@ -1,4 +1,4 @@
-import type { StateStore } from "@forerunner/state";
+import type { DecisionRow, HumanRequestRow, StateStore } from "@forerunner/state";
 import type {
   ApprovalOutcome,
   ApprovalPort,
@@ -142,4 +142,61 @@ export function statePorts(
     audit: new StateAudit(store),
     approvals: new StateApprovals(store),
   };
+}
+
+/**
+ * Decision log (spec J): an answered decision is recorded per project and the same question
+ * is never asked again unless a newer answer supersedes it. Callers that need a decision go
+ * through ask(); the daemon records answers through recordAnswer().
+ */
+export class DecisionLog {
+  constructor(private readonly store: StateStore) {}
+
+  /**
+   * Open a decision request, unless the project already answered the same question: then
+   * the recorded decision is returned and no request is opened.
+   */
+  async ask(
+    input: Parameters<StateStore["humanRequest"]["insert"]>[0] & { kind: "decision" },
+  ): Promise<{ request: HumanRequestRow | null; decision: DecisionRow | null }> {
+    const projectId = typeof input.project_id === "string" ? input.project_id : null;
+    const question = typeof input.why === "string" ? input.why : "";
+    if (projectId && question) {
+      const decision = await this.store.decision.findAnswered(projectId, question);
+      if (decision) return { request: null, decision };
+    }
+    const request = await this.store.humanRequest.insert(input);
+    return { request, decision: null };
+  }
+
+  /** Record the answer of an answered request of kind "decision"; supersedes an older answer. */
+  async recordAnswer(
+    request: HumanRequestRow,
+    decidedBy: string,
+    rationale = "",
+  ): Promise<DecisionRow | null> {
+    if (request.kind !== "decision" || request.status !== "answered" || !request.project_id)
+      return null;
+    const chosen =
+      typeof request.answer === "string" ? request.answer : JSON.stringify(request.answer ?? "");
+    const input = {
+      project_id: request.project_id,
+      question: request.why,
+      options: request.options,
+      chosen,
+      decided_by: decidedBy,
+      rationale,
+      author_human: decidedBy,
+    };
+    const existing = await this.store.decision.findAnswered(request.project_id, request.why);
+    if (existing) {
+      if (existing.chosen === chosen) return existing;
+      return this.store.decision.supersede(existing.id, input as never);
+    }
+    return this.store.decision.record(input as never);
+  }
+
+  current(projectId: string): Promise<DecisionRow[]> {
+    return this.store.decision.current(projectId);
+  }
 }

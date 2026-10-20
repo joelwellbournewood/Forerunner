@@ -280,6 +280,35 @@ describe("local daemon", () => {
     expect(resumed.killActive).toBe(false);
   });
 
+  it("records answered decisions and lists the project's decision log", async () => {
+    const card = await json(
+      await req("/projects", {
+        method: "POST",
+        body: JSON.stringify({ name: "Decide", goal: "A project with a decision to make" }),
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const request = await rt.store.humanRequest.insert({
+      human_id: rt.human.id,
+      project_id: str(card.id),
+      kind: "decision",
+      why: "Which cloud region?",
+      steps: [],
+      options: ["eu-central", "us-east"],
+      blocking: false,
+      risk: "low",
+    });
+    const answered = await req(`/requests/${request.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ version: request.version, answer: "eu-central" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(answered.status).toBe(200);
+    const decisions = await jsonList(await req(`/projects/${str(card.id)}/decisions`));
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({ question: "Which cloud region?", chosen: "eu-central" });
+  });
+
   it("streams events over SSE", async () => {
     const res = await req("/events", { headers: { accept: "text/event-stream" } });
     expect(res.status).toBe(200);
