@@ -30,3 +30,4 @@ Status: accepted | superseded by NNNN
 | 0009 | Device identity and auth for the state service: Ed25519 device keys, scoped tokens |
 | 0010 | Test environment: fake provider with recorded replies, simulated clock, fake git host |
 | 0011 | Local daemon API between the shells and the runtime |
+| 0012 | Voice pipeline: PCM contract, local helpers over stdio, latency anchors |

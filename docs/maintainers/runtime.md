@@ -114,6 +114,35 @@ giving instructions); the run is registered as protected so scoped and global st
 cut the human's channel. Transcripts are events on a per-agent conversation session; spoken
 confirmations are logged with the words used.
 
+### Local daemon (`src/daemon/`, ADR 0011)
+
+`compose.ts` is the composition root: `composeRuntime()` opens the store and vault under
+`appDirs()`, builds the token issuer, kill switch, hooks, loop driver, provider registry
+(Anthropic when a credential is in the vault, the fake provider under `--provider fake`,
+otherwise a provider that fails every call with `provider_auth`), the specialist registry,
+the session runner, scheduler and conversation agent, and returns a `RuntimeApp` with a
+`close()`. It also bootstraps identity on first run (one human, one principal agent) and seeds
+the billing source from the vault. `DynamicCaps` turns a human's monthly cap and a project's
+budget into per-call caps so the cap checker never runs with stale limits.
+
+`server.ts` is the HTTP surface the desktop, Android and web shells talk to. Hono, bound to
+`127.0.0.1` only; every request carries `Authorization: Bearer <token>` compared with
+`timingSafeEqual`. The token is written to `<runtime dir>/daemon.json` (mode 0600) together
+with the base URL, so a shell on the same machine finds the daemon without configuration.
+Routes follow `DAEMON_ROUTES` in `api-types.ts`; response shapes are the zod views in the
+same file (`ProjectCard`, `TaskView`, `SessionView`, `EventView`, `InboxView`, `CostView`,
+...) so the UI and the daemon share one contract. `views.ts` maps store rows to those views
+and renders money in CHF at the day's rate. Streams use server-sent events: `/events` for
+the live feed (session events, inbox, session and project changes, a heartbeat) and
+`/sessions/:id/events` for one session, with `afterSeq` to resume. Errors map
+`ForerunnerError` codes to status codes (not found 404, validation and conflicts 409 or 400,
+permission 403); the body is `{ error, code, details }` with secrets redacted.
+
+`tools.ts` holds the file and shell tools a session gets (`read_file`, `write_file`,
+`list_dir`, `run_command`), each declaring its action class and path fields so the hooks can
+enforce containment. `fr daemon [--provider fake] [--port N]` starts the server; `fr status`
+reads `daemon.json` and reports health.
+
 ### Models (`src/models/ladder.ts`)
 
 Ladder haiku → sonnet → opus → fable, ceiling opus by default; mode defaults and response
@@ -145,7 +174,7 @@ the human; it is never acted on.
 
 `packages/runtime/test/*.test.ts` (unit, fake provider, no network): tokens, autonomy, kill
 switch timing, budget rules, context transforms (golden cases, idempotence, FATAL-at-line-67,
-stable-prefix lint, bypass), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, hooks (overspend, steps, wall clock, kill, allowlist, schema,
+stable-prefix lint, bypass), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE), hooks (overspend, steps, wall clock, kill, allowlist, schema,
 paths, domains, secrets, autonomy, injection), ladder, brief, loop driver (completion, overspend
 blocked, step cap, kill mid-run, timeout with partial output, inline denials, needs-human pause,
 injection flagged).

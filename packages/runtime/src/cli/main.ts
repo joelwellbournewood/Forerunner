@@ -170,6 +170,30 @@ program
   });
 
 program
+  .command("daemon")
+  .description("Run the local runtime daemon (the desktop shell starts this as a sidecar)")
+  .option("--port <n>", "port on 127.0.0.1 (default: random free port)")
+  .option("--provider <name>", "fake | anthropic (default: anthropic when a credential exists)")
+  .action(async (opts) => {
+    const { composeRuntime } = await import("../daemon/compose.ts");
+    const { startDaemon } = await import("../daemon/server.ts");
+    const rt = await composeRuntime(
+      opts.provider === "fake"
+        ? { provider: (await import("../daemon/fake-provider-shim.ts")).fakeProvider() }
+        : {},
+    );
+    const d = await startDaemon(rt, { port: opts.port ? Number(opts.port) : undefined });
+    console.log(`Forerunner daemon listening on ${d.url} (daemon.json in ${rt.dirs.runtime})`);
+    const shutdown = async () => {
+      await d.stop();
+      await rt.close();
+      process.exit(0);
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+  });
+
+program
   .command("dirs")
   .description("Print the application directories for this platform")
   .action(() => {
