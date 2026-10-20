@@ -18,6 +18,16 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-20 (core loop, Android, cloud runner, UI phase 2 landed; credits out again)
+- Snapshots 3f9b436 (cloud runner, phase 6 gate rows), 2560623 (core loop closed per ADR 0036,
+  Android app per ADR 0032, UI phase 2 pages, notifications, Cloudflare, update and extension
+  review fixes) plus CI timing fixes; CI green on both OS at run 54. Progress report 3 posted.
+- Requirements 100 done / 111 in progress / 17 todo. Still unwired: notifications, Cloudflare,
+  model-watch settings, desktop control, data assets; reviews pending for model watch, desktop
+  control, data assets, sandbox; voice fix pass cut off.
+- Every wave stopped on the account credit limit a second time at about 15:00 UTC; the
+  resumed round used 10.7M sub-agent tokens (COST.md).
+
 ### 2026-10-20 (approvals web and desktop shell landed)
 - Credits restored; the four cut-off waves resumed with a note to continue from their partial
   files (core loop, UI phase 2, phase 3 and 4 gate harnesses; desktop shell fixes and Android;
