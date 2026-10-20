@@ -124,6 +124,12 @@ export class PrTaskExecutor implements TaskExecutor {
         branch,
       };
     }
+    let changedFiles: string[] = [];
+    try {
+      changedFiles = await git.changedFiles(`origin/${target.base}`);
+    } catch {
+      // the diff is informational (peer overlap detection); never fail the PR for it
+    }
     try {
       await git.push(branch, { force: !!existingPr, defaultBranch: target.base });
     } catch (e) {
@@ -151,7 +157,7 @@ export class PrTaskExecutor implements TaskExecutor {
       );
     }
     this.logger.info("pull request ready", { taskId: task.id, branch, prUrl });
-    return { ...result, outcome: "in_review", prUrl, branch };
+    return { ...result, outcome: "in_review", prUrl, branch, changedFiles };
   }
 }
 

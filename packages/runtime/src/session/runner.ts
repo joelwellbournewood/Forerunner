@@ -6,6 +6,15 @@ import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { SignedToken, TokenIssuer } from "../enforcement/token.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, runStartupChecklist } from "./checklist.ts";
+import {
+  buildPeerFeed,
+  detectOverlap,
+  extractPathHints,
+  overlapBlocks,
+  overlapMessage,
+  renderPeerFeed,
+  TASK_FILES_EVENT,
+} from "./peers.ts";
 
 /**
  * One working period of a principal agent (spec E). Code owns the skeleton: checklist, plan
@@ -65,6 +74,8 @@ export interface TaskExecutionResult {
   costUsdMicro: number;
   prUrl?: string;
   branch?: string;
+  /** Files the task changed (relative to the worktree root), for peer overlap detection. */
+  changedFiles?: string[];
   artifacts?: unknown[];
   /** True when automated checks (tier 0) passed, so the task may close without a critic review. */
   checksPassed?: boolean;
@@ -231,6 +242,9 @@ export class SessionRunner {
     const inReview: string[] = [];
     const failed: string[] = [];
     const skipped: string[] = [];
+    const filesByTask = new Map<string, string[]>();
+    const overlapNotified = new Set<string>();
+    let peerIds: string[] = [];
     const needsHuman: string[] = [];
     let plan: SessionPlan | null = null;
     let brief: StateBrief | null = null;
@@ -267,12 +281,30 @@ export class SessionRunner {
         signal: controller.signal,
         ...opts.checklist,
       });
-      const briefText = renderStateBrief(brief);
+      // Peer feed: what the other agents on the project are doing (spec F).
+      peerIds = await (this.deps.peersOf ?? defaultPeers(store))(agent.id, project?.id);
+      const peerFeed = async () =>
+        buildPeerFeed({ store, clock, agentId: agent.id, projectId: project?.id, peerIds });
+      let feed = await peerFeed();
+      const feedText = renderPeerFeed(feed);
+      const briefText = feedText
+        ? `${renderStateBrief(brief)}\n\n${feedText}`
+        : renderStateBrief(brief);
       await emit("session.brief", {
         tokensApprox: Math.ceil(briefText.length / 4),
         warnings: brief.warnings,
         unread: brief.inbox.unreadCount,
         ready: brief.tasks.readyCount,
+      });
+      await emit("peers.feed", {
+        peers: feed.peers.map((p) => ({
+          agentId: p.agentId,
+          name: p.agentName,
+          online: p.online,
+          claims: p.activeClaims.length,
+          openPrs: p.openPullRequests.length,
+          filesInFlight: Object.values(p.inFlightFiles).flat().length,
+        })),
       });
 
       // Mark inbox as read/delivered now that the agent has seen it.
@@ -337,6 +369,43 @@ export class SessionRunner {
             stopReason = "stopped_by_message";
             skipped.push(...plan.items.slice(plan.items.indexOf(item)).map((i) => i.taskId));
             break;
+          }
+          // Overlap check against the peers' current activity before any work starts.
+          const planned = readyTasks.find((t) => t.id === item.taskId);
+          const work = {
+            taskId: item.taskId,
+            title: item.title,
+            files: planned
+              ? extractPathHints(
+                  `${planned.title}\n${planned.outcome}\n${planned.acceptance_criteria.join("\n")}`,
+                )
+              : [],
+          };
+          feed = await peerFeed();
+          const overlaps = detectOverlap(work, feed);
+          let blocked = false;
+          for (const o of overlaps) {
+            const key = `${o.peerId}:${o.kind}:${o.taskId}`;
+            if (overlapNotified.has(key)) continue;
+            overlapNotified.add(key);
+            await emit("peer.overlap", { ...o, plannedTaskId: item.taskId });
+            if (o.kind === "task_claimed") continue; // the claim below reports and messages this case
+            await store.message.send({
+              from_agent_id: agent.id,
+              to_agent_id: o.peerId,
+              project_id: project?.id ?? null,
+              task_id: item.taskId,
+              type: "warning",
+              body: overlapMessage(work, o),
+              requires_ack: false,
+              author_agent: agent.id,
+            });
+            if (overlapBlocks(o)) blocked = true;
+          }
+          if (blocked) {
+            skipped.push(item.taskId);
+            await emit("task.skipped", { taskId: item.taskId, reason: "peer_in_flight" });
+            continue;
           }
           const claim = await store.task.claim(item.taskId, agent.id, claimTtlMs, clock.now(), {
             reason: `session ${session.id}`,
@@ -416,8 +485,13 @@ export class SessionRunner {
             actual_cost_usd_micro: task.actual_cost_usd_micro + result.costUsdMicro,
             ...(result.prUrl ? { pr_url: result.prUrl } : {}),
             ...(result.branch ? { branch: result.branch } : {}),
+            ...(task.owner_agent_id ? {} : { owner_agent_id: agent.id }),
           });
           task = await store.task.mustGet(task.id);
+          if (result.changedFiles?.length) {
+            filesByTask.set(task.id, result.changedFiles);
+            await emit(TASK_FILES_EVENT, { taskId: task.id, files: result.changedFiles });
+          }
           await emit(
             "task.finished",
             {
@@ -529,6 +603,9 @@ export class SessionRunner {
     const handoff = {
       done: completed,
       in_flight: inReview,
+      in_flight_files: Object.fromEntries(
+        inReview.filter((id) => filesByTask.has(id)).map((id) => [id, filesByTask.get(id)]),
+      ),
       blocked: [...needsHuman, ...failed],
       next: skipped,
       stop_reason: stopReason,
@@ -552,8 +629,7 @@ export class SessionRunner {
         } as never,
       });
     }
-    const peers = await (this.deps.peersOf ?? defaultPeers(store))(agent.id, project?.id);
-    for (const peerId of peers) {
+    for (const peerId of peerIds) {
       await store.message.send({
         from_agent_id: agent.id,
         to_agent_id: peerId,

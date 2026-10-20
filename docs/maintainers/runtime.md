@@ -101,6 +101,19 @@ one active session per agent; quiet hours defer non-manual triggers). `state-por
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
 approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call.
 
+### Peer awareness (`src/session/peers.ts`)
+
+At startup and again before every task the runner builds a peer feed from the store: for each
+peer on the project (the project's `settings.members`, else every principal that touched it)
+its active claims, open pull requests, last handoff and the files it has in flight. Files come
+from two places: the `in_flight_files` map every handoff carries (filled from the PR executor's
+`changedFiles`) and `task.files` events of the peer's running sessions. The feed is appended to
+the planner's brief (`peers.feed` event) and `detectOverlap` compares the planned task against
+it: a claim, an open PR or an in-flight entry of an online peer for the same task skips the task
+(`task.skipped` with reason `peer_in_flight`) and a path hint in the task text that meets a file
+the peer has in flight sends a `warning` message before work starts and continues. Each
+(peer, kind, task) triple is reported once per session.
+
 ### Conversation agent (`src/conversation/agent.ts`)
 
 The fast channel for text and voice (spec O): Haiku at low effort, a stable cached system
@@ -184,7 +197,7 @@ the human; it is never acted on.
 
 `packages/runtime/test/*.test.ts` (unit, fake provider, no network): tokens, autonomy, kill
 switch timing, budget rules, context transforms (golden cases, idempotence, FATAL-at-line-67,
-stable-prefix lint, bypass), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE), hooks (overspend, steps, wall clock, kill, allowlist, schema,
+stable-prefix lint, bypass), Anthropic adapter mapping, SDK driver options and hooks, sessions (checklist and brief size, planning, claims, collisions, budget stop, kill, advisor mode, concurrency, scheduler), executor, peers (hints, overlap rules, feed from the store, overlap message and skip through the runner), daemon (auth, projects and tasks with a 409 on a bad transition, chat and inbox, sessions, events and kill, costs, SSE), hooks (overspend, steps, wall clock, kill, allowlist, schema,
 paths, domains, secrets, autonomy, injection), ladder, brief, loop driver (completion, overspend
 blocked, step cap, kill mid-run, timeout with partial output, inline denials, needs-human pause,
 injection flagged).

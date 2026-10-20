@@ -43,3 +43,11 @@ with their milestone.
 ## Tests
 
 ## Known issues
+
+### Changed files for peer awareness
+
+After a successful rebase the PR executor records `git diff --name-only base...HEAD` as
+`changedFiles` on the task result. The session runner appends a `task.files` event and stores
+the list under `in_flight_files` in the session handoff, which is what peers use for overlap
+detection (`runtime.md` § Peer awareness). The diff is informational: a failure to compute it
+never fails the pull request.
