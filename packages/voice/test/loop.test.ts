@@ -192,14 +192,43 @@ describe("VoiceLoop push-to-talk", () => {
     expect(tts.calls.map((c) => c.text)).toEqual(["One.", "Two.", "Three."]);
     const [c0, c1, c2] = tts.calls;
     if (!c0 || !c1 || !c2) throw new Error("expected three calls");
-    // sentence 1 is requested the moment sentence 0 starts playing, before it has finished
+    // sentence 1 is requested as soon as sentence 0 has been synthesised and handed to playback;
+    // the fake delivers all of sentence 0's chunks at its first-chunk latency, so that is the
+    // moment of its first chunk, well before sentence 0 has finished playing (300 ms)
     expect(c1.startedAtMs).toBe(c0.firstChunkAtMs);
     expect(c1.startedAtMs).toBeLessThan((c0.firstChunkAtMs ?? 0) + 300);
-    // sentence 2 waits until sentence 1 starts playing (after sentence 0's 300 ms)
+    // sentence 2 (prefetch 1) waits until sentence 1 is handed to playback, which happens when
+    // sentence 0 has finished playing; sentence 1 was synthesised by then
     expect(c2.startedAtMs).toBe((c0.firstChunkAtMs ?? 0) + 300);
     const idx = events.filter((e) => e.type === "audio").map((e) => e.sentenceIndex);
     expect(idx).toEqual([0, 0, 0, 1, 1, 1, 2, 2, 2]);
     expect(tts.calls.every((c) => c.finished)).toBe(true);
+  });
+
+  it("with chunks arriving over time, sentence i+1 is requested once sentence i is synthesised, while it still plays", async () => {
+    const clock = new SimulatedClock(0);
+    const tts = new FakeTts({
+      clock,
+      firstChunkLatencyMs: 200,
+      chunkMs: 100,
+      chunks: 3,
+      interChunkMs: 100,
+    });
+    const { loop, events } = setup({ clock, tts, sentences: ["One. ", "Two. ", "Three."] });
+    pttTurn(loop, clock);
+    await throughFirstAudio(clock);
+    await advanceStepwise(clock, 3000, 50);
+    await loop.idle();
+    const [c0, c1, c2] = tts.calls;
+    if (!c0 || !c1 || !c2) throw new Error("expected three calls");
+    const fc0 = c0.firstChunkAtMs ?? 0;
+    // sentence 0: chunks at fc0, fc0+100, fc0+200; its playback runs until fc0+300
+    expect(c1.startedAtMs).toBe(fc0 + 200); // requested when sentence 0's stream completed
+    expect(c1.startedAtMs).toBeLessThan(fc0 + 300); // while sentence 0 is still playing
+    // sentence 1: synthesised fc0+200 .. fc0+600, handed to playback at fc0+300
+    expect(c2.startedAtMs).toBe(fc0 + 600);
+    const idx = events.filter((e) => e.type === "audio").map((e) => e.sentenceIndex);
+    expect(idx).toEqual([0, 0, 0, 1, 1, 1, 2, 2, 2]);
   });
 
   it("pressing push-to-talk while the agent speaks is a barge-in", async () => {
@@ -401,6 +430,159 @@ describe("VoiceLoop push-to-talk", () => {
     await settle();
     expect(events.find((e) => e.type === "turn_end")).toMatchObject({ turn: 1 });
     expect(loop.state).toBe("listening");
+  });
+
+  it("stop() while transcribing calls no model and plays nothing", async () => {
+    let converseCalls = 0;
+    const { clock, loop, events, tts } = setup({
+      converse: async function* (_t, signal) {
+        converseCalls++;
+        await clock.sleep(500, signal);
+        yield "All good.";
+      },
+    });
+    pttTurn(loop, clock);
+    expect(loop.state).toBe("transcribing");
+    await loop.stop();
+    expect(loop.state).toBe("idle");
+    // the scripted final (300 ms), model delay and TTS latency would all have elapsed
+    await advanceStepwise(clock, 3000, 50);
+    await loop.idle();
+    expect(converseCalls).toBe(0);
+    expect(tts.calls).toHaveLength(0);
+    expect(events.filter((e) => e.type === "state").map((e) => e.state)).toEqual([
+      "listening",
+      "transcribing",
+      "idle",
+    ]);
+    const end = events.find((e) => e.type === "turn_end");
+    expect(end).toMatchObject({ turn: 1, entry: null });
+    expect(end?.type === "turn_end" && end.latency.interrupted).toBe(true);
+    expect(loop.transcript).toEqual([]);
+    expect(clock.pendingTimers()).toBe(0);
+  });
+
+  it("push-to-talk: mic audio without a press never barges in (the press is the barge-in)", async () => {
+    const { clock, loop, events } = setup({ ttsChunks: 5 });
+    pttTurn(loop, clock);
+    await advance(clock, 300);
+    expect(loop.state).toBe("thinking");
+    for (const c of speech(400, 1000)) loop.push(c); // a loud room while the model thinks
+    await settle();
+    expect(loop.state).toBe("thinking");
+    await advance(clock, 500);
+    await advance(clock, 200);
+    expect(loop.state).toBe("speaking");
+    for (const c of speech(400, 2000)) loop.push(c); // speaker echo without AEC, no press
+    await settle();
+    expect(events.some((e) => e.type === "barge_in")).toBe(false);
+    expect(loop.state).toBe("speaking");
+    expect(loop.currentTurn).toBe(1);
+    await advanceStepwise(clock, 2000, 50);
+    await loop.idle();
+    expect(loop.state).toBe("idle");
+    expect(events.filter((e) => e.type === "turn_start")).toHaveLength(1);
+    expect(loop.latencies).toHaveLength(1);
+    expect(loop.latencies[0]).toMatchObject({ interrupted: false });
+    expect(loop.transcript.map((e) => e.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("unspokenText follows the sentence list when the model separates sentences with newlines", async () => {
+    const { clock, loop, events } = setup({
+      scripts: [{ final: "first" }, { final: "second" }],
+      converse: async function* () {
+        yield "All good.\n\nTwo tasks remain.\n\nThird thing. Fourth thing.";
+      },
+    });
+    pttTurn(loop, clock);
+    await advance(clock, 300); // final; the model answers at once
+    await advance(clock, 200); // first audio
+    expect(loop.state).toBe("speaking");
+    await advance(clock, 350); // sentence 0 played (300 ms), sentence 1 is playing
+    loop.pressStart();
+    await settle();
+    expect(events.find((e) => e.type === "barge_in")).toMatchObject({
+      turn: 1,
+      spokenText: "All good. Two tasks remain.",
+    });
+    expect(loop.transcript.find((e) => e.role === "assistant")).toMatchObject({
+      text: "All good. Two tasks remain.",
+      interrupted: true,
+      unspokenText: "Third thing. Fourth thing.",
+    });
+    expect(events.find((e) => e.type === "turn_end")).toMatchObject({
+      turn: 1,
+      unspokenText: "Third thing. Fourth thing.",
+    });
+  });
+
+  it("a TTS slow to honour its abort cannot flip the next turn's state", async () => {
+    const clock = new SimulatedClock(0);
+    const silent = (timestampMs: number): AudioChunk => ({
+      pcm: new Int16Array(1600),
+      sampleRate: 16000,
+      channels: 1,
+      timestampMs,
+    });
+    const slow: TtsProvider = {
+      name: "slow-abort",
+      kind: "fake",
+      isAvailable: async () => ({ ok: true, reason: "" }),
+      synthesize: async function* (_text, opts) {
+        await clock.sleep(200);
+        yield silent(0);
+        await clock.sleep(1500); // ignores the signal for 1.5 s
+        if (opts?.signal?.aborted) return;
+        yield silent(100);
+      },
+    };
+    const { loop, events } = setup({
+      clock,
+      tts: slow,
+      scripts: [{ final: "first" }, { final: "second" }],
+      sentences: ["One. "],
+    });
+    pttTurn(loop, clock); // released at 20
+    await throughFirstAudio(clock); // final 320, first token 820, first chunk 1020
+    expect(loop.state).toBe("speaking");
+    await advance(clock, 50);
+    loop.pressStart(); // barge-in at 1070; the old TTS will only return at 2520
+    for (const c of speech(200)) loop.push(c);
+    clock.tickMonotonic(20);
+    loop.pressEnd(); // 1090
+    await advance(clock, 300); // 1390 final
+    await advance(clock, 500); // 1890 first token
+    await advance(clock, 200); // 2090 first chunk of turn 2
+    expect(loop.state).toBe("speaking");
+    expect(loop.currentTurn).toBe(2);
+    expect(events.some((e) => e.type === "turn_end" && e.turn === 1)).toBe(false);
+    await advance(clock, 600); // 2690: the old turn's tail has run
+    expect(events.some((e) => e.type === "turn_end" && e.turn === 1)).toBe(true);
+    expect(loop.state).toBe("speaking"); // turn 2 untouched
+    await advanceStepwise(clock, 3000, 50);
+    await loop.idle();
+    expect(loop.state).toBe("idle");
+    const idleAt = events.findIndex((e) => e.type === "state" && e.state === "idle");
+    const turn2End = events.findIndex((e) => e.type === "turn_end" && e.turn === 2);
+    expect(turn2End).toBeGreaterThan(-1);
+    expect(idleAt).toBeGreaterThan(turn2End);
+    expect(events.filter((e) => e.type === "state").map((e) => `${e.turn}:${e.state}`)).toEqual([
+      "1:listening",
+      "1:transcribing",
+      "1:thinking",
+      "1:speaking",
+      "2:listening",
+      "2:transcribing",
+      "2:thinking",
+      "2:speaking",
+      "2:idle",
+    ]);
+    expect(loop.transcript.map((e) => `${e.turn}:${e.role}`)).toEqual([
+      "1:user",
+      "1:assistant",
+      "2:user",
+      "2:assistant",
+    ]);
   });
 });
 

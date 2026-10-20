@@ -116,7 +116,12 @@ interface Capture {
 interface Response {
   turn: number;
   abort: AbortController;
+  /** Every sentence the splitter emitted, in order. */
+  sentences: string[];
+  /** Sentences whose playback started (a prefix of `sentences`, by index). */
   spoken: string[];
+  /** Index of the last sentence whose playback started; -1 before the first chunk. */
+  lastPlayedIndex: number;
   generated: string;
   /** Why the turn was cut short; null while it runs or when it completed. */
   abortedBy: "barge_in" | "stop" | "failure" | null;
@@ -145,6 +150,8 @@ export class VoiceLoop {
   private stateValue: VoiceLoopState = "idle";
   private turn = 0;
   private capture: Capture | null = null;
+  /** The capture whose final transcript runTurn() is waiting for; stop() aborts it. */
+  private transcribing: Capture | null = null;
   private response: Response | null = null;
   private preRoll: AudioChunk[] = [];
   private preRollMs = 0;
@@ -189,14 +196,18 @@ export class VoiceLoop {
     this.setState("idle");
   }
 
-  /** Abort everything. Stopping is immediate. */
+  /**
+   * Abort everything. Stopping is immediate in every state: a capture still listening, a
+   * turn waiting for its final transcript (no model call follows), a reply being generated or
+   * played.
+   */
   async stop(): Promise<void> {
     this.stopped = true;
     this.abortResponse("stop");
-    const cap = this.capture;
+    const caps = [this.capture, this.transcribing].filter((c): c is Capture => c !== null);
     this.capture = null;
-    if (cap) {
-      cap.abort.abort();
+    for (const cap of caps) {
+      cap.abort.abort(new ForerunnerError("killed", "stop"));
       await cap.session.close();
     }
     this.setState("idle");
@@ -252,7 +263,9 @@ export class VoiceLoop {
       }
       case "thinking":
       case "speaking": {
-        if (this.opts.bargeIn === false) return;
+        // Push-to-talk: the press is the barge-in. Mic audio arriving without a press (room
+        // noise, speaker echo without AEC) must not open a capture that only a release could end.
+        if (this.opts.mode !== "open_mic" || this.opts.bargeIn === false) return;
         this.keepPreRoll(chunk);
         if (this.vad.push(chunk).some((e) => e.type === "speech_start")) {
           this.bargeIn();
@@ -369,39 +382,64 @@ export class VoiceLoop {
     const cap = this.capture;
     if (!cap) return;
     this.capture = null;
+    this.transcribing = cap;
     this.setState("transcribing");
     this.vad.reset();
-    const run = this.runTurn(cap, endOfTurnMs).catch((e: unknown) => {
-      const err = asForerunnerError(e, "internal");
-      this.logger.error("turn failed", { turn: cap.turn, code: err.code, message: err.message });
-      this.emit({ type: "error", turn: cap.turn, error: err });
-      if (this.stateValue === "transcribing") this.setState("idle");
-    });
+    const run = this.runTurn(cap, endOfTurnMs)
+      .catch((e: unknown) => {
+        const err = asForerunnerError(e, "internal");
+        this.logger.error("turn failed", { turn: cap.turn, code: err.code, message: err.message });
+        this.emit({ type: "error", turn: cap.turn, error: err });
+        if (this.turn === cap.turn && this.stateValue === "transcribing") this.setState("idle");
+      })
+      .finally(() => {
+        if (this.transcribing === cap) this.transcribing = null;
+      });
     this.inFlight = run;
   }
 
   private async runTurn(cap: Capture, endOfTurnMs: number): Promise<void> {
     const tEnd = this.clock.monotonic();
+    const stopSignal = cap.abort.signal;
     cap.session.endOfSpeech();
 
     const timeoutAbort = new AbortController();
     const timeoutMs = this.opts.sttFinalTimeoutMs ?? 10_000;
+    // stop() aborts the capture; the wait for the final ends at once, whatever STT does.
+    const stopped = new Promise<never>((_, reject) => {
+      const fail = () => reject(new ForerunnerError("killed", "stop"));
+      if (stopSignal.aborted) fail();
+      else stopSignal.addEventListener("abort", fail, { once: true });
+    });
+    stopped.catch(() => {});
     let final: Extract<SttEvent, { type: "final" }>;
     try {
       final = await Promise.race([
         cap.final,
+        stopped,
         this.clock.sleep(timeoutMs, timeoutAbort.signal).then(() => {
           throw new ForerunnerError("timeout", `no final transcript within ${timeoutMs} ms`, {
             retryable: true,
           });
         }),
       ]);
+    } catch (e) {
+      if (stopSignal.aborted) {
+        this.endStopped(cap.turn, endOfTurnMs, null);
+        return;
+      }
+      throw e;
     } finally {
       timeoutAbort.abort();
       await cap.session.close();
     }
     const tFinal = this.clock.monotonic();
     const finalTranscriptMs = tFinal - tEnd;
+    if (stopSignal.aborted) {
+      // The final arrived in the same tick as stop(): keep nothing, call no model.
+      this.endStopped(cap.turn, endOfTurnMs, finalTranscriptMs);
+      return;
+    }
 
     const userEntry: TranscriptEntry = {
       turn: cap.turn,
@@ -438,15 +476,39 @@ export class VoiceLoop {
       );
       this.latencies.push(latency);
       this.emit({ type: "turn_end", turn: cap.turn, latency, entry: null });
-      if (this.stateValue === "transcribing") this.setState("idle");
+      if (this.turn === cap.turn && this.stateValue === "transcribing") this.setState("idle");
       return;
     }
 
+    if (stopSignal.aborted) {
+      await userWrite;
+      this.endStopped(cap.turn, endOfTurnMs, finalTranscriptMs);
+      return;
+    }
     try {
       await this.respond(cap.turn, final.text, { tEnd, tFinal, endOfTurnMs, finalTranscriptMs });
     } finally {
       await userWrite;
     }
+  }
+
+  /** stop() while waiting for the transcript: end the turn without a model call. */
+  private endStopped(turn: number, endOfTurnMs: number, finalTranscriptMs: number | null): void {
+    const latency = buildLatencyReport(
+      {
+        turn,
+        endOfTurnMs,
+        finalTranscriptMs,
+        modelFirstTokenMs: null,
+        firstAudioMs: null,
+        interrupted: true,
+        noResponse: true,
+      },
+      this.opts.targets,
+    );
+    this.latencies.push(latency);
+    this.emit({ type: "turn_end", turn, latency, entry: null });
+    if (this.turn === turn && this.stateValue === "transcribing") this.setState("idle");
   }
 
   private async respond(
@@ -456,7 +518,15 @@ export class VoiceLoop {
   ): Promise<void> {
     const abort = new AbortController();
     const signal = abort.signal;
-    const res: Response = { turn, abort, spoken: [], generated: "", abortedBy: null };
+    const res: Response = {
+      turn,
+      abort,
+      sentences: [],
+      spoken: [],
+      lastPlayedIndex: -1,
+      generated: "",
+      abortedBy: null,
+    };
     this.response = res;
     this.setState("thinking");
 
@@ -499,6 +569,7 @@ export class VoiceLoop {
     const emitSentence = (text: string) => {
       const index = sentenceCount++;
       if (tFirstSentence === null) tFirstSentence = this.clock.monotonic();
+      res.sentences.push(text);
       this.emit({ type: "sentence", turn, index, text });
       sentences.push(text);
     };
@@ -569,11 +640,13 @@ export class VoiceLoop {
             if (!started) {
               started = true;
               res.spoken.push(item.text);
+              res.lastPlayedIndex = item.index;
             }
             if (tFirstAudio === null) {
               tFirstAudio = this.clock.monotonic();
               ttsFirstByteMs = tFirstAudio - item.sentAt;
-              this.setState("speaking");
+              // Only the current turn owns the state (a barge-in aborts this signal first).
+              if (this.turn === turn && this.response === res) this.setState("speaking");
               this.emit({ type: "speaking_start", turn });
             }
             this.emit({ type: "audio", turn, sentenceIndex: item.index, chunk: c });
@@ -631,7 +704,12 @@ export class VoiceLoop {
     const cutShort = res.abortedBy !== null;
     const byHuman = res.abortedBy === "barge_in" || res.abortedBy === "stop";
     const spokenText = res.spoken.join(" ");
-    const unspokenText = cutShort ? res.generated.slice(spokenText.length).trim() : "";
+    // From the sentence list, not character offsets: the model may separate sentences with
+    // newlines or double spaces, which the spoken text (joined with single spaces) does not keep.
+    const unspokenParts = cutShort ? res.sentences.slice(res.lastPlayedIndex + 1) : [];
+    const rest = cutShort ? splitter.pending.trim() : "";
+    if (rest) unspokenParts.push(rest);
+    const unspokenText = unspokenParts.join(" ");
     // No assistant line when nothing was heard: session history must not get an empty entry.
     const heard = cutShort ? spokenText.length > 0 : res.generated.trim().length > 0;
     let entry: TranscriptEntry | null = null;
@@ -644,7 +722,7 @@ export class VoiceLoop {
         audioStored: false,
         ...(cutShort ? { interrupted: true, unspokenText } : {}),
       };
-      this.transcript.push(entry);
+      this.insertTranscript(entry);
       if (this.store && assistantPcm.length > 0) {
         entry.audioFile = await this.store.writeTurn(
           turn,
@@ -681,8 +759,25 @@ export class VoiceLoop {
       entry,
       ...(unspokenText.length > 0 ? { unspokenText } : {}),
     });
-    // Every worker has finished, so no late chunk can flip the state after this.
+    // Every worker has finished, so no late chunk can flip the state after this. A turn that
+    // was barged in on may end after the next turn started: its tail must not touch that state.
+    if (this.turn !== turn) return;
     if (this.stateValue === "thinking" || this.stateValue === "speaking") this.setState("idle");
+  }
+
+  /**
+   * Keep the transcript in turn order. A turn that was barged in on ends only once its TTS has
+   * honoured the abort, which can be after the next turn's user line was written; its assistant
+   * line still belongs right after its own user line.
+   */
+  private insertTranscript(entry: TranscriptEntry): void {
+    let at = this.transcript.length;
+    for (;;) {
+      const prev = this.transcript[at - 1];
+      if (!prev || prev.turn <= entry.turn) break;
+      at--;
+    }
+    this.transcript.splice(at, 0, entry);
   }
 
   private bargeIn(): void {

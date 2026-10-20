@@ -21,7 +21,17 @@ export function pythonCandidates(env: NodeJS.ProcessEnv = process.env): string[]
   return out;
 }
 
-/** Run `python -c <code>` for the first interpreter that starts. Never throws. */
+/**
+ * True when the exit says the interpreter itself never ran. The Microsoft Store `python` alias
+ * on Windows spawns fine, prints "Python was not found; run without arguments to install from
+ * the Microsoft Store..." and exits 9009, so the next candidate (`py`, `python3`) must be tried.
+ */
+export function interpreterDidNotRun(code: number | null, stderr: string): boolean {
+  if (code === 9009) return true;
+  return /python was not found|manage app execution aliases/i.test(stderr);
+}
+
+/** Run `python -c <code>` for the first interpreter that really runs. Never throws. */
 export async function pythonRun(
   code: string,
   opts: PythonLookupOptions = {},
@@ -35,7 +45,11 @@ export async function pythonRun(
         timeoutMs: opts.timeoutMs ?? 20_000,
         env: opts.env,
       });
-      // A missing interpreter rejects with ENOENT; any exit code means it ran.
+      // A missing interpreter rejects with ENOENT; a Store stub exits without running anything.
+      if (interpreterDidNotRun(r.code, r.stderr)) {
+        lastErr = `${py}: ${r.stderr.trim().split(/\r?\n/)[0] || `exit ${r.code}`}`;
+        continue;
+      }
       return { python: py, code: r.code, stdout: r.stdout, stderr: r.stderr };
     } catch (e) {
       lastErr = e instanceof Error ? e.message : String(e);

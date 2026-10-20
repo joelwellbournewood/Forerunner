@@ -26,8 +26,6 @@ const ABBREVIATIONS = new Set(
     "jr",
     "st",
     "vs",
-    "no",
-    "fig",
     "approx",
     "inc",
     "ltd",
@@ -35,16 +33,9 @@ const ABBREVIATIONS = new Set(
     "corp",
     "dept",
     "est",
-    "min",
-    "max",
     "ca",
     "cf",
     "al",
-    "ex",
-    "p",
-    "pp",
-    "vol",
-    "ed",
     "eds",
     "a.m",
     "p.m",
@@ -58,7 +49,6 @@ const ABBREVIATIONS = new Set(
     "z.b",
     "bzw",
     "usw",
-    "nr",
     "evtl",
     "ggf",
     "inkl",
@@ -85,15 +75,11 @@ const ABBREVIATIONS = new Set(
     "dra",
     "ud",
     "uds",
-    "pág",
-    "núm",
     "p.ej",
     // Italian
     "sig",
     "dott",
     "ecc",
-    "es",
-    "pag",
     // Dutch
     "bv",
     "dhr",
@@ -102,6 +88,16 @@ const ABBREVIATIONS = new Set(
     "bijv",
   ].map((w) => w.toLowerCase()),
 );
+
+/**
+ * Abbreviations only when a number follows ("No. 5", "Fig. 3", "Vol. 2", "pp. 10", "Nr. 7"):
+ * as plain words they end sentences ("The answer is no."), and holding those back delays the
+ * first audio of a common spoken answer. Short ordinary words ("min", "max", "es", "ed", "ex")
+ * are not abbreviations here at all.
+ */
+const NUMERIC_ABBREVIATIONS = new Set(["no", "nr", "vol", "pp", "fig", "núm", "num", "pág", "pag"]);
+
+type PeriodVerdict = "abbreviation" | "boundary" | "wait";
 
 export interface SentenceSplitterOptions {
   /** Extra abbreviations (without the trailing period). */
@@ -200,8 +196,12 @@ export class SentenceSplitter {
 
       const run = this.buffer.slice(i, j + 1);
       if (run === ".") {
-        const before = this.buffer.slice(0, i);
-        if (this.isAbbreviationOrMarker(before)) {
+        const verdict = this.periodVerdict(this.buffer.slice(0, i), k + 1);
+        if (verdict === "wait") {
+          this.scanFrom = i;
+          return out;
+        }
+        if (verdict === "abbreviation") {
           i = k + 1;
           continue;
         }
@@ -228,20 +228,30 @@ export class SentenceSplitter {
     return out;
   }
 
-  /** `before` is the text up to (not including) a period followed by whitespace. */
-  private isAbbreviationOrMarker(before: string): boolean {
+  /**
+   * Decide what a period followed by whitespace is. `before` is the text up to (not including)
+   * the period, `from` the buffer index right after the period. "wait" means the decision needs
+   * more text (a numeric abbreviation is one only when a number follows).
+   */
+  private periodVerdict(before: string, from: number): PeriodVerdict {
     const m = before.match(/([\p{L}\p{N}][\p{L}\p{N}.]*)$/u);
-    if (!m) return false;
+    if (!m) return "boundary";
     const word = m[1] as string;
     const lower = word.toLowerCase();
-    if (this.abbreviations.has(lower)) return true;
-    // Single-letter initials: "J. Smith", "a. first item".
-    if (/^\p{L}$/u.test(word)) return true;
+    if (this.abbreviations.has(lower)) return "abbreviation";
+    if (NUMERIC_ABBREVIATIONS.has(lower)) {
+      let n = from;
+      while (n < this.buffer.length && isWhitespace(this.buffer[n] as string)) n++;
+      if (n >= this.buffer.length) return "wait";
+      return /\p{N}/u.test(this.buffer[n] as string) ? "abbreviation" : "boundary";
+    }
+    // Single-letter initials: "J. Smith", "a. first item", "p. 12".
+    if (/^\p{L}$/u.test(word)) return "abbreviation";
     // A numbered list marker at the start of the sentence: "1. First".
-    if (/^\p{N}+$/u.test(word) && before.trim() === word) return true;
+    if (/^\p{N}+$/u.test(word) && before.trim() === word) return "abbreviation";
     // "U.S.A" style: letters separated by periods.
-    if (/^(?:\p{L}\.)+\p{L}$/u.test(word)) return true;
-    return false;
+    if (/^(?:\p{L}\.)+\p{L}$/u.test(word)) return "abbreviation";
+    return "boundary";
   }
 }
 

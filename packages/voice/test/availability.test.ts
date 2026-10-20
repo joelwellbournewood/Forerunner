@@ -1,15 +1,28 @@
-import { describe, expect, it } from "vitest";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { currentPlatform, join } from "@forerunner/platform";
+import { afterEach, describe, expect, it } from "vitest";
 import { CartesiaTts } from "../src/providers/cloud/cartesia.ts";
 import { DeepgramStt } from "../src/providers/cloud/deepgram.ts";
 import { ElevenLabsTts } from "../src/providers/cloud/elevenlabs.ts";
 import { FasterWhisperStt } from "../src/providers/local/faster-whisper.ts";
 import { KokoroTts } from "../src/providers/local/kokoro.ts";
 import { PiperTts } from "../src/providers/local/piper.ts";
-import { findPython, probePythonModule } from "../src/providers/local/python.ts";
+import {
+  findPython,
+  interpreterDidNotRun,
+  probePythonModule,
+  pythonRun,
+} from "../src/providers/local/python.ts";
 import { fakeKey, fakeWsFactory } from "./helpers.ts";
 
 const python = await findPython();
 const MISSING_PY = "forerunner-no-such-python-xyz";
+
+const tmpDirs: string[] = [];
+afterEach(async () => {
+  for (const d of tmpDirs.splice(0)) await rm(d, { recursive: true, force: true });
+});
 
 describe("availability probes never throw", () => {
   it("faster-whisper reports a missing interpreter", async () => {
@@ -44,6 +57,37 @@ describe("availability probes never throw", () => {
     expect(probe).toMatchObject({ ok: false, python: null });
     expect(probe.reason).toMatch(/invalid module name/);
   });
+
+  it("recognises an interpreter that did not run (Windows Store alias)", () => {
+    expect(interpreterDidNotRun(9009, "")).toBe(true);
+    expect(
+      interpreterDidNotRun(
+        49,
+        "Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Manage App Execution Aliases.",
+      ),
+    ).toBe(true);
+    expect(interpreterDidNotRun(1, "ModuleNotFoundError: No module named 'kokoro'")).toBe(false);
+    expect(interpreterDidNotRun(0, "")).toBe(false);
+    expect(interpreterDidNotRun(null, "")).toBe(false);
+  });
+
+  it.skipIf(currentPlatform() === "windows")(
+    "skips a stub that only says Python was not found and tries the next candidate",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "fr-pystub-"));
+      tmpDirs.push(dir);
+      const stub = join(dir, "python");
+      await writeFile(
+        stub,
+        "#!/bin/sh\necho 'Python was not found; run without arguments to install from the Microsoft Store' >&2\nexit 49\n",
+      );
+      await chmod(stub, 0o755);
+      const r = await pythonRun("print(1)", { env: { ...process.env, FORERUNNER_PYTHON: stub } });
+      expect(r.python).not.toBe(stub);
+      if (python !== null) expect(r).toMatchObject({ python, code: 0 });
+      else expect(r.python).toBeNull();
+    },
+  );
 
   it("piper reports a missing binary and a missing model", async () => {
     const a = await new PiperTts({

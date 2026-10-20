@@ -61,7 +61,12 @@ export class MyTts implements TtsProvider {
   throw) when it aborts. The loop aborts on barge-in and expects the generator to finish within
   one chunk. Check the signal before allocating anything (ids, queue entries): the loop can call
   `synthesize()` for a sentence that was cancelled while it was queued, and an early return
-  must leave nothing behind (`KokoroTts.pendingRequests` is asserted in the tests).
+  must leave nothing behind (`KokoroTts.pendingRequests` is asserted in the tests). With the
+  fetch transport, passing the signal to `fetch` makes the body reader reject with `AbortError`
+  once it fires: wrap the body loop in `try/catch`, return when `opts.signal?.aborted`, rethrow
+  otherwise (`elevenlabs.ts`; `cloud.test.ts` drives a body that rejects on abort). A provider
+  that keeps the loop waiting after the abort delays the end of the turn; the loop guards the
+  next turn against that tail, but the provider's work keeps running meanwhile.
 - Throw only for a real failure. A thrown error from `synthesize()` fails the whole turn: the
   loop aborts the model stream and playback, emits `error` and ends the turn.
 - Report the real sample rate per chunk. The loop does not resample output; the shell does.
@@ -76,10 +81,13 @@ stdout, a `ready` message before the first request, `dispose()` that sends the c
 `killTree`s after a grace period. Pass the provider's `clock` to `HelperProcess` (and use it for
 the ready timeout): the grace timer runs on it, so a test with a `SimulatedClock` controls when
 the kill fires (`test/local-helpers.test.ts`, "HelperProcess"). Nothing outside
-`packages/platform` calls the global `setTimeout`. Probe availability with `probePythonModule("<module>")`. Put
-the helper script in `packages/voice/python/` with its protocol in the docstring, keep it
-`py_compile`-clean (the test runs it), and give it a `--selftest` flag that prints `ready`
-without loading a model.
+`packages/platform` calls the global `setTimeout`. Probe availability with `probePythonModule("<module>")`
+(it tries the interpreter candidates in order and skips the Windows Store alias that only
+prints "Python was not found"). Put the helper script in `packages/voice/python/` with its
+protocol in the docstring, keep it `py_compile`-clean (the test runs it), and give it a
+`--selftest` flag that prints `ready` without loading a model. Validate what the helper sends
+with a zod schema (`HelperMessageSchema` in `faster-whisper.ts`): `nullish()` fields, unknown
+keys ignored, a line that does not fit logged and dropped, never delivered as a transcript.
 
 If the engine is a binary, follow `piper.ts`: one process per sentence is fine when start-up
 is well under a second (the loop prefetches the next sentence); otherwise use the long-lived

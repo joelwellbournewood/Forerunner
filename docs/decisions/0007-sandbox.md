@@ -12,13 +12,15 @@ container engine for `docker run` of our image; developers may have Podman.
 
 ## Decision
 
-`packages/runtime/src/sandbox/` defines `Sandbox { run(argv, opts), exec, copyIn, copyOut, destroy }`
+`packages/runtime/src/sandbox/` defines `Sandbox { run(argv, opts), writeFile, readFile, exists, destroy }`
+(as built; the first draft named `exec`, `copyIn` and `copyOut`, which collapsed into `run` and the two file calls)
 with three adapters chosen by `detectSandboxEngine()`:
 
 1. `ContainerSandbox`: `docker` or `podman` CLI (argv arrays, no shell). Image is the runner
    image from `services/cloud-runner/Dockerfile`. Mounts only the worktree, `--network none`
-   by default, or a per-task allowlist implemented with an egress proxy sidecar
-   (`forerunner-egress`) whose allowlist is the token's `allowedDomains`. CPU and memory limits
+   by default, or a per-task allowlist enforced by the kernel: the task container joins a
+   per-sandbox `--internal` network whose only way out is an egress proxy sidecar
+   (`forerunner-egress`) that allows the token's `allowedDomains` and nothing else. CPU and memory limits
    from the task.
 2. `ProcessSandbox`: a child process with a scrubbed environment, `cwd` pinned to the worktree,
    path checks by the enforcement hooks, no secrets in env, wall-clock and output caps. Used

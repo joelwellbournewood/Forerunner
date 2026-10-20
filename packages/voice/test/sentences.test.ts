@@ -116,4 +116,47 @@ describe("SentenceSplitter", () => {
       "Alles klar.",
     ]);
   });
+
+  it("treats no/nr/vol/pp/fig as abbreviations only before a number", () => {
+    expect(splitSentences("The answer is no. Two tasks remain. Ok.")).toEqual([
+      "The answer is no.",
+      "Two tasks remain.",
+      "Ok.",
+    ]);
+    expect(splitSentences("See No. 5 and Fig. 3 in Vol. 2, pp. 10-12. Done.")).toEqual([
+      "See No. 5 and Fig. 3 in Vol. 2, pp. 10-12.",
+      "Done.",
+    ]);
+    expect(splitSentences("Die Antwort ist Nr. 7. Nein.")).toEqual([
+      "Die Antwort ist Nr. 7.",
+      "Nein.",
+    ]);
+    // Streaming: "no." waits for the next non-blank character, then decides.
+    const s = new SentenceSplitter();
+    expect(s.push("The answer is no.")).toEqual([]);
+    expect(s.push(" ")).toEqual([]);
+    expect(s.push("Two")).toEqual(["The answer is no."]);
+    expect(s.flush()).toBe("Two");
+    const n = new SentenceSplitter();
+    expect(n.push("See no. ")).toEqual([]);
+    expect(n.push("5. Then go.")).toEqual(["See no. 5."]);
+    expect(n.flush()).toBe("Then go.");
+    const text = "The answer is no. No. 5 is next. Nr. 7 too. Ok.";
+    const whole = splitSentences(text);
+    expect(whole).toEqual(["The answer is no.", "No. 5 is next.", "Nr. 7 too.", "Ok."]);
+    expect(streamed(text, 1)).toEqual(whole);
+    expect(streamed(text, 4)).toEqual(whole);
+  });
+
+  it("does not hold back sentences that end in short ordinary words", () => {
+    expect(splitSentences("Ich mache es. Dann sehen wir weiter.")).toEqual([
+      "Ich mache es.",
+      "Dann sehen wir weiter.",
+    ]);
+    expect(splitSentences("Set it to max. Then wait a min. Ok.")).toEqual([
+      "Set it to max.",
+      "Then wait a min.",
+      "Ok.",
+    ]);
+  });
 });

@@ -12,6 +12,7 @@ import {
   log,
   systemClock,
 } from "@forerunner/platform";
+import { z } from "zod";
 import { AsyncQueue } from "../../queue.ts";
 import type {
   AudioChunk,
@@ -50,15 +51,21 @@ export interface FasterWhisperOptions {
   readyTimeoutMs?: number;
 }
 
-interface HelperMessage {
-  type: string;
-  text?: string;
-  message?: string;
-  start_ms?: number;
-  end_ms?: number;
-  language?: string;
-  model?: string;
-}
+/**
+ * One JSON line from fr_stt.py (see its docstring). Unknown keys are ignored and `null` stands
+ * for absent, so a helper from a newer or older package version still parses; a line that does
+ * not fit (a non-string `text`, a missing `type`) is logged and dropped rather than delivered.
+ */
+export const HelperMessageSchema = z.object({
+  type: z.string(),
+  text: z.string().nullish(),
+  message: z.string().nullish(),
+  start_ms: z.number().nullish(),
+  end_ms: z.number().nullish(),
+  language: z.string().nullish(),
+  model: z.string().nullish(),
+});
+type HelperMessage = z.infer<typeof HelperMessageSchema>;
 
 const HELPER_RATE = 16000;
 
@@ -250,14 +257,19 @@ export class FasterWhisperStt implements SttProvider {
 
   private onStdout(data: Buffer): void {
     for (const line of this.lines.push(data)) {
-      let msg: HelperMessage;
+      let raw: unknown;
       try {
-        msg = JSON.parse(line) as HelperMessage;
+        raw = JSON.parse(line);
       } catch {
         this.logger.warn("unparseable helper line", { line: line.slice(0, 200) });
         continue;
       }
-      this.onMessage(msg);
+      const parsed = HelperMessageSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.logger.warn("malformed helper message", { line: line.slice(0, 200) });
+        continue;
+      }
+      this.onMessage(parsed.data);
     }
   }
 
@@ -282,9 +294,9 @@ export class FasterWhisperStt implements SttProvider {
           type: "final",
           text: msg.text ?? "",
           atMs: this.clock.monotonic(),
-          startMs: msg.start_ms,
-          endMs: msg.end_ms,
-          language: msg.language,
+          startMs: msg.start_ms ?? undefined,
+          endMs: msg.end_ms ?? undefined,
+          language: msg.language ?? undefined,
         });
         break;
       case "error": {

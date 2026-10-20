@@ -114,13 +114,20 @@ export class ElevenLabsTts implements TtsProvider {
       samples += pcm.length;
       return chunk;
     };
-    for await (const piece of res.body) {
+    try {
+      for await (const piece of res.body) {
+        if (opts.signal?.aborted) return;
+        carry = carry.length ? Buffer.concat([carry, Buffer.from(piece)]) : Buffer.from(piece);
+        if (carry.length < minBytes) continue;
+        const even = carry.length - (carry.length % 2);
+        yield toChunk(carry.subarray(0, even));
+        carry = Buffer.from(carry.subarray(even));
+      }
+    } catch (e) {
+      // With the fetch transport the body reader rejects with AbortError once `signal` aborts:
+      // that is a stop (barge-in), not a failure, so return like every other provider.
       if (opts.signal?.aborted) return;
-      carry = carry.length ? Buffer.concat([carry, Buffer.from(piece)]) : Buffer.from(piece);
-      if (carry.length < minBytes) continue;
-      const even = carry.length - (carry.length % 2);
-      yield toChunk(carry.subarray(0, even));
-      carry = Buffer.from(carry.subarray(even));
+      throw e;
     }
     if (carry.length >= 2 && !opts.signal?.aborted) yield toChunk(carry);
   }

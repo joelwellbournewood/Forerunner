@@ -331,4 +331,37 @@ describe("ElevenLabsTts", () => {
       })(),
     ).rejects.toMatchObject({ code: "validation" });
   });
+
+  it("returns instead of throwing when the signal aborts and the body rejects", async () => {
+    const ac = new AbortController();
+    const bytes = pcmBytes(synth(440, 100, 24000));
+    const http: HttpStreamFn = async (_url, init) => ({
+      status: 200,
+      headers: {},
+      body: (async function* () {
+        yield bytes.subarray(0, 2400);
+        // the fetch transport's reader.read() rejects with AbortError once the signal aborts
+        await new Promise<void>((_, reject) => {
+          const fail = () => reject(new DOMException("The operation was aborted.", "AbortError"));
+          if (init.signal?.aborted) fail();
+          else init.signal?.addEventListener("abort", fail, { once: true });
+        });
+        yield bytes.subarray(2400);
+      })(),
+    });
+    const tts = new ElevenLabsTts({
+      apiKeyRef: "secret:eleven",
+      resolveSecret: async () => EL_KEY,
+      http,
+      voice: "v",
+    });
+    const chunks: AudioChunk[] = [];
+    const run = (async () => {
+      for await (const c of tts.synthesize("Long.", { signal: ac.signal })) chunks.push(c);
+    })();
+    await settle();
+    ac.abort();
+    await expect(run).resolves.toBeUndefined();
+    expect(chunks).toHaveLength(1);
+  });
 });

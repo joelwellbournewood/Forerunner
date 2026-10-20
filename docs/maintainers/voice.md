@@ -35,7 +35,7 @@ src/providers/fake.ts             FakeStt, FakeTts (scripted, Clock-driven), Scr
 src/providers/local/python.ts     find an interpreter, probe `import <module>` without throwing
 src/providers/local/framing.ts    length-prefixed frames shared with the Python helpers
 src/providers/local/helper-process.ts  long-lived helper subprocess (argv array, killTree)
-src/providers/local/faster-whisper.ts  STT via python/fr_stt.py
+src/providers/local/faster-whisper.ts  STT via python/fr_stt.py (JSON lines checked by a zod schema)
 src/providers/local/kokoro.ts          TTS via python/fr_tts.py
 src/providers/local/piper.ts           TTS via the `piper` binary (--output-raw)
 src/providers/cloud/transport.ts  injected WebSocket factory and streaming HTTP; SecretResolver
@@ -80,14 +80,25 @@ converse(transcript, signal) ──deltas──▶ SentenceSplitter ──senten
 2. **End of turn.** `pressEnd()` or `speech_end` (200 ms of silence after speech, configurable).
    The loop calls `endOfSpeech()` and waits for the final (timeout `sttFinalTimeoutMs`, 10 s).
 3. **Reply.** `converse(transcript, signal)` streams deltas into the `SentenceSplitter`. Each
-   completed sentence goes to TTS at once. The pipeline synthesises sentence *i+1* while
-   sentence *i* plays (`prefetchSentences`, default 1) and plays strictly in order.
-4. **Barge-in.** While the agent thinks or speaks, mic audio still runs through the VAD. A
-   `speech_start` (or `pressStart()` in PTT) aborts TTS and the model stream through one
-   `AbortSignal`, calls `sink.stop()`, records the assistant entry as `interrupted: true` with
-   `text` = sentences whose playback started and `unspokenText` = the rest, and immediately opens
-   the next capture with the pre-roll. A `converse()` that ignores its signal cannot hold the
-   loop: the model stream is raced against the abort.
+   completed sentence goes to TTS at once. Synthesis is sequential and runs ahead of playback:
+   sentence *i+1* is requested as soon as sentence *i* has been fully synthesised and handed to
+   playback (`prefetchSentences`, default 1, caps how far synthesis may run beyond the sentence
+   playing), so with any faster-than-real-time TTS the synthesis of *i+1* overlaps the playback
+   of *i*. Playback is strictly in order.
+4. **Barge-in.** In open mic, mic audio keeps running through the VAD while the agent thinks or
+   speaks, and a `speech_start` is the barge-in. In push-to-talk the press is the barge-in: mic
+   audio arriving without a press (room noise, speaker echo without AEC) is ignored, so no
+   capture can open that only a release could end. A barge-in aborts TTS and the model stream
+   through one `AbortSignal`, calls `sink.stop()`, records the assistant entry as
+   `interrupted: true` with `text` = the sentences whose playback started and `unspokenText` =
+   the sentences that never started plus the splitter's pending remainder (taken from the
+   sentence list, not from character offsets, so model output that separates sentences with
+   newlines or double spaces is cut at the right place), and immediately opens the next capture
+   with the pre-roll. A `converse()` that ignores its signal cannot hold the loop: the model
+   stream is raced against the abort. The interrupted turn winds down in the background; when
+   its TTS is slow to honour the abort, its tail runs after the next turn has started and then
+   touches nothing of that turn: every state transition checks it belongs to the current turn,
+   and the late assistant entry is slotted into the transcript in turn order.
 5. **Failure.** If `converse()` throws (for example a budget hook killing the model call), a
    TTS call fails or playback fails, the loop aborts the same `AbortSignal` at once: the model
    stream, every pending TTS call and the sink stop, so a paid model stream never runs on after
@@ -102,6 +113,10 @@ converse(transcript, signal) ──deltas──▶ SentenceSplitter ──senten
    started); when a turn is cut short before that, `turn_end` carries `entry: null` and
    `unspokenText`, so session history never gets an empty assistant line. Audio is never stored
    unless `storeAudio: true` (see below).
+7. **Stop.** `stop()` is immediate in every state (O.9): a capture still listening is closed; a
+   turn waiting for its final transcript ends without a model call (`turn_end` with
+   `entry: null` and latency `interrupted: true`, no `converse()`, no TTS); a reply being
+   generated or played is aborted like a barge-in. Input is ignored until `start()`.
 
 ### Latency budget (O.5, D.8)
 
@@ -137,8 +152,12 @@ to the hangover value.
 | `fake-stt`, `fake-tts` | fake | always | scripted, Clock-driven |
 
 Python lookup: `FORERUNNER_PYTHON`, then `python3`/`python` (Linux) or `python`/`py`/`python3`
-(Windows); an explicit `python` option overrides. Helpers are spawned with argv arrays through
+(Windows); an explicit `python` option overrides. A candidate that spawns but never runs
+Python (the Microsoft Store `python` alias exits 9009 with "Python was not found") is skipped
+and the next one tried (`interpreterDidNotRun`). Helpers are spawned with argv arrays through
 `@forerunner/platform` `spawnProcess`, never a shell, and killed with `killTree` on dispose.
+The STT helper's JSON lines are validated with a zod schema (`HelperMessageSchema`): unknown
+keys are ignored, `null` stands for absent, and a line that does not fit is logged and dropped.
 
 `VoiceProviderRegistry.selectStt/selectTts({preferred, hasSecret})` applies the default policy
 **local if available, else cloud if its key is configured, else fake**, and returns `policy` and
@@ -162,21 +181,34 @@ cloud runner has no device and uses `pacedSink`.
 ### What is stored
 
 - Transcripts: always, as `TranscriptEntry` rows handed to session history (`audioStored: false`).
-- Spoken approvals: `spokenApprovalRecord(turn, line, clock, subject)` logs the exact
-  transcript line with the decision and, when refused, the reason (`blockedBy`) (O.7).
-  `expectYes()` is conservative, because it gates above-routine actions and spending:
+- Spoken approvals: `spokenApprovalRecord(turn, line, clock, subject, {language?})` logs the
+  exact transcript line with the decision and, when refused, the reason (`blockedBy`) (O.7).
+  `expectYes(line, {language?})` is conservative, because it gates above-routine actions and
+  spending:
   - unambiguous affirmatives (yes, confirm, approve, go ahead, do it, jawohl, oui, d'accord,
-    adelante, va bene, akkoord, sim, ...) approve a line of any length;
+    adelante, va bene, akkoord, ...) approve when they start within the first four words of
+    the line or the whole line has at most five words; an affirmative buried late in a long
+    line ("Everything about this plan is great and I approve") is refused as `ambiguous`;
   - words that also start instructions or acknowledgements (ok, sure, correct, fine, right, ja,
     genau, si, claro, vale, certo, oke, ...) approve only a line of at most three words
     ("Correct.", "That's right", "Fine by me"), so "Correct the budget first" is refused;
-  - any negation, stop word or hesitation ("not", "wait", "maybe", "nein", "non", "nee", ...)
-    refuses (`negated`, `blockedBy: "negation"`);
+  - any negation, stop word or hesitation ("not", "wait", "maybe", "nein", "non", "nee",
+    "a ver", ...) refuses (`negated`, `blockedBy: "negation"`);
   - a question refuses: a question mark, an interrogative lead ("is that", "what", "ist das",
     "est-ce", "es eso", "is dat", ...) or "what/which/how much/how many" (and their German,
     French, Spanish, Italian, Dutch forms) anywhere ("Sure, what is it exactly?");
   - a qualifier ("but", "aber", "mais", "pero", "ma", "maar", "mas") refuses ("Fine, but how
-    much does it cost?").
+    much does it cost?");
+  - a deferral, condition or hand-off refuses (`blockedBy: "deferral"`): "first", "tomorrow",
+    "tonight", "after", "before", "until", "let me", "I need to", "ask", "check", "said",
+    "wants", "my manager" and their German, French, Spanish, Italian, Dutch and Portuguese
+    forms, so "Approve it after the review", "Let me confirm the number with Simone" and
+    "Simone said yes" never pass;
+  - words that are ordinary words in another language ("sim" is a SIM card in English, "dale"
+    a name, "prima" is Dutch for fine and Italian for first) count as a yes only when they open
+    the line ("Sim, pode." yes, "Replace the SIM" no) and never when the session `language` is
+    known to be another one; as blockers they count anywhere unless the language rules them
+    out ("Prima." is refused without a language and approved with `language: "nl"`).
   A refused line costs one repeated question; the agent reads the action back again.
 - Audio: only with `storeAudio: true`. Then each turn's user and assistant PCM is written as
   `turn-NNNN-user.wav` / `turn-NNNN-assistant.wav` under `appDirs().data/voice/<session>/`
@@ -191,8 +223,12 @@ cloud runner has no device and uses `pacedSink`.
   `endOfTurnSilenceMs`). Keep `test/vad.test.ts` deterministic: build input with
   `wav.synth/silence/noise` and `chunkify`; events must not depend on chunk size.
 - Sentence rules: `SentenceSplitter` holds the abbreviation list (English, German, French,
-  Spanish, Italian, Dutch) and the ellipsis/closing-quote/guillemet rules. Add a case to
-  `test/sentences.test.ts` with the streamed-vs-whole check.
+  Spanish, Italian, Dutch), the numeric-only abbreviations (`no`, `nr`, `vol`, `pp`, `fig`,
+  `núm`, `pág`: an abbreviation only when a number follows, so "The answer is no." ends a
+  sentence at once and "No. 5" does not) and the ellipsis/closing-quote/guillemet rules. Short
+  ordinary words ("min", "max", "es", "ed", "ex") are deliberately not abbreviations: holding
+  them back delays first audio. Add a case to `test/sentences.test.ts` with the
+  streamed-vs-whole check.
 - Latency targets: `DEFAULT_LATENCY_TARGETS` in `latency.ts`; the loop accepts `targets` for
   per-project overrides. Changing the stage anchors changes the spec's budget: ADR first.
 - Loop behaviour: `VoiceLoop` options (`mode`, `bargeIn`, `prefetchSentences`, `preRollMs`,
@@ -204,23 +240,23 @@ cloud runner has no device and uses `pacedSink`.
 
 ## Tests
 
-`pnpm vitest run --project unit packages/voice` (157 tests, about 2 s, no network):
+`pnpm vitest run --project unit packages/voice` (186 tests, a few seconds, no network):
 
 | File | Covers |
 | --- | --- |
 | `test/vad.test.ts` | burst + silence timing, 150 ms minimum, hangover, chunk-size independence, noise rejection, stereo |
-| `test/sentences.test.ts` | streaming boundaries, abbreviations, decimals, list markers, ellipses, quotes, newlines, ¿ ¡ « » |
+| `test/sentences.test.ts` | streaming boundaries, abbreviations, numeric-only abbreviations ("No. 5" vs "The answer is no."), short ordinary words never held back, decimals, list markers, ellipses, quotes, newlines, ¿ ¡ « » |
 | `test/wav.test.ts` | WAV round trip, validation errors, generators, chunkify, resample, downmix, byte views |
 | `test/framing.test.ts` | frame encoding, split-frame reassembly, JSON lines with CRLF |
 | `test/fake-providers.test.ts` | scripted partials/final with Clock delays, per-session scripts, abort |
 | `test/latency.test.ts` | stage sums, over-target flags, null stages, custom targets, median |
-| `test/approval.test.ts` | yes variants in seven languages, short ambiguous lines, negations and hesitation, questions and qualifiers refused (the critic's five false positives), instructions with an affirmative word refused, `blockedBy` in the record, exact line in the record |
+| `test/approval.test.ts` | yes variants in seven languages, short ambiguous lines, negations and hesitation, questions and qualifiers refused (the critic's false positives), instructions with an affirmative word refused, deferrals and hand-offs refused in seven languages ("I need to confirm with my manager first", "Simone said yes"), an affirmative buried late in a long line refused, colliding words ("SIM", "Dale", "prima") gated on the line start or the session language, `blockedBy` and the exact line in the record |
 | `test/registry.test.ts` | local -> cloud -> fake policy with reasons, preferred, throwing probes, replace by name |
-| `test/availability.test.ts` | probes return `{ok:false}` for missing interpreter/module/binary/model/key; invalid module names never spawn |
-| `test/local-helpers.test.ts` | faster-whisper, Kokoro and Piper Node sides against protocol-identical node stand-ins: streaming, resampling, errors, cancel (no leaked request on a pre-aborted call); `HelperProcess.stop()` grace kill timed on a `SimulatedClock` against a helper that ignores stdin closing |
+| `test/availability.test.ts` | probes return `{ok:false}` for missing interpreter/module/binary/model/key; invalid module names never spawn; the Windows Store alias is recognised (`interpreterDidNotRun`, both OSes) and a stub that only prints "Python was not found" is skipped for the next candidate (stub run on Linux) |
+| `test/local-helpers.test.ts` | faster-whisper, Kokoro and Piper Node sides against protocol-identical node stand-ins: streaming, resampling, errors, cancel (no leaked request on a pre-aborted call); `HelperProcess.stop()` grace kill timed on a `SimulatedClock` against a helper that ignores stdin closing; the fr_stt.py message schema (nulls, unknown keys, malformed lines) |
 | `test/python-helpers.test.ts` | `py_compile` of both helpers and `--selftest` (skipped visibly when no Python) |
-| `test/cloud.test.ts` | Deepgram, Cartesia, ElevenLabs with fake transports replaying captured-shaped messages; keys only in headers, never in logs |
-| `test/loop.test.ts` | PTT turn where `totalToFirstAudio` equals the sum of scripted delays; pipelining order and overlap; PTT and VAD barge-in within one chunk with a clean next turn; barge-in while thinking writes no empty assistant entry (`unspokenText` on `turn_end`); over-target flags; empty transcript; `stop()`; spoken approval; STT error; converse ignoring its signal; failures: `converse()` throwing while audio plays (synthesis and playback aborted, `sink.stop()`, nothing but the idle transition after `turn_end`), throwing before audio (no late `speaking`), a failing TTS aborting the model signal with no further deltas; open-mic pre-roll and measured end of turn (200 ms in real time, 250 ms with a late chunk); audio storage on/off |
+| `test/cloud.test.ts` | Deepgram, Cartesia, ElevenLabs with fake transports replaying captured-shaped messages; keys only in headers, never in logs; ElevenLabs returns rather than throws when the abort makes the body reject |
+| `test/loop.test.ts` | PTT turn where `totalToFirstAudio` equals the sum of scripted delays; pipelining order and overlap (chunks at once and spread over time); PTT and VAD barge-in within one chunk with a clean next turn; PTT ignores mic audio without a press while thinking and speaking; barge-in while thinking writes no empty assistant entry (`unspokenText` on `turn_end`); `unspokenText` with newline-separated model output; a TTS slow to honour its abort leaves the next turn's state alone and its entry lands in turn order; over-target flags; empty transcript; `stop()` while speaking and while transcribing (no model call, no TTS); spoken approval; STT error; converse ignoring its signal; failures: `converse()` throwing while audio plays (synthesis and playback aborted, `sink.stop()`, nothing but the idle transition after `turn_end`), throwing before audio (no late `speaking`), a failing TTS aborting the model signal with no further deltas; open-mic pre-roll and measured end of turn (200 ms in real time, 250 ms with a late chunk); audio storage on/off |
 
 Live validation of the cloud providers is **pending keys** (`docs/status/BLOCKERS.md`, row
 "Voice keys"): the message shapes come from the vendors' public API documentation, not from
@@ -240,14 +276,20 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
   used by default to keep keys out of URLs. If a live test shows the header is rejected, set
   `keyInQuery: true` (the URL is then never logged at debug level either: the logger redacts).
 - Open mic without echo cancellation can barge in on the agent's own voice; the shell decides
-  per device. The VAD's 150 ms minimum speech and the energy threshold are the only guards here.
+  per device (push-to-talk never barges in on mic audio, only on a press). The VAD's 150 ms
+  minimum speech and the energy threshold are the only guards in open mic.
 - Audio storage writes WAV at the capture rate (16 kHz mono) and the TTS rate; there is no
   size cap or automatic retention beyond the note.
 - `expectYes()` refuses any line with "what"/"which" in it, so "Yes, do what you proposed" is
-  not an approval; the agent asks again. Chosen on purpose (a false yes spends money).
-- A TTS provider that ignores its abort signal can still delay the end of a failed or
-  interrupted turn until it returns; the fake, local and cloud providers all honour it, and the
-  model stream is the only worker raced against the abort.
+  not an approval, and any deferral word, so "Yes, do the first one" and "Yes, will do, ask
+  Simone" are refused too; the agent asks again. Chosen on purpose (a false yes spends money).
+  Without a session language, Dutch "Prima." is refused (Italian "prima" blocks it) and
+  Portuguese "sim" counts only at the start of a line; pass `language` to lift that.
+- A TTS provider that ignores its abort signal delays the end of a failed or interrupted turn
+  until it returns; the turn's tail then runs beside the next turn without touching its state
+  or ordering, but the provider's work (and a cloud provider's bill) continues meanwhile. The
+  fake, local and cloud providers all honour the signal; the model stream is the only worker
+  raced against the abort.
 
 ## Requirements covered
 

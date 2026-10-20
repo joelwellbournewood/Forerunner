@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, log, SimulatedClock } from "@forerunner/platform";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { FasterWhisperStt } from "../src/providers/local/faster-whisper.ts";
+import { FasterWhisperStt, HelperMessageSchema } from "../src/providers/local/faster-whisper.ts";
 import { HelperProcess } from "../src/providers/local/helper-process.ts";
 import { KokoroTts } from "../src/providers/local/kokoro.ts";
 import { PiperTts } from "../src/providers/local/piper.ts";
@@ -155,5 +155,26 @@ describe("PiperTts over a stand-in binary", () => {
         }
       })(),
     ).rejects.toMatchObject({ code: "provider_error" });
+  });
+});
+
+describe("fr_stt.py message schema", () => {
+  it("accepts helper lines with nulls and unknown keys and rejects malformed ones", () => {
+    expect(
+      HelperMessageSchema.safeParse({ type: "ready", model: null, selftest: true }).success,
+    ).toBe(true);
+    const final = HelperMessageSchema.safeParse({
+      type: "final",
+      text: "hi",
+      start_ms: 0,
+      end_ms: 120,
+      language: "en",
+      at_ms: 20,
+    });
+    expect(final.success).toBe(true);
+    expect(final.success && final.data).toMatchObject({ type: "final", text: "hi", end_ms: 120 });
+    expect(HelperMessageSchema.safeParse({ type: "final", text: 5 }).success).toBe(false);
+    expect(HelperMessageSchema.safeParse({ text: "no type" }).success).toBe(false);
+    expect(HelperMessageSchema.safeParse("ready").success).toBe(false);
   });
 });
