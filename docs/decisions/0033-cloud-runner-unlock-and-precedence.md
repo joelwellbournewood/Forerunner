@@ -15,7 +15,7 @@ start" and "auto-unlock window" mean in code, or what a runner does when it forg
 The hybrid run mode ("PC when on, cloud runner when off") needs a rule for who runs the agent's
 schedules when both the PC daemon and the runner can see the same shared Postgres. The spec
 leaves open how the runner knows that a PC is on, and whether email tasks and remote commands
-follow the same rule. `@forerunner/billing` is not a dependency of the runner service, and
+follow the same rule. `@forerunner/billing` was not a dependency of the runner service when this was written (it is now, and the runner uses `BillingRouter.pick`), and
 the daemon's `composeRuntime` starts its own scheduler, kill-file watcher and connectors, so the
 runner also had to decide how much of the daemon's composition it reuses.
 

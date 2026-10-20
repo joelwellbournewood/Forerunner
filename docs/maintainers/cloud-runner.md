@@ -49,10 +49,10 @@ U.8 (sessions carry `runner: "cloud"` and the runner's device id).
 | `src/vault-unlock.ts` | the unlock protocol: `RunnerVaultUnlock` (runner side), `answerUnlockChallenge` and `shouldAutoAnswer` (device side), the audit tool names |
 | `src/presence.ts` | `PcPresence`: the PC-wins rule over `device.last_seen` and `session.runner` |
 | `src/inbox-trigger.ts` | `InboxTrigger`: a peer's unread message or the human's answer to a session's question asks for a `message` session (the PC rule applies) |
-| `src/billing.ts` | `pickRunnerBillingSource`: the human's source for cloud sessions; `VaultCredentialProbe` |
+| `src/billing.ts` | `pickRunnerBillingSource`: the human's source for cloud sessions, decided by `BillingRouter` from `@forerunner/billing`; `runnerRoutingPolicy`, `VaultCredentialProbe` |
 | `src/remote.ts` | `RemoteCommandWatcher`: `remote_command` rows with target `cloud` (kill, stop, start, pause refused), from the runner's human's devices only |
 | `src/email-watch.ts` | `EmailWatch`: the email module composed around the agent's mailbox; the completion hook |
-| `src/health.ts` | `startHealthServer` (`node:http`, loopback only), the readiness file |
+| `src/health.ts` | `createHealthApp` (the Hono app) and `startHealthServer` (`@hono/node-server`, loopback only), the readiness file |
 | `src/runner.ts` | `startCloudRunner(deps)`: the composition root; `CloudRunner` (status, startSession, stop) |
 | `Dockerfile` | the runner image (also the sandbox image); `.dockerignore` at the repository root applies |
 
@@ -204,14 +204,24 @@ are in `/health` under `inbox`.
 
 ### Sessions and billing
 
-`pickRunnerBillingSource` mirrors `BillingRouter`'s cloud rule (the billing package is not a
-dependency of this service): only the human's enabled sources; a subscription only on a
-personal runner (`FORERUNNER_RUNNER_PERSONAL=1`) or when the source opted in with
-`limits.personalRunner: true`; the credential must be in the runner's vault
-(`VaultCredentialProbe`); preference subscription, plan credits, API key, fake; ties by
-priority. The agent must belong to the human (a `validation` error otherwise). With no usable
-source and the fake provider the runner seeds a fake source, as the daemon does; with a real
-provider it refuses to start. Every run and ledger row of a cloud session carries that source.
+`pickRunnerBillingSource` asks `@forerunner/billing`'s `BillingRouter` (billing.md, "Routing
+policy") with `{ runner: "cloud", purpose: "session", modelTier: "sonnet" }` over the human's
+enabled sources (`stateSources` from the runtime, the daemon's lister) and the runner's vault
+as the probe (`VaultCredentialProbe`: available when the credential is in the vault; fake
+sources need none). The router's invariants hold (never another human's source, never a
+disabled one) and its cloud rule is policy, `runnerRoutingPolicy(personal)`: on a shared
+runner the package default `subscriptionOnCloudRunner: "personal_runner_only"` (a subscription
+is used only when the source opted in with `limits.personalRunner: true`); on a personal runner
+(`FORERUNNER_RUNNER_PERSONAL=1`, one person's runner) `"always"`, which the owner invariant
+still bounds. A probe that reports `planUsageShare` or `monthSpentUsdMicro` gets the package's
+plan-share and monthly-limit rules too. Preference for `session` work: subscription, plan
+credits, API key, fake; ties by priority, then id. Skip codes are the router's
+(`other_human`, `disabled`, `purpose`, `tier`, `cloud_runner`, `unavailable`, `plan_share`,
+`monthly_limit`); the choice is made once per runner start and `/health` shows it. On top of
+the router the module refuses an agent another human owns (a `validation` error). With no
+usable source and the fake provider the runner seeds a fake source, as the daemon does; with a
+real provider it refuses to start. Every run and ledger row of a cloud session carries that
+source.
 
 A session's cap is `project.settings.session_cap_usd_micro`, else
 `FORERUNNER_RUNNER_SESSION_CAP_USD_MICRO`; an email session's cap is the per-email cap and its
@@ -268,13 +278,18 @@ commands are off, no address is registered, no mailbox is configured or no provi
 
 ### Health and readiness
 
-`GET http://127.0.0.1:<port>/health` answers the `RunnerStatus` JSON: runner id, version,
-uptime, redacted store URL, human, agent, device id, vault state (`locked`, `unlockedUntil`,
+A Hono app (`createHealthApp` in `health.ts`) served by `@hono/node-server` on the loopback
+interface (spec: "a health route on 127.0.0.1 (Hono)"; `startHealthServer` refuses any other
+host with `isLoopbackHost`, after the configuration already did). `GET
+http://127.0.0.1:<port>/health` answers the `RunnerStatus` JSON: runner id, version, uptime,
+redacted store URL, human, agent, device id, vault state (`locked`, `unlockedUntil`,
 `cachedKey`, `pendingRequestId`), billing source, provider, last presence verdict, active
 sessions, `killActive`, schedule count, sessions started, schedules skipped, email watch state,
-remote command stats, inbox trigger counters (`inbox`, null when off), `ready`. `GET /ready`
-is 200 once everything started, 503 before. The
-readiness file holds runner id, pid, health URL, ready time and version.
+remote command stats, inbox trigger counters (`inbox`, null when off), `ready`; 500 with the
+error message when the status function fails. `GET /ready` is 200 once everything started,
+503 before. Any other path is 404, any method but GET or HEAD 405; every answer is JSON with
+`cache-control: no-store`. The readiness file holds runner id, pid, health URL, ready time and
+version.
 
 ### Docker
 
@@ -323,9 +338,14 @@ or a sidecar on `network_mode: "service:runner"`.
 - **Inbox triggers**: what counts is `InboxTrigger.check()` in `inbox-trigger.ts`, and nothing
   else starts a `message` session on the runner; a new source (CI results, PR comments) is a
   new filter there with a case in `inbox-trigger.test.ts`.
-- **Billing**: when `@forerunner/billing` becomes a dependency of this service, replace the
-  body of `pickRunnerBillingSource` with `BillingRouter.pick({ runner: "cloud", purpose:
-  "session" })` and keep the tests.
+- **Billing**: a provider rule change is a change to `DEFAULT_ROUTING_POLICY` in the billing
+  package (billing.md), which this service picks up unchanged; what "personal runner" means
+  for the policy is `runnerRoutingPolicy` in `billing.ts`, and a deployment that wants another
+  rule passes `policy` to `pickRunnerBillingSource`. A new source kind or skip code arrives
+  through the package types. Keep `presence-billing.test.ts` asserting that the router is the
+  one deciding.
+- **The health route**: routes are added to `createHealthApp`; keep every answer JSON, keep
+  the method guard and never put a credential or the store URL unredacted into the status.
 - **A new remote command**: add it to `RemoteCommandWatcher.run` and `remote.test.ts`; the
   state service's `REMOTE_COMMANDS` names what the phone may send. `authorize` runs before
   every command and stays the one place that binds a command to the runner's human.
@@ -340,9 +360,10 @@ file-backed SQLite, testenv mail server on 127.0.0.1, SimulatedClock):
 | File | Covers |
 | --- | --- |
 | `config.test.ts` | defaults, required URL, every issue listed, overrides, lists and booleans, header verifier needs authserv-ids, inbox poll off with 0 and never under 1 s, no credential in the description (a password with a literal `@` included), a non-loopback health host listed with the other issues |
+| `health.test.ts` | the Hono app in process (`/health`, `/ready` 503 then 200, 404, query strings, `cache-control: no-store`, HEAD allowed, other methods 405, a failing status function answered 500 with the message and none of its data) and over a loopback socket on a free port; `localhost` accepted, a non-loopback host refused before binding; close releases the port |
 | `inbox-trigger.test.ts` | a peer's message triggers once (own notes, read and pre-start messages never; two projects give no project); waiting while a session runs; an answered session question, an approved plan carrying `planApproved`; a rejected plan, the unlock challenge and another agent's question ignored; a PC online defers with a back-off; a start the scheduler skipped leaves the items for the next check; polling on the clock |
 | `vault-unlock.test.ts` | challenge and answer against the real file vault; wrong key, tampered answer, stale challenge, expiry (withdrawn), deny; the key absent from every log line, audit row and request row; the window: cached re-unlock, forgetting at the end, shortened / cleared window, policy ask, window set by the answer, absurd window refused |
-| `presence-billing.test.ts` | desktop seen / stale / revoked / other human / runner kind; active pc session; billing: shared vs personal runner, `personalRunner` opt-in, missing credential and disabled source skipped, other human's agent refused |
+| `presence-billing.test.ts` | desktop seen / stale / revoked / other human / runner kind; active pc session; billing: shared vs personal runner, `personalRunner` opt-in, missing credential and disabled source skipped, other human's agent refused; the router decides (`BillingRouter.pick` called once with `runner: "cloud", purpose: "session"`, a `never` policy skips the subscription on a personal runner, `runnerRoutingPolicy` per runner kind, the plan-share rule falls back to the API key at the cap) |
 | `remote.test.ts` | kill within one poll (runs aborted, freeze, result and audit rows), stop lifts the freeze, start resumes and asks the scheduler, pause refused, pc-targeted and other-runner commands untouched; another human's phone (start of its agent, kill) and a start naming another agent refused with `forbidden: ...`, the runner's run untouched |
 | `email-watch.test.ts` | a valid command acknowledged within 60 s of simulated time (one simulated second per 50 ms of wall time) and a capped session started; a spoofed command ignored with no session, no reply and an audit row; completion threaded under the command; polling when the host has no push; `push: false` polling only although the host pushes (delivery at the interval, never twice); commands off |
 | `runner.test.ts` | the composed runner on a file-backed SQLite store: health route and readiness file, device row, billing source, schedules; a schedule left to a heartbeating PC and taken over once it is gone (session `runner: "cloud"`, task done, ledger rows under the runner's source); `startSession` answering `deferred` for a firing the PC rule skipped and `started` when forced; a peer's handoff starting a message-triggered cloud session that reads it and does the ready task, with no second session for the same handoff; an emailed task acknowledged within a minute, run as a capped cloud session (tier 1 tasks end `in_review`) with the completion mail |
@@ -363,12 +384,6 @@ on a real host and a real mailbox is pending the items in `docs/status/BLOCKERS.
 
 ## Known issues
 
-- `hono` and `@forerunner/billing` are not dependencies of this service (pre-declared
-  package.json, no install from the build; `hono@4.13.13` and `@hono/node-server` are in the
-  pnpm store through `services/state-api` but not resolvable from here without an install): the
-  health route is `node:http` and the billing choice re-implements the router's cloud rule.
-  Declaring both is a one-line change each; `startHealthServer` keeps the same three routes and
-  the loopback check when it moves to Hono.
 - `RemoteCommandRepo.pickUp` (packages/state) filters on the target and the target device only,
   not on the issuing device's owner. On a shared state with several humans, a `{ target:
   "cloud" }` command without a target device is taken by whichever runner polls first; a

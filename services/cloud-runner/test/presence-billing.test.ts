@@ -1,14 +1,21 @@
+import { BillingRouter, DEFAULT_ROUTING_POLICY, type RoutingPolicy } from "@forerunner/billing";
 import { SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
 import { MemoryVault } from "@forerunner/vault";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { pickRunnerBillingSource, VaultCredentialProbe } from "../src/billing.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  DEFAULT_RUNNER_MODEL_TIER,
+  pickRunnerBillingSource,
+  runnerRoutingPolicy,
+  VaultCredentialProbe,
+} from "../src/billing.ts";
 import { PcPresence } from "../src/presence.ts";
 import { type Seed, seedWorld } from "./helpers.ts";
 
 /**
  * The PC-wins precedence rule (ADR 0033) and the choice of the human's billing source for
- * cloud work (T.13, S.14), both against an in-memory store.
+ * cloud work (T.13, S.14) through `@forerunner/billing`'s router, both against an in-memory
+ * store.
  */
 let store: StateStore;
 let clock: SimulatedClock;
@@ -198,5 +205,84 @@ describe("billing source for cloud sessions", () => {
         probe,
       }),
     ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("the billing package's router decides: it is asked for cloud session work and its policy wins", async () => {
+    const { sub, api, probe } = await sources();
+    const pick = vi.spyOn(BillingRouter.prototype, "pick");
+    try {
+      // The runner's own policy for a personal runner lets the subscription through...
+      expect(runnerRoutingPolicy(true)).toMatchObject({ subscriptionOnCloudRunner: "always" });
+      expect(runnerRoutingPolicy(false)).toBe(DEFAULT_ROUTING_POLICY);
+      // ...and a policy handed to the router overrides it: "never" skips it on a personal runner.
+      const never: RoutingPolicy = {
+        ...DEFAULT_ROUTING_POLICY,
+        subscriptionOnCloudRunner: "never",
+      };
+      const choice = await pickRunnerBillingSource({
+        store,
+        humanId: seed.human.id,
+        agentId: seed.agent.id,
+        agentOwnerHumanId: seed.agent.owner_human_id,
+        personal: true,
+        probe,
+        policy: never,
+      });
+      expect(choice).toMatchObject({ sourceId: api.id, kind: "api_key" });
+      expect(choice.skipped).toEqual([
+        expect.objectContaining({ sourceId: sub.id, kind: "subscription", code: "cloud_runner" }),
+      ]);
+      expect(choice.reason).toContain("session work on the cloud runner");
+      expect(choice.reason).toContain("personal runner");
+      expect(pick).toHaveBeenCalledTimes(1);
+      expect(pick.mock.calls[0]?.[0]).toEqual({
+        humanId: seed.human.id,
+        agentId: seed.agent.id,
+        runner: "cloud",
+        purpose: "session",
+        modelTier: DEFAULT_RUNNER_MODEL_TIER,
+      });
+      expect((pick.mock.contexts[0] as BillingRouter).policy).toBe(never);
+    } finally {
+      pick.mockRestore();
+    }
+  });
+
+  it("the router's plan-share rule applies: a subscription at its cap falls back to the API key", async () => {
+    const { sub, api, probe } = await sources();
+    const withUsage = {
+      status: async (source: Parameters<typeof probe.status>[0]) => ({
+        ...(await probe.status(source)),
+        ...(source.kind === "subscription" ? { planUsageShare: 0.95 } : {}),
+      }),
+    };
+    const choice = await pickRunnerBillingSource({
+      store,
+      humanId: seed.human.id,
+      agentId: seed.agent.id,
+      agentOwnerHumanId: seed.agent.owner_human_id,
+      personal: true,
+      probe: withUsage,
+    });
+    expect(choice).toMatchObject({ sourceId: api.id, kind: "api_key" });
+    expect(choice.skipped).toEqual([
+      expect.objectContaining({ sourceId: sub.id, code: "plan_share" }),
+    ]);
+    const below = {
+      status: async (source: Parameters<typeof probe.status>[0]) => ({
+        ...(await probe.status(source)),
+        ...(source.kind === "subscription" ? { planUsageShare: 0.5 } : {}),
+      }),
+    };
+    const fine = await pickRunnerBillingSource({
+      store,
+      humanId: seed.human.id,
+      agentId: seed.agent.id,
+      agentOwnerHumanId: seed.agent.owner_human_id,
+      personal: true,
+      probe: below,
+    });
+    expect(fine).toMatchObject({ sourceId: sub.id, kind: "subscription", skipped: [] });
+    expect(fine.reason).toContain("plan usage 50% below the cap 95%");
   });
 });
