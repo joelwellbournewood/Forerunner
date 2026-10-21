@@ -168,7 +168,7 @@ describe("SDK driver: the subprocess environment", () => {
   // `FORERUNNER_SDK_HOST_COMMANDS=1` the model reads them with `cc:Bash env`. Fix: allowlist
   // what the subprocess needs (PATH, HOME, TMP, LANG, SystemRoot, …) or at least scrub values
   // that match `://user:pass@` and widen the name pattern (PASS, KEY, AUTH, CREDENTIAL, DSN).
-  it.fails("security finding: credentials embedded in URLs or under other names do not reach the subprocess", () => {
+  it("security finding: credentials embedded in URLs or under other names do not reach the subprocess", () => {
     const out = scrubEnv({
       PATH: "/bin",
       FORERUNNER_STATE_URL: `postgres://postgres:${DB_PASSWORD}@db.internal:5432/forerunner`,
@@ -234,7 +234,7 @@ describe("SDK driver: PreToolUse refusals", () => {
   // `../../**/*.pem` with `path` unset (the SDK defaults to cwd) walks out of the run
   // directory inside the subprocess. Fix: refuse patterns containing `..` or an absolute
   // prefix (or require `path` and resolve the pattern's static prefix against the roots).
-  it.fails("security finding: a traversing Glob/Grep pattern with no path is refused", async () => {
+  it("security finding: a traversing Glob/Grep pattern with no path is refused", async () => {
     const h = harness();
     const cwd = mkdtempSync(join(tmpdir(), "fr-sec-sdk-"));
     try {
@@ -269,7 +269,7 @@ describe("SDK driver: PostToolUse and secrets", () => {
   // every secret a Forerunner MCP tool used on the SDK path lands in `audit_log` in clear.
   // Fix: keep the raw input per `tool_use_id` from PreToolUse and audit that, and scrub
   // `inputSummary` through the resolver anyway.
-  it.fails("security finding: a secret resolved for an MCP tool on the SDK path never reaches the audit log", async () => {
+  it("security finding: a secret resolved for an MCP tool on the SDK path never reaches the audit log", async () => {
     const h = harness({ secrets: new SecretResolver(new MemoryVault({ gh: VAULT_VALUE })) });
     const { pre, post } = await runDriver(h, { grantedSecrets: ["gh"] });
     const ran = await pre({
@@ -296,7 +296,7 @@ describe("SDK driver: PostToolUse and secrets", () => {
   // computed and thrown away), and gets no data envelope or injection flag on repo files it
   // reads. Fix: return `updatedMCPToolOutput` with the redacted content for MCP tools (and
   // mark `read_file`-like results untrusted), as the loop driver feeds back `post.content`.
-  it.fails("security finding: MCP tool output quoting a secret is fed back to the subprocess redacted", async () => {
+  it("security finding: MCP tool output quoting a secret is fed back to the subprocess redacted", async () => {
     const h = harness({ secrets: new SecretResolver(new MemoryVault({ gh: VAULT_VALUE })) });
     const { pre, post } = await runDriver(h, { grantedSecrets: ["gh"] });
     await pre({
@@ -513,7 +513,7 @@ describe("SDK path through the executor: what a run's final text may carry", () 
   // learns its environment) a report that quotes `CLAUDE_CODE_OAUTH_TOKEN` goes to the
   // session log, the task transition and the critic unredacted. Fix: `redact(finalText)`
   // (the platform shape redaction catches `sk-ant-…`) on both paths before it leaves the executor.
-  it.fails("security finding: a final report that quotes the subprocess environment is redacted before it becomes the summary", async () => {
+  it("security finding: a final report that quotes the subprocess environment is redacted before it becomes the summary", async () => {
     const { res } = await executorWorld(
       (env) => `Env seen: CLAUDE_CODE_OAUTH_TOKEN=${env.CLAUDE_CODE_OAUTH_TOKEN}`,
     );

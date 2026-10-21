@@ -44,6 +44,25 @@ const secretReference = z
   .string()
   .regex(SECRET_REFERENCE_PATTERN, "must be a secret reference (secret:<name>), never a value");
 
+/**
+ * Names of the install's own credentials, which a mailbox password may never be. Whoever can
+ * write the settings row also names the host the password is sent to, and the runner grants
+ * the mailbox exactly the secrets the row names: `passwordRef: secret:anthropic_api_key` on
+ * an attacker's IMAP host would hand over the model key on the next poll. A mailbox credential
+ * is a password created for the mailbox; a name that says API key, token, PAT, client secret
+ * or private key is refused.
+ */
+export const INSTALL_CREDENTIAL_NAME_PATTERN =
+  /api[_.-]?key|apikey|token|(private|signing|secret|access)[_.-]?key|(^|[_.-])pat([_.-]|$)|client[_.-]?secret/;
+
+const mailboxSecretReference = secretReference.refine(
+  (ref) => !INSTALL_CREDENTIAL_NAME_PATTERN.test(ref.slice("secret:".length)),
+  {
+    message:
+      "must name a password created for the mailbox, never an API key, token or private key of the install",
+  },
+);
+
 const address = z
   .string()
   .trim()
@@ -67,7 +86,7 @@ export const ImapConfigSchema = z.object({
   port: z.number().int().min(1).max(65535).default(993),
   secure: z.boolean().default(true),
   user: z.string().min(1),
-  passwordRef: secretReference,
+  passwordRef: mailboxSecretReference,
   folder: z.string().min(1).default("INBOX"),
   draftsFolder: z.string().min(1).default("Drafts"),
 });
@@ -78,7 +97,7 @@ export const SmtpConfigSchema = z.object({
   port: z.number().int().min(1).max(65535).default(587),
   secure: z.boolean().default(false),
   user: z.string().min(1),
-  passwordRef: secretReference,
+  passwordRef: mailboxSecretReference,
 });
 export type SmtpConfig = z.infer<typeof SmtpConfigSchema>;
 

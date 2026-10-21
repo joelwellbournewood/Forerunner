@@ -8,12 +8,14 @@ import type {
   HumanRequestRow,
   LessonRow,
   MessageRow,
+  MilestoneRow,
   ReviewRow,
   RunRow,
   SessionRow,
   StateStore,
   TaskRow,
 } from "@forerunner/state";
+import { defaultRiskTier } from "../session/project-plan.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import type {
   ChangeLogView,
@@ -24,6 +26,7 @@ import type {
   HumanRequestView,
   LessonView,
   MessageView,
+  MilestoneView,
   Money,
   ProjectCard,
   ProjectSummary,
@@ -92,6 +95,22 @@ export async function projectCard(
     latestCriticGrade: latest?.grade ?? null,
     lastSessionAt: last?.ended_at ?? null,
     active: p.active,
+    smallProjectMode: p.small_project_mode,
+    defaultRiskTier: defaultRiskTier(p),
+  };
+}
+
+export function milestoneView(m: MilestoneRow): MilestoneView {
+  return {
+    id: m.id,
+    projectId: m.project_id,
+    name: m.name,
+    successCriteria: m.success_criteria,
+    targetDate: m.target_date,
+    status: m.status,
+    orderIndex: m.order_index,
+    createdAt: m.created_at,
+    version: m.version,
   };
 }
 

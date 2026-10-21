@@ -75,14 +75,21 @@ A message is a command only when all of these hold, checked in code in this orde
 2. The From header names exactly one address and it is the registered address.
 3. The `AuthVerifier` says DKIM passes for a domain aligned (relaxed DMARC alignment) with the
    From domain, and SPF passes.
-4. The subject carries the agent's private marker (`[FR-xxxx]`, `hasCommandMarker`) or the
-   message is a reply in a thread the agent started (`In-Reply-To`/`References` against the
-   Message-IDs of the sent log, `isReplyToThread`).
+4. The message's own Date header is no older than `maxCommandAgeMs` (7 days; `stale`
+   otherwise): DKIM signatures carry no expiry, so a captured command replayed later from a
+   host inside the owner domain's SPF is not obeyed again, whatever the dedupe window.
+5. The subject carries the agent's private marker (`[FR-xxxx]`, `hasCommandMarker`) or the
+   message's direct parent (`In-Reply-To`, else the last `References` entry) is a mail the
+   agent sent to the registered human alone (a sent-log row with `toHuman`;
+   `EmailCommandGate.threadParent`). An id further up the chain, or a mail the agent sent to
+   a third party, is no thread: a stranger who received the agent's mail knows its Message-ID
+   and could seed it into the References of a mail to the owner, whose reply to the stranger
+   would otherwise pass here as a command.
 
 Anything else is data: the handler writes an `email.command` audit row with `allowed = false`
 and `denied_reason = "ignored: <reason>"` (`disabled`, `no_registered_address`,
-`wrong_sender`, `dkim_fail`, `not_aligned`, `spf_fail`, `no_marker`), sends nothing, calls no
-model. Forwarded mail (From is the forwarder) fails rule 2; a stranger's mail the owner forwards
+`wrong_sender`, `dkim_fail`, `not_aligned`, `spf_fail`, `stale`, `no_marker`), sends nothing,
+calls no model. Forwarded mail (From is the forwarder) fails rule 2; a stranger's mail the owner forwards
 passes the gate but only the owner's own words survive `stripQuotedText` (quoted lines,
 "On ... wrote:" and translations, "Original Message", "Forwarded message", Outlook header
 blocks, everything after a hard cut). An email that is only quoted text yields the `empty`
@@ -105,7 +112,8 @@ Order: gate -> flag injection (`email.inbound_flagged` audit row, warning log, n
 -> ignored? -> paused? -> approval reply? -> empty? -> the owner's own words instruction-like?
 (`flagged`: the passages are quoted back, nothing runs) -> classify with the model provider
 (`ModelCommandClassifier`, strict JSON `{kind, project, title, summary, answer}`, the email
-wrapped as untrusted data; unparsable -> `unclear` reply) -> act:
+wrapped as untrusted data and the subject with the marker replaced by `[command marker]`;
+unparsable -> `unclear` reply) -> act:
 
 - `question`: answered by reply (T.6).
 - `task`: project from the text (`pickProject`: exact or unique partial name, or the only
@@ -136,8 +144,9 @@ A command costs money, so a message is acted on exactly once however often it is
 
 - `handle` runs under a per-agent lock (`KeyedLock`): one command at a time per agent, which
   also makes the daily task cap check-and-start one step.
-- Before acting it reads the `email.command` audit rows of the last 30 days
-  (`dedupeWindowMs`); a row with the same Message-ID (or, for a message without one, the same
+- Before acting it reads the `email.command` audit rows of the last 90 days
+  (`dedupeWindowMs`, the gate's thread window: never shorter than the window in which a
+  signed message is still accepted); a row with the same Message-ID (or, for a message without one, the same
   mailbox id stored as `mailboxId`) ends it with the `duplicate` outcome: no model call, no
   task, no session, no reply, no new audit row.
 - When handling ends, success or failure, the message is marked seen through `mailboxFor`
@@ -174,8 +183,8 @@ runtime's own requests; `EmailPolicy.resolveApproval` for `send_email`, `new_rec
 | `mailbox.ts` | `Mailbox` interface, `ImapSmtpMailbox` (imapflow + nodemailer, IDLE push with a polling fallback, credentials resolved per call through `MailboxSecrets`, library errors scrubbed), `defaultSmtpFactory` (implicit TLS when `secure`, else `requireTLS`: STARTTLS mandatory, never `ignoreTLS`), `loopbackSmtpFactory` (plaintext, 127.0.0.1/::1/localhost only, refuses any other host; the `TestMailbox` default), `TestMailbox` over the testenv server, `pollLoop`, `buildOutboundRaw` |
 | `locks.ts` | `KeyedLock`: in-process serialization per agent for the cap checks and command handling |
 | `commands.ts` | `EmailCommandGate`, `EmailCommandHandler` (`handle` once per message, `duplicate`, `error` row), `ModelCommandClassifier`, `parseYesNo`, `pickProject`, `effectivePerEmailCapUsdMicro`, `defaultTaskEstimate` |
-| `tools.ts` | `emailTools`/`registerEmailTools`: `email_send` (`external_send`, high; routes through `EmailPolicy`), `email_list` and `email_read` (`read`, low; `untrusted` output, references only), `email_draft` (`routine_reversible`, low) |
-| `routes.ts` | `createEmailRoutes(deps, app)` / `emailRouteTable(deps)` |
+| `tools.ts` | `emailTools`/`registerEmailTools`: `email_send` (`external_send`, high; routes through `EmailPolicy`), `email_list` and `email_read` (`read`, low; `untrusted` output, references only, the owner's command marker replaced by `[command marker]` through `hideCommandMarker`), `email_draft` (`routine_reversible`, low) |
+| `routes.ts` | `createEmailRoutes(deps, app)` / `emailRouteTable(deps)`; with `humanFor` and `identity` set, every route under `/agents/:agentId` refuses (403, `tool_not_allowed`) a signed-in human who is not the agent's owner |
 | `ports.ts` | production adapters (`StoreIdentityLookup`, `HumanRequestApprovalPort`, `StoreEventSink`) and fakes (`StaticIdentity`, `FakeApprovalPort`, `FixedRate`, `MemoryEventSink`, `FakeCloudSessions`) |
 | `money.ts` | micro-unit helpers mirroring `@forerunner/billing` (`chfToUsdMicro`, `formatUsdMicroAsChf`, `localDayKey`) |
 
@@ -186,7 +195,11 @@ runtime's own requests; `EmailPolicy.resolveApproval` for `send_email`, `new_rec
   rows from older versions fall back field by field). `enabled` mirrors "mode is not off or
   commands are on"; `permissions` lists `email:<mode>`, `email-commands`, `paused` for the
   Extensions panel. Mailbox credentials are `secret:<name>` references; the schema refuses a
-  value. The row is created with defaults on first read so the marker is stable from the start.
+  value, and a name that says API key, token, PAT, client secret or private key
+  (`INSTALL_CREDENTIAL_NAME_PATTERN`): the row also names the host the password is sent to, so
+  a mailbox password is a secret created for the mailbox, never one of the install's own
+  credentials. The row is created with defaults on first read so the marker is stable from
+  the start.
 - Sent log: `audit_log` rows with `tool = "email.send"` and `allowed = true`; `input_summary`
   is the redacted full copy as JSON (`kind`, `messageId`, `to`, `cc`, `subject`, `text`,
   `inReplyTo`, `references`, `mode`, `signature`, `toHuman`, `projectId`, `taskId`,
@@ -309,6 +322,19 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
 - `email-routes.test.ts`: the seven routes over a fake app: settings GET/PUT with audit and
   validation, pause/resume enforced by the policy, marker rotation invalidates the old marker,
   sent log newest first, command audit.
+- `security-email.test.ts` (security review): every test is an attack from a real input and
+  asserts what the code does with it: a forged `Authentication-Results` header naming the
+  trusted host plus a bogus signature is data; a display name spelling the owner's address;
+  a DKIM-valid copy from a host outside the owner's SPF; a stranger answering the agent's mail;
+  a stranger-seeded `References` header does not turn the owner's reply to the stranger into a
+  command (direct parent, `toHuman`); the owner's signed command replayed after 31 days is a
+  `duplicate`; an approval reply that only quotes the request approves nothing; the
+  per-recipient cap under case variation; allowlist look-alike domains; a credential in a draft
+  never leaves and never reaches the audit copy; the private marker is not shown to the model
+  through `email_read`; instruction-like stranger mail is wrapped, flagged and never acted on;
+  a signed-in human gets 403 on another human's agent's settings; the install's own
+  credentials cannot be named as a mailbox password; no credential value in place of a
+  reference.
 - `closeout-email.test.ts` (requirements close-out, 2026-10-20): a second human's agent lists
   and reads its own mailbox only (the tools bind the mailbox to the run's agent id, the schemas
   drop any mailbox or agent the model names, mode off reads nothing while the other mailbox has
@@ -368,6 +394,14 @@ same file; the live e2e runs under `tests/e2e/`.
   caller's app); the settings row is written by the cloud runner's routes, the CLI or a test
   through `EmailSettingsStore`, and the daemon picks a changed mode or mailbox up at the next
   session start (`emailPresence`), the policy at the next call.
+- The routes' owner check needs both `humanFor` and `identity`: a mount with `humanFor` alone
+  cannot tell the humans apart, warns once in the log and applies no owner check (every
+  agent's settings stay reachable to any signed-in human, as before). The daemon must pass
+  its identity lookup when it mounts them.
+- The private command marker is replaced only on the model-facing paths (`email_read`,
+  `email_list`, the classifier's subject). The sent log, the `email.command` audit rows and the
+  `source.subject` a cloud session is started with keep it; the first two are the owner's
+  records, the last reaches the runner, which should not hand it to the session's model.
 - The mailbox is opened once per daemon from the settings at that moment; a changed host or
   credential reference takes effect after a restart (the connection is kept, not re-read).
 - An installed `email` capability row is not re-synced from the catalog: a row installed

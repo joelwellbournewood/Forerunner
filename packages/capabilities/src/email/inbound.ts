@@ -308,13 +308,33 @@ export function normalizeMessageId(id: string): string {
   return id.trim().replace(/^<|>$/g, "").trim();
 }
 
+/** The marker's bracketed form as a regex ("[FR-7k2q]", spaces inside allowed); null when empty. */
+function markerPattern(marker: string, flags = ""): RegExp | null {
+  const bare = marker.trim().replace(/^\[/, "").replace(/\]$/, "").trim();
+  if (bare.length === 0) return null;
+  const escaped = bare.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\[\\s*${escaped}\\s*\\]`, flags);
+}
+
 /** True when the subject carries the private marker in brackets, e.g. "[FR-7k2q]". */
 export function hasCommandMarker(subject: string | undefined, marker: string): boolean {
   if (!subject) return false;
-  const bare = marker.trim().replace(/^\[/, "").replace(/\]$/, "").trim();
-  if (bare.length === 0) return false;
-  const escaped = bare.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`\\[\\s*${escaped}\\s*\\]`).test(subject);
+  const re = markerPattern(marker);
+  return re !== null && re.test(subject);
+}
+
+/** What the model sees in place of the owner's private command marker. */
+export const COMMAND_MARKER_PLACEHOLDER = "[command marker]";
+
+/**
+ * `text` with every occurrence of the private command marker replaced by a placeholder. The
+ * marker is the one factor of the command gate the owner can rotate (T.3), so it never enters
+ * the model context: `email_read` and `email_list` output and the classifier's input go through
+ * here. The audit rows, the sent log and a task's source, which the owner reads, keep it.
+ */
+export function hideCommandMarker(text: string, marker: string): string {
+  const re = markerPattern(marker, "g");
+  return re ? text.replace(re, COMMAND_MARKER_PLACEHOLDER) : text;
 }
 
 /** True when In-Reply-To or References names a message id the agent sent. */

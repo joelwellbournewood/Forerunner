@@ -385,10 +385,186 @@ function Timeline({ rows, today }: { rows: MilestoneRow[]; today: string }) {
   );
 }
 
+function DependencyGraphSection({ tasks }: { tasks: TaskView[] | null }) {
+  return (
+    <section>
+      <h2 className="font-semibold">Dependency graph</h2>
+      <p className="text-xs text-neutral-500">
+        Left to right: a task sits after every task it depends on.
+      </p>
+      <div className="mt-2 overflow-x-auto">{tasks ? <DependencyGraph tasks={tasks} /> : null}</div>
+    </section>
+  );
+}
+
+/** The one milestone of a small project as the Plan tab shows it. */
+export interface SmallProjectMilestone {
+  id: string;
+  name: string;
+  targetDate: string | null;
+  status: MilestoneView["status"] | "derived";
+  successCriteria: string[];
+}
+
+/**
+ * Small-project mode (spec B.6) keeps one milestone: the project's open one (`planned` or
+ * `active`, first by order) from the route, or, on a daemon without the route, the card's
+ * next milestone. Any other milestone on file (one from before the mode was switched on, or
+ * one the mode closed before the next plan opened the current one) is named, never hidden.
+ */
+export function smallProjectMilestone(
+  project: ProjectCard,
+  milestones: MilestoneView[] | null,
+): { current: SmallProjectMilestone | null; others: MilestoneView[] } {
+  if (milestones) {
+    const sorted = [...milestones].sort((a, b) => a.orderIndex - b.orderIndex);
+    const open = sorted.find((m) => m.status === "planned" || m.status === "active") ?? null;
+    return {
+      current: open
+        ? {
+            id: open.id,
+            name: open.name,
+            targetDate: open.targetDate,
+            status: open.status,
+            successCriteria: open.successCriteria,
+          }
+        : null,
+      others: sorted.filter((m) => m.id !== open?.id),
+    };
+  }
+  const next = project.nextMilestone;
+  return {
+    current: next
+      ? {
+          id: next.id,
+          name: next.name,
+          targetDate: next.targetDate,
+          status: "derived",
+          successCriteria: [],
+        }
+      : null,
+    others: [],
+  };
+}
+
+/**
+ * The Plan tab of a small project (spec B.6): the one milestone, the tasks as a flat list in
+ * the order the daemon serves them (priority first), no grouping and no timeline, and the
+ * dependency graph.
+ */
+function SmallProjectPlan({
+  project,
+  tasks,
+  milestones,
+}: {
+  project: ProjectCard;
+  tasks: ReturnType<typeof useAsync<TaskView[]>>;
+  milestones: ReturnType<typeof useAsync<MilestoneView[]>>;
+}) {
+  const all = tasks.data ?? [];
+  const { current, others } = useMemo(
+    () => smallProjectMilestone(project, milestones.data),
+    [project, milestones.data],
+  );
+  const done = all.filter((t) => t.status === "done").length;
+  return (
+    <div className="space-y-5" data-testid="plan">
+      <p
+        className="rounded border border-neutral-200 p-2 text-sm text-neutral-700 dark:border-neutral-800 dark:text-neutral-300"
+        data-testid="small-project-notice"
+      >
+        Small-project mode: one milestone and a flat task list. A new task that names no tier is
+        reviewed at critic tier 0.
+      </p>
+
+      <section>
+        <h2 className="font-semibold">Milestone</h2>
+        {milestones.routeMissing ? (
+          <RouteMissing route="milestones" what="milestone status and success criteria">
+            <p className="mt-1">The milestone below comes from the project card.</p>
+          </RouteMissing>
+        ) : null}
+        {milestones.error && !milestones.routeMissing && !milestones.data ? (
+          <ErrorBanner message={milestones.error} onRetry={milestones.reload} />
+        ) : null}
+        {milestones.loading && !milestones.data && !milestones.routeMissing ? (
+          <Loading what="milestone" />
+        ) : null}
+        <div
+          className="mt-2 rounded border border-neutral-200 p-2 text-sm dark:border-neutral-800"
+          data-testid="small-project-milestone"
+          data-milestone-id={current?.id ?? ""}
+        >
+          {current ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">{current.name}</span>
+                {current.status !== "derived" ? (
+                  <Badge tone={milestoneTone(current.status)}>{current.status}</Badge>
+                ) : null}
+                {current.targetDate ? (
+                  <span className="text-xs text-neutral-500">target {current.targetDate}</span>
+                ) : null}
+                <span className="ml-auto text-xs text-neutral-500">
+                  {done} / {all.length} tasks done
+                </span>
+              </div>
+              {current.successCriteria.length > 0 ? (
+                <ul className="mt-1 list-disc pl-5 text-xs text-neutral-600 dark:text-neutral-400">
+                  {current.successCriteria.map((c) => (
+                    <li key={c}>{c}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-neutral-500">No milestone yet; the agent plans it from the brief.</p>
+          )}
+        </div>
+        {others.length > 0 ? (
+          <p className="mt-1 text-xs text-neutral-500" data-testid="small-project-other-milestones">
+            Other milestones on file: {others.map((m) => `${m.name} (${m.status})`).join(", ")}
+          </p>
+        ) : null}
+      </section>
+
+      <section>
+        <h2 className="font-semibold">Tasks</h2>
+        {tasks.error ? <ErrorBanner message={tasks.error} onRetry={tasks.reload} /> : null}
+        {tasks.loading && !tasks.data ? <Loading what="tasks" /> : null}
+        {tasks.data && all.length === 0 ? (
+          <p className="text-sm text-neutral-500">No tasks yet.</p>
+        ) : null}
+        <ul className="mt-2 space-y-1" data-testid="flat-task-list">
+          {all.map((t) => (
+            <li
+              key={t.id}
+              className="flex flex-wrap items-center gap-2 rounded border border-neutral-200 p-2 text-sm dark:border-neutral-800"
+              data-testid="flat-task"
+              data-task-id={t.id}
+              data-status={t.status}
+            >
+              <Badge tone={statusTone(t.status)}>{t.status}</Badge>
+              <span className="font-medium">{t.title}</span>
+              <span className="text-xs text-neutral-500">
+                tier {t.riskTier} · priority {t.priority}
+                {t.dependsOn.length > 0 ? ` · after ${t.dependsOn.join(", ")}` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <DependencyGraphSection tasks={tasks.data} />
+    </div>
+  );
+}
+
 /**
  * Plan tab (spec K.2, B): milestone timeline, milestones with their tasks, dependency graph.
  * `now` (epoch ms) places today's tick; it defaults to the wall clock and tests inject it,
- * the same way `lib/time.ts` takes `now`.
+ * the same way `lib/time.ts` takes `now`. A project in small-project mode (B.6) gets the flat
+ * list instead (`SmallProjectPlan`).
  */
 export function PlanTab({
   projectId,
@@ -419,6 +595,10 @@ export function PlanTab({
   // The timeline draws the route's milestones, or, on a daemon without the route, the derived
   // ones (the card's dated next milestone on the axis, the ids the tasks reference after it).
   const showTimeline = milestones.data !== null || (milestones.routeMissing && tasks.data !== null);
+
+  if (project.smallProjectMode) {
+    return <SmallProjectPlan project={project} tasks={tasks} milestones={milestones} />;
+  }
 
   return (
     <div className="space-y-5" data-testid="plan">
@@ -492,15 +672,7 @@ export function PlanTab({
         </ul>
       </section>
 
-      <section>
-        <h2 className="font-semibold">Dependency graph</h2>
-        <p className="text-xs text-neutral-500">
-          Left to right: a task sits after every task it depends on.
-        </p>
-        <div className="mt-2 overflow-x-auto">
-          {tasks.data ? <DependencyGraph tasks={tasks.data} /> : null}
-        </div>
-      </section>
+      <DependencyGraphSection tasks={tasks.data} />
     </div>
   );
 }

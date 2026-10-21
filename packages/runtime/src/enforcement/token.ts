@@ -70,6 +70,12 @@ export class TokenIssuer {
     if (!Number.isFinite(claims.budgetUsdMicro) || claims.budgetUsdMicro < 0) {
       throw new ForerunnerError("validation", "token budget must be a non-negative number");
     }
+    // An unparseable expiry would compare as NaN and never expire; the issuer is the last line.
+    if (typeof claims.expiresAt !== "string" || !Number.isFinite(Date.parse(claims.expiresAt))) {
+      throw new ForerunnerError("validation", "token expiresAt must be an ISO-8601 time", {
+        details: { expiresAt: String(claims.expiresAt) },
+      });
+    }
     const full: CapabilityClaims = {
       ...claims,
       id: claims.id ?? newId(this.now()),
@@ -155,7 +161,8 @@ export class TokenIssuer {
         details: { tokenId: token.claims.id },
       });
     }
-    if (new Date(token.claims.expiresAt).getTime() <= now) {
+    // Negated so an expiry that does not parse (NaN) counts as expired, never as open-ended.
+    if (!(new Date(token.claims.expiresAt).getTime() > now)) {
       throw new ForerunnerError("timeout", "capability token expired", {
         details: { tokenId: token.claims.id },
       });
@@ -197,7 +204,7 @@ export class TokenIssuer {
     for (const t of this.issued.values()) {
       const c = t.claims;
       if (c.runId !== runId || this.revoked.has(c.id)) continue;
-      if (new Date(c.expiresAt).getTime() <= now) continue;
+      if (!(new Date(c.expiresAt).getTime() > now)) continue;
       if (!found || c.issuedAt >= found.issuedAt) found = c;
     }
     return found;

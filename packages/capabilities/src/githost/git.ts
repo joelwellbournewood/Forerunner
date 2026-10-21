@@ -163,11 +163,21 @@ export class GitOps {
     return { ok: false, conflicts, detail: r.stderr.trim().slice(-800) };
   }
 
-  /** Push the branch; never force unless explicitly asked (never to a default branch). */
+  /**
+   * Push the branch; never force unless explicitly asked, and never to the default branch. A
+   * force push without `defaultBranch` is refused rather than attempted: the rule could not be
+   * applied, and a caller that forgot the branch would otherwise force-push `main`.
+   */
   async push(
     branch: string,
     opts: { remote?: string; force?: boolean; defaultBranch?: string } = {},
   ): Promise<void> {
+    if (opts.force && !opts.defaultBranch) {
+      throw new ForerunnerError(
+        "autonomy_insufficient",
+        `force-pushing ${branch} needs the repository's default branch declared (defaultBranch), so a default branch is never forced`,
+      );
+    }
     if (opts.force && opts.defaultBranch && branch === opts.defaultBranch) {
       throw new ForerunnerError("autonomy_insufficient", `force-pushing ${branch} needs a human`);
     }

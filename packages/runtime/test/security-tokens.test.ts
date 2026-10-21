@@ -161,7 +161,7 @@ describe("capability tokens: expiry and revocation", () => {
   // gives NaN and `NaN <= now` is false, so the token never expires. Nothing in the runtime
   // passes one today, but the issuer is the last line and should refuse at issue (or treat
   // an unparseable expiry as already expired).
-  it.fails("security finding: a token whose expiresAt is not a date is refused at issue or treated as expired", () => {
+  it("security finding: a token whose expiresAt is not a date is refused at issue or treated as expired", () => {
     const h = harness();
     let refused = false;
     try {

@@ -30,12 +30,15 @@ export class SessionBudget {
   private _warned80 = false;
 
   constructor(readonly limits: SessionLimits) {
-    if (limits.budgetUsdMicro < 0)
+    // Negated comparisons so NaN fails each check instead of slipping through every one.
+    if (!(limits.budgetUsdMicro >= 0))
       throw new ForerunnerError("validation", "session budget must be >= 0");
-    if (limits.stepCap <= 0) throw new ForerunnerError("validation", "step cap must be > 0");
-    if (limits.reserveShare < 0 || limits.reserveShare > 0.5) {
+    if (!(limits.stepCap > 0)) throw new ForerunnerError("validation", "step cap must be > 0");
+    if (!(limits.reserveShare >= 0 && limits.reserveShare <= 0.5)) {
       throw new ForerunnerError("validation", "reserve share must be between 0 and 0.5");
     }
+    if (Number.isNaN(limits.deadlineMs))
+      throw new ForerunnerError("validation", "session deadline must be a time");
   }
 
   get noNewWork(): boolean {
@@ -98,6 +101,7 @@ export class SessionBudget {
   ): {
     decision: "allow" | "finish_current";
   } {
+    checkAmount(estimateUsdMicro, "budget estimate");
     const runSpent = this.spentByRunId(runId);
     // At or over the cap nothing more runs, whatever the estimate says.
     if (runSpent >= runCapUsdMicro || runSpent + estimateUsdMicro > runCapUsdMicro) {
@@ -141,7 +145,7 @@ export class SessionBudget {
   }
 
   record(runId: string, usdMicro: number): void {
-    if (usdMicro < 0) throw new ForerunnerError("validation", "spend cannot be negative");
+    checkAmount(usdMicro, "budget spend");
     this.spentBySession += usdMicro;
     this.spentByRun.set(runId, this.spentByRunId(runId) + usdMicro);
     if (this.spentBySession >= this.limits.budgetUsdMicro * 0.8) {
@@ -152,6 +156,21 @@ export class SessionBudget {
 
   remainingUsdMicro(): number {
     return Math.max(0, this.limits.budgetUsdMicro - this.spentBySession);
+  }
+}
+
+/**
+ * An amount is a non-negative integer of USD micro-units. NaN passes every comparison and,
+ * once added to the session's spend, makes every later cap check false; one unpriced model
+ * id or a provider that reports no usage would otherwise switch the hard cap off for good.
+ */
+function checkAmount(n: number, what: string): void {
+  if (!Number.isSafeInteger(n) || n < 0) {
+    throw new ForerunnerError(
+      "validation",
+      `${what} must be a non-negative integer of USD micro-units, got ${String(n)}`,
+      { details: { what, value: String(n) } },
+    );
   }
 }
 

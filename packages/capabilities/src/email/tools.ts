@@ -8,7 +8,7 @@
 import { type Clock, ForerunnerError } from "@forerunner/platform";
 import type { ToolRegistry, ToolResult, ToolSpec } from "@forerunner/runtime";
 import { z } from "zod";
-import type { InboundEmail } from "./inbound.ts";
+import { hideCommandMarker, type InboundEmail } from "./inbound.ts";
 import { applySignature, type EmailPolicy, type MailboxProvider } from "./policy.ts";
 import { EMAIL_DRAFT_TOOL, type SentLog } from "./sent-log.ts";
 import type { EmailSettingsStore, IdentityPort } from "./types.ts";
@@ -33,18 +33,24 @@ function failure(e: unknown): ToolResult {
   return { content: `error: ${e instanceof Error ? e.message : String(e)}`, isError: true };
 }
 
-export function describeInbound(message: InboundEmail): string {
+/**
+ * The message as the model reads it. With `marker` (the agent's command marker), every
+ * occurrence in the subject and body is replaced by a placeholder: the owner's private tag is
+ * not the model's to see or to repeat to a stranger.
+ */
+export function describeInbound(message: InboundEmail, opts: { marker?: string } = {}): string {
+  const hide = (s: string) => (opts.marker ? hideCommandMarker(s, opts.marker) : s);
   const lines = [
     `Id: ${message.id}`,
     `Message-ID: ${message.messageId ?? "(none)"}`,
     `From: ${message.fromName ? `${message.fromName} <${message.from ?? ""}>` : (message.from ?? "(none)")}`,
     `To: ${message.to.join(", ")}`,
     ...(message.cc.length ? [`Cc: ${message.cc.join(", ")}`] : []),
-    `Subject: ${message.subject}`,
+    `Subject: ${hide(message.subject)}`,
     `Date: ${message.date ?? message.receivedAt}`,
     ...(message.inReplyTo ? [`In-Reply-To: ${message.inReplyTo}`] : []),
     "",
-    message.text,
+    hide(message.text),
   ];
   if (message.links.length > 0) {
     lines.push("", "Links (references only; open them in the sandbox browser, never here):");
@@ -150,12 +156,12 @@ export function emailTools(deps: EmailToolDeps): ToolSpec[] {
     risk: "low",
     async execute(input, ctx) {
       try {
-        await readable(ctx.agentId);
+        const config = await readable(ctx.agentId);
         const mailbox = await deps.mailboxFor(ctx.agentId);
         const messages = await mailbox.listUnseen({ limit: input.limit ?? 20 });
         const lines = messages.map(
           (m) =>
-            `${m.id}\t${m.date ?? m.receivedAt}\t${m.from ?? "?"}\t${m.subject}\tattachments=${m.attachments.length}${m.injection.suspicious ? "\tFLAGGED" : ""}`,
+            `${m.id}\t${m.date ?? m.receivedAt}\t${m.from ?? "?"}\t${hideCommandMarker(m.subject, config.commands.marker)}\tattachments=${m.attachments.length}${m.injection.suspicious ? "\tFLAGGED" : ""}`,
         );
         return {
           content: lines.length
@@ -178,13 +184,13 @@ export function emailTools(deps: EmailToolDeps): ToolSpec[] {
     risk: "low",
     async execute(input, ctx) {
       try {
-        await readable(ctx.agentId);
+        const config = await readable(ctx.agentId);
         const mailbox = await deps.mailboxFor(ctx.agentId);
         const message = await mailbox.fetch(input.id);
         if (!message) return { content: `no message ${input.id}`, isError: true };
         if (input.markSeen) await mailbox.markSeen(input.id);
         return {
-          content: describeInbound(message),
+          content: describeInbound(message, { marker: config.commands.marker }),
           untrusted: { source: "email", origin: message.from ?? mailbox.address },
           artifacts: {
             attachments: message.attachments.map((a) => ({

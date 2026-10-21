@@ -430,7 +430,7 @@ export function pcWatcherFor(world: ScenarioWorld, opts: PcWatcherOptions): Remo
     store: world.store,
     clock: world.clock,
     kill: install.kill,
-    start: (req) => install.scheduler.request(req),
+    start: (req) => install.scheduler.requestStart(req),
     commands: opts.commands,
     chat: null,
     conversationSessionId: async () => opts.sessionId,

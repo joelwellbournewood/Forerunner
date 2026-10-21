@@ -258,6 +258,49 @@ export function isRouteMissing(error: unknown): boolean {
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** The audit export (spec S.9): the daemon's `GET /audit/export` as the page uses it. */
+export type AuditExportFormat = "jsonl" | "csv";
+export interface AuditExportFilter {
+  agentId?: string;
+  sessionId?: string;
+  /** Inclusive lower bound on the time of the call (ISO-8601). */
+  from?: string;
+  /** Exclusive upper bound. */
+  to?: string;
+  format?: AuditExportFormat;
+}
+export interface AuditExportFile {
+  /** The daemon's name for the file, base name only. */
+  filename: string;
+  contentType: string;
+  text: string;
+  /** Rows in the body (JSON lines, or CSV lines less the header). */
+  rows: number;
+}
+
+/**
+ * The file name of a `Content-Disposition` header, base name only: a server names the file,
+ * never the directory it lands in.
+ */
+export function filenameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
+  if (!m?.[1]) return null;
+  let name = m[1].trim();
+  try {
+    name = decodeURIComponent(name);
+  } catch {
+    // keep the raw name
+  }
+  const base = name.split(/[\\/]/).pop() ?? "";
+  return base.length > 0 && base !== "." && base !== ".." ? base : null;
+}
+
+export function countExportRows(text: string, format: AuditExportFormat): number {
+  const lines = text.split(/\r?\n/).filter((l) => l.length > 0).length;
+  return format === "csv" ? Math.max(0, lines - 1) : lines;
+}
+
 export type Query = Record<string, string | number | null | undefined>;
 
 export interface RawRequestOptions {
@@ -419,6 +462,11 @@ export interface DaemonClient {
   docs(projectId: string, signal?: AbortSignal): Promise<DocView[]>;
   doc(projectId: string, path: string, signal?: AbortSignal): Promise<DocContentView>;
   performance(filter?: { projectId?: string }, signal?: AbortSignal): Promise<PerformanceView>;
+  /**
+   * The audit log as a file (spec S.9): the daemon streams it in pages; the body comes back
+   * whole with the name the daemon gave it, ready for `saveTextFile`.
+   */
+  auditExport(filter?: AuditExportFilter, signal?: AbortSignal): Promise<AuditExportFile>;
 }
 
 function isAbort(error: unknown): boolean {
@@ -716,6 +764,34 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         { projectId: filter?.projectId },
         signal,
       ),
+    auditExport: async (filter, signal) => {
+      const format: AuditExportFormat = filter?.format ?? "jsonl";
+      const res = await raw({
+        method: "GET",
+        path: routePath("auditExport"),
+        query: {
+          agentId: filter?.agentId,
+          sessionId: filter?.sessionId,
+          from: filter?.from,
+          to: filter?.to,
+          format,
+        },
+        accept: format === "csv" ? "text/csv" : "application/x-ndjson",
+        signal,
+      });
+      if (!res.ok) throw await errorFromResponse(res);
+      const text = await res.text();
+      return {
+        filename:
+          filenameFromDisposition(res.headers.get("content-disposition")) ??
+          `forerunner-audit.${format}`,
+        contentType:
+          res.headers.get("content-type") ??
+          (format === "csv" ? "text/csv" : "application/x-ndjson"),
+        text,
+        rows: countExportRows(text, format),
+      };
+    },
   };
 }
 

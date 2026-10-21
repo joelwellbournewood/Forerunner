@@ -20,7 +20,13 @@ import {
   toToolSpecs,
 } from "@forerunner/commands";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
-import type { ChangeLogRow, JsonObject, SessionRow, StateStore } from "@forerunner/state";
+import type {
+  ChangeLogRow,
+  JsonObject,
+  JsonValue,
+  SessionRow,
+  StateStore,
+} from "@forerunner/state";
 import type { ToolSpec } from "../agent/tools.ts";
 import type { KillScope } from "../enforcement/killswitch.ts";
 import type {
@@ -197,7 +203,10 @@ export class CommandLoop implements ConversationCommands {
    * The command tools for the model path. Each is gated by the registry (`gate: "registry"`):
    * the executor confirms by risk and the change card is the one approval, so the hooks file
    * no second request for a high-risk command (RT-P5-3; the always-human rule of the autonomy
-   * table keeps applying to every tool that is not a registry command).
+   * table keeps applying to every tool that is not a registry command). The actor is the
+   * agent, not the human: a command the model decides to call is logged as the agent's act
+   * (`author_agent`, no `author_human`) and a `limit` command always asks (ADR 0030 item 2);
+   * the human stays `humanId`, whose yes confirms (security-command-actor.test.ts).
    */
   tools(turn: CommandTurn, onResult: (r: CommandResultView) => void): ToolSpec[] {
     return this.commandToolSpecs(turn, onResult).map((spec) => ({ ...spec, gate: "registry" }));
@@ -223,7 +232,7 @@ export class CommandLoop implements ConversationCommands {
               ? { status: "cancelled" }
               : { status: r.status, sentence: r.sentence };
       },
-      ctxFor: () => this.contextFor(turn),
+      ctxFor: () => this.contextFor(turn, { actor: { kind: "agent", id: turn.agentId } }),
     });
   }
 
@@ -258,14 +267,20 @@ export class CommandLoop implements ConversationCommands {
   }
 
   /**
-   * The undo of a change that is one `session.start` whose session already ended (phase 5
-   * follow-up RT-P5-2): nothing is left to undo, so the row is marked irreversible (the
-   * Changes screen stops offering it) and the human is told why, before the executor runs
-   * anything. The check is made for that start (`after.start_id`, the scheduler entry the
-   * port answered with), so a later start of the same agent, running or not, never stands in
-   * for it. A start the registry can still act on (a remote command the PC has not picked up,
-   * a port that named the session) and a composed change (the start is one part; its undo is
-   * a no-op inside the whole) go to the executor as before.
+   * The undo of a change that is one `session.start` with nothing left to undo (phase 5
+   * follow-up RT-P5-2): the row is marked irreversible (the Changes screen stops offering it)
+   * and the human is told why, before the executor runs anything. The check is made for that
+   * start (`after.start_id`, the scheduler entry the port answered with), so a later start of
+   * the same agent, running or not, never stands in for it. A start made from a phone is a
+   * remote row (`after.remote_command_id`) the PC runs: while it is `pending` the executor
+   * cancels it; while it is `picked_up` the PC is starting the session this instant, so the
+   * undo is refused as in flight and the row stays undoable for the next try; once `done`,
+   * the id the PC's watcher recorded in the row's result (`startId`) names the start, and a
+   * result without one (a runner that records none) cannot be tied to a session, so that undo
+   * is refused as such rather than stopping something by guesswork; a `failed` row never ran.
+   * A start the registry can still act on (a port that named the session) and a composed
+   * change (the start is one part; its undo is a no-op inside the whole) go to the executor
+   * as before.
    */
   private async endedStart(
     changeLogId: string,
@@ -283,24 +298,41 @@ export class CommandLoop implements ConversationCommands {
         ? (row.after as JsonObject)
         : {};
     if (typeof after.session_id === "string") return null;
+    const refused = (reason: string, code: string): CommandResultView => ({
+      status: "refused",
+      reason,
+      code,
+      card: null,
+      commands: ["undo"],
+    });
+    let startId = typeof after.start_id === "string" ? after.start_id : undefined;
+    let reason = SESSION_START_ENDED_REASON;
     if (typeof after.remote_command_id === "string") {
       const remote = await store.remoteCommand.get(after.remote_command_id);
       if (remote?.status === "pending") return null;
+      if (remote?.status === "picked_up") {
+        this.logger.info("undo of a session.start deferred: the PC is picking the start up", {
+          changeLogId,
+          remoteCommandId: remote.id,
+        });
+        return refused(SESSION_START_IN_FLIGHT_REASON, "unavailable");
+      }
+      if (remote?.status === "failed") {
+        startId = undefined;
+        reason = SESSION_START_NOT_RUN_REASON;
+      } else {
+        startId = remoteStartId(remote?.result);
+        if (!startId) reason = SESSION_START_UNKNOWN_REASON;
+      }
     }
     const agentId = typeof after.agent_id === "string" ? after.agent_id : row.agent_id;
-    const startId = typeof after.start_id === "string" ? after.start_id : undefined;
     if (!agentId || (await check(agentId, startId)) !== "ended") return null;
     await store.changeLog.update(row.id, row.version, { undo_state: "irreversible" });
-    this.logger.info("undo of a session.start refused: the session already ended", {
+    this.logger.info("undo of a session.start refused: nothing left to undo", {
       changeLogId,
+      reason,
     });
-    return {
-      status: "refused",
-      reason: SESSION_START_ENDED_REASON,
-      code: "validation",
-      card: null,
-      commands: ["undo"],
-    };
+    return refused(reason, "validation");
   }
 
   activeProject(humanId: string): Promise<string | null> {
@@ -421,8 +453,34 @@ export const SESSION_START_UNDO_REASON = "undo of session.start";
 /** What the undo of a `session.start` whose session already ended answers with. */
 export const SESSION_START_ENDED_REASON =
   "the session this start began has already ended; there is nothing to undo";
+/**
+ * The undo of a phone's `session.start` while the PC has taken the remote row but not
+ * recorded its result yet: refused for the moment, the row stays undoable.
+ */
+export const SESSION_START_IN_FLIGHT_REASON =
+  "your PC is picking this start up right now; undo it again in a moment";
+/** The undo of a phone's `session.start` whose remote row the PC failed: nothing ran. */
+export const SESSION_START_NOT_RUN_REASON =
+  "this start never ran (the PC refused or dropped it); there is nothing to undo";
+/**
+ * The undo of a phone's `session.start` whose remote row completed without a start identity
+ * (a runner that records none, such as the cloud runner): its session cannot be found from
+ * here, so nothing is stopped by guesswork.
+ */
+export const SESSION_START_UNKNOWN_REASON =
+  "the runner that picked this start up recorded no identity for its session, so it cannot be undone from here; stop the session by hand if it still runs";
 /** The principal's conversation session is never a work session (`summary` marks it). */
 const CONVERSATION_SUMMARY = "conversation";
+
+/**
+ * The start id a remote `start` row's result carries (`RemoteCommandWatcher.runStart` writes
+ * `{ kind: "start", result, startId }`), or undefined for a result without one.
+ */
+export function remoteStartId(result: JsonValue | null | undefined): string | undefined {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return undefined;
+  const id = (result as JsonObject).startId;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
 
 export interface SessionStartOutcome {
   /** Never known synchronously: the scheduler starts the runner in the background. */
@@ -470,8 +528,10 @@ const nothingStopped = () => ({ stoppedRuns: 0, killedProcesses: 0 });
  * request) is a no-op that never reaches the kill switch (`CommandLoop.undo` marks such a
  * row irreversible with `SESSION_START_ENDED_REASON`). A later start of the same agent, by
  * hand, from the phone or by schedule, is never mistaken for the one undone, and an undo
- * whose row names no start matches nothing running. `session.stop` reaches the kill switch
- * unchanged.
+ * whose row names no start matches nothing running. A start made from a phone is a remote
+ * row the PC's `RemoteCommandWatcher` runs through this same scheduler; the id it records in
+ * the row's result is what `session.start`'s undo passes here for such a row. `session.stop`
+ * reaches the kill switch unchanged.
  */
 export function sessionCommandPorts(deps: {
   scheduler: Pick<Scheduler, "requestStart" | "cancelPending" | "pendingStart" | "activeStart">;

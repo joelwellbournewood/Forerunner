@@ -27,6 +27,13 @@ import {
   StartSessionBody,
   TransitionTaskBody,
 } from "@forerunner/runtime/daemon/api-types";
+import {
+  auditExportContentType,
+  auditExportFilename,
+  csvHeader,
+  csvLine,
+  jsonlLine,
+} from "@forerunner/runtime/daemon/audit-export";
 import { serve } from "@hono/node-server";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
@@ -41,6 +48,7 @@ import type {
 } from "../src/api/contracts.ts";
 import {
   AGENTS,
+  AUDIT_EXPORT,
   CATALOG,
   CHANGES,
   COMMAND_DEFS,
@@ -338,6 +346,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       latestCriticGrade: null,
       lastSessionAt: null,
       active: false,
+      smallProjectMode: false,
+      defaultRiskTier: 1,
     };
     state.projects.push(project);
     emit("project.changed", { id: project.id });
@@ -372,7 +382,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   });
   app.post("/projects/:id/tasks", async (c) => {
     const id = c.req.param("id");
-    if (!state.projects.some((p) => p.id === id)) {
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) {
       return errorBody(c, 404, "not_found", "no such project");
     }
     const parsed = CreateTaskBody.safeParse(await c.req.json());
@@ -384,7 +395,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       title: parsed.data.title,
       outcome: parsed.data.outcome,
       acceptanceCriteria: parsed.data.acceptanceCriteria,
-      riskTier: parsed.data.riskTier,
+      // Like the daemon: a task that names no tier gets the project's default (B.6).
+      riskTier: parsed.data.riskTier ?? project.defaultRiskTier ?? 1,
       status: parsed.data.status,
       priority: parsed.data.priority,
       claimedBy: null,
@@ -658,6 +670,31 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     });
   });
 
+  // Audit log export (spec S.9): the daemon streams a file; the fake serves the fixture rows
+  // through the daemon's own serialisers, honouring the filters and the format.
+  app.get("/audit/export", (c) => {
+    const format = c.req.query("format") ?? "jsonl";
+    if (format !== "jsonl" && format !== "csv")
+      return errorBody(c, 400, "validation", "format: must be jsonl or csv");
+    const agentId = c.req.query("agentId");
+    const sessionId = c.req.query("sessionId");
+    const from = c.req.query("from");
+    const to = c.req.query("to");
+    const rows = AUDIT_EXPORT.filter(
+      (r) =>
+        (!agentId || r.agentId === agentId) &&
+        (!sessionId || r.sessionId === sessionId) &&
+        (!from || r.occurredAt >= from) &&
+        (!to || r.occurredAt < to),
+    );
+    const body =
+      format === "csv" ? csvHeader() + rows.map(csvLine).join("") : rows.map(jsonlLine).join("");
+    return c.body(body, 200, {
+      "content-type": auditExportContentType(format),
+      "content-disposition": `attachment; filename="${auditExportFilename(format, "2026-10-19T19:31:00.000Z")}"`,
+      "cache-control": "no-store",
+    });
+  });
   app.get("/costs", (c) => {
     const projectId = c.req.query("projectId");
     if (projectId) {
@@ -1424,7 +1461,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           },
           risk,
         ),
-        apply: () => ({ before: { [key]: null }, after: { [key]: params.value } }),
+        apply: () => {
+          // Like the daemon's card: the flag and the default tier of new tasks follow (B.6).
+          if (key === "small_project_mode" && project && typeof params.value === "boolean") {
+            project.smallProjectMode = params.value;
+            project.defaultRiskTier = params.value ? 0 : 1;
+          }
+          return { before: { [key]: null }, after: { [key]: params.value } };
+        },
       };
     }
     if (name === "note.add") {

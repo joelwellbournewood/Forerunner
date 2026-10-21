@@ -26,6 +26,7 @@ language models drive tools with them. The rules the code enforces:
 | Model asks a tool to print, email or commit a secret | The model only ever holds the reference; the hook injects the value into the tool call, and `afterToolCall` scrubs every resolved value out of the output before the model sees it. |
 | Secret in a log line, error or crash dump | `Logger` redacts credential shapes; vault errors carry names, paths and reasons, never values; `SecretResolver.redact` scrubs resolved values; `test/no-leak.test.ts` proves it across every failure path. |
 | Secret written to the state store or git | The vault is the only writer of values; `secret_ref` rows store name, scope and grants; the secret scan runs on the repository and on log directories. |
+| Secret or raw tool parameter in an audit export (`GET /audit/export` on the daemon and the state service, `fr audit export`; spec S.9, ADR 0050) | The export writes the `audit_log` row's `input_summary` and `result_summary` exactly as the hooks stored them (redacted by `redactForDisplay`, capped by `summarize` at write time) and no other column about the call; the file is scoped to the caller's own rows (their human and their agents; another human's agent is not found); CSV cells that a spreadsheet would evaluate are neutralised (`docs/maintainers/runtime.md`, "Audit log export"). |
 | Vault file copied off a machine (laptop theft, runner image leak) | Entries are AES-256-GCM under a key derived from a 32-byte device key or a passphrase. On the runner the key is not on disk at all. |
 | Vault file edited in place (entry swapped, byte flipped, check forged) | Each entry's name is authenticated data; any change fails authentication with `validation` / `integrity`; the key-check value makes a wrong key distinguishable from tampering. |
 | Agent of human A reads the vault of human B | Separate OS users or installs have separate keyring services and vault files; the runtime passes a run only the token of its owner (to be filled by runtime / state-service). |
@@ -88,7 +89,13 @@ returned to the caller is the one copy that cannot be erased.
 States: `new EncryptedFileVault(opts)` starts **locked** (every operation throws
 `ForerunnerError("unavailable", "vault locked")`); `EncryptedFileVault.open(opts)` returns it
 unlocked with a passphrase, a given key, or the device key from `vault.key` (created on first
-use). `lock()` zeroes the key material. `exportKey()` returns a copy of the device key;
+use). On POSIX a `vault.key` found with any group or other bit (restored from a backup, copied
+with `cp`, written by another tool) is tightened to 0600 and a warning logged before it is
+used, the way ssh treats a private key; one that cannot be tightened is refused (`validation`,
+`reason: "key_permissions"`). The KDF block is bounded on read (`SCRYPT_BOUNDS`: N a power of
+two in 2^10..2^20, r in 1..32, p in 1..16): a file outside them is `validation` with `reason:
+"corrupt"`, never a raw scrypt error escaping `open()` or a memory bomb through a huge N
+(`maxmem` follows N). `lock()` zeroes the key material. `exportKey()` returns a copy of the device key;
 `importKey(key, { persist })` / `unlock(key)` accept it. Passphrase vaults have no exportable
 key (`not_supported`).
 
@@ -117,9 +124,10 @@ state-service; the vault side is complete.
   `secret_not_granted` (before any vault read) otherwise and `not_found` for a granted name that
   is not stored. Returns a new structure; the input is never mutated; class instances (Date,
   Buffer) pass through by identity; nesting deeper than 64 is refused.
-- `redactValues(text, values)`: removes every value and its JSON-escaped, URL-encoded and
-  base64 forms, longest first. Values shorter than 4 characters are not scrubbed (they would
-  destroy ordinary text and are not secrets).
+- `redactValues(text, values)`: removes every value and its JSON-escaped, URL-encoded, base64,
+  base64url (padded and unpadded: JWT segments, some Basic-auth clients, `@base64d` pipelines)
+  and hex (both cases) forms, longest first. Values shorter than 4 characters are not scrubbed
+  (they would destroy ordinary text and are not secrets).
 - `SecretResolver(vault, audit?)`: per-run object with `resolve(input, granted)` and
   `redact(text)`; it remembers the values it resolved. It matches the runtime's `SecretsPort`
   and is what `packages/runtime` wires into `beforeToolCall` / `afterToolCall`.
@@ -165,6 +173,7 @@ See `runtime.md`. Injection suite, browser and email hardening: to be filled by 
 | `test/open.test.ts` | backend selection, fall back with logged reason, env override, forced keyring failing loudly, invalid env value |
 | `test/refs.test.ts` | reference syntax, nested resolution, immutability, not-granted before vault read, not-found, depth cap, `redactValues` forms, `SecretResolver` |
 | `test/no-leak.test.ts` | captures Logger sinks, console and every thrown error across all backends and failure paths; asserts no value (or its base64) appears |
+| `test/security-vault.test.ts` | the security review: a vault file copied without its key is refused (`wrong_key`) and no key is written next to it, the locked state names the path and never a value, a world-readable key file is tightened to 0600 before use, a tampered KDF block is `corrupt` and never a raw crypto error, an ungranted name is refused before any vault read, the resolver's edge cases, and base64url and hex forms are scrubbed |
 
 Fixtures are random `v-<hex>` values; anything credential-shaped in tests is built by
 concatenation and marked `// not-a-secret` so `pnpm secrets:scan` stays clean.
@@ -179,8 +188,8 @@ Injection suite, capability token and autonomy enforcement tests: see `runtime.m
 - Windows: file modes are advisory; the vault relies on the user profile ACL. The Credential
   Manager also stores secrets per Windows user, which is the intended boundary.
 - Linux without a Secret Service (servers, containers, some minimal desktops) uses the file
-  vault; the device key then sits next to the data at 0600. This is weaker than a keyring and
-  is logged at startup.
+  vault; the device key then sits next to the data at 0600 (put back to 0600, with a warning,
+  when found wider). This is weaker than a keyring and is logged at startup.
 - Keyring and file operations are serialised per process only. Two processes writing the same
   file vault at once (desktop app and a local runner on one profile) are not coordinated; use
   separate profiles.

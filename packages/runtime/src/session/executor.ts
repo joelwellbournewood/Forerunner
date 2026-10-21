@@ -605,12 +605,15 @@ export class LoopTaskExecutor implements TaskExecutor {
       // The result is never lost because bookkeeping failed, and the failure is on record.
       await this.runPersistFailed(runIds, "end", e);
     }
-    // A driver's error message may quote what the subprocess or the provider said; the store
-    // has no redaction layer, so it is redacted here before it becomes the task's summary.
+    // A driver's error message, and a successful run's final text, may quote what the
+    // subprocess or the provider said (its own environment included); the store has no
+    // redaction layer, so both are redacted here before they become the task's summary, the
+    // report the critic reads and the lesson candidates (ADR 0044 item 9).
+    const finalText = redact(result.finalText);
     return {
       outcome,
       summary:
-        result.finalText.slice(0, 2000) ||
+        finalText.slice(0, 2000) ||
         (result.error ? redact(result.error.message) : "") ||
         result.outcome,
       costUsdMicro: result.costUsdMicro,
@@ -618,8 +621,8 @@ export class LoopTaskExecutor implements TaskExecutor {
       checksPassed: result.outcome === "completed",
       runId: run.id,
       ...(worktree ? { worktree } : {}),
-      finalReport: result.finalText,
-      lessons: this.screenedLessons(task.id, result.finalText, spec.name),
+      finalReport: finalText,
+      lessons: this.screenedLessons(task.id, finalText, spec.name),
     };
   }
 

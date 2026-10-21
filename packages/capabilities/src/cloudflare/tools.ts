@@ -33,7 +33,7 @@ import {
   type DeployPlan,
   type PlanRequest,
 } from "./deploy.ts";
-import { cloudflareSettingsOf, scopeOf } from "./settings.ts";
+import { cloudflareSettingsOf, scopeOf, standInBaseUrlOf } from "./settings.ts";
 
 export const CLOUDFLARE_TOOL_NAMES = [
   "cloudflare_plan",
@@ -406,12 +406,19 @@ export interface CloudflareCapabilityDeps {
   audit?: CloudflareAuditPort;
   clock: Clock;
   fetchImpl?: typeof fetch;
-  /** Overrides the settings' base URL (tests). */
+  /** Overrides the settings' base URL and is the one stand-in a project may name (tests). */
   baseUrl?: string;
+  /** Environment to read `FORERUNNER_CLOUDFLARE_API_BASE` from (default `process.env`). */
+  env?: Record<string, string | undefined>;
 }
 
-/** Reads `project.settings.cloudflare` and `project.autonomy_level` for every call. */
+/**
+ * Reads `project.settings.cloudflare` and `project.autonomy_level` for every call. The settings
+ * are parsed with the stand-in the install owner allowed (`baseUrl`, else the environment), so
+ * a project naming another API host or another vault entry is refused before any request.
+ */
 export function cloudflareToolDeps(deps: CloudflareCapabilityDeps): CloudflareToolDeps {
+  const standInBaseUrl = standInBaseUrlOf(deps);
   const projectOf = async (ctx: ToolExecutionContext): Promise<ProjectRow> => {
     const project = ctx.projectId ? await deps.projects.get(ctx.projectId) : undefined;
     if (!project) {
@@ -426,7 +433,7 @@ export function cloudflareToolDeps(deps: CloudflareCapabilityDeps): CloudflareTo
     audit: deps.audit,
     async deployerFor(ctx) {
       const project = await projectOf(ctx);
-      const settings = cloudflareSettingsOf(project);
+      const settings = cloudflareSettingsOf(project, { standInBaseUrl });
       if (!settings) {
         throw new ForerunnerError(
           "tool_not_allowed",
@@ -437,7 +444,7 @@ export function cloudflareToolDeps(deps: CloudflareCapabilityDeps): CloudflareTo
       const client = new CloudflareClient({
         scope: scopeOf(settings),
         token: cloudflareTokenSource({ vault: deps.vault, ref: settings.secret_ref }),
-        baseUrl: deps.baseUrl ?? settings.base_url,
+        baseUrl: deps.baseUrl ?? settings.base_url ?? standInBaseUrl,
         fetchImpl: deps.fetchImpl,
         clock: deps.clock,
       });

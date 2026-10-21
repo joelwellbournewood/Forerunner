@@ -57,6 +57,12 @@ claimed or in-progress tasks to `ready`. Another agent cannot start a claimed ta
 `task.transition(..., "done")` is refused with `ForerunnerError("findings_open")` while the task
 has findings in status `open`.
 
+### Decisions stay in their project
+
+`DecisionRepo.supersede(oldId, input)` refuses with `ForerunnerError("validation")` when the
+older decision belongs to another project than the new one, so a caller allowed to record
+in one project cannot retire a decision of another by naming its id.
+
 ### Append-only tables
 
 `audit_log`, `event` accept inserts only. Their repositories expose no update or delete, and

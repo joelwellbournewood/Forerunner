@@ -50,9 +50,13 @@ does not run commands and records `checks: N command(s) not run at tier 1 ...` i
 omission is never silent.
 
 Mandatory tiers (open decision in the spec): anything touching main, security, data, money or
-science claims is reviewed at tier 2 or higher; small-project mode defaults to tier 0. The tier
-is chosen by the planner and stored on the task (`risk_tier`); the critic reviews at the tier it
-is given.
+science claims is reviewed at tier 2 or higher. Small-project mode (spec B.6, ADR 0051)
+defaults a new task that names no tier to tier 0: that default is chosen in one place, the
+runtime's `defaultRiskTier(project)` (`packages/runtime/src/session/project-plan.ts`), by every
+task creation path, and stored on the task (`risk_tier`). The critic reviews at the tier it is
+given and never reads the flag, so a tier named on a task stands whatever the mode and flipping
+the flag leaves existing tasks' tiers alone (`packages/runtime/test/small-project.test.ts`,
+`packages/commands/test/small-project.test.ts`).
 
 ### Independence (H.1, ADR 0028)
 

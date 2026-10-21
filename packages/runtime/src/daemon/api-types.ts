@@ -27,6 +27,13 @@ export const ProjectCard = z.object({
   latestCriticGrade: z.number().int().min(0).max(100).nullable(),
   lastSessionAt: z.string().nullable(),
   active: z.boolean(),
+  /**
+   * Small-project mode (spec B.6): one milestone, a flat task list, new tasks at critic tier 0.
+   * Absent on a card the state service serves, which does not carry the flag yet.
+   */
+  smallProjectMode: z.boolean().optional(),
+  /** The tier a new task of this project gets when it names none (`defaultRiskTier`). */
+  defaultRiskTier: z.number().int().min(0).max(3).optional(),
 });
 export type ProjectCard = z.infer<typeof ProjectCard>;
 
@@ -74,6 +81,42 @@ export const TaskView = z.object({
   version: z.number().int(),
 });
 export type TaskView = z.infer<typeof TaskView>;
+
+export const MilestoneView = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  name: z.string(),
+  successCriteria: z.array(z.string()),
+  /** A calendar date (YYYY-MM-DD) or null. */
+  targetDate: z.string().nullable(),
+  status: z.enum(["planned", "active", "done", "cancelled"]),
+  orderIndex: z.number().int(),
+  createdAt: z.string(),
+  version: z.number().int(),
+});
+export type MilestoneView = z.infer<typeof MilestoneView>;
+
+/** `POST /projects/:id/plan` (spec B.6): the rows the plan became. */
+export const PlanProjectView = z.object({
+  /** Milestones written by this call, in order; one at most in small-project mode. */
+  milestones: z.array(MilestoneView),
+  /**
+   * Small-project mode: the project's open milestone the tasks joined instead of a new one, as
+   * it stands after `merged` was applied; null when this call created a milestone.
+   */
+  reusedMilestone: MilestoneView.nullable(),
+  /**
+   * What joining added to `reusedMilestone`: the plan's success criteria it did not have yet
+   * (plan order, once each) and the plan's target date when later than its own, else null; the
+   * milestone keeps its name. Null when nothing was added or a milestone was created.
+   */
+  merged: z
+    .object({ successCriteria: z.array(z.string()), targetDate: z.string().nullable() })
+    .nullable(),
+  /** Tasks written by this call, dependencies before dependants. */
+  tasks: z.array(TaskView),
+});
+export type PlanProjectView = z.infer<typeof PlanProjectView>;
 
 export const RunView = z.object({
   id: z.string(),
@@ -279,7 +322,8 @@ export const CreateTaskBody = z.object({
   title: z.string().min(3),
   outcome: z.string().min(3),
   acceptanceCriteria: z.array(z.string()).default([]),
-  riskTier: z.number().int().min(0).max(3).default(1),
+  /** Left out, the project's default applies: tier 0 in small-project mode, else 1 (B.6). */
+  riskTier: z.number().int().min(0).max(3).optional(),
   priority: z.number().int().min(1).max(9).default(5),
   milestoneId: z.string().optional(),
   dependsOn: z.array(z.string()).default([]),
@@ -978,6 +1022,8 @@ export const DAEMON_ROUTES = {
   projectSummary: "GET /projects/:id/summary",
   tasks: "GET /projects/:id/tasks?status=&limit=",
   createTask: "POST /projects/:id/tasks",
+  planProject:
+    "POST /projects/:id/plan (ProjectPlanBody -> 201 PlanProjectView: the plan written as milestone and task rows; one milestone and a flat task list in small-project mode, spec B.6, where a later plan joins the project's open milestone (reusedMilestone), which keeps its name and takes the plan's new success criteria and a later target date (merged says what was added; an audit row project.plan carries the plan's reason); an unknown dependency, a cycle, an empty plan or one over the caps is refused as 409 conflict with cause validation (ADR 0025) and nothing is written; 404 for an unknown project)",
   transitionTask: "POST /tasks/:id/transition",
   runs: "GET /projects/:id/runs?limit=",
   sessions: "GET /sessions?agentId=&projectId=&status=",
@@ -995,6 +1041,8 @@ export const DAEMON_ROUTES = {
   chat: "POST /chat (JSON) | POST /chat/stream (SSE tokens then a final reply event)",
   costs: "GET /costs?projectId=&from=&to=",
   costEstimates: "GET /costs/estimates (estimate-versus-actual accuracy, EstimateAccuracyView)",
+  auditExport:
+    "GET /audit/export?agentId=&sessionId=&from=&to=&format=jsonl|csv (spec S.9: the audit log as a file download, streamed in pages; the install's human's rows and their agents' with the summaries as stored; Content-Disposition names the file; 404 for another human's agent, 400 for a bad format, timestamp or window)",
   settings: "GET /settings?scope=&scopeId=",
   updateProjectSettings:
     "PUT /projects/:id/settings { version, settings } (merged; mirror schedule follows)",

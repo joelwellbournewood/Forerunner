@@ -167,17 +167,17 @@ describe("email commands: forged senders", () => {
 // Thread detection and replay
 
 describe("email commands: thread detection and replay", () => {
-  // security finding (medium): `EmailCommandGate` treats a message as "a reply in a thread
-  // the agent started" when ANY id in its References names a Message-ID the agent ever sent
-  // (commands.ts, `isReplyToThread` over `sentLog.threadIds`), including mail the agent sent
-  // to strangers. A stranger who received such a mail knows its Message-ID. They mail the
-  // owner with `References: <that id>` and `Reply-To: <the agent>`; the owner's client answers
-  // to the agent and copies the References. The owner's casual words to the stranger ("yes,
-  // go ahead and order 10 and pay the invoice") then pass the gate as a command from the
-  // owner, DKIM and SPF included, with no marker. Fix: accept a thread only when the direct
-  // parent (`In-Reply-To`, else the last References entry) is a sent row whose recipients
-  // were the registered human (`toHuman`), never a row sent to a third party.
-  it.fails("security finding: a stranger-seeded References header cannot turn the owner's reply to the stranger into a command", async () => {
+  // security finding (medium, fixed): `EmailCommandGate` treated a message as "a reply in a
+  // thread the agent started" when ANY id in its References named a Message-ID the agent ever
+  // sent (`isReplyToThread` over `sentLog.threadIds`), including mail the agent sent to
+  // strangers. A stranger who received such a mail knows its Message-ID. They mail the owner
+  // with `References: <that id>` and `Reply-To: <the agent>`; the owner's client answers to
+  // the agent and copies the References. The owner's casual words to the stranger ("yes, go
+  // ahead and order 10 and pay the invoice") then passed the gate as a command from the
+  // owner, DKIM and SPF included, with no marker. The gate now accepts a thread only when the
+  // direct parent (`In-Reply-To`, else the last References entry) is a sent row whose
+  // recipients were the registered human (`toHuman`), never a row sent to a third party.
+  it("security finding: a stranger-seeded References header cannot turn the owner's reply to the stranger into a command", async () => {
     world = await emailWorld({ mode: "full_discretion" });
     const sent = await world.policy.send(
       { to: [STRANGER], subject: "Quote request", text: "Could you quote 10 widgets?" },
@@ -198,13 +198,14 @@ describe("email commands: thread detection and replay", () => {
     expect(verdict.obey).toBe(false);
   });
 
-  // security finding (low): a message is handled once per Message-ID for `dedupeWindowMs`
-  // (30 days) and the Date header is never compared with the delivery time. DKIM signatures
-  // carry no expiry, so a captured owner command replayed from a host that passes the owner
-  // domain's SPF (the same provider) after 31 days is obeyed again: a second task, a second
-  // session, a second spend. Fix: refuse commands whose Date (or the host's Received date)
-  // is older than a short window, and make the dedupe window at least the thread window.
-  it.fails("security finding: the owner's signed command replayed after the dedupe window is not obeyed twice", async () => {
+  // security finding (low, fixed): a message was handled once per Message-ID for
+  // `dedupeWindowMs` (30 days) and the Date header was never compared with the delivery time.
+  // DKIM signatures carry no expiry, so a captured owner command replayed from a host that
+  // passes the owner domain's SPF (the same provider) after 31 days was obeyed again: a second
+  // task, a second session, a second spend. The dedupe window is now the thread window (90
+  // days) and the gate refuses a command whose Date header is older than `maxCommandAgeMs`
+  // (7 days) as `stale`.
+  it("security finding: the owner's signed command replayed after the dedupe window is not obeyed twice", async () => {
     world = await emailWorld({
       replies: [
         interpretation(
@@ -333,13 +334,15 @@ describe("email policy: caps and allowlists under evasion", () => {
 // What the model gets to see
 
 describe("email tools: what reaches the model", () => {
-  // security finding (low): `email_read` renders the subject verbatim (`describeInbound`),
-  // so the owner's private command marker (`[FR-xxxx]`, spec T.3 "a private tag") enters the
-  // model context whenever the agent reads one of the owner's command mails. A prompt-injected
-  // agent in full discretion can then mail it to a stranger; the marker is the one factor the
-  // owner can rotate, and the other two (DKIM, SPF) do not change when it leaks. Fix: replace
-  // the configured marker with a placeholder in tool output and audit rows.
-  it.fails("security finding: the owner's private command marker is not shown to the model", async () => {
+  // security finding (low, fixed): `email_read` rendered the subject verbatim
+  // (`describeInbound`), so the owner's private command marker (`[FR-xxxx]`, spec T.3 "a
+  // private tag") entered the model context whenever the agent read one of the owner's command
+  // mails. A prompt-injected agent in full discretion could then mail it to a stranger; the
+  // marker is the one factor the owner can rotate, and the other two (DKIM, SPF) do not change
+  // when it leaks. `email_read`, `email_list` and the classifier's input now carry
+  // `[command marker]` in its place (`hideCommandMarker`); the audit rows, the sent log and a
+  // task's source, which the owner reads, keep it.
+  it("security finding: the owner's private command marker is not shown to the model", async () => {
     world = await emailWorld();
     const stored = await ownerSends(world, { subject: "Fix the build", text: "Please fix CI." });
     const tools = emailTools({
@@ -437,14 +440,15 @@ class FakeApp implements EmailRouteApp {
 }
 
 describe("email settings as an attack surface", () => {
-  // security finding (medium, latent until the daemon mounts the routes): the email settings
-  // routes take any `:agentId` and only record `humanFor(c)` as the author
+  // security finding (medium, latent until the daemon mounts the routes; fixed): the email
+  // settings routes took any `:agentId` and only recorded `humanFor(c)` as the author
   // (routes.ts `PUT /agents/:agentId/email/settings`). On a shared state the signed-in human
-  // of one daemon can set another human's agent's `registeredHumanAddress` to their own
-  // address and enable commands: that agent then obeys the attacker's mail, on the victim's
-  // runner, vault and billing source. Fix: resolve the agent and refuse (403) when its
-  // `owner_human_id` is not the signed-in human, for every route under `/agents/:agentId`.
-  it.fails("security finding: a signed-in human cannot change another human's agent's email settings", async () => {
+  // of one daemon could set another human's agent's `registeredHumanAddress` to their own
+  // address and enable commands: that agent then obeyed the attacker's mail, on the victim's
+  // runner, vault and billing source. The routes now resolve the agent's owner through the
+  // `identity` port and refuse (403) when it is not the signed-in human, for every route under
+  // `/agents/:agentId`.
+  it("security finding: a signed-in human cannot change another human's agent's email settings", async () => {
     world = await emailWorld();
     const other = await addAgentForHuman(world, {
       humanName: "K",
@@ -459,6 +463,7 @@ describe("email settings as an attack surface", () => {
         clock: world.clock,
         audit: world.store.auditLog,
         humanFor: (c) => c.req.header?.("x-human"),
+        identity: world.identity,
       },
       new FakeApp(),
     );
@@ -472,15 +477,16 @@ describe("email settings as an attack surface", () => {
     expect(after.commands.registeredHumanAddress).toBe("k@example.test");
   });
 
-  // security finding (medium): a mailbox credential is any `secret:<name>` and the host is
-  // any string (types.ts `ImapConfigSchema`); the runner grants exactly the names the row
-  // names (cloud-runner `EmailWatch.openMailbox`). Whoever can write the settings row can
-  // therefore point the IMAP client at their own host with `passwordRef:
+  // security finding (medium, fixed): a mailbox credential was any `secret:<name>` and the
+  // host is any string (types.ts `ImapConfigSchema`); the runner grants exactly the names the
+  // row names (cloud-runner `EmailWatch.openMailbox`). Whoever could write the settings row
+  // could therefore point the IMAP client at their own host with `passwordRef:
   // secret:anthropic_api_key` and receive the victim's model key as a password on the next
-  // poll. Together with the route above this is a cross-human secret exfiltration. Fix: a
-  // mailbox credential must be a secret created for the mailbox (a `mail.`/`email_` name
-  // prefix or a vault purpose tag), never one of the install's own credentials.
-  it.fails("security finding: the install's own credentials cannot be named as a mailbox password", () => {
+  // poll. Together with the route above this was a cross-human secret exfiltration. The schema
+  // now refuses a name that says API key, token, PAT, client secret or private key
+  // (`INSTALL_CREDENTIAL_NAME_PATTERN`): a mailbox credential is a password created for the
+  // mailbox, never one of the install's own credentials.
+  it("security finding: the install's own credentials cannot be named as a mailbox password", () => {
     expect(() =>
       mergeEmailConfig(defaultEmailConfig(), {
         settings: {

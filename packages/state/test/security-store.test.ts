@@ -321,7 +321,7 @@ describe("security: workflow graphs and version checks", () => {
    * naming its id. Fix: throw `validation` when `old.project_id !== input.project_id`
    * (and keep the route's check as the first line).
    */
-  it.fails("supersede refuses a decision of another project", async () => {
+  it("supersede refuses a decision of another project", async () => {
     const original = await store.decision.record({
       project_id: s.project.id,
       question: "Database?",

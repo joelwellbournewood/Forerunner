@@ -170,7 +170,7 @@ describe("security: local daemon", () => {
    * `Access-Control-Allow-Origin: null` is a known anti-pattern (CWE-942). Fix: drop
    * `origin === "null"` from `isLocalOrigin`, or record in ADR 0025 which shell needs it.
    */
-  it.fails("CORS: the opaque origin 'null' is not a local origin", async () => {
+  it("CORS: the opaque origin 'null' is not a local origin", async () => {
     const pre = await app.request("/me", {
       method: "OPTIONS",
       headers: { origin: "null", "access-control-request-method": "GET" },
@@ -214,7 +214,7 @@ describe("security: local daemon", () => {
      * boundary, but the route is the UI's contract. Fix: refuse (403) when
      * `r.human_id !== null && r.human_id !== rt.human.id`, as ADR 0041 item 4 describes.
      */
-    it.fails("does not answer a request addressed to another human", async () => {
+    it("does not answer a request addressed to another human", async () => {
       const r = await rt.store.humanRequest.insert({
         human_id: otherHuman.id,
         kind: "approval",
@@ -238,7 +238,7 @@ describe("security: local daemon", () => {
      * the message's human (addressee, or the owner of the addressed agent) is not the
      * daemon's human.
      */
-    it.fails("does not receipt a message addressed to another human", async () => {
+    it("does not receipt a message addressed to another human", async () => {
       const m = await rt.store.message.send({
         from_agent_id: rt.agent.id,
         to_human_id: otherHuman.id,
@@ -257,7 +257,7 @@ describe("security: local daemon", () => {
      * not only the daemon's human; the state service forces a device's own human.
      * Fix: ignore the query parameter, or refuse a value other than `rt.human.id`.
      */
-    it.fails("does not serve another human's inbox through ?humanId", async () => {
+    it("does not serve another human's inbox through ?humanId", async () => {
       await rt.store.humanRequest.insert({
         human_id: otherHuman.id,
         kind: "decision",
@@ -289,7 +289,7 @@ describe("security: local daemon", () => {
    * for `/sessions`, `/projects/:id/runs`, `/memory` and `/changes`. Fix: parse list
    * numbers through one validator (as the state service's `intParam` does) and answer 400.
    */
-  it.fails("malformed numbers in list queries are a 400, never a 500 with driver text", async () => {
+  it("malformed numbers in list queries are a 400, never a 500 with driver text", async () => {
     const created = await json(
       await req("/projects", {
         method: "POST",

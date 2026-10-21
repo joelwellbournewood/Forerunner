@@ -3,7 +3,7 @@ import { type Principal, requireScope } from "../auth/principal.ts";
 import { ApiError, forbidden, notFound } from "../errors.ts";
 import { type App, agentName, intParam, principal, type RouteContext } from "../http.ts";
 import type { ChangeEvent } from "../realtime.ts";
-import { sseLoop } from "../sse.ts";
+import { deviceStillActive, sseLoop } from "../sse.ts";
 import { currentChfRate, eventView, sessionView } from "../views.ts";
 
 async function currentTaskOf(ctx: RouteContext, s: SessionRow) {
@@ -122,6 +122,7 @@ export function registerSessionRoutes(app: App, ctx: RouteContext): void {
       clock: ctx.clock,
       heartbeatMs: ctx.config.heartbeatMs,
       pollMs: ctx.config.pollIntervalMs,
+      stillAllowed: deviceStillActive(ctx.store, p),
       init: async (send) => {
         await send("ready", { sessionId, afterSeq, at: ctx.clock.nowIso() });
         await sendNew(send);

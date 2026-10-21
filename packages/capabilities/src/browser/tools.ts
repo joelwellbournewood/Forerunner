@@ -269,8 +269,11 @@ export function browserTools(manager: BrowserSessionManager): ToolSpec[] {
       const blocked = r.blockedRequests
         ? ` ${r.blockedRequests} request(s) to ${r.blockedHosts.join(", ")} were blocked by the site policy.`
         : "";
+      // The title and the blocked hosts are the page's words: the result is untrusted, so the
+      // hooks wrap and scan them as data like the page body, never bare in the model context.
       return {
         content: `Opened ${r.url} (HTTP ${r.status ?? "n/a"}) ${JSON.stringify(r.title)}.${blocked}`,
+        untrusted: { source: "web_page", origin: r.url },
       };
     },
   };
@@ -304,6 +307,7 @@ export function browserTools(manager: BrowserSessionManager): ToolSpec[] {
       const r = await s.click(input.selector);
       return {
         content: `Clicked ${input.selector}. Now at ${r.url} ${JSON.stringify(r.title)}.${r.guards.length ? ` Approved guards: ${r.guards.join(", ")}.` : ""}`,
+        untrusted: { source: "web_page", origin: r.url },
       };
     },
   };

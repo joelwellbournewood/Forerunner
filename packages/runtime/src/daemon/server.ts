@@ -18,6 +18,7 @@ import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
 import { createNotificationRoutes } from "../notifications/routes.ts";
 import { buildPeerFeed } from "../session/peers.ts";
+import { applyProjectPlan, defaultRiskTier, ProjectPlanBody } from "../session/project-plan.ts";
 import { defaultPeers } from "../session/runner.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
 import type { SchemaSyncStatus } from "../update/sync.ts";
@@ -60,6 +61,7 @@ import {
   type PeerFeedView,
   type PendingChangeView,
   PinLessonBody,
+  type PlanProjectView,
   StartSessionBody,
   StartVoiceSessionBody,
   type SyncHealth,
@@ -71,6 +73,7 @@ import {
   VoicePressBody,
   VoiceTextBody,
 } from "./api-types.ts";
+import { createAuditRoutes } from "./audit-export.ts";
 import type { RuntimeApp } from "./compose.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
@@ -82,6 +85,7 @@ import {
   eventView,
   lessonView,
   messageView,
+  milestoneView,
   money,
   projectCard,
   projectSummary,
@@ -122,10 +126,14 @@ function syncHealth(s: SchemaSyncStatus): SyncHealth {
   };
 }
 
-/** Origins the shells and the dev server use; anything else gets no CORS headers. */
+/**
+ * Origins the shells and the dev server use; anything else gets no CORS headers. The opaque
+ * origin `null` (sandboxed iframes, `file://` pages, some redirects) is not one: no shell sends
+ * it and allowing it is the CWE-942 anti-pattern (security-daemon.test.ts).
+ */
 export function isLocalOrigin(origin: string | undefined): boolean {
   if (!origin) return false;
-  if (origin === "tauri://localhost" || origin === "null") return true;
+  if (origin === "tauri://localhost") return true;
   try {
     const u = new URL(origin);
     const host = u.hostname;
@@ -219,15 +227,17 @@ export function createDaemonApp(
       const status =
         err.code === "not_found"
           ? 404
-          : err.code === "validation" ||
-              err.code === "version_conflict" ||
-              err.code === "claim_conflict"
-            ? 409
-            : err.code === "approval_required" || err.code === "autonomy_insufficient"
-              ? 403
-              : err.code === "provider_auth" || err.code === "unavailable"
-                ? 503
-                : 500;
+          : err.code === "validation" && err.details?.reason === "bad_query"
+            ? 400
+            : err.code === "validation" ||
+                err.code === "version_conflict" ||
+                err.code === "claim_conflict"
+              ? 409
+              : err.code === "approval_required" || err.code === "autonomy_insufficient"
+                ? 403
+                : err.code === "provider_auth" || err.code === "unavailable"
+                  ? 503
+                  : 500;
       // ADR 0025: a stale version or a lost claim is reported as "conflict"; the runtime's own
       // code stays in the details for the log.
       const code = status === 409 ? "conflict" : err.code;
@@ -248,6 +258,8 @@ export function createDaemonApp(
       origin: (origin) => (isLocalOrigin(origin) ? origin : ""),
       allowHeaders: ["Authorization", "Content-Type", "Accept"],
       allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      // The audit export names its file in Content-Disposition; the UI reads it cross-origin.
+      exposeHeaders: ["Content-Disposition"],
       maxAge: 600,
     }),
   );
@@ -288,6 +300,29 @@ export function createDaemonApp(
       );
     return r.data;
   };
+
+  // Numbers in list queries (`?limit=`, `?afterSeq=`) go through one validator, as the state
+  // service's `intParam` does: anything but a non-negative integer is a 400 before any store
+  // call, never a NaN that fails in SQL and comes back as a 500 carrying the driver's text.
+  const intQuery = (
+    c: { req: { query(name: string): string | undefined } },
+    name: string,
+    fallback: number,
+    max: number,
+  ): number => {
+    const raw = c.req.query(name);
+    if (raw === undefined || raw === "") return fallback;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0)
+      throw new ForerunnerError("validation", `${name} must be a non-negative integer`, {
+        details: { reason: "bad_query", param: name },
+      });
+    return Math.min(n, max);
+  };
+
+  // Rows of another human on a shared state (ADR 0041 item 4): the daemon reads and answers
+  // as its own human only, the way the state service forces a device's own human.
+  const NOT_YOURS = { code: "forbidden" } as const;
 
   app.get("/health", async (c) => {
     const active = await rt.store.session.active(rt.agent.id);
@@ -383,6 +418,12 @@ export function createDaemonApp(
       actor: () => ({ humanId: rt.human.id }),
     }),
   );
+  // Audit log export (spec S.9, ADR 0050): `GET /audit/export` streams the install's human's
+  // rows and their agents' in pages, as JSON lines or CSV, with the summaries as stored.
+  app.route(
+    "/",
+    createAuditRoutes({ store: rt.store, clock: rt.clock, humanId: () => rt.human.id }),
+  );
 
   app.get("/me", async (c) => {
     const h = await rt.store.human.mustGet(rt.human.id);
@@ -463,7 +504,7 @@ export function createDaemonApp(
 
   app.get("/projects/:id/tasks", async (c) => {
     const status = c.req.query("status");
-    const limit = Math.min(1000, Number(c.req.query("limit") ?? 200));
+    const limit = intQuery(c, "limit", 200, 1000);
     const rows = await rt.store.task.list(
       { project_id: c.req.param("id"), ...(status ? { status } : {}) } as never,
       { limit, orderBy: [{ column: "priority", direction: "desc" }, { column: "created_at" }] },
@@ -480,7 +521,8 @@ export function createDaemonApp(
       title: body.title,
       outcome: body.outcome,
       acceptance_criteria: body.acceptanceCriteria,
-      risk_tier: body.riskTier,
+      // A task that names no tier gets the project's default: 0 in small-project mode (B.6).
+      risk_tier: body.riskTier ?? defaultRiskTier(project),
       status: body.status,
       priority: body.priority,
       depends_on: body.dependsOn,
@@ -493,6 +535,23 @@ export function createDaemonApp(
     });
     rt.events.emit("project", { id: project.id });
     return c.json(taskView(t, chf()), 201);
+  });
+
+  // The plan writer (spec B.6): a plan becomes milestone and task rows shaped by the project's
+  // mode; one milestone and a flat task list in small-project mode. The project is looked up
+  // first so an unknown project is 404 whatever the body.
+  app.post("/projects/:id/plan", async (c) => {
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    const body = await parse(c, ProjectPlanBody);
+    const applied = await applyProjectPlan(rt.store, project, body, { humanId: rt.human.id });
+    rt.events.emit("project", { id: project.id });
+    const view: PlanProjectView = {
+      milestones: applied.milestones.map(milestoneView),
+      reusedMilestone: applied.reusedMilestone ? milestoneView(applied.reusedMilestone) : null,
+      merged: applied.merged,
+      tasks: applied.tasks.map((t) => taskView(t, chf())),
+    };
+    return c.json(view, 201);
   });
 
   app.post("/tasks/:id/transition", async (c) => {
@@ -509,7 +568,7 @@ export function createDaemonApp(
   });
 
   app.get("/projects/:id/runs", async (c) => {
-    const limit = Math.min(2000, Number(c.req.query("limit") ?? 200));
+    const limit = intQuery(c, "limit", 200, 2000);
     const tasks = await rt.store.task.list({ project_id: c.req.param("id") } as never, {
       limit: 2000,
     });
@@ -590,7 +649,7 @@ export function createDaemonApp(
 
   app.get("/sessions/:id/events", async (c) => {
     const id = c.req.param("id");
-    const afterSeq = Number(c.req.query("afterSeq") ?? 0);
+    const afterSeq = intQuery(c, "afterSeq", 0, Number.MAX_SAFE_INTEGER);
     const accept = c.req.header("accept") ?? "";
     if (!accept.includes("text/event-stream")) {
       const rows = await rt.store.event.list(id, afterSeq, 2000);
@@ -666,7 +725,11 @@ export function createDaemonApp(
   });
 
   app.get("/inbox", async (c) => {
-    const humanId = c.req.query("humanId") ?? rt.human.id;
+    // The inbox is the daemon's human's own; `?humanId=` naming anyone else is refused.
+    const humanId = rt.human.id;
+    const asked = c.req.query("humanId");
+    if (asked !== undefined && asked !== "" && asked !== humanId)
+      return c.json({ ...NOT_YOURS, message: "not your inbox" }, 403);
     const requests = await rt.store.humanRequest.open({ humanId }, { limit: 200 });
     const messages = await rt.store.message.inbox(
       { humanId },
@@ -701,6 +764,10 @@ export function createDaemonApp(
 
   app.post("/requests/:id/answer", async (c) => {
     const body = await parse(c, AnswerRequestBody);
+    // A request addressed to another human (shared Postgres) is not this human's to answer.
+    const asked = await rt.store.humanRequest.mustGet(c.req.param("id"));
+    if (asked.human_id !== null && asked.human_id !== rt.human.id)
+      return c.json({ ...NOT_YOURS, message: "not your request" }, 403);
     const r = await rt.store.humanRequest.answer(
       c.req.param("id"),
       body.version,
@@ -788,7 +855,17 @@ export function createDaemonApp(
   });
 
   app.post("/messages/:id/read", async (c) => {
-    const m = await rt.store.message.markRead(c.req.param("id"));
+    // Receipts come from the addressee only (spec F.2): the human the message names, or the
+    // owner of the agent it names. An addressee the store cannot resolve is nobody's.
+    const existing = await rt.store.message.mustGet(c.req.param("id"));
+    const addressee =
+      existing.to_human_id ??
+      (existing.to_agent_id
+        ? ((await rt.store.agent.get(existing.to_agent_id))?.owner_human_id ?? "")
+        : null);
+    if (addressee !== null && addressee !== rt.human.id)
+      return c.json({ ...NOT_YOURS, message: "only the addressee marks a message read" }, 403);
+    const m = await rt.store.message.markRead(existing.id);
     rt.events.emit("inbox", {});
     return c.json(messageView(m, ""));
   });
@@ -842,7 +919,7 @@ export function createDaemonApp(
   app.get("/projects/:id/reviews", async (c) => {
     const projectId = c.req.param("id");
     await rt.store.project.mustGet(projectId);
-    const limit = Math.min(1000, Number(c.req.query("limit") ?? 200));
+    const limit = intQuery(c, "limit", 200, 1000);
     return c.json(await reviewsView(rt.store, { projectId, limit }));
   });
   app.get("/tasks/:id/reviews", async (c) => {
@@ -890,7 +967,7 @@ export function createDaemonApp(
       ...(text ? { text } : {}),
       ...(tag ? { tags: [tag] } : {}),
       ...(status ? { status } : {}),
-      limit: Math.min(1000, Number(c.req.query("limit") ?? 200)),
+      limit: intQuery(c, "limit", 200, 1000),
     });
     const view: MemoryView = {
       scope,
@@ -916,7 +993,7 @@ export function createDaemonApp(
 
   app.get("/memory/consolidation", async (c) => {
     const rows = await rt.memory.proposals({
-      limit: Math.min(200, Number(c.req.query("limit") ?? 50)),
+      limit: intQuery(c, "limit", 50, 200),
     });
     return c.json(rows satisfies ConsolidationProposalView[]);
   });
@@ -1030,7 +1107,7 @@ export function createDaemonApp(
       humanId: rt.human.id,
       ...(c.req.query("projectId") ? { projectId: c.req.query("projectId") } : {}),
       undoable: c.req.query("undoable") === "true",
-      limit: Math.min(1000, Number(c.req.query("limit") ?? 100)),
+      limit: intQuery(c, "limit", 100, 1000),
     });
     const now = rt.clock.nowIso();
     return c.json(rows.map((row) => changeLogView(row, now)));

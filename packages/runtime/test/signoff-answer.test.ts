@@ -1,5 +1,5 @@
 import { SIGNOFF_KEY, SIGNOFF_OPTIONS } from "@forerunner/critic";
-import type { HumanRequestRow, TaskRow } from "@forerunner/state";
+import type { HumanRequestRow, StateStore, TaskRow } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import {
   SIGNOFF_AUDIT_TOOL,
@@ -343,6 +343,86 @@ describe("critic sign-off answers", () => {
       resolvedFindings: 2,
     });
     await w.close();
+  });
+
+  it("an accept the store refuses over a finding of a newer review, filed between the stale check and the close, is recorded findings_open: the task stays needs_human, nothing of the card's is resolved, no audit row", async () => {
+    const s = await signoff({
+      grade: 60,
+      verdict: "revise",
+      summary: "One gap.",
+      findings: [{ severity: "major", what: "No retry", required_action: "Add a retry" }],
+    });
+    const { store } = s.w;
+    // A later review of the task with an open finding lands in the instant between the
+    // sync's stale check and its transaction (a critic session finishing elsewhere): the
+    // card is no longer current, and the store's own rule (no open finding at close,
+    // `findings_open`) is what catches it.
+    let raced = false;
+    const racing = new Proxy(store, {
+      get(target, prop) {
+        if (prop === "transaction") {
+          return async (fn: Parameters<StateStore["transaction"]>[0]) => {
+            if (!raced) {
+              raced = true;
+              await s.w.clock.advance(60_000);
+              const later = await store.review.insert({
+                task_id: s.task.id,
+                critic_model: "fake-opus",
+                tier: 3,
+                grade: 50,
+                confidence: 0.9,
+                verdict: "revise",
+                evidence: [],
+                summary: "a later review",
+                author_agent: s.w.alice,
+              });
+              await store.finding.insert({
+                review_id: later.id,
+                task_id: s.task.id,
+                severity: "high",
+                description: "No timeout",
+                required_action: "Add a timeout",
+                status: "open",
+                fingerprint: "fp-timeout",
+                author_agent: s.w.alice,
+              });
+            }
+            return target.transaction(fn);
+          };
+        }
+        const v = Reflect.get(target, prop, target);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    }) as StateStore;
+    const current = await store.humanRequest.mustGet(s.request.id);
+    await store.humanRequest.answer(current.id, current.version, "accept", s.w.human);
+    expect(
+      await syncSignoffAnswers({
+        store: racing,
+        clock: s.w.clock,
+        humanId: s.w.human,
+        agentId: s.w.alice,
+      }),
+    ).toEqual({ ...NONE, skipped: 1 });
+    expect(raced).toBe(true);
+    expect((await store.task.mustGet(s.task.id)).status).toBe("needs_human");
+    // The transaction rolled back: the card's own finding is open too, and nothing was audited.
+    expect((await store.finding.openFor(s.task.id)).map((f) => f.description).sort()).toEqual([
+      "No retry",
+      "No timeout",
+    ]);
+    expect(card(await store.humanRequest.mustGet(s.request.id)).outcome).toBe("findings_open");
+    expect((await store.auditLog.list()).filter((r) => r.tool === SIGNOFF_AUDIT_TOOL)).toEqual([]);
+    // Applied once: the answer is consumed; the later review's own sign-off is the one to answer.
+    expect(
+      await syncSignoffAnswers({
+        store,
+        clock: s.w.clock,
+        humanId: s.w.human,
+        agentId: s.w.alice,
+      }),
+    ).toEqual(NONE);
+    await s.w.close();
   });
 
   it("a sign-off answered behind more than a page of later-answered blocking requests is still applied", async () => {

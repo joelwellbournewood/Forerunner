@@ -1,15 +1,21 @@
+import { createHash } from "node:crypto";
+import { lstatSync, realpathSync } from "node:fs";
 import {
+  basename,
   type Clock,
+  dirname,
   ForerunnerError,
   isInside,
+  join,
   log,
+  redact,
   resolve as resolvePath,
 } from "@forerunner/platform";
 import type { ToolSpec } from "../agent/tools.ts";
 import { getPath } from "../agent/tools.ts";
 import { type InjectionReport, wrapUntrusted } from "../injection/scan.ts";
 import type { Usage } from "../provider/types.ts";
-import { type AutonomyDecision, decideAutonomy } from "./autonomy.ts";
+import { ALWAYS_HUMAN, type AutonomyDecision, decideAutonomy } from "./autonomy.ts";
 import type { SessionBudget } from "./budget.ts";
 import type { KillSwitch } from "./killswitch.ts";
 import type {
@@ -45,7 +51,11 @@ export interface RunContext {
   provider: string;
   billingSourceId: string;
   billing?: RunBilling;
-  /** Approvals already granted for this run (approval ids or tool+hash keys). */
+  /**
+   * Approvals already granted for this run (`tool:<sha256 of the canonical input>` keys). An
+   * approval of an always-human action (`ALWAYS_HUMAN`) admits one call and is taken out as
+   * it is used; every other approval holds for the run.
+   */
   approvals?: Set<string>;
   /** Working directory of the run; relative paths in tool inputs resolve against it. */
   cwd?: string;
@@ -196,7 +206,16 @@ export class EnforcementHooks {
     tool: ToolSpec,
     rawInput: unknown,
   ): Promise<ToolCallDecision | ToolCallPending> {
-    const claims = this.claims(ctx);
+    let claims: CapabilityClaims;
+    try {
+      claims = this.claims(ctx);
+    } catch (e) {
+      // Spec S.9, every tool call: a call on a revoked, expired or forged token, or after a
+      // stop, leaves a row too. The claims are unverified here, so the row carries what the
+      // token says it is (its id and run), which is what the human needs to find the attempt.
+      if (e instanceof ForerunnerError) await this.auditUnverified(ctx, tool, rawInput, e);
+      throw e;
+    }
     const deny = async (
       code: ConstructorParameters<typeof ForerunnerError>[0],
       message: string,
@@ -208,7 +227,7 @@ export class EnforcementHooks {
         agentId: claims.agentId,
         humanId: claims.ownerHumanId,
         tool: tool.name,
-        inputSummary: summarize(rawInput),
+        inputSummary: this.summary(rawInput),
         resultSummary: "",
         allowed: false,
         deniedReason: `${code}: ${message}`,
@@ -243,7 +262,7 @@ export class EnforcementHooks {
       for (const v of values) {
         if (typeof v !== "string") continue;
         const abs = ctx.cwd ? resolvePath(ctx.cwd, v) : resolvePath(v);
-        if (!claims.allowedPaths.some((root) => isInside(root, abs))) {
+        if (!claims.allowedPaths.some((root) => pathInsideRoot(root, abs))) {
           throw await deny("path_not_allowed", `path outside the run's allowed roots: ${v}`, {
             field,
           });
@@ -270,14 +289,20 @@ export class EnforcementHooks {
     // A command tool of the registry is confirmed by the registry's own policy (the change
     // card: a yes for medium risk, the paired device for high, ADR 0030); a hold here would
     // make one change need two answers. Everything above and below still applies to it.
-    const approvalKey = `${tool.name}:${stableHash(input)}`;
+    const approvalKey = approvalKeyFor(tool.name, input);
+    // An approval of an always-human action (delete, purchase, send) admits one call: the key
+    // is taken out as it is used, so the resume path re-makes the paused call once and every
+    // further identical call asks again. Other approvals hold for the rest of the run.
+    const alwaysHuman = ALWAYS_HUMAN.has(tool.actionClass);
+    const actionApproved = ctx.approvals?.has(approvalKey) ?? false;
+    if (actionApproved && alwaysHuman) ctx.approvals?.delete(approvalKey);
     const decision: AutonomyDecision =
       tool.gate === "registry"
         ? "allow"
         : decideAutonomy(tool.actionClass, {
             level: claims.autonomy,
             planApproved: claims.planApproved,
-            actionApproved: ctx.approvals?.has(approvalKey) ?? false,
+            actionApproved,
           });
     if (decision === "forbidden") {
       throw await deny(
@@ -309,7 +334,7 @@ export class EnforcementHooks {
           agentId: claims.agentId,
           humanId: claims.ownerHumanId,
           tool: tool.name,
-          inputSummary: summarize(input),
+          inputSummary: this.summary(input),
           resultSummary: "pending human approval",
           allowed: false,
           deniedReason: "approval_required: pending",
@@ -319,7 +344,7 @@ export class EnforcementHooks {
         });
         return { allowed: false, pending: true, reason: `waiting for approval of ${tool.name}` };
       }
-      ctx.approvals?.add(approvalKey);
+      if (!alwaysHuman) ctx.approvals?.add(approvalKey);
     }
 
     let resolved: unknown;
@@ -367,14 +392,90 @@ export class EnforcementHooks {
       agentId: claims.agentId,
       humanId: claims.ownerHumanId,
       tool: tool.name,
-      inputSummary: summarize(redactForDisplay(input)),
-      resultSummary: summarize(content),
+      inputSummary: this.summary(redactForDisplay(input)),
+      resultSummary: this.summary(content),
       allowed: true,
       costUsdMicro: result.costUsdMicro ?? 0,
       occurredAt: this.deps.clock.nowIso(),
       tokenId: claims.id,
     });
     return { content, report };
+  }
+
+  /** An audit summary: stringified, scrubbed of secret values and credential shapes, truncated. */
+  private summary(v: unknown): string {
+    return summarize(scrubSummary(this.deps.secrets, stringify(v)));
+  }
+
+  /** The audit row of a call refused before the token verified (revoked, expired, forged, stopped). */
+  private async auditUnverified(
+    ctx: RunContext,
+    tool: ToolSpec,
+    rawInput: unknown,
+    e: ForerunnerError,
+  ): Promise<void> {
+    const c = (ctx.token?.claims ?? {}) as Partial<CapabilityClaims>;
+    try {
+      await this.deps.audit.append({
+        sessionId: String(c.sessionId ?? ""),
+        runId: String(c.runId ?? ""),
+        agentId: String(c.agentId ?? ""),
+        humanId: String(c.ownerHumanId ?? ""),
+        tool: tool.name,
+        inputSummary: this.summary(rawInput),
+        resultSummary: "",
+        allowed: false,
+        deniedReason: `${e.code}: ${e.message}`,
+        costUsdMicro: 0,
+        occurredAt: this.deps.clock.nowIso(),
+        tokenId: String(c.id ?? ""),
+      });
+    } catch (auditError) {
+      // The refusal stands whatever happened to the row; the failure is logged, not hidden.
+      this.logger.error("audit row for a refused call failed", {
+        tool: tool.name,
+        error: String(auditError),
+      });
+    }
+  }
+}
+
+/**
+ * Containment with symlinks resolved: `abs` must lie inside `root` as written and once the
+ * links in its existing part are followed. A repository cloned into the worktree can carry a
+ * committed `link -> ~/.ssh/id_ed25519` or a linked directory; the lexical check alone would
+ * let a read-class tool read it and a routine write land outside the worktree. A link that
+ * cannot be resolved (dangling, a loop) is outside: a write through it would land wherever
+ * it points once the target exists.
+ */
+export function pathInsideRoot(root: string, abs: string): boolean {
+  if (!isInside(root, abs)) return false;
+  const real = realPathOf(abs);
+  if (real === null) return false;
+  return isInside(realPathOf(root) ?? root, real);
+}
+
+/** `abs` with the symlinks of its existing part resolved; null when a link cannot be resolved. */
+export function realPathOf(abs: string): string | null {
+  const tail: string[] = [];
+  let head = abs;
+  for (;;) {
+    try {
+      const real = realpathSync(head);
+      return tail.length ? join(real, ...tail.reverse()) : real;
+    } catch {
+      let link = false;
+      try {
+        link = lstatSync(head).isSymbolicLink();
+      } catch {
+        // Does not exist yet: resolve the parent and keep this segment as written.
+      }
+      if (link) return null;
+      const parent = dirname(head);
+      if (parent === head) return null;
+      tail.push(basename(head));
+      head = parent;
+    }
   }
 }
 
@@ -399,15 +500,34 @@ export function domainAllowed(host: string, patterns: readonly string[]): boolea
   return false;
 }
 
-function summarize(v: unknown, max = 300): string {
-  let s: string;
+function stringify(v: unknown): string {
   try {
-    s = typeof v === "string" ? v : JSON.stringify(v);
+    return (typeof v === "string" ? v : JSON.stringify(v)) ?? "";
   } catch {
-    s = String(v);
+    return String(v);
   }
-  if (s === undefined) s = "";
+}
+
+function summarize(s: string, max = 300): string {
   return s.length > max ? `${s.slice(0, max)}…(${s.length} chars)` : s;
+}
+
+const SECRET_REF = /secret:[A-Za-z0-9_][A-Za-z0-9_.-]*/g;
+
+/**
+ * Scrub a summary bound for the audit log: every value the run's resolver handed out (in its
+ * encodings), then the platform's credential shapes as a last line, for a value the model
+ * obtained elsewhere (the subprocess environment, a page) and pasted into a later input.
+ * `secret:<name>` references are what the audit is meant to carry, so they are kept out of
+ * the shape pass, which would otherwise take a long name for a value.
+ */
+function scrubSummary(secrets: SecretsPort, s: string): string {
+  const refs: string[] = [];
+  const held = secrets.redact(s).replace(SECRET_REF, (m) => {
+    refs.push(m);
+    return `\uE000${refs.length - 1}\uE001`;
+  });
+  return redact(held).replace(/\uE000(\d+)\uE001/g, (_m, i: string) => refs[Number(i)] ?? "");
 }
 
 /** Hide secret refs' values (they are refs here, so safe) and long blobs in approval cards. */
@@ -423,13 +543,26 @@ function redactForDisplay(v: unknown): unknown {
   return v;
 }
 
-function stableHash(v: unknown): string {
-  const s = JSON.stringify(v, (_k, val) =>
-    val && typeof val === "object" && !Array.isArray(val)
-      ? Object.fromEntries(Object.entries(val as Record<string, unknown>).sort())
-      : val,
+/**
+ * The key under which an approval of `tool` with `input` is remembered, in the run and in the
+ * state store (`StateApprovals`): SHA-256 of the canonical JSON, so two inputs never share a
+ * key (a 32-bit string hash let `{repo: "Aa"}` and `{repo: "BB"}` collide).
+ */
+export function approvalKeyFor(tool: string, input: unknown): string {
+  return `${tool}:${createHash("sha256").update(canonicalJson(input)).digest("hex")}`;
+}
+
+/** JSON with object keys sorted at every level; the same value always gives the same text. */
+export function canonicalJson(v: unknown): string {
+  return (
+    JSON.stringify(v, (_k, val) =>
+      val && typeof val === "object" && !Array.isArray(val)
+        ? Object.fromEntries(
+            Object.entries(val as Record<string, unknown>).sort(([a], [b]) =>
+              a < b ? -1 : a > b ? 1 : 0,
+            ),
+          )
+        : val,
+    ) ?? ""
   );
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(16);
 }

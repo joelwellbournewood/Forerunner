@@ -185,6 +185,18 @@ const NAMED_COLOURS: Record<string, [number, number, number]> = {
 
 type Rgba = [number, number, number, number];
 
+/**
+ * Thresholds under which text counts as hidden although the page set no exact zero: near-white
+ * on white, `opacity: 0.01`, a 1px box with overflow hidden or a 2px font are as invisible to
+ * a human as the exact values and are used the same way. The static path and the in-page
+ * script apply the same numbers.
+ */
+export const HIDDEN_OPACITY_BELOW = 0.1;
+export const HIDDEN_FONT_PX_BELOW = 4;
+export const HIDDEN_BOX_PX_BELOW = 2;
+/** Euclidean RGB distance at or under which a text colour counts as its background's. */
+export const HIDDEN_COLOUR_DISTANCE_MAX = 24;
+
 /** Parse a CSS colour (hex, rgb/rgba, a few names, transparent). Null when unknown. */
 export function parseColour(value: string | undefined): Rgba | null {
   if (!value) return null;
@@ -224,8 +236,11 @@ export function parseColour(value: string | undefined): Rgba | null {
   return null;
 }
 
+/** Text colour `a` cannot be read on background `b`: nearly transparent, or within the distance. */
 function sameColour(a: Rgba, b: Rgba): boolean {
-  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] > 0 && b[3] > 0;
+  if (a[3] < HIDDEN_OPACITY_BELOW) return true;
+  if (b[3] <= 0) return false;
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) <= HIDDEN_COLOUR_DISTANCE_MAX;
 }
 
 function lengthZero(v: string | undefined): boolean {
@@ -240,6 +255,17 @@ function lengthBelow(v: string | undefined, px: number): boolean {
   const unit = m[2] ?? "px";
   const scale = unit === "em" || unit === "rem" ? 16 : unit === "pt" ? 1.33 : 1;
   return n * scale <= px;
+}
+
+/** True when `v` is an absolute length under `px`; percent and viewport units are not judged. */
+function lengthUnder(v: string | undefined, px: number): boolean {
+  if (v === undefined) return false;
+  const m = /^(-?[\d.]+)(px|em|rem|pt)?$/.exec(v.trim());
+  if (!m) return false;
+  const n = Number.parseFloat(m[1] ?? "0");
+  const unit = m[2] ?? "px";
+  const scale = unit === "em" || unit === "rem" ? 16 : unit === "pt" ? 1.33 : 1;
+  return n * scale < px;
 }
 
 function collapse(s: string): string {
@@ -294,13 +320,12 @@ function computeStaticHidden(ctx: StaticCtx, el: HtmlElement): HiddenReason | nu
   const s = styleOf(ctx, el);
   if (s.display === "none") return "display_none";
   if (s.visibility === "hidden" || s.visibility === "collapse") return "visibility_hidden";
-  if (s.opacity !== undefined && Number.parseFloat(s.opacity) === 0) return "opacity_zero";
-  if (lengthBelow(s["font-size"], 1)) return "font_size_zero";
+  if (s.opacity !== undefined && Number.parseFloat(s.opacity) < HIDDEN_OPACITY_BELOW)
+    return "opacity_zero";
+  if (lengthUnder(s["font-size"], HIDDEN_FONT_PX_BELOW)) return "font_size_zero";
+  const small = (v: string | undefined) => lengthUnder(v, HIDDEN_BOX_PX_BELOW);
   if (
-    (lengthZero(s.width) ||
-      lengthZero(s.height) ||
-      lengthZero(s["max-height"]) ||
-      lengthZero(s["max-width"])) &&
+    (small(s.width) || small(s.height) || small(s["max-height"]) || small(s["max-width"])) &&
     (s.overflow === "hidden" ||
       s.overflow === "clip" ||
       lengthZero(s.width) ||
@@ -324,10 +349,7 @@ function computeStaticHidden(ctx: StaticCtx, el: HtmlElement): HiddenReason | nu
   )
     return "clipped";
   const colour = parseColour(s.color ?? (el.tag === "font" ? el.attrs.color : undefined));
-  if (colour) {
-    if (colour[3] === 0) return "same_colour";
-    if (sameColour(colour, effectiveBackground(ctx, el))) return "same_colour";
-  }
+  if (colour && sameColour(colour, effectiveBackground(ctx, el))) return "same_colour";
   return null;
 }
 
@@ -709,16 +731,16 @@ export const BROWSER_EXTRACT_SCRIPT = `(() => {${BROWSER_DOM_HELPERS}
       const text = ownText(el);
       if (s.display === "none") r = "display_none";
       else if (s.visibility === "hidden" || s.visibility === "collapse") r = "visibility_hidden";
-      else if (parseFloat(s.opacity) === 0) r = "opacity_zero";
-      else if (parseFloat(s.fontSize) <= 1 && text) r = "font_size_zero";
-      else if ((rect.width < 1 || rect.height < 1) && text && s.display !== "contents") r = "zero_size";
+      else if (parseFloat(s.opacity) < ${HIDDEN_OPACITY_BELOW}) r = "opacity_zero";
+      else if (parseFloat(s.fontSize) < ${HIDDEN_FONT_PX_BELOW} && text) r = "font_size_zero";
+      else if ((rect.width < 1 || rect.height < 1 || ((rect.width < ${HIDDEN_BOX_PX_BELOW} || rect.height < ${HIDDEN_BOX_PX_BELOW}) && /hidden|clip/.test(s.overflow))) && text && s.display !== "contents") r = "zero_size";
       else if (text && (rect.right <= 0 || rect.bottom <= 0 || rect.left >= docW + 1 || rect.top >= docH + 1 || parseFloat(s.textIndent) <= -999)) r = "off_screen";
       else if (/^rect\\(\\s*0px,?\\s*0px,?\\s*0px,?\\s*0px\\s*\\)$/.test(s.clip) || /^rect\\(\\s*1px,?\\s*1px,?\\s*1px,?\\s*1px\\s*\\)$/.test(s.clip) || /^inset\\(\\s*(100|50)%/.test(s.clipPath)) r = "clipped";
       else if (text) {
         const c = parseRgb(s.color);
         if (c) {
           const b = bgOf(el);
-          if (c[3] === 0 || (c[0] === b[0] && c[1] === b[1] && c[2] === b[2] && b[3] > 0)) r = "same_colour";
+          if (c[3] < ${HIDDEN_OPACITY_BELOW} || (b[3] > 0 && Math.hypot(c[0] - b[0], c[1] - b[1], c[2] - b[2]) <= ${HIDDEN_COLOUR_DISTANCE_MAX})) r = "same_colour";
         }
       }
     }

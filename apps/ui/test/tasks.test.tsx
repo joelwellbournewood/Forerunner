@@ -103,7 +103,6 @@ describe("Tasks tab", () => {
       title: "Write the deploy runbook",
       outcome: "docs/runbook.md explains the deploy",
       acceptanceCriteria: ["Covers rollback", "Covers secrets"],
-      riskTier: 1,
       priority: 5,
       status: "ready",
       dependsOn: [],

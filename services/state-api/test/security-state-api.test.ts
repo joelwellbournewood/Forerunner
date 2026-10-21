@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
-import { join, SimulatedClock } from "@forerunner/platform";
+import { join, Logger, type LogRecord, SimulatedClock } from "@forerunner/platform";
 import { serve } from "@hono/node-server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { signRequest } from "../src/auth/crypto.ts";
@@ -34,7 +34,7 @@ describe("security: device signatures and replay", () => {
    * Fix: key `ReplayGuard.accept` on the decoded signature bytes (hex), or refuse any
    * signature whose strict re-encoding differs from the header (as `isValidPublicKey` does).
    */
-  it.fails("refuses a captured mutation replayed with the same signature bytes under another base64 spelling", async () => {
+  it("refuses a captured mutation replayed with the same signature bytes under another base64 spelling", async () => {
     const body = JSON.stringify({
       fromAgentId: h.seed.alice.id,
       toHumanId: h.seed.bob.id,
@@ -550,7 +550,7 @@ describe("security: ownership between humans", () => {
    * of that project's current decisions). Fix: in the route (or `DecisionRepo.supersede`),
    * refuse when `old.project_id !== projectId` with 400/404.
    */
-  it.fails("a decision of one project cannot be superseded through another project's route", async () => {
+  it("a decision of one project cannot be superseded through another project's route", async () => {
     const other = await h.store.project.insert({
       name: "Other",
       goal: "Separate",
@@ -642,7 +642,7 @@ describe("security: revocation", () => {
    * subscribe to `device.changed` for the stream's own device id and end the stream when
    * `revoked` is true.
    */
-  it.fails("revoking a device ends its open change feed instead of streaming on", async () => {
+  it("revoking a device ends its open change feed instead of streaming on", async () => {
     const res = await open("/events", phone.token as string);
     expect(res.status).toBe(200);
     const reader = (res.body as ReadableStream<Uint8Array>).getReader();
@@ -760,7 +760,7 @@ describe("security: the change feed never carries another human's private events
    * owner (`ownerOfAgent(agent_id)`, and for `event` rows the session's agent) into
    * `humanId`, as remote commands and messages already do.
    */
-  it.fails("bob's phone does not receive session.event / session.changed frames of ada's agent's session", async () => {
+  it("bob's phone does not receive session.event / session.changed frames of ada's agent's session", async () => {
     const bob = await h.pairDevice(h.seed.bob.id);
     const res = await open("/events", bob.token as string);
     const reader = (res.body as ReadableStream<Uint8Array>).getReader();
@@ -784,6 +784,73 @@ describe("security: the change feed never carries another human's private events
         (e.data as { sessionId: string | null }).sessionId === h.seed.session.id,
     );
     expect(adaSession).toEqual([]);
+  });
+
+  /**
+   * security critic (low): `describe()` fell back to `humanId = null` (project-wide) when the
+   * owner of a `session` or `event` row could not be resolved (`ownerOfAgent` /
+   * `ownerOfSession` returning null for a missing row), so an unresolvable private event was
+   * open rather than closed: sent to every device of the project. Fix: a row that names an
+   * agent, session or device the store cannot resolve is not published at all, and the
+   * missing referent is logged once.
+   */
+  it("a session whose agent row cannot be resolved is not broadcast to anyone (fail closed), logged once", async () => {
+    const bob = await h.pairDevice(h.seed.bob.id);
+    const res = await open("/events", bob.token as string);
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    await readSse(reader, (events) => events.some((e) => e.event === "ready"));
+    const published: { type: string; sessionId: string | null; humanId: string | null }[] = [];
+    const unsubscribe = h.api.bus.subscribe((e) =>
+      published.push({ type: e.type, sessionId: e.sessionId, humanId: e.humanId }),
+    );
+    const warnings: LogRecord[] = [];
+    const removeSink = Logger.addSink((r) => {
+      if (r.level === "warn" && r.scope === "state-api:realtime") warnings.push(r);
+    });
+    try {
+      // Ada's agent row disappears underneath her running session (a dangling reference).
+      await h.store.db.exec("PRAGMA foreign_keys = OFF");
+      await h.store.db.exec(`DELETE FROM "agent" WHERE "id" = '${h.seed.alice.id}'`);
+      await h.store.db.exec("PRAGMA foreign_keys = ON");
+      await h.store.event.append(h.seed.session.id, "tool.call", { text: "step one" });
+      await h.store.event.append(h.seed.session.id, "tool.result", { text: "step two" });
+      await h.store.session.setStatus(
+        h.seed.session.id,
+        (await h.store.session.mustGet(h.seed.session.id)).version,
+        "paused",
+      );
+      await h.api.poller.pollOnce();
+      await h.admin.post(`/tasks/${h.seed.task2.id}/transition`, {
+        version: h.seed.task2.version,
+        to: "cancelled",
+        reason: "marker",
+      });
+      const events = await readSse(
+        reader,
+        (es) => es.some((e) => e.event === "task.changed"),
+        3000,
+      );
+      const adaSession = events.filter(
+        (e) =>
+          (e.event === "session.event" || e.event === "session.changed") &&
+          (e.data as { sessionId: string | null }).sessionId === h.seed.session.id,
+      );
+      expect(adaSession).toEqual([]);
+      // Not even as a project-wide or admin event: the rows were skipped, not widened.
+      expect(published.filter((e) => e.sessionId === h.seed.session.id)).toEqual([]);
+      expect(published.some((e) => e.type === "task.changed")).toBe(true);
+      // Three rows, one missing agent: one warning naming it, no ids of the rows' content.
+      expect(warnings).toHaveLength(1);
+      expect(JSON.stringify(warnings[0])).toContain(h.seed.alice.id);
+      // A later poll over the same dangling agent does not warn again.
+      await h.store.event.append(h.seed.session.id, "tool.call", { text: "step three" });
+      await h.api.poller.pollOnce();
+      expect(warnings).toHaveLength(1);
+      expect(published.filter((e) => e.sessionId === h.seed.session.id)).toEqual([]);
+    } finally {
+      removeSink();
+      unsubscribe();
+    }
   });
 
   it("Last-Event-ID resume replays only what the filter allows", async () => {
@@ -930,7 +997,7 @@ describe("security: input validation and bounds", () => {
    * (drop the oldest beyond, say, 5,000) and the file as a whole, or move the records to
    * a table with an index on (key) and a TTL sweep.
    */
-  it.fails("the idempotency store is bounded per device", async () => {
+  it("the idempotency store is bounded per device", async () => {
     const clock = new SimulatedClock(START);
     const state = new MemoryJsonState<IdempotencyFile>(emptyIdempotency());
     const store = new IdempotencyStore(state, clock);
@@ -939,6 +1006,38 @@ describe("security: input validation and bounds", () => {
       await store.put("device-a", `client-${i}`, { clientId: `client-${i}`, status: "rejected" });
     }
     expect(state.get().records.length).toBeLessThanOrEqual(CAP);
+  });
+
+  /**
+   * security critic (low): the per-key cap selected a key's records with
+   * `r.key.startsWith(`${deviceKey}:`)`. `INSTALL_ID` allows ':' in an admin install id, so
+   * install `default` and install `default:x` shared one cap and the oldest of the union were
+   * dropped (the wrong records for one of them). Fix: a record carries its device key, and
+   * the cap counts records by that key, never by a prefix of the composite key.
+   */
+  it("the idempotency cap is per key: an install id that extends another's never shares its cap", async () => {
+    const clock = new SimulatedClock(START);
+    const state = new MemoryJsonState<IdempotencyFile>(emptyIdempotency());
+    const store = new IdempotencyStore(state, clock, undefined, { maxPerKey: 3 });
+    const outer = "admin:default";
+    const inner = "admin:default:x";
+    const rejected = (clientId: string) => ({ clientId, status: "rejected" as const });
+    for (const c of ["c1", "c2", "c3"]) await store.put(inner, c, rejected(c));
+    for (const d of ["d1", "d2", "d3"]) await store.put(outer, d, rejected(d));
+    // Both installs are at their cap of 3; neither dropped the other's records.
+    expect(state.get().records).toHaveLength(6);
+    for (const c of ["c1", "c2", "c3"]) expect(store.get(inner, c)).toBeDefined();
+    for (const d of ["d1", "d2", "d3"]) expect(store.get(outer, d)).toBeDefined();
+    // A fourth record of the outer install drops the outer's oldest only.
+    await store.put(outer, "d4", rejected("d4"));
+    expect(store.get(outer, "d1")).toBeUndefined();
+    expect(store.get(outer, "d4")).toBeDefined();
+    for (const c of ["c1", "c2", "c3"]) expect(store.get(inner, c)).toBeDefined();
+    // A client id containing ':' belongs to the key that stored it, not to a longer one.
+    await store.put(outer, "x:c1", rejected("x:c1"));
+    expect(store.get(outer, "x:c1")).toBeDefined();
+    expect(store.get(inner, "c1")).toBeDefined();
+    expect(state.get().records.filter((r) => r.key === `${inner}:c1`)).toHaveLength(1);
   });
 
   it("a device's rate limit is per device: one chatty device does not starve another", async () => {

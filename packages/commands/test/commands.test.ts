@@ -8,6 +8,7 @@ import {
   SESSION_CAP_CHF_KEY,
   SESSION_CAP_KEY,
   SETTING_SPECS,
+  SMALL_PROJECT_MODE_EFFECT,
 } from "../src/index.ts";
 import { TOMORROW_0600, world } from "./helpers.ts";
 
@@ -362,7 +363,9 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
         ctx: w.ctx(),
       }),
     );
-    expect(small.sentence).toBe("Set small project mode for Game from false to true. Undo.");
+    expect(small.sentence).toBe(
+      `Set small project mode for Game from false to true: ${SMALL_PROJECT_MODE_EFFECT.on}. Undo.`,
+    );
     expect((await w.store.project.mustGet(w.game.id)).small_project_mode).toBe(true);
     expect(
       (

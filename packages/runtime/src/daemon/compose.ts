@@ -1994,7 +1994,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       store,
       clock,
       kill,
-      start: (req) => scheduler.request(req),
+      // The entry, not the bare outcome: its id is the start's identity the row's result
+      // carries for the undo (ADR 0049).
+      start: (req) => scheduler.requestStart(req),
       commands,
       chat: conversation ? (req) => conversation.chat(req) : null,
       conversationSessionId: () =>

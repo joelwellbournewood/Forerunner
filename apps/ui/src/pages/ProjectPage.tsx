@@ -107,12 +107,16 @@ export function ProjectPage() {
       <div className="min-h-0 flex-1" data-testid={`tab-panel-${tab}`}>
         {tab === "summary" ? <SummaryTab projectId={id} /> : null}
         {tab === "plan" ? <PlanTab projectId={id} project={view} /> : null}
-        {tab === "tasks" ? <TasksTab projectId={id} reference={view.budget} /> : null}
+        {tab === "tasks" ? (
+          <TasksTab projectId={id} reference={view.budget} defaultRiskTier={view.defaultRiskTier} />
+        ) : null}
         {tab === "docs" ? <DocsTab projectId={id} /> : null}
         {tab === "reviews" ? <ReviewsTab projectId={id} /> : null}
         {tab === "costs" ? <CostsTab projectId={id} /> : null}
         {tab === "data" ? <DataTab projectId={id} /> : null}
-        {tab === "chat" ? <ChatTab projectId={id} reference={view.budget} /> : null}
+        {tab === "chat" ? (
+          <ChatTab projectId={id} reference={view.budget} defaultRiskTier={view.defaultRiskTier} />
+        ) : null}
       </div>
       <StartSessionDialog
         open={startOpen}

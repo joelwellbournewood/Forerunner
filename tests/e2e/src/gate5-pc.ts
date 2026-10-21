@@ -48,7 +48,7 @@ export function pcFor(world: ScenarioWorld, opts: PcOptions): RemoteCommandWatch
     store: world.store,
     clock: world.clock,
     kill: install.kill,
-    start: (req) => install.scheduler.request(req),
+    start: (req) => install.scheduler.requestStart(req),
     commands: opts.commands,
     chat: (req) => opts.conversation.chat(req),
     conversationSessionId: async () => opts.sessionId,

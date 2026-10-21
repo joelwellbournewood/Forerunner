@@ -26,6 +26,13 @@ import { assertSecretName, assertSecretValue, type Vault } from "./types.ts";
 export const FILE_VAULT_VERSION = 1;
 export const DEVICE_KEY_BYTES = 32;
 export const DEFAULT_SCRYPT = { N: 16384, r: 8, p: 1 } as const;
+/**
+ * Bounds a vault file's KDF block must sit in to be opened: N a power of two in 2^10..2^20,
+ * r in 1..32, p in 1..16. A file outside them is corrupt, never handed to scrypt (which
+ * throws a raw crypto error for an invalid N and, since `maxmem` follows N, would let a huge
+ * one turn the unlock into a memory bomb).
+ */
+export const SCRYPT_BOUNDS = { minN: 2 ** 10, maxN: 2 ** 20, maxR: 32, maxP: 16 } as const;
 const AAD_PREFIX = `forerunner-vault:v${FILE_VAULT_VERSION}:`;
 const CHECK_ACCOUNT = "__check__";
 const CHECK_PLAINTEXT = "forerunner-vault-check";
@@ -276,8 +283,36 @@ export class EncryptedFileVault implements Vault {
         details: { keyPath: this.keyPath, reason: "corrupt" },
       });
     }
+    if (!created && !isWindows()) await this.tightenKeyFileMode();
     await this.importKey(key, { persist: created });
     key.fill(0);
+  }
+
+  /**
+   * A key file that grants group or other any bit (restored from a backup, copied with `cp`,
+   * written by another tool) lets every local user decrypt the vault: before the key is used
+   * it is tightened to 0600 and the event logged, the way ssh treats a private key. One that
+   * cannot be tightened is refused. Windows modes are advisory; the profile ACL is the boundary.
+   */
+  private async tightenKeyFileMode(): Promise<void> {
+    const mode = (await fs.stat(this.keyPath)).mode & 0o777;
+    if ((mode & 0o077) === 0) return;
+    try {
+      await fs.chmod(this.keyPath, 0o600);
+    } catch (e) {
+      throw new ForerunnerError("validation", "vault key file is readable by others", {
+        details: {
+          keyPath: this.keyPath,
+          mode: mode.toString(8),
+          reason: "key_permissions",
+          cause: errorMessage(e),
+        },
+      });
+    }
+    this.logger.warn("vault key file was readable by others; mode tightened to 0600", {
+      keyPath: this.keyPath,
+      mode: mode.toString(8),
+    });
   }
 
   /** Derive the AES key from `secret` and verify it against the file's check value. */
@@ -423,6 +458,21 @@ function parseDocument(text: string, path: string): VaultDocument {
   ) {
     throw corrupt("kdf");
   }
+  const N = kdf.N;
+  const r = kdf.r;
+  const p = kdf.p;
+  const kdfInBounds =
+    Number.isInteger(N) &&
+    N >= SCRYPT_BOUNDS.minN &&
+    N <= SCRYPT_BOUNDS.maxN &&
+    (N & (N - 1)) === 0 &&
+    Number.isInteger(r) &&
+    r >= 1 &&
+    r <= SCRYPT_BOUNDS.maxR &&
+    Number.isInteger(p) &&
+    p >= 1 &&
+    p <= SCRYPT_BOUNDS.maxP;
+  if (!kdfInBounds) throw corrupt("kdf parameters out of bounds");
   if (!isSealedBox(doc.check)) throw corrupt("check");
   if (!doc.entries || typeof doc.entries !== "object" || Array.isArray(doc.entries)) {
     throw corrupt("entries");

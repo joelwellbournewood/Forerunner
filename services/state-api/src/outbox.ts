@@ -172,7 +172,15 @@ export async function flushOutbox(
 // ---------------------------------------------------------------------------------------
 
 export interface IdempotencyRecord {
+  /** `<deviceKey>:<clientId>`; looked up whole, never split (both halves may contain ':'). */
   key: string;
+  /**
+   * The device key (or admin install) the record belongs to, stored on its own so the per-key
+   * cap counts exactly this key's records: a prefix test on `key` would let install `default`
+   * and install `default:x` share one cap. Absent on records written before the field existed;
+   * those count for the longest key whose prefix they carry until they age out.
+   */
+  deviceKey?: string;
   at: string;
   result: OutboxResult;
 }
@@ -192,6 +200,10 @@ export function migrateIdempotency(raw: unknown): IdempotencyFile {
 }
 
 export const IDEMPOTENCY_TTL_MS = 7 * 24 * 3600 * 1000;
+/** Records kept per device key (or admin install); the oldest beyond this are dropped. */
+export const IDEMPOTENCY_MAX_PER_KEY = 5_000;
+/** Records kept in the whole file, whatever the key. */
+export const IDEMPOTENCY_MAX_RECORDS = 50_000;
 
 /**
  * Devices are their own idempotency space; admin callers are split by install (ADR 0009).
@@ -207,16 +219,26 @@ export function idempotencyKeyOf(p: Principal): string {
  * Remembers (device, clientId) -> result for a week so retried batches are safe. `run()` is
  * the whole contract: the key is reserved before the action is applied, so two batches in
  * flight at once (a retry fired before the first answer arrived) apply it once and both get
- * the same result.
+ * the same result. Bounded: at most `maxPerKey` records per device key and `maxRecords` in
+ * all (the oldest go first), so a device sending fresh client ids at its rate limit cannot
+ * grow the state file without bound; a retry older than the cap's horizon is applied again,
+ * which the routes' own checks (version, "first receipt wins", the remote command's
+ * `clientId` row) keep harmless.
  */
 export class IdempotencyStore {
   private readonly inFlight = new Map<string, Promise<OutboxResult>>();
+  private readonly maxPerKey: number;
+  private readonly maxRecords: number;
 
   constructor(
     private readonly state: JsonState<IdempotencyFile> = new MemoryJsonState(emptyIdempotency()),
     private readonly clock: Clock,
     private readonly ttlMs = IDEMPOTENCY_TTL_MS,
-  ) {}
+    limits: { maxPerKey?: number; maxRecords?: number } = {},
+  ) {
+    this.maxPerKey = Math.max(1, limits.maxPerKey ?? IDEMPOTENCY_MAX_PER_KEY);
+    this.maxRecords = Math.max(1, limits.maxRecords ?? IDEMPOTENCY_MAX_RECORDS);
+  }
 
   /**
    * Apply `fn` once per key. A stored result is returned as is; a concurrent call with the
@@ -260,14 +282,23 @@ export class IdempotencyStore {
 
   async put(deviceKey: string, clientId: string, result: OutboxResult): Promise<void> {
     const key = this.key(deviceKey, clientId);
+    const prefix = this.key(deviceKey, "");
     const at = this.clock.nowIso();
     const cutoff = this.clock.now() - this.ttlMs;
-    await this.state.update((s) => ({
-      version: 1,
-      records: [
-        ...s.records.filter((r) => r.key !== key && Date.parse(r.at) >= cutoff),
-        { key, at, result },
-      ],
-    }));
+    await this.state.update((s) => {
+      // Records are appended in time order, so the oldest of a key come first.
+      const live = s.records.filter((r) => r.key !== key && Date.parse(r.at) >= cutoff);
+      live.push({ key, deviceKey, at, result });
+      let kept = live;
+      const mine = live.filter((r) =>
+        r.deviceKey === undefined ? r.key.startsWith(prefix) : r.deviceKey === deviceKey,
+      );
+      if (mine.length > this.maxPerKey) {
+        const drop = new Set(mine.slice(0, mine.length - this.maxPerKey));
+        kept = live.filter((r) => !drop.has(r));
+      }
+      if (kept.length > this.maxRecords) kept = kept.slice(kept.length - this.maxRecords);
+      return { version: 1, records: kept };
+    });
   }
 }

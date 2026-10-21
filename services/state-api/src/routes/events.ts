@@ -2,7 +2,7 @@ import { requireScope } from "../auth/principal.ts";
 import { ApiError } from "../errors.ts";
 import { type App, principal, type RouteContext } from "../http.ts";
 import { type ChangeEvent, filterForHuman } from "../realtime.ts";
-import { sseLoop } from "../sse.ts";
+import { deviceStillActive, sseLoop } from "../sse.ts";
 
 /**
  * GET /events: the realtime channel (spec F.3, R). A device sees changes that concern its
@@ -32,6 +32,7 @@ export function registerEventRoutes(app: App, ctx: RouteContext): void {
     return sseLoop(c, {
       clock: ctx.clock,
       heartbeatMs: ctx.config.heartbeatMs,
+      stillAllowed: deviceStillActive(ctx.store, p),
       init: async (send) => {
         await send("ready", {
           seq: ctx.bus.currentSeq,

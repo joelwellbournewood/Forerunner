@@ -83,8 +83,8 @@ apps/ui/
 | `/` | Home: project cards (stage, next milestone, health, spend vs budget, waiting-on-you, latest critic grade), New project dialog | store (`GET /projects`), `POST /projects` |
 | `/projects/:id/:tab?` | Project page; tabs `summary`, `plan`, `tasks`, `docs`, `reviews`, `costs`, `data`, `chat` (default `summary`); opening a project makes it active | `GET /projects/:id` and the tab routes below |
 | `summary` tab | the cached one-screen summary with Read aloud; **Next session** (queue items by priority with type badges, add note/task/correction/idea with a priority, dismiss; consumed items collapsed); **Peers** (per agent: online, active claims with expiry, open PRs, last handoff done/in flight/blocked/next, files in flight); **Decisions** (question, chosen option, the others, rationale, who, supersedes) | `GET /projects/:id/summary`, `GET /projects/:id/queue`, `POST /projects/:id/queue`, `POST /queue/:id/dismiss` (proposed), `GET /projects/:id/peers`, `GET /projects/:id/decisions` |
-| `plan` tab | milestone **timeline** (SVG: dated milestones on a time axis with today's tick, undated ones after), milestones with status, success criteria and their tasks, the task **dependency graph** (layered SVG, a task after everything it depends on); without a milestones route the timeline and the list are derived from the tasks and the card (the card's dated next milestone on the axis, the ids the tasks reference after it) behind a route-missing notice; today's tick comes from a `now` prop (wall clock by default, injected in tests) | `GET /projects/:id/tasks`, `GET /projects/:id/milestones` (proposed) |
-| `tasks` tab | task log table with filters, transitions with a reason, New task dialog | `GET /projects/:id/tasks`, `/runs`, `POST /projects/:id/tasks`, `POST /tasks/:id/transition` |
+| `plan` tab | milestone **timeline** (SVG: dated milestones on a time axis with today's tick, undated ones after), milestones with status, success criteria and their tasks, the task **dependency graph** (layered SVG, a task after everything it depends on); without a milestones route the timeline and the list are derived from the tasks and the card (the card's dated next milestone on the axis, the ids the tasks reference after it) behind a route-missing notice; today's tick comes from a `now` prop (wall clock by default, injected in tests); in **small-project mode** (spec B.6, the card's `smallProjectMode`) the tab shows instead the one milestone (the open one from the route, or the card's next milestone without it; milestones on file from before the mode are named, not hidden), the tasks as a **flat list** in the daemon's order with no grouping and no timeline, and the graph | `GET /projects/:id/tasks`, `GET /projects/:id/milestones` (proposed) |
+| `tasks` tab | task log table with filters, transitions with a reason, New task dialog (its risk tier offers "project default (tier N)" from the card's `defaultRiskTier` and sends no `riskTier` unless one is picked, so the daemon applies the project's default: 0 in small-project mode, B.6) | `GET /projects/:id/tasks`, `/runs`, `POST /projects/:id/tasks`, `POST /tasks/:id/transition` |
 | `docs` tab | the standard doc set with present/missing/drift state, size and date; a document opens in a reader | `GET /projects/:id/docs`, `GET /projects/:id/docs/:path` (proposed) |
 | `reviews` tab | counts (reviews, open findings, average grade, verdicts), the grade trend chart with the accept line, every review newest first (grade, verdict, tier, confidence, model, task, session link, summary, evidence, findings with severity and status), verdict filter | `GET /projects/:id/reviews` |
 | `costs` tab | totals, by model / specialist / task with accepted share and cost per accepted task, savings apart | `GET /costs?projectId=` |
@@ -95,7 +95,7 @@ apps/ui/
 | `/memory` | one view per principal agent (the human's own first, then the peers' as listed-but-not-readable), the critic, shared lessons, each with active and pinned counts; search (debounced); per lesson: pin, tags, confidence, uses, last used, source, project, file; edit text and tags, delete (two clicks); consolidation proposals with merged/contradictions/retired and "Run now" (its own route-missing notice, under the Consolidation heading, when the daemon lacks the consolidation routes) | `GET /memory/scopes`, `GET /memory?scope=&agentId=&q=`, `PUT /memory/lessons/:id`, `POST /memory/lessons/:id/pin`, `DELETE /memory/lessons/:id`, `GET /memory/consolidation`, `POST /memory/consolidation/run` |
 | `/extensions` | grouped by kind (connectors and MCP servers, skills, specialists, capabilities, model providers): name, version, status, connected, cost, description, permissions summary with the full list behind details; On/Off switch; Remove (two clicks); pending rows show the review (stage, risk, summary, tools, requested permissions) with Approve/Deny; Add dialog: catalog with search and kind filter, or an MCP server URL; reloads on every `extension.changed` frame | `GET /extensions`, `GET /extensions/catalog`, `POST /extensions` (201 or 202), `POST /extensions/:id/toggle`, `/approve`, `/deny`, `DELETE /extensions/:id` |
 | `/changes` | the change log newest first: source, scope, project, undo state, who asked and when, the sentence, the words used, revert time, commands / before / after behind details, Undo while undoable; project filter and "undoable only" | `GET /changes?projectId=&undoable=`, `POST /changes/:id/undo` |
-| `/performance` | per mode: target (first token / first audio / total / by task), samples, first-token p50/p95, total p50/p95, within-target share, a bar of the p95 against the target (met/missed in words); recent runs; estimate accuracy (overall and per specialist and kind); project filter | `GET /performance?projectId=` (proposed), `GET /costs/estimates` |
+| `/performance` | per mode: target (first token / first audio / total / by task), samples, first-token p50/p95, total p50/p95, within-target share, a bar of the p95 against the target (met/missed in words); recent runs; estimate accuracy (overall and per specialist and kind); project filter; "Audit log" with a format select (JSON lines / CSV) and **Export audit log** (spec S.9): fetches the daemon's file through `client.auditExport`, saves it under the daemon's name with `saveTextFile` (`src/lib/download.ts`: a Blob behind an object URL on a hidden anchor, clicked once) and reports `Exported N rows to <file>`; says so when the browser cannot save files or the daemon lacks the route, pointing at `fr audit export` | `GET /performance?projectId=` (proposed), `GET /costs/estimates`, `GET /audit/export?format=` |
 | `/updates` | app: running and installed version, channel, state, the available release with changelog, size and "Update and restart", previous version with "Roll back and restart", last rollback, rejected releases, last error; connector updates (installed vs available); model updates; model watch: latest report with recommendations to adopt/ignore/remind, "Run now", recent reports. Asks the feed first and falls back to the local state with a banner | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback`, `GET /model-watch/reports`, `/latest`, `POST /model-watch/run`, `POST /model-watch/reports/:id/answer` |
 | `/settings` | theme override, daemon connection status (with links to Updates and Extensions), every setting grouped by scope with the scope badge; rows that map to a command have Change: a dialog with the current value, the change card from the daemon, Yes/No (a tap; a high-risk card asks this paired device), the sentence with Undo, a link to Changes; other rows say read-only | `GET /settings`, `POST /commands/execute`, `POST /commands/:id/confirm`, `POST /changes/:id/undo` |
 
@@ -106,7 +106,10 @@ apps/ui/
 extensions, updates, model watch, reviews, memory and consolidation, commands and the change
 log) plus the proposed routes (`queue`, `enqueue`, `dismissQueueItem`, `milestones`,
 `dataAssets`, `registerDataAsset`, `removeDataAsset`, `importProject`, `docs`, `doc`,
-`performance`) and `url()` / `raw()` for the stream helpers. Paths come from `routePath(name,
+`performance`), `auditExport(filter?)` (spec S.9: `GET /audit/export` with `agentId`, `sessionId`,
+`from`, `to` and `format`; the body as text with the row count and the base name from
+`Content-Disposition`, `filenameFromDisposition` / `countExportRows`) and `url()` / `raw()`
+for the stream helpers. Paths come from `routePath(name,
 params)` over `DAEMON_ROUTES` or `proposedPath(name, params)` over `PROPOSED_ROUTES` (which
 follows the daemon's entry as soon as one exists), URL-encoded; the client sends
 `Authorization: Bearer <token>` and validates every JSON body with the contract's zod schema.
@@ -290,7 +293,12 @@ chat stream), `store` (persistence, restart, extensions version), `app`, `home`,
 incl. a cut cycle, timeline positions, timeline and graph render, the timeline and derived
 milestones when the route is missing, today's tick from an injected `now`, docs with drift
 and a reader, data register / remove / import, queue add / dismiss, peers, decisions, solo
-project and missing queue route, cost per accepted), `reviews` (tones, trend, newest first,
+project and missing queue route, cost per accepted), `small-project` (B.6: the flat Plan tab
+list with the one milestone from the route or, without it, the card, milestones from before
+the mode named, a small project without a milestone yet, the grouped tab unchanged with the
+flag off; the dialog's "project default (tier N)" option from the card, no `riskTier` in the
+posted body unless picked and the picked one sent, a card without the field naming no number),
+`reviews` (tones, trend, newest first,
 findings, verdict filter, missing route), `tasks`, `session`, `inbox`, `chat`, `memory` (view
 order, pinned first, search, critic and shared views, a peer's agent not readable, edit / pin
 / delete, consolidation, missing memory routes with both notices, missing consolidation route
@@ -299,6 +307,12 @@ review, toggle and remove, add from the catalog then approve, add from a URL the
 on `extension.changed`), `updates` (states, available release with changelog, apply with the
 restart banner, rollback, model watch adopt and run, feed failure fallback), `performance`
 (formatting, target comparison, every mode with the bar, estimates, missing route),
+`audit-export` (the client's filename parsing and row counting, the fetch with the token and
+the filters in both formats against the fake daemon, 401 without a token; the button downloads
+the daemon's file in the chosen format and reports the count, says so when the browser cannot
+save and names the missing route), `download` (`saveTextFile`: the Blob's type and size, the
+anchor's `download` name clicked once and removed, the URL revoked later, false without object
+URLs),
 `changes` (rows with words / commands / before / after, undo and the undo row, filters,
 missing route), `settings` (scope on every row, command mapping, autonomy by one step: card →
 yes → sentence → undo → the change log row, high risk needs this device, cancel and refusal),
@@ -348,6 +362,10 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
   elsewhere shows up on Refresh or with the next blocking change.
 - `Read aloud` uses the browser's Web Speech API; WebKitGTK (Linux Tauri) may expose no voices,
   in which case the button is disabled with a tooltip saying so.
+- **Export audit log** saves through an anchor `download` on an object URL, which the dev
+  server and WebView2 (Windows) honour; the Linux desktop shell (WebKitGTK) registers no
+  download handler yet (`apps/desktop/src-tauri`), so the click may do nothing there. The page
+  cannot tell, and `fr audit export` writes the same file from the command line meanwhile.
 - The project page tab bar scrolls horizontally on narrow screens; the phone layout is
   `src/mobile`.
 - Desktop notifications and the tray menu (K.8) live in the desktop shell (next section); the

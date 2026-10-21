@@ -12,7 +12,7 @@ import type { ChatReply, ChatRequest } from "../conversation/agent.ts";
 import type { KillReport, KillScope, KillSwitch } from "../enforcement/killswitch.ts";
 import type { CommandLoop, PendingView } from "../loop/commands.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
-import type { StartRequest } from "../session/triggers.ts";
+import type { StartEntry, StartRequest } from "../session/triggers.ts";
 
 /**
  * Remote commands for the PC (spec R.4, R.8, Q.12; ADR 0032 item 4, ADR 0041). A paired phone
@@ -31,7 +31,10 @@ import type { StartRequest } from "../session/triggers.ts";
  * - a plain `kill` / `stop` / `pause` / `start` (the approvals web, the state service API, the
  *   registry's own remote rows `session.*`) goes through the kill switch, the registry's
  *   `session.pause` (whose port in the daemon, `wiring/session-ports.ts`, ends a session
- *   running here at the next task boundary) and the scheduler.
+ *   running here at the next task boundary) and the scheduler. A `start`'s result records
+ *   the start's identity (`startId`, the scheduler entry's id): the registry's `session.start`
+ *   made from a phone is such a row, and its undo reads the id there to act on that start
+ *   alone (`CommandLoop.undo`, the `kill` port of `sessionCommandPorts`; ADR 0049).
  *
  * Authorisation has two lines: the store's `pickUp` takes only rows whose issuing device
  * belongs to the human who owns this daemon's agent (another human's command stays pending
@@ -161,14 +164,22 @@ export function verbOf(command: string): RemoteVerb | null {
   }
 }
 
+/**
+ * What the scheduler answers a plain `start` with: the outcome and the entry's `id`, the
+ * start's identity from the queue to the run (`Scheduler.requestStart`). The watcher writes
+ * the id into the row's result as `startId`.
+ */
+export type RemoteStartEntry = Pick<StartEntry, "id" | "result">;
+
 export interface RemoteCommandDeps {
   store: Pick<StateStore, "remoteCommand" | "auditLog" | "device" | "humanRequest">;
   clock: Clock;
   kill: Pick<KillSwitch, "stop" | "resume">;
-  /** A plain `start`: the scheduler's request (the registry's `session.start` uses the same port). */
-  start: (
-    req: StartRequest & { budgetUsdMicro?: number },
-  ) => Promise<"started" | "queued" | "deferred" | "skipped">;
+  /**
+   * A plain `start`: the scheduler's request with the entry it made (`Scheduler.requestStart`;
+   * the registry's `session.start` port asks the same scheduler and keeps the same id).
+   */
+  start: (req: StartRequest & { budgetUsdMicro?: number }) => Promise<RemoteStartEntry>;
   /** The command registry in the loop: plans, pauses and the answers to pending cards. */
   commands: Pick<CommandLoop, "compose" | "confirm" | "cancel" | "pending" | "activeProject">;
   /** One conversation turn for `kind: "chat"`; null when no model credential is configured. */
@@ -599,14 +610,17 @@ export class RemoteCommandWatcher {
     }
     // A start after a kill lifts the freeze: the human asked for work explicitly.
     this.deps.kill.resume();
-    const outcome = await this.deps.start({
+    const entry = await this.deps.start({
       agentId: this.deps.agentId,
       projectId: params.projectId,
       trigger: "remote",
       reason: params.reason ?? `remote start from device ${row.device_id}`,
       ...(params.budgetUsdMicro ? { budgetUsdMicro: params.budgetUsdMicro } : {}),
     });
-    return { ok: true, result: { kind: "start", result: outcome } };
+    // The start's identity travels in the result: the undo of the registry's remote
+    // `session.start` row (`after.remote_command_id`) reads it here, so it stops the session
+    // this start began and never a later start of the agent (ADR 0049).
+    return { ok: true, result: { kind: "start", result: entry.result, startId: entry.id } };
   }
 
   // -------------------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
+import { type Clock, errorMessage, ForerunnerError, log, redact } from "@forerunner/platform";
 import type { SessionBudget } from "../enforcement/budget.ts";
 import type { EnforcementHooks, RunBilling, RunContext } from "../enforcement/hooks.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
@@ -310,6 +310,18 @@ export class SdkAgentDriver {
 
   /** Map our hooks onto the SDK's PreToolUse / PostToolUse. */
   private sdkHooks(ctx: RunContext, tools: ToolRegistry, emit: (ev: RunEvent) => void) {
+    // PostToolUse reports the input the tool ran with, which is the `updatedInput` PreToolUse
+    // returned: the resolved secret values. The audit row must carry the model's input (the
+    // `secret:<name>` references), so it is kept per tool_use_id between the two hooks.
+    const rawInputs = new Map<string, unknown>();
+    const remember = (id: string, raw: unknown) => {
+      if (!id) return;
+      if (rawInputs.size >= RAW_INPUTS_MAX) {
+        const oldest = rawInputs.keys().next().value;
+        if (oldest !== undefined) rawInputs.delete(oldest);
+      }
+      rawInputs.set(id, raw);
+    };
     const pre = async (input: Record<string, unknown>) => {
       const toolName = String(input.tool_name ?? "");
       const spec = resolveSpec(tools, toolName);
@@ -324,6 +336,7 @@ export class SdkAgentDriver {
             },
           };
         }
+        remember(String(input.tool_use_id ?? ""), input.tool_input);
         emit({
           type: "tool_call",
           id: String(input.tool_use_id ?? ""),
@@ -361,17 +374,25 @@ export class SdkAgentDriver {
     const post = async (input: Record<string, unknown>) => {
       const toolName = String(input.tool_name ?? "");
       const spec = resolveSpec(tools, toolName);
+      const useId = String(input.tool_use_id ?? "");
+      const modelInput = rawInputs.has(useId) ? rawInputs.get(useId) : input.tool_input;
+      rawInputs.delete(useId);
       const raw =
         typeof input.tool_response === "string"
           ? input.tool_response
           : JSON.stringify(input.tool_response ?? "");
+      const toolInput = input.tool_input as { url?: string; file_path?: string; path?: string };
+      // What came from outside the run is data (spec S.2): a page or search result, and a
+      // repository file the subprocess read (the loop driver's read_file marks the same).
       const untrusted = isExternalCcTool(toolName)
-        ? ({
-            source: "web_page",
-            origin: String((input.tool_input as { url?: string } | undefined)?.url ?? toolName),
-          } as const)
-        : undefined;
-      const r = await this.deps.hooks.afterToolCall(ctx, spec, input.tool_input, {
+        ? ({ source: "web_page", origin: String(toolInput?.url ?? toolName) } as const)
+        : isRepoReadCcTool(toolName)
+          ? ({
+              source: "repo_file",
+              origin: String(toolInput?.file_path ?? toolInput?.path ?? toolName),
+            } as const)
+          : undefined;
+      const r = await this.deps.hooks.afterToolCall(ctx, spec, modelInput, {
         content: raw,
         untrusted,
       });
@@ -385,7 +406,11 @@ export class SdkAgentDriver {
         isError: false,
         durationMs: 0,
       });
-      return untrusted
+      // The subprocess sees what the loop driver would feed back: the redacted content, with
+      // the data envelope where the source is untrusted. The SDK applies the replacement to
+      // MCP tool outputs; for the web tools it is handed over as before. A built-in file tool's
+      // output cannot be rewritten from a hook: its read is scanned and flagged, not changed.
+      return untrusted || isMcpTool(toolName)
         ? { hookSpecificOutput: { hookEventName: "PostToolUse", updatedMCPToolOutput: r.content } }
         : {};
     };
@@ -416,8 +441,19 @@ function resolveSpec(tools: ToolRegistry, sdkToolName: string): ToolSpec {
   };
 }
 
+/** How many allowed calls' inputs are kept for PostToolUse at most (one per tool_use_id). */
+const RAW_INPUTS_MAX = 1_000;
+
 function isExternalCcTool(name: string): boolean {
   return /^(WebFetch|WebSearch)$/.test(name);
+}
+
+function isRepoReadCcTool(name: string): boolean {
+  return /^(Read|NotebookRead|Grep)$/.test(name);
+}
+
+function isMcpTool(name: string): boolean {
+  return name.startsWith("mcp__");
 }
 
 function addUsage(a: Usage, b: Usage): Usage {
@@ -429,17 +465,38 @@ function addUsage(a: Usage, b: Usage): Usage {
   };
 }
 
-/** Remove every credential-looking variable from the environment handed to the subprocess. */
+/** Variables of the providers and stores the daemon itself talks to: never the subprocess's. */
+const DENIED_ENV_PREFIX =
+  /^(ANTHROPIC_|CLAUDE_CODE_OAUTH|GITHUB_TOKEN|GH_TOKEN|AWS_|CLOUDFLARE_|DEEPGRAM|CARTESIA|ELEVEN|OPENAI_|FORERUNNER_VAULT)/i;
+/**
+ * Names under which credentials travel: anywhere in the name for the unambiguous words, as
+ * a whole segment (`_PASS`, `SIGNING_KEY`, `BASIC_AUTH`, `SENTRY_DSN`) for the short ones,
+ * so `PATHEXT` or `XAUTHORITY` stay and `SSH_AUTH_SOCK` (the user's agent) goes.
+ */
+const DENIED_ENV_NAME =
+  /(TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|PRIVATE_KEY|API_KEY|ACCESS_KEY|COOKIE)|(^|_)(PASS|KEY|KEYS|AUTH|DSN)(_|$)/i;
+/** `scheme://user:password@host`: a connection string or a proxy with its credentials. */
+const USERINFO_URL = /^([a-z][a-z0-9+.-]*:\/\/)[^/\s@]*:[^/\s@]*@/i;
+const PROXY_NAME = /(^|_)PROXY$/i;
+
+/**
+ * The environment handed to the Claude Code subprocess (and the process sandbox's base): a
+ * denylist on names plus a look at values, because credentials also travel under other names.
+ * A variable goes when its name is a credential's, when its value carries `user:password@` in
+ * a URL (a database or state URL; a proxy keeps its URL with the user-info cut out, the
+ * subprocess still has to reach the API through it) or when the platform's credential shapes
+ * find a token in it (`sk-ant-…`, `ghp_…`, a private key). With `FORERUNNER_SDK_HOST_COMMANDS=1`
+ * the model can run `env`, so what is left here is what it may read.
+ */
 export function scrubEnv(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(env)) {
-    if (
-      /^(ANTHROPIC_|CLAUDE_CODE_OAUTH|GITHUB_TOKEN|GH_TOKEN|AWS_|CLOUDFLARE_|DEEPGRAM|CARTESIA|ELEVEN|OPENAI_|FORERUNNER_VAULT)/i.test(
-        k,
-      )
-    )
+    if (DENIED_ENV_PREFIX.test(k) || DENIED_ENV_NAME.test(k)) continue;
+    if (typeof v === "string" && USERINFO_URL.test(v)) {
+      if (PROXY_NAME.test(k)) out[k] = v.replace(USERINFO_URL, "$1");
       continue;
-    if (/(TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)/i.test(k)) continue;
+    }
+    if (typeof v === "string" && redact(v) !== v) continue;
     out[k] = v;
   }
   return out;

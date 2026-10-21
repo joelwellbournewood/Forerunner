@@ -11,12 +11,28 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | 2 | Two agents, one project | gate passed on the fake provider (two agents, five sessions each, claims, peer feed, PR flow, human requests); state service with device auth, realtime, receipts, decision log, GitHub Projects mirror, approvals web fallback done | gates.md § Phase 2 |
 | 3 | Critic and quality loop | gate passed live (40 of 40 seeded defects caught, 40 of 40 clean submissions accepted after ADR 0042); reviews tab done | gates.md § Phase 3 |
 | 4 | Memory, docs and learning | gate harness passed on the fake provider (four simulated weeks, retrieval under budget, consolidation applied only as approved, no cross-human lesson); memory UI done | gates.md § Phase 4 |
-| 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 30 voice turns, nine settings changes with one change log, ten phone answers); the Android emulator and real-audio halves pending (no emulator boots on the hosted runner) | gates.md § Phase 5 |
+| 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending (no emulator boots on the hosted runner) | gates.md § Phase 5 |
 | 6 | Capabilities | injection suite, live revocation, overnight cloud-runner session, emailed task and spoofed email passed on the fake provider and the in-process mail server; live halves pending a real mailbox and host | gates.md § Phase 6 |
 | 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts) | gates.md § Phase 7 |
-| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each) and on Windows in CI; no Android run; requirements 170 done, 49 in progress, 9 todo; security suite with 42 open findings pinned; release criteria not met, no release cut; build stopped for budget on 2026-10-20 | gates.md § Phase 8 and § Release 1.0 criteria |
+| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each) and on Windows in CI; the hosted emulator boots and launches the app (run 6), its tests pending run 7; requirements 172 done, 48 in progress, 8 todo; security suite green (45 findings fixed, 4 medium review findings open); release criteria not met, no release cut; build stopped at the credit limit on 2026-10-21 | gates.md § Phase 8 and § Release 1.0 criteria |
 
 ## Log
+
+### 2026-10-21 (security fixes landed, audit export, small-project mode, sign-off follow-up; build stopped at the credit limit)
+- Security: the 45 findings pinned by the review's `it.fails` tests are fixed in the state service,
+  the store, the commands, the platform log, the runtime hooks, the SDK driver, the tokens, the
+  daemon, the vault, the browser, email and Cloudflare; no expected-failure marker remains. The
+  independent review of the fixes accepted the daemon/vault and capabilities surfaces (88, 78)
+  and sent the state-service (78) and runtime-hooks (70) surfaces back with medium findings
+  (listed under "Where to pick up"); their fix stage was interrupted when the credits ran out.
+- S.9 audit log export (daemon route, state-service route, `fr audit export`, UI button) built,
+  reviewed and accepted (88). The sign-off and session.start undo follow-up built, reviewed,
+  fixed and accepted. B.6 small-project mode built with its tests; its independent review did
+  not complete before the stop.
+- Android: the hosted runner now boots the emulator (52 s) after the disk clean-up and builds,
+  installs and launches the debug APK (run 6); the WebView attach failed on a CommonJS import
+  shape, fixed in 6542a3f; run 7 decides the emulator rows.
+- Requirements 172 done, 48 in progress, 8 todo. Progress report 6 posted to the contact issue.
 
 ### 2026-10-20 (requirements close-out, security review, runtime follow-ups; build stopped for budget)
 - Requirements close-out over all 22 sections: every in-progress row verified against the code
@@ -41,19 +57,26 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ### Where to pick up (handover)
 In this order, each item a wave of its own with the snapshot procedure in `AGENTS.md`:
-1. Land the security fixes: for every `it.fails` in `**/test/security-*.test.ts*`, apply the
-   fix the test names, drop `.fails`, keep the test (the state service's `inbox.ts` carries a
-   partial fix from the stopped stage: finish or revert it against its test file).
-2. Finish the runtime follow-up item "sign-off and undo" (`packages/runtime/test/signoff-answer.test.ts`
-   and `loop-commands.test.ts` pin it; the critic's open findings are in its review).
-3. Close the requirement rows marked "missing in code" in `BLOCKERS.md` (A.2, B.6, D.20, O.1,
-   S.9, S.13, S.15/S.29, J.6/J.7) and then the "partly built" rows; each needs code, a test
-   and its maintainer doc.
-4. Dispatch `android.yml` (it now frees the runner's disk before the emulator starts); when the
-   emulator tests pass, record the phase 5 emulator row and scenario 9's Android run, then
-   re-run every gate on the final build and fill the phase 8 "re-run" row.
-5. Cut the release: tag `v1.0.0` (`release.yml` builds Windows, Linux and Android artefacts,
-   writes the changelog section and signs the update manifest with `UPDATE_SIGNING_KEY`).
+1. Apply the open security-review findings (medium, from the review of 2026-10-20/21):
+   - `packages/platform/src/log.ts`: the key-name rule is case-inconsistent (`SECRET_KEY_NAME`
+     is case-insensitive, `KEY_SUFFIX` is not), so `PRIVATE_KEY`-style names slip through; and
+     `URL_USERINFO` needs a non-empty user, so `redis://:password@host/0` is not masked.
+   - `packages/runtime/src/wiring/state-ports.ts` and `enforcement/hooks.ts`: the always-human
+     approval consumption lives only in `ctx.approvals`; the durable `StateApprovals` port still
+     answers "approved" for an identical later request, and its key is computed from the
+     redacted input, so two inputs that redact alike share a key. Consume the durable row and
+     key on the raw canonical input.
+   - Finish the independent review of B.6 small-project mode (its tests pass; the critic stage
+     was interrupted) and apply what it finds.
+2. Close the requirement rows marked "missing in code" in `BLOCKERS.md` (A.2, A.4, B.6 is done,
+   D.20, G.5, G.6, H.7, J.1, J.7, J.9, L.6, O.1, R.6, S.13, S.15/S.29) and then the "partly
+   built" rows; each needs code, a test and its maintainer doc.
+3. Android: read run 7 of `android.yml`; when the emulator tests pass, record the phase 5
+   emulator row and scenario 9's Android run, then re-run every gate on the final build and
+   fill the phase 8 "re-run" row.
+4. Severity triage of the Known issues sections (V.4), then the release: tag `v1.0.0`
+   (`release.yml` builds Windows, Linux and Android artefacts, writes the changelog section and
+   signs the update manifest with `UPDATE_SIGNING_KEY`).
 Credentials: the API key and the subscription token used for the live runs must be revoked
 and re-issued; the ledger `tests/live/spend.json` carries every live call (USD 5.93).
 

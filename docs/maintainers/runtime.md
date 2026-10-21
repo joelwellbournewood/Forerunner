@@ -16,7 +16,9 @@ A run gets a `SignedToken`: HMAC-signed claims (allowed tools, allowed path root
 domains, granted secret names, run budget, depth and max depth, autonomy level, expiry). The
 model only ever sees the token id. `TokenIssuer.derive` builds a sub-agent token that can only
 narrow the parent (intersection of lists, min of budgets, depth + 1, depth cap enforced).
-`revoke`/`revokeWhere` are used by the kill switch.
+`revoke`/`revokeWhere` are used by the kill switch. `issue` refuses an `expiresAt` that does
+not parse as a time, and `verify` and `claimsForRun` read one that still slips in as already
+expired (compared as NaN it counted as "never expires" before; `test/security-tokens.test.ts`).
 
 ### Enforcement hooks (`src/enforcement/hooks.ts`)
 
@@ -24,12 +26,17 @@ narrow the parent (intersection of lists, min of budgets, depth + 1, depth cap e
 | --- | --- |
 | `beforeModelCall(ctx, estimate)` | token valid and not revoked, kill state, session wall clock, run deadline, step cap, run cap, session cap with 80% finish-current and review reserve, outer caps (task, project, month, plan share) via `CapsPort` |
 | `afterModelCall(ctx, usage, usd)` | records spend in `SessionBudget` and the ledger |
-| `beforeToolCall(ctx, tool, input)` | token/kill, step, tool allowlist, zod schema, path containment for `pathFields`, domain allowlist for `domainFields`, autonomy decision (may ask `ApprovalPort`; pending pauses the run; skipped for a tool with `gate: "registry"`, a command of the command registry whose executor confirms by risk itself, so the change card is the one approval and the hooks file no second request), secret-ref resolution for granted names only; denials are audited |
-| `afterToolCall(ctx, tool, input, result)` | redacts resolved secrets, wraps untrusted output in the data envelope and scans it for injection, audits |
+| `beforeToolCall(ctx, tool, input)` | token/kill, step, tool allowlist, zod schema, path containment for `pathFields` (`pathInsideRoot`: inside a root as written and once the symlinks of the path's existing part are resolved, so a committed `link -> ~/.ssh/id_ed25519` or a linked directory in the worktree is refused for reads and writes alike, and a link that cannot be resolved counts as outside), domain allowlist for `domainFields`, autonomy decision (may ask `ApprovalPort`; the key an approval is remembered under is `tool:<SHA-256 of the canonical input>`, `approvalKeyFor`, the same function `StateApprovals` writes into `change_card.key`; an approval of an always-human class (`ALWAYS_HUMAN`) admits one call and is taken out of `ctx.approvals` as it is used, so the resume path re-makes the paused call once and every further identical delete, purchase or send asks again, while any other approval holds for the run; pending pauses the run; skipped for a tool with `gate: "registry"`, a command of the command registry whose executor confirms by risk itself, so the change card is the one approval and the hooks file no second request), secret-ref resolution for granted names only; denials are audited, a call on a revoked, expired or forged token or after a stop too (the row carries the token's own id and run, unverified, spec S.9) |
+| `afterToolCall(ctx, tool, input, result)` | redacts resolved secrets, wraps untrusted output in the data envelope and scans it for injection, audits. Every audit summary the hooks write (input and result, on the allow, deny and pending paths) is scrubbed first: the run's resolved secret values in every encoding (`SecretsPort.redact`), then the platform's credential shapes as a last line for a value the model obtained elsewhere and pasted into a later input, with `secret:<name>` references kept, since the name is what the audit is meant to carry |
 
 The per-session accounting is `SessionBudget` (`src/enforcement/budget.ts`): run and session
 caps, step cap, wall clock, the 80% rule and the review reserve (default 20%). The estimate
 before a call is conservative: full input at input price plus `max_tokens` at output price.
+Every estimate and spend must be a non-negative safe integer of USD micro-units: `precheck`
+and `record` refuse NaN, infinity, a fraction and a negative with `validation` (a NaN recorded
+once made every later cap comparison false, which switched the session's hard cap off for
+good), and the limits are checked with negated comparisons so a NaN cap, step cap, deadline
+or reserve share is refused at construction.
 
 ### Autonomy (`src/enforcement/autonomy.ts`)
 
@@ -50,7 +57,12 @@ tool's raw input instead.
 
 Registered runs (abort controllers) and child processes are stopped, tokens revoked and claims
 frozen through a callback; the test proves 40 runs and 3 processes stop in under 2 s. A stopped
-scope stays frozen (new registrations abort at once) until `resume()`.
+scope stays frozen (new registrations abort at once) until `resume()`. The cross-process kill
+file (`src/enforcement/killfile.ts`) goes through `parseKillRequest` before `KillFileWatcher`
+acts on it: something that is not an object with a `requestedAt` is no request (ignored, like
+unparseable JSON), and a scope that is neither `"all"` nor an object naming an agent or a
+session is read as `"all"`, because the switch would stop every registration for such a scope
+yet freeze nothing, so new work would start at once (fail closed).
 
 ### Drivers
 
@@ -61,6 +73,30 @@ for each tool use: `beforeToolCall` → execute with per-tool timeout → `after
 `needs_human` (approval pending), `max_turns`, `error`. Events stream to the live session view.
 `SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks; a task
 runs on it when its billing source is a subscription (see "Billing per task" below, ADR 0044).
+
+**What the subprocess inherits and what it gets back (security review, `test/security-sdk.test.ts`).**
+`scrubEnv` builds the subprocess environment (and the process sandbox's base environment): a
+variable goes when its name is a credential's (the provider and store prefixes; `TOKEN`,
+`SECRET`, `PASSWORD`, `CREDENTIAL`, `PRIVATE_KEY`, `API_KEY`, `ACCESS_KEY`, `COOKIE` anywhere;
+`PASS`, `KEY`, `AUTH`, `DSN` as a whole segment, so `SMTP_PASS`, `SIGNING_KEY`, `BASIC_AUTH`,
+`SENTRY_DSN` and `SSH_AUTH_SOCK` go while `PATHEXT` and `XAUTHORITY` stay), when its value
+carries `user:password@` in a URL (a database or state URL is dropped; a `*_PROXY` keeps its
+URL with the user-info cut out, since the subprocess reaches the API through it) or when the
+platform's credential shapes find a token in the value under any name. Exactly the picked
+credential is added afterwards. The hooks run as `PreToolUse` / `PostToolUse`: the Claude Code
+specs (`src/agent/cc-tools.ts`) carry the path and URL fields and, for `Glob.pattern` and
+`Grep.glob`, refuse a pattern with a `..` segment (also inside a brace list) or an absolute
+prefix (`/`, `\\`, `C:`, `~`), since the SDK resolves it against `path` or the run directory
+and the containment check on `path` alone would let it walk out. `PreToolUse` keeps the
+model's input per `tool_use_id`, because `PostToolUse` reports the input the tool ran with,
+which is the `updatedInput` with the resolved values; the audit row is written from the
+model's input (`secret:<name>`). `PostToolUse` hands the redacted content back to the
+subprocess as `updatedMCPToolOutput` for every `mcp__` tool and for the web tools (wrapped as
+data and scanned); a repository read by the built-in `Read`, `NotebookRead` or `Grep` is marked
+`repo_file`, scanned and flagged like the loop driver's `read_file`, though its text cannot be
+rewritten from the hook. The executor redacts a run's final text (`redact`, the platform's
+shapes) before it becomes the task summary, the final report and the lesson candidates, on the
+success path as on the error path (ADR 0044 item 9).
 
 **Specialist tools on each driver (`src/registry/tools.ts`, ADR 0043).** The registry names
 Claude Code tools (`allowed_tools: cc:Read, cc:Edit, cc:Bash, ...`) for the SDK driver, which
@@ -262,7 +298,8 @@ written to `config.json` as `subscription.planUsdMonthly` when given; a bad flag
 environment value is a `validation` error before any credential is stored); the summary's
 "Billing sources:" line names the sources the next start registers and the allowance with its
 origin; `config.json` never holds a secret), `status` (directories, config, secret names only), `doctor`
-(prerequisites), `kill` (writes a kill request file), `dirs`, `daemon`. The kill request file
+(prerequisites), `kill` (writes a kill request file), `dirs`, `daemon`, `audit export` (the
+audit log to a file, in the table below). The kill request file
 in the runtime directory is polled by `KillFileWatcher` in every running runtime, so the CLI,
 the tray and the app can stop sessions across processes on both platforms.
 
@@ -284,6 +321,7 @@ rename). `cli.test.ts` covers the written record and the parser.
 | `fr update check\|apply\|rollback\|status\|health\|keygen\|sign` | `registerUpdateCli` with `composeUpdateManager({ runningVersion })` | A manager of its own over the configured store; no daemon needed. `apply` stages the release and asks for a restart (a CLI cannot relaunch the app). |
 | `fr models watch\|report` | `registerModelWatchCli` over the composed runtime's `modelWatch` | Runs the weekly model watch now, lists reports. |
 | `fr mirror sync\|enable\|disable` | `registerMirrorCli` over the composed runtime's `store` and `mirror` | One-way GitHub Projects mirror. |
+| `fr audit export [--agent <id>] [--session <id>] [--from <iso>] [--to <iso>] [--format jsonl\|csv] [--out <path>] [--force]` | `registerAuditCli` (`src/cli/audit.ts`) over the composed runtime's `store`, `clock` and `human`, `startServices: false` | Spec S.9, ADR 0050: the install's human's audit rows and their agents' (plus the install-level rows that name nobody) through the daemon's export module (`src/daemon/audit-export.ts`), paged, as JSON lines or CSV, the summaries as stored. Flags are checked before the runtime is composed; `--out` defaults to `forerunner-audit-<UTC stamp>.<format>` in the current directory (parent directories are created); an existing file is refused unless `--force`; another human's agent is `not_found`; prints `N rows written to <path> (<format>)`. |
 
 Commands that need the whole product compose it once through `composeRuntime` (the same
 wiring as the daemon) with `startServices: false`, a one-shot: the composed objects exist but no
@@ -315,7 +353,31 @@ session summary, handoff and spend. `triggers.ts` is the scheduler (daily, weekd
 minutes in the human's time zone; message, CI, PR comment, email, remote and manual requests;
 one active session per agent; quiet hours defer non-manual triggers). `state-ports.ts` adapts
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
-approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call.
+approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call (matched by
+`change_card.key`, the hooks' SHA-256 key; a row written under the former 32-bit string hash
+no longer matches, so such an approval is asked once more).
+
+**Small-project mode and the plan writer (spec B.6, ADR 0051).** `src/session/project-plan.ts`
+is where `project.small_project_mode` is read. `defaultRiskTier(project)` (0 with the flag,
+else 1) is the one place a new task's tier is chosen when the task names none: the daemon's
+`POST /projects/:id/tasks` (`riskTier` optional), the `task.create` command (`risk_tier`
+optional) and the plan writer call it; the critic reviews at `task.risk_tier` and never reads
+the flag, so a named tier stands and flipping the flag leaves existing tasks alone.
+`applyProjectPlan(store, project, plan, author)`, served as `POST /projects/:id/plan`
+(`ProjectPlanBody` to `PlanProjectView`), writes a plan (phases with their tasks, loose tasks,
+one reason for every row) as milestone and task rows in one transaction: outside the mode a
+milestone per phase after the project's existing ones (`order_index`) and the loose tasks under
+none; in the mode exactly one milestone (the planned one when the plan names a single
+milestone, else one named after the project with every phase's success criteria once each and
+the latest target date), every task under it in plan order, and a later plan joins the
+project's open milestone instead of adding one. `dependsOn` takes plan keys or ids of the
+project's own tasks and the rows are written dependencies first; an unknown reference, a cycle,
+a duplicate key, an empty plan or one over the caps (`MAX_PLAN_MILESTONES` 20,
+`MAX_PLAN_TASKS` 200) is refused as `validation` (409 `conflict` on the route, ADR 0025) with
+nothing written. Milestone target dates are calendar dates (`YYYY-MM-DD`). The project card
+carries `smallProjectMode` and `defaultRiskTier` so the UI computes neither. Not yet on the
+helper: the email command's task insert in `packages/capabilities` names tier 1 literally
+(`BLOCKERS.md`). Tests: `small-project.test.ts`. Requirement: B.6.
 
 **The next-session queue (spec J.2).** The checklist reads the project's `queued` items
 (`store.queue.pending`, priority first) into `brief.queue.items` with each row's `id` and
@@ -516,7 +578,11 @@ the source (`SOURCE_OF`: `chat` for text and the phone, `voice` for voice, `ui` 
 settings screen's route calls). The conversation agent calls
 `parse` (deterministic; `matched: "none"` means the model answers), `compose` (one card, one
 change log row for a combined request), `tools` (the command tools for the model path, each
-`gate: "registry"` so the hooks leave the confirmation to the executor), `confirmByText` and
+`gate: "registry"` so the hooks leave the confirmation to the executor, and each run with the
+principal agent as actor, not the human: a command the model decides to call is recorded as
+the agent's act, `author_agent` set and `author_human` null, and a `limit` command asks
+whatever its risk, ADR 0030 item 2; the human stays `humanId`, whose yes confirms;
+`security-command-actor.test.ts`), `confirmByText` and
 `undo`; the daemon calls `execute`, `confirm`, `cancel`, `pending`, `changeLog` and `undo`. `start()` persists the command table and re-arms the reverts of
 temporary changes after a restart; `stop()` cancels the timers. `sessionCapFromSettings` is
 how the scheduler's `startSession` reads the cap the registry wrote (a temporary override
@@ -546,7 +612,19 @@ executor: the undo of a change that is one `session.start` whose session ended i
 with `SESSION_START_ENDED_REASON` ("the session this start began has already ended; there
 is nothing to undo") and the row is marked `irreversible` (the Changes screen stops
 offering it; no undo row is written); inside a composed change (the phone's "switch,
-budget, start") the start part is the no-op and the rest is undone.
+budget, start") the start part is the no-op and the rest is undone. A start made with a
+phone's or web client's device id (the daemon's `POST /commands/execute` with `deviceId`)
+is a remote row the PC's `RemoteCommandWatcher` runs, so its change log row has
+`after.remote_command_id` and `after.start_id: null`; the watcher records the start's
+identity in the row's result (`startId`, below) and the undo reads it there
+(`session.start`'s undo names it in the kill scope): a `pending` row is failed by the
+executor as before; a `picked_up` row (the PC is starting the session this instant) is
+refused as in flight (`SESSION_START_IN_FLIGHT_REASON`, code `unavailable`) and stays
+undoable; a `done` row is the start the result names (running: stopped as that session
+only; ended: refused as above), and one whose result names no start (a runner that records
+none, such as the cloud runner's watcher) is refused as `SESSION_START_UNKNOWN_REASON` and
+marked irreversible, since its session cannot be found from here and nothing is stopped by
+guesswork; a `failed` row never ran (`SESSION_START_NOT_RUN_REASON`).
 
 ### Conversation agent (`src/conversation/agent.ts`)
 
@@ -872,12 +950,22 @@ and renders money in CHF at the day's rate. Streams use server-sent events: `/ev
 the live feed (session events, inbox, session and project changes, a heartbeat) and
 `/sessions/:id/events` for one session, with `afterSeq` to resume. Errors map
 `ForerunnerError` codes to status codes (not found 404, validation and conflicts 409 or 400,
-permission 403); the body is `{ error, code, details }` with secrets redacted.
+permission 403); the body is `{ error, code, details }` with secrets redacted. Numbers in list
+queries (`?limit=`, `?afterSeq=`) go through one validator, `intQuery`, as the state service's
+`intParam` does: anything but a non-negative integer is a 400 (`validation`, `reason:
+"bad_query"`) before any store call, never a NaN that fails in SQL and comes back as a 500
+carrying the driver's text. On a shared state the daemon acts as its own human only (ADR 0041
+item 4, the way the state service forces a device's own human): `GET /inbox?humanId=` naming
+another human, `POST /requests/:id/answer` on a request whose `human_id` is another human's,
+and `POST /messages/:id/read` on a message whose addressee (its human, or the owner of the
+agent it names; an agent the store cannot resolve is nobody's) is not the daemon's human all
+answer 403 `{ code: "forbidden" }` and change nothing (`security-daemon.test.ts`).
 
 Beyond the route table of ADR 0011 the daemon serves `GET /projects/:id/peers` (the peer feed,
 `PeerFeedView`), `GET /projects/:id/decisions` (the decision log, `DecisionView[]`), the core
 loop's data (below: the Reviews tab, the memory views, the commands and the change log), and
-follows the UI conventions of ADR 0025: CORS for local and Tauri origins only, the bearer
+follows the UI conventions of ADR 0025: CORS for local and Tauri origins only (`isLocalOrigin`;
+the opaque origin `null` of sandboxed iframes and `file://` pages is not one, CWE-942), the bearer
 token accepted as `?token=` on the two EventSource routes and nowhere else, `/chat/stream`
 frames `token` (`{text}`), `reply` and `error`, a 409 with code `conflict` on a stale version,
 and `{killActive}` from the kill routes.
@@ -908,8 +996,35 @@ the route is unauthenticated but loopback-only); `/events` also streams `extensi
 are mounted as described above. The notification routes (`GET|PUT /notifications/prefs`,
 `POST /notifications/test`, `GET /notifications/recent`, `GET /notifications/pending`) and the
 Cloudflare panel routes (`GET /cloudflare/projects/:projectId/settings|token`) are mounted the
-same way (see "Notifications" and "Cloudflare deploys" above). Each sub-app keeps its module's
-error mapping.
+same way (see "Notifications" and "Cloudflare deploys" above), as is the audit log export
+(`GET /audit/export`, next paragraph). Each sub-app keeps its module's error mapping.
+
+**Audit log export (`src/daemon/audit-export.ts`, spec S.9, [ADR 0050](../decisions/0050-audit-log-export.md)).**
+`createAuditRoutes({ store, clock, humanId })` serves
+`GET /audit/export?agentId=&sessionId=&from=&to=&format=jsonl|csv` behind the bearer check (the
+SSE `?token=` exception does not cover it): the query is parsed first (`parseAuditExportQuery`:
+ids up to 200 characters, `from` and `to` ISO-8601 and `from <= to`, `format` an enum, blank
+values absent; 400 `validation`), then the scope (`auditScopeFor`: the daemon's human, their
+agents from `store.agent.forOwner`, install-level rows included; a requested `agentId` that is
+not theirs is 404 `not_found` whether it is another human's or nobody's), then the headers
+(`Content-Type` `application/x-ndjson` or `text/csv`, `Content-Disposition: attachment;
+filename="forerunner-audit-<UTC stamp>.<format>"` from the clock, exposed through CORS so the
+UI reads it cross-origin, `Cache-Control: no-store`) and the body as a chunked stream
+(`hono/streaming`): `auditExportPages` reads `store.auditLog.list` with `limit:
+AUDIT_EXPORT_PAGE_SIZE` (500) and a growing offset in the repository's `occurred_at, id` order
+until a short page, `rowInScope` keeps a page's rows that name the human or one of their
+agents (or nobody, on the install), and `writeAuditExport` serialises each page before the
+next is read, so memory is bounded by one page whatever the log's size. A record is `id,
+occurredAt, agentId, humanId, sessionId, runId, tokenId, tool, allowed, deniedReason,
+costUsdMicro, inputSummary, resultSummary, recordedAt` (`AUDIT_EXPORT_COLUMNS`): the summaries
+exactly as the hooks stored them (redacted and capped at write time; the export adds nothing
+about the raw parameters), `recordedAt` the row's `created_at`. CSV is RFC 4180 (CRLF, header
+first, quotes doubled) and `csvCell` prefixes a cell that starts with `=`, `+`, `-`, `@`, tab
+or CR with an apostrophe before quoting (CSV injection: the summaries carry text from pages and
+emails). A failure after the headers went out is logged and truncates the body. The state
+service (`services/state-api/src/routes/audit.ts`) and `fr audit export` call the same
+functions (`state-service.md`, Routes; "Command line and setup" above); the UI's button is in
+`apps.md`.
 
 **Voice (`src/voice/`, spec O, Q.4, Q.5; ADR 0012, [ADR 0048](../decisions/0048-voice-bridge-in-the-daemon.md);
 `voice.md` has the loop and "How the shell reaches it").** `composeRuntime` builds one
@@ -1005,7 +1120,7 @@ for every state URL that is not `sqlite:`), exposed as `RuntimeApp.remote`:
 | --- | --- | --- |
 | `registerDesktopDevice` | one `device` row of kind `desktop` per install for the human: the public key (a random identifier, never used to authenticate) is kept in `<config>/desktop-device.json`; the row under that key is reused (same human, not revoked), else a non-revoked row of the human named `FORERUNNER_DEVICE_NAME` (default the host name), else a fresh one | the row is what the phone can address a command to (`targetDeviceId`) |
 | `DesktopPresence` | stamps the row's `last_seen` at start and every `FORERUNNER_PRESENCE_HEARTBEAT_MS` (default 60 000; the runner's window `FORERUNNER_RUNNER_PC_ONLINE_MS` is 3 min) | `services/cloud-runner/src/presence.ts` reads it: a desktop seen within the window keeps the runner off the agent's schedules |
-| `RemoteCommandWatcher` | polls `store.remoteCommand.pickUp("pc", { deviceId, agentId })` every `FORERUNNER_REMOTE_POLL_MS` (default 500 ms; the daemon reads the shared Postgres directly, ADR 0024, so no service client is involved): the store hands over only rows whose issuing device belongs to the human who owns this agent (first line); `authorize` loads the issuing device and refuses an unknown, revoked or foreign one (`failed`, `forbidden: ...`, audit row) without acting (second line). Then: a `kind: "plan"` envelope runs through `CommandLoop.compose` as the PC (source `phone`, the daemon's desktop row as the context device, so the registry's session commands call the ports instead of enqueueing another remote command); low risk acts, the phone's tap (`confirmedAt`, counted by `isFreshTap` only within the card's own life, `DEFAULT_TAP_MAX_AGE_MS` = 10 min, plus 2 min of clock skew; a tap the outbox replayed from long ago leaves the card `needs_yes` for the inbox) answers a medium card, a high-risk card stays a `human_request` (`needs_device`) and the row completes with `status: "pending"` and the `pendingId`; a `kind: "chat"` envelope is one `ConversationAgent.chat` turn (`failed`, `provider_auth` without a model credential); plain `kill` (stop everything and freeze), `stop` (the agent's runs, freeze lifted), `start` (freeze lifted, `scheduler.request` with `trigger: "remote"`), `pause` (the registry's `session.pause`, whose daemon ports in `src/wiring/session-ports.ts` make it the graceful stop: the row reads `paused` at once and, for a session registered with the kill switch in this process, the agent gets a `pause: <reason> (session <id>)` message that the runner reads between tasks, so the task in flight finishes, no new one starts and the runner closes the session with its handoff, `paused -> stopped`, `stop_reason: stopped_by_message`, the remaining tasks in `handoff.next`; a session running elsewhere gets the status only; the undo, `resumeSession`, withdraws the unread message and puts a `paused` row back to `running`, and a closed session stays closed), and the registry's own `session.*` rows; a start or scope naming another agent is refused. `syncAnswered` (every drain) applies inbox answers to the cards still pending in the executor: an approval confirms a `needs_yes` card as a tap and a `needs_device` card as a device confirmation naming the daemon's desktop row with `biometric: false` (the state service enforced the signature and `confirm:high` on the phone's answer; the daemon's route is the human at the PC), a rejection cancels, another human's answer is ignored; an approval the executor refuses (this daemon's desktop row revoked, the risk rose since the card was shown) is not counted as applied: it is warned once, audited (`allowed: false`, input `kind: "card"` with the pending id, the decision and the command names) and the dead card is cancelled so no drain repeats it (`stats.refusedCards`), while a `version_conflict` (another answer in flight) is simply retried on the next drain. Every row ends `done` or `failed` with a result the phone reads back plus one `audit_log` row `daemon.remote_command` naming the command, the device, the envelope's `clientId` and the plan's command names, never the parameters. One tap acts once: the state service already enqueues a device's envelope once per `clientId` (`state-service.md`, "Once per tap"), and as the second line `replayOf` refuses an envelope (plan or chat) whose (issuing device, `clientId`) this daemon handled before, found in this process's memory (`SEEN_MAX` pairs) or in an audit row of the last `duplicateWindowMs` (`DEFAULT_DUPLICATE_WINDOW_MS`, 30 days, longer than the service's seven-day record; the audit input of every handled envelope names its `clientId`, which is what the lookup reads): the row ends `failed` with `status: "duplicate"`, `code: "duplicate"`, the first row's id as `duplicateOf` and its own audit row, before anything is composed, so a copy that slipped past the service (two service instances, a restored backup, a row older than the service's week) never starts a second session or raises a budget twice (`stats.duplicates`). The lookup is per row, not a lock: two daemons of one human taking two copies at the same instant could both act (Known issues). A kill reaches the kill switch within one poll, so a session stops within 2 s of the tap. | the command registry's policy (ADR 0030), the kill switch, the scheduler; `RemoteCommandRepo.pickUp`'s owner filter in `packages/state` (`ownerHumanId` / `agentId`: a subquery on `device.owner_human_id`, through `agent` for the agent, both dialects) |
+| `RemoteCommandWatcher` | polls `store.remoteCommand.pickUp("pc", { deviceId, agentId })` every `FORERUNNER_REMOTE_POLL_MS` (default 500 ms; the daemon reads the shared Postgres directly, ADR 0024, so no service client is involved): the store hands over only rows whose issuing device belongs to the human who owns this agent (first line); `authorize` loads the issuing device and refuses an unknown, revoked or foreign one (`failed`, `forbidden: ...`, audit row) without acting (second line). Then: a `kind: "plan"` envelope runs through `CommandLoop.compose` as the PC (source `phone`, the daemon's desktop row as the context device, so the registry's session commands call the ports instead of enqueueing another remote command); low risk acts, the phone's tap (`confirmedAt`, counted by `isFreshTap` only within the card's own life, `DEFAULT_TAP_MAX_AGE_MS` = 10 min, plus 2 min of clock skew; a tap the outbox replayed from long ago leaves the card `needs_yes` for the inbox) answers a medium card, a high-risk card stays a `human_request` (`needs_device`) and the row completes with `status: "pending"` and the `pendingId`; a `kind: "chat"` envelope is one `ConversationAgent.chat` turn (`failed`, `provider_auth` without a model credential); plain `kill` (stop everything and freeze), `stop` (the agent's runs, freeze lifted), `start` (freeze lifted, `Scheduler.requestStart` with `trigger: "remote"`; the row's result is `{ kind: "start", result, startId }`, the scheduler entry's id being the start's identity the undo of the registry's remote `session.start` row acts on, ADR 0049), `pause` (the registry's `session.pause`, whose daemon ports in `src/wiring/session-ports.ts` make it the graceful stop: the row reads `paused` at once and, for a session registered with the kill switch in this process, the agent gets a `pause: <reason> (session <id>)` message that the runner reads between tasks, so the task in flight finishes, no new one starts and the runner closes the session with its handoff, `paused -> stopped`, `stop_reason: stopped_by_message`, the remaining tasks in `handoff.next`; a session running elsewhere gets the status only; the undo, `resumeSession`, withdraws the unread message and puts a `paused` row back to `running`, and a closed session stays closed), and the registry's own `session.*` rows; a start or scope naming another agent is refused. `syncAnswered` (every drain) applies inbox answers to the cards still pending in the executor: an approval confirms a `needs_yes` card as a tap and a `needs_device` card as a device confirmation naming the daemon's desktop row with `biometric: false` (the state service enforced the signature and `confirm:high` on the phone's answer; the daemon's route is the human at the PC), a rejection cancels, another human's answer is ignored; an approval the executor refuses (this daemon's desktop row revoked, the risk rose since the card was shown) is not counted as applied: it is warned once, audited (`allowed: false`, input `kind: "card"` with the pending id, the decision and the command names) and the dead card is cancelled so no drain repeats it (`stats.refusedCards`), while a `version_conflict` (another answer in flight) is simply retried on the next drain. Every row ends `done` or `failed` with a result the phone reads back plus one `audit_log` row `daemon.remote_command` naming the command, the device, the envelope's `clientId` and the plan's command names, never the parameters. One tap acts once: the state service already enqueues a device's envelope once per `clientId` (`state-service.md`, "Once per tap"), and as the second line `replayOf` refuses an envelope (plan or chat) whose (issuing device, `clientId`) this daemon handled before, found in this process's memory (`SEEN_MAX` pairs) or in an audit row of the last `duplicateWindowMs` (`DEFAULT_DUPLICATE_WINDOW_MS`, 30 days, longer than the service's seven-day record; the audit input of every handled envelope names its `clientId`, which is what the lookup reads): the row ends `failed` with `status: "duplicate"`, `code: "duplicate"`, the first row's id as `duplicateOf` and its own audit row, before anything is composed, so a copy that slipped past the service (two service instances, a restored backup, a row older than the service's week) never starts a second session or raises a budget twice (`stats.duplicates`). The lookup is per row, not a lock: two daemons of one human taking two copies at the same instant could both act (Known issues). A kill reaches the kill switch within one poll, so a session stops within 2 s of the tap. | the command registry's policy (ADR 0030), the kill switch, the scheduler; `RemoteCommandRepo.pickUp`'s owner filter in `packages/state` (`ownerHumanId` / `agentId`: a subquery on `device.owner_human_id`, through `agent` for the agent, both dialects) |
 
 Both stop with `close()`. The project's escalation ceiling is wired here too: `makeLoop` passes
 `projectCeiling: (settings) => criticSettingsOf(settings).ceiling` to `LoopTaskExecutor`, so
@@ -1052,6 +1167,33 @@ the human; it is never acted on.
 
 ## Tests
 
+`small-project.test.ts` (spec B.6, ADR 0051): `defaultRiskTier` by flag; `shapeProjectPlan`
+with the flag on (one milestone named after the project, the phases' criteria once each, the
+latest date, every task under it in plan order, tier 0 unless named; a single planned milestone
+kept as it is; a plan of loose tasks only) and off (a milestone per phase, loose tasks
+unassigned, tier 1 unless named); `applyProjectPlan` on an in-memory store (one milestone row
+and a flat list with dependencies resolved to ids and the reason and author on every row; a
+second plan joining the open milestone; phases after existing milestones with the loose task
+under none; dependants after dependencies whatever the plan order and a dependency on an
+existing task; an unknown dependency, a cycle, another project's task, an empty plan and a
+duplicate key refused with nothing written; the task cap); through `composeRuntime` and the
+daemon: the card's `smallProjectMode` and `defaultRiskTier`, `POST /projects/:id/tasks`
+without a tier (0 under the flag, 1 without, a named tier kept, an out-of-range tier refused),
+`POST /projects/:id/plan` for a small and a phased project, the second plan reusing the
+milestone, refusals as 409 `conflict` with nothing written and 404 for an unknown project.
+
+`security-daemon.test.ts` and `security-command-actor.test.ts` (security review 2026-10-20,
+ADR 0011, 0025, 0030, 0041): every route but `/health` needs the exact bearer (a prefix, a
+suffix, a query token or a Basic header is 401; the query token only on the SSE GETs),
+`daemon.json` is 0600 under the runtime dir and removed on stop, a foreign origin and the
+opaque origin `null` get no CORS headers, the kill switch and its resume are audited as the
+daemon's human, another human's request, message receipt and inbox are refused 403 and left
+untouched, a malformed `?limit=` is a 400; on the model path every command tool is gated by
+the registry with the command's static risk and class, the change log row of a command the
+model calls names the agent (`author_agent`) and no human, a model-initiated `autonomy_set`
+asks even when its risk would be low, and the human, project and device come from the turn,
+never from keys in the model's input.
+
 `closeout-security.test.ts` (requirements close-out 2026-10-20, spec S.5 and S.8, through
 `composeRuntime` and the daemon routes on an in-memory store): a capability added from the
 catalog carries its declared scopes in the review on the inbox card and, after the human's
@@ -1069,6 +1211,39 @@ claim is refused with the holder meanwhile; once the holder's renewals fail (its
 the claim holds for the rest of its 30 minutes and no longer: `expireClaims` returns the task to
 `ready` with the reason `claim expired`, the peer's claim succeeds, and the lapsed holder's late
 return cannot take the task back from the new holder.
+
+`audit-export.test.ts` (spec S.9, ADR 0050): `csvCell` quoting and the formula guard, the record
+shape and column order, the file name from the clock, the query (defaults, normalised window,
+blank values dropped, bad format / timestamp / inverted window / over-long id refused as
+`validation`), `auditExportPages` (limit and offset until a short page, no empty page yielded,
+the default page size), `rowInScope` and `writeAuditExport` across pages with the count; the
+sub-app over a sqlite store with two humans (JSON lines in time order with the download
+headers, CSV with the header and the guard, filters by agent / session / window with `to`
+exclusive, another human's agent and an unknown one 404, the same store seen as the other
+human, 400s before anything streams, `list` called in pages of the configured size,
+`auditScopeFor`); and mounted on the composed daemon (in `DAEMON_ROUTES`, 401 without the token,
+with a wrong one and with `?token=`, `Access-Control-Expose-Headers` carries
+`Content-Disposition`, only the install's rows, a foreign agent 404, CSV by session).
+`audit-cli.test.ts`: `fr audit export` registered with its flags, JSON lines with the count line
+and `startServices: false`, CSV with the header and the filters, the default file name from the
+clock, a foreign agent `not_found`, a bad flag refused before anything is composed, an existing
+file refused without `--force` and overwritten with it.
+
+`security-hooks.test.ts`, `security-sdk.test.ts`, `security-tokens.test.ts` (security review
+2026-10-20, spec S.1, S.3, S.4, S.6, S.9; every finding was fixed in the same change): every
+traversal form, look-alike prefix and drive letter against the path roots; a committed symlink
+out of the worktree refused for `read_file` and `write_file` through the hooks; IP literals in
+every spelling, user-info, fragments and schemes against the domain allowlist; an approval for
+one input not admitting a colliding input, the durable key collision resistant, an always-human
+approval consumed by its first use; secrets by reference through a real resolver with the
+output scrubbed in every encoding and a resolved value pasted into a later input kept out of
+the audit log; one audit row per refusal, a revoked token's included; a NaN cost refused by the
+budget with the cap still in force; a malformed kill request failing closed; on the SDK path
+the parent's credentials never reaching the subprocess (by name and by URL user-info), a
+traversing Glob/Grep pattern refused, the audit row of an MCP tool carrying the reference and
+not the value, MCP output fed back redacted, a final report quoting the environment redacted;
+token forging claim by claim, expiry (an unparseable one refused), revocation by the kill
+switch and `derive` never widening.
 
 `packages/runtime/test/*.test.ts` (unit, fake provider, no network): tokens, autonomy, kill
 switch timing, budget rules, context transforms (golden cases, idempotence, FATAL-at-line-67,
@@ -1283,8 +1458,21 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   UI change). The `context_compressed` run event reaches SSE but is not stored as a session
   event, so the stored session log has no per-call numbers; whether to persist it through the
   session event store is undecided.
-- Path containment resolves symlinks only when the target exists; the sandbox adapter mounts
-  only the worktree so escapes cannot reach the host anyway.
+- Path containment (`pathInsideRoot`) resolves the symlinks of the part of a path that exists
+  and refuses a link it cannot resolve; the built-in file tools' own second check
+  (`src/daemon/tools.ts`, `inside()`) is still lexical, which is safe because the hooks run
+  first on every call, but it should adopt `realPathOf` so the tools fail closed on their own
+  too. A link created between the check and the read (a race inside the worktree) is not
+  covered; the sandbox adapter mounts only the worktree so such an escape cannot reach the host.
+- An approval of an always-human action is consumed per run (`ctx.approvals`), but
+  `StateApprovals` answers from the durable row: an identical call in a later run of the same
+  session finds the answered request and is approved without a new question. Consuming the row
+  needs a `HumanRequestRepo` write (`packages/state`), not a runtime change.
+- On the SDK path a built-in file tool's output (`Read`, `Grep`) is scanned and flagged but
+  cannot be rewritten from the `PostToolUse` hook (the SDK applies `updatedMCPToolOutput` to
+  MCP tools), so the subprocess sees the file as is. `scrubEnv` withholds `SSH_AUTH_SOCK` from
+  the subprocess and the process sandbox, so a sandboxed command that needs git over SSH fails
+  until a secret reference carries the credential.
 - Notifications: the email channel is resolved once at compose from the agent's email settings
   row (`notificationEmailPort` answers null without a mailbox), so a mailbox configured while
   the daemon runs reaches the channel at the next start (the `email_*` tools pick it up at the

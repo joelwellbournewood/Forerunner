@@ -1,5 +1,7 @@
 import type { Clock } from "@forerunner/platform";
+import type { StateStore } from "@forerunner/state";
 import { streamSSE } from "hono/streaming";
+import type { Principal } from "./auth/principal.ts";
 import type { Ctx } from "./http.ts";
 
 /**
@@ -17,6 +19,28 @@ export interface SseLoopOptions {
   init: (send: SseSend) => Promise<void>;
   subscribe: (wake: () => void) => () => void;
   flush: (send: SseSend) => Promise<void>;
+  /**
+   * Re-checked on every wake before anything is flushed; false ends the stream. `authenticate()`
+   * runs once per request and a stream is one request, so this is how a device revoked while
+   * its feed is open stops receiving (ADR 0009: "within one request of the revocation").
+   */
+  stillAllowed?: () => Promise<boolean>;
+}
+
+/**
+ * The `stillAllowed` check of a device stream: the device row is read again (one indexed
+ * lookup, as `authenticate()` does per request) and the stream ends once it is gone or
+ * revoked. Admin streams need no check.
+ */
+export function deviceStillActive(
+  store: StateStore,
+  p: Principal,
+): (() => Promise<boolean>) | undefined {
+  if (p.kind !== "device") return undefined;
+  return async () => {
+    const device = await store.device.get(p.deviceId);
+    return device !== undefined && !device.revoked;
+  };
 }
 
 export function sseLoop(c: Ctx, opts: SseLoopOptions): Response {
@@ -57,6 +81,7 @@ export function sseLoop(c: Ctx, opts: SseLoopOptions): Response {
         cancel?.();
         wakeResolve = undefined;
         if (closed) break;
+        if (opts.stillAllowed && !(await opts.stillAllowed())) break;
         await opts.flush(send);
         if (opts.clock.now() - lastBeat >= opts.heartbeatMs) {
           lastBeat = opts.clock.now();

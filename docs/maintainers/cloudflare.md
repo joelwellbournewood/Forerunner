@@ -50,13 +50,15 @@ policy; without "API Tokens Read" it says the scopes are unknown instead of gues
 | --- | --- | --- |
 | `account_id` | required | the one account the project may touch |
 | `zone_ids` | `[]` | zones the project may touch; anything else is refused before any request |
-| `secret_ref` | `secret:cloudflare_api_token` | a reference, never a value (`validation` otherwise) |
-| `base_url` | `https://api.cloudflare.com/client/v4` | only the stand-in changes it |
+| `secret_ref` | `secret:cloudflare_api_token` | a reference, never a value, and only the catalog's token or a `secret:cloudflare.<name>` (`CLOUDFLARE_SECRET_REFERENCE_PATTERN`; `validation` otherwise): project settings are shared data and never name another vault entry |
+| `base_url` | `https://api.cloudflare.com/client/v4` | accepted only as the API, a loopback stand-in, or the one stand-in the install owner named (`FORERUNNER_CLOUDFLARE_API_BASE`, or the wiring's `baseUrl`); any other host is `validation`, so a project can never send the token elsewhere |
 | `workers.staging_suffix` | `-staging` | staging Workers deploy to `<name><suffix>` |
 | `pages.staging_branch` | `staging` | staging Pages deploys are preview deployments on this branch |
 
-`cloudflareSettingsOf(project)` returns `null` when the project has no settings and throws
-`validation` when they are present but invalid, so a typo never widens the scope. Nothing is
+`cloudflareSettingsOf(project, { standInBaseUrl })` returns `null` when the project has no
+settings and throws `validation` when they are present but invalid, so a typo never widens the
+scope and a collaborator's edit never points the token at another host (`isAllowedBaseUrl`;
+`standInBaseUrlOf` reads the wiring's `baseUrl`, else the environment). Nothing is
 hardcoded to an account, zone or host; the catalog entry (`packages/runtime/src/extensions/catalog.json`,
 id `cloudflare`) declares the domain `api.cloudflare.com` and the secret `cloudflare_api_token`.
 
@@ -188,7 +190,10 @@ with a token whose allowlist is only `api.cloudflare.com`: a route deploy and an
 nothing sent, and a script path outside the run's roots is still refused by the hooks.
 
 `cloudflareToolDeps({ projects, vault, approvals, audit, clock })` builds the production deps:
-a deployer per call from `project.settings.cloudflare` and the project's `autonomy_level`.
+a deployer per call from `project.settings.cloudflare` and the project's `autonomy_level`. The
+settings are parsed with the stand-in the wiring allows (`baseUrl`, else
+`FORERUNNER_CLOUDFLARE_API_BASE`), so a project naming another API host or another vault entry
+is refused with `validation` before any request; the panel routes apply the same rule.
 `registerCloudflareTools(registry, deps)` registers the four tools.
 
 ### `routes.ts`: the panel
@@ -292,6 +297,12 @@ fake API on 127.0.0.1, `sqlite::memory:` store, `SimulatedClock`, memory vault):
   without the token, the settings by reference and the token's real scopes without the value,
   404 for an unknown project; installing the `cloudflare` extension from the catalog makes the
   gate refuse the tools while the grant is pending and allow them after the inbox answer.
+- `security-cloudflare-githost.test.ts` (security review): project settings naming
+  `secret:anthropic_api_key` and an attacker's `base_url` send nothing (a collaborator on the
+  shared state cannot point another secret at another host); a token value in place of a
+  reference is refused before any request; a project without settings is an audit row without
+  a token; `GitOps.push` refuses a force push to the default branch before git runs, and a
+  force push without a declared `defaultBranch` is refused rather than attempted.
 
 ## Known issues
 
@@ -306,6 +317,12 @@ fake API on 127.0.0.1, `sqlite::memory:` store, `SimulatedClock`, memory vault):
   of the single `cloudflare_deploy` tool the spec asks for.
 - The fake API lives in `packages/capabilities/test/helpers/`; BLOCKERS.md says `testenv`.
   Moving it there is a copy once `testenv` has a slot for it.
+- The GitHub Projects mirror's `settings.github_mirror.secret_ref` (`projects-mirror.ts`, see
+  `runtime.md`) is not pinned the way `secret_ref` is here: a collaborator who can write
+  project settings could still name another vault entry for it.
+- `GitOps` (`src/githost/git.ts`) is described in `capabilities.md`; its force-push rule
+  (never the default branch, and never without `defaultBranch` declared) is proved by
+  `security-cloudflare-githost.test.ts` and should be noted there as well.
 - The daemon's session grant does not add `api.cloudflare.com` to a run's domain allowlist
   (only the GitHub hosts); the tools declare no domain fields so the hooks never check it, and
   the gate enforces the catalog's domain once the extension is installed. A session that should

@@ -135,7 +135,7 @@ function watcher(
     store,
     clock,
     kill,
-    start: (req) => scheduler.request(req),
+    start: (req) => scheduler.requestStart(req),
     commands,
     chat: over.chat === undefined ? chat : over.chat,
     conversationSessionId: async () => conversationSession,
@@ -584,9 +584,14 @@ describe("kill, stop, pause, start", () => {
         budgetUsdMicro: 2_000_000,
       }),
     ]);
+    // The result names the start (the scheduler entry's id): the undo of the registry's
+    // remote `session.start` row reads it there and acts on that start alone (ADR 0049).
+    const remoteStart = scheduler.log.find((e) => e.req.trigger === "remote");
+    expect(remoteStart?.result).toBe("started");
     expect((await store.remoteCommand.mustGet(start.id)).result).toMatchObject({
       kind: "start",
       result: "started",
+      startId: remoteStart?.id,
     });
   });
 

@@ -1,3 +1,4 @@
+import { isForerunnerError } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import { ConfirmationPolicy } from "../src/confirmation.ts";
 import { staticRisk } from "../src/registry.ts";
@@ -121,14 +122,15 @@ describe("a pending change card and the answers it does not accept", () => {
     await settle();
   });
 
-  // security finding (low): `ConfirmationPolicy.check` requires the biometric flag only for
+  // security finding (low): `ConfirmationPolicy.check` required the biometric flag only for
   // `device.kind === "phone"`. A `web` device (ADR 0034: the page "always signs biometric=0";
   // high risk on the web is a re-entered code checked by the state service) and a `runner`
-  // device therefore confirm a high-risk change here without any second factor. The state
+  // device therefore confirmed a high-risk change here without any second factor. The state
   // service is the first line for answers that come through it; this policy is the line for
-  // answers that reach the daemon directly, and it should accept `desktop`, and `phone` with
-  // biometric, only. Fix: `if (device.kind !== "desktop" && !answer.biometric) throw`.
-  it.fails("security finding: a web or runner device does not confirm a high-risk change without a second factor", async () => {
+  // answers that reach the daemon directly, and it accepts `desktop`, and `phone` with
+  // biometric, only. The security critic's follow-up: a `web` or `runner` device presenting
+  // `biometric: true` is refused as well; there is no second factor those kinds can bring.
+  it("security finding: a web or runner device never confirms a high-risk change, with or without a biometric flag", async () => {
     const w = await world();
     const web = await w.store.device.register({
       owner_human_id: w.human.id,
@@ -137,22 +139,47 @@ describe("a pending change card and the answers it does not accept", () => {
       public_key: ["pk", "web", "fixture"].join("-"), // not-a-secret
       kind: "web",
     });
+    const runner = await w.store.device.register({
+      owner_human_id: w.human.id,
+      name: "Cloud runner",
+      platform: "linux",
+      public_key: ["pk", "runner", "fixture"].join("-"), // not-a-secret
+      kind: "runner",
+    });
     const policy = new ConfirmationPolicy();
-    let refused = false;
-    try {
+    const ctx = (device: typeof web) => ({ humanId: w.human.id, emailToken: "", device });
+    for (const device of [web, runner]) {
+      for (const biometric of [false, true]) {
+        let refused: unknown;
+        try {
+          policy.check(
+            "needs_device",
+            { kind: "device", deviceId: device.id, biometric },
+            ctx(device),
+          );
+        } catch (e) {
+          refused = e;
+        }
+        expect(refused, `${device.kind} biometric=${biometric}`).toBeDefined();
+        expect(isForerunnerError(refused, "approval_required")).toBe(true);
+        expect((refused as Error).message).toContain(device.kind);
+      }
+    }
+    // The two kinds that can confirm still do: the desktop alone, the phone with biometric.
+    expect(
       policy.check(
         "needs_device",
-        { kind: "device", deviceId: web.id, biometric: false },
-        {
-          humanId: w.human.id,
-          emailToken: "",
-          device: web,
-        },
-      );
-    } catch {
-      refused = true;
-    }
-    expect(refused).toBe(true);
+        { kind: "device", deviceId: w.desktop.id, biometric: false },
+        ctx(w.desktop),
+      ),
+    ).toBe("confirmed");
+    expect(
+      policy.check(
+        "needs_device",
+        { kind: "device", deviceId: w.phone.id, biometric: true },
+        ctx(w.phone),
+      ),
+    ).toBe("confirmed");
   });
 });
 

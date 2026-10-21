@@ -6,10 +6,14 @@ import { TokenIssuer } from "../src/enforcement/token.ts";
 import {
   CommandLoop,
   SESSION_START_ENDED_REASON,
+  SESSION_START_IN_FLIGHT_REASON,
+  SESSION_START_NOT_RUN_REASON,
   SESSION_START_UNDO_REASON,
+  SESSION_START_UNKNOWN_REASON,
   sessionCommandPorts,
 } from "../src/loop/commands.ts";
 import type { CommandTurn } from "../src/loop/ports.ts";
+import { RemoteCommandWatcher } from "../src/remote/index.ts";
 import { Scheduler, type StartRequest } from "../src/session/triggers.ts";
 
 /**
@@ -19,7 +23,9 @@ import { Scheduler, type StartRequest } from "../src/session/triggers.ts";
  * agent is running; the undo of a start whose session is still running stops that session
  * only, never the agent's scope; and the undo of a start whose session already ended is a
  * no-op with a clear message that leaves the kill switch open and marks the change row
- * irreversible (follow-up RT-P5-2 of the phase 5 gate).
+ * irreversible (follow-up RT-P5-2 of the phase 5 gate). A start made from a phone travels as
+ * a remote row the PC's `RemoteCommandWatcher` picks up: the watcher records the start's
+ * identity in the row's result, so that undo is tied to its start the same way.
  */
 function fakeKill() {
   const calls: { scope: unknown; reason: string }[] = [];
@@ -542,6 +548,199 @@ describe("session commands over the scheduler", () => {
     });
     expect(kill.isFrozen({ agentId: w.agentId })).toBe(false);
     await sched.release();
+    await store.close();
+  });
+
+  it("a phone's session.start is a remote row the PC picks up: the watcher records the start's identity in the row's result, so the undo stops the remote-started session only, an ended one is refused, a row the PC is picking up is refused without being marked, and a row without an identity or one the PC never ran is refused as such", async () => {
+    const w = await storeWorld();
+    const { store, clock } = w;
+    const phone = await store.device.register({
+      owner_human_id: w.humanId,
+      name: "J's phone",
+      platform: "android",
+      public_key: ["pk-", "P".repeat(40)].join(""), // not-a-secret
+      kind: "phone",
+    });
+    const pc = await store.device.register({
+      owner_human_id: w.humanId,
+      name: "J's PC",
+      platform: "linux",
+      public_key: ["pk-", "D".repeat(40)].join(""), // not-a-secret
+      kind: "desktop",
+    });
+    const kill = new KillSwitch(new TokenIssuer({ now: () => clock.now() }));
+    const stops: { scope: unknown; reason: string }[] = [];
+    kill.onStop((report, reason) => stops.push({ scope: report.scope, reason }));
+    const sched = sessionScheduler(w);
+    const { startUndoState, ...ports } = sessionCommandPorts({
+      scheduler: sched.scheduler,
+      kill,
+      store,
+    });
+    const commands = new CommandLoop({
+      store,
+      clock,
+      ports: { chfPerUsd: async () => 0.8, ...ports },
+      startUndoState,
+    });
+    await commands.start();
+    // The PC's watcher as compose.ts builds it: the plain `start` is the scheduler's request
+    // with the entry it made, whose id is the start's identity.
+    const watcher = new RemoteCommandWatcher({
+      store,
+      clock,
+      kill,
+      start: (req) => sched.scheduler.requestStart(req),
+      commands,
+      chat: null,
+      conversationSessionId: async () => w.chatId,
+      deviceId: pc.id,
+      agentId: w.agentId,
+      humanId: w.humanId,
+    });
+    // The daemon's execute route with the phone's device id (`POST /commands/execute`).
+    const phoneTurn: CommandTurn = {
+      ...w.turn,
+      source: "phone",
+      deviceId: phone.id,
+      wordsUsed: "start a session on sample",
+    };
+    const startCommand = { name: "session.start", params: { project: "Sample", budgetChf: 1 } };
+    const workSessions = async () =>
+      (await store.session.active(w.agentId)).filter((s) => s.summary !== "conversation");
+    const rowOf = (id: string | undefined) => store.changeLog.mustGet(id ?? "");
+    const remoteIdOf = async (id: string | undefined) => {
+      const after = (await rowOf(id)).after as { remote_command_id?: unknown; start_id?: unknown };
+      expect(typeof after.remote_command_id).toBe("string");
+      expect(after.start_id).toBeNull();
+      return after.remote_command_id as string;
+    };
+
+    // 1. The start the PC picked up is running: its undo stops that session only.
+    const first = await commands.execute(startCommand, phoneTurn);
+    expect(first.status).toBe("done");
+    expect(first.sentence).toContain("the PC picks it up");
+    const firstRemoteId = await remoteIdOf(first.changeLogId);
+    sched.setMode("running");
+    expect(await watcher.drain()).toBe(1);
+    await settle();
+    const firstRemote = await store.remoteCommand.mustGet(firstRemoteId);
+    const activeId = sched.scheduler.activeStart(w.agentId)?.id;
+    expect(typeof activeId).toBe("string");
+    expect(firstRemote.status).toBe("done");
+    expect(firstRemote.result).toMatchObject({
+      kind: "start",
+      result: "started",
+      startId: activeId,
+    });
+    const live = await workSessions();
+    expect(live.map((s) => [s.trigger, s.status, s.runner])).toEqual([["remote", "running", "pc"]]);
+    const liveId = live[0]?.id ?? "";
+    expect(await startUndoState(w.agentId, activeId)).toBe("running");
+    const undoFirst = await commands.undo(first.changeLogId ?? null, phoneTurn);
+    expect(undoFirst.status).toBe("done");
+    expect(stops).toEqual([
+      { scope: { agentId: w.agentId, sessionId: liveId }, reason: SESSION_START_UNDO_REASON },
+    ]);
+    expect(kill.isFrozen({ agentId: w.agentId })).toBe(false);
+    expect(kill.isFrozen({ agentId: w.agentId, sessionId: liveId })).toBe(true);
+    expect((await rowOf(first.changeLogId)).undo_state).toBe("undone");
+    await sched.release();
+    expect((await store.session.mustGet(liveId)).status).toBe("completed");
+    kill.resume();
+
+    // 2. The start the PC picked up ran and its session ended: refused, nothing stopped.
+    sched.setMode("completed");
+    const second = await commands.execute(startCommand, phoneTurn);
+    const secondRemoteId = await remoteIdOf(second.changeLogId);
+    expect(await watcher.drain()).toBe(1);
+    await settle();
+    expect(sched.scheduler.isActive(w.agentId)).toBe(false);
+    expect((await store.remoteCommand.mustGet(secondRemoteId)).result).toMatchObject({
+      startId: expect.any(String),
+    });
+    await clock.advance(3_600_000);
+    const undoSecond = await commands.undo(second.changeLogId ?? null, phoneTurn);
+    expect(undoSecond.status).toBe("refused");
+    expect(undoSecond.reason).toBe(SESSION_START_ENDED_REASON);
+    expect(stops).toHaveLength(1);
+    expect(kill.isFrozen({ agentId: w.agentId })).toBe(false);
+    expect((await rowOf(second.changeLogId)).undo_state).toBe("irreversible");
+
+    // 3. The PC has taken the row but not recorded its result yet (the instant between
+    // pickup and completion): the undo is refused as in flight and the row stays undoable;
+    // once the PC finishes, the undo stops the session that start began.
+    sched.setMode("running");
+    const third = await commands.execute(startCommand, phoneTurn);
+    const thirdRemoteId = await remoteIdOf(third.changeLogId);
+    const picked = await store.remoteCommand.pickUpById(thirdRemoteId);
+    expect(picked?.status).toBe("picked_up");
+    const undoInFlight = await commands.undo(third.changeLogId ?? null, phoneTurn);
+    expect(undoInFlight.status).toBe("refused");
+    expect(undoInFlight.reason).toBe(SESSION_START_IN_FLIGHT_REASON);
+    expect(undoInFlight.code).toBe("unavailable");
+    expect((await rowOf(third.changeLogId)).undo_state).toBe("undoable");
+    expect(
+      (await commands.changeLog({ humanId: w.humanId, undoable: true })).map((r) => r.id),
+    ).toContain(third.changeLogId);
+    expect(stops).toHaveLength(1);
+    expect(sched.scheduler.isActive(w.agentId)).toBe(false);
+    if (!picked) throw new Error("the row was not picked up");
+    await watcher.handle(picked);
+    await settle();
+    const thirdLive = await workSessions();
+    expect(thirdLive.map((s) => s.trigger)).toEqual(["remote"]);
+    const undoThird = await commands.undo(third.changeLogId ?? null, phoneTurn);
+    expect(undoThird.status).toBe("done");
+    expect(stops.at(-1)).toEqual({
+      scope: { agentId: w.agentId, sessionId: thirdLive[0]?.id },
+      reason: SESSION_START_UNDO_REASON,
+    });
+    expect(kill.isFrozen({ agentId: w.agentId })).toBe(false);
+    expect((await rowOf(third.changeLogId)).undo_state).toBe("undone");
+    await sched.release();
+    kill.resume();
+
+    // 4. A done row whose result names no start (a runner that records none: the cloud
+    // runner's watcher, an older PC): the session cannot be found from here, so the undo is
+    // refused as such and the row marked irreversible; nothing is stopped by guesswork.
+    const fourth = await commands.execute(
+      { name: "session.start", params: { project: "Sample", budgetChf: 1, runner: "cloud" } },
+      phoneTurn,
+    );
+    const fourthRemoteId = await remoteIdOf(fourth.changeLogId);
+    expect((await store.remoteCommand.mustGet(fourthRemoteId)).target).toBe("cloud");
+    expect(await store.remoteCommand.pickUpById(fourthRemoteId)).toBeDefined();
+    await store.remoteCommand.complete(fourthRemoteId, { result: "started" });
+    const undoFourth = await commands.undo(fourth.changeLogId ?? null, phoneTurn);
+    expect(undoFourth.status).toBe("refused");
+    expect(undoFourth.reason).toBe(SESSION_START_UNKNOWN_REASON);
+    expect((await rowOf(fourth.changeLogId)).undo_state).toBe("irreversible");
+    expect(stops).toHaveLength(2);
+
+    // 5. A row the PC refused (a revoked device, say): the start never ran.
+    const fifth = await commands.execute(startCommand, phoneTurn);
+    const fifthRemoteId = await remoteIdOf(fifth.changeLogId);
+    expect(await store.remoteCommand.pickUpById(fifthRemoteId)).toBeDefined();
+    await store.remoteCommand.fail(fifthRemoteId, {
+      error: "forbidden: revoked device",
+      code: "validation",
+    });
+    const undoFifth = await commands.undo(fifth.changeLogId ?? null, phoneTurn);
+    expect(undoFifth.status).toBe("refused");
+    expect(undoFifth.reason).toBe(SESSION_START_NOT_RUN_REASON);
+    expect((await rowOf(fifth.changeLogId)).undo_state).toBe("irreversible");
+    expect(stops).toHaveLength(2);
+
+    // 6. A row the PC has not picked up yet: the executor cancels it, as before.
+    const sixth = await commands.execute(startCommand, phoneTurn);
+    const sixthRemoteId = await remoteIdOf(sixth.changeLogId);
+    const undoSixth = await commands.undo(sixth.changeLogId ?? null, phoneTurn);
+    expect(undoSixth.status).toBe("done");
+    expect((await store.remoteCommand.mustGet(sixthRemoteId)).status).toBe("failed");
+    expect((await rowOf(sixth.changeLogId)).undo_state).toBe("undone");
+    expect(stops).toHaveLength(2);
+    expect(kill.isFrozen({ agentId: w.agentId })).toBe(false);
     await store.close();
   });
 });

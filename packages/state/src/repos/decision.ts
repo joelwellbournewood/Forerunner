@@ -1,4 +1,4 @@
-import type { Clock } from "@forerunner/platform";
+import { type Clock, ForerunnerError } from "@forerunner/platform";
 import type { Database } from "../db/types.ts";
 import { ENTITIES, type EntityDef } from "../schema.ts";
 import type { DecisionRow, NewDecision } from "../types.ts";
@@ -39,13 +39,23 @@ export class DecisionRepo extends Repository<DecisionRow> {
     return row;
   }
 
-  /** Record a new decision that replaces an older one. */
+  /**
+   * Record a new decision that replaces an older one of the same project. A decision of
+   * another project cannot be retired this way (`validation`): any caller allowed to record
+   * in project Q could otherwise drop a decision of project P by naming its id.
+   */
   supersede(oldId: string, input: NewDecision): Promise<DecisionRow> {
     return this.db.transaction(async () => {
       const old = await this.mustGet(oldId);
+      const projectId = input.project_id ?? old.project_id;
+      if (projectId !== old.project_id) {
+        throw new ForerunnerError("validation", `decision ${oldId} belongs to another project`, {
+          details: { id: oldId, projectId: old.project_id, requested: projectId },
+        });
+      }
       const next = await this.insert({
         ...input,
-        project_id: input.project_id ?? old.project_id,
+        project_id: projectId,
         supersedes: oldId,
       });
       await this.patch(oldId, { superseded_by: next.id });

@@ -94,7 +94,7 @@ describe("file vault: the key is the boundary", () => {
   // tool) is used as is: on a shared Linux host every local user can then decrypt the vault.
   // Fix: in `unlockWithStoredKey`, refuse (or chmod and log) a key file whose mode grants
   // group or other any bit, as ssh does for private keys.
-  it.skipIf(isWindows).fails(
+  it.skipIf(isWindows)(
     "security finding: a world-readable device key file is refused or tightened before use",
     async () => {
       const path = join(dir, "vault.json");
@@ -118,7 +118,7 @@ describe("file vault: the key is the boundary", () => {
   // `ForerunnerError("validation", reason "corrupt")`) that escapes `open()`, and a huge N
   // turns the unlock into a memory bomb (`maxmem` is computed from N, so nothing refuses it).
   // Fix: validate N (power of two, 2^10..2^20), r (1..32) and p (1..16) in `parseDocument`.
-  it.fails("security finding: a tampered KDF block is refused as a corrupt vault file, never a raw crypto error", async () => {
+  it("security finding: a tampered KDF block is refused as a corrupt vault file, never a raw crypto error", async () => {
     const path = join(dir, "vault.json");
     const v = await EncryptedFileVault.open({ path, scrypt: FAST_SCRYPT });
     await v.set("github_pat", freshValue());
@@ -212,7 +212,7 @@ describe("references and redaction", () => {
   // tool that prints the value base64url-encoded (JWT segments, `Authorization: Basic` in
   // some clients, `jq -r @base64d` pipelines) or hex-encoded gets through to the model.
   // Fix: add the base64url (with and without padding) and hex forms to the needle set.
-  it.fails("security finding: base64url and hex encodings of a resolved value are scrubbed too", () => {
+  it("security finding: base64url and hex encodings of a resolved value are scrubbed too", () => {
     const value = `${freshValue()}>>??`;
     const b64url = Buffer.from(value).toString("base64url");
     const hex = Buffer.from(value).toString("hex");

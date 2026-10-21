@@ -5,6 +5,7 @@ import type {
   LessonView,
   ReviewView,
 } from "@forerunner/runtime/daemon/api-types";
+import type { AuditExportRecord } from "@forerunner/runtime/daemon/audit-export";
 import type {
   AgentView,
   CostView,
@@ -97,6 +98,8 @@ export const PROJECTS: ProjectCard[] = [
     latestCriticGrade: 82,
     lastSessionAt: "2026-10-19T21:10:00.000Z",
     active: true,
+    smallProjectMode: false,
+    defaultRiskTier: 1,
   },
   {
     id: "proj_beacon",
@@ -1550,3 +1553,60 @@ export const PERFORMANCE: PerformanceView = {
     },
   ],
 };
+
+/**
+ * Audit rows the fake daemon exports from `GET /audit/export` (spec S.9), already in the
+ * export's record shape: Alice's calls across two sessions, the summaries as the hooks store
+ * them (redacted, capped), one denied. The fake serialises them with the daemon's own
+ * `jsonlLine` / `csvLine`, so the bytes match a real daemon's.
+ */
+export const AUDIT_EXPORT: AuditExportRecord[] = [
+  {
+    id: "audit_1",
+    occurredAt: "2026-10-19T19:21:03.000Z",
+    agentId: "agent_alice",
+    humanId: "human_1",
+    sessionId: "sess_1",
+    runId: "run_1",
+    tokenId: "tok_1",
+    tool: "read_file",
+    allowed: true,
+    deniedReason: null,
+    costUsdMicro: 0,
+    inputSummary: '{"path":"README.md"}',
+    resultSummary: "42 lines",
+    recordedAt: "2026-10-19T19:21:03.010Z",
+  },
+  {
+    id: "audit_2",
+    occurredAt: "2026-10-19T19:24:40.000Z",
+    agentId: "agent_alice",
+    humanId: "human_1",
+    sessionId: "sess_1",
+    runId: "run_1",
+    tokenId: "tok_1",
+    tool: "write_file",
+    allowed: false,
+    deniedReason: "path_not_allowed: outside the worktree",
+    costUsdMicro: 0,
+    inputSummary: '{"path":"/etc/hosts","text":"[REDACTED]"}',
+    resultSummary: "",
+    recordedAt: "2026-10-19T19:24:40.004Z",
+  },
+  {
+    id: "audit_3",
+    occurredAt: "2026-10-19T19:30:12.000Z",
+    agentId: "agent_alice",
+    humanId: "human_1",
+    sessionId: "sess_2",
+    runId: "run_2",
+    tokenId: "tok_2",
+    tool: "web_fetch",
+    allowed: true,
+    deniedReason: null,
+    costUsdMicro: 1_250,
+    inputSummary: 'https://example.test/docs, a "quoted" title',
+    resultSummary: "200, 12 kB",
+    recordedAt: "2026-10-19T19:30:12.120Z",
+  },
+];

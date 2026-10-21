@@ -1,4 +1,5 @@
 import { ForerunnerError } from "@forerunner/platform";
+import { defaultRiskTier } from "@forerunner/runtime";
 import {
   canTransition,
   TASK_STATUSES,
@@ -16,7 +17,8 @@ const createParams = z.object({
   outcome: z.string().default(""),
   acceptance_criteria: z.array(z.string()).default([]),
   priority: z.number().int().min(0).max(9).default(0),
-  risk_tier: z.number().int().min(0).max(3).default(1),
+  /** Left out, the project's default applies: tier 0 in small-project mode, else 1 (B.6). */
+  risk_tier: z.number().int().min(0).max(3).optional(),
   status: z.enum(["draft", "ready"]).default("draft"),
   project: z.string().optional(),
 });
@@ -59,7 +61,7 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       title: params.title,
       outcome: params.outcome,
       acceptance_criteria: params.acceptance_criteria,
-      risk_tier: params.risk_tier,
+      risk_tier: params.risk_tier ?? defaultRiskTier(project),
       status: params.status,
       priority: params.priority,
       reason: `created by ${ctx.actor.kind} ${ctx.actor.id} via ${ctx.source}`,

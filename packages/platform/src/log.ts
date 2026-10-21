@@ -28,9 +28,36 @@ const SECRET_PATTERNS: RegExp[] = [
   /(?:password|passwd|pwd|secret|token|api[_-]?key)\s*[=:]\s*["']?[^\s"',;]{6,}/gi,
 ];
 
+/**
+ * The password of a connection string (`scheme://user:password@host`): the most common way a
+ * database password reaches a log line (`FORERUNNER_STATE_URL`, a migration error echoing the
+ * URL). The scheme, user and host stay so the line is still useful. The user may be empty
+ * (`redis://:password@host`, `amqp://:password@host`): the password is still a password.
+ */
+const URL_USERINFO = /([a-z][\w+.-]*:\/\/[^\s:@/]*:)([^\s@/]+)@/gi;
+
+/**
+ * Keys whose value is masked whatever its shape: the usual names, `credential(s)`, `passwd`,
+ * `passphrase`, and any `*_key` / `*-key` / `*Key` / bare `key` in any case (private, signing,
+ * vault, session keys; `PRIVATE_KEY` and the other env-style names of a dumped `process.env`
+ * included); a public key is an identifier and stays. The camel-case form keeps its capital
+ * `K` so that `monkey` or `hockey` is not a credential.
+ */
+const SECRET_KEY_NAME =
+  /(secret|token|password|passwd|passphrase|credential|api[_-]?key|authorization|cookie)/i;
+const KEY_SUFFIX = /(^|[_-])key$/i;
+const CAMEL_KEY_SUFFIX = /[a-z0-9]Key$/;
+const PUBLIC_KEY_NAME = /^public[_-]?key$/i;
+
+export function isSecretKeyName(key: string): boolean {
+  if (SECRET_KEY_NAME.test(key)) return true;
+  if (PUBLIC_KEY_NAME.test(key)) return false;
+  return KEY_SUFFIX.test(key) || CAMEL_KEY_SUFFIX.test(key);
+}
+
 /** Replace anything that looks like a credential with a stable marker. */
 export function redact(input: string): string {
-  let out = input;
+  let out = input.replace(URL_USERINFO, (_m, prefix: string) => `${prefix}[REDACTED]@`);
   for (const re of SECRET_PATTERNS) {
     out = out.replace(re, (m) => {
       const eq = m.match(/^([A-Za-z_ -]+[=:]\s*)/);
@@ -41,22 +68,30 @@ export function redact(input: string): string {
   return out;
 }
 
-export function redactDeep<T>(value: T, depth = 0): T {
-  if (depth > 8) return value;
+/** Deeper than this a subtree is replaced by a marker: nothing is ever passed through in clear. */
+const MAX_DEPTH = 64;
+
+/**
+ * Redact every string and every secret-named key at any depth. A cycle is cut with
+ * `[Circular]` (a `WeakSet` of the objects on the current path), so the result always
+ * serialises; a subtree deeper than `MAX_DEPTH` becomes `[TRUNCATED]` rather than leaking.
+ */
+export function redactDeep<T>(value: T, depth = 0, path: WeakSet<object> = new WeakSet()): T {
   if (typeof value === "string") return redact(value) as T;
-  if (Array.isArray(value)) return value.map((v) => redactDeep(v, depth + 1)) as T;
-  if (value && typeof value === "object") {
+  if (!value || typeof value !== "object") return value;
+  if (depth > MAX_DEPTH) return "[TRUNCATED]" as unknown as T;
+  if (path.has(value)) return "[Circular]" as unknown as T;
+  path.add(value);
+  try {
+    if (Array.isArray(value)) return value.map((v) => redactDeep(v, depth + 1, path)) as T;
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (/(secret|token|password|api[_-]?key|authorization|cookie)/i.test(k)) {
-        out[k] = "[REDACTED]";
-      } else {
-        out[k] = redactDeep(v, depth + 1);
-      }
+      out[k] = isSecretKeyName(k) ? "[REDACTED]" : redactDeep(v, depth + 1, path);
     }
     return out as T;
+  } finally {
+    path.delete(value);
   }
-  return value;
 }
 
 const LEVELS: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };

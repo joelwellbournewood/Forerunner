@@ -42,19 +42,19 @@ function ctxFor(projectId: string): ToolExecutionContext {
 }
 
 describe("Cloudflare: the token reference and the API host come from shared project settings", () => {
-  // security finding (high): `project.settings.cloudflare` names both the secret the token is
-  // read from (`secret_ref`, any vault name) and the API base URL (`base_url`, any URL), and
-  // `cloudflareToolDeps` builds the client from them per call with `granted = [that name]`.
-  // Project settings are project-wide data on the shared state: a collaborator (another
-  // human on the project, through their own daemon or the state service) can set
+  // security finding (high, fixed): `project.settings.cloudflare` named both the secret the
+  // token is read from (`secret_ref`, any vault name) and the API base URL (`base_url`, any
+  // URL), and `cloudflareToolDeps` built the client from them per call with `granted = [that
+  // name]`. Project settings are project-wide data on the shared state: a collaborator
+  // (another human on the project, through their own daemon or the state service) could set
   // `secret_ref: secret:anthropic_api_key` and `base_url: https://<their host>/client/v4`;
-  // the next `cloudflare_verify_token` (class `read`, free at autonomy 0, no approval) sends
-  // the victim's model key as a Bearer token to the attacker's host. The same holds for the
-  // GitHub token and every other vault entry. Fix: pin `base_url` to the Cloudflare API host
-  // (a stand-in only through an environment variable the install owner sets, as the daemon
-  // does for GitHub), and accept as `secret_ref` only the catalog's `cloudflare_api_token`
-  // (or names under a `cloudflare.` prefix), never the install's own credentials.
-  it.fails("security finding: project settings cannot point another secret at another host", async () => {
+  // the next `cloudflare_verify_token` (class `read`, free at autonomy 0, no approval) sent
+  // the victim's model key as a Bearer token to the attacker's host. `parseCloudflareSettings`
+  // now accepts `base_url` only as the Cloudflare API, a loopback stand-in or the one the
+  // install owner named (`FORERUNNER_CLOUDFLARE_API_BASE`, or the wiring's `baseUrl`), and
+  // `secret_ref` only as `secret:cloudflare_api_token` or a `secret:cloudflare.<name>`; the
+  // GitHub mirror's `secret_ref` (projects-mirror.ts) is not covered here.
+  it("security finding: project settings cannot point another secret at another host", async () => {
     const clock = new SimulatedClock();
     store = await openStore({ url: "sqlite::memory:", clock });
     const project = await store.project.insert({
@@ -158,11 +158,11 @@ describe("git host: force pushes", () => {
     expect(isForerunnerError(refs, "not_found")).toBe(true);
   });
 
-  // security finding (low): `GitOps.push` applies the "never force a default branch" rule only
-  // when the caller passes `defaultBranch`; a caller that forgets it (the PR executor passes
-  // it, a future tool might not) force-pushes `main` with `--force-with-lease`. Fix: refuse a
-  // force push without a known default branch, or resolve it from `origin/HEAD`.
-  it.fails("security finding: a force push without a declared default branch is refused rather than attempted", async () => {
+  // security finding (low, fixed): `GitOps.push` applied the "never force a default branch"
+  // rule only when the caller passed `defaultBranch`; a caller that forgot it (the PR executor
+  // passes it, a future tool might not) force-pushed `main` with `--force-with-lease`. A force
+  // push without a declared default branch is now refused before git runs.
+  it("security finding: a force push without a declared default branch is refused rather than attempted", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fr-git-sec-"));
     temps.push(dir);
     const git = new GitOps({ cwd: join(dir, "nonrepo") });

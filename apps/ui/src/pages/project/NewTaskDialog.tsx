@@ -26,12 +26,16 @@ export function seedFromMessage(text: string): TaskSeed {
   };
 }
 
+/** The tier select's value for "leave it to the project": no `riskTier` is sent. */
+export const PROJECT_DEFAULT_TIER = "";
+
 export function NewTaskDialog({
   open,
   onClose,
   projectId,
   seed,
   reference,
+  defaultRiskTier,
   onCreated,
 }: {
   open: boolean;
@@ -40,13 +44,19 @@ export function NewTaskDialog({
   seed?: TaskSeed | null;
   /** Money pair carrying the day's rate for the CHF budget field. */
   reference?: MoneyLike;
+  /**
+   * The tier the daemon gives a task that names none (the project card's `defaultRiskTier`:
+   * 0 in small-project mode, spec B.6), shown on the "project default" option; the dialog
+   * never computes it.
+   */
+  defaultRiskTier?: number;
   onCreated: (task: TaskView) => void;
 }) {
   const client = useClient();
   const [title, setTitle] = useState("");
   const [outcome, setOutcome] = useState("");
   const [criteria, setCriteria] = useState("");
-  const [riskTier, setRiskTier] = useState(1);
+  const [riskTier, setRiskTier] = useState(PROJECT_DEFAULT_TIER);
   const [priority, setPriority] = useState(5);
   const [budget, setBudget] = useState("");
   const [status, setStatus] = useState<"draft" | "ready">("ready");
@@ -62,7 +72,7 @@ export function NewTaskDialog({
     setCriteria("");
     setBudget("");
     setDependsOn("");
-    setRiskTier(1);
+    setRiskTier(PROJECT_DEFAULT_TIER);
     setPriority(5);
     setError(null);
   }, [open, seed]);
@@ -84,7 +94,8 @@ export function NewTaskDialog({
         .split(/\r?\n/)
         .map((l) => l.trim())
         .filter(Boolean),
-      riskTier,
+      // Only a tier the human picked is sent; otherwise the daemon applies the project's.
+      ...(riskTier === PROJECT_DEFAULT_TIER ? {} : { riskTier: Number(riskTier) }),
       priority,
       status,
       dependsOn: dependsOn
@@ -138,15 +149,19 @@ export function NewTaskDialog({
           />
         </Field>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Field label="Risk tier">
+          <Field label="Risk tier" hint="The project default applies unless you pick one.">
             <select
               className={INPUT_CLASS}
               value={riskTier}
-              onChange={(e) => setRiskTier(Number(e.target.value))}
+              onChange={(e) => setRiskTier(e.target.value)}
               name="riskTier"
+              data-testid="task-risk-tier"
             >
+              <option value={PROJECT_DEFAULT_TIER}>
+                project default{defaultRiskTier === undefined ? "" : ` (tier ${defaultRiskTier})`}
+              </option>
               {[0, 1, 2, 3].map((t) => (
-                <option key={t} value={t}>
+                <option key={t} value={String(t)}>
                   {t}
                 </option>
               ))}

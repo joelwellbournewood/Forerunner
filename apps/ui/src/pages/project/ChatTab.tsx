@@ -28,7 +28,16 @@ const nextId = () => `m${++counter}-${Date.now()}`;
  * Quick chat per project (spec J.1): read-only by default, streaming replies, "make this a
  * task", and read-back confirmations answered with Yes/No (sent as the words "yes"/"no").
  */
-export function ChatTab({ projectId, reference }: { projectId: string; reference?: MoneyLike }) {
+export function ChatTab({
+  projectId,
+  reference,
+  defaultRiskTier,
+}: {
+  projectId: string;
+  reference?: MoneyLike;
+  /** The project card's default tier for a new task, named on the dialog's default option. */
+  defaultRiskTier?: number;
+}) {
   const client = useClient();
   const store = useUiStore();
   const identity = useIdentity();
@@ -230,6 +239,7 @@ export function ChatTab({ projectId, reference }: { projectId: string; reference
         projectId={projectId}
         seed={seed}
         reference={reference}
+        defaultRiskTier={defaultRiskTier}
         onCreated={(task) => setCreated(task)}
       />
     </div>

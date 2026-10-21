@@ -240,9 +240,12 @@ describe("phase 7 gate: a UI change ships as an update both users install; a bro
       risk_tier: 2,
       priority: 8,
       project_id: w.project.id,
-      author_human: w.j.id,
+      // The command was issued by the conversation agent on J's turn: since the security review
+      // (security-command-actor.test.ts, ADR 0030 item 2) a model-issued registry command acts as
+      // the agent, so the task carries no author_human; J's authority is the chat turn itself.
+      author_human: null,
     });
-    expect(task.reason).toContain(`created by human ${w.j.id} via chat`);
+    expect(task.reason).toContain(`created by agent ${w.alice.agent.id} via chat`);
     // The change log row with the words used; the conversation's events; the tool's audit row.
     const log = await w.changeLog();
     expect(log).toHaveLength(1);

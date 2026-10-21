@@ -1,4 +1,5 @@
 import type { DecisionRow, HumanRequestRow, StateStore } from "@forerunner/state";
+import { approvalKeyFor } from "../enforcement/hooks.ts";
 import type {
   ApprovalOutcome,
   ApprovalPort,
@@ -113,15 +114,14 @@ export class StateApprovals implements ApprovalPort {
   }
 }
 
+/**
+ * The durable key of an approval (`change_card.key`): the hooks' collision-resistant key, a
+ * SHA-256 of the canonical input, so an answer for one input never admits another whose
+ * 32-bit string hash happened to match. A row written with the old key no longer matches,
+ * which fails closed: the human is asked again once.
+ */
 export function approvalKey(req: Pick<ApprovalRequest, "tool" | "input">): string {
-  const s = JSON.stringify(req.input, (_k, v) =>
-    v && typeof v === "object" && !Array.isArray(v)
-      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort())
-      : v,
-  );
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return `${req.tool}:${(h >>> 0).toString(16)}`;
+  return approvalKeyFor(req.tool, req.input);
 }
 
 export function isYes(answer: unknown): boolean {

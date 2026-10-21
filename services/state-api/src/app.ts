@@ -16,6 +16,7 @@ import type { GitHubMirror } from "./mirror/github.ts";
 import { IdempotencyStore } from "./outbox.ts";
 import { TokenBucketLimiter } from "./ratelimit.ts";
 import { ChangeBus, ChangePoller, type PostgresNotifier } from "./realtime.ts";
+import { registerAuditRoutes } from "./routes/audit.ts";
 import { registerCostRoutes } from "./routes/costs.ts";
 import { registerDeviceRoutes } from "./routes/devices.ts";
 import { registerEventRoutes } from "./routes/events.ts";
@@ -295,6 +296,7 @@ export function createApp(deps: AppDeps): StateApiApp {
   registerSessionRoutes(app, ctx);
   registerEventRoutes(app, ctx);
   registerCostRoutes(app, ctx);
+  registerAuditRoutes(app, ctx);
   registerReviewRoutes(app, ctx);
   registerSyncRoutes(app, ctx);
 

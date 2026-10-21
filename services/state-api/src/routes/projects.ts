@@ -150,6 +150,12 @@ export function registerProjectRoutes(app: App, ctx: RouteContext): void {
       rationale: body.rationale,
       author_human: p.humanId,
     };
+    if (body.supersedes) {
+      // A decision of another project is not visible from this route: 404, never retired.
+      // `DecisionRepo.supersede` refuses the same case with `validation` as the second line.
+      const old = await ctx.store.decision.get(body.supersedes);
+      if (!old || old.project_id !== projectId) throw notFound("decision", body.supersedes);
+    }
     const row = body.supersedes
       ? await ctx.store.decision.supersede(body.supersedes, input)
       : await ctx.store.decision.record(input);

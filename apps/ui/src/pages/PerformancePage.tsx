@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { type AuditExportFormat, describeError, isRouteMissing } from "../api/client.ts";
 import type { PerformanceModeView } from "../api/contracts.ts";
 import { TargetBar } from "../components/charts.tsx";
 import { RouteMissing } from "../components/RouteMissing.tsx";
-import { Badge, ErrorBanner, INPUT_CLASS, Loading } from "../components/ui.tsx";
+import { Badge, Button, ErrorBanner, INPUT_CLASS, Loading } from "../components/ui.tsx";
+import { saveTextFile } from "../lib/download.ts";
 import { formatMs, formatShare } from "../lib/format.ts";
 import { formatDateTime } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
@@ -44,6 +46,38 @@ export function PerformancePage() {
     [client, projectId],
   );
   const estimates = useAsync((signal) => client.costEstimates(signal), [client]);
+
+  // Audit log export (spec S.9): the daemon streams the file; the browser saves it.
+  const [exportFormat, setExportFormat] = useState<AuditExportFormat>("jsonl");
+  const [exporting, setExporting] = useState(false);
+  const [exportStatus, setExportStatus] = useState<{ tone: "good" | "bad"; text: string } | null>(
+    null,
+  );
+  async function exportAudit() {
+    setExporting(true);
+    setExportStatus(null);
+    try {
+      const file = await client.auditExport({ format: exportFormat });
+      const rows = `${file.rows} row${file.rows === 1 ? "" : "s"}`;
+      if (saveTextFile(file)) {
+        setExportStatus({ tone: "good", text: `Exported ${rows} to ${file.filename}` });
+      } else {
+        setExportStatus({
+          tone: "bad",
+          text: `Fetched ${rows}, but this browser cannot save files; run fr audit export instead`,
+        });
+      }
+    } catch (err) {
+      setExportStatus({
+        tone: "bad",
+        text: isRouteMissing(err)
+          ? "This daemon has no audit export (GET /audit/export); update it or run fr audit export"
+          : describeError(err),
+      });
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <section aria-labelledby="performance-title" className="space-y-5">
@@ -256,6 +290,51 @@ export function PerformancePage() {
               </p>
             )}
           </>
+        ) : null}
+      </div>
+
+      <div data-testid="audit-export" className="space-y-2">
+        <h2 className="font-semibold">Audit log</h2>
+        <p className="text-xs text-neutral-500">
+          Every tool call with who, what, when, cost and result, as the daemon recorded it: inputs
+          and results are summarised and redacted when written, so the file holds no raw parameters.
+          The export covers you and your agents.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs text-neutral-500" htmlFor="audit-export-format">
+            Export format
+          </label>
+          <select
+            id="audit-export-format"
+            className={`${INPUT_CLASS} w-auto`}
+            value={exportFormat}
+            onChange={(e) => setExportFormat(e.target.value === "csv" ? "csv" : "jsonl")}
+            data-testid="audit-export-format"
+          >
+            <option value="jsonl">JSON lines</option>
+            <option value="csv">CSV</option>
+          </select>
+          <Button
+            variant="primary"
+            onClick={() => void exportAudit()}
+            disabled={exporting}
+            data-testid="audit-export-button"
+          >
+            Export audit log
+          </Button>
+        </div>
+        {exportStatus ? (
+          <p
+            role="status"
+            data-testid="audit-export-status"
+            className={
+              exportStatus.tone === "good"
+                ? "text-xs text-green-700 dark:text-green-400"
+                : "text-xs text-red-700 dark:text-red-400"
+            }
+          >
+            {exportStatus.text}
+          </p>
         ) : null}
       </div>
     </section>

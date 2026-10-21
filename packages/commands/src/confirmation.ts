@@ -67,12 +67,28 @@ export class ConfirmationPolicy {
           details: { deviceId: device.id },
         });
       }
-      if (device.kind === "phone" && !answer.biometric) {
-        throw new ForerunnerError(
-          "approval_required",
-          "a high-risk change needs biometric confirmation on the phone",
-          { details: { deviceId: device.id } },
-        );
+      // Two kinds of device confirm a high-risk change, and no other: the desktop alone (the
+      // PC the human sits at, which the daemon names for itself after the state service
+      // checked the phone), and a phone with its biometric. A web page (ADR 0034: it always
+      // signs biometric=0, its high-risk answers go through the state service's re-entered
+      // code) and a runner have no second factor to bring, so a `biometric: true` they present
+      // is not believed; a device kind this policy does not know is refused the same way. The
+      // rule holds for every decision a device answers, as the biometric rule always did.
+      if (device.kind !== "desktop") {
+        if (device.kind !== "phone") {
+          throw new ForerunnerError(
+            "approval_required",
+            `a ${device.kind} device cannot confirm a high-risk change; confirm on the desktop or on the phone with biometric`,
+            { details: { deviceId: device.id, kind: device.kind } },
+          );
+        }
+        if (!answer.biometric) {
+          throw new ForerunnerError(
+            "approval_required",
+            "a high-risk change needs biometric confirmation on the phone",
+            { details: { deviceId: device.id, kind: device.kind } },
+          );
+        }
       }
       if (answer.by && (answer.by.kind !== "human" || answer.by.id !== ctx.humanId)) {
         throw new ForerunnerError(

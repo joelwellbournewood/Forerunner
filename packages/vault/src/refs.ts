@@ -111,8 +111,9 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Scrub every value (and its JSON-escaped, URL-encoded and base64 forms) out of `text`.
- * Longest values first so a value that contains another is replaced whole.
+ * Scrub every value (and its JSON-escaped, URL-encoded, base64, base64url with and without
+ * padding, and hex forms) out of `text`. Longest values first so a value that contains
+ * another is replaced whole.
  */
 export function redactValues(
   text: string,
@@ -127,7 +128,17 @@ export function redactValues(
     if (json !== v) needles.add(json);
     const url = encodeURIComponent(v);
     if (url !== v) needles.add(url);
-    needles.add(Buffer.from(v, "utf8").toString("base64"));
+    const bytes = Buffer.from(v, "utf8");
+    const b64 = bytes.toString("base64");
+    needles.add(b64);
+    // base64url (JWT segments, some Basic-auth clients, `@base64d` pipelines) padded and
+    // unpadded, and hex: a tool that prints the value in one of these must not reach the model.
+    const b64url = b64.replace(/\+/g, "-").replace(/\//g, "_");
+    needles.add(b64url);
+    needles.add(b64url.replace(/=+$/, ""));
+    const hex = bytes.toString("hex");
+    needles.add(hex);
+    needles.add(hex.toUpperCase());
   }
   let out = text;
   for (const needle of [...needles].sort((a, b) => b.length - a.length)) {

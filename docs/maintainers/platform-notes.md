@@ -25,6 +25,24 @@ redaction), `ids`, `errors`.
 | Display server | win32 | wayland or x11 from env | `os.osFacts` (desktop control limits on Wayland) |
 | Shell for user scripts | PowerShell | sh | `scripts/*.ps1` and `*.sh` pairs |
 
+### Logging (`src/log.ts`)
+
+`Logger` redacts before any sink sees a record (spec S.4 "logs are scanned and redacted").
+`redact(text)` masks known credential shapes (Anthropic, GitHub, GitLab, Slack and AWS keys,
+PEM private keys, `Bearer` tokens, `password=` / `token:` style assignments, long base64 next
+to a secret-like word) and the password of a connection string (`scheme://user:password@host`
+keeps scheme, user and host; the user may be empty, as in `redis://:password@host` or
+`amqp://:password@host`). `redactDeep(data)` applies it to every string at any depth and
+replaces the value under a secret-named key whatever its shape: `isSecretKeyName` matches
+`secret`, `token`, `password`, `passwd`, `passphrase`, `credential(s)`, `api_key`,
+`authorization`, `cookie`, and any `*_key` / `*-key` / `*Key` / bare `key` in any case
+(`private_key`, `SIGNING_KEY`, `vaultKey`, the env-style names of a dumped `process.env`),
+except a public key, which is an identifier; a word that merely ends in "key" (`monkey`) is
+not a credential, which is why the camel-case form keeps its capital `K`. There is no depth at which data
+passes in clear: a cycle is cut with `[Circular]` and a subtree deeper than 64 levels becomes
+`[TRUNCATED]`. Sinks are isolated: one that throws never stops the others or the caller.
+`pnpm secrets:scan` checks the repository and the logs afterwards.
+
 ## How to change it
 
 Add the OS-specific branch inside `packages/platform`, export a neutral function, and add a test
@@ -33,7 +51,13 @@ that exercises both branches by passing `platform`/`env` explicitly (see `test/p
 ## Tests
 
 `packages/platform/test/*.test.ts` run on both CI runners. Path tests pass `platform` explicitly
-so Windows behaviour is checked on Linux too and the other way round.
+so Windows behaviour is checked on Linux too and the other way round. `log.test.ts` covers the
+known shapes and the key-name rule; `security-log.test.ts` is the security review's set: a token
+in the message, nested data, an array and an error string, a connection string's password,
+other credential-like key names, a token nested deeper than eight levels, a throwing sink.
+`security-log-critic.test.ts` holds the security critic's follow-ups on that fix: the password
+of a connection string with an empty user, upper-case `*_KEY` names, the key-name rule in
+every case with the public-key exception.
 
 ## Known issues
 

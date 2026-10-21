@@ -933,18 +933,18 @@ phone's quick chat answered on the PC; Saturday a medium card asked by chat and 
 in the phone's inbox, applied by the PC's drain. The report (`formatPhase5`) is printed and
 written to `FORERUNNER_E2E_REPORT_DIR` as `phase5-week.txt`.
 
-Measured on 2026-10-20 (fake provider, Linux, about 60 s with the daemons' approvals poll
-every simulated minute): 12 scheduled and 1 remote session, 13 completed, 13 tasks done
+Measured on 2026-10-20 (fake provider, Linux, about 50 s with the daemons' approvals poll
+every simulated minute; 49.8 s, 51.8 s and 51.6 s for the file in the three runs below): 12 scheduled and 1 remote session, 13 completed, 13 tasks done
 (Tuesday's tier 3 task closed by the sign-off's accept) and 13 pull requests on the two
-repositories; 30 voice turns with
+repositories; 29 voice turns with
 a median of 520 ms to first audio (end of turn 20, final transcript 300, model first token 0
-on the fake provider's zero-latency stream, first audio 200), all within target, 30
+on the fake provider's zero-latency stream, first audio 200), all within target, 29
 `voice.turn` rows; 9 settings changes with the same entry across the three channels and 9
 undos; 8 phone answers (5 accepted, 3 of them with the biometric, 3 refused without it);
 80 UI calls (no Resume in the header any more); 32 audit rows (one `critic.signoff`), none
 denied, 2 remote pickups (three runs on 2026-10-20 after RT-P5-1 to RT-P5-4 closed; before,
-10 phone answers, 81 UI calls and 32 audit rows with the one denial of the hooks' hold, then
-31 rows and 81 calls with the Resume).
+30 voice turns, 10 phone answers, 81 UI calls and 32 audit rows with the one denial of the
+hooks' hold, then 31 rows and 81 calls with the Resume).
 
 **Phase 7, the UI change shipped, the broken build rolled back, the model watch adopted**
 (`gate7-release.ts`, `gate7-model-watch.ts`, `phase7-gate.integration.test.ts`; ADR 0046).
@@ -1133,10 +1133,13 @@ doctor and the eval checks as argv arrays).
     `CriticService.review`, `applyVerdict` and the loop's ladder branch in
     `packages/runtime/src/loop/critic.ts`); `syncSignoffAnswers`
     (`packages/runtime/src/session/findings.ts`, next to `syncBlockedByFindings`) applies the
-    answer once, from `syncApprovals` (`compose.ts`; `gate5-daemon.ts` mirrors it): accept
-    resolves the open findings against the run and closes the task along the graph's own
-    edges in one transaction, revise goes `failed -> ready` with the attempt counted and the
-    owner agent told, cancel cancels; one `critic.signoff` audit row each. And the daemon
+    answer once, from `syncApprovals` (`compose.ts`; `gate5-daemon.ts` mirrors it), and only
+    when the card's `review_id` is the task's latest review (a sign-off left open while the
+    task was reviewed again is skipped as `stale` and touches nothing, ADR 0049): accept
+    resolves the card's findings and the task's other open findings up to the card's review
+    against the run and closes the task along the graph's own edges in one transaction,
+    revise goes `failed -> ready` with the attempt counted and the owner agent told, cancel
+    cancels; one `critic.signoff` audit row each. And the daemon
     runs `syncApprovals` on an approvals poll (`FORERUNNER_APPROVALS_POLL_MS`, default 5 s,
     only where answers can come from another device; `WEEK_APPROVALS_POLL_MS`, a simulated
     minute, in `gate5-week.ts` and `gate5-daemon.ts`), so the phone's answer reaches the PC
@@ -1145,7 +1148,12 @@ doctor and the eval checks as argv arrays).
     critic loop on the fake provider: the card, accept with the findings resolved against the
     run and the task `done`, accept of a clean review, revise with the attempt counted and the
     findings open, cancel, the ladder's own sign-off, a moved-on task and an unknown answer
-    skipped and recorded, applied once, the answer words),
+    skipped and recorded, a stale sign-off of an earlier review skipped with nothing
+    resolved while the current review's accept closes the task with every finding up to
+    its review resolved, an answer behind more than a page of later answers still applied,
+    a `findings_open` outcome when a later review's finding lands between the stale check
+    and the close, the transaction rolled back with the card's own finding still open, no
+    audit row and the answer consumed, applied once, the answer words),
     `packages/runtime/test/approvals-poll.test.ts` (the composed daemon applies a sign-off
     answered in the store within the poll, once; a daemon on a local store has no poll),
     `packages/critic/test/critic.test.ts` and `followup.test.ts` (the card on every filing
@@ -1156,22 +1164,44 @@ doctor and the eval checks as argv arrays).
     `SESSION_START_UNDO_REASON` (`packages/runtime/src/loop/commands.ts`, `kill`): a queued
     or deferred start was dropped (`Scheduler.cancelPending`), but a start that had run was a
     `kill.stop` of the agent's scope, which froze the agent until Resume even when that
-    session completed hours ago, so the next scheduled session would not run. Fix:
-    `sessionCommandPorts` (now over the store's sessions too) answers the undo by
-    `startUndoState(agentId)`: `pending` drops the request, `running` stops that session only
-    (`{ agentId, sessionId }`, never the agent's scope), `ended` is a no-op that never reaches
-    the kill switch; "that start's session" is `Scheduler.activeStart` (the log entry of the
-    running start) against the entry the port recorded when it made the start, so a later
-    (scheduled) session is never the one undone. `CommandLoop.undo` asks the same check
+    session completed hours ago, so the next scheduled session would not run. Fix: a start
+    has an identity, the scheduler's log entry id (`Scheduler.requestStart`, one id from the
+    queue to the run); `session.start` keeps it in its change log row (`after.start_id`) and
+    its undo names it in the kill scope (`KillScope.startId`), and `sessionCommandPorts`
+    (now over the store's sessions too) answers the undo by `startUndoState(agentId,
+    startId)` for that start alone (ADR 0049): `pending` (the scheduler's `pendingStart`
+    carries the id) drops the request, `running` (`Scheduler.activeStart` carries it) stops
+    that session only (`{ agentId, sessionId }`: the agent's active row of this install's
+    runner kind with the start's trigger, begun at or after the start; never the agent's
+    scope), `ended` (neither, or a row naming no start) is a no-op that never reaches the
+    kill switch, so a later start of the agent, by hand, from the phone or by schedule, is
+    never the one undone. `CommandLoop.undo` asks the same check
     before the executor: a change that is one ended `session.start` is refused with
     `SESSION_START_ENDED_REASON` and its row marked `irreversible`; inside a composed change
     the start is the no-op and the rest is undone (runtime.md, "The core loop", commands).
+    A start made from a phone (the daemon's execute route with the phone's device id) is a
+    remote row the PC's `RemoteCommandWatcher` runs, whose `start` port is
+    `Scheduler.requestStart`: the watcher writes the entry's id into the row's result
+    (`startId`), `session.start`'s undo names it in the kill scope and `CommandLoop.undo`
+    classes the row by the remote command's state (`pending` failed by the executor,
+    `picked_up` refused as in flight with the row still undoable, `done` the start the result
+    names, a result without an id refused as `SESSION_START_UNKNOWN_REASON`, `failed` as
+    `SESSION_START_NOT_RUN_REASON`); the first fix had classed such a row `ended` while its
+    session ran (the critic's finding on the start identity, ADR 0049).
     Tests: `packages/runtime/test/loop-commands.test.ts` (an ended start: refused with the
     reason, nothing stopped, `isFrozen` false, the row `irreversible` and no longer offered,
     no undo row; a running start stopped as that session only with the agent not frozen; a
     scheduled session running while the old start is undone left alone; the phone's composed
-    plan undone as a whole with the ended start a no-op; the queued and deferred cases as
-    before). Pins inverted: test 4, `killFrozenAfterUndo` and `resumedFromUi` are `false`
+    plan undone as a whole with the ended start a no-op; an earlier start whose session
+    ended undone while a later start of the agent runs: refused, the later session untouched
+    and the kill switch open, then the later start's undo stopping its session only, never a
+    cloud session of the agent; a queued start that ran stopped under its own id; the queued
+    and deferred cases as before, each start answered with its id; a phone's start as a
+    remote row through the real watcher: the id in the result, the running remote session
+    stopped as that session only, an ended one refused, a picked-up row refused as in flight
+    and still offered, a done row without an id and a failed row refused as such, a pending
+    row cancelled), `packages/runtime/test/remote-watcher.test.ts` (the plain `start`'s
+    result carries the scheduler entry's id). Pins inverted: test 4, `killFrozenAfterUndo` and `resumedFromUi` are `false`
     (J pressed no Resume; Friday's scheduled session ran on its own).
   - **RT-P5-3, closed 2026-10-20: the hooks held a command tool on the model path before
     the registry's card formed.** On the conversation's model path `email_mode_set` is

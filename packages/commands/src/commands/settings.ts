@@ -25,9 +25,20 @@ export interface SettingSpec {
   /** A column instead of the JSON bag, when the row has one. */
   column?: keyof ProjectRow | keyof HumanRow;
   description: string;
+  /**
+   * What the new value changes in practice, for the card's new value and the change log
+   * sentence ("Set X from a to b: <effect>. Undo."), when the key's name alone does not say.
+   */
+  effect?: (value: JsonValue) => string;
 }
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** What flipping small-project mode (spec B.6) changes; existing tasks keep their tier. */
+export const SMALL_PROJECT_MODE_EFFECT = {
+  on: "new tasks default to critic tier 0 and the next plan is written as one milestone with a flat task list; existing tasks keep their tier",
+  off: "new tasks default to critic tier 1 and the next plan may have several milestones; existing tasks keep their tier",
+} as const;
 
 export const SETTING_SPECS: Record<string, SettingSpec> = {
   speed_quality_offset: {
@@ -62,6 +73,8 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     schema: z.boolean(),
     column: "small_project_mode",
     description: "One milestone, flat task list, critic tier 0 by default.",
+    effect: (value) =>
+      value === true ? SMALL_PROJECT_MODE_EFFECT.on : SMALL_PROJECT_MODE_EFFECT.off,
   },
   shared_with: {
     key: "shared_with",
@@ -184,7 +197,14 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
 }
 
 function sentenceOf(t: Target): string {
-  return `Set ${t.what} from ${show(t.current)} to ${show(t.value)}. Undo.`;
+  const effect = t.spec.effect?.(t.value);
+  return `Set ${t.what} from ${show(t.current)} to ${show(t.value)}${effect ? `: ${effect}` : ""}. Undo.`;
+}
+
+/** The card's new value, with what it changes when the key defines an effect. */
+function newValueOf(t: Target): string {
+  const effect = t.spec.effect?.(t.value);
+  return effect ? `${show(t.value)} (${effect})` : show(t.value);
 }
 
 async function write(
@@ -232,7 +252,7 @@ export const settingsSet: CommandDef<SettingsSetParams> = {
       command: "settings.set",
       what: t.what,
       oldValue: show(t.current),
-      newValue: show(t.value),
+      newValue: newValueOf(t),
       scope: t.spec.scope === "global" ? "global" : "project",
       risk: t.spec.risk,
       sentence: sentenceOf(t),

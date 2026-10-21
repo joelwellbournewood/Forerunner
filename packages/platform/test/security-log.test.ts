@@ -76,7 +76,7 @@ describe("logger: gaps", () => {
   // database password reaches a log line (`FORERUNNER_STATE_URL`, `FORERUNNER_TEST_PG`,
   // migration errors that echo the URL). No pattern in `SECRET_PATTERNS` matches
   // `scheme://user:password@host`. Fix: add `/(\w+:\/\/[^\s:@/]+:)([^\s@/]+)@/g` keeping the user.
-  it.fails("security finding: the password of a connection string is masked", () => {
+  it("security finding: the password of a connection string is masked", () => {
     const line = `cannot connect to postgres://forerunner:${PASSWORD}@db.internal:5432/forerunner`;
     const out = redact(line);
     expect(out).not.toContain(PASSWORD);
@@ -88,7 +88,7 @@ describe("logger: gaps", () => {
   // `credentials`, `passwd`, `passphrase` and a bare `key` are not in the list, and a raw
   // 32-byte base64 value under them has no shape the patterns know (the lookahead wants the
   // keyword *after* the value). Fix: widen the key regex (`key$`, `credential`, `pass(wd|phrase)?$`).
-  it.fails("security finding: values under other credential-like key names are masked", () => {
+  it("security finding: values under other credential-like key names are masked", () => {
     const out = redactDeep({
       private_key: RAW32,
       signing_key: RAW32,
@@ -106,7 +106,7 @@ describe("logger: gaps", () => {
   // token nested nine objects deep (an error's `cause` chain, an SDK response echoed into
   // `data`) is serialised by the console sink in clear. Fix: redact the serialised string at
   // the sink, or recurse without a depth cap and guard against cycles with a `WeakSet`.
-  it.fails("security finding: a token nested deeper than eight levels is still masked", () => {
+  it("security finding: a token nested deeper than eight levels is still masked", () => {
     const c = capture();
     try {
       let data: Record<string, unknown> = { token: GITHUB, msg: `key ${ANTHROPIC}` };

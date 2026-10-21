@@ -40,7 +40,12 @@ raise its own limits without a human, and text from pages, files or email is nev
 for, the principal agent, the active project, the store, the Clock, the ports (session start,
 kill switch, pause/resume, the CHF rate, the "costly session" threshold, who shares a project),
 the source (`ui | chat | voice | email | api | palette`), the words used, the time zone, the
-requesting device and the conversation session that receives the activity event.
+requesting device and the conversation session that receives the activity event. Who the
+actor is depends on the caller: the runtime's routes, the palette, the phone and email
+commands act as the human; the model path (`CommandLoop.tools()` in `packages/runtime`)
+passes the principal agent as actor with the human as `humanId`, so a command the model
+decides to call is recorded with `author_agent` and no `author_human` and the `limit` rule
+below applies to it (`packages/runtime/test/security-command-actor.test.ts`).
 
 `CommandRegistry.register/get/mustGet/list/names/validate/schemaJson/persist`. `persist(store)`
 upserts every definition into the `command` table by name (`CommandRepo.register`), so a
@@ -57,7 +62,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | --- | --- | --- | --- | --- |
 | `project.switch` | global | low | yes | `human.notify_prefs.active_project`, `project_history` (last 10; "go back") |
 | `project.create` | global | low | yes (archive) | `project` row, active project |
-| `task.create` | project | low | yes (cancel) | `task` row, draft or ready |
+| `task.create` | project | low | yes (cancel) | `task` row, draft or ready; `risk_tier` left out takes the project's default through the runtime's `defaultRiskTier` (0 in small-project mode, else 1; spec B.6, ADR 0051) |
 | `task.transition` | project | low; `done`/`cancelled` medium | when the graph allows the way back | `task.status` through `TaskRepo.transition` |
 | `budget.set` | session / project / global (month) | medium within the ceiling, high above it or raising the ceiling | yes | see below |
 | `autonomy.set` | project | one step medium, more high, same level low | yes | `project.autonomy_level` |
@@ -65,7 +70,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `session.stop` | session / global | low | no | ports.kill or a `remote_command` row |
 | `session.pause` | session | low | yes (resume) | ports or `session.status` |
 | `capability.grant` | global | high | yes | `extension.permissions`, `enabled` |
-| `settings.set` | by key | by key (`SETTING_SPECS`) | yes | project settings/columns or human prefs/columns |
+| `settings.set` | by key | by key (`SETTING_SPECS`) | yes | project settings/columns or human prefs/columns; a key with an `effect` (`small_project_mode`, spec B.6) says what changes in the card's new value and the sentence, both ways |
 | `note.add` | project | low | yes (dismiss) | `queue_item` |
 | `request.answer` | project | the request's own risk | no | `human_request.answer` |
 | `email.mode.set` | global | high | yes | `extension` kind `capability`, name `email:<agentId>`, `config.settings.mode` |
@@ -102,7 +107,7 @@ the test `commands.test.ts` asserts it exactly. When no project was named the ca
 | --- | --- | --- |
 | low | `act` | nobody asked; the sentence states what happened, with Undo |
 | medium | `needs_yes` | a human's typed or spoken yes (`isYes` from the runtime, so "ja"/"oui" work), a tap in the app, or an email reply carrying the pending entry's `FR-` token |
-| high | `needs_device` | `confirmFromDevice(id, {deviceId, biometric})` on a device of the same human that is not revoked; a phone needs `biometric: true`, a desktop does not |
+| high | `needs_device` | `confirmFromDevice(id, {deviceId, biometric})` on a device of the same human that is not revoked; only a `desktop` confirms without a second factor (it is the PC the human sits at; the daemon's watcher names its own desktop row after the state service checked the phone), a `phone` needs `biometric: true`, and a `web` or `runner` device is refused whatever flag it presents, since neither has a second factor to bring (ADR 0034: the web page always signs biometric=0 and its high-risk answers go through the state service's re-entered code); a device kind the policy does not know is refused the same way |
 
 An agent actor whose command has `limit: true` (`budget.set`, `autonomy.set`,
 `capability.grant`, `email.mode.set`) gets at least `needs_yes` whatever the risk, and only a
@@ -174,7 +179,13 @@ When `ctx.deviceId` is a paired phone or web client, `session.start` and `sessio
 call the ports: they enqueue a `remote_command` row (`target` pc or cloud, the agent, project,
 budget and reason) that the PC or the cloud runner picks up through the state service. The
 sentence says so ("the PC picks it up in seconds"); undo fails the row while it is still
-pending and otherwise stops the session through the kill switch.
+pending and otherwise stops the session through the kill switch, naming the start the
+runner recorded in the row's result (`result.startId`, written by the runtime's
+`RemoteCommandWatcher` when it ran the start) so the runtime's port stops that start's
+session and no later one; the row's `after.start_id` is `null`, the id not being known
+here. A result without a `startId` (a runner that records none) names no start, and the
+port stops nothing for it (ADR 0049; the runtime's `CommandLoop.undo` refuses such an undo
+with its reason before it reaches this undo).
 
 On the desktop `session.start` calls `ports.startSession`, which answers the session id when
 it knows it and otherwise the start's identity (`startId`: in the runtime the scheduler
@@ -237,7 +248,10 @@ in `src/types.ts`, and add tests: the card sentence, the risk, the write and the
 for it goes into `IntentParser.matchClause`.
 
 **Add a setting.** Add a `SettingSpec` to `SETTING_SPECS` in `src/commands/settings.ts` (key,
-label, scope, risk, zod schema, optional column). `settings.set` refuses unknown keys
+label, scope, risk, zod schema, optional column, and an optional `effect(value)` when the key's
+name alone does not say what changes: it is appended to the card's new value and to the
+sentence as "Set X from a to b: <effect>. Undo.", as `small_project_mode` does with
+`SMALL_PROJECT_MODE_EFFECT`; `test/small-project.test.ts`). `settings.set` refuses unknown keys
 (`settingSpec` looks at own keys only, so `constructor` or `__proto__` are unknown settings,
 not prototype lookups), so the UI and the parser can only reach what is listed.
 
@@ -265,7 +279,10 @@ needs a device with biometric on a phone, agent self-limit, undo and undo after 
 06:00 revert with the clock, undo cancels the revert, resume after a restart, compose as one
 entry and its rollback, shared projects, the settings-screen path, another human's yes/tap/
 token/device and undo/revert refused, a double tap runs once, no email answer on the
-settings-screen path, a risen risk refused when the yes arrives), `commands.test.ts` (the
+settings-screen path, a risen risk refused when the yes arrives), `security-commands.test.ts`
+(the security review: the always-human commands carry the spec's risk, a pending card is not
+confirmed by the wrong kind of answer, a guessed email token or another actor, a web or runner
+device does not confirm a high-risk change without a second factor), `commands.test.ts` (the
 PharmaWatch sentence exactly, every command's risk, writes and undo, prototype keys as unknown
 settings), `intent.test.ts` (the two spec sentences, thirty English and German phrases,
 ambiguity questions, budget tails that are not a time, invalid values as a question, the

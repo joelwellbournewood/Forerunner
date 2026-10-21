@@ -1,6 +1,17 @@
 import type { Clock } from "@forerunner/platform";
 
 /**
+ * The key a signature is remembered under: its bytes (hex), not the header text. Node decodes
+ * base64 leniently (padding optional, base64url alphabet accepted, whitespace ignored), so a
+ * captured mutation re-sent with the same bytes under another spelling must hit the same
+ * entry. Text that decodes to nothing is kept as is.
+ */
+export function replayKey(signature: string): string {
+  const hex = Buffer.from(signature, "base64").toString("hex");
+  return hex ? `b:${hex}` : `s:${signature}`;
+}
+
+/**
  * Replay guard for signed mutations (ADR 0009, amendment). A signature covers the method,
  * path, body hash, timestamp and biometric flag, so a captured request replayed inside the
  * five-minute window would carry the same signature. The guard remembers every accepted
@@ -22,8 +33,9 @@ export class ReplayGuard {
 
   /** True when `signature` is new (and now remembered); false when it was used before. */
   accept(signature: string): boolean {
+    const key = replayKey(signature);
     const now = this.clock.now();
-    const expiresAt = this.seen.get(signature);
+    const expiresAt = this.seen.get(key);
     if (expiresAt !== undefined && expiresAt > now) return false;
     if (this.seen.size >= this.maxEntries) {
       this.sweep();
@@ -33,8 +45,8 @@ export class ReplayGuard {
         this.seen.delete(oldest.value);
       }
     }
-    this.seen.delete(signature);
-    this.seen.set(signature, now + this.windowMs);
+    this.seen.delete(key);
+    this.seen.set(key, now + this.windowMs);
     return true;
   }
 

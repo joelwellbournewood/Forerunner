@@ -13,6 +13,7 @@ import { describePlanAllowance } from "../setup/plan-allowance.ts";
 import { ensureDirs, readConfig, runSetup, type SetupReport } from "../setup/wizard.ts";
 import { registerUpdateCli } from "../update/cli.ts";
 import { composeUpdateManager } from "../update/compose.ts";
+import { registerAuditCli } from "./audit.ts";
 
 /**
  * `fr`: the Forerunner command line. Used by the setup wizard, the fresh-install scripts, the
@@ -46,6 +47,8 @@ export interface CliDeps {
   /** Composes the runtime for the commands that need the whole product (models, mirror, daemon). */
   compose?: (opts: Record<string, unknown>) => Promise<RuntimeApp>;
   out?: (line: string) => void;
+  /** Where relative output paths land; the process's working directory by default. */
+  cwd?: () => string;
 }
 
 export function buildProgram(deps: CliDeps = {}): Command {
@@ -324,6 +327,13 @@ export function buildProgram(deps: CliDeps = {}): Command {
       return { store: rt.store, mirror: rt.mirror };
     },
     out,
+  });
+
+  // Audit log export (spec S.9): a one-shot over the store through the daemon's export module.
+  registerAuditCli(program, {
+    open: () => openRuntime({ startServices: false }),
+    out,
+    cwd: deps.cwd ?? (() => process.cwd()),
   });
 
   return program;

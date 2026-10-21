@@ -133,10 +133,13 @@ export const sessionStart: CommandDef<SessionStartParams> = {
         },
         ...authorOf(ctx),
       });
+      // No start id yet: the PC that picks the row up makes the start and records its
+      // identity in the row's result (`startId`), where the undo reads it.
       return {
         before: { session_id: null, remote_command_id: null },
         after: {
           session_id: null,
+          start_id: null,
           remote_command_id: row.id,
           agent_id: agentId,
           budget_usd_micro: s.budgetUsd,
@@ -182,19 +185,26 @@ export const sessionStart: CommandDef<SessionStartParams> = {
   },
   async undo(_p, _before, after, ctx) {
     const a = asObject(after);
+    let startId = typeof a.start_id === "string" ? a.start_id : undefined;
     if (typeof a.remote_command_id === "string") {
       const row = await ctx.store.remoteCommand.get(a.remote_command_id);
       if (row?.status === "pending") {
         await ctx.store.remoteCommand.fail(row.id, { cancelled: true, reason: "undo" });
         return;
       }
+      // The runner that picked the row up recorded the start's identity in its result (the
+      // runtime's `RemoteCommandWatcher`): the kill names it, so the runtime stops the
+      // session that start began and no later start of the agent. A result without one
+      // names no start, and the runtime's port stops nothing for it.
+      const recorded = asObject(row?.result).startId;
+      startId = typeof recorded === "string" && recorded.length > 0 ? recorded : undefined;
     }
     const scope =
       typeof a.session_id === "string"
         ? { sessionId: a.session_id }
         : {
             agentId: typeof a.agent_id === "string" ? a.agent_id : (ctx.agentId ?? ""),
-            ...(typeof a.start_id === "string" ? { startId: a.start_id } : {}),
+            ...(startId ? { startId } : {}),
           };
     await ctx.ports.kill?.(scope, "undo of session.start");
   },

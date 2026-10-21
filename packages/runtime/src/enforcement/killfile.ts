@@ -29,10 +29,39 @@ export function readKillRequest(runtimeDir: string = appDirs().runtime): KillReq
   const p = killFilePath(runtimeDir);
   if (!existsSync(p)) return null;
   try {
-    return JSON.parse(readFileSync(p, "utf8")) as KillRequest;
+    return parseKillRequest(JSON.parse(readFileSync(p, "utf8")));
   } catch {
     return null;
   }
+}
+
+/**
+ * The request as the watcher may act on it. Anything that is not an object with a
+ * `requestedAt` is no request (ignored, like unparseable JSON). A scope that is neither
+ * `"all"` nor an object naming an agent or a session is read as `"all"`: the kill switch
+ * would stop every registration for such a scope anyway but freeze nothing, so new work
+ * would start at once; failing closed keeps "stopped" and "frozen" the same set.
+ */
+export function parseKillRequest(raw: unknown): KillRequest | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.requestedAt !== "string" || r.requestedAt === "") return null;
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
+  let scope: KillScope | "all" = "all";
+  if (r.scope && typeof r.scope === "object" && !Array.isArray(r.scope)) {
+    const s = r.scope as Record<string, unknown>;
+    const agentId = str(s.agentId);
+    const sessionId = str(s.sessionId);
+    if (agentId || sessionId) {
+      scope = { ...(agentId ? { agentId } : {}), ...(sessionId ? { sessionId } : {}) };
+    }
+  }
+  return {
+    scope,
+    reason: str(r.reason) ?? "",
+    requestedAt: r.requestedAt,
+    requestedBy: str(r.requestedBy) ?? "unknown",
+  };
 }
 
 export function clearKillRequest(runtimeDir: string = appDirs().runtime): void {

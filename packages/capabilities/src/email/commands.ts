@@ -40,8 +40,9 @@ import { z } from "zod";
 import type { AuthVerdict, AuthVerifier } from "./auth.ts";
 import {
   hasCommandMarker,
+  hideCommandMarker,
   type InboundEmail,
-  isReplyToThread,
+  normalizeMessageId,
   saveAttachments,
   stripQuotedText,
 } from "./inbound.ts";
@@ -79,6 +80,7 @@ export type GateReason =
   | "dkim_fail"
   | "not_aligned"
   | "spf_fail"
+  | "stale"
   | "no_marker";
 
 export interface GateVerdict {
@@ -99,13 +101,25 @@ export interface EmailCommandGateDeps {
   clock: Clock;
   /** How far back the sent log is searched for threads (default 90 days). */
   threadWindowMs?: number;
+  /**
+   * A command whose Date header is older than this is not obeyed (`stale`; default 7 days):
+   * DKIM signatures carry no expiry, so a captured command replayed from a host inside the
+   * owner domain's SPF would otherwise be obeyed again once its audit row is out of the
+   * handler's dedupe window.
+   */
+  maxCommandAgeMs?: number;
 }
+
+export const DEFAULT_THREAD_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+export const DEFAULT_MAX_COMMAND_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export class EmailCommandGate {
   private readonly threadWindowMs: number;
+  private readonly maxCommandAgeMs: number;
 
   constructor(private readonly deps: EmailCommandGateDeps) {
-    this.threadWindowMs = deps.threadWindowMs ?? 90 * 24 * 60 * 60 * 1000;
+    this.threadWindowMs = deps.threadWindowMs ?? DEFAULT_THREAD_WINDOW_MS;
+    this.maxCommandAgeMs = deps.maxCommandAgeMs ?? DEFAULT_MAX_COMMAND_AGE_MS;
   }
 
   async evaluate(agentId: string, message: InboundEmail): Promise<GateVerdict> {
@@ -122,23 +136,56 @@ export class EmailCommandGate {
     if (auth.dkim !== "pass") return no("dkim_fail");
     if (!auth.aligned) return no("not_aligned");
     if (auth.spf !== "pass") return no("spf_fail");
+    if (this.isStale(message)) return no("stale");
     if (hasCommandMarker(message.subject, commands.marker)) {
       return { obey: true, reason: "ok", via: "marker", commandText, auth };
     }
-    const since = new Date(this.deps.clock.now() - this.threadWindowMs).toISOString();
-    const threadIds = await this.deps.sentLog.threadIds(agentId, since);
-    if (isReplyToThread(message, threadIds)) {
-      const candidates = [message.inReplyTo, ...message.references].filter(
-        (id): id is string => typeof id === "string" && threadIds.has(id),
-      );
-      const parentId = candidates[0];
-      const threadRow = parentId
-        ? await this.deps.sentLog.byMessageId(agentId, parentId, since)
-        : undefined;
-      return { obey: true, reason: "ok", via: "thread", commandText, auth, threadRow };
-    }
+    const threadRow = await this.threadParent(agentId, message);
+    if (threadRow) return { obey: true, reason: "ok", via: "thread", commandText, auth, threadRow };
     return no("no_marker");
   }
+
+  /**
+   * The sent-log row a reply continues, or undefined. Only the direct parent counts (the
+   * `In-Reply-To` id, else the last `References` entry), and only when the agent sent it to
+   * the registered human alone (`toHuman`). An id further up the chain, or a mail the agent
+   * sent to a third party, is no thread: a stranger who received the agent's mail knows its
+   * Message-ID and could seed it into the References of a mail to the owner, whose casual
+   * reply to the stranger would otherwise pass the gate as a command.
+   */
+  private async threadParent(
+    agentId: string,
+    message: InboundEmail,
+  ): Promise<SentLogRow | undefined> {
+    const parents = directParentIds(message);
+    if (parents.length === 0) return undefined;
+    const since = new Date(this.deps.clock.now() - this.threadWindowMs).toISOString();
+    const sent = await this.deps.sentLog.recent(agentId, since);
+    for (const id of parents) {
+      const row = sent.find((r) => normalizeMessageId(r.messageId) === id);
+      if (row?.toHuman) return row;
+    }
+    return undefined;
+  }
+
+  /** Older than `maxCommandAgeMs` by its own Date header: a replay, not a command. */
+  private isStale(message: InboundEmail): boolean {
+    if (!message.date) return false;
+    const sentAt = Date.parse(message.date);
+    if (Number.isNaN(sentAt)) return false;
+    return this.deps.clock.now() - sentAt > this.maxCommandAgeMs;
+  }
+}
+
+/** The ids a reply names as its direct parent: `In-Reply-To`, else the last `References` entry. */
+function directParentIds(message: Pick<InboundEmail, "inReplyTo" | "references">): string[] {
+  const direct = (message.inReplyTo ?? "")
+    .split(/\s+/)
+    .map(normalizeMessageId)
+    .filter((id) => id.length > 0);
+  if (direct.length > 0) return direct;
+  const last = message.references.at(-1);
+  return last ? [normalizeMessageId(last)] : [];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -343,7 +390,11 @@ export interface EmailCommandHandlerDeps {
    * check alone stops repeats, and a catch-up poll keeps listing the message.
    */
   mailboxFor?: MailboxProvider;
-  /** How far back audit rows are read to refuse an already handled Message-ID (default 30 d). */
+  /**
+   * How far back audit rows are read to refuse an already handled Message-ID (default 90 d,
+   * the gate's thread window: never shorter than the window in which a signed message is
+   * still accepted, or a replay after the window would be obeyed a second time).
+   */
   dedupeWindowMs?: number;
 }
 
@@ -375,7 +426,7 @@ export class EmailCommandHandler {
 
   constructor(private readonly deps: EmailCommandHandlerDeps) {
     this.lookbackMs = deps.lookbackMs ?? 48 * 60 * 60 * 1000;
-    this.dedupeWindowMs = deps.dedupeWindowMs ?? 30 * 24 * 60 * 60 * 1000;
+    this.dedupeWindowMs = deps.dedupeWindowMs ?? DEFAULT_THREAD_WINDOW_MS;
   }
 
   // -- replies -------------------------------------------------------------------------------
@@ -717,7 +768,7 @@ export class EmailCommandHandler {
     const projects = await this.deps.store.project.list({ status: "active" }, { orderBy: "name" });
     const interpretation = await this.deps.classifier.classify({
       commandText: verdict.commandText,
-      subject: redact(message.subject),
+      subject: redact(hideCommandMarker(message.subject, config.commands.marker)),
       projects: projects.map((p) => ({ id: p.id, name: p.name, goal: p.goal })),
     });
     if (!interpretation) {

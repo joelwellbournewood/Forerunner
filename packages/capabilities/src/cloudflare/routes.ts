@@ -13,7 +13,7 @@ import { type Clock, ForerunnerError } from "@forerunner/platform";
 import type { ProjectRow } from "@forerunner/state";
 import type { Vault } from "@forerunner/vault";
 import { CloudflareClient, cloudflareTokenSource } from "./client.ts";
-import { cloudflareSettingsOf, scopeOf } from "./settings.ts";
+import { cloudflareSettingsOf, scopeOf, standInBaseUrlOf } from "./settings.ts";
 
 export interface CloudflareRouteRequest {
   param(name: string): string | undefined;
@@ -73,7 +73,7 @@ export function cloudflareRoutes(deps: CloudflareRouteDeps): CloudflareRoute[] {
     const id = c.req.param("projectId") ?? "";
     const project = await deps.projects.get(id);
     if (!project) throw new ForerunnerError("not_found", `no project ${id}`);
-    const settings = cloudflareSettingsOf(project);
+    const settings = cloudflareSettingsOf(project, { standInBaseUrl: standInBaseUrlOf(deps) });
     if (!settings) {
       throw new ForerunnerError("not_found", "Cloudflare is not configured for this project", {
         details: { projectId: id },
@@ -103,7 +103,7 @@ export function cloudflareRoutes(deps: CloudflareRouteDeps): CloudflareRoute[] {
           const client = new CloudflareClient({
             scope: scopeOf(settings),
             token: cloudflareTokenSource({ vault: deps.vault, ref: settings.secret_ref }),
-            baseUrl: deps.baseUrl ?? settings.base_url,
+            baseUrl: deps.baseUrl ?? settings.base_url ?? standInBaseUrlOf(deps),
             fetchImpl: deps.fetchImpl,
             clock: deps.clock,
           });

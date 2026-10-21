@@ -332,6 +332,8 @@ const WATCHED: readonly WatchedTable[] = [
 ];
 
 const POLL_LIMIT = 500;
+/** Missing rows already warned about; cleared when it grows past this (an anomaly, not a flow). */
+const MISSING_WARNED_MAX = 1_000;
 
 export interface ChangePollerOptions {
   store: StateStore;
@@ -347,7 +349,8 @@ export interface ChangePollerOptions {
 /**
  * Reads rows changed since the last poll and announces them. The human an event concerns is
  * derived per table (message addressee or the addressee agent's owner, request human,
- * remote command issuer's owner); other tables are project-wide.
+ * remote command issuer's owner, the session's agent's owner for `session` and `event` rows,
+ * which are one human's working notes like `GET /sessions/:id`); other tables are project-wide.
  */
 export class ChangePoller {
   private readonly marks = new Map<string, string>();
@@ -356,6 +359,8 @@ export class ChangePoller {
   private inFlight: Promise<void> | undefined;
   private readonly agentOwner = new Map<string, string>();
   private readonly deviceOwner = new Map<string, string>();
+  private readonly sessionOwner = new Map<string, string>();
+  private readonly missingWarned = new Set<string>();
   polls = 0;
 
   constructor(private readonly opts: ChangePollerOptions) {
@@ -409,6 +414,7 @@ export class ChangePoller {
         if (at > newest) newest = at;
         if (!this.opts.bus.markSeen(w.table, id, version)) continue;
         const event = await this.describe(w, row, id, Number(version));
+        if (!event) continue;
         this.opts.bus.publish(event);
       }
       this.marks.set(w.table, newest);
@@ -420,30 +426,60 @@ export class ChangePoller {
     }
   }
 
+  /**
+   * A row that names an agent, session or device the store cannot resolve (a dangling
+   * reference) is logged once per missing row, at the point it is found missing. The row
+   * itself is then not announced (see `describe`): "nobody" must never become "everybody".
+   */
+  private noteMissing(kind: "agent" | "session" | "device", id: string): null {
+    const key = `${kind}:${id}`;
+    if (this.missingWarned.has(key)) return null;
+    if (this.missingWarned.size >= MISSING_WARNED_MAX) this.missingWarned.clear();
+    this.missingWarned.add(key);
+    logger.warn("change not announced: the row it names does not exist", { kind, id });
+    return null;
+  }
+
   private async ownerOfAgent(agentId: string): Promise<string | null> {
     const cached = this.agentOwner.get(agentId);
     if (cached) return cached;
     const agent = await this.opts.store.agent.get(agentId);
-    if (!agent) return null;
+    if (!agent) return this.noteMissing("agent", agentId);
     this.agentOwner.set(agentId, agent.owner_human_id);
     return agent.owner_human_id;
+  }
+
+  /** The owner of the session's agent (a session never changes agent, so the answer is cached). */
+  private async ownerOfSession(sessionId: string): Promise<string | null> {
+    const cached = this.sessionOwner.get(sessionId);
+    if (cached) return cached;
+    const session = await this.opts.store.session.get(sessionId);
+    if (!session) return this.noteMissing("session", sessionId);
+    const owner = await this.ownerOfAgent(session.agent_id);
+    if (owner) this.sessionOwner.set(sessionId, owner);
+    return owner;
   }
 
   private async ownerOfDevice(deviceId: string): Promise<string | null> {
     const cached = this.deviceOwner.get(deviceId);
     if (cached) return cached;
     const device = await this.opts.store.device.get(deviceId);
-    if (!device) return null;
+    if (!device) return this.noteMissing("device", deviceId);
     this.deviceOwner.set(deviceId, device.owner_human_id);
     return device.owner_human_id;
   }
 
+  /**
+   * The change event for a row, or null when the row must not be announced: it names an
+   * agent, session or device whose owner cannot be resolved, so there is no human to address
+   * it to and it would otherwise go out project-wide (fail closed; `noteMissing` logged it).
+   */
   private async describe(
     w: WatchedTable,
     row: Row,
     id: string,
     version: number,
-  ): Promise<ChangeInput> {
+  ): Promise<ChangeInput | null> {
     const str = (k: string): string | null =>
       typeof row[k] === "string" ? (row[k] as string) : null;
     let humanId: string | null = null;
@@ -451,24 +487,28 @@ export class ChangePoller {
     let sessionId: string | null = null;
     const payload: JsonObject = { id, version };
     switch (w.table) {
-      case "message":
-        humanId =
-          str("to_human_id") ??
-          (str("to_agent_id") ? await this.ownerOfAgent(str("to_agent_id") as string) : null);
-        payload.toAgentId = str("to_agent_id");
+      case "message": {
+        const toAgentId = str("to_agent_id");
+        humanId = str("to_human_id") ?? (toAgentId ? await this.ownerOfAgent(toAgentId) : null);
+        if (toAgentId && !humanId) return null;
+        payload.toAgentId = toAgentId;
         payload.toHumanId = str("to_human_id");
         payload.type = str("type");
         break;
+      }
       case "human_request":
         humanId = str("human_id");
         payload.status = str("status");
         payload.blocking = row.blocking === true || row.blocking === 1;
         break;
-      case "remote_command":
-        humanId = str("device_id") ? await this.ownerOfDevice(str("device_id") as string) : null;
+      case "remote_command": {
+        const deviceId = str("device_id");
+        humanId = deviceId ? await this.ownerOfDevice(deviceId) : null;
+        if (deviceId && !humanId) return null;
         payload.status = str("status");
         payload.target = str("target");
         break;
+      }
       case "device":
         humanId = str("owner_human_id");
         payload.revoked = row.revoked === true || row.revoked === 1;
@@ -477,13 +517,22 @@ export class ChangePoller {
         humanId = str("human_id");
         payload.status = str("status");
         break;
-      case "session":
+      case "session": {
+        // One human's working notes (ADR 0009 amendment): a session without a resolvable
+        // owner is not announced at all rather than to everyone with the project.
         sessionId = id;
+        const agentId = str("agent_id");
+        humanId = agentId ? await this.ownerOfAgent(agentId) : null;
+        if (!humanId) return null;
+        this.sessionOwner.set(id, humanId);
         payload.status = str("status");
-        payload.agentId = str("agent_id");
+        payload.agentId = agentId;
         break;
+      }
       case "event":
         sessionId = str("session_id");
+        humanId = sessionId ? await this.ownerOfSession(sessionId) : null;
+        if (!humanId) return null;
         payload.seq = Number(row.seq ?? 0);
         payload.type = str("type");
         break;

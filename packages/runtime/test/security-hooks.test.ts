@@ -202,7 +202,7 @@ describe("hooks and the built-in file tools: symlinks", () => {
   // `cfg -> ~/.config/forerunner`): a "read" class tool then reads it at autonomy 0 and a
   // "routine_reversible" write lands outside the worktree. Fix: `realpath` the resolved path
   // (and, for writes, its parent) before the containment check in `inside()` and in the hook.
-  it.skipIf(!canSymlink).fails(
+  it.skipIf(!canSymlink)(
     "security finding: a symlink inside the worktree pointing outside is refused by read_file",
     async () => {
       const h = harness();
@@ -229,7 +229,7 @@ describe("hooks and the built-in file tools: symlinks", () => {
     },
   );
 
-  it.skipIf(!canSymlink).fails(
+  it.skipIf(!canSymlink)(
     "security finding: write_file through a symlinked directory cannot write outside the worktree",
     async () => {
       const h = harness();
@@ -354,7 +354,7 @@ describe("hooks: approvals", () => {
   // equal hash ("Aa" and "BB") give the same key, so an approval of `delete_repo {repo:
   // "Aa"}` also admits `delete_repo {repo: "BB"}` without asking. The state-store variant
   // persists the collision for the whole session. Fix: a SHA-256 of the canonical JSON.
-  it.fails("security finding: an approval granted for one input does not admit a different input with a colliding key", async () => {
+  it("security finding: an approval granted for one input does not admit a different input with a colliding key", async () => {
     const approvals = new ScriptedApprovals(["approved", "denied"]);
     const h = harness({ approvals });
     const t = issue(h, { allowedTools: ["delete_repo"], autonomy: 4 });
@@ -371,7 +371,7 @@ describe("hooks: approvals", () => {
     expect(asked).toBe(true);
   });
 
-  it.fails("security finding: the durable approval key (StateApprovals) is collision resistant", () => {
+  it("security finding: the durable approval key (StateApprovals) is collision resistant", () => {
     expect(approvalKey({ tool: "delete_repo", input: { repo: "Aa" } })).not.toBe(
       approvalKey({ tool: "delete_repo", input: { repo: "BB" } }),
     );
@@ -381,7 +381,7 @@ describe("hooks: approvals", () => {
   // of the run: the same `delete_repo` / purchase / send call runs again and again without a
   // new answer (the key stays in `ctx.approvals`). The resume path needs one reuse (the
   // paused call is re-made after the answer); every further identical call should ask again.
-  it.fails("security finding: an approval of an always-human action is consumed by the first execution", async () => {
+  it("security finding: an approval of an always-human action is consumed by the first execution", async () => {
     const approvals = new ScriptedApprovals(["approved", "approved"]);
     const h = harness({ approvals });
     const t = issue(h, { allowedTools: ["delete_repo"], autonomy: 4 });
@@ -551,7 +551,7 @@ describe("hooks: secrets by reference, end to end through a real resolver", () =
   // `rawInput`. A value the model obtained elsewhere (the SDK path, see security-sdk) and
   // pasted into a later call is then written to the audit log verbatim. Fix: pass both
   // summaries through `secrets.redact` (and the platform `redact`) as a last line.
-  it.fails("security finding: a resolved value pasted into a later tool input never reaches the audit log", async () => {
+  it("security finding: a resolved value pasted into a later tool input never reaches the audit log", async () => {
     const cv = countingVault();
     const h = harness({ secrets: new SecretResolver(cv.vault) });
     const t = issue(h, { allowedTools: ["use_secret", "echo"], grantedSecrets: ["gh"] });
@@ -619,7 +619,7 @@ describe("hooks: an audit row for every refusal", () => {
   // `deny` helper exists, so a call attempted on a revoked, expired or forged token, or after
   // a stop, is refused without an audit row (spec S.9: "every tool call"). Fix: build the
   // audit row from the unverified claims (token id, run id) for these refusals too.
-  it.fails("security finding: a tool call refused because the token was revoked or expired is audited", async () => {
+  it("security finding: a tool call refused because the token was revoked or expired is audited", async () => {
     const h = harness();
     const t = issue(h, { allowedTools: ["echo"] });
     await h.kill.stop("all", "test");
@@ -639,7 +639,7 @@ describe("budget: non-finite numbers", () => {
   // that reports no usage) silently disables the session's hard cap for good. The outer
   // `CapChecker` refuses non-integers but the daemon runs `AllowAllCaps` in solo mode. Fix:
   // `Number.isSafeInteger` checks in `precheck` and `record`, refusing with `validation`.
-  it.fails("security finding: a NaN cost cannot pass or poison the session budget", () => {
+  it("security finding: a NaN cost cannot pass or poison the session budget", () => {
     const b = new SessionBudget({
       sessionId: "s",
       budgetUsdMicro: 1_000,
@@ -661,7 +661,7 @@ describe("budget: non-finite numbers", () => {
     expect(refused).toBe(2);
   });
 
-  it("after a NaN was recorded the cap is gone: the attack this finding is about", () => {
+  it("a refused NaN leaves the cap in force: the attack this finding was about", () => {
     const b = new SessionBudget({
       sessionId: "s",
       budgetUsdMicro: 1_000,
@@ -671,9 +671,10 @@ describe("budget: non-finite numbers", () => {
     });
     b.record("r", 900);
     expect(() => b.precheck("r", 1_000, 200, "work")).toThrow(/budget/);
-    b.record("r", Number.NaN);
-    // Documents the current behaviour the `it.fails` above asks to change.
-    expect(b.precheck("r", 1_000, 1_000_000, "work").decision).toBe("allow");
+    // Before the fix this record poisoned the session's spend and the next precheck allowed.
+    expect(() => b.record("r", Number.NaN)).toThrow(/budget spend/);
+    expect(() => b.precheck("r", 1_000, 1_000_000, "work")).toThrow(/budget/);
+    expect(b.snapshot().sessionSpentUsdMicro).toBe(900);
   });
 
   it("an infinite estimate is refused and a negative spend cannot be recorded", () => {
@@ -712,7 +713,7 @@ describe("kill file", () => {
   // (no `sessionId`, no `agentId`) and revokes every token, but `isFrozen` then answers false
   // for every scope: everything is stopped and nothing is frozen, so new work starts at once.
   // Fix: validate the request shape and treat an unknown scope as `"all"` (fail closed).
-  it.fails("security finding: a malformed kill request either freezes everything or is ignored, never 'stop all, freeze nothing'", async () => {
+  it("security finding: a malformed kill request either freezes everything or is ignored, never 'stop all, freeze nothing'", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fr-sec-kill-"));
     try {
       const h = harness();

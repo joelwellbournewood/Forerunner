@@ -189,7 +189,8 @@ export function staticBrowserTools(real: ToolSpec[], opts: StaticBrowserOptions)
             const title = titleOf(body.text);
             const result = `Opened ${url} (HTTP ${res.status}) ${JSON.stringify(title)}.${body.truncated ? ` The page was cut at ${maxBytes} bytes.` : ""}`;
             await audit(ctx, run, spec.name, input.url, { result });
-            return { content: result };
+            // The title is the page's: untrusted, wrapped and scanned by the hooks as data.
+            return { content: result, untrusted: { source: "web_page", origin: url } };
           } catch (e) {
             const code = e instanceof ForerunnerError ? e.code : "unavailable";
             await audit(ctx, run, spec.name, input.url, { denied: `${code}: ${errorMessage(e)}` });

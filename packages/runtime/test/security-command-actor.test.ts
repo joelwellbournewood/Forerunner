@@ -85,7 +85,7 @@ describe("command tools on the model path", () => {
   // `{ actor: { kind: "agent", id: turn.agentId } }` to `contextFor` (the human stays
   // `humanId`), so a model-initiated `budget_set`/`autonomy_set` always asks and the log
   // names the agent.
-  it.fails("security finding: a command the model calls is recorded as the agent's act, not the human's", async () => {
+  it("security finding: a command the model calls is recorded as the agent's act, not the human's", async () => {
     const w = await world();
     const results: unknown[] = [];
     const tools = w.loop.tools(w.turn, (r) => results.push(r));
@@ -100,7 +100,7 @@ describe("command tools on the model path", () => {
     expect(rows[0]?.author_human).toBeNull();
   });
 
-  it.fails("security finding: a limit change the model initiates needs a human's yes even when its risk would be low", async () => {
+  it("security finding: a limit change the model initiates needs a human's yes even when its risk would be low", async () => {
     const w = await world();
     const tools = w.loop.tools(w.turn, () => undefined);
     const autonomySet = tools.find((t) => t.name === "autonomy_set");

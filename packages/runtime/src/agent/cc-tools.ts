@@ -17,6 +17,8 @@ interface CcToolShape {
   risk: ToolSpec["risk"];
   pathFields?: string[];
   domainFields?: string[];
+  /** Glob fields: a pattern that leaves the search root (`..`, an absolute prefix) is refused. */
+  globFields?: string[];
 }
 
 const SHAPES: Record<string, CcToolShape> = {
@@ -56,12 +58,15 @@ const SHAPES: Record<string, CcToolShape> = {
     actionClass: "read",
     risk: "low",
     pathFields: ["path"],
+    globFields: ["pattern"],
   },
   Grep: {
     description: "Search file contents",
     actionClass: "read",
     risk: "low",
     pathFields: ["path"],
+    // `pattern` is the regular expression; `glob` narrows the files and is the one that walks.
+    globFields: ["glob"],
   },
   LS: { description: "List a directory", actionClass: "read", risk: "low", pathFields: ["path"] },
   Bash: {
@@ -93,20 +98,47 @@ export function claudeCodeToolNames(): string[] {
   return KNOWN_CLAUDE_CODE_TOOLS.map((t) => `${CLAUDE_CODE_PREFIX}${t}`);
 }
 
+/**
+ * A glob that walks out of the directory it is resolved against: a `..` segment anywhere
+ * (also inside a brace list) or an absolute prefix (`/`, `\\`, `C:`, `~`). The SDK resolves
+ * `Glob.pattern` and `Grep.glob` against `path` or, when unset, the run directory, so the
+ * containment check on `path` alone would let a pattern starting `../../` walk out of the
+ * worktree (every key file two levels up, say).
+ */
+export function globEscapes(pattern: string): boolean {
+  return (
+    /(^|[\\/{,])\.\.([\\/},]|$)/.test(pattern) || /(^|[{,])(~|[\\/]|[A-Za-z]:[\\/])/.test(pattern)
+  );
+}
+
 /** The spec for one Claude Code tool name (without the prefix), for the hooks only. */
 export function claudeCodeToolSpec(tool: string): ToolSpec {
   const shape = Object.hasOwn(SHAPES, tool) ? SHAPES[tool] : undefined;
   const name = `${CLAUDE_CODE_PREFIX}${tool}`;
+  const globFields = shape?.globFields ?? [];
   return {
     name,
     description: shape?.description ?? `Claude Code tool ${tool}`,
-    // The SDK validates the input itself; the hooks only need the path and URL fields.
-    schema: z.looseObject({
-      file_path: z.string().optional(),
-      notebook_path: z.string().optional(),
-      path: z.string().optional(),
-      url: z.string().optional(),
-    }),
+    // The SDK validates the input itself; the hooks only need the path, URL and glob fields.
+    schema: z
+      .looseObject({
+        file_path: z.string().optional(),
+        notebook_path: z.string().optional(),
+        path: z.string().optional(),
+        url: z.string().optional(),
+      })
+      .superRefine((v, ctx) => {
+        for (const field of globFields) {
+          const value = (v as Record<string, unknown>)[field];
+          if (typeof value === "string" && globEscapes(value)) {
+            ctx.addIssue({
+              code: "custom",
+              path: [field],
+              message: "a pattern may not leave the search directory (no .., no absolute prefix)",
+            });
+          }
+        }
+      }),
     actionClass: shape?.actionClass ?? "non_routine",
     risk: shape?.risk ?? "medium",
     ...(shape?.pathFields ? { pathFields: shape.pathFields } : {}),

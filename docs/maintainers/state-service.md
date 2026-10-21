@@ -44,11 +44,11 @@ mirror, status and comments sync back), phase 2 gate (48 simulated hours offline
 | `src/auth/tokens.ts` | `SessionTokenStore`: hashed scoped tokens, 30-day expiry, revoke per device |
 | `src/auth/pairing.ts` | `PairingService`: one-time codes, proof of key possession, device row |
 | `src/auth/principal.ts` | `authenticate()`: admin (with its install id) or device, signature window, replay check, revocation; `requireScope`, `requireSigned` |
-| `src/auth/replay.ts` | `ReplayGuard`: a signed mutation's signature is accepted once inside the window |
+| `src/auth/replay.ts` | `ReplayGuard`: a signed mutation's signature is accepted once inside the window, keyed on the signature's bytes (`replayKey`) so another base64 spelling of the same bytes is the same replay |
 | `src/auth/scopes.ts` | the scope list and per-kind defaults |
 | `src/ratelimit.ts` | token bucket per device / admin install / client address, bounded and swept |
-| `src/realtime.ts` | `ChangeBus` (buffer, resume), `PostgresNotifier` (LISTEN/NOTIFY), `ChangePoller` (2 s fallback) |
-| `src/sse.ts` | one SSE loop: initial batch, wake on push, poll, heartbeat, abort |
+| `src/realtime.ts` | `ChangeBus` (buffer, resume), `PostgresNotifier` (LISTEN/NOTIFY), `ChangePoller` (2 s fallback; resolves the human an event concerns, for `session` and `event` rows the session's agent's owner) |
+| `src/sse.ts` | one SSE loop: initial batch, wake on push, poll, heartbeat, abort; `stillAllowed` re-checked before every flush (`deviceStillActive`: a revoked device's stream ends) |
 | `src/routes/*.ts` | health, devices and pairing, projects / tasks / decisions / queue / uploads, inbox and requests, remote commands, sessions and live log, `/events`, costs, reviews, `/sync/outbox` |
 | `src/views.ts` | row to view mapping (`ProjectCard`, `TaskView`, `MessageView`, ... from ADR 0011) |
 | `src/mirror/github.ts` | `GitHubMirror`: push tasks and milestones to issues, pull comments and closes |
@@ -91,10 +91,16 @@ never includes headers (the platform logger redacts anyway).
    `X-Device-Timestamp` (±5 minutes). A mutation signature is accepted once: the same
    signed request sent again inside the window is refused (`401 bad_signature`, "replayed"),
    so a retry must sign again with a fresh timestamp (the outbox makes the retry itself
-   idempotent). Signed reads are not replay-checked. `GET /me` shows the principal, scopes
-   and expiry (and the install id for admin callers).
+   idempotent). The guard remembers the signature's bytes, not the header text: Node decodes
+   base64 leniently, so the same signature re-sent without padding, in the base64url alphabet
+   or with whitespace inside is refused as the same replay (`replayKey` in `src/auth/replay.ts`).
+   Signed reads are not replay-checked. `GET /me` shows the principal, scopes and expiry (and
+   the install id for admin callers).
 4. Lost phone: desktop `POST /devices/:id/revoke` → `DeviceRepo.revoke` plus token deletion;
-   the next request of that device is refused (`401 unauthorized`).
+   the next request of that device is refused (`401 unauthorized`), and an open `GET /events`
+   or `GET /sessions/:id/events` stream of that device ends on its next wake: `sseLoop` runs
+   the stream's `stillAllowed` check (`deviceStillActive` in `src/sse.ts`, one device-row read)
+   before every flush, so nothing published after the revocation reaches the device.
 
 ### Scopes
 
@@ -121,7 +127,7 @@ biometric API succeeded for that action. Admin callers hold every scope and do n
 | `GET /projects/:id/tasks?status=&limit=&offset=`, `GET /tasks/:id`, `POST /tasks/:id/transition { version, to, reason }` | workflow graph and version check from `TaskRepo.transition` |
 | `GET /inbox?humanId=|agentId=&unreadOnly=1`, `GET /messages/:id`, `POST /messages`, `POST /messages/:id/receipt { state: delivered|read|acted }` | receipts are monotonic, first wins, and come only from the addressee (the human, or the owner of the agent addressed): the sender's device may read its message but never acknowledge it, so a `requires_ack` handoff cannot be self-acknowledged |
 | `GET /requests?humanId=&projectId=`, `GET /requests/:id`, `POST /requests/:id/answer { version, answer }` | 409 on a stale version; a device reads and answers only requests addressed to its human; a request with no human (`human_id` null) belongs to the runtime (admin) and is 403 for devices. Spec J ("every human decision is logged with who, what, when, from which device"): `answerRequestAs` writes the same decision-log entry the daemon's answer route writes (`DecisionLog.recordAnswer` from `@forerunner/runtime/wiring/state-ports`), so the outbox's `request.answer` and the review approve / reject path get it too: an answered request of kind `decision` with a project becomes a `decision` row (`question` the request's `why`, `chosen` the answer, `decided_by` and `author_human` the device's human or `runtime`, `created_at` the time), written in one store transaction with the answer (`ctx.store.transaction`), so a failed decision write leaves the request open at its version and the client's retry succeeds instead of meeting a 409 on an answered row with no decision whose rationale names the source and the request (`decisionRationale`: `request <id> answered from device <id> (<kind>) through the state service`, or `from the runtime (install <X-Forerunner-Install>)`), since the row has no device column; a different answer to the same question supersedes the older row, the same answer adds nothing; approvals, credentials and info requests write nothing; `decision.changed` goes on the change feed with the `requestId` |
-| `GET /projects/:id/decisions?all=1`, `POST /projects/:id/decisions { question, options, chosen, rationale, supersedes? }` | |
+| `GET /projects/:id/decisions?all=1`, `POST /projects/:id/decisions { question, options, chosen, rationale, supersedes? }` | `supersedes` must name a decision of the same project: another project's id is `404 not_found` here and `400 validation` in `DecisionRepo.supersede` (the second line), so no caller retires a decision of a project through another project's route |
 | `GET /projects/:id/queue`, `POST /projects/:id/queue { kind, text, priority, transcript? }` | notes, tasks, ideas for the next session |
 | `GET /projects/:id/uploads`, `POST /projects/:id/uploads` (multipart `file`, optional `kind`) | `data_asset` row; file under `<data>/uploads/<project>/<asset id>-<safe name>`; metadata only in responses |
 | `POST /remote/commands { target: pc|cloud, targetDeviceId?, command: start|pause|stop|kill, params }`, `GET /remote/commands`, `GET /remote/commands/:id` | the phone's view of its commands; a device's POST whose `params.clientId` it sent before answers 200 with the first row and creates nothing, a different body under that id is 409 ("Remote control" below) |
@@ -131,6 +137,7 @@ biometric API succeeded for that action. Admin callers hold every scope and do n
 | `GET /sessions/:id/events?afterSeq=` | JSON page, or SSE with `Accept: text/event-stream` (`session.event`, `session.changed`, heartbeat; `Last-Event-ID` = seq) |
 | `GET /events` | SSE change feed, see Realtime |
 | `GET /costs?projectId=&humanId=&from=&to=` | `CostView`; devices only for their own human |
+| `GET /audit/export?agentId=&sessionId=&from=&to=&format=jsonl\|csv&humanId=` | spec S.9, ADR 0050: the audit log as a file download, streamed in pages of 500 through the daemon's export module (`@forerunner/runtime/daemon/audit-export`; `runtime.md`, "Audit log export"), JSON lines or RFC 4180 CSV with the summaries as stored; a device gets the rows naming its human or one of its human's agents (never the install-level rows that name nobody), another human's agent or an unknown one is 404 `not_found`, another human's `humanId` is 403; an admin reads the whole log, or one human's rows with `humanId`; a bad format, timestamp or inverted window is 400 before anything streams; `Content-Disposition` names the file after the clock |
 | `GET /reviews?taskId=|projectId=`, `GET /reviews/:id` | reviews with findings, task title and PR URL |
 | `POST /reviews/:id/comment { body, fromAgentId? }` | message to the task's owner or claimant from the human's principal agent |
 | `POST /reviews/:id/approve|reject { body?, requestVersion? }` | decision message (requires ack) plus the answer to the task's open approval request |
@@ -148,7 +155,12 @@ buffer), then pushes `<table>.changed` events (`message`, `human_request`, `task
 `project`, `session`, `remote_command`, `queue_item`, `decision`, `review`, `finding`,
 `device`) and `session.event`, each `{ seq, type, at, humanId, projectId, sessionId, payload
 { id, version, ... }, origin }`. A device sees events whose `humanId` is its human or null
-(project-wide); admins see everything. Heartbeat every 15 s.
+(project-wide); admins see everything. Heartbeat every 15 s. `session.changed` and
+`session.event` carry the owner of the session's agent as `humanId` (`ChangePoller.describe`
+resolves it through the session row and caches it per session), so one human's devices never
+see the session ids, agent ids, statuses or event names of another human's sessions, as
+`GET /sessions/:id` already refuses them (one human's working notes). A device stream ends
+once its device is revoked (see the pairing flow, step 4).
 
 Three sources feed the bus: (1) the service's own writes (`announce()` in routes); (2)
 `PostgresNotifier`: every local event is `pg_notify`'d on `forerunner_changes[_<schema>]`
@@ -234,7 +246,11 @@ separate, board-shaped mirror; the two are configured independently (ADR 0024).
   commands in an `Outbox` (`src/outbox.ts`). On reconnect `flushOutbox` posts batches to
   `POST /sync/outbox`; `clientId`s are remembered for a week (`idempotency.json`) so a retry
   after a lost response applies nothing twice; rejected actions (4xx) are dropped by the
-  client, transport failures keep the queue. Its claims lapse after 30 minutes
+  client, transport failures keep the queue. The store is bounded: at most
+  `IDEMPOTENCY_MAX_PER_KEY` (5,000) records per device or admin install and
+  `IDEMPOTENCY_MAX_RECORDS` (50,000) in all, the oldest dropped first, so a device sending
+  fresh ids at its rate limit cannot grow the file without bound (a retry older than that
+  horizon is applied again, which the routes' own checks keep harmless). Its claims lapse after 30 minutes
   (`TaskRepo.expireClaims`), so nothing on the other PC waits for it. The returning install
   reads the inbox and acknowledges `requires_ack` handoffs.
 - The phone: the same contract with a keystore-backed outbox.
@@ -306,7 +322,9 @@ Environment:
 | `realtime.test.ts` | `ChangeBus` buffer / resume / dedupe / filter, poller `onTick`; over a real server with `fetch` and a `ReadableStream` reader: event after a write, per-human filtering, polling fallback for direct store writes, `Last-Event-ID` resume, `resync` when the id fell out of a one-entry buffer, heartbeat on the simulated clock, session log stream with `afterSeq`, 401, public limiter keyed by the socket over a real server |
 | `mirror.test.ts` | rendering, idempotent push, label and state updates, comment sync back (quoted, once, marker ignored), close sync back (done when allowed, cancelled otherwise, ignored with open findings), reopen on GitHub is undone; `MirrorScheduler` on the simulated clock (active projects only, unchanged second pass, stop), a failing project reported without stopping the others |
 | `outbox.test.ts` | `flushOutbox` ordering, rejection, transport failure; `IdempotencyStore` persistence, TTL and `run()` under overlapping calls; `/sync/outbox` batch, duplicates, two batches in flight with one clientId apply once, scope per action, end to end |
+| `security-state-api.test.ts` | the security review's attacks, each from a real input: a replayed mutation under another base64 spelling of the same signature (refused), a signature over another body / path / method, skew, pairing and token misuse, ownership on every route (another human's inbox, requests, costs, sessions; a decision of another project cannot be superseded through this project's route), revocation (tokens gone, the key cannot pair again, an open change feed ends instead of streaming on), the change feed never carries another human's private events (messages, requests, remote commands, `session.event` / `session.changed` of another human's agent; `Last-Event-ID` resume filtered the same way), input bounds (body size, batch size, the idempotency store capped per device), per-device rate limits, the remote command flow |
 | `main.test.ts` | config defaults and validation, admin token by env or reference, `startService` boot / health / stop, refuses a newer schema; mirror wiring from `FORERUNNER_MIRROR_*` with the token by reference (`/health`, a pass on the interval against `MemoryGitHost`, `runOnce`, stops with the service), refuses a missing token reference or a malformed repo |
+| `audit-export.test.ts` | spec S.9: a phone's export holds its human's rows and their agents' rows only (JSON lines in time order, the download headers), CSV with the header and the formula guard, filters by agent / session / window (`to` exclusive), another human's agent and an unknown one 404, another human's `humanId` 403 and its own accepted, 401 without a token, the narrowest device (`read` only) may export, bad format / timestamp / window 400, the admin's whole log and one human's rows by `humanId` or `agentId`, 1003 rows streamed through three `list` calls capped at the page size |
 
 `pnpm vitest run --project integration services/state-api/test` with `FORERUNNER_TEST_PG`:
 `state-api.integration.test.ts` runs two service instances on one Postgres schema

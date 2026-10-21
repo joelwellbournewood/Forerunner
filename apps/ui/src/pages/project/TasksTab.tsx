@@ -49,10 +49,13 @@ export function filterTasks(tasks: TaskView[], filter: TaskFilter): TaskView[] {
 export function TasksTab({
   projectId,
   reference,
+  defaultRiskTier,
 }: {
   projectId: string;
   /** Money pair carrying the day's rate for the CHF budget field of the New task dialog. */
   reference?: MoneyLike;
+  /** The project card's default tier for a new task, named on the dialog's default option. */
+  defaultRiskTier?: number;
 }) {
   const client = useClient();
   const tasks = useAsync(
@@ -278,6 +281,7 @@ export function TasksTab({
         onClose={() => setNewOpen(false)}
         projectId={projectId}
         reference={reference}
+        defaultRiskTier={defaultRiskTier}
         onCreated={(task) => tasks.setData((prev) => (prev ? [task, ...prev] : [task]))}
       />
       <TransitionDialog

@@ -179,12 +179,17 @@ through `buildExtract`:
   block-aware text with headings, links (resolved `href`s) and a summary of every form (fields
   with type, name, autocomplete, label, placeholder; buttons; action and method);
 - hidden text is collected separately over the whole document, top-most hidden subtree first,
-  with its reason: `display_none`, `visibility_hidden`, `opacity_zero`, `zero_size`,
-  `off_screen` (far negative offsets, text-indent, transforms, outside the document box),
-  `clipped`, `same_colour` (text colour equal to the effective background, or transparent),
-  `font_size_zero` (at most 1px), `aria_hidden`, `hidden_attribute`, `html_comment`,
-  `not_rendered` (`noscript`, `template`). It is never merged into the visible text; links
-  inside hidden subtrees are dropped;
+  with its reason: `display_none`, `visibility_hidden`, `opacity_zero` (opacity under 0.1),
+  `zero_size` (a dimension of 0, or under 2px with overflow hidden), `off_screen` (far
+  negative offsets, text-indent, transforms, outside the document box), `clipped`,
+  `same_colour` (text colour within an RGB distance of 24 of the effective background, or
+  nearly transparent), `font_size_zero` (under 4px), `aria_hidden`, `hidden_attribute`,
+  `html_comment`, `not_rendered` (`noscript`, `template`). Near-invisible text is hidden
+  text: the thresholds (`HIDDEN_OPACITY_BELOW`, `HIDDEN_FONT_PX_BELOW`, `HIDDEN_BOX_PX_BELOW`,
+  `HIDDEN_COLOUR_DISTANCE_MAX` in `extract.ts`) are the same numbers in the static path and
+  the in-page script, so `#fefefe` on white, `opacity: 0.01`, a 1px overflow-hidden box or a
+  2px font never reach the visible text without the "hidden by the page author" label. It is
+  never merged into the visible text; links inside hidden subtrees are dropped;
 - the visible rendering and the hidden rendering are each scanned with `scanForInjection` and
   each wrapped with `wrapUntrusted("web_page", origin)`, the hidden part with the origin
   "… (hidden text, not visible to a human)". `suspicious` is true when either scan flagged
@@ -212,9 +217,9 @@ where the route policy applies and the file is saved from Playwright's download 
 
 | Tool | Class | Risk | Notes |
 | --- | --- | --- | --- |
-| `browser_navigate` | read | low | `domainFields: ["url"]`; starts the run's session on first use |
+| `browser_navigate` | read | low | `domainFields: ["url"]`; starts the run's session on first use; output `untrusted` (the page's title and the blocked hosts are page data, wrapped and scanned by the hooks; the static reader does the same) |
 | `browser_read` | read | low | output `untrusted: { source: "web_page", origin }`, artifacts `suspicious`, `hidden`, `truncated` |
-| `browser_click` | routine_reversible | medium | guards `purchase`, `accept_terms`, form submission kinds |
+| `browser_click` | routine_reversible | medium | guards `purchase`, `accept_terms`, form submission kinds; output `untrusted` (the new page's title) |
 | `browser_type` | routine_reversible | medium | guards `credential`, `payment`; `submit: true` presses Enter and adds the form's kinds |
 | `browser_fill_secret` | credential | high | secret by reference; value never in result, logs or audit |
 | `browser_screenshot` | read | low | path in result and audit |
@@ -319,6 +324,7 @@ the manager and the presence switch; `rt.capabilities.refresh()` re-reads everyt
 | `test/browser-policy.test.ts` | unit | host-only patterns (`domainCovered` semantics, scheme/port/path rejected), every URL decided as the runtime's `domainAllowed`/`domainCovered` decide it, block wins, empty allow list, `assert` errors, narrowing, redirect helpers (target resolution, method keeping, hop headers, stub escaping) |
 | `test/browser-profile.test.ts` | unit | profile layout per agent, executable override, exactly one `--disable-features` carrying Playwright's list and ours, drift check against the installed Playwright (skips visibly when the bundle cannot be read) |
 | `test/browser-tools.test.ts` | unit | the eight tools, classes, risks, schemas; refusal before navigation; unavailable browser as `ForerunnerError`; concurrent first calls for one run share one opening (one binding, one launch); behind `EnforcementHooks`: token domains deny before any browser exists, a hostname token domain passes every port of that host and no other host, secret references resolved and asked for `browser_fill_secret` |
+| `test/security-browser.test.ts` | unit | the security review of the browser (spec L.2, S.30, S.31; ADR 0014, ADR 0047) without Chromium: the static reader with the same `SitePolicy`, tool specs and extractor as the session, and the real `EnforcementHooks`; a redirect to a host outside the policy refused before the hop and audited, a redirect loop ending at the hop cap, user-info, port, case and path tricks, non-network schemes, a binding without domains; visible and hidden injections flagged apart and unable to close the data envelope, a hostile page title reaching the model only inside the envelope, near-invisible text listed as hidden; `browser_fill_secret` as a credential action (autopilot asks, the value nowhere), the same fill on another page asking the human again (the hooks keep no always-human approval), an ungranted secret refused before the vault is read |
 | `packages/runtime/test/capabilities-wiring.test.ts` | unit | the daemon's wiring (ADR 0047): the tools absent until the `browser` capability is approved in the inbox and gone again after a toggle off, the catalog entry naming the eight tools, the project's `settings.browser.allowedDomains` into the session grant and the registry entry's run token, a session through the daemon in static mode reading the page inside the allowlist (the reader's own audit rows beside the hooks'), the collector outside the token refused by the hooks before any request with its `tool_denied` event, the hidden instruction flagged once per run and tool as an `injection.flagged` row and an urgent notification carrying the rules and never the passage |
 | `test/browser.integration.test.ts` | integration | against two `node:http` servers on the loopback interface told apart by hostname (`127.0.0.1` allowed, `localhost` not): profile location, headless, AI user agent; navigation outside the allowlist refused before any request and audited; subresources, document redirects, redirect chains and subresource redirects to the other host aborted with no request arriving, allowed ones followed; a page forging the redirect stub attribute (towards the blocked host and towards an allowed page) is read as content and moves nothing, a real redirect still follows; WebSockets refused (1008) or connected; visible, hidden and injected content; password and one-time-code typing need approval at autonomy 4; vault secret typed through a POST that redirects, cookie kept, value nowhere; a page echoing the typed secret hands back `[REDACTED]`; `browser_fill_secret` behind the hooks is one card for the fill and still asks for a payment field; a purchase approval is spent by its order, the same order asks again and goes out only with a fresh "yes"; purchases and payment fields need approval at 4, personal data and terms only below 4; screenshot and downloads inside the sandbox and audited; concurrent first calls share one session; live revocation; the kill switch |
 
@@ -367,6 +373,9 @@ nothing or the launch fails. Chromium is expected to be installed where Playwrig
 - `extractFromHtml` reads inline styles and simple stylesheet rules only; anything a real
   layout decides (overflow of a parent, `@media`, cascaded classes with combinators) is seen by
   the in-page path only. The injection suite therefore runs the same fixtures through both.
+- The hidden-text thresholds are the edge of a heuristic: a 4px font, `opacity: 0.1` or
+  `#e0e0e0` on white count as visible. The injection scanner runs over the visible text too,
+  so such a passage is still flagged, only without the hidden label.
 - Chromium only. Headed mode exists for a human watching, never for the agent's own use.
 - Downloads by URL use the context's request API, not the page: cookies are shared, but a
   download that needs page state (a POST, JavaScript) must go through a click.
