@@ -31,7 +31,8 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   not complete before the stop.
 - Android: the hosted runner now boots the emulator (52 s) after the disk clean-up and builds,
   installs and launches the debug APK (run 6); the WebView attach failed on a CommonJS import
-  shape, fixed in 6542a3f; run 7 decides the emulator rows.
+  shape (fixed in 6542a3f) and then, in run 7, on the WebView refusing Playwright's
+  browser-level CDP connection; the raw-CDP attach is the next step ("Where to pick up").
 - Requirements 172 done, 48 in progress, 8 todo. Progress report 6 posted to the contact issue.
 
 ### 2026-10-20 (requirements close-out, security review, runtime follow-ups; build stopped for budget)
@@ -71,9 +72,14 @@ In this order, each item a wave of its own with the snapshot procedure in `AGENT
 2. Close the requirement rows marked "missing in code" in `BLOCKERS.md` (A.2, A.4, B.6 is done,
    D.20, G.5, G.6, H.7, J.1, J.7, J.9, L.6, O.1, R.6, S.13, S.15/S.29) and then the "partly
    built" rows; each needs code, a test and its maintainer doc.
-3. Android: read run 7 of `android.yml`; when the emulator tests pass, record the phase 5
-   emulator row and scenario 9's Android run, then re-run every gate on the final build and
-   fill the phase 8 "re-run" row.
+3. Android: the hosted emulator boots, installs and launches the app (runs 6 and 7); the
+   Android WebView refuses Playwright's `connectOverCDP` (`Browser context management is not
+   supported`, run 7). Replace the attach step of `apps/mobile/e2e/run.mjs` with a raw CDP
+   client on the page target (`GET /json/list` on the forwarded devtools port, then
+   `Runtime.evaluate` and `Input.dispatchMouseEvent`/`insertText` over its WebSocket; Node 22's
+   global `WebSocket` suffices) and port the UI steps to it; then dispatch `android.yml`, record
+   the phase 5 emulator row and scenario 9's Android run, re-run every gate on the final build
+   and fill the phase 8 "re-run" row.
 4. Severity triage of the Known issues sections (V.4), then the release: tag `v1.0.0`
    (`release.yml` builds Windows, Linux and Android artefacts, writes the changelog section and
    signs the update manifest with `UPDATE_SIGNING_KEY`).
