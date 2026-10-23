@@ -31,6 +31,13 @@ export interface CloudflareApprovalRequest extends ApprovalRequest {
   env?: DeployEnv;
   /** True for the always-human money class: the answer is spent by one action. */
   oneShot: boolean;
+  /**
+   * What a card this port files shows as the input: the hooks' display copy, before secret
+   * references were resolved. `input` is what the tool executes with (secret values
+   * resolved), so it is only shown when no display copy came with the call (a direct caller,
+   * which resolved nothing).
+   */
+  displayInput?: unknown;
 }
 
 export type CloudflareApprovalAnswer = ApprovalOutcome;
@@ -151,7 +158,8 @@ export class HumanRequestCloudflareApprovals implements CloudflareApprovalPort {
         env: req.env ?? null,
         actionClass: req.actionClass,
         oneShot: req.oneShot,
-        input: JSON.parse(JSON.stringify(displayForm(req.input) ?? null)),
+        // Never the resolved input: it carries the values of the call's `secret:` references.
+        input: JSON.parse(JSON.stringify(displayForm(req.displayInput ?? req.input) ?? null)),
       },
       author_agent: req.agentId,
     });

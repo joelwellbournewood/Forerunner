@@ -367,6 +367,7 @@ export class LoopAgentDriver {
             signal: controller.signal,
             cwd: req.cwd,
             approvalKey: decision.approvalKey,
+            approvalInput: decision.approvalInput,
           });
           const post = await this.deps.hooks.afterToolCall(ctx, spec, call.input, execResult);
           if (post.report?.suspicious) {

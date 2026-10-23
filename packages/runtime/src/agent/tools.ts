@@ -26,6 +26,12 @@ export interface ToolExecutionContext {
    * passes it on, so it matches the hooks' row instead of hashing the resolved input.
    */
   approvalKey?: string;
+  /**
+   * The hooks' display copy of this call's input (`ToolCallDecision.approvalInput`: secret
+   * references unresolved). A tool that files an approval card itself shows this, never the
+   * input it executes with, which carries resolved secret values.
+   */
+  approvalInput?: unknown;
 }
 
 export interface ToolResult {

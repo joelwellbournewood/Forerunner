@@ -168,7 +168,15 @@ input carries a `secret:` reference (a `secret_text` binding) therefore finds th
 rather than hashing the resolved value and asking a second time (review of 2026-10-23); without a
 key (a direct caller) the lookup hashes `input` as before. `change_card.input` is the card's
 copy with long strings cut, so a Worker whose script body runs past 2000 characters still
-matches (`displayForm` serves this module's own card only).
+matches (`displayForm` serves this module's own card only). The card this module files itself
+(always for the one-shot money class: Durable Object migrations, Logpush, a usage model, a plan
+change) shows the hooks' display copy of the input, never the input the tool executes with:
+`ToolCallDecision.approvalInput` (parsed, `secret:` references unresolved, long strings cut) ->
+`ToolExecutionContext.approvalInput` -> `DeployActor.approvalInput` -> the request's
+`displayInput`, used for `change_card.input`; before this (review of w5-review-findings) a
+deploy with a `secret_text` binding by reference put the secret's value on the inbox card. A
+direct caller without the hooks passes no display copy and resolved nothing, so its `input` is
+shown.
 `FakeCloudflareApprovals(answer)` for tests; `cloudflareApprovalsFromRuntime(port)` adapts the
 runtime's `ApprovalPort`.
 
@@ -306,7 +314,9 @@ fake API on 127.0.0.1, `sqlite::memory:` store, `SimulatedClock`, memory vault):
   (`approval_required: pending`) and raised to the human as an urgent notification; a staging
   deploy whose `secret_text` binding carries a `secret:` reference, filed through the real
   `rt.hooks.beforeToolCall` and answered, is `approved` by `HumanRequestCloudflareApprovals`
-  with the decision's `approvalKey` and runs through the tool with no second row filed; at
+  with the decision's `approvalKey` and runs through the tool with no second row filed; the
+  same deploy with `logpush: true` files the port's own one-shot money row, whose card shows the
+  `secret:` reference and no row carries the value; at
   autonomy 3 the hooks pass the staging class and the deployer refuses production in code with
   nothing written and a denied `cloudflare.deploy_worker` row; a `cloudflare_plan` at autonomy
   2 passes the hooks and runs against the fake API with reads only; the panel routes answer 401
