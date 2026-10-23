@@ -433,3 +433,52 @@ passed (`hotkey.test.tsx` 19, `extensions.test.tsx` 8); `pnpm --filter
 1 todo; `cargo fmt --check` clean, `cargo clippy --all-targets -- -D warnings` clean,
 `cargo test` 90 passed; `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok;
 `node scripts/check-paths.mjs` ok.
+
+## Rebase (2026-10-23, onto `origin/ccr-4d8a843c-1k9syk` at 4ff4fb1)
+
+The branch (16 commits from the merge base cac6fee, ending at f8ec45d) was rebased commit by
+commit onto the release head 4ff4fb1 (which had merged w2-l6-speak, w3-c5-specialist-approval,
+w3-d16-slider, w3-e4-recheck and w5-android-high-risk). Hashes in the sections above are
+pre-rebase hashes; the rebased commits carry the same subjects. Conflicts and how they were
+resolved:
+
+- `apps/ui/test/fake-daemon.ts` (commit "ui: the hotkey opens the conversation ..."): the
+  base's `speedQuality` state (D.16 slider) and the branch's `voiceSessions` / `nextVoiceLine`
+  state are all kept, in the `FakeDaemonState` interface and in the initial state. The single
+  `GET /voice/status` route and `initialVoiceStatus` from the previous rebase are unchanged;
+  the base's `/__test/reset` (now resetting `speedQuality` too) keeps calling
+  `initialVoiceStatus(options)`.
+- `docs/maintainers/apps.md` (commit "docs: the global hotkey in apps.md and ADR 0064"), UI
+  Known issues: the base rewrote the `Read aloud` bullet (L.6: the daemon's voice provider,
+  `lib/speech.ts` playing the frames, Web Speech only on 503); the branch side still carried
+  the old `Read aloud` bullet. The base's bullet is kept, the old one dropped (the base
+  superseded it), and the branch's two bullets (the panel shows a voice turn's reply as text;
+  the ScriptProcessorNode capture) are kept after it. The panel bullet now says the PCM player
+  `Read aloud` uses (`lib/speech.ts`) could play the voice session's frames, instead of "needs
+  a PCM player in the webview", which the base now has.
+- `docs/decisions/README.md` (commits "status: O.1 done ..." and "docs: ADR 0064's index row
+  names the microphone decision"): the base's new 0063 row (Read aloud) and the branch's 0064
+  row both kept, in number order; the 0064 row carries the review's wording (the microphone
+  decision).
+- `docs/status/PROGRESS.md` (commit "status: O.1 done ..."): the base's milestone 8 row and its
+  new log entries (w3-d16-slider, w3-e4-recheck, w5-android-high-risk) kept, the branch's O.1
+  entry added above them; the counts in that intermediate commit were recomputed from the
+  base's rows (188 done, 35 in progress, 5 todo on the base, so 189 / 34 / 5 with O.1 done).
+  `docs/requirements.md` and `docs/status/BLOCKERS.md` auto-merged there.
+- `docs/status/PROGRESS.md` (commit "docs: the microphone answer ...; status rows back to the
+  base"): that commit returns the status files to the base's text, so `docs/requirements.md`,
+  `docs/status/BLOCKERS.md` and `docs/status/PROGRESS.md` were taken from 4ff4fb1; the branch's
+  net change to them is none, and the row updates are in the stage report for the orchestrator.
+
+The base changed no file under `apps/desktop/src-tauri`, so the Rust side applied cleanly; the
+base's new `client.ts` members (`speakProject`, `speakSession`, `speak`, `cancelSpeak`) and
+`sse.ts` `speak.started` event do not overlap the branch's voice methods.
+
+After the rebase (2026-10-23, Linux): `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59
+warnings, none in files of this branch); `pnpm --filter @forerunner/ui test` 49 files, 341
+tests passed (`hotkey.test.tsx` 19, `extensions.test.tsx` 8, `settings-slider.test.tsx` 3);
+`pnpm --filter @forerunner/approvals-web test` 10 files, 58 passed;
+`scripts/closeout-docs.test.ts` 19 passed, 1 todo; `cargo fmt --check` clean,
+`cargo clippy --all-targets -- -D warnings` clean, `cargo test` 90 passed (the count in
+apps.md is unchanged); `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok;
+`node scripts/check-paths.mjs` ok.
