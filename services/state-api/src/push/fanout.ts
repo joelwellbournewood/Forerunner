@@ -55,6 +55,8 @@ export interface PushCounters {
   failed: number;
   held: number;
   invalidated: number;
+  /** Held notices dropped at the end of the window because their item was answered or read. */
+  expired: number;
 }
 
 export interface PushStatusView {
@@ -107,7 +109,7 @@ export class PushFanout {
   private unsubscribe: (() => void) | undefined;
   private lastError: string | null = null;
   private flushing: Promise<number> | undefined;
-  readonly counters: PushCounters = { sent: 0, failed: 0, held: 0, invalidated: 0 };
+  readonly counters: PushCounters = { sent: 0, failed: 0, held: 0, invalidated: 0, expired: 0 };
 
   constructor(private readonly opts: PushFanoutOptions) {}
 
@@ -163,7 +165,10 @@ export class PushFanout {
     }
   }
 
-  /** Send the held notices whose human is out of quiet hours now; returns how many went out. */
+  /**
+   * Send the held notices whose human is out of quiet hours now, re-reading each item first
+   * (an answered request or a read message is dropped); returns how many went out.
+   */
   flushHeld(): Promise<number> {
     if (this.flushing) return this.flushing;
     this.flushing = this.runFlush().finally(() => {
@@ -186,8 +191,30 @@ export class PushFanout {
       if (quiet) i += 1;
       else due.push(...this.held.splice(i, 1));
     }
-    for (const n of due) await this.deliver(n);
-    return due.length;
+    let sent = 0;
+    for (const n of due) {
+      if (await this.stillDue(n)) {
+        await this.deliver(n);
+        sent += 1;
+      } else {
+        // Answered, withdrawn or read while it was held: not news any more.
+        this.counters.expired += 1;
+        logger.debug("held push notice dropped (no longer due)", { kind: n.kind });
+      }
+    }
+    return sent;
+  }
+
+  /** A held notice is still worth sending: the request is still open, the message unread. */
+  private async stillDue(n: PushNotice): Promise<boolean> {
+    if (n.kind === "approval") {
+      return (await this.opts.store.humanRequest.get(n.refId))?.status === "open";
+    }
+    if (n.kind === "message") {
+      const m = await this.opts.store.message.get(n.refId);
+      return m !== undefined && m.read_at === null;
+    }
+    return true;
   }
 
   private hold(notice: PushNotice): void {

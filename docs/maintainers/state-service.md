@@ -129,7 +129,7 @@ biometric API succeeded for that action. Admin callers hold every scope and do n
 
 | Route | Notes |
 | --- | --- |
-| `GET /health` | public: `version`, `schema { code, applied, state: current/pending/ahead }`, `compatibleSchemaVersion`, `time`, realtime and mirror status, `push { mode: fcm\|polling, enabled, reason, projectId, holding, counters { sent, failed, held, invalidated }, lastError }` (see Push) |
+| `GET /health` | public: `version`, `schema { code, applied, state: current/pending/ahead }`, `compatibleSchemaVersion`, `time`, realtime and mirror status, `push { mode: fcm\|polling, enabled, reason, projectId, holding, counters { sent, failed, held, invalidated, expired }, lastError }` (see Push) |
 | `GET /me` | principal, scopes, expiry |
 | `GET /devices?humanId=`, `GET /devices/:id`, `POST /devices/:id/revoke` | devices see their own human's; revoke is admin; views say `pushRegistered` |
 | `PUT /devices/:id/push-token { pushToken: string \| null }` | signed; the device itself or admin (another device 403, unknown 404, revoked 409); stores or clears the FCM token, `push.token_set` audit row, `device.changed` |
@@ -205,7 +205,8 @@ Each notice goes to every non-revoked device of the human with a `push_token`
 `resolvePrefs` and decided by `isQuietAt` from `@forerunner/runtime/notifications/prefs`, the
 same rule the desktop notifier uses): urgent kinds go through; the others are held in memory
 (at most `MAX_HELD`, 1,000; the oldest dropped with a warning) and sent by `flushHeld`, which
-runs on every poller tick, once the human's window is over. Payloads are data-minimal: a
+runs on every poller tick, once the human's window is over; each held item is re-read first,
+and a request answered or a message read meanwhile is dropped (counted as `expired`). Payloads are data-minimal: a
 generic title and body, and `data { kind, id, link, projectId? }` for the app's deep link;
 request reasons, message text and project names never go through Google. Urgent notices are
 sent with Android priority `HIGH`, the rest `NORMAL`.

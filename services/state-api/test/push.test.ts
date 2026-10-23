@@ -446,6 +446,45 @@ describe("push fan-out from the state service (spec R.6)", () => {
     expect(health.push.holding).toBe(0);
   });
 
+  it("a held notice whose request was answered or whose message was read meanwhile is dropped at the end of the window", async () => {
+    await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
+    await h.store.human.patch(h.seed.ada.id, {
+      notify_prefs: { quiet_hours: { start: "08:00", end: "10:00" }, timezone: "UTC" },
+    });
+    const answered = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      kind: "decision",
+      why: "pick",
+      options: ["a", "b"],
+    });
+    const stillOpen = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      kind: "decision",
+      why: "pick again",
+      options: ["a", "b"],
+    });
+    const read = await h.store.message.send({
+      from_agent_id: h.seed.bobAgent.id,
+      to_agent_id: h.seed.alice.id,
+      type: "question",
+      body: "read on the desktop at night",
+    });
+    await h.tick();
+    expect(h.api.push.status().holding).toBe(3);
+    // Answered on the desktop and read inside the window.
+    await h.store.humanRequest.answer(answered.id, answered.version, "a" as never, h.seed.ada.id);
+    await h.store.message.markRead(read.id);
+    await h.tick();
+    await h.clock.advance(60 * 60 * 1000);
+    await h.tick();
+    expect(h.google.sent.map((s) => s.message.data?.id)).toEqual([stillOpen.id]);
+    const health = await json<{ push: { holding: number; counters: { expired: number } } }>(
+      await h.anonymous.get("/health"),
+    );
+    expect(health.push.holding).toBe(0);
+    expect(health.push.counters.expired).toBe(2);
+  });
+
   it("an UNREGISTERED token is cleared from the device with an audit row; a refreshed token is kept", async () => {
     const phone = await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
     h.google.script(PHONE_TOKEN, [UNREGISTERED]);

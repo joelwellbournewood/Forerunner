@@ -50,7 +50,8 @@ configured.
    `human.notify_prefs` with `resolvePrefs` and asks `isQuietAt`
    (`@forerunner/runtime/notifications/prefs`), with ADR 0017's urgency per kind
    (`KIND_URGENCY`): urgent kinds go through; normal and info notices are held in memory and
-   sent on the first poller tick after the window ends. There is no push digest.
+   sent on the first poller tick after the window ends, unless the item was answered or read
+   meanwhile (re-read at the flush). There is no push digest.
 5. **Retries and dead tokens.** 5xx, 429 and network errors are retried up to four attempts
    with doubling backoff from 0.5 s (capped at 30 s, `Retry-After` honoured); other 4xx fail
    at once. A 404 or the `UNREGISTERED` error code clears the device's `push_token` (unless
