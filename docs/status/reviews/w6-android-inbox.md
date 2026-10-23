@@ -150,3 +150,78 @@ served (`GET /inbox?humanId=human_j ... ok`) in the failing runs too.
   Listed in apps.md Known issues and in the BLOCKERS emulator row.
 - **The stand-in is not in the repository.** It needs a downloaded Chromium 83 snapshot and
   serves on port 80; it lives in the session outputs with this report.
+
+## Review
+
+Independent adversarial review of `wave/w6-android-inbox` at 684ccfd (built on
+`origin/ccr-4d8a843c-1k9syk` at 4ff4fb1; the base is now aa497bf).
+
+Verdict: **revise**. Score: **74**/100.
+
+The diagnosis holds up: it is not an inbox regression. The click on the nav misses when the
+layout moves. The fix in the runner is right and the new tests prove the race. The guard
+itself still has a hole on the path it was written for (events that arrive late), and one
+outcome is reported wrongly.
+
+### Requirements checked
+
+- [x] Every suspect of the brief is checked, in order. (1) Unlock card: `useAutoUnlock`
+  (`apps/ui/src/components/UnlockCard.tsx:235-260`) skips any request without a challenge,
+  `InboxScreen` filters nothing on unlock state, and the phone makes no unlock call to the
+  state service. (2) `git diff 82a6295 4ff4fb1 -- apps/ui/src/mobile/store.tsx` leaves
+  pairing, `refresh`, `loadInbox` and the stream alone. (3) The `m-request` locator is
+  unchanged. (4) Nothing in `apps/ui/src` calls `PUT /devices/:id/push-token`. Agreed.
+- [x] The stylesheet premise is checked on its own: `vite build` of apps/ui puts every
+  utility, `.fixed{position:fixed}` included, inside `@layer utilities`. Chrome versions
+  before 99 drop `@layer` blocks, so `m-nav` (`MobileApp.tsx`, `className="fixed ..."`) is
+  in the flow after `<main>` on the API 30 WebView.
+- [x] A test fails on the regression and passes with the fix. With the base `cdp.mjs`
+  swapped in (plus stubs for the two new exports), the three click tests and the
+  describePage test fail ("expected [ 'Projects' ] to deeply equal [ 'Inbox' ]"). With the
+  branch they pass: 1 file, 30 tests.
+- [x] The runner's new waits match the app. `m-project-card` is on Home
+  (`HomeScreen.tsx:47`) and the fake service has projects. The headings are "Inbox"
+  (exact), "Remote control" and "Change log" (`InboxScreen.tsx:43`, `RemoteScreen.tsx:211`,
+  `ChangesScreen.tsx:32`). `getByRole` supports `exact` (`cdp.mjs:791`).
+- [x] apps.md (mobile section), e2e README, ADR 0087 with its index row, the BLOCKERS
+  emulator row and PROGRESS are all updated. requirements.md is unchanged, which is right:
+  R.1 stays in progress until an emulator run.
+- [x] No fake-service endpoint is missing: the client makes no new call on pairing.
+- [x] Security and privacy: the guard runs without eval (CSP). `page:` lines print the
+  screen text of the fake service's data on CI only. The secret scan is clean.
+- [x] Conflicts with the base: the base moved 4ff4fb1 → aa497bf (D.4 settings). A trial
+  merge in a throwaway worktree conflicts only in the `docs/status/PROGRESS.md` log, where
+  both new entries go on top: textual, keep both. There is no code overlap and no ADR
+  number clash (the base's highest ADR is 0086).
+- [ ] The guard's guarantee ("misplaced events never reach the page", "a late event could
+  otherwise click twice") is broken on the late-event path: finding 1.
+- [ ] A click that navigates the document is reported as lost: finding 2.
+
+### Findings
+
+1. **medium**: `apps/mobile/e2e/cdp.mjs:1004` (`#clickOutcome`). The settle condition is
+   `seen.missed !== null || click seen || !armed`, so the guard is disarmed at the **first**
+   misplaced event. The code's own comment says the release's `mouseup`/`click` "may still be
+   queued behind the CDP answer". If they are, they arrive after the disarm, reach the page
+   unguarded at the old point (Home), and then the retry's own late click lands as well.
+   Verified with a throwaway test in `cdp.test.ts`: the nav moves on the press, and the
+   release events are dispatched 150 ms after the CDP answer (`setTimeout` in the page).
+   Result: `expected [ 'Inbox', 'Inbox' ] to deeply equal [ 'Inbox' ]`, a double click,
+   with the misplaced release also unguarded. The test was deleted afterwards. Fix: keep the
+   guard armed until the attempt's `click` has been seen, or the settle time is up.
+2. **low**: `apps/mobile/e2e/cdp.mjs:967` (`Locator.click`). A missing guard (`armed: false`)
+   is reported as `cdp.click_lost`. But the guard lives on the `window` that was measured;
+   it is only gone within the settle second when that document was replaced, which means the
+   click navigated (a plain link or a form that is not intercepted). The click worked, and
+   the driver throws. Verified by reading the code: `seen.armed === false` makes `settled`
+   true, `events` is `[]`, so it throws. A fake that drops the guard on release shows the same.
+3. **low**: `docs/decisions/0087-emulator-click-guard-and-in-flow-nav.md:73`. The ADR says
+   scenario 3's failure on 82a6295 "is in the same class and is covered by the same guard".
+   The cause ADR 0086 suspected is a coordinate-space mismatch below the fold. Every retry
+   would press the same wrong point, so the guard turns that case into a named
+   `cdp.click_missed`; it does not fix it. apps.md says this correctly ("can no longer pass
+   silently"). Verified by reading the ADR against `click()`: the retry measures again with
+   the same `getBoundingClientRect` coordinates.
+4. **low**: `docs/status/reviews/w6-android-inbox.md` (build report). The failure rates
+   (8/20, 4/20, 0/20) come from a Chromium 83 stand-in that lives only in the build
+   session's outputs, so they cannot be checked from the repository.
