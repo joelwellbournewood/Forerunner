@@ -230,6 +230,7 @@ describe("plan approval on the desktop daemon", () => {
     // The follow-up planned under the cap of the session the human approved the plan of.
     expect(follow.budget_cap_usd_micro).toBe(CAP);
     expect((await rt.store.task.mustGet(task.id)).status).toBe("done");
+    await waitFor(async () => (rt.scheduler.isActive(rt.agent.id) ? undefined : true));
   });
 
   it("'approve' said in chat or voice (the conversation agent's command path) starts the plan", async () => {
@@ -266,6 +267,9 @@ describe("plan approval on the desktop daemon", () => {
     await waitFor(async () =>
       (await rt.store.task.mustGet(task.id)).status === "done" ? true : undefined,
     );
+    // The follow-up has ended before the next case starts one (the simulated clock never
+    // ticks the scheduler, so a start queued behind it would wait forever).
+    await waitFor(async () => (rt.scheduler.isActive(rt.agent.id) ? undefined : true));
   });
 
   it("a rejected plan starts nothing and the task stays ready", async () => {
