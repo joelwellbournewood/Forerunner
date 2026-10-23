@@ -85,6 +85,7 @@ Status: accepted | superseded by NNNN
 | 0071 | The specialist approval gate: the pass threshold (10 decided tasks at 90%), the approval eval budget, results recorded in `proposal.json`, a one-line promotion, applied once by its own human |
 | 0075 | CI results and PR comments start sessions: a poller over the git host (no webhook receiver), event keys in a persisted cursor saved before the start (at most once, a per-PR baseline first poll), the agent's own text by its login and a hidden mark, quiet hours defer, the comment quoted as data and flagged, never in the request |
 | 0078 | What you say during a live session: the message kind and where the next task reads it |
+| 0080 | The phone contributes: uploads idempotent by clientId, review verdicts under the biometric rule, push-to-talk relayed to the PC's voice loop |
 | 0082 | Install identity on a shared store: an install names its human; the store's first row is never it |
 | 0083 | Private memory next to a shared state: a local SQLite index routed by scope, and the Postgres adapter's refusal |
 | 0084 | Email routes: a mount that identifies humans without an identity port fails closed per request, and an owner-check refusal is an audited 403 that stands without its row |

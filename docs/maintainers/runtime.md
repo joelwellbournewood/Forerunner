@@ -1907,6 +1907,29 @@ attached the text is the reply, with the reason) and
 the `voice` notification channel's port (`notifications.md`, ADR 0063). Finished utterances
 are kept like stopped voice sessions (8, 10 min) and swept on access.
 
+**The phone's push-to-talk (`src/voice/relay.ts`, spec R.5; [ADR 0080](../decisions/0080-phone-uploads-reviews-and-voice-relay.md)).**
+The phone runs no voice loop. A turn reaches the PC as a remote command whose params are a
+`kind: "voice"` envelope (`VoiceEnvelope` in `src/remote/watcher.ts`): 16-bit little-endian PCM
+in base64 (8 to 48 kHz, 1 or 2 channels, at most `VOICE_RELAY_MAX_MS` = 5 s at 16 kHz,
+`VOICE_RELAY_MAX_PCM_BASE64`, so the envelope fits the state service's 256 KiB JSON body cap)
+or a `transcript` (the typed line, where the phone cannot record), exactly one. The watcher
+hands it to `VoiceRelay.turn` (`RemoteCommandDeps.voice`, wired in `compose.ts` over
+`RuntimeApp.voice`), which runs it through the same `VoiceSessions` as the `/voice` routes:
+a recording as a press, 20 ms frames on the capture timeline (`toFrames`) and a release; a
+typed line as the bridge's text turn. One session per issuing device is held between turns
+(push-to-talk, the turn's project; a different project opens a new one), so a spoken "yes" in
+the next relayed turn answers the card the last one read back; it is stopped after
+`DEFAULT_VOICE_RELAY_IDLE_MS` (5 min) without a turn, checked on the next relay, and on
+`close()`. A turn that does not end within `DEFAULT_VOICE_RELAY_TURN_TIMEOUT_MS` (60 s, on the
+clock) fails with `timeout`. The row's result is `{ kind: "voice", source, said, reply, heard,
+pending, approved, voiceSessionId, turn, audioChunks, totalToFirstAudioMs, clientId,
+issuedBy }` (`reply` = what the PC's TTS spoke, which the phone shows and speaks); a turn the
+loop failed is `failed` with its code; without voice on the PC (`voice: null`) or with a
+malformed envelope the row fails visibly. Once the turn ran (or failed) the watcher replaces
+the envelope's `audio` with `{ dropped: true, sampleRate, channels, bytes, durationMs }`
+through `RemoteCommandRepo.patch`, so no recording stays in the shared store. Replays of the
+same `clientId` are refused like plan and chat envelopes.
+
 **Core loop routes (ADR 0036, all in `DAEMON_ROUTES`).** Reviews tab (spec K.2):
 `GET /projects/:id/reviews` and `GET /tasks/:id/reviews` answer `ReviewsView` (every review
 with its findings, the open finding count, verdict counts, the grade trend oldest first and
@@ -2748,7 +2771,15 @@ stays a card the phone confirms with its biometric through the state service), S
 the watcher), D.3 (the project's ceiling caps the retry ladder). Tests:
 `test/remote-watcher.test.ts`, `test/remote-pause.test.ts`, `test/remote-wiring.test.ts`,
 `test/remote-presence.test.ts`, `test/executor-ceiling.test.ts`, `packages/state/test/suite.ts`
-(the owner filter on both dialects).
+(the owner filter on both dialects). R.5's voice half (ADR 0080): `test/voice-relay.test.ts`
+(the watcher hands a recorded turn to the voice port as audio and a typed line as the
+transcript, writes the PC's reply into the result and drops the audio from the shared row;
+an envelope with both or neither input, or longer than 5 s, fails as malformed and a PC
+without voice fails with `unavailable`; `toFrames` cuts 20 ms frames on the capture
+timeline; `VoiceRelay` over the composed runtime's voice sessions with the fake STT and TTS:
+a recorded turn is transcribed and answered, a typed line reuses the phone's session, a
+spoken "yes" in the next relayed turn confirms the card the last one read back, another
+phone gets its own session, both-or-neither is refused and `close()` stops the sessions).
 Q.5, Q.7 and Q.8 for a command on the conversation's model path (one change card and one
 answer per change: the registry confirms by risk, a yes for medium, the paired device for
 high, and the hooks hold no command tool; `test/conversation.test.ts`, `test/hooks.test.ts`),

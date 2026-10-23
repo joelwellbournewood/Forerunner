@@ -18,6 +18,20 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-r5-phone: the phone uploads, reviews and talks; R.5 built, emulator run open)
+- Branch `wave/w3-r5-phone` on the `wip:` snapshot 34bfcdb (the upload route's `clientId`
+  idempotency and `maxBytes` in the list, kept). ADR 0080. The phone gains an Upload screen
+  (file or camera photo, name, project, the cap shown and checked, signed multipart, phase
+  progress, an offline upload queue resent under the same `clientId`), a Reviews screen (the
+  project's critic reviews with PR and findings; comment; approve / reject answering the
+  task's approval at its version, high risk only after the biometric prompt) and push-to-talk
+  on Chat (5 s of 16 kHz PCM, or the typed line in the shell, as a `kind: "voice"` remote
+  command; the reply shown and spoken). The PC's `RemoteCommandWatcher` runs the voice
+  envelope through `VoiceRelay` over the daemon's voice sessions (one held per phone, so a
+  spoken yes answers the last read-back) and drops the audio from the shared row. Both
+  screens are in the nav. R.5 stays `in progress` until the emulator run (BLOCKERS.md, R.5).
+  Build report: `docs/status/reviews/w3-r5-phone.md`.
+
 ### 2026-10-23 (item w3-d16-slider rebased onto cac6fee)
 - `wave/w3-d16-slider` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
   daemon's `/settings` rows (the base's handover and Opus fast-mode rows next to the slider's
@@ -371,7 +385,7 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    w3-d4-specialist-settings (D.4), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
-   w3-r5-phone (R.5), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
+   w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
    `it.todo`, the executor's ceiling rung). Then an independent review of each of the ten
    items merged on 2026-10-23 without one (w4-install-identity, w4-private-memory,
    w4-android-signing, w2-a2-intake, w2-g5-docs, w2-g6-promotion, w2-a4-sources,
