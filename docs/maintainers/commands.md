@@ -73,7 +73,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `capability.grant` | global | high | yes | `extension.permissions`, `enabled` |
 | `settings.set` | by key | by key (`SETTING_SPECS`) | yes | project settings/columns or human prefs/columns; a key with an `effect` (`small_project_mode`, spec B.6; `fast_mode`, spec D.20; the monthly jobs' `calibration`, global in `human.notify_prefs`, and `handover`, per project, ADR 0060) says what changes in the card's new value and the sentence, both ways; `voice_alerts` (global, low, boolean) is the voice notification channel's switch in `human.notify_prefs` (ADR 0063) |
 | `note.add` | project | low | yes (dismiss) | `queue_item` |
-| `summary.speak` | project | low | no (stop the playback in the app) | nothing; `ports.speak` reads the one-screen summary aloud (spec A.6, L.6; ADR 0063). By chat or from the UI the sentence is "Reading the summary of X aloud. <text>"; in a voice session the sentence is the text itself (the loop speaks it, no second voice); without a port or a usable provider "Voice is unavailable (reason). Summary of X: <text>". `after` says whether it was spoken and by which path. `spokenProjectSummary(project, spendUsdMicro, chfPerUsd)` is the one builder of the text, used by the daemon's `GET /projects/:id/summary` too |
+| `summary.speak` | project | low | no (stop the playback in the app) | nothing; `ports.speak` reads the one-screen summary aloud (spec A.6, L.6; ADR 0063). By chat or from the UI the sentence is "Reading the summary of X aloud. <text>"; in a voice session the sentence is the text itself (the loop speaks it, no second voice); without a port, a usable provider or an app window that plays speech (the daemon's port answers "no app window open to play speech", so nothing claims "aloud" into silence) "Voice is unavailable (reason). Summary of X: <text>". `after` says whether it was spoken and by which path. Another human's project (the named one or the active one) is refused as `not_found` "the project "X" is not yours" before anything is read, by `ownsProject` (`src/ownership.ts`: members, `shared_with`, author, or no owner facts at all), the one rule the daemon's speak route uses too. `spokenProjectSummary(project, spendUsdMicro, chfPerUsd)` is the one builder of the text, used by the daemon's `GET /projects/:id/summary` too |
 | `request.answer` | project | the request's own risk | no | `human_request.answer` |
 | `email.mode.set` | global | high | yes | `extension` kind `capability`, name `email:<agentId>`, `config.settings.mode` |
 | `device.revoke` | global | high | no | `device.revoked` |
@@ -336,7 +336,8 @@ settings; `memory.record` acting at once at low risk with the read-back sentence
 naming the human and the conversation session, another project or no project, undo through the
 port, refused without an agent or without the port, an agent actor's lesson refused unless
 grounded in the human's words; `summary.speak` through the port, in a voice session and without
-voice, the `voice_alerts` setting), `intent.test.ts` (the two spec sentences,
+voice, another human's project refused by id, by name and as the active project and allowed once
+shared, the `voice_alerts` setting), `intent.test.ts` (the two spec sentences,
 forty-four English and German phrases including the lesson phrases, "remember to" staying a note and the summary phrases, seven questions and ordinary sentences that are not lessons,
 ambiguity questions, budget tails that are not a time, invalid values as a question, the
 envelope refusal, the model port, time parsing with `rest`), and `scenario.test.ts` (the

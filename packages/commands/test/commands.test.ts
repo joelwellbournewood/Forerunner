@@ -902,6 +902,52 @@ describe("summary.speak (spec A.6 readable aloud, L.6 TTS for summaries)", () =>
     await w.store.close();
   });
 
+  it("refuses another human's project on a shared state, as the daemon's speak route does", async () => {
+    const w = await world();
+    let called = 0;
+    w.ports.speak = async () => {
+      called++;
+      return { spoken: true, id: "x" };
+    };
+    const theirs = await w.store.project.insert({
+      name: "Mara's Lab",
+      goal: "Hers",
+      autonomy_level: 2,
+      settings: { members: ["agent-of-mara"] },
+      author_human: w.other.id,
+    });
+    for (const params of [{ project: theirs.id }, { project: "Mara's Lab" }]) {
+      const r = refused(
+        await w.executor.execute({ name: "summary.speak", params, ctx: w.ctx({ source: "chat" }) }),
+      );
+      expect(r.code).toBe("not_found");
+      expect(r.reason).toContain("is not yours");
+    }
+    // The active project pointing at it is refused too, and nothing of it was read or spoken.
+    const active = refused(
+      await w.executor.execute({
+        name: "summary.speak",
+        params: {},
+        ctx: w.ctx({ activeProjectId: theirs.id }),
+      }),
+    );
+    expect(active.code).toBe("not_found");
+    expect(called).toBe(0);
+    // Shared with this human: allowed.
+    const shared = await w.store.project.update(theirs.id, theirs.version, {
+      settings: { members: ["agent-of-mara"], shared_with: [w.human.id] },
+    });
+    done(
+      await w.executor.execute({
+        name: "summary.speak",
+        params: { project: shared.id },
+        ctx: w.ctx({ source: "chat" }),
+      }),
+    );
+    expect(called).toBe(1);
+    await w.store.close();
+  });
+
   it("voice_alerts is a low-risk global setting written to notify_prefs", async () => {
     const w = await world();
     expect(SETTING_SPECS.voice_alerts).toMatchObject({ scope: "global", risk: "low" });

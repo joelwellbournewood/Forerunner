@@ -1,8 +1,10 @@
+import { ForerunnerError } from "@forerunner/platform";
 import type { JsonObject, ProjectRow } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
-import type { CommandDef, SpeakPortResult } from "../types.ts";
-import { resolveProject } from "./shared.ts";
+import { ownsProject } from "../ownership.ts";
+import type { CommandContext, CommandDef, SpeakPortResult } from "../types.ts";
+import { type ResolvedProject, resolveProject } from "./shared.ts";
 
 /**
  * summary.speak (spec A.6 "readable aloud", L.6 "TTS for summaries"): read a project's cached
@@ -12,7 +14,8 @@ import { resolveProject } from "./shared.ts";
  * summary, so the loop that answers the human speaks it; by chat or from the UI the port
  * speaks it through the desktop's audio path and the sentence echoes the text so the screen
  * shows what is being read. Without a usable voice provider the text is the reply, so "read
- * me the summary" always answers. Low risk, no confirmation, nothing to undo.
+ * me the summary" always answers. Low risk, no confirmation, nothing to undo. Another human's
+ * project on a shared state is refused as the daemon's speak route refuses it (`ownsProject`).
  */
 
 /** The fields of a project row the spoken summary reads. */
@@ -56,6 +59,20 @@ async function textOf(ctx: Parameters<CommandDef<SummarySpeakParams>["run"]>[1],
   return spokenProjectSummary(p, spend.usd_micro, chf);
 }
 
+/** The named or active project, refused when it belongs to another human (ADR 0041 item 4). */
+async function ownProject(
+  ctx: CommandContext,
+  named: string | undefined,
+): Promise<ResolvedProject> {
+  const resolved = await resolveProject(ctx, named);
+  if (!ownsProject(resolved.project, { humanId: ctx.humanId, agentId: ctx.agentId })) {
+    throw new ForerunnerError("not_found", `the project "${resolved.project.name}" is not yours`, {
+      details: { projectId: resolved.project.id, cause: "not_your_project" },
+    });
+  }
+  return resolved;
+}
+
 export const summarySpeak: CommandDef<SummarySpeakParams> = {
   name: "summary.speak",
   description:
@@ -66,7 +83,7 @@ export const summarySpeak: CommandDef<SummarySpeakParams> = {
   reversible: false,
   undoStrategy: "nothing to undo; stop the playback in the app",
   async plan(p, ctx) {
-    const { project, usedActive } = await resolveProject(ctx, p.project);
+    const { project, usedActive } = await ownProject(ctx, p.project);
     return buildCard({
       command: "summary.speak",
       what: `the summary of ${project.name}`,
@@ -82,7 +99,7 @@ export const summarySpeak: CommandDef<SummarySpeakParams> = {
     });
   },
   async run(p, ctx) {
-    const { project } = await resolveProject(ctx, p.project);
+    const { project } = await ownProject(ctx, p.project);
     const text = await textOf(ctx, project);
     // A voice session speaks its reply itself: the text is the sentence, nothing else plays.
     let result: SpeakPortResult | null = null;
