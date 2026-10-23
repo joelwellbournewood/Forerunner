@@ -438,3 +438,69 @@ files, 1207 passed, 1 skipped (`email-routes-wiring.test.ts` 8, `notifications-c
 integration without Postgres (capabilities, commands, cloud-runner): 3 files passed, 1 skipped,
 21 tests passed, 3 skipped (the runner integration needs Postgres or Docker); `node
 scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok.
+
+## Rebase onto 38ae8cc (2026-10-24, `origin/ccr-4d8a843c-1k9syk`)
+
+The release head moved from 4ff4fb1 to 38ae8cc (merges of w3-d4-specialist-settings, D.4 with
+ADR 0072, and w3-r5-phone, R.5 with ADR 0080). The branch (starting commit 56a4fc3) was rebased
+commit by commit with `git rebase origin/ccr-4d8a843c-1k9syk`; the hashes named in the sections
+above are pre-rebase hashes, the subjects are unchanged. Conflicts and how they were resolved:
+
+- `docs/decisions/README.md` (commit "docs: ADR 0081 ..."): the base's 0080 row (the phone
+  contributes) and the branch's 0081 row both kept, in number order.
+- `docs/status/BLOCKERS.md` (commit "status: T.1 done on ADR 0081 ..."): the R.5 row took the
+  base's text (built, emulator run open; the branch had not changed it), the T.1 row took the
+  branch's resolved text, and the V.1 row kept the base's clauses (C.5, D.16, E.4 merged; D.4
+  closed by its item) with the branch's T.1 clause added and the count set to the real count
+  of `docs/requirements.md` on the rebased branch (190 / 33 / 5).
+- `docs/status/PROGRESS.md` (same commit): the base's new log entries (w3-d4 rebase, w3-r5
+  review, rebases and build) and the branch's T.1 entry all kept (the T.1 entry on top); the
+  item list line keeps the base's "w3-r5-phone (R.5; built on its branch 2026-10-23, emulator
+  run open)" and the branch's "w3-t1-mode-off (T.1; built on its branch, ADR 0081, awaiting
+  review)". A missing blank line between the T.1 entry and the base's next entry is restored
+  in the status commit of this rebase.
+- `packages/commands/src/types.ts` (commit "commands: email.mode.set keeps ADR 0081 ..."): the
+  base's `modelSettings` port (D.4: `specialists`, `capabilities`, `maxEffort`) and the
+  branch's `emailMode` port both kept in `CommandPorts`, each with its own doc comment; the
+  branch's `EmailModePortRequest` / `EmailModePortResult` after the interface.
+- `packages/runtime/src/daemon/compose.ts` (same commit): the command loop's ports keep the
+  base's `modelSettings` (the registry's runnable specialists and `max_effort`, the provider's
+  capability flags) next to the branch's `emailMode` (through `emailPorts.settings`, unchanged
+  on the base).
+- `docs/maintainers/apps.md` (commit "ui: the email page follows the commands toggle ..."): the
+  `/settings` row took the base's text (the new "Models per agent and specialist" section and
+  `GET /settings/models`; the branch had not touched that row); the `/settings/capabilities/email`
+  row took the branch's text (the ADR 0081 clause), which the base had not changed.
+- `docs/status/BLOCKERS.md` and `docs/status/PROGRESS.md` (commit "status: T.1 review fixes
+  ..."): the R.5 and V.1 rows as above with the branch's review sentence in the T.1 row; the
+  item list keeps the base's R.5 clause and the branch's "reviewed and fixed 2026-10-24,
+  awaiting merge".
+- `docs/status/PROGRESS.md` (commit "status: w3-t1-mode-off rebased onto cac6fee ..."): the
+  phase 8 row keeps the base's clauses (D.16 merged in 443139a, D.4 on its item branch) and
+  names T.1 on `wave/w3-t1-mode-off`, with the real count 190 / 33 / 5.
+- `docs/status/BLOCKERS.md` and `docs/status/PROGRESS.md` (commit "status: w3-t1-mode-off
+  rebased onto 4ff4fb1 ..."): the V.1 and phase 8 rows kept as already merged in the earlier
+  commits (the base's clauses, T.1's clause, 190 / 33 / 5), not the stale 189 / 34 / 5 of the
+  previous rebase.
+
+Auto-merged without a conflict and checked by reading: `docs/maintainers/runtime.md`,
+`docs/maintainers/commands.md` (the base's `model.settings.set` row next to the branch's
+`email.mode.set` row), `docs/requirements.md` and `apps/ui/test/fake-daemon.ts`. No code needed
+a name or type change: the base did not touch the email capability, the cloud-runner watcher,
+the notifications module or `packages/commands/src/commands/email.ts`.
+
+Counts: `docs/requirements.md` on the rebased branch has 190 done, 33 in progress, 5 todo of
+228 (the base: 189 / 34 / 5; T.1 is the only row the branch moves); the V.1 row in BLOCKERS and
+the phase 8 row in PROGRESS say 190 / 33 / 5. The email.md count "8 files, 128 tests" for
+`email-*.test.ts` re-checked: still 8 files, 128 tests.
+
+After the rebase: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, the same count as
+on the base checkout); unit tests from the root (`pnpm exec vitest run --project unit
+<pkg>/test`): capabilities 36 files, 393 passed (`closeout-email-commands.test.ts` 2,
+`email-settings.test.ts` 11, `email-commands.test.ts` 32); commands 12 files, 173 passed
+(`commands.test.ts` 30); cloud-runner 9 files, 64 passed (`email-watch.test.ts` 9); runtime 137
+files, 1267 passed, 1 skipped (`email-routes-wiring.test.ts` 8, `notifications-channels.test.ts`
+23); `pnpm --filter @forerunner/ui test` 52 files, 349 passed (`email-settings.test.tsx` 9);
+integration without Postgres (capabilities, commands, cloud-runner): 3 files passed, 1 skipped,
+21 tests passed, 3 skipped (the runner integration needs Postgres or Docker); `node
+scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok.

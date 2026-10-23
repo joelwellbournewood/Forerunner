@@ -18,6 +18,18 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-24 (item w3-t1-mode-off rebased onto 38ae8cc)
+- `wave/w3-t1-mode-off` rebased onto `origin/ccr-4d8a843c-1k9syk` (38ae8cc, after the merges
+  of w3-d4-specialist-settings (D.4) and w3-r5-phone (R.5)). Conflicts in the ADR index (0080
+  next to 0081), BLOCKERS (twice: R.5 and V.1 next to T.1), this log (three times: the base's
+  entries, the item list's R.5 and T.1 clauses, the phase 8 row), apps.md (the `/settings` row
+  with the base's Models section, the email page row with the branch's ADR 0081 clause), the
+  command ports (`modelSettings` next to `emailMode`) and the daemon's command ports in
+  `compose.ts` (the same); both sides kept (`docs/status/reviews/w3-t1-mode-off.md` `## Rebase
+  onto 38ae8cc`). Requirements on the rebased branch: 190 done, 33 in progress, 5 todo of
+  228. Current counts: capabilities 36 files / 393 tests, commands 12 / 173, cloud-runner
+  9 / 64, runtime 137 / 1267 (1 skipped), UI 52 / 349 unit tests passed. Not merged yet.
+
 ### 2026-10-24 (item w3-t1-mode-off rebased onto 4ff4fb1)
 - `wave/w3-t1-mode-off` rebased again onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1, after the
   merges of w2-l6-speak, w3-c5-specialist-approval, w3-d16-slider, w3-e4-recheck and
@@ -64,6 +76,7 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   todo); its BLOCKERS row resolved; email.md, cloud-runner.md, notifications.md and runtime.md updated. The B.6
   residual was left to wave/w1-b6-review as the brief says. Build report:
   `docs/status/reviews/w3-t1-mode-off.md`.
+
 ### 2026-10-23 (item w3-d4-specialist-settings rebased onto 4ff4fb1)
 - `wave/w3-d4-specialist-settings` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1), which
   had since merged w2-l6-speak (L.6), w3-c5-specialist-approval (C.5), w3-d16-slider (D.16),
