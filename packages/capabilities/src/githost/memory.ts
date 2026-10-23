@@ -87,9 +87,9 @@ export class MemoryGitHost implements GitHost {
     };
   }
 
-  async listRepos(opts: { org?: string } = {}): Promise<RepoInfo[]> {
+  async listRepos(opts: { org?: string; user?: string } = {}): Promise<RepoInfo[]> {
     return [...this.repos.values()]
-      .filter((r) => !opts.org || r.owner === opts.org)
+      .filter((r) => (!opts.org || r.owner === opts.org) && (!opts.user || r.owner === opts.user))
       .map((r) => ({
         owner: r.owner,
         name: r.name,
