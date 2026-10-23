@@ -10,6 +10,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import { INTAKE_RUN_SPECIALIST } from "../src/models/ladder.ts";
 import {
   INTAKE_AUDIT_TOOL,
+  INTAKE_BUILTIN_PROMPT_VERSION,
   IntakeService,
   intakeKey,
   parseIntakeReply,
@@ -252,6 +253,10 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       expect(runRow.ttft_ms).not.toBeNull();
       expect(runRow.duration_ms).not.toBeNull();
       expect(runRow.cost_usd_micro).toBe(spend.usd_micro);
+      // Spec D.5: the row stores the registry PM prompt's version, as every run does.
+      const pm = rt.registry.principals.get("project-manager");
+      expect(pm?.promptVersion).toMatch(/^project-manager@/);
+      expect(runRow.prompt_version).toBe(pm?.promptVersion);
       const audit = await rt.store.auditLog.list({ tool: INTAKE_AUDIT_TOOL });
       expect(audit.some((a) => a.input_summary.includes(requestId))).toBe(true);
       // The status route reports the open proposal.
@@ -522,6 +527,32 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     const status = await json(await req(`/projects/${id}/intake`));
     expect(status).toMatchObject({ state: "failed" });
     expect(String(status.error)).toContain("JSON");
+  });
+
+  it("on the built-in prompt the intake Run row names the built-in prompt version", async () => {
+    replies.push({ text: "no json here" });
+    const service = new IntakeService({
+      store: rt.store,
+      clock,
+      tokens: rt.tokens,
+      driver: rt.driver,
+      provider,
+      pricing: { estimate: () => 1, cost: () => 1 },
+      billingSourceId: rt.billingSourceId,
+      modelConfig: rt.modelConfig,
+      human: rt.human,
+      agent: rt.agent,
+      gitHost: host,
+      projectsRoot: rt.data.assets.projectsRoot,
+      worktreeRoot: join(home, "wt-builtin"),
+    });
+    const projectId = await createProject({ name: "Lambda", goal: "g", brief: "b" });
+    await expect(service.propose(projectId)).rejects.toMatchObject({ code: "validation" });
+    const runs = (await rt.store.run.list({ specialist: INTAKE_RUN_SPECIALIST } as never)).filter(
+      (r) => r.prompt_version === INTAKE_BUILTIN_PROMPT_VERSION,
+    );
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.prompt_version).not.toBe("");
   });
 
   it("without a model provider the intake is unavailable", async () => {

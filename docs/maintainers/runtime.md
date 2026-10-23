@@ -1981,7 +1981,9 @@ its own:
   offset yet (D.16), so their `effort` stays the table's. Without a project the offset is 0.
 
 What feeds it: the executor and the critic write their Run rows as before; the intake call
-now writes one (`specialist: "intake"`, its tokens, cost, first token and duration, written in
+now writes one (`specialist: "intake"`, its tokens, cost, first token and duration, and the
+prompt version of spec D.5: the registry PM prompt's `promptVersion`, passed in by compose,
+or `INTAKE_BUILTIN_PROMPT_VERSION` on the built-in line; written in
 the `finally` so a failed call is measured too; a refused row is logged and the intake goes
 on); the conversation agent's `chat.reply` row now carries `durationMs` (the loop's measured
 run time), `model`, `effort` and `source` next to `ttftMs`. Tests:

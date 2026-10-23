@@ -1881,6 +1881,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     modelConfig: () => modelConfig.get(),
     prompt: registry.principals.get("project-manager")?.prompt,
     maxEffort: registry.principals.get("project-manager")?.max_effort,
+    promptVersion: registry.principals.get("project-manager")?.promptVersion,
     human: { id: human.id },
     agent: { id: agent.id, name: agent.name },
     gitHost,
