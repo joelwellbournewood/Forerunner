@@ -24,8 +24,9 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   status doc, the summary cache, the peers' handoffs, the note to the human and the session
   record are written. A stop or pause read there ends the session `stopped`
   (`stopped_by_message`) and `handoff.end_inbox` names it with what was and was not written
-  (`after_stop`); an ordinary message is read and summarised in the handoff; a pause leaves the
-  row `paused -> stopped`. Tests: `packages/runtime/test/closeout-sessions.test.ts` (five new
+  (`after_stop`); an ordinary message is read and summarised in the handoff, and the next
+  session's startup checklist carries it once into the brief (it would otherwise vanish from
+  the unread list); a pause leaves the row `paused -> stopped`. Tests: `packages/runtime/test/closeout-sessions.test.ts` (five new
   cases); doc: runtime.md "The inbox before the session-end writes"; BLOCKERS.md E.4 row
   resolved. The requirement totals in the milestone table and gates.md criterion 1 move by one
   (E.4 in progress → done) at integration. Report: `docs/status/reviews/w3-e4-recheck.md`.
