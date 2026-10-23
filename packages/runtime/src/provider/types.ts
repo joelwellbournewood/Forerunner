@@ -164,6 +164,9 @@ export async function collectStream(
     switch (ev.type) {
       case "message_start":
         model = ev.model;
+        // The input side of the bill; message_end replaces it with the full figure, and a
+        // stream cut off before message_end returns it with stop_reason "error".
+        if (ev.usage) usage = { ...ev.usage };
         break;
       case "text_delta":
         text += ev.text;
