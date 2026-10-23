@@ -301,7 +301,8 @@ The desktop CSP (`apps/desktop/src-tauri/tauri.conf.json`) already allows
   `CommandResult` and confirm through `confirmCommand`; never bypass the card.
 - **A new setting the UI can change**: extend `commandForSetting` in `SettingsPage.tsx` (and
   `SETTING_KEYS` when `SETTING_SPECS` in `@forerunner/commands` gains a key) and the fake's
-  `SETTING_RISK`.
+  `SETTING_RISK`. The monthly jobs' `calibration` and `handover` keys (ADR 0060) are in
+  `SETTING_KEYS` and the fake's risks (medium); their values are objects, edited as JSON.
 - **Links that look like buttons**: use `buttonClassName(variant)` from `components/ui.tsx` on
   the `<Link>`; never put a `<Button>` inside a link (invalid HTML, double tab stop).
 - **Change money display**: `lib/money.ts` and its test; keep USD out of any visible string.

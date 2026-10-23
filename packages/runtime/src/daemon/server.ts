@@ -938,12 +938,15 @@ export function createDaemonApp(
       settings: merged as never,
     });
     const mirrors = await rt.refreshMirrorSchedules();
+    // The handover schedule follows `settings.handover` the same way (ADR 0060).
+    const jobs = await rt.jobs.refreshSchedules();
     rt.events.emit("project", { id: updated.id });
     return c.json({
       id: updated.id,
       version: updated.version,
       settings: updated.settings,
       mirrorScheduled: mirrors.includes(updated.id),
+      handoverScheduled: jobs.handover.includes(updated.id),
     });
   });
 
@@ -1353,6 +1356,15 @@ export function createDaemonApp(
         risk: "low",
       },
       {
+        key: "human.calibration",
+        scope: "human",
+        scopeId: h.id,
+        value: h.notify_prefs.calibration ?? null,
+        description:
+          "Monthly critic calibration over the golden eval sets: enabled, day, time, budget_usd, tier (defaults: on, day 1, 06:00, USD 10, tier 1)",
+        risk: "medium",
+      },
+      {
         key: "runtime.provider",
         scope: "global",
         scopeId: null,
@@ -1383,6 +1395,14 @@ export function createDaemonApp(
           scopeId: p.id,
           value: money(p.budget_usd_micro, chf()),
           description: `Budget for ${p.name}`,
+          risk: "medium",
+        },
+        {
+          key: "project.handover",
+          scope: "project",
+          scopeId: p.id,
+          value: p.settings.handover ?? null,
+          description: `Monthly handover test on ${p.name}: enabled, day, time, budget_usd, seed (off until enabled)`,
           risk: "medium",
         },
       ]),

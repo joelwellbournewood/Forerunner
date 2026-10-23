@@ -33,6 +33,39 @@ export interface SettingSpec {
 }
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const DAY_OF_MONTH = z.number().int().min(1).max(31);
+
+/**
+ * The monthly jobs' settings (ADR 0060). `calibration` is global (`human.notify_prefs`,
+ * the runtime reads it before every scheduler tick); `handover` is per project
+ * (`project.settings.handover`, off until `enabled` is true). Day and time are the human's
+ * local time; the budget is the cap the hooks enforce on the run, in USD.
+ */
+const MonthlyJobFields = {
+  enabled: z.boolean().optional(),
+  day: DAY_OF_MONTH.optional(),
+  time: z.string().regex(HHMM).optional(),
+  budget_usd: z.number().positive().max(1000).optional(),
+};
+export const CalibrationSetting = z.object({
+  ...MonthlyJobFields,
+  tier: z.number().int().min(1).max(3).optional(),
+  specialists: z.array(z.string().min(1)).optional(),
+});
+export const HandoverSetting = z.object({
+  ...MonthlyJobFields,
+  enabled: z.boolean(),
+  seed: z
+    .object({
+      title: z.string().min(1).max(200),
+      outcome: z.string().min(1).max(4000),
+      acceptanceCriteria: z.array(z.string().min(1)).min(1).max(20),
+      riskTier: z.number().int().min(0).max(3),
+      specialist: z.string().min(1).optional(),
+      files: z.array(z.string().min(1)).min(1).max(50),
+    })
+    .optional(),
+});
 
 /** What flipping small-project mode (spec B.6) changes; existing tasks keep their tier. */
 export const SMALL_PROJECT_MODE_EFFECT = {
@@ -118,6 +151,36 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     schema: z.enum(["en", "de"]),
     column: "locale",
     description: "UI and voice language.",
+  },
+  calibration: {
+    key: "calibration",
+    label: "the monthly critic calibration",
+    scope: "global",
+    risk: "medium",
+    schema: CalibrationSetting as unknown as z.ZodType<JsonValue>,
+    description:
+      "Monthly critic calibration over the golden eval sets: enabled (default on), day of month, local time, budget_usd cap, tier, specialists.",
+    effect: (value) => {
+      const v = (value ?? {}) as { enabled?: boolean; day?: number; time?: string };
+      return v.enabled === false
+        ? "the critic is no longer graded against the eval sets each month"
+        : `the critic grades the eval sets on day ${v.day ?? 1} at ${v.time ?? "06:00"} each month`;
+    },
+  },
+  handover: {
+    key: "handover",
+    label: "the monthly handover test",
+    scope: "project",
+    risk: "medium",
+    schema: HandoverSetting as unknown as z.ZodType<JsonValue>,
+    description:
+      "Monthly handover test on the project: a fresh agent with only the repo and docs makes a seeded change; where it got stuck becomes a docs task. enabled, day, time, budget_usd, seed.",
+    effect: (value) => {
+      const v = (value ?? {}) as { enabled?: boolean; day?: number; time?: string };
+      return v.enabled
+        ? `a fresh agent runs the seeded change on day ${v.day ?? 1} at ${v.time ?? "07:00"} each month and its stuck places become a docs task`
+        : "no monthly handover test runs on the project";
+    },
   },
 };
 

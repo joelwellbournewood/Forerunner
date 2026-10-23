@@ -58,6 +58,36 @@ describe("Settings", () => {
     });
     expect(spec?.name).toBe("settings.set");
     expect(spec?.params("3")).toEqual({ key: "critic_ceiling", value: 3, project: "proj_atlas" });
+    // The monthly jobs' settings are objects (ADR 0060): shown and edited as JSON.
+    const handover = commandForSetting({
+      key: "project.handover",
+      scope: "project",
+      scopeId: "proj_atlas",
+      value: { enabled: false },
+      description: "",
+      risk: "medium",
+    });
+    expect(handover?.name).toBe("settings.set");
+    expect(handover?.initial({ enabled: false })).toBe('{"enabled":false}');
+    expect(handover?.params('{"enabled": true, "day": 2, "time": "08:00"}')).toEqual({
+      key: "handover",
+      value: { enabled: true, day: 2, time: "08:00" },
+      project: "proj_atlas",
+    });
+    const calibration = commandForSetting({
+      key: "human.calibration",
+      scope: "human",
+      scopeId: "human_alice",
+      value: null,
+      description: "",
+      risk: "medium",
+    });
+    expect(calibration?.params('{"enabled":false}')).toEqual({
+      key: "calibration",
+      value: { enabled: false },
+    });
+    // Text that only looks like JSON stays text.
+    expect(calibration?.params("{not json")).toEqual({ key: "calibration", value: "{not json" });
     expect(
       commandForSetting({
         key: "runtime.provider",

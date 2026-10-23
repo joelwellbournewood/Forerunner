@@ -62,6 +62,8 @@ export const SETTING_KEYS = [
   "notify_channel",
   "default_autonomy",
   "language",
+  "calibration",
+  "handover",
 ] as const;
 
 export interface SettingCommand {
@@ -90,6 +92,15 @@ const parseLoose = (value: string): unknown => {
   if (t === "true") return true;
   if (t === "false") return false;
   if (t !== "" && Number.isFinite(Number(t))) return Number(t);
+  // Object settings (the monthly jobs' `calibration` and `handover`) are edited as the JSON
+  // `initialPlain` shows; text that does not parse stays text and the schema answers.
+  if (t.startsWith("{") || t.startsWith("[")) {
+    try {
+      return JSON.parse(t) as unknown;
+    } catch {
+      return t;
+    }
+  }
   return t;
 };
 const initialPlain = (current: unknown) =>

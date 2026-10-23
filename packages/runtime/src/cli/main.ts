@@ -14,6 +14,7 @@ import {
 } from "../daemon/identity.ts";
 import type { RunningDaemon } from "../daemon/server.ts";
 import { writeKillRequest } from "../enforcement/killfile.ts";
+import { registerJobsCli } from "../jobs/cli.ts";
 import { registerModelWatchCli } from "../models/watch-cli.ts";
 import { registerRunnerKeyCli } from "../secrets/runner-key-cli.ts";
 import { describePlanAllowance } from "../setup/plan-allowance.ts";
@@ -348,6 +349,16 @@ export function buildProgram(deps: CliDeps = {}): Command {
     watch: (await openRuntime({ startServices: false })).modelWatch,
     out,
   }));
+
+  // Monthly jobs (ADR 0060): the critic calibration and the handover test by hand, their
+  // reports. One-shots like the model watch (the runtime is closed by the hook).
+  registerJobsCli(program, {
+    open: async () => {
+      const rt = await openRuntime({ startServices: false });
+      return { jobs: rt.jobs, store: rt.store };
+    },
+    out,
+  });
 
   // One-way GitHub Projects mirror: sync, enable, disable (the runtime is closed by the hook).
   registerMirrorCli(program, {

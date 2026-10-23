@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { type Clock, errorMessage, log } from "@forerunner/platform";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { type Clock, errorMessage, join, log } from "@forerunner/platform";
 import type { SessionTriggerKind } from "./runner.ts";
 
 /**
@@ -11,10 +12,15 @@ export interface Schedule {
   id: string;
   agentId: string;
   projectId?: string;
-  /** "daily" at hh:mm local, "weekdays" at hh:mm local, or "every" N minutes. */
-  kind: "daily" | "weekdays" | "every";
-  time?: string; // hh:mm for daily/weekdays
+  /**
+   * "daily" at hh:mm local, "weekdays" at hh:mm local, "every" N minutes, or "monthly" on
+   * `dayOfMonth` at hh:mm local (ADR 0060: the critic calibration and the handover test).
+   */
+  kind: "daily" | "weekdays" | "every" | "monthly";
+  time?: string; // hh:mm for daily/weekdays/monthly
   everyMinutes?: number;
+  /** 1 to 31 for "monthly"; a day past the month's end fires on its last day. Default 1. */
+  dayOfMonth?: number;
   timezone: string;
   enabled: boolean;
 }
@@ -43,13 +49,84 @@ export interface SchedulerDeps {
   start: (req: StartRequest) => Promise<unknown>;
   /** Quiet hours: when true, non-manual triggers are deferred to the next check. */
   isQuietHours?: (agentId: string, now: number) => boolean;
+  /**
+   * Where the last fired day (daily, weekdays) or month (monthly) of each schedule is kept.
+   * Default: this process's memory. The daemon passes `fileFiredKeys` under its data
+   * directory so a restart after the due time does not fire a day's or a month's job again
+   * (ADR 0060: a monthly calibration costs money on a live model).
+   */
+  fired?: FiredKeys;
+  /**
+   * Runs before every tick: re-reads the settings that decide which schedules exist (the
+   * handover per project, the calibration), so a change made by a route, a command or the
+   * phone takes effect at the next tick without a restart. An error is logged, never fatal.
+   */
+  refresh?: (scheduler: Scheduler) => Promise<void>;
+}
+
+/** The last day or month key a schedule fired on, by schedule id. */
+export interface FiredKeys {
+  get(id: string): string | undefined;
+  set(id: string, key: string): void;
+}
+
+export function memoryFiredKeys(): FiredKeys {
+  const map = new Map<string, string>();
+  return { get: (id) => map.get(id), set: (id, key) => void map.set(id, key) };
+}
+
+/**
+ * Fired keys in one JSON file (`<data dir>/scheduler-fired.json`): read on first use, written
+ * on every set. A missing or unreadable file is an empty store and a failed write is logged;
+ * the schedule then behaves as it did before (once per process).
+ */
+export function fileFiredKeys(file: string): FiredKeys {
+  const logger = log("scheduler");
+  let map: Map<string, string> | null = null;
+  const load = (): Map<string, string> => {
+    if (map) return map;
+    map = new Map();
+    try {
+      const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        for (const [k, v] of Object.entries(parsed as Record<string, unknown>))
+          if (typeof v === "string") map.set(k, v);
+      }
+    } catch {
+      // absent or malformed: start empty
+    }
+    return map;
+  };
+  return {
+    get: (id) => load().get(id),
+    set: (id, key) => {
+      const m = load();
+      m.set(id, key);
+      try {
+        mkdirSync(join(file, ".."), { recursive: true });
+        writeFileSync(file, `${JSON.stringify(Object.fromEntries(m), null, 2)}\n`, "utf8");
+      } catch (e) {
+        logger.warn("could not write the fired keys", { file, error: errorMessage(e) });
+      }
+    },
+  };
 }
 
 /** Local wall-clock parts in a time zone, without a date library. */
 export function localParts(
   nowMs: number,
   timezone: string,
-): { hour: number; minute: number; weekday: number; dayKey: string } {
+): {
+  hour: number;
+  minute: number;
+  weekday: number;
+  dayKey: string;
+  /** Day of the month, 1 to 31. */
+  day: number;
+  /** `YYYY-MM` in the zone: the dedupe key of a monthly schedule. */
+  monthKey: string;
+  daysInMonth: number;
+} {
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     hour12: false,
@@ -65,11 +142,18 @@ export function localParts(
   );
   const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const hour = Number(parts.hour) % 24;
+  const year = Number(parts.year);
+  const month = Number(parts.month);
   return {
     hour,
     minute: Number(parts.minute),
     weekday: weekdays.indexOf(parts.weekday ?? "Sun"),
     dayKey: `${parts.year}-${parts.month}-${parts.day}`,
+    day: Number(parts.day),
+    monthKey: `${parts.year}-${parts.month}`,
+    // Day 0 of the next month is the last day of this one (UTC arithmetic on the calendar
+    // only; the zone decided year and month above).
+    daysInMonth: new Date(Date.UTC(year, month, 0)).getUTCDate(),
   };
 }
 
@@ -97,7 +181,8 @@ export interface StartEntry extends SchedulerLogEntry {
 
 export class Scheduler {
   private readonly schedules = new Map<string, Schedule>();
-  private readonly firedDay = new Map<string, string>();
+  /** Last fired day (daily, weekdays) or month (monthly) per schedule id. */
+  private readonly fired: FiredKeys;
   private readonly lastEvery = new Map<string, number>();
   private readonly active = new Set<string>();
   /** The log entry of the start each active agent is running, until it ends. */
@@ -111,7 +196,9 @@ export class Scheduler {
   constructor(
     private readonly deps: SchedulerDeps,
     private readonly tickMs = 30_000,
-  ) {}
+  ) {
+    this.fired = deps.fired ?? memoryFiredKeys();
+  }
 
   add(s: Schedule): void {
     this.schedules.set(s.id, s);
@@ -143,6 +230,13 @@ export class Scheduler {
 
   /** Evaluate schedules once. Exposed for tests and for the app's manual "check now". */
   async tick(now: number = this.deps.clock.now()): Promise<void> {
+    if (this.deps.refresh) {
+      try {
+        await this.deps.refresh(this);
+      } catch (e) {
+        this.logger.warn("schedule refresh failed", { error: errorMessage(e) });
+      }
+    }
     for (const s of this.schedules.values()) {
       if (!s.enabled) continue;
       if (s.kind === "every") {
@@ -161,9 +255,40 @@ export class Scheduler {
       const lp = localParts(now, s.timezone);
       if (s.kind === "weekdays" && (lp.weekday === 0 || lp.weekday === 6)) continue;
       const [hh, mm] = (s.time ?? "06:00").split(":").map(Number);
-      const due = lp.hour > (hh ?? 0) || (lp.hour === (hh ?? 0) && lp.minute >= (mm ?? 0));
-      if (due && this.firedDay.get(s.id) !== lp.dayKey) {
-        this.firedDay.set(s.id, lp.dayKey);
+      const timePassed = lp.hour > (hh ?? 0) || (lp.hour === (hh ?? 0) && lp.minute >= (mm ?? 0));
+      if (s.kind === "monthly") {
+        // The due day, clamped to the month's length; once per month however often we tick
+        // (or restart, with a persistent `fired` store).
+        const day = Math.min(Math.max(1, Math.trunc(s.dayOfMonth ?? 1)), lp.daysInMonth);
+        const due = lp.day > day || (lp.day === day && timePassed);
+        const last = this.fired.get(s.id);
+        if (last === undefined) {
+          // First sight of the schedule (a new install, a job just switched on). After its day
+          // this month: wait for the next month rather than run (and spend) at once; `fr jobs`
+          // runs it by hand. Before its day, or on it: remember the sighting ("" is "seen,
+          // never fired"), so a daemon that is then down on the day catches up afterwards.
+          if (lp.day > day) {
+            this.fired.set(s.id, lp.monthKey);
+            continue;
+          }
+          if (!due) {
+            this.fired.set(s.id, "");
+            continue;
+          }
+        }
+        if (due && last !== lp.monthKey) {
+          this.fired.set(s.id, lp.monthKey);
+          await this.request({
+            agentId: s.agentId,
+            projectId: s.projectId,
+            trigger: "schedule",
+            reason: `monthly on day ${s.dayOfMonth ?? 1} at ${s.time ?? "06:00"} ${s.timezone}`,
+          });
+        }
+        continue;
+      }
+      if (timePassed && this.fired.get(s.id) !== lp.dayKey) {
+        this.fired.set(s.id, lp.dayKey);
         await this.request({
           agentId: s.agentId,
           projectId: s.projectId,

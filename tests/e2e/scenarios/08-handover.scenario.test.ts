@@ -25,6 +25,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   CLAMP_BUGGY,
   CLAMP_FIXED,
+  CLAMP_SEED,
   coderReadsDocsThenWrites,
   type FreshInstall,
   freshInstall,
@@ -37,7 +38,8 @@ import { type ScenarioWorld, scenarioWorld } from "../src/scenario-world.ts";
 import { lessonsSection } from "../src/world.ts";
 
 const START = "2026-11-03T08:00:00Z"; // 09:00 Europe/Zurich
-const TASK = "Fix the clamp upper bound";
+/** The seeded change as the runtime's monthly handover job files it (ADR 0060). */
+const TASK = CLAMP_SEED.title;
 const READS = [
   "README.md",
   "docs/testing.md",
@@ -106,13 +108,9 @@ describe("scenario 8: handover", () => {
     );
     const task = await w.addTask({
       title: TASK,
-      outcome:
-        "test/clamp.test.js passes: clamp never returns a value above hi. Start from README.md; docs/testing.md says how the tests run.",
-      acceptanceCriteria: [
-        "node --test test/clamp.test.js exits 0",
-        "src/clamp.js returns hi for values above the range",
-      ],
-      riskTier: 2,
+      outcome: CLAMP_SEED.outcome,
+      acceptanceCriteria: CLAMP_SEED.acceptanceCriteria,
+      riskTier: CLAMP_SEED.riskTier,
     });
     const result = await fresh.runSession();
 

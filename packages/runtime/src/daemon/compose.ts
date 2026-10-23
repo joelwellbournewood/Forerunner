@@ -99,6 +99,16 @@ import {
   type McpConnectorFactory,
 } from "../extensions/mcp.ts";
 import { ExtensionRegistry } from "../extensions/registry.ts";
+import {
+  CalibrationJob,
+  calibrationSettingsOf,
+  HandoverJob,
+  isCalibrationRequest,
+  isHandoverRequest,
+  SeedOnlyPlanner,
+  scheduleCalibration,
+  syncHandoverSchedules,
+} from "../jobs/index.ts";
 import { CommandLoop, sessionCapFromSettings, sessionCommandPorts } from "../loop/commands.ts";
 import { CriticLoop } from "../loop/critic.ts";
 import { ProjectDocs, parseRepoRef } from "../loop/docs.ts";
@@ -180,11 +190,12 @@ import {
 } from "../session/plan-approval.ts";
 import {
   SessionRunner,
+  type SessionRunnerDeps,
   type SessionStartOptions,
   StaticPlanner,
   type TaskExecutor,
 } from "../session/runner.ts";
-import { Scheduler, type StartRequest } from "../session/triggers.ts";
+import { fileFiredKeys, Scheduler, type StartRequest } from "../session/triggers.ts";
 import { readInstallRecord } from "../setup/install-record.ts";
 import {
   describePlanAllowance,
@@ -742,6 +753,17 @@ export interface RuntimeApp {
   /** Add or drop mirror schedules after a project's settings changed. */
   refreshMirrorSchedules(): Promise<string[]>;
   /**
+   * The monthly jobs (ADR 0060): the critic calibration (spec H.7, on by default, day and
+   * time from `human.notify_prefs.calibration`) and the handover test (spec P.15, per project
+   * whose `settings.handover.enabled` is true, off until one is). Their schedules are re-read
+   * from the settings before every scheduler tick and by `refreshSchedules()`.
+   */
+  jobs: {
+    calibration: CalibrationJob;
+    handover: HandoverJob;
+    refreshSchedules(): Promise<JobSchedules>;
+  };
+  /**
    * Run the mirror for a project now. Resolves with the run, or with the open approval request
    * as soon as the mirror asks the human (the run goes on in the background and finishes when
    * the request is answered in the inbox); a second call while a run is in flight joins it.
@@ -751,6 +773,12 @@ export interface RuntimeApp {
 }
 
 const DEFAULT_SESSION_CAP_USD_MICRO = 6_250_000; // CHF 5 at 0.8 CHF/USD
+
+/** What `jobs.refreshSchedules()` answers: the calibration's switch and the handover projects. */
+export interface JobSchedules {
+  calibration: boolean;
+  handover: string[];
+}
 
 /**
  * How `specialistSpecFrom` turns a registry entry's `allowed_tools` into the names a run token
@@ -1584,7 +1612,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // moves the tier-1 and tier-2/3 reviews with the executor and the chat.
     modelConfig: () => modelConfig.get(),
   });
-  const makeLoop = (worktree?: string) =>
+  // `withMemory: false` is the handover test's executor (spec P.15 "only the repo and docs",
+  // ADR 0060): its specialists get no lesson, the shared scope included.
+  const makeLoop = (worktree?: string, withMemory = true) =>
     new LoopTaskExecutor({
       store,
       clock,
@@ -1612,7 +1642,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         hostCommands: sdkHostCommands,
       },
       specialists,
-      memory,
+      ...(withMemory ? { memory } : {}),
       modelConfig: () => modelConfig.get(),
       // The project's escalation ceiling (`critic_ceiling`, spec D.3): a retry climbs the
       // ladder under it, never under the default ceiling.
@@ -1639,23 +1669,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     name: `${agent.name} (Forerunner)`,
     email: human.email || "forerunner@localhost",
   };
-  const executor = new PrTaskExecutor({
-    store,
-    clock,
-    host: gitHost,
-    inner: { execute: (ctx) => makeLoop().execute(ctx), withWorktree: (dir) => makeLoop(dir) },
-    repoFor: async (task) => {
-      const project = await store.project.get(task.project_id);
-      const full = project?.repos[0];
-      // A local folder linked by a source scan (spec A.4) is not a host repository: the
-      // inner executor runs without the branch-and-PR flow, as for a project without one.
-      if (!full?.includes("/") || isAbsolute(full)) return null;
-      return repoOfProject(project);
-    },
-    worktreeRoot: dirs.worktrees,
-    token: ghToken ?? undefined,
-    identity: gitIdentity,
-  });
+  const prExecutor = (withMemory: boolean) =>
+    new PrTaskExecutor({
+      store,
+      clock,
+      host: gitHost,
+      inner: {
+        execute: (ctx) => makeLoop(undefined, withMemory).execute(ctx),
+        withWorktree: (dir) => makeLoop(dir, withMemory),
+      },
+      repoFor: async (task) => {
+        const project = await store.project.get(task.project_id);
+        const full = project?.repos[0];
+        // A local folder linked by a source scan (spec A.4) is not a host repository: the
+        // inner executor runs without the branch-and-PR flow, as for a project without one.
+        if (!full?.includes("/") || isAbsolute(full)) return null;
+        return repoOfProject(project);
+      },
+      worktreeRoot: dirs.worktrees,
+      token: ghToken ?? undefined,
+      identity: gitIdentity,
+    });
+  const executor = prExecutor(true);
   // Project docs (spec G.5, ADR 0058): the standard doc set on a branch and PR of the
   // project's repository, or under the project's data dir without one.
   const docs = new ProjectDocs({
@@ -1681,12 +1716,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     token: ghToken ?? undefined,
     identity: gitIdentity,
   });
-  const runner = new SessionRunner({
+  // The runner's ports; the handover job builds a second runner over the same ones (below).
+  const runnerDeps: Omit<SessionRunnerDeps, "planner"> = {
     store,
     clock,
     tokens,
     kill,
-    planner: new StaticPlanner(500_000, estimates),
     executor,
     context,
     critic,
@@ -1713,6 +1748,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         taskId: task.id,
       });
     },
+  };
+  const runner = new SessionRunner({
+    ...runnerDeps,
+    planner: new StaticPlanner(500_000, estimates),
   });
 
   // PM intake (spec A.2, ADR 0055): one planning-rung call through the loop driver and the
@@ -2062,11 +2101,87 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     grantedSecrets: [...(ghToken ? [SECRET_NAMES.github] : []), ...sharedNames],
     maxDepth: 2,
   });
+  // Monthly jobs (ADR 0060). The calibration runs the critic over the registry's eval sets
+  // under a budget from the human's settings; the handover runs ONE session of a fresh agent
+  // on the flagged project, planned over the seeded task alone and without a memory port
+  // (`runSession` below is that session: the same ports, grant and gate as any other).
+  const calibrationJob = new CalibrationJob({
+    store,
+    clock,
+    tokens,
+    critic: critic.service,
+    registry,
+    outDir: join(dirs.data, "critic"),
+    notifier,
+    humanId: human.id,
+    agentId: agent.id,
+    criticAgentId: criticAgent.id,
+    settings: async () => calibrationSettingsOf((await store.human.mustGet(human.id)).notify_prefs),
+    // The once-a-month check is the human's local month, as the schedule's (ADR 0060).
+    timezone: async () => (await store.human.mustGet(human.id)).timezone,
+  });
+  const handoverJob = new HandoverJob({
+    store,
+    clock,
+    humanId: human.id,
+    agentId: agent.id,
+    reportDir: join(dirs.data, "handover"),
+    notifier,
+    timezone: async () => (await store.human.mustGet(human.id)).timezone,
+    runSession: async ({ agentId, projectId, taskId, budgetCapUsdMicro }) => {
+      await schemaSync.assertCanSync("session.start");
+      if (!provider)
+        throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
+      const project = await store.project.mustGet(projectId);
+      await refreshCapabilities();
+      // No memory anywhere in the session (spec P.15 "only the repo and docs", ADR 0060):
+      // neither the runner's lessons block nor the executor's per-task recall.
+      const handoverRunner = new SessionRunner({
+        ...runnerDeps,
+        executor: prExecutor(false),
+        memory: undefined,
+        planner: new SeedOnlyPlanner(taskId, new StaticPlanner(500_000, estimates)),
+      });
+      return handoverRunner.start({
+        agentId,
+        projectId,
+        trigger: "schedule",
+        budgetCapUsdMicro,
+        appVersion,
+        grant: sessionGrant(project, await sharedSecretNamesFor(store, agentId)),
+        onEvent: (type, payload) => events.emit("session", { type, payload, agentId, projectId }),
+      });
+    },
+  });
+  /**
+   * The jobs' schedules from the settings as they stand: the calibration's day, time and
+   * switch from the human's prefs, one handover entry per flagged project. Run at compose,
+   * before every scheduler tick (so a settings change by any route, command or device takes
+   * effect at the next tick) and by the project settings route.
+   */
+  const refreshJobSchedules = async (target: Scheduler): Promise<JobSchedules> => {
+    const h = await store.human.mustGet(human.id);
+    const cal = calibrationSettingsOf(h.notify_prefs);
+    scheduleCalibration(target, {
+      timezone: h.timezone,
+      day: cal.day,
+      time: cal.time,
+      enabled: cal.enabled,
+    });
+    const projects = await store.project.list({}, { limit: 1000 });
+    return {
+      calibration: cal.enabled,
+      handover: syncHandoverSchedules(target, projects, h.timezone),
+    };
+  };
   const startSession = async (req: StartRequest) => {
-    // The model watch and the memory consolidation are local jobs (this install's providers
-    // and this human's memory); only a session syncs with peers, so only it waits on the gate.
+    // The model watch, the memory consolidation and the monthly jobs are local jobs (this
+    // install's providers and this human's memory); only a session syncs with peers, so only
+    // it waits on the gate (the handover's own session does, inside the job).
     if (isModelWatchRequest(req)) return modelWatch.run();
     if (isMemoryConsolidationRequest(req)) return memory.propose();
+    if (isCalibrationRequest(req)) return calibrationJob.run();
+    if (isHandoverRequest(req)) return handoverJob.run(req.projectId as string);
     return runSession(req);
   };
   // The scheduler runs a start in the background and only logs a rejection: one bound to an
@@ -2133,6 +2248,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const scheduler = new Scheduler({
     clock,
     start: mirrorStartHandler(gatedMirror, startSession, { agentId: agent.id }),
+    // The fired day or month of every schedule survives a restart (a monthly job on a live
+    // model must not run twice because the daemon came back after its time, ADR 0060).
+    fired: fileFiredKeys(join(dirs.data, "scheduler-fired.json")),
+    refresh: async (target) => {
+      await refreshJobSchedules(target);
+    },
   });
   scheduleModelWatch(scheduler, { timezone: human.timezone });
   // Weekly memory consolidation (spec G.4): report only; the human applies it from the inbox.
@@ -2365,6 +2486,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   if (schemaSync.paused) logger.warn("sync paused at compose", { ...schemaSync.status() });
   else await syncApprovals();
   await refreshMirrorSchedules();
+  const jobSchedules = await refreshJobSchedules(scheduler);
   if (services) scheduler.start();
   // The PC's heartbeat and the phone's commands (only built when the services run).
   presence?.start();
@@ -2457,6 +2579,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     sdkHostCommands,
     bridgedTools: extensions.bridgedTools().length,
     mirrors: mirrorSchedules.size,
+    calibration: jobSchedules.calibration ? "monthly" : "off",
+    handoverProjects: jobSchedules.handover.length,
     services,
     desktopDevice: remoteDevice?.name ?? "none",
     remote: remoteEnabled ? "on" : "off",
@@ -2563,6 +2687,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     toolsForRun,
     syncApprovals,
     refreshMirrorSchedules,
+    jobs: {
+      calibration: calibrationJob,
+      handover: handoverJob,
+      refreshSchedules: () => refreshJobSchedules(scheduler),
+    },
     mirrorSync,
     intake,
     async close() {

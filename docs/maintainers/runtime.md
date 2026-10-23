@@ -498,8 +498,19 @@ full with the task each was given to (`describeHeard`); `SessionResult.heard` ca
 deliveries. Tests: `live-chat.test.ts`. Requirement: O.9.
 
 `triggers.ts` is the scheduler (daily, weekdays, every N
-minutes in the human's time zone; message, CI, PR comment, email, remote and manual requests;
-one active session per agent; quiet hours defer non-manual triggers). `state-ports.ts` adapts
+minutes and monthly in the human's time zone; message, CI, PR comment, email, remote and manual
+requests; one active session per agent; quiet hours defer non-manual triggers). A `monthly`
+schedule (ADR 0060) fires on `dayOfMonth` (1 to 31, clamped to the month's last day, so 31
+fires on 30 April and 28 February) at `time`, once per local month (`localParts().monthKey`),
+and catches up later in the month when the daemon was down on the day. A schedule seen for the
+first time after its day (a new install on the 20th, a job just switched on) waits for the next
+month instead of running at once; seen before or on its day, it is recorded as seen (`""`) so
+the catch-up applies. The last fired day or
+month of every schedule lives in a `FiredKeys` store: in memory by default, `fileFiredKeys`
+(`<data dir>/scheduler-fired.json`) in the daemon, so a restart after the due time does not run
+a day's or a month's job twice. `SchedulerDeps.refresh` runs before every tick (an error is
+logged, never fatal): the daemon re-reads the settings that decide the monthly jobs' schedules
+there, so a change by any route, command or device applies at the next tick. `state-ports.ts` adapts
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
 approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call (matched by
 `change_card.key` within the session: the hooks' SHA-256 key of the canonical raw input,
@@ -694,6 +705,68 @@ still refuses never stops the session: the result reaches the runner, and the fa
 `error`, the store's message; never the prompt, the brief or the report), so a run history that
 disagrees with the cost ledger is traceable. Tests: `executor.test.ts`, `loop.test.ts`.
 
+### Monthly jobs (`src/jobs/`, spec H.7 and P.15, [ADR 0060](../decisions/0060-monthly-jobs.md))
+
+Two jobs on the session scheduler's `monthly` kind, each with a sentinel agent id that
+`startSession` routes before the sync gate (`isCalibrationRequest`, `isHandoverRequest`), like
+the model watch. The calibration's is `critic-calibration`; every handover project has its own,
+`handoverAgentId(project)` = `handover-test:<project>`, because the scheduler keeps one pending
+slot per agent and a shared id let a third project due the same day replace the second's
+request. Both jobs read the human's time zone at every run (`timezone` dep): their own
+once-a-month check is the local month the run starts in against the local month of the newest
+report's `startedAt`, the same key the scheduler fires on. `compose.ts` registers their schedules from the settings at compose and before
+every tick (`refreshJobSchedules`, also `RuntimeApp.jobs.refreshSchedules()` and the project
+settings route, whose answer says `handoverScheduled`). Both can be run by hand: `fr jobs
+calibrate [--force]`, `fr jobs handover <project> [--force]`, `fr jobs reports` (`cli.ts`).
+
+- Critic calibration (`calibration.ts`, H.7): on by default, day 1 at 06:00 local; the human's
+  `notify_prefs.calibration` (`enabled`, `day`, `time`, `budget_usd` default 10, `tier` default
+  1, `specialists` default every runnable one with eval tasks; `calibrationSettingsOf` falls
+  back field by field). `CalibrationJob.run` loads the registry's eval sets
+  (`loadEvalSet` on each specialist's `evalSetDir`), opens a session row (no project,
+  `trigger: "schedule"`, the budget as its cap) and a token for it, and runs the critic
+  package's `calibrate()` through the composed critic service with a `SessionBudget`, so the
+  hooks refuse a review past the cap. A run whose reviews did not all complete (budget,
+  provider, timeout) is reported as failed with the outcomes and writes no report (its
+  conservative verdicts would otherwise read as catches or misses). A completed run writes
+  `<data dir>/critic/calibration-<date>.json`, computes the drift in percentage points of the
+  catch rate and the pass rate against the newest earlier report (by `startedAt`, so a
+  forced second run on one day is the newest; none: "this run is the baseline"), writes a `critic.calibration` audit row and raises a `critic_calibration`
+  notification naming both rates, the gate and the drift. A report that started in this local
+  month makes the run a skip (`already_ran`) unless forced: the second line of the once-a-month rule
+  after the scheduler's fired keys.
+- Handover test (`handover.ts`, `handover-seed.ts`, P.15): off until a project's
+  `settings.handover.enabled` is true (that flag is how the install names its own Forerunner
+  project; any project can carry it); day 1 at 07:00 local, `budget_usd` default 5, `seed`
+  optional. `HandoverJob.run(projectId)` skips a project below autonomy 2 (such a session only
+  files its plan), creates a new principal agent row `Handover <date>` (counting up on a
+  second same-day run; no lesson names it), files the seed (`settings.handover.seed`, validated
+  by `HandoverSeedSchema`, else `defaultHandoverSeed(date)`: a dated line at the end of
+  `docs/runbook.md`, reachable only by reading README.md and the docs) as a ready task, and
+  runs one session through `runSession`: in the daemon a second `SessionRunner` over the same
+  ports with no memory port, its own `PrTaskExecutor` whose loop executor has no memory port
+  either (the daemon's executor recalls `agent_private` and `shared` lessons into every task
+  brief; the fresh agent must get none), and `SeedOnlyPlanner`, which plans the seeded task
+  alone. After
+  it, `stuckPlaces` reads the fresh agent's audit rows of that session (other agents' rows,
+  the critic's included, do not count): a `read_file` of one path more than once (`reread`),
+  an allowed call whose result starts `ERROR:` (`failed`), a call the hooks refused
+  (`refused`), the seeded task ending `needs_human` or `failed`, the seeded task ending
+  anywhere short of `done` or `in_review` (`task_unfinished`: sent back by the critic and left
+  `ready`, never planned, stopped `in_progress`; the change was not made), the session ending
+  `failed` or `killed`. Any stuck place files ONE docs task on the project (`docsTaskFor`:
+  every place as a line, one acceptance criterion per file name). Tool output, the hooks'
+  reasons and paths are data: one that `scanForInjection` flags is withheld from the task
+  (`[withheld: instruction-shaped ...]`; the audit row keeps the original), since the docs task
+  is filed `ready` and a later specialist gets its text as the goal. The report goes to
+  `<data dir>/handover/<project>/handover-<date>.json`, to the inbox as an `info` message
+  from the fresh agent, as a `handover_report` notification and as a `handover.run` audit row;
+  a seeded task the session left active is cancelled (the seed never becomes regular work)
+  and the fresh agent is retired. A session that cannot start (no credential, the sync gate)
+  ends the run `failed` with an audit row, the seed cancelled and the agent retired.
+  `handover-seed.ts` also holds scenario 8's sample repository (`SEEDED_REPO`,
+  `SEEDED_CHECKS`, `CLAMP_SEED`), which `tests/e2e/src/scenario-handover.ts` re-exports.
+
 ### Decision log (`src/wiring/state-ports.ts`, `DecisionLog`)
 
 Answered decisions are recorded per project and never asked again unless superseded (spec
@@ -734,8 +807,9 @@ gate first and is refused (`unavailable`) while sync is paused; `SessionRunner.s
 gate before the session row exists. Spec M's "compatible version before sync resumes" is
 enforced there and in `compose.ts` (`updates.md`, "The wired gate"): the scheduler's `start`
 asks the gate for a session and for a scheduled mirror run alike, while the model watch and
-the memory consolidation, local jobs, are routed before the gate and keep running on a paused
-install.
+the memory consolidation and the monthly calibration and handover jobs, local jobs, are routed
+before the gate and keep running on a paused install (the handover's own session asks the gate
+inside the job, like any session).
 
 ### The core loop: critic, memory and commands (`src/loop/`, [ADR 0036, core loop integration](../decisions/0036-core-loop-integration.md))
 
@@ -1114,6 +1188,7 @@ already:
 | Estimates (`src/estimates`, spec I.3) | `EstimateModel.fromStore(store)` with registry defaults for the cold start; `StaticPlanner(500_000, estimates)` prices plan items; `SessionRunner.onTaskFinished` feeds actual cost and wall time back (`observe`). | `GET /costs/estimates` serves the accuracy view (`EstimateAccuracyView`). |
 | GitHub Projects mirror (`@forerunner/capabilities`) | `ProjectsMirror` over the store, the vault (`githubHostForSecretRef` resolves `settings.github_mirror.secret_ref`, default `secret:github_token`) and `DaemonMirrorApprovals` (compose.ts): the daemon's `MirrorHumanPort`, which files the approval request like `HumanRequestMirrorPort`, reuses an open one for the same project, reports which request a project waits on and wakes on `syncApprovals()` instead of waiting for the next poll; an injected `gitHost` (tests) short-circuits `hostFor`. | The scheduler's `start` is `mirrorStartHandler(gatedMirror, startSession)`, where `gatedMirror.sync` asks the schema sync gate (`updates.md`) before `mirror.sync`, so a scheduled run on a paused install is refused with `unavailable` like a manual one; `refreshMirrorSchedules()` registers an `every` schedule per project whose settings enable the mirror, at compose and from `PUT /projects/:id/settings`. `RuntimeApp.mirrorSync()` runs one now and answers with the run, or with the approval request as soon as the mirror asks (the run goes on in the background and finishes when the inbox answers it; a second call joins the run). |
 | Model watch (`src/models`, spec D.6, D.21) | `ModelWatch` over the provider registry, `BUILTIN_PRICING` plus `<config>/pricing.json` and `<config>/models.json` (`FileModelSettingsStore`), `FetchPriceListSource` when `FORERUNNER_PRICE_LIST_URL` is set, else `UnconfiguredPriceListSource` (reports "no price list configured", invents nothing), `LoopEvalRunner` (below) and `StateModelWatchApprovals`. `scheduleModelWatch` registers the weekly run; `startSession` routes `isModelWatchRequest` to `modelWatch.run()`. | Routes under `/model-watch`; answers from the inbox are applied by `syncApprovals()`. |
+| Monthly jobs (`src/jobs`, spec H.7, P.15, ADR 0060) | `CalibrationJob` over the composed critic service, the registry, the token issuer and the notifier, reports under `<data dir>/critic`; `HandoverJob` with `<data dir>/handover` and a `runSession` that builds a second `SessionRunner` over the same runner ports (`runnerDeps`) without a memory port, with `prExecutor(false)` (the executor whose loop executor recalls no lessons) and with `SeedOnlyPlanner`, after the sync gate and the credential check. The scheduler gets `fileFiredKeys(<data dir>/scheduler-fired.json)` and `refresh: refreshJobSchedules` (the calibration from `human.notify_prefs.calibration`, one handover schedule per project with `settings.handover.enabled`). `startSession` routes `isCalibrationRequest` and `isHandoverRequest` before the gate. | `fr jobs calibrate`, `fr jobs handover`, `fr jobs reports`; the settings rows `human.calibration` and `project.handover` in `GET /settings`; `PUT /projects/:id/settings` re-syncs the schedules and answers `handoverScheduled`. |
 | Updates (`src/update`, spec M) | `composeUpdateManager({ store, dirs, clock, humanId, runningVersion, restarter })` over the daemon's own store (the `store` option was added for this; the CLI leaves it out and opens one). A malformed `update.json` is logged and ignored. | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback` with `RegistryConnectorCatalog` (connector versions from the extension catalog) and `ModelWatchUpdates` (the latest report as new models, deprecations, price changes and recommendations). `fr daemon` runs `updates.healthCheck()` once the server listens. |
 
 `syncApprovals()` (extension grants, model watch decisions, memory consolidations, the
@@ -2147,6 +2222,32 @@ refused data never forwarded; no session and a paused session posting nothing; a
 running session untouched with both running; the `LoopTaskExecutor` placing the section after
 the brief's limits with the flagged line's rules in a warning and its words out of it).
 
+`scheduler-monthly.test.ts` (ADR 0060): on the simulated clock a monthly schedule fires once
+per local month across month boundaries, a day past a short month's end fires on its
+last day, a schedule first seen after its day waits for the next month while one seen
+before it catches up after a downtime, the file-backed fired keys
+keep a new scheduler from firing again after a restart, quiet hours defer the run and the
+drain runs it once, `refresh` adds and drops schedules before each tick.
+`calibration-job.test.ts` (H.7): the fake provider grades the registry's eval sets through
+`calibrate()`, the dated report is written, the notification names the catch rate, the pass
+rate and the drift against the previous report, the audit row is written, a second run in the
+month is skipped unless forced, a run the budget refuses is reported failed with no report,
+and the settings parse with their defaults. `handover-job.test.ts` (P.15): a fresh principal
+agent with no lessons and no memory port runs the seeded change alone on the sample
+repository with real file tools and hooks; the re-read, the failed read and the refused read
+become one docs task naming the files; the report reaches the inbox, a notification and a
+dated file; a clean run files no docs task; the setting and autonomy gates; a session that
+never ran or left the seed ready cancels the seed; `stuckPlaces`, the settings and the schedule
+sync; an unfinished seed is a `task_unfinished` place; instruction-shaped tool output and
+paths are withheld from the docs task; three projects due the same day all start; the local
+month (Los Angeles, a late-February run that is 1 March UTC does not swallow March's) and the
+report order by `startedAt`. `calibration-job.test.ts` also proves the local month and that a
+forced same-day run is the drift base. `monthly-jobs-wiring.test.ts` composes the daemon on the
+fake provider: no model call of the handover's fresh agent carries a shared lesson (a control
+recall shows it would), and the composed scheduler fires the calibration once on day 1 at
+06:00 local on the simulated clock and raises the `critic_calibration` notification.
+`jobs-cli.test.ts`: `fr jobs calibrate|handover|reports`.
+
 ## Requirements covered by the daemon wiring
 
 G.5 (the standard doc set scaffolded at project creation as a pull request on the linked
@@ -2454,3 +2555,12 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   repository whose base branch runs CI only on push (no workflow on pull requests) reports
   nothing on a PR head, so its PRs wait out the bound and go to the human instead of merging.
   A tier 3 task is merged by the human who signs it off, never by the step.
+- The monthly jobs (ADR 0060) have run on the fake provider only: the handover test on
+  Forerunner's own repository with a live model is a run on the final build within the live
+  budget (`fr jobs handover <project> --force`), not done here. Their reports are files under
+  the install's data dir, so a second device of the same human does not see them except as the
+  notification and the inbox message. Each sentinel agent (the calibration's, one per
+  handover project) has the scheduler's single pending slot: a run deferred by quiet hours
+  waits there and is lost on a restart before the hours end (the fired key is already set;
+  `fr jobs ... --force` runs it). The stuck-place rule counts `read_file` re-reads by path
+  only; an agent lost in searches without re-reading a file is not caught by that line.

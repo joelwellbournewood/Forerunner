@@ -1879,7 +1879,10 @@ doctor probe, its wall-clock bound, and the shell stand-in),
 `scenario-commands.ts` (a `CommandLoop` and a `ConversationAgent` for an install, as the daemon
 composes them, plus predicates for scripting the agent's model calls), `scenario-voice.ts`
 (the voice bridge), `scenario-handover.ts` (the seeded repository, `freshInstall`, the
-read-then-write specialist script, the node test runner) and `scenario-phone.ts` (the state
+read-then-write specialist script, the node test runner; `SEEDED_REPO`, `SEEDED_CHECKS`,
+`CLAMP_SEED` and the clamp sources are re-exported from the runtime's
+`packages/runtime/src/jobs/handover-seed.ts`, which the daemon's monthly handover job shares,
+ADR 0060, so scenario 8 runs the same task the job files) and `scenario-phone.ts` (the state
 service in process, the phone client, the app's parser and card, the envelope, the daemon's
 watcher for an install).
 

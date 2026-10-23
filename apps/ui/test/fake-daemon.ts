@@ -1654,6 +1654,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     notify_channel: "low",
     default_autonomy: "medium",
     language: "low",
+    calibration: "medium",
+    handover: "medium",
   };
   const plan = (name: string, params: Record<string, unknown>): PlanOutcome => {
     const projectRef = typeof params.project === "string" ? params.project : undefined;

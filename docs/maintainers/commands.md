@@ -70,7 +70,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `session.stop` | session / global | low | no | ports.kill or a `remote_command` row |
 | `session.pause` | session | low | yes (resume) | ports or `session.status` |
 | `capability.grant` | global | high | yes | `extension.permissions`, `enabled` |
-| `settings.set` | by key | by key (`SETTING_SPECS`) | yes | project settings/columns or human prefs/columns; a key with an `effect` (`small_project_mode`, spec B.6) says what changes in the card's new value and the sentence, both ways |
+| `settings.set` | by key | by key (`SETTING_SPECS`) | yes | project settings/columns or human prefs/columns; a key with an `effect` (`small_project_mode`, spec B.6; the monthly jobs' `calibration`, global in `human.notify_prefs`, and `handover`, per project, ADR 0060) says what changes in the card's new value and the sentence, both ways |
 | `note.add` | project | low | yes (dismiss) | `queue_item` |
 | `request.answer` | project | the request's own risk | no | `human_request.answer` |
 | `email.mode.set` | global | high | yes | `extension` kind `capability`, name `email:<agentId>`, `config.settings.mode` |

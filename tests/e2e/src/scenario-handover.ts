@@ -5,7 +5,9 @@
  * - `SEEDED_REPO`: a small library with the standard doc set (README, docs/overview.md,
  *   docs/testing.md, docs/runbook.md), a seeded defect in `src/clamp.js` and the failing test
  *   `test/clamp.test.js` (node:test, no dependencies). `SEEDED_CHECKS` is the project setting
- *   that makes the critic run that test at tier 2 (`settings.checks`).
+ *   that makes the critic run that test at tier 2 (`settings.checks`). `CLAMP_SEED` is the
+ *   task. All three come from the runtime's handover seed module, which the daemon's monthly
+ *   handover job (spec P.15, ADR 0060) runs from.
  * - `runSeededTest(root, files)`: writes the files to a fresh directory and runs the test
  *   with node, so the scenario proves the test fails before the fix and passes after it.
  * - `freshInstall(world, { agentName })`: a NEW principal agent row for J with an empty
@@ -44,7 +46,6 @@ import {
   TokenIssuer,
 } from "@forerunner/runtime";
 import { fileTools } from "@forerunner/runtime/daemon/tools";
-import type { JsonObject } from "@forerunner/state";
 import { type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
 import { coderOn } from "./scenario-scripts.ts";
 import type { RunEventRecord, ScenarioEvent, ScenarioWorld } from "./scenario-world.ts";
@@ -57,81 +58,19 @@ import {
   specialistTurn,
 } from "./world.ts";
 
-export const CLAMP_BUGGY = `/**
- * clamp(x, lo, hi): x limited to the closed range [lo, hi].
+/**
+ * The seeded repository, its checks setting and the task that fixes the defect live in the
+ * runtime (`packages/runtime/src/jobs/handover-seed.ts`, ADR 0060): the daemon's monthly
+ * handover job and this scenario share them. Re-exported so the scenario reads as before.
  */
-export function clamp(x, lo, hi) {
-  if (x < lo) return lo;
-  if (x > hi) return lo; // seeded defect: the upper bound returns the wrong edge
-  return x;
-}
-`;
-
-export const CLAMP_FIXED = `/**
- * clamp(x, lo, hi): x limited to the closed range [lo, hi].
- */
-export function clamp(x, lo, hi) {
-  if (x < lo) return lo;
-  if (x > hi) return hi;
-  return x;
-}
-`;
-
-export const CLAMP_TEST = `import assert from "node:assert/strict";
-import { test } from "node:test";
-import { clamp } from "../src/clamp.js";
-
-test("clamp keeps values inside the range", () => {
-  assert.equal(clamp(3, 0, 5), 3);
-  assert.equal(clamp(-1, 0, 5), 0);
-});
-
-test("clamp returns the upper bound above it", () => {
-  assert.equal(clamp(10, 0, 5), 5);
-});
-`;
-
-/** The seeded repository: docs first, a defect, a failing test. Keys are POSIX paths. */
-export const SEEDED_REPO: Record<string, string> = {
-  "README.md": `# clamp
-
-A one-function library. Start with docs/overview.md; docs/testing.md says how the tests run
-and what they pin; docs/runbook.md lists the day-to-day commands.
-`,
-  "docs/overview.md": `# Overview
-
-The library exports one function, \`clamp(x, lo, hi)\` in \`src/clamp.js\`. It limits a number
-to the closed range [lo, hi]. A value below lo becomes lo; a value above hi becomes hi.
-`,
-  "docs/testing.md": `# Testing
-
-Run \`node --test test/clamp.test.js\` from the repository root (Node 22, no dependencies).
-The test pins both edges of the range: below lo gives lo, above hi gives hi. A change to
-\`src/clamp.js\` is done when this command exits 0.
-`,
-  "docs/runbook.md": `# Runbook
-
-- Tests: \`node --test test/clamp.test.js\`
-- Release: tag the commit; there is no build step.
-`,
-  "package.json": `{
-  "name": "clamp",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": { "test": "node --test test/clamp.test.js" }
-}
-`,
-  "src/clamp.js": CLAMP_BUGGY,
-  "test/clamp.test.js": CLAMP_TEST,
-};
-
-/** The project setting that makes the critic run the test at tier 2 (`settings.checks`). */
-export const SEEDED_CHECKS: JsonObject = {
-  checks: [
-    { name: "tests", argv: ["node", "--test", "test/clamp.test.js"], required: true },
-  ] as never,
-};
+export {
+  CLAMP_BUGGY,
+  CLAMP_FIXED,
+  CLAMP_SEED,
+  CLAMP_TEST,
+  SEEDED_CHECKS,
+  SEEDED_REPO,
+} from "@forerunner/runtime";
 
 /** Write `files` under a fresh directory and run the seeded test there with node. */
 export async function runSeededTest(
