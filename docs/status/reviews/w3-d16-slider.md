@@ -249,3 +249,51 @@ Findings:
    - A UI test against the fake would therefore show a message the real daemon never sends.
    - Fix: the fake gives each refusal the daemon's text, and a UI test covers the -2 refusal.
    Resolution: fixed in 6a45e69: the fake builds the zod message `settings.set` gives (too small, too big, not an int, not a number). `settings-slider.test.tsx` checks -2, +2, 0.5 and "1" against it with nothing written, and `speed-quality.test.ts` pins the daemon's reasons for +2 and -2, so the two cannot drift apart unnoticed.
+
+## Rebase
+
+Stage REBASE, 2026-10-23. `wave/w3-d16-slider` (0e15027, merge base 82a6295) rebased with
+`git rebase origin/ccr-4d8a843c-1k9syk` onto cac6fee (181 commits ahead of the old merge base).
+The review commits named above as 2e87526 and 6a45e69 are a9aac00 and b72b99c after the rebase.
+
+Conflicts and how each was resolved (both sides kept every time):
+
+1. `packages/runtime/src/daemon/server.ts` (commit `wip:`): the imports (the base's
+   `fast-mode.ts` import and the branch's `speedQualityOffsetOf`) both kept; the per-project
+   `GET /settings` rows keep the base's `project.handover` and `project.fast_mode` rows and add
+   the branch's `project.speed_quality_offset` row after them.
+2. `packages/runtime/src/session/executor.ts` (commits `wip:`, `runtime: every mode's effort`,
+   `runtime: the slider never lifts`): imports merged (fast mode from `fast-mode.ts`;
+   `capEffort`, `effortForTask`, `modelIdFor`, `speedQualityOffsetOf`, `startingTier` from
+   `ladder.ts`). In `execute` the base's `decideFastMode` / `runModel` block stays as written
+   and the effort is the branch's `capEffort(effortForTask(..., speedQualityOffsetOf(project
+   settings), modeDefaults), spec.maxEffort)`: fast mode changes the model id, the slider the
+   effort; neither touches the other.
+3. `apps/ui/test/fake-daemon.ts` (commit `ui: Settings shows the ... slider`): the state type,
+   its initial value and the `/__test/reset` handler keep the base's `runnerKeys`, `fastMode`
+   and `desktop` fields and add `speedQuality`; `settings.set` keeps the base's `fast_mode`
+   card branch and adds the slider's branch after it as a separate `if`, both ahead of the
+   generic card.
+4. `docs/maintainers/apps.md`: the base's Opus fast-mode card paragraph and the branch's
+   slider paragraph both kept; the "new setting the UI can change" bullet keeps the base's
+   monthly-jobs sentence and the branch's slider sentence; the test list keeps the base's
+   longer `settings` description and adds the branch's `settings-slider` entry.
+5. `docs/maintainers/commands.md`: the `settings.set` row is one row naming `small_project_mode`,
+   `fast_mode`, `calibration`, `handover` and `speed_quality_offset`; the `SettingSpec.effect`
+   paragraph keeps the base's `fast_mode` text and the branch's `speed-quality.test.ts` clause.
+6. `docs/status/PROGRESS.md`: the branch's log entries sit above the base's newer entries (all
+   kept); the plan's item list keeps the base's wording with the branch's D.16 clause. The
+   requirement counts, which said 184 / 39 / 5 at build time, are now the real 186 done, 37 in
+   progress, 5 todo (the base has 185 / 38 / 5; D.16 moves to done), in the build entry and in
+   the phase 8 row.
+
+Auto-merged without conflict and checked by reading: `compose.ts` (the registry `max_effort`
+handed to `SpecialistSpec`, the conversation agent and the intake), `conversation/agent.ts`,
+`session/intake.ts`, `models/ladder.ts`, `SettingsPage.tsx` (the base's fast-mode card and the
+branch's slider input side by side), runtime.md, requirements.md, BLOCKERS.md.
+
+Checks after the rebase: `pnpm typecheck` ok; `pnpm lint` exit 0 (warnings only, none new
+from the branch); runtime unit 129 files / 1143 passed, 1 skipped (`effort-offset.test.ts`
+11); commands unit 11 files / 153; critic unit 14 files / 116; `pnpm --filter @forerunner/ui
+test` 47 files / 301 (`settings-slider.test.tsx` 3); `node scripts/docs-check.mjs --base
+origin/ccr-4d8a843c-1k9syk` ok. No base test needed a change.

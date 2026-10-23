@@ -14,9 +14,22 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending: the hosted emulator boots and launches the app (run 6), the raw-CDP attach is merged (ADR 0054) and not yet dispatched; the Settings → Capabilities → Email page (ADR 0066), PM intake (ADR 0055) and what you say during a live session (ADR 0078) landed 2026-10-23 | gates.md § Phase 5 |
 | 6 | Capabilities | injection suite, live revocation, overnight cloud-runner session, emailed task and spoofed email passed on the fake provider and the in-process mail server; live halves pending a real mailbox and host | gates.md § Phase 6 |
 | 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts) | gates.md § Phase 7 |
-| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 184 done, 39 in progress, 5 todo (S.32 on `wave/w2-s32-indicator`, built, not merged); security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
+| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 186 done, 37 in progress, 5 todo (S.32 on `wave/w2-s32-indicator`, built, not merged; D.16 `done` on `wave/w3-d16-slider`, reviewed and rebased onto cac6fee, not merged); security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
 
 ## Log
+
+### 2026-10-23 (item w3-d16-slider rebased onto cac6fee)
+- `wave/w3-d16-slider` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
+  daemon's `/settings` rows (the base's handover and Opus fast-mode rows next to the slider's
+  row), the executor (the base's fast-mode routing next to the slider's offset and the
+  `max_effort` cap), the UI's fake daemon (runner keys, fast mode and desktop state next to
+  the slider state; the fast-mode and slider `settings.set` cards as two branches), apps.md,
+  commands.md (the `settings.set` row and the `SettingSpec.effect` paragraph name both
+  `fast_mode` and `speed_quality_offset`) and this log; both sides kept
+  (`docs/status/reviews/w3-d16-slider.md` `## Rebase`). Current counts: runtime 129 files /
+  1143 passed, 1 skipped (`effort-offset.test.ts` 11), commands 11 files / 153
+  (`speed-quality.test.ts` 3), critic 14 files / 116, UI 47 files / 301
+  (`settings-slider.test.tsx` 3); requirements 186 done, 37 in progress, 5 todo. Not merged yet.
 
 ### 2026-10-23 (item w3-d16-slider reviewed and fixed on `wave/w3-d16-slider`)
 - Independent review of the D.16 build (`docs/status/reviews/w3-d16-slider.md`, `## Review`):
@@ -36,7 +49,7 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   Tests: `packages/runtime/test/effort-offset.test.ts` (composed daemon, each mode at each
   position, a move applies to the next turn, session or run), `packages/commands/test/
   speed-quality.test.ts`, `apps/ui/test/settings-slider.test.tsx`. D.16 `done` on this branch
-  (requirements 184 done, 39 in progress, 5 todo); BLOCKERS.md row D.16 says built, review
+  (requirements 186 done, 37 in progress, 5 todo after the rebase onto cac6fee); BLOCKERS.md row D.16 says built, review
   pending. Report: `docs/status/reviews/w3-d16-slider.md`.
 
 ### 2026-10-23 (item w2-s32-indicator rebased onto 22982fa)
