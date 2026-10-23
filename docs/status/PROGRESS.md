@@ -29,7 +29,11 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   log row, one session start), and `executor-ceiling.test.ts` / `remote-wiring.test.ts` pin a
   haiku (tier 1) ceiling keeping the third attempt at haiku and the ceiling re-read per run.
   Each test was shown to fail with the dedupe or the ceiling read removed. Report:
-  `docs/status/reviews/w3-misc-replay-ceiling.md`. Independent review pending.
+  `docs/status/reviews/w3-misc-replay-ceiling.md`. Reviewed the same day (verdict revise, five
+  findings, all fixed on the branch): the cloud runner's executor ignored the project's
+  ceiling (the executor now reads `critic_ceiling` itself when no reader is passed), the
+  replay case was order-dependent, the V.4 blockers edit conflicted with the base, two docs
+  overstated and the build report cited commits not on the branch.
 
 ### 2026-10-23 (item w3-d4-specialist-settings rebased onto 4ff4fb1)
 - `wave/w3-d4-specialist-settings` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1), which
@@ -484,7 +488,7 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
    w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
-   `it.todo`, the executor's ceiling rung; built on its branch 2026-10-23, review pending). Then an independent review of each of the ten
+   `it.todo`, the executor's ceiling rung; built and reviewed on its branch 2026-10-23, not merged). Then an independent review of each of the ten
    items merged on 2026-10-23 without one (w4-install-identity, w4-private-memory,
    w4-android-signing, w2-a2-intake, w2-g5-docs, w2-g6-promotion, w2-a4-sources,
    w2-email-page, w2-s13-shared-secrets, w3-o9-chat-to-inbox), applying what they find.

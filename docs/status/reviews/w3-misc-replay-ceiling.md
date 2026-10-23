@@ -162,7 +162,8 @@ and docs only; the dedupe and the ceiling read already existed in the code the b
 on, merge base 82a6295), traced from the real callers (`composeRuntime`, the cloud runner's
 `startCloudRunner`, the e2e worlds, `POST /remote/commands`, `RemoteCommandWatcher.run`).
 
-Verdict: **revise**. Score: **62/100**.
+Verdict: **revise**. Score: **62/100**. (Verdict on the build as reviewed; every finding below
+is resolved on the branch, see each `Resolution:` line.)
 
 Requirements checked:
 
@@ -199,23 +200,47 @@ Requirements checked:
    `services/cloud-runner/test/runner.test.ts` (project settings `{ critic_ceiling: "sonnet" }`,
    a ready task at `attempt: 3`, `startSession({ force: true })`): the coder's run row read
    `fake-opus`. Test deleted afterwards.
+   Resolution: fixed in addd4ab: `LoopTaskExecutor` falls back to `projectCeilingOf`
+   (`packages/runtime/src/models/ladder.ts`, the `critic_ceiling` setting when it names a
+   rung) when no `projectCeiling` reader is passed, so the cloud runner and every e2e world
+   honour the cap; proved by `services/cloud-runner/test/runner.test.ts` "a third retry on
+   the runner stays under the project's critic_ceiling" and `executor-ceiling.test.ts`
+   "without the projectCeiling port the executor reads critic_ceiling itself" /
+   "projectCeilingOf names a rung only", all three failing with the executor change stashed
+   (`expected [ 'fake-opus' ] to deeply equal [ 'fake-sonnet' ]`).
 2. **low**, `docs/maintainers/testing.md:1274` (the "Closed" ceiling entry) and
    `docs/maintainers/runtime.md:1472`. The entry says "a run above the ceiling cannot happen",
    and runtime.md calls the static `ceiling` "only the fallback"; with finding 1 both are false
    for the cloud runner's sessions. Verified by the same throwaway test.
+   Resolution: fixed in addd4ab: testing.md's closed entry, runtime.md ("Remote control of
+   the PC" and the test list) and cloud-runner.md (start step 4) now say the executor reads
+   the setting itself without a reader and name the cloud runner's test; requirements.md D.3
+   lists it.
 3. **low**, `tests/e2e/scenarios/09-phone.scenario.test.ts:455` (the replay case). The case
    asserts, rather than establishes, its precondition (the sample project active, which only
    the first case's undo produces), so it cannot run alone: `pnpm exec vitest run --project
    e2e tests/e2e/scenarios/09-phone.scenario.test.ts -t replays` fails with `expected null to
    be '<sample project id>'`. A test whose result depends on another case's side effects
    proves less than its name claims.
+   Resolution: fixed in 7ce6e02: the case switches to the sample project through the desktop
+   UI's turn when it is not active, so `-t replays` alone passes (1 passed, 1 skipped) as
+   does the whole file (2 passed).
 4. **low**, `docs/status/BLOCKERS.md:60` (V.4 row). The base branch rewrote the same V.4 row
    after this branch forked (item w4-stale-docs), so integrating the branch conflicts:
    `git merge-tree --write-tree origin/ccr-4d8a843c-1k9syk HEAD` reports
    `CONFLICT (content): Merge conflict in docs/status/BLOCKERS.md`. The V.3 row (unchanged on
    the base) can carry the same note.
+   Resolution: fixed in 359624a as far as the required rows allow: the V.4 row is back to its
+   starting text and the closure note sits in the V.3 row (unchanged on the base); git still
+   reports a conflict because the V.3 and V.4 lines are adjacent, and any V.3 edit the brief
+   asks for touches that hunk, but the resolution is now mechanical: keep the base's V.4 line
+   and this branch's V.3 line (checked with `git merge-tree --write-tree
+   origin/ccr-4d8a843c-1k9syk HEAD`).
 5. **low**, `docs/status/reviews/w3-misc-replay-ceiling.md` (Build report). The report names
    commits that are not on the branch (5d2270e, b57f8cb, 604918f, 478d320, 528d230, 8a61e40)
    and a base at e2bfb1e; `git merge-base --is-ancestor <sha> HEAD` fails for each, the real
    series is ae53f03..c6336f8 on merge base 82a6295. The evidence trail does not match the
    repository.
+   Resolution: fixed in 35dbf21: the build report's ids are replaced by the branch commits
+   with the same subjects (ae53f03, 8e8645b, ceefcd2, 79d6eba, cfa0237, d16edf7, c6336f8) and
+   the base by 82a6295; `git diff 79d6eba d16edf7` printing nothing was re-checked.
