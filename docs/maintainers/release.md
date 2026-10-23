@@ -71,8 +71,12 @@ shells; keep them equal to the tag.
 
 ### Staged install, health check, rollback (module M, phase 7)
 
-The contract the updater implements; today the release channel and signatures exist, the in-app
-updater does not yet (see Known issues).
+The contract as first planned around the Tauri updater plugin. ADR 0015 replaced the plugin
+with the pointer-file install layout and an Ed25519-signed release manifest: the updater is
+`packages/runtime/src/update/` (`updates.md`), and the desktop shell's launcher
+(`apps/desktop/src-tauri/src/install.rs`, `current.json`) and restart supervisor
+(`restart.rs`) apply it. The steps below keep the behaviour (stage, verify, swap, health check,
+rollback); `updates.md` is the current description of how each is done.
 
 1. **Check.** The app reads the latest release's updater manifest (`latest.json` uploaded by
    the release workflow once the updater plugin is on) and shows "Update available" with the
@@ -90,8 +94,8 @@ updater does not yet (see Known issues).
    migration restores the pre-migration database copy taken in step 3 (`data/state.sqlite.bak`).
 
 Scenario 7 ("Bad update") in `tests/e2e/` installs a deliberately broken build and expects the
-rollback. Until the updater ships, a human rolls back by installing the previous release from
-GitHub Releases over the current one; data directories are untouched.
+rollback (passing, `docs/status/gates.md`). A human can still roll back by hand by installing
+the previous release from GitHub Releases over the current one; data directories are untouched.
 
 Staged rollout: tag a release candidate first (`v1.0.0-rc.1` publishes as a pre-release, the
 updater's default channel ignores pre-releases), install it on both reference machines, run the
@@ -238,11 +242,6 @@ Run: `pnpm vitest run --project unit scripts`.
 
 - The Windows signing step is not wired (no certificate exists); the workflow passes the
   secret through but Tauri does not read `WINDOWS_CERTIFICATE` on its own. See "How to change it".
-- The updater plugin is not configured (`plugins: {}` in the desktop `tauri.conf.json`);
-  staged install, health check and rollback are phase 7 work.
-- `release.yml` uploads `docs/user-guide.md`, which does not exist yet.
-- `lint:paths` (`node scripts/check-paths.mjs`) must be added to the root `package.json` and to
-  `ci.yml` to enforce the path rule; it is clean on the current tree.
 - `@forerunner/platform` is not resolvable from `scripts/` (the root package has no workspace
   dependency on it), so `gates-verify.ts` and `sync-registry.ts` import it by relative path
   (`../packages/platform/src/*.ts`). Switch to the package name once the root depends on it.

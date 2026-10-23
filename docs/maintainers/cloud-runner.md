@@ -162,7 +162,10 @@ tests scan every log line and every store row for all encodings.
 
 `PcPresence.check()` says the PC is online when a non-revoked `device` of the human with kind
 `desktop` has `last_seen` within `FORERUNNER_RUNNER_PC_ONLINE_MS`, or when an active
-`session` of the agent has `runner: "pc"`. A scheduled, inbox-triggered or unforced manual
+`session` of the agent has `runner: "pc"`. The PC daemon registers that `desktop` row and
+refreshes its `last_seen` (`registerDesktopDevice`, `DesktopPresence` in
+`packages/runtime/src/remote/`, wired in `compose.ts` when remote commands are enabled), so a
+PC idle between sessions still counts as online. A scheduled, inbox-triggered or unforced manual
 session that fires while the PC is online is dropped for that firing with a log line and a
 counter in `/health` (`schedulesSkipped`); the PC's own scheduler fired it. Inbox items are not
 lost: `InboxTrigger` leaves them untouched while a PC is online and looks again after
@@ -401,10 +404,6 @@ on a real host and a real mailbox is pending the items in `docs/status/BLOCKERS.
 - A `{ target: "cloud" }` command from a human who has no cloud runner stays `pending` for
   ever (no runner owns it); the phone shows it as pending until the human cancels it. Refusing
   it at enqueue needs the state service to know which humans run a cloud runner (ADR 0041).
-- The PC daemon does not yet heartbeat a `desktop` device row; until it does, an active
-  `session` with `runner: "pc"` is what keeps a working PC ahead of the runner, and a PC that
-  is idle between sessions looks offline. The state service stamps `last_seen` for devices
-  that talk to it (phones, web), not for the daemon.
 - Locking the vault cannot take the model credential back from the composed provider; the
   runner restarts (exit 75) to forget the key. The GitHub token read at compose time has the
   same lifetime.

@@ -622,8 +622,6 @@ clean, `cargo test` 68 passed, 0 failed.
 
 ### Known issues
 
-- The daemon does not emit `notification` events yet (the notification module of phase 5);
-  the shell parses and shows them as soon as it does.
 - The daemon does not mount the email routes of `packages/capabilities/src/email/routes.ts`
   yet, so the tray's email item reads "Pause email (not available: the daemon has no email
   routes yet)" until the wiring lands.
@@ -636,11 +634,6 @@ clean, `cargo test` 68 passed, 0 failed.
   the icon is invisible but the window and the daemon work.
 - The first run against the real daemon end to end (attach, restart, deep link) is not yet
   recorded in `docs/status/gates.md`.
-- `.github/workflows/desktop.yml` only runs `tauri build`; the three Rust checks above
-  (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, each with
-  `working-directory: apps/desktop/src-tauri`) still have to be added before the build step
-  on both matrix OSes so the Windows fixture cases run in CI. The workflow is outside the
-  desktop item's paths; the orchestrator owns `.github/`.
 - `docs/requirements.md` rows K.8, S.8, S.28, M.3 and M.4 do not list the shell's test
   modules (`apps/desktop/src-tauri/src/{state,restart,sse,dirs,daemon,actions}.rs`) yet; same
   ownership.
@@ -789,12 +782,18 @@ replaced by the code per ADR 0034), Q.8 partial (high risk never from a plain "y
 - The state service has no `POST /confirm/challenge` and no confirmation check in
   `answerRequestAs` yet; high-risk answers from the web fail with the explanation until it
   lands (ADR 0034 item 4).
-- `REMOTE_COMMANDS` in the service has no `chat`, and the daemon consumes no remote commands
-  yet, so chat and the kill switch only complete against the fake; against the real service
-  chat shows "does not relay chat yet" and kill stays "pending" (ADR 0034 items 5 and 6).
+- The page sends chat as `command: "chat"` with `{ projectId, text }`, but `REMOTE_COMMANDS`
+  in the service (`services/state-api/src/routes/remote.ts`) has no `chat`, so the service
+  refuses it (`validation`) and the page shows "does not relay chat yet" (ADR 0034 item 5).
+  The daemon's `RemoteCommandWatcher` runs the phone's chat envelope (`command: "start"`,
+  params `{ v: 1, kind: "chat", text, projectId, clientId }`); sending that envelope from the
+  page, or adding `chat` to the service, would close it. The kill switch completes against
+  the real service: the watcher consumes `kill` (ADR 0034 item 6).
 - Nothing issues the link yet (no daemon route or Settings button calls `POST /pairing/start`
-  with `kind: "web"`), and the daemon does not register as a `desktop` device, so presence
-  relies on sessions and command pick-ups.
+  with `kind: "web"`). The daemon registers and heartbeats its `desktop` device row
+  (`registerDesktopDevice`, `DesktopPresence` in `packages/runtime/src/daemon/compose.ts`)
+  when remote commands are enabled (a shared store with the background services); on a
+  solo `sqlite:` store it has none.
 - The service does not serve `dist/` yet; build with `pnpm --filter @forerunner/approvals-web
   build` and mount the folder (relative asset paths).
 - Ed25519 in WebCrypto needs a current browser (Chrome 137+, Firefox 130+, Safari 17+); older
@@ -1031,12 +1030,6 @@ node apps/mobile/e2e/run.mjs
 
 ### Known issues
 
-- The PC's daemon does not consume `target: "pc"` remote commands with `kind: "plan"` or
-  `kind: "chat"` yet; scenario 9 passes against the fake service's simulated PC only. The
-  runtime side needs a watcher like the cloud runner's `RemoteCommandWatcher` that runs the
-  plan through the command registry (ADR 0030) and posts a human request for high-risk steps;
-  `docs/status/BLOCKERS.md` carries the work item, and no gate row claims the phone gate
-  until it lands.
 - The service's `/me` does not send the human's `monthlyCap` yet (`humans.monthly_cap_usd_micro`
   exists in the schema); the phone's card says "the current cap" and treats a monthly change
   as high risk until the route carries it (`MeView.monthlyCap` is already accepted).

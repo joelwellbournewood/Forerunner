@@ -247,8 +247,9 @@ All of it is in `packages/runtime/src/daemon/compose.ts` ("Notifications") and
    the reason), the restarter's `restart` event (`updateApplied`), and `critic.verdict` /
    `critic.session_review` bus events with `escalation: true` and no `humanRequestId`
    (`criticVerdict` raised to normal; the session id comes from the review row `reviewId`
-   names, so the delivery is logged on that session). `peerMessage`, `emailCommandReceived`
-   and `injectionFlagged` have no daemon source yet (Known issues).
+   names, so the delivery is logged on that session), and the loop's `injection_flagged` run
+   event (`injectionFlagged`, with an `injection.flagged` audit row, ADR 0047).
+   `peerMessage` and `emailCommandReceived` have no daemon source yet (Known issues).
 
 ## How to change it
 
@@ -348,10 +349,11 @@ Signal tests injected `run` and `which`).
 - The email sender is resolved once at compose from the agent's email settings row: a mailbox
   configured while the daemon runs takes effect at the next daemon start (the settings screen
   shows "no email sender" until then). Re-reading the row on a settings change is a follow-up.
-- `peerMessage`, `emailCommandReceived` and `injectionFlagged` have builders and hooks but no
-  daemon source yet (ADR 0038, point 2): messages to the human arrive through the state service,
-  the email command handler runs on the cloud runner, and the loop's injection flag is a session
-  event. Each needs one call on `RuntimeApp.notifications` where the fact is known.
+- `peerMessage` and `emailCommandReceived` have builders and hooks but no daemon source yet
+  (ADR 0038, point 2): messages to the human arrive through the state service and the email
+  command handler runs on the cloud runner. Each needs one call on `RuntimeApp.notifications`
+  where the fact is known. (`injectionFlagged` has its source since ADR 0047: `compose.ts`
+  calls it on the loop's `injection_flagged` run event.)
 - `update_available` links to `/settings` although the UI has a `/updates` page: the desktop
   shell's deep-link roots do not list `updates` yet. When they do, change the link in
   `producers.updateAvailable` and `SHELL_ROOTS` in the producers test together.

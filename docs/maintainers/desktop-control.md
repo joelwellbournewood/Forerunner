@@ -330,8 +330,6 @@ on an allowlisted editor and `desktop_type`; the banner must be visible while it
   adapter change.
 - `desktop_list_windows` returns titles of allowlisted windows as untrusted content; the
   injection scan wraps them like any tool output.
-- The ADR index row for 0021 in `docs/decisions/README.md` still carries an older title; the
-  file is `0021-desktop-control.md`.
 
 ## Requirements covered
 
