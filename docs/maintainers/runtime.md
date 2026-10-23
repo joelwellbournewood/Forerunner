@@ -473,6 +473,7 @@ rename). `cli.test.ts` covers the written record and the parser.
 | `fr mirror sync\|enable\|disable` | `registerMirrorCli` over the composed runtime's `store` and `mirror` | One-way GitHub Projects mirror. |
 | `fr audit export [--agent <id>] [--session <id>] [--from <iso>] [--to <iso>] [--format jsonl\|csv] [--out <path>] [--force]` | `registerAuditCli` (`src/cli/audit.ts`) over the composed runtime's `store`, `clock` and `human`, `startServices: false` | Spec S.9, ADR 0050: the install's human's audit rows and their agents' (plus the install-level rows that name nobody) through the daemon's export module (`src/daemon/audit-export.ts`), paged, as JSON lines or CSV, the summaries as stored. Flags are checked before the runtime is composed; `--out` defaults to `forerunner-audit-<UTC stamp>.<format>` in the current directory (parent directories are created); an existing file is refused unless `--force`; another human's agent is `not_found`; prints `N rows written to <path> (<format>)`. |
 | `fr runner-key import <runner> <file>\|status <runner>\|remove <runner> [--profile <name>]` | `registerRunnerKeyCli` (`src/secrets/runner-key-cli.ts`) over `openVault({ profile, env })`, the vault the daemon opens (the config's profile, else `default`) | Spec S.12, ADR 0068: puts a cloud runner's 32-byte vault key under `cloud_runner_vault_key:<runner>`, where `POST /runner-unlock/wrap` reads it when the desktop inbox's unlock card answers. The key comes from a file (the runner vault's `vault.key`, raw 32 bytes, or its base64; `parseRunnerKeyFile`), never an argument; anything else is `validation` and nothing is stored; no line prints the key. `status` says present or missing (with the import hint), `remove` deletes the entry. |
+| `fr specialists list [--json]\|approve <name> [--json]\|reject <name> [--json]` | `registerSpecialistsCli` (`src/cli/specialists.ts`) over the composed runtime's `specialistApprovals` and `human`, `startServices: false` | Spec C.5, ADR 0071: the headless approval. `approve` answers the proposal's open request as the install's human (files one first when there is none, e.g. after a failed run) and applies it at once: the eval set runs and only a pass promotes; prints `Specialist "<name>" is active (pass rate ...)` or `... stays proposed: <outcome>: <reason>` and exits 1 when it did not go live. `reject` withdraws. `list` shows each pending proposal's prompt version, eval-set size, last result and open request, then the invalid proposals. |
 | `fr sources list [--json]\|add <kind> <locator> [--name <n>] [--credential secret:<name>]\|scan <id> [--json]\|candidates <id> [--status <s>] [--json]\|accept <candidateId> [--name <n>] [--goal <g>]\|remove <id>` | `registerSourcesCli` (`src/sources/cli.ts`) over the composed runtime's `sources` and `human`, `startServices: false` | Spec A.4, ADR 0056: the same `SourceDiscovery` as the daemon's `/sources` routes. `add` refuses a token value (a `secret:<name>` reference only), `scan` prints the counts and one line per candidate (status, locator, proposed name, existing install, project), `accept` creates the project through the same path as `POST /projects`, `remove` keeps every project. |
 
 Commands that need the whole product compose it once through `composeRuntime` (the same
@@ -1994,6 +1995,35 @@ every new specialist goes through review. The composition root turns registry en
 (`tools.ts`, see "Specialist tools on each driver" under Drivers, ADR 0043). See
 `adding-a-specialist.md` for the file format and the golden eval sets under `evals/registry/`.
 
+**The approval gate (`approval.ts`, spec C.5, [ADR 0071](../decisions/0071-specialist-approval-gate.md)).**
+`SpecialistApprovals` (composed as `RuntimeApp.specialistApprovals`) is the only way a proposal
+becomes runnable. `propose(input)` writes the proposal (`proposeSpecialist`) and `file(name)`
+files one blocking `approval` request, options approve / reject, card keyed
+`specialist:<name>` with the summary (description and rationale), the `prompt_version` the
+human is shown, `eval_task_count`, the `threshold` and the limits; `file` returns the open
+request when there is one, and `fileMissing()` (once at compose, services on) files requests
+for proposals on disk without one. `syncAnswers({ background })`, run from `syncApprovals`,
+claims each answered request with a versioned write of `applied_at` and outcome `evaluating`
+before anything runs, so the answer route, the poll, a restart and the CLI apply it once. Approve runs the
+proposal's eval set through the composed `EvalRunnerPort` (the model watch's
+`LoopEvalRunner`, with `EvalRunInput.candidate` set to the proposed definition) on the
+composed provider at the rung of the proposal's `default_tier` and its `default_effort`; the
+run's worst case (the sum of the tasks' brief budgets) must fit the approval eval budget (the
+smaller of USD 5 and 20% of the human's monthly cap) before the first call, and every call is
+checked by the hooks under the human's caps. The result goes into `proposal.json`
+(`evalResult`, `evalHistory`); a pass (at least 10 mechanically decided tasks, pass rate at
+least 90%) writes `specialists/<name>/specialist.md` with the one `status:` line changed
+(exclusive create, every other field compared with the evaluated file), moves
+`proposal.json` with it, removes `proposed/<name>/` and puts the runnable definition into the
+live registry (`onPromoted`), so `RuntimeApp.specialists(name)` finds it at once. Anything
+else (a failed set, a set below 10 tasks, over budget, no model, an eval error, the name
+taken) keeps it proposed, the reason and the result on the card, a `warning` message in the
+inbox. Reject removes `proposed/<name>/` (the record stays on the card). An answer by
+another human, an unreadable answer and a proposal whose prompt version changed since it was
+filed run nothing, are recorded and are filed again. Each step is a
+`registry.specialist_approval` audit row. In the daemon the evaluation runs in the
+background (`settled()` waits; `close()` does), a CLI one-shot waits for it.
+
 ### Models (`src/models/ladder.ts`)
 
 Ladder haiku → sonnet → opus → fable, ceiling opus by default; mode defaults and response
@@ -2070,6 +2100,22 @@ session and a refused start is audited (`allowed: false`) without throwing; a cl
 read once; the poll runs on the clock and stops. The composed daemon builds the watcher at the
 option's interval, polls on the clock, fires `ci` into the scheduler's log once, defers in the
 human's quiet hours, records a flagged comment as `injection.flagged` and stops on close.
+
+`specialist-approval.test.ts` (18) and `specialists-cli.test.ts` (3) (spec C.5, ADR 0071): a
+proposal files one blocking request with the summary and the eval-set size and filing again
+returns it; approve runs the eval set through the real `LoopEvalRunner` on the scripted fake
+provider (two calls per task, the proposal's prompt) and a pass at or above 90% (9 of 10
+included) moves the files to `specialists/` with `status: active`, runnable in the loader,
+the result (pass rate, counts, model, date, threshold) in `proposal.json`; 8 of 10 stays
+proposed with the result in `proposal.json` and on the card and a note in the inbox; a set
+below 10 tasks, a worst case over the approval budget and no model run nothing; an eval error
+keeps it proposed; a proposal edited after filing is filed again; reject withdraws it and
+frees the name; another human's answer and the CLI as another human run nothing; a second
+sync and two concurrent background syncs run it once; the registry sync script carries a
+promoted specialist; the eval runner refuses a candidate that is not the named pending
+proposal. Through `composeRuntime`: the inbox's approve on the daemon route makes
+`rt.specialists(name)` defined, a failing set leaves it undefined, and `fr specialists list`,
+`approve`, `reject` print and exit as documented.
 
 `closeout-autonomy.test.ts`, `plan-approval.test.ts` and `plan-approval-daemon.test.ts` (spec
 J.6, J.7; ADR 0053): the runner files the plan of a level 0 or 1 session as a blocking request

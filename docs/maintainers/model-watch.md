@@ -243,6 +243,14 @@ driver's equivalents of the specialist's `allowed_tools`, `CLAUDE_CODE_TOOL_EQUI
 lease). A `rubric` check without a failing mechanical check is `needs_model` and counts
 neither as pass nor as fail; `pass_rate = passed / (passed + failed)`. `maxTasks` bounds a set.
 
+The runner runs only runnable registry entries (`not_found` otherwise), with one exception:
+`EvalRunInput.candidate`, the specialist approval gate's input (spec C.5, ADR 0071). It names
+a pending proposal's `SpecialistDef`, which must be `location: "proposed"` and carry the name
+asked for (`validation` otherwise); the run then uses that definition's prompt, limits, tools
+and eval set instead of the registry's entry, so a proposal is evaluated without ever being
+runnable anywhere else. `SpecialistApprovals` (`src/registry/approval.ts`, runtime.md) is the
+only caller; `specialist-approval.test.ts` covers both refusals.
+
 ### CLI and routes
 
 `registerModelWatchCli(program, () => ({ watch, out? }))` adds `fr models watch [--json]`
