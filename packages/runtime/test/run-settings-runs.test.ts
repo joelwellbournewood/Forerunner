@@ -1,8 +1,10 @@
+import { BUILTIN_PRICING, type PricingTable } from "@forerunner/billing";
 import { openStore, type StateStore } from "@forerunner/state";
 import { FakeProvider } from "@forerunner/testenv";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver, type RunEvent, type RunPricing } from "../src/agent/loop.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
+import { FAST_MODE_AUDIT_TOOL } from "../src/models/fast-mode.ts";
 import type { ProviderCapabilities } from "../src/provider/types.ts";
 import { LoopTaskExecutor, type SpecialistSpec } from "../src/session/executor.ts";
 import { budget, flatPricing, harness, issue, registry } from "./helpers.ts";
@@ -11,7 +13,8 @@ import { budget, flatPricing, harness, issue, registry } from "./helpers.ts";
  * Spec D.4 (ADR 0072): the settings per agent and specialist reach the model request. The loop
  * honours max tokens and sends a temperature or a speed only where the provider's capability
  * flags allow; the executor resolves the effort table, the registry file and the agent's
- * `model_config` override, and sends `speed: "fast"` only where the project allows it.
+ * `model_config` override, and sends `speed: "fast"` only where the project allows it: D.20's
+ * `decideFastMode` decides, with the run's explicit speed mode as one more input.
  */
 
 const fake = (capabilities: Partial<ProviderCapabilities> = {}) =>
@@ -159,7 +162,8 @@ interface ExecOptions {
   modelConfig?: object;
   projectSettings?: object;
   capabilities?: Partial<ProviderCapabilities>;
-  fastModePricing?: (model: string) => RunPricing | null;
+  /** The price table in force (D.20): fast mode needs the variant's row. Default: built-ins. */
+  pricingTable?: PricingTable;
   pricingFor?: (model: string) => RunPricing;
   effortOffset?: -1 | 0 | 1;
 }
@@ -182,7 +186,7 @@ async function runTask(o: ExecOptions = {}) {
     billingSourceId: "bs",
     specialists: (n) => (n === spec.name ? spec : undefined),
     onEvent: (_t, ev) => events.push(ev),
-    ...(o.fastModePricing ? { fastModePricing: o.fastModePricing } : {}),
+    ...(o.pricingTable ? { pricingTable: () => o.pricingTable as PricingTable } : {}),
     ...(o.pricingFor ? { pricingFor: o.pricingFor } : {}),
     ...(o.effortOffset !== undefined ? { effortOffset: o.effortOffset } : {}),
   });
@@ -214,8 +218,9 @@ async function runTask(o: ExecOptions = {}) {
     signal: new AbortController().signal,
   });
   const runs = await store.run.forTask(w.task.id);
+  const audit = await store.auditLog.list({ tool: FAST_MODE_AUDIT_TOOL });
   await store.close();
-  return { res, provider, events, run: runs[0] };
+  return { res, provider, events, run: runs[0], audit };
 }
 
 const warnings = (events: RunEvent[]) =>
@@ -324,22 +329,47 @@ describe("speed mode: a specialist's fast only takes effect where the project al
     estimate: (i, o) => 6 * (i + o),
     cost: (u) => 6 * (u.input_tokens + u.output_tokens),
   };
+  // The fake ladder's Opus rung with its fast-mode variant row (D.20: never priced from a guess).
+  const withFastRow: PricingTable = {
+    ...BUILTIN_PRICING,
+    "fake-opus": { ...(BUILTIN_PRICING["claude-opus-5-5"] as PricingTable[string]) },
+    "fake-opus-fast": { ...(BUILTIN_PRICING["claude-opus-5-5-fast"] as PricingTable[string]) },
+  };
   const fastSetup: ExecOptions = {
     spec: { ...coder, defaultTier: "opus", speedMode: "fast" },
     projectSettings: { fast_mode: true },
     capabilities: { fastMode: true },
-    fastModePricing: (model) => (model === "fake-opus" ? fastPrice : null),
+    pricingTable: withFastRow,
+    // Every run priced by the model its records name: the variant at the fast price.
+    pricingFor: (model) => (model.endsWith("-fast") ? fastPrice : flatPricing),
   };
 
   it("sends speed fast and prices the run at the fast row when every condition holds", async () => {
     const { provider, run, res, events } = await runTask(fastSetup);
     expect(provider.calls[0]?.request.speed).toBe("fast");
+    expect(run?.model).toBe("fake-opus-fast");
     expect(run?.artifacts).toContainEqual({ speed: "fast" });
-    const standard = await runTask({ ...fastSetup, spec: { ...coder, defaultTier: "opus" } });
+    const standard = await runTask({
+      ...fastSetup,
+      spec: { ...coder, defaultTier: "opus", speedMode: "standard" },
+    });
     expect(standard.provider.calls[0]?.request).not.toHaveProperty("speed");
     // Same tokens, six times the price: the fast run was priced at the fast row.
     expect(res.costUsdMicro).toBe(6 * standard.res.costUsdMicro);
     expect(warnings(events)).toEqual([]);
+  });
+
+  it("leaves a specialist without a speed preference to the project's flag (D.20 unchanged)", async () => {
+    const noPreference = await runTask({ ...fastSetup, spec: { ...coder, defaultTier: "opus" } });
+    expect(noPreference.provider.calls[0]?.request.speed).toBe("fast");
+    expect(noPreference.run?.model).toBe("fake-opus-fast");
+    const projectOff = await runTask({
+      ...fastSetup,
+      spec: { ...coder, defaultTier: "opus" },
+      projectSettings: {},
+    });
+    expect(projectOff.provider.calls[0]?.request).not.toHaveProperty("speed");
+    expect(warnings(projectOff.events)).toEqual([]);
   });
 
   it("stays standard without the project's leave and says why", async () => {
@@ -354,7 +384,7 @@ describe("speed mode: a specialist's fast only takes effect where the project al
     const sonnet = await runTask({ ...fastSetup, spec: { ...coder, speedMode: "fast" } });
     expect(sonnet.provider.calls[0]?.request).not.toHaveProperty("speed");
     expect(warnings(sonnet.events).join("\n")).toMatch(/Opus only/);
-    const unpriced = await runTask({ ...fastSetup, fastModePricing: () => null });
+    const unpriced = await runTask({ ...fastSetup, pricingTable: BUILTIN_PRICING });
     expect(unpriced.provider.calls[0]?.request).not.toHaveProperty("speed");
     expect(warnings(unpriced.events).join("\n")).toMatch(/no fast-mode price/);
     const noFast = await runTask({ ...fastSetup, capabilities: { fastMode: false } });
@@ -366,14 +396,24 @@ describe("speed mode: a specialist's fast only takes effect where the project al
     const on = await runTask({
       ...fastSetup,
       spec: { ...coder, defaultTier: "opus" },
+      projectSettings: {},
       modelConfig: { specialists: { coder: { speed_mode: "fast" } } },
     });
-    expect(on.provider.calls[0]?.request.speed).toBe("fast");
+    // Without the project's leave the agent's fast is not enough.
+    expect(on.provider.calls[0]?.request).not.toHaveProperty("speed");
+    const allowed = await runTask({
+      ...fastSetup,
+      spec: { ...coder, defaultTier: "opus", speedMode: "standard" },
+      modelConfig: { specialists: { coder: { speed_mode: "fast" } } },
+    });
+    expect(allowed.provider.calls[0]?.request.speed).toBe("fast");
     const off = await runTask({
       ...fastSetup,
       modelConfig: { specialists: { coder: { speed_mode: "standard" } } },
     });
     expect(off.provider.calls[0]?.request).not.toHaveProperty("speed");
-    expect(warnings(off.events)).toEqual([]);
+    // D.20 records every decision that meets an Opus rung: ignored, with the reason.
+    expect(off.audit[0]?.result_summary).toMatch(/^ignored: the run's speed mode is standard/);
+    expect(warnings(off.events).join("\n")).toMatch(/speed mode is standard/);
   });
 });

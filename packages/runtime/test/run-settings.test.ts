@@ -1,13 +1,20 @@
+import { BUILTIN_PRICING } from "@forerunner/billing";
 import { describe, expect, it } from "vitest";
 import { buildModelSettingsView } from "../src/daemon/model-settings-view.ts";
+import {
+  decideFastMode,
+  FAST_MODE_SETTING,
+  type FastModeInput,
+  fastModeOf,
+} from "../src/models/fast-mode.ts";
 import { DEFAULT_LADDER, MODE_DEFAULTS } from "../src/models/ladder.ts";
 import {
-  decideSpeed,
+  explicitSpeedMode,
+  PROJECT_FAST_MODE_KEY,
   parseAgentModelConfig,
-  projectAllowsFastMode,
   resolveRunSettings,
-  type SpeedDecisionInput,
   specialistOverride,
+  speedPreferenceNote,
 } from "../src/models/run-settings.ts";
 import { builtinModelConfig } from "../src/models/settings.ts";
 import { providerCapabilities } from "../src/provider/types.ts";
@@ -155,50 +162,99 @@ describe("agent model_config (ADR 0072)", () => {
   });
 });
 
-describe("decideSpeed: a fast preference meets the project's leave (D.4 with D.20)", () => {
-  const base: SpeedDecisionInput = {
-    speedMode: "fast",
-    projectAllows: true,
+describe("speed mode meets the project's Opus fast mode (D.4 with D.20's decideFastMode)", () => {
+  const base: FastModeInput = {
+    enabled: true,
     tier: "opus",
+    model: "claude-opus-5-5",
     driver: "loop",
     sourceKind: "api_key",
-    capabilities: { acceptsTemperature: false, fastMode: true },
-    priced: true,
+    provider: { name: "anthropic", fastMode: true },
+    pricing: BUILTIN_PRICING,
+    speedMode: "fast",
   };
 
-  it("goes fast only when every condition holds", () => {
-    expect(decideSpeed(base)).toEqual({ kind: "fast" });
-    expect(decideSpeed({ ...base, sourceKind: null })).toEqual({ kind: "fast" });
-    expect(decideSpeed({ ...base, speedMode: "standard" })).toEqual({ kind: "standard" });
+  it("goes fast only when every condition holds; no preference leaves it to the project", () => {
+    const applied = {
+      kind: "applied",
+      model: "claude-opus-5-5",
+      variant: "claude-opus-5-5-fast",
+    };
+    expect(decideFastMode(base)).toEqual(applied);
+    expect(decideFastMode({ ...base, sourceKind: null })).toEqual(applied);
+    // The table's `standard` is no preference: D.20's project flag alone decides.
+    const { speedMode: _none, ...noPreference } = base;
+    expect(decideFastMode(noPreference)).toEqual(applied);
+    // An explicit `standard` keeps a fast-mode project's Opus run standard, and says so.
+    const standard = decideFastMode({ ...base, speedMode: "standard" });
+    expect(standard.kind).toBe("ignored");
+    if (standard.kind === "ignored") expect(standard.reason).toMatch(/speed mode is standard/);
   });
 
   it("stays standard and says why for each missing condition", () => {
-    const cases: [Partial<SpeedDecisionInput>, RegExp][] = [
-      [{ projectAllows: false }, /project does not allow fast mode/],
-      [{ tier: "sonnet" }, /Opus only/],
+    const cases: [Partial<FastModeInput>, RegExp][] = [
       [{ driver: "sdk" }, /Agent SDK/],
       [{ sourceKind: "subscription" }, /API only/],
       [{ sourceKind: "plan_credits" }, /API only/],
-      [{ capabilities: { acceptsTemperature: false, fastMode: false } }, /no fast mode/],
-      [{ priced: false }, /no fast-mode price/],
+      [{ provider: { name: "fake", fastMode: false } }, /no fast mode/],
+      [{ pricing: {} }, /no fast-mode price row/],
     ];
     for (const [change, reason] of cases) {
-      const d = decideSpeed({ ...base, ...change });
+      const d = decideFastMode({ ...base, ...change });
       expect(d.kind).toBe("ignored");
       if (d.kind === "ignored") expect(d.reason).toMatch(reason);
     }
+    // Without the project's leave or off Opus the decision is off; the preference's note says why.
+    expect(decideFastMode({ ...base, enabled: false })).toEqual({ kind: "off" });
+    expect(decideFastMode({ ...base, tier: "sonnet" })).toEqual({ kind: "off" });
+    expect(speedPreferenceNote({ speedMode: "fast", projectAllows: false, tier: "opus" })).toMatch(
+      /project does not allow fast mode/,
+    );
+    expect(speedPreferenceNote({ speedMode: "fast", projectAllows: true, tier: "sonnet" })).toMatch(
+      /Opus only/,
+    );
+    expect(
+      speedPreferenceNote({ speedMode: "fast", projectAllows: true, tier: "opus" }),
+    ).toBeNull();
+    expect(
+      speedPreferenceNote({ speedMode: "standard", projectAllows: false, tier: "opus" }),
+    ).toBeNull();
+    expect(
+      speedPreferenceNote({ speedMode: undefined, projectAllows: false, tier: "opus" }),
+    ).toBeNull();
+  });
+
+  it("passes a speed mode on only when the file or the agent set one", () => {
+    const table = resolveRunSettings({ mode: "coder", specialist: { tier: "opus" } });
+    expect(explicitSpeedMode(table)).toBeUndefined();
+    const file = resolveRunSettings({
+      mode: "coder",
+      specialist: { tier: "opus", speedMode: "standard" },
+    });
+    expect(explicitSpeedMode(file)).toBe("standard");
+    const agent = resolveRunSettings({
+      mode: "coder",
+      specialist: { tier: "opus" },
+      override: { speed_mode: "fast" },
+    });
+    expect(explicitSpeedMode(agent)).toBe("fast");
   });
 
   it("reads the project's leave from the fast_mode key D.20 owns, literal true only", () => {
-    expect(projectAllowsFastMode({ fast_mode: true })).toBe(true);
-    expect(projectAllowsFastMode({ fast_mode: "true" })).toBe(false);
-    expect(projectAllowsFastMode({})).toBe(false);
-    expect(projectAllowsFastMode(undefined)).toBe(false);
+    expect(PROJECT_FAST_MODE_KEY).toBe(FAST_MODE_SETTING);
+    expect(fastModeOf({ fast_mode: true })).toBe(true);
+    expect(fastModeOf({ fast_mode: "true" })).toBe(false);
+    expect(fastModeOf({})).toBe(false);
+    expect(fastModeOf(undefined)).toBe(false);
   });
 
   it("fills a provider's missing capabilities with no temperature and no fast mode", () => {
     expect(providerCapabilities({})).toEqual(NO_TEMP);
     expect(providerCapabilities({ capabilities: TEMP })).toEqual(TEMP);
+    expect(providerCapabilities({ fastMode: true })).toEqual({
+      acceptsTemperature: false,
+      fastMode: true,
+    });
   });
 });
 

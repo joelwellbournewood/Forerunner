@@ -278,8 +278,9 @@ export function ModelSettingsSection() {
               ? "accepts a temperature"
               : "takes no temperature (none is sent, none is shown)"}{" "}
             · fast mode {data.provider.fastMode ? "available" : "not available"}. Defaults come from
-            the effort table or the specialist's registry file; a fast speed mode applies only where
-            the project allows fast mode.
+            the effort table or the specialist's registry file. A specialist with no speed mode of
+            its own follows the project's Opus fast mode; standard keeps it standard, and fast
+            applies only where the project allows fast mode.
           </p>
           {data.configError ? (
             <ErrorBanner

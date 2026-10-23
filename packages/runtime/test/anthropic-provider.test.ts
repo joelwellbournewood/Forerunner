@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { FAST_MODE_BETA } from "../src/models/fast-mode.ts";
 import {
-  ANTHROPIC_FAST_MODE_BETA,
   AnthropicMessagesProvider,
   fastModeApplies,
   tierFromId,
@@ -134,7 +134,7 @@ describe("AnthropicMessagesProvider", () => {
     expect(providerCapabilities(api)).toEqual({ acceptsTemperature: false, fastMode: true });
     expect(providerCapabilities(sub)).toEqual({ acceptsTemperature: false, fastMode: false });
     // A proxied copy keeps the credential and so the same flags.
-    expect(api.viaProxy("http://127.0.0.1:1", {}).capabilities.fastMode).toBe(true);
+    expect(api.viaProxy("http://127.0.0.1:1", {}).fastMode).toBe(true);
     expect(fastModeApplies("claude-opus-5-5", "api_key")).toBe(true);
     expect(fastModeApplies("claude-sonnet-5-5", "api_key")).toBe(false);
     expect(fastModeApplies("claude-opus-5-5", "subscription")).toBe(false);
@@ -155,7 +155,7 @@ describe("AnthropicMessagesProvider", () => {
     await api.complete({ ...req, model: "claude-opus-5-5" });
     expect(seen[0]?.body.speed).toBe("fast");
     expect(seen[0]?.body.max_tokens).toBe(3210);
-    expect(seen[0]?.headers.get("anthropic-beta")).toContain(ANTHROPIC_FAST_MODE_BETA);
+    expect(seen[0]?.headers.get("anthropic-beta")).toContain(FAST_MODE_BETA);
     // A non-Opus model on the same key: a standard call, never an error.
     await api.complete({ ...req, model: "claude-sonnet-5-5" });
     expect(seen[1]?.body.speed).toBeUndefined();
