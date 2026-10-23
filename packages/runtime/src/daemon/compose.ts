@@ -175,6 +175,7 @@ import {
   TOOL_UNMAPPED_AUDIT,
 } from "../registry/index.ts";
 import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
+import { DeviceManager } from "../devices/index.ts";
 import { detectSandboxEngine, type EngineDetection } from "../sandbox/detect.ts";
 import type { RunFn, WhichFn } from "../sandbox/types.ts";
 import {
@@ -422,6 +423,18 @@ export interface ComposeOptions {
     pollMs?: number;
     heartbeatMs?: number;
     deviceName?: string;
+  };
+  /**
+   * Settings -> Devices (spec R.2): the state service the daemon starts pairings at and
+   * revokes through with its admin token. Defaults: `FORERUNNER_STATE_API_URL` and the vault
+   * secret named by `FORERUNNER_STATE_API_ADMIN_TOKEN_REF` (default `secret:state_api_admin`);
+   * `serviceUrl: null` turns the service off (list and revoke over the store, no pairing).
+   * `adminToken` and `fetch` replace the vault read and the network (tests).
+   */
+  devices?: {
+    serviceUrl?: string | null;
+    adminToken?: string;
+    fetch?: typeof fetch;
   };
   /**
    * How often answered approvals are applied from the shared state
@@ -769,6 +782,11 @@ export interface RuntimeApp {
    * said no.
    */
   githostWatcher: GitHostWatcher | null;
+  /**
+   * Settings -> Devices (spec R.2): the human's paired devices, a new pairing through the
+   * state service (its admin token stays here) and the immediate revocation.
+   */
+  devices: DeviceManager;
   /**
    * Shared secrets (spec S.13, ADR 0065): the vault the hooks resolve through (this install's
    * own vault, then the wrapped copies for this agent), the service over the shared store, the
@@ -2800,6 +2818,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ),
       })
     : null;
+  // Settings -> Devices (spec R.2): the admin token is read from the vault per call and
+  // never reaches the app; without a service URL the list and the revocation use the store.
+  const deviceServiceUrl =
+    opts.devices?.serviceUrl === undefined
+      ? env.FORERUNNER_STATE_API_URL?.trim() || null
+      : opts.devices.serviceUrl;
+  const adminTokenName = parseSecretRef(
+    env.FORERUNNER_STATE_API_ADMIN_TOKEN_REF?.trim() || "secret:state_api_admin",
+  );
+  const devices = new DeviceManager({
+    store,
+    clock,
+    humanId: human.id,
+    currentDeviceId: () => remoteDevice?.id ?? null,
+    service: deviceServiceUrl
+      ? {
+          baseUrl: deviceServiceUrl,
+          adminToken: async () => opts.devices?.adminToken ?? (await vault.get(adminTokenName)),
+          ...(opts.devices?.fetch ? { fetch: opts.devices.fetch } : {}),
+        }
+      : null,
+  });
   const killWatcher = new KillFileWatcher(kill, clock, dirs.runtime);
   if (services) killWatcher.start();
   mkdirSync(evalWorkRoot, { recursive: true });
@@ -2990,6 +3030,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       presence,
     },
     githostWatcher,
+    devices,
     sharedSecrets: {
       vault: sharedSecrets,
       service: sharedSecretService,
