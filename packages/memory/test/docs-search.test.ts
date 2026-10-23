@@ -6,8 +6,10 @@ import {
   chunkMarkdown,
   collectDocFiles,
   DOCS_BLOCK_HEADER,
+  loadDocChunks,
   renderDocHits,
   searchDocs,
+  selectDocHits,
 } from "../src/docs-search.ts";
 import { estimateTokens } from "../src/types.ts";
 
@@ -129,5 +131,53 @@ describe("project docs search (spec J.1)", () => {
       { path: "docs/runbook.md", heading: "Runbook > Deploy", reason: "secret shape" },
     ]);
     expect(renderDocHits([])).toBe("");
+  });
+
+  it("does not follow a docs/ root that is itself a symlink out of the tree", async () => {
+    // Review w2-chat-memory finding 5.
+    const outside = await mkdtemp(join(tmpdir(), "fr-memory-docs-outside-"));
+    try {
+      await mkdir(join(outside, "private"), { recursive: true });
+      await writeFile(join(outside, "private", "notes.md"), "# Private\n\nhome notes\n", "utf8");
+      await put("README.md", "# Game\n");
+      try {
+        await symlink(outside, join(repo, "docs"), "dir");
+      } catch {
+        return; // no symlink rights on this platform: nothing to check
+      }
+      expect((await collectDocFiles(repo)).map((f) => f.path)).toEqual(["README.md"]);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("searches several roots, the first winning on the same path, and selects again without reading", async () => {
+    // Review w2-chat-memory findings 4 and 6: a linked folder plus the data-dir workspace.
+    await put("docs/runbook.md", RUNBOOK);
+    const workspace = await mkdtemp(join(tmpdir(), "fr-memory-docs-ws-"));
+    try {
+      await mkdir(join(workspace, "docs"), { recursive: true });
+      await writeFile(
+        join(workspace, "docs", "status.md"),
+        "# Status\n\n## Next\n\nDeploy the leaderboard after the rollback drill.\n",
+        "utf8",
+      );
+      await writeFile(join(workspace, "docs", "runbook.md"), "# Runbook\n\nshadowed deploy\n");
+      const loaded = await loadDocChunks([repo, workspace]);
+      expect(loaded.filesScanned).toBe(2);
+      const r = selectDocHits(loaded, "deploy rollback", { maxTokens: 600 });
+      expect(r.hits.map((h) => h.path).sort()).toEqual(["docs/runbook.md", "docs/status.md"]);
+      expect(r.block).not.toContain("shadowed deploy");
+      // The chunks are in memory: a second, smaller selection needs no file.
+      await rm(workspace, { recursive: true, force: true });
+      await rm(join(repo, "docs"), { recursive: true, force: true });
+      const smaller = selectDocHits(loaded, "deploy rollback", { maxTokens: r.tokensUsed - 1 });
+      expect(smaller.hits.length).toBeLessThan(r.hits.length);
+      expect(smaller.tokensUsed).toBeLessThanOrEqual(r.tokensUsed - 1);
+      const viaSearch = await searchDocs([repo], "deploy");
+      expect(viaSearch.hits).toEqual([]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
   });
 });

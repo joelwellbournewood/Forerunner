@@ -330,17 +330,22 @@ branch or a small PR of its own.
 
 The quick chat's "docs search" reads the same doc set back. `collectDocFiles(root)` lists
 `README.md` and every `.md`/`.markdown`/`.mdx` file under `docs/` (sorted by POSIX path; hidden
-directories, `node_modules` and symlinks are skipped, so nothing outside the tree is read; at
-most `maxFiles`, default 400). `chunkMarkdown(path, text, { chunkTokens = 300 })` drops the
+directories, `node_modules` and symlinks are skipped, a `docs` root that is itself a symlink
+included, so nothing outside the tree is read; at most `maxFiles`, default 400). `chunkMarkdown(path, text, { chunkTokens = 300 })` drops the
 frontmatter and cuts at every ATX heading outside a code fence; a chunk's `heading` is the
 heading trail (`Runbook > Deploy`), sections without body text are dropped and a section longer
 than `chunkTokens` is split at paragraphs, then at words. `rankChunks(chunks, query)` is BM25
 (k1 1.2, b 0.75) over `docTerms` (the embedder's word tokens without English and German
 stopwords, a crude suffix stem so `deploys` meets `deploy`), the heading counted twice; no index
 and no embedder: a project's docs are small and change between turns, and the hashed n-gram
-vectors of ADR 0027 rank short lessons, not sections of hundreds of words. `searchDocs(root,
-query, { maxTokens = 1200, maxChunks = 8, countTokens?, maxFiles?, maxFileBytes = 256 KiB })`
-returns the sections with a score above zero, best first, each charged for its rendered segment
+vectors of ADR 0027 rank short lessons, not sections of hundreds of words.
+`loadDocChunks(roots, { maxFiles?, maxFileBytes = 256 KiB, chunkTokens?, countTokens? })` reads
+and chunks one root or several in order (a repo-relative path already read from an earlier root
+is skipped, so the first root wins; `maxFiles` counts across roots) and does all the file I/O;
+`selectDocHits(loaded, query, { maxTokens = 1200, maxChunks = 8, countTokens? })` selects from
+those chunks with no I/O, so a caller that must shrink its budget selects again without reading
+(the chat does, after measuring its envelope). `searchDocs(roots, query, opts)` is the two in a
+row and returns the sections with a score above zero, best first, each charged for its rendered segment
 plus the joining newline; the rendered block (`renderDocHits`: `DOCS_BLOCK_HEADER`, then
 `## [<path> > <heading>]` and the text per hit) is measured at the end with the caller's counter
 and cut from the lowest-ranked hit until it fits, so `tokensUsed = countTokens(block) <=
@@ -427,7 +432,7 @@ opposite polarity 0.93, unrelated under 0.2).
 | `promotion.test.ts` | `general` tag required, idempotent proposal with source pointing at the origin, proposals not retrievable, private origin needs owner plus human approval, foreign (critic) ids refused by promotion, promotion needs an accepting review (empty, revise, missing review rejected), promoted copy active and global, shared project origin superseded, critic origin untouched, reject, offers to projects (explicit and derived) |
 | `docs.test.ts` | the eight docs, scaffold with frontmatter, `renderStandardDoc` with name, goal and repos equal to what the scaffold writes (no repos section without repos), existing untouched and idempotent, frontmatter parse, every drift rule including separators, missing docs reported; status.md updates: from the template with the four sections and a dated session entry, a human-edited doc keeping its frontmatter, intro and own sections with only the four rewritten and missing ones added before the log, newest session first, idempotent per session id, "nothing"/"none" for empty lists, the project `state` for the sections while the entry keeps the session's lists, the log capped at `MAX_STATUS_SESSIONS`, long and multi-line titles cut to one line, `writeStatusUpdate` scaffolding the doc first and touching no other doc |
 | `scoped-store.test.ts` | the by-scope store over a private index and a shared store that refuses private writes like the Postgres adapter: `createMemory` builds it; a session's private lessons land only in the index (files in the usual roots) and critic and shared ones only in the shared store; recall unions both for the owner, the critic sees no private row, touches go to the holding store; edit, pin, retire, touch and delete locate the row; a scope change across the boundary (update, patch, supersede) is refused with `MEMORY_SCOPE_VIOLATION` while the near-duplicate merge inside the index still supersedes; promotion copies a private `general` lesson into the shared store and leaves the origin home; consolidation runs per scope on its store; `reconcile` of a private root fills the index and never the shared store; scoped and unscoped list, count and search |
-| `docs-search.test.ts` | the doc set collected (README and `docs/**.md`, other trees, other extensions and a symlink out of the tree skipped); chunks by heading trail with frontmatter and empty sections dropped; an overlong section split under the chunk size; the section that answers the question ranked first with its `[path > heading]` label and a section sharing no term left out; a 40-file tree cut to the budget under a non-default counter with `tokensUsed = count(block) <= maxTokens` and `dropped > 0`; nothing for a missing tree or a budget smaller than the header; a section with a credential shape never rendered and reported in `excluded` |
+| `docs-search.test.ts` | the doc set collected (README and `docs/**.md`, other trees, other extensions and a symlink out of the tree skipped); chunks by heading trail with frontmatter and empty sections dropped; an overlong section split under the chunk size; the section that answers the question ranked first with its `[path > heading]` label and a section sharing no term left out; a 40-file tree cut to the budget under a non-default counter with `tokensUsed = count(block) <= maxTokens` and `dropped > 0`; nothing for a missing tree or a budget smaller than the header; a section with a credential shape never rendered and reported in `excluded`; a `docs` root that is a symlink out of the tree not followed; two roots searched with the first winning on the same path, and a second, smaller selection from the loaded chunks with no file left on disk |
 | `service.test.ts` | `rememberFromSession` records, rejects and writes the catalog; `recallForSession` loads standing notes then lessons under the budget; instructions larger than the budget refused; empty grant; the "4 simulated weeks" sketch: repeated findings recorded as shared lessons are recalled by later sessions (repeats 3, 0, 0, 0), memory per session stays under budget, hits and `last_used` advance, re-recording merges instead of duplicating |
 
 `test/postgres.integration.test.ts` (`pnpm vitest run --project integration packages/memory/test`)

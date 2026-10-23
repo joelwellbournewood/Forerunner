@@ -114,7 +114,14 @@ export async function collectDocFiles(
       }
     }
   };
-  await walk(join(root, "docs"), ["docs"]);
+  // The `docs` root itself is checked too: `readdir` would follow a `docs` symlink out of the
+  // tree (review w2-chat-memory finding 5).
+  try {
+    if ((await fs.lstat(join(root, "docs"))).isDirectory())
+      await walk(join(root, "docs"), ["docs"]);
+  } catch {
+    // no docs/
+  }
   out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return out.slice(0, opts.maxFiles ?? DEFAULT_DOCS_MAX_FILES);
 }
@@ -266,58 +273,87 @@ export function renderDocHits(hits: readonly DocChunk[]): string {
   return [DOCS_BLOCK_HEADER, ...hits.map(segmentOf)].join("\n");
 }
 
+export interface LoadedDocs {
+  chunks: DocChunk[];
+  filesScanned: number;
+  excluded: { path: string; heading: string; reason: string }[];
+  truncated: boolean;
+}
+
 /**
- * The best sections of the project's docs for `query` under `maxTokens`. Each candidate is
- * charged for its rendered segment plus the joining newline; the rendered block is measured
- * at the end and, should a counter not be subadditive, cut from the lowest-ranked hit until
- * it fits. Nothing over the budget is ever returned.
+ * Read and chunk the doc set of one or more roots once (a project linked to a local folder
+ * keeps its own `docs/` there and the G.5 set in the data-dir workspace). Roots are read in
+ * order and a repo-relative path already read from an earlier root is skipped, so the first
+ * root wins on the same path. `maxFiles` counts across all roots.
  */
-export async function searchDocs(
-  root: string,
-  query: string,
-  opts: DocsSearchOptions = {},
-): Promise<DocsSearchResult> {
-  const maxTokens = opts.maxTokens ?? DEFAULT_DOCS_MAX_TOKENS;
-  const maxChunks = opts.maxChunks ?? DEFAULT_DOCS_MAX_CHUNKS;
-  const count = opts.countTokens ?? estimateTokens;
-  const maxBytes = opts.maxFileBytes ?? DEFAULT_DOCS_MAX_FILE_BYTES;
-  const result: DocsSearchResult = {
-    hits: [],
-    block: "",
-    tokensUsed: 0,
-    maxTokens,
-    filesScanned: 0,
-    matched: 0,
-    dropped: 0,
-    excluded: [],
-    truncated: false,
-  };
-  const all = await collectDocFiles(root, { maxFiles: Number.MAX_SAFE_INTEGER });
+export async function loadDocChunks(
+  roots: string | readonly string[],
+  opts: CollectDocsOptions & ChunkOptions = {},
+): Promise<LoadedDocs> {
   const maxFiles = opts.maxFiles ?? DEFAULT_DOCS_MAX_FILES;
-  if (all.length > maxFiles) result.truncated = true;
-  const chunks: DocChunk[] = [];
-  for (const f of all.slice(0, maxFiles)) {
+  const maxBytes = opts.maxFileBytes ?? DEFAULT_DOCS_MAX_FILE_BYTES;
+  const out: LoadedDocs = { chunks: [], filesScanned: 0, excluded: [], truncated: false };
+  const seen = new Set<string>();
+  const files: DocFile[] = [];
+  for (const root of typeof roots === "string" ? [roots] : roots) {
+    for (const f of await collectDocFiles(root, { maxFiles: Number.MAX_SAFE_INTEGER })) {
+      if (seen.has(f.path)) continue;
+      seen.add(f.path);
+      files.push(f);
+    }
+  }
+  if (files.length > maxFiles) out.truncated = true;
+  for (const f of files.slice(0, maxFiles)) {
     let text: string;
     try {
       const st = await fs.stat(f.abs);
       if (st.size > maxBytes) {
-        result.truncated = true;
+        out.truncated = true;
         continue;
       }
       text = await fs.readFile(f.abs, "utf8");
     } catch {
       continue;
     }
-    result.filesScanned++;
+    out.filesScanned++;
     for (const c of chunkMarkdown(f.path, text, opts)) {
       if (hasSecretShape(c.text) || hasSecretShape(c.heading)) {
-        result.excluded.push({ path: c.path, heading: c.heading, reason: "secret shape" });
+        out.excluded.push({ path: c.path, heading: c.heading, reason: "secret shape" });
         continue;
       }
-      chunks.push(c);
+      out.chunks.push(c);
     }
   }
-  const ranked = rankChunks(chunks, query)
+  return out;
+}
+
+/**
+ * The best of the loaded sections for `query` under `maxTokens`: no file I/O, so a caller
+ * that must shrink the budget (the chat, after measuring its envelope) selects again from the
+ * same chunks. Each candidate is charged for its rendered segment plus the joining newline;
+ * the rendered block is measured at the end and, should a counter not be subadditive, cut
+ * from the lowest-ranked hit until it fits. Nothing over the budget is ever returned.
+ */
+export function selectDocHits(
+  loaded: LoadedDocs,
+  query: string,
+  opts: Pick<DocsSearchOptions, "maxTokens" | "maxChunks" | "countTokens"> = {},
+): DocsSearchResult {
+  const maxTokens = opts.maxTokens ?? DEFAULT_DOCS_MAX_TOKENS;
+  const maxChunks = opts.maxChunks ?? DEFAULT_DOCS_MAX_CHUNKS;
+  const count = opts.countTokens ?? estimateTokens;
+  const result: DocsSearchResult = {
+    hits: [],
+    block: "",
+    tokensUsed: 0,
+    maxTokens,
+    filesScanned: loaded.filesScanned,
+    matched: 0,
+    dropped: 0,
+    excluded: [...loaded.excluded],
+    truncated: loaded.truncated,
+  };
+  const ranked = rankChunks(loaded.chunks, query)
     .filter((r) => r.score > 0)
     .sort(
       (a, b) =>
@@ -348,4 +384,13 @@ export async function searchDocs(
   result.block = block;
   result.tokensUsed = block ? count(block) : 0;
   return result;
+}
+
+/** The best sections of the project's docs for `query` under `maxTokens` (load, then select). */
+export async function searchDocs(
+  roots: string | readonly string[],
+  query: string,
+  opts: DocsSearchOptions = {},
+): Promise<DocsSearchResult> {
+  return selectDocHits(await loadDocChunks(roots, opts), query, opts);
 }
