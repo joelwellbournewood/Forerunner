@@ -108,6 +108,8 @@ pub struct ShellState {
     pub status: DaemonStatus,
     pub email: EmailState,
     pub desktop: DesktopControl,
+    /// The order of what set `desktop` (ADR 0067); see `begin_desktop_read`.
+    pub desktop_order: DesktopOrder,
     pub stream: StreamMode,
     pub restart: RestartCycle,
     /// Set when the shell started the daemon itself (the supervisor thread waits on it).
@@ -123,7 +125,42 @@ pub struct ShellState {
     pub halted: bool,
 }
 
+/// Every `desktop.indicator` frame (or fresh answer) and every `GET /desktop/status` read
+/// started takes the next number; `applied` is the number of what set the state last.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DesktopOrder {
+    next: u64,
+    applied: u64,
+}
+
 impl ShellState {
+    /// A frame, or the daemon's answer to a stop: always the newest word, applied at once.
+    pub fn apply_desktop_frame(&mut self, indicator: &DesktopIndicator) {
+        self.desktop_order.next += 1;
+        self.desktop_order.applied = self.desktop_order.next;
+        self.desktop.apply(indicator);
+    }
+
+    /// A status read starts; pass the token to `apply_desktop_read` with its answer.
+    pub fn begin_desktop_read(&mut self) -> u64 {
+        self.desktop_order.next += 1;
+        self.desktop_order.next
+    }
+
+    /// The answer of the read `token` started: applied only if no frame and no later read
+    /// landed since it started. The read and the `/events` stream are two connections, so an
+    /// answer given before an `on` frame can arrive after it; applying it would clear the
+    /// tray for the whole burst (the controller sends no further frame). Returns whether it
+    /// was applied.
+    pub fn apply_desktop_read(&mut self, token: u64, indicator: &DesktopIndicator) -> bool {
+        if token <= self.desktop_order.applied {
+            return false;
+        }
+        self.desktop_order.applied = token;
+        self.desktop.apply(indicator);
+        true
+    }
+
     pub fn new(dirs: AppDirs, install_id: String, shell_version: String) -> Self {
         Self {
             dirs,
@@ -133,6 +170,7 @@ impl ShellState {
             status: DaemonStatus::default(),
             email: EmailState::default(),
             desktop: DesktopControl::default(),
+            desktop_order: DesktopOrder::default(),
             stream: StreamMode::Off,
             restart: RestartCycle::default(),
             child_pid: None,
@@ -532,6 +570,32 @@ mod tests {
                 .starts_with("DESKTOP CONTROL ACTIVE: code (session sess_1) — last reported\n")
         );
         assert!(v.tooltip.ends_with("daemon not reachable"));
+    }
+
+    /// ADR 0067: the status re-read on reconnect never overwrites a newer frame.
+    #[test]
+    fn a_desktop_status_read_never_overwrites_a_newer_frame() {
+        let mut s = reachable();
+        // The stream opens: the re-read starts while control is off ...
+        let read = s.begin_desktop_read();
+        // ... the agent's first action sends `on` on the stream, which arrives first ...
+        s.apply_desktop_frame(&indicator(true, Some("code"), Some("sess_1")));
+        // ... and the answer, given before the action, lands last: dropped.
+        assert!(!s.apply_desktop_read(read, &indicator(false, None, None)));
+        assert!(s.desktop.active);
+        assert_eq!(tray_view(&s).desktop_text, "Desktop control: active (code)");
+
+        // A read started after the frame lands (a missed off on a reconnect).
+        let read = s.begin_desktop_read();
+        assert!(s.apply_desktop_read(read, &indicator(false, None, None)));
+        assert!(!s.desktop.active);
+
+        // Two reads in flight: the later one wins, whichever answer lands first.
+        let first = s.begin_desktop_read();
+        let second = s.begin_desktop_read();
+        assert!(s.apply_desktop_read(second, &indicator(true, Some("gimp"), None)));
+        assert!(!s.apply_desktop_read(first, &indicator(false, None, None)));
+        assert_eq!(s.desktop.app.as_deref(), Some("gimp"));
     }
 
     #[test]

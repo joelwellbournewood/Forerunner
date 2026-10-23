@@ -175,7 +175,7 @@ fn handle_event(app: &AppHandle, event: DaemonEvent) {
             );
             let state = shared(app);
             let mut s = lock(&state);
-            s.desktop.apply(&indicator);
+            s.apply_desktop_frame(&indicator);
             drop(s);
             tray::refresh(app);
         }

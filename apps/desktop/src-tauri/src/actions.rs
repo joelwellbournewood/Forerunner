@@ -414,6 +414,12 @@ pub async fn probe_desktop(app: AppHandle) {
     let Some(client) = current_client(&app) else {
         return;
     };
+    // A frame that arrives while the read is in flight is newer than its answer (ADR 0067).
+    let token = {
+        let state = shared(&app);
+        let mut s = lock(&state);
+        s.begin_desktop_read()
+    };
     let indicator = match client.get_json(DESKTOP_STATUS_PATH).await {
         Ok((200, v)) => v.get("desktopControl").and_then(parse_desktop_indicator),
         Ok((status, v)) => {
@@ -429,12 +435,16 @@ pub async fn probe_desktop(app: AppHandle) {
         }
     };
     if let Some(indicator) = indicator {
-        {
+        let applied = {
             let state = shared(&app);
             let mut s = lock(&state);
-            s.desktop.apply(&indicator);
+            s.apply_desktop_read(token, &indicator)
+        };
+        if applied {
+            tray::refresh(&app);
+        } else {
+            log::info!("{DESKTOP_STATUS_PATH} answer dropped: a newer desktop.indicator landed");
         }
-        tray::refresh(&app);
     }
 }
 
@@ -455,7 +465,7 @@ pub async fn desktop_stop(app: AppHandle) {
             if let Some(indicator) = indicator {
                 let state = shared(&app);
                 let mut s = lock(&state);
-                s.desktop.apply(&indicator);
+                s.apply_desktop_frame(&indicator);
             }
             tray::refresh(&app);
         }
