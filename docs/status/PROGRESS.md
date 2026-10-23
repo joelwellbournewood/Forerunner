@@ -28,6 +28,17 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   Upload screen warns when a queued file is held in memory only; the emulator smoke opens
   Reviews, Upload and the Chat voice turn. R.5 stays `in progress` until the emulator run.
 
+### 2026-10-23 (item w3-r5-phone rebased onto 4ff4fb1)
+- `wave/w3-r5-phone` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1). Conflicts in
+  `compose.ts` (the base's read-aloud `SpeakSessions` next to the branch's `VoiceRelay`), the
+  phone store (the base's `BIOMETRIC_TIMEOUT_MS` next to the branch's upload queue key; a
+  high-risk review verdict now gets the base's bounded refusal), runtime.md (the Read aloud
+  and push-to-talk paragraphs) and this log; both sides kept
+  (`docs/status/reviews/w3-r5-phone.md`, `## Rebase` onto 4ff4fb1). Current counts: UI suite
+  51 files / 340 tests (`mobile-upload`, `mobile-reviews`, `mobile-voice` 18), runtime 134
+  files / 1214 unit tests passed, 1 skipped (`voice-relay` 9), state-api 11 files / 159,
+  `cdp.test.ts` 25. R.5 stays `in progress` (the emulator run). Not merged yet.
+
 ### 2026-10-23 (item w3-r5-phone rebased onto cac6fee)
 - `wave/w3-r5-phone` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
   phone store (the base's runner unlock window key next to the branch's upload queue key),

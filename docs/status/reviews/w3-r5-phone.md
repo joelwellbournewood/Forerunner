@@ -328,3 +328,42 @@ and 0082), `docs/status/BLOCKERS.md`, `CHANGELOG.md`. ADR 0080 is still free on 
 | `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` | `docs-check: ok (32 files)` |
 | `node scripts/link-check.mjs` | `link-check: ok (129 files)` |
 | `pnpm check` | exit 0 (290 files; 2927 passed, 4 skipped, 1 todo; secret scan clean, 1488 files; its docs-check skips without `origin/main`) |
+
+## Rebase (2026-10-23, onto `origin/ccr-4d8a843c-1k9syk` 4ff4fb1)
+
+`wave/w3-r5-phone` (6966efb, on cac6fee) rebased onto the release head 4ff4fb1 (73 commits
+ahead: the merges of w2-l6-speak, w3-c5-specialist-approval, w3-d16-slider, w3-e4-recheck and
+w5-android-high-risk). The commit hashes named above predate this rebase; the commits keep
+their subjects. Three commits conflicted; every other change applied cleanly.
+
+| Commit | File | Conflict | Resolution |
+| --- | --- | --- | --- |
+| runtime: relay the phone's push-to-talk turns to the PC's voice sessions | `packages/runtime/src/daemon/compose.ts` | after the voice sessions are built: the base's `voiceBusy` and the read-aloud `SpeakSessions` (ADR 0063) and the branch's `VoiceRelay` over the same `voice` | both kept, the base's speaker first, then `const voiceRelay = new VoiceRelay(voice, { clock })`; the imports (`SpeakSessions`, `VoiceRelay`) and `close()` (`voiceRelay.close()` before `voice.close()`, then the base's `speechSessions.close()` and `specialistApprovals.settled()`) auto-merged |
+| ui: phone screens for uploads, PR and critic review, … | `apps/ui/src/mobile/store.tsx` | the base's `BIOMETRIC_TIMEOUT_MS` (ADR 0086) and the branch's `UPLOADS_KEY` on the same lines | both kept. The branch's `reviewVerdict` already calls `assertHighRisk`, which on the base is the bounded refusal, so a high-risk review verdict gets the same refusal in bounded time as a request answer |
+| docs: ADR 0080 and the maintainer, requirement and status rows … | `docs/maintainers/runtime.md` | the base's "Read aloud" paragraph and the branch's "The phone's push-to-talk" paragraph at the same place | both paragraphs kept, the base's first |
+| same | `docs/status/PROGRESS.md` | the base's log entries (w3-d16-slider, w3-e4-recheck, w5-android-high-risk) and the branch's entry at the top of the log | all kept, the branch's entries first (newest) |
+
+Auto-merged and read against the base: `packages/runtime/src/voice/index.ts` (`relay.ts` next
+to the base's `speak.ts`), `apps/mobile/e2e/run.mjs` (the branch's Reviews, Upload and voice
+steps after the base's bounded high-risk refusal step; `node --check` clean),
+`apps/ui/src/api/state-client.ts`, `docs/maintainers/apps.md`, `docs/requirements.md` (R.5 the
+branch's row; the base did not touch it), `docs/status/BLOCKERS.md` (R.5 the branch's row),
+`docs/decisions/README.md` (0080 between 0078 and 0082). ADR 0080 is still free on the base
+(the base's newest ADRs are 0085 and 0086). R.5 stays `in progress` (the emulator run).
+
+### Checks after the rebase onto 4ff4fb1
+
+| Command | Result |
+| --- | --- |
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0 (59 warnings, as on the base) |
+| `pnpm --filter @forerunner/ui test` | 51 files, 340 tests passed (`mobile-upload`, `mobile-reviews`, `mobile-voice`: 3 files, 18 tests) |
+| `pnpm exec vitest run --project unit packages/runtime/test` | 134 files; 1214 passed, 1 skipped (`voice-relay` 9) |
+| `pnpm exec vitest run --project unit services/state-api/test` | 11 files, 159 tests passed |
+| `pnpm exec vitest run --project unit apps/mobile/e2e` | 1 file, 25 tests passed |
+| `pnpm exec vitest run --project integration packages/runtime/test services/state-api/test` | 2 files, 7 tests skipped (no Postgres, no container engine) |
+| `pnpm exec vitest run --project e2e tests/e2e/scenarios/09-phone.scenario.test.ts tests/e2e/scenarios/03-voice.scenario.test.ts tests/e2e/scenarios/phase5-gate.integration.test.ts` | 3 files; 6 passed, 1 todo |
+| `pnpm exec vitest run --project unit scripts/closeout-docs.test.ts` | 19 passed, 1 todo |
+| `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` | `docs-check: ok` |
+| `node scripts/link-check.mjs` | `link-check: ok (137 files)` |
+| `pnpm check` | exit 0 (296 files; 3021 passed, 4 skipped, 1 todo; secret scan clean, 1516 files; its docs-check skips without `origin/main`) |
