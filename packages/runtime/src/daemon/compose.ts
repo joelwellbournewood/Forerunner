@@ -1706,6 +1706,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // The project's escalation ceiling (`critic_ceiling`, spec D.3): a retry climbs the
       // ladder under it, never under the default ceiling.
       projectCeiling: (settings) => criticSettingsOf(settings).ceiling,
+      // The speed-versus-quality slider (spec D.16) is not a dependency: the executor reads
+      // `speed_quality_offset` from the project row it loads per run, as the conversation agent
+      // (chat and voice) does per turn, the intake per planning session and the critic per
+      // review, so a slider change applies to the next one without a restart.
       ...(worktree ? { worktreeFor: async () => worktree } : {}),
       onEvent: (taskId, ev) => {
         events.emit("run", { taskId, ev });

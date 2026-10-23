@@ -42,12 +42,7 @@ import {
   fastModeAuditLine,
   fastModeOf,
 } from "../models/fast-mode.ts";
-import {
-  effortForTask,
-  modelIdFor,
-  speedQualityOffsetOf,
-  startingTier,
-} from "../models/ladder.ts";
+import { effortForTask, modelIdFor, speedQualityOffsetOf, startingTier } from "../models/ladder.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
 import type { EffortLevel, ModelProvider, ModelTier, Usage } from "../provider/types.ts";
 import { RUN_COMMAND_TOOL, type SpecialistDriver, TOOL_UNMAPPED_AUDIT } from "../registry/tools.ts";

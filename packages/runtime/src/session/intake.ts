@@ -624,7 +624,11 @@ export class IntakeService {
     const model = modelIdFor(planning.tier, provider.name, config.ladder);
     // The planning effort, shifted by the project's speed-versus-quality slider (spec D.16)
     // as the row this session read says, so a slider change applies to the next session.
-    const effort = modeEffort("planning", speedQualityOffsetOf(project.settings), config.modeDefaults);
+    const effort = modeEffort(
+      "planning",
+      speedQualityOffsetOf(project.settings),
+      config.modeDefaults,
+    );
     const settingBudget = (project.settings as { intake_budget_usd_micro?: unknown })
       .intake_budget_usd_micro;
     const budgetUsdMicro =
