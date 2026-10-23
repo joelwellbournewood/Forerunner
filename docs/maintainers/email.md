@@ -184,7 +184,7 @@ runtime's own requests; `EmailPolicy.resolveApproval` for `send_email`, `new_rec
 | `locks.ts` | `KeyedLock`: in-process serialization per agent for the cap checks and command handling |
 | `commands.ts` | `EmailCommandGate`, `EmailCommandHandler` (`handle` once per message, `duplicate`, `error` row), `ModelCommandClassifier`, `parseYesNo`, `pickProject`, `effectivePerEmailCapUsdMicro`, `defaultTaskEstimate` |
 | `tools.ts` | `emailTools`/`registerEmailTools`: `email_send` (`external_send`, high; routes through `EmailPolicy`), `email_list` and `email_read` (`read`, low; `untrusted` output, references only, the owner's command marker replaced by `[command marker]` through `hideCommandMarker`), `email_draft` (`routine_reversible`, low) |
-| `routes.ts` | `createEmailRoutes(deps, app)` / `emailRouteTable(deps)`; with `humanFor` and `identity` set, every route under `/agents/:agentId` refuses (403, `tool_not_allowed`) a signed-in human who is not the agent's owner |
+| `routes.ts` | `createEmailRoutes(deps, app)` / `emailRouteTable(deps)`; with `humanFor` and `identity` set, every route under `/agents/:agentId` refuses (403, `tool_not_allowed`, `details.reason: "not_owner"`) a signed-in human who is not the agent's owner; a mount with `humanFor` and no `identity` fails closed (403, `reason: "identity_port_missing"`, one error log line at construction); every refusal is an `email.settings` audit row with `allowed = false` and the reason as `denied_reason` (`EmailOwnerRefusal`) |
 | `ports.ts` | production adapters (`StoreIdentityLookup`, `HumanRequestApprovalPort`, `StoreEventSink`) and fakes (`StaticIdentity`, `FakeApprovalPort`, `FixedRate`, `MemoryEventSink`, `FakeCloudSessions`) |
 | `money.ts` | micro-unit helpers mirroring `@forerunner/billing` (`chfToUsdMicro`, `formatUsdMicroAsChf`, `localDayKey`) |
 
@@ -232,8 +232,25 @@ const handler = new EmailCommandHandler({ gate, settings, identity, policy, appr
   mailboxFor /* marks handled messages seen; without it only the audit-row check stops repeats */ });
 registerEmailTools(registry, { policy, settings, identity, sentLog, mailboxFor, clock });
 app.route("/", createEmailRoutes({ settings, sentLog, clock, audit: store.auditLog,
-  commandAudit: (a, o) => handler.commandAudit(a, o), humanFor }, new Hono()));
+  commandAudit: (a, o) => handler.commandAudit(a, o), humanFor, identity }, new Hono()));
 ```
+
+The routes' owner check (S.15: the mode is the human's to pick, per agent, for their own
+agents): `humanFor` names the signed-in human of a request, `identity` resolves an agent's
+owner. Three mount shapes exist and the table decides at construction which one it is:
+
+| Mount | Owner check | Result |
+| --- | --- | --- |
+| neither `humanFor` nor `identity` | none (a single-user daemon identifies nobody) | every request served, `author_human` null |
+| `humanFor` and `identity` | the signed-in human must be `identity.lookup(agentId).humanId` | 403 `tool_not_allowed`, `reason: "not_owner"` otherwise (an unknown agent, nobody signed in and another human's agent alike) |
+| `humanFor` without `identity` | cannot be made | fails closed: 403 `tool_not_allowed`, `reason: "identity_port_missing"` on every route under `/agents/:agentId`, and one `error` log line at construction naming the fix |
+
+A refusal never changes a row and is itself audited: an `email.settings` row with `allowed =
+false`, `denied_reason` the reason, `input_summary` `{ action, refused }` (`read_settings`,
+`update`, `read_sent`, `pause`, `resume`, `rotate_marker`, `read_commands`), `human_id` and
+`author_human` the signed-in human, `agent_id` the agent that was aimed at, so the owner of
+that agent sees the attempt in their audit. The sent log and the command audit filter on their
+own tool names and never pick these rows up.
 
 `StartCloudSessionPort.start` receives `humanId`, `capUsdMicro` and `autonomyLevel`; the cloud
 runner picks the owner's billing source (subscription on a personal runner, else an API key,
@@ -319,9 +336,17 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
 - `email-tools.test.ts`: tool shapes and action classes; `email_send` through the policy in
   every mode; `email_read`/`email_list` untrusted output with references only and the flagged
   marker; `email_draft`.
-- `email-routes.test.ts`: the seven routes over a fake app: settings GET/PUT with audit and
+- `email-routes.test.ts`: the seven routes over a fake app mounted the production way
+  (`humanFor` and `identity`, every call as the owner): settings GET/PUT with audit and
   validation, pause/resume enforced by the policy, marker rotation invalidates the old marker,
   sent log newest first, command audit.
+- `security-email-routes-identity.test.ts` (critic reproduction of the owner check, fixed
+  2026-10-23): a mount with `humanFor` and no `identity` refuses (403, `identity_port_missing`)
+  the cross-human write and every other route under `/agents/:agentId`, the human's own agent
+  and an anonymous request included, logs the misconfiguration once at construction, changes
+  nothing and audits each refusal; with `identity` the owner is served, the other human is
+  refused (`not_owner`) on all seven routes with one audited refusal each naming the action,
+  and an unknown agent is refused too; a mount without `humanFor` applies no check.
 - `security-email.test.ts` (security review): every test is an attack from a real input and
   asserts what the code does with it: a forged `Authentication-Results` header naming the
   trusted host plus a bogus signature is data; a display name spelling the owner's address;
@@ -394,10 +419,12 @@ same file; the live e2e runs under `tests/e2e/`.
   caller's app); the settings row is written by the cloud runner's routes, the CLI or a test
   through `EmailSettingsStore`, and the daemon picks a changed mode or mailbox up at the next
   session start (`emailPresence`), the policy at the next call.
-- The routes' owner check needs both `humanFor` and `identity`: a mount with `humanFor` alone
-  cannot tell the humans apart, warns once in the log and applies no owner check (every
-  agent's settings stay reachable to any signed-in human, as before). The daemon must pass
-  its identity lookup when it mounts them.
+- The routes' owner check needs both `humanFor` and `identity`. A mount with `humanFor` alone
+  no longer applies no check (the medium finding of the 2026-10-20/21 review): it fails closed
+  and refuses every request under `/agents/:agentId` with `identity_port_missing`, so a daemon
+  that forgets the identity port sees every Settings -> Email call fail with 403 and one
+  `error` log line at startup rather than a silent cross-human write. The daemon must pass its
+  identity lookup when it mounts them.
 - The private command marker is replaced only on the model-facing paths (`email_read`,
   `email_list`, the classifier's subject). The sent log, the `email.command` audit rows and the
   `source.subject` a cloud session is started with keep it; the first two are the owner's
