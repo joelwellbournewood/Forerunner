@@ -1,6 +1,117 @@
 # w3-c5-specialist-approval
 
-## Build report
+## Review
+
+Branch `wave/w3-c5-specialist-approval`, reviewed at 961911b against `origin/ccr-4d8a843c-1k9syk`
+(f1948dd; the branch's merge base is 82a6295, `git merge-tree --write-tree HEAD
+origin/ccr-4d8a843c-1k9syk` is clean, the base adds no ADR 0071 and no other builder of the
+`syncApprovals` result than `tests/e2e/src/gate5-daemon.ts`, which the branch already updates).
+
+Verdict: **revise**. Score: 70/100 (as built at 961911b).
+
+The happy path is real and proven on the real `LoopEvalRunner` under the hooks: a proposal
+files one blocking request keyed `specialist:<name>`, approve runs the set on the fake
+provider, a pass at the registry's 90% / 10-task bar moves the file to `specialists/` with one
+line changed and the daemon's registry finds it, a failure stays proposed with the result in
+`proposal.json` and on the card, reject withdraws. What is wrong is the claim/apply life
+cycle on realistic paths that the tests do not reach: on a shared store another composition
+of the same human (the cloud runner, a second install) claims the answer and burns it as
+`proposal_missing`; an evaluation interrupted by an exit or crash stays `evaluating` forever;
+an approve or reject while an evaluation runs starts a second run or deletes the directory
+under the first; every `fr` one-shot runs pending eval sets synchronously at compose; a
+proposal written while the daemon runs is never filed until a restart; and the "testing
+share" bound is per run, not per month.
+
+Requirements checked:
+
+- C.5 "goes live only after human approval and passing its eval set": met on the single-install
+  path (`specialist-approval.test.ts` approve/pass, 9 of 10, 8 of 10, `specialists-cli.test.ts`
+  daemon route); not safe on a shared store (finding 1).
+- "a proposal files a human_request (kind approval, change_card key `specialist:<name>`, the
+  summary and the eval-set size in the card)": met (`approval.ts:393-426`, test "files one
+  blocking approval request"). Filed only by `propose()` or at daemon start (finding 5).
+- "on approve the daemon runs the eval set through the eval runner ... under the budget hooks,
+  with the spend charged to the human's testing share": the runner and hooks are met; the
+  testing share is a per-run figure, not a share (finding 6).
+- "records the result in proposal.json (pass rate, date, model)": met (`ProposalEvalResult`,
+  test "approve -> ... result recorded").
+- "promotes ... only on a pass above the threshold the registry defines (record it)": met
+  (`gateVerdict`, `ACTIVATION_THRESHOLD` recorded with every result, ADR 0071 point 2).
+- "otherwise keeps it proposed with the failure in the card and a note to the inbox": met
+  (test "fail -> stays proposed").
+- "'reject' withdraws it": met (test "reject -> withdrawn"); unsafe during a running
+  evaluation (finding 3).
+- "the request idempotent": met for filing (`file()` returns the open request) and for one
+  answer (versioned claim); not across an interrupted run (finding 2).
+- "another human refused": met (`apply` wrong_human, `answerAndApply` refuses `by`).
+- "the registry sync script keeps working": met (test "the registry sync script carries a
+  promoted specialist").
+- "a CLI path (`fr specialists approve <name>`)": met (`cli/specialists.ts`,
+  `specialists-cli.test.ts`); the CLI one-shot side effect is finding 4.
+- `registry.test.ts` kept green: yes (30 tests).
+- Docs: adding-a-specialist.md (flow, Known issues row closed), runtime.md, ADR 0071, BLOCKERS,
+  requirements, PROGRESS present; ADR point 7 claims restart safety the code does not have
+  (finding 2), adding-a-specialist.md says the PM proposes through
+  `specialistApprovals.propose` while no agent tool calls it (finding 5).
+
+Findings:
+
+1. **high**: `packages/runtime/src/registry/approval.ts:592-606` (`unapplied`) and `:637-688`
+   (`apply`). Any `SpecialistApprovals` over the same store and the same human claims every
+   answered `specialist:` request, whatever registry directory it has. The cloud runner
+   composes with `startServices: false` on the shared Postgres store
+   (`services/cloud-runner/src/runner.ts:397`), and `composeRuntime` runs `syncApprovals()` at
+   compose (`compose.ts:2317`), so a runner start (or a second install of the same human)
+   claims the human's approve, finds no `proposed/<name>/` in its own registry and records
+   `proposal_missing`: the answer is consumed and the install that holds the proposal never
+   evaluates it. Verified with a throwaway test: two instances over one store, the second with
+   a registry copy without the proposal; `runner.syncAnswers()` returned `skipped: 1`, the
+   owner's then `0`, the card said `proposal_missing`. Needed: only the install whose
+   `proposal.json` names the request applies it; a test with two instances.
+2. **medium**: `approval.ts:641-652` (the claim) with `:443-461` (`fileMissing`). An evaluation
+   interrupted after the claim (the daemon's update-and-restart exit is bounded by
+   `EXIT_DEADLINE_MS` and does not wait for `settled()`, a crash, a kill) leaves the card at
+   `outcome: "evaluating"` with `applied_at` set and `proposal.json` at `approval.status:
+   "evaluating"` for ever: `unapplied` skips it (applied), `fileMissing` skips it (not
+   `pending`), nothing tells the human. ADR 0071 point 7 says a restart is safe. Verified with
+   a throwaway test: a run that never settles, then a fresh instance a day later:
+   `fileMissing()` filed `[]`, `syncAnswers()` did nothing, card and record still
+   `evaluating`, no open request. Needed: a stale evaluation (its process gone, or older than
+   the set's worst-case duration) is recovered: card marked `interrupted`, a note, the
+   proposal filed again; a test.
+3. **medium**: `approval.ts:545-561` (`answerAndApply`) and `:366-436` (`file`). While an
+   evaluation runs, `fr specialists approve|reject <name>` finds no open request, files a new
+   one and applies it: approve starts a second paid run of the same set; reject removes
+   `proposed/<name>/` under the running one, whose `keep()` then throws `ENOENT` writing
+   `proposal.json` (`:727-744`), so the first card stays `evaluating`. Verified with a
+   throwaway test (a run held on a promise, `reject()` meanwhile): reject returned
+   `withdrawn`, the background run logged `ENOENT ... proposal.json`, the first card stayed
+   `evaluating`. Needed: filing and answering refused (`claim_conflict`) while an evaluation of
+   the name is live; `keep()` tolerates a removed directory; a test.
+4. **low**: `packages/runtime/src/daemon/compose.ts:2184-2186`. In a one-shot
+   (`startServices: false`: every `fr` command that opens the runtime, e.g. `fr specialists
+   list`, `fr models ...`, `fr audit ...`, and the cloud runner) `syncApprovals()` at compose
+   runs each answered proposal's eval set synchronously, so a read-only command blocks for
+   minutes and spends money on the side. Verified by tracing: `compose.ts:2317` calls
+   `syncApprovals()`, which passes `background: false` there, and `syncAnswers` awaits
+   `apply`. Needed: one-shots leave inbox answers to the daemon (as they do plan approvals,
+   `compose.ts:2170-2180`); `fr specialists approve` applies its own request; a test.
+5. **low**: `compose.ts:2318-2323` and `docs/maintainers/adding-a-specialist.md:194-195`. A
+   proposal reaching `proposed/` while the daemon runs (a direct `proposeSpecialist` call, a
+   registry pull, a hand-written one) gets no request until the next daemon start, because
+   `fileMissing()` runs only at compose; the doc says "the PM proposes through
+   `RuntimeApp.specialistApprovals.propose(...)`" but no agent tool calls it (grep: the only
+   callers are the CLI and tests). Also `fileMissing` would file a duplicate when the
+   proposal's request is answered and not applied yet (an approval racing the start).
+   Verified by reading and grep. Needed: the daemon's `syncApprovals` files missing requests;
+   `fileMissing` skips a proposal whose request is answered and unapplied; the doc and
+   BLOCKERS say plainly that no PM-facing tool exists yet.
+6. **low**: `approval.ts:945-952` (`evalBudget`). The approval eval budget is
+   `min(USD 5, 20% of the monthly cap)` for every run, so repeated approvals each get the full
+   figure and nothing is "charged to the human's testing share" as the brief and ADR 0071
+   point 3 say. Verified by reading: nothing sums earlier approval spend. Needed: the share
+   minus this month's approval eval spend (the `registry.specialist_approval` audit rows carry
+   the cost) bounds the next run; a test.
 
 Item: w3-c5-specialist-approval, stage BUILD, branch `wave/w3-c5-specialist-approval`.
 Starting commit: `16bb864` (the earlier attempt's `wip:` snapshot, which holds the eval
