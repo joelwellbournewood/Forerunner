@@ -2017,10 +2017,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       return c.json(result);
     }
     if (body.answer === "device") {
-      // As the daemon's route: an answer without an id is this PC's own row; an id is
-      // checked as given, and one that is no paired device of the human is refused by the
-      // registry's policy ("unknown device; pair it first"), the card staying open.
-      const deviceId = body.deviceId ?? ME.desktopDeviceId;
+      // As the daemon's route: an answer without an id, or with the literal `desktop` an older
+      // settings screen sent, is this PC's own row as `/me` names it; a daemon that names no
+      // row refuses it (409 `conflict`, its message). An id is checked as given, and one that
+      // is no paired device of the human is refused by the registry's policy ("unknown
+      // device; pair it first"), the card staying open.
+      const thisPc = !body.deviceId || body.deviceId === "desktop";
+      const deviceId = thisPc ? me.desktopDeviceId : body.deviceId;
+      if (!deviceId) {
+        return errorBody(
+          c,
+          409,
+          "conflict",
+          "deviceId is required: this daemon has no desktop device row to answer for",
+        );
+      }
       if (deviceId !== ME.desktopDeviceId) {
         const result: CommandResultJson = {
           status: "refused",

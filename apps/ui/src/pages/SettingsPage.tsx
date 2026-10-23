@@ -223,8 +223,9 @@ function SettingChangeDialog({
     }
     // A tap in the app answers a medium-risk card; a high-risk card needs this paired device
     // (the desktop app is one, ADR 0030): the daemon checks the device row, not this screen.
-    // Without an id from `/me` (an older daemon) the device answer goes without one and the
-    // daemon-token route answers with its own desktop row.
+    // Without an id (`/me` not loaded yet, or it failed) the device answer goes without one
+    // and the daemon-token route answers with its own desktop row; a daemon that has no row
+    // (its `/me` names none) refuses that, and the dialog shows the refusal.
     void run(() =>
       result.decision === "needs_device"
         ? client.confirmCommand(pendingId, {
@@ -457,7 +458,7 @@ export function SettingsPage() {
                     paired device <code>{me.desktopDeviceId}</code>: confirms high-risk changes here
                   </>
                 ) : (
-                  "no device row registered by the daemon: high-risk changes are confirmed as this PC"
+                  "no device row registered by the daemon: high-risk changes cannot be confirmed on this PC (confirm on the phone with biometric)"
                 )}
               </dd>
             </>

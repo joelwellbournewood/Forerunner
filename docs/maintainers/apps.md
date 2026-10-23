@@ -155,9 +155,13 @@ shows the daemon's card through `CommandResult`, answers `needs_yes` with `{ ans
 and `needs_device` with `{ answer: "device", deviceId: <me.desktopDeviceId> }` (this PC's own
 device row as `GET /me` names it, ADR 0030: the daemon checks the row like any paired device
 and refuses an id it does not know, which the dialog shows as a refusal with the card still
-open; when `/me` names no row the answer goes without an id and the daemon-token route answers
-with its own desktop row), and shows the sentence with Undo (`POST /changes/:id/undo`). The
-daemon status block shows the row as "This PC: paired device <id>". `ChangeCard` renders the
+open; while `/me` has not loaded, or failed, the answer goes without an id and the
+daemon-token route answers with its own desktop row; a daemon whose `/me` names no row, one
+composed without its services, refuses that id-less answer with 409 `conflict` "deviceId is
+required: this daemon has no desktop device row to answer for", shown as the dialog's error
+with the card still pending), and shows the sentence with Undo (`POST /changes/:id/undo`). The
+daemon status block shows the row as "This PC: paired device <id>", or, when `/me` names none,
+that high-risk changes cannot be confirmed on this PC. `ChangeCard` renders the
 spec Q.4 card (what, old → new, scope, duration, impact, undo hint, the parts of a plan) from
 the daemon's `card` through `parseChangeCard` (lenient: unknown fields kept, missing ones
 defaulted).
@@ -248,8 +252,9 @@ into `pending_approval`, and emit `extension.changed`; `POST /updates/apply` emi
 daemon (one card and one change log row per request, low risk acts, medium needs a yes or a
 tap, high needs `{ answer: "device" }` naming the one device row the fake has, the fixture's
 `ME.desktopDeviceId` (any other id is refused `approval_required` "unknown device; pair it
-first" with the card kept, as the real executor does; no id means that row, as the daemon's
-route does), `confirm: "tap"` runs a medium change at once, the `SOURCE_OF` mapping
+first" with the card kept, as the real executor does; no id, or the literal `desktop`, means
+the row `/me` names, as the daemon's route does, and when `/me` names none, 409 `conflict`
+with the daemon's message), `confirm: "tap"` runs a medium change at once, the `SOURCE_OF` mapping
 `text → chat`, `voice → voice`, `phone → chat`, `ui → ui`, undo rows; the `me` option
 overrides the `/me` answer, e.g. `desktopDeviceId: null` or a row the fake does not have). Run directly
 (`pnpm exec tsx test/fake-daemon.ts`) it reads `FAKE_DAEMON_PORT`, `FAKE_DAEMON_TOKEN` and
@@ -351,7 +356,9 @@ URLs),
 missing route), `settings` (scope on every row, the paired-device line, command mapping,
 autonomy by one step: card → yes → sentence → undo → the change log row, high risk needs this
 device: the `/me` row's id is posted and performs, an id the fake does not know is shown as
-the daemon's refusal with the card kept, no id when `/me` names none, cancel and refusal),
+the daemon's refusal with the card kept, no id while `/me` failed and the change performs,
+`/me` naming no row: the status line says this PC cannot confirm and the daemon's 409 is shown
+with nothing changed, cancel and refusal; `client`: the literal `desktop` is this PC),
 `sources` (spec A.4: counts and kind labels; the fixture source with its reference and counts,
 its candidates with statuses, the install mark and the duplicate's project link, Create
 project on a proposal posting to the accept route with the project landing in the store and
