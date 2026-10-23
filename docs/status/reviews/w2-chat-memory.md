@@ -112,46 +112,164 @@ Failing first: the runtime and commands tests were run before the code and faile
 (`memoryCommandPort is not a function`: 20 failed in `conversation.test.ts`; 7 failed in the
 commands package).
 
-### Commands run and results (2026-10-23)
+### Commits
 
-- `pnpm install --frozen-lockfile`: done.
-- `pnpm typecheck`: clean (node project plus apps). Run before every Biome write.
-- `pnpm lint`: exit 0. The warnings are all in files this item does not touch;
-  `pnpm exec biome check <the 18 changed .ts files>` reports no diagnostics.
-- `node scripts/check-paths.mjs`: `check-paths: ok (990 files)`.
-- `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk`: `docs-check: ok (22 files)`.
-- `node scripts/link-check.mjs`: `link-check: ok (108 files)`.
-- `pnpm secrets:scan`: `secret-scan: clean (1416 files)`.
-- `pnpm exec vitest run --project unit packages/memory/test`: 12 files, 113 tests passed.
-- `pnpm exec vitest run --project unit packages/commands/test`: 9 files, 139 tests passed.
-- `pnpm exec vitest run --project unit packages/runtime/test`: 116 files, 1009 passed,
-  1 skipped.
-- Targeted run (`conversation`, `loop-docs`, `docs-scaffold`, `closeout-conversation`,
-  `live-chat`, `docs-search`, `commands`, `intent`): 8 files, 132 tests passed
-  (`conversation.test.ts` alone has 21).
-- `pnpm exec vitest run --project integration packages/runtime/test packages/memory/test packages/commands/test`:
-  2 files, 5 tests, all skipped. They need Postgres or Docker, which this sandbox lacks.
-- `pnpm exec vitest run --project e2e tests/e2e/scenarios/phase5-gate.integration.test.ts`:
-  1 file, 4 tests passed.
-- `pnpm exec vitest run --project e2e tests/e2e/scenarios/03-voice.scenario.test.ts tests/e2e/scenarios/09-phone.scenario.test.ts tests/e2e/scenarios/phase4-gate.integration.test.ts`:
-  3 files, 4 passed, 1 todo.
-- `pnpm --filter @forerunner/ui test`: 42 files, 256 tests passed.
-  `pnpm --filter @forerunner/approvals-web test`: 10 files, 57 tests passed.
-- `pnpm check`: lint, paths and typecheck pass. The tests give 272 files: 2717 passed,
-  **1 failed**, 4 skipped, 1 todo.
-  - The one failure is `scripts/closeout-docs.test.ts`, which requires every ADR to be indexed
-    in `docs/decisions/README.md`.
-  - The brief forbids editing that file; the index row is returned for the orchestrator.
-  - With the row
-    `| 0061 | Quick chat retrieval: docs and lessons under measured budgets; recording a stated lesson |`
-    added locally (not committed), `scripts/closeout-docs.test.ts` passes 19 tests (1 todo).
+All on `wave/w2-chat-memory` above the start commit `b1804e3`. Each commit ends with the
+trailer `Claude-Build: managed-agent w2-chat-memory build`.
+
+1. `memory:` the docs search (`packages/memory`).
+2. `commands:` `memory.record` and its parser phrases (`packages/commands`).
+3. `runtime:` chat retrieval, the memory port and the daemon wiring (`packages/runtime`).
+4. `docs:` the maintainer docs (runtime, memory, commands) and ADR 0061.
+5. `status:` this build report.
+6. `status:` the J.1 and O.2 rows set to done in `docs/requirements.md`, the two rows removed
+   from `docs/status/BLOCKERS.md`, `docs/status/PROGRESS.md` updated, and 0061 indexed in
+   `docs/decisions/README.md`.
+
+The trailers of the first build were written with an uppercase `BUILD`. The six commits were
+re-applied unchanged with `git format-patch` and `git am` over the same start commit, with the
+trailer corrected. The tree before and after is identical (`git diff` between the two was
+empty).
+
+### Commands run and results (2026-10-23, final tree)
+
+Typecheck (`pnpm typecheck`), output as printed:
+
+```
+> forerunner@0.1.0 typecheck /workspace/repo
+> tsc -p tsconfig.node.json --noEmit && pnpm -r --filter "./apps/*" --if-present typecheck
+
+Scope: 4 of 21 workspace projects
+apps/approvals-web typecheck$ tsc -p tsconfig.json --noEmit
+apps/desktop typecheck$ echo 'no TypeScript in the desktop shell; see @forerunner/ui'
+apps/mobile typecheck$ echo 'no TypeScript in the mobile shell; see @forerunner/ui'
+apps/ui typecheck$ tsc -p tsconfig.json --noEmit
+apps/mobile typecheck: Done
+apps/desktop typecheck: Done
+apps/approvals-web typecheck: Done
+apps/ui typecheck: Done
+exit 0
+```
+
+Lint (`pnpm lint`), tail of the output:
+
+```
+Diagnostics not shown: 39.
+Checked 1164 files in 2s. No fixes applied.
+Found 59 warnings.
+exit 0
+```
+
+The 59 warnings are all in files this item does not touch.
+`pnpm exec biome check <the 18 changed .ts files>` reports no diagnostics:
+
+```
+Checked 18 files in 106ms. No fixes applied.
+```
+
+Paths, docs, links and secrets:
+
+```
+$ node scripts/check-paths.mjs
+check-paths: ok (990 files).
+$ node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk
+docs-check: ok (27 files).
+$ node scripts/link-check.mjs
+link-check: ok (109 files).
+$ pnpm secrets:scan
+secret-scan: clean (1417 files).
+```
+
+Tests of the touched packages, run from the repository root:
+
+```
+$ pnpm exec vitest run --project unit packages/memory/test packages/commands/test
+ Test Files  21 passed (21)
+      Tests  252 passed (252)
+$ pnpm exec vitest run --project unit packages/memory/test
+ Test Files  12 passed (12)
+      Tests  113 passed (113)
+$ pnpm exec vitest run --project unit packages/commands/test
+ Test Files  9 passed (9)
+      Tests  139 passed (139)
+$ pnpm exec vitest run --project unit packages/runtime/test
+ Test Files  116 passed (116)
+      Tests  1009 passed | 1 skipped (1010)
+$ pnpm exec vitest run --project unit packages/runtime/test/conversation.test.ts packages/runtime/test/loop-docs.test.ts packages/runtime/test/docs-scaffold.test.ts packages/runtime/test/closeout-conversation.test.ts packages/runtime/test/live-chat.test.ts packages/memory/test/docs-search.test.ts packages/commands/test/commands.test.ts packages/commands/test/intent.test.ts
+ Test Files  8 passed (8)
+      Tests  132 passed (132)
+$ pnpm exec vitest run --project integration packages/runtime/test packages/memory/test packages/commands/test
+ Test Files  2 skipped (2)
+      Tests  5 skipped (5)
+```
+
+The integration files need Postgres or Docker, which this sandbox does not have:
+`sandbox.integration.test.ts` and `postgres.integration.test.ts`.
+
+Neighbouring suites:
+
+```
+$ pnpm exec vitest run --project e2e tests/e2e/scenarios/phase5-gate.integration.test.ts
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+$ pnpm exec vitest run --project e2e tests/e2e/scenarios/03-voice.scenario.test.ts tests/e2e/scenarios/09-phone.scenario.test.ts tests/e2e/scenarios/phase4-gate.integration.test.ts
+ Test Files  3 passed (3)
+      Tests  4 passed | 1 todo (5)
+$ pnpm --filter @forerunner/ui test
+ Test Files  42 passed (42)
+      Tests  256 passed (256)
+$ pnpm --filter @forerunner/approvals-web test
+ Test Files  10 passed (10)
+      Tests  57 passed (57)
+$ pnpm exec vitest run --project unit scripts
+ Test Files  10 passed (10)
+      Tests  97 passed | 2 skipped | 1 todo (100)
+```
+
+Full check (`pnpm check`), relevant lines:
+
+```
+check-paths: ok (990 files).
+ Test Files  272 passed (272)
+      Tests  2718 passed | 4 skipped | 1 todo (2723)
+link-check: ok (109 files).
+secret-scan: clean (1417 files).
+EXIT 0
+```
+
+Inside `pnpm check`, `pnpm docs:check` diffs against `origin/main`. This checkout has no such
+ref, so the script prints that it cannot diff and passes. The check against the item's base
+above is the real one.
+
+Failing first: before the code existed, the new tests failed.
+`packages/runtime/test/conversation.test.ts` had 20 failures (`memoryCommandPort is not a
+function`), and `packages/commands/test` had 7 failures (unknown command `memory.record` and
+the unmatched lesson phrases).
+
+### Export and patch check
+
+```
+$ git format-patch --stdout $(cat /tmp/start-sha)..HEAD > /mnt/session/outputs/w2-chat-memory.patch
+$ git worktree add --detach /tmp/clean b1804e3     # clean checkout of the start commit
+$ cd /tmp/clean && git rev-parse --short HEAD && git status --short | wc -l
+b1804e3
+0
+$ git apply --check -v /mnt/session/outputs/w2-chat-memory.patch
+...
+Checking patch docs/decisions/README.md...
+Checking patch docs/requirements.md...
+Checking patch docs/status/BLOCKERS.md...
+Checking patch docs/status/PROGRESS.md...
+exit 0
+```
+
+The check was run on the patch before this report was committed, and again on the final
+exported patch: `git apply --check` exits 0 both times. The patch does not apply to
+`b31c2e5`, the branch's old head, because that commit lacks 80 base commits; `b1804e3` is the
+base the brief names.
 
 ### What is left open and why
 
-- **ADR index row.** The `docs/decisions/README.md` row for 0061 is not committed (the rule
-  says it is added centrally). Until it is, `pnpm check` fails on `closeout-docs.test.ts`.
-- **Status files.** `docs/requirements.md`, `docs/status/BLOCKERS.md` and
-  `docs/status/PROGRESS.md` are not edited, by rule; the row updates are in the final answer.
 - **Registry prompt.** The `conversation-agent` prompt in the registry repository
   (`evals/registry` is a synced copy) does not yet mention cited paths or the memory tool. The
   docs block header and the lessons header tell the model directly, and `ChatReply.sources`
@@ -161,3 +279,4 @@ commands package).
 - **Docs search limits.** The search is lexical and runs on every turn with no index (see the
   Known issues in memory.md and runtime.md). The docs clone is read as last checked out and is
   not fetched for the chat.
+- **Integration suites.** They need Postgres or Docker and were skipped in this sandbox.
