@@ -2,15 +2,22 @@ import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "@forerunner/platform";
+import { dirname, join, resolve } from "@forerunner/platform";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   escapeProperty,
+  PROPERTIES_FILE,
   propertiesText,
   resolveKeytool,
   setupKeystore,
   // @ts-expect-error plain JS module
 } from "./android-keystore.mjs";
+
+const repoRoot = resolve(
+  dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")),
+  "..",
+);
+const read = (...parts: string[]) => readFileSync(join(repoRoot, ...parts), "utf8");
 
 const temps: string[] = [];
 function tempDir(): string {
@@ -166,4 +173,85 @@ describe("android-keystore generated development key", () => {
       setupKeystore({ androidDir: dir, env: {}, log: () => {}, spawn: missing }),
     ).toThrow(/keytool could not be started/);
   });
+});
+
+describe("the Android project's release signing config (build.gradle.kts)", () => {
+  // Tauri keeps gen/android/app/build.gradle.kts after `android init` (only tauri.build.gradle.kts
+  // and tauri.properties are regenerated, see gen/android/.gitignore), so the signing config
+  // lives in the committed file and must read what scripts/android-keystore.mjs writes.
+  const gradle = read("apps", "mobile", "src-tauri", "gen", "android", "app", "build.gradle.kts");
+  const releaseBlock = gradle.slice(gradle.indexOf('getByName("release")'));
+
+  it("loads keystore.properties from the Android project root only when it exists", () => {
+    expect(gradle).toContain(`rootProject.file("${PROPERTIES_FILE}")`);
+    expect(gradle).toMatch(/keystorePropertiesFile\.exists\(\)/);
+    // the properties are loaded the way tauri.properties is, with the stream closed
+    expect(gradle).toMatch(/keystorePropertiesFile\.inputStream\(\)\.use \{ load\(it\) \}/);
+  });
+
+  it("declares a release signing config from the keys the keystore script writes", () => {
+    expect(gradle).toMatch(/signingConfigs\s*\{[\s\S]*?create\("release"\)/);
+    const written = propertiesText({ storeFile: "k.jks", password: "p", alias: "a" });
+    for (const key of ["storeFile", "keyAlias", "storePassword", "keyPassword"]) {
+      expect(written).toMatch(new RegExp(`^${key}=`, "m"));
+      expect(gradle).toContain(`keystoreProperty("${key}")`);
+    }
+    // the store file is resolved against the Android project root, where the script writes it
+    expect(gradle).toMatch(/storeFile = rootProject\.file\(keystoreProperty\("storeFile"\)\)/);
+    // a half-written properties file fails the build with the key named, never silently
+    expect(gradle).toMatch(/fun keystoreProperty\(name: String\): String/);
+    expect(gradle).toMatch(/getProperty\(name\)\s*\?:\s*error\(/);
+  });
+
+  it("signs the release build type with it and says so when the file is missing", () => {
+    expect(releaseBlock).toMatch(
+      /signingConfig\s*=\s*[^\n]*signingConfigs\.getByName\("release"\)/,
+    );
+    expect(releaseBlock).toMatch(/logger\.warn\(/);
+    expect(releaseBlock).toContain("scripts/android-keystore.mjs");
+  });
+
+  it("keeps the Tauri-generated content intact", () => {
+    expect(gradle).toContain('id("rust")');
+    expect(gradle).toContain('file("tauri.properties")');
+    expect(gradle).toContain('apply(from = file("tauri.build.gradle.kts"))');
+    expect(gradle).toContain('rootDirRel = "../../../"');
+    expect(gradle).toContain('namespace = "app.forerunner.mobile"');
+    // the debug build type stays as generated (debug key, debuggable, JNI symbols kept)
+    const debugBlock = gradle.slice(
+      gradle.indexOf('getByName("debug")'),
+      gradle.indexOf('getByName("release")'),
+    );
+    expect(debugBlock).toContain("isDebuggable = true");
+    expect(debugBlock).not.toContain("signingConfig");
+  });
+
+  it("never carries a password or a store path itself", () => {
+    expect(gradle).not.toMatch(/(?:storePassword|keyPassword)\s*=\s*"/);
+    expect(gradle).not.toMatch(/\.jks/);
+  });
+});
+
+describe("the workflows verify the release APK signature", () => {
+  for (const workflow of ["android.yml", "release.yml"]) {
+    it(`${workflow}: keystore, then the build, then apksigner through scripts/android-apk-verify.mjs`, () => {
+      const text = read(".github", "workflows", workflow);
+      const keystore = text.indexOf("node scripts/android-keystore.mjs");
+      const build = text.indexOf("tauri android build --apk");
+      const verify = text.indexOf("node scripts/android-apk-verify.mjs");
+      expect(keystore).toBeGreaterThan(-1);
+      expect(build).toBeGreaterThan(keystore);
+      expect(verify).toBeGreaterThan(build);
+      // the verify step is a plain run step (no `continue-on-error`, no `if:` that could skip it)
+      const step = text.slice(
+        text.lastIndexOf("\n      - ", verify),
+        text.indexOf("\n      - ", verify),
+      );
+      expect(step).not.toMatch(/continue-on-error|\bif:/);
+      // the artefact upload comes after the verification, so an unsigned APK is never uploaded
+      expect(text.indexOf("upload-artifact", verify)).toBeGreaterThan(verify);
+      // build-tools (apksigner) are installed by the job
+      expect(text).toContain("build-tools;34.0.0");
+    });
+  }
 });

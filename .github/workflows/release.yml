@@ -87,6 +87,8 @@ jobs:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       - run: pnpm --filter @forerunner/mobile tauri android build --apk --ci
+      - name: Verify the release APK signature (apksigner; an unsigned or debug-signed APK fails the job)
+        run: node scripts/android-apk-verify.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: android
