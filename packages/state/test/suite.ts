@@ -1025,12 +1025,16 @@ export function defineStateSuite(target: SuiteTarget): void {
 
     describe("lessons", () => {
       it("keeps private lessons private: agent B cannot read agent A's through the repo API", async () => {
-        await store.lesson.add({
+        // On Postgres the private scope never enters the shared store (ADR 0083, the case
+        // below): the add is refused and Alice's private row simply does not exist here.
+        const privateAdd = store.lesson.add({
           scope: "agent_private",
           owner_agent_id: s.alice.id,
           text: "Alice secret habit",
           tags: ["habit"],
         });
+        if (store.dialect === "postgres") await expectCode(privateAdd, "MEMORY_SCOPE_VIOLATION");
+        else await privateAdd;
         const shared = await store.lesson.add({
           scope: "shared",
           text: "Shared habit",
@@ -1058,16 +1062,18 @@ export function defineStateSuite(target: SuiteTarget): void {
           (await store.lesson.search({ scope: "agent_private", ownerAgentId: s.alice.id })).map(
             (l) => l.text,
           ),
-        ).toEqual(["Alice secret habit"]);
+        ).toEqual(store.dialect === "postgres" ? [] : ["Alice secret habit"]);
         expect(
           (await store.lesson.search({ scope: "shared", tags: ["habit"] })).map((l) => l.id),
         ).toEqual([shared.id]);
         expect((await store.lesson.search({ scope: "critic" })).map((l) => l.id)).toEqual([
           critic.id,
         ]);
+        // The scope rule runs before the owner check, so the shared store refuses this add for
+        // its scope; the local store refuses it for the missing owner.
         await expectCode(
           store.lesson.add({ scope: "agent_private", text: "no owner" }),
-          "validation",
+          store.dialect === "postgres" ? "MEMORY_SCOPE_VIOLATION" : "validation",
         );
       });
 
