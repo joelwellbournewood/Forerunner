@@ -1571,6 +1571,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       pricing: provider
         ? livePricing(provider, () => rungModelFor(provider, "sonnet"))
         : { estimate: () => 0, cost: () => 0 },
+      // Every loop run priced by the model its records name, from the table in force: its own
+      // rung, or the fast-mode variant of the Opus rung (spec D.20, ADR 0057).
+      ...(provider
+        ? { pricingFor: (modelId: string) => pricingForProvider(provider, modelId, pricingTable) }
+        : {}),
+      pricingTable: () => pricingTable,
       tools,
       toolsFor: toolsForRun,
       sandbox: sandboxPort,

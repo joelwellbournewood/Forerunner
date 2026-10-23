@@ -15,6 +15,7 @@ import { estimateAccuracyView } from "../estimates/view.ts";
 import { createExtensionsRoutes } from "../extensions/routes.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
+import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
 import { createNotificationRoutes } from "../notifications/routes.ts";
 import { createSharedSecretRoutes } from "../secrets/routes.ts";
@@ -1339,6 +1340,16 @@ export function createDaemonApp(
           scopeId: p.id,
           value: money(p.budget_usd_micro, chf()),
           description: `Budget for ${p.name}`,
+          risk: "medium",
+        },
+        {
+          // Opus fast mode (spec D.20, ADR 0057): the effect and the surcharge both ways, from
+          // the price table in force; changed through `settings.set` like any SETTING_SPECS key.
+          key: `project.${FAST_MODE_SETTING}`,
+          scope: "project",
+          scopeId: p.id,
+          value: fastModeOf(p.settings),
+          description: fastModeDescription(rt.pricingTable()),
           risk: "medium",
         },
       ]),

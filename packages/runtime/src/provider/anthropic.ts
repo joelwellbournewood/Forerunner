@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { type Clock, ForerunnerError, systemClock } from "@forerunner/platform";
+import { FAST_MODE_BETA } from "../models/fast-mode.ts";
 import {
   type ChatMessage,
   type ContentBlock,
@@ -15,7 +16,8 @@ import {
 
 /**
  * Anthropic Messages API adapter. Streams, maps effort to output_config.effort, marks stable
- * prefixes for prompt caching, never sends temperature (current Claude models reject it).
+ * prefixes for prompt caching, never sends temperature (current Claude models reject it),
+ * sends `speed: "fast"` with the fast-mode beta header when the request asks (ADR 0057).
  * The credential is passed in by the billing router; this class never reads env itself.
  */
 export interface AnthropicProviderOptions {
@@ -33,6 +35,8 @@ export interface AnthropicProviderOptions {
 
 export class AnthropicMessagesProvider implements ModelProvider {
   readonly name = "anthropic";
+  /** Fast mode (ADR 0057): `speed: "fast"` on the model id, with the fast-mode beta header. */
+  readonly fastMode = true;
   private readonly client: Anthropic;
   private readonly clock: Clock;
   private readonly opts: AnthropicProviderOptions;
@@ -111,10 +115,17 @@ export class AnthropicMessagesProvider implements ModelProvider {
     }
     if (req.effort) params.output_config = { effort: req.effort };
     if (req.metadata) params.metadata = { user_id: req.metadata.user_id };
+    // Fast mode (spec D.20, ADR 0057): the same model id with the speed parameter; the beta
+    // header is what the API asks for with `speed` on the models that need it.
+    const fast = req.speed === "fast";
+    if (fast) params.speed = "fast";
 
     let stream: AsyncIterable<Anthropic.RawMessageStreamEvent>;
     try {
-      stream = await this.client.messages.create(params, { signal: req.signal });
+      stream = await this.client.messages.create(params, {
+        signal: req.signal,
+        ...(fast ? { headers: { "anthropic-beta": FAST_MODE_BETA } } : {}),
+      });
     } catch (e) {
       yield mapError(e);
       return;

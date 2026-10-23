@@ -1,3 +1,4 @@
+import { canonicalModelId, fastModeBaseId } from "@forerunner/billing";
 import type { EffortLevel, ModelTier } from "../provider/types.ts";
 
 /** The model ladder (spec D, Open decisions): Haiku -> Sonnet -> Opus -> Fable, ceiling Opus by default. */
@@ -114,11 +115,20 @@ export function modelIdFor(
   return id;
 }
 
+/**
+ * The rung of a model id on the ladder. A fast-mode variant (`claude-opus-5-5-fast`, the id a
+ * Run row carries for a fast-mode run, ADR 0057) is on its base model's rung.
+ */
 export function tierOfModel(
   modelId: string,
   ladder: LadderRung[] = DEFAULT_LADDER,
 ): ModelTier | null {
   for (const r of ladder) if (Object.values(r.models).includes(modelId)) return r.tier;
+  const base = fastModeBaseId(modelId);
+  if (base) {
+    for (const r of ladder)
+      if (Object.values(r.models).some((m) => canonicalModelId(m) === base)) return r.tier;
+  }
   return null;
 }
 
