@@ -154,6 +154,7 @@ import { isQuietAt, resolvePrefs } from "../notifications/prefs.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
 import { ProviderRegistry } from "../provider/registry.ts";
 import type { ModelProvider, ModelTier } from "../provider/types.ts";
+import { SpecialistApprovals, type SpecialistSyncResult } from "../registry/approval.ts";
 import {
   type DroppedTool,
   loadRegistry,
@@ -584,6 +585,12 @@ export interface RuntimeApp {
    * first-session plan), applied on the approving answer by `syncApprovals`.
    */
   intake: IntakeService;
+  /**
+   * Proposed specialists (spec C.5, ADR 0071): `propose` writes `proposed/<name>/` and files
+   * the approval request; the approving answer (inbox through `syncApprovals`, or
+   * `fr specialists approve`) runs the eval set and promotes the file only on a pass.
+   */
+  specialistApprovals: SpecialistApprovals;
   scheduler: Scheduler;
   conversation: ConversationAgent | null;
   gitHost: GitHost;
@@ -796,6 +803,8 @@ export interface RuntimeApp {
     signoffs: SignoffSyncResult;
     plans: PlanApprovalSyncResult;
     intake: IntakeSyncResult;
+    /** Answered specialist proposals (ADR 0071); the eval runs go on in the background in the daemon. */
+    specialists: SpecialistSyncResult;
   }>;
   /** Add or drop mirror schedules after a project's settings changed. */
   refreshMirrorSchedules(): Promise<string[]>;
@@ -1923,6 +1932,34 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // Evals run commands where task runs do: inside a lease over the work directory.
       sandbox: sandboxPort,
     });
+  // Proposed specialists (spec C.5, ADR 0071): the approving answer runs the proposal's eval
+  // set through the same eval runner as the model watch (every call under the hooks, charged
+  // to this human, the run capped by the approval eval budget before the first call) on the
+  // rung of the proposal's default tier; a pass moves it to specialists/ and the live
+  // registry picks it up at once, so the executor's next lookup finds it runnable.
+  const specialistApprovals = new SpecialistApprovals({
+    store,
+    clock,
+    registryDir,
+    humanId: human.id,
+    agentId: agent.id,
+    evals: evalRunner,
+    loadOptions: {
+      toolNames: [...tools.names(), ...browserToolNames, ...emailPorts.tools.map((t) => t.name)],
+    },
+    target: (def) =>
+      provider
+        ? {
+            provider: provider.name,
+            model: rungModelFor(provider, def.default_tier),
+            effort: def.default_effort,
+            pricing: pricingTable,
+          }
+        : null,
+    onPromoted: (def) => {
+      registry.specialists.set(def.name, def);
+    },
+  });
   const modelWatch = new ModelWatch({
     clock,
     store,
@@ -2399,6 +2436,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             })
           : { started: 0, rejected: 0, skipped: 0 },
       intake: await intake.syncAnswers(),
+      // An approved proposal's eval run can take minutes: the daemon claims the answer here
+      // and runs it in the background; a CLI one-shot waits for it.
+      specialists: await specialistApprovals.syncAnswers({
+        background: opts.startServices !== false,
+      }),
     };
     // A mirror run waiting on its approval re-reads the request now, not at the next poll.
     mirrorApprovals.wake();
@@ -2609,6 +2651,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // approvals it would apply from the shared state wait for the resume.
   if (schemaSync.paused) logger.warn("sync paused at compose", { ...schemaSync.status() });
   else await syncApprovals();
+  // Proposals already on disk without a request (an earlier build, a hand-written one).
+  if (services && !schemaSync.paused) {
+    await specialistApprovals.fileMissing().catch((e: unknown) => {
+      logger.warn("specialist proposals not filed", { error: errorMessage(e) });
+    });
+  }
   await refreshMirrorSchedules();
   const jobSchedules = await refreshJobSchedules(scheduler);
   if (services) scheduler.start();
@@ -2820,9 +2868,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     },
     mirrorSync,
     intake,
+    specialistApprovals,
     async close() {
       await voice.close();
       stopApprovalsPoll();
+      await specialistApprovals.settled();
       remoteWatcher?.stop();
       githostWatcher?.stop();
       await browserManager.closeAll().catch((e: unknown) => {
