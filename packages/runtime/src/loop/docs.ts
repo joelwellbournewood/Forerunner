@@ -88,19 +88,24 @@ export class ProjectDocs implements ProjectDocsPort {
   }
 
   /**
-   * Where the chat's docs search reads a project's doc set (spec J.1, ADR 0061), the places G.5
-   * writes it, without cloning or fetching anything: a local folder the project is linked to
-   * (an absolute `repos[0]`, spec A.4), else this install's docs clone of its repository
-   * (`<worktreeRoot>/<project id>`, kept by the scaffold and the status updates), else the
-   * data-dir workspace of a project without a repository; null when none exists yet.
+   * Where the chat's docs search reads a project's doc set (spec J.1, ADR 0061), in order,
+   * without cloning or fetching anything: a local folder the project is linked to (an absolute
+   * `repos[0]`, spec A.4: the human's own docs), this install's docs clone of its repository
+   * (`<worktreeRoot>/<project id>`, kept by the scaffold and the status updates), and the
+   * data-dir workspace, where G.5 writes the set of a project without a host repository, a
+   * linked folder's project included (`parseRepoRef` is null for a path; review finding 4).
+   * Only the roots that exist; empty when none does yet. The search lets the first root win
+   * on the same repo-relative path.
    */
-  docsDirFor(project: ProjectRow): string | null {
+  docsDirsFor(project: ProjectRow): string[] {
+    const out: string[] = [];
     const linked = project.repos[0]?.trim();
-    if (linked && isAbsolute(linked) && existsSync(linked)) return linked;
+    if (linked && isAbsolute(linked) && existsSync(linked)) out.push(linked);
     const clone = join(this.deps.worktreeRoot, safeSegment(project.id, "project"));
-    if (existsSync(join(clone, ".git"))) return clone;
+    if (existsSync(join(clone, ".git"))) out.push(clone);
     const workspace = this.workspaceDir(project.id);
-    return existsSync(workspace) ? workspace : null;
+    if (existsSync(workspace)) out.push(workspace);
+    return out;
   }
 
   async scaffoldProject(project: ProjectRow): Promise<DocsScaffoldOutcome> {

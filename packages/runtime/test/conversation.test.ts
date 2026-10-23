@@ -137,7 +137,7 @@ async function setup(
     modelId: "fake-haiku",
     commands,
     memory,
-    docsDir: async (projectId) => (projectId === game && opts.docs ? checkout : null),
+    docsDirs: async (projectId) => (projectId === game && opts.docs ? [checkout] : []),
     ...(opts.retrieval ? { retrieval: opts.retrieval } : {}),
     ...(opts.prompt ? { prompt: opts.prompt } : {}),
   });

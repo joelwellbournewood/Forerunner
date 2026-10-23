@@ -1152,10 +1152,13 @@ commit. Without a repository the file under the workspace is updated. The result
 `handoff.docs` on the session row; a failure is `docs.status_failed` with the message and
 the session ends as it would have. Not scaffolded from here: a project created by the
 `project.create` command (chat, voice) in `@forerunner/commands` (Known issues).
-`docsDirFor(project)` is where the chat's docs search reads the set (spec J.1, ADR 0061),
-without cloning or fetching: a local folder the project is linked to (an absolute `repos[0]`,
-spec A.4), else this install's docs clone `<worktreeRoot>/<project id>` (made by the scaffold
-and the status updates), else the workspace; null when none exists yet.
+`docsDirsFor(project)` lists where the chat's docs search reads the set (spec J.1, ADR 0061),
+in order and without cloning or fetching: a local folder the project is linked to (an absolute
+`repos[0]`, spec A.4), this install's docs clone `<worktreeRoot>/<project id>` (made by the
+scaffold and the status updates), and the workspace, each only when it exists (empty when none
+does). A linked folder is not a host repository (`parseRepoRef` is null for a path), so G.5
+writes such a project's set to the workspace and the list carries both; the search lets the
+first root win on the same repo-relative path.
 
 ### Conversation agent (`src/conversation/agent.ts`)
 
@@ -1187,16 +1190,17 @@ principal's lessons through `ConversationDeps.memory.recall` (the daemon's `Memo
 principal grant: its own private scope plus shared, for the active project and global ones),
 only when the agent is a principal or conversation agent owned by the asking human, so nothing
 of another human's memory is read; and the project's best doc sections through
-`searchDocs` (memory.md, "Docs search") in the directory `ConversationDeps.docsDir(projectId)`
-names (the daemon: `ProjectDocs.docsDirFor`), wrapped in the data envelope
+`loadDocChunks` and `selectDocHits` (memory.md, "Docs search") over the roots
+`ConversationDeps.docsDirs(projectId)` lists (the daemon: `ProjectDocs.docsDirsFor`), wrapped in the data envelope
 (`wrapUntrusted(..., "repo_file", "project docs")`; an instruction-like passage is logged)
 with each section labelled `[<path> > <heading>]` so the answer can cite it. Each part has its
 own budget, `ConversationDeps.retrieval` (`docsMaxTokens`, default `DEFAULT_CHAT_DOCS_TOKENS`
 1,200; `lessonsMaxTokens`, default `DEFAULT_CHAT_LESSONS_TOKENS` 600; 0 turns a part off),
 measured with the provider's `countTokens` on the exact text sent: the lessons block is
-recalled under the budget with that counter and dropped if it still measures over; the docs are
-searched under the budget, the wrapped block measured, and searched again with the overshoot
-taken off (at most three tries) until the envelope fits, never sent over. A failure costs the
+recalled under the budget with that counter and dropped if it still measures over; the doc set
+is read and chunked once per turn, the sections selected under the budget, the wrapped block
+measured, and selected again from the same chunks with the overshoot taken off (at most three
+tries, no file read again) until the envelope fits, never sent over. A failure costs the
 context, never the answer (`chat lessons not retrieved`, `chat docs not searched` warnings).
 `ChatReply.sources` (`docs`: path and heading; `lessons`: ids) and the `chat.reply` event
 (`sources`, and `retrieval` with `budget`, `tokens`, `hits`, `dropped` per part) say what the
@@ -2064,8 +2068,9 @@ section and called by the model through `memory_record` refused (not in the huma
 command's grounding rule) with nothing recorded; another human's private
 lesson on the same project never in the context, a turn naming that human's agent retrieving no
 lessons and refused when it tries to record into it. `loop-docs.test.ts` also proves
-`docsDirFor` (nothing before a scaffold and nothing cloned to find out, the workspace, the docs
-clone, a linked folder first); `docs-scaffold.test.ts` drives the composed daemon's `/chat` to
+`docsDirsFor` (nothing before a scaffold and nothing cloned to find out, the workspace, the docs
+clone before it, a linked folder first, and a scaffolded linked project listing the folder and
+the workspace that holds its G.5 set); `docs-scaffold.test.ts` drives the composed daemon's `/chat` to
 search a project's workspace docs and record a stated lesson into `rt.memory`.
 
 `loop-docs.test.ts` (spec G.5, ADR 0058; the runner with `ProjectDocs` on a `MemoryGitHost`
@@ -2496,7 +2501,7 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   calls there (ADR 0057).
 - Chat retrieval (ADR 0061): the docs search reads and ranks the doc set on every model turn
   (no index or cache; bounded by the memory package's file caps) and ranks lexically, so a
-  question worded unlike the doc finds nothing. The docs clone `docsDirFor` reads is whatever
+  question worded unlike the doc finds nothing. The docs clone `docsDirsFor` lists is whatever
   branch the last scaffold or status update checked out; it is not fetched for the chat. A
   project linked to a host repository that was never scaffolded on this install has no docs
   dir until the first scaffold or status update. The registry's `conversation-agent` prompt

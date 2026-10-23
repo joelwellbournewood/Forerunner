@@ -31,10 +31,12 @@ next-session note and recorded.
    `docs/status.md` at every session end), so reading it per turn is cheap and never stale; the
    ADR 0027 hashed n-gram vectors rank one-line lessons well but blur sections of hundreds of
    words. Sections with a credential shape are never rendered.
-2. **The docs come from where G.5 keeps them, without fetching** (`ProjectDocs.docsDirFor`): a
-   local folder the project is linked to (spec A.4), else this install's docs clone of the
-   project's repository, else the data-dir workspace of a project without one. The chat never
-   clones or fetches; it reads what is on disk.
+2. **The docs come from where G.5 keeps them, without fetching** (`ProjectDocs.docsDirsFor`):
+   every root that exists, in order: a local folder the project is linked to (spec A.4), this
+   install's docs clone of the project's repository, and the data-dir workspace (where G.5
+   writes the set of a project without a host repository, a linked folder's included). The
+   first root wins on the same repo-relative path. The chat never clones or fetches; it reads
+   what is on disk, once per turn.
 3. **Two budgets, measured, never estimated.** Lessons get `DEFAULT_CHAT_LESSONS_TOKENS` (600)
    and docs `DEFAULT_CHAT_DOCS_TOKENS` (1,200) per model turn, a `ConversationAgent` option
    (`retrieval`) each. Both are counted with the provider's `countTokens` on the exact text

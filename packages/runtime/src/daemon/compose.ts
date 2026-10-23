@@ -2378,9 +2378,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         // Spec J.1, O.2 (ADR 0061): the principal's lessons and the project's doc sections
         // for the question, each under its token budget, in the volatile context.
         memory,
-        docsDir: async (projectId) => {
+        docsDirs: async (projectId) => {
           const project = await store.project.get(projectId);
-          return project ? docs.docsDirFor(project) : null;
+          return project ? docs.docsDirsFor(project) : [];
         },
       })
     : null;

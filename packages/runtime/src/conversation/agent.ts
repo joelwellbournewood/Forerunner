@@ -1,4 +1,4 @@
-import { searchDocs } from "@forerunner/memory";
+import { loadDocChunks, selectDocHits } from "@forerunner/memory";
 import { type Clock, errorMessage, log, newId } from "@forerunner/platform";
 import type { AgentRow, StateStore } from "@forerunner/state";
 import type { LoopAgentDriver, RunEvent, RunPricing } from "../agent/loop.ts";
@@ -64,10 +64,11 @@ export interface ConversationDeps {
    */
   memory?: Pick<MemoryPort, "recall">;
   /**
-   * Where a project's docs live (spec J.1, G.5): its checkout, a linked local folder or the
-   * data-dir workspace (`ProjectDocs.docsDirFor`); null when it has none. Absent: no docs.
+   * Where a project's docs live (spec J.1, G.5), in order: a linked local folder, its docs
+   * clone, the data-dir workspace (`ProjectDocs.docsDirsFor`); the first root wins on the same
+   * path; empty when it has none. Absent: no docs.
    */
-  docsDir?: (projectId: string) => Promise<string | null>;
+  docsDirs?: (projectId: string) => Promise<readonly string[]>;
   /**
    * Token budgets of the retrieved context per model turn, each measured with the provider's
    * `countTokens` on the exact text sent (ADR 0061). Defaults `DEFAULT_CHAT_DOCS_TOKENS` and
@@ -680,14 +681,16 @@ export class ConversationAgent {
         this.logger.warn("chat lessons not retrieved", { error: errorMessage(e) });
       }
     }
-    if (this.deps.docsDir && projectId && docsBudget > 0 && query.trim()) {
+    if (this.deps.docsDirs && projectId && docsBudget > 0 && query.trim()) {
       try {
-        const dir = await this.deps.docsDir(projectId);
-        // The envelope costs tokens too: search under the budget, measure the wrapped block,
-        // and search again with the overshoot taken off until it fits (at most three tries).
+        const dirs = await this.deps.docsDirs(projectId);
+        // Read and chunk the doc set once per turn (review finding 6). The envelope costs
+        // tokens too: select under the budget, measure the wrapped block, and select again
+        // from the same chunks with the overshoot taken off until it fits (at most three tries).
+        const loaded = dirs.length ? await loadDocChunks(dirs, { countTokens: count }) : null;
         let inner = docsBudget;
-        for (let attempt = 0; dir && attempt < 3 && inner > 0; attempt++) {
-          const found = await searchDocs(dir, query, { maxTokens: inner, countTokens: count });
+        for (let attempt = 0; loaded && attempt < 3 && inner > 0; attempt++) {
+          const found = selectDocHits(loaded, query, { maxTokens: inner, countTokens: count });
           if (!found.hits.length) break;
           const wrapped = wrapUntrusted(found.block, "repo_file", "project docs");
           const tokens = count(wrapped.content);
