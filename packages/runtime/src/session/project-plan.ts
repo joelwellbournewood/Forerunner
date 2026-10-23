@@ -252,6 +252,34 @@ function describeMerge(open: MilestoneRow, merged: MilestoneMerge): string {
     : text;
 }
 
+/** `tool` of the audit row the daemon writes for each milestone change made from the app (B.5). */
+export const MILESTONE_AUDIT_TOOL = "milestone.change";
+
+/**
+ * The history of a milestone change (spec B.5), as the audit row's `input_summary`: the row's
+ * version step and each field that moved, before -> after. The reason goes in the row's
+ * `result_summary`, as on the plan writer's join row.
+ */
+export function describeMilestoneChange(before: MilestoneRow, after: MilestoneRow): string {
+  const parts: string[] = [];
+  if (after.name !== before.name) {
+    parts.push(`name ${JSON.stringify(before.name)} -> ${JSON.stringify(after.name)}`);
+  }
+  const added = after.success_criteria.filter((c) => !before.success_criteria.includes(c));
+  const removed = before.success_criteria.filter((c) => !after.success_criteria.includes(c));
+  const quote = (list: string[]) => list.map((c) => JSON.stringify(c)).join(", ");
+  if (added.length > 0) parts.push(`success criteria added: ${quote(added)}`);
+  if (removed.length > 0) parts.push(`success criteria removed: ${quote(removed)}`);
+  if (after.target_date !== before.target_date) {
+    parts.push(`target date ${before.target_date ?? "none"} -> ${after.target_date ?? "none"}`);
+  }
+  if (after.status !== before.status) parts.push(`status ${before.status} -> ${after.status}`);
+  const text = `milestone ${JSON.stringify(before.name)} (${before.id}) v${before.version} -> v${after.version}: ${parts.length > 0 ? parts.join("; ") : "no field changed"}`;
+  return text.length > MAX_AUDIT_SUMMARY_CHARS
+    ? `${text.slice(0, MAX_AUDIT_SUMMARY_CHARS - 1)}…`
+    : text;
+}
+
 interface Placed {
   task: ShapedTask;
   milestone: ShapedMilestone | null;

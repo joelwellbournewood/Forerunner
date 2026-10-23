@@ -557,7 +557,7 @@ Tests: `intake.test.ts`. Requirement: A.2.
 
 **Reasons on plan and milestone changes (spec B.5).** Every change to a plan, task or
 milestone is versioned with author and reason, and the store enforces it: `TaskRepo.transition`
-has always taken the reason and the actor; since migration v3 `milestone.reason` and
+has always taken the reason and the actor; since migration v5 `milestone.reason` and
 `session.reason` (the session plan's) exist too, written only through
 `MilestoneRepo.change(id, version, patch, reason, actor)` and
 `SessionRepo.setPlan(id, version, plan, reason, actor)`, and the repositories refuse a
@@ -574,10 +574,17 @@ from the brief", cut at `MAX_PLAN_REASON_CHARS` 500); and the daemon, which serv
 `updatedAt`, `version`) and `POST /milestones/:id` (`ChangeMilestoneBody`: `version`, a
 required `reason` of at most 500 characters, and any of `name`, `successCriteria`,
 `targetDate` as a calendar date or null, `status`) for the app's Plan tab, recording the
-human as author. A missing or blank reason, a bad date and a stale version are 409 `conflict`
-with `cause` `validation` / `version_conflict` (ADR 0025) and nothing moves; an unknown
-milestone is 404. Approving a `plan:<session>` card changes no plan (it starts nothing yet,
-Known issues), and no command edits milestones, so `packages/commands` has no caller. Tests:
+human as author. Each change made there also leaves its history: one `milestone.change`
+audit row (`MILESTONE_AUDIT_TOOL`) written in the same transaction, `input_summary` from
+`describeMilestoneChange(before, after)` (the version step and each field that moved,
+before -> after: name, success criteria added or removed, target date, status) and
+`result_summary` `reason: <reason>`, redacted and cut at 500 characters like the plan
+writer's `project.plan` row. A missing or blank reason, a bad date and a stale version are
+409 `conflict` with `cause` `validation` / `version_conflict` (ADR 0025), nothing moves and
+no audit row is written; an unknown milestone is 404. Approving a `plan:<session>` card
+changes no stored plan: it starts the follow-up session (ADR 0053), which writes its own plan
+through `setPlan` like any session. No command edits milestones, so `packages/commands` has no
+caller. Tests:
 `change-reasons.test.ts`, `small-project.test.ts`, `session.test.ts`,
 `closeout-sessions.test.ts`; the store rules in `packages/state/test/suite.ts`. Requirement: B.5.
 
@@ -1778,9 +1785,11 @@ milestone, refusals as 409 `conflict` with nothing written and 404 for an unknow
 store): `GET /projects/:id/milestones` serves the plan writer's rows with the plan's reason,
 the human as author and version 1 (404 for an unknown project); `POST /milestones/:id` with a
 reason changes status and date, bumps the version, records the human and the reason on the
-row and in the listed view; a missing reason, a blank one, a stale version and a bad date are
-409 `conflict` with the cause and leave the row as it was; an unknown milestone is 404; name,
-criteria, date and status change under one reason. The plan's reason on the session row:
+row and in the listed view, and leaves one `milestone.change` audit row with the human, the
+version step, each field before -> after and the reason; a missing reason, a blank one, a
+stale version and a bad date are 409 `conflict` with the cause and leave the row as it was and
+no audit row; an unknown milestone is 404; name, criteria, date and status change under one
+reason, the history naming each. The plan's reason on the session row:
 `session.test.ts` (the cut plan's summary as the reason, the agent as author) and
 `closeout-sessions.test.ts`; the plan writer's reason on milestone rows and the join as a
 reasoned change: `small-project.test.ts`.
@@ -2042,6 +2051,11 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 ## Known issues
 
+- B.5 history: a milestone or session row holds the reason and author of its *last* change
+  (as a task row does); the full before -> after trail is the audit log's `milestone.change`
+  rows (daemon route) and `project.plan` rows (the plan writer's join), and for a session plan
+  the `session.planned` event. A future caller of `MilestoneRepo.change` outside those two
+  paths records the reason on the row but writes no history row unless it appends one.
 - An approved plan the scheduler answers `queued` (the agent is busy) holds the scheduler's
   single pending slot per agent, which a later trigger replaces (`triggers.ts`: the newest
   request wins the slot); the approval is recorded as handed over (`outcome: "queued"`) and

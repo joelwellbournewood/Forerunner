@@ -5,6 +5,7 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { MILESTONE_AUDIT_TOOL } from "../src/session/project-plan.ts";
 import { ScriptedProvider } from "./helpers.ts";
 
 const REGISTRY = join(process.cwd(), "evals", "registry");
@@ -131,6 +132,19 @@ describe("milestone changes carry author and reason (B.5)", () => {
     });
     const listed = await jsonList(await req(`/projects/${projectId}/milestones`));
     expect(listed[0]).toEqual(view);
+    // The history: one audit row per change with what moved (before -> after) and the reason.
+    const history = await rt.store.auditLog.list({ tool: MILESTONE_AUDIT_TOOL });
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      allowed: true,
+      human_id: rt.human.id,
+      agent_id: null,
+      occurred_at: clock.nowIso(),
+      result_summary: "reason: the index landed early; kickoff of the search phase moved up",
+    });
+    expect(history[0]?.input_summary).toBe(
+      `milestone "Docs indexed" (${str(milestone.id)}) v1 -> v2: target date 2026-11-15 -> 2026-11-01; status planned -> active`,
+    );
   });
 
   it("refuses a change without a reason, with a blank one, or on a stale version, and nothing moves", async () => {
@@ -167,6 +181,8 @@ describe("milestone changes carry author and reason (B.5)", () => {
     expect(await json(badDate)).toMatchObject({ details: { cause: "validation" } });
     expect(await rt.store.milestone.mustGet(str(milestone.id))).toEqual(before);
     expect((await change("nope", { version: 1, reason: "x", name: "y" })).status).toBe(404);
+    // A refused change leaves no history row behind.
+    expect(await rt.store.auditLog.count({ tool: MILESTONE_AUDIT_TOOL })).toBe(1);
   });
 
   it("every field the app edits is recorded under one reason: name, criteria, date and status", async () => {
@@ -188,5 +204,12 @@ describe("milestone changes carry author and reason (B.5)", () => {
       reason: "scope agreed with the team: search is part of this milestone",
       version: before.version + 1,
     });
+    const last = (await rt.store.auditLog.list({ tool: MILESTONE_AUDIT_TOOL })).at(-1);
+    expect(last?.input_summary).toBe(
+      `milestone "Docs indexed" (${str(milestone.id)}) v2 -> v3: name "Docs indexed" -> "Docs indexed and searchable"; success criteria added: "Header search answers under 200 ms"; target date 2026-11-01 -> none; status active -> planned`,
+    );
+    expect(last?.result_summary).toBe(
+      "reason: scope agreed with the team: search is part of this milestone",
+    );
   });
 });
