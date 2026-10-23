@@ -2219,8 +2219,17 @@ state service with its **admin token**, which never reaches the app. `DeviceMana
   service (the revoke route is then never called). Through the service it is `POST
   /devices/:id/revoke` (the row revoked, the device's session tokens dropped, the next request
   refused, `device.changed` announced); without one the row is revoked in the shared store,
-  which the service reads on every request. Audit row `devices.revoke` with the device and
-  how it was revoked.
+  which the service reads on every request. When a service is configured but the call fails
+  as `unavailable` (unreachable, hung past the timeout, a 5xx, a missing or refused admin
+  token) and the row is in the daemon's own store (the shared Postgres in hybrid mode), the
+  row is revoked there instead, so a lost phone is never left working because the service is
+  out: the answer says `via: "store"` with the service's failure in `serviceError`. A
+  refusal by the service itself (404, 400) or a row the store does not have is not retried
+  in the store. Audit row `devices.revoke` with the device and how it was revoked, and, when
+  the device was not revoked before, the `change_log` row the registry's `device.revoke`
+  writes for chat or voice (`commands: [device.revoke]`, source `ui`, scope `global`,
+  `irreversible`, before and after, the same sentence), so a revocation from Settings shows in
+  the change log like any other permission change (spec Q).
 
 Configuration (`composeRuntime`): the service URL is `opts.devices.serviceUrl`, else
 `FORERUNNER_STATE_API_URL` (`null` turns it off); the admin token is read from the vault **per
@@ -2228,13 +2237,15 @@ call** under `FORERUNNER_STATE_API_ADMIN_TOKEN_REF` (default `secret:state_api_a
 same variable the service reads); `opts.devices.adminToken` and `opts.devices.fetch` replace
 the vault and the network in tests. Admin calls send `X-Forerunner-Install: <this desktop
 device id>` when there is one (the service's per-install rate bucket). A missing token, a
-refused one (the service's 401) or an unreachable host is `unavailable` with the status and
-the service's code in `details`, never the token or the body.
+refused one (the service's 401), an unreachable host or a call the service has not answered
+within `DEVICE_SERVICE_TIMEOUT_MS` (15 s; `service.timeoutMs` in tests) is `unavailable` with
+the status and the service's code in `details`, never the token or the body; so the app's
+"Starting…" and "Revoking…" end with an error instead of waiting minutes on a hung service.
 
 Routes (`DEVICES_ROUTES`, spread into `DAEMON_ROUTES`; `devices/routes.ts`, mounted behind the
 bearer check): `GET /devices` (`DeviceListView { devices, pairingAvailable }`),
 `POST /devices/pairing { kind?, name? }` (201 `PairingStartView`; 400 `validation` for a bad
-body), `POST /devices/:id/revoke` (`RevokeDeviceView { device, tokensRevoked }`,
+body), `POST /devices/:id/revoke` (`RevokeDeviceView { device, tokensRevoked, via, serviceError }`,
 `tokensRevoked` null for a store revocation). Errors: 400 `validation`, 403
 `tool_not_allowed`, 404 `not_found`, 503 `unavailable`, 500 otherwise with no details.
 `devices/types.ts` imports only zod so the UI loads the shapes through `daemon/api-types`.
@@ -2666,7 +2677,11 @@ call made), with a refused token (the 401 named, the token not echoed) and an un
 host; the list filtered to the human with this install `current`; revoke through the
 service with the tokens count and the audit row, this install's own device 400, another
 human's 404 without calling the revoke route; without a service the list and the revocation
-over the store (another human's 403, unknown 404). In the composed daemon: the three
+over the store (another human's 403, unknown 404); a service that never answers is 503
+`unavailable` after `timeoutMs`; a lost phone in the store is revoked there when the service
+is down, hung, answers 5xx or the token is missing (`via: "store"`, `serviceError`), but not
+after the service's own 404 or for a row only the service has; each revocation writes one
+`change_log` row `device.revoke` (source `ui`, `irreversible`), none for a repeat. In the composed daemon: the three
 `DAEMON_ROUTES` entries, 401 without the bearer, and a pairing for the daemon's human with the
 admin token read from the vault under the default reference and the URL from
 `FORERUNNER_STATE_API_URL`. The real service's routes behind the manager are exercised by
@@ -3117,8 +3132,8 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   the `session.planned` event. A future caller of `MilestoneRepo.change` outside those two
   paths records the reason on the row but writes no history row unless it appends one.
 - Settings -> Devices (`src/devices/`): the daemon does not relay the service's
-  `device.changed` frames to its own `/events`, so the app's device list refreshes on Done or
-  Refresh rather than the moment a phone completes a pairing. `startPairing` accepts
+  `device.changed` frames to its own `/events`; the app polls `GET /devices` while a pairing
+  is shown instead (apps.md). `startPairing` accepts
   `kind: "web"` but builds the same `fr://` link; the approvals web needs
   `<page url>#code=` and no page URL is configured yet (apps.md, approvals web).
 - An approved plan the scheduler answers `queued` (the agent is busy) holds the scheduler's

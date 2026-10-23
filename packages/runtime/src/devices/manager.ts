@@ -13,6 +13,11 @@ import type { DaemonDeviceView, PairingKind, PairingStartView, RevokeDeviceView 
  * through the service when it is configured (the service also drops the device's session
  * tokens and tells open streams), and through the shared store otherwise: the service checks
  * the device row on every request, so a row revoked in the store refuses the next request.
+ * The same holds when the service is configured but cannot be reached (down, hung past
+ * `timeoutMs`, a refused or missing admin token): a row that is in this daemon's store (the
+ * shared Postgres in hybrid mode) is revoked there, so a lost phone is never left working
+ * because the service is out. Every revocation also writes the `change_log` row the
+ * registry's `device.revoke` writes (source `ui`, irreversible), so the change log shows it.
  */
 
 /** Where the state service is and the admin credential to call it with. */
@@ -22,10 +27,17 @@ export interface DeviceServiceConfig {
   /** Read at every call (the vault is the only holder); null when the secret is missing. */
   adminToken: () => Promise<string | null>;
   fetch?: typeof fetch;
+  /** Abort a call the service has not answered after this long; `DEVICE_SERVICE_TIMEOUT_MS`. */
+  timeoutMs?: number;
 }
 
+/** How long one admin call to the state service may take before it is `unavailable`. */
+export const DEVICE_SERVICE_TIMEOUT_MS = 15_000;
+
 export interface DeviceManagerDeps {
-  store: Pick<StateStore, "device" | "auditLog">;
+  store: Pick<StateStore, "device" | "auditLog" | "changeLog">;
+  /** The agent the change log row names as executor; null when there is none. */
+  agentId?: string | null;
   clock: Clock;
   humanId: string;
   /** This daemon's own device row id, when it registered one. */
@@ -128,33 +140,85 @@ export class DeviceManager {
       throw new ForerunnerError("tool_not_allowed", "not a device of the signed-in human");
     }
     let view: RevokeDeviceView;
+    let wasRevoked = row?.revoked ?? false;
     if (this.deps.service) {
       if (!row) {
         // Ownership is checked against the service's list before the revocation.
-        const own = (await this.list()).some((d) => d.id === deviceId);
-        if (!own) throw new ForerunnerError("not_found", "device not found");
+        const listed = (await this.list()).find((d) => d.id === deviceId);
+        if (!listed) throw new ForerunnerError("not_found", "device not found");
+        wasRevoked = listed.revoked;
       }
-      const body = await this.call<{ device: ServiceDevice; tokensRevoked: number }>(
-        "POST",
-        `/devices/${encodeURIComponent(deviceId)}/revoke`,
-        {},
-      );
-      view = { device: this.fromService(body.device), tokensRevoked: body.tokensRevoked };
+      try {
+        const body = await this.call<{ device: ServiceDevice; tokensRevoked: number }>(
+          "POST",
+          `/devices/${encodeURIComponent(deviceId)}/revoke`,
+          {},
+        );
+        view = {
+          device: this.fromService(body.device),
+          tokensRevoked: body.tokensRevoked,
+          via: "service",
+          serviceError: null,
+        };
+      } catch (e) {
+        // A lost phone stays revocable while the service is out: the row in this daemon's
+        // store is the one the service authenticates against (hybrid mode), so revoking it
+        // there refuses the phone's next request as soon as the service answers again.
+        if (!row || !(e instanceof ForerunnerError) || e.code !== "unavailable") throw e;
+        view = {
+          device: this.fromRow(await this.revokeInStore(row.id)),
+          tokensRevoked: null,
+          via: "store",
+          serviceError: e.message,
+        };
+      }
     } else {
-      const current = row as DeviceRow;
-      const revoked = current.revoked
-        ? current
-        : await this.deps.store.device.revoke(current.id, current.version);
-      view = { device: this.fromRow(revoked), tokensRevoked: null };
+      view = {
+        device: this.fromRow(await this.revokeInStore((row as DeviceRow).id)),
+        tokensRevoked: null,
+        via: "store",
+        serviceError: null,
+      };
     }
     await this.audit(
       DEVICE_AUDIT.revoked,
       `device=${deviceId} kind=${view.device.kind}`,
-      view.tokensRevoked === null
-        ? "row revoked in the shared store"
-        : `revoked by the state service, ${view.tokensRevoked} session token(s) dropped`,
+      view.via === "service"
+        ? `revoked by the state service, ${view.tokensRevoked} session token(s) dropped`
+        : view.serviceError
+          ? `row revoked in the shared store; the state service failed: ${view.serviceError}`
+          : "row revoked in the shared store",
     );
+    if (!wasRevoked) await this.recordChange(view.device);
     return view;
+  }
+
+  /** Revoke the row in this daemon's store, re-read so a concurrent change is not lost. */
+  private async revokeInStore(id: string): Promise<DeviceRow> {
+    const current = await this.deps.store.device.mustGet(id);
+    return current.revoked ? current : this.deps.store.device.revoke(current.id, current.version);
+  }
+
+  /**
+   * The change log row of a revocation from Settings -> Devices, the same one the registry's
+   * `device.revoke` writes for chat or voice (spec Q: nothing is UI-only): source `ui`, scope
+   * `global`, before and after, irreversible (the device has to be paired again).
+   */
+  private async recordChange(device: DaemonDeviceView): Promise<void> {
+    await this.deps.store.changeLog.record({
+      human_id: this.deps.humanId,
+      agent_id: this.deps.agentId ?? null,
+      words_used: `Settings -> Devices: revoke ${device.name}`,
+      commands: [{ name: "device.revoke", params: { device: device.id } }],
+      before: { device_id: device.id, revoked: false },
+      after: { device_id: device.id, revoked: true },
+      scope: "global",
+      project_id: null,
+      undo_state: "irreversible",
+      source: "ui",
+      sentence: `Revoked the device ${device.name}; it must be paired again to reconnect.`,
+      author_human: this.deps.humanId,
+    });
   }
 
   private fromRow(r: DeviceRow): DaemonDeviceView {
@@ -212,6 +276,9 @@ export class DeviceManager {
       );
     }
     const doFetch = service.fetch ?? fetch;
+    const timeoutMs = service.timeoutMs ?? DEVICE_SERVICE_TIMEOUT_MS;
+    // A hung service must not hold the app's "Starting…" or "Revoking…" for minutes.
+    const signal = AbortSignal.timeout(timeoutMs);
     let res: Response;
     try {
       res = await doFetch(`${service.baseUrl.replace(/\/+$/, "")}${path}`, {
@@ -224,8 +291,16 @@ export class DeviceManager {
             : {}),
         },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        signal,
       });
     } catch (e) {
+      if (signal.aborted) {
+        throw new ForerunnerError(
+          "unavailable",
+          `state service did not answer within ${timeoutMs} ms`,
+          { details: { path: path.split("?")[0], timeoutMs }, cause: e },
+        );
+      }
       throw new ForerunnerError("unavailable", `state service unreachable: ${errorMessage(e)}`, {
         details: { path: path.split("?")[0] },
         cause: e,
@@ -254,6 +329,18 @@ export class DeviceManager {
         { details },
       );
     }
-    return (await res.json()) as T;
+    try {
+      return (await res.json()) as T;
+    } catch (e) {
+      // A body cut off by the timeout or not JSON (a proxy's HTML page): the service is not
+      // answering as itself.
+      throw new ForerunnerError(
+        "unavailable",
+        signal.aborted
+          ? `state service did not answer within ${timeoutMs} ms`
+          : "state service answered with an unreadable body",
+        { details: { path: path.split("?")[0], status: res.status }, cause: e },
+      );
+    }
   }
 }

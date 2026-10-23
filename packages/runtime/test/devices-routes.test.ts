@@ -235,6 +235,7 @@ describe("device routes over the state service", () => {
     const view = RevokeDeviceView.parse(await res.json());
     expect(view.device).toMatchObject({ id: "dev_phone", revoked: true, current: false });
     expect(view.tokensRevoked).toBe(2);
+    expect(view).toMatchObject({ via: "service", serviceError: null });
     expect(svc.calls.at(-1)).toMatchObject({
       method: "POST",
       path: "/devices/dev_phone/revoke",
@@ -283,6 +284,152 @@ describe("device routes over the state service", () => {
     expect((await app.fetch(json("POST", `/devices/${bobs.id}/revoke`))).status).toBe(403);
     expect((await store.device.get(bobs.id))?.revoked).toBe(false);
     expect((await app.fetch(json("POST", "/devices/dev_nope/revoke"))).status).toBe(404);
+  });
+});
+
+describe("device revocation when the state service is out, and the change log", () => {
+  let store: StateStore;
+  const clock = new SimulatedClock("2026-10-23T09:00:00.000Z");
+  let ada = "";
+  let n = 0;
+
+  beforeAll(async () => {
+    store = await openStore({ url: "sqlite::memory:", clock });
+    ada = (await store.human.insert({ name: "Ada", email: "ada@example.test" })).id;
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  const phoneOf = (owner: string) =>
+    store.device.register({
+      owner_human_id: owner,
+      name: `phone ${++n}`,
+      platform: "android",
+      public_key: ["pk-", String(n).padStart(3, "0"), "C".repeat(40)].join(""), // not-a-secret
+      kind: "phone",
+    });
+  const managerWith = (service: DeviceServiceConfig | null) =>
+    new DeviceManager({
+      store,
+      clock,
+      humanId: ada,
+      agentId: "agent_ada",
+      currentDeviceId: () => null,
+      service,
+    });
+  /** A service that accepts the request and never answers, until the caller aborts. */
+  const hungFetch: typeof fetch = (_input, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+    });
+
+  it("gives up on a service that never answers and reports unavailable instead of hanging", async () => {
+    const app = createDeviceRoutes({
+      devices: managerWith({
+        baseUrl: SERVICE,
+        adminToken: async () => ADMIN,
+        fetch: hungFetch,
+        timeoutMs: 50,
+      }),
+    });
+    const res = await app.fetch(json("POST", "/devices/pairing", {}));
+    expect(res.status).toBe(503);
+    const body = await read(res);
+    expect(body.code).toBe("unavailable");
+    expect(body.message).toBe("state service did not answer within 50 ms");
+  });
+
+  it("revokes a lost phone in the shared store when the service is down, hung or refuses the token", async () => {
+    const failing: [string, Partial<DeviceServiceConfig>][] = [
+      [
+        "down",
+        {
+          fetch: async () => {
+            throw new TypeError("fetch failed");
+          },
+        },
+      ],
+      ["hung", { fetch: hungFetch, timeoutMs: 50 }],
+      ["5xx", { fetch: async () => new Response("bad gateway", { status: 502 }) }],
+      ["no token", { adminToken: async () => null, fetch: hungFetch }],
+    ];
+    for (const [label, cfg] of failing) {
+      const phone = await phoneOf(ada);
+      const app = createDeviceRoutes({
+        devices: managerWith({ baseUrl: SERVICE, adminToken: async () => ADMIN, ...cfg }),
+      });
+      const res = await app.fetch(json("POST", `/devices/${phone.id}/revoke`));
+      expect(res.status, label).toBe(200);
+      const view = RevokeDeviceView.parse(await res.json());
+      expect(view, label).toMatchObject({
+        device: { id: phone.id, revoked: true },
+        tokensRevoked: null,
+        via: "store",
+      });
+      expect(view.serviceError, label).toMatch(/state service|admin token/);
+      expect((await store.device.get(phone.id))?.revoked, label).toBe(true);
+    }
+    const audit = await store.auditLog.list({ tool: DEVICE_AUDIT.revoked });
+    expect(audit.at(-1)?.result_summary).toContain("the state service failed");
+  });
+
+  it("does not touch the store when the service refuses the revocation itself (404) or the row is not local", async () => {
+    const phone = await phoneOf(ada);
+    const notFound = managerWith({
+      baseUrl: SERVICE,
+      adminToken: async () => ADMIN,
+      fetch: async () =>
+        Response.json({ code: "not_found", message: "device not found" }, { status: 404 }),
+    });
+    await expect(notFound.revoke(phone.id)).rejects.toMatchObject({ code: "not_found" });
+    expect((await store.device.get(phone.id))?.revoked).toBe(false);
+    const down = managerWith({
+      baseUrl: SERVICE,
+      adminToken: async () => ADMIN,
+      fetch: async () => {
+        throw new TypeError("fetch failed");
+      },
+    });
+    await expect(down.revoke("dev_only_at_the_service")).rejects.toMatchObject({
+      code: "unavailable",
+    });
+  });
+
+  it("writes the change log row of device.revoke (source ui, irreversible) once per revocation", async () => {
+    const phone = await phoneOf(ada);
+    const before = (await store.changeLog.list()).length;
+    const local = managerWith(null);
+    await local.revoke(phone.id);
+    const rows = await store.changeLog.list(undefined, { orderBy: "created_at desc" });
+    expect(rows).toHaveLength(before + 1);
+    const row = rows.find((r) =>
+      JSON.stringify(r.commands).includes(phone.id),
+    ) as (typeof rows)[number];
+    expect(row).toMatchObject({
+      human_id: ada,
+      agent_id: "agent_ada",
+      commands: [{ name: "device.revoke", params: { device: phone.id } }],
+      before: { device_id: phone.id, revoked: false },
+      after: { device_id: phone.id, revoked: true },
+      scope: "global",
+      undo_state: "irreversible",
+      source: "ui",
+      sentence: `Revoked the device ${phone.name}; it must be paired again to reconnect.`,
+    });
+    // Revoking it again changes nothing, so nothing more is logged.
+    await local.revoke(phone.id);
+    expect(await store.changeLog.list()).toHaveLength(before + 1);
+
+    // Through the service too.
+    const svcPhone = device("dev_svc_phone", ada);
+    const svc = fakeService([svcPhone]);
+    await managerWith({ baseUrl: SERVICE, adminToken: async () => ADMIN, ...svc }).revoke(
+      "dev_svc_phone",
+    );
+    const all = await store.changeLog.list();
+    expect(all).toHaveLength(before + 2);
+    expect(JSON.stringify(all)).toContain("dev_svc_phone");
   });
 });
 

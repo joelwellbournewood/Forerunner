@@ -2831,6 +2831,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     store,
     clock,
     humanId: human.id,
+    agentId: agent.id,
     currentDeviceId: () => remoteDevice?.id ?? null,
     service: deviceServiceUrl
       ? {

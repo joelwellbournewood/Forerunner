@@ -2717,7 +2717,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       d.revokedAt = "2026-10-23T09:01:00.000Z";
       d.version++;
     }
-    return c.json({ device: d, tokensRevoked: 1 });
+    return c.json({ device: d, tokensRevoked: 1, via: "service", serviceError: null });
   });
 
   // Source discovery (spec A.4): the daemon's /sources routes. A scan of a fresh source
