@@ -197,6 +197,24 @@ describe("conversation agent over the command registry", () => {
     await w.store.close();
   });
 
+  it("a chat turn runs at the principal's text_chat settings (spec D.4): table defaults, then model_config", async () => {
+    const w = await setup([textReply("first", { ttftMs: 0 }), textReply("second", { ttftMs: 0 })]);
+    await w.chat("what's next on the game?");
+    expect(w.provider.calls[0]?.request).toMatchObject({ max_tokens: 400, effort: "low" });
+    expect(w.provider.calls[0]?.request).not.toHaveProperty("temperature");
+    const row = await w.store.agent.mustGet(w.alice);
+    await w.store.agent.update(w.alice, row.version, {
+      model_config: {
+        modes: { text_chat: { max_tokens: 900, effort: "medium", temperature: 0.5 } },
+      },
+    });
+    await w.chat("and after that?");
+    // The fake declares no temperature: the override is kept but never sent.
+    expect(w.provider.calls[1]?.request).toMatchObject({ max_tokens: 900, effort: "medium" });
+    expect(w.provider.calls[1]?.request).not.toHaveProperty("temperature");
+    await w.store.close();
+  });
+
   it("a plain sentence no pattern understands goes to the model, not to the parser's fallback question", async () => {
     const w = await setup([textReply("Hello! Ask me about your projects.")]);
     const res = await w.chat("hello there");

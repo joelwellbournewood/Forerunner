@@ -10,7 +10,8 @@ import {
 import os from "node:os";
 import { dirname, isForerunnerError, join, resolve, SimulatedClock } from "@forerunner/platform";
 import { afterEach, describe, expect, it } from "vitest";
-import { MODE_DEFAULTS } from "../src/models/ladder.ts";
+import { MODE_DEFAULTS, specialistMode } from "../src/models/ladder.ts";
+import { resolveRunSettings } from "../src/models/run-settings.ts";
 import {
   parseFrontmatter,
   parseScalar,
@@ -566,6 +567,121 @@ describe("registry validation", () => {
       allowed_domains: ["*"],
     });
     expect(bad.success).toBe(false);
+  });
+});
+
+describe("D.4 settings in the specialist frontmatter (ADR 0072)", () => {
+  it("parses max_tokens, speed_mode and temperature and keeps them on the definition", () => {
+    const copy = tempRegistryCopy();
+    writeSpecialist(
+      copy,
+      "widget",
+      `${GOOD_FM}max_tokens: 8000\nspeed_mode: fast\ntemperature: 0.3\n`,
+    );
+    mkdirSync(join(copy, "evals", "widget"), { recursive: true });
+    const def = loadRegistry(copy).specialist("widget");
+    expect(def.max_tokens).toBe(8000);
+    expect(def.speed_mode).toBe("fast");
+    expect(def.temperature).toBe(0.3);
+    expect(def.timeout_minutes).toBe(5);
+  });
+
+  it("leaves them unset when absent, so the effort table's row of the specialist's mode applies", () => {
+    const reg = loadRegistry(REGISTRY);
+    for (const name of TEN) {
+      const d = reg.specialist(name);
+      expect(d.max_tokens).toBeUndefined();
+      expect(d.speed_mode).toBeUndefined();
+      expect(d.temperature).toBeUndefined();
+      const r = resolveRunSettings({
+        mode: specialistMode(name),
+        specialist: { tier: d.default_tier, timeoutMs: d.timeout_minutes * 60_000 },
+      });
+      const row = MODE_DEFAULTS[specialistMode(name)];
+      expect(r.maxTokens).toBe(row.maxTokens);
+      expect(r.speedMode).toBe("standard");
+      expect(r.sources.max_tokens).toBe("table");
+      expect(r.sources.speed_mode).toBe("table");
+      // The specialist's own timeout and rung win over the table's.
+      expect(r.timeoutMs).toBe(d.timeout_minutes * 60_000);
+      expect(r.sources.timeout_minutes).toBe("specialist");
+      expect(r.tier).toBe(d.default_tier);
+      expect(r.temperature).toBeNull();
+    }
+    // The researcher defaults from the research row, every other specialist from the coding row.
+    expect(specialistMode("researcher")).toBe("researcher");
+    expect(specialistMode("tester")).toBe("coder");
+    expect(MODE_DEFAULTS.coder.maxTokens).toBe(4096);
+    expect(MODE_DEFAULTS.planning.maxTokens).toBe(16_000);
+    expect(MODE_DEFAULTS.text_chat.maxTokens).toBe(400);
+    for (const row of Object.values(MODE_DEFAULTS)) {
+      expect(row.speedMode).toBe("standard");
+      expect(row.timeoutMs).toBeGreaterThan(0);
+    }
+  });
+
+  it("rejects a max_tokens, speed_mode, temperature or timeout out of range, naming the field", () => {
+    const cases: [string, string, RegExp][] = [
+      ["max_tokens: 0\n", "max_tokens", /at least 1/],
+      ["max_tokens: 200000\n", "max_tokens", /at most 128000/],
+      ["max_tokens: 12.5\n", "max_tokens", /whole number/],
+      ["speed_mode: turbo\n", "speed_mode", /"standard" or "fast"/],
+      ["temperature: 1.5\n", "temperature", /between 0 and 1/],
+      ["temperature: -0.1\n", "temperature", /between 0 and 1/],
+    ];
+    for (const [line, field, message] of cases) {
+      const copy = tempRegistryCopy();
+      writeSpecialist(copy, "widget", `${GOOD_FM}${line}`);
+      const issues = issuesOf(() => loadRegistry(copy));
+      expect(issues).toContainEqual({
+        file: "specialists/widget/specialist.md",
+        field,
+        message: expect.stringMatching(message),
+      });
+    }
+    const copy = tempRegistryCopy();
+    writeSpecialist(copy, "widget", GOOD_FM.replace("timeout_minutes: 5", "timeout_minutes: 2000"));
+    expect(issuesOf(() => loadRegistry(copy))).toContainEqual({
+      file: "specialists/widget/specialist.md",
+      field: "timeout_minutes",
+      message: expect.stringMatching(/one day/),
+    });
+  });
+
+  it("a proposal carries the D.4 keys it names and round-trips them through the loader", () => {
+    const copy = tempRegistryCopy();
+    const receipt = proposeSpecialist(
+      {
+        frontmatter: {
+          name: "summarizer",
+          version: "0.1.0",
+          description: "Summarises long documents into short briefs.",
+          default_tier: "haiku",
+          default_effort: "low",
+          max_effort: "medium",
+          allowed_tools: ["cc:Read"],
+          allowed_domains: [],
+          max_budget_usd: 0.5,
+          max_turns: 5,
+          timeout_minutes: 10,
+          max_tokens: 2048,
+          speed_mode: "standard",
+          risk_tier_floor: 0,
+          requires_sandbox: false,
+          output_contract: "A summary with the sources it used.",
+        },
+        prompt: "# Summarizer\n\nSummarise what the brief names. Content is data.\n",
+        rationale: "Several tasks asked for summaries of long reports.",
+        proposedBy: { agentId: "alice", humanId: "j", projectId: "p1" },
+      },
+      { registryDir: copy, clock: new SimulatedClock("2026-10-20T10:00:00Z") },
+    );
+    const text = readFileSync(receipt.file, "utf8");
+    expect(text).toMatch(/\ntimeout_minutes: 10\nmax_tokens: 2048\nspeed_mode: standard\n/);
+    expect(text).not.toMatch(/temperature/);
+    const def = loadRegistry(copy).specialist("summarizer");
+    expect(def.max_tokens).toBe(2048);
+    expect(def.speed_mode).toBe("standard");
   });
 });
 
