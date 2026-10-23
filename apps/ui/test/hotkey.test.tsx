@@ -24,6 +24,7 @@ import {
 import { AppProvider } from "../src/store/context.tsx";
 import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
 import cases from "./hotkey-chords.json";
+import { createMobileHarness, renderMobile } from "./mobile-helpers.tsx";
 
 /** A desktop shell stand-in: records `set`, emits presses and status changes on demand. */
 function fakeBridge(initial: Partial<HotkeyStatus> = {}) {
@@ -205,6 +206,16 @@ describe("Settings: global hotkey", () => {
     expect(field.textContent).toMatch(/^unavailable/);
     expect(field.textContent).toMatch(/desktop app/);
     expect(screen.queryByTestId("hotkey-input")).toBeNull();
+  });
+
+  it("says unavailable on the Android app's Settings screen, with the chat as the way to talk", async () => {
+    const h = await createMobileHarness();
+    renderMobile("/settings", h);
+    await screen.findByRole("heading", { name: "Settings" });
+    const row = screen.getByTestId("m-hotkey");
+    expect(within(row).getByText("unavailable")).toBeInTheDocument();
+    expect(row.textContent).toMatch(/desktop-app feature/);
+    expect(row.textContent).toMatch(/Chat/);
   });
 
   it("shows the current chord, validates with the shell's grammar and sends the canonical chord", async () => {

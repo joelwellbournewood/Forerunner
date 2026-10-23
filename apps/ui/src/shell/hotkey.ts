@@ -264,18 +264,20 @@ const DESKTOP_PLATFORMS = new Set(["windows", "linux", "macos"]);
  * platform. `inTauri` is a parameter so every branch is tested without globals.
  */
 export function hotkeyBridgeFor(config: Pick<DaemonConfig, "platform">, inTauri: boolean) {
-  const platform = (config.platform ?? "").trim().toLowerCase();
+  const reason = hotkeyUnavailableReason(config.platform ?? null, inTauri);
+  return reason === null ? desktopHotkeyBridge() : unavailableHotkeyBridge(reason);
+}
+
+/** Why this page has no global hotkey, or null inside the desktop shell. */
+export function hotkeyUnavailableReason(platformName: string | null, inTauri: boolean) {
+  const platform = (platformName ?? "").trim().toLowerCase();
   if (!inTauri) {
-    return unavailableHotkeyBridge(
-      "unavailable here: the global hotkey needs the Forerunner desktop app (this page runs in a browser)",
-    );
+    return "unavailable here: the global hotkey needs the Forerunner desktop app (this page runs in a browser)";
   }
   if (!DESKTOP_PLATFORMS.has(platform)) {
-    return unavailableHotkeyBridge(
-      `unavailable here: the global hotkey is a desktop-app feature (this shell is ${platform || "unknown"})`,
-    );
+    return `unavailable here: the global hotkey is a desktop-app feature (this shell is ${platform || "unknown"})`;
   }
-  return desktopHotkeyBridge();
+  return null;
 }
 
 export function inTauriShell(): boolean {
