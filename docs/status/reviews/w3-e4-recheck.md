@@ -232,6 +232,10 @@ and the status rows still say the item is unreviewed (finding 4).
    row read `paused`, the handoff named the pause, and the next `start` threw `claim_conflict`.
    Needed: the final status is reached from `paused` (through `running` when the move is not
    direct), with a test.
+   Resolution: fixed in 0580bca — the final `setStatus` goes `paused -> running -> <final>` when
+   `paused` cannot move to the final status directly; test "a pause read at the end of a session
+   that fails does not leave the row paused; the next session starts" (fails without the fix:
+   row `paused`, next start `claim_conflict`).
 2. **medium** — `packages/runtime/src/session/checklist.ts:43` (`carriedFromLastEnd`). An
    ordinary message read by the end re-check is marked read and carried into the next brief
    only from the handoff of the *last ended* session. When the next session ends before its
@@ -242,6 +246,11 @@ and the status rows still say the item is unreviewed (finding 4).
    throwaway test (session N reads an `info` at its end, session N+1 fails in `peersOf`,
    session N+2's brief does not contain the message, `acted_at` null). Needed: a session that
    did not take its inbox in passes the carry on, with a test.
+   Resolution: fixed in 0580bca — a session whose startup receipts never ran calls the exported
+   `carriedFromLastEnd` in step 4 and records the messages in `handoff.carried_forward`, which
+   the checklist reads alongside `end_inbox.read`; test "a message read at the end is carried
+   past a session that ended before its startup receipts" (fails without the fix: no
+   `carried_forward`, the message absent from the next brief).
 3. **low** — `packages/runtime/src/session/runner.ts:1169` and `endWritesAccount` (≈1820).
    `after_stop` claims to say what was and was not written after the stop was read, but the
    memory record (lessons into the agent's memory, the rejected-lessons warning to the human)
@@ -250,6 +259,20 @@ and the status rows still say the item is unreviewed (finding 4).
    promotions at ≈1262, both after the re-check at 1055 and after `after_stop` is computed at
    1169). Needed: both entries in the account, computed after those writes, with a test that
    records a lesson after an end-of-session stop.
+   Resolution: fixed in 0580bca — `after_stop` is filled in after memory and promotions and
+   lists `memory`, `lesson_warning` and `promotions` as written or not written; test "a stop
+   read at the end names the memory write that followed it in after_stop", and test 1's
+   expected `not_written` now includes the three entries (both fail without the fix).
 4. **low** — `docs/status/BLOCKERS.md` E.4 row and `docs/status/PROGRESS.md` (2026-10-23 entry)
    say "builder-verified, no independent review yet"; after this review they must name it and
    its outcome.
+   Resolution: fixed in eb72017 — the BLOCKERS E.4 row and a new PROGRESS log entry name this
+   review, its verdict and the fixes; the "review before the merge" re-test is removed.
+
+### After the fixes
+
+Checks on the branch after 0580bca and eb72017 (2026-10-23): `pnpm typecheck` exit 0;
+`pnpm lint` exit 0 (59 pre-existing warnings, no errors); `pnpm exec vitest run --project unit
+packages/runtime/test` 114 files, 992 passed, 1 skipped; `node scripts/docs-check.mjs --base
+4742e03` ok. With `runner.ts` and `checklist.ts` reverted to 4742e03, `closeout-sessions.test.ts`
+has 4 failed / 11 passed (the three new tests and test 1's account).
