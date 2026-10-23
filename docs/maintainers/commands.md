@@ -379,11 +379,11 @@ Android scenario end to end and the phase 5 gate: ui, chat and voice produce the
 log entry), `fast-mode.test.ts` (spec D.20: the `fast_mode` spec, its card and the change
 log sentences with the effect and the surcharge both ways, the yes a medium-risk change needs,
 the flag written on one project only; a corrected fast row from `ports.pricingTable` quoted in
-the card and the sentence), and `model-settings.test.ts` (4, spec D.4: a specialist field set,
+the card and the sentence), and `model-settings.test.ts` (5, spec D.4: a specialist field set,
 a second one undone, `null` back to the default with the group removed; planning and chat
 modes with a medium card for a rung and for fast; bad values, an unknown specialist, both or
 neither targets, another human's agent and the critic refused; a temperature refused without
-the port or the flag and stored with it).
+the port or the flag and stored with it; an effort above a specialist's `max_effort` refused).
 
 Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 163 tests).
 

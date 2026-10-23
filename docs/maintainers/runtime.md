@@ -2745,29 +2745,36 @@ recall shows it would), and the composed scheduler fires the calibration once on
 06:00 local on the simulated clock and raises the `critic_calibration` notification.
 `jobs-cli.test.ts`: `fr jobs calibrate|handover|reports`.
 
-`registry.test.ts` (D.4 frontmatter, see adding-a-specialist.md); `run-settings.test.ts` (12,
+`registry.test.ts` (D.4 frontmatter, see adding-a-specialist.md); `run-settings.test.ts` (16,
 spec D.4, ADR 0072): the table row for an agent mode, the order table → file → agent with the
 sources and the defaults kept for the screen, an adopted effort reaching the default, a
 temperature only for a provider that accepts one, `model_config` read with other keys kept and
-a malformed one refused whole, the explicit speed mode and the note for a `fast` preference the
-project or the rung does not grant, the `fast_mode` key literal `true` only, the default flags, and the
+a malformed one refused whole, `decideFastMode` with a speed mode (fast only when every
+condition holds, no preference left to the project, an explicit `standard` ignored with its
+reason), the explicit speed mode passed on only from the file or the agent, the note for a
+`fast` preference the project or the rung does not grant, the `fast_mode` key (the same name
+as D.20's `FAST_MODE_SETTING`) literal `true` only, the default flags, and the
 settings view (sources, defaults, the critic read-only, temperature only with the flag, a
-malformed config named); `run-settings-runs.test.ts` (12): the loop sends the run's max tokens
+malformed config named); `run-settings-runs.test.ts` (15): the loop sends the run's max tokens
 (4096 without one), a temperature only to a `FakeProvider` declaring `acceptsTemperature`, a
 speed only to one declaring `fastMode`; the executor with the table's 4096 and no speed or
 temperature by default, the file's max tokens and temperature (sent only where accepted), the
 agent's override of rung, effort and max tokens on the request and the Run row, the overridden
-timeout in the brief, a malformed config warned and ignored, fast sent and priced at the fast
-row (six times the standard cost for the same tokens) with every condition, and standard with
-the reason without the project's leave, off Opus, without a price or on a provider without
-fast mode, an agent's `speed_mode` turning fast on and off for one specialist;
+timeout in the brief, a malformed config warned and ignored, the specialist's `max_effort`
+cap, fast sent, the Run row naming the variant and priced at the fast row (six times the
+standard cost for the same tokens) with every condition, a specialist without a speed mode
+left to the project's flag (D.20 unchanged), and standard with the reason without the
+project's leave, off Opus, without a fast-mode price row or on a provider without fast mode,
+an agent's `speed_mode` turning fast on (only with the project's leave) and off for one
+specialist (the `model.fast_mode` audit row "ignored: the run's speed mode is standard");
 `conversation.test.ts` (a chat turn at the table's 400 tokens and low effort, then at the
 principal's `modes.text_chat` override, its temperature kept off a provider that takes none);
-`model-settings-routes.test.ts` (5): `GET /settings/models` in the route table, the agents and
+`model-settings-routes.test.ts` (6): `GET /settings/models` in the route table, the agents and
 the ten specialists with the table and registry defaults and no temperature, a
 `model.settings.set` from the UI channel written, shown with source `agent`, in the change log
 and undone, a rung change waiting for a yes, out-of-range values, an unknown specialist and a
-bad speed refused, a temperature refused without the flag and shown and stored with it.
+bad speed refused, a temperature refused without the flag and shown and stored with it, a chat
+turn priced as the rung the human chose.
 
 ## Requirements covered by the daemon wiring
 

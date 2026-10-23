@@ -71,7 +71,7 @@ API so the Anthropic adapter (`provider/anthropic.ts`) is a thin mapping and the
 
 ## Tests
 
-`packages/runtime/test/anthropic-provider.test.ts` is the template (7 tests; two for the flags:
+`packages/runtime/test/anthropic-provider.test.ts` is the template (11 tests; two for the flags:
 no temperature and fast mode only on an API key, a proxied copy keeping them; `speed: "fast"`
 and the beta header on an API key with an Opus id, nothing on a Sonnet id, a subscription token
 or a request without `speed`); the fast-mode wire form (`speed: "fast"` and the beta header

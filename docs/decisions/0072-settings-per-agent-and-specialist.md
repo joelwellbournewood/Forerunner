@@ -118,3 +118,34 @@ the settings must keep, so no override steps over a limit the rest of the runtim
   passes the project's (`critic_ceiling`, default Opus), the chat the default ceiling, as the
   executor already did through `startingTier`. The top rung needs the explicit project setting
   (spec "Model ladder", D.3), never only an agent's preference.
+
+## Amendment (rebase onto D.20, 2026-10-23)
+
+Spec D.20 (ADR 0057) merged into the release branch before this item, so point 6's "when the
+two branches meet" was settled in the rebase onto `cac6fee`. Two of point 6's expectations
+changed, because D.20's behaviour on the release branch (and its tests) must stand:
+
+- **One decision, D.20's.** `decideFastMode` (`models/fast-mode.ts`) is the only place a run is
+  made fast; this item's `decideSpeed`, `projectAllowsFastMode` and the executor's
+  `fastModePricing` port are gone. The run's price is D.20's: `pricingFor(<id>-fast)` over the
+  table in force, the variant's row required (`claude-opus-5-5-fast`), the Run row naming the
+  variant (and still carrying `{ speed: "fast" }` in `artifacts`), the `model.fast_mode` audit
+  row for every decision that meets an Opus rung.
+- **Speed mode narrows the project's flag; it does not add a second opt-in.** Point 6 wanted
+  `enabled = fast_mode && speed_mode == fast`, which with the table's `standard` default would
+  have switched D.20 off for every project. Instead `decideFastMode` takes an optional
+  `speedMode`, passed only when the specialist's file or the agent's `model_config` sets one
+  (`explicitSpeedMode`; the table's `standard` is shown as the default but is no preference):
+  no preference, the project's flag decides as D.20 does; `standard` keeps an Opus run of a
+  fast-mode project standard (decision "ignored", reason "the run's speed mode is standard",
+  audit row and warning); `fast` takes effect only where the project allows it and the rung is
+  Opus, and otherwise runs standard with a session-log warning (`speedPreferenceNote`). So a
+  human still spends the surcharge only after switching the project's flag on; the per-agent
+  and per-specialist setting decides which of that project's runs use it.
+- **One fast-mode flag on the provider.** D.20's `ModelProvider.fastMode` is the flag;
+  `ModelProvider.capabilities` declares only `acceptsTemperature`
+  (`ProviderDeclaredCapabilities`), and `providerCapabilities(p)` returns both
+  (`{ acceptsTemperature, fastMode }`) for the loop, the command and the settings view. The
+  Anthropic adapter's `fastMode` is a getter, `true` on an API key and `false` on a
+  subscription token, and it still sends `speed` only for an Opus id. The beta header constant
+  is D.20's `FAST_MODE_BETA`; this item's `ANTHROPIC_FAST_MODE_BETA` is gone.

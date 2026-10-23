@@ -14,7 +14,7 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending: the hosted emulator boots and launches the app (run 6), the raw-CDP attach is merged (ADR 0054) and not yet dispatched; the Settings → Capabilities → Email page (ADR 0066), PM intake (ADR 0055) and what you say during a live session (ADR 0078) landed 2026-10-23 | gates.md § Phase 5 |
 | 6 | Capabilities | injection suite, live revocation, overnight cloud-runner session, emailed task and spoofed email passed on the fake provider and the in-process mail server; live halves pending a real mailbox and host | gates.md § Phase 6 |
 | 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts) | gates.md § Phase 7 |
-| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 186 done, 37 in progress, 5 todo (S.32 on `wave/w2-s32-indicator`, built, not merged; D.16 `done` on `wave/w3-d16-slider`, reviewed and rebased onto cac6fee, not merged; D.4 done on its item branch, 2026-10-23); security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
+| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 186 done, 37 in progress, 5 todo (S.32 merged from `wave/w2-s32-indicator` in c83a15d; D.16 `done` on `wave/w3-d16-slider`, reviewed and rebased onto cac6fee, merged in 443139a; D.4 done on its item branch, rebased onto cac6fee, 2026-10-23); security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
 
 ## Log
 
@@ -106,6 +106,19 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   the base's typed `cdp.mjs` type-checks; the bounded wait closes an open simulated prompt
   with the refusal; docs on V8's console replay, the platform prompt that outlives the
   shell's bound, and the BLOCKERS row corrected. Counts in the review file.
+
+### 2026-10-23 (item w3-d4-specialist-settings rebased onto cac6fee)
+- `wave/w3-d4-specialist-settings` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee), which
+  had since merged D.20 (Opus fast mode, ADR 0057), chat memory, the indicator, the unlock card,
+  the triggers and the FCM sender. Conflicts in the provider contract, the Anthropic adapter,
+  the loop, the executor, compose, the command ports and registry, the UI's Settings page and
+  fake daemon, five maintainer docs, the ADR index, BLOCKERS and this file; both sides kept
+  (`docs/status/reviews/w3-d4-specialist-settings.md` `## Rebase`). The speed mode now
+  composes with D.20's `decideFastMode` (ADR 0072, rebase amendment): one decision, D.20's
+  price rows and audit rows, `speed_mode: standard` opting a run out of a fast-mode project,
+  `fast` only with the project's leave. Requirements 186 done, 37 in progress, 5 todo of 228.
+  Counts: runtime 131 files / 1180 tests, commands 11 / 155, critic 14 / 116, billing 10 / 92,
+  testenv 10 / 142, UI 47 / 306. Not merged yet.
 
 ### 2026-10-23 (item w3-d4-specialist-settings, REVIEW AND FIX)
 - Independent review of the D.4 build: verdict revise (68/100), six findings, all fixed on the
@@ -392,10 +405,10 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    with six findings fixed, awaiting merge, see its review in
    `docs/status/reviews/w3-c5-specialist-approval.md`),
    w3-d4-specialist-settings (D.4; built and reviewed on its branch 2026-10-23, its six review
-   findings fixed, ADR 0072: merge, then wire D.20's price into it), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
+   findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
    merge pending), w3-c5-specialist-approval (C.5),
    w3-d4-specialist-settings (D.4; built and reviewed on its branch 2026-10-23, its six review
-   findings fixed, ADR 0072: merge, then wire D.20's price into it), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16:
+   findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
    w3-r5-phone (R.5), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
