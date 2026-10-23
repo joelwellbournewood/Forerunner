@@ -69,8 +69,9 @@ export interface DataImporterDeps {
   /** Where `owner/name` resolves to (`<base>/<owner>/<name>.git`). Default `https://github.com`. */
   gitRemoteBase?: string;
   /**
-   * The install's token reference (`secret:<name>`) used when an import names none and the
-   * vault holds it: the human's own GitHub token from setup. Never a value.
+   * The install's token reference (`secret:<name>`) used when an import names none, the vault
+   * holds it and the clone URL is on `gitRemoteBase`'s origin: the human's own GitHub token
+   * from setup. Never a value.
    */
   defaultTokenRef?: string;
   /** Wall-clock limit per git command. Default 10 minutes (a clone can be large). */
@@ -511,7 +512,7 @@ export class DataImporter {
   ): Promise<ImportResultView> {
     const limits = this.deps.assets.limits;
     const target = parseRepositorySource(input.repo, this.deps.gitRemoteBase);
-    const tokenRef = await this.pickTokenRef(input.tokenRef);
+    const tokenRef = await this.pickTokenRef(input.tokenRef, target.url);
     await this.checkProject(projectId);
     const token = tokenRef ? await this.resolveToken(tokenRef) : null;
     const dir = join(
@@ -645,14 +646,21 @@ export class DataImporter {
     };
   }
 
-  /** The reference to use: the caller's, else the install's default when the vault holds it. */
-  private async pickTokenRef(named: string | undefined): Promise<string | null> {
+  /**
+   * The reference to use: the caller's (for any host: naming it is the human's choice), else
+   * the install's default when the vault holds it and the clone URL is on the git host that
+   * token belongs to (`gitRemoteBase`'s origin). Another origin is cloned anonymously, so a
+   * request naming some other server never receives the install's GitHub token.
+   */
+  private async pickTokenRef(named: string | undefined, url: string): Promise<string | null> {
     if (named !== undefined) {
       parseSecretRef(named);
       return named;
     }
     const fallback = this.deps.defaultTokenRef;
     if (!fallback || !this.deps.vault) return null;
+    const home = new URL(this.deps.gitRemoteBase ?? DEFAULT_GIT_REMOTE_BASE).origin;
+    if (new URL(url).origin !== home) return null;
     return (await this.deps.vault.has(parseSecretRef(fallback))) ? fallback : null;
   }
 

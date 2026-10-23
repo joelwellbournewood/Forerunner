@@ -43,6 +43,8 @@ describe("data assets wired into the daemon", () => {
   let projectId = "";
   let sessionId = "";
   let importedCsv = "";
+  let gitHost: FakeGitHost;
+  let gitHostRoot = "";
   const clock = new SimulatedClock("2026-10-20T08:00:00Z");
   let runCounter = 0;
   const req = (path: string, init: RequestInit = {}, auth = true) =>
@@ -139,6 +141,10 @@ describe("data assets wired into the daemon", () => {
     worktree = join(home, "worktree");
     mkdirSync(src, { recursive: true });
     mkdirSync(worktree, { recursive: true });
+    // The fake git host is the install's git remote base, so `owner/name` resolves to it and
+    // the install's own token is sent to it (and to no other origin).
+    gitHostRoot = mkdtempSync(join(tmpdir(), "fr-data-wiring-gh-"));
+    gitHost = await FakeGitHost.start({ rootDir: gitHostRoot, clock });
     rt = await composeRuntime({
       env: { FORERUNNER_HOME: home },
       dirs,
@@ -150,6 +156,7 @@ describe("data assets wired into the daemon", () => {
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.1.0-test",
       sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      data: { gitRemoteBase: gitHost.baseUrl },
     });
     ({ app, token } = createDaemonApp(rt));
     projectId = str((await json(await post("/projects", { name: "Data", goal: "Use data" }))).id);
@@ -168,6 +175,8 @@ describe("data assets wired into the daemon", () => {
   }, 120_000);
   afterAll(async () => {
     await rt?.close();
+    await gitHost?.stop();
+    if (gitHostRoot) await rm(gitHostRoot, { recursive: true, force: true });
   });
 
   it("registers the four data tools as built-in tools and lists the Data tab routes", () => {
@@ -238,8 +247,7 @@ describe("data assets wired into the daemon", () => {
     "a github import through the daemon route clones under the install's data dir onto the migration branch with the daemon's own token reference",
     { timeout: 120_000 },
     async () => {
-      const hostRoot = mkdtempSync(join(tmpdir(), "fr-data-wiring-gh-"));
-      const host = await FakeGitHost.start({ rootDir: hostRoot, clock });
+      const host = gitHost;
       try {
         host.createUser({ login: "alice" });
         host.createOrg({ login: "acme", members: ["alice"] });
@@ -252,9 +260,20 @@ describe("data assets wired into the daemon", () => {
         });
         // The install's own token from setup; the request names no reference.
         await rt.vault.set("github_token", issued.token);
+        // The install's token is not sent to another origin: the same server under another
+        // name gets an anonymous clone, which a private repository refuses; nothing is left.
+        const foreign = `${host.baseUrl.replace("127.0.0.1", "localhost")}/acme/legacy.git`;
+        const anonymous = await post(`/projects/${projectId}/data/import`, {
+          source: "github",
+          locator: foreign,
+        });
+        expect(anonymous.status).toBeGreaterThanOrEqual(400);
+        expect(existsSync(join(rt.data.assets.projectReposDir(projectId), "acme", "legacy"))).toBe(
+          false,
+        );
         const r = await post(`/projects/${projectId}/data/import`, {
           source: "github",
-          locator: host.cloneUrl("acme/legacy"),
+          locator: "acme/legacy",
         });
         expect(r.status).toBe(200);
         const result = ImportResultView.parse(await r.json());
@@ -287,8 +306,6 @@ describe("data assets wired into the daemon", () => {
         expect(missing.status).toBe(404);
       } finally {
         await rt.vault.delete("github_token");
-        await host.stop();
-        await rm(hostRoot, { recursive: true, force: true });
       }
     },
   );

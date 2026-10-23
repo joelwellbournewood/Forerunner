@@ -219,7 +219,7 @@ describe("data import: github repository", { timeout: 120_000 }, () => {
   );
 
   it.skipIf(skipReason())(
-    "resolves owner/name against the git base, clones a public repository without a token, and uses the install's default reference when none is named",
+    "resolves owner/name against the git base, clones a public repository without a token, and sends the install's default reference only to that git host",
     async () => {
       const base = new DataImporter({
         assets: h.assets,
@@ -265,7 +265,23 @@ describe("data import: github repository", { timeout: 120_000 }, () => {
       });
       expect(priv.repository?.slug).toBe(FULL);
       expect(existsSync(join(dir, "README.md"))).toBe(true);
-      expect(JSON.stringify({ logs, priv, pub, quiet })).not.toContain(token.token);
+
+      // The install's token goes to the git host it belongs to and nowhere else: the same
+      // server under another origin gets an anonymous clone (and a private repository fails),
+      // while a reference the caller names explicitly is used for any host.
+      const foreign = `${host.baseUrl.replace("127.0.0.1", "localhost")}/${FULL}.git`;
+      expect(new URL(foreign).origin).not.toBe(new URL(host.baseUrl).origin);
+      await expect(
+        withDefault.importGitHubRepo({ repo: foreign }, h.projectId, { actor: human }),
+      ).rejects.toMatchObject({ code: "provider_error" });
+      expect(existsSync(join(h.projectsRoot, h.projectId, "repos", "acme", "service"))).toBe(false);
+      const named = await withDefault.importGitHubRepo(
+        { repo: foreign, tokenRef: "secret:github_token" },
+        h.projectId,
+        { actor: human },
+      );
+      expect(named.repository?.url).toBe(foreign);
+      expect(JSON.stringify({ logs, priv, pub, quiet, named })).not.toContain(token.token);
     },
   );
 
