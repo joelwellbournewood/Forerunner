@@ -147,6 +147,7 @@ had no zod shapes and no tests.
 | `cd apps/ui && pnpm exec vitest run --config vitest.config.ts test/settings-devices.test.tsx test/settings.test.tsx` | 2 files, 15 passed (8 + 7) |
 | `node scripts/docs-check.mjs --base 88e4235` | `docs-check: ok` |
 | `node scripts/docs-check.mjs --base e2bfb1e` | `docs-check: ok` |
+| `git format-patch --stdout 88e4235..HEAD > /mnt/session/outputs/w3-r2-devices.patch`, then `git worktree add /tmp/verify 88e4235 && cd /tmp/verify && git apply --check /mnt/session/outputs/w3-r2-devices.patch` | exit 0, no output (the patch applies cleanly to a clean checkout of the starting commit); `git log --oneline 88e4235..HEAD` lists exactly this item's 5 commits (runtime, ui, docs, build report, and this report's patch-check row), and the exported patch holds 5 `From ` headers. Re-run on the final export, after the commit that added this row |
 | `pnpm check` | exit 0: lint, `check-paths: ok (994 files)`, typecheck, unit tests 271 files with 2684 passed, 4 skipped and 1 todo, docs check (no `origin/main` in this clone, so nothing to diff), `link-check: ok (105 files)`, `secret-scan: clean (1417 files)` |
 
 The integration projects were not run for the touched packages. Their only files,
