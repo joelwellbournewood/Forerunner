@@ -978,6 +978,11 @@ export class SessionRunner {
           });
           await emit("docs.status_written", { ...docsOutcome });
         } catch (e) {
+          this.logger.warn("status update not written", {
+            sessionId: session.id,
+            projectId: project.id,
+            error: errorMessage(e),
+          });
           await emit("docs.status_failed", { warning: errorMessage(e) });
         }
       }

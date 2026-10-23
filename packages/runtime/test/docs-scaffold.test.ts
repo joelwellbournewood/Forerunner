@@ -8,7 +8,12 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
-import { DOCS_SCAFFOLD_BRANCH, parseRepoRef, WORKSPACE_DIR } from "../src/loop/docs.ts";
+import {
+  DOCS_SCAFFOLD_BRANCH,
+  parseRepoRef,
+  statusBranchFor,
+  WORKSPACE_DIR,
+} from "../src/loop/docs.ts";
 import { ScriptedProvider } from "./helpers.ts";
 
 /**
@@ -43,6 +48,8 @@ describe("standard doc set at project creation (G.5)", () => {
   let token: string;
   let root: string;
   let projectsRoot: string;
+  let gammaBare = "";
+  let gammaId = "";
   const host = new MemoryGitHost("alice");
   const clock = new SimulatedClock("2026-03-05T08:00:00Z");
   const req = (path: string, init: RequestInit = {}) =>
@@ -104,12 +111,14 @@ describe("standard doc set at project creation (G.5)", () => {
 
   it("with a linked repository the missing docs are a branch and a pull request; the original is untouched", async () => {
     const bare = await bareRepo("gamma");
+    gammaBare = bare;
     const res = await req("/projects", {
       method: "POST",
       body: JSON.stringify({ name: "Gamma", goal: "Ship the thing", repos: ["o/gamma"] }),
     });
     expect(res.status).toBe(201);
     const card = await json(res);
+    gammaId = String(card.id);
     const prs = await host.listPullRequests({ owner: "o", name: "gamma" }, { state: "open" });
     expect(prs).toHaveLength(1);
     expect(prs[0]).toMatchObject({ head: { ref: DOCS_SCAFFOLD_BRANCH }, base: { ref: "main" } });
@@ -202,6 +211,63 @@ describe("standard doc set at project creation (G.5)", () => {
     expect((row.summary_cache.docs as { created: string[] }).created).toHaveLength(
       STANDARD_DOCS.length,
     );
+  });
+
+  it("a session through the composed runner writes its status update on a pull request of the project's repository", async () => {
+    const task = await rt.store.task.insert({
+      project_id: gammaId,
+      title: "Add a clamp",
+      outcome: "clamp exists",
+      acceptance_criteria: ["clamp works"],
+      risk_tier: 1,
+      status: "ready",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 500_000,
+      est_cost_usd_micro: 0,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    const events: { type: string; payload: Record<string, unknown> }[] = [];
+    // The scripted provider answers with text only, so the composed PR executor finds no
+    // change in the worktree and opens no pull request: the status update gets its own.
+    const result = await rt.runner.start({
+      agentId: rt.agent.id,
+      projectId: gammaId,
+      trigger: "manual",
+      budgetCapUsdMicro: 2_000_000,
+      grant: {
+        allowedTools: rt.toolsForRun().names(),
+        allowedPaths: [],
+        allowedDomains: [],
+        grantedSecrets: [],
+      },
+      onEvent: (type, payload) => events.push({ type, payload }),
+    });
+    expect(result.status).toBe("completed");
+    expect([
+      ...result.completed,
+      ...result.failed,
+      ...result.inReview,
+      ...result.needsHuman,
+    ]).toEqual([task.id]);
+    const branch = statusBranchFor(result.sessionId);
+    expect(events.find((e) => e.type === "docs.status_written")?.payload).toMatchObject({
+      location: "repo",
+      branch,
+      path: "docs/status.md",
+      created: true,
+    });
+    const status = await show(gammaBare, branch, "docs/status.md");
+    expect(status).toContain(`### 2026-03-05 session ${result.sessionId}`);
+    expect(status).toContain("Add a clamp");
+    expect(await show(gammaBare, "main", "docs/status.md")).toBeNull();
+    const prs = await host.listPullRequests({ owner: "o", name: "gamma" }, { state: "open" });
+    expect(prs.map((p) => p.head.ref).sort()).toEqual([DOCS_SCAFFOLD_BRANCH, branch].sort());
+    expect(prs.find((p) => p.head.ref === branch)?.body).toContain(result.sessionId);
+    const session = await rt.store.session.mustGet(result.sessionId);
+    expect((session.handoff as { docs?: { branch?: string } }).docs?.branch).toBe(branch);
   });
 
   it("a git host that cannot serve the repository never fails the creation", async () => {

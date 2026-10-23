@@ -182,6 +182,13 @@ export class ProjectDocs implements ProjectDocsPort {
         prUrl = pr.htmlUrl;
       }
     }
+    this.logger.info("status update written", {
+      projectId: project.id,
+      sessionId: session.id,
+      branch,
+      prUrl,
+      committed: commit.committed,
+    });
     return { location: "repo", branch, prUrl, path: STATUS_DOC, created: res.created };
   }
 

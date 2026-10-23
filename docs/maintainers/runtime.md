@@ -1227,8 +1227,12 @@ non-references; a creation with a linked repository opens one PR from `fr/docs-s
 holding only the seed, the overview carrying the goal and the repository, the outcome on
 `summary_cache.docs`, nothing under the data dir; files the intake drafted on the branch kept,
 no second PR, and a second creation on the same repository finding nothing to add; a project
-without a repository scaffolded under its workspace with name and goal; a repository the host
-cannot serve answering 201 with the error recorded.
+without a repository scaffolded under its workspace with name and goal; a session started
+through the composed `rt.runner` (the PR executor and loop executor on the scripted
+provider, whose text-only reply leaves no change and so no task PR) writing its status
+update on `fr/status-<session id>` with a PR of its own, the entry naming the session and
+the task, `main` untouched, `handoff.docs` on the session row; a repository the host cannot
+serve answering 201 with the error recorded.
 
 `small-project.test.ts` (spec B.6, ADR 0051): `defaultRiskTier` by flag; `shapeProjectPlan`
 with the flag on (one milestone named after the project, the phases' criteria once each, the
