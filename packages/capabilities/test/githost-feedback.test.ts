@@ -66,6 +66,9 @@ describe("GitHubHost PR feedback against the fake git host", () => {
     // Every comment written through the port carries the agent's mark.
     expect(all.map((c) => c.body)).toEqual(["one", "two", "three"].map(markAgentText));
     expect(all.every((c) => isAgentText(c.body))).toBe(true);
+    // The mark is appended once, hidden in an HTML comment.
+    expect(markAgentText(markAgentText("x"))).toBe(`x\n\n${AGENT_TEXT_MARKER}`);
+    expect(AGENT_TEXT_MARKER).toMatch(/^<!--.*-->$/);
     expect(all.map((c) => c.author)).toEqual([owner, "reviewer", "reviewer"]);
     expect(all[2]?.htmlUrl).toContain(`/pull/${prNumber}#issuecomment-`);
     const recent = await gh.listPullRequestComments(repo, prNumber, { since });

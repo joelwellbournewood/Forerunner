@@ -2,7 +2,6 @@ import { createServer, type Server } from "node:http";
 import { SimulatedClock } from "@forerunner/platform";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GitHubHost } from "../src/githost/github.ts";
-import { AGENT_TEXT_MARKER, markAgentText } from "../src/githost/types.ts";
 
 interface Seen {
   method: string;
@@ -155,9 +154,8 @@ describe("GitHubHost", () => {
     expect(merge.merged).toBe(false);
     expect(merge.message).toContain("not mergeable");
     const c = await gh.commentOnPullRequest({ owner: "o", name: "r" }, 7, "looks good");
-    // What the port writes carries the agent's hidden mark (ADR 0075), once.
-    expect(c.body).toBe(`looks good\n\n${AGENT_TEXT_MARKER}`);
-    expect(markAgentText(c.body)).toBe(c.body);
+    // What the port writes carries the agent's hidden mark (ADR 0075).
+    expect(c.body).toBe("looks good\n\n<!-- forerunner:agent -->");
     const f = await gh.getFile({ owner: "o", name: "r" }, "docs/a.md");
     expect(f?.content).toBe("hello");
     expect(
