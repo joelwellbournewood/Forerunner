@@ -1,7 +1,7 @@
 import { type Clock, log } from "@forerunner/platform";
 import { isQuietAt, resolvePrefs } from "@forerunner/runtime/notifications/prefs";
 import { KIND_URGENCY, type Urgency } from "@forerunner/runtime/notifications/types";
-import type { DeviceRow, StateStore } from "@forerunner/state";
+import type { DeviceRow, SessionRow, StateStore } from "@forerunner/state";
 import type { ChangeBus, ChangeEvent } from "../realtime.ts";
 import type { PushMessage, PushSender } from "./fcm.ts";
 
@@ -153,13 +153,14 @@ export class PushFanout {
   /** One change event: the notice it raises (if any), sent now or held for quiet hours. */
   async handle(event: ChangeEvent): Promise<void> {
     if (!this.opts.sender) return;
-    const notice = await this.noticeFor(event);
-    if (!notice || !this.seen.add(notice.key)) return;
-    if (await this.isQuietFor(notice)) {
-      this.hold(notice);
-      return;
+    for (const notice of await this.noticesFor(event)) {
+      if (!this.seen.add(notice.key)) continue;
+      if (await this.isQuietFor(notice)) {
+        this.hold(notice);
+        continue;
+      }
+      await this.deliver(notice);
     }
-    await this.deliver(notice);
   }
 
   /** Send the held notices whose human is out of quiet hours now; returns how many went out. */
@@ -258,94 +259,53 @@ export class PushFanout {
     });
   }
 
-  /** The notice a change event raises for push, or null. Reads the row to decide. */
-  async noticeFor(e: ChangeEvent): Promise<PushNotice | null> {
+  /**
+   * The notices a change event raises for push (none, one, or for a session that ended past
+   * the budget warning share, the warning and the end). Reads the row to decide.
+   */
+  async noticesFor(e: ChangeEvent): Promise<PushNotice[]> {
     const id = typeof e.payload.id === "string" ? e.payload.id : null;
-    if (!id) return null;
+    if (!id) return [];
     const store = this.opts.store;
     switch (e.type) {
       case "human_request.changed": {
-        if (e.payload.status !== "open") return null;
+        if (e.payload.status !== "open") return [];
         const row = await store.humanRequest.get(id);
-        if (row?.status !== "open" || !row.human_id) return null;
-        return {
-          kind: "approval",
-          urgency: KIND_URGENCY[row.blocking ? "request_blocking" : "request_opened"],
-          humanId: row.human_id,
-          key: `approval:${id}`,
-          title: row.blocking ? "Approval needed (blocking)" : "A request waits on you",
-          body: "Open the inbox to answer.",
-          link: "/inbox",
-          refId: id,
-          projectId: row.project_id,
-        };
+        if (row?.status !== "open" || !row.human_id) return [];
+        return [
+          {
+            kind: "approval",
+            urgency: KIND_URGENCY[row.blocking ? "request_blocking" : "request_opened"],
+            humanId: row.human_id,
+            key: `approval:${id}`,
+            title: row.blocking ? "Approval needed (blocking)" : "A request waits on you",
+            body: "Open the inbox to answer.",
+            link: "/inbox",
+            refId: id,
+            projectId: row.project_id,
+          },
+        ];
       }
       case "session.changed": {
-        if (!e.humanId) return null;
+        if (!e.humanId) return [];
         const row = await store.session.get(id);
-        if (!row) return null;
-        const cap = row.budget_cap_usd_micro;
-        const atCap = cap > 0 && row.spent_usd_micro >= cap;
-        const base = { humanId: e.humanId, refId: id, projectId: row.project_id };
-        const link = `/sessions/${id}`;
-        if (row.status === "stopped" || row.status === "failed" || row.status === "completed") {
-          if (atCap && row.status !== "completed") {
-            return {
-              ...base,
-              kind: "budget",
-              urgency: KIND_URGENCY.budget_stop,
-              key: `budget:${id}:stop`,
-              title: "Budget reached: session stopped",
-              body: "A session stopped at its budget cap.",
-              link,
-            };
-          }
-          return {
-            ...base,
-            kind: "session",
-            urgency: KIND_URGENCY.session_ended,
-            key: `session:${id}:ended`,
-            title:
-              row.status === "completed"
-                ? "Session finished"
-                : row.status === "failed"
-                  ? "Session failed"
-                  : "Session stopped",
-            body: "Open the session for the summary.",
-            link,
-          };
-        }
-        if (
-          row.status === "running" &&
-          cap > 0 &&
-          row.spent_usd_micro >= cap * BUDGET_WARNING_SHARE
-        ) {
-          return {
-            ...base,
-            kind: "budget",
-            // No runtime kind for the 80% warning: normal, so it waits out quiet hours.
-            urgency: "normal",
-            key: `budget:${id}:warn`,
-            title: "Budget warning",
-            body: `A session has used ${Math.round(BUDGET_WARNING_SHARE * 100)}% of its budget.`,
-            link,
-          };
-        }
-        return null;
+        if (!row) return [];
+        return sessionNotices(row, e.humanId);
       }
       case "message.changed": {
-        if (!e.humanId) return null;
+        if (!e.humanId) return [];
         const row = await store.message.get(id);
         // Unread only: a message the human already read on another device is not news.
-        if (!row || row.read_at !== null) return null;
+        if (!row || row.read_at !== null) return [];
         if (!row.to_human_id) {
           // A message to the human's agent is pushed only when it comes from another human's agent.
           const from = await store.agent.get(row.from_agent_id);
-          if (!from || from.owner_human_id === e.humanId) return null;
+          if (!from || from.owner_human_id === e.humanId) return [];
         } else if (row.to_human_id !== e.humanId) {
-          return null;
+          return [];
         }
-        return {
+        return [
+          {
           kind: "message",
           urgency: KIND_URGENCY.peer_message,
           humanId: e.humanId,
@@ -355,10 +315,11 @@ export class PushFanout {
           link: "/inbox",
           refId: id,
           projectId: row.project_id,
-        };
+          },
+        ];
       }
       default:
-        return null;
+        return [];
     }
   }
 }
@@ -376,4 +337,86 @@ export function messageOf(n: PushNotice): PushMessage {
     },
     priority: n.urgency === "urgent" ? "high" : "normal",
   };
+}
+
+/** Session ends that mean the budget stopped the work (the runner's `handoff.stop_reason`). */
+const BUDGET_STOP_REASONS: ReadonlySet<string> = new Set(["budget_exceeded"]);
+/** The runner stopped starting new work at the warning share and finished what was running. */
+const BUDGET_WARNING_REASONS: ReadonlySet<string> = new Set(["budget_finish_current"]);
+const ENDED: ReadonlySet<SessionRow["status"]> = new Set(["completed", "failed", "stopped"]);
+
+function stopReasonOf(row: SessionRow): string | null {
+  const h = row.handoff;
+  if (!h || typeof h !== "object" || Array.isArray(h)) return null;
+  const r = (h as Record<string, unknown>).stop_reason;
+  return typeof r === "string" ? r : null;
+}
+
+/**
+ * Push notices for a session row, decided the way the runtime decides its own notifications
+ * (`sessionEnded` in `@forerunner/runtime/notifications/producers`): the runner writes spend,
+ * the handoff (with `stop_reason`) and the end status when the session ends, and the budget
+ * hook refuses the call that would cross the cap, so a budget stop usually ends below the cap.
+ *
+ * - budget stop (urgent `budget_stop`): ended with `stop_reason` `budget_exceeded`, or
+ *   stopped / failed with spend at the cap;
+ * - budget warning (normal): `stop_reason` `budget_finish_current` (the hook stopped new work
+ *   at 80 %), or spend at `BUDGET_WARNING_SHARE` of the cap on a row that records spend while
+ *   it runs; not sent when the session ended at the budget stop, which says more;
+ * - session ended (normal `session_ended`): completed, failed or stopped otherwise.
+ */
+export function sessionNotices(row: SessionRow, humanId: string): PushNotice[] {
+  const id = row.id;
+  const cap = row.budget_cap_usd_micro;
+  const reason = stopReasonOf(row);
+  const ended = ENDED.has(row.status);
+  const base = { humanId, refId: id, projectId: row.project_id, link: `/sessions/${id}` };
+  const stopReason = reason !== null && BUDGET_STOP_REASONS.has(reason);
+  const budgetStop =
+    ended && (stopReason || (row.status !== "completed" && cap > 0 && row.spent_usd_micro >= cap));
+  // The runner writes the handoff a moment before the end status: a row that already names
+  // the budget stop is not announced as a warning first.
+  const warned =
+    !budgetStop &&
+    !stopReason &&
+    (ended || row.status === "running" || row.status === "paused") &&
+    ((reason !== null && BUDGET_WARNING_REASONS.has(reason)) ||
+      (cap > 0 && row.spent_usd_micro >= cap * BUDGET_WARNING_SHARE));
+  const out: PushNotice[] = [];
+  if (warned) {
+    out.push({
+      ...base,
+      kind: "budget",
+      // No runtime kind for the 80% warning: normal, so it waits out quiet hours.
+      urgency: "normal",
+      key: `budget:${id}:warn`,
+      title: "Budget warning",
+      body: `A session has used ${Math.round(BUDGET_WARNING_SHARE * 100)}% of its budget.`,
+    });
+  }
+  if (budgetStop) {
+    out.push({
+      ...base,
+      kind: "budget",
+      urgency: KIND_URGENCY.budget_stop,
+      key: `budget:${id}:stop`,
+      title: "Budget reached: session stopped",
+      body: "A session stopped at its budget cap.",
+    });
+  } else if (ended) {
+    out.push({
+      ...base,
+      kind: "session",
+      urgency: KIND_URGENCY.session_ended,
+      key: `session:${id}:ended`,
+      title:
+        row.status === "completed"
+          ? "Session finished"
+          : row.status === "failed"
+            ? "Session failed"
+            : "Session stopped",
+      body: "Open the session for the summary.",
+    });
+  }
+  return out;
 }

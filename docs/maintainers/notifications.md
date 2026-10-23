@@ -256,7 +256,8 @@ The phone is not a channel of this notifier: the daemon runs on the PC and the p
 the shared state service. Push to Android is sent by the state service itself
 (`services/state-api/src/push/`, `state-service.md`, "Push to Android") through FCM HTTP v1,
 for the four kinds of R.6: approval (`request_opened` / `request_blocking`), finished session
-(`session_ended`), budget (`budget_stop`, plus an 80 % warning that has no runtime kind and
+(`session_ended`), budget (`budget_stop`, decided like `sessionEnded` by the runner's
+`stop_reason`, plus an 80 % warning from `budget_finish_current` that has no runtime kind and
 counts as normal) and message (`peer_message`). It reuses this module's rules rather than
 copying them: `KIND_URGENCY` gives the urgency, and quiet hours are the human's
 `notify_prefs` read with `resolvePrefs` and decided by `isQuietAt`, so a window set in

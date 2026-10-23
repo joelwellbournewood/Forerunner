@@ -196,8 +196,8 @@ directly. Four kinds become a push, each once per key:
 | Kind | Raised by | Urgency (ADR 0017) |
 | --- | --- | --- |
 | `approval` | `human_request.changed` with status `open` and a `human_id` | `request_blocking` urgent, `request_opened` normal |
-| `session` | `session.changed` to `completed`, `failed` or `stopped` | `session_ended` normal |
-| `budget` | a running session at 80 % of its `budget_cap_usd_micro` (`BUDGET_WARNING_SHARE`), or a session stopped / failed at its cap | warning normal, stop `budget_stop` urgent |
+| `session` | `session.changed` to `completed`, `failed` or `stopped` (not a budget stop) | `session_ended` normal |
+| `budget` | read like the runtime's `sessionEnded` producer (`sessionNotices`): a session that ended with `handoff.stop_reason` `budget_exceeded` (the runner's budget stop, usually below the cap because the hook refuses the crossing call) or stopped / failed at its cap is the stop; `budget_finish_current` (new work stopped at 80 %) or spend at `BUDGET_WARNING_SHARE` of the cap on a row that records spend while running is the warning, sent before the session's end notice | warning normal, stop `budget_stop` urgent |
 | `message` | an unread message to the human, or to the human's agent from another human's agent | `peer_message` info |
 
 Each notice goes to every non-revoked device of the human with a `push_token`

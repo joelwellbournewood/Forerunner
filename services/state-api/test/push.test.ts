@@ -358,6 +358,52 @@ describe("push fan-out from the state service (spec R.6)", () => {
     expect(h.google.sent[0]?.message.notification?.title).toMatch(/Budget reached/);
   });
 
+  it("a budget stop as the runner writes it (below the cap, stop_reason budget_exceeded) is urgent, even in quiet hours", async () => {
+    await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
+    // 09:00 UTC is inside Ada's window: only an urgent notice goes out.
+    await h.store.human.patch(h.seed.ada.id, {
+      notify_prefs: { quiet_hours: { start: "08:00", end: "10:00" }, timezone: "UTC" },
+    });
+    // The runner's end-of-session writes: spend and handoff first, then the end status. The
+    // budget hook refused the call that would cross the cap, so spend stays below it.
+    await h.store.session.patch(h.seed.session.id, {
+      budget_cap_usd_micro: 1_000_000,
+      spent_usd_micro: 960_000,
+      handoff: { stop_reason: "budget_exceeded", spent_usd_micro: 960_000 },
+    });
+    await h.tick();
+    expect(h.google.sent).toHaveLength(0);
+    expect(h.api.push.status().holding).toBe(0);
+    await h.store.session.patch(h.seed.session.id, { status: "stopped" });
+    await h.tick();
+    expect(
+      h.google.sent.map((s) => [
+        s.message.data?.kind,
+        s.message.notification?.title,
+        s.message.android?.priority,
+      ]),
+    ).toEqual([["budget", "Budget reached: session stopped", "HIGH"]]);
+    expect(h.api.push.status().holding).toBe(0);
+  });
+
+  it("a session that stopped new work at 80 % (budget_finish_current) pushes the budget warning and the end", async () => {
+    await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
+    await h.store.session.patch(h.seed.session.id, {
+      budget_cap_usd_micro: 1_000_000,
+      spent_usd_micro: 820_000,
+      handoff: { stop_reason: "budget_finish_current" },
+      status: "completed",
+    });
+    await h.tick();
+    expect(
+      h.google.sent.map((s) => [s.message.data?.kind, s.message.notification?.title]),
+    ).toEqual([
+      ["budget", "Budget warning"],
+      ["session", "Session finished"],
+    ]);
+    expect(h.google.sent[0]?.message.android?.priority).toBe("NORMAL");
+  });
+
   it("quiet hours hold normal kinds until the window ends; urgent ones go through", async () => {
     await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
     // 09:00 UTC is inside Ada's 08:00-10:00 window.

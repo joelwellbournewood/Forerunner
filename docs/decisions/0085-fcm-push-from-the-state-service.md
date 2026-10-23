@@ -29,8 +29,10 @@ configured.
    (`services/state-api/src/push/fanout.ts`) subscribes to the change bus and raises at most
    one notice per key: `approval` (a `human_request` opened for the human; blocking =
    urgent), `session` (a session of the human's agent completed, failed or stopped),
-   `budget` (a running session at 80 % of its cap: normal; a session stopped at its cap:
-   urgent) and `message` (an unread message to the human, or to the human's agent from another
+   `budget` (decided like the runtime's `sessionEnded` producer, from the runner's
+   `handoff.stop_reason`: `budget_exceeded`, or a session stopped at its cap, is the urgent
+   stop; `budget_finish_current`, new work stopped at 80 %, or 80 % of the cap on a row that
+   records spend while it runs, is the normal warning; see "Review amendment") and `message` (an unread message to the human, or to the human's agent from another
    human's agent). Each goes to every non-revoked device of the human with a `push_token`.
 2. **FCM HTTP v1, `node:crypto` only.** `FcmSender` (`src/push/fcm.ts`) posts
    `POST https://fcm.googleapis.com/v1/projects/<project>/messages:send` with
