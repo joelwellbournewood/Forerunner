@@ -108,8 +108,8 @@ this module holds the rules and the two sides.
   only inside the blobs.
 - **In the daemon.** `composeRuntime` creates the install wrapping key in the vault
   (`ensureInstallWrapKey`) and registers it on the desktop device row (`registerDesktopDevice`
-  takes `wrapPublicKey`; the row is registered whenever there is a shared state, or remote
-  control was asked for explicitly), wires `SharedSecretVault` under the hooks' resolver with
+  takes `wrapPublicKey`; the row is registered whenever remote control is on, or was asked
+  for explicitly, so `FORERUNNER_REMOTE_COMMANDS=0` also leaves this install without a key), wires `SharedSecretVault` under the hooks' resolver with
   the `secret.shared_resolved` audit row, and exposes `rt.sharedSecrets` (`propose`, `revoke`,
   `list`, `names`). `routes.ts` mounts `POST /secrets/shared { name, agentIds, why?, kind? }`
   (201 `{ grant, requestIds, targets }`), `GET /secrets/shared` and

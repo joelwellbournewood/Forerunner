@@ -22,7 +22,8 @@ confirmation (ADR 0009). `node:crypto` is the only crypto dependency of the vaul
    key is a vault entry (`forerunner.install_wrap_key`: keyring or encrypted file, so never a
    plain file), the public key is registered on the install's `device` row
    (`wrap_public_key`, migration 0003). The daemon creates it at compose and registers it
-   with its desktop row whenever it has a shared state (or remote control was asked for).
+   with its desktop row whenever remote control is on (the default on a shared state) or was
+   asked for explicitly; the cloud runner keeps its own `runner` row and gets no key yet.
    Phones and web pages have no key and are never wrap targets.
 2. **The value is wrapped on the owner's install, once per (agent, install).** The scheme is
    the runner unlock's (ADR 0033) with a long-term recipient key: a fresh ephemeral X25519

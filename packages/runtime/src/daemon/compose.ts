@@ -2029,12 +2029,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   let remoteWatcher: RemoteCommandWatcher | null = null;
   let presence: DesktopPresence | null = null;
   // The device row is also where the install's wrapping key lives (spec S.13, ADR 0065), so
-  // it is registered whenever there is a shared state to register on, or remote control was
-  // asked for explicitly; the watcher and the heartbeat still need the services running.
-  const registerDevice =
-    remoteEnabled ||
-    opts.remote?.enabled === true ||
-    !stateUrl.trim().toLowerCase().startsWith("sqlite");
+  // it is registered whenever remote control is on, or was asked for explicitly (a test, a
+  // one-shot); the watcher and the heartbeat still need the services running. The cloud
+  // runner composes without the option and keeps its own `runner` row.
+  const registerDevice = remoteEnabled || opts.remote?.enabled === true;
   if (registerDevice) {
     // The install's wrapping key: created in the vault on first use and registered on the
     // device row, so a peer can wrap a shared secret to this install.
