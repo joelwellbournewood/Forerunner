@@ -14,7 +14,7 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending: the hosted emulator boots and launches the app (run 6), the raw-CDP attach is merged (ADR 0054) and not yet dispatched; the Settings → Capabilities → Email page (ADR 0066), PM intake (ADR 0055) and what you say during a live session (ADR 0078) landed 2026-10-23 | gates.md § Phase 5 |
 | 6 | Capabilities | injection suite, live revocation, overnight cloud-runner session, emailed task and spoofed email passed on the fake provider and the in-process mail server; live halves pending a real mailbox and host | gates.md § Phase 6 |
 | 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts) | gates.md § Phase 7 |
-| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 186 done, 37 in progress, 5 todo (S.32 on `wave/w2-s32-indicator`, built, not merged; D.16 `done` on `wave/w3-d16-slider`, reviewed and rebased onto cac6fee, not merged); security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
+| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 186 done, 37 in progress, 5 todo (S.32 on `wave/w2-s32-indicator`, built, not merged; D.16 `done` on `wave/w3-d16-slider`, reviewed and rebased onto cac6fee, not merged; D.4 done on its item branch, 2026-10-23); security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
 
 ## Log
 
@@ -106,6 +106,21 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   the base's typed `cdp.mjs` type-checks; the bounded wait closes an open simulated prompt
   with the refusal; docs on V8's console replay, the platform prompt that outlives the
   shell's bound, and the BLOCKERS row corrected. Counts in the review file.
+
+### 2026-10-23 (item w3-d4-specialist-settings, BUILD: D.4 settings per agent and specialist)
+- Built on `wave/w3-d4-specialist-settings` (ADR 0072), over the earlier attempt's `wip:`
+  snapshot (the capability flags, the effort-table columns and the adapter's `speed`, kept and
+  finished): max tokens, speed mode and timeout in the effort table; optional `max_tokens`,
+  `speed_mode`, `temperature` in specialist frontmatter; per-mode and per-specialist overrides
+  on the principal's `model_config` through the new `model.settings.set` command (card, change
+  log, undo); `ModelProvider.capabilities` (`acceptsTemperature`, `fastMode`) read by the loop,
+  the command and the settings view; the executor, the intake and the chat run at the resolved
+  settings; `GET /settings/models` and the Settings section "Models per agent and specialist"
+  with the temperature column only for a provider that accepts one. Speed mode composes with
+  D.20: fast only with the project's `fast_mode` leave, the Opus rung, an API-style source and
+  a fast-mode price (none wired before D.20, so inert and said per run). D.4 `done` in
+  requirements.md (184 done, 39 in progress, 5 todo of 228); the BLOCKERS row keeps the D.20 residual. Review and merge pending. Report:
+  `docs/status/reviews/w3-d4-specialist-settings.md`.
 
 ### 2026-10-23 (item w2-s32-indicator rebased onto 22982fa)
 - `wave/w2-s32-indicator` rebased onto `origin/ccr-4d8a843c-1k9syk` (22982fa). Conflicts in
@@ -366,9 +381,11 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    merge pending), w3-c5-specialist-approval (C.5; built on its branch with ADR 0071, reviewed
    with six findings fixed, awaiting merge, see its review in
    `docs/status/reviews/w3-c5-specialist-approval.md`),
-   w3-d4-specialist-settings (D.4), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
+   w3-d4-specialist-settings (D.4; built on its branch 2026-10-23, ADR 0072: review, then
+   merge, then wire D.20's price into it), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
    merge pending), w3-c5-specialist-approval (C.5),
-   w3-d4-specialist-settings (D.4), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16:
+   w3-d4-specialist-settings (D.4; built on its branch 2026-10-23, ADR 0072: review, then
+   merge, then wire D.20's price into it), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
    w3-r5-phone (R.5), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
