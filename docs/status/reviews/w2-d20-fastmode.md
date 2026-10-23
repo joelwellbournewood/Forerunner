@@ -198,3 +198,120 @@ it. If the row is added centrally, drop that commit; the row is:
 - **The effect sentence uses the built-in prices.** The change card's effect sentence is priced
   from the built-in table, while the Settings row uses the table in force. They differ only after
   an override of an Opus or fast-mode row.
+
+## Review
+
+Reviewer: independent review of `wave/w2-d20-fastmode` at 9fdfe81 (stage REVIEW AND FIX),
+against the build brief and base `origin/ccr-4d8a843c-1k9syk` (c713755; the branch's merge
+base is b1804e3, and the base's later commits touch only the desktop-confirm and stale-docs
+items, so there is no file overlap with this branch).
+
+Verdict: **revise**. Score: **72 / 100**.
+
+The core path is sound and tested. The setting is off by default and medium risk, the Opus
+call carries `speed: "fast"` on `claude-opus-5-5` with the beta header, the variant price
+rows live in `pricing.ts`, and subscription and plan-credits runs are ignored with an
+"API only" audit row. On the as-built tree, `pnpm typecheck` is clean, `pnpm lint` has 0
+errors, runtime has 117 files / 1017 tests, billing and commands have 21 files / 240 tests,
+and docs-check is ok. What remains: one clause of the brief is only partly met, one surcharge
+text can disagree with the prices actually charged, and two smaller defects plus an untested
+composition need fixing.
+
+### Requirements checked
+
+- [x] A per-project `fast_mode` setting, off by default, changed through `settings.set` with an
+  effect sentence (commands `fast-mode.test.ts`; I read `settings.ts:81-92`).
+- [ ] "routes **every** Opus rung of that project's runs to the fast-mode variant". Specialist
+  runs are routed. Critic reviews are not, and tiers 2 and 3 run on Opus by default
+  (`MODE_DEFAULTS.critic_t23`). See finding 1.
+- [x] `speed: "fast"` on `claude-opus-5-5` with `anthropic-beta: fast-mode-2026-02-01`, and no
+  model-id change on the wire (adapter test with an injected fetch; checked against the SDK
+  0.135 typings, `MessageCreateParams.speed`).
+- [x] API billing sources only. A subscription or plan credits is ignored with an audit row
+  saying "API only" (runtime `fast-mode.test.ts`).
+- [x] Priced from separate rows named for the variant, in the one price table. The rows are
+  marked as the research-preview rate and justified in ADR 0057 (4.6 at 30 / 150 is the
+  published list price; 5.5 fast is assumed at 6x).
+- [x] The Run rows and the ledger name the variant. `allocation().byModel` lists it apart.
+- [~] The Settings card explains the effect and the surcharge both ways. The card does. The
+  change card the human confirms, and the change-log sentence, can quote a different price
+  from the one charged. See finding 2.
+- [~] The model watch and the estimates read the variant's rate. `diffPrices` reprices the
+  variant row, and the per-call estimate uses the variant's rate. The learned estimate
+  (spec I.3) folds fast-mode actuals into the standard ratio. See finding 3.
+- [x] Tests exist in the files the brief names: `packages/runtime/test/fast-mode.test.ts`,
+  `packages/billing/test`, `packages/commands/test` and `apps/ui/test`.
+- [x] Docs: `billing.md`, `runtime.md`, `adding-a-provider.md`, `apps.md`, `commands.md`,
+  `model-watch.md` and ADR 0057. They agree with the code except where findings 1 to 3
+  change it.
+- [x] No secrets in rows or logs. The audit row carries the source id and kind, never a
+  credential. Time goes through the Clock and errors are `ForerunnerError`.
+
+### Documented limitations accepted (not findings)
+
+- `usage.speed` is not read back from the response (ADR 0057, Consequences). If the API
+  served a request at standard speed, the ledger would over-state its cost. It can never
+  under-state it. Pricing per call would need a change to the hooks' run context, so it
+  stays a known issue in `adding-a-provider.md`.
+- No live call has been made; there is no key in this environment.
+
+### Findings
+
+1. **medium**: `packages/critic/src/critic.ts:363-372` (with `runtime/src/loop/critic.ts:221`,
+   `daemon/compose.ts:1540`, ADR 0057 Consequences and Alternatives).
+   - **What is wrong.** Critic reviews ignore the project's `fast_mode`. At tiers 2 and 3 the
+     critic runs on the Opus rung by default. It is the main Opus consumer of a project and
+     sits on the critical path of urgent work. The brief says the flag routes "every Opus
+     rung of that project's runs". The ADR gives two reasons for excluding the critic, and
+     neither holds:
+     - "no billing pick": the critic's source is the composition's loop source, a known row
+       with a known kind, so the API-only rule can be applied to it.
+     - "independence": speed does not change the model.
+   - **How I verified it.** I wrote a throwaway critic test (since deleted): a tier-2 review
+     of a project with `fast_mode: true`, on a provider with `fastMode = true`. The provider
+     calls carried no `speed`, the Run row named the base model, and no `model.fast_mode`
+     audit row was written.
+
+2. **medium**: `packages/commands/src/commands/settings.ts:91` and
+   `packages/runtime/src/models/fast-mode.ts:118`.
+   - **What is wrong.** The `fast_mode` change card's new value and the change-log sentence
+     are priced from `BUILTIN_PRICING`. Runs and the Settings row use the table in force
+     (`<config>/pricing.json` plus model-watch adoptions). The 5.5 fast row is
+     `source: "assumed"` and is expected to be corrected through exactly that path. Once it
+     is corrected, the card the human says yes to quotes a surcharge that is not the one
+     charged.
+   - **How I verified it.** A throwaway commands test (since deleted) printed both texts with
+     the fast row overridden to 30 / 150. The card read "USD 24 / 120 ... 6x". The daemon row
+     read "USD 30 / 150 ... 7.5x".
+
+3. **low**: `packages/runtime/src/estimates/model.ts:446-457`.
+   - **What is wrong.** The estimate-versus-actual fold adds a fast-mode run's cost (6x) to
+     the task's actuals. The cost ratio is learned per (specialist, kind), with no regard to
+     speed. After a stretch of urgent work, every later standard task of that specialist and
+     kind is estimated several times too high, and planner budgets follow. So the
+     "estimates read the variant's rate" clause holds for the per-call estimate but corrupts
+     the learned one.
+   - **How I verified it.** By reading the code: `refresh()` sums `r.cost_usd_micro` over
+     every finished run of the task, whatever `r.model` is. Finding 3's test exercises this
+     path.
+
+4. **low**: `apps/ui/test/fake-daemon.ts:1742`.
+   - **What is wrong.** The fake daemon's `fast_mode` card shows the old value `false` for a
+     project whose flag was never set. The real daemon's card says `unset`, as the commands
+     test asserts (`card.oldValue === "unset"`). So the UI fixtures drift from the daemon
+     they mirror.
+   - **How I verified it.** I compared the two code paths (`state.fastMode[id] ?? false`
+     against `show(null) === "unset"` in `settings.ts:157`).
+
+5. **low**: `packages/runtime/src/daemon/compose.ts:1574-1579`.
+   - **What is wrong.** No test covers the composition. The executor's `pricingFor` and
+     `pricingTable` wiring, which is what makes a daemon fast run use the table in force,
+     can be deleted with every test still green.
+   - **How I verified it.** I removed the four lines from `compose.ts` and ran
+     `fast-mode.test.ts`, `daemon.test.ts` and `wiring.test.ts`: 3 files, 36 tests passed.
+     Then I restored the file.
+
+6. **low**: `docs/decisions/README.md` (commit 6d8fded).
+   - **What is wrong.** The brief says "Do NOT edit docs/decisions/README.md". The branch
+     adds the ADR 0057 index row anyway.
+   - **How I verified it.** `git show 6d8fded --stat`.
