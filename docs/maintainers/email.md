@@ -122,7 +122,9 @@ unparsable -> `unclear` reply) -> act:
   (`estimateUsdMicro(taskEstimate(text), estimateModel)`) against the per-email cap
   (`effectivePerEmailCapUsdMicro`: CHF 5 at the day's rate, or an explicit USD cap) ->
   `task_over_cap` reply, no session; else a `task` row (`ready`, budget = cap, estimate,
-  owner agent) and `StartCloudSessionPort.start({ capUsdMicro, autonomyLevel, trigger: "email" })`
+  owner agent, `risk_tier` from the runtime's `defaultRiskTier(project)`: 0 in small-project
+  mode, else 1, spec B.6 and ADR 0051, so an emailed task is reviewed like one created in the
+  app) and `StartCloudSessionPort.start({ capUsdMicro, autonomyLevel, trigger: "email" })`
   (T.7). The acknowledgement reply carries what was understood, the project, the estimate and
   cap in CHF, when it starts, the autonomy level and the session log link; `ackLatencyMs`
   (clock now minus `receivedAt`) is recorded in the audit row, and the tests assert it is under
@@ -290,7 +292,7 @@ presence switch. The email command watcher stays on the cloud runner.
 
 ## Tests
 
-Unit (`pnpm vitest run --project unit packages/capabilities/test/email-*.test.ts`, 121 tests on
+Unit (`pnpm vitest run --project unit packages/capabilities/test/email-*.test.ts`, 122 tests on
 the testenv mail server with DKIM and SPF, an in-memory SQLite store and `SimulatedClock`):
 
 - `email-settings.test.ts`: defaults, merge and validation, credential values refused, marker
@@ -359,7 +361,8 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
 - `email-commands.test.ts`: the gate (marker, thread reply, spoofed DKIM, bogus signature, SPF
   fail, wrong sender, forwarded by another, forwarded by the owner, quoted command, missing
   marker, disabled, each agent obeys only its own human); the handler (question, task with ack
-  under 60 s and the capped cloud session, watched mailbox end to end, ask-which-project then
+  under 60 s and the capped cloud session, the task's tier from the project's default (0 in
+  small-project mode, else 1; B.6), watched mailbox end to end, ask-which-project then
   threaded answer, note, attachments never opened, per-email cap, daily task cap with rollover,
   injection flagged and not acted on (scenario 6), paused, unclear, completion summary, command
   audit); idempotency and serialization (the same message handled twice acts once and is
