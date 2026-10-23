@@ -28,6 +28,15 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   Upload screen warns when a queued file is held in memory only; the emulator smoke opens
   Reviews, Upload and the Chat voice turn. R.5 stays `in progress` until the emulator run.
 
+### 2026-10-23 (item w3-r5-phone rebased onto cac6fee)
+- `wave/w3-r5-phone` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
+  phone store (the base's runner unlock window key next to the branch's upload queue key),
+  apps.md (the screen list and Known issues), requirements.md (R.5 and R.6 in one hunk) and
+  this log; both sides kept (`docs/status/reviews/w3-r5-phone.md` `## Rebase`). Current
+  counts: UI suite 49 files / 316 tests (`mobile-upload` 5, `mobile-reviews` 7,
+  `mobile-voice` 6), runtime 129 files / 1141 unit tests (`voice-relay` 9), state-api 11
+  files / 159. R.5 stays `in progress` (the emulator run). Not merged yet.
+
 ### 2026-10-23 (item w3-r5-phone: the phone uploads, reviews and talks; R.5 built, emulator run open)
 - Branch `wave/w3-r5-phone` on the `wip:` snapshot 34bfcdb (the upload route's `clientId`
   idempotency and `maxBytes` in the list, kept). ADR 0080. The phone gains an Upload screen

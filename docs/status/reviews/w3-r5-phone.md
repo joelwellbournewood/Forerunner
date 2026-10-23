@@ -290,3 +290,41 @@ in the docs about the Upload screen and the 5 s cap do not match the code.
 | `pnpm exec vitest run --project integration packages/runtime/test services/state-api/test` | 2 files, 7 tests skipped (no Postgres, no container engine) |
 | `node scripts/docs-check.mjs --base 5eee27a` | `docs-check: ok (19 files)` |
 | `pnpm check` | exit 0 (270 files; 2685 passed, 4 skipped, 1 todo; link-check ok; secret scan clean; its docs-check skips without `origin/main`) |
+
+## Rebase (2026-10-23, onto `origin/ccr-4d8a843c-1k9syk` cac6fee)
+
+`wave/w3-r5-phone` (c0b0b8c, on 82a6295) rebased onto the release head cac6fee (181 commits
+ahead). The commit hashes named in the sections above predate the rebase; the commits keep
+their subjects. Two commits conflicted; every other change applied cleanly.
+
+| Commit | File | Conflict | Resolution |
+| --- | --- | --- | --- |
+| ui: phone screens for uploads, PR and critic review, … | `apps/ui/src/mobile/store.tsx` | the base's `UNLOCK_WINDOW_KEY` (runner unlock window, ADR 0068) and the branch's `UPLOADS_KEY` on the same line | both constants kept; the controller holds both `uploads` (`UploadQueue`) and the base's `runnerKeys` (auto-merged) |
+| docs: ADR 0080 and the maintainer, requirement and status rows … | `docs/maintainers/apps.md` (layout, `screens/`) | the base's unlock-card sentence and the branch's new screen list | one entry: the branch's list (Chat with push-to-talk, Reviews, Upload) followed by the base's unlock-card text |
+| same | `docs/maintainers/apps.md` (Known issues) | the base deleted the stale plan/chat bullet the branch rewrote | the branch's rewritten bullet kept (finding 8 above) |
+| same | `docs/requirements.md` | R.5 (branch: the new test files) and R.6 (base: `push.test.ts`, `packages/state/test/suite.ts`) in one hunk | R.5 from the branch (a superset of the base's evidence), R.6 from the base; R.5 stays `in progress` |
+| same | `docs/status/PROGRESS.md` | the base's new log entries (w2-s32-indicator, w2-s12-unlock-card, w3-e1-triggers, w4-fcm-sender) and the branch's entry at the top of the log | all kept, the branch's entry first (newest); the plan's item list auto-merged (`w3-r5-phone (R.5; built on its branch …)`) |
+
+Auto-merged and read against the base: `packages/runtime/src/daemon/compose.ts` (`VoiceRelay`
+over the base's `voice` sessions, `voice:` in the watcher's deps, `voiceRelay.close()` before
+`voice.close()`), `apps/ui/src/mobile/MobileApp.tsx` (Reviews and Upload routes and nav next to
+the base's unlock auto-answer), `apps/mobile/e2e/run.mjs`, `docs/maintainers/runtime.md`,
+`docs/maintainers/state-service.md`, `docs/decisions/README.md` (0080 between the base's 0078
+and 0082), `docs/status/BLOCKERS.md`, `CHANGELOG.md`. ADR 0080 is still free on the base.
+
+### Checks after the rebase
+
+| Command | Result |
+| --- | --- |
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0 (59 warnings, as on the base) |
+| `pnpm --filter @forerunner/ui test` | 49 files, 316 tests passed (`mobile-upload` 5, `mobile-reviews` 7, `mobile-voice` 6) |
+| `pnpm exec vitest run --project unit packages/runtime/test` | 129 files; 1141 passed, 1 skipped (`voice-relay` 9) |
+| `pnpm exec vitest run --project unit services/state-api/test` | 11 files, 159 tests passed |
+| `pnpm exec vitest run --project unit apps/mobile/e2e` | 1 file, 20 tests passed |
+| `pnpm exec vitest run --project integration packages/runtime/test services/state-api/test` | 2 files, 7 tests skipped (no Postgres, no container engine) |
+| `pnpm exec vitest run --project e2e tests/e2e/scenarios/09-phone.scenario.test.ts tests/e2e/scenarios/03-voice.scenario.test.ts tests/e2e/scenarios/phase5-gate.integration.test.ts` | 3 files; 6 passed, 1 todo |
+| `pnpm exec vitest run --project unit scripts/closeout-docs.test.ts` | 19 passed, 1 todo |
+| `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` | `docs-check: ok (32 files)` |
+| `node scripts/link-check.mjs` | `link-check: ok (129 files)` |
+| `pnpm check` | exit 0 (290 files; 2927 passed, 4 skipped, 1 todo; secret scan clean, 1488 files; its docs-check skips without `origin/main`) |
