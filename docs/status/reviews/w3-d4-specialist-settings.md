@@ -244,3 +244,62 @@ All six findings fixed; verdict for the fixed branch: accept. Checks on the fixe
 `packages/commands/test` 10 files, 135 passed; `testenv/test` 10 files, 142 passed;
 `pnpm --filter @forerunner/ui test` 43 files, 260 passed; `node scripts/docs-check.mjs --base
 origin/ccr-4d8a843c-1k9syk` ok (46 files); `node scripts/link-check.mjs` ok (107 files).
+
+## Rebase
+
+Stage REBASE, 2026-10-23: `wave/w3-d4-specialist-settings` (start `21ca992`) rebased with
+`git rebase origin/ccr-4d8a843c-1k9syk` onto the release head `cac6fee`, which had merged,
+since the branch's base `82a6295`, among others D.20 Opus fast mode (`22982fa`, ADR 0057),
+w2-chat-memory, w2-s32-indicator, w2-s12-unlock-card, w3-e1-triggers and w4-fcm-sender. No
+merge of the base; the series is the branch's commits replayed, two fixups squashed into the
+commits whose resolution they repair, and two new commits (the tests against D.20's names, the
+docs after the rebase).
+
+### Conflicts and how each was resolved
+
+| Commit (original) | File | Resolution |
+| --- | --- | --- |
+| `1219933` wip | `models/ladder.ts` | both imports: D.20's `canonicalModelId, fastModeBaseId` and D.4's `SpeedMode` |
+| `1219933` wip | `provider/types.ts` | one `SpeedMode` (same type on both sides) documented for D.4 and D.20; D.20's `ModelProvider.fastMode` kept as the one fast-mode flag; D.4's `capabilities` narrowed to `ProviderDeclaredCapabilities { acceptsTemperature }`, `providerCapabilities(p)` returns `{ acceptsTemperature, fastMode: p.fastMode === true }`; the `speed` doc merged |
+| `1219933` wip | `provider/anthropic.ts` | doc comment merged; D.20's `FAST_MODE_BETA` import kept and the wip's duplicate constant dropped; D.4's API-key-and-Opus gate (`fastModeApplies`) kept on D.20's `params.speed`; `fastMode` became a getter (`true` on an API key, D.20's tests construct with one) |
+| `583cd5d` flags | `provider/anthropic.ts` | `ANTHROPIC_FAST_MODE_BETA` → D.20's `FAST_MODE_BETA`; `capabilities` returns `{ acceptsTemperature: false }` beside the `fastMode` getter. Not conflicted, adapted: the testenv `FakeProvider` sets `fastMode` from `capabilities.fastMode` in its options (an own field, so D.20's `Object.assign(provider, { fastMode: true })` still works) |
+| `432a9b7` honour | `agent/loop.ts` | D.20's `recordedModel` (variant on the Run row and `run_start`) kept with D.4's `temperature` and the drop of `speed` for a provider without `fastMode` |
+| `432a9b7` honour | `session/executor.ts` | imports of both; **D.20's `decideFastMode` is the one decision**: it takes the new optional `speedMode` (only when the file or the agent set one, `explicitSpeedMode`); D.4's `decideSpeed`, `projectAllowsFastMode` and `fastModePricing` removed; pricing D.20's `loopPricing(runModel, fast)`; `temperature` and `maxTokensPerCall` kept; a `fast` preference the project or the rung does not grant warns via `speedPreferenceNote`; the `{ speed: "fast" }` artifact follows `fast.kind === "applied"`. Not conflicted, adapted: `models/fast-mode.ts` (`speedMode` input, `standard` → ignored with its reason) and `models/run-settings.ts` (`explicitSpeedMode`, `speedPreferenceNote`, `PROJECT_FAST_MODE_KEY` kept equal to `FAST_MODE_SETTING`) |
+| `434db1a` command | `commands/index.ts` | both commands exported and registered (`memory.record`, `model.settings.set`) |
+| `434db1a` command | `commands/types.ts` | both command names; ports `requestAnswered`, `pricingTable` (base) and `modelSettings` (D.4); both imports (a lost comment opener fixed in a squashed fixup) |
+| `434db1a` command | `daemon/compose.ts` | ports `requestAnswered`, `memory` (base) and `modelSettings` (D.4) |
+| `e4eba79` UI | `SettingsPage.tsx` | D.20's `FastModeCard` and D.4's `ModelSettingsSection`, in that order |
+| `e4eba79` UI | `test/fake-daemon.ts` | options `me` and `acceptsTemperature`, state `runnerKeys`, `fastMode`, `desktop` and `modelSettings`, `acceptsTemperature` (a lost comment opener fixed in a squashed fixup) |
+| `55f1e54` docs | `adding-a-provider.md` | the base's stream and fast-mode paragraphs and D.4's capability flags in one list (flags read through `providerCapabilities`, fast mode = D.20's `fastMode`); steps renumbered 1 to 8 with both the temperature flag and the optional fast mode; both test paragraphs; both known issues |
+| `55f1e54` docs | `apps.md` | the fast-mode card paragraph and the model-settings paragraph; the monthly-jobs and the D.4-field sentences in one bullet; the base's longer `settings` test entry then `settings-models` |
+| `55f1e54` docs | `commands.md` | the `memory.record` and `model.settings.set` rows and paragraphs; `fast-mode.test.ts` and `model-settings.test.ts` in one sentence; count set to the real 11 files / 155 tests |
+| `55f1e54` docs | `runtime.md` | the base's `tierOfModel` sentence kept; the D.4 speed paragraph rewritten for the D.20 composition; both test paragraphs; the base's known issues kept and the D.4 one rewritten (no "until D.20 lands") |
+| `7fff9e7` status | `decisions/README.md` | 0067, 0068, 0072, 0075 in number order |
+| `7fff9e7` status | `BLOCKERS.md` V.1 | one row with both clauses (S.32 and D.4), counts re-read from requirements.md: 186 / 37 / 5 |
+| `7fff9e7` status | `PROGRESS.md` | phase 8 row with both clauses; both sides' log entries; handover item 3 with both sides' item notes |
+| `f3e4080` finding 6 | `daemon/compose.ts` | the executor's `pricingFor` is D.20's (`pricingForProvider` over the table in force, the variant included), the same intent; D.4's intake and chat `pricingFor` (not conflicted) kept |
+| `f3e4080` finding 6 | `session/executor.ts` | one `pricingFor` dep (same name and shape on both sides) with both docs; `pricing: this.loopPricing(runModel, fast)` |
+| `f3e4080` finding 6 | `test/conversation.test.ts` | setup options `docs`, `retrieval`, `prompt` (base) and `agentDeps` (D.4); deps spread last |
+| `f3e4080` finding 6 | `runtime.md` | the pricing paragraph naming both wirings, then the D.20 speed paragraph |
+| `34e6c46` findings 1, 3 | `session/executor.ts` | the fast decision as above, then D.4's `max_effort` cap |
+| `34e6c46` findings 1, 3 | `apps.md` | the base's `settings` entry, `settings-models` (8) |
+| `7843076` finding 5 | five files | **skipped**: a pure move of D.4 additions away from the base's anchors to make a merge conflict-free; after the rebase the union already sits in place, so the commit had nothing left to do |
+| `581bb0c` finding 5 | `runtime.md` | the reconciled D.4 known issue moved beside the model-settings one, as the commit intended |
+| `1df8dae` status | `PROGRESS.md` | handover item 3 with both sides' notes |
+
+### After the rebase
+
+- `pnpm typecheck` exit 0 (run before any formatter); `pnpm lint` exit 0 (59 warnings, none
+  new).
+- `pnpm exec vitest run --project unit packages/runtime/test`: 131 files, 1180 passed, 1
+  skipped (`fast-mode.test.ts` 16 and `fast-mode-wiring.test.ts` 2 of D.20 among them,
+  `run-settings.test.ts` 16, `run-settings-runs.test.ts` 15, `anthropic-provider.test.ts` 11,
+  `model-settings-routes.test.ts` 6, `registry.test.ts` 34, `conversation.test.ts` 26,
+  `intake.test.ts` 13).
+- `packages/commands/test` 11 files, 155 passed; `packages/critic/test` 14 files, 116 passed;
+  `packages/billing/test` 10 files, 92 passed; `testenv/test` 10 files, 142 passed;
+  `pnpm --filter @forerunner/ui test` 47 files, 306 passed.
+- `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok.
+- No base test was changed. Intermediate commits of the series do not all typecheck (the
+  test files of `b6030de` and the review commits still name `decideSpeed` until the
+  "tests, ui: the D.4 speed tests against D.20's decideFastMode" commit); the head does.
