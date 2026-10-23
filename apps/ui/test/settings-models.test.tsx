@@ -7,7 +7,7 @@ import {
   optionsFor,
   rowsOf,
 } from "../src/pages/ModelSettingsSection.tsx";
-import { MODEL_SETTINGS } from "./fixtures.ts";
+import { MODEL_SETTINGS, SETTINGS } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 /**
@@ -221,6 +221,7 @@ describe("Settings: models per agent and specialist", () => {
     renderApp("/settings", createHarness({ missingRoutes: ["/settings/models"] }));
     const section = await screen.findByTestId("model-settings");
     await waitFor(() => expect(section).toHaveTextContent("/settings/models"));
-    expect(await screen.findAllByTestId("setting-row")).toHaveLength(4);
+    // Every row of "All settings" is still there (the fixture's, the D.16 slider row included).
+    expect(await screen.findAllByTestId("setting-row")).toHaveLength(SETTINGS.length);
   });
 });
