@@ -990,10 +990,12 @@ apps/mobile/
   package.json       tauri CLI scripts; test:emulator -> e2e/run.mjs
   e2e/run.mjs        emulator run (build, boot, install, fake service, CDP smoke); README.md has the
                      adb / gradle commands by hand
+  e2e/webview-console.mjs  forwardPageConsole: the page's console and uncaught exceptions as
+                     `webview:` lines on the runner's stdout (ADR 0085); its own module, typed by
+                     webview-console.d.mts, so the driver below is untouched; tested in cdp.test.ts
   e2e/cdp.mjs        raw CDP client and DOM driver for the smoke (ADR 0054): /json/list, page socket,
                      Runtime.evaluate queries, Input.* clicks and fills; no eval in the page (CSP);
-                     forwardPageConsole (the page's console and uncaught exceptions as `webview:`
-                     lines, ADR 0085); cdp.test.ts against a fake endpoint
+                     cdp.test.ts against a fake endpoint
   e2e/cdp.d.mts      types of cdp.mjs for the test (keep in step); e2e/jsdom.d.ts: the jsdom slice it uses
   src-tauri/
     Cargo.toml, tauri.conf.json (no static window; deep-link scheme "fr"; CSP allows 127.0.0.1 and 10.0.2.2)
@@ -1215,10 +1217,12 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   non-function; `fill` through `Input.insertText` after focus and select-all, the
   native-setter fallback with `input` and `change`, `not_editable`; `connectPage` waiting for
   the target and giving up with `cdp.no_page_target`; `describeFailure` (the runner's `FAIL:`
-  line) keeping a `CdpError`'s code and details; `forwardPageConsole` (the fake's
-  `Runtime.enable` hooks the jsdom page's console the way Chrome reports it): nothing before
-  enable, `webview: [level]` lines with the call site for warnings and errors, every line of
-  a stack prefixed, RemoteObject shapes, uncaught exceptions and unhandled rejections with
+  line) keeping a `CdpError`'s code and details; `forwardPageConsole`
+  (`webview-console.mjs`; the fake's `Runtime.enable` hooks the jsdom page's console the way
+  Chrome reports it, except that Chrome also replays the messages it kept from before the
+  enable and the fake does not): `webview: [level]` lines with the call site on the head line
+  for warnings and errors, every line of a stack prefixed, RemoteObject shapes, uncaught
+  exceptions and unhandled rejections with
   location and stack, `stop()`, a refused `Runtime.enable` as one line that never fails the
   smoke, and `run.mjs` turning it on between the attach and the smoke.
 - `scripts/android-keystore.test.ts` and `scripts/android-apk-verify.test.ts` (`release.md`

@@ -40,7 +40,8 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { connectPage, describeFailure, forwardPageConsole } from "./cdp.mjs";
+import { connectPage, describeFailure } from "./cdp.mjs";
+import { forwardPageConsole } from "./webview-console.mjs";
 
 // The runner's one clock (Node-only tooling, ADR 0054): every wait here and the CDP driver's
 // polls read it.

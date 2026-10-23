@@ -64,9 +64,12 @@ refusal says; where the bound lives (UI, shell, both); how the next run shows th
    `biometric:allow-status` and `biometric:allow-authenticate` rather than `biometric:default`
    (the same set in 2.4.0), so a change of the plugin's default cannot drop them; a Rust test
    pins them, the `main` window, the plugin registration and the command registration.
-5. **The emulator runner forwards the page's console.** `forwardPageConsole` (`cdp.mjs`) sends
-   `Runtime.enable` on the page session the smoke already holds and prints every
-   `Runtime.consoleAPICalled` and `Runtime.exceptionThrown` as `webview: [level] ...` lines;
+5. **The emulator runner forwards the page's console.** `forwardPageConsole`
+   (`apps/mobile/e2e/webview-console.mjs`, a module of its own next to the driver `cdp.mjs`,
+   so the driver and its typed declarations stay untouched) sends `Runtime.enable` on the
+   page session the smoke already holds and prints every `Runtime.consoleAPICalled` and
+   `Runtime.exceptionThrown` as `webview: [level] ...` lines (V8 also replays, on enable,
+   the messages it kept from before the attach);
    the controller logs both ends of the biometric step (asked, passed or refused with the
    reason) and the shell logs the outcome to logcat without the ticket. Diagnostics never fail
    the smoke.

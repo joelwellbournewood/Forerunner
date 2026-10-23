@@ -108,9 +108,10 @@ names and their meaning (strict single-element actions, visible waits). `cdp.tes
 it runs the driver against a fake DevTools endpoint (`node:http` + `ws` + jsdom with a layout
 stand-in): `pnpm exec vitest run --project unit apps/mobile/e2e`.
 
-Right after the attach, `run.mjs` calls `forwardPageConsole(client)` on the same page
-session: `Runtime.enable`, then every `Runtime.consoleAPICalled` and `Runtime.exceptionThrown`
-of the page is printed among the PASS lines as
+Right after the attach, `run.mjs` calls `forwardPageConsole(client)` (`webview-console.mjs`)
+on the same page session: `Runtime.enable`, then every `Runtime.consoleAPICalled` and
+`Runtime.exceptionThrown` of the page is printed among the PASS lines (V8 first replays what
+the page logged before the attach) as
 
 ```
 webview: [info] forerunner: high-risk answer: asking the biometric prompt (60000 ms limit)

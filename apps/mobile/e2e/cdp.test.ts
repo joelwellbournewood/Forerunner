@@ -20,14 +20,12 @@ import {
   type CdpTarget,
   connectPage,
   describeFailure,
-  formatConsoleEvent,
-  formatException,
-  forwardPageConsole,
   listTargets,
   Page,
   pickPageTarget,
   socketUrlFor,
 } from "./cdp.mjs";
+import { formatConsoleEvent, formatException, forwardPageConsole } from "./webview-console.mjs";
 
 type Target = {
   id: string;
@@ -705,8 +703,9 @@ describe("describeFailure (the runner's FAIL line)", () => {
 
 /**
  * What Chrome does after `Runtime.enable`, on the fake: the page's `console.*` calls arrive as
- * `Runtime.consoleAPICalled` with RemoteObject arguments and a call site; nothing is reported
- * before the domain is enabled.
+ * `Runtime.consoleAPICalled` with RemoteObject arguments and a call site. Simpler than Chrome
+ * in one way: V8 also replays, on enable, the console messages it kept from before; the fake
+ * hooks the console only from the enable on, so the tests can tell when forwarding started.
  */
 function enableRuntimeOnFake(fake: FakeDevTools): void {
   fake.handlers.set("Runtime.enable", (_params, f) => {
@@ -765,7 +764,7 @@ describe("forwardPageConsole: the WebView's console on the runner's stdout", () 
     const fake = await startFakeDevTools();
     enableRuntimeOnFake(fake);
     const page = await openPage(fake);
-    // Before forwarding is on, the page's console goes nowhere (Chrome reports nothing either).
+    // Before forwarding is on, the fake reports nothing (Chrome would replay this on enable).
     await page.evaluate("console.warn('before'), true");
     const lines: string[] = [];
     const forwarding = await forwardPageConsole(page.client, {
@@ -788,10 +787,11 @@ describe("forwardPageConsole: the WebView's console on the runner's stdout", () 
     expect(lines[1]).toBe(
       "webview: [warn] forerunner: high-risk answer refused on the phone: Biometrics not enrolled. (http://tauri.localhost/assets/index.js:1:4121)",
     );
-    // A multi-line error description keeps the prefix on every line.
+    // A multi-line error description keeps the prefix on every line, and the call site sits
+    // on the head line (a grep for `webview: [error]` shows where), not after the stack.
     expect(lines[2]?.split("\n")).toEqual([
-      "webview: [error] Error: boom",
-      "webview:       at send (http://tauri.localhost/assets/index.js:1:200) 42 null undefined Object (http://tauri.localhost/assets/index.js:1:4121)",
+      "webview: [error] Error: boom (http://tauri.localhost/assets/index.js:1:4121)",
+      "webview:       at send (http://tauri.localhost/assets/index.js:1:200) 42 null undefined Object",
     ]);
     expect(lines[3]).toBe("webview: [log] two words");
     expect(lines.join("\n")).not.toContain("before");
@@ -906,5 +906,44 @@ describe("forwardPageConsole: the WebView's console on the runner's stdout", () 
     expect(attach).toBeGreaterThan(0);
     expect(forward).toBeGreaterThan(attach);
     expect(smoke).toBeGreaterThan(forward);
+  });
+});
+
+describe("connectPage", () => {
+  it("waits for the page target to appear, connects to it, and drives the page", async () => {
+    let polls = 0;
+    const fake = await startFakeDevTools({
+      targets: (f) => {
+        polls += 1;
+        if (polls < 3) return [];
+        return [
+          {
+            id: "PAGE1",
+            type: "page",
+            title: "Forerunner",
+            url: APP_URL,
+            webSocketDebuggerUrl: `ws://localhost:${f.port}/devtools/page/PAGE1`,
+          },
+        ];
+      },
+    });
+    const { page, client, target } = await connectPage(fake.httpBase, {
+      prefer: (t: Target) => t.url.includes("/m"),
+      waitForTargetMs: 5_000,
+      pollMs: 20,
+      timeoutMs: 2_000,
+    });
+    expect(target.id).toBe("PAGE1");
+    expect(fake.listRequests).toBeGreaterThanOrEqual(3);
+    expect(await page.title()).toBe("Forerunner");
+    await page.getByRole("heading", { name: "Pair this phone" }).waitFor({ timeout: 1_000 });
+    client.close();
+  });
+
+  it("gives up with a stable code when no page target appears in time", async () => {
+    const fake = await startFakeDevTools({ targets: () => [] });
+    expect(
+      await failure(connectPage(fake.httpBase, { waitForTargetMs: 150, pollMs: 20 })),
+    ).toMatchObject({ code: "cdp.no_page_target" });
   });
 });
