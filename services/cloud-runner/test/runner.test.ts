@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { MemoryGitHost } from "@forerunner/capabilities";
 import { EmailSettingsStore, TestMailbox } from "@forerunner/capabilities/email/index";
 import { join, SimulatedClock } from "@forerunner/platform";
+import { planIdOf, planKeyOf } from "@forerunner/runtime";
 import { openStore, type StateStore } from "@forerunner/state";
 import { FakeProvider, generateDkimKeyPair, LocalMailServer, textReply } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
@@ -292,6 +293,61 @@ describe("cloud runner", () => {
     // Nothing new: no second session for the same handoff.
     await w.clock.advance(60_000);
     expect(await w.store.session.list({ agent_id: w.seed.agent.id })).toHaveLength(1);
+  });
+
+  // Review of 2026-10-23 (w5-review-findings): the inbox trigger shares the daemon's plan mark,
+  // so a start it records as `started` consumes the answer for both producers. When the
+  // runner's session then fails in the background (here `claim_conflict`: a session of the
+  // agent left `running` by a runner that died), the card must say so and the human must be
+  // warned, as on the PC daemon; otherwise the approval is spent and nothing ever runs.
+  it("an approved plan whose cloud session fails in the background is marked start_failed and the human is warned", async () => {
+    w = await world({ schedules: [], env: { FORERUNNER_RUNNER_INBOX_POLL_MS: "30000" } });
+    const world_ = w;
+    const task = await addReadyTask(w.store, w.seed.project.id, "Write the readme");
+    const stale = await w.store.session.insert({
+      agent_id: w.seed.agent.id,
+      project_id: w.seed.project.id,
+      trigger: "schedule",
+      runner: "cloud",
+    });
+    await w.store.session.start(stale.id, stale.version);
+    const filing = await w.store.session.insert({
+      agent_id: w.seed.agent.id,
+      project_id: w.seed.project.id,
+      trigger: "schedule",
+      runner: "cloud",
+    });
+    await w.clock.advance(1_000);
+    const planId = planIdOf(filing.id, [{ taskId: task.id }]);
+    const plan = await w.store.humanRequest.insert({
+      human_id: w.seed.human.id,
+      project_id: w.seed.project.id,
+      session_id: filing.id,
+      kind: "approval",
+      why: "The plan for this session",
+      steps: ["Write the readme"],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium",
+      change_card: { key: planKeyOf(filing.id), plan_id: planId, plan: {} },
+      author_agent: w.seed.agent.id,
+    });
+    await w.store.humanRequest.answer(plan.id, plan.version, "approve", w.seed.human.id);
+    await w.clock.advance(30_000);
+    const marked = await waitFor(async () => {
+      const row = await world_.store.humanRequest.mustGet(plan.id);
+      return (row.change_card as { outcome?: string }).outcome === "start_failed" ? row : undefined;
+    });
+    expect(marked.change_card).toMatchObject({
+      plan_id: planId,
+      outcome: "start_failed",
+      error: expect.stringContaining("already has an active session"),
+    });
+    const warnings = (
+      await w.store.message.inbox({ humanId: w.seed.human.id }, { limit: 50 })
+    ).filter((m) => m.type === "warning" && m.body.includes(plan.id));
+    expect(warnings).toHaveLength(1);
+    expect((await w.store.task.mustGet(task.id)).status).toBe("ready");
   });
 
   it("an emailed task is acknowledged within a minute and runs as a capped cloud session with a completion mail", async () => {

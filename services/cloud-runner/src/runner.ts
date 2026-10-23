@@ -35,6 +35,7 @@ import {
   pricingFor,
   type RunPricing,
   type RuntimeApp,
+  reportingPlanStartFailures,
   type Schedule,
   Scheduler,
   SECRET_NAMES,
@@ -594,10 +595,16 @@ export async function startCloudRunner(deps: CloudRunnerDeps): Promise<CloudRunn
     decisions.delete(req);
     resolve(outcome);
   };
+  // A start bound to an approved plan is claimed on the plan request by the inbox trigger and
+  // marked with the scheduler's answer; when it then fails (the PC check throws, or the
+  // session rejects in the background: `claim_conflict`, `provider_auth`, a locked vault) the
+  // request says `start_failed` and the human is warned once, as on the PC daemon (ADR 0053).
+  // Without it the shared mark would spend the approval with nothing run and no word said.
+  const planReport = { store, clock, humanId: human.id, agentId: agent.id };
   const scheduler = new Scheduler(
     {
       clock,
-      start: async (req) => {
+      start: reportingPlanStartFailures(planReport, async (req) => {
         const r = req as CloudStartRequest;
         if (!r.force && PC_RULE_TRIGGERS.has(r.trigger)) {
           let verdict: PresenceVerdict;
@@ -621,7 +628,7 @@ export async function startCloudRunner(deps: CloudRunnerDeps): Promise<CloudRunn
         }
         decide(req, "started");
         return runSession(r);
-      },
+      }),
     },
     config.scheduleTickMs,
   );

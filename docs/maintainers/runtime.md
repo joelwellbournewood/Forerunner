@@ -1021,7 +1021,9 @@ on is `start_failed` with the error, the human gets a warning message, and the r
 retried. A start the scheduler took but whose `runner.start` rejects in the background
 (`claim_conflict` while a cloud session of the agent runs, `provider_auth`, the schema gate) is
 reported the same way by `reportingPlanStartFailures`, which wraps the daemon's session start
-(`reportPlanStartFailure` finds the request by its `plan_id`; one warning per request). A row
+and the cloud runner's scheduler start (`reportPlanStartFailure` finds the request by its
+`plan_id`; one warning per request, remembered as the card's `failure_reported_at`, so a card
+the cloud trigger already marked `start_failed` still gets its warning). A row
 whose handling throws is logged (`plan answer not applied`) and left for the next sync; the
 other rows still act. Each outcome is one audit row `session.plan_approval` (`PLAN_APPROVAL_AUDIT_TOOL`:
 the request, plan and start ids and the outcome, never the plan text). The conditional claim
@@ -1623,7 +1625,8 @@ membership count, specialist and estimate do not) and the answer shapes; `syncPl
 a fake port (one start bound to the id, the card and the audit row, a second sync starting
 nothing; queued and deferred answers; a rejected plan leaving the tasks ready; an answer outside
 the options; a card without the id; a start the port refuses warned once and not retried; a
-start that fails in the background marked `start_failed` and warned once; two approved plans
+start that fails in the background marked `start_failed` and warned once, also when another
+producer wrote `start_failed` first; two approved plans
 of one project, the older superseded; two overlapping syncs making one start; a card another
 producer marked left alone; a failing row left for the next sync; a plan cut to budget run
 under the filing session's cap;
