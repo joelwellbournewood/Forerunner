@@ -269,6 +269,10 @@ chat, voice, the phone and the agent's own `email_mode_set` tool change the mode
 the row past the store, so switching to off there leaves commands on with no audit row and no
 notification, and the ADR's "every writer goes through it" is false.
 
+After the fixes (commits `aaddb91`, `96ddd11`, `f407646`, `c7e53ac`) every requirement below
+holds; the build report's "Left open" items about the running watcher and the page are closed
+by findings 2 and 3.
+
 ### Requirements checked
 
 - [x] ADR 0081 picks one reading (commands need a sending mode other than off) and records the
@@ -315,6 +319,7 @@ notification, and the ADR's "every writer goes through it" is false.
    notification follow), a fallback that keeps the rule when no store is wired, the change
    card saying commands go off with it, undo restoring commands with the mode, and a commands
    test plus a daemon test proving the audit row and the notification.
+   Resolution: fixed in aaddb91: `email.mode.set` hands the change to the daemon's settings store through `CommandPorts.emailMode` (switch-off, `commands_switched_off` audit row, `email_commands_off` notification), applies the same rule and audit row itself without the port, says so on the card and its undo turns commands back on; proved by `commands.test.ts` ("email.mode.set to off turns email commands off …", "… goes through the daemon's settings store when the port is wired") and `email-routes-wiring.test.ts` ("ADR 0081: email.mode.set … undo turns them back on", which fails with the port unwired); ADR 0081 amended, commands.md, runtime.md and email.md corrected.
 2. **low** — `services/cloud-runner/src/email-watch.ts:297` (`handleOne`). The watcher reads
    the settings once at `start`; after the owner switches the mode to off (or turns commands
    off) under a running runner, `status` and `/health` keep saying `watching` for commands
@@ -323,6 +328,7 @@ notification, and the ADR's "every writer goes through it" is false.
    Verified by reading `start`/`handleOne` (no other read of the settings) and
    `docs/maintainers/cloud-runner.md`, which states the gap. Needed: the watcher stands down
    with the reason when a message arrives for commands no longer in force, with a test.
+   Resolution: fixed in 96ddd11: after each message the watcher re-reads the settings and, when commands are no longer in force, stops watching with the reason in `status`/`/health` and an `email watch stopped` line (`standDownWhenOff`); two new `email-watch.test.ts` cases (push, and poll-only with a pre-rule row) fail with the call removed; cloud-runner.md updated.
 3. **low** — `apps/ui/src/pages/EmailSettingsPage.tsx:638` (`CommandsForm`) and `:179`
    (`ModePicker`). The commands checkbox is local state seeded once from
    `config.commands.enabled` and the form is not keyed on it; after "Apply mode" to off the
@@ -333,3 +339,5 @@ notification, and the ADR's "every writer goes through it" is false.
    (`apps/ui/test/fake-daemon.ts:411`), which does not mirror the rule, so no UI test can see
    it. Needed: the form follows the stored toggle, the mode note says commands went off, the
    fake daemon mirrors ADR 0081, and a UI test.
+
+   Resolution: fixed in f407646: the commands toggle follows the stored value, the mode note adds `COMMANDS_TURNED_OFF_NOTE` when the change turned commands off, and the fake daemon mirrors ADR 0081 (400 with the plain sentence, switch-off at off); the new `apps/ui/test/email-settings.test.tsx` case fails without the `useEffect`; apps.md and email.md updated.
