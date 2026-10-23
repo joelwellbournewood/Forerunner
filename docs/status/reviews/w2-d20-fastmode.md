@@ -271,6 +271,14 @@ composition need fixing.
      of a project with `fast_mode: true`, on a provider with `fastMode = true`. The provider
      calls carried no `speed`, the Run row named the base model, and no `model.fast_mode`
      audit row was written.
+   Resolution: fixed in 7eb389b. The critic now makes the executor's `decideFastMode`
+   decision for each review whose pick is on the Opus rung (`CriticDeps.fastMode`, filled by
+   the daemon with the source row's kind from the store and the price table in force). On
+   an API-style source the review gets speed fast, and the Run row, the ledger rows and the
+   review's model name the variant. Every decision writes one `model.fast_mode` audit row.
+   A subscription source is ignored with an "API only" audit row. This is proved by
+   `packages/critic/test/fast-mode.test.ts` (6 tests; 4 fail without the fix) and
+   `packages/runtime/test/fast-mode-wiring.test.ts`. ADR 0057 decision 5 is amended.
 
 2. **medium**: `packages/commands/src/commands/settings.ts:91` and
    `packages/runtime/src/models/fast-mode.ts:118`.
@@ -283,6 +291,12 @@ composition need fixing.
    - **How I verified it.** A throwaway commands test (since deleted) printed both texts with
      the fast row overridden to 30 / 150. The card read "USD 24 / 120 ... 6x". The daemon row
      read "USD 30 / 150 ... 7.5x".
+   Resolution: fixed in df8fa90. `SettingSpec.effect(value, ctx)` now receives the price
+   table through the new optional `CommandPorts.pricingTable` port, which the daemon fills
+   with the table in force. The card and the change-log sentence now quote the corrected
+   surcharge. This is proved by the new case in `packages/commands/test/fast-mode.test.ts`
+   (it failed before the fix) and by the composed-daemon case in
+   `fast-mode-wiring.test.ts`.
 
 3. **low**: `packages/runtime/src/estimates/model.ts:446-457`.
    - **What is wrong.** The estimate-versus-actual fold adds a fast-mode run's cost (6x) to
@@ -294,6 +308,11 @@ composition need fixing.
    - **How I verified it.** By reading the code: `refresh()` sums `r.cost_usd_micro` over
      every finished run of the task, whatever `r.model` is. Finding 3's test exercises this
      path.
+   Resolution: fixed in fd36071. `EstimateModel.refresh()` still folds a finished task with a
+   run that names a `<id>-fast` variant, and never re-reads it, but no longer counts it as a
+   sample. This is proved by the new case in `packages/runtime/test/estimates.test.ts`: 6
+   standard tasks and 5 fast ones give 6 samples and a ratio of 1. Before the fix it saw 10
+   samples.
 
 4. **low**: `apps/ui/test/fake-daemon.ts:1742`.
    - **What is wrong.** The fake daemon's `fast_mode` card shows the old value `false` for a
@@ -302,6 +321,9 @@ composition need fixing.
      they mirror.
    - **How I verified it.** I compared the two code paths (`state.fastMode[id] ?? false`
      against `show(null) === "unset"` in `settings.ts:157`).
+   Resolution: fixed in c40f75a. `state.fastMode` now takes `null` for a flag that was never
+   set. The row reads off, and the card and the sentence say "unset". This is proved by the
+   new case in `apps/ui/test/fast-mode.test.tsx` (it fails against the old fake daemon).
 
 5. **low**: `packages/runtime/src/daemon/compose.ts:1574-1579`.
    - **What is wrong.** No test covers the composition. The executor's `pricingFor` and
@@ -310,8 +332,26 @@ composition need fixing.
    - **How I verified it.** I removed the four lines from `compose.ts` and ran
      `fast-mode.test.ts`, `daemon.test.ts` and `wiring.test.ts`: 3 files, 36 tests passed.
      Then I restored the file.
+   Resolution: fixed in 202cf54. The new `packages/runtime/test/fast-mode-wiring.test.ts`
+   runs the composed daemon with a corrected `claude-opus-5-5-fast` row in `pricing.json`.
+   The test fails if any one of these is removed from `compose.ts`: the executor's
+   `pricingFor` and `pricingTable`, the critic's `fastMode`, or the command loop's
+   `pricingTable` port. I checked each removal, and each fails one test.
 
 6. **low**: `docs/decisions/README.md` (commit 6d8fded).
    - **What is wrong.** The brief says "Do NOT edit docs/decisions/README.md". The branch
      adds the ADR 0057 index row anyway.
    - **How I verified it.** `git show 6d8fded --stat`.
+   Resolution: not a defect. `scripts/closeout-docs.test.ts:225-246` requires every ADR to
+   be indexed in `docs/decisions/README.md`. Removing the 0057 row fails it ("README indexes
+   ADR 0057"); I verified that and restored the row. Without the row, `pnpm check` cannot
+   pass. The row is its own commit (6d8fded), so the orchestrator can drop it if it adds the
+   row centrally.
+
+### After the fixes
+
+All six findings are resolved: five fixed and one not a defect. With the fixes, the brief's
+clauses are met: every Opus rung of a fast-mode project's runs goes fast on an API source,
+and the surcharge text the human confirms matches the prices charged. Re-score after fixes:
+90 / 100. Two limitations remain documented and are not defects of this build: no live call
+yet, and `usage.speed` is not read back.
