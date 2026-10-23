@@ -35,6 +35,11 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   `packages/state/test/suite.ts`. R.6 and K.8 stay `in progress`: the Android app's Firebase
   wiring (google-services.json, firebase-messaging, the messaging service, `fcmToken`) waits
   for a Firebase project (BLOCKERS.md, FCM row). Report: `docs/status/reviews/w4-fcm-sender.md`.
+- Reviewed (verdict revise, nine findings, all resolved on the branch): the budget push now
+  reads the runner's `stop_reason`, held notices are re-read at the end of quiet hours, only
+  FCM's `UNREGISTERED` clears a token, requests time out, the own agent's `info` summary no
+  longer double-buzzes, one token on two rows is sent once, a blank pairing token is none.
+  `push.test.ts` 25 tests. Review: `docs/status/reviews/w4-fcm-sender.md`, `## Review`.
 
 ### 2026-10-23 (fifteen bounded items merged; wave 1 reviewed, its fix stage and waves 2 to 4 stopped at the credit limit; triage; live probe on the new key)
 - Base b31c2e5 (the handover of 2026-10-21). Fifteen items were built on `wave/<id>` branches

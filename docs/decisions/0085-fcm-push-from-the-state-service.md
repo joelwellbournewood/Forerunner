@@ -104,3 +104,20 @@ configured.
 - **Refuse to start on a bad reference** (as the mirror does). Rejected for push (point 7):
   the mirror is something the operator asked for and acts on repositories; push is a
   convenience on top of a feed the app already polls.
+
+## Review amendment (2026-10-23, review of w4-fcm-sender)
+
+The independent review (`docs/status/reviews/w4-fcm-sender.md`) changed five rules, recorded
+in the points above:
+
+- The budget kind is read from the runner's `handoff.stop_reason`, like the runtime's
+  `sessionEnded` producer, because the runner writes spend only at session end and the budget
+  hook stops before the cap: `budget_exceeded` is the urgent stop, `budget_finish_current`
+  the warning (sent with the end notice). Spend against the cap is kept as a second signal
+  for a writer that records spend while a session runs.
+- Held notices are re-read at the flush; an answered request or a read message is dropped.
+- Only FCM's `UNREGISTERED` code clears a token; a bare 404 is a failure (it is what a wrong
+  API URL or a proxy answers, and it must not wipe every token).
+- Each request has a 10 s timeout, retried like a network error.
+- Messages from the human's own agent are pushed only when they need the human; one token on
+  several device rows is sent to once and cleared from all of them.
