@@ -317,9 +317,14 @@ checks the mode so a row stored before the rule (commands on at `off`) watches n
 `EmailSettingsStore` with the runner's audit log, so a settings write made through it (a
 marker rotation, an allowlist addition) that turns such a row's commands off leaves the
 `commands_switched_off` audit row; the owner's notification for that case is the daemon's
-(the runner binds no listener). The watcher reads the settings once at `start`; a mode
-changed to `off` later is caught by the gate, which obeys nothing at `off`
-(`emailCommandsActive`), until the runner restarts and `start` reports the reason.
+(the runner binds no listener). A mode changed to `off` (or commands turned off) while the
+watcher runs is caught by the gate, which obeys nothing (`emailCommandsActive`); after each
+message the watcher reads the settings again and, when commands are no longer in force, stops
+watching, sets `status` (and so `/health`) to `disabled` with the reason
+(`EMAIL_WATCH_MODE_OFF_REASON`, or "email commands are off for this agent") and logs
+`email watch stopped` (`standDownWhenOff`). The message itself was handled (ignored, with its
+`email.command` audit row). Watching resumes at the next `start` (a runner restart) once
+commands are on at a sending mode again.
 
 ### Health and readiness
 
@@ -412,7 +417,7 @@ file-backed SQLite, testenv mail server on 127.0.0.1, SimulatedClock):
 | `vault-unlock.test.ts` | challenge and answer against the real file vault; wrong key, tampered answer, stale challenge, expiry (withdrawn), deny; the key absent from every log line, audit row and request row; the window: cached re-unlock, forgetting at the end, shortened / cleared window, policy ask, window set by the answer, absurd window refused |
 | `presence-billing.test.ts` | desktop seen / stale / revoked / other human / runner kind; active pc session; billing: shared vs personal runner, `personalRunner` opt-in, missing credential and disabled source skipped, other human's agent refused; the router decides (`BillingRouter.pick` called once with `runner: "cloud", purpose: "session"`, a `never` policy skips the subscription on a personal runner, `runnerRoutingPolicy` per runner kind, the plan-share rule falls back to the API key at the cap) |
 | `remote.test.ts` | kill within one poll (runs aborted, freeze, result and audit rows), stop lifts the freeze, start resumes and asks the scheduler, pause refused, pc-targeted and other-runner commands untouched; another human's phone (start of its agent, kill) and a start naming another agent refused with `forbidden: ...`, the runner's run untouched |
-| `email-watch.test.ts` | a valid command acknowledged within 60 s of simulated time (one simulated second per 50 ms of wall time) and a capped session started; a spoofed command ignored with no session, no reply and an audit row; completion threaded under the command; polling when the host has no push; `push: false` polling only although the host pushes (delivery at the interval, never twice); commands off; ADR 0081: commands on at sending mode off (a row from before the rule) does not start, with `EMAIL_WATCH_MODE_OFF_REASON` in the status and the log, and a command mailed afterwards starts nothing and gets no reply |
+| `email-watch.test.ts` | a valid command acknowledged within 60 s of simulated time (one simulated second per 50 ms of wall time) and a capped session started; a spoofed command ignored with no session, no reply and an audit row; completion threaded under the command; polling when the host has no push; `push: false` polling only although the host pushes (delivery at the interval, never twice); commands off; ADR 0081: commands on at sending mode off (a row from before the rule) does not start, with `EMAIL_WATCH_MODE_OFF_REASON` in the status and the log, and a command mailed afterwards starts nothing and gets no reply; a running watcher (push, and poll-only) whose mode goes to `off` stands down at the next message: the message ignored, nothing started or sent, `status` disabled with the reason, the `email watch stopped` line, the poll loop stopped |
 | `identity.test.ts` | ADR 0082 on a file-backed SQLite store holding two humans: a runner naming none refused `identity_ambiguous` and one naming an unknown email `not_found`, nothing created either way; `FORERUNNER_RUNNER_HUMAN` as an email (case does not matter) serving that human and their own principal, the composed runtime bound to the same rows (`rt.identity`), the status naming them |
 | `runner.test.ts` | the composed runner on a file-backed SQLite store: health route and readiness file, device row, billing source, schedules; a schedule left to a heartbeating PC and taken over once it is gone (session `runner: "cloud"`, task done, ledger rows under the runner's source); `startSession` answering `deferred` for a firing the PC rule skipped and `started` when forced; a peer's handoff starting a message-triggered cloud session that reads it and does the ready task, with no second session for the same handoff; an approved plan whose cloud session fails in the background (a stale `running` session of the agent: `claim_conflict`) marked `start_failed` with one warning to the human; an emailed task acknowledged within a minute, run as a capped cloud session (tier 1 tasks end `in_review`) with the completion mail |
 

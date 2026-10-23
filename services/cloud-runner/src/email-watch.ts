@@ -8,6 +8,7 @@ import {
   type EmailIdentity,
   EmailPolicy,
   EmailSettingsStore,
+  emailCommandsActive,
   HumanRequestApprovalPort,
   ImapSmtpMailbox,
   type InboundEmail,
@@ -308,6 +309,37 @@ export class EmailWatch {
     } catch (e) {
       this.logger.warn("inbound email failed", { id: message.id, error: errorMessage(e) });
     }
+    await this.standDownWhenOff();
+  }
+
+  /**
+   * After each message: when the owner turned commands off or the sending mode to `off`
+   * (ADR 0081) while this watcher runs, stop watching and report why in `status` (the health
+   * view) and the log, instead of claiming `watching` for commands no longer in force. The
+   * gate already obeyed nothing; the message itself was handled (ignored, audited). `start`
+   * reads the settings again, so a runner restart picks commands up once they are back on.
+   */
+  private async standDownWhenOff(): Promise<void> {
+    const w = this.watch;
+    if (!w) return;
+    let config: Awaited<ReturnType<EmailSettingsStore["get"]>>;
+    try {
+      config = await this.settings.get(this.deps.agentId);
+    } catch (e) {
+      this.logger.warn("email settings unreadable; still watching", { error: errorMessage(e) });
+      return;
+    }
+    if (emailCommandsActive(config) || this.watch !== w) return;
+    const reason = config.commands.enabled
+      ? EMAIL_WATCH_MODE_OFF_REASON
+      : "email commands are off for this agent";
+    this.watch = null;
+    this.current = { state: "disabled", reason };
+    this.logger.warn("email watch stopped", { reason });
+    // Not awaited: the poll-only watch's stop waits for the message in flight, which is this.
+    void w.stop().catch((e: unknown) => {
+      this.logger.warn("email watch did not stop cleanly", { error: errorMessage(e) });
+    });
   }
 
   /** Completion summary for an email-triggered session (T.10); the handler threads it. */
