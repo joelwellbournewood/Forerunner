@@ -18,6 +18,18 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-r2-devices reviewed and fixed, R.2)
+- Independent review of `wave/w3-r2-devices` (`docs/status/reviews/w3-r2-devices.md`,
+  verdict revise, 72/100, seven findings). Fixed on the branch: the daemon's calls to the
+  state service time out (`DEVICE_SERVICE_TIMEOUT_MS`, 15 s) instead of holding the app;
+  a lost phone whose row is in the daemon's store is revoked there when the service is down,
+  hung or refuses the token (`via: "store"`); every revocation from Settings writes the
+  `change_log` row the registry's `device.revoke` writes (source `ui`, irreversible); the
+  Devices section re-reads the list while a code is live and closes the pairing when the
+  phone appears; a loopback service URL in the QR is warned about; the state-service.md
+  test table holds its new row. Left to the merge: the textual conflicts with the base in
+  `fixtures.ts`, apps.md and runtime.md. R.2 stays `done` on the branch.
+
 ### 2026-10-23 (item w3-r2-devices built: Settings → Devices on the desktop, R.2)
 - Branch `wave/w3-r2-devices`, continuing the earlier attempt's uqr pin and its unverified
   `wip:` snapshot of the daemon side. The daemon gained `GET /devices`, `POST /devices/pairing`

@@ -260,3 +260,8 @@ the same thing.
    these three files: both sides append next to the same anchors. Every other shared file
    (`client.ts`, `SettingsPage.tsx`, `fake-daemon.ts`, `server.ts`, `compose.ts`,
    `api-types.ts`) auto-merges.
+7. **low**: `docs/maintainers/state-service.md:341`. The new `desktop-devices.test.ts` row
+   comes after the blank line that ends the test table, so Markdown renders it as a stray
+   paragraph of pipes. The base's `shared-secrets.test.ts` row has the same problem. Verified
+   by reading the file: the line before the new row is blank, and the table ends at
+   `audit-export.test.ts`. Fix: put the row inside the table.
