@@ -13,7 +13,11 @@ import {
 } from "@forerunner/runtime";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CLOUDFLARE_TOOL_NAMES, type CloudflareToolName } from "../src/cloudflare/index.ts";
+import {
+  CLOUDFLARE_TOOL_NAMES,
+  type CloudflareToolName,
+  HumanRequestCloudflareApprovals,
+} from "../src/cloudflare/index.ts";
 import {
   ACCOUNT,
   fullPolicies,
@@ -38,6 +42,9 @@ import { FakeCloudflare } from "./helpers/fake-cloudflare.ts";
  * token by reference, SimulatedClock; no model provider is needed.
  */
 const REGISTRY = join(process.cwd(), "evals", "registry");
+/** A secret a Worker binding names by reference; the value is a fixture. */
+const SIGNING_SECRET = "worker_signing_secret";
+const SIGNING_VALUE = "fixture-signing-value-0001"; // not-a-secret
 type Json = Record<string, unknown>;
 const json = async (r: Response): Promise<Json> => (await r.json()) as Json;
 
@@ -79,6 +86,7 @@ describe("cloudflare wired into the daemon", () => {
   /** A run of the daemon's own token issuer with only the catalog's API host allowed. */
   const runContext = (
     autonomy: 0 | 1 | 2 | 3 | 4,
+    grantedSecrets: string[] = [],
   ): { run: RunContext; ctx: ToolExecutionContext } => {
     const runId = `run-cf-${++runCounter}`;
     const run: RunContext = {
@@ -91,7 +99,7 @@ describe("cloudflare wired into the daemon", () => {
         allowedTools: [...CLOUDFLARE_TOOL_NAMES],
         allowedPaths: [worktree],
         allowedDomains: ["api.cloudflare.com"],
-        grantedSecrets: [],
+        grantedSecrets,
         budgetUsdMicro: 1_000_000,
         depth: 0,
         maxDepth: 2,
@@ -146,7 +154,7 @@ describe("cloudflare wired into the daemon", () => {
       config: null,
       clock,
       stateUrl: "sqlite::memory:",
-      vault: new MemoryVault({ cloudflare_api_token: TOKEN }),
+      vault: new MemoryVault({ cloudflare_api_token: TOKEN, [SIGNING_SECRET]: SIGNING_VALUE }),
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.1.0-test",
@@ -262,6 +270,66 @@ describe("cloudflare wired into the daemon", () => {
     const rows = await rt.store.auditLog.list({ tool: "cloudflare_plan" } as never, { limit: 10 });
     expect(rows.some((r) => r.allowed)).toBe(true);
     expect(JSON.stringify(rows)).not.toContain(TOKEN);
+  });
+
+  // Review of 2026-10-23: the hooks key their row on the parsed input (a `secret:` reference
+  // as written) while the tool sees the input with the secret resolved; the Cloudflare port
+  // hashed that resolved input, found no hook row and asked the human a second time. The
+  // hooks hand their key to the tool (`ctx.approvalKey`), which passes it on as `key`.
+  it("a deploy whose input carries a secret: reference reuses the hooks' answer: the human is asked once", async () => {
+    const { run, ctx } = runContext(2, [SIGNING_SECRET]);
+    const deploy = tool("cloudflare_deploy");
+    const input = {
+      env: "staging",
+      target: {
+        kind: "worker",
+        name: "signed",
+        scriptPath: join("dist", "worker.js"),
+        bindings: [{ type: "secret_text", name: "SIGNING", text: `secret:${SIGNING_SECRET}` }],
+      },
+      hosts: [`app.${ZONE_A_NAME}`],
+    };
+    const signedRows = async () =>
+      (await rt.store.humanRequest.list({ session_id: SESSION, kind: "approval" } as never)).filter(
+        (r) => JSON.stringify(r.change_card ?? {}).includes('"signed"'),
+      );
+    const first = await rt.hooks.beforeToolCall(run, deploy, input);
+    expect(first).toMatchObject({ allowed: false, pending: true });
+    const [filed] = await signedRows();
+    if (!filed) throw new Error("the hooks filed no approval for the deploy");
+    await rt.store.humanRequest.answer(filed.id, filed.version, "yes", rt.human.id);
+
+    const second = await rt.hooks.beforeToolCall(run, deploy, input);
+    expect(second.allowed).toBe(true);
+    if (!second.allowed) return;
+    expect(JSON.stringify(second.input)).toContain(SIGNING_VALUE);
+    expect(second.approvalKey).toBe((filed.change_card as { key?: string }).key);
+    const approvals = new HumanRequestCloudflareApprovals(rt.store.humanRequest, clock);
+    const answer = await approvals.ask({
+      sessionId: SESSION,
+      runId: ctx.runId,
+      agentId: rt.agent.id,
+      humanId: rt.human.id,
+      projectId,
+      tool: "cloudflare_deploy",
+      input: second.input,
+      key: second.approvalKey,
+      actionClass: "deploy_staging",
+      risk: "medium",
+      why: "autonomy level 2 requires a human's approval to deploy",
+      operation: "deploy_worker",
+      scope: `account:${ACCOUNT}`,
+      env: "staging",
+      oneShot: false,
+    });
+    expect(answer).toBe("approved");
+
+    // The same through the tool, as the agent loop runs it: the key rides in the context.
+    const result = await deploy.execute(second.input, { ...ctx, approvalKey: second.approvalKey });
+    await rt.hooks.afterToolCall(run, deploy, second.input, result);
+    expect(result.artifacts?.pending).toBeFalsy();
+    const rows = await signedRows();
+    expect(rows.map((r) => r.id)).toEqual([filed.id]);
   });
 
   it("serves the panel routes behind the bearer token: settings by reference, the token's real scopes, 404 for an unknown project", async () => {

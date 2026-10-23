@@ -62,6 +62,12 @@ export interface DeployActor {
   planApproved?: boolean;
   /** The tool call this deploy serves; the hooks' answer for it is reused when it matches. */
   tool?: { name: string; input: unknown };
+  /**
+   * The hooks' approval key for that tool call (`ToolExecutionContext.approvalKey`, computed
+   * on the input before secret references were resolved). Passed on as the approval's `key`
+   * so the hooks' row matches although `tool.input` carries resolved values.
+   */
+  approvalKey?: string;
 }
 
 export interface WorkerDeployRequest {
@@ -826,6 +832,7 @@ export class CloudflareDeployer {
   private async gate(actor: DeployActor, g: GateInput): Promise<GateResult> {
     const tool = actor.tool?.name ?? `cloudflare.${g.operation}`;
     const input = actor.tool?.input ?? g.request;
+    const key = actor.tool ? actor.approvalKey : undefined;
     const base = {
       sessionId: actor.sessionId,
       runId: actor.runId,
@@ -835,6 +842,7 @@ export class CloudflareDeployer {
       taskId: actor.taskId,
       tool,
       input,
+      ...(key ? { key } : {}),
       operation: g.operation,
       scope: g.scope,
       env: g.env ?? undefined,
