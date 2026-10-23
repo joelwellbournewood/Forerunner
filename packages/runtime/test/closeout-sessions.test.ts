@@ -10,6 +10,7 @@ import {
   type TaskExecutionResult,
   type TaskExecutor,
 } from "../src/session/runner.ts";
+import { pauseMessageBody, sessionPausePorts } from "../src/wiring/session-ports.ts";
 
 /**
  * Requirements close-out for the session runner (spec A.6, C.1, C.6, C.7, D.17, E.4, F.7): the
@@ -425,9 +426,8 @@ describe("closeout: a run that times out (D.17)", () => {
 /**
  * E.4 has two clauses. The first (re-checked between every task) is asserted here. The second
  * (before any write to shared state) holds for the claim of the next task, asserted here at the
- * moment of the claim, but not yet for the session-end writes (task states, summary cache,
- * handoffs): a message that lands during the last task is read at the next session's startup
- * checklist. E.4 stays `in progress`; `docs/status/BLOCKERS.md` names the stand-in and the re-test.
+ * moment of the claim, and for the session-end writes (summary cache, handoffs, the note to the
+ * human), asserted in the next block with messages that land during the last task.
  */
 describe("closeout: the inbox is re-checked between tasks (E.4)", () => {
   let w: World;
@@ -491,6 +491,219 @@ describe("closeout: the inbox is re-checked between tasks (E.4)", () => {
     expect(noteAtClaim.get(b.id)).toBe(note.read_at);
     expect(noteAtClaim.get(b.id)).not.toBeNull();
     expect(w.store.task.claim).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("closeout: the inbox is re-checked before the session-end writes (E.4)", () => {
+  let w: World;
+  beforeEach(async () => {
+    w = await world();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    return w.store.close();
+  });
+
+  /**
+   * Records `read_at` of the message `watched()` names at the moment of each session-end write:
+   * the summary cache patch and every handoff or note the runner sends after the last task.
+   */
+  function watchEndWrites(watched: () => string) {
+    const at: { cache?: string | null; handoff?: string | null; human?: string | null } = {};
+    const readAt = async () => (await w.store.message.get(watched()))?.read_at ?? null;
+    const realPatch = w.store.project.patch.bind(w.store.project);
+    vi.spyOn(w.store.project, "patch").mockImplementation(async (...args) => {
+      if ("summary_cache" in (args[1] as object)) at.cache = await readAt();
+      return realPatch(...args);
+    });
+    const realSend = w.store.message.send.bind(w.store.message);
+    vi.spyOn(w.store.message, "send").mockImplementation(async (...args) => {
+      const m = args[0];
+      if (m.from_agent_id === w.alice && m.type === "handoff") at.handoff = await readAt();
+      if (m.from_agent_id === w.alice && m.to_human_id === w.human) at.human = await readAt();
+      return realSend(...args);
+    });
+    return at;
+  }
+
+  async function run(exec: TaskExecutor) {
+    return runnerFor(w, exec).start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: 5_000_000,
+      grant,
+    });
+  }
+
+  it("a requires_ack stop sent during the last task is read before the summary cache and the handoff are written, and the session ends stopped on it", async () => {
+    const a = await addTask(w, "A", { priority: 9 });
+    const b = await addTask(w, "B", { priority: 5 });
+    let stopId = "";
+    const at = watchEndWrites(() => stopId);
+    const exec = executorByTitle(w, {}, async (title) => {
+      if (title !== "B") return;
+      stopId = (
+        await w.store.message.send({
+          from_agent_id: w.bob,
+          to_agent_id: w.alice,
+          type: "request",
+          body: "stop: I need the branch for a hotfix",
+          requires_ack: true,
+          author_agent: w.bob,
+        })
+      ).id;
+      await w.clock.advance(1_000);
+    });
+    const res = await run(exec);
+    // Both tasks ran and their states stand as written; nothing was left to skip.
+    expect(res.completed).toEqual([a.id, b.id]);
+    expect(res.skipped).toEqual([]);
+    for (const t of [a, b]) {
+      const row = await w.store.task.mustGet(t.id);
+      expect(row.status).toBe("done");
+      expect(row.claimed_by).toBeNull();
+    }
+    // The stop was read (and, being obeyed, acted on) before any session-end write.
+    const stop = await w.store.message.mustGet(stopId);
+    expect(stop.delivered_at).not.toBeNull();
+    expect(stop.read_at).not.toBeNull();
+    expect(stop.acted_at).not.toBeNull();
+    expect(at.cache).toBe(stop.read_at);
+    expect(at.handoff).toBe(stop.read_at);
+    expect(at.human).toBe(stop.read_at);
+    // The session ends stopped on it, and every record names it.
+    expect(res.stopReason).toBe("stopped_by_message");
+    expect(res.status).toBe("stopped");
+    expect((await w.store.session.mustGet(res.sessionId)).status).toBe("stopped");
+    const entry = { id: stopId, type: "request", from: w.bob, kind: "stop" };
+    expect(res.handoff).toMatchObject({
+      done: [a.id, b.id],
+      next: [],
+      stop_reason: "stopped_by_message",
+      end_inbox: { read: [entry], stopped_by: entry },
+    });
+    expect(JSON.stringify(res.handoff)).not.toContain("hotfix");
+    expect((await w.store.session.mustGet(res.sessionId)).handoff).toEqual(res.handoff);
+    expect(res.summary).toContain("Session ended (stopped_by_message).");
+    expect(res.summary).toContain(
+      `Read before the session-end writes: 1 message. A stop (message ${stopId}) ended the session: the task states above were written as each task ended, and nothing further was started.`,
+    );
+    const cache = (await w.store.project.mustGet(w.project)).summary_cache as {
+      last_session: { stop_reason: string; summary: string };
+    };
+    expect(cache.last_session.stop_reason).toBe("stopped_by_message");
+    expect(cache.last_session.summary).toBe(res.summary);
+    const handoffs = await w.store.message.list({ to_agent_id: w.bob, type: "handoff" } as never);
+    expect(handoffs).toHaveLength(1);
+    expect(handoffs[0]?.body).toContain(`A stop (message ${stopId}) ended the session`);
+    const log = await w.store.event.list(res.sessionId);
+    const end = log.find((e) => e.type === "session.end_inbox");
+    expect(end?.payload).toMatchObject({
+      read: [stopId],
+      interrupt: { id: stopId, kind: "stop" },
+      stopped: true,
+    });
+  });
+
+  it("an ordinary message sent during the last task is read before the writes and named in the handoff; the session still completes", async () => {
+    const only = await addTask(w, "Only");
+    let noteId = "";
+    const at = watchEndWrites(() => noteId);
+    const exec = executorByTitle(w, {}, async () => {
+      noteId = (
+        await w.store.message.send({
+          from_agent_id: w.bob,
+          to_agent_id: w.alice,
+          type: "info",
+          body: "fyi: I renamed the config module",
+          requires_ack: true,
+          author_agent: w.bob,
+        })
+      ).id;
+      await w.clock.advance(1_000);
+    });
+    const res = await run(exec);
+    expect(res.completed).toEqual([only.id]);
+    expect(res.status).toBe("completed");
+    expect(res.stopReason).toBe("completed");
+    const note = await w.store.message.mustGet(noteId);
+    expect(note.read_at).not.toBeNull();
+    // An ack-required info message is acted on by reading it, as between tasks.
+    expect(note.acted_at).not.toBeNull();
+    expect(at.cache).toBe(note.read_at);
+    expect(at.handoff).toBe(note.read_at);
+    expect(res.handoff).toMatchObject({
+      done: [only.id],
+      end_inbox: {
+        read: [{ id: noteId, type: "info", from: w.bob, kind: "message" }],
+        stopped_by: null,
+      },
+    });
+    expect(res.summary).toContain("Session completed.");
+    expect(res.summary).toContain("Read before the session-end writes: 1 message.");
+    expect(res.summary).not.toContain("ended the session");
+  });
+
+  it("a pause from the pause port during the last task is acknowledged and the row ends stopped, not left paused", async () => {
+    const only = await addTask(w, "Only");
+    const ports = sessionPausePorts({
+      store: w.store,
+      kill: { activeCount: () => 1 },
+      agentId: w.alice,
+      humanId: w.human,
+    });
+    const exec = executorByTitle(w, {}, async () => {
+      const [running] = await w.store.session.active(w.alice);
+      if (!running) throw new Error("no running session");
+      await ports.pauseSession?.(running.id, "lunch");
+      expect((await w.store.session.mustGet(running.id)).status).toBe("paused");
+    });
+    const res = await run(exec);
+    expect(res.completed).toEqual([only.id]);
+    expect(res.skipped).toEqual([]);
+    const [pause] = (await w.store.message.inbox({ agentId: w.alice })).filter(
+      (m) => m.body === pauseMessageBody(res.sessionId, "lunch"),
+    );
+    expect(pause?.read_at).not.toBeNull();
+    expect(pause?.acted_at).toBeNull(); // the port sends it without requires_ack
+    expect(res.stopReason).toBe("stopped_by_message");
+    expect((await w.store.session.mustGet(res.sessionId)).status).toBe("stopped");
+    expect(res.handoff).toMatchObject({
+      next: [],
+      end_inbox: { stopped_by: { id: pause?.id, from: w.alice, kind: "pause" } },
+    });
+    expect(res.summary).toContain(
+      `A pause (message ${pause?.id}) ended the session; no task was left to defer.`,
+    );
+  });
+
+  it("a session already stopped for another reason keeps its reason; the stop read at the end is named but not its cause", async () => {
+    await addTask(w, "Spend", { priority: 9 });
+    await addTask(w, "Later", { priority: 5 });
+    let stopId = "";
+    const exec = executorByTitle(w, { Spend: { outcome: "budget_exceeded" } }, async (title) => {
+      if (title !== "Spend") return;
+      stopId = (await stopFrom(w)).id;
+    });
+    const res = await run(exec);
+    expect(res.stopReason).toBe("budget_exceeded");
+    expect((await w.store.message.mustGet(stopId)).read_at).not.toBeNull();
+    expect(res.handoff).toMatchObject({
+      stop_reason: "budget_exceeded",
+      end_inbox: { read: [{ id: stopId, kind: "stop" }], stopped_by: null },
+    });
+    expect(res.summary).toContain("Read before the session-end writes: 1 message.");
+    expect(res.summary).not.toContain("ended the session");
+  });
+
+  it("nothing waiting at the end: no event, no handoff field, no summary line", async () => {
+    await addTask(w, "Quiet");
+    const res = await run(executorByTitle(w));
+    expect(res.handoff).not.toHaveProperty("end_inbox");
+    expect(res.summary).not.toContain("Read before the session-end writes");
+    const log = await w.store.event.list(res.sessionId);
+    expect(log.some((e) => e.type === "session.end_inbox")).toBe(false);
   });
 });
 
