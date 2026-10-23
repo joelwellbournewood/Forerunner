@@ -43,14 +43,28 @@ import {
   type StateStore,
   type TaskStatus,
 } from "@forerunner/state";
+import { scanForInjection } from "../injection/scan.ts";
 import type { NotifierLike } from "../notifications/producers.ts";
 import { handoverReport as handoverReportNotification } from "../notifications/producers.ts";
 import type { Planner, PlannerContext, SessionPlan, SessionResult } from "../session/runner.ts";
-import type { Schedule, Scheduler, StartRequest } from "../session/triggers.ts";
+import {
+  localParts,
+  type Schedule,
+  type Scheduler,
+  type StartRequest,
+} from "../session/triggers.ts";
 import { defaultHandoverSeed, type HandoverSeed, handoverSeedOf } from "./handover-seed.ts";
 
-/** The scheduler entry's sentinel agent id, like the model watch's. */
+/**
+ * The prefix of the scheduler entries' sentinel agent ids, like the model watch's. Each
+ * project gets its own (`handoverAgentId`): the scheduler keeps one pending slot per agent,
+ * so a shared id would let a third project due the same day replace the second's request.
+ */
 export const HANDOVER_AGENT_ID = "handover-test";
+
+export function handoverAgentId(projectId: string): string {
+  return `${HANDOVER_AGENT_ID}:${projectId}`;
+}
 export const HANDOVER_SETTINGS_KEY = "handover";
 export const HANDOVER_AUDIT_TOOL = "handover.run";
 export const DEFAULT_HANDOVER_DAY = 1;
@@ -63,8 +77,11 @@ const STUCK_KINDS = [
   "refused",
   "task_needs_human",
   "task_failed",
+  "task_unfinished",
   "session_failed",
 ] as const;
+/** The seeded task's ends that mean the change was made (merged or waiting in its PR). */
+const FINISHED: readonly TaskStatus[] = ["done", "in_review"];
 
 export function handoverScheduleId(projectId: string): string {
   return `handover:${projectId}`;
@@ -105,7 +122,7 @@ export function scheduleHandover(
 ): Schedule {
   const schedule: Schedule = {
     id: handoverScheduleId(opts.projectId),
-    agentId: HANDOVER_AGENT_ID,
+    agentId: handoverAgentId(opts.projectId),
     projectId: opts.projectId,
     kind: "monthly",
     dayOfMonth: opts.day ?? DEFAULT_HANDOVER_DAY,
@@ -141,7 +158,7 @@ export function syncHandoverSchedules(
 }
 
 export function isHandoverRequest(req: StartRequest): boolean {
-  return req.agentId === HANDOVER_AGENT_ID && !!req.projectId;
+  return !!req.projectId && req.agentId === handoverAgentId(req.projectId);
 }
 
 /** The planner of a handover session: the seeded task alone, nothing else the project holds. */
@@ -167,7 +184,10 @@ export interface StuckPlace {
   tool?: string;
   /** For `reread`: how many times the file was read. */
   count?: number;
-  /** For `failed` and `refused`: the error or the hooks' reason, cut short. */
+  /**
+   * For `failed` and `refused`: the error or the hooks' reason, cut short; for
+   * `task_unfinished`: the status the seeded task was left in.
+   */
   detail?: string;
 }
 
@@ -185,6 +205,19 @@ function pathOf(inputSummary: string): string | null {
 function cut(s: string, max = 200): string {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
+}
+
+/**
+ * Tool output, the hooks' reasons and the paths the model chose are data (AGENTS.md): they
+ * go into a READY task that a later session hands to a specialist as its goal, so text that
+ * reads as an instruction is withheld and only named (the audit row keeps the original).
+ */
+function asData(text: string, what: "text" | "path"): string {
+  const report = scanForInjection(text, "tool_output");
+  if (!report.suspicious) return text;
+  if (what === "path") return "[withheld: instruction-shaped path]";
+  const rules = [...new Set(report.matches.map((m) => m.rule))].join(", ");
+  return `[withheld: instruction-shaped text (${rules}); see the audit row]`;
 }
 
 /**
@@ -207,13 +240,14 @@ export function stuckPlaces(
   const failed: StuckPlace[] = [];
   const refused: StuckPlace[] = [];
   for (const r of own) {
-    const path = pathOf(r.input_summary);
+    const raw = pathOf(r.input_summary);
+    const path = raw === null ? null : asData(raw, "path");
     if (!r.allowed) {
       refused.push({
         kind: "refused",
         tool: r.tool,
         files: path ? [path] : [],
-        detail: cut(r.denied_reason ?? "refused"),
+        detail: asData(cut(r.denied_reason ?? "refused"), "text"),
       });
       continue;
     }
@@ -223,7 +257,7 @@ export function stuckPlaces(
         kind: "failed",
         tool: r.tool,
         files: path ? [path] : [],
-        detail: cut(r.result_summary),
+        detail: asData(cut(r.result_summary), "text"),
       });
   }
   const out: StuckPlace[] = [];
@@ -233,6 +267,14 @@ export function stuckPlaces(
   const seedFiles = [...facts.seedFiles];
   if (facts.taskStatus === "needs_human") out.push({ kind: "task_needs_human", files: seedFiles });
   if (facts.taskStatus === "failed") out.push({ kind: "task_failed", files: seedFiles });
+  // Any other end short of done or in review: the change was not made (sent back by the
+  // critic, never planned, stopped by the budget). Never "stuck nowhere".
+  if (
+    facts.taskStatus !== "needs_human" &&
+    facts.taskStatus !== "failed" &&
+    !FINISHED.includes(facts.taskStatus)
+  )
+    out.push({ kind: "task_unfinished", files: seedFiles, detail: facts.taskStatus });
   if (facts.sessionStatus === "failed" || facts.sessionStatus === "killed")
     out.push({ kind: "session_failed", files: seedFiles });
   return out;
@@ -251,6 +293,8 @@ export function describeStuckPlace(p: StuckPlace): string {
       return `the seeded task ended needs_human (${files})`;
     case "task_failed":
       return `the seeded task ended failed (${files})`;
+    case "task_unfinished":
+      return `the seeded task ended ${p.detail}, not done: the change was not made (${files})`;
     case "session_failed":
       return `the session ended failed (${files})`;
   }
@@ -280,7 +324,11 @@ export function docsTaskFor(
 }
 
 export interface HandoverReport {
+  /** The UTC date of the run (file name, titles). */
   date: string;
+  /** When the run started (ISO UTC): the order of the reports and the local month. */
+  startedAt: string;
+  /** The human's local `YYYY-MM` of the run: the job's once-a-month key. */
   monthKey: string;
   projectId: string;
   projectName: string;
@@ -307,6 +355,7 @@ export interface HandoverReport {
 
 export interface HandoverReportSummary {
   date: string;
+  startedAt: string;
   file: string;
   projectId: string;
   stuck: number;
@@ -344,6 +393,11 @@ export interface HandoverJobDeps {
   /** `<data dir>/handover`. */
   reportDir: string;
   notifier?: NotifierLike;
+  /**
+   * The human's time zone, read at every run: the once-a-month check is the local month, the
+   * same key the scheduler's monthly kind fires on. Default UTC.
+   */
+  timezone?: () => Promise<string> | string;
 }
 
 export function formatHandoverReport(r: HandoverReport): string {
@@ -371,30 +425,31 @@ export class HandoverJob {
     return join(this.deps.reportDir, safeSegment(projectId));
   }
 
-  /** This month's report file of the project, if one exists (the dedupe across restarts). */
-  private reportThisMonth(projectId: string, monthKey: string): string | null {
-    const dir = this.projectDir(projectId);
-    if (!existsSync(dir)) return null;
-    const files = readdirSync(dir)
-      .filter((f) => f.startsWith(`handover-${monthKey}`) && f.endsWith(".json"))
-      .sort();
-    const last = files.at(-1);
-    return last ? join(dir, last) : null;
+  /**
+   * This local month's report of the project, if one exists (the dedupe across restarts): a
+   * report counts for the month its run started in, in the human's zone.
+   */
+  private reportThisMonth(projectId: string, monthKey: string, timezone: string): string | null {
+    const hit = this.reports(projectId).find(
+      (r) => localParts(Date.parse(r.startedAt), timezone).monthKey === monthKey,
+    );
+    return hit?.file ?? null;
   }
 
-  /** The project's reports, newest first. */
+  /** The project's reports, newest first by when the run started. */
   reports(projectId: string): HandoverReportSummary[] {
     const dir = this.projectDir(projectId);
     if (!existsSync(dir)) return [];
     const out: HandoverReportSummary[] = [];
-    for (const f of readdirSync(dir)
-      .filter((f) => f.startsWith("handover-") && f.endsWith(".json"))
-      .sort()
-      .reverse()) {
+    for (const f of readdirSync(dir).filter(
+      (f) => f.startsWith("handover-") && f.endsWith(".json"),
+    )) {
       try {
         const r = JSON.parse(readFileSync(join(dir, f), "utf8")) as HandoverReport;
         out.push({
           date: r.date,
+          // A report written before `startedAt` existed counts at noon UTC of its date.
+          startedAt: r.startedAt ?? `${r.date}T12:00:00.000Z`,
           file: join(dir, f),
           projectId: r.projectId,
           stuck: r.stuck.length,
@@ -405,7 +460,11 @@ export class HandoverJob {
         this.logger.warn("unreadable handover report", { file: f, error: errorMessage(e) });
       }
     }
-    return out;
+    return out.sort((a, b) =>
+      a.startedAt === b.startedAt
+        ? b.file.localeCompare(a.file)
+        : b.startedAt.localeCompare(a.startedAt),
+    );
   }
 
   async run(
@@ -415,7 +474,8 @@ export class HandoverJob {
     const { store, clock } = this.deps;
     const now = clock.nowIso();
     const date = now.slice(0, 10);
-    const monthKey = now.slice(0, 7);
+    const timezone = (await this.deps.timezone?.()) ?? "UTC";
+    const monthKey = localParts(clock.now(), timezone).monthKey;
     const skip = (reason: string): HandoverRunResult => {
       this.logger.info("handover skipped", { projectId, reason });
       return {
@@ -430,7 +490,8 @@ export class HandoverJob {
     const project = await store.project.mustGet(projectId);
     const settings = handoverSettingsOf(project.settings);
     if (!settings) return skip("not_enabled");
-    if (!opts.force && this.reportThisMonth(projectId, monthKey)) return skip("already_ran");
+    if (!opts.force && this.reportThisMonth(projectId, monthKey, timezone))
+      return skip("already_ran");
     if (project.autonomy_level < 2) return skip("autonomy_too_low");
     const seedSource = opts.seed ? "setting" : settings.seed ? "setting" : "default";
     const seed = opts.seed ?? settings.seed ?? defaultHandoverSeed(date);
@@ -552,6 +613,7 @@ export class HandoverJob {
     // 5. The report: a dated file, the inbox, a notification, an audit row; the agent retired.
     const report: HandoverReport = {
       date,
+      startedAt: now,
       monthKey,
       projectId,
       projectName: project.name,
