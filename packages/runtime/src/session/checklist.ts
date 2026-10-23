@@ -36,11 +36,13 @@ export interface ChecklistInput {
 
 /**
  * The ordinary messages (not a stop or a pause) that the agent's last ended session read in its
- * inbox re-check before the session-end writes (`handoff.end_inbox.read`, spec E.4) and that no
- * one has acted on since; `skip` holds ids already in the brief as unread. Best effort: a
- * malformed handoff or a message gone from the store is left out.
+ * inbox re-check before the session-end writes (`handoff.end_inbox.read`, spec E.4), plus those
+ * it passed on without taking them in (`handoff.carried_forward`: it ended before its startup
+ * receipts), that no one has acted on since; `skip` holds ids already in the brief as unread.
+ * Best effort: a malformed handoff or a message gone from the store is left out. The runner
+ * calls it too, at the end of a session that never took its inbox in.
  */
-async function carriedFromLastEnd(
+export async function carriedFromLastEnd(
   store: StateStore,
   agentId: string,
   skip: ReadonlySet<string>,
@@ -50,11 +52,19 @@ async function carriedFromLastEnd(
     limit: 5,
   });
   const last = recent.find((s) => s.ended_at);
-  const endInbox = (last?.handoff as { end_inbox?: { read?: unknown } } | null)?.end_inbox;
-  const read = Array.isArray(endInbox?.read) ? endInbox.read : [];
+  const handoff = last?.handoff as {
+    end_inbox?: { read?: unknown };
+    carried_forward?: unknown;
+  } | null;
+  const entries = [
+    ...(Array.isArray(handoff?.end_inbox?.read) ? handoff.end_inbox.read : []),
+    ...(Array.isArray(handoff?.carried_forward) ? handoff.carried_forward : []),
+  ] as Array<{ id?: unknown; kind?: unknown }>;
   const out: MessageRow[] = [];
-  for (const entry of read as Array<{ id?: unknown; kind?: unknown }>) {
-    if (typeof entry?.id !== "string" || entry.kind !== "message" || skip.has(entry.id)) continue;
+  const seen = new Set(skip);
+  for (const entry of entries) {
+    if (typeof entry?.id !== "string" || entry.kind !== "message" || seen.has(entry.id)) continue;
+    seen.add(entry.id);
     const m = await store.message.get(entry.id);
     if (m && m.to_agent_id === agentId && !m.acted_at) out.push(m);
   }

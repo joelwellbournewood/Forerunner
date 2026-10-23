@@ -23,7 +23,8 @@ import type { KillSwitch } from "../enforcement/killswitch.ts";
  * `running`; a session the runner already closed stays closed (nothing resumes a handoff).
  * A pause that lands during the last task is read by the inbox re-check before the session-end
  * writes (spec E.4): nothing is left to defer, so the session ends `stopped` with the pause
- * named in its handoff (`end_inbox`) and the row leaves `paused`.
+ * named in its handoff (`end_inbox`) and the row leaves `paused` (through `running` when the
+ * session ends `failed`, which `paused` cannot move to directly).
  */
 export interface SessionPortsDeps {
   store: Pick<StateStore, "session" | "message">;

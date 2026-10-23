@@ -517,11 +517,16 @@ message(s).", which the peers' handoff message and the human's note carry. A sto
 (body starting with stop, halt or pause, not a handoff) ends a session that would otherwise
 end `completed` or `budget_finish_current` as `stopped` with `stop_reason: stopped_by_message`;
 the summary names the message, and `handoff.end_inbox.after_stop` says what was still written
-after it was read (`task_states`, `summary_cache`, `handoffs`, `human_note`, `session_record`,
-`status_doc` when the docs port wrote it) and what was not (`task_claims`: no further task was
-claimed or started, plus any of those writes that did not apply). A pause at the end defers
-nothing (no task is left) and is acknowledged by reading it; the row goes `paused -> stopped`
-instead of staying `paused`. A stop or pause carrying `requires_ack` is marked acted on (here
+after it was read (`task_states`, `summary_cache`, `handoffs`, `human_note`, `session_record`;
+`status_doc` when the docs port wrote it, `memory` when lessons were recorded or merged,
+`lesson_warning` when the rejected-lessons warning went to the human, `promotions` when a
+cross-project promotion was decided; the account is filled in after those writes) and what was
+not (`task_claims`: no further task was claimed or started, plus any of those writes that did
+not apply). A pause at the end defers nothing (no task is left) and is acknowledged by reading
+it; the row goes `paused -> stopped` instead of staying `paused`. A row a pause left `paused`
+whose session ends `failed` (or `completed`, a status-only pause) goes back through `running`
+to that status, since `paused` cannot move there directly: left `paused` with `ended_at` set,
+`session.active` would refuse every later session of the agent. A stop or pause carrying `requires_ack` is marked acted on (here
 and between tasks). An ordinary message read at the end is not acted on there, since no plan
 follows to take it in: the next session's startup checklist (`checklist.ts`,
 `carriedFromLastEnd`) reads the last ended session's `handoff.end_inbox.read`, carries each
@@ -529,7 +534,11 @@ follows to take it in: the next session's startup checklist (`checklist.ts`,
 `readAtLastSessionEnd`, rendered "read at the end of the last session"; not counted in
 `unreadCount`), and that session's startup receipts act on it as on any unread message (an
 ack-required `info` / `warning` / `decision` / `handoff` by reading it, a request or question
-once a reply exists). A critic's "Revision requested" to the owner that lands during the last
+once a reply exists). A session that ends before its startup receipts ran (a startup step
+failed, the kill switch during startup) never took those messages in: step 4 calls the same
+`carriedFromLastEnd` and passes them on in its own `handoff.carried_forward` (same entry
+shape, event `inbox.carried_forward`), which the next checklist reads alongside
+`end_inbox.read`, so such a session does not lose them. A critic's "Revision requested" to the owner that lands during the last
 task is such a message (`loop-critic.test.ts`). A session that already ended for another
 reason (killed, out of budget, plan filed, failed) keeps its reason; the stop is named in `end_inbox.read` with `stopped_by: null`.
 A said line (O.9) is left alone at the end for the next session's brief. A failing re-check is
@@ -540,7 +549,10 @@ and the human note are written (the `read_at` seen by each write equals the mess
 task states stay `done`, the handoff names it; an ordinary message is read and summarised in the
 handoff while the session completes, and the next session's brief carries it once and acts on
 it; a pause from the pause port ends the row `stopped`; a
-session out of budget keeps `budget_exceeded`; an empty inbox adds nothing.
+session out of budget keeps `budget_exceeded`; a stop read at the end names the memory write
+that followed it in `after_stop`; a pause read at the end of a session that fails leaves the
+row `failed`, not `paused`, and the next session starts; a message read at the end is carried
+past a session that failed before its receipts; an empty inbox adds nothing.
 
 **What you say during a live session (spec O.9, ADR 0078; `src/session/live-chat.ts`).** A
 free-form line the human types or speaks to the conversation agent while a session of the

@@ -588,7 +588,7 @@ describe("closeout: the inbox is re-checked before the session-end writes (E.4)"
         // written with the stop named; no further task was claimed (no docs port here).
         after_stop: {
           written: ["task_states", "summary_cache", "handoffs", "human_note", "session_record"],
-          not_written: ["task_claims", "status_doc"],
+          not_written: ["task_claims", "status_doc", "memory", "lesson_warning", "promotions"],
         },
       },
     });
@@ -726,6 +726,148 @@ describe("closeout: the inbox is re-checked before the session-end writes (E.4)"
     });
     expect(res.summary).toContain("Read before the session-end writes: 1 message.");
     expect(res.summary).not.toContain("ended the session");
+  });
+
+  it("a stop read at the end names the memory write that followed it in after_stop", async () => {
+    await addTask(w, "Learn");
+    const recorded: string[] = [];
+    let stopId = "";
+    const exec = executorByTitle(
+      w,
+      { Learn: { lessons: [{ text: "Run the linter first" }] } },
+      async () => {
+        stopId = (await stopFrom(w)).id;
+      },
+    );
+    const res = await new SessionRunner({
+      store: w.store,
+      clock: w.clock,
+      tokens: new TokenIssuer({ now: () => w.clock.now() }),
+      kill: new KillSwitch(),
+      planner: new StaticPlanner(),
+      executor: exec,
+      memory: {
+        recall: async () => ({ block: "", tokens: 0, lessonIds: [], denied: [], warnings: [] }),
+        record: async (req) => {
+          recorded.push(...req.lessons.map((l) => l.text));
+          return { recorded: req.lessons.length, merged: 0, rejected: [] };
+        },
+      },
+    }).start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: 5_000_000,
+      grant,
+    });
+    expect(recorded).toEqual(["Run the linter first"]);
+    expect(res.stopReason).toBe("stopped_by_message");
+    const account = (res.handoff as { end_inbox: { after_stop: Record<string, string[]> } })
+      .end_inbox.after_stop;
+    expect(account.written).toContain("memory");
+    expect(account.not_written).not.toContain("memory");
+    expect(account.not_written).toEqual([
+      "task_claims",
+      "status_doc",
+      "lesson_warning",
+      "promotions",
+    ]);
+    expect((await w.store.session.mustGet(res.sessionId)).handoff).toEqual(res.handoff);
+    expect(stopId).not.toBe("");
+  });
+
+  it("a pause read at the end of a session that fails does not leave the row paused; the next session starts", async () => {
+    await addTask(w, "Only");
+    const ports = sessionPausePorts({
+      store: w.store,
+      kill: { activeCount: () => 1 },
+      agentId: w.alice,
+      humanId: w.human,
+    });
+    const res = await new SessionRunner({
+      store: w.store,
+      clock: w.clock,
+      tokens: new TokenIssuer({ now: () => w.clock.now() }),
+      kill: new KillSwitch(),
+      planner: {
+        async plan(ctx) {
+          await ports.pauseSession?.(ctx.session.id, "lunch");
+          throw new Error("planner unavailable");
+        },
+      },
+      executor: executorByTitle(w),
+    }).start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: 5_000_000,
+      grant,
+    });
+    expect(res.status).toBe("failed");
+    const row = await w.store.session.mustGet(res.sessionId);
+    expect(row.status).toBe("failed");
+    expect(row.ended_at).not.toBeNull();
+    expect(res.handoff).toMatchObject({
+      end_inbox: { read: [{ kind: "pause" }], stopped_by: null },
+    });
+    expect(await w.store.session.active(w.alice)).toEqual([]);
+    const next = await run(executorByTitle(w));
+    expect(next.status).toBe("completed");
+  });
+
+  it("a message read at the end is carried past a session that ended before its startup receipts", async () => {
+    await addTask(w, "First");
+    let noteId = "";
+    await run(
+      executorByTitle(w, {}, async () => {
+        noteId = (
+          await w.store.message.send({
+            from_agent_id: w.bob,
+            to_agent_id: w.alice,
+            type: "info",
+            body: "fyi: the staging host moved",
+            requires_ack: true,
+            author_agent: w.bob,
+          })
+        ).id;
+      }),
+    );
+    expect((await w.store.message.mustGet(noteId)).read_at).not.toBeNull();
+    await w.clock.advance(1_000);
+    // The next session fails at startup, after its brief but before its receipts.
+    const failed = await new SessionRunner({
+      store: w.store,
+      clock: w.clock,
+      tokens: new TokenIssuer({ now: () => w.clock.now() }),
+      kill: new KillSwitch(),
+      planner: new StaticPlanner(),
+      executor: executorByTitle(w),
+      peersOf: async () => {
+        throw new Error("peer list unavailable");
+      },
+    }).start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: 5_000_000,
+      grant,
+    });
+    expect(failed.status).toBe("failed");
+    expect(failed.handoff).toMatchObject({
+      carried_forward: [{ id: noteId, type: "info", from: w.bob, kind: "message" }],
+    });
+    expect((await w.store.message.mustGet(noteId)).acted_at).toBeNull();
+    await w.clock.advance(1_000);
+    await addTask(w, "Second");
+    const next = await run(executorByTitle(w));
+    expect(next.brief.inbox.unread.filter((m) => m.id === noteId)).toEqual([
+      expect.objectContaining({ id: noteId, readAtLastSessionEnd: true }),
+    ]);
+    expect((await w.store.message.mustGet(noteId)).acted_at).not.toBeNull();
+    expect(next.handoff).not.toHaveProperty("carried_forward");
+    await w.clock.advance(1_000);
+    const after = await run(executorByTitle(w));
+    expect(after.brief.inbox.unread.some((m) => m.id === noteId)).toBe(false);
   });
 
   it("nothing waiting at the end: no event, no handoff field, no summary line", async () => {

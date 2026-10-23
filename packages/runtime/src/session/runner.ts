@@ -6,7 +6,14 @@ import {
   log,
   newId,
 } from "@forerunner/platform";
-import type { AgentRow, JsonObject, SessionRow, StateStore, TaskRow } from "@forerunner/state";
+import {
+  type AgentRow,
+  type JsonObject,
+  SESSION_TRANSITIONS,
+  type SessionRow,
+  type StateStore,
+  type TaskRow,
+} from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
@@ -31,7 +38,7 @@ import {
 } from "../loop/ports.ts";
 import type { SchemaSyncPort } from "../update/sync.ts";
 import { renderStateBrief, type StateBrief } from "./brief.ts";
-import { type ChecklistInput, runStartupChecklist } from "./checklist.ts";
+import { type ChecklistInput, carriedFromLastEnd, runStartupChecklist } from "./checklist.ts";
 import { fileBlockedByFindingsRequest } from "./findings.ts";
 import { describeRejectedLessons, type RejectedLesson, screenLessons } from "./lessons.ts";
 import {
@@ -472,6 +479,11 @@ export class SessionRunner {
     const merges: MergeOutcome[] = [];
     /** What the human said during the session (spec O.9), collected between tasks. */
     const heard: HeardDelivery[] = [];
+    /**
+     * The startup receipts ran: the brief's inbox, including what the last session read at its
+     * end (spec E.4), was taken in. A session that ends before that passes the carry on.
+     */
+    let inboxTakenIn = false;
     const lessonCandidates: LessonCandidate[] = [];
     /** Lesson proposals the critic port refused as instruction-shaped (quoted to the human). */
     const quarantinedByCritic: RejectedLesson[] = [];
@@ -603,6 +615,7 @@ export class SessionRunner {
           await emit("inbox.acted", { id: m.id, type: m.type });
         }
       }
+      inboxTakenIn = true;
       const unacked = await store.message.unacknowledged(agent.id, { limit: 50 });
       if (unacked.length) {
         await emit("inbox.unacknowledged", {
@@ -1117,6 +1130,28 @@ export class SessionRunner {
         interrupt: endStop ? { id: endStop.id, kind: endStop.kind } : null,
         stopped: stoppedAtEnd,
       });
+    // A session that ends before its startup receipts (a startup step failed, the kill switch)
+    // never took in what the last session read at its end: it passes those messages on in its
+    // own handoff (`carried_forward`), so the next brief still carries them (checklist.ts).
+    let carriedForward: InboxRead[] = [];
+    if (!inboxTakenIn) {
+      try {
+        carriedForward = (await carriedFromLastEnd(store, agent.id, new Set())).map((m) => ({
+          id: m.id,
+          type: m.type,
+          from: m.from_agent_id,
+          kind: "message" as const,
+        }));
+      } catch (e) {
+        this.logger.warn("messages read at the last session end not carried forward", {
+          sessionId: session.id,
+          error: errorMessage(e),
+        });
+        await emit("inbox.carry_failed", { warning: errorMessage(e) });
+      }
+      if (carriedForward.length)
+        await emit("inbox.carried_forward", { ids: carriedForward.map((m) => m.id) });
+    }
     await this.ackAnswered(agent.id, emit);
     const spent = (await store.costLedger.sum({ sessionId: session.id })).usd_micro;
     const summary = summarize({
@@ -1173,6 +1208,18 @@ export class SessionRunner {
         }
       }
     }
+    // What the re-check before these writes read (spec E.4): ids and kinds, never the words
+    // (another agent's message is data); `stopped_by` is the stop or pause this session ended
+    // on, null when it ended for another reason. A session that ended on it also says what was
+    // and was not written after it was read (`after_stop`, filled in once memory and the
+    // promotions below are done, since they are written after the stop was read too).
+    const endInboxRecord: {
+      read: InboxRead[];
+      stopped_by: InboxRead | null;
+      after_stop?: { written: string[]; not_written: string[] };
+    } | null = endInbox.read.length
+      ? { read: endInbox.read, stopped_by: stoppedAtEnd ? endStop : null }
+      : null;
     const handoff = {
       // The lines the human said and the task each reached; the words stay in the message
       // rows and the human's own summary message (peers and the project cache read this).
@@ -1206,27 +1253,8 @@ export class SessionRunner {
       })),
       next: skipped,
       stop_reason: stopReason,
-      // What the re-check before these writes read (spec E.4): ids and kinds, never the words
-      // (another agent's message is data); `stopped_by` is the stop or pause this session
-      // ended on, null when it ended for another reason. A session that ended on it also says
-      // what was and was not written after it was read (`after_stop`).
-      ...(endInbox.read.length
-        ? {
-            end_inbox: {
-              read: endInbox.read,
-              stopped_by: stoppedAtEnd ? endStop : null,
-              ...(stoppedAtEnd
-                ? {
-                    after_stop: endWritesAccount({
-                      statusDoc: docsOutcome !== null,
-                      summaryCache: project !== null,
-                      handoffs: peerIds.length > 0,
-                    }),
-                  }
-                : {}),
-            },
-          }
-        : {}),
+      ...(endInboxRecord ? { end_inbox: endInboxRecord } : {}),
+      ...(carriedForward.length ? { carried_forward: carriedForward } : {}),
       spent_usd_micro: spent,
       ...(docsOutcome ? { docs: docsOutcome } : {}),
     };
@@ -1234,6 +1262,8 @@ export class SessionRunner {
     // lessons the specialists spelled out, critic findings resolved by rework, and decisions
     // the human answered since the last session. Rejections are reported, never fatal.
     let lessonsRecorded = 0;
+    let memoryWritten = false;
+    let lessonWarningSent = false;
     if (this.deps.memory) {
       try {
         const decisions = project
@@ -1271,6 +1301,7 @@ export class SessionRunner {
             requires_ack: false,
             author_agent: agent.id,
           });
+          lessonWarningSent = true;
         }
         if (screened.kept.length) {
           const recorded = await this.deps.memory.record({
@@ -1280,6 +1311,7 @@ export class SessionRunner {
             lessons: screened.kept,
           });
           lessonsRecorded = recorded.recorded;
+          memoryWritten = recorded.recorded + recorded.merged > 0;
           const rejected = recorded.rejected.length + rejectedLessons.length;
           await emit("memory.recorded", {
             recorded: recorded.recorded,
@@ -1317,6 +1349,15 @@ export class SessionRunner {
       signal: controller.signal,
       emit,
     });
+    if (endInboxRecord && stoppedAtEnd)
+      endInboxRecord.after_stop = endWritesAccount({
+        statusDoc: docsOutcome !== null,
+        memory: memoryWritten,
+        lessonWarning: lessonWarningSent,
+        promotions: (promotions?.promoted ?? 0) + (promotions?.rejected ?? 0) > 0,
+        summaryCache: project !== null,
+        handoffs: peerIds.length > 0,
+      });
     if (project) {
       await store.project.patch(project.id, {
         summary_cache: {
@@ -1379,7 +1420,14 @@ export class SessionRunner {
       headroom_saved_tokens: contextEnd?.headroomSavedTokens ?? 0,
     });
     try {
-      await store.session.setStatus(patched.id, patched.version, finalStatus);
+      // A row a pause left `paused` (the pause port marks it at once) cannot move straight to
+      // `failed` or `completed`; it goes back through `running`, or it would stay `paused`
+      // with `ended_at` set and every later session of the agent would be refused as active.
+      const row =
+        patched.status === "paused" && !SESSION_TRANSITIONS.paused.includes(finalStatus)
+          ? await store.session.setStatus(patched.id, patched.version, "running")
+          : patched;
+      await store.session.setStatus(row.id, row.version, finalStatus);
     } catch {
       // already terminal (e.g. killed by the kill switch callback)
     }
@@ -1939,13 +1987,23 @@ function summarizeEndInbox(end: InboxRecheck, stopped: boolean, skipped: number)
  * after reading it, and what it did not (spec E.4): the record of the session is written so the
  * next session and the peers know where it stopped; no further task is claimed or started.
  */
-function endWritesAccount(x: { statusDoc: boolean; summaryCache: boolean; handoffs: boolean }): {
+function endWritesAccount(x: {
+  statusDoc: boolean;
+  memory: boolean;
+  lessonWarning: boolean;
+  promotions: boolean;
+  summaryCache: boolean;
+  handoffs: boolean;
+}): {
   written: string[];
   not_written: string[];
 } {
   const written = ["task_states"];
   const notWritten = ["task_claims"];
   (x.statusDoc ? written : notWritten).push("status_doc");
+  (x.memory ? written : notWritten).push("memory");
+  (x.lessonWarning ? written : notWritten).push("lesson_warning");
+  (x.promotions ? written : notWritten).push("promotions");
   (x.summaryCache ? written : notWritten).push("summary_cache");
   (x.handoffs ? written : notWritten).push("handoffs");
   written.push("human_note", "session_record");
