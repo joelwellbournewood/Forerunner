@@ -376,6 +376,15 @@ describe("daemon client", () => {
       deviceId: ME.desktopDeviceId ?? "",
     });
     expect(onThisPc.status).toBe("done");
+    // The literal `desktop` an older settings screen sent is this PC, as on the daemon's route.
+    const thirdHigh = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 600 } }],
+    });
+    const literal = await client.confirmCommand(thirdHigh.pendingId ?? "", {
+      answer: "device",
+      deviceId: "desktop",
+    });
+    expect(literal.status).toBe("done");
     const tapped = await client.executeCommands({
       commands: [{ name: "autonomy.set", params: { level: 1, project: "proj_beacon" } }],
       confirm: "tap",
