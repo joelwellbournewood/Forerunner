@@ -361,6 +361,12 @@ version that D.5 (`done`) requires of every run.
 
    *Fix:* a Run row or chat turn is a measurement when it has a first token, or when it timed
    out (a real over-target). Add a regression test.
+
+   Resolution: fixed in df2a693. `isMeasurement` keeps a Run row only when it has `ttft_ms` or
+   timed out, and `eventSample` does the same for chat turns (`ttftMs`, or `outcome: "timeout"`).
+   The new test in `performance-view.test.ts`, "what counts as a measurement", seeds an error
+   run, a budget-refused run, a failed intake row, a timed-out run and failed or timed-out
+   chat turns. It failed before the fix and passes now.
 2. **medium**, `packages/runtime/src/session/intake.ts:745`: the intake call's new Run row
    writes `prompt_version: ""`. D.5 (`done`) says every run stores model, version, settings
    and prompt version. The executor and the critic store theirs. The PM prompt comes from the
@@ -372,6 +378,11 @@ version that D.5 (`done`) requires of every run.
 
    *Fix:* pass the PM prompt's version into `IntakeService`, store it, and use a named
    built-in version when there is no registry prompt. Assert it in `intake.test.ts`.
+
+   Resolution: fixed in 73b3437. Compose passes `registry.principals.get("project-manager").promptVersion`,
+   and the row stores it, or `INTAKE_BUILTIN_PROMPT_VERSION` on the built-in line.
+   `intake.test.ts` checks the registry version on the approved path and the built-in version
+   in a new test. Both failed before the fix.
 3. **low**, `packages/runtime/src/daemon/views.ts` (`modes` map) against `models/ladder.ts:96-98`:
    "the effort in force" shows one effort per mode, but `effortForTask` raises the coder to
    `high` at risk tier 2 and above, and critic tier 2/3 to `max` at risk tier 3. A tier-2
@@ -383,6 +394,14 @@ version that D.5 (`done`) requires of every run.
    *Fix:* add the raised effort per mode (`riskEffort`, `riskTierFrom`) with the offset
    applied as for `effort`. Show it on the page and in the fixture. Test it in the view, route
    and UI tests.
+
+   and UI tests.
+
+   Resolution: fixed in 494bb8a. `PerformanceModeView` gains `riskEffort` and `riskTierFrom`
+   (`riskEffortOf`, from `effortForTask`, with the offset applied as for `effort`). The page's
+   `effortLabel` shows "medium; high from risk tier 2", and the fixture and docs follow. The
+   view, route and UI tests assert it, including an adopted table where the coder is already
+   at high (`riskEffort` null).
 4. **low**, `packages/runtime/src/daemon/server.ts:1250` and `apps/ui/test/fake-daemon.ts:2417`:
    `days` is parsed with `Number()`, so `?days=0x10` is read as a 16-day window, `1e1` as 10
    days, and `" 7"` and `7.0` as 7. The documented contract is "a positive integer".
@@ -391,6 +410,12 @@ version that D.5 (`done`) requires of every run.
 
    *Fix:* accept decimal digits only, in the daemon and in the fake. Extend the 400 cases in
    `performance-route.test.ts` and in `client.test.ts`.
+
+   `performance-route.test.ts` and in `client.test.ts`.
+
+   Resolution: fixed in 15725da. The daemon and the fake daemon accept `/^[0-9]+$/` only. The
+   route test refuses `0x10`, `1e1`, `%207`, `7.0` and `+7` and accepts `007`, and the client
+   test checks the fake. The route test failed before the fix.
 5. **low**, `apps/ui/test/client.test.ts:253` and the following lines: the "missing route"
    example was moved from `performance` to `milestones`. The base branch now serves
    `milestones` (its `contracts.test.ts` lists `milestones` and `changeMilestone` as served,
@@ -401,6 +426,15 @@ version that D.5 (`done`) requires of every run.
    *Verified* with the throwaway merge described above (passes, but on a served route).
 
    *Fix:* use `docs`, which stays proposed on both branches.
+
+   *Fix:* use `docs`, which stays proposed on both branches.
+
+   Resolution: fixed in 63b9c9a. The test uses `docs` and asserts that it is in
+   `PROPOSED_ROUTES` and not in `DAEMON_ROUTES`, so the test fails loudly once `docs` is
+   served. A repeat of the throwaway merge with the base after all fixes gives typecheck
+   clean, UI 42 files / 262 tests passed and runtime 4 files / 38 tests passed. The three
+   textual conflicts (`contracts.ts` header comment, `contracts.test.ts` served list,
+   `apps.md`) remain for the integrator; each is a union of both sides.
 6. **low**, `docs/maintainers/apps.md:109-110`: the client paragraph this branch rewrote still
    lists `dataAssets`, `registerDataAsset` and `removeDataAsset` among the proposed routes.
    The `contracts.ts` header (also rewritten here) and `contracts.test.ts` say they are
@@ -409,3 +443,18 @@ version that D.5 (`done`) requires of every run.
    *Verified* by reading `contracts.test.ts:80-90`, which lists them as served.
 
    *Fix:* list them with the served routes.
+
+   *Fix:* list them with the served routes.
+
+   Resolution: fixed in 0fd80f8. The client paragraph and the proposed-routes note list the
+   data asset routes as served. The client tests' description names the `docs` missing-route
+   example and the `days` cases.
+
+### After the fixes
+
+All six findings are fixed on the branch. b1397e8 is Biome formatting of two test files, and
+the status rows are updated in the commit after it. Checks on the final tree: `pnpm typecheck`
+exit 0; `pnpm lint` exit 0 (59 warnings, all in files this item does not touch); runtime unit
+tests 116 files / 996 passed, 1 skipped; the four item files 38/38; UI 42 files / 255 tests;
+`node scripts/docs-check.mjs --base <start>` ok (18 files) and `--base origin/ccr-4d8a843c-1k9syk`
+ok (27 files); `pnpm check` exit 0 (unit 271 files / 2685 passed, 4 skipped, 1 todo).
