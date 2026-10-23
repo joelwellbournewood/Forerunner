@@ -373,3 +373,55 @@ this item's commits (eight, including this report update). Each one ends with th
   the new file in the hash.
 - **The PM has no tool that calls `propose()`.** The gate is wired (`RuntimeApp.specialistApprovals.propose`),
   but exposing it as a principal-agent tool or command was not in this item's paths.
+
+## Rebase (2026-10-23, onto `origin/ccr-4d8a843c-1k9syk` at cac6fee)
+
+The branch (built from 82a6295, head 0537337 before the rebase) was rebased commit by commit
+onto the release head with `git rebase origin/ccr-4d8a843c-1k9syk`; the base was never
+merged in. Commit hashes named above are the pre-rebase hashes; the rebased commits carry the
+same subjects. The code commits (registry, daemon wiring, CLI) applied without a textual
+conflict except the one in `compose.ts` below. Conflicts and how they were resolved:
+
+- `docs/decisions/README.md` ("docs: ADR 0071 and the maintainer docs ..."): the base added
+  the 0057, 0060, 0061, 0062, 0067, 0068 and 0075 rows; the branch added 0071. All kept, 0071
+  between 0068 and 0075 in number order.
+- `docs/maintainers/runtime.md`, CLI table (same commit, and again in "docs: ADR 0071
+  amendment ..."): the base's `fr runner-key` row (S.12, ADR 0068) and the branch's
+  `fr specialists` row both kept; in the amendment the branch's later wording of its own row
+  (an inbox answer applied first, `claim_conflict` while an evaluation is live) replaced its
+  earlier wording, the runner-key row untouched.
+- `docs/maintainers/runtime.md`, "Tests" (both commits): the base's `fast-mode.test.ts`,
+  `fast-mode-wiring.test.ts` and `githost-watcher.test.ts`/`githost-wiring.test.ts`
+  paragraphs and the branch's `specialist-approval.test.ts`/`specialists-cli.test.ts`
+  paragraph all kept, the branch's as its own paragraph after the base's; the counts are the
+  real ones after the rebase (24 and 5).
+- `docs/status/PROGRESS.md` (in "status: C.5 done ..." and in the amendment): the shared
+  "Build the unbuilt items" row; the base's w4-fcm-sender clause ("built on its branch
+  2026-10-23, review and merge pending") and the branch's w3-c5 clause (built with ADR 0071,
+  reviewed with six findings fixed, awaiting merge, the review file named) merged into one
+  row; the base's own repeated line of that list was left as the base has it.
+- `packages/runtime/src/daemon/compose.ts` ("daemon: one-shots leave specialist answers to
+  the daemon ..."): the base serialised `syncApprovals` (a promise chain over
+  `syncApprovalsOnce`, so overlapping callers never apply one answer twice); the branch added
+  `syncSpecialistApprovals` (claim answers in the background, then `fileMissing()`) right
+  before `syncApprovals`. Both kept: `syncSpecialistApprovals` is defined before the chain and
+  called from `syncApprovalsOnce`'s `specialists` field (daemon only; a one-shot returns the
+  zero result), so the specialist half runs under the base's one-at-a-time rule. The removal
+  of the compose-time `fileMissing()` call merged next to the base's new
+  `refreshJobSchedules` line, which is kept.
+
+Auto-merged without conflict and checked by reading the result: `docs/requirements.md` (C.5
+row), `docs/status/BLOCKERS.md` (C.5 row), `docs/maintainers/model-watch.md`,
+`docs/maintainers/testing.md`, `packages/runtime/src/cli/main.ts` (the base's
+`registerAuditCli` import and the branch's `registerSpecialistsCli` both present), the
+`specialistApprovals` construction in `compose.ts` (its `toolNames` match the base's
+`loadRegistry` call).
+
+After the rebase: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, all in files the
+branch does not touch; `biome lint` on the branch's runtime files reports none); runtime unit
+130 files, 1161 passed, 1 skipped (`specialist-approval.test.ts` 24, `specialists-cli.test.ts`
+5, `registry.test.ts` 30); runtime integration 1 file, 4 skipped (`sandbox.integration.test.ts`,
+no container engine); `scripts/sync-registry.test.ts` plus `evals/test` 5 files, 55 passed;
+`pnpm exec vitest run --project e2e tests/e2e/scenarios` 13 files, 24 passed, 1 skipped,
+1 todo; `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok; `pnpm check`
+exit 0 (291 files, 2944 passed, 4 skipped, 1 todo; link-check ok, secret-scan clean).
