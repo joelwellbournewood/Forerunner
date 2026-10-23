@@ -46,7 +46,7 @@ U.8 (sessions carry `runner: "cloud"` and the runner's device id).
 | --- | --- |
 | `src/main.ts` | `pnpm runner` (the image's CMD): read the environment, start, stop on SIGINT / SIGTERM, exit 75 to forget the vault key |
 | `src/config.ts` | `readRunnerConfig(env)`: every `FORERUNNER_*` setting, zod-validated, with its default; `describeConfig` for the start log (store credential redacted) |
-| `src/vault-unlock.ts` | the unlock protocol: `RunnerVaultUnlock` (runner side), `answerUnlockChallenge` and `shouldAutoAnswer` (device side), the audit tool names |
+| `src/vault-unlock.ts` | the unlock protocol: `RunnerVaultUnlock` (runner side), `answerUnlockChallenge` (node device side for scripts and tests), the audit tool names; the constants, `shouldAutoAnswer` and the WebCrypto `wrapVaultKey` come from `@forerunner/vault/runner-unlock` (ADR 0068) |
 | `src/presence.ts` | `PcPresence`: the PC-wins rule over `device.last_seen` and `session.runner` |
 | `src/inbox-trigger.ts` | `InboxTrigger`: a peer's unread message or the human's answer to a session's question asks for a `message` session (the PC rule applies) |
 | `src/billing.ts` | `pickRunnerBillingSource`: the human's source for cloud sessions, decided by `BillingRouter` from `@forerunner/billing`; `runnerRoutingPolicy`, `VaultCredentialProbe` |
@@ -135,9 +135,15 @@ created the blob (or exported the key) and keeps the 32-byte key. `RunnerVaultUn
 3. The device answers (`answerUnlockChallenge(card, vaultKey, { autoUnlockUntil? })`): the
    key wrapped with X25519 + HKDF-SHA256 (salt = nonce, info bound to the challenge id) +
    AES-256-GCM (AAD = runner id + challenge id); the answer is public key, iv, ciphertext, tag.
-   A desktop or phone that sees the request shows it like any high-risk approval (biometric
-   on the phone); `shouldAutoAnswer(human.notify_prefs, now)` says when it may answer without
-   prompting (the window is open).
+   The desktop and Android inboxes render the request as the unlock card (ADR 0068, see
+   apps.md): Unlock once, Unlock and allow for 1 / 8 / 24 h, Unlock and clear the window,
+   Deny. The desktop daemon wraps the key from its vault (`POST /runner-unlock/wrap`, the key
+   under `cloud_runner_vault_key:<runner>`), the phone from its Keystore-wrapped secure store
+   (`runner-vault-key-<runner>`), both through `wrapVaultKey` in `@forerunner/vault`
+   (`runner-unlock.ts`, WebCrypto, no dependencies), which also holds the constants and
+   `shouldAutoAnswer`; this file re-exports them. `answerUnlockChallenge` (node:crypto) stays
+   for scripts and the tests. `shouldAutoAnswer` over the window the device itself set says
+   when it may answer without a choice (on the phone the biometric prompt still runs).
 4. The runner polls the request (`clock.sleep`, so simulated clocks work), unwraps in memory,
    hands the key to the vault and zeroes it. `runner.unlock_granted` on success; on a refusal
    (`wrong_key`, `unwrap_failed`, `stale_challenge`, `expired`, `malformed`, `bad_device_key`,
@@ -416,3 +422,8 @@ on a real host and a real mailbox is pending the items in `docs/status/BLOCKERS.
   next session) instead of queueing behind the running session.
 - Two runners for the same agent would both pass the handler's audit-row check for a brand-new
   message (email.md "Known issues"); run one runner per agent mailbox.
+- The unlock card (ADR 0068) needs the runner's vault key on the answering device already:
+  `cloud_runner_vault_key:<runner>` in the desktop's vault, `runner-vault-key-<runner>` in
+  the phone's secure store. There is no import screen yet (the stand-in is `pnpm fr` / a
+  script on the human's machine); a device without the key shows the card read-only. One
+  unlock against a real runner host has not been run (BLOCKERS S.12).

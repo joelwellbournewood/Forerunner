@@ -75,6 +75,7 @@ Status: accepted | superseded by NNNN
 | 0059 | Cross-project promotion in the loop: who reviews a proposal and when, the offer rule, what an accepted offer does |
 | 0065 | Shared secrets: wrapped to the named agents' install keys, both humans approve, served by reference |
 | 0066 | Settings -> Capabilities -> Email: the capability's routes on the daemon, a page per agent, the full-discretion confirmation as the page's own step, the command audit read from the shared state |
+| 0068 | Runner unlock card: the device auto-answers only inside the window it set, the biometric prompt still runs, a key bridge returns only the wrapped answer (the daemon on the desktop, the Keystore store on Android) |
 | 0078 | What you say during a live session: the message kind and where the next task reads it |
 | 0082 | Install identity on a shared store: an install names its human; the store's first row is never it |
 | 0083 | Private memory next to a shared state: a local SQLite index routed by scope, and the Postgres adapter's refusal |

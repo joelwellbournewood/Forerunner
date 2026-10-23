@@ -18,6 +18,18 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w2-s12-unlock-card: the cloud runner unlock card, S.12, ADR 0068)
+- The desktop and Android inboxes render a runner's vault-unlock challenge as the unlock card
+  (runner, project, filing time, challenge age; Unlock once / allow for 1, 8, 24 h / clear the
+  window / Deny). The device side of the protocol moved to `@forerunner/vault`
+  (`runner-unlock.ts`, WebCrypto, no imports), shared by the runner, the daemon and the web
+  views; the daemon wraps the key from the OS keyring on the desktop (`/runner-unlock/*`), the
+  phone wraps it from the Keystore-wrapped secure store; auto-answer inside the window the
+  device set (the phone's biometric prompt still runs); read-only without a keyring or the
+  key, approvals web included. Tests: cloud-runner `vault-unlock` (WebCrypto answers against
+  the real runner), runtime `runner-unlock-routes`, ui `unlock-card` and `mobile-unlock`,
+  approvals-web `inbox`. Open: one unlock on the real host; a key import screen (BLOCKERS S.12).
+
 ### 2026-10-23 (fifteen bounded items merged; wave 1 reviewed, its fix stage and waves 2 to 4 stopped at the credit limit; triage; live probe on the new key)
 - Base b31c2e5 (the handover of 2026-10-21). Fifteen items were built on `wave/<id>` branches
   and merged (`git log b31c2e5..HEAD --merges`). Wave 1, the handover's item 1: always-human

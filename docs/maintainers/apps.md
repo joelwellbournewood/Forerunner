@@ -61,10 +61,13 @@ apps/ui/
                          the /events stream), useClient, useUiState, useIdentity
     store/theme.ts       prefers-color-scheme + stored override -> data-theme
     lib/                 money (CHF formatting), time, format (bytes, ms, shares), storage,
-                         use-async (data, error, routeMissing, errorStatus), task-transitions
+                         use-async (data, error, routeMissing, errorStatus), task-transitions,
+                         runner-unlock (the cloud runner unlock bridge contract, ADR 0068)
     components/          ui.tsx (Button, Badge, SpendBar, Money, Loading, ErrorBanner, Field),
                          Dialog.tsx (native <dialog>), RouteMissing.tsx, charts.tsx (TrendLine,
-                         TargetBar), ChangeCardDialog.tsx (ChangeCard, CommandResult)
+                         TargetBar), ChangeCardDialog.tsx (ChangeCard, CommandResult),
+                         UnlockCard.tsx (the cloud runner unlock card and useAutoUnlock, shared
+                         by the desktop and phone inboxes)
     shell/               Shell.tsx (header, nav, switcher, kill switch, banners), CommandPalette,
                          commands.ts, shortcuts.ts (sequence matcher), ShortcutsHelp, ShellContext
     pages/               HomePage, NewProjectDialog, ProjectPage (+ project/*Tab, *Section,
@@ -92,7 +95,7 @@ apps/ui/
 | `data` tab | registered datasets (name, kind, size, locator, sample, who), register by path or URI, remove (two clicks), import from zip/folder/repo with the result | `GET /projects/:id/data`, `POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/import` (proposed) |
 | `chat` tab | quick chat with streaming, read-back confirmation, make-this-a-task | `POST /chat/stream` |
 | `/sessions/:id` | Live session view: header (status, agent, current task + specialist, steps/stepCap, spent/cap bar, Stop), event stream with level chips, raw JSON toggle, follow/auto-scroll | `GET /sessions/:id`, `GET /sessions/:id/events` (JSON backlog, then SSE), `POST /sessions/:id/stop` |
-| `/inbox` | Requests (blocking first, newest first) with option buttons and a free-text answer, messages with read marking; reloads when the install stream reports a blocking count the page has not seen. An intake proposal (spec A.2, ADR 0055: a card whose `key` is `intake:<project>`) renders as a plan card (`IntakeCard`, `intakeCardOf`): phases with their tasks (tier, priority, specialist, dependencies), the docs and where they go, the first session with estimates, the planning call's cost; the raw card stays behind "Change card" and the options are the ordinary approve / reject buttons | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /messages/:id/read` |
+| `/inbox` | Requests (blocking first, newest first) with option buttons and a free-text answer, messages with read marking; reloads when the install stream reports a blocking count the page has not seen. An intake proposal (spec A.2, ADR 0055: a card whose `key` is `intake:<project>`) renders as a plan card (`IntakeCard`, `intakeCardOf`): phases with their tasks (tier, priority, specialist, dependencies), the docs and where they go, the first session with estimates, the planning call's cost; the raw card stays behind "Change card" and the options are the ordinary approve / reject buttons. A cloud runner vault unlock (spec S.12, ADR 0068: a `credential` request whose card is the runner's challenge, `unlockChallengeOf`) renders as the **unlock card** (`UnlockCard`) instead of the options and the free-text box: the runner, the project, when it was filed, the challenge's age and time left; Unlock once / Unlock and allow for 1, 8 or 24 h / Unlock and clear the window / Deny. The key never reaches the page: `daemonRunnerKeys(client)` asks the daemon, which holds the OS keyring, to wrap it (`POST /runner-unlock/wrap`) and the page sends the wrapped answer as the request's answer; the window it set is recorded in browser storage (`runnerUnlockWindow.<human>`) only after the answer was accepted. While that window is open the next challenge is answered once, without a choice, with a notice (`useAutoUnlock`). Without the key on this computer (`GET /runner-unlock/:runnerId/key`) or after the challenge expired, the card is read-only with the reason. `InboxPage` takes `runnerKeys`, `unlockWindows` and `now` props for tests | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /messages/:id/read`, `GET /runner-unlock/:runnerId/key`, `POST /runner-unlock/wrap` |
 | `/memory` | one view per principal agent (the human's own first, then the peers' as listed-but-not-readable), the critic, shared lessons, each with active and pinned counts; search (debounced); per lesson: pin, tags, confidence, uses, last used, source, project, file; edit text and tags, delete (two clicks); Share (spec G.6: proposes the lesson for every project; shown for an active lesson that is not already global shared, `canShare`; the row then says the critic reviews it at the next session end and gains the `general` tag); "Shared across projects": the proposals waiting for the critic and the offers of promoted lessons to the human's other projects (open first: Accept for that project / Dismiss, applied at once; decided ones with their outcome; its own route-missing notice when the daemon lacks the offers route); consolidation proposals with merged/contradictions/retired and "Run now" (its own route-missing notice, under the Consolidation heading, when the daemon lacks the consolidation routes) | `GET /memory/scopes`, `GET /memory?scope=&agentId=&q=`, `PUT /memory/lessons/:id`, `POST /memory/lessons/:id/pin`, `DELETE /memory/lessons/:id`, `POST /memory/lessons/:id/propose`, `GET /memory/promotions`, `GET /memory/offers`, `POST /memory/offers/:id/answer`, `GET /memory/consolidation`, `POST /memory/consolidation/run` |
 | `/extensions` | grouped by kind (connectors and MCP servers, skills, specialists, capabilities, model providers): name, version, status, connected, cost, description, permissions summary with the full list behind details; On/Off switch; Remove (two clicks); pending rows show the review (stage, risk, summary, tools, requested permissions) with Approve/Deny; Add dialog: catalog with search and kind filter, or an MCP server URL; reloads on every `extension.changed` frame | `GET /extensions`, `GET /extensions/catalog`, `POST /extensions` (201 or 202), `POST /extensions/:id/toggle`, `/approve`, `/deny`, `DELETE /extensions/:id` |
 | `/changes` | the change log newest first: source, scope, project, undo state, who asked and when, the sentence, the words used, revert time, commands / before / after behind details, Undo while undoable; project filter and "undoable only" | `GET /changes?projectId=&undoable=`, `POST /changes/:id/undo` |
@@ -322,7 +325,14 @@ findings, verdict filter, missing route), `tasks`, `session`, `inbox` (sorting, 
 free text, reload on a streamed count, mark read; an intake proposal rendered as the plan card
 with phases, tasks with tier / priority / specialist / dependencies, docs and their target, the
 first session with estimates and the call's cost, the ordinary options kept, and `intakeCardOf`
-reading only intake cards that carry a proposal; spec A.2, ADR 0055), `chat`, `memory` (view
+reading only intake cards that carry a proposal; spec A.2, ADR 0055), `unlock-card` (spec
+S.12, ADR 0068: the cloud runner unlock card with the runner, project, filing time and the
+challenge's age; Unlock once sends the key wrapped by the fake daemon's keyring and the test
+unwraps it as the runner does; the key in neither the DOM nor any recorded call; a window set
+with the answer and remembered, then the next challenge answered automatically with a notice;
+clear sends null and drops the record; deny never asks the keyring; no auto-answer after the
+window; read-only without the key and for an expired challenge; over the bridge contract a key
+holder's every handed-out copy is zeroed and a shell without a keyring is read-only), `chat`, `memory` (view
 order, pinned first, search, critic and shared views, a peer's agent not readable, edit / pin
 / delete, consolidation, the offers and pending proposals with accept and dismiss posted and
 the outcome shown, Share on a lesson row posting the proposal and joining the pending list
@@ -719,7 +729,7 @@ apps/approvals-web/
 | --- | --- | --- |
 | Sign-in | states: exchanging, error in plain words (used or expired link, unreachable service, unsupported browser), idle ("open this page from the link") | `POST /pairing/complete` |
 | Header (Shell) | active project always shown (`<select>`, remembered per tab; defaults to the stored choice, else a blocked project, else the first), Inbox with the blocking badge, Chat, feed badge (live / polling / connecting), kill switch (confirm dialog → `kill {scope:"all"}` to every runner that is present: `pc` when a PC is online, `cloud` when it runs sessions; enabled when either is there, so cloud-only work can be stopped from the web; one request per target, a refusal shown next to the other target's status; pick-up and outcome shown), Sign out | `GET /projects`, `GET /devices`, `GET /sessions?status=running,paused`, `GET /remote/commands`, `POST /remote/commands`, `GET /remote/commands/:id`, `GET /events` |
-| Inbox | requests blocking first (then newest), each with kind, project, "Blocks work" / "Does not block", "High risk" badge, why it matters, context (steps), option buttons or a free-text field; answer posts `{ version, answer }`; `409` shows "changed on another device" with Reload; answered requests leave the list and are not asked again (the service lists open ones; the runtime records the decision, spec J.4); messages with Mark read; reloads on `human_request.changed` / `message.changed` and on polls | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /confirm/challenge`, `POST /messages/:id/receipt` |
+| Inbox | requests blocking first (then newest), each with kind, project, "Blocks work" / "Does not block", "High risk" badge, why it matters, context (steps), option buttons or a free-text field; answer posts `{ version, answer }`; `409` shows "changed on another device" with Reload; answered requests leave the list and are not asked again (the service lists open ones; the runtime records the decision, spec J.4); a credential request shows no answer controls, and a cloud runner vault unlock (`runnerUnlockOf`, spec S.12, ADR 0068) names the runner and says this page has no keyring, so unlock from the desktop or Android app; messages with Mark read; reloads on `human_request.changed` / `message.changed` and on polls | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /confirm/challenge`, `POST /messages/:id/receipt` |
 | Chat | read-only quick chat for the active project relayed as `chat` remote command; the reply arrives through the command's result (`{ reply }`); "answering…", "not picked up yet", failures in plain words; disabled with the reason when the link has no `write:remote`, when no PC is online, or when there is no project (the kill switch, by contrast, stays usable for a cloud runner alone) | `POST /remote/commands`, `GET /remote/commands/:id` |
 
 Presence (`lib/presence.ts`): a PC counts as online when a `desktop` device was seen within
@@ -842,10 +852,16 @@ apps/ui/src/mobile/
   outbox.ts          offline queue, batches to /sync/outbox, duplicates never applied twice
   pairing.ts         fr://pair?u=&c=&h=, web link, qr JSON, bare code; buildPairingLink
   push.ts            PushPort, PollingPush (the stand-in), quiet hours, noticeFor(feed event)
-  storage.ts         per-install localStorage keys, SecureStore (shell | browser | memory)
+  storage.ts         per-install localStorage keys, SecureStore (shell | browser | memory); the
+                     cloud runner's vault key sits in the shell's secure store under
+                     runner-vault-key-<runner> (ADR 0068)
   shell-bridge.ts    invoke wrappers: shell_info, device_key_*, secure_store_*, assert_biometric,
                      push_status, barcode scan, deep links
-  screens/           Pairing, Home, Inbox, Chat, Remote, Changes, Settings, Session (live log)
+  screens/           Pairing, Home, Inbox, Chat, Remote, Changes, Settings, Session (live log);
+                     Inbox renders a cloud runner unlock as the shared UnlockCard with
+                     `controller.runnerKeys` (secureStoreRunnerKeys in the shell, read-only
+                     without one) and `controller.answerUnlock` (biometric first, the window
+                     recorded on the phone after the service accepted the answer)
 apps/mobile/
   package.json       tauri CLI scripts; test:emulator -> e2e/run.mjs
   e2e/run.mjs        emulator run (build, boot, install, fake service, CDP smoke); README.md has the
@@ -983,6 +999,12 @@ quiet hours. The FCM wiring is listed in ADR 0032 item 6.
   `mobile-store.test.ts` asserts the token and the key never reach state, storage or logs,
   that an auth loss keeps the queue until the next pairing, and that the monthly cap and
   the CHF rate come from `/me` and the project cards.
+- `apps/ui/test/mobile-unlock.test.tsx` (spec S.12, ADR 0068): the phone's unlock card with
+  the key from a secure store standing in for the Keystore: unlock once only after the
+  biometric prompt (device-signed, biometric flag), the answer unwraps to the key and the key
+  is in neither the DOM nor a call; a cancelled prompt sends nothing; the 24 h window set and
+  persisted; clear sends null; deny; the auto-answer inside the phone's window (the prompt
+  opens on its own); read-only in a browser and on a phone without the runner's key.
 - `apps/ui/e2e/mobile-{pairing,inbox,remote}.spec.ts`: Playwright on a Pixel 7 viewport with
   the fake state service as a web server (real signature checks, simulated PC): pairing,
   approve, high risk needs the prompt, scenario 9 end to end with undo.

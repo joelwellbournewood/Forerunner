@@ -106,14 +106,34 @@ key (`not_supported`).
    stores the secrets the runner may use, and keeps `exportKey()` (32 bytes) in its own OS
    keyring.
 2. `vault.json` goes to the runner; `vault.key` never does. The runner opens the vault locked.
-3. At runner start the runner asks for an unlock; the human approves on their device (or an
-   auto-unlock window is active), the device sends the key over the authenticated device
-   channel, the runner calls `unlock(key)` and keeps the key in memory only.
+3. At runner start the runner files a one-time challenge (a `credential` request, ADR 0033);
+   the human answers on a device (or an auto-unlock window is active) with the key wrapped to
+   the challenge's X25519 key, the runner calls `unlock(key)` and keeps the key in memory only.
 4. Lock on stop, on kill switch, or when the window ends. A wrong or stale key fails with
    `validation` / `wrong_key` and the runner stays locked.
 
-The transport, approval and auto-unlock window are to be filled by cloud-runner and
-state-service; the vault side is complete.
+The device side is `runner-unlock.ts` (spec S.12, ADR 0068): `wrapVaultKey` (WebCrypto only,
+no imports, so the daemon, the web views and the tests share it), `parseUnlockChallenge`, the
+window rule (`shouldAutoAnswer`, `autoUnlockWindowEnd`, at most a week), the key names and
+`decodeStoredKey`. The bridge contract: a device returns only the wrapped answer, never the key.
+
+- Desktop: the key lives in the install's vault (OS keyring) under
+  `cloud_runner_vault_key:<runner>` (`runnerKeySecretName`). The daemon's
+  `POST /runner-unlock/wrap` reads it, wraps it and zeroes it inside the handler; the web view
+  never sees it. `GET /runner-unlock/:runnerId/key` says only whether it is there. Each wrap is
+  one `runner.unlock_answer_wrapped` audit row with the runner and challenge ids.
+- Android: the key lives in the shell's Keystore-wrapped secure store under
+  `runner-vault-key-<runner>` (`runnerKeySecureStoreKey`). The UI reads it for the one call,
+  wraps it with WebCrypto and zeroes the bytes in `finally` (the base64 string the shell
+  returns is the one copy JavaScript cannot erase). The answer is high risk: device-signed
+  plus the biometric assertion, never queued in the outbox.
+- A page without a keyring (the browser fallback) shows the card read-only.
+
+Tests: `services/cloud-runner/test/vault-unlock.test.ts` (a WebCrypto answer unlocks the real
+runner and vault; refusals), `packages/runtime/test/runner-unlock-routes.test.ts` (the key is
+never in a response or an audit row; the answer unwraps to exactly the stored key),
+`apps/ui/test/unlock-card.test.tsx` and `mobile-unlock.test.tsx` (the key in neither the DOM
+nor any call; every copy a key holder handed out is zeroed).
 
 ### Shared secrets between two humans (`wrap.ts`; spec S.13, ADR 0065)
 
