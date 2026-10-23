@@ -491,15 +491,18 @@ cases; skipping the open-item lookup in `ensureRequest` fails the "not every tic
 - Wired by the daemon (`runtime.md`, "Local daemon"): the routes are mounted, `fr daemon` runs
   the health check once it listens, `fr update` is registered and the package index exports the
   module as the `updates` namespace. The daemon's `Restarter` writes `<runtime>/restart.json`
-  and exits with `RESTART_EXIT_CODE` (86); the shells' supervisor that reacts to it and the
-  launcher that reads `current.json` do not exist yet, so until then `fr update apply` from the
-  CLI stages and asks the user to restart.
+  and exits with `RESTART_EXIT_CODE` (86); the desktop shell's supervisor relaunches on it
+  (`apps/desktop/src-tauri/src/restart.rs`, `decide_after_exit`; `actions.rs`,
+  `watch_external_restart`, for a daemon the shell did not start) and its launcher starts the
+  version `current.json` names (`install.rs`, `staged_version_dir`). `fr update apply` from the
+  CLI stages the version and asks the user to restart (`update/cli.ts`): the CLI process is
+  not the daemon the shell supervises.
 - `release.yml` builds and uploads the signed `forerunner-release.json` asset in its publish
   job (`fr update manifest` from the downloaded artefacts, `fr update sign --key-file` with the
   `UPDATE_SIGNING_KEY` secret written to a temp file and removed after); the step is skipped
   when the secret is absent, so a release without the secret is unsigned and no install will
-  take it. `release.md` still describes the earlier Tauri/minisign plan, which this module
-  replaces with the Ed25519 manifest (ADR 0015).
+  take it. `release.md`'s staged-install steps keep the earlier Tauri/minisign wording (with a
+  note pointing here); this module replaces that plan with the Ed25519 manifest (ADR 0015).
 - The sync gate learns of a peer's migration when this install next reads the shared state
   (a session start, a peer feed before a task, `GET /projects/:id/peers`, the health check
   after an update); an idle daemon with no session due keeps its last verdict until then.

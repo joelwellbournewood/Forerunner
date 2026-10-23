@@ -304,8 +304,6 @@ Run: `pnpm vitest run --project unit packages/runtime/test/extensions-*.test.ts`
 
 ## Known issues
 
-- Installing anything that is not a built-in catalog entry takes two yeses; the panel should
-  show `pendingStage` so the human knows which one is open.
 - `addFromUrl` fetches the URL the human typed (manifest probe) before any approval, and
   `fetchJson` accepts loopback and private addresses: a daemon-side request to an address the
   human chose. It yields at most a pending row; nothing is started from it. If the daemon ever

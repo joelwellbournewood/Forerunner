@@ -305,13 +305,6 @@ Run: `pnpm vitest run --project unit packages/commands/test` (122 tests).
   loop is wired in the state service and daemon, not here.
 - A posted sentence needs a principal agent (`ctx.agentId`) because messages have a sender;
   without one only the change log and the activity event are written.
-- The temporary session budget (`project.settings.session_budget_override`, "give it 20 francs
-  tonight") is honoured by `session.start` through this package (`sessionBudgetOf`), but the
-  runtime's own `startSession` in `packages/runtime/src/daemon/compose.ts` still reads
-  `session_cap_usd_micro` only, so a session the scheduler starts tonight ignores the override.
-  The daemon wiring step must derive the cap from `sessionBudgetOf(project, ctx)` (or read the
-  override with its expiry); until then the spec's "same enforcement as the settings screen"
-  holds for sessions started through this package, not for scheduler-started ones.
 - The rows Q.1 to Q.12, R.4, R.5, R.7 and I.1 in `docs/requirements.md` do not yet cite this
   package's tests (the file was outside this task's paths); the wiring PR updates them.
 

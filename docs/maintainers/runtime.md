@@ -2171,8 +2171,7 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   session on the cloud runner reads said lines only once that runner's `recheckInbox` runs
   (the same runner code; nothing here is PC-only); a pending
   high-risk card is dropped by a daemon restart (ADR 0030 item 3) and the human asks again; `/health` does not report the watcher or
-  the presence row (`RuntimeApp.remote` does); the cloud runner's watcher does not pass the
-  owner filter to `pickUp` yet (one option in `services/cloud-runner/src/remote.ts`); no
+  the presence row (`RuntimeApp.remote` does); no
   end-to-end test drives the real phone client through the state service to the daemon yet
   (the watcher is covered against the store, which is what the service writes); the replay
   rule reads audit rows per row rather than taking a lock, so two daemons of one human that

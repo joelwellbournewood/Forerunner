@@ -1372,8 +1372,8 @@ composition, `settleSubscriptionRuns`, `scrubHostSessionEnv`), `src/tasks.ts` (t
 phase 1 tasks and the kill task, shared by both halves), `src/dry-run.ts` (fake credentials and
 the fake ladder priced like the real one), `src/stats.ts`, `src/report.ts` (`reportDir`,
 `writeReport`, `readPhase1Evidence`); the tests under `test/`: `env`, `budget`, `metered`,
-`harness` (the dry runs of both halves; on under the package's own `test` script, which no CI
-job invokes yet, see Known issues) and the four `live-*.live.test.ts` files (opt-in).
+`harness` (the dry runs of both halves; on under the package's own `test` script, which
+`ci.yml` runs on both OS, step "Live harness offline tests") and the four `live-*.live.test.ts` files (opt-in).
 
 ### How it works
 
@@ -1479,9 +1479,9 @@ small coder tasks (greet, clamp, changelog) on a seeded repository, task cap 0.4
 cap 3 USD: the session runs to its end, every task is worked and opens a PR on the fake host,
 no run exceeds its cap, no call is refused, the store's cost ledger for the session carries
 the same tokens the provider reported, the runs charge the `api_key` source; (2b) the gate
-case on its own: `completed + inReview === 3` and nothing sent back by the critic, so the
-tier 1 escalate-at-confidence-0.5 defect (gates.md, phase 3 row) fails that case and no
-other, with the verdicts in the message; (3) text chat on Haiku through the composed
+case on its own: `completed + inReview === 3` and nothing sent back by the critic, so a
+critic defect such as the tier 1 escalate-at-confidence-0.5 verdicts of runs 1 to 3 below
+(fixed by ADR 0042; the case passed in run `2026-10-20T18:58:41Z`, gates.md) fails that case and no other, with the verdicts in the message; (3) text chat on Haiku through the composed
 `ConversationAgent` with its measured `ttftMs`; (4) a fourth, long task started and stopped
 with `kill.stop("all")` 0.5 s after its first model call: the session ends `killed` in under
 2 s of wall time, the claim is released, no call starts after the stop, and when a call was in
@@ -1685,17 +1685,11 @@ row with the note settled once, the audit row, the host-session scrub and the no
 run). The 14 live cases in the four `live-*` files are reported as skipped without
 `FORERUNNER_LIVE=1` (the subscription file also without a token, with that reason). No network,
 no Docker, no Postgres; Windows and Linux (paths through `@forerunner/platform`, temp roots
-under `os.tmpdir()`). The script runs in no CI job yet (see Known issues); until it does, run
-it locally before a change to this package.
+under `os.tmpdir()`). CI runs the script on both OS (`ci.yml`, step "Live harness offline
+tests", `pnpm --filter @forerunner/live test`), where every live case skips visibly.
 
 ### Known issues
 
-- Not in CI yet: the root vitest `unit` project globs `packages/*`, `services/*`, `testenv`,
-  `evals` and `scripts`, and `ci.yml` never runs `pnpm --filter @forerunner/live test`, so the
-  package's always-on tests (ledger, caps, metered provider, the dry-run composition) run only
-  when someone runs them. The orchestrator owns both files; the step to add is
-  `pnpm --filter @forerunner/live test` in the unit and integration jobs on both OS (every live
-  case skips visibly there), or `tests/live/test/**/*.test.ts` in the root unit include.
 - The aborted-call blind spot: the adapter reports usage only at `message_end`, so a killed
   call's billed input tokens are not in the ledger (row with `no usage reported`). The runtime
   adapter would have to surface `message_start` usage to close it.
@@ -1719,11 +1713,13 @@ it locally before a change to this package.
   `packages/runtime/src/wiring/state-ports.ts` passes none), so a breakdown by specialist
   reads `unknown`; the harness reads per-task coder spend from the Run rows and records the
   breakdown as evidence only. A runtime follow-up.
-- The kill switch on the Agent SDK path: one live sample measured 2016 ms from `stop()` to
-  the session's `killed` end (the switch itself 4 ms; the SDK's abort waits for the Claude Code
-  subprocess to exit), 16 ms over the 2 s target. The fix belongs in `packages/runtime`
-  (`SdkAgentDriver`: end the run as killed on abort without waiting for the child, or SIGKILL
-  after a short grace); the case keeps the target as written.
+- The kill switch on the Agent SDK path: the one live sample (run `2026-10-20T20:04:16Z`)
+  measured 2016 ms from `stop()` to the session's `killed` end, 16 ms over the 2 s target,
+  because the run waited for the Claude Code subprocess to exit. `SdkAgentDriver` now ends the
+  run the moment the abort fires and leaves the iterator to finish in the background
+  (`packages/runtime/src/agent/sdk.ts`, the `aborted` race in `run`); no live run has measured
+  it since, so the number is re-measured on the final build (phase 1 gate, V.6). The case
+  keeps the target as written.
 - The subscription half compares the per-task outcomes with the API-key half only when that
   half's `phase1-live.json` of the same run is in the report directory (or named by
   `FORERUNNER_LIVE_PHASE1_EVIDENCE`); a run of the subscription file alone records that the
@@ -1738,11 +1734,6 @@ it locally before a change to this package.
 - The harness mutates the worker's `process.env` for a real subprocess (`scrubHostSessionEnv`),
   because the SDK driver builds the subprocess environment from `process.env`; the dry run
   (fake `query`) leaves it alone, and `hostSessionEnv: "keep"` turns it off.
-- The phase 1 gate case (all three tasks completed) fails live on the tier 1 critic's
-  escalate-at-confidence-0.5 verdicts until the critic fix lands; the usage case before it
-  passes. The phase 3 live gate fails on the pass rate for the same reason (see "Measured");
-  both are critic prompt and evidence findings, not harness ones, and the rows in gates.md
-  say so.
 - The registry copy still narrows the coder's caps and, on the API-key half, its tools to the
   three built-ins (ADR 0040 item 5); since ADR 0043 the loop driver maps `cc:` names itself,
   so the tool rewrite is a choice of the harness, no longer a workaround.
@@ -1827,7 +1818,7 @@ of the file. What it assembles, and why this way:
 
 | # | File | Spec sentence | How the world drives it |
 | --- | --- | --- | --- |
-| 1 | `01-good-day.scenario.test.ts` | Notes left at night, a scheduled session runs, the peer's changes are picked up, work is reviewed, PRs open, a summary and questions arrive by morning | Clock at 00:00 Zurich. Bob runs a late session (one task, PR), M merges it; J leaves two queue items and adds four tasks. Schedules: Bob daily 05:45, Alice 06:00. `advanceTo` 05:45: Bob's scheduled session finishes one task and is held at the first model call of the next (online, claim held, files in flight). `advanceTo` 06:00: Alice's scheduled session acts on Bob's handoff, reads the peer feed (Bob online, 1 claim, files in flight), raises the `files` overlap on the task that touches Bob's file and warns him, does the task on a branch on top of the merged change, has it reviewed (tier 1 accept, `fake-sonnet`), does the tier 3 task (critic verdict `human` on `fake-opus`, a blocking sign-off request to J), opens PRs; the hold is released and Bob finishes. Assertions: the queue rows at night, then `consumed` by one scheduled morning session whose brief carried both in priority order, with that session's `queue.consumed` event and audit row (ids, never the text) and no queue item in the other session's brief (the consumer is derived, not named: see Known issues on the per-human scoping); session rows with `trigger: schedule` at the scheduled minute and the scheduler's log; receipts on the handoff; `peers.feed`, `peer.overlap`, `inbox.acted`, `critic.verdict`, `session.ended` events; review rows per task and the critic's `critic.verdict_adjusted` audit row for the tier 3 accept turned into `human`; PR rows and `pull_request opened` host events; the summary message and the open human request in J's inbox before 07:00; claims released; per session one allowed audit row per `tool_call` run event of its coder runs (each on its run), one `submit_review` row per task review, no row denied; no git token in any row |
+| 1 | `01-good-day.scenario.test.ts` | Notes left at night, a scheduled session runs, the peer's changes are picked up, work is reviewed, PRs open, a summary and questions arrive by morning | Clock at 00:00 Zurich. Bob runs a late session (one task, PR), M merges it; J leaves two queue items and adds four tasks. Schedules: Bob daily 05:45, Alice 06:00. `advanceTo` 05:45: Bob's scheduled session finishes one task and is held at the first model call of the next (online, claim held, files in flight). `advanceTo` 06:00: Alice's scheduled session acts on Bob's handoff, reads the peer feed (Bob online, 1 claim, files in flight), raises the `files` overlap on the task that touches Bob's file and warns him, does the task on a branch on top of the merged change, has it reviewed (tier 1 accept, `fake-sonnet`), does the tier 3 task (critic verdict `human` on `fake-opus`, a blocking sign-off request to J), opens PRs; the hold is released and Bob finishes. Assertions: the queue rows at night, then `consumed` by one scheduled morning session whose brief carried both in priority order, with that session's `queue.consumed` event and audit row (ids, never the text) and no queue item in the other session's brief (the consumer is derived, not named: the checklist reads only the queuing human's notes, `store.queue.pending(project.id, { humanId })` in `packages/runtime/src/session/checklist.ts`); session rows with `trigger: schedule` at the scheduled minute and the scheduler's log; receipts on the handoff; `peers.feed`, `peer.overlap`, `inbox.acted`, `critic.verdict`, `session.ended` events; review rows per task and the critic's `critic.verdict_adjusted` audit row for the tier 3 accept turned into `human`; PR rows and `pull_request opened` host events; the summary message and the open human request in J's inbox before 07:00; claims released; per session one allowed audit row per `tool_call` run event of its coder runs (each on its run), one `submit_review` row per task review, no row denied; no git token in any row |
 | 2 | `02-email-task.scenario.test.ts` | J emails a task with both PCs off. The cloud runner acknowledges it, does it, and replies with results | Clock at 22:00 Zurich; no desktop device row was ever seen and no PC session runs. `agentMailbox` (`scenario-mail.ts`) configures Alice's mailbox on the world's mail server (mode `read_only`, commands on, J's address registered, the private marker) and `scenarioCloudRunner` (`scenario-cloud-runner.ts`) composes the cloud runner's parts on the world's store: its `device` row (kind `runner`), the `PcPresence` rule, the cloud runner's own `EmailWatch` (production gate, handler and policy, the header verifier trusting the world's mail host, push delivery) and the `StartCloudSessionPort` that starts an email session with runner `cloud`, the runner's device, the per-email cap and the email autonomy level, planned on that task only (the runner's `FocusedPlanner` rule) and run by the install's executor, critic and memory. J sends from his mailbox through the signed submission path with the marker; the scenario advances the clock a second at a time until the handler reports the outcome, awaits the session, then injects a spoofed copy (same From, subject and words, bogus DKIM, from the internet). Assertions: no desktop rows and `pcOnline: false`; the `email.command` audit row (verdict, auth, interpretation, result, `ackLatencyMs`), the ack in J's mailbox within the minute and in the thread; the session row (`email`, `cloud`, device, cap, `completed`) and its events; the task row, the coder run, the critic review, the PR and the file on the host, the ledger on Alice's source; the completion mail in the thread with the PR link and the cost, the sent log, the summary message; the spoof's `allowed: false` row with `ignored: dkim_fail`, the command audit, no new task, session, reply or outbox entry; no token in any row or mail |
 | 4 | `04-collision.scenario.test.ts` | Both agents try to take the same task. One wins the claim, the other messages and moves on | Two ready tasks. Both sessions start at once with their planners held after planning (both plans name the same first task); Alice is released and claims it (`task.started`), then Bob is released: his overlap check sees her claim (`peer.overlap` `task_claimed`), his claim fails `held_by`, he sends the info message to the holder and starts the second task; Alice's specialist is held until then, and Bob's specialist on the second task is held until Alice's session has ended, so her overlap check meets his claim (the feed is rebuilt before every task) and her skip is `held_by` too. Assertions: one coder run and one PR per task, each by one agent, both tasks `done`; Bob's `task.skipped` with the holder and the message read at Alice's inbox check between tasks; Alice's `peer.overlap` `task_claimed` on the second task, her `task.skipped` `held_by` Bob and her message to him (unread: his session had no task after it); both sessions `completed` with handoffs, claims released, audit rows with no denial |
 | 5 | `05-budget.scenario.test.ts` | A session hits its cap mid-task and stops cleanly with a handoff | Cap 0.15 USD, three tasks. The second has no estimate (`setEstimate(id, 0)`), so its allowance is the session's remaining budget (the executor caps every run at the session's remaining budget: with an estimate the task's share binds first, which is the phase 1 overspend gate); its specialist keeps calling `read_file` with 4,000-character replies until `SessionBudget.precheck` in `EnforcementHooks.beforeModelCall` refuses the next call. Assertions: run outcome `budget_exceeded`, the ledger's session total under the cap and above 80% of it, the refused call would have crossed it (last estimate plus the tokens it added: a proxy, because the loop keeps the hook's refusal only as the run outcome and the refused call's estimate is not persisted), the 80% warning run event, every `read_file` audited and allowed, `task.finished` and `session.ended` events, session `stopped` with `handoff.stop_reason`, the handoff message to Bob and the summary to J, the third task never started, the task `needs_human` with the claim released and `needs_human -> ready` allowed; then J sets it back to ready and a second session with more budget completes it (two coder runs on the task: `budget_exceeded`, `completed`) |
@@ -1950,20 +1941,6 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
   of its own. Until then a change to `composeRuntime` does not reach the world until it is
   mirrored here (the gate-5 daemon view carries `identity` like the real `RuntimeApp`). The
   `RuntimeApp` shape is the reference; keep the world's install in step with it.
-- The startup checklist reads the next-session queue per project
-  (`store.queue.pending(project.id)` in `packages/runtime/src/session/checklist.ts`), and the
-  runner consumes every item a brief carried, so on a shared project the first session of
-  *any* member's agent takes a note another human left: in scenario 1, J's notes at 00:30 are
-  consumed by Bob's 05:45 session, not by Alice's at 06:00. A queue item carries `human_id`;
-  the queue should reach the agent of the human who queued it (or the runtime should decide,
-  in an ADR, that a project note is for whichever session comes first). Filed as a runtime
-  finding; scenario 1 asserts the clause on the consuming session, whichever it is, and keeps
-  passing once the runtime scopes the queue to the agent's owner.
-- A task's claim is renewed once, `claimTtlMs / 6` after the claim (`SessionRunner`, the
-  `renew` timer is one-shot), so a run longer than about 35 simulated minutes loses its
-  claim while still running. Scenarios hold a session for simulated minutes, never hours:
-  scenario 1 holds Bob from 05:45 to 06:00 so his claim is still live in Alice's feed. Filed
-  as a runtime finding with the queue scoping.
 - The session cap reaches a run through the task's allowance (`LoopTaskExecutor` caps the run
   at the session's remaining budget); a task with an estimate stops at its own share first.
   Scenario 5 uses a task without an estimate so the session cap is the one that binds.
@@ -1980,17 +1957,14 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
   `source: "voice"`, the spoken approval rules (`expectYes`) in front of a pending card, the
   `voice.approval` and `voice.turn` rows. When the shell gets that wiring, move the bridge
   there and point the scenario at it.
-- A registry command whose static risk is high (`budget.set`, `request.answer`, every `limit`
-  command) is offered to the model as a `permission_change` tool, and the enforcement hooks
-  hold such a call for a typed human approval at every autonomy level (`ALWAYS_HUMAN`), before
-  the registry's own risk policy sees it: a spoken "approve the merge request" through the
-  model path ends in an audit row `approval_required: pending` and a blocking request, not in
-  the registry's card. Scenario 3 therefore approves a change the parser understands without
-  a model (`budget.set` from "give it 20 francs tonight"), which is spec O.7 exactly; answering
-  an inbox request by voice needs either an intent pattern for `request.answer` or a tool
-  action class that defers to the registry's dynamic risk: an open runtime decision (an ADR by
-  the runtime owner). Until it lands, the seeded inbox request stays open in scenario 3 and the
-  scenario is extended to it afterwards.
+- Scenario 3 approves a change the parser understands without a model (`budget.set` from
+  "give it 20 francs tonight", spec O.7) and leaves the seeded merge request open in J's
+  inbox. The reason it was written that way is gone: the hooks no longer hold a registry
+  command tool before its card forms (RT-P5-3, `gate: "registry"` from `CommandLoop.tools`
+  in `packages/runtime/src/loop/commands.ts`), so a high-risk command called on the model
+  path forms the registry's card instead of a hold (`conversation.test.ts` shows it for
+  `email_mode_set`). Extending the scenario to answer that
+  request by voice is a test change still to make.
 - The session handoff (`session.handoff`, the handoff message) does not list what the session
   learned; the evidence of the learning is `session.ended.lessonsRecorded`, the
   `memory.recorded` event and the lesson rows in the agent's private memory, which scenario 8
@@ -2026,10 +2000,6 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
   `services/cloud-runner/src/runner.ts` is the reference, keep the helper in step with it. A
   `store` seam on `startCloudRunner` (as `composeUpdateManager` has) would let the scenario run
   the real composition root.
-- `composeRuntime` registers neither the browser tools nor the agent email tools in the daemon's
-  tool registry, and nothing in the daemon calls `producers.injectionFlagged` on the loop's
-  `injection_flagged` run event; `researchInstall` (`scenario-capabilities.ts`) does both for
-  scenario 6 the way the daemon should. The runtime package owes that wiring.
 - Scenario 6 runs Playwright's Chromium when `resolveChromiumExecutable` finds one and a launch
   succeeds (the pinned revision on the build box and in CI); otherwise the two read tools run on
   `staticBrowserTools` (an HTTP fetch after the same `SitePolicy.assert`, redirects followed hop
