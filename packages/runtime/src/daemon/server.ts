@@ -1200,26 +1200,29 @@ export function createDaemonApp(
           "deviceId is required: this daemon has no desktop device row to answer for",
         );
       }
-      if (thisPc) {
-        await rt.store.auditLog.append({
-          tool: "daemon.confirm_device",
-          allowed: true,
-          denied_reason: null,
-          agent_id: rt.agent.id,
-          human_id: rt.human.id,
-          input_summary: JSON.stringify({ pendingId: id, deviceId, given: body.deviceId ?? null }),
-          result_summary: "device answer naming no device row: this PC's own desktop row answers",
-          cost_usd_micro: 0,
-          occurred_at: rt.clock.nowIso(),
-          author_agent: rt.agent.id,
-        });
-      }
       r = await rt.commands.confirm(id, {
         kind: "device",
         deviceId,
         biometric: body.biometric === true,
         by,
       });
+      // The substitution is audited after the registry answered, with its outcome: a mapped
+      // answer for a card that does not exist or that the policy refused is not "allowed".
+      if (thisPc) {
+        const accepted = r.status !== "refused";
+        await rt.store.auditLog.append({
+          tool: "daemon.confirm_device",
+          allowed: accepted,
+          denied_reason: accepted ? null : `${r.code ?? "refused"}: ${r.reason ?? ""}`,
+          agent_id: rt.agent.id,
+          human_id: rt.human.id,
+          input_summary: JSON.stringify({ pendingId: id, deviceId, given: body.deviceId ?? null }),
+          result_summary: `device answer naming no device row: this PC's own desktop row answered; ${r.status}`,
+          cost_usd_micro: 0,
+          occurred_at: rt.clock.nowIso(),
+          author_agent: rt.agent.id,
+        });
+      }
     } else {
       r = await rt.commands.confirm(id, { kind: body.answer, by });
     }
