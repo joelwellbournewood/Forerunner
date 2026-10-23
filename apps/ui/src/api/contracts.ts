@@ -17,8 +17,8 @@ import { z } from "zod";
  *    `PROPOSED_ROUTES`; `proposedPath()` prefers the daemon's `DAEMON_ROUTES` entry of the same
  *    name as soon as one exists, and the pages render a visible "route not available" state
  *    (`isRouteMissing`) until the daemon serves the route. Reviews, memory, commands and the
- *    change log, data assets and performance were proposed here first and now come from
- *    `api-types.ts` directly.
+ *    change log, milestones, data assets and performance were proposed here first and now
+ *    come from `api-types.ts` directly.
  */
 
 // ---------------------------------------------------------------------------------------

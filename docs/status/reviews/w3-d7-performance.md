@@ -458,3 +458,35 @@ exit 0; `pnpm lint` exit 0 (59 warnings, all in files this item does not touch);
 tests 116 files / 996 passed, 1 skipped; the four item files 38/38; UI 42 files / 255 tests;
 `node scripts/docs-check.mjs --base <start>` ok (18 files) and `--base origin/ccr-4d8a843c-1k9syk`
 ok (27 files); `pnpm check` exit 0 (unit 271 files / 2685 passed, 4 skipped, 1 todo).
+
+## Rebase
+
+2026-10-23: the branch (start f8fb6a4, merge base 82a6295) was rebased with
+`git rebase origin/ccr-4d8a843c-1k9syk` onto cac6fee (181 base commits ahead of the merge
+base). All 19 commits replayed; the base was not merged into the branch. Conflicts and their
+resolution (the commit being replayed first):
+
+1. 0f4a2ce agent.ts imports: base added AgentRow import; branch added wholeMs value import -> kept both
+2. 501362e apps/ui/src/api/contracts.ts header comment listing proposed routes: base had removed milestones (served) and still listed "data assets and imports, project docs, performance"; branch removed performance. Base had also since served data assets (dataAssets in DAEMON_ROUTES). Resolved to the routes still in PROPOSED_ROUTES: "the next-session queue, imports, project docs".
+3. 501362e apps/ui/test/contracts.test.ts served-route list: base added milestones, changeMilestone; branch added performance -> kept all three.
+4. 33328fb docs/maintainers/apps.md, client paragraph: base moved milestones/changeMilestone to the served list and kept performance among the proposed; branch moved performance out with its `performance(filter?)` description. Merged: served list carries milestones, changeMilestone and the data asset routes (base serves them, see contracts.test.ts; the branch's later fix 6336000 says the same), proposed list is queue, enqueue, dismissQueueItem, importProject, docs, doc, plus the branch's performance sentence.
+5. 33328fb apps.md, fake-daemon paragraph: base added milestones with POST /milestones/:id behaviour; branch added the GET /performance behaviour. Merged both; "served read-only" now lists decisions, the peer feed and docs.
+6. 33328fb apps.md, known-gaps proposed-routes bullet: base said milestones are served since B.5 with the Plan tab fallback; branch said performance left the list. Merged: both sentences, plus the data assets as served (branch fix 6336000 applied here already).
+7. 33328fb docs/maintainers/runtime.md, Ladder paragraph: base added the fast-mode tierOfModel sentence (ADR 0057); branch added INTAKE_RUN_SPECIALIST. Kept both.
+8. fabb930 CHANGELOG.md, Unreleased/Added: base added the E.1 CI-and-PR-comment triggers entry; branch added the Performance view entry. Kept both entries (base first, then the branch's).
+9. fabb930 docs/status/PROGRESS.md, Log: base added the entries for w2-s32-indicator (rebase, review, build), w2-s12-unlock-card, w3-e1-triggers and w4-fcm-sender; branch added its build entry. Kept all; the branch's entry first (newest).
+10. fabb930 PROGRESS.md, "Next" item list: base annotated w4-fcm-sender ("built on its branch, review and merge pending"); branch annotated w3-d7-performance. Merged both annotations into the one list item.
+11. 6336000 apps.md, client paragraph and proposed-routes bullet: the branch's fix (data asset routes served) was already folded in at conflict 4/6 together with the base's milestones; took that merged text (milestones stays served, as on the base).
+
+Afterwards one follow-up commit: the `contracts.ts` header names milestones among the routes
+that were proposed first and are now served, and this log, PROGRESS.md (rebase entry, the
+item list, the requirement counts) carry the current figures.
+
+Checks on the rebased tree: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, none
+an error); `pnpm exec vitest run --project unit packages/runtime/test` 130 files / 1144
+passed, 1 skipped (`performance-view.test.ts` 8, `performance-route.test.ts` 3,
+`intake.test.ts` 12, `conversation.test.ts` 23); `pnpm exec vitest run --project integration
+packages/runtime/test` 1 file / 4 tests skipped (Docker sandbox, no daemon); `pnpm --filter
+@forerunner/ui test` 46 files / 301 tests (`performance.test.tsx` 7, `client.test.ts` 17,
+`contracts.test.ts` 8); `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok.
+Requirements after the rebase: 187 done, 36 in progress, 5 todo.

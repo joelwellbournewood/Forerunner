@@ -77,6 +77,17 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   screens are in the nav. R.5 stays `in progress` until the emulator run (BLOCKERS.md, R.5).
   Build report: `docs/status/reviews/w3-r5-phone.md`.
 
+### 2026-10-23 (item w3-d7-performance rebased onto cac6fee)
+- `wave/w3-d7-performance` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in
+  the conversation agent's imports (the base's `AgentRow` next to the branch's `wholeMs`), the
+  UI contracts header and served-route test (the base's milestones next to the branch's
+  performance), apps.md (client, fake daemon and proposed-routes paragraphs), runtime.md
+  (Ladder: fast mode and `INTAKE_RUN_SPECIALIST`), CHANGELOG (E.1 and D.7/D.19) and this log;
+  both sides kept (`docs/status/reviews/w3-d7-performance.md` `## Rebase`). Current counts:
+  runtime unit 130 files / 1144 passed, 1 skipped (`performance-view.test.ts` 8,
+  `performance-route.test.ts` 3); UI 46 files / 301 tests (`performance.test.tsx` 7);
+  requirements 187 done, 36 in progress, 5 todo. Not merged yet.
+
 ### 2026-10-23 (item w3-d7-performance reviewed and fixed on its branch)
 - Independent review of the Performance view build: verdict revise, six findings, all fixed
   on `wave/w3-d7-performance` (`docs/status/reviews/w3-d7-performance.md`, `## Review`):
@@ -484,12 +495,12 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    with six findings fixed, awaiting merge, see its review in
    `docs/status/reviews/w3-c5-specialist-approval.md`),
    w3-d4-specialist-settings (D.4; built and reviewed on its branch 2026-10-23, its six review
-   findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19; built on its branch
-   2026-10-23, review pending), w3-d16-slider (D.16),
+   findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19; built, reviewed and
+   fixed on its branch 2026-10-23, rebased onto cac6fee, awaiting the merge), w3-d16-slider (D.16),
    merge pending), w3-c5-specialist-approval (C.5),
    w3-d4-specialist-settings (D.4; built and reviewed on its branch 2026-10-23, its six review
-   findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19; built on its branch
-   2026-10-23, review pending), w3-d16-slider (D.16:
+   findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19; built, reviewed and
+   fixed on its branch 2026-10-23, rebased onto cac6fee, awaiting the merge), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
    w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
