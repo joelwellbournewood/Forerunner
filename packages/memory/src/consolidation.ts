@@ -4,6 +4,7 @@ import type { LessonRow } from "@forerunner/state";
 import { cosine } from "./embedding.ts";
 import { exportRow } from "./files.ts";
 import { polarityConflict } from "./polarity.ts";
+import { parseSource } from "./record.ts";
 import type { MemoryContext, MemoryScope } from "./types.ts";
 
 /**
@@ -85,6 +86,16 @@ function sameProjectOrGlobal(a: LessonRow, b: LessonRow): boolean {
   return a.project_id === null || b.project_id === null || a.project_id === b.project_id;
 }
 
+/**
+ * A project-level copy accepted from a promotion offer (spec G.6) names its global origin in
+ * `source` (`promotion:<origin id>`). The two carry the same text by design and are never a
+ * duplicate pair: merging them would keep the pinned copy and make it global, pinning the
+ * lesson for every project the human never accepted it for.
+ */
+function acceptedCopyOf(a: LessonRow, b: LessonRow): boolean {
+  return parseSource(a.source).promotion === b.id || parseSource(b.source).promotion === a.id;
+}
+
 function shareTag(a: LessonRow, b: LessonRow): boolean {
   const set = new Set(a.tags);
   return b.tags.some((t) => set.has(t));
@@ -158,7 +169,7 @@ export async function consolidate(
     for (let j = i + 1; j < rows.length; j++) {
       const a = rows[i] as LessonRow;
       const b = rows[j] as LessonRow;
-      if (!sameProjectOrGlobal(a, b)) continue;
+      if (!sameProjectOrGlobal(a, b) || acceptedCopyOf(a, b)) continue;
       const s = sim(a, b);
       pairSim.set(`${a.id}|${b.id}`, s);
       if (s >= cfg.duplicateThreshold && !polarityConflict(a.text, b.text)) {
@@ -172,6 +183,22 @@ export async function consolidate(
     const g = groups.get(root) ?? [];
     g.push(r);
     groups.set(root, g);
+  }
+  // A third lesson can link an accepted copy and its origin through the union; the copy is
+  // then left out of that group (its own singleton) and the rest merges as usual.
+  for (const [root, g] of [...groups]) {
+    const ids = new Set(g.map((r) => r.id));
+    const copies = g.filter((r) => {
+      const origin = parseSource(r.source).promotion;
+      return origin !== undefined && origin !== r.id && ids.has(origin);
+    });
+    if (copies.length === 0) continue;
+    const copyIds = new Set(copies.map((c) => c.id));
+    groups.set(
+      root,
+      g.filter((r) => !copyIds.has(r.id)),
+    );
+    for (const c of copies) groups.set(c.id, [c]);
   }
   const mergedAway = new Set<string>();
   const byId = new Map(rows.map((r) => [r.id, r]));

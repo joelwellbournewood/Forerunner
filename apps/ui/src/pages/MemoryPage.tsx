@@ -1,6 +1,11 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { describeError, type LessonView, type MemoryScopeView } from "../api/client.ts";
+import {
+  describeError,
+  type LessonOfferView,
+  type LessonView,
+  type MemoryScopeView,
+} from "../api/client.ts";
 import { RouteMissing } from "../components/RouteMissing.tsx";
 import { Badge, Button, ErrorBanner, INPUT_CLASS, Loading } from "../components/ui.tsx";
 import { formatDateTime, relativeTime } from "../lib/time.ts";
@@ -75,14 +80,22 @@ export function sortLessons(rows: LessonView[]): LessonView[] {
   );
 }
 
+/** A lesson the human may propose for every project (spec G.6): active, not yet global shared. */
+export function canShare(lesson: Pick<LessonView, "scope" | "projectId" | "status">): boolean {
+  return lesson.status === "active" && !(lesson.scope === "shared" && lesson.projectId === null);
+}
+
 function LessonRow({
   lesson,
   onChange,
   onDeleted,
+  onProposed,
 }: {
   lesson: LessonView;
   onChange: (next: LessonView) => void;
   onDeleted: (id: string) => void;
+  /** The lesson was proposed for the shared store (the proposal row comes back). */
+  onProposed?: (proposal: LessonView) => void;
 }) {
   const client = useClient();
   const [editing, setEditing] = useState(false);
@@ -91,6 +104,7 @@ function LessonRow({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [proposed, setProposed] = useState<string | null>(null);
 
   const run = async (action: () => Promise<void>) => {
     if (busy) return;
@@ -215,6 +229,25 @@ function LessonRow({
               Edit
             </Button>
           ) : null}
+          {!editing && canShare(lesson) && !proposed ? (
+            <Button
+              variant="ghost"
+              onClick={() =>
+                void run(async () => {
+                  const next = await client.proposeLesson(lesson.id);
+                  setProposed(next.id);
+                  if (!lesson.tags.includes("general"))
+                    onChange({ ...lesson, tags: [...lesson.tags, "general"] });
+                  onProposed?.(next);
+                })
+              }
+              disabled={busy}
+              title="Propose this lesson for every project; the critic reviews it at the next session end"
+              data-testid="lesson-share"
+            >
+              Share
+            </Button>
+          ) : null}
           {confirmDelete ? (
             <>
               <Button
@@ -246,12 +279,163 @@ function LessonRow({
           )}
         </span>
       </div>
+      {proposed ? (
+        <output className="mt-2 block text-xs text-neutral-500" data-testid="lesson-proposed">
+          Proposed for every project: the critic reviews it at the end of the next session, and
+          accepted lessons are offered to your other projects below.
+        </output>
+      ) : null}
       {error ? (
         <div className="mt-2">
           <ErrorBanner message={error} testId="lesson-error" />
         </div>
       ) : null}
     </li>
+  );
+}
+
+/**
+ * Cross-project sharing (spec G.6): the proposals the critic has not decided yet and the
+ * offers of promoted lessons to this human's other projects, answered here or in the inbox.
+ */
+function OffersSection({ proposalsVersion }: { proposalsVersion: number }) {
+  const client = useClient();
+  const offers = useAsync((signal) => client.memoryOffers(signal), [client]);
+  const promotions = useAsync(
+    (signal) => client.memoryPromotions(signal),
+    [client, proposalsVersion],
+  );
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const answer = async (offer: LessonOfferView, decision: "accept" | "dismiss") => {
+    if (busy) return;
+    setBusy(offer.requestId);
+    setError(null);
+    try {
+      const next = await client.answerOffer(offer.requestId, decision);
+      offers.setData((prev) =>
+        prev ? prev.map((o) => (o.requestId === next.requestId ? next : o)) : prev,
+      );
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const heading = (
+    <div className="flex flex-wrap items-center gap-2">
+      <h2 id="offers-title" className="font-semibold">
+        Shared across projects
+      </h2>
+      <span className="text-xs text-neutral-500">
+        A lesson tagged general is promoted to the shared store after the critic accepts it and
+        offered to your other projects by their tags. Accept pins it for that project; dismiss
+        leaves it available by relevance only.
+      </span>
+    </div>
+  );
+  if (offers.routeMissing) {
+    return (
+      <section
+        className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+        data-testid="offers"
+        aria-labelledby="offers-title"
+      >
+        {heading}
+        <div className="mt-2">
+          <RouteMissing route="memoryOffers" what="cross-project offers" />
+        </div>
+      </section>
+    );
+  }
+  const open = (offers.data ?? []).filter((o) => o.status === "open");
+  const decided = (offers.data ?? []).filter((o) => o.status !== "open");
+  const describe = (o: LessonOfferView) =>
+    o.answer === "accept" || (o.answer === "yes" && o.copyId)
+      ? o.copyId
+        ? `accepted: pinned for ${o.projectName}`
+        : "accepted"
+      : o.answer === "dismiss"
+        ? "dismissed"
+        : String(o.status);
+  return (
+    <section
+      className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+      data-testid="offers"
+      aria-labelledby="offers-title"
+    >
+      {heading}
+      {error ? <ErrorBanner message={error} /> : null}
+      {(offers.loading && !offers.data) || (promotions.loading && !promotions.data) ? (
+        <Loading what="cross-project offers" />
+      ) : null}
+      {offers.error && !offers.data ? (
+        <ErrorBanner message={offers.error} onRetry={offers.reload} />
+      ) : null}
+      {promotions.data && promotions.data.length > 0 ? (
+        <div className="mt-2 text-sm" data-testid="pending-promotions">
+          <span className="text-neutral-500">
+            Waiting for the critic ({promotions.data.length}):
+          </span>
+          <ul className="mt-1 list-disc pl-5">
+            {promotions.data.map((p) => (
+              <li key={p.id} data-testid="pending-promotion">
+                {p.text}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {offers.data && open.length === 0 && decided.length === 0 && !offers.error ? (
+        <p className="mt-1 text-sm text-neutral-500">No offers yet.</p>
+      ) : null}
+      <ul className="mt-2 space-y-2 text-sm">
+        {[...open, ...decided].map((o) => (
+          <li
+            key={o.requestId}
+            className="rounded bg-neutral-50 p-2 dark:bg-neutral-900"
+            data-testid="offer"
+            data-offer-id={o.requestId}
+            data-status={o.status}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={o.status === "open" ? "warn" : o.copyId ? "good" : "neutral"}>
+                {o.status === "open" ? `offered to ${o.projectName}` : describe(o)}
+              </Badge>
+              {o.sharedTags.map((t) => (
+                <Badge key={t}>{t}</Badge>
+              ))}
+              <span className="text-xs text-neutral-500">{formatDateTime(o.createdAt)}</span>
+              {o.status === "open" ? (
+                <span className="ml-auto flex gap-1">
+                  <Button
+                    variant="primary"
+                    onClick={() => void answer(o, "accept")}
+                    disabled={busy !== null}
+                    data-testid="offer-accept"
+                  >
+                    Accept for {o.projectName}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => void answer(o, "dismiss")}
+                    disabled={busy !== null}
+                    data-testid="offer-dismiss"
+                  >
+                    Dismiss
+                  </Button>
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-1" data-testid="offer-text">
+              {o.text}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -414,6 +598,7 @@ export function MemoryPage() {
     [client, scope, agentId, q, ready, view !== null],
   );
   const rows = useMemo(() => sortLessons(lessons.data?.lessons ?? []), [lessons.data]);
+  const [proposalsVersion, setProposalsVersion] = useState(0);
 
   return (
     <section aria-labelledby="memory-title" className="space-y-3">
@@ -509,10 +694,12 @@ export function MemoryPage() {
                   prev ? { ...prev, lessons: prev.lessons.filter((x) => x.id !== id) } : prev,
                 )
               }
+              onProposed={() => setProposalsVersion((v) => v + 1)}
             />
           ))}
         </ul>
       ) : null}
+      <OffersSection proposalsVersion={proposalsVersion} />
       <ConsolidationSection />
     </section>
   );

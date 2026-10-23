@@ -14,6 +14,24 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Release signing (docs/maintainers/release.md, "Signing"). scripts/android-keystore.mjs writes
+// keystore.properties into the Android project root (gen/android, gitignored) with storeFile,
+// keyAlias, storePassword and keyPassword: the release key decoded from the CI secret, or a
+// generated development key. The file is optional so a checkout without it still configures;
+// then the release APK is left unsigned and CI's scripts/android-apk-verify.mjs fails the job.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+val hasReleaseKeystore = keystorePropertiesFile.exists()
+
+fun keystoreProperty(name: String): String =
+    keystoreProperties.getProperty(name) ?: error(
+        "${keystorePropertiesFile.path}: '$name' is missing (the file is written by scripts/android-keystore.mjs)"
+    )
+
 android {
     compileSdk = 37
     namespace = "app.forerunner.mobile"
@@ -24,6 +42,16 @@ android {
         targetSdk = 37
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperty("storeFile"))
+                storePassword = keystoreProperty("storePassword")
+                keyAlias = keystoreProperty("keyAlias")
+                keyPassword = keystoreProperty("keyPassword")
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -39,6 +67,13 @@ android {
             }
         }
         getByName("release") {
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                logger.warn(
+                    "${keystorePropertiesFile.path} not found: the release APK will be unsigned and cannot be installed. Run `node scripts/android-keystore.mjs` first."
+                )
+            }
             optimization {
                enable = true
             }

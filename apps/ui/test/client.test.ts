@@ -111,6 +111,29 @@ describe("daemon client", () => {
       status: 409,
       message: "kill switch is active",
     });
+    // The capability routes (email, desktop) wrap the same body under `error`; a 403 from
+    // them is the route's own refusal, never the token.
+    const nested = createClient(testConfig(), async () =>
+      jsonResponse(
+        {
+          error: {
+            code: "tool_not_allowed",
+            message: "the signed-in human does not own this agent",
+            details: { agentId: "agent_bob" },
+            retryable: false,
+          },
+        },
+        403,
+      ),
+    );
+    const refused = await nested.emailSettings("agent_bob").catch((e: unknown) => e);
+    expect(refused).toMatchObject({
+      code: "tool_not_allowed",
+      status: 403,
+      message: "the signed-in human does not own this agent",
+      details: { agentId: "agent_bob" },
+    });
+    expect(describeError(refused)).toBe("the signed-in human does not own this agent");
   });
 
   it("maps a plain HTTP failure and a network failure to ui codes", async () => {

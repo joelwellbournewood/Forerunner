@@ -6,5 +6,6 @@ export * from "./polarity.ts";
 export * from "./promotion.ts";
 export * from "./record.ts";
 export * from "./retrieval.ts";
+export * from "./scoped-store.ts";
 export * from "./service.ts";
 export * from "./types.ts";

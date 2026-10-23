@@ -30,6 +30,7 @@ language models drive tools with them. The rules the code enforces:
 | Vault file copied off a machine (laptop theft, runner image leak) | Entries are AES-256-GCM under a key derived from a 32-byte device key or a passphrase. On the runner the key is not on disk at all. |
 | Vault file edited in place (entry swapped, byte flipped, check forged) | Each entry's name is authenticated data; any change fails authentication with `validation` / `integrity`; the key-check value makes a wrong key distinguishable from tampering. |
 | Agent of human A reads the vault of human B | Separate OS users or installs have separate keyring services and vault files; the runtime passes a run only the token of its owner (to be filled by runtime / state-service). |
+| Signed-in human of one daemon writes another human's agent's email settings (points the agent at their own address, enables commands) over a shared state | `packages/capabilities/src/email/routes.ts`: with `humanFor` and `identity` every route under `/agents/:agentId` refuses (403, `tool_not_allowed`, `not_owner`) a human who is not the agent's owner; a mount that identifies humans without an identity port fails closed (`identity_port_missing`) instead of skipping the check; every refusal is an `email.settings` audit row with `allowed = false` and `result_summary` `{ status: "refused", reason }`, and stands (403, a `warn` line) when that row cannot be written (`docs/maintainers/email.md`, "How it is wired"; ADR 0084; `test/security-email.test.ts`, `test/security-email-routes-identity.test.ts`). |
 | Prompt injection via web page, email, repo file | to be filled by capabilities (injection suite) |
 | Phone lost | to be filled by apps (scoped session tokens, revoke from desktop) |
 
@@ -114,6 +115,33 @@ key (`not_supported`).
 The transport, approval and auto-unlock window are to be filled by cloud-runner and
 state-service; the vault side is complete.
 
+### Shared secrets between two humans (`wrap.ts`; spec S.13, ADR 0065)
+
+A secret one human owns (an org deploy token) can be made readable by named agents of the
+other human without the value ever leaving the owner's install in clear.
+
+- **Install wrapping key.** Every install (the PC daemon, later a cloud runner) holds an
+  X25519 pair: the private key as a vault entry under `INSTALL_WRAP_KEY_NAME`
+  (`forerunner.install_wrap_key`, keyring or encrypted file, never a plain file), the public
+  key on its `device` row (`wrap_public_key`, migration 0003). `ensureInstallWrapKey(vault)`
+  creates it on first use; the daemon registers it with its desktop device row at compose.
+- **Wrapping.** `wrapSecret(value, recipientPublicKey, binding)`: a fresh ephemeral X25519
+  pair and a 32-byte salt per blob, `HKDF-SHA256(X25519(ephemeral, install), salt,
+  "forerunner-shared-secret:v1")`, AES-256-GCM with the AAD
+  `1:<ownerHumanId>:<name>:<agentId>:<deviceId>`. The blob (`WrappedSecret`: version,
+  ephemeral public key, salt, iv, ciphertext, tag; all base64) is safe to store, serve and
+  log. `unwrapSecret(blob, installPrivateKey, binding)` is the only way back; another key,
+  another binding (served for another agent, copied to another install) or a tampered field
+  is `validation` with reason `integrity` and no plaintext. `isWrappedSecret` /
+  `parseWrappedSecret` bound the fields; `valueEncodings(value)` lists the encodings the leak
+  tests scan for.
+- **Who holds what.** The owner's vault holds the value; the shared state holds one blob per
+  (agent, install) on a `secret_grant` row plus the approvals; the named agent's install
+  holds its private key. The state service and the phones see ciphertext and names only.
+  The grant flow (both humans, the standard approval card, serving rules, revocation) is in
+  `packages/runtime/src/secrets/` (runtime.md, "Shared secrets") and the service routes in
+  state-service.md.
+
 ### Secrets by reference (`refs.ts`)
 
 - `isSecretRef(v)`: true only for a whole string `secret:<valid name>`. `"token is
@@ -173,6 +201,7 @@ See `runtime.md`. Injection suite, browser and email hardening: to be filled by 
 | `test/open.test.ts` | backend selection, fall back with logged reason, env override, forced keyring failing loudly, invalid env value |
 | `test/refs.test.ts` | reference syntax, nested resolution, immutability, not-granted before vault read, not-found, depth cap, `redactValues` forms, `SecretResolver` |
 | `test/no-leak.test.ts` | captures Logger sinks, console and every thrown error across all backends and failure paths; asserts no value (or its base64) appears |
+| `test/wrap.test.ts` | spec S.13: raw 32-byte X25519 pairs, the install key created once in the vault under its reserved name (a non-key entry is refused), wrap/unwrap round trip to the recipient and nobody else, every binding field (name, owner, agent, device) fails closed, tampered ciphertext / tag / iv / salt / ephemeral key, a wrong version and malformed blobs are `validation` without the value in the error or the logs, fresh ephemeral key and salt per wrap, values up to the cap and multi-byte text |
 | `test/security-vault.test.ts` | the security review: a vault file copied without its key is refused (`wrong_key`) and no key is written next to it, the locked state names the path and never a value, a world-readable key file is tightened to 0600 before use, a tampered KDF block is `corrupt` and never a raw crypto error, an ungranted name is refused before any vault read, the resolver's edge cases, and base64url and hex forms are scrubbed |
 
 Fixtures are random `v-<hex>` values; anything credential-shaped in tests is built by
@@ -196,5 +225,9 @@ Injection suite, capability token and autonomy enforcement tests: see `runtime.m
 - The real-keyring test skips on CI runners without a session bus; keyring behaviour is
   exercised there through the fake store only. A desktop run (`pnpm vitest run --project unit
   packages/vault`) on a machine with a keyring runs the full suite.
-- Shared secrets between two humans, the runner unlock transport and the auto-unlock window are
-  not part of this package (see the table above for owners).
+- The runner unlock transport and the auto-unlock window are not part of this package (see the
+  table above for owners). The cloud runner does not yet register an install wrapping key on
+  its `runner` device row (its vault is locked until the unlock protocol ran), so a shared
+  secret reaches an agent on its owner's PC install; a runner is a follow-up (ADR 0065).
+- The install wrapping key is a vault entry (`forerunner.install_wrap_key`) and shows in
+  `list()`; it is not a user secret and must not be granted to a run.

@@ -1,4 +1,8 @@
 import {
+  type AcceptCandidateBody,
+  type AcceptCandidateView,
+  AcceptCandidateView as AcceptCandidateViewSchema,
+  type AddSourceBody,
   AgentView as AgentViewSchema,
   type ChangeLogView,
   ChangeLogView as ChangeLogViewSchema,
@@ -25,6 +29,20 @@ import {
   DAEMON_ROUTES,
   type DecisionView,
   DecisionView as DecisionViewSchema,
+  type EmailCommandRowView,
+  type EmailCommandsView,
+  EmailCommandsView as EmailCommandsViewSchema,
+  type EmailMarkerView,
+  EmailMarkerView as EmailMarkerViewSchema,
+  type EmailMode,
+  type EmailPausedView,
+  EmailPausedView as EmailPausedViewSchema,
+  type EmailSentRowView,
+  type EmailSentView,
+  EmailSentView as EmailSentViewSchema,
+  type EmailSettingsPatchBody,
+  type EmailSettingsView,
+  EmailSettingsView as EmailSettingsViewSchema,
   ErrorBody,
   type EventView,
   EventView as EventViewSchema,
@@ -36,6 +54,8 @@ import {
   type InboxView,
   InboxView as InboxViewSchema,
   type KillBody as KillBodySchema,
+  type LessonOfferView,
+  LessonOfferView as LessonOfferViewSchema,
   type LessonView,
   LessonView as LessonViewSchema,
   type MemoryScopeView,
@@ -54,14 +74,23 @@ import {
   ProjectCard as ProjectCardSchema,
   type ProjectSummary,
   ProjectSummary as ProjectSummarySchema,
+  type RemoveSourceView,
+  RemoveSourceView as RemoveSourceViewSchema,
   type ReviewsView,
   ReviewsView as ReviewsViewSchema,
   type ReviewView,
   type RunView,
   RunView as RunViewSchema,
+  type ScanResultView,
+  ScanResultView as ScanResultViewSchema,
   type SessionView,
   SessionView as SessionViewSchema,
   SettingView as SettingViewSchema,
+  type SourceCandidateStatus,
+  type SourceCandidateView,
+  SourceCandidateView as SourceCandidateViewSchema,
+  type SourceView,
+  SourceView as SourceViewSchema,
   type StartSessionBody as StartSessionBodySchema,
   type TaskView,
   TaskView as TaskViewSchema,
@@ -123,6 +152,9 @@ import {
 } from "./contracts.ts";
 
 export type {
+  AcceptCandidateBody,
+  AcceptCandidateView,
+  AddSourceBody,
   ApplyUpdateResult,
   CatalogView,
   ChangeLogView,
@@ -141,6 +173,15 @@ export type {
   DecisionView,
   DocContentView,
   DocView,
+  EmailCommandRowView,
+  EmailCommandsView,
+  EmailMarkerView,
+  EmailMode,
+  EmailPausedView,
+  EmailSentRowView,
+  EmailSentView,
+  EmailSettingsPatchBody,
+  EmailSettingsView,
   EstimateAccuracyView,
   EventView,
   ExtensionView,
@@ -148,6 +189,7 @@ export type {
   HumanRequestView,
   ImportResultView,
   InboxView,
+  LessonOfferView,
   LessonView,
   MemoryScopeView,
   MemoryView,
@@ -165,11 +207,16 @@ export type {
   ProjectSettingsView,
   ProjectSummary,
   QueueItemView,
+  RemoveSourceView,
   ReviewsView,
   ReviewView,
   RollbackResult,
   RunView,
+  ScanResultView,
   SessionView,
+  SourceCandidateStatus,
+  SourceCandidateView,
+  SourceView,
   TaskView,
   UpdateLessonBody,
   UpdateProjectSettingsBody,
@@ -201,6 +248,10 @@ export const ChangeLogList = z.array(ChangeLogViewSchema);
 export const CommandDefList = z.array(CommandDefViewSchema);
 export const PendingChangeList = z.array(PendingChangeViewSchema);
 export const ConsolidationList = z.array(ConsolidationProposalViewSchema);
+export const LessonList = z.array(LessonViewSchema);
+export const OfferList = z.array(LessonOfferViewSchema);
+export const SourceList = z.array(SourceViewSchema);
+export const SourceCandidateList = z.array(SourceCandidateViewSchema);
 
 /** Query of GET /memory; `agentId` is required for the private scope. */
 export interface MemoryFilter {
@@ -431,6 +482,13 @@ export interface DaemonClient {
   deleteLesson(id: string): Promise<LessonView>;
   consolidation(signal?: AbortSignal): Promise<ConsolidationProposalView[]>;
   runConsolidation(): Promise<ConsolidationRunView>;
+  // Cross-project sharing (spec G.6): propose, the pending proposals, the offers.
+  /** Tags the lesson `general` and proposes it for every project; the critic decides at the next session end. */
+  proposeLesson(id: string): Promise<LessonView>;
+  memoryPromotions(signal?: AbortSignal): Promise<LessonView[]>;
+  memoryOffers(signal?: AbortSignal): Promise<LessonOfferView[]>;
+  /** Applied at once: accept pins a copy in the project's memory, dismiss leaves it by relevance. */
+  answerOffer(id: string, answer: "accept" | "dismiss"): Promise<LessonOfferView>;
 
   // Commands and the change log (spec Q): the same registry chat and voice use.
   commandDefs(signal?: AbortSignal): Promise<CommandDefView[]>;
@@ -446,6 +504,23 @@ export interface DaemonClient {
   ): Promise<ChangeLogView[]>;
   undoChange(changeId: string): Promise<CommandResultJson>;
 
+  // Agent email (spec S.15, S.28, S.29, T.14; ADR 0066): the Settings -> Capabilities -> Email
+  // page; a daemon without the routes shows the "route not available" state.
+  emailSettings(agentId: string, signal?: AbortSignal): Promise<EmailSettingsView>;
+  updateEmailSettings(agentId: string, body: EmailSettingsPatchBody): Promise<EmailSettingsView>;
+  emailSent(
+    agentId: string,
+    filter?: { limit?: number; since?: string },
+    signal?: AbortSignal,
+  ): Promise<EmailSentView>;
+  pauseEmail(agentId: string): Promise<EmailPausedView>;
+  resumeEmail(agentId: string): Promise<EmailPausedView>;
+  rotateEmailMarker(agentId: string): Promise<EmailMarkerView>;
+  emailCommands(
+    agentId: string,
+    filter?: { limit?: number },
+    signal?: AbortSignal,
+  ): Promise<EmailCommandsView>;
   // Proposed routes (ADR 0032); pages degrade when `isRouteMissing(error)`.
   queue(
     projectId: string,
@@ -467,6 +542,18 @@ export interface DaemonClient {
    * whole with the name the daemon gave it, ready for `saveTextFile`.
    */
   auditExport(filter?: AuditExportFilter, signal?: AbortSignal): Promise<AuditExportFile>;
+
+  // Source discovery (spec A.4): connected sources, scans, proposals, accept and remove.
+  sources(signal?: AbortSignal): Promise<SourceView[]>;
+  addSource(body: AddSourceBody): Promise<SourceView>;
+  scanSource(id: string): Promise<ScanResultView>;
+  sourceCandidates(
+    id: string,
+    filter?: { status?: SourceCandidateStatus },
+    signal?: AbortSignal,
+  ): Promise<SourceCandidateView[]>;
+  acceptCandidate(id: string, body?: AcceptCandidateBody): Promise<AcceptCandidateView>;
+  removeSource(id: string): Promise<RemoveSourceView>;
 }
 
 function isAbort(error: unknown): boolean {
@@ -521,7 +608,13 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       text = "";
     }
     try {
-      const parsed = ErrorBody.safeParse(JSON.parse(text));
+      const body = JSON.parse(text) as unknown;
+      // The daemon's own routes answer the ErrorBody flat; the capability routes it mounts
+      // (email, desktop, Cloudflare) wrap the same fields under `error`.
+      const nested = (body as { error?: unknown } | null)?.error;
+      const parsed = ErrorBody.safeParse(body).success
+        ? ErrorBody.safeParse(body)
+        : ErrorBody.safeParse(nested);
       if (parsed.success) {
         return new ApiError(parsed.data.code, parsed.data.message, res.status, parsed.data.details);
       }
@@ -714,6 +807,11 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     consolidation: (signal) =>
       get(routePath("consolidation"), ConsolidationList, undefined, signal),
     runConsolidation: () => post(routePath("runConsolidation"), ConsolidationRunViewSchema, {}),
+    proposeLesson: (id) => post(routePath("proposeLesson", { id }), LessonViewSchema, {}),
+    memoryPromotions: (signal) => get(routePath("memoryPromotions"), LessonList, undefined, signal),
+    memoryOffers: (signal) => get(routePath("memoryOffers"), OfferList, undefined, signal),
+    answerOffer: (id, answer) =>
+      post(routePath("answerOffer", { id }), LessonOfferViewSchema, { answer }),
     commandDefs: (signal) => get(routePath("commands"), CommandDefList, undefined, signal),
     parseCommand: (body) => post(routePath("parseCommand"), CommandParseViewSchema, body),
     executeCommands: (body) => post(routePath("executeCommands"), CommandResultViewSchema, body),
@@ -736,6 +834,29 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       ),
     undoChange: (changeId) =>
       post(routePath("undoChange", { id: changeId }), CommandResultViewSchema, {}),
+    emailSettings: (agentId, signal) =>
+      get(routePath("emailSettings", { agentId }), EmailSettingsViewSchema, undefined, signal),
+    updateEmailSettings: (agentId, body) =>
+      put(routePath("updateEmailSettings", { agentId }), EmailSettingsViewSchema, body),
+    emailSent: (agentId, filter, signal) =>
+      get(
+        routePath("emailSent", { agentId }),
+        EmailSentViewSchema,
+        { limit: filter?.limit, since: filter?.since },
+        signal,
+      ),
+    pauseEmail: (agentId) => post(routePath("pauseEmail", { agentId }), EmailPausedViewSchema, {}),
+    resumeEmail: (agentId) =>
+      post(routePath("resumeEmail", { agentId }), EmailPausedViewSchema, {}),
+    rotateEmailMarker: (agentId) =>
+      post(routePath("rotateEmailMarker", { agentId }), EmailMarkerViewSchema, {}),
+    emailCommands: (agentId, filter, signal) =>
+      get(
+        routePath("emailCommands", { agentId }),
+        EmailCommandsViewSchema,
+        { limit: filter?.limit },
+        signal,
+      ),
     queue: (projectId, filter, signal) =>
       get(proposedPath("queue", { id: projectId }), QueueList, { status: filter?.status }, signal),
     enqueue: (projectId, body) =>
@@ -764,6 +885,19 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         { projectId: filter?.projectId },
         signal,
       ),
+    sources: (signal) => get(routePath("sources"), SourceList, undefined, signal),
+    addSource: (body) => post(routePath("addSource"), SourceViewSchema, body),
+    scanSource: (id) => post(routePath("scanSource", { id }), ScanResultViewSchema, {}),
+    sourceCandidates: (id, filter, signal) =>
+      get(
+        routePath("sourceCandidates", { id }),
+        SourceCandidateList,
+        { status: filter?.status },
+        signal,
+      ),
+    acceptCandidate: (id, body) =>
+      post(routePath("acceptCandidate", { id }), AcceptCandidateViewSchema, body ?? {}),
+    removeSource: (id) => del(routePath("removeSource", { id }), RemoveSourceViewSchema),
     auditExport: async (filter, signal) => {
       const format: AuditExportFormat = filter?.format ?? "jsonl";
       const res = await raw({

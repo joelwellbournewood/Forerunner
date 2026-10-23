@@ -16,6 +16,7 @@
     "tests/live/test/**/*.ts",
     "tests/live/vitest.config.ts",
     "scripts/**/*.ts",
+    "apps/mobile/e2e/**/*.ts",
     "vitest.config.ts"
   ],
   "exclude": ["**/node_modules", "**/dist"]

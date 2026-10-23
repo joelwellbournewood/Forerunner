@@ -1,6 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { cloudflare, desktop } from "@forerunner/capabilities";
+import { email as agentEmail, cloudflare, desktop } from "@forerunner/capabilities";
 import { errorMessage, ForerunnerError, join, log, osFacts } from "@forerunner/platform";
 import type { LessonStatus } from "@forerunner/state";
 import { serve } from "@hono/node-server";
@@ -17,9 +17,12 @@ import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
 import { createNotificationRoutes } from "../notifications/routes.ts";
+import { createSharedSecretRoutes } from "../secrets/routes.ts";
+import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { applyProjectPlan, defaultRiskTier, ProjectPlanBody } from "../session/project-plan.ts";
 import { defaultPeers } from "../session/runner.ts";
+import { createSourcesRoutes } from "../sources/routes.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
 import type { SchemaSyncStatus } from "../update/sync.ts";
 import type { VoiceBridgeEntry } from "../voice/bridge.ts";
@@ -36,6 +39,7 @@ import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring
 import { DecisionLog, StateAudit } from "../wiring/state-ports.ts";
 import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
 import {
+  AnswerOfferBody,
   AnswerRequestBody,
   type ChatReplyView,
   ChatRequestBody,
@@ -52,7 +56,11 @@ import {
   type DecisionView,
   type EventView,
   type HealthView,
+  type IntakeProposalView,
+  IntakeRequestBody,
+  type IntakeStatusView,
   KillBody,
+  type LessonOfferView,
   type MemoryScopeView,
   type MemoryView,
   type MirrorRunView,
@@ -75,6 +83,7 @@ import {
 } from "./api-types.ts";
 import { createAuditRoutes } from "./audit-export.ts";
 import type { RuntimeApp } from "./compose.ts";
+import { createProjectRecord } from "./create-project.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
 import { CLIENT_HEADER, isShellStream } from "./shells.ts";
@@ -408,6 +417,33 @@ export function createDaemonApp(
       }),
     );
   }
+  // Agent email (spec S.15, S.28, S.29, T.14; ADR 0066): the Settings -> Capabilities -> Email
+  // routes (settings per agent, the sent log, pause and resume for the tray, marker rotation,
+  // the command audit) over the capability's own ports. The daemon's human is the signed-in
+  // human and the identity port the owner check: another human's agent answers 403 before
+  // any read or write. Every change is one `email.settings` audit row; the policy reads the
+  // settings row per call, so a changed mode or a pause holds the very next send.
+  for (const route of agentEmail.emailRouteTable({
+    settings: rt.capabilities.email.ports.settings,
+    sentLog: rt.capabilities.email.ports.sentLog,
+    identity: rt.capabilities.email.ports.identity,
+    clock: rt.clock,
+    audit: rt.store.auditLog,
+    commandAudit: agentEmail.emailCommandAudit({ auditLog: rt.store.auditLog, clock: rt.clock }),
+    humanFor: () => rt.human.id,
+  })) {
+    app.on(route.method, route.path, (c) =>
+      route.handler({
+        req: {
+          param: (name) => c.req.param(name as never) as string | undefined,
+          query: (name) => c.req.query(name),
+          json: () => c.req.json(),
+          header: (name) => c.req.header(name),
+        },
+        json: (body, status) => c.json(body, (status ?? 200) as ContentfulStatusCode),
+      }),
+    );
+  }
   // Files and data (spec L.1, A.3, K.2): the Data tab routes (list, register or upload, import,
   // describe, sample, delete); the daemon's human is the actor, so DELETE always has one.
   app.route(
@@ -418,12 +454,21 @@ export function createDaemonApp(
       actor: () => ({ humanId: rt.human.id }),
     }),
   );
+  // Source discovery (spec A.4, ADR 0056): connected sources, scans, proposals and accepts;
+  // the daemon's human is the actor and another human's source answers 403 forbidden.
+  app.route(
+    "/",
+    createSourcesRoutes({ discovery: rt.sources, actor: () => ({ humanId: rt.human.id }) }),
+  );
   // Audit log export (spec S.9, ADR 0050): `GET /audit/export` streams the install's human's
   // rows and their agents' in pages, as JSON lines or CSV, with the summaries as stored.
   app.route(
     "/",
     createAuditRoutes({ store: rt.store, clock: rt.clock, humanId: () => rt.human.id }),
   );
+  // Shared secrets (spec S.13, ADR 0065): the owner proposes, lists and revokes grants of a
+  // secret in this install's vault; the value is wrapped here and never in a body.
+  app.route("/", createSharedSecretRoutes({ sharedSecrets: rt.sharedSecrets }));
 
   app.get("/me", async (c) => {
     const h = await rt.store.human.mustGet(rt.human.id);
@@ -466,35 +511,63 @@ export function createDaemonApp(
 
   app.post("/projects", async (c) => {
     const body = await parse(c, CreateProjectBody);
-    const p = await rt.store.project.insert({
-      name: body.name,
-      goal: body.goal,
-      repos: body.repos ?? [],
-      stage: "planning",
-      status: "active",
-      budget_usd_micro: body.budgetUsdMicro ?? 0,
-      autonomy_level: body.autonomyLevel ?? 2,
-      summary_cache: body.brief ? { brief: body.brief } : {},
-      data_assets: [],
-      settings: { members: [rt.agent.id] },
-      small_project_mode: false,
-      active: true,
-      author_human: rt.human.id,
-    });
-    if (body.brief) {
-      await rt.store.queue.enqueue({
-        project_id: p.id,
-        human_id: rt.human.id,
-        kind: "note",
-        text: `Project brief:\n${body.brief}`,
-        priority: 5,
-        status: "queued",
-        author_human: rt.human.id,
-      });
+    // The same path an accepted source proposal takes (create-project.ts, spec A.4).
+    const p = await createProjectRecord(rt, body);
+    // The standard doc set (spec G.5): a pull request on the linked repository, or the
+    // project's data dir. The gap is recorded on the project; the creation never fails on it.
+    // A creation that asks for the intake (spec A.2) leaves the set to the intake's approval,
+    // which drafts the docs from the brief and scaffolds only what the draft left out.
+    if (body.intake === true) {
+      logger.info("project docs deferred to the intake", { projectId: p.id });
+    } else {
+      try {
+        await rt.docs.scaffoldProject(p);
+      } catch (e) {
+        logger.warn("project docs not scaffolded", { projectId: p.id, error: errorMessage(e) });
+      }
     }
-    rt.events.emit("project", { id: p.id });
-    rt.conversation?.setActiveProject(rt.human.id, p.id);
+    // PM intake (spec A.2): asked for, the proposal is drafted in the background and lands in
+    // the inbox; the card answers now. A failure is recorded on the project (the status route).
+    if (body.intake === true) void rt.intake.enqueue(p.id).catch(() => undefined);
     return c.json(await projectCard(rt.store, p.id, chf(), rt.human.id), 201);
+  });
+
+  // PM intake (spec A.2, ADR 0055): one model call on the planning rung, one blocking approval
+  // request with the whole proposal; nothing is written until the inbox answers it (the answer
+  // route's `syncApprovals` applies it). The project is looked up first so an unknown project
+  // is 404 whatever the body.
+  app.post("/projects/:id/intake", async (c) => {
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    const body = await parse(c, IntakeRequestBody);
+    const r = await rt.intake.propose(
+      project.id,
+      body.brief !== undefined ? { brief: body.brief } : {},
+    );
+    rt.events.emit("project", { id: project.id });
+    const view: IntakeProposalView = {
+      pending: true,
+      projectId: r.projectId,
+      requestId: r.requestId,
+      reused: r.reused,
+      summary: r.summary,
+      estimateUsdMicro: r.estimateUsdMicro,
+      costUsdMicro: r.costUsdMicro,
+      docsTarget: r.docsTarget,
+    };
+    return c.json(view, 202);
+  });
+  app.get("/projects/:id/intake", async (c) => {
+    const s = await rt.intake.status(c.req.param("id"));
+    const view: IntakeStatusView = {
+      projectId: s.projectId,
+      state: s.state,
+      requestId: s.requestId,
+      outcome: s.outcome,
+      appliedAt: s.appliedAt,
+      docs: s.docs,
+      error: s.error,
+    };
+    return c.json(view);
   });
 
   app.get("/projects/:id", async (c) =>
@@ -770,13 +843,22 @@ export function createDaemonApp(
     const asked = await rt.store.humanRequest.mustGet(c.req.param("id"));
     if (asked.human_id !== null && asked.human_id !== rt.human.id)
       return c.json({ ...NOT_YOURS, message: "not your request" }, 403);
-    const r = await rt.store.humanRequest.answer(
-      c.req.param("id"),
-      body.version,
-      body.answer as never,
-      rt.human.id,
-    );
-    await new DecisionLog(rt.store).recordAnswer(r, rt.human.id);
+    // The answer, its decision-log entry and, for a shared-secret card (spec S.13, ADR 0065),
+    // the grant it moves are one write, as in the state service's answer route.
+    const r = await rt.store.transaction(async (tx) => {
+      const answered = await tx.humanRequest.answer(
+        c.req.param("id"),
+        body.version,
+        body.answer as never,
+        rt.human.id,
+      );
+      await new DecisionLog(tx).recordAnswer(answered, rt.human.id);
+      await applySharedGrantAnswer(tx, answered, rt.human.id, {
+        clock: rt.clock,
+        installId: rt.remote.device?.id ?? null,
+      });
+      return answered;
+    });
     // An answered extension grant or model watch decision is applied at once.
     await rt.syncApprovals();
     rt.events.emit("inbox", {});
@@ -992,6 +1074,25 @@ export function createDaemonApp(
   app.delete("/memory/lessons/:id", async (c) =>
     c.json(lessonView(await rt.memory.remove(c.req.param("id")))),
   );
+
+  // Cross-project sharing (spec G.6): the human proposes, the critic decides at the next
+  // session end, the offers are answered here or in the inbox (applied either way).
+  app.post("/memory/lessons/:id/propose", async (c) =>
+    c.json(lessonView(await rt.memory.proposeSharing(c.req.param("id")))),
+  );
+  app.get("/memory/promotions", async (c) =>
+    c.json((await rt.memory.pendingProposals()).map(lessonView)),
+  );
+  app.get("/memory/offers", async (c) => {
+    const rows = await rt.memory.offers({ limit: intQuery(c, "limit", 100, 1000) });
+    return c.json(rows satisfies LessonOfferView[]);
+  });
+  app.post("/memory/offers/:id/answer", async (c) => {
+    const body = await parse(c, AnswerOfferBody);
+    const view = await rt.memory.answerOffer(c.req.param("id"), body.answer);
+    rt.events.emit("inbox", {});
+    return c.json(view satisfies LessonOfferView);
+  });
 
   app.get("/memory/consolidation", async (c) => {
     const rows = await rt.memory.proposals({

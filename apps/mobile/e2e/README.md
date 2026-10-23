@@ -5,11 +5,11 @@
 the debug APK when no *debug* APK exists (a release APK left by the workflow's artefact build
 does not count: its WebView has remote debugging off), boots an emulator when none is
 attached, installs the app, starts the fake shared state service on the host, and drives the
-WebView through Chrome DevTools with Playwright: pair by code, approve a request, refuse a
-high-risk answer without a biometric assertion, then scenario 9 ("switch to the game, give it
-15 francs until tomorrow and start a session on my PC": one change card, confirm, the
-simulated PC starts the session, the change log shows the entry, Undo sends the inverse
-plan). Without `adb`, a device, an AVD, or (with `--no-build`) a debug APK, it prints
+WebView over raw Chrome DevTools Protocol on its page target (`cdp.mjs`, ADR 0054): pair by
+code, approve a request, refuse a high-risk answer without a biometric assertion, then
+scenario 9 ("switch to the game, give it 15 francs until tomorrow and start a session on my
+PC": one change card, confirm, the simulated PC starts the session, the change log shows the
+entry, Undo sends the inverse plan). Without `adb`, a device, an AVD, or (with `--no-build`) a debug APK, it prints
 `SKIP: <reason>` and exits 0 after cleaning up; CI sets `FR_ANDROID_REQUIRE=1` so every one of
 those skips fails there, which keeps the job from going green on install-and-launch alone.
 
@@ -86,13 +86,27 @@ adb shell am start -W -a android.intent.action.VIEW \
   -d "fr://pair?u=http%3A%2F%2F127.0.0.1%3A8788&c=<code>" app.forerunner.mobile
 ```
 
-WebView DevTools (debug builds only; `run.mjs` does this and connects Playwright over CDP):
+WebView DevTools (debug builds only; `run.mjs` does this and attaches `cdp.mjs` to the page):
 
 ```
 adb shell pidof app.forerunner.mobile
 adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>
-curl -s http://127.0.0.1:9222/json      # the page; open the devtoolsFrontendUrl in Chrome
+curl -s http://127.0.0.1:9222/json/list # the page target; open its devtoolsFrontendUrl in Chrome
 ```
+
+The attach is raw CDP, not Playwright: the Android WebView answers only page-level commands
+on that socket and refuses the browser-level ones `connectOverCDP` starts with
+(`Browser.setDownloadBehavior: Browser context management is not supported`, android.yml run
+7). `cdp.mjs` reads `/json/list`, picks the page whose title is Forerunner (or whose URL is
+`tauri.localhost`), opens its `webSocketDebuggerUrl` on the forwarded port with Node 22's
+global `WebSocket`, and drives the DOM through `Runtime.evaluate` (queries by test id, role
+and accessible name, text; waits; `innerText`, `getAttribute`, `count`),
+`Input.dispatchMouseEvent` (clicks at the element's centre after a hit test) and
+`Input.insertText` (fills, with a native-setter fallback that fires `input` and `change`).
+The smoke's `smoke()` reads like the Playwright version because the driver keeps those
+names and their meaning (strict single-element actions, visible waits). `cdp.test.ts` next to
+it runs the driver against a fake DevTools endpoint (`node:http` + `ws` + jsdom with a layout
+stand-in): `pnpm exec vitest run --project unit apps/mobile/e2e`.
 
 Biometrics on the emulator (high-risk answers need the platform prompt, spec R.7): enrol a
 fingerprint once under Settings → Security → Fingerprint (set a PIN first), then when the

@@ -1,3 +1,4 @@
+import { applySharedGrantAnswer } from "@forerunner/runtime/secrets/shared-grants";
 import { DecisionLog } from "@forerunner/runtime/wiring/state-ports";
 import type { HumanRequestRow, MessageRow } from "@forerunner/state";
 import { MESSAGE_TYPES } from "@forerunner/state";
@@ -160,20 +161,37 @@ export async function answerRequestAs(
   // request of kind `decision` with a project makes one. The answer and the entry are one
   // transaction: a failed decision write leaves the request open at its version, so the
   // client's retry is not a 409 on an answered row that has no decision.
-  const { row, decision } = await ctx.store.transaction(async (tx) => {
+  // A shared-secret approval card (spec S.13, ADR 0065) moves its grant in the same write:
+  // the last required yes activates it, a no cancels it and withdraws the other cards.
+  const { row, decision, grant } = await ctx.store.transaction(async (tx) => {
     const answered = await tx.humanRequest.answer(id, version, answer as never, by);
     const entry = await new DecisionLog(tx).recordAnswer(
       answered,
       by,
       decisionRationale(p, answered),
     );
-    return { row: answered, decision: entry };
+    const moved = await applySharedGrantAnswer(tx, answered, by, {
+      clock: ctx.clock,
+      installId: p.kind === "admin" ? p.installId : p.deviceId,
+    });
+    return { row: answered, decision: entry, grant: moved };
   });
   announce(ctx, "human_request.changed", "human_request", row, {
     humanId: row.human_id,
     projectId: row.project_id,
     payload: { status: row.status, blocking: row.blocking },
   });
+  if (grant && grant.status === "cancelled") {
+    for (const other of grant.request_ids.filter((r) => r !== row.id)) {
+      const withdrawn = await ctx.store.humanRequest.get(other);
+      if (!withdrawn) continue;
+      announce(ctx, "human_request.changed", "human_request", withdrawn, {
+        humanId: withdrawn.human_id,
+        projectId: withdrawn.project_id,
+        payload: { status: withdrawn.status, blocking: withdrawn.blocking, grantId: grant.id },
+      });
+    }
+  }
   if (decision) {
     announce(ctx, "decision.changed", "decision", decision, {
       humanId: row.human_id,

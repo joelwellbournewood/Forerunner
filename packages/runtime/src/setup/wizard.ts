@@ -46,6 +46,15 @@ export interface SetupConfig {
   version: 1;
   profile: string;
   humanName?: string;
+  /**
+   * The human this install binds to on a shared store (ADR 0082). `humanId`: from
+   * `fr setup --human-id`, or recorded by the daemon at its first bind so a later email change
+   * never rebinds the install. `humanEmail`: from `fr setup --email`, lower case; finds the
+   * human by email or names the one created at first start. `FORERUNNER_HUMAN` (an id or an
+   * email) overrides both for one start. Neither is a secret.
+   */
+  humanId?: string;
+  humanEmail?: string;
   timezone: string;
   githubApiBase: string;
   anthropicApiBase: string;
@@ -77,6 +86,9 @@ export interface SetupConfig {
 export interface SetupInput {
   profile?: string;
   humanName?: string;
+  /** `--email`: the human's email (format-checked, stored lower case); `--human-id`: an existing human's id. */
+  humanEmail?: string;
+  humanId?: string;
   timezone?: string;
   githubToken?: string;
   anthropicKey?: string;
@@ -152,6 +164,37 @@ export function readConfig(dirs: AppDirs = appDirs()): SetupConfig | null {
   }
 }
 
+/**
+ * Record the human the daemon bound to (ADR 0082) in `config.json` when the file exists and
+ * names another or none; returns whether it was written. The setup wizard keeps the key.
+ */
+export function rememberBoundHuman(dirs: AppDirs, humanId: string): boolean {
+  const p = configPath(dirs);
+  if (!existsSync(p)) return false;
+  let current: SetupConfig;
+  try {
+    current = JSON.parse(readFileSync(p, "utf8")) as SetupConfig;
+  } catch {
+    return false;
+  }
+  if (current.humanId === humanId) return false;
+  writeFileSync(p, `${JSON.stringify({ ...current, humanId }, null, 2)}\n`);
+  return true;
+}
+
+/** `--email`: trimmed and lower case; anything but one `@` between two non-empty parts is a `validation` error. */
+export function normalizeHumanEmail(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const email = value.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+$/.test(email)) {
+    throw new ForerunnerError(
+      "validation",
+      `--email: ${JSON.stringify(value)} is not an email address`,
+    );
+  }
+  return email;
+}
+
 export function ensureDirs(dirs: AppDirs = appDirs()): AppDirs {
   for (const d of Object.values(dirs)) mkdirSync(d, { recursive: true });
   return dirs;
@@ -164,10 +207,14 @@ export async function runSetup(vault: Vault, input: SetupInput): Promise<SetupRe
   const existing = readConfig(dirs);
   const profile = input.profile ?? existing?.profile ?? "default";
   const facts = osFacts(env);
+  const humanEmail = normalizeHumanEmail(input.humanEmail);
+  const humanId = input.humanId?.trim() || undefined;
   const config: SetupConfig = {
     version: 1,
     profile,
     humanName: input.humanName ?? existing?.humanName,
+    humanId: humanId ?? existing?.humanId,
+    humanEmail: humanEmail ?? existing?.humanEmail,
     timezone:
       input.timezone ??
       existing?.timezone ??

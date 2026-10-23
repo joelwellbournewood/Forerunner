@@ -19,6 +19,7 @@ import {
   desktop,
   type GitHost,
   GitHubHost,
+  githubHostForSecretRef,
   MemoryGitHost,
   MIRROR_APPROVE_OPTION,
   type MirrorApprovalAnswer,
@@ -39,6 +40,7 @@ import {
   currentPlatform,
   errorMessage,
   ForerunnerError,
+  isAbsolute,
   join,
   log,
   osFacts,
@@ -48,15 +50,23 @@ import {
 } from "@forerunner/platform";
 import {
   type DeviceRow,
+  type HumanRow,
   type JsonObject,
   type JsonValue,
   type NewAuditLog,
   openStore,
+  type ProjectRow,
   REVIEW_VERDICTS,
   type ReviewVerdict,
   type StateStore,
 } from "@forerunner/state";
-import { openVault, parseSecretRef, SecretResolver, type Vault } from "@forerunner/vault";
+import {
+  ensureInstallWrapKey,
+  openVault,
+  parseSecretRef,
+  SecretResolver,
+  type Vault,
+} from "@forerunner/vault";
 import { claudeCodeToolNames } from "../agent/cc-tools.ts";
 import { LoopAgentDriver, type RunEvent, type RunPricing } from "../agent/loop.ts";
 import { type QueryLike, SdkAgentDriver } from "../agent/sdk.ts";
@@ -91,9 +101,12 @@ import {
 import { ExtensionRegistry } from "../extensions/registry.ts";
 import { CommandLoop, sessionCapFromSettings, sessionCommandPorts } from "../loop/commands.ts";
 import { CriticLoop } from "../loop/critic.ts";
+import { ProjectDocs, parseRepoRef } from "../loop/docs.ts";
 import {
   isMemoryConsolidationRequest,
   MemoryLoop,
+  openPrivateIndex,
+  privateIndexUrl,
   scheduleMemoryConsolidation,
 } from "../loop/memory.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
@@ -141,6 +154,15 @@ import {
 import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
 import { detectSandboxEngine, type EngineDetection } from "../sandbox/detect.ts";
 import type { RunFn, WhichFn } from "../sandbox/types.ts";
+import {
+  type ProposedSharedSecret,
+  proposeSharedSecret,
+  SHARED_SECRET_AUDIT,
+  type SharedGrantView,
+  SharedSecretVault,
+  StoreSharedSecretService,
+  sharedSecretNamesFor,
+} from "../secrets/index.ts";
 import type { TaskBillingPort } from "../session/billing.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import {
@@ -149,15 +171,19 @@ import {
   syncBlockedByFindings,
   syncSignoffAnswers,
 } from "../session/findings.ts";
+import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
+import { type PlanApprovalSyncResult, syncPlanApprovals } from "../session/plan-approval.ts";
 import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
 import { Scheduler, type StartRequest } from "../session/triggers.ts";
+import { readInstallRecord } from "../setup/install-record.ts";
 import {
   describePlanAllowance,
   PLAN_USD_MONTHLY_ENV,
   type PlanAllowance,
   resolvePlanAllowance,
 } from "../setup/plan-allowance.ts";
-import { readConfig, SECRET_NAMES, type SetupConfig } from "../setup/wizard.ts";
+import { readConfig, rememberBoundHuman, SECRET_NAMES, type SetupConfig } from "../setup/wizard.ts";
+import { SourceDiscovery } from "../sources/discovery.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 import { readUpdateConfig, UpdateConfig } from "../update/config.ts";
 import type { UpdateManager } from "../update/install.ts";
@@ -212,6 +238,13 @@ import {
 } from "../wiring/notification-ports.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
+import { createProjectRecord } from "./create-project.ts";
+import {
+  bindInstallHuman,
+  type InstallIdentity,
+  installIdentitySelectors,
+  pickPrincipal,
+} from "./identity.ts";
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
 import { DetectingSandboxPort } from "./sandbox-port.ts";
 import { ShellPresence } from "./shells.ts";
@@ -231,6 +264,12 @@ export interface ComposeOptions {
   config?: SetupConfig | null;
   clock?: Clock;
   stateUrl?: string;
+  /**
+   * The private memory index (ADR 0083): a `sqlite:` URL, or null for none. Default
+   * `privateIndexUrl(stateUrl, dirs)`: none for a `sqlite:` state, `<data>/memory/private.sqlite`
+   * for a shared one. Tests force an index next to an in-memory state.
+   */
+  privateIndexUrl?: string | null;
   vault?: Vault;
   /** Injected model provider (tests); otherwise Anthropic from the vault credential. */
   provider?: ModelProvider;
@@ -242,7 +281,21 @@ export interface ComposeOptions {
   chfPerUsd?: number;
   rates?: RateSource;
   appVersion?: string;
-  identity?: { humanName?: string; email?: string; timezone?: string; agentName?: string };
+  /**
+   * Who this install is (ADR 0082). `humanId` (an id or an email) binds the install to that
+   * human ahead of `FORERUNNER_HUMAN` and `config.json`; the cloud runner passes the human it
+   * resolved. `email` finds the human by email or names the one created on first run (ahead of
+   * `config.json` `humanEmail`). `humanName` and `timezone` are used only when the human is
+   * created; `agentName` picks the principal agent among the human's own (created with that
+   * name when there is none).
+   */
+  identity?: {
+    humanId?: string;
+    humanName?: string;
+    email?: string;
+    timezone?: string;
+    agentName?: string;
+  };
   /** MCP connector factory (tests use an in-memory transport). */
   connectors?: McpConnectorFactory;
   /** Extension catalog; default: the built-in one plus FORERUNNER_EXTENSION_CATALOG_URL. */
@@ -461,10 +514,17 @@ export interface RuntimeApp {
   tools: ToolRegistry;
   executor: TaskExecutor;
   runner: SessionRunner;
+  /**
+   * PM intake (spec A.2, ADR 0055): the brief as one proposal in the inbox (plan, doc set,
+   * first-session plan), applied on the approving answer by `syncApprovals`.
+   */
+  intake: IntakeService;
   scheduler: Scheduler;
   conversation: ConversationAgent | null;
   gitHost: GitHost;
   human: { id: string; name: string; timezone: string };
+  /** How `human` was chosen (ADR 0082): the selector and where it came from. */
+  identity: InstallIdentity;
   agent: { id: string; name: string };
   /**
    * The source the loop paths are billed to (the critic, chat, the model watch's evals): the
@@ -502,6 +562,18 @@ export interface RuntimeApp {
   criticAgent: { id: string; name: string };
   /** Memory in the loop (spec G): recall under budget, lessons at session end, consolidation, views. */
   memory: MemoryLoop;
+  /**
+   * The local private memory index when the state is shared (`<data>/memory/private.sqlite`,
+   * ADR 0083): the only store that holds this install's `agent_private` rows. Null in solo mode,
+   * where `store` holds every scope.
+   */
+  privateMemory: StateStore | null;
+  /**
+   * Project docs (spec G.5): the standard doc set scaffolded at project creation (a branch and
+   * pull request with a repository, the data dir without) and `docs/status.md` updated at
+   * session end.
+   */
+  docs: ProjectDocs;
   /** The command registry (spec Q): the only way chat, voice, the UI and the phone change state. */
   commands: CommandLoop;
   /**
@@ -547,6 +619,12 @@ export interface RuntimeApp {
     assets: DataAssets;
     importer: DataImporter;
   };
+  /**
+   * Source discovery (spec A.4, ADR 0056): the one `SourceDiscovery` behind the `/sources`
+   * routes and `fr sources`; a GitHub source's host comes from the vault by the source's
+   * credential reference at scan time (an injected `gitHost` stands in for every source).
+   */
+  sources: SourceDiscovery;
   /** One-way GitHub Projects mirror. */
   mirror: ProjectsMirror;
   sandbox: { port: RunSandboxPort; detection: EngineDetection };
@@ -577,6 +655,24 @@ export interface RuntimeApp {
     presence: DesktopPresence | null;
   };
   /**
+   * Shared secrets (spec S.13, ADR 0065): the vault the hooks resolve through (this install's
+   * own vault, then the wrapped copies for this agent), the service over the shared store, the
+   * owner-side calls the `/secrets/shared` routes expose, and the names active for this agent.
+   */
+  sharedSecrets: {
+    vault: SharedSecretVault;
+    service: StoreSharedSecretService;
+    propose(input: {
+      name: string;
+      agentIds: string[];
+      why?: string;
+      kind?: string;
+    }): Promise<ProposedSharedSecret>;
+    revoke(grantId: string): Promise<SharedGrantView>;
+    list(): Promise<SharedGrantView[]>;
+    names(): Promise<string[]>;
+  };
+  /**
    * The sandboxed browser and agent email inside the daemon (spec L.2, L.3; ADR 0047): the
    * browser mode and session manager, the email ports the tools and the notifier share, the
    * presence switches (`enabled()`: whether the next run is offered the tools), the project
@@ -601,17 +697,23 @@ export interface RuntimeApp {
   toolsForRun(): ToolRegistry;
   /**
    * Apply answered human requests: extension grants, model watch decisions, memory
-   * consolidations, the rework/accept/cancel answers for tasks blocked by open findings and
-   * the accept/revise/cancel answers to critic sign-offs. Runs after every answer given
-   * through this daemon's route and, where answers can arrive from another device, on the
-   * approvals poll (`approvalsPollMs`).
+   * consolidations, the rework/accept/cancel answers for tasks blocked by open findings, the
+   * accept/revise/cancel answers to critic sign-offs, the approve/reject answers to session
+   * plans (an approved plan is handed to the scheduler as a start bound to it, ADR 0053; only
+   * while the services run, a CLI one-shot starts no session) and the approve/reject answers
+   * to intake proposals (ADR 0055). Runs after every answer given through this daemon's route
+   * and, where answers can arrive from another device, on the approvals poll (`approvalsPollMs`).
    */
   syncApprovals(): Promise<{
     extensions: { approved: string[]; denied: string[] };
     modelWatch: number;
     memory: { applied: number; skipped: number };
+    /** Answered cross-project offers applied (spec G.6). */
+    memoryOffers: { accepted: number; dismissed: number; stale: number };
     findings: BlockedSyncResult;
     signoffs: SignoffSyncResult;
+    plans: PlanApprovalSyncResult;
+    intake: IntakeSyncResult;
   }>;
   /** Add or drop mirror schedules after a project's settings changed. */
   refreshMirrorSchedules(): Promise<string[]>;
@@ -831,26 +933,66 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     config?.stateUrl ??
     `sqlite:${join(dirs.data, "state.sqlite")}`;
   const store = await openStore({ url: stateUrl, clock });
+  // Private memory stays on this PC (spec "never leave that PC", ADR 0002): next to a shared
+  // state the agent_private scope lives in a local index; the shared store never sees it.
+  const indexUrl =
+    opts.privateIndexUrl === undefined ? privateIndexUrl(stateUrl, dirs) : opts.privateIndexUrl;
+  let privateStore: StateStore | null = null;
+  if (indexUrl) {
+    try {
+      privateStore = await openPrivateIndex(indexUrl, clock);
+    } catch (e) {
+      await store.close().catch(() => undefined);
+      throw e;
+    }
+  }
   const vault = opts.vault ?? (await openVault({ profile: config?.profile ?? "default", env }));
   const events = new EventEmitter();
   events.setMaxListeners(100);
 
-  // Identity: the first human and their principal agent are created on first run.
-  const humans = await store.human.list(undefined, { limit: 1 });
-  const human =
-    humans[0] ??
-    (await store.human.insert({
-      name: opts.identity?.humanName ?? config?.humanName ?? env.USERNAME ?? env.USER ?? "me",
-      email: opts.identity?.email ?? "",
-      timezone: opts.identity?.timezone ?? config?.timezone ?? "UTC",
-      notify_prefs: {},
-      default_autonomy: 2,
-      monthly_cap_usd_micro: Math.round(150 / (opts.chfPerUsd ?? 0.8)) * 1_000_000,
-      locale: "en",
-    }));
+  // Identity (ADR 0082): this install's own human, by selector (the caller's, FORERUNNER_HUMAN,
+  // config.json's id, then its email), never the store's first row: on a shared store that row
+  // is another person. Created on first run only when nothing names one and the store holds
+  // none (or none with the configured email); several humans and no selector refuse the start.
+  const identitySelectors = installIdentitySelectors({
+    humanId: opts.identity?.humanId,
+    email: opts.identity?.email,
+    env,
+    config,
+  });
+  let human: HumanRow;
+  let identity: InstallIdentity;
+  try {
+    ({ human, identity } = await bindInstallHuman(store, identitySelectors, (email) =>
+      store.human.insert({
+        name: opts.identity?.humanName ?? config?.humanName ?? env.USERNAME ?? env.USER ?? "me",
+        email: email ?? "",
+        timezone: opts.identity?.timezone ?? config?.timezone ?? "UTC",
+        notify_prefs: {},
+        default_autonomy: 2,
+        monthly_cap_usd_micro: Math.round(150 / (opts.chfPerUsd ?? 0.8)) * 1_000_000,
+        locale: "en",
+      }),
+    ));
+  } catch (e) {
+    await store.close().catch(() => undefined);
+    throw e;
+  }
+  logger.info("install identity", { humanId: human.id, source: identity.source });
+  // An install started from its config.json records the human it found or created there, so
+  // a later email change in the store never rebinds it; an override from the environment or
+  // the caller is for this start only and is never written.
+  if (
+    opts.config === undefined &&
+    config &&
+    (identity.source === "email" || identity.source === "only" || identity.source === "created") &&
+    rememberBoundHuman(dirs, human.id)
+  ) {
+    logger.info("install identity recorded in config.json", { humanId: human.id });
+  }
   const principals = await store.agent.principals(human.id);
   const agent =
-    principals[0] ??
+    pickPrincipal(principals, opts.identity?.agentName ?? env.FORERUNNER_AGENT_NAME) ??
     (await store.agent.insert({
       name: opts.identity?.agentName ?? env.FORERUNNER_AGENT_NAME ?? "Alice",
       owner_human_id: human.id,
@@ -1021,7 +1163,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // A managed proxy dies with the global stop, like every other child process (ADR 0003).
   managedHeadroom?.bindKillSwitch(kill);
   const ports = statePorts(store, { chfPerUsd });
-  const secrets = new SecretResolver(vault);
+  // Shared secrets (spec S.13, ADR 0065): the resolver reads this install's own vault first
+  // and then the wrapped copy the shared state holds for this agent on this install, bound
+  // once the daemon's device row exists (below, with the remote presence). Nothing is cached
+  // in clear; every unwrap for a tool call is an audit row naming the secret, never the value.
+  const sharedSecretService = new StoreSharedSecretService(store, { clock, installId: null });
+  const sharedSecrets = new SharedSecretVault({
+    local: vault,
+    source: sharedSecretService,
+    agentId: agent.id,
+    onResolved: async (info) => {
+      await store.auditLog.append({
+        tool: SHARED_SECRET_AUDIT.resolved,
+        human_id: human.id,
+        agent_id: agent.id,
+        input_summary: `name=${info.name} grant=${info.grantId} owner=${info.ownerHumanId}`,
+        result_summary: "unwrapped for a tool call on this install",
+        allowed: true,
+        occurred_at: clock.nowIso(),
+      });
+    },
+  });
+  const secrets = new SecretResolver(sharedSecrets);
 
   // The ladder and effort table in force (spec D, ADR 0039): the built-ins with the adopted
   // <config>/models.json applied; a malformed file is ignored with an audit row. The holder is
@@ -1364,8 +1527,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const appVersion = opts.appVersion ?? env.FORERUNNER_VERSION ?? "0.1.0";
 
   // Memory (spec G): one root under the data directory; lessons per agent, critic and shared.
+  // With a shared state the private scope is routed to the local index opened above.
   const memory = new MemoryLoop({
     store,
+    ...(privateStore ? { privateStore } : {}),
     clock,
     root: join(dirs.data, "memory"),
     humanId: human.id,
@@ -1438,6 +1603,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           });
       },
     });
+  // A project's repository (`repos[0]`, as owner/name or a clone URL) on the git host: the
+  // PR executor's target and the project docs' target are the same resolution.
+  const repoOfProject = async (project: ProjectRow | null | undefined) => {
+    const ref = parseRepoRef(project?.repos[0] ?? "");
+    if (!ref) return null;
+    const info = await gitHost.getRepo(ref);
+    return { clone: info.cloneUrl, repo: ref, base: info.defaultBranch };
+  };
+  const gitIdentity = {
+    name: `${agent.name} (Forerunner)`,
+    email: human.email || "forerunner@localhost",
+  };
   const executor = new PrTaskExecutor({
     store,
     clock,
@@ -1446,14 +1623,26 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     repoFor: async (task) => {
       const project = await store.project.get(task.project_id);
       const full = project?.repos[0];
-      if (!full?.includes("/")) return null;
-      const [owner, name] = full.split("/") as [string, string];
-      const info = await gitHost.getRepo({ owner, name });
-      return { clone: info.cloneUrl, repo: { owner, name }, base: info.defaultBranch };
+      // A local folder linked by a source scan (spec A.4) is not a host repository: the
+      // inner executor runs without the branch-and-PR flow, as for a project without one.
+      if (!full?.includes("/") || isAbsolute(full)) return null;
+      return repoOfProject(project);
     },
     worktreeRoot: dirs.worktrees,
     token: ghToken ?? undefined,
-    identity: { name: `${agent.name} (Forerunner)`, email: human.email || "forerunner@localhost" },
+    identity: gitIdentity,
+  });
+  // Project docs (spec G.5, ADR 0058): the standard doc set on a branch and PR of the
+  // project's repository, or under the project's data dir without one.
+  const docs = new ProjectDocs({
+    store,
+    clock,
+    host: gitHost,
+    repoFor: repoOfProject,
+    worktreeRoot: join(dirs.worktrees, "docs"),
+    projectsRoot: dataAssets.projectsRoot,
+    token: ghToken ?? undefined,
+    identity: gitIdentity,
   });
   const runner = new SessionRunner({
     store,
@@ -1465,6 +1654,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     context,
     critic,
     memory,
+    docs,
     schemaSync,
     // Actual versus estimate at task.finished feeds the next plan (spec I).
     onTaskFinished: ({ task, item, result, durationMs }) => {
@@ -1485,6 +1675,34 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         taskId: task.id,
       });
     },
+  });
+
+  // PM intake (spec A.2, ADR 0055): one planning-rung call through the loop driver and the
+  // hooks, the proposal as one blocking request; the approving answer writes the plan through
+  // `applyProjectPlan`, the docs through the executor's branch-and-PR flow on `gitHost` (or
+  // into the project's workspace under the projects root) and the first-session plan onto the
+  // summary cache and the queue. Without a provider `propose` is `unavailable`.
+  const intake = new IntakeService({
+    store,
+    clock,
+    tokens,
+    driver,
+    provider,
+    pricing: provider
+      ? livePricing(provider, () =>
+          rungModelFor(provider, modelConfig.get().modeDefaults.planning.tier),
+        )
+      : null,
+    billingSourceId,
+    modelConfig: () => modelConfig.get(),
+    prompt: registry.principals.get("project-manager")?.prompt,
+    human: { id: human.id },
+    agent: { id: agent.id, name: agent.name },
+    gitHost,
+    ...(ghToken ? { gitToken: ghToken } : {}),
+    identity: { name: `${agent.name} (Forerunner)`, email: human.email || "forerunner@localhost" },
+    projectsRoot: dataAssets.projectsRoot,
+    worktreeRoot: dirs.worktrees,
   });
 
   // GitHub Projects mirror: the host comes from the vault by the secret reference in the
@@ -1784,7 +2002,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // under the worktrees root, which the grant's paths cover.
   // The capability tools present at this start join the grant; the project's own site
   // allowlist (`settings.browser.allowedDomains`) joins the domains (ADR 0047).
-  const sessionGrant = (project: { settings: JsonObject } | null) => ({
+  // The shared secrets active for this agent join the grant by name (spec S.13): the hooks'
+  // granted-names rule is unchanged, the resolver finds the value by reference.
+  const sessionGrant = (project: { settings: JsonObject } | null, sharedNames: string[]) => ({
     allowedTools: [
       ...tools.names(),
       ...capabilityTools().map((t) => t.name),
@@ -1799,7 +2019,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ...browserSettingsOf(project?.settings).allowedDomains,
       ]),
     ],
-    grantedSecrets: ghToken ? [SECRET_NAMES.github] : [],
+    grantedSecrets: [...(ghToken ? [SECRET_NAMES.github] : []), ...sharedNames],
     maxDepth: 2,
   });
   const startSession = async (req: StartRequest) => {
@@ -1827,8 +2047,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       projectId: req.projectId,
       trigger: req.trigger,
       budgetCapUsdMicro: budgetUsdMicro,
+      // The approved plan's id from the inbox answer (`syncPlanApprovals`); never a bare true.
+      ...(req.planApproved ? { planApproved: req.planApproved } : {}),
       appVersion,
-      grant: sessionGrant(project),
+      grant: sessionGrant(project, await sharedSecretNamesFor(store, req.agentId)),
       onEvent: (type, payload) =>
         events.emit("session", { type, payload, agentId: req.agentId, projectId: req.projectId }),
     });
@@ -1906,8 +2128,23 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       extensions: await extensions.syncApprovals({ humanId: human.id }),
       modelWatch: await modelWatch.syncPendingAnswers(),
       memory: await memory.syncApprovals(),
+      memoryOffers: await memory.syncOffers(),
       findings: await syncBlockedByFindings({ store, clock, humanId: human.id, agentId: agent.id }),
       signoffs: await syncSignoffAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
+      // An approved session plan (spec J.6, J.7; ADR 0053) becomes a "message" start bound to
+      // that plan; the scheduler keeps one session per agent. A CLI one-shot
+      // (`startServices: false`) is no place to start a session from: the daemon does it.
+      plans:
+        opts.startServices !== false
+          ? await syncPlanApprovals({
+              store,
+              clock,
+              humanId: human.id,
+              agentId: agent.id,
+              start: (req) => scheduler.requestStart(req),
+            })
+          : { started: 0, rejected: 0, skipped: 0 },
+      intake: await intake.syncAnswers(),
     };
     // A mirror run waiting on its approval re-reads the request now, not at the next poll.
     mirrorApprovals.wake();
@@ -1965,20 +2202,6 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // Background services: the daemon starts them; a CLI one-shot (startServices: false) only
   // uses the composed objects and never connects a connector or ticks the scheduler.
   const services = opts.startServices !== false;
-  // This PC as a paired device (ADR 0030: a high-risk change from the desktop app is
-  // confirmed on the desktop's own device row, ADR 0041 item 6): the daemon registers itself
-  // as a `desktop` device of the human on every store, shared or local. `GET /me` names the
-  // row's id, the settings screen sends it with a high-risk confirmation and the registry's
-  // policy checks the row like any other device; on a `sqlite:` store, where no phone can
-  // reach this daemon, nothing else reads the row. The identity file under the config dir
-  // keeps the row stable across restarts.
-  const remoteDevice: DeviceRow = await registerDesktopDevice({
-    store,
-    dirs,
-    humanId: human.id,
-    name: opts.remote?.deviceName ?? env.FORERUNNER_DEVICE_NAME?.trim() ?? osFacts(env).hostname,
-    platform: currentPlatform(),
-  });
   // Remote control of this PC (spec R.4, R.8; ADR 0032 item 4, ADR 0033 items 8b and 9, ADR
   // 0041): on a shared state the daemon heartbeats its desktop row (the cloud runner's
   // PC-wins rule reads it) and polls the phone's `target: "pc"` commands. The store's pick-up
@@ -1986,9 +2209,40 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // plans through the command registry, chat through the conversation agent, and the plain
   // verbs through the kill switch and scheduler.
   const remoteEnabled = remoteCommandsEnabled(env, stateUrl, services, opts.remote?.enabled);
+  let remoteDevice: DeviceRow | null = null;
   let remoteWatcher: RemoteCommandWatcher | null = null;
   let presence: DesktopPresence | null = null;
-  if (remoteEnabled) {
+  // This PC as a paired device (ADR 0030: a high-risk change from the desktop app is
+  // confirmed on the desktop's own device row, ADR 0041 item 6): the daemon registers itself
+  // as a `desktop` device of the human on every store, shared or local. `GET /me` names the
+  // row's id, the settings screen sends it with a high-risk confirmation and the registry's
+  // policy checks the row like any other device. The row is also where the install's
+  // wrapping key lives (spec S.13, ADR 0065). It is registered whenever the daemon runs its
+  // services, remote control is on, or it was asked for explicitly (a test, a one-shot); the
+  // watcher and the heartbeat still need remote control. The cloud runner composes without
+  // services or the option and keeps its own `runner` row. The identity file under the
+  // config dir keeps the row stable across restarts.
+  const registerDevice = services || remoteEnabled || opts.remote?.enabled === true;
+  if (registerDevice) {
+    // The install's wrapping key: created in the vault on first use and registered on the
+    // device row, so a peer can wrap a shared secret to this install.
+    const wrapKey = await ensureInstallWrapKey(vault);
+    remoteDevice = await registerDesktopDevice({
+      store,
+      dirs,
+      humanId: human.id,
+      name: opts.remote?.deviceName ?? env.FORERUNNER_DEVICE_NAME?.trim() ?? osFacts(env).hostname,
+      platform: currentPlatform(),
+      wrapPublicKey: wrapKey.publicKey,
+    });
+    sharedSecretService.installId = remoteDevice.id;
+    sharedSecrets.bind({
+      deviceId: remoteDevice.id,
+      // Read from the vault at every unwrap: the vault is the only holder of the private key.
+      privateKey: async () => (await ensureInstallWrapKey(vault)).privateKey,
+    });
+  }
+  if (remoteEnabled && remoteDevice) {
     presence = new DesktopPresence({
       store,
       clock,
@@ -2062,6 +2316,48 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // Quiet-hours holds and the daily digest are flushed on the clock; a one-shot sends at once
   // or holds in memory and never ticks.
   const stopNotifier = services ? notifier.start() : () => undefined;
+
+  // Source discovery (spec A.4, ADR 0056): a GitHub source's host from the vault by the
+  // source's own credential reference (never a value in the row), an injected host standing
+  // in for every source in tests; an accepted proposal creates the project the way
+  // POST /projects does; the install record tells a scanned folder that is this checkout.
+  const sources = new SourceDiscovery({
+    store,
+    clock,
+    hostFor: async (source) =>
+      opts.gitHost ??
+      githubHostForSecretRef({
+        vault,
+        ref: source.credential_ref ?? undefined,
+        baseUrl: config?.githubApiBase,
+        clock,
+        fetchImpl: opts.fetchImpl,
+        audit: (name) => {
+          void store.auditLog.append({
+            human_id: human.id,
+            tool: "secret.resolve",
+            input_summary: `secret:${name} for source ${source.id}`,
+            result_summary: "github host",
+            allowed: true,
+            occurred_at: clock.nowIso(),
+          });
+        },
+      }),
+    createProject: async (input) => {
+      const p = await createProjectRecord(
+        { store, human: { id: human.id }, agent: { id: agent.id }, events, conversation },
+        {
+          name: input.name,
+          goal: input.goal,
+          repos: input.repos,
+          ...(input.autonomyLevel !== undefined ? { autonomyLevel: input.autonomyLevel } : {}),
+          ...(input.budgetUsdMicro !== undefined ? { budgetUsdMicro: input.budgetUsdMicro } : {}),
+        },
+      );
+      return { id: p.id, name: p.name };
+    },
+    installRecord: () => readInstallRecord(dirs),
+  });
   logger.info("runtime composed", {
     stateUrl: stateUrl.replace(/\/\/[^@]*@/, "//[REDACTED]@"),
     vault: vault.backend,
@@ -2079,7 +2375,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     bridgedTools: extensions.bridgedTools().length,
     mirrors: mirrorSchedules.size,
     services,
-    desktopDevice: remoteDevice.name,
+    desktopDevice: remoteDevice?.name ?? "none",
     remote: remoteEnabled ? "on" : "off",
   });
 
@@ -2105,6 +2401,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     conversation,
     gitHost,
     human: { id: human.id, name: human.name, timezone: human.timezone },
+    identity,
     agent: { id: agent.id, name: agent.name },
     billingSourceId,
     billing: {
@@ -2120,6 +2417,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     critic,
     criticAgent: { id: criticAgent.id, name: criticAgent.name },
     memory,
+    privateMemory: privateStore,
+    docs,
     commands,
     voice,
     events,
@@ -2137,6 +2436,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     estimates,
     desktop: { controller: desktopController, allowlist: desktopAllowlist, detect: desktopDetect },
     data: { assets: dataAssets, importer: dataImporter },
+    sources,
     mirror,
     sandbox: { port: sandboxPort, detection: sandboxDetection },
     notifier,
@@ -2148,6 +2448,23 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       watcher: remoteWatcher,
       presence,
     },
+    sharedSecrets: {
+      vault: sharedSecrets,
+      service: sharedSecretService,
+      propose: (input) =>
+        proposeSharedSecret({
+          vault,
+          service: sharedSecretService,
+          ownerHumanId: human.id,
+          name: input.name,
+          agentIds: input.agentIds,
+          ...(input.why !== undefined ? { why: input.why } : {}),
+          ...(input.kind !== undefined ? { kind: input.kind } : {}),
+        }),
+      revoke: (grantId) => sharedSecretService.revoke(grantId, human.id),
+      list: () => sharedSecretService.list(human.id),
+      names: () => sharedSecretNamesFor(store, agent.id),
+    },
     capabilities: {
       browser: { mode: browserMode, manager: browserManager, presence: browserOn },
       email: { ports: emailPorts, presence: emailOn },
@@ -2158,6 +2475,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     syncApprovals,
     refreshMirrorSchedules,
     mirrorSync,
+    intake,
     async close() {
       await voice.close();
       stopApprovalsPoll();
@@ -2178,6 +2496,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       await extensions.close();
       await updates.close();
       await store.close();
+      await privateStore?.close();
     },
   };
 }

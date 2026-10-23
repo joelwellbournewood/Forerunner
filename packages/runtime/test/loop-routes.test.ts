@@ -13,6 +13,7 @@ import {
   ConsolidationProposalView,
   ConsolidationRunView,
   DAEMON_ROUTES,
+  LessonOfferView,
   LessonView,
   MemoryScopeView,
   MemoryView,
@@ -128,6 +129,10 @@ describe("core loop routes", () => {
       "pinLesson",
       "deleteLesson",
       "consolidation",
+      "proposeLesson",
+      "memoryPromotions",
+      "memoryOffers",
+      "answerOffer",
       "runConsolidation",
       "commands",
       "parseCommand",
@@ -425,6 +430,117 @@ describe("core loop routes", () => {
       await json(await req(`/memory?scope=agent_private&agentId=${rt.agent.id}`)),
     );
     expect(active.lessons).toHaveLength(1);
+  });
+
+  it("cross-project sharing: propose from the view, pending proposals, offers answered and applied", async () => {
+    // The human proposes their agent's private lesson for every project (spec G.6).
+    const view = MemoryView.parse(
+      await json(await req(`/memory?scope=agent_private&agentId=${rt.agent.id}`)),
+    );
+    const mine = view.lessons[0];
+    if (!mine) throw new Error("expected a private lesson");
+    const proposed = LessonView.parse(
+      await json(await req(`/memory/lessons/${mine.id}/propose`, { method: "POST" })),
+    );
+    expect(proposed).toMatchObject({ scope: "shared", status: "proposed", projectId: null });
+    expect(proposed.tags).toContain("general");
+    expect(proposed.text).toBe(mine.text);
+    const pending = (await jsonList(await req("/memory/promotions"))).map((l) =>
+      LessonView.parse(l),
+    );
+    expect(pending.map((p) => p.id)).toEqual([proposed.id]);
+    // Another human's private row reads as 404 here as well.
+    const [carol] = await rt.store.agent.list({ name: "Carol" } as never);
+    const [hers] = await rt.store.lesson.search({
+      scope: "agent_private",
+      ownerAgentId: carol?.id ?? "",
+    });
+    expect((await req(`/memory/lessons/${hers?.id}/propose`, { method: "POST" })).status).toBe(404);
+    expect((await req("/memory/lessons/les_missing/propose", { method: "POST" })).status).toBe(404);
+    // The critic decides at a session end (loop-memory-promotion.test.ts); its accepting
+    // review row stands in for it here. The Game project shares the lesson's tag.
+    const [game] = await rt.store.project.list({ name: "Game" } as never);
+    if (!game) throw new Error("expected the Game project");
+    await rt.store.project.patch(game.id, { settings: { tags: ["windows"] } });
+    const review = await rt.store.review.insert({
+      critic_model: "fake",
+      verdict: "accept",
+      tier: 1,
+      author_agent: rt.criticAgent.id,
+    });
+    const resolved = await rt.memory.resolvePromotion(proposed.id, {
+      reviewId: review.id,
+      verdict: "accept",
+      grade: 90,
+      confidence: 0.9,
+      summary: "general",
+      completed: true,
+      costUsdMicro: 0,
+    });
+    expect(resolved.status).toBe("promoted");
+    expect(resolved.offers.map((o) => o.projectId)).toEqual([game.id]);
+    expect(await jsonList(await req("/memory/promotions"))).toEqual([]);
+    const offers = (await jsonList(await req("/memory/offers"))).map((o) =>
+      LessonOfferView.parse(o),
+    );
+    expect(offers).toHaveLength(1);
+    expect(offers[0]).toMatchObject({
+      lessonId: proposed.id,
+      projectId: game.id,
+      projectName: "Game",
+      sharedTags: ["windows"],
+      status: "open",
+      appliedAt: null,
+      copyId: null,
+    });
+    const requestId = offers[0]?.requestId ?? "";
+    // The offer is a non-blocking approval in the inbox too.
+    const inbox = await json(await req("/inbox"));
+    expect((inbox.requests as Json[]).some((r) => r.id === requestId)).toBe(true);
+    expect(
+      (
+        await req(`/memory/offers/${requestId}/answer`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "maybe" }),
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await req("/memory/offers/req_missing/answer", {
+          method: "POST",
+          body: JSON.stringify({ answer: "accept" }),
+        })
+      ).status,
+    ).toBe(404);
+    const answered = LessonOfferView.parse(
+      await json(
+        await req(`/memory/offers/${requestId}/answer`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "accept" }),
+        }),
+      ),
+    );
+    expect(answered.status).toBe("answered");
+    expect(answered.appliedAt).not.toBeNull();
+    const copy = MemoryView.parse(
+      await json(await req(`/memory?scope=shared&projectId=${game.id}`)),
+    ).lessons.find((l) => l.id === answered.copyId);
+    expect(copy).toMatchObject({ projectId: game.id, pinned: true, text: mine.text });
+    // Answered once: a second answer is refused and nothing is copied twice.
+    expect(
+      (
+        await req(`/memory/offers/${requestId}/answer`, {
+          method: "POST",
+          body: JSON.stringify({ answer: "dismiss" }),
+        })
+      ).status,
+    ).toBeGreaterThanOrEqual(400);
+    expect(
+      (await rt.store.auditLog.list({ humanId: rt.human.id })).filter(
+        (a) => a.tool === "memory.offer_accepted",
+      ),
+    ).toHaveLength(1);
   });
 
   it("lists the registry and parses a sentence without running anything", async () => {
