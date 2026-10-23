@@ -209,12 +209,14 @@ outcome is reported wrongly.
    Result: `expected [ 'Inbox', 'Inbox' ] to deeply equal [ 'Inbox' ]`, a double click,
    with the misplaced release also unguarded. The test was deleted afterwards. Fix: keep the
    guard armed until the attempt's `click` has been seen, or the settle time is up.
+   Resolution: fixed in 8c7b011. `#clickOutcome` now waits for the attempt's `click` even after a miss, and keeps the guard up until the retry arms its own after a miss whose click never came; the new test "keeps the guard up until the click of a missed press arrives..." gets two Inbox clicks on the old driver and exactly one (no mouseup on Home) with the fix.
 2. **low**: `apps/mobile/e2e/cdp.mjs:967` (`Locator.click`). A missing guard (`armed: false`)
    is reported as `cdp.click_lost`. But the guard lives on the `window` that was measured;
    it is only gone within the settle second when that document was replaced, which means the
    click navigated (a plain link or a form that is not intercepted). The click worked, and
    the driver throws. Verified by reading the code: `seen.armed === false` makes `settled`
    true, `events` is `[]`, so it throws. A fake that drops the guard on release shows the same.
+   Resolution: fixed in 8c7b011. A guard that has vanished now counts as a landed click (`navigated`). The new test "counts a click that replaced the document as landed, not lost" throws `cdp.click_lost` on the old driver and passes with the fix; the real lost-click test still gets `cdp.click_lost`.
 3. **low**: `docs/decisions/0087-emulator-click-guard-and-in-flow-nav.md:73`. The ADR says
    scenario 3's failure on 82a6295 "is in the same class and is covered by the same guard".
    The cause ADR 0086 suspected is a coordinate-space mismatch below the fold. Every retry
@@ -222,6 +224,8 @@ outcome is reported wrongly.
    `cdp.click_missed`; it does not fix it. apps.md says this correctly ("can no longer pass
    silently"). Verified by reading the ADR against `click()`: the retry measures again with
    the same `getBoundingClientRect` coordinates.
+   Resolution: fixed in 8c7b011. The ADR's Consequences now say the guard makes a coordinate mismatch visible as `cdp.click_missed` but does not fix it, which matches apps.md.
 4. **low**: `docs/status/reviews/w6-android-inbox.md` (build report). The failure rates
    (8/20, 4/20, 0/20) come from a Chromium 83 stand-in that lives only in the build
    session's outputs, so they cannot be checked from the repository.
+   Resolution: not a defect: the build report says so openly ("Left open"), and the facts the fix rests on were checked here without the stand-in. A `vite build` of apps/ui puts every Tailwind utility, `.fixed` included, inside `@layer`, which Chrome before 99 drops. `cdp.test.ts` reproduces the race on the base driver and proves the fix. The next `android.yml` run prints `webview engine:` to confirm the WebView version.
