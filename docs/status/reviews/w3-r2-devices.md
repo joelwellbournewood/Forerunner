@@ -172,3 +172,91 @@ are unchanged by this item.
 - **Not reviewed and not merged.** The requirement and gate totals in `gates.md` belong to
   the integration step: R.2 is `done` on this branch, giving 184 done, 39 in progress and
   5 todo.
+
+## Review
+
+Independent adversarial review, stage REVIEW AND FIX, 2026-10-23. Reviewed the branch at
+1e3ca53 (`git diff 82a6295...HEAD`, 7 commits) against the brief, the spec (R.2, Q) and the
+base `ccr-4d8a843c-1k9syk` at f1948dd.
+
+**Verdict: revise.** Score: 72/100. The section is there and works on the happy path (the QR
+is the real `fr://` link the phone parses, the admin token stays in the daemon, the
+real-service test proves the pairing and the immediate refusal). But a hung service freezes
+the screen, a lost phone cannot be revoked while the service is down, and a revocation from
+the button leaves no change-log entry, although the registry has a `device.revoke` command for
+the same thing.
+
+### Requirements checked
+
+- [x] R.2 "scan a QR code from the desktop app": `DevicesSection` → `POST /devices/pairing` →
+  service `POST /pairing/start`; the QR encodes `fr://pair?u=&c=&h=`, and
+  `parsePairingPayload` reads it back (`settings-devices.test.tsx`).
+- [x] "Each device gets its own key": the phone completes the pairing with its own key
+  (`services/state-api/test/desktop-devices.test.ts`, against the real routes).
+- [x] "listed in Settings → Devices": the list shows name, kind, paired at and last seen, with
+  this install marked. Partly met: a newly paired phone appears only after Done or Refresh
+  (finding 4).
+- [~] "can be revoked at once": works through the service. Not met when the service is
+  unreachable, even though the shared store could revoke (finding 2).
+- [x] Brief: the admin token never reaches the UI. It is read from the vault per call and
+  is not in any body or the audit (`devices-routes.test.ts`).
+- [x] Brief: the typed code and its expiry countdown run on an injectable clock.
+- [x] Brief: ADR 0037 route-missing state, for the list and for the pairing route alone.
+- [x] Brief: `settings.test.tsx` case. The build report says removing `<DevicesSection />`
+  fails it; I re-checked this by reading the code: the case finds `devices-section`.
+- [~] Spec Q ("nothing is UI-only"; the change log records "every change made by conversation
+  or UI"): the revoke button bypasses the change log (finding 3).
+- [x] Docs and status: apps.md, runtime.md and state-service.md describe the routes;
+  requirements R.2 is `done`; the BLOCKERS row says the work is built and lists what is open.
+- [x] Base merge: `git merge-tree` shows textual conflicts only (finding 6). The base's new
+  `/me.desktopDeviceId` reads the same `rt.remote.device` as the list's `current` flag, so
+  the two agree.
+
+### Findings
+
+1. **medium**: `packages/runtime/src/devices/manager.ts:205-226` (`call`). Calls to the state
+   service have no timeout. If the service accepts the connection and never answers (a hung
+   process, a proxy that holds the request), `startPairing`, `list` and `revoke` stay pending
+   until undici's 300 s headers timeout. During that time the UI shows "Starting…" or
+   "Revoking…" with no way out. Verified with a throwaway test: a `fetch` that never
+   resolves left `startPairing()` pending after 2 s, with no error. The test was deleted
+   afterwards. Fix: abort each call after a bounded time and report it as `unavailable`,
+   with a test.
+2. **medium**: `packages/runtime/src/devices/manager.ts:117-149` (`revoke`). When a service is
+   configured, a revocation fails with 503 if the service is unreachable or answers 5xx,
+   even when the device row is in the daemon's store. In hybrid mode that store is the same
+   shared Postgres the service authenticates against, and the service reads the row on every
+   request. So the spec's lost-phone case ("can be revoked at once", "Lost phone: revoke from
+   desktop") fails for no reason. Verified with a throwaway test: a phone registered in the
+   store, a service `fetch` that throws `fetch failed`. `revoke()` rejected `unavailable`
+   and the row stayed `revoked: false`. Fix: when the service cannot be reached and the row is
+   in the store, revoke it in the store and say so, with a test.
+3. **medium**: `packages/runtime/src/devices/manager.ts:117-158`. A revocation from Settings →
+   Devices writes an audit row but no `change_log` row. The schema describes the change log
+   as "Every change made by conversation or UI", spec Q says nothing is UI-only, and the
+   registry's `device.revoke` (high risk, `permission_change`) writes one for the same change
+   made by chat or voice. So the change log is missing a permission change made from the
+   settings screen, and the activity log does not record it. Verified with a throwaway test:
+   after `revoke()` the store had `changeLog.list()` = 0 rows. Fix: the revocation records a
+   `change_log` row (`device.revoke`, source `ui`, scope `global`, `irreversible`, before
+   and after, the sentence), with a test.
+4. **low**: `apps/ui/src/pages/DevicesSection.tsx:296` (`closePairing`, the only reload while
+   a pairing is shown). When the phone completes the pairing, the section keeps showing the
+   used QR and its countdown. The new phone appears only after the human clicks Done or
+   Refresh. The brief's flow (start → QR → the device listed) relies on the human guessing
+   that. Verified by reading the code: `useAsync` reloads only on `list.reload()`, which is
+   called by Done, Refresh and after a revoke. The apps.md Known issues says the same. Fix:
+   while a pairing is shown, poll the list; when a device paired after the start appears,
+   close the panel and say it is paired, with a test.
+5. **low**: `packages/runtime/src/devices/manager.ts:112` and
+   `apps/ui/src/pages/DevicesSection.tsx:87`. The QR encodes the daemon's own service URL. A
+   daemon that reaches the service at a loopback address (`http://localhost:8787` from
+   `pnpm state-api` on the same PC) produces a QR that no phone can use. The phone then fails
+   with a network error and nothing explains why. Verified by reading the code: `serviceUrl`
+   is passed through unchanged, and nothing checks it. Fix: the panel warns when the
+   service host is loopback (`localhost`, `127.0.0.0/8`, `::1`), with a test.
+6. **low**: `apps/ui/test/fixtures.ts`, `docs/maintainers/apps.md`, `docs/maintainers/runtime.md`.
+   `git merge-tree --write-tree HEAD origin/ccr-4d8a843c-1k9syk` reports content conflicts in
+   these three files: both sides append next to the same anchors. Every other shared file
+   (`client.ts`, `SettingsPage.tsx`, `fake-daemon.ts`, `server.ts`, `compose.ts`,
+   `api-types.ts`) auto-merges.
