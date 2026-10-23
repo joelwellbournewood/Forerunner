@@ -135,3 +135,16 @@ attach to (`composeRuntime`, ADR 0029): the model watch's adopted settings (ADR 
 - **A project-level worktree for the gitignore guard**: there is none in the daemon's model
   (worktrees are per task); building one for a guard that protects a directory outside it was
   not worth a new concept.
+
+## Addendum (2026-10-23): a mount that passes `humanFor` must pass `identity`
+
+Point 9's convention (`humanFor` is the daemon's one human) carries an obligation for an owner
+check: a route table mounted with `humanFor` must also get an `identity` port, else it fails
+closed per request (403 `tool_not_allowed`, `details.reason: "identity_port_missing"`, one
+`error` line at construction). The alternative was to throw at construction so a misconfigured
+daemon refuses to start; per-request was picked because the mount is a code path rather than
+configuration (unit tests that mount the table the daemon's way catch the mistake) and a daemon
+that answers every call with the reason is diagnosed from the UI, where one that does not start
+is diagnosed from a log nobody has open. ADR 0084 records the decision for the email routes,
+and ADR 0066 has the daemon mount them with
+`identity: rt.capabilities.email.ports.identity`.
