@@ -17,12 +17,23 @@ import type { VoiceTurn } from "./bridge.ts";
 import { type AudioChunk, bytesToPcm } from "./pkg.ts";
 import type { VoiceSession, VoiceSessions } from "./sessions.ts";
 
-/** The longest recorded turn the phone relays: 5 s of 16 kHz mono 16-bit PCM (ADR 0080). */
+/**
+ * The longest recorded turn the phone relays (ADR 0080): checked as a duration from the
+ * bytes, the rate and the channels (`VoiceEnvelope` in `remote/watcher.ts`, `toFrames`).
+ */
 export const VOICE_RELAY_MAX_MS = 5_000;
-/** Raw PCM bytes of the longest turn at the highest rate the relay accepts. */
+/**
+ * The byte bound on a recording: 5 s of 16 kHz mono 16-bit PCM, the phone's format. A higher
+ * rate or a second channel fits fewer seconds under it; the duration bound applies as well.
+ */
 export const VOICE_RELAY_MAX_PCM_BYTES = 16_000 * 2 * (VOICE_RELAY_MAX_MS / 1000);
 /** Base64 length of `VOICE_RELAY_MAX_PCM_BYTES` (what fits the state service's JSON body cap). */
 export const VOICE_RELAY_MAX_PCM_BASE64 = Math.ceil(VOICE_RELAY_MAX_PCM_BYTES / 3) * 4;
+/**
+ * A relayed turn older than this when the PC picks it up is refused, never run (ADR 0080
+ * item 7): the phone stops waiting for the reply after about two minutes.
+ */
+export const VOICE_RELAY_MAX_AGE_MS = 2 * 60_000;
 export const DEFAULT_VOICE_RELAY_IDLE_MS = 5 * 60_000;
 /** A relayed turn that has not ended after this long fails (the watcher must not hang). */
 export const DEFAULT_VOICE_RELAY_TURN_TIMEOUT_MS = 60_000;
@@ -201,6 +212,12 @@ export function toFrames(audio: VoiceRelayAudio): AudioChunk[] {
   }
   const bytes = Buffer.from(audio.pcm, "base64");
   const channels = Math.max(1, audio.channels);
+  if ((bytes.byteLength / (2 * channels * audio.sampleRate)) * 1000 > VOICE_RELAY_MAX_MS + 20) {
+    throw new ForerunnerError(
+      "validation",
+      `the relayed recording is longer than ${VOICE_RELAY_MAX_MS / 1000} s`,
+    );
+  }
   const frameSamples = Math.max(1, Math.round((audio.sampleRate * FRAME_MS) / 1000)) * channels;
   const pcm = bytesToPcm(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
   const frames: AudioChunk[] = [];

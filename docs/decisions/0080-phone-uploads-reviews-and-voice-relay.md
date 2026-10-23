@@ -69,7 +69,9 @@ Open points:
 5. **A turn is at most 5 s of audio.** 5 s at 16 kHz is 160,000 bytes, about 213 KB in
    base64, which keeps the envelope under the service's 256 KiB JSON body cap with room for
    the rest. The phone releases a longer press for the human at 5 s and trims what it sends;
-   the PC refuses a longer recording as a malformed envelope. Longer turns are a follow-up
+   the PC refuses a longer recording as a malformed envelope, checking the duration from the
+   bytes, the rate and the channels (one 20 ms frame of slack) as well as the byte bound, so
+   8 kHz audio cannot carry 10 s and a higher rate or a second channel fits fewer seconds. Longer turns are a follow-up
    (several commands per turn, or the audio as an upload the PC reads).
 6. **Without a recorder, the typed line is the voice turn.** Where the page cannot record,
    the Chat screen's button is "Say it" and the envelope carries `transcript` instead of
@@ -79,10 +81,17 @@ Open points:
    a browser on the phone (`/m`) records through `getUserMedia` and an `AudioContext`
    (MediaRecorder gives compressed audio the PC's loop does not read). A refused microphone
    switches the screen to the typed line.
-7. **No audio stays in the shared store.** The remote command row is the only place the
-   recording passes through the service. Once the turn ran (or failed), the PC replaces the
-   envelope's `audio` with `{ dropped: true, sampleRate, channels, bytes, durationMs }`. The
-   audit row names the command, device and clientId, never the audio or the transcript.
+7. **No audio stays in the shared store, and a stale turn never runs.** The remote command
+   row is the only place the recording passes through the service. Whatever happens to a
+   `kind: "voice"` row the PC picked up (the turn ran or failed, the envelope was malformed,
+   a replay, a device the PC refuses, a stale turn), the PC replaces the envelope's `audio`
+   with `{ dropped: true, sampleRate, channels, bytes, durationMs }` before it records the
+   result. A turn older than two minutes (`VOICE_RELAY_MAX_AGE_MS`) when the PC picks it up
+   is refused as expired and never run: the phone has stopped waiting for its reply, and a
+   spoken "yes" or "stop it" must not act hours later because the PC was offline. The audit
+   row names the command, device and clientId, never the audio or the transcript.
+   (Amended in the review of 2026-10-23: the drop used to happen only when the turn reached
+   the voice port.)
 
 ## Consequences
 
@@ -92,8 +101,9 @@ Open points:
   phone's reply arrives through the command's status, like quick chat.
 - The service's upload route changed (the `clientId` field, `maxBytes` in the list); old
   phones that send no `clientId` keep the old behaviour.
-- The audio sits in the shared store for the seconds between the phone's post and the PC's
-  pick-up. A service operator with database access could read it in that window.
+- The audio sits in the shared store between the phone's post and the PC's pick-up: seconds
+  while the PC is online, as long as the PC is off otherwise (it is dropped, unplayed, when
+  the PC comes back). A service operator with database access could read it in that window.
 
 ## Alternatives considered
 

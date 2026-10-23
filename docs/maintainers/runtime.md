@@ -1910,8 +1910,11 @@ are kept like stopped voice sessions (8, 10 min) and swept on access.
 **The phone's push-to-talk (`src/voice/relay.ts`, spec R.5; [ADR 0080](../decisions/0080-phone-uploads-reviews-and-voice-relay.md)).**
 The phone runs no voice loop. A turn reaches the PC as a remote command whose params are a
 `kind: "voice"` envelope (`VoiceEnvelope` in `src/remote/watcher.ts`): 16-bit little-endian PCM
-in base64 (8 to 48 kHz, 1 or 2 channels, at most `VOICE_RELAY_MAX_MS` = 5 s at 16 kHz,
-`VOICE_RELAY_MAX_PCM_BASE64`, so the envelope fits the state service's 256 KiB JSON body cap)
+in base64 (8 to 48 kHz, 1 or 2 channels; at most `VOICE_RELAY_MAX_MS` = 5 s as a duration
+computed from the bytes, the rate and the channels, plus one 20 ms frame of slack, and at
+most `VOICE_RELAY_MAX_PCM_BASE64` characters, 5 s at the phone's 16 kHz mono, so the envelope
+fits the state service's 256 KiB JSON body cap; a higher rate or two channels fit fewer
+seconds)
 or a `transcript` (the typed line, where the phone cannot record), exactly one. The watcher
 hands it to `VoiceRelay.turn` (`RemoteCommandDeps.voice`, wired in `compose.ts` over
 `RuntimeApp.voice`), which runs it through the same `VoiceSessions` as the `/voice` routes:
@@ -1925,10 +1928,16 @@ clock) fails with `timeout`. The row's result is `{ kind: "voice", source, said,
 pending, approved, voiceSessionId, turn, audioChunks, totalToFirstAudioMs, clientId,
 issuedBy }` (`reply` = what the PC's TTS spoke, which the phone shows and speaks); a turn the
 loop failed is `failed` with its code; without voice on the PC (`voice: null`) or with a
-malformed envelope the row fails visibly. Once the turn ran (or failed) the watcher replaces
-the envelope's `audio` with `{ dropped: true, sampleRate, channels, bytes, durationMs }`
-through `RemoteCommandRepo.patch`, so no recording stays in the shared store. Replays of the
-same `clientId` are refused like plan and chat envelopes.
+malformed envelope the row fails visibly. A turn whose row is older than
+`VOICE_RELAY_MAX_AGE_MS` (2 min, on the clock, from `created_at`) when the PC picks it up is
+refused as `{ status: "expired", code: "timeout" }` and never run: the phone stops waiting
+after about two minutes, and a "yes" or "stop it" must not act hours later because the PC was
+offline. On every outcome of a `kind: "voice"` row (run, failed, malformed, expired, a replay,
+a device refused by the authorisation) `handle` replaces the envelope's `audio` with
+`{ dropped: true, sampleRate, channels, bytes, durationMs }` through `RemoteCommandRepo.patch`
+before it records the result, so no recording stays in the shared store once the PC has seen
+the row. Replays of the same `clientId` are refused like plan and chat envelopes. Tests:
+`test/voice-relay.test.ts` (the drop on every outcome, the expiry, the duration bound).
 
 **Core loop routes (ADR 0036, all in `DAEMON_ROUTES`).** Reviews tab (spec K.2):
 `GET /projects/:id/reviews` and `GET /tasks/:id/reviews` answer `ReviewsView` (every review

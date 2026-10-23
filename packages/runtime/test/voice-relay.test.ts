@@ -21,6 +21,7 @@ import { Scheduler } from "../src/session/triggers.ts";
 import { FakeStt, type FakeSttScript, FakeTts } from "../src/voice/pkg.ts";
 import {
   toFrames,
+  VOICE_RELAY_MAX_AGE_MS,
   VOICE_RELAY_MAX_PCM_BASE64,
   VoiceRelay,
   type VoiceRelayRequest,
@@ -243,6 +244,73 @@ describe("the PC's watcher runs the phone's voice envelope", () => {
     const failed = await store.remoteCommand.mustGet(row.id);
     expect(failed.status).toBe("failed");
     expect(failed.result).toMatchObject({ code: "unavailable" });
+  });
+
+  it("no recording stays in the shared row on any outcome: malformed, stale, a replay, a revoked device", async () => {
+    const pcm = tonePcm(200);
+    const leftovers = async (id: string) => {
+      const r = await store.remoteCommand.mustGet(id);
+      expect(JSON.stringify(r.params)).not.toContain(pcm.slice(0, 64));
+      expect(JSON.stringify(r.params)).not.toContain("AAAAAAAAAAAAAAAA");
+      return r;
+    };
+    // Malformed: over the byte bound.
+    const tooLong = await enqueue({
+      v: 1,
+      kind: "voice",
+      audio: { pcm: "A".repeat(VOICE_RELAY_MAX_PCM_BASE64 + 4), sampleRate: 16_000, channels: 1 },
+    });
+    // A replay of a turn already handled (same clientId).
+    const turn = { v: 1, kind: "voice", clientId: "voice-turn-dup1", audio: { pcm, sampleRate: 16_000, channels: 1, durationMs: 200 } };
+    const first = await enqueue(turn);
+    const again = await enqueue(turn);
+    expect(await watcher(fakeVoice).drain()).toBe(3);
+    expect(calls).toHaveLength(1);
+    expect((await leftovers(tooLong.id)).status).toBe("failed");
+    expect((await leftovers(first.id)).status).toBe("done");
+    const dup = await leftovers(again.id);
+    expect(dup.status).toBe("failed");
+    expect(dup.result).toMatchObject({ code: "duplicate" });
+    expect(dup.params).toMatchObject({ audio: { dropped: true, bytes: 6_400, durationMs: 200 } });
+
+    // Stale: the PC was offline; the turn is refused, never run, and its audio goes.
+    const stale = await enqueue({
+      v: 1,
+      kind: "voice",
+      clientId: "voice-turn-old1",
+      audio: { pcm, sampleRate: 16_000, channels: 1 },
+    });
+    await clock.advance(VOICE_RELAY_MAX_AGE_MS + 1_000);
+    expect(await watcher(fakeVoice).drain()).toBe(1);
+    expect(calls).toHaveLength(1);
+    const old = await leftovers(stale.id);
+    expect(old.status).toBe("failed");
+    expect(old.result).toMatchObject({ kind: "voice", status: "expired", code: "timeout" });
+
+    // A revoked phone: refused by the authorisation, the audio dropped all the same.
+    const fromRevoked = await enqueue({
+      v: 1,
+      kind: "voice",
+      audio: { pcm, sampleRate: 16_000, channels: 1 },
+    });
+    await store.device.revoke(phone.id, (await store.device.mustGet(phone.id)).version);
+    await watcher(fakeVoice).handle(await store.remoteCommand.mustGet(fromRevoked.id));
+    expect((await leftovers(fromRevoked.id)).result).toMatchObject({
+      error: expect.stringMatching(/revoked/),
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("bounds a recording by its duration, not only its bytes", () => {
+    // 6 s at 8 kHz mono is under the byte bound but over 5 s.
+    const slow = { pcm: tonePcm(6_000, 8_000), sampleRate: 8_000, channels: 1 };
+    expect(VoiceEnvelope.safeParse({ v: 1, kind: "voice", audio: slow }).success).toBe(false);
+    expect(() => toFrames(slow)).toThrow(/longer than 5 s/);
+    // 4 s at 8 kHz mono and exactly 5 s at 16 kHz mono are fine.
+    const ok = { pcm: tonePcm(4_000, 8_000), sampleRate: 8_000, channels: 1 };
+    expect(VoiceEnvelope.safeParse({ v: 1, kind: "voice", audio: ok }).success).toBe(true);
+    const five = { pcm: tonePcm(5_000), sampleRate: 16_000, channels: 1 };
+    expect(VoiceEnvelope.safeParse({ v: 1, kind: "voice", audio: five }).success).toBe(true);
   });
 
   it("splits a recording into 20 ms frames on the capture timeline", () => {
