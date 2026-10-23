@@ -22,7 +22,8 @@ API so the Anthropic adapter (`provider/anthropic.ts`) is a thin mapping and the
   `provider_error`, and `aborted` when the request's `signal` fired) and a `retryable` flag. An
   adapter ends a stream whose `signal` fired with `error: aborted` whatever its client did (the
   Anthropic SDK exits its iterator without throwing after an abort, which would otherwise read
-  as a complete `message_end`). `collectStream` turns a stream into a `ModelResponse` with time
+  as a complete `message_end`), unless the vendor's end-of-message event had already arrived:
+  that message is complete and ends with `message_end` and its full usage. `collectStream` turns a stream into a `ModelResponse` with time
   to first token and duration.
 - Effort is a first-class request field; temperature is only honoured by providers that accept it
   (Anthropic adapters drop it).
