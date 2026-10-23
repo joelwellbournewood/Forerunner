@@ -24,6 +24,7 @@ import {
   type ActionClass,
   type AutonomyLevel,
   decideAutonomy,
+  defaultRiskTier,
   type ModelProvider,
   scanForInjection,
   wrapUntrusted,
@@ -923,7 +924,9 @@ export class EmailCommandHandler {
       title: interpretation.title,
       outcome: `${interpretation.summary}${attachmentNote}`,
       acceptance_criteria: [],
-      risk_tier: 1,
+      // The project's default tier, like every other creation path: 0 in small-project mode,
+      // else 1 (spec B.6, ADR 0051); the critic reviews at the tier stored on the row.
+      risk_tier: defaultRiskTier(project),
       status: "ready",
       priority: 10,
       budget_usd_micro: capUsdMicro,
