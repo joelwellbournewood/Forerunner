@@ -177,6 +177,43 @@ describe("GET /performance on the daemon", () => {
     expect((await view("/performance?days=365")).days).toBe(90);
   });
 
+  it("shows the principal's D.4 effort settings as the base the slider shifts, read per request", async () => {
+    const before = await rt.store.agent.mustGet(rt.agent.id);
+    await rt.store.agent.update(rt.agent.id, before.version, {
+      model_config: {
+        modes: { planning: { effort: "low" } },
+        specialists: { researcher: { effort: "xhigh" } },
+      },
+    });
+    try {
+      const v = await view(`/performance?projectId=${projectId}`);
+      // Planning: the principal's low, one step down with the slider stays low.
+      expect(modeOf(v, "planning")).toMatchObject({
+        baseEffort: "low",
+        effortSource: "agent",
+        effort: "low",
+      });
+      // The researcher's xhigh one step down is high, at the specialist's max_effort.
+      expect(modeOf(v, "researcher")).toMatchObject({
+        baseEffort: "xhigh",
+        effortSource: "agent",
+        effort: "high",
+        maxEffort: "high",
+      });
+      expect(modeOf(v, "text_chat")).toMatchObject({ effortSource: "table", baseEffort: "low" });
+      // A malformed document applies no override, as the runs read it.
+      const row = await rt.store.agent.mustGet(rt.agent.id);
+      await rt.store.agent.update(rt.agent.id, row.version, {
+        model_config: { modes: { planning: { effort: "fastest" } } },
+      });
+      const bad = await view(`/performance?projectId=${projectId}`);
+      expect(modeOf(bad, "planning")).toMatchObject({ effortSource: "table", baseEffort: "high" });
+    } finally {
+      const row = await rt.store.agent.mustGet(rt.agent.id);
+      await rt.store.agent.update(rt.agent.id, row.version, { model_config: {} });
+    }
+  });
+
   it("refuses a bad days with 400 and an unknown project with 404", async () => {
     // Decimal digits only: no hex, exponent, padding or fraction that Number() would accept.
     for (const bad of ["0", "-3", "1.5", "week", "0x10", "1e1", "%207", "7.0", "+7"]) {

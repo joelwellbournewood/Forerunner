@@ -140,6 +140,57 @@ describe("Performance view", () => {
     );
   });
 
+  it("shows the principal's own effort setting (spec D.4) as the base the slider shifts", async () => {
+    const h = createHarness();
+    h.daemon.state.speedQuality.proj_atlas = 1;
+    // What Settings writes through model.settings.set (settings-models.test.tsx).
+    const alice = h.daemon.state.modelSettings.agents.find((a) => a.editable);
+    const planning = alice?.modes.find((m) => m.mode === "planning");
+    const coder = h.daemon.state.modelSettings.specialists.find((x) => x.name === "coder");
+    if (!planning || !coder) throw new Error("fixture");
+    planning.effort = { value: "low", default: "high", source: "agent", defaultSource: "table" };
+    coder.settings.effort = {
+      value: "low",
+      default: "medium",
+      source: "agent",
+      defaultSource: "table",
+    };
+    const view = await h.client.performance({ projectId: "proj_atlas" });
+    expect(RuntimePerformanceView.safeParse(view).success).toBe(true);
+    const mode = (name: string) => {
+      const m = view.modes.find((x) => x.mode === name);
+      if (!m) throw new Error(name);
+      return m;
+    };
+    // Planning: the principal's low, one step up medium.
+    expect(mode("planning")).toMatchObject({
+      baseEffort: "low",
+      effortSource: "agent",
+      effort: "medium",
+    });
+    // The coder's low one step up is medium; a risky task still runs at high (held at the cap).
+    expect(mode("coder")).toMatchObject({
+      baseEffort: "low",
+      effortSource: "agent",
+      effort: "medium",
+      riskEffort: "high",
+    });
+    expect(mode("text_chat")).toMatchObject({ effortSource: "table", baseEffort: "low" });
+    expect(effortLabel(mode("planning"))).toBe("medium (your setting low)");
+    expect(effortLabel({ ...mode("planning"), effort: "low" })).toBe("low (your setting)");
+
+    renderApp("/performance", h);
+    const table = await screen.findByTestId("performance-modes");
+    const row = within(table)
+      .getAllByTestId("performance-mode")
+      .find((r) => r.dataset.mode === "planning");
+    if (!row) throw new Error("no planning row");
+    // All projects (the page's default): no slider, the principal's low as set.
+    await waitFor(() =>
+      expect(within(row).getByTestId("effort")).toHaveTextContent("low (your setting)"),
+    );
+  });
+
   it("shows a daemon failure as an error with a retry, not as a missing route", async () => {
     renderApp(
       "/performance",

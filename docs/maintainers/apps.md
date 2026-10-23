@@ -195,7 +195,9 @@ reads it). A move is still one `settings.set` through `executeCommands` with `so
 and the words used name the position ("Settings: project.speed_quality_offset to speed (-1)");
 the sentence with the effect comes from the daemon (`commands.md`). The Performance view does
 not move the slider: it shows response times per mode and, per mode, the effort in force that
-the slider's position yields (held at the registry's `max_effort`), as the daemon computes it.
+the slider's position yields (held at the registry's `max_effort`), as the daemon computes it,
+from the table's effort or the principal's own D.4 setting (`effortSource: "agent"`, which
+`effortLabel` names "your setting", e.g. "medium (your setting low)").
 
 The model settings section (spec D.4) uses the same dialog: `modelSettingCommand(target, field,
 value)` builds a synthetic row (`specialist.<name>.<field>` or `agent.<mode>.<field>`, scope
@@ -317,7 +319,9 @@ with the daemon's message); decisions, the peer feed and docs are served read-on
 with the query's window and project, 400 for a bad `days` and 404 for an unknown project, as
 the daemon answers; with a project, the slider position Settings left in
 `state.speedQuality` shifts each mode with `offsetApplied` one step, held at its `maxEffort`,
-and sets `effortOffset`) and
+and sets `effortOffset`; an effort `model.settings.set` left in `state.modelSettings` with
+source `agent` for planning, text chat, `coder` or `researcher` is the base it shifts, with
+`effortSource: "agent"`) and
 `startFakeDaemon({ port })` (`@hono/node-server` on 127.0.0.1). Its `/health` answer is the
 `HEALTH` fixture with the extension counts derived from the extension state (3 enabled, 1
 pending with the fixtures). It requires the bearer token on every route (and accepts `?token=`

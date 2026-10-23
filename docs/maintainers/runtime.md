@@ -1978,7 +1978,15 @@ its own:
   researcher, critic tiers 2 and 3); `lastAt`. `recent` lists the 20 newest measurements with
   their source (`run`, `chat`, `voice`).
 - *Effort in force (the D.7 half).* `tier` and `baseEffort` from the table in force (an effort
-  the model watch adopted shows here), and `effort` computed as the consumers compute it
+  the model watch adopted shows here); where the principal agent's D.4 settings set an effort
+  (ADR 0072: `model_config.modes.planning` for the intake, `modes.text_chat` for a typed chat
+  turn, `specialists.coder` and `specialists.researcher` for the executor's coder and research
+  rows), that effort is the base instead (`agentEffortOverride`, `effortSource: "agent"`;
+  otherwise `"table"`), as the intake's and the chat's `resolveRunSettings` and the executor's
+  `withModeEffort` take it. The route reads the agent row's `model_config` per request through
+  `parseAgentModelConfig`, so a `model.settings.set` change shows at once and a malformed
+  document applies no override, as the runs read it. A spoken turn keeps the voice mode's table
+  effort, and the critic and routing have no override. Then `effort` is computed as the consumers compute it
   (D.16, "The speed-versus-quality slider" below): `modeEffort` shifts the base by the
   project's `speed_quality_offset` (`speedQualityOffsetOf`) for every mode a run reads the
   slider in (`OFFSET_MODES`: chat, voice, planning, coder, researcher and both critic tiers,
@@ -2004,9 +2012,10 @@ measured run time), `model`, `effort` (the turn's, after the slider and the cap)
 `projectId` (the turn's active project) next to `ttftMs`. Tests:
 `performance-view.test.ts` (nearest rank, mode derivation, seeded rows across modes, targets,
 the window, ownership, chat turns scoped by their own project, the effort in force with the
-slider and the registry caps), `performance-route.test.ts` (the route on the composed daemon
-with a chat turn through `POST /chat`, the slider and the shipped caps per mode, 400 and
-404), `intake.test.ts` (the intake Run row, its effort under the slider and a cap),
+slider and the registry caps, the principal's D.4 effort overrides as the base),
+`performance-route.test.ts` (the route on the composed daemon with a chat turn through
+`POST /chat`, the slider and the shipped caps per mode, the principal's `model_config` read
+per request and a malformed one ignored, 400 and 404), `intake.test.ts` (the intake Run row, its effort under the slider and a cap),
 `conversation.test.ts` (the reply row's timing and project), `effort-offset.test.ts` (a typed
 chat turn's effort per slider position is what the view shows, for the mode and the sample).
 

@@ -30,6 +30,7 @@ import {
   speedQualityOffsetOf,
   tierOfModel,
 } from "../models/ladder.ts";
+import { type AgentModelConfig, modeOverride, specialistOverride } from "../models/run-settings.ts";
 import type { EffortLevel } from "../provider/types.ts";
 import type { Registry } from "../registry/types.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
@@ -700,6 +701,23 @@ export function effortCapsOf(
   return caps;
 }
 
+/**
+ * The principal agent's effort override for a mode (spec D.4, ADR 0072), where a run of the mode
+ * reads one: `modes.planning` (the intake), `modes.text_chat` (a typed chat turn; a spoken one
+ * keeps the voice mode's table effort), `specialists.coder` and `specialists.researcher` (the
+ * executor; the coder row stands for every non-research specialist, as its cap does). The
+ * critic, voice and routing modes have no override. Undefined when none is set.
+ */
+export function agentEffortOverride(
+  config: AgentModelConfig | undefined,
+  mode: Mode,
+): EffortLevel | undefined {
+  if (!config) return undefined;
+  if (mode === "planning" || mode === "text_chat") return modeOverride(config, mode).effort;
+  if (mode === "coder" || mode === "researcher") return specialistOverride(config, mode).effort;
+  return undefined;
+}
+
 /** Newest measurements the view lists under the table. */
 export const PERFORMANCE_RECENT_LIMIT = 20;
 
@@ -840,6 +858,12 @@ export interface PerformanceViewOptions {
   modelConfig?: { ladder: LadderRung[]; modeDefaults: Record<Mode, ModeDefault> };
   /** The registry caps per mode (`effortCapsOf(rt.registry)`); none by default. */
   effortCaps?: EffortCaps;
+  /**
+   * The principal agent's D.4 settings (`parseAgentModelConfig(agent.model_config).config`):
+   * an effort override there replaces the mode's base effort, as the runs apply it. None by
+   * default.
+   */
+  agentModelConfig?: AgentModelConfig;
   recentLimit?: number;
 }
 
@@ -959,19 +983,23 @@ export async function performanceView(
     const offsetApplied = OFFSET_MODES.includes(mode);
     const cap = opts.effortCaps?.[mode];
     const modeOffset = offsetApplied ? offset : 0;
-    // As the consumers compute it: the table's effort shifted by the slider, held at the cap.
-    const effort = capEffort(
-      modeEffort(mode, modeOffset, { ...MODE_DEFAULTS, ...config.modeDefaults }),
-      cap,
-    );
-    const risk = riskEffortOf(mode, modeOffset, config.modeDefaults, effort, cap);
+    // As the consumers compute it: the table's effort, or the principal's D.4 override of it
+    // (the base the slider shifts, as the executor's `withModeEffort` and the intake's and
+    // chat's `resolveRunSettings` take it), shifted by the slider, held at the cap.
+    const override = agentEffortOverride(opts.agentModelConfig, mode);
+    const table: Record<Mode, ModeDefault> = { ...MODE_DEFAULTS, ...config.modeDefaults };
+    if (override) table[mode] = { ...table[mode], effort: override };
+    const baseEffort = table[mode].effort;
+    const effort = capEffort(modeEffort(mode, modeOffset, table), cap);
+    const risk = riskEffortOf(mode, modeOffset, table, effort, cap);
     return {
       mode,
       label: MODE_LABELS[mode],
       targetMs: d.targetMs,
       targetKind: d.targetKind,
       tier: d.tier,
-      baseEffort: d.effort,
+      baseEffort,
+      effortSource: override ? ("agent" as const) : ("table" as const),
       effort,
       offsetApplied,
       maxEffort: cap ?? null,

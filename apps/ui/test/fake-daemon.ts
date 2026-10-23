@@ -2900,8 +2900,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const window = Math.min(days, 90);
     const generated = Date.parse(PERFORMANCE.generatedAt);
-    // The project's speed-versus-quality slider shifts each mode it reaches one step, held at
-    // the registry cap (`maxEffort`), as the daemon's view computes the effort in force.
+    // The project's speed-versus-quality slider shifts each mode it reaches one step from its
+    // base (the table's, or the principal's D.4 override), held at the registry cap
+    // (`maxEffort`), as the daemon's view computes the effort in force.
     const offset = projectId ? (state.speedQuality[projectId] ?? 0) : 0;
     const scale = ["low", "medium", "high", "xhigh", "max"] as const;
     const shift = (e: (typeof scale)[number], cap: (typeof scale)[number] | null) => {
@@ -2915,13 +2916,27 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       from: new Date(generated - window * 86_400_000).toISOString(),
       effortOffset: offset,
       modes: PERFORMANCE.modes.map((m) => {
-        if (!m.offsetApplied) return m;
-        const effort = shift(m.baseEffort, m.maxEffort);
+        // The principal's D.4 effort override (what Settings sets through model.settings.set)
+        // replaces the base effort of planning, text chat and the coder and research rows.
+        const set =
+          m.mode === "coder" || m.mode === "researcher"
+            ? state.modelSettings.specialists.find((x) => x.name === m.mode)?.settings.effort
+            : state.modelSettings.agents
+                .find((a) => a.editable)
+                ?.modes.find((x) => x.mode === m.mode)?.effort;
+        const override =
+          set?.source === "agent" && scale.includes(set.value as (typeof scale)[number])
+            ? (set.value as (typeof scale)[number])
+            : null;
+        const base = override ?? m.baseEffort;
+        const effortSource = override ? ("agent" as const) : ("table" as const);
+        if (!m.offsetApplied) return { ...m, baseEffort: base, effortSource };
+        const effort = shift(base, m.maxEffort);
         // A risky task's effort is shown only where it differs from the mode's.
         const risk = m.riskEffort === null ? null : shift(m.riskEffort, m.maxEffort);
         return risk === effort
-          ? { ...m, effort, riskEffort: null, riskTierFrom: null }
-          : { ...m, effort, riskEffort: risk };
+          ? { ...m, baseEffort: base, effortSource, effort, riskEffort: null, riskTierFrom: null }
+          : { ...m, baseEffort: base, effortSource, effort, riskEffort: risk };
       }),
     });
   });

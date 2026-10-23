@@ -809,8 +809,17 @@ export const PerformanceModeView = z.object({
   targetKind: z.enum(PERFORMANCE_TARGET_KINDS),
   /** The rung the mode starts on in the effort table in force. */
   tier: z.string(),
-  /** The table's effort for the mode (built-ins plus the adopted models.json), before the offset. */
+  /**
+   * The mode's effort before the offset: the table's (built-ins plus the adopted models.json),
+   * or the principal agent's D.4 override where it sets one (`effortSource: "agent"`).
+   */
   baseEffort: z.enum(EFFORT_LEVELS),
+  /**
+   * Where `baseEffort` comes from (spec D.4, ADR 0072): `table`, or `agent` when the principal's
+   * `model_config` sets the effort (`modes.planning`, `modes.text_chat`, `specialists.coder`,
+   * `specialists.researcher`), as the intake, the conversation agent and the executor read it.
+   */
+  effortSource: z.enum(["table", "agent"]),
   /**
    * The effort in force: the base, shifted by the project's offset where the code applies it,
    * held at `maxEffort`.

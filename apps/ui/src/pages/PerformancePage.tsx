@@ -41,11 +41,17 @@ export function targetLabel(mode: PerformanceModeView): string {
 
 /**
  * The effort in force for a mode (spec D.7: the lowest effort that passes the task's checks):
- * the effort table's, and the project's speed-versus-quality offset where the code applies it.
+ * the effort table's, or the principal's own setting (spec D.4), and the project's
+ * speed-versus-quality offset where the code applies it.
  */
 export function effortLabel(mode: PerformanceModeView): string {
+  const from = mode.effortSource === "agent" ? "your setting" : "table";
   const effort =
-    mode.effort === mode.baseEffort ? mode.effort : `${mode.effort} (table ${mode.baseEffort})`;
+    mode.effort === mode.baseEffort
+      ? mode.effortSource === "agent"
+        ? `${mode.effort} (${from})`
+        : mode.effort
+      : `${mode.effort} (${from} ${mode.baseEffort})`;
   // A risky task runs the mode higher (the coder at risk tier 2+, a tier 3 critic review).
   return mode.riskEffort && mode.riskTierFrom !== null
     ? `${effort}; ${mode.riskEffort} from risk tier ${mode.riskTierFrom}`

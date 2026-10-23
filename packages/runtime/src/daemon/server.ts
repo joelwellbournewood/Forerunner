@@ -16,6 +16,7 @@ import { createExtensionsRoutes } from "../extensions/routes.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { speedQualityOffsetOf } from "../models/ladder.ts";
+import { parseAgentModelConfig } from "../models/run-settings.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
 import { createNotificationRoutes } from "../notifications/routes.ts";
@@ -1427,6 +1428,12 @@ export function createDaemonApp(
         nowIso: rt.clock.nowIso(),
         modelConfig: rt.modelConfig(),
         effortCaps: effortCapsOf(rt.registry),
+        // The principal's D.4 effort overrides (spec D.4, ADR 0072), read per request so a
+        // `model.settings.set` change shows at once; a malformed document applies none, as the
+        // runs read it.
+        agentModelConfig: parseAgentModelConfig(
+          (await rt.store.agent.get(rt.agent.id))?.model_config,
+        ).config,
       }),
     );
   });

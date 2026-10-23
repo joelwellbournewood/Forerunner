@@ -3,6 +3,7 @@ import { openStore, type StateStore } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PerformanceView } from "../src/daemon/api-types.ts";
 import {
+  agentEffortOverride,
   effortCapsOf,
   eventSample,
   nearestRank,
@@ -563,6 +564,70 @@ describe("performanceView over seeded Run rows and turns", () => {
     const all = await performanceView(store, { humanId: w.human, nowIso: clock.nowIso() });
     expect(all.effortOffset).toBe(0);
     expect(modeOf(all, "critic_t1").effort).toBe("medium");
+  });
+
+  it("takes the principal's D.4 effort override as the base the slider shifts, where a run reads one", async () => {
+    // Spec D.4 (ADR 0072): `model_config.modes.planning|text_chat` and
+    // `specialists.coder|researcher` replace the table's base effort for the intake, a typed
+    // chat turn and the executor; the slider (+1 here), the risk rule and the cap still apply.
+    const config = {
+      modes: { planning: { effort: "low" as const }, text_chat: { effort: "medium" as const } },
+      specialists: {
+        coder: { effort: "low" as const },
+        researcher: { effort: "medium" as const },
+        // Not a mode's row: the coder row stands for the shipped `coder` only.
+        writer: { effort: "max" as const },
+      },
+    };
+    expect(agentEffortOverride(config, "planning")).toBe("low");
+    expect(agentEffortOverride(config, "coder")).toBe("low");
+    expect(agentEffortOverride(config, "critic_t1")).toBeUndefined();
+    expect(agentEffortOverride(config, "voice_chat")).toBeUndefined();
+    expect(agentEffortOverride(undefined, "planning")).toBeUndefined();
+    const v = await performanceView(store, {
+      humanId: w.human,
+      projectId: w.project,
+      nowIso: clock.nowIso(),
+      agentModelConfig: config,
+      effortCaps: effortCapsOf(loadRegistry(REGISTRY)),
+    });
+    expect(modeOf(v, "planning")).toMatchObject({
+      baseEffort: "low",
+      effortSource: "agent",
+      effort: "medium",
+    });
+    // The conversation agent's cap (medium) holds the shifted override (high).
+    expect(modeOf(v, "text_chat")).toMatchObject({
+      baseEffort: "medium",
+      effortSource: "agent",
+      effort: "medium",
+    });
+    // A coder override of low: +1 is medium; a risky task still runs at high (effortForTask),
+    // +1 xhigh, held at the coder's max_effort high.
+    expect(modeOf(v, "coder")).toMatchObject({
+      baseEffort: "low",
+      effortSource: "agent",
+      effort: "medium",
+      riskEffort: "high",
+      riskTierFrom: 2,
+    });
+    expect(modeOf(v, "researcher")).toMatchObject({
+      baseEffort: "medium",
+      effortSource: "agent",
+      effort: "high",
+    });
+    // A spoken turn keeps the voice mode's table effort; the critic has no override.
+    for (const mode of ["voice_chat", "routing", "critic_t1", "critic_t23"])
+      expect(modeOf(v, mode).effortSource).toBe("table");
+    expect(modeOf(v, "voice_chat")).toMatchObject({ baseEffort: "low", effort: "medium" });
+    // Without overrides every row reads the table.
+    const plain = await performanceView(store, {
+      humanId: w.human,
+      projectId: w.project,
+      nowIso: clock.nowIso(),
+    });
+    for (const m of plain.modes) expect(m.effortSource).toBe("table");
+    expect(modeOf(plain, "planning")).toMatchObject({ baseEffort: "high", effort: "xhigh" });
   });
 
   it("covers all of the human's projects without a project, and the window follows ?days", async () => {
