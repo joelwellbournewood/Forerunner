@@ -42,8 +42,11 @@ describe("GitOps", { timeout: 120_000 }, () => {
     const c = await a.commitAll("a: add x");
     expect(c.committed).toBe(true);
     await a.fetch();
+    // The base moved: origin/main is no longer an ancestor of the branch until the rebase.
+    expect(await a.isAncestor("origin/main", "HEAD")).toBe(false);
     const rb = await a.rebaseOnto("origin/main");
     expect(rb.ok).toBe(true);
+    expect(await a.isAncestor("origin/main", "HEAD")).toBe(true);
     expect(await a.changedFiles("origin/main")).toEqual(["x.txt"]);
     await a.push("feat/x");
     expect((await b.log(1))[0]?.subject).toBe("b: edit readme");

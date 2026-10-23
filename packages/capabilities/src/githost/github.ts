@@ -330,12 +330,13 @@ export class GitHubHost implements GitHost {
   async mergePullRequest(
     repo: RepoRef,
     number: number,
-    opts: { method?: "merge" | "squash" | "rebase"; title?: string } = {},
+    opts: { method?: "merge" | "squash" | "rebase"; title?: string; sha?: string } = {},
   ): Promise<{ merged: boolean; sha: string | null; message: string }> {
     try {
       const r = await this.request<Json>("PUT", `${this.repoPath(repo)}/pulls/${number}/merge`, {
         merge_method: opts.method ?? "squash",
         ...(opts.title ? { commit_title: opts.title } : {}),
+        ...(opts.sha ? { sha: opts.sha } : {}),
       });
       return {
         merged: Boolean(r.merged),

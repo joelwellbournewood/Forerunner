@@ -187,10 +187,14 @@ export interface GitHost {
     repo: RepoRef,
     opts?: { state?: "open" | "closed" | "all"; head?: string },
   ): Promise<PullRequestInfo[]>;
+  /**
+   * Merge the pull request. `sha` pins the head the caller checked (the reviewed commit, the
+   * one the checks ran on): the host refuses the merge when the head moved since (ADR 0062).
+   */
   mergePullRequest(
     repo: RepoRef,
     number: number,
-    opts?: { method?: "merge" | "squash" | "rebase"; title?: string },
+    opts?: { method?: "merge" | "squash" | "rebase"; title?: string; sha?: string },
   ): Promise<{ merged: boolean; sha: string | null; message: string }>;
   commentOnPullRequest(repo: RepoRef, number: number, body: string): Promise<CommentInfo>;
   listPullRequestComments(repo: RepoRef, number: number): Promise<CommentInfo[]>;

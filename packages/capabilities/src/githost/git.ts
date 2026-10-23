@@ -186,6 +186,16 @@ export class GitOps {
     this.must(await this.git(args), `push ${branch}`);
   }
 
+  /** True when `ancestor` is reachable from `of` (the base has not moved past the branch). */
+  async isAncestor(ancestor: string, of = "HEAD"): Promise<boolean> {
+    const r = await this.git(["merge-base", "--is-ancestor", ancestor, of]);
+    if (r.code === 0) return true;
+    if (r.code === 1) return false;
+    // Any other exit is git failing (an unknown ref): reported, never read as "not an ancestor".
+    this.must(r, `merge-base --is-ancestor ${ancestor} ${of}`);
+    return false;
+  }
+
   async changedFiles(base: string): Promise<string[]> {
     return this.must(await this.git(["diff", "--name-only", `${base}...HEAD`]), "diff")
       .stdout.split(/\r?\n/)

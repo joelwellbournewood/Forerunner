@@ -20,6 +20,9 @@ import {
   MAX_PROMOTION_REVIEWS_PER_SESSION,
   type MemoryPort,
   type MemoryRecallResult,
+  type MergeOutcome,
+  type MergePort,
+  type MergeRequest,
   memoryBudgetOf,
   type ProjectDocsPort,
   type SessionReviewOutcome,
@@ -228,6 +231,8 @@ export interface SessionResult {
   /** Tasks whose close was refused because a finding is still open (B.4). */
   blockedByFindings: string[];
   reviews: SessionReviewRecord[];
+  /** What became of each accepted task's pull request (spec J.9): merged or left open, and why. */
+  merges: MergeOutcome[];
   /** The lessons block loaded at start, or null without a memory port. */
   memory: { tokens: number; budget: number; lessons: number } | null;
   lessonsRecorded: number;
@@ -298,6 +303,12 @@ export interface SessionRunnerDeps {
    * check is the only reminder.
    */
   docs?: ProjectDocsPort;
+  /**
+   * The merge of a reviewed pull request (spec J.9, ADR 0062): after an accepting review the
+   * task's PR goes through the `merge_pr` tool behind the hooks; level 3 merges, below it the
+   * hooks refuse and the PR stays open for the human. Without it every PR stays open.
+   */
+  merge?: MergePort;
   /**
    * The schema sync gate (spec M): a session is refused before its row exists while sync is
    * paused, and the peer feed (start and before every task) re-evaluates and is refused too.
@@ -441,6 +452,7 @@ export class SessionRunner {
     const retried: string[] = [];
     const blockedByFindings: string[] = [];
     const reviews: SessionReviewRecord[] = [];
+    const merges: MergeOutcome[] = [];
     /** What the human said during the session (spec O.9), collected between tasks. */
     const heard: HeardDelivery[] = [];
     const lessonCandidates: LessonCandidate[] = [];
@@ -942,9 +954,28 @@ export class SessionRunner {
                 })),
               );
               switch (reviewed.decision) {
-                case "accepted":
+                case "accepted": {
                   completed.push(task.id);
+                  // Level 3 merges the reviewed PR (J.9); the hooks decide, the outcome is
+                  // reported either way. A merged branch no longer carries the status doc.
+                  const merged = await this.mergeReviewed({
+                    task: await store.task.mustGet(task.id),
+                    session,
+                    token,
+                    budget,
+                    signal: controller.signal,
+                    agentId: agent.id,
+                    emit,
+                  });
+                  if (merged) {
+                    merges.push(merged);
+                    if (merged.status === "merged" && result.branch) {
+                      const at = prBranches.lastIndexOf(result.branch);
+                      if (at >= 0) prBranches.splice(at, 1);
+                    }
+                  }
                   break;
+                }
                 case "revise":
                 case "retry":
                   retried.push(task.id);
@@ -1038,6 +1069,7 @@ export class SessionRunner {
       needsHuman,
       retried,
       blockedByFindings,
+      merges,
       spent,
       stopReason,
       plan,
@@ -1104,6 +1136,13 @@ export class SessionRunner {
         verdict: r.verdict,
         grade: r.grade,
         decision: r.decision,
+      })),
+      merges: merges.map((m) => ({
+        task_id: m.taskId,
+        pr_url: m.prUrl,
+        status: m.status,
+        merge_sha: m.mergeSha ?? null,
+        human_request_id: m.humanRequestId ?? null,
       })),
       next: skipped,
       stop_reason: stopReason,
@@ -1327,6 +1366,7 @@ export class SessionRunner {
       retried,
       blockedByFindings,
       reviews,
+      merges,
       memory: memoryLoaded
         ? {
             tokens: memoryLoaded.tokens,
@@ -1402,6 +1442,45 @@ export class SessionRunner {
       },
       outcome.costUsdMicro,
     );
+    return outcome;
+  }
+
+  /**
+   * The merge of an accepted task's pull request (spec J.9) through the merge port; a port
+   * failure leaves the PR open and is surfaced as an event, never fatal to the session.
+   */
+  private async mergeReviewed(
+    req: MergeRequest & {
+      emit: (t: string, p: Record<string, unknown>, cost?: number) => Promise<void>;
+    },
+  ): Promise<MergeOutcome | null> {
+    const { emit, ...request } = req;
+    const port = this.deps.merge;
+    if (!port || !request.task.pr_url) return null;
+    let outcome: MergeOutcome | null;
+    try {
+      outcome = await port.mergeReviewed(request);
+    } catch (e) {
+      if (e instanceof ForerunnerError && e.code === "killed") throw e;
+      await emit("pr.merge_failed", {
+        taskId: request.task.id,
+        prUrl: request.task.pr_url,
+        warning: `merge step failed, PR left open: ${errorMessage(e)}`,
+      });
+      return null;
+    }
+    if (!outcome) return null;
+    await emit(outcome.status === "merged" ? "pr.merged" : "pr.left_open", {
+      taskId: outcome.taskId,
+      prUrl: outcome.prUrl,
+      status: outcome.status,
+      reason: outcome.reason,
+      ...(outcome.mergeSha ? { mergeSha: outcome.mergeSha } : {}),
+      ...(outcome.rebased ? { rebased: true } : {}),
+      ...(outcome.humanRequestId
+        ? { humanRequestId: outcome.humanRequestId, warning: outcome.reason }
+        : {}),
+    });
     return outcome;
   }
 
@@ -1675,6 +1754,7 @@ function summarize(x: {
   needsHuman: string[];
   retried: string[];
   blockedByFindings: string[];
+  merges?: readonly MergeOutcome[];
   spent: number;
   stopReason: string;
   plan: SessionPlan | null;
@@ -1693,10 +1773,26 @@ function summarize(x: {
           `Blocked by open findings: ${x.blockedByFindings.length} (asked you: rework, accept or cancel).`,
         ]
       : []),
+    ...summarizeMerges(x.merges ?? []),
     ...(x.heard ? [summarizeHeard(x.heard)] : []),
     `Spent $${(x.spent / 1e6).toFixed(2)}.`,
   ];
   return parts.join(" ");
+}
+
+/** The merge step's outcomes (spec J.9): how many reviewed PRs merged, how many wait on the human. */
+function summarizeMerges(merges: readonly MergeOutcome[]): string[] {
+  const merged = merges.filter((m) => m.status === "merged").length;
+  const open = merges.length - merged;
+  const asked = merges.filter((m) => m.humanRequestId).length;
+  return [
+    ...(merged ? [`Merged ${merged} reviewed pull request(s).`] : []),
+    ...(open
+      ? [
+          `Reviewed pull requests left open for you: ${open}${asked ? ` (${asked} with a request in your inbox)` : ""}.`,
+        ]
+      : []),
+  ];
 }
 
 /**

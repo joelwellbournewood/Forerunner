@@ -402,3 +402,59 @@ export interface ProjectDocsPort {
     prBranch?: string | null;
   }): Promise<SessionStatusOutcome>;
 }
+
+// ---------------------------------------------------------------------------------------
+// Merge of a reviewed pull request (spec J.9: level 3 Trusted merges reviewed PRs; ADR 0062)
+// ---------------------------------------------------------------------------------------
+
+/**
+ * What became of a reviewed pull request: merged, or left open and why. `not_allowed`: the
+ * hooks refused the `merge_pr` call (the autonomy level, the grant); `unverified`: the
+ * reviewed commit is not known (no task worktree), so nothing proves the PR head is what the
+ * critic read. The other refusals file a request for the human.
+ */
+export type MergeStatus =
+  | "merged"
+  | "not_allowed"
+  | "unverified"
+  | "checks_failed"
+  | "checks_pending"
+  | "conflict"
+  | "head_moved"
+  | "closed"
+  | "failed";
+
+export interface MergeRequest {
+  /** The task after its accepting review (status done, `pr_url` set). */
+  task: TaskRow;
+  session: SessionRow;
+  /** The session token: the merge runs on a token derived from it (`merge_pr` only). */
+  token: SignedToken;
+  budget: SessionBudget;
+  signal: AbortSignal;
+  agentId: string;
+}
+
+export interface MergeOutcome {
+  taskId: string;
+  prUrl: string;
+  status: MergeStatus;
+  /** One line for the human: what happened, or why the PR is left open. */
+  reason: string;
+  /** The merge commit on the base branch. */
+  mergeSha?: string;
+  /** The head that was merged or checked (after a rebase, the rebased head). */
+  headSha?: string;
+  /** True when the branch was rebased onto a base that had moved before the merge. */
+  rebased?: boolean;
+  failedChecks?: string[];
+  pendingChecks?: string[];
+  conflicts?: string[];
+  /** The request filed for the human (red check, conflict, moved head, checks still running). */
+  humanRequestId?: string;
+}
+
+export interface MergePort {
+  /** After an accepting review: merge the task's PR through the hooks, or say why not; null without a PR. */
+  mergeReviewed(req: MergeRequest): Promise<MergeOutcome | null>;
+}

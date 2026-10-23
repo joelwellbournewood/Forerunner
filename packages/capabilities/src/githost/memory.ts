@@ -192,10 +192,17 @@ export class MemoryGitHost implements GitHost {
   async mergePullRequest(
     repo: RepoRef,
     number: number,
+    opts: { sha?: string } = {},
   ): Promise<{ merged: boolean; sha: string | null; message: string }> {
     const r = this.repo(repo);
     const pr = await this.getPullRequest(repo, number);
     if (pr.state !== "open") return { merged: false, sha: null, message: "already closed" };
+    if (opts.sha && opts.sha !== pr.head.sha)
+      return {
+        merged: false,
+        sha: null,
+        message: "Head branch was modified. Review and try the merge again.",
+      };
     if (!pr.mergeable)
       return { merged: false, sha: null, message: "Pull Request is not mergeable" };
     pr.state = "closed";
