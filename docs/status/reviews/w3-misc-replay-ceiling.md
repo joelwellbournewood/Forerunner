@@ -244,3 +244,38 @@ Requirements checked:
    Resolution: fixed in 35dbf21: the build report's ids are replaced by the branch commits
    with the same subjects (ae53f03, 8e8645b, ceefcd2, 79d6eba, cfa0237, d16edf7, c6336f8) and
    the base by 82a6295; `git diff 79d6eba d16edf7` printing nothing was re-checked.
+
+## Rebase
+
+`wave/w3-misc-replay-ceiling` was rebased on 2026-10-23 from 1885618 (merge base 82a6295) onto
+`origin/ccr-4d8a843c-1k9syk` at cac6fee. The same 15 commits, re-applied with these new ids
+(old -> new): 14594ad -> efb7e4c, c786f82 -> 5d3c685, ae53f03 -> 5ca94a7, 8e8645b -> f728539,
+ceefcd2 -> 3df5c08, 79d6eba -> 2113ac0, cfa0237 -> cf1a2c6, d16edf7 -> 2638e46,
+c6336f8 -> 779cb52, 655b94b -> ed388a4, 81deaa8 -> bf91fc4, 11f5651 -> 7b4ffbe,
+990c118 -> 7ace2dd, 691869f -> 5f09b28, 1885618 -> 04fe2eb. The commit ids quoted in the
+sections above are the pre-rebase ones.
+
+Conflicts and how they were resolved:
+
+1. `docs/status/BLOCKERS.md` (f728539, 7ace2dd, 04fe2eb): the base rewrote the V.1 row
+   (w2-s32-indicator) and the V.4 row (w4-stale-docs: the 20 stale entries edited) next to
+   this branch's V.3 edit. Kept the base's V.1 and V.4 rows and this branch's V.3 row. At
+   f728539 the branch's V.4 clause on the two closed Known issues was added to the base's V.4
+   text; 7ace2dd (review finding 4) moves that note into V.3, so from there the V.4 row is the
+   base's exactly.
+2. `docs/status/PROGRESS.md` (f728539): the base added entries for w2-s32-indicator,
+   w2-s12-unlock-card, w3-e1-triggers and w4-fcm-sender at the top of the log, where this
+   branch added its own. Kept every entry, with this item's entry first (newest first).
+3. `packages/runtime/src/session/executor.ts` (bf91fc4): the base added the fast-mode import
+   block (`../models/fast-mode.ts`) above the ladder import that this branch extends with
+   `projectCeilingOf`. Kept the base's fast-mode imports and added `projectCeilingOf` to the
+   ladder import. The ceiling read (`this.deps.projectCeiling ?? projectCeilingOf`) merged
+   cleanly next to the base's fast-mode code.
+
+Checks after the rebase (on 04fe2eb plus this section): after `pnpm install --frozen-lockfile`,
+`pnpm typecheck` clean; `pnpm lint` clean (warnings only, all in files outside this branch);
+`node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok (14 files); runtime unit
+128 files / 1135 passed, 1 skipped; cloud-runner unit + integration 9 files passed, 1 skipped /
+62 passed, 2 skipped; state-api unit 11 files / 156 passed; scenario 9 1 file / 2 passed; the
+e2e project 13 files / 25 passed, 1 skipped, no todo; `pnpm check` 289 files / 2919 passed,
+4 skipped, 1 todo (the P.7 todo in `scripts/closeout-docs.test.ts`, not this branch's).
