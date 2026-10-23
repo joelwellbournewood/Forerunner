@@ -18,6 +18,15 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-misc-replay-ceiling rebased onto 4ff4fb1)
+- `wave/w3-misc-replay-ceiling` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1). Conflicts
+  in this log (the base's w3-d16-slider, w3-e4-recheck and w5-android-high-risk entries next
+  to this item's) and in the executor's ladder import (the base's `capEffort` and
+  `speedQualityOffsetOf` next to `projectCeilingOf`); both sides kept
+  (`docs/status/reviews/w3-misc-replay-ceiling.md` `## Rebase`). Current counts: runtime 133
+  files / 1208 passed, 1 skipped; cloud-runner 9 files / 62 passed; state-api 11 files / 156;
+  scenario 9 2 passed, no todo. Not merged yet.
+
 ### 2026-10-23 (item w3-misc-replay-ceiling built on its branch)
 - Two Known issues of `docs/maintainers/testing.md` closed (R.4, V.3 scenario 9's `it.todo`,
   H.4 and D.3 the critic ceiling, V.4 the known-issues list). The code was already in place

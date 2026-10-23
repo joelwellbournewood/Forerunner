@@ -279,3 +279,41 @@ Checks after the rebase (on 04fe2eb plus this section): after `pnpm install --fr
 62 passed, 2 skipped; state-api unit 11 files / 156 passed; scenario 9 1 file / 2 passed; the
 e2e project 13 files / 25 passed, 1 skipped, no todo; `pnpm check` 289 files / 2919 passed,
 4 skipped, 1 todo (the P.7 todo in `scripts/closeout-docs.test.ts`, not this branch's).
+
+### Second rebase (onto 4ff4fb1)
+
+`wave/w3-misc-replay-ceiling` was rebased again on 2026-10-23 from ec054f6 (merge base cac6fee)
+onto `origin/ccr-4d8a843c-1k9syk` at 4ff4fb1. The same 16 commits, re-applied with these new ids
+(old -> new): 58c90fc -> e2415bc, 6c5c8c5 -> e272a52, fe5a969 -> 006cef4, 4254759 -> 11a9ee6,
+4415da9 -> 844a842, 223cb0a -> f21bc61, 3003f1e -> 7473228, b5a31df -> a456b67,
+f36c347 -> 9c569eb, 5ef83ff -> 5388925, 6d25819 -> 4d2d81e, 7996060 -> 0d56979,
+86641a1 -> d232a54, 1bb7754 -> 6b0c17b, f78e9c1 -> 6ae3287, ec054f6 -> 68b720c.
+
+Conflicts and how they were resolved:
+
+1. `docs/status/PROGRESS.md` (11a9ee6): the base added log entries at the top for
+   w3-d16-slider (built, reviewed, rebased), w3-e4-recheck (built, reviewed, rebased) and
+   w5-android-high-risk (built and reviewed, rebased) where this branch added its own entry.
+   Kept every entry, with this item's entry first (newest first). The "Next" list item that
+   names this item merged without a conflict (the base's C.5 and D.16 clauses and this
+   branch's "built on its branch 2026-10-23, review pending" clause are all in it).
+2. `packages/runtime/src/session/executor.ts` (4d2d81e): the base (w3-d16-slider) turned the
+   one-line ladder import into a block adding `capEffort` and `speedQualityOffsetOf`; this
+   branch adds `projectCeilingOf` to the same import. Kept one import block with all six
+   names. The base also dropped the static `effortOffset` dependency next to the
+   `projectCeiling` doc comment this branch rewrites; the branch's comment is kept and
+   `effortOffset` stays removed (the base reads the offset from the project row). The
+   ceiling read (`this.deps.projectCeiling ?? projectCeilingOf`) applied cleanly; the base's
+   `compose.ts` still passes `projectCeiling: (settings) => criticSettingsOf(settings).ceiling`.
+
+Everything else (runtime.md, testing.md, cloud-runner.md, state-service.md, requirements.md,
+BLOCKERS.md, the tests) merged without conflicts.
+
+Checks after the second rebase (on 68b720c plus this section): `pnpm install --frozen-lockfile`;
+`pnpm typecheck` clean; `pnpm lint` clean (59 warnings, none in a file this branch touches);
+`node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok (14 files); runtime unit
+133 files / 1208 passed, 1 skipped (`executor-ceiling.test.ts` + `remote-wiring.test.ts`
+2 files / 12 passed); cloud-runner unit + integration 9 files passed, 1 skipped / 62 passed,
+2 skipped; state-api unit 11 files / 156 passed; scenario 9 1 file / 2 passed; the e2e project
+13 files / 25 passed, 1 skipped, no todo; `pnpm check` 295 files / 3013 passed, 4 skipped, 1 todo (the P.7 todo in
+`scripts/closeout-docs.test.ts`, not this branch's), secret scan clean.
