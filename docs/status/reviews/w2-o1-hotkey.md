@@ -73,27 +73,137 @@ to change, tests, known issues). ADR `docs/decisions/0064-global-hotkey-default-
   the agent; closing stops capture and session; PCM encoding. (Fails at the start commit: the
   modules do not exist.)
 
-### Commands run (2026-10-23, Linux) and results
+### Commands run (2026-10-23, Linux) and their output
 
-| Command | Result |
-| --- | --- |
-| `cargo fmt --check` (apps/desktop/src-tauri) | clean |
-| `cargo clippy --all-targets -- -D warnings` | clean |
-| `cargo test` | 79 passed, 0 failed (68 before + 11 hotkey) |
-| `pnpm --filter @forerunner/ui test` | 41 test files, 248 tests passed |
-| `pnpm --filter @forerunner/ui exec vitest run --config vitest.config.ts test/hotkey.test.tsx` | 1 file, 14 tests passed |
-| `pnpm --filter @forerunner/approvals-web test` (neighbour, untouched) | 10 files, 57 tests passed |
-| `pnpm typecheck` | clean |
-| `pnpm lint` | exit 0; 61 warnings, none in the changed files (`biome check` on them: clean) |
-| `node scripts/check-paths.mjs` | ok (939 files) |
-| `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` | ok (23 files) |
-| `node scripts/link-check.mjs` | ok (92 files) |
-| `pnpm secrets:scan` | clean (1353 files) |
-| `pnpm check` | lint, paths, typecheck pass; `pnpm test` 245 of 246 files, 2482 tests passed, 1 failed: `scripts/closeout-docs.test.ts` "README indexes ADR 0064" — the index row is added centrally (the brief forbids editing `docs/decisions/README.md`); with the row added locally the file passes (19 passed, 1 todo) |
+All commands run from `/workspace/repo` on the final branch state (after the trailer fix and
+the status commit). Output pasted as printed (colour codes stripped).
+
+**Rust, `apps/desktop/src-tauri`**
+
+```
+$ cargo fmt --check && echo "cargo fmt --check: exit 0"
+cargo fmt --check: exit 0
+
+$ cargo clippy --all-targets -- -D warnings; echo "exit $?"
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.44s
+exit 0
+
+$ cargo test; echo "exit $?"     (hotkey lines and summaries)
+test hotkey::tests::a_refused_change_keeps_the_working_chord ... ok
+test hotkey::tests::accepts_every_shared_case_with_the_same_canonical_form ... ok
+test hotkey::tests::error_messages_name_the_token ... ok
+test hotkey::tests::linux_without_a_display_is_reported_not_registered ... ok
+test hotkey::tests::every_canonical_chord_is_accepted_by_the_plugin_parser ... ok
+test hotkey::tests::refuses_every_shared_case_for_the_same_reason ... ok
+test hotkey::tests::registration_state_reports_success_failure_and_plans_a_change ... ok
+test hotkey::tests::the_default_chord_is_the_shared_one_and_parses_to_itself ... ok
+test hotkey::tests::the_startup_chord_falls_back_to_the_default_with_a_note ... ok
+test hotkey::tests::the_preference_file_round_trips_and_garbage_reads_as_absent ... ok
+test hotkey::tests::the_event_and_status_payloads_are_the_documented_json ... ok
+test result: ok. 79 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit 0
+```
+
+Failing first: the same tests in a worktree of the starting commit f4848b5
+(`CARGO_TARGET_DIR=… cargo test hotkey`):
+
+```
+test result: FAILED. 0 passed; 8 failed; 0 ignored; 0 measured; 68 filtered out; finished in 0.66s
+```
+
+**UI and the neighbouring web app**
+
+```
+$ pnpm --filter @forerunner/ui test
+ ✓ test/hotkey.test.tsx (14 tests) 1683ms
+ Test Files  41 passed (41)
+      Tests  248 passed (248)
+   Duration  36.95s
+
+$ pnpm --filter @forerunner/approvals-web test
+ Test Files  10 passed (10)
+      Tests  57 passed (57)
+```
+
+**Repository checks**
+
+```
+$ pnpm check; echo "EXIT $?"
+> pnpm lint && pnpm lint:paths && pnpm typecheck && pnpm test && pnpm docs:check && pnpm docs:links && pnpm secrets:scan
+> biome check .
+Checked 1113 files in 2s. No fixes applied.
+Found 61 warnings.
+> node scripts/check-paths.mjs
+check-paths: ok (939 files).
+> tsc -p tsconfig.node.json --noEmit && pnpm -r --filter "./apps/*" --if-present typecheck
+apps/mobile typecheck: Done
+apps/desktop typecheck: Done
+apps/approvals-web typecheck: Done
+apps/ui typecheck: Done
+> vitest run --project unit
+ Test Files  246 passed (246)
+      Tests  2483 passed | 4 expected fail | 4 skipped | 1 todo (2492)
+> node scripts/docs-check.mjs
+docs-check: cannot diff against origin/main (...); nothing to check.
+> node scripts/link-check.mjs
+link-check: ok (93 files).
+> node scripts/secret-scan.mjs
+secret-scan: clean (1354 files).
+EXIT 0
+
+$ node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk
+docs-check: ok (28 files).
+
+$ node scripts/check-paths.mjs
+check-paths: ok (939 files).
+
+$ pnpm exec biome check <every .ts/.tsx/.json file changed since f4848b5>
+Checked 12 files in 167ms. No fixes applied.
+```
+
+The 61 lint warnings are in files this item does not touch (biome on the changed files is
+clean). `pnpm check`'s own docs check has no `origin/main` in this clone; the run against the
+base branch above is the one that counts. `pnpm typecheck` ran inside `pnpm check` (above).
+
+**Patch export and apply check** (re-run after the last commit; the output below is the final
+run)
+
+```
+$ git log --oneline $(cat /tmp/start-sha)..HEAD     # start-sha f4848b5
+(this commit: status: build report with the command output, the apply check and the row updates)
+6b31099 status: O.1 done; BLOCKERS row removed; ADR 0064 indexed
+9d50bae status: build report for w2-o1-hotkey
+64f5fe6 docs: the global hotkey in apps.md and ADR 0064
+431358b ui: the hotkey opens the conversation and starts a push-to-talk turn; Settings changes it
+bc77451 desktop: register the global hotkey that brings up the conversation
+$ git format-patch --stdout $(cat /tmp/start-sha)..HEAD > /mnt/session/outputs/w2-o1-hotkey.patch
+$ git worktree add /tmp/clean f4848b5 && cd /tmp/clean && git apply --check /mnt/session/outputs/w2-o1-hotkey.patch && echo APPLY_OK
+APPLY_OK
+```
+
+All commits carry the trailer `Claude-Build: managed-agent w2-o1-hotkey build`.
 
 The Tauri system libraries were not installed in this sandbox; I installed the packages the
 desktop CI workflow installs (`libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
 librsvg2-dev libxdo-dev`) before the cargo runs.
+
+### Row updates (applied on this branch)
+
+- `docs/requirements.md` O.1: `in progress` → `done`; tests: packages/runtime/test/conversation.test.ts;
+  packages/runtime/test/daemon.test.ts; packages/runtime/test/voice-route.test.ts;
+  packages/runtime/test/remote-watcher.test.ts; apps/approvals-web/test/chat.test.tsx;
+  tests/e2e/scenarios/phase5-gate.integration.test.ts; apps/ui/test/hotkey.test.tsx;
+  apps/desktop/src-tauri/src/hotkey.rs
+- O.3 (stays `done`): adds apps/ui/test/hotkey.test.tsx; apps/desktop/src-tauri/src/hotkey.rs
+- K.8 (stays `in progress`): adds apps/ui/test/hotkey.test.tsx
+- `docs/status/BLOCKERS.md`: row "O.1 global hotkey for the conversation" removed (its
+  condition, a registration in `apps/desktop/src-tauri` with a test there and the shortcut in
+  Settings, is met).
+- `docs/status/PROGRESS.md`: 2026-10-23 log entry; counts 173 done, 47 in progress, 8 todo
+  (counted from the rows).
+- `docs/decisions/README.md`: index row for ADR 0064.
 
 ### Left open and why
 
@@ -106,4 +216,3 @@ librsvg2-dev libxdo-dev`) before the cargo runs.
 - Linux: X11/XWayland only; a pure Wayland session reports "not registered" with the reason
   (a desktop-portal GlobalShortcuts registration is not built).
 - A press while the main window does not exist yet starts the attach but is not queued.
-- ADR index row for 0064 to be added to `docs/decisions/README.md` centrally.
