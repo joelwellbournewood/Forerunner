@@ -71,6 +71,7 @@ Status: accepted | superseded by NNNN
 | 0054 | Android emulator smoke over raw CDP on the WebView's page target |
 | 0055 | PM intake: one proposal in the inbox, written only on approval |
 | 0056 | Source discovery: source kinds, duplicate keys and how an existing install is told |
+| 0057 | Opus fast mode per project: the speed parameter on the same model id, variant price rows named `<id>-fast`, API-only sources |
 | 0058 | Project docs: in the repository by pull request, the status doc rewritten per session |
 | 0059 | Cross-project promotion in the loop: who reviews a proposal and when, the offer rule, what an accepted offer does |
 | 0065 | Shared secrets: wrapped to the named agents' install keys, both humans approve, served by reference |
