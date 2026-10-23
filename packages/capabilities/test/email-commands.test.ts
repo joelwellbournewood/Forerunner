@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { isInside, join } from "@forerunner/platform";
+import type { JsonObject } from "@forerunner/state";
 import { forwardedCopy, quotedReply, spoofedFrom } from "@forerunner/testenv";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -272,6 +273,36 @@ describe("EmailCommandGate: who it obeys", () => {
     expect(await world.gate.evaluate(world.agentId, await inboundOf(marked))).toMatchObject({
       obey: false,
       reason: "no_registered_address",
+    });
+    expectNothingActed(world);
+  });
+
+  it("obeys nothing at sending mode off: the switch turns commands off, and a row stored before ADR 0081 is not in force", async () => {
+    world = await emailWorld({ mode: "read_only" });
+    const marked = await ownerSends(world, { subject: "status", text: "what is due?" });
+    expect(await world.gate.evaluate(world.agentId, await inboundOf(marked))).toMatchObject({
+      obey: true,
+    });
+    await world.settings.update(world.agentId, { settings: { mode: "off" } });
+    expect((await world.settings.get(world.agentId)).commands.enabled).toBe(false);
+    expect(await world.gate.evaluate(world.agentId, await inboundOf(marked))).toMatchObject({
+      obey: false,
+      reason: "disabled",
+    });
+    // A row written before the rule: commands on at mode off, bypassing the store.
+    const row = await world.store.extension.byName("capability", `email:${world.agentId}`);
+    if (!row) throw new Error("settings row missing");
+    const config = row.config as { settings: JsonObject; commands: JsonObject };
+    await world.store.extension.update(row.id, row.version, {
+      config: { settings: config.settings, commands: { ...config.commands, enabled: true } },
+    });
+    expect((await world.settings.get(world.agentId)).commands.enabled).toBe(true);
+    expect(await world.gate.evaluate(world.agentId, await inboundOf(marked))).toMatchObject({
+      obey: false,
+      reason: "disabled",
+    });
+    expect(await world.handler.handle(world.agentId, await inboundOf(marked))).toMatchObject({
+      kind: "ignored",
     });
     expectNothingActed(world);
   });
