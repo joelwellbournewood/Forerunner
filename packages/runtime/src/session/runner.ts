@@ -32,6 +32,13 @@ import { type ChecklistInput, runStartupChecklist } from "./checklist.ts";
 import { fileBlockedByFindingsRequest } from "./findings.ts";
 import { describeRejectedLessons, type RejectedLesson, screenLessons } from "./lessons.ts";
 import {
+  describeHeard,
+  type HeardDelivery,
+  type HeardLine,
+  heardLineOf,
+  summarizeHeard,
+} from "./live-chat.ts";
+import {
   buildPeerFeed,
   detectOverlap,
   extractPathHints,
@@ -145,6 +152,12 @@ export interface TaskExecutor {
     budget: SessionBudget;
     item: PlanItem;
     signal: AbortSignal;
+    /**
+     * What the human said during the session since the last task started (spec O.9): lines
+     * the runner collected at this boundary, for the task's brief as quoted data. Each line
+     * reaches one task.
+     */
+    heard?: readonly HeardLine[];
   }): Promise<TaskExecutionResult>;
 }
 
@@ -226,6 +239,8 @@ export interface SessionResult {
   summary: string;
   handoff: Record<string, unknown>;
   stopReason: string;
+  /** What the human said during the session and the task each line reached (spec O.9). */
+  heard: HeardDelivery[];
 }
 
 export interface PromotionTally {
@@ -426,6 +441,8 @@ export class SessionRunner {
     const retried: string[] = [];
     const blockedByFindings: string[] = [];
     const reviews: SessionReviewRecord[] = [];
+    /** What the human said during the session (spec O.9), collected between tasks. */
+    const heard: HeardDelivery[] = [];
     const lessonCandidates: LessonCandidate[] = [];
     /** Lesson proposals the critic port refused as instruction-shaped (quoted to the human). */
     const quarantinedByCritic: RejectedLesson[] = [];
@@ -655,7 +672,7 @@ export class SessionRunner {
             skipped.push(item.taskId);
             continue;
           }
-          const interrupt = await this.recheckInbox(agent.id, session.id, emit);
+          const interrupt = await this.recheckInbox(agent.id, session.id, emit, heard);
           if (interrupt === "stop") {
             stopReason = "stopped_by_message";
             skipped.push(...plan.items.slice(plan.items.indexOf(item)).map((i) => i.taskId));
@@ -750,6 +767,15 @@ export class SessionRunner {
           };
           scheduleRenew();
           const renew = () => cancelRenew();
+          // What the human said since the last task started reaches this task's brief (spec
+          // O.9): read now, between the tasks, and given to this task alone.
+          const said = heard.filter((h) => h.deliveredTo === null);
+          for (const h of said) {
+            h.deliveredTo = task.id;
+            await store.message.markRead(h.id);
+          }
+          if (said.length)
+            await emit("task.heard", { taskId: task.id, ids: said.map((h) => h.id) });
           let result: TaskExecutionResult;
           const execStarted = clock.monotonic();
           try {
@@ -760,6 +786,7 @@ export class SessionRunner {
               budget,
               item,
               signal: controller.signal,
+              heard: said.map(({ deliveredTo: _to, ...line }) => line),
             });
           } catch (e) {
             const code = e instanceof ForerunnerError ? e.code : "internal";
@@ -1014,6 +1041,7 @@ export class SessionRunner {
       spent,
       stopReason,
       plan,
+      heard: heard.length,
     });
     // Project docs (spec G.5): the PM's status update into docs/status.md, carried by the
     // session's pull request or a small one of its own; a session that touched no task
@@ -1054,6 +1082,14 @@ export class SessionRunner {
       }
     }
     const handoff = {
+      // The lines the human said and the task each reached; the words stay in the message
+      // rows and the human's own summary message (peers and the project cache read this).
+      heard: heard.map((h) => ({
+        id: h.id,
+        source: h.source,
+        said_at: h.saidAt,
+        delivered_to: h.deliveredTo,
+      })),
       done: completed,
       in_flight: inReview,
       in_flight_files: Object.fromEntries(
@@ -1190,12 +1226,16 @@ export class SessionRunner {
         author_agent: agent.id,
       });
     }
+    const heardForHuman = describeHeard(
+      heard,
+      (taskId) => plan?.items.find((i) => i.taskId === taskId)?.title,
+    );
     await store.message.send({
       from_agent_id: agent.id,
       to_human_id: agent.owner_human_id,
       project_id: project?.id ?? null,
       type: "info",
-      body: summary,
+      body: heardForHuman ? `${summary}\n${heardForHuman}` : summary,
       requires_ack: false,
       author_agent: agent.id,
     });
@@ -1302,6 +1342,7 @@ export class SessionRunner {
       summary,
       handoff,
       stopReason,
+      heard,
     };
   }
 
@@ -1549,11 +1590,17 @@ export class SessionRunner {
     return rows.filter((d) => !sinceIso || d.created_at > sinceIso);
   }
 
-  /** Inbox re-check between tasks: a human "stop" message stops the session; questions become requests. */
+  /**
+   * Inbox re-check between tasks: a human "stop" message stops the session; questions become
+   * requests. A line the human said during this session (spec O.9, `heardLineOf`) is collected
+   * into `heard` as delivered and stays unread until a task's brief carries it: one that no
+   * task follows reaches the next session's brief like any unread message.
+   */
   private async recheckInbox(
     agentId: string,
     sessionId: string,
     emit: (t: string, p: Record<string, unknown>) => Promise<void>,
+    heard: HeardDelivery[],
   ): Promise<"continue" | "stop"> {
     const unread = await this.deps.store.message.inbox(
       { agentId },
@@ -1561,6 +1608,20 @@ export class SessionRunner {
     );
     let stop = false;
     for (const m of unread) {
+      const said = heardLineOf(m.body);
+      if (said && said.sessionId === sessionId && m.from_agent_id === agentId) {
+        if (heard.some((h) => h.id === m.id)) continue;
+        await this.deps.store.message.markDelivered(m.id);
+        heard.push({
+          id: m.id,
+          source: said.source,
+          text: said.text,
+          saidAt: m.created_at,
+          deliveredTo: null,
+        });
+        await emit("inbox.heard", { id: m.id, source: said.source, sessionId });
+        continue;
+      }
       await this.deps.store.message.markDelivered(m.id);
       await this.deps.store.message.markRead(m.id);
       if (/^\s*(stop|halt|pause)\b/i.test(m.body) && m.type !== "handoff") stop = true;
@@ -1617,6 +1678,8 @@ function summarize(x: {
   spent: number;
   stopReason: string;
   plan: SessionPlan | null;
+  /** Lines the human said during the session (spec O.9); the count only, peers read this. */
+  heard?: number;
 }): string {
   const parts = [
     `Session ${x.stopReason === "completed" ? "completed" : `ended (${x.stopReason})`}.`,
@@ -1630,6 +1693,7 @@ function summarize(x: {
           `Blocked by open findings: ${x.blockedByFindings.length} (asked you: rework, accept or cancel).`,
         ]
       : []),
+    ...(x.heard ? [summarizeHeard(x.heard)] : []),
     `Spent $${(x.spent / 1e6).toFixed(2)}.`,
   ];
   return parts.join(" ");

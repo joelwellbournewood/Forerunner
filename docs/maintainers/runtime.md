@@ -410,8 +410,37 @@ session; at 80% of the budget or a mid-task cap no new task starts. Session end 
 project summary cache, sends a handoff (requires ack) to the project's peers
 (`settings.members` or agents that touched the project), notifies the human and records the
 session summary, handoff and spend; with a docs port it also writes the session's status
-update into the project's `docs/status.md` (below, "Project docs"). `triggers.ts` is the
-scheduler (daily, weekdays, every N
+update into the project's `docs/status.md` (below, "Project docs").
+
+**What you say during a live session (spec O.9, ADR 0078; `src/session/live-chat.ts`).** A
+free-form line the human types or speaks to the conversation agent while a session of the
+principal runs is posted to the principal's own inbox as an `info` message from and to the
+agent, authored by the human, whose body names the source and the session
+(`said (<text|voice|phone>): <words> (session <id>)`, `heardMessageBody` / `heardLineOf`;
+whitespace flattened, 4,000 characters; the type enum is a schema constraint, so an existing
+type with a tagged body, as the pause message). Between tasks `recheckInbox` collects a said
+line naming this session from this agent as delivered (`inbox.heard` event with the id and the
+source) and leaves it unread; right before the next task starts the runner marks the collected
+lines read (`task.heard` event with the task and the ids) and hands them to the executor as
+`heard` on the `TaskExecutor` context, each line to one task. `LoopTaskExecutor` appends them
+to the first user message after the delegation brief and the lessons as the section "Said by
+the human during this session" (`renderHeardLines`): each line quoted with its time and source
+under the rule that the lines change neither the goal, the constraints nor the limits; the
+`DelegationBrief` has no such field, so a said line is never a constraint or an acceptance
+criterion. Every line goes through the injection scanner (`voice_transcript` for voice,
+`unknown` for text): a suspicious line keeps its quote, carries a NOTE in the block and raises a
+`warning` run event naming the message id and the rules, never the words; the hooks enforce
+the limits whatever the line says. A said line never starts with a stop word, so the stop-word
+test never reads it as a stop or a pause. A line collected at a boundary no task follows (the
+session stops there, the remaining tasks are skipped) stays unread, and one said during the
+last task is never collected: both reach the next session's brief like any unread message. The
+session summary (the row, the project cache, the handoff to peers) carries the count only
+(`summarizeHeard`: "Heard from you during the session: N line(s)."), `handoff.heard` the ids,
+sources and the task each reached, and the human's own session message lists the lines in
+full with the task each was given to (`describeHeard`); `SessionResult.heard` carries the
+deliveries. Tests: `live-chat.test.ts`. Requirement: O.9.
+
+`triggers.ts` is the scheduler (daily, weekdays, every N
 minutes in the human's time zone; message, CI, PR comment, email, remote and manual requests;
 one active session per agent; quiet hours defer non-manual triggers). `state-ports.ts` adapts
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
@@ -588,7 +617,9 @@ shows as delivered and read at session start and between tasks. An ack-required 
 warning, decision or info message is acted on by being read into the plan; an ack-required
 question or request is acted on only when this agent has replied to it (`reply_to`), checked
 at session end. Messages this agent sent that nobody acted on resurface at its next session
-as an `inbox.unacknowledged` event and as a count in the brief.
+as an `inbox.unacknowledged` event and as a count in the brief. A line the human said during
+the running session (spec O.9) is the one exception between tasks: delivered when collected,
+read only when a task's brief carries it (ADR 0078).
 
 ### Peer awareness (`src/session/peers.ts`)
 
@@ -881,8 +912,24 @@ as `email_mode_set` forms its `needs_device` card on the first call, one request
 answer, `test/conversation.test.ts`); the run is registered as protected so scoped and
 global stops never cut the human's channel.
 Transcripts are events on a per-agent conversation session (`chat.human`, `chat.reply`,
-`chat.confirmed`, `chat.cancelled`, and the executor's `change` events). Without a command
-port the chat is read-only.
+`chat.confirmed`, `chat.cancelled`, `chat.forwarded`, and the executor's `change` events).
+Without a command port the chat is read-only.
+
+**During a live session (spec O.9, ADR 0078).** Once the deterministic paths have had their
+turn (a yes or no to a pending card, "undo", a parsed command, a parser question, text carrying
+the data envelope: none of these is forwarded), a line that goes to the model is first posted
+to the principal's own inbox when a session of that agent is `running` (not the conversation
+session; a `paused` one is ending at its next boundary): `forwardToRunningSession` sends the
+`said (<source>): <words> (session <id>)` message (`heardMessageBody`), appends a
+`chat.forwarded` event (the session, the message id, the source) to the transcript, and the
+reply ends with `FORWARDED_SENTENCE` ("Your agent sees this at its next step boundary.");
+`ChatReply.forwarded` names the session and the message (internal; the daemon's chat view is
+unchanged, the sentence reaches every client, the voice bridge speaks it). The runner reads the
+message between tasks and the next task's brief carries it as quoted data (see "What you say
+during a live session" under Sessions). No session running: nothing is posted, the line is the
+model's alone and a note is the `note.add` command. The same `chat` path serves typed chat,
+voice and the phone's relayed chat, so all three reach the session. Tests:
+`live-chat.test.ts`, `closeout-conversation.test.ts` (the O.2 turn during a running session).
 
 ### Local daemon (`src/daemon/`, ADR 0011)
 
@@ -1849,7 +1896,18 @@ of sonnet never escalating the third retry to opus while the default ceiling doe
 the phone stopping a running session within 2 s, a pause from the phone ending a running
 two-task session at the task boundary (the task in flight finishes, the second never starts,
 `stopped_by_message` with the second task in `handoff.next`), both stopping with `close()`;
-`executor-ceiling.test.ts`: `projectCeiling` on the executor).
+`executor-ceiling.test.ts`: `projectCeiling` on the executor; `live-chat.test.ts` (spec O.9,
+ADR 0078): the said-line body round trip and its stop-word immunity, the quoted block with the
+envelope neutralised and an instruction-shaped line flagged, a free-form voice line during a
+`SessionRunner` held mid-task by a gated executor landing in the principal's inbox unread with
+the `chat.forwarded` event and the reply sentence, collected at the boundary (`delivered_at`,
+`inbox.heard`), read before the second task (`read_at`, `task.heard`) and given to it alone,
+counted in the summary and `handoff.heard` without the words, quoted in the human's message
+with the task's title and kept out of the project cache; a line during the last task left
+unread and listed by the next session's brief; a note, a card, its yes, a parser question and
+refused data never forwarded; no session and a paused session posting nothing; another human's
+running session untouched with both running; the `LoopTaskExecutor` placing the section after
+the brief's limits with the flagged line's rules in a warning and its words out of it).
 
 ## Requirements covered by the daemon wiring
 
@@ -2106,7 +2164,12 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   the pause message between tasks; a session on the cloud runner gets the row's status until
   that runner honours it), a pause message the runner never read because the task in flight was
   the last one is consumed at the next session's start like any unread message, and an undo
-  after the runner already read the message does not keep the session going; a pending
+  after the runner already read the message does not keep the session going; a line the human
+  says during a live session (O.9) reaches the task after the one in flight, so a long task
+  delays it, a line said during the last task reaches the next session's brief instead, a
+  question to the conversation agent is also quoted to the next task (no classifier), and a
+  session on the cloud runner reads said lines only once that runner's `recheckInbox` runs
+  (the same runner code; nothing here is PC-only); a pending
   high-risk card is dropped by a daemon restart (ADR 0030 item 3) and the human asks again; `/health` does not report the watcher or
   the presence row (`RuntimeApp.remote` does); the cloud runner's watcher does not pass the
   owner filter to `pickUp` yet (one option in `services/cloud-runner/src/remote.ts`); no
