@@ -351,6 +351,9 @@ which repository text can write into the principal's memory.
    - the noun forms take an explicit `:` or `-` separator;
    - a stated lesson ending in `?` is not a lesson;
    - intent tests for each of these phrases.
+
+   Resolution: fixed in 039e4f8. The noun forms need `:` or `-` and text ending in `?` is never a stated lesson; seven new `intent.test.ts` cases (failing before the fix) prove none of the phrases above records memory.
+
 2. **medium**: `packages/runtime/src/conversation/agent.ts:156` and `:351`. The instructions to
    name the bracketed doc path and to record a stated lesson with the memory tool live only in
    `DEFAULT_PROMPT`. `composeRuntime` passes
@@ -365,6 +368,9 @@ which repository text can write into the principal's memory.
 
    Needed: runtime-owned retrieval and recording rules in the stable system part, appended
    whatever the registry prompt is, and a test with a registry prompt.
+
+   Resolution: fixed in f820387. The rules are now `CHAT_RETRIEVAL_RULES`, laid into the stable system part as `instructions` after any role prompt; a new `conversation.test.ts` case passes a registry prompt and asserts the rules are in the system part and unchanged between questions.
+
 3. **medium (security)**: `packages/commands/src/commands/memory.ts:96` (`run`), on the model
    path. Repository docs now enter the chat context, and the model has the `memory_record`
    tool. That gives doc text a route into the principal's private memory, which later sessions
@@ -377,6 +383,9 @@ which repository text can write into the principal's memory.
 
    Needed: a lesson recorded by an agent actor must be grounded in the human's own words of
    that turn (`ctx.wordsUsed`), enforced in the command, with a test.
+
+   Resolution: fixed in 45f1cc0. `memory.record` refuses an agent actor's lesson (`injection_suspected`) unless half of its content words are in `ctx.wordsUsed`; the new tests are `commands.test.ts` ("...grounded in the human's own words") and `conversation.test.ts` ("a lesson planted in a project doc is never recorded..."), and the runtime test was shown to fail with the fix stashed.
+
 4. **medium**: `packages/runtime/src/loop/docs.ts:97` (`docsDirFor`). For a project linked to a
    local folder (an absolute `repos[0]`, spec A.4), it returns only that folder. G.5 writes
    such a project's doc set to the data-dir workspace: `repoOfProject` uses `parseRepoRef`,
@@ -389,16 +398,25 @@ which repository text can write into the principal's memory.
 
    Needed: search the linked folder and the workspace, with the linked folder's file winning
    on the same path, and a test that scaffolds a linked project and finds the workspace doc.
+
+   Resolution: fixed in 7f3fd6b and 2a78efa. `ProjectDocs.docsDirsFor` lists the linked folder, the docs clone and the workspace, and the search reads several roots with the first winning on a path; the new `loop-docs.test.ts` case scaffolds a linked project and asserts `[folder, workspace]`, and `docs-search.test.ts` asserts a workspace `docs/status.md` is found beside the folder.
+
 5. **low**: `packages/memory/src/docs-search.ts:117`. `collectDocFiles` walks `join(root, "docs")`
    with `readdir`, which follows a `docs` that is itself a symlink. memory.md and the source
    comment say "symlinks are skipped, so nothing outside the tree is read". A throwaway test
    with `docs -> /tmp/outside` returned `docs/private/notes.md` from outside the tree. Needed:
    `lstat` the `docs` root and skip it when it is a symlink, with a test.
+
+   Resolution: fixed in 7f3fd6b. `collectDocFiles` `lstat`s the `docs` root and skips a symlink; the new `docs-search.test.ts` case links `docs` out of the tree and was shown to fail before the fix.
+
 6. **low**: `packages/runtime/src/conversation/agent.ts:678`. When the wrapped envelope
    overshoots, the retry loop calls `searchDocs` again, re-reading and re-chunking every file
    under `docs/` up to three times in one chat turn. Verified by reading: `searchDocs` does
    all the file I/O on each call. Needed: load the chunks once per turn and only re-select
    under the smaller budget.
+
+   Resolution: fixed in 7f3fd6b and 2a78efa. The search is split into `loadDocChunks` (all I/O) and `selectDocHits` (no I/O), and the chat loads once per turn and re-selects on an overshoot; the new `docs-search.test.ts` case re-selects under a smaller budget after the files are deleted.
+
 7. **low**: commit `d939057`. It edits `docs/requirements.md` (J.1 and O.2 set to `done`),
    `docs/status/BLOCKERS.md` (two rows removed), `docs/status/PROGRESS.md` and
    `docs/decisions/README.md` (row 0061). The item brief reserves all four files to the
@@ -406,3 +424,30 @@ which repository text can write into the principal's memory.
    NOT edit docs/decisions/README.md". Verified with
    `git diff origin/ccr-4d8a843c-1k9syk...HEAD -- docs/requirements.md docs/status/BLOCKERS.md docs/status/PROGRESS.md docs/decisions/README.md`.
    Needed: revert those edits, and return the row updates in the report.
+
+   Resolution: fixed in 3359229. The four files are restored to the merge base; the J.1, O.2, BLOCKERS and ADR-index rows are returned in `/mnt/session/outputs/w2-chat-memory-report.md` for the orchestrator.
+
+### Verification after the fixes (2026-10-23)
+
+- `pnpm typecheck`: exit 0.
+- `pnpm lint`: exit 0. It reports 59 warnings, all in files this branch does not touch.
+  `biome check` on the 18 changed `.ts` files reports no diagnostics.
+- Unit tests:
+  - `pnpm exec vitest run --project unit packages/runtime/test`: 116 files, 1012 passed,
+    1 skipped.
+  - `pnpm exec vitest run --project unit packages/commands/test`: 9 files, 147 passed.
+  - `pnpm exec vitest run --project unit packages/memory/test`: 12 files, 115 passed.
+- `pnpm exec vitest run --project integration packages/runtime/test packages/memory/test packages/commands/test`:
+  2 files, 5 tests, all skipped (they need Postgres or Docker, which this sandbox lacks).
+- `pnpm exec vitest run --project e2e tests/e2e/scenarios/phase5-gate.integration.test.ts`:
+  1 file, 4 passed.
+- Docs and repository checks:
+  - `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk`: ok.
+  - `node scripts/check-paths.mjs`: ok.
+  - `node scripts/link-check.mjs`: ok.
+  - `pnpm secrets:scan`: clean.
+- `pnpm check`: 271 of 272 test files pass. The one failure is
+  `scripts/closeout-docs.test.ts` ("every ADR ... is indexed in the README"), because ADR 0061
+  is not in `docs/decisions/README.md`. The brief reserves that index row to the orchestrator
+  (finding 7). With the row applied the file passes: 19 passed, 1 todo, checked by applying
+  the row temporarily.
