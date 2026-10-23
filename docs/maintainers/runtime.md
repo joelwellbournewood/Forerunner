@@ -1465,9 +1465,11 @@ human, not revoked), so an id that is no device row (the shell's install id, whi
 to send; another install's row) is refused with `approval_required` "unknown device; pair it
 first" and the card stays open. A device answer that names no id on this daemon-token route,
 or names the literal `desktop` an older settings screen sent when the shell had no install
-id, is the human at this PC: the route substitutes the daemon's own row and writes one
+id, is the human at this PC: the route substitutes the daemon's own row and, after the registry answered, writes one
 `audit_log` row `daemon.confirm_device` (`input_summary` `{ pendingId, deviceId, given }`,
-`given` null or `"desktop"`) before the registry checks it; a runtime without a row (a
+`given` null or `"desktop"`; `allowed` true only when the registry accepted the answer,
+else false with `denied_reason` `<code>: <reason>`, e.g. a card that does not exist;
+`result_summary` ends with the result status); a runtime without a row (a
 one-shot, the cloud runner, a hand-built one) answers `validation`. A phone still needs `biometric: true`, a web or runner device is refused as
 before (`packages/commands`, `security-commands.test.ts`).
 
@@ -2011,8 +2013,10 @@ executor and policy as chat and voice; `test/loop-routes.test.ts`, `apps/ui/test
 `tests/e2e/scenarios/phase5-gate.integration.test.ts`); Q.8 on a solo install (a daemon
 composed with its services on a `sqlite:` store has its desktop row with the remote services
 off, `/me.desktopDeviceId` names it, that id performs the high-risk change, the shell's
-install id is refused as an unknown device with the card kept, an id-less or `desktop`
-device answer is this PC with its audit row, a phone row without biometric is still refused;
+install id is refused as an unknown device with the card kept, another human's desktop row
+is refused as "the device belongs to someone else" with the card and the cap unchanged, an id-less or `desktop`
+device answer is this PC with its audit row (a mapped answer for a card that does not exist
+is audited `allowed: false` with the registry's reason), a phone row without biometric is still refused;
 a one-shot without services or the option registers no row and `/me` names none;
 `test/loop-routes.test.ts` "a solo daemon's own desktop device" and "a one-shot without
 services").
@@ -2033,6 +2037,12 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 (ADR 0047).
 
 ## Known issues
+
+- Revoking this PC's own desktop row (`device.revoke`, confirmed on that row) leaves
+  `rt.remote.device` holding the revoked row until the daemon restarts: `/me` keeps naming it
+  and every high-risk confirmation from the desktop is refused "this device was revoked"
+  (ADR 0030's revocation rule); the next start skips the revoked row and registers a fresh
+  one (`registerDesktopDevice`), as it already did on a shared store.
 
 - An approved plan the scheduler answers `queued` (the agent is busy) holds the scheduler's
   single pending slot per agent, which a later trigger replaces (`triggers.ts`: the newest

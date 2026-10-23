@@ -953,6 +953,25 @@ describe("a solo daemon's own desktop device", () => {
     expect(foreign.code).toBe("approval_required");
     expect(foreign.reason).toContain("unknown device");
     expect((await jsonList(await req("/commands/pending"))).map((p) => p.id)).toContain(first);
+    // A real foreign id: another human's desktop row on the same store (the shared-store case,
+    // where the shell's id never matched either) is refused by the route, the card kept and
+    // the cap unchanged.
+    const other = await rt.store.human.insert({ name: "Bob", email: "bob@example.test" });
+    const othersPc = await rt.store.device.register({
+      owner_human_id: other.id,
+      name: "Bob's PC",
+      platform: "linux",
+      public_key: ["pk-", "B".repeat(40)].join(""), // not-a-secret
+      kind: "desktop",
+    });
+    const capBefore = (await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro;
+    const theirs = await confirm(first, { answer: "device", deviceId: othersPc.id });
+    expect(theirs.status).toBe("refused");
+    expect(theirs.code).toBe("approval_required");
+    expect(theirs.reason).toBe("the device belongs to someone else");
+    expect((await jsonList(await req("/commands/pending"))).map((p) => p.id)).toContain(first);
+    expect((await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro).toBe(capBefore);
+    expect(capBefore).not.toBe(750_000_000);
     // The id `/me` names performs the change.
     const ok = await confirm(first, { answer: "device", deviceId: me.desktopDeviceId });
     expect(ok.status).toBe("done");
@@ -999,6 +1018,22 @@ describe("a solo daemon's own desktop device", () => {
       deviceId: desktop?.id,
       given: "desktop",
     });
+
+    // The audit row tells what the registry answered: an id-less answer for a card that does
+    // not exist is mapped to this PC and logged as not allowed, with the registry's reason.
+    const ghost = await confirm("no-such-pending", { answer: "device" });
+    expect(ghost.status).toBe("refused");
+    const audit3 = (await rt.store.auditLog.list()).filter(
+      (r) => r.tool === "daemon.confirm_device",
+    );
+    expect(audit3).toHaveLength(3);
+    const ghostRow = audit3.find(
+      (r) => JSON.parse(r.input_summary ?? "{}").pendingId === "no-such-pending",
+    );
+    expect(ghostRow).toMatchObject({ allowed: false });
+    expect(ghostRow?.denied_reason).toContain("no pending");
+    expect(audit3.filter((r) => r.allowed)).toHaveLength(2);
+    expect(audit3.find((r) => r.allowed)?.result_summary).toContain("done");
 
     // A phone row of the same human still needs biometric to confirm.
     const phone = await rt.store.device.register({
