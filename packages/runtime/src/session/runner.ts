@@ -611,9 +611,15 @@ export class SessionRunner {
       // plan is filed as one blocking request whose card names it (`plan_id`), and the
       // session ends `stopped` so the approval can start the follow-up. A start bound to an
       // approved plan runs it only while the plan is still that plan; a plan that changed
-      // since the human looked (a task added, removed or reordered) is asked again.
+      // since the human looked (a task added, removed or reordered) is asked again. An empty
+      // plan (no task ready, or the approved tasks were done meanwhile) asks nothing: there is
+      // nothing to approve, and the session ends `completed` having run nothing.
       const approval = planApprovalOf(opts.planApproved, plan.items);
-      if ((autonomy === 0 || autonomy === 1) && approval !== "approved") {
+      if (
+        (autonomy === 0 || autonomy === 1) &&
+        approval !== "approved" &&
+        plan.items.length > 0
+      ) {
         const changed = approval === "changed";
         const approvedPlanId = typeof opts.planApproved === "string" ? opts.planApproved : null;
         const planId = planIdOf(session.id, plan.items);
@@ -1686,6 +1692,7 @@ function summarize(x: {
     ...(x.stopReason === "plan_awaiting_approval"
       ? ["The plan awaits your approval in the inbox; nothing ran."]
       : []),
+    ...(x.plan && x.plan.items.length === 0 ? ["Nothing to plan: no task is ready."] : []),
     `Done: ${x.completed.length}. In review: ${x.inReview.length}. Needs you: ${x.needsHuman.length}. Failed: ${x.failed.length}. Not started: ${x.skipped.length} of ${x.plan?.items.length ?? 0} planned.`,
     ...(x.retried.length ? [`Sent back by the critic: ${x.retried.length}.`] : []),
     ...(x.blockedByFindings.length

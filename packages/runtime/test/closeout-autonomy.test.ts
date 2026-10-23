@@ -381,8 +381,8 @@ describe("J.7 Assisted (autonomy 1): acting after the approval of each plan (ADR
     expect(exec.executed).toEqual([t1.id, t2.id]);
   });
 
-  it("a removed task changes the plan too, and a plan id of another session never approves this one", async () => {
-    const t1 = await addTask(w, "T1");
+  it("a removed task changes the plan too, and a forged or stale id (another hash) approves nothing", async () => {
+    await addTask(w, "T1");
     const t2 = await addTask(w, "T2");
     const exec = fakeExecutor();
     const { planId } = await fileAndApprovePlan(exec);
@@ -401,7 +401,8 @@ describe("J.7 Assisted (autonomy 1): acting after the approval of each plan (ADR
     });
     expect(second.stopReason).toBe("plan_awaiting_approval");
     expect(exec.executed).toEqual([]);
-    // A forged or stale id (another session's, a wrong hash) approves nothing either.
+    // A forged or stale id (a hash of no plan the human saw) approves nothing either. The
+    // session part is not checked: the hash names the approved task ids (plan-approval.test.ts).
     const forged = await runner(w, exec).start({
       agentId: w.alice,
       projectId: w.project,
@@ -413,7 +414,58 @@ describe("J.7 Assisted (autonomy 1): acting after the approval of each plan (ADR
     });
     expect(forged.stopReason).toBe("plan_awaiting_approval");
     expect(exec.executed).toEqual([]);
-    void t1;
+  });
+
+  it("a start bound to an approved plan whose tasks were done meanwhile files no request and runs nothing", async () => {
+    const t1 = await addTask(w, "T1");
+    const exec = fakeExecutor();
+    const { planId } = await fileAndApprovePlan(exec);
+    const first = await runner(w, exec).start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "message",
+      budgetCapUsdMicro: 1_000_000,
+      autonomy: 1,
+      planApproved: planId,
+      grant,
+    });
+    expect(first.status).toBe("completed");
+    expect(exec.executed).toEqual([t1.id]);
+    // A second start bound to the same plan (another runner, an overlapping sync): T1 is done,
+    // the plan is empty, and there is nothing for the human to approve.
+    const second = await runner(w, exec).start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "message",
+      budgetCapUsdMicro: 1_000_000,
+      autonomy: 1,
+      planApproved: planId,
+      grant,
+    });
+    expect(second.status).toBe("completed");
+    expect(second.stopReason).toBe("completed");
+    expect(second.summary).toContain("Nothing to plan");
+    expect(exec.executed).toEqual([t1.id]);
+    expect(await w.store.humanRequest.open({ humanId: w.human })).toEqual([]);
+    const types = (await w.store.event.list(second.sessionId)).map((e) => e.type);
+    expect(types).toContain("session.planned");
+    expect(types).not.toContain("session.plan_filed");
+  });
+
+  it("an unapproved level 1 session with no ready task files no empty plan request", async () => {
+    const exec = fakeExecutor();
+    const res = await runner(w, exec).start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "schedule",
+      budgetCapUsdMicro: 1_000_000,
+      autonomy: 1,
+      grant,
+    });
+    expect(res.status).toBe("completed");
+    expect(res.stopReason).toBe("completed");
+    expect(exec.executed).toEqual([]);
+    expect(await w.store.humanRequest.list({ session_id: res.sessionId })).toEqual([]);
   });
 
   it("J.6 Advisor (autonomy 0): the plan is a proposal, and an approved proposal runs as the follow-up session", async () => {
