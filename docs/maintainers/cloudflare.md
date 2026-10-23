@@ -157,7 +157,11 @@ the row (optimistic concurrency, so two deploys cannot both spend it). It is spe
 deliberate (spending real money always needs a human); the cost is one extra question after a
 failed write. A non-one-shot ask also
 accepts the row the runtime hooks' `StateApprovals` filed for the same tool call when its
-action class matches, so a staging deploy at level 2 is approved once, not twice.
+action class matches, so a staging deploy at level 2 is approved once, not twice. That row is
+keyed on the raw input (`approvalKey({ tool, input })`, the hooks' `ApprovalRequest.key`),
+while its `change_card.input` is the card's copy with long strings cut, so the lookup hashes
+the raw input too and a Worker whose script body runs past 2000 characters still finds the
+hooks' answer (`displayForm` serves this module's own card only).
 `FakeCloudflareApprovals(answer)` for tests; `cloudflareApprovalsFromRuntime(port)` adapts the
 runtime's `ApprovalPort`.
 
@@ -279,7 +283,9 @@ fake API on 127.0.0.1, `sqlite::memory:` store, `SimulatedClock`, memory vault):
   the tool with a denied audit row; script outside the worktree refused; DNS and plan tools;
   project without settings refused; no token value in logs, output or audit rows during a
   failing deploy; `HumanRequestCloudflareApprovals` filing, per-key answers, one-shot
-  consumption, denial and reuse of the hooks' answer; the panel routes.
+  consumption, denial and reuse of the hooks' answer, found through the raw-input key for a
+  script body past the card's 2000-character cut and not for a different long body; the
+  panel routes.
 - `cloudflare-hooks.test.ts`: the tools behind the real `EnforcementHooks` with a token whose
   domain allowlist is only `api.cloudflare.com`: a Worker route deploy on two configured zones
   passes; an `_acme-challenge` TXT upsert and a Pages plan pass; a host outside the zones

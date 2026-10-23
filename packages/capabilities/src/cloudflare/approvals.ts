@@ -104,7 +104,9 @@ export class HumanRequestCloudflareApprovals implements CloudflareApprovalPort {
     }
     if (!req.oneShot) {
       // The runtime hooks may have asked for this very tool call already (same action class).
-      const hookKey = approvalKey({ tool: req.tool, input: displayForm(req.input) });
+      // Their row is keyed on the raw input (the card's cut copy is display only), so a long
+      // script body matches too.
+      const hookKey = approvalKey({ tool: req.tool, input: req.input });
       const hookRow = existing.find((r) => {
         const card = r.change_card as CloudflareChangeCard | null;
         return card?.key === hookKey && card.actionClass === req.actionClass;
