@@ -262,6 +262,14 @@ prompt dialog open behind the refusal, and a few docs claim more than the code o
    'formatConsoleEvent'` and the same for the other two names. Fix: move the forwarding into
    its own module with its own declaration file, so neither side's `cdp.mjs` nor
    `cdp.d.mts` has to change. Then re-run the merge check.
+   Resolution: fixed in b90ed52. `forwardPageConsole` and its formatters moved to
+   `apps/mobile/e2e/webview-console.mjs`, typed by `webview-console.d.mts` (a structural
+   client type, so it fits both the untyped and the typed `CdpClient`), and `cdp.mjs` is back
+   to the fork point. Re-run of the scratch merge with the base: `cdp.mjs` and `cdp.test.ts`
+   merge cleanly; what is left is one import line in `run.mjs`, the ADR index row and the
+   apps.md Tests paragraph, all textual. With those resolved, `tsc -p tsconfig.node.json`
+   reports nothing in `apps/mobile`, and `vitest run --project unit apps/mobile/e2e` passes
+   on the merged tree (1 file, 25 tests).
 2. **medium**: `apps/ui/src/mobile/store.tsx:781-822` (with the simulated prompt at
    `store.tsx:357-379`). The new bound refuses the answer but leaves a pending simulated
    prompt open. In the web and test build (`biometric: "prompt"`), when
@@ -274,6 +282,11 @@ prompt dialog open behind the refusal, and a few docs claim more than the code o
    `m-biometric-confirm` posted nothing (test deleted afterwards). Fix: on any refusal of
    the step, dismiss a pending simulated prompt. Test: the dialog is gone once the refusal
    shows.
+   Resolution: fixed in 4750717. `assertHighRisk` resolves a pending simulated prompt as
+   cancelled on every refusal. The new test "candidate 3, simulated prompt: the bound closes
+   the open dialog with the refusal" fails without the change (`expected <div role="dialog"
+   …> to be null`) and passes with it; it also proves that a second Confirm opens a fresh
+   dialog that sends the signed answer.
 3. **low**: `docs/decisions/0085-high-risk-refusal-on-a-phone-that-cannot-confirm.md`
    (Consequences) and `docs/maintainers/apps.md` (Known issues). The real-device
    counterpart of finding 2 is not documented. When `wait_bounded` gives up after
@@ -283,6 +296,8 @@ prompt dialog open behind the refusal, and a few docs claim more than the code o
    prompt. A touch after the bound does nothing; the phone has already refused. Verified by
    reading `BiometricPlugin.kt` / `BiometricActivity.kt` and `biometric.rs`
    `wait_bounded`. Fix: say so in the ADR and the Known issues.
+   Resolution: fixed in 4750717. ADR 0085 (Consequences) and apps.md (Android app, Known
+   issues) now state it. There is no code fix without a cancel command in the plugin.
 4. **low**: `apps/mobile/e2e/cdp.test.ts:683`, `docs/maintainers/apps.md:1051`. Both say
    Chrome reports nothing from before `Runtime.enable` ("the page's console goes nowhere
    (Chrome reports nothing either)"; "nothing before enable"). V8 does the opposite: its
@@ -290,6 +305,9 @@ prompt dialog open behind the refusal, and a few docs claim more than the code o
    context group. So the runner also prints what the app logged before the attach, which is
    useful, but the docs and the test's comment describe it wrongly. Fix the comment and the
    doc. The fake keeps its simpler behaviour, and the comment says so.
+   Resolution: fixed in b90ed52. The test comments, apps.md (Tests), the e2e README and
+   ADR 0085 item 5 now say V8 replays the earlier messages on enable, and that the fake
+   does not.
 5. **low**: `apps/mobile/e2e/cdp.mjs:971-979`. `formatConsoleEvent` appends the call site
    to the last line of the joined text. When an argument has a multi-line description (an
    `Error` with its stack), the location lands at the end of the stack's last line, after the
@@ -297,9 +315,35 @@ prompt dialog open behind the refusal, and a few docs claim more than the code o
    (...) 42 null undefined Object (http://tauri.localhost/assets/index.js:1:4121)"`). A
    `grep 'webview: \[error\]'` then shows the message without its location. Fix: put the
    call site on the head line. Test: the error case has the location on its first line.
+   Resolution: fixed in b90ed52. `formatConsoleEvent` puts the location on the first line
+   (`withLocation`). The cdp test now expects `"webview: [error] Error: boom
+   (http://tauri.localhost/assets/index.js:1:4121)"` as the head line, which the old
+   formatter did not produce.
 6. **low**: `docs/status/BLOCKERS.md:21` (Android emulator row). The row contradicts
    itself. Its new head says the attach works on the real WebView (run 39952987240). The
    retained "Earlier" text still says the driver "has not met a real WebView yet:
    `android.yml` was not dispatched on 2026-10-23", and it counts `cdp.test.ts` at 17 tests
    (22 now). Verified by reading the row. Fix: reword the retained history so it is past
    tense and true.
+   Resolution: fixed in 90639ef. The retained text says the driver was tested only against
+   the fake (17 tests then, 22 now) until run 39952987240, its first real WebView run. The
+   row names `webview-console.mjs`.
+
+### Verification after the fixes
+
+Run on the final tree (counts as printed):
+
+- `pnpm typecheck`: exit 0.
+- `pnpm lint`: exit 0. It reports 59 warnings, the same as on the starting commit, none in
+  touched files.
+- `pnpm --filter @forerunner/ui test`: 42 test files, 264 tests passed (263 before, plus
+  the simulated-prompt case).
+- `pnpm exec vitest run --project unit apps/mobile/e2e`: 1 test file, 22 tests passed.
+- `cd apps/mobile/src-tauri && cargo test --lib`: 30 passed, 0 failed. The Rust code is
+  unchanged in this stage.
+- `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` and `--base 82a6295`:
+  `docs-check: ok (21 files)`. Without `--base`, the script finds no `origin/main` and checks
+  nothing.
+- `pnpm check`: exit 0. That covers lint, lint:paths, typecheck, `pnpm test` (269 files,
+  2678 passed, 4 skipped, 1 todo), docs:check, docs:links and secrets:scan.
+- Scratch merge with `origin/ccr-4d8a843c-1k9syk` (f1948dd), not committed: see finding 1.
