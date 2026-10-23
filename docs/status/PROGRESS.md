@@ -51,6 +51,36 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   speed-quality.test.ts`, `apps/ui/test/settings-slider.test.tsx`. D.16 `done` on this branch
   (requirements 186 done, 37 in progress, 5 todo after the rebase onto cac6fee); BLOCKERS.md row D.16 says built, review
   pending. Report: `docs/status/reviews/w3-d16-slider.md`.
+### 2026-10-23 (item w3-e4-recheck rebased onto cac6fee)
+- `wave/w3-e4-recheck` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in
+  `runner.ts` (the base's `summarizeMerges` next to the branch's `summarizeEndInbox`; the
+  summary and the handoff carry both the J.9 merges and the end inbox), BLOCKERS (E.1, S.12,
+  S.32 as the base has them; the E.4 row the branch's with the base's O.9 clause) and this log;
+  both sides kept (`docs/status/reviews/w3-e4-recheck.md` `## Rebase`). Current counts:
+  runtime 128 files / 1140 unit tests passed (1 skipped), the E.4 block of
+  `closeout-sessions.test.ts` 8. Not merged yet.
+
+### 2026-10-23 (item w3-e4-recheck: independent review and fixes)
+- Review of the E.4 build (`docs/status/reviews/w3-e4-recheck.md`, "## Review"): verdict
+  revise, 72/100, four findings, all fixed on the branch: a pause read at the end of a session
+  that ends `failed` no longer leaves the row `paused` (which refused every later session of
+  the agent); a message read at the end is carried past a session that ends before its startup
+  receipts (`handoff.carried_forward`); `after_stop` also accounts for the memory, lesson-warning
+  and promotion writes; these status rows name the review. Three new cases in
+  `closeout-sessions.test.ts` (eight in the E.4 block). E.4 stays `done`.
+
+### 2026-10-23 (item w3-e4-recheck: the inbox is re-checked before the session-end writes)
+- E.4 `done` on `wave/w3-e4-recheck` (builder-verified; an independent review is due before the
+  merge): step 4 of `packages/runtime/src/session/runner.ts` re-checks the inbox before the
+  status doc, the summary cache, the peers' handoffs, the note to the human and the session
+  record are written. A stop or pause read there ends the session `stopped`
+  (`stopped_by_message`) and `handoff.end_inbox` names it with what was and was not written
+  (`after_stop`); an ordinary message is read and summarised in the handoff, and the next
+  session's startup checklist carries it once into the brief (it would otherwise vanish from
+  the unread list); a pause leaves the row `paused -> stopped`. Tests: `packages/runtime/test/closeout-sessions.test.ts` (five new
+  cases); doc: runtime.md "The inbox before the session-end writes"; BLOCKERS.md E.4 row
+  resolved. The requirement totals in the milestone table and gates.md criterion 1 move by one
+  (E.4 in progress → done) at integration. Report: `docs/status/reviews/w3-e4-recheck.md`.
 
 ### 2026-10-23 (item w2-s32-indicator rebased onto 22982fa)
 - `wave/w2-s32-indicator` rebased onto `origin/ccr-4d8a843c-1k9syk` (22982fa). Conflicts in

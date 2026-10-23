@@ -20,6 +20,11 @@ export interface BriefMessage {
   body: string;
   requiresAck: boolean;
   createdAt: string;
+  /**
+   * Read by the previous session's inbox re-check before its session-end writes (spec E.4),
+   * after its last task: carried into this brief so the plan takes it in.
+   */
+  readAtLastSessionEnd?: boolean;
 }
 
 export interface BriefRequest {
@@ -168,7 +173,7 @@ function render(
   );
   for (const m of b.inbox.unread.slice(0, l.msgs))
     lines.push(
-      `- [${m.type}${m.requiresAck ? ", ack" : ""}] ${m.from}: ${clip(m.body, l.bodyChars)} (${m.id})`,
+      `- [${m.type}${m.requiresAck ? ", ack" : ""}${m.readAtLastSessionEnd ? ", read at the end of the last session" : ""}] ${m.from}: ${clip(m.body, l.bodyChars)} (${m.id})`,
     );
   lines.push(`\n## Open human requests (${b.humanRequests.openCount})`);
   for (const r of b.humanRequests.open.slice(0, l.reqs))

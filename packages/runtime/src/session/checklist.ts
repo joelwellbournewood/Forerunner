@@ -1,5 +1,5 @@
 import { type Clock, errorMessage, log } from "@forerunner/platform";
-import type { StateStore, TaskRow } from "@forerunner/state";
+import type { MessageRow, StateStore, TaskRow } from "@forerunner/state";
 import type { BriefTask, StateBrief } from "./brief.ts";
 
 /**
@@ -32,6 +32,43 @@ export interface ChecklistInput {
   signal?: AbortSignal;
   /** How many rows to load per list; the renderer trims further. */
   limit?: number;
+}
+
+/**
+ * The ordinary messages (not a stop or a pause) that the agent's last ended session read in its
+ * inbox re-check before the session-end writes (`handoff.end_inbox.read`, spec E.4), plus those
+ * it passed on without taking them in (`handoff.carried_forward`: it ended before its startup
+ * receipts), that no one has acted on since; `skip` holds ids already in the brief as unread.
+ * Best effort: a malformed handoff or a message gone from the store is left out. The runner
+ * calls it too, at the end of a session that never took its inbox in.
+ */
+export async function carriedFromLastEnd(
+  store: StateStore,
+  agentId: string,
+  skip: ReadonlySet<string>,
+): Promise<MessageRow[]> {
+  const recent = await store.session.list({ agent_id: agentId } as never, {
+    orderBy: "created_at desc",
+    limit: 5,
+  });
+  const last = recent.find((s) => s.ended_at);
+  const handoff = last?.handoff as {
+    end_inbox?: { read?: unknown };
+    carried_forward?: unknown;
+  } | null;
+  const entries = [
+    ...(Array.isArray(handoff?.end_inbox?.read) ? handoff.end_inbox.read : []),
+    ...(Array.isArray(handoff?.carried_forward) ? handoff.carried_forward : []),
+  ] as Array<{ id?: unknown; kind?: unknown }>;
+  const out: MessageRow[] = [];
+  const seen = new Set(skip);
+  for (const entry of entries) {
+    if (typeof entry?.id !== "string" || entry.kind !== "message" || seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    const m = await store.message.get(entry.id);
+    if (m && m.to_agent_id === agentId && !m.acted_at) out.push(m);
+  }
+  return out;
 }
 
 function toBriefTask(t: TaskRow): BriefTask {
@@ -96,8 +133,12 @@ export async function runStartupChecklist(input: ChecklistInput): Promise<StateB
   const unread = await store.message.inbox({ agentId }, { unreadOnly: true, limit });
   const unreadCount = await store.message.count({ to_agent_id: agentId, read_at: null } as never);
   const unackSent = await store.message.unacknowledged(agentId, { limit });
+  // Messages the previous session read in its re-check before the session-end writes (spec E.4,
+  // `handoff.end_inbox`): read, but no task followed to take them in, so they are carried into
+  // this brief once more (stops and pauses were obeyed there and are not carried).
+  const carried = await carriedFromLastEnd(store, agentId, new Set(unread.map((m) => m.id)));
   const agentNames = new Map<string, string>();
-  for (const m of unread) {
+  for (const m of [...unread, ...carried]) {
     if (!agentNames.has(m.from_agent_id))
       agentNames.set(
         m.from_agent_id,
@@ -201,14 +242,25 @@ export async function runStartupChecklist(input: ChecklistInput): Promise<StateB
     git,
     sharedState,
     inbox: {
-      unread: unread.map((m) => ({
-        id: m.id,
-        from: agentNames.get(m.from_agent_id) ?? m.from_agent_id,
-        type: m.type,
-        body: m.body,
-        requiresAck: m.requires_ack,
-        createdAt: m.created_at,
-      })),
+      unread: [
+        ...unread.map((m) => ({
+          id: m.id,
+          from: agentNames.get(m.from_agent_id) ?? m.from_agent_id,
+          type: m.type,
+          body: m.body,
+          requiresAck: m.requires_ack,
+          createdAt: m.created_at,
+        })),
+        ...carried.map((m) => ({
+          id: m.id,
+          from: agentNames.get(m.from_agent_id) ?? m.from_agent_id,
+          type: m.type,
+          body: m.body,
+          requiresAck: m.requires_ack,
+          createdAt: m.created_at,
+          readAtLastSessionEnd: true,
+        })),
+      ],
       unreadCount,
       unacknowledgedSent: unackSent.length,
     },
