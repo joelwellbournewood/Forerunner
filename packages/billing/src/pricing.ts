@@ -12,6 +12,7 @@ import { readFile } from "node:fs/promises";
 import { appDirs, ForerunnerError, join } from "@forerunner/platform";
 import { z } from "zod";
 import { roundHalfUp } from "./money.ts";
+import type { BillingSourceKind } from "./sources.ts";
 
 export type PriceSource = "list" | "assumed" | "override";
 
@@ -41,6 +42,8 @@ export const PRICING_FILE_NAME = "pricing.json";
 /** Prompt-cache multipliers on the provider price list: reads 10% of input, writes 125%. */
 export const CACHE_READ_SHARE = 0.1;
 export const CACHE_WRITE_SHARE = 1.25;
+
+const FAST_MODE_RATE_NOTE_TEXT = "research-preview rate";
 
 function price(
   input: number,
@@ -95,7 +98,56 @@ export const BUILTIN_PRICING: PricingTable = Object.freeze({
   "claude-sonnet-5-5": price(2, 10, "2026-10-06", { cacheRead: 0.2 }),
   "claude-opus-5-5": price(4, 20, "2026-10-06", { cacheRead: 0.2 }),
   "claude-fable-5-1": price(10, 50, "2026-10-06", { cacheRead: 0.25 }),
+  // Opus fast mode (spec D.20, ADR 0057): the same model requested with `speed: "fast"`,
+  // priced apart under its own `<base>-fast` row so the ledger, estimates and cost tables show
+  // it apart. The 4.6 row is the published research-preview list price (30 / 150, six times
+  // 5 / 25, cache multipliers on top); the 5.5 row applies that multiplier to every price of
+  // the 5.5 row above and is marked assumed until the model watch confirms it.
+  "claude-opus-4-6-fast": price(30, 150, "2026-10-23", {
+    notes: `Opus 4.6 fast mode (speed: fast), ${FAST_MODE_RATE_NOTE_TEXT}: 6x the standard row.`,
+  }),
+  "claude-opus-5-5-fast": price(24, 120, "2026-10-23", {
+    source: "assumed",
+    cacheRead: 1.2,
+    cacheWrite: 30,
+    notes: `Opus 5.5 fast mode (speed: fast), ${FAST_MODE_RATE_NOTE_TEXT}: 6x every price of claude-opus-5-5, the multiplier published for Opus 4.6 fast mode.`,
+  }),
 });
+
+/**
+ * Fast mode (spec D.20, ADR 0057). A fast-mode run is the base model requested with the
+ * provider's speed parameter; everything Forerunner records about it (the Run row, the ledger
+ * row, the estimate, the price row) names the variant `<canonical base id>-fast`.
+ */
+export const FAST_MODE_SUFFIX = "-fast";
+/** Every fast-mode price row's notes say this: the rate is the provider's research preview. */
+export const FAST_MODE_RATE_NOTE = FAST_MODE_RATE_NOTE_TEXT;
+
+/** True for a variant id (`claude-opus-5-5-fast`). */
+export function isFastModeVariant(modelId: string): boolean {
+  return canonicalModelId(modelId).endsWith(FAST_MODE_SUFFIX);
+}
+
+/** The variant id of a model: its canonical id plus `-fast`; a variant is returned unchanged. */
+export function fastModeVariantId(modelId: string): string {
+  const id = canonicalModelId(modelId);
+  return id.endsWith(FAST_MODE_SUFFIX) ? id : `${id}${FAST_MODE_SUFFIX}`;
+}
+
+/** The base model of a variant id, or null for an id that is not a variant. */
+export function fastModeBaseId(modelId: string): string | null {
+  const id = canonicalModelId(modelId);
+  return id.endsWith(FAST_MODE_SUFFIX) ? id.slice(0, -FAST_MODE_SUFFIX.length) : null;
+}
+
+/**
+ * Fast mode is an API feature (spec D.20: "API only"): only an API-style source pays for it.
+ * A subscription or plan credits run at the standard speed whatever the project says. The
+ * fake source bills like the API (`ledgerKindFor`), so tests exercise the API path.
+ */
+export function fastModeBillable(kind: BillingSourceKind): boolean {
+  return kind === "api_key" || kind === "fake";
+}
 
 /**
  * Canonical model id for table lookup: lower case, without a provider prefix
