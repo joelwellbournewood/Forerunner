@@ -96,3 +96,42 @@ Open points:
 - A shell attached to an older daemon without `desktopControl` fails the status parse and
   keeps what the frames said; the frames alone still drive the banner.
 - `LogIndicator` stays as the fallback line in the daemon log.
+
+## Alternatives considered
+
+- **`desktopControl` on `GET /health`.** The UI already reads `/health` on every
+  (re)connect. Rejected: `/health` is served without the bearer token (only loopback guards
+  it), and the application names and session ids of the controlled desktop must not be
+  readable by any local process that skips the token. `GET /desktop/status` is behind the
+  token and already reports the controller.
+- **A new route or a field in `views.ts`** (a dedicated `GET /desktop/indicator`, or a field on
+  a session view). Rejected: the brief asks for an existing status or view route when one
+  fits, and the controller's own status is that route. One source answers both the
+  Extensions panel and the banner; a session view would miss control that has not been tied
+  to a session the UI has loaded.
+- **Replaying the last `desktop.indicator` frame to every new `/events` stream** instead of a
+  re-read. Rejected: the daemon's `/events` has no replay for any other event, and the polling
+  fallback needs a JSON route anyway. A replay would also not help a shell whose stream
+  stayed "open" while frames were dropped by a proxy. One read on every open covers SSE,
+  reconnects and polling alike.
+- **"Stop desktop control" as the kill switch** (`POST /kill` with the session's scope, or
+  `scope: "all"`). Rejected: the human wants the agent off the keyboard and mouse, not
+  necessarily the session ended. Revoke interrupts and refuses desktop actions until resumed,
+  is open to any caller and fail-safe, and leaves the header's "Stop all" for stopping
+  everything.
+- **A toast or a notice in the page body** instead of a banner above the header. Rejected: a
+  toast times out and a notice in `<main>` scrolls away or is replaced on navigation, while
+  S.32 asks for an indicator that stays visible while control is active.
+- **An always-on-top overlay window in the desktop shell** (a borderless Tauri window across
+  the top of the screen). Not built now: it needs per-platform window flags (click-through,
+  no focus steal, every workspace and monitor), with its own tests on Windows and on X11.
+  The tray title, tooltip and item cover the hidden-window case for 1.0. It remains the next
+  step if the tray proves too quiet (Consequences).
+- **Hiding the tray items while off.** Tauri 2's `MenuItem` (over `muda`) has `set_text` and
+  `set_enabled` but no visibility setter. Hiding would mean rebuilding and re-setting the whole
+  menu on every frame, a second code path outside `tray_view`'s tested derivation. The items
+  stay in the menu and read `Desktop control: off`, disabled.
+- **Sending the indicator only once per burst**, as before. Rejected: a burst that starts with
+  `desktop_list_windows` names no window, so the banner would say "the desktop" while the agent
+  types into a named application. A fresh `on` only when the names change keeps the frames
+  few and the banner truthful.

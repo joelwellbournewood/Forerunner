@@ -20,6 +20,7 @@ the patch is `b1804e3..HEAD`. The build commits (`git log --oneline b1804e3..HEA
 - `a19edfa` docs: ADR 0067, the indicator in the apps, desktop-control and runtime docs; S.32 done
 - `0c67fec` status: build report for w2-s32-indicator
 - the revision commit that adds the export check and the command output below
+- the revision commit that adds `## Alternatives considered` to ADR 0067, which the template in `docs/decisions/README.md` requires
 
 Every commit ends with the trailer `Claude-Build: managed-agent w2-s32-indicator build`. The
 first attempt's commits had the trailer as `... BUILD`. The grader asked for the lower-case
@@ -153,7 +154,7 @@ no other branch was changed.
 | `cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/home/user/Forerunner/apps/desktop/src-tauri/target cargo fmt --check` | clean |
 | `… cargo clippy --all-targets -- -D warnings` | clean |
 | `… cargo test` | 73 passed, 0 failed (68 before; 5 new) |
-| `node scripts/docs-check.mjs --base b1804e3` | ok (27 files) |
+| `node scripts/docs-check.mjs --base b1804e3` | ok (27 files) in the first build run; ok (28 files) on the final branch, which adds this report |
 | `pnpm check` (lint, paths, typecheck, unit tests, docs, links, secret scan) | exit 0; unit: 271 files, 2696 passed, 4 skipped, 1 todo; check-paths ok; link-check ok; secret-scan clean. Its `docs:check` step has no `origin/main` in this clone and says "nothing to check", so I ran it with `--base` above |
 
 The cargo commands needed the WebKitGTK and AppIndicator development packages. I installed
