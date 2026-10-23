@@ -1,0 +1,356 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { openStore, type StateStore, silenceSqliteExperimentalWarning } from "@forerunner/state";
+import { MemoryVault } from "@forerunner/vault";
+import { Hono } from "hono";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { DAEMON_ROUTES } from "../src/daemon/api-types.ts";
+import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
+import { createDaemonApp } from "../src/daemon/server.ts";
+import {
+  DEVICE_AUDIT,
+  DeviceListView,
+  DeviceManager,
+  type DeviceServiceConfig,
+  PairingStartView,
+  pairingLink,
+  RevokeDeviceView,
+} from "../src/devices/index.ts";
+import { createDeviceRoutes } from "../src/devices/routes.ts";
+import { ScriptedProvider } from "./helpers.ts";
+
+silenceSqliteExperimentalWarning();
+
+const SERVICE = "https://state.example.test";
+/** Built by concatenation so the secret scan never sees a credential shape. */
+const ADMIN = ["admin", "token", "for", "device", "routes"].join("-"); // not-a-secret
+const CODE = "ABCD2345";
+
+type Loose = Record<string, unknown> & { code?: string; message?: string };
+const json = (method: string, path: string, body?: unknown) =>
+  new Request(`http://local${path}`, {
+    method,
+    headers: body === undefined ? {} : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+const read = async (r: Response): Promise<Loose> => (await r.json()) as Loose;
+
+interface FakeDevice {
+  id: string;
+  ownerHumanId: string;
+  name: string;
+  platform: string;
+  kind: string;
+  lastSeen: string | null;
+  revoked: boolean;
+  revokedAt: string | null;
+  pairedAt: string;
+  version: number;
+}
+
+/**
+ * A stand-in for the state service's admin routes with the same shapes and refusals as
+ * `services/state-api/src/routes/devices.ts` (the real routes are exercised end to end by
+ * `services/state-api/test/desktop-devices.test.ts`). Records every call with its bearer.
+ */
+function fakeService(devices: FakeDevice[]) {
+  const calls: { method: string; path: string; auth: string | null; body: unknown }[] = [];
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    const raw = await c.req.raw
+      .clone()
+      .text()
+      .catch(() => "");
+    calls.push({
+      method: c.req.method,
+      path: new URL(c.req.url).pathname + new URL(c.req.url).search,
+      auth: c.req.header("authorization") ?? null,
+      body: raw ? JSON.parse(raw) : null,
+    });
+    if (c.req.header("authorization") !== `Bearer ${ADMIN}`) {
+      return c.json({ code: "unauthorized", message: "missing or invalid token" }, 401);
+    }
+    return next();
+  });
+  app.post("/pairing/start", async (c) => {
+    const body = (await c.req.json()) as { humanId: string; kind?: string };
+    return c.json(
+      { code: CODE, expiresAt: "2026-10-23T09:10:00.000Z", kind: body.kind ?? "phone" },
+      201,
+    );
+  });
+  app.get("/devices", (c) => {
+    const humanId = c.req.query("humanId");
+    return c.json({ devices: devices.filter((d) => !humanId || d.ownerHumanId === humanId) });
+  });
+  app.post("/devices/:id/revoke", (c) => {
+    const d = devices.find((x) => x.id === c.req.param("id"));
+    if (!d) return c.json({ code: "not_found", message: "device not found" }, 404);
+    d.revoked = true;
+    d.revokedAt = "2026-10-23T09:01:00.000Z";
+    d.version += 1;
+    return c.json({ device: d, tokensRevoked: 2 });
+  });
+  const fetchFn: typeof fetch = async (input, init) =>
+    app.request(String(input), init as RequestInit);
+  return { app, calls, fetch: fetchFn };
+}
+
+const device = (id: string, ownerHumanId: string, kind = "phone"): FakeDevice => ({
+  id,
+  ownerHumanId,
+  name: `${kind} ${id}`,
+  platform: kind === "phone" ? "android" : "linux",
+  kind,
+  lastSeen: "2026-10-23T08:55:00.000Z",
+  revoked: false,
+  revokedAt: null,
+  pairedAt: "2026-10-01T09:00:00.000Z",
+  version: 1,
+});
+
+/**
+ * The daemon's Settings -> Devices routes (spec R.2): list, start a pairing (the code, its
+ * expiry and the fr:// link the QR encodes) and revoke at once, through the state service with
+ * the admin token the daemon alone holds, or over the shared store when no service is set.
+ */
+describe("device routes over the state service", () => {
+  let store: StateStore;
+  const clock = new SimulatedClock("2026-10-23T09:00:00.000Z");
+  let ada = "";
+
+  beforeAll(async () => {
+    store = await openStore({ url: "sqlite::memory:", clock });
+    ada = (await store.human.insert({ name: "Ada", email: "ada@example.test" })).id;
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  const routesWith = (service: DeviceServiceConfig | null, current: string | null = "dev_pc") =>
+    createDeviceRoutes({
+      devices: new DeviceManager({
+        store,
+        clock,
+        humanId: ada,
+        currentDeviceId: () => current,
+        service,
+      }),
+    });
+
+  it("starts a pairing: 201 with the code, expiry and the fr:// link; the admin token stays here", async () => {
+    const svc = fakeService([]);
+    const app = routesWith({ baseUrl: `${SERVICE}/`, adminToken: async () => ADMIN, ...svc });
+    const res = await app.fetch(json("POST", "/devices/pairing", { kind: "phone" }));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    const view = PairingStartView.parse(body);
+    expect(view).toEqual({
+      code: CODE,
+      expiresAt: "2026-10-23T09:10:00.000Z",
+      kind: "phone",
+      humanId: ada,
+      serviceUrl: SERVICE,
+      link: pairingLink(SERVICE, CODE, ada),
+    });
+    expect(new URL(view.link).searchParams.get("c")).toBe(CODE);
+    expect(JSON.stringify(body)).not.toContain(ADMIN);
+    expect(svc.calls).toEqual([
+      {
+        method: "POST",
+        path: "/pairing/start",
+        auth: `Bearer ${ADMIN}`,
+        body: { humanId: ada, kind: "phone" },
+      },
+    ]);
+    // The code is a one-time secret: the audit row has the kind and the expiry only.
+    const audit = await store.auditLog.list({ tool: DEVICE_AUDIT.pairingStarted });
+    expect(audit.at(-1)?.input_summary).toBe("kind=phone");
+    expect(JSON.stringify(audit)).not.toContain(CODE);
+  });
+
+  it("refuses a bad body with 400 and answers 503 unavailable without the service, the token or a reachable host", async () => {
+    const svc = fakeService([]);
+    const ok = routesWith({ baseUrl: SERVICE, adminToken: async () => ADMIN, ...svc });
+    const bad = await ok.fetch(json("POST", "/devices/pairing", { kind: "tablet" }));
+    expect(bad.status).toBe(400);
+    expect((await read(bad)).code).toBe("validation");
+
+    const none = await routesWith(null).fetch(json("POST", "/devices/pairing", {}));
+    expect(none.status).toBe(503);
+    const noneBody = await read(none);
+    expect(noneBody.code).toBe("unavailable");
+    expect(noneBody.message).toContain("FORERUNNER_STATE_API_URL");
+
+    const noToken = routesWith({ baseUrl: SERVICE, adminToken: async () => null, ...svc });
+    const missing = await noToken.fetch(json("POST", "/devices/pairing", {}));
+    expect(missing.status).toBe(503);
+    expect((await read(missing)).message).toContain("admin token");
+    expect(svc.calls).toHaveLength(0);
+
+    const wrong = routesWith({ baseUrl: SERVICE, adminToken: async () => "wrong", ...svc });
+    const refused = await wrong.fetch(json("POST", "/devices/pairing", {}));
+    expect(refused.status).toBe(503);
+    const refusedBody = await read(refused);
+    expect(refusedBody.message).toBe("state service answered 401 unauthorized");
+    expect(JSON.stringify(refusedBody)).not.toContain("wrong");
+
+    const down = routesWith({
+      baseUrl: SERVICE,
+      adminToken: async () => ADMIN,
+      fetch: async () => {
+        throw new TypeError("fetch failed");
+      },
+    });
+    const unreachable = await down.fetch(json("GET", "/devices"));
+    expect(unreachable.status).toBe(503);
+    expect((await read(unreachable)).message).toContain("state service unreachable");
+  });
+
+  it("lists the human's devices from the service, this install marked current, another human's filtered", async () => {
+    const svc = fakeService([
+      device("dev_phone", ada),
+      device("dev_pc", ada, "desktop"),
+      device("dev_bob", "hum_bob"),
+    ]);
+    const app = routesWith({ baseUrl: SERVICE, adminToken: async () => ADMIN, ...svc });
+    const res = await app.fetch(json("GET", "/devices"));
+    expect(res.status).toBe(200);
+    const view = DeviceListView.parse(await res.json());
+    expect(view.pairingAvailable).toBe(true);
+    expect(view.devices.map((d) => [d.id, d.current])).toEqual([
+      ["dev_phone", false],
+      ["dev_pc", true],
+    ]);
+    expect(svc.calls[0]?.path).toBe(`/devices?humanId=${ada}`);
+  });
+
+  it("revokes at once through the service; this install's own device and another human's are refused", async () => {
+    const devices = [device("dev_phone", ada), device("dev_pc", ada, "desktop")];
+    const svc = fakeService([...devices, device("dev_bob", "hum_bob")]);
+    const app = routesWith({ baseUrl: SERVICE, adminToken: async () => ADMIN, ...svc });
+    const res = await app.fetch(json("POST", "/devices/dev_phone/revoke"));
+    expect(res.status).toBe(200);
+    const view = RevokeDeviceView.parse(await res.json());
+    expect(view.device).toMatchObject({ id: "dev_phone", revoked: true, current: false });
+    expect(view.tokensRevoked).toBe(2);
+    expect(svc.calls.at(-1)).toMatchObject({
+      method: "POST",
+      path: "/devices/dev_phone/revoke",
+      auth: `Bearer ${ADMIN}`,
+    });
+    const audit = await store.auditLog.list({ tool: DEVICE_AUDIT.revoked });
+    expect(audit.at(-1)?.input_summary).toBe("device=dev_phone kind=phone");
+
+    const own = await app.fetch(json("POST", "/devices/dev_pc/revoke"));
+    expect(own.status).toBe(400);
+    expect((await read(own)).code).toBe("validation");
+    const before = svc.calls.length;
+    const bobs = await app.fetch(json("POST", "/devices/dev_bob/revoke"));
+    expect(bobs.status).toBe(404);
+    // Ownership is checked against the human's list; the revoke route is never called.
+    expect(svc.calls.slice(before).map((c) => c.path)).toEqual([`/devices?humanId=${ada}`]);
+  });
+
+  it("without a service lists and revokes over the shared store; pairing is reported unavailable", async () => {
+    const phone = await store.device.register({
+      owner_human_id: ada,
+      name: "Ada's phone",
+      platform: "android",
+      public_key: ["pk-", "A".repeat(40)].join(""), // not-a-secret
+      kind: "phone",
+    });
+    const bob = await store.human.insert({ name: "Bob", email: "bob@example.test" });
+    const bobs = await store.device.register({
+      owner_human_id: bob.id,
+      name: "Bob's phone",
+      platform: "android",
+      public_key: ["pk-", "B".repeat(40)].join(""), // not-a-secret
+      kind: "phone",
+    });
+    const app = routesWith(null, null);
+    const list = DeviceListView.parse(await (await app.fetch(json("GET", "/devices"))).json());
+    expect(list.pairingAvailable).toBe(false);
+    expect(list.devices.map((d) => d.id)).toEqual([phone.id]);
+
+    const res = await app.fetch(json("POST", `/devices/${phone.id}/revoke`));
+    expect(res.status).toBe(200);
+    const view = RevokeDeviceView.parse(await res.json());
+    expect(view).toMatchObject({ device: { revoked: true }, tokensRevoked: null });
+    expect((await store.device.get(phone.id))?.revoked).toBe(true);
+
+    expect((await app.fetch(json("POST", `/devices/${bobs.id}/revoke`))).status).toBe(403);
+    expect((await store.device.get(bobs.id))?.revoked).toBe(false);
+    expect((await app.fetch(json("POST", "/devices/dev_nope/revoke"))).status).toBe(404);
+  });
+});
+
+describe("device routes in the composed daemon", () => {
+  let rt: RuntimeApp;
+  let app: ReturnType<typeof createDaemonApp>["app"];
+  let token: string;
+  let home: string;
+  let svc: ReturnType<typeof fakeService>;
+  const clock = new SimulatedClock("2026-10-23T09:00:00.000Z");
+  const req = (path: string, init: RequestInit = {}, auth = true) =>
+    app.request(path, {
+      ...init,
+      headers: {
+        ...(auth ? { authorization: `Bearer ${token}` } : {}),
+        "content-type": "application/json",
+        ...(init.headers ?? {}),
+      },
+    });
+
+  beforeAll(async () => {
+    home = mkdtempSync(join(tmpdir(), "fr-devices-daemon-"));
+    const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+    const vault = new MemoryVault();
+    // The default reference: the admin token is read from the vault per call.
+    await vault.set("state_api_admin", ADMIN);
+    svc = fakeService([]);
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home, FORERUNNER_STATE_API_URL: SERVICE },
+      dirs,
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault,
+      provider: new ScriptedProvider([{ text: "Noted." }], clock),
+      registryDir: join(process.cwd(), "evals", "registry"),
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      devices: { fetch: svc.fetch },
+    });
+    ({ app, token } = createDaemonApp(rt));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("lists the three routes in the route table and mounts them behind the bearer", async () => {
+    expect(DAEMON_ROUTES.devices.startsWith("GET /devices ")).toBe(true);
+    expect(DAEMON_ROUTES.startPairing.startsWith("POST /devices/pairing ")).toBe(true);
+    expect(DAEMON_ROUTES.revokeDevice.startsWith("POST /devices/:id/revoke ")).toBe(true);
+    expect((await req("/devices", {}, false)).status).toBe(401);
+    expect((await req("/devices/pairing", { method: "POST", body: "{}" }, false)).status).toBe(401);
+    const list = DeviceListView.parse(await (await req("/devices")).json());
+    expect(list).toEqual({ devices: [], pairingAvailable: true });
+  });
+
+  it("starts a pairing for the daemon's human with the vault's admin token from FORERUNNER_STATE_API_URL", async () => {
+    const res = await req("/devices/pairing", { method: "POST", body: "{}" });
+    expect(res.status).toBe(201);
+    const view = PairingStartView.parse(await res.json());
+    expect(view.humanId).toBe(rt.human.id);
+    expect(view.link).toBe(pairingLink(SERVICE, CODE, rt.human.id));
+    expect(svc.calls.at(-1)).toMatchObject({
+      path: "/pairing/start",
+      auth: `Bearer ${ADMIN}`,
+      body: { humanId: rt.human.id, kind: "phone" },
+    });
+  });
+});

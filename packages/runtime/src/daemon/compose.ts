@@ -84,6 +84,7 @@ import { DataAssets } from "../data/assets.ts";
 import { DataImporter } from "../data/import.ts";
 import { registerDataTools } from "../data/tools.ts";
 import type { DataLimits } from "../data/types.ts";
+import { DeviceManager } from "../devices/index.ts";
 import type { EnforcementHooks, HookDeps, RunContext } from "../enforcement/hooks.ts";
 import { KillFileWatcher } from "../enforcement/killfile.ts";
 import { KillSwitch } from "../enforcement/killswitch.ts";
@@ -175,7 +176,6 @@ import {
   TOOL_UNMAPPED_AUDIT,
 } from "../registry/index.ts";
 import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
-import { DeviceManager } from "../devices/index.ts";
 import { detectSandboxEngine, type EngineDetection } from "../sandbox/detect.ts";
 import type { RunFn, WhichFn } from "../sandbox/types.ts";
 import {

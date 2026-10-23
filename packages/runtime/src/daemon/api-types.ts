@@ -1,5 +1,17 @@
 import { z } from "zod";
+import { DEVICES_ROUTES } from "../devices/types.ts";
 
+/** Settings -> Devices shapes (spec R.2): the daemon's `/devices` routes' bodies and answers. */
+export {
+  DaemonDeviceView,
+  DEVICES_ROUTES,
+  DeviceListView,
+  PAIRING_KINDS,
+  type PairingKind,
+  PairingStartView,
+  RevokeDeviceView,
+  StartPairingBody,
+} from "../devices/types.ts";
 export type {
   SourceCandidateStatus,
   SourceKind,
@@ -1756,6 +1768,7 @@ export const DAEMON_ROUTES = {
     "POST /sources/candidates/:id/accept { name?, goal?, autonomyLevel?, budgetUsdMicro? } (201 AcceptCandidateView: the project created through the same path as POST /projects with no brief; 409 conflict for an accepted, duplicate or gone candidate, a repo a project took meanwhile, or a taken name)",
   removeSource:
     "DELETE /sources/:id ({ ok, id, candidatesRemoved }; projects created from it stay)",
+  ...DEVICES_ROUTES,
   dataAssets: "GET /projects/:id/data (DataAssetView[])",
   registerDataAsset:
     "POST /projects/:id/data { locator, kind?, mode?, name?, sizeBytes? } | multipart file (+ kind, name) (201 DataAssetView; 413 above the upload cap)",

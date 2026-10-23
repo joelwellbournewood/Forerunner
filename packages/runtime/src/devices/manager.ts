@@ -1,5 +1,6 @@
 import { type Clock, errorMessage, ForerunnerError } from "@forerunner/platform";
 import type { DeviceRow, StateStore } from "@forerunner/state";
+import type { DaemonDeviceView, PairingKind, PairingStartView, RevokeDeviceView } from "./types.ts";
 
 /**
  * Settings -> Devices on the desktop (spec R.2; ADR 0009): the human's paired devices, a new
@@ -13,40 +14,6 @@ import type { DeviceRow, StateStore } from "@forerunner/state";
  * tokens and tells open streams), and through the shared store otherwise: the service checks
  * the device row on every request, so a row revoked in the store refuses the next request.
  */
-
-/** One device as the Devices section shows it; the public key is not needed there. */
-export interface DaemonDeviceView {
-  id: string;
-  name: string;
-  platform: string;
-  kind: string;
-  pairedAt: string;
-  lastSeen: string | null;
-  revoked: boolean;
-  revokedAt: string | null;
-  /** True for this daemon's own `desktop` row (the install the app runs on). */
-  current: boolean;
-  version: number;
-}
-
-export type PairingKind = "phone" | "web";
-
-export interface PairingStartView {
-  code: string;
-  expiresAt: string;
-  kind: string;
-  humanId: string;
-  /** The service URL the phone completes the pairing at. */
-  serviceUrl: string;
-  /** `fr://pair?u=<service>&c=<code>&h=<human>`: what the QR encodes (apps/ui `pairing.ts`). */
-  link: string;
-}
-
-export interface RevokeDeviceView {
-  device: DaemonDeviceView;
-  /** Session tokens the service dropped; null when the store revoked the row directly. */
-  tokensRevoked: number | null;
-}
 
 /** Where the state service is and the admin credential to call it with. */
 export interface DeviceServiceConfig {
@@ -107,10 +74,7 @@ export class DeviceManager {
   async list(): Promise<DaemonDeviceView[]> {
     if (this.deps.service) {
       const q = new URLSearchParams({ humanId: this.deps.humanId });
-      const body = await this.call<{ devices: ServiceDevice[] }>(
-        "GET",
-        `/devices?${q.toString()}`,
-      );
+      const body = await this.call<{ devices: ServiceDevice[] }>("GET", `/devices?${q.toString()}`);
       return body.devices
         .filter((d) => d.ownerHumanId === this.deps.humanId)
         .map((d) => this.fromService(d));

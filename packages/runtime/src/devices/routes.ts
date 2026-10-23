@@ -1,8 +1,8 @@
 import { isForerunnerError } from "@forerunner/platform";
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { z } from "zod";
 import type { DeviceManager } from "./manager.ts";
+import { StartPairingBody } from "./types.ts";
 
 /**
  * The daemon's device routes (spec R.2), for Settings -> Devices in the app on this install:
@@ -14,11 +14,6 @@ import type { DeviceManager } from "./manager.ts";
 export interface DeviceRoutesDeps {
   devices: Pick<DeviceManager, "list" | "startPairing" | "revoke" | "pairingAvailable">;
 }
-
-const PairingBody = z.object({
-  kind: z.enum(["phone", "web"]).optional(),
-  name: z.string().max(120).optional(),
-});
 
 function statusFor(code: string): ContentfulStatusCode {
   switch (code) {
@@ -60,7 +55,7 @@ export function createDeviceRoutes(deps: DeviceRoutesDeps): Hono {
   );
 
   app.post("/devices/pairing", async (c) => {
-    const parsed = PairingBody.safeParse(await c.req.json().catch(() => ({})));
+    const parsed = StartPairingBody.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) {
       return c.json(
         {
