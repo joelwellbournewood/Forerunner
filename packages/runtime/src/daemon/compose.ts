@@ -644,9 +644,12 @@ export interface RuntimeApp {
    */
   shells: ShellPresence;
   /**
-   * Remote control of this PC (spec R.4, R.8; ADR 0041): the daemon's own `desktop` device
-   * row, the watcher that executes the phone's `target: "pc"` commands and the heartbeat the
-   * cloud runner's PC-wins rule reads. All null when `remoteCommandsEnabled` said no.
+   * This PC as a device and the remote control of it (spec R.4, R.8; ADR 0030, ADR 0041):
+   * the daemon's own `desktop` device row (registered on every store: it is the paired device
+   * a high-risk change from the desktop app is confirmed on, and `GET /me` names its id;
+   * null only in a hand-built runtime), the watcher that executes the phone's `target: "pc"`
+   * commands and the heartbeat the cloud runner's PC-wins rule reads, both null when
+   * `remoteCommandsEnabled` said no.
    */
   remote: {
     enabled: boolean;
@@ -2216,20 +2219,26 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // uses the composed objects and never connects a connector or ticks the scheduler.
   const services = opts.startServices !== false;
   // Remote control of this PC (spec R.4, R.8; ADR 0032 item 4, ADR 0033 items 8b and 9, ADR
-  // 0041): on a shared state the daemon registers itself as a `desktop` device of the human,
-  // heartbeats that row (the cloud runner's PC-wins rule reads it) and polls the phone's
-  // `target: "pc"` commands. The store's pick-up is keyed on this agent's owner; the watcher
-  // checks the issuing device again and runs plans through the command registry, chat
-  // through the conversation agent, and the plain verbs through the kill switch and scheduler.
+  // 0041): on a shared state the daemon heartbeats its desktop row (the cloud runner's
+  // PC-wins rule reads it) and polls the phone's `target: "pc"` commands. The store's pick-up
+  // is keyed on this agent's owner; the watcher checks the issuing device again and runs
+  // plans through the command registry, chat through the conversation agent, and the plain
+  // verbs through the kill switch and scheduler.
   const remoteEnabled = remoteCommandsEnabled(env, stateUrl, services, opts.remote?.enabled);
   let remoteDevice: DeviceRow | null = null;
   let remoteWatcher: RemoteCommandWatcher | null = null;
   let presence: DesktopPresence | null = null;
-  // The device row is also where the install's wrapping key lives (spec S.13, ADR 0065), so
-  // it is registered whenever remote control is on, or was asked for explicitly (a test, a
-  // one-shot); the watcher and the heartbeat still need the services running. The cloud
-  // runner composes without the option and keeps its own `runner` row.
-  const registerDevice = remoteEnabled || opts.remote?.enabled === true;
+  // This PC as a paired device (ADR 0030: a high-risk change from the desktop app is
+  // confirmed on the desktop's own device row, ADR 0041 item 6): the daemon registers itself
+  // as a `desktop` device of the human on every store, shared or local. `GET /me` names the
+  // row's id, the settings screen sends it with a high-risk confirmation and the registry's
+  // policy checks the row like any other device. The row is also where the install's
+  // wrapping key lives (spec S.13, ADR 0065). It is registered whenever the daemon runs its
+  // services, remote control is on, or it was asked for explicitly (a test, a one-shot); the
+  // watcher and the heartbeat still need remote control. The cloud runner composes without
+  // services or the option and keeps its own `runner` row. The identity file under the
+  // config dir keeps the row stable across restarts.
+  const registerDevice = services || remoteEnabled || opts.remote?.enabled === true;
   if (registerDevice) {
     // The install's wrapping key: created in the vault on first use and registered on the
     // device row, so a peer can wrap a shared secret to this install.
@@ -2382,7 +2391,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     bridgedTools: extensions.bridgedTools().length,
     mirrors: mirrorSchedules.size,
     services,
-    remote: remoteEnabled ? (remoteDevice?.name ?? "on") : "off",
+    desktopDevice: remoteDevice?.name ?? "none",
+    remote: remoteEnabled ? "on" : "off",
   });
 
   return {

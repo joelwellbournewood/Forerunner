@@ -177,7 +177,9 @@ function SettingChangeDialog({
   onChanged: () => void;
 }) {
   const client = useClient();
-  const installId = useUiState((s) => s.config.installId);
+  // This PC's own device row as the daemon names it on `/me` (ADR 0030): the paired device a
+  // high-risk change is confirmed on. The shell's install id is not a device the daemon knows.
+  const desktopDeviceId = useUiState((s) => s.me?.desktopDeviceId ?? null);
   const [value, setValue] = useState(() => command.initial(setting.value));
   const [result, setResult] = useState<CommandResultJson | null>(null);
   const [busy, setBusy] = useState(false);
@@ -220,10 +222,16 @@ function SettingChangeDialog({
       return;
     }
     // A tap in the app answers a medium-risk card; a high-risk card needs this paired device
-    // (the desktop app is one, ADR 0030): the daemon checks the device, not this screen.
+    // (the desktop app is one, ADR 0030): the daemon checks the device row, not this screen.
+    // Without an id (`/me` not loaded yet, or it failed) the device answer goes without one
+    // and the daemon-token route answers with its own desktop row; a daemon that has no row
+    // (its `/me` names none) refuses that, and the dialog shows the refusal.
     void run(() =>
       result.decision === "needs_device"
-        ? client.confirmCommand(pendingId, { answer: "device", deviceId: installId ?? "desktop" })
+        ? client.confirmCommand(pendingId, {
+            answer: "device",
+            ...(desktopDeviceId ? { deviceId: desktopDeviceId } : {}),
+          })
         : client.confirmCommand(pendingId, { answer: "tap" }),
     );
   };
@@ -324,7 +332,7 @@ function SettingChangeDialog({
 export function SettingsPage() {
   const client = useClient();
   const store = useUiStore();
-  const { theme, connection, config } = useUiState((s) => s);
+  const { theme, connection, config, me } = useUiState((s) => s);
   const settings = useAsync((signal) => client.settings(undefined, signal), [client]);
   const groups = groupByScope(settings.data ?? []);
   const [editing, setEditing] = useState<{ setting: SettingView; command: SettingCommand } | null>(
@@ -438,6 +446,20 @@ export function SettingsPage() {
               <dd>
                 {config.platform}
                 {config.shellVersion ? ` · ${config.shellVersion}` : ""}
+              </dd>
+            </>
+          ) : null}
+          {me ? (
+            <>
+              <dt className="text-neutral-500">This PC</dt>
+              <dd data-testid="desktop-device">
+                {me.desktopDeviceId ? (
+                  <>
+                    paired device <code>{me.desktopDeviceId}</code>: confirms high-risk changes here
+                  </>
+                ) : (
+                  "no device row registered by the daemon: high-risk changes cannot be confirmed on this PC (confirm on the phone with biometric)"
+                )}
               </dd>
             </>
           ) : null}

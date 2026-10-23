@@ -8,6 +8,7 @@ import {
 } from "../src/api/client.ts";
 import { DEFAULT_DAEMON_URL, resolveDaemonConfig } from "../src/api/config.ts";
 import { createFakeDaemon } from "./fake-daemon.ts";
+import { ME } from "./fixtures.ts";
 import { fetchFromApp, testConfig } from "./helpers.tsx";
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}) {
@@ -351,8 +352,39 @@ describe("daemon client", () => {
     expect(high.decision).toBe("needs_device");
     const refused = await client.confirmCommand(high.pendingId ?? "", { answer: "yes" });
     expect(refused).toMatchObject({ status: "refused", code: "approval_required" });
+    // The fake checks the device like the real executor: an id that is no paired row of the
+    // human is refused and the card stays; the row `/me` names (this PC) performs.
+    const unknown = await client.confirmCommand(high.pendingId ?? "", {
+      answer: "device",
+      deviceId: "install-uuid-of-shell",
+    });
+    expect(unknown).toMatchObject({
+      status: "refused",
+      code: "approval_required",
+      reason: "unknown device; pair it first",
+      pendingId: high.pendingId,
+    });
+    expect((await client.pendingCommands()).map((p) => p.id)).toEqual([high.pendingId]);
+    expect((await client.me()).desktopDeviceId).toBe(ME.desktopDeviceId);
     const cancelled = await client.cancelCommand(high.pendingId ?? "");
     expect(cancelled.status).toBe("cancelled");
+    const secondHigh = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 500 } }],
+    });
+    const onThisPc = await client.confirmCommand(secondHigh.pendingId ?? "", {
+      answer: "device",
+      deviceId: ME.desktopDeviceId ?? "",
+    });
+    expect(onThisPc.status).toBe("done");
+    // The literal `desktop` an older settings screen sent is this PC, as on the daemon's route.
+    const thirdHigh = await client.executeCommands({
+      commands: [{ name: "budget.set", params: { scope: "month", amountChf: 600 } }],
+    });
+    const literal = await client.confirmCommand(thirdHigh.pendingId ?? "", {
+      answer: "device",
+      deviceId: "desktop",
+    });
+    expect(literal.status).toBe("done");
     const tapped = await client.executeCommands({
       commands: [{ name: "autonomy.set", params: { level: 1, project: "proj_beacon" } }],
       confirm: "tap",

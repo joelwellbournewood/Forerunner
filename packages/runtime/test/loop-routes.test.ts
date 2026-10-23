@@ -699,6 +699,15 @@ describe("core loop routes", () => {
     expect(cancelled.status).toBe("refused");
   });
 
+  it("a one-shot without services or the remote option (the cloud runner's shape) registers no desktop row and /me names none", async () => {
+    expect(rt.remote.device).toBeNull();
+    expect(
+      await rt.store.device.list({ owner_human_id: rt.human.id, kind: "desktop" }),
+    ).toHaveLength(0);
+    const me = await json(await req("/me"));
+    expect(me.desktopDeviceId).toBeNull();
+  });
+
   it("chat, voice and the UI produce the same change log entry for the same change", async () => {
     const before = (await rt.store.changeLog.list()).length;
     const ui = CommandResultViewSchema.parse(
@@ -852,5 +861,191 @@ describe("core loop routes", () => {
     );
     expect(undone.status).toBe("done");
     expect((await rt.store.project.mustGet(projectId)).autonomy_level).toBe(2);
+  });
+});
+
+describe("a solo daemon's own desktop device", () => {
+  let rt: RuntimeApp;
+  let app: ReturnType<typeof createDaemonApp>["app"];
+  let token: string;
+  const clock = new SimulatedClock("2026-10-20T18:00:00Z");
+  const req = (path: string, init: RequestInit = {}) =>
+    app.request(path, {
+      ...init,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        ...(init.headers ?? {}),
+      },
+    });
+
+  beforeAll(async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-loop-solo-"));
+    const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+    // The daemon's own shape: services on (the default), a local store, no remote option.
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs,
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new FakeProvider({
+        replies: [textReply("Hello from the fake agent.", { times: Number.POSITIVE_INFINITY })],
+        clock,
+        latency: "none",
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+    });
+    ({ app, token } = createDaemonApp(rt));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("a solo install's desktop is the paired device: /me names the daemon's own desktop row, its id confirms a high-risk change, a foreign id is refused, and an answer without an id is this PC", async () => {
+    // A daemon (services on) on a `sqlite:` store: the remote services stay off (no phone can
+    // reach this daemon), yet the daemon's own `desktop` device row exists: it is the paired
+    // device the settings screen confirms a high-risk change on (ADR 0030, the P1 of
+    // BLOCKERS.md).
+    expect(rt.remote.enabled).toBe(false);
+    expect(rt.remote.watcher).toBeNull();
+    expect(rt.remote.presence).toBeNull();
+    const desktop = rt.remote.device;
+    expect(desktop).toMatchObject({ kind: "desktop", owner_human_id: rt.human.id, revoked: false });
+    const me = await json(await req("/me"));
+    expect(me.desktopDeviceId).toBe(desktop?.id);
+
+    const ask = async (amountChf: number) => {
+      const r = CommandResultViewSchema.parse(
+        await json(
+          await req("/commands/execute", {
+            method: "POST",
+            body: JSON.stringify({
+              commands: [{ name: "budget.set", params: { scope: "month", amountChf } }],
+              wordsUsed: `Settings: human.monthly_cap to ${amountChf}`,
+              source: "ui",
+            }),
+          }),
+        ),
+      );
+      expect(r.decision).toBe("needs_device");
+      return r.pendingId ?? "";
+    };
+    const confirm = async (pendingId: string, body: Record<string, unknown>) =>
+      CommandResultViewSchema.parse(
+        await json(
+          await req(`/commands/${pendingId}/confirm`, {
+            method: "POST",
+            body: JSON.stringify(body),
+          }),
+        ),
+      );
+
+    // The shell's install id (what the UI used to send) is not a device row: refused, and the
+    // card stays open for a proper answer.
+    const first = await ask(600);
+    const foreign = await confirm(first, { answer: "device", deviceId: "install-uuid-of-shell" });
+    expect(foreign.status).toBe("refused");
+    expect(foreign.code).toBe("approval_required");
+    expect(foreign.reason).toContain("unknown device");
+    expect((await jsonList(await req("/commands/pending"))).map((p) => p.id)).toContain(first);
+    // A real foreign id: another human's desktop row on the same store (the shared-store case,
+    // where the shell's id never matched either) is refused by the route, the card kept and
+    // the cap unchanged.
+    const other = await rt.store.human.insert({ name: "Bob", email: "bob@example.test" });
+    const othersPc = await rt.store.device.register({
+      owner_human_id: other.id,
+      name: "Bob's PC",
+      platform: "linux",
+      public_key: ["pk-", "B".repeat(40)].join(""), // not-a-secret
+      kind: "desktop",
+    });
+    const capBefore = (await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro;
+    const theirs = await confirm(first, { answer: "device", deviceId: othersPc.id });
+    expect(theirs.status).toBe("refused");
+    expect(theirs.code).toBe("approval_required");
+    expect(theirs.reason).toBe("the device belongs to someone else");
+    expect((await jsonList(await req("/commands/pending"))).map((p) => p.id)).toContain(first);
+    expect((await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro).toBe(capBefore);
+    expect(capBefore).not.toBe(750_000_000);
+    // The id `/me` names performs the change.
+    const ok = await confirm(first, { answer: "device", deviceId: me.desktopDeviceId });
+    expect(ok.status).toBe("done");
+    expect((await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro).toBe(750_000_000);
+    // The pending id is the card's `human_request` row: its answer names the device.
+    const row = await rt.store.humanRequest.mustGet(first);
+    expect(row.status).toBe("answered");
+    expect(row.answer).toMatchObject({
+      verdict: "confirmed",
+      kind: "device",
+      device_id: desktop?.id,
+      biometric: false,
+    });
+
+    // A device answer without an id on the daemon-token route is this PC (an older shell):
+    // the daemon substitutes its own row and writes an audit row saying so.
+    const second = await ask(700);
+    const mapped = await confirm(second, { answer: "device" });
+    expect(mapped.status).toBe("done");
+    expect((await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro).toBe(875_000_000);
+    const audit = (await rt.store.auditLog.list()).filter(
+      (r) => r.tool === "daemon.confirm_device",
+    );
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ allowed: true, human_id: rt.human.id });
+    expect(JSON.parse(audit[0]?.input_summary ?? "{}")).toMatchObject({
+      pendingId: second,
+      deviceId: desktop?.id,
+      given: null,
+    });
+
+    // The literal `desktop` an older settings screen sent without an install id is the same
+    // id-less answer: this PC's row, audited.
+    const third = await ask(800);
+    const literal = await confirm(third, { answer: "device", deviceId: "desktop" });
+    expect(literal.status).toBe("done");
+    expect((await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro).toBe(1_000_000_000);
+    const audit2 = (await rt.store.auditLog.list()).filter(
+      (r) => r.tool === "daemon.confirm_device",
+    );
+    expect(audit2).toHaveLength(2);
+    expect(audit2.map((r) => JSON.parse(r.input_summary ?? "{}"))).toContainEqual({
+      pendingId: third,
+      deviceId: desktop?.id,
+      given: "desktop",
+    });
+
+    // The audit row tells what the registry answered: an id-less answer for a card that does
+    // not exist is mapped to this PC and logged as not allowed, with the registry's reason.
+    const ghost = await confirm("no-such-pending", { answer: "device" });
+    expect(ghost.status).toBe("refused");
+    const audit3 = (await rt.store.auditLog.list()).filter(
+      (r) => r.tool === "daemon.confirm_device",
+    );
+    expect(audit3).toHaveLength(3);
+    const ghostRow = audit3.find(
+      (r) => JSON.parse(r.input_summary ?? "{}").pendingId === "no-such-pending",
+    );
+    expect(ghostRow).toMatchObject({ allowed: false });
+    expect(ghostRow?.denied_reason).toContain("no pending");
+    expect(audit3.filter((r) => r.allowed)).toHaveLength(2);
+    expect(audit3.find((r) => r.allowed)?.result_summary).toContain("done");
+
+    // A phone row of the same human still needs biometric to confirm.
+    const phone = await rt.store.device.register({
+      owner_human_id: rt.human.id,
+      name: "J's phone",
+      platform: "android",
+      public_key: ["pk-", "Q".repeat(40)].join(""), // not-a-secret
+      kind: "phone",
+    });
+    const fourth = await ask(900);
+    const noBio = await confirm(fourth, { answer: "device", deviceId: phone.id });
+    expect(noBio.status).toBe("refused");
+    expect((await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro).toBe(1_000_000_000);
   });
 });

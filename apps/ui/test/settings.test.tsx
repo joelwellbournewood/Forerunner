@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { commandForSetting, groupByScope } from "../src/pages/SettingsPage.tsx";
-import { SETTINGS } from "./fixtures.ts";
+import { ME, SETTINGS } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 describe("Settings", () => {
@@ -96,6 +96,9 @@ describe("Settings", () => {
     expect(status).toHaveTextContent("present (never shown)");
     expect(status).not.toHaveTextContent("test-token");
     expect(status).toHaveTextContent("v0.1.0-fake");
+    expect(within(status).getByTestId("desktop-device")).toHaveTextContent(
+      `paired device ${ME.desktopDeviceId}`,
+    );
     expect(within(status).getByTestId("sandbox-health")).toHaveTextContent(
       "process stand-in fake daemon",
     );
@@ -179,13 +182,112 @@ describe("Settings", () => {
     await waitFor(() =>
       expect(postedCalls(harness, `/commands/${pendingId}/confirm`)).toHaveLength(1),
     );
+    // The device named is this PC's own row as `/me` names it (ADR 0030), never the shell's
+    // install id: the daemon knows the row, not the shell.
     expect(postedCalls(harness, `/commands/${pendingId}/confirm`)[0]?.body).toEqual({
       answer: "device",
-      deviceId: "test",
+      deviceId: ME.desktopDeviceId,
     });
     expect(await within(dialog).findByTestId("command-sentence")).toHaveTextContent(
       "Raised the monthly hard ceiling from CHF 150 to CHF 200. Undo.",
     );
+  });
+
+  it("shows the daemon's refusal when the device it names is not paired, and the card stays open", async () => {
+    // A daemon that names a row this fake does not know (a stale `/me`, another install's
+    // row): the fake refuses like the real executor does, the dialog shows it as a refusal
+    // and nothing changed.
+    const user = userEvent.setup();
+    const harness = createHarness({ me: { desktopDeviceId: "device_from_another_install" } });
+    renderApp("/settings", harness);
+    const rows = await screen.findAllByTestId("setting-row");
+    const cap = rows.find((r) => r.dataset.key === "human.monthly_cap");
+    await user.click(within(cap as HTMLElement).getByTestId("setting-change"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    const input = within(dialog).getByTestId("setting-value");
+    await user.clear(input);
+    await user.type(input, "200");
+    await user.click(within(dialog).getByTestId("setting-apply"));
+    const pending = await within(dialog).findByTestId("command-pending");
+    await user.click(within(pending).getByTestId("command-yes"));
+    const pendingId = postedCallPendingId(harness);
+    await waitFor(() =>
+      expect(postedCalls(harness, `/commands/${pendingId}/confirm`)).toHaveLength(1),
+    );
+    expect(postedCalls(harness, `/commands/${pendingId}/confirm`)[0]?.body).toEqual({
+      answer: "device",
+      deviceId: "device_from_another_install",
+    });
+    expect(await within(dialog).findByTestId("command-refused")).toHaveTextContent(
+      "Refused (approval_required): unknown device; pair it first",
+    );
+    expect(harness.daemon.state.pendingCommands.has(pendingId)).toBe(true);
+    expect(harness.daemon.state.changes).toHaveLength(2);
+  });
+
+  it("confirms without a device id while /me is not loaded, and the daemon answers with its own row", async () => {
+    // `/me` failed (or has not answered yet) while the daemon has its desktop row: the dialog
+    // sends the device answer without an id and the daemon-token route answers with that row.
+    const user = userEvent.setup();
+    const harness = createHarness({
+      failing: { "/me": { status: 503, code: "unavailable", message: "me down" } },
+    });
+    renderApp("/settings", harness);
+    const rows = await screen.findAllByTestId("setting-row");
+    const cap = rows.find((r) => r.dataset.key === "human.monthly_cap");
+    await user.click(within(cap as HTMLElement).getByTestId("setting-change"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    const input = within(dialog).getByTestId("setting-value");
+    await user.clear(input);
+    await user.type(input, "200");
+    await user.click(within(dialog).getByTestId("setting-apply"));
+    const pending = await within(dialog).findByTestId("command-pending");
+    await user.click(within(pending).getByTestId("command-yes"));
+    const pendingId = postedCallPendingId(harness);
+    await waitFor(() =>
+      expect(postedCalls(harness, `/commands/${pendingId}/confirm`)).toHaveLength(1),
+    );
+    expect(postedCalls(harness, `/commands/${pendingId}/confirm`)[0]?.body).toEqual({
+      answer: "device",
+    });
+    expect(await within(dialog).findByTestId("command-sentence")).toHaveTextContent(
+      "Raised the monthly hard ceiling from CHF 150 to CHF 200. Undo.",
+    );
+  });
+
+  it("says a daemon without a desktop row cannot confirm here and shows its refusal, nothing changed", async () => {
+    // A daemon whose `/me` names no row (one composed without its services) refuses an
+    // id-less device answer with 409 `conflict`, as the real route does: the status line says
+    // so, the dialog shows the daemon's message and the card stays pending.
+    const user = userEvent.setup();
+    const harness = createHarness({ me: { desktopDeviceId: null } });
+    renderApp("/settings", harness);
+    expect(await screen.findByTestId("desktop-device")).toHaveTextContent(
+      "high-risk changes cannot be confirmed on this PC",
+    );
+    const rows = await screen.findAllByTestId("setting-row");
+    const cap = rows.find((r) => r.dataset.key === "human.monthly_cap");
+    await user.click(within(cap as HTMLElement).getByTestId("setting-change"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    const input = within(dialog).getByTestId("setting-value");
+    await user.clear(input);
+    await user.type(input, "200");
+    await user.click(within(dialog).getByTestId("setting-apply"));
+    const pending = await within(dialog).findByTestId("command-pending");
+    await user.click(within(pending).getByTestId("command-yes"));
+    const pendingId = postedCallPendingId(harness);
+    await waitFor(() =>
+      expect(postedCalls(harness, `/commands/${pendingId}/confirm`)).toHaveLength(1),
+    );
+    expect(postedCalls(harness, `/commands/${pendingId}/confirm`)[0]?.body).toEqual({
+      answer: "device",
+    });
+    expect(await within(dialog).findByTestId("error-banner")).toHaveTextContent(
+      "no desktop device row to answer for",
+    );
+    expect(within(dialog).queryByTestId("command-sentence")).toBeNull();
+    expect(harness.daemon.state.pendingCommands.has(pendingId)).toBe(true);
+    expect(harness.daemon.state.changes).toHaveLength(2);
   });
 
   it("shows a cancelled change and a refused one without changing anything", async () => {

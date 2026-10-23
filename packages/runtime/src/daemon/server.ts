@@ -486,6 +486,8 @@ export function createDaemonApp(
       timezone: h.timezone,
       defaultAutonomy: h.default_autonomy,
       monthlyCap: money(h.monthly_cap_usd_micro, chf()),
+      // This PC's own device row: what a high-risk confirmation from the desktop app names.
+      desktopDeviceId: rt.remote.device?.id ?? null,
       agent: rt.agent,
       // The registry's record wins (a switch by chat, voice or the UI all land there).
       activeProjectId:
@@ -1228,13 +1230,42 @@ export function createDaemonApp(
     const id = c.req.param("id");
     let r: CommandResultView;
     if (body.answer === "device") {
-      if (!body.deviceId) throw new ForerunnerError("validation", "deviceId is required");
+      // The bearer of the daemon token is the human at this PC, and this PC is a paired
+      // device (its row, `/me.desktopDeviceId`). An answer that names no device is answered
+      // by that row, noted in the audit log, and so is the literal `desktop` an older settings
+      // screen sent when the shell had no install id; any other id is checked as given, so a
+      // foreign, revoked or unknown id is refused by the registry's policy.
+      const thisPc = !body.deviceId || body.deviceId === "desktop";
+      const deviceId = thisPc ? rt.remote.device?.id : body.deviceId;
+      if (!deviceId) {
+        throw new ForerunnerError(
+          "validation",
+          "deviceId is required: this daemon has no desktop device row to answer for",
+        );
+      }
       r = await rt.commands.confirm(id, {
         kind: "device",
-        deviceId: body.deviceId,
+        deviceId,
         biometric: body.biometric === true,
         by,
       });
+      // The substitution is audited after the registry answered, with its outcome: a mapped
+      // answer for a card that does not exist or that the policy refused is not "allowed".
+      if (thisPc) {
+        const accepted = r.status !== "refused";
+        await rt.store.auditLog.append({
+          tool: "daemon.confirm_device",
+          allowed: accepted,
+          denied_reason: accepted ? null : `${r.code ?? "refused"}: ${r.reason ?? ""}`,
+          agent_id: rt.agent.id,
+          human_id: rt.human.id,
+          input_summary: JSON.stringify({ pendingId: id, deviceId, given: body.deviceId ?? null }),
+          result_summary: `device answer naming no device row: this PC's own desktop row answered; ${r.status}`,
+          cost_usd_micro: 0,
+          occurred_at: rt.clock.nowIso(),
+          author_agent: rt.agent.id,
+        });
+      }
     } else {
       r = await rt.commands.confirm(id, { kind: body.answer, by });
     }
