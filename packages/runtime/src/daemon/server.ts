@@ -493,6 +493,19 @@ export function createDaemonApp(
         author_human: rt.human.id,
       });
     }
+    // The standard doc set (spec G.5): a pull request on the linked repository, or the
+    // project's data dir. The gap is recorded on the project; the creation never fails on it.
+    // A creation that asks for the intake (spec A.2) leaves the set to the intake's approval,
+    // which drafts the docs from the brief and scaffolds only what the draft left out.
+    if (body.intake === true) {
+      logger.info("project docs deferred to the intake", { projectId: p.id });
+    } else {
+      try {
+        await rt.docs.scaffoldProject(p);
+      } catch (e) {
+        logger.warn("project docs not scaffolded", { projectId: p.id, error: errorMessage(e) });
+      }
+    }
     rt.events.emit("project", { id: p.id });
     rt.conversation?.setActiveProject(rt.human.id, p.id);
     // PM intake (spec A.2): asked for, the proposal is drafted in the background and lands in

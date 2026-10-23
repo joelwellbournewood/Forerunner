@@ -56,8 +56,9 @@ rename), LF on write, CRLF accepted on read.
 | `critic` | every principal, the critic | none | row (state service in team mode), file is the export | the critic's reviews and calibration |
 | `shared` | every principal, the critic | none | row, file is the export | promotion, project-level lessons recorded by the critic or a principal |
 
-Project docs (`README`, `docs/*.md` in the project repo) are the fourth place knowledge lives and
-are never written by this package beyond scaffolding missing ones (see "Project docs").
+Project docs (`README`, `docs/*.md` in the project repo) are the fourth place knowledge lives.
+This package scaffolds the missing ones and rewrites the four standard sections of
+`docs/status.md` at session end; it never touches any other existing doc (see "Project docs").
 
 `grantFor(kind, agentId)` in `src/service.ts` turns an agent kind into a `ScopeGrant`: principal
 and conversation agents get their own private scope plus shared; the critic gets critic plus
@@ -289,8 +290,31 @@ adrWorthy? })` returns the docs that should have changed, for the critic at tier
 were added or removed under a source directory; `docs/decisions/` when an ADR-worthy change is
 flagged and no decision file changed; `docs/data.md` for schema, migration, model or `.sql`
 files; `docs/testing.md` for test-runner or workflow config; plus every standard doc missing
-from the repo. Paths may use either separator. The PM edits the docs in a PR at session end;
-this package never rewrites an existing doc.
+from the repo. Paths may use either separator.
+
+`renderStandardDoc(doc, project)` is a doc's full scaffold text (frontmatter and body; the
+README and `docs/overview.md` list `repos` under "## Repositories" when given), so a caller
+that writes through a git host instead of the file system, or wants to know whether a file is
+still the untouched template, gets the same bytes `scaffoldDocs` writes.
+
+**The status doc (spec G.5 "PM keeps them current", ADR 0058).** `applyStatusUpdate(existing,
+update)` is the pure format of `docs/status.md` after a session and `writeStatusUpdate(repoDir,
+update)` applies it on disk (`STATUS_DOC`, scaffolding the doc from its template when the repo
+has none; `created` says so; no other doc is touched). A `StatusUpdate` carries `sessionId`,
+`endedAt` (ISO-8601 UTC from the Clock), the session's `done`, `inFlight`, `blocked` and
+`next` task titles, an optional one-line `note` and an optional `state` (the project's open
+work, used for the top sections instead of the session's lists). The result: the frontmatter
+and every section the doc already has are kept in place; the four standard sections
+(`STATUS_SECTIONS`: "## Done", "## In flight", "## Blocked", "## Next", matched by heading,
+case-insensitive) are rewritten as one bullet per title ("- nothing" when empty) and added
+before the session log when the doc lacks them; "## Sessions" (`SESSIONS_HEADING`, moved to
+the end) holds one entry per session, newest first, headed `### <YYYY-MM-DD> session <id>`
+with the lines `- Done:`, `- In flight:`, `- Blocked:`, `- Next:` (titles joined by `; `,
+"none" when empty) and `- Note:` when given; an entry for the same session id replaces the
+earlier one, so a rerun of the same session changes nothing; the log keeps the newest
+`MAX_STATUS_SESSIONS` (20). Titles are made one line and cut at 120 characters. The runtime's
+`ProjectDocs` (runtime.md, "Project docs") commits the result on the session's pull request
+branch or a small PR of its own.
 
 ### Service facade (`src/service.ts`)
 
@@ -342,6 +366,10 @@ the private/shared boundary; spelled as ADR 0002 names it).
   `test/consolidation.test.ts`.
 - **A new standard doc**: add it to `STANDARD_DOCS` and `TEMPLATES` in `src/docs.ts` and a rule
   in `checkDocDrift` if some change should trigger it.
+- **The status format**: `STATUS_SECTIONS`, `sessionEntry` and `MAX_STATUS_SESSIONS` in
+  `src/docs.ts`; `applyStatusUpdate` must stay idempotent per session id and must keep every
+  section it does not own (`test/docs.test.ts`, "status.md updates"). A format that drops a
+  human's section is a bug, not a redesign.
 - **Team mode**: critic and shared rows live in Postgres behind the state API; `LessonFiles` is
   then an export target after each sync. The Postgres adapter must refuse `scope = private`
   writes (ADR 0002); that guard belongs in `packages/state` and is listed under Known issues.
@@ -363,7 +391,7 @@ opposite polarity 0.93, unrelated under 0.2).
 | `record.test.ts` | validation of text, tags, confidence, source and ownership; file plus mirrored row; near-duplicate merge with supersede, tag union, carried hits; below-threshold insert; no merge across scopes, owners or projects (global merges); a merged lesson stays global when either side was global and is still recalled from another project; a critic or shared lesson citing a private id refused at write time (shared ids and private memory unaffected); a private write for another agent refused when `agentId` is given, the service forcing owner = acting agent; opposite polarity not merged; `noDedup`; source grammar |
 | `consolidation.test.ts` | polarity pairs, `consolidationDue`, duplicate merge keeping the most used with report-only then apply, the kept lesson made global when a merged member was global (and kept project-scoped when none was), contradictions flagged in both files and never resolved, contradiction above the duplicate threshold, no pairing without a shared tag or across projects, retirement by the simulated clock (never used after 60 days, stale after 90, pinned kept, young kept), custom thresholds, owner required for a private plan |
 | `promotion.test.ts` | `general` tag required, idempotent proposal with source pointing at the origin, proposals not retrievable, private origin needs owner plus human approval, foreign (critic) ids refused by promotion, promotion needs an accepting review (empty, revise, missing review rejected), promoted copy active and global, shared project origin superseded, critic origin untouched, reject, offers to projects (explicit and derived) |
-| `docs.test.ts` | the eight docs, scaffold with frontmatter, existing untouched and idempotent, frontmatter parse, every drift rule including separators, missing docs reported |
+| `docs.test.ts` | the eight docs, scaffold with frontmatter, `renderStandardDoc` with name, goal and repos equal to what the scaffold writes (no repos section without repos), existing untouched and idempotent, frontmatter parse, every drift rule including separators, missing docs reported; status.md updates: from the template with the four sections and a dated session entry, a human-edited doc keeping its frontmatter, intro and own sections with only the four rewritten and missing ones added before the log, newest session first, idempotent per session id, "nothing"/"none" for empty lists, the project `state` for the sections while the entry keeps the session's lists, the log capped at `MAX_STATUS_SESSIONS`, long and multi-line titles cut to one line, `writeStatusUpdate` scaffolding the doc first and touching no other doc |
 | `scoped-store.test.ts` | the by-scope store over a private index and a shared store that refuses private writes like the Postgres adapter: `createMemory` builds it; a session's private lessons land only in the index (files in the usual roots) and critic and shared ones only in the shared store; recall unions both for the owner, the critic sees no private row, touches go to the holding store; edit, pin, retire, touch and delete locate the row; a scope change across the boundary (update, patch, supersede) is refused with `MEMORY_SCOPE_VIOLATION` while the near-duplicate merge inside the index still supersedes; promotion copies a private `general` lesson into the shared store and leaves the origin home; consolidation runs per scope on its store; `reconcile` of a private root fills the index and never the shared store; scoped and unscoped list, count and search |
 | `service.test.ts` | `rememberFromSession` records, rejects and writes the catalog; `recallForSession` loads standing notes then lessons under the budget; instructions larger than the budget refused; empty grant; the "4 simulated weeks" sketch: repeated findings recorded as shared lessons are recalled by later sessions (repeats 3, 0, 0, 0), memory per session stays under budget, hits and `last_used` advance, re-recording merges instead of duplicating |
 

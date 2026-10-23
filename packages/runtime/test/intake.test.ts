@@ -114,6 +114,14 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
         ...(init.headers ?? {}),
       },
     });
+  /** The creation-time scaffold (spec G.5) wrote the placeholder; the intake drafted nothing. */
+  const expectNotDrafted = (projectId: string) => {
+    const readme = join(rt.intake.workspaceDir(projectId), "README.md");
+    expect(existsSync(readme)).toBe(true);
+    const text = readFileSync(readme, "utf8");
+    expect(text).toContain("maintained-by: forerunner");
+    expect(text).not.toContain("Ship the thing.");
+  };
   const createProject = async (body: Json): Promise<string> => {
     const res = await req("/projects", { method: "POST", body: JSON.stringify(body) });
     expect(res.status).toBe(201);
@@ -219,7 +227,7 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       const queued = await rt.store.queue.pending(projectId);
       expect(queued).toHaveLength(1);
       expect(queued[0]?.text).toContain("Project brief:");
-      expect(existsSync(rt.intake.workspaceDir(projectId))).toBe(false);
+      expectNotDrafted(projectId);
       const project = await rt.store.project.mustGet(projectId);
       expect(project.summary_cache).not.toHaveProperty("first_session");
       // The call is billed to the project through an intake session and audited.
@@ -298,10 +306,12 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       expect(c.outcome).toBe("approved");
       expect(typeof c.applied_at).toBe("string");
       expect((c.docs as JsonObject).target).toBe("workspace");
-      expect((c.docs as JsonObject).scaffolded).toEqual([
-        "docs/decisions/README.md",
-        "docs/testing.md",
-      ]);
+      // The two docs the model left out were already scaffolded at creation (spec G.5), so
+      // the intake scaffolds nothing and leaves those placeholders as they are.
+      expect((c.docs as JsonObject).scaffolded).toEqual([]);
+      expect(readFileSync(join(dir, "docs", "testing.md"), "utf8")).toContain(
+        "maintained-by: forerunner",
+      );
       const again = await rt.syncApprovals();
       expect(again.intake).toEqual({ applied: 0, rejected: 0, skipped: 0 });
       expect(await rt.store.task.list({ project_id: projectId } as never)).toHaveLength(3);
@@ -328,7 +338,7 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     await answer(requestId, "reject");
     expect(await rt.store.task.list({ project_id: projectId } as never)).toHaveLength(0);
     expect(await rt.store.milestone.forProject(projectId)).toHaveLength(0);
-    expect(existsSync(rt.intake.workspaceDir(projectId))).toBe(false);
+    expectNotDrafted(projectId);
     const c = await card(requestId);
     expect(c.outcome).toBe("rejected");
     expect(typeof c.applied_at).toBe("string");
@@ -420,7 +430,7 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     expect(synced.intake).toEqual({ applied: 0, rejected: 0, skipped: 1 });
     expect(await rt.store.task.list({ project_id: projectId } as never)).toHaveLength(0);
     expect(await rt.store.milestone.forProject(projectId)).toHaveLength(0);
-    expect(existsSync(rt.intake.workspaceDir(projectId))).toBe(false);
+    expectNotDrafted(projectId);
     const c = await card(requestId);
     expect(c.outcome).toBe("wrong_human");
     const status = await json(await req(`/projects/${projectId}/intake`));
@@ -442,14 +452,16 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     const requestId = String(res.requestId);
     await answer(requestId, "approve");
     const prs = await host.listPullRequests({ owner: "o", name: "sample" });
-    expect(prs).toHaveLength(1);
-    expect(prs[0]?.head.ref).toMatch(/^fr\/intake-/);
-    expect(prs[0]?.title).toContain("doc set");
+    // The creation-time scaffold (spec G.5) opened the first pull request; the intake's is its own.
+    expect(prs).toHaveLength(2);
+    expect(prs.some((pr) => pr.head.ref === "fr/docs-scaffold")).toBe(true);
+    const intakePr = prs.find((pr) => /^fr\/intake-/.test(pr.head.ref));
+    expect(intakePr?.title).toContain("doc set");
     const c = await card(requestId);
     expect(c.docs).toMatchObject({
       target: "repository",
-      prUrl: prs[0]?.htmlUrl,
-      branch: prs[0]?.head.ref,
+      prUrl: intakePr?.htmlUrl,
+      branch: intakePr?.head.ref,
       kept: ["README.md"],
     });
     const branch = String((c.docs as JsonObject).branch);

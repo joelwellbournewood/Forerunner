@@ -357,7 +357,9 @@ needs human or failed; the inbox is re-checked between tasks and a human "stop" 
 session; at 80% of the budget or a mid-task cap no new task starts. Session end writes the
 project summary cache, sends a handoff (requires ack) to the project's peers
 (`settings.members` or agents that touched the project), notifies the human and records the
-session summary, handoff and spend. `triggers.ts` is the scheduler (daily, weekdays, every N
+session summary, handoff and spend; with a docs port it also writes the session's status
+update into the project's `docs/status.md` (below, "Project docs"). `triggers.ts` is the
+scheduler (daily, weekdays, every N
 minutes in the human's time zone; message, CI, PR comment, email, remote and manual requests;
 one active session per agent; quiet hours defer non-manual triggers). `state-ports.ts` adapts
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
@@ -565,9 +567,10 @@ tier, the verdict moves it through the state workflow and the retry ladder, less
 at session start and out at session end, and every change by chat, voice, the UI or the phone
 runs the same command. The runner, the executor and the conversation agent reach the three
 packages only through the ports in `src/loop/ports.ts` (`CriticPort`, `MemoryPort`,
-`ConversationCommands`); `src/loop/critic.ts`, `memory.ts` and `commands.ts` implement them
-over `@forerunner/critic`, `@forerunner/memory` and `@forerunner/commands`, and `compose.ts`
-wires them (`RuntimeApp.critic`, `memory`, `commands`, `criticAgent`). Tests run the runner
+`ConversationCommands`, `ProjectDocsPort`); `src/loop/critic.ts`, `memory.ts`, `commands.ts`
+and `docs.ts` implement them over `@forerunner/critic`, `@forerunner/memory`,
+`@forerunner/commands` and `@forerunner/capabilities` (git), and `compose.ts` wires them
+(`RuntimeApp.critic`, `memory`, `commands`, `docs`, `criticAgent`). Tests run the runner
 with fakes of the ports (`test/loop-memory.test.ts`) and with the real implementations on the
 fake provider (`test/loop-critic.test.ts`, `test/conversation.test.ts`, `test/loop-routes.test.ts`,
 `test/loop-commands.test.ts`, `test/signoff-answer.test.ts`, `test/approvals-poll.test.ts`).
@@ -730,6 +733,45 @@ only; ended: refused as above), and one whose result names no start (a runner th
 none, such as the cloud runner's watcher) is refused as `SESSION_START_UNKNOWN_REASON` and
 marked irreversible, since its session cannot be found from here and nothing is stopped by
 guesswork; a `failed` row never ran (`SESSION_START_NOT_RUN_REASON`).
+
+**Project docs (`ProjectDocs`, spec G.5, [ADR 0058](../decisions/0058-project-docs-in-the-repo-by-pull-request.md)).**
+The standard doc set (`README.md`, `docs/overview.md`, `architecture.md`, `status.md`,
+`decisions/`, `runbook.md`, `data.md`, `testing.md`; templates and the status format in
+`@forerunner/memory`, memory.md "Project docs") lives in the project's first repository
+(`project.repos[0]`, as `owner/name` or a clone URL, parsed by `parseRepoRef`; the PR
+executor resolves the same way) and is written like any other code change: on a branch and
+through a pull request, never by a push to the default branch, and never over an existing
+file. `scaffoldProject(project)` runs inside `POST /projects` right after the row is inserted
+(the creation waits for it, so the card the dashboard gets back already names the PR): with
+a repository it clones or fetches `<worktrees>/docs/<project id>`, checks out
+`fr/docs-scaffold` (`DOCS_SCAFFOLD_BRANCH`; from `origin/fr/docs-scaffold` when the branch
+exists, so files the intake drafted there are kept, else from the default branch), runs
+`scaffoldDocs` for the missing files, commits, pushes and opens the PR
+("docs: scaffold the standard project doc set", the created files in the body) or comments
+on the open one; nothing to create means nothing pushed. Without a repository the set goes
+under `<projectsRoot>/<project id>/workspace` (`WORKSPACE_DIR`, beside the project's `data/`).
+The outcome is recorded on the row as `summary_cache.docs` (`location`, `branch`, `pr_url`,
+`dir`, `created`, `existing`, `scaffolded_at`; a failure as `error` and `failed_at`); a git
+host that cannot serve the repository is a warning in the daemon log and the creation still
+answers 201, the critic's drift check reporting the missing docs at the first review.
+`writeSessionStatus({ project, session, update, prBranch })` runs in the runner's step 4
+once the task states are final, for a session that executed a plan and changed at least one
+task (`docs.status_skipped` otherwise; a paused session writes nothing): the update is the
+session's completed, in-review plus sent-back, blocked (needs human, failed, blocked by
+findings) and skipped task titles with the session id, the end instant from the Clock and
+a note (`stop reason <x>; spent $<n>`), and the four top sections come from the project's
+state in the store (the latest 15 done tasks, every task claimed, in progress or in review,
+every needs-human or failed one, the ready and draft ones highest priority first). With a
+repository it is committed as `docs: status after session <id>` on the branch of the last
+pull request the session opened or updated (`prBranch`, from the executor's `branch` and
+`prUrl`), so the session's PR carries it, or on `fr/status-<session id>`
+(`statusBranchFor`) with a small PR of its own ("docs: status after session <id8>") when the
+session opened none; a repository without `docs/status.md` gets it scaffolded in the same
+commit. Without a repository the file under the workspace is updated. The result is the
+`docs.status_written` event (`location`, `branch`, `prUrl`, `path`, `created`) and
+`handoff.docs` on the session row; a failure is `docs.status_failed` with the message and
+the session ends as it would have. Not scaffolded from here: a project created by the
+`project.create` command (chat, voice) in `@forerunner/commands` (Known issues).
 
 ### Conversation agent (`src/conversation/agent.ts`)
 
@@ -1362,6 +1404,31 @@ with nothing written; with a repository the docs pushed as a pull request on
 running the intake in the background and without the flag running nothing; a failed background
 intake recorded on the status route; no provider refused as `unavailable`.
 
+`loop-docs.test.ts` (spec G.5, ADR 0058; the runner with `ProjectDocs` on a `MemoryGitHost`
+whose repository clones from a local bare repo): a session whose executor pushed a branch and
+opened its PR gets `docs/status.md` scaffolded and committed on that branch (the session id,
+the date, the task under Done and in the entry, the note, `src/x.ts` still there), the only
+open PR is the task's, `main` has no status doc and its README is unchanged, the event and
+`handoff.docs` name the branch and PR; a session that opened no PR (a task that needs the
+human) files `fr/status-<session id>` with its own PR, the entry listing the blocked task and
+the top sections the project's state (a draft task under Next), a second session adding its
+own branch and PR; a project without a repository writes under
+`<projectsRoot>/<id>/workspace`; a session that touched no task writes nothing
+(`docs.status_skipped`) and a port that throws ends the session `completed` with
+`docs.status_failed`. `docs-scaffold.test.ts` (through `composeRuntime` and `POST /projects`
+with a `MemoryGitHost` and bare repos): `parseRepoRef` on `owner/name`, HTTPS and SSH URLs and
+non-references; a creation with a linked repository opens one PR from `fr/docs-scaffold` to
+`main` with the seven missing docs, the existing README byte-identical on the branch, `main`
+holding only the seed, the overview carrying the goal and the repository, the outcome on
+`summary_cache.docs`, nothing under the data dir; files the intake drafted on the branch kept,
+no second PR, and a second creation on the same repository finding nothing to add; a project
+without a repository scaffolded under its workspace with name and goal; a session started
+through the composed `rt.runner` (the PR executor and loop executor on the scripted
+provider, whose text-only reply leaves no change and so no task PR) writing its status
+update on `fr/status-<session id>` with a PR of its own, the entry naming the session and
+the task, `main` untouched, `handoff.docs` on the session row; a repository the host cannot
+serve answering 201 with the error recorded.
+
 `small-project.test.ts` (spec B.6, ADR 0051): `defaultRiskTier` by flag; `shapeProjectPlan`
 with the flag on (one milestone named after the project, the phases' criteria once each, the
 latest date, every task under it in plan order, tier 0 unless named; a single planned milestone
@@ -1531,6 +1598,10 @@ two-task session at the task boundary (the task in flight finishes, the second n
 
 ## Requirements covered by the daemon wiring
 
+G.5 (the standard doc set scaffolded at project creation as a pull request on the linked
+repository or under the project's data dir, `docs/status.md` updated at session end on the
+session's PR or one of its own; the critic's drift check unchanged). Tests:
+`test/docs-scaffold.test.ts`, `test/loop-docs.test.ts`, `packages/memory/test/docs.test.ts`.
 K.6 and L.5 (extensions reachable from the daemon, revoked live), S.7 (task commands in a
 sandbox with only the worktree and the token's domains), I.3 (estimate error tracked and fed
 back to the planner), D.6 and D.21 (weekly model watch scheduled, decided in the inbox), M.3,
@@ -1635,6 +1706,18 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   host token (`secret:github_token`); without them the docs fall back to the workspace with
   `repo_error` on the card. The intake re-run for a project whose proposal was rejected makes
   a new call with the same brief (pass `brief` to `POST /projects/:id/intake` to change it).
+  A creation with `intake: true` defers the G.5 scaffold to the intake's approval; a project
+  scaffolded at creation and put through the intake later gets its untouched placeholders
+  replaced by the drafts (an edited file is kept) and, with a repository, a second pull request.
+- Project docs (G.5): the critic's `docs-drift` check runs at review time, before the
+  runner's session-end status write, so at tier 2+ it still lists `docs/status.md` for a
+  specialist's diff that did not touch it even though the PM's commit lands on the same PR
+  minutes later; a check that knows about the docs port would stop the repeat finding.
+  `project.create` from chat or voice (`@forerunner/commands`) inserts the row without the
+  scaffold; only `POST /projects` scaffolds. The docs follow `repos[0]` only. Sessions that
+  open no PR each file their own small status PR, which merge in order; a session whose last
+  PR was force-pushed by its next attempt keeps the status commit, since the attempt branches
+  from `origin/<branch>`.
 - The task workflow has no `needs_human -> done` edge, so an accepted critic sign-off closes
   the task along the graph's own edges (`ready -> claimed -> in_progress -> in_review -> done`)
   in one store transaction (`syncSignoffAnswers`); a direct edge for a human's acceptance is a

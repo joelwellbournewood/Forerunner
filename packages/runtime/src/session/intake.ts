@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { type GitHost, GitOps, type RepoRef } from "@forerunner/capabilities";
-import { docFile, STANDARD_DOCS, scaffoldDocs } from "@forerunner/memory";
+import { docFile, renderStandardDoc, STANDARD_DOCS, scaffoldDocs } from "@forerunner/memory";
 import {
   type Clock,
   errorMessage,
@@ -1068,9 +1068,11 @@ export class IntakeService {
 }
 
 /**
- * Write the drafted docs under `dir` (never over an existing file), then fill the standard
- * docs the model left out from the templates (`scaffoldDocs`, which never touches a file
- * that exists). Paths are the allowlisted repo-relative posix paths of the proposal.
+ * Write the drafted docs under `dir`, then fill the standard docs the model left out from the
+ * templates (`scaffoldDocs`, which never touches a file that exists). An existing file is kept
+ * unless it is an untouched placeholder of the creation-time scaffold (spec G.5: byte-equal to
+ * `renderStandardDoc` for that path), which the draft replaces; a file anyone edited stays.
+ * Paths are the allowlisted repo-relative posix paths of the proposal.
  */
 async function writeDocSet(
   dir: string,
@@ -1079,12 +1081,13 @@ async function writeDocSet(
 ): Promise<{ written: string[]; kept: string[]; scaffolded: string[] }> {
   const written: string[] = [];
   const kept: string[] = [];
+  const info = { name: project.name, goal: project.goal, repos: project.repos };
   for (const rel of Object.keys(docs).sort()) {
     if (!allowedDocPath(rel)) {
       throw new ForerunnerError("validation", `intake: doc path not allowed: ${rel}`);
     }
     const abs = join(dir, fromPosix(rel));
-    if (existsSync(abs)) {
+    if (existsSync(abs) && !(await isScaffoldPlaceholder(rel, abs, info))) {
       kept.push(rel);
       continue;
     }
@@ -1095,12 +1098,20 @@ async function writeDocSet(
     await writeFile(abs, body.endsWith("\n") ? body : `${body}\n`, "utf8");
     written.push(rel);
   }
-  const scaffold = await scaffoldDocs(dir, {
-    name: project.name,
-    goal: project.goal,
-    repos: project.repos,
-  });
+  const scaffold = await scaffoldDocs(dir, info);
   return { written, kept, scaffolded: scaffold.created };
+}
+
+/** True when the file at `abs` is exactly what the creation-time scaffold wrote for `rel`. */
+async function isScaffoldPlaceholder(
+  rel: string,
+  abs: string,
+  info: { name: string; goal?: string; repos?: string[] },
+): Promise<boolean> {
+  const doc = STANDARD_DOCS.find((d) => docFile(d) === rel);
+  if (!doc) return false;
+  const current = normalizeNewlines(await readFile(abs, "utf8"));
+  return current === normalizeNewlines(renderStandardDoc(doc, info));
 }
 
 function sizes(p: IntakeProposal): IntakeProposalOutcome["summary"] {

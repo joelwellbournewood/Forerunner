@@ -3,12 +3,18 @@ import { tmpdir } from "node:os";
 import { fromPosix, join } from "@forerunner/platform";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  applyStatusUpdate,
   checkDocDrift,
   docFile,
   MAINTAINED_BY,
+  MAX_STATUS_SESSIONS,
   parseDocFrontmatter,
+  renderStandardDoc,
   STANDARD_DOCS,
+  STATUS_DOC,
+  type StatusUpdate,
   scaffoldDocs,
+  writeStatusUpdate,
 } from "../src/docs.ts";
 
 let repo: string;
@@ -52,6 +58,21 @@ describe("standard doc set", () => {
     expect(readme.includes("\r")).toBe(false);
   });
 
+  it("renders a doc's template with the project's name, goal and repos; scaffold writes exactly that", async () => {
+    const info = { name: "PharmaWatch", goal: "Watch pharma news.", repos: ["acme/pharma"] };
+    const readme = renderStandardDoc("README.md", info);
+    expect(readme.startsWith("---\n")).toBe(true);
+    expect(readme).toContain("# PharmaWatch");
+    expect(readme).toContain("Watch pharma news.");
+    expect(readme).toContain("- acme/pharma");
+    expect(renderStandardDoc("docs/overview.md", info)).toContain("acme/pharma");
+    await scaffoldDocs(repo, info);
+    expect(await read("README.md")).toBe(readme);
+    expect(await read("docs/decisions/README.md")).toBe(renderStandardDoc("docs/decisions/", info));
+    // Without repositories the section is left out rather than printed empty.
+    expect(renderStandardDoc("README.md", { name: "X" })).not.toContain("## Repositories");
+  });
+
   it("never touches an existing doc and is idempotent", async () => {
     await writeFile(join(repo, "README.md"), "# mine\n", "utf8");
     const first = await scaffoldDocs(repo, { name: "X" });
@@ -71,6 +92,152 @@ describe("standard doc set", () => {
       read_if: "a: b",
     });
     expect(parseDocFrontmatter("# No frontmatter\n")).toEqual({});
+  });
+});
+
+describe("status.md updates", () => {
+  const update: StatusUpdate = {
+    sessionId: "0192a1b2-0000-7000-8000-000000000001",
+    endedAt: "2026-10-20T09:30:00.000Z",
+    done: ["Add clamp"],
+    inFlight: ["Write the runbook"],
+    blocked: ["Deploy to staging"],
+    next: ["Add retries"],
+    note: "stop reason completed, spent $0.30",
+  };
+
+  it("starts from the template when the doc is missing and writes the four sections plus a dated session entry", () => {
+    const text = applyStatusUpdate(null, update);
+    expect(parseDocFrontmatter(text)["maintained-by"]).toBe(MAINTAINED_BY);
+    expect(text).toContain("# Status\n");
+    expect(text).toMatch(/## Done\n\n- Add clamp\n/);
+    expect(text).toMatch(/## In flight\n\n- Write the runbook\n/);
+    expect(text).toMatch(/## Blocked\n\n- Deploy to staging\n/);
+    expect(text).toMatch(/## Next\n\n- Add retries\n/);
+    expect(text).toContain("## Sessions\n");
+    expect(text).toContain(`### 2026-10-20 session ${update.sessionId}\n`);
+    expect(text).toContain("- Done: Add clamp\n");
+    expect(text).toContain("- In flight: Write the runbook\n");
+    expect(text).toContain("- Blocked: Deploy to staging\n");
+    expect(text).toContain("- Next: Add retries\n");
+    expect(text).toContain("- Note: stop reason completed, spent $0.30\n");
+    expect(text.includes("\r")).toBe(false);
+    expect(text.endsWith("\n")).toBe(true);
+    // The placeholders of the template are gone.
+    expect(text).not.toContain("nothing yet");
+  });
+
+  it("rewrites only the four standard sections, keeps every other section and the frontmatter, and lists newest sessions first", () => {
+    const existing = [
+      "---",
+      "maintained-by: human",
+      'read_if: "custom"',
+      "---",
+      "# Project status",
+      "",
+      "Intro paragraph the human wrote.",
+      "",
+      "## Done",
+      "",
+      "- old item",
+      "",
+      "## Risks",
+      "",
+      "- the human's own section",
+      "",
+      "## Next",
+      "",
+      "- old next",
+      "",
+      "## Sessions",
+      "",
+      "### 2026-10-19 session earlier",
+      "",
+      "- Done: something earlier",
+      "",
+    ].join("\n");
+    const text = applyStatusUpdate(existing, { ...update, note: undefined });
+    expect(text.startsWith('---\nmaintained-by: human\nread_if: "custom"\n---\n')).toBe(true);
+    expect(text).toContain("# Project status\n\nIntro paragraph the human wrote.\n");
+    expect(text).toContain("## Risks\n\n- the human's own section\n");
+    expect(text).not.toContain("old item");
+    expect(text).not.toContain("old next");
+    // Sections the doc lacked are added before the session log.
+    const order = [
+      "## Done",
+      "## Risks",
+      "## Next",
+      "## In flight",
+      "## Blocked",
+      "## Sessions",
+    ].map((h) => text.indexOf(`${h}\n`));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    const mine = text.indexOf(`### 2026-10-20 session ${update.sessionId}`);
+    const earlier = text.indexOf("### 2026-10-19 session earlier");
+    expect(mine).toBeGreaterThan(0);
+    expect(earlier).toBeGreaterThan(mine);
+    expect(text).toContain("- Done: something earlier");
+    expect(text).not.toContain("- Note:");
+  });
+
+  it("is idempotent per session, prints none for an empty list, uses the project state for the sections when given, and caps the log", () => {
+    const once = applyStatusUpdate(null, update);
+    const twice = applyStatusUpdate(once, update);
+    expect(twice).toBe(once);
+    const empty = applyStatusUpdate(null, {
+      ...update,
+      done: [],
+      inFlight: [],
+      blocked: [],
+      next: [],
+      note: undefined,
+    });
+    expect(empty).toMatch(/## Done\n\n- nothing\n/);
+    expect(empty).toContain("- Done: none\n");
+    const withState = applyStatusUpdate(null, {
+      ...update,
+      state: {
+        done: ["Earlier task", "Add clamp"],
+        inFlight: [],
+        blocked: [],
+        next: ["Add retries", "Ship"],
+      },
+    });
+    expect(withState).toMatch(/## Done\n\n- Earlier task\n- Add clamp\n/);
+    expect(withState).toMatch(/## In flight\n\n- nothing\n/);
+    expect(withState).toContain("- Done: Add clamp\n");
+    expect(withState).toContain("- In flight: Write the runbook\n");
+    let text: string | null = null;
+    for (let i = 0; i < MAX_STATUS_SESSIONS + 5; i++) {
+      text = applyStatusUpdate(text, {
+        ...update,
+        sessionId: `s-${i}`,
+        endedAt: `2026-10-${String(1 + (i % 28)).padStart(2, "0")}T00:00:00.000Z`,
+      });
+    }
+    expect((text ?? "").match(/^### /gm)).toHaveLength(MAX_STATUS_SESSIONS);
+    expect(text).toContain(`session s-${MAX_STATUS_SESSIONS + 4}`);
+    expect(text).not.toContain("session s-0\n");
+    // Titles are one line each and bounded.
+    const long = applyStatusUpdate(null, { ...update, done: [`multi\nline ${"x".repeat(300)}`] });
+    expect(long).not.toMatch(/- multi\n/);
+    expect(long).toMatch(/- multi line x+\.\.\.\n/);
+  });
+
+  it("writes docs/status.md on disk, scaffolding it first when missing, and touches no other doc", async () => {
+    const first = await writeStatusUpdate(repo, update);
+    expect(first).toMatchObject({ path: STATUS_DOC, created: true });
+    expect(await read(STATUS_DOC)).toBe(first.content);
+    expect(first.content).toContain(`session ${update.sessionId}`);
+    const drift = await checkDocDrift(repo, { changedFiles: [] });
+    expect(drift.map((d) => d.doc)).not.toContain("docs/status.md");
+    expect(drift.map((d) => d.doc)).toContain("README.md");
+    const second = await writeStatusUpdate(repo, { ...update, sessionId: "later", done: ["Ship"] });
+    expect(second.created).toBe(false);
+    expect(second.content).toContain("### 2026-10-20 session later");
+    expect(second.content).toContain(`session ${update.sessionId}`);
+    expect(await read(STATUS_DOC)).toBe(second.content);
   });
 });
 

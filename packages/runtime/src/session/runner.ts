@@ -20,7 +20,9 @@ import {
   type MemoryPort,
   type MemoryRecallResult,
   memoryBudgetOf,
+  type ProjectDocsPort,
   type SessionReviewOutcome,
+  type SessionStatusOutcome,
   type TaskReviewOutcome,
 } from "../loop/ports.ts";
 import type { SchemaSyncPort } from "../update/sync.ts";
@@ -264,6 +266,12 @@ export interface SessionRunnerDeps {
   /** Default retrieval budget when neither the project nor the start options set one. */
   memoryTokenBudget?: number;
   /**
+   * Project docs (spec G.5): the session's status update written into `docs/status.md` at
+   * its end, on the session's pull request or one of its own. Without it the critic's drift
+   * check is the only reminder.
+   */
+  docs?: ProjectDocsPort;
+  /**
    * The schema sync gate (spec M): a session is refused before its row exists while sync is
    * paused, and the peer feed (start and before every task) re-evaluates and is refused too.
    */
@@ -417,6 +425,8 @@ export class SessionRunner {
       opts.memoryTokenBudget ?? this.deps.memoryTokenBudget ?? DEFAULT_MEMORY_TOKEN_BUDGET,
     );
     const filesByTask = new Map<string, string[]>();
+    /** Branches of the pull requests this session opened or updated, in order. */
+    const prBranches: string[] = [];
     const overlapNotified = new Set<string>();
     let peerIds: string[] = [];
     const needsHuman: string[] = [];
@@ -764,6 +774,7 @@ export class SessionRunner {
             ...(task.owner_agent_id ? {} : { owner_agent_id: agent.id }),
           });
           task = await store.task.mustGet(task.id);
+          if (result.prUrl && result.branch) prBranches.push(result.branch);
           if (result.changedFiles?.length) {
             filesByTask.set(task.id, result.changedFiles);
             await emit(TASK_FILES_EVENT, { taskId: task.id, files: result.changedFiles });
@@ -992,6 +1003,44 @@ export class SessionRunner {
       stopReason,
       plan,
     });
+    // Project docs (spec G.5): the PM's status update into docs/status.md, carried by the
+    // session's pull request or a small one of its own; a session that touched no task
+    // writes nothing, and a failure is an event, never fatal.
+    let docsOutcome: SessionStatusOutcome | null = null;
+    if (project && this.deps.docs && plan && stopReason !== "plan_awaiting_approval") {
+      const touched = [completed, inReview, failed, needsHuman, retried, blockedByFindings].some(
+        (l) => l.length > 0,
+      );
+      if (!touched) {
+        await emit("docs.status_skipped", { reason: "no task changed state" });
+      } else {
+        const titleOf = (id: string) => plan.items.find((i) => i.taskId === id)?.title ?? id;
+        try {
+          docsOutcome = await this.deps.docs.writeSessionStatus({
+            project,
+            session,
+            update: {
+              sessionId: session.id,
+              endedAt: clock.nowIso(),
+              done: completed.map(titleOf),
+              inFlight: [...inReview, ...retried].map(titleOf),
+              blocked: [...needsHuman, ...failed, ...blockedByFindings].map(titleOf),
+              next: skipped.map(titleOf),
+              note: `stop reason ${stopReason}; spent $${(spent / 1e6).toFixed(2)}`,
+            },
+            prBranch: prBranches.at(-1) ?? null,
+          });
+          await emit("docs.status_written", { ...docsOutcome });
+        } catch (e) {
+          this.logger.warn("status update not written", {
+            sessionId: session.id,
+            projectId: project.id,
+            error: errorMessage(e),
+          });
+          await emit("docs.status_failed", { warning: errorMessage(e) });
+        }
+      }
+    }
     const handoff = {
       done: completed,
       in_flight: inReview,
@@ -1011,6 +1060,7 @@ export class SessionRunner {
       next: skipped,
       stop_reason: stopReason,
       spent_usd_micro: spent,
+      ...(docsOutcome ? { docs: docsOutcome } : {}),
     };
     // Memory (spec G, E.5): what this session learned goes into the agent's private memory:
     // lessons the specialists spelled out, critic findings resolved by rework, and decisions
