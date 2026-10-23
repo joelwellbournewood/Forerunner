@@ -18,6 +18,16 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-24 (item w3-t1-mode-off reviewed and fixed)
+- Independent review of the T.1 build (`docs/status/reviews/w3-t1-mode-off.md`, `## Review`):
+  verdict revise, three findings, all fixed on the branch. High: `email.mode.set` (chat,
+  voice, the phone, the agent's `email_mode_set` tool) wrote the settings row past the store,
+  so a change to off kept commands on with no audit row or notification; the daemon now hands
+  it to the settings store through `CommandPorts.emailMode` (ADR 0081 amended), the card says
+  commands go off and the undo turns them back on. Low: a running cloud-runner watcher stands
+  down with the reason in `/health` when commands go out of force under it; the email page's
+  commands toggle follows the stored value and the mode note says commands went off.
+
 ### 2026-10-23 (item w3-t1-mode-off: T.1 done, ADR 0081)
 - Email commands at sending mode off, one reading decided, enforced and tested (ADR 0081):
   commands need a sending mode other than off. The settings store refuses turning them on at
@@ -482,7 +492,7 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
-   w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1; built on its branch, ADR 0081, awaiting review), w3-misc-replay-ceiling (scenario 9's replay
+   w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1; built on its branch, ADR 0081, reviewed and fixed 2026-10-24, awaiting merge), w3-misc-replay-ceiling (scenario 9's replay
    `it.todo`, the executor's ceiling rung). Then an independent review of each of the ten
    items merged on 2026-10-23 without one (w4-install-identity, w4-private-memory,
    w4-android-signing, w2-a2-intake, w2-g5-docs, w2-g6-promotion, w2-a4-sources,
