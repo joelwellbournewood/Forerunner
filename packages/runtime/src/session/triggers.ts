@@ -30,6 +30,11 @@ export interface StartRequest {
    * while it is still that plan; a bare "approved" is never carried here.
    */
   planApproved?: string;
+  /**
+   * The session's budget cap; unset, the project's cap applies. A start bound to an approved
+   * plan carries the cap of the session that filed it, so the plan is cut as the human saw it.
+   */
+  budgetUsdMicro?: number;
 }
 
 export interface SchedulerDeps {

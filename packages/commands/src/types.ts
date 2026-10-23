@@ -91,6 +91,12 @@ export interface CommandPorts {
   costlySessionUsdMicro?: number;
   /** Humans who share a project with the asking human. Default: project.settings.shared_with. */
   sharedWith?(projectId: string, humanId: string): Promise<string[]>;
+  /**
+   * Called after `request.answer` recorded an answer: the daemon applies it at once (its
+   * `syncApprovals`: an approved plan starts, a sign-off closes the task), as its answer
+   * route does, so an answer said in chat or voice acts like one given in the inbox.
+   */
+  requestAnswered?(requestId: string): Promise<void>;
 }
 
 export interface CommandContext {
