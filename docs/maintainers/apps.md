@@ -257,11 +257,16 @@ into `pending_approval`, and emit `extension.changed`; `POST /updates/apply` emi
 daemon (one card and one change log row per request, low risk acts, medium needs a yes or a
 tap, high needs `{ answer: "device" }`, `confirm: "tap"` runs a medium change at once, the
 `SOURCE_OF` mapping `text → chat`, `voice → voice`, `phone → chat`, `ui → ui`, undo rows).
-`state.fastMode` (project id → flag, empty by default so the fixtures' row counts stay) adds
-one `project.fast_mode` row per listed project to `/settings` with the runtime's
-`fastModeDescription()`, and `settings.set` with `fast_mode` answers the daemon's card (what
-"Opus fast mode for <project>", the new value with `fastModeEffect(value)`, the sentence) and
-flips the flag on apply. Run directly
+`state.fastMode` maps a project id to its flag, with `null` for a flag never set; it is empty
+by default, so the fixtures' row counts stay. It adds one `project.fast_mode` row per listed
+project to `/settings`: the value is off unless `true`, and the description is the runtime's
+`fastModeDescription()`. `settings.set` with `fast_mode` answers with the daemon's card:
+- what: "Opus fast mode for <project>";
+- the old value, "unset" for `null`, as the daemon's card says;
+- the new value with `fastModeEffect(value)`;
+- the sentence.
+
+It flips the flag on apply. Run directly
 (`pnpm exec tsx test/fake-daemon.ts`) it reads `FAKE_DAEMON_PORT`, `FAKE_DAEMON_TOKEN` and
 `FAKE_DAEMON_EVENT_DELAY_MS`.
 
@@ -340,7 +345,8 @@ flag off; the dialog's "project default (tier N)" option from the card, no `risk
 posted body unless picked and the picked one sent, a card without the field naming no number),
 `fast-mode` (D.20: the Settings card with the effect and the surcharge both ways and each
 project's state, no card without the rows, Turn on through the change card with the on effect,
-a yes and the sentence, Turn off with the off effect, the row mapped to `settings.set` with a
+a yes and the sentence, Turn off with the off effect, a never-set flag reading off with
+"unset" as the card's old value and in the sentence, the row mapped to `settings.set` with a
 boolean),
 `reviews` (tones, trend, newest first,
 findings, verdict filter, missing route), `tasks`, `session`, `inbox` (sorting, options,

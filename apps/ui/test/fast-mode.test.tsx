@@ -106,6 +106,27 @@ describe("Settings: Opus fast mode (D.20)", () => {
     expect(harness.daemon.state.fastMode.proj_beacon).toBe(false);
   });
 
+  it("a project whose flag was never set reads off and its card says unset, as the daemon's does", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.fastMode = { proj_atlas: null };
+    renderApp("/settings", harness);
+    const card = await screen.findByTestId("fast-mode-card");
+    const atlas = (await within(card).findAllByTestId("fast-mode-row"))[0] as HTMLElement;
+    expect(within(atlas).getByTestId("fast-mode-state")).toHaveTextContent("off");
+    await user.click(within(atlas).getByTestId("fast-mode-toggle"));
+    const dialog = await screen.findByTestId("setting-dialog");
+    expect(within(dialog).getByTestId("setting-value")).toHaveValue("true");
+    await user.click(within(dialog).getByTestId("setting-apply"));
+    const pending = await within(dialog).findByTestId("command-pending");
+    expect(within(pending).getByTestId("card-old")).toHaveTextContent("unset");
+    await user.click(within(pending).getByTestId("command-yes"));
+    const done = await within(dialog).findByTestId("command-done");
+    expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
+      `Set Opus fast mode for Atlas from unset to true: ${ON}. Undo.`,
+    );
+  });
+
   it("maps the row to settings.set with a boolean value, like every SETTING_SPECS key", () => {
     const row = {
       key: FAST_MODE_KEY,

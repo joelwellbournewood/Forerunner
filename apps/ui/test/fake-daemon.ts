@@ -188,9 +188,11 @@ export interface FakeDaemonState {
   /**
    * Opus fast mode per project id (spec D.20). A project listed here gets a
    * `project.fast_mode` row on `/settings`, as the daemon lists one for every project; the
-   * default is none, so the fixtures' other settings tests keep their rows.
+   * default is none, so the fixtures' other settings tests keep their rows. `null` is a project
+   * whose flag was never set: the row reads off and the card's old value is "unset", as the
+   * daemon's `settings.set` card says.
    */
-  fastMode: Record<string, boolean>;
+  fastMode: Record<string, boolean | null>;
 }
 
 interface PendingCommand {
@@ -927,7 +929,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         key: "project.fast_mode",
         scope: "project",
         scopeId: projectId,
-        value: on,
+        value: on === true,
         description: fastModeDescription(),
         risk: "medium",
       });
@@ -1739,9 +1741,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         // The daemon's card for this key (SettingSpec.effect, ADR 0051 item 4): the effect
         // and the surcharge for the direction asked, in the change card and the sentence.
         const value = params.value;
-        const before = state.fastMode[project.id] ?? false;
+        const before = state.fastMode[project.id] ?? null;
+        const shown = before === null ? "unset" : String(before);
         const effect = fastModeEffect(value);
-        const sentence = `Set Opus fast mode for ${project.name} from ${before} to ${value}: ${effect}. Undo.`;
+        const sentence = `Set Opus fast mode for ${project.name} from ${shown} to ${value}: ${effect}. Undo.`;
         return {
           name,
           params,
@@ -1750,7 +1753,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
             {
               command: name,
               what: `Opus fast mode for ${project.name}`,
-              oldValue: String(before),
+              oldValue: shown,
               newValue: `${value} (${effect})`,
               scope: "project",
               sentence,
