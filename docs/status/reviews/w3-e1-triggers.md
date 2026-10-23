@@ -1,5 +1,3 @@
-# w3-e1-triggers: CI results and PR comments start sessions
-
 ## Build report
 
 Item `w3-e1-triggers`, stage BUILD, branch `wave/w3-e1-triggers`. The starting commit is
@@ -98,30 +96,110 @@ finished it. Requirement: E.1 (E.2 and E.3 are context only). ADR: 0075.
 
 ### Commands run and results
 
-All commands were run from `/workspace/repo`.
+Every command below was run from `/workspace/repo`, on HEAD, after the commit messages were rewritten (see "Commit history" below). The output is copied verbatim, cut to its last lines, with ANSI colours removed.
 
-- `pnpm install --frozen-lockfile`: done.
-- `pnpm typecheck`: passes (tsc for the node packages, then each app).
-- `pnpm lint`: exit 0. It reports 59 warnings, all in files this item does not touch; my files
-  are clean under `biome check`.
-- `pnpm lint:paths`: ok (988 files).
-- `pnpm exec vitest run --project unit packages/runtime/test`: 116 files passed, 1002 tests
-  passed, 1 skipped.
-- `pnpm exec vitest run --project unit packages/capabilities/test testenv/test services/state-api/test`:
-  56 files passed, 654 tests passed. state-api is included because its mirror uses
-  `listPullRequestComments`.
-- `pnpm exec vitest run --project integration packages/runtime/test packages/capabilities/test testenv/test`:
-  3 files passed and 1 skipped; 21 tests passed and 5 skipped. The skips are the sandbox tests,
-  which need Docker, and one phase-2 case; both are unrelated to this item.
-- New files alone: `githost-watcher.test.ts` 13 passed, `githost-wiring.test.ts` 5 passed,
-  `githost-feedback.test.ts` 3 passed.
-- `node scripts/docs-check.mjs --base c4a0e85`: ok (19 files). Plain
-  `node scripts/docs-check.mjs` exits 0 with "nothing to check", because there is no
-  `origin/main` in this clone.
-- `node scripts/link-check.mjs`: ok (106 files).
-- `pnpm check`: exit 0. That covers lint, path lint, typecheck, the whole unit suite (272 files
-  passed, 2694 tests passed, 4 skipped, 1 todo), the docs check, the link check and the secret
-  scan (clean).
+```
+$ pnpm install --frozen-lockfile
+Done in 8.5s using pnpm v10.28.0
+```
+
+```
+$ pnpm typecheck
+apps/desktop typecheck$ echo 'no TypeScript in the desktop shell; see @forerunner/ui'
+apps/ui typecheck$ tsc -p tsconfig.json --noEmit
+apps/desktop typecheck: no TypeScript in the desktop shell; see @forerunner/ui
+apps/mobile typecheck: no TypeScript in the mobile shell; see @forerunner/ui
+apps/mobile typecheck: Done
+apps/desktop typecheck: Done
+apps/approvals-web typecheck: Done
+apps/ui typecheck: Done
+exit=0
+```
+
+`pnpm lint` reports 59 warnings, none of them in a file this item touches. I checked with `biome check --max-diagnostics=200`; the only githost-named hit is the existing file `packages/capabilities/test/security-cloudflare-githost.test.ts`.
+
+```
+$ pnpm lint
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 39.
+Checked 1162 files in 2s. No fixes applied.
+Found 59 warnings.
+exit=0
+```
+
+```
+$ node scripts/docs-check.mjs --base c4a0e85bfe5a3a8d29462c515ec01b754284b930
+docs-check: ok (20 files).
+exit=0
+```
+
+The new test files:
+
+```
+$ pnpm exec vitest run --project unit packages/runtime/test/githost-watcher.test.ts packages/runtime/test/githost-wiring.test.ts packages/capabilities/test/githost-feedback.test.ts
+ ✓  unit  packages/capabilities/test/githost-feedback.test.ts (3 tests)
+ ✓  unit  packages/runtime/test/githost-wiring.test.ts (5 tests)
+ ✓  unit  packages/runtime/test/githost-watcher.test.ts (13 tests)
+ Test Files  3 passed (3)
+      Tests  21 passed (21)
+```
+
+The suites of every package touched (runtime, capabilities, testenv), plus state-api, whose mirror calls `listPullRequestComments`:
+
+```
+$ pnpm exec vitest run --project unit packages/runtime/test
+ Test Files  116 passed (116)
+      Tests  1002 passed | 1 skipped (1003)
+exit 0
+
+$ pnpm exec vitest run --project unit packages/capabilities/test testenv/test services/state-api/test
+ Test Files  56 passed (56)
+      Tests  654 passed (654)
+exit 0
+
+$ pnpm exec vitest run --project integration packages/runtime/test packages/capabilities/test testenv/test
+ Test Files  3 passed | 1 skipped (4)
+      Tests  21 passed | 5 skipped (26)
+exit 0
+```
+
+The integration skips are `sandbox.integration.test.ts` (it needs a Docker daemon) and one case of `phase2-gate`. Neither is related to this item.
+
+```
+$ pnpm check
+check-paths: ok (988 files).
+ Test Files  272 passed (272)
+      Tests  2694 passed | 4 skipped | 1 todo (2699)
+link-check: ok (106 files).
+secret-scan: clean (1412 files).
+exit 0
+```
+
+None of these runs printed "No test files found".
+
+### Export and `git apply --check` against a clean checkout of the starting commit
+
+The starting commit is `c4a0e85bfe5a3a8d29462c515ec01b754284b930`; `/tmp/start-sha` holds it, and so does `/mnt/session/outputs/w3-e1-triggers.start`. Before this report was committed, I built the patch from every commit then on the branch (the four code and docs commits plus the first version of this report) and applied it to a fresh worktree of the starting commit:
+
+```
+$ git worktree add /tmp/verify c4a0e85bfe5a3a8d29462c515ec01b754284b930 && cd /tmp/verify && git apply --check /tmp/pre.patch
+exit=0
+$ git apply --stat /tmp/pre.patch | tail -1
+ 20 files changed, 1658 insertions(+), 93 deletions(-)
+```
+
+`exit=0` with no other output means the patch applies cleanly. After this report was committed, I ran the export again in the same way and repeated the check on the final patch:
+
+```
+$ git format-patch --stdout $(cat /tmp/start-sha)..HEAD > /mnt/session/outputs/w3-e1-triggers.patch
+$ git worktree add /tmp/verify $(cat /tmp/start-sha) && cd /tmp/verify && git apply --check /mnt/session/outputs/w3-e1-triggers.patch
+```
+
+I also ran `git log --oneline $(cat /tmp/start-sha)..HEAD` and confirmed it lists exactly this item's commits, with nothing from the base branch.
+
+### Commit history
+
+Every commit ends with the trailer `Claude-Build: managed-agent w3-e1-triggers build`. The first export used `... BUILD` in upper case. I corrected the messages of this item's own commits with `git filter-branch --msg-filter` over `c4a0e85..HEAD`; this changed messages only, and no file contents. The base branch was not merged in, rebased onto, or touched.
 
 ### Left open, and why
 
