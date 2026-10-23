@@ -53,7 +53,7 @@ export const RunnerConfigSchema = z.object({
   stateUrl: storeUrl,
   stateSchema: z.string().trim().min(1).optional(),
   runnerId,
-  /** Human id or email of the person this runner serves; the first human when absent. */
+  /** Human id or email of the person this runner serves; the store's only human when absent (required once it holds several, ADR 0082). */
   human: z.string().trim().min(1).optional(),
   /** Agent id or name; the human's first principal agent when absent. */
   agent: z.string().trim().min(1).optional(),
@@ -218,7 +218,7 @@ export function describeConfig(cfg: RunnerConfig): Record<string, unknown> {
     runnerId: cfg.runnerId,
     stateUrl: redactStoreUrl(cfg.stateUrl),
     stateSchema: cfg.stateSchema ?? null,
-    human: cfg.human ?? "(first)",
+    human: cfg.human ?? "(the store's only human)",
     agent: cfg.agent ?? "(first principal)",
     vaultPath: cfg.vaultPath,
     unlock: cfg.unlock,

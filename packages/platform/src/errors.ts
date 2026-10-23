@@ -16,6 +16,7 @@ export type ErrorCode =
   | "claim_conflict"
   | "version_conflict"
   | "not_found"
+  | "identity_ambiguous"
   | "validation"
   | "brief_incomplete"
   | "findings_open"

@@ -297,8 +297,14 @@ subscription source exists, the plan allowance (`--plan-usd-monthly`,
 written to `config.json` as `subscription.planUsdMonthly` when given; a bad flag or
 environment value is a `validation` error before any credential is stored); the summary's
 "Billing sources:" line names the sources the next start registers and the allowance with its
-origin; `config.json` never holds a secret), `status` (directories, config, secret names only), `doctor`
-(prerequisites), `kill` (writes a kill request file), `dirs`, `daemon`, `audit export` (the
+origin; `--email <address>` and `--human-id <id>` name the human this install binds to on a
+shared store, written to `config.json` as `humanEmail` (lower case, format-checked) and
+`humanId` and kept by later runs; the summary's "Identity:" line says what the next start
+binds to, ADR 0082; `config.json` never holds a secret), `status` (directories, config, secret names only), `doctor`
+(prerequisites, and on a set-up install the human the next daemon start binds to, from the
+configured store without creating anything: `identity` ok with the human and its selector,
+"created at the daemon's first start", or failing with the store's humans and the remedies
+when the start would be `identity_ambiguous` or `not_found`), `kill` (writes a kill request file), `dirs`, `daemon`, `audit export` (the
 audit log to a file, in the table below). The kill request file
 in the runtime directory is polled by `KillFileWatcher` in every running runtime, so the CLI,
 the tray and the app can stop sessions across processes on both platforms.
@@ -656,12 +662,34 @@ port the chat is read-only.
 (Anthropic when a credential is in the vault, the fake provider under `--provider fake`,
 otherwise a provider that fails every call with `provider_auth`), the specialist registry,
 the session runner, scheduler and conversation agent, and returns a `RuntimeApp` with a
-`close()`. It also bootstraps identity on first run (one human, one principal agent) and seeds
+`close()`. It binds the install to its human (below) and seeds
 the billing sources from the vault (both when both credentials exist, ADR 0044). `DynamicCaps`
 turns a human's monthly cap and a project's budget into per-call caps so the cap checker never
 runs with stale limits, and adds the plan level for a subscription run from the billing facts
 the hooks pass. There is exactly one wiring: the daemon, the CLI and the tests all go through
 it (ADR 0029).
+
+**Identity (`src/daemon/identity.ts`, ADR 0082).** On a shared store (every PC's daemon is a
+direct client of the shared Postgres, ADR 0024) the `human` table holds every member, so the
+install names its own: `lookupInstallHuman` resolves the selectors in order, the first present
+deciding: `ComposeOptions.identity.humanId` (the cloud runner passes the human it resolved),
+`FORERUNNER_HUMAN`, then `config.json`'s `humanId` (written by `fr setup --human-id` or
+recorded by the daemon at its first bind); each is an id or an email (the id tried first, the
+email case-insensitively), and one that names nobody is `not_found`. Without these, an email
+(`identity.email`, else `config.json`'s `humanEmail` from `fr setup --email`) finds the human
+or names the one created at this start (the joining PC). Without any selector the store must
+hold at most one human: none is the first run (created from `humanName` and `timezone`), one
+is a solo install (`source: "only"`), more is `identity_ambiguous` and nothing is created or
+started, whatever the store's dialect (two profiles can share a `sqlite:` file). A daemon
+started from its `config.json` that bound by email, as the only human or by creating one
+records the id there (`rememberBoundHuman`), so a later email change never rebinds it; a
+binding from `FORERUNNER_HUMAN` or the caller is for that start only. `RuntimeApp.identity`
+carries `{ humanId, source, selector }`. The agent is picked among the human's own principals
+(`pickPrincipal`: `agentName` / `FORERUNNER_AGENT_NAME` by name when it matches, else the
+first; created with that name only when the human has none), never another human's; the
+critic agent is per owner as before. `fr doctor` runs the lookup on the configured store
+without creating anything and prints who the next start binds to, or the humans and the
+remedies when it would be refused.
 
 **Modules composed (phases 6 and 7).** In order, each with its ports filled from what exists
 already:
@@ -1182,6 +1210,24 @@ without a tier (0 under the flag, 1 without, a named tier kept, an out-of-range 
 `POST /projects/:id/plan` for a small and a phased project, the second plan reusing the
 milestone, refusals as 409 `conflict` with nothing written and 404 for an unknown project.
 
+`compose-identity.test.ts` (triage 2026-10-23 P0 #2, ADR 0082, two installs on one
+`sqlite:<file>` store as two PCs on the shared Postgres): two humans in one store and two
+`composeRuntime` calls, one by `identity.humanId`, one by `FORERUNNER_HUMAN` as an email, each
+bound to its own human, principal and critic agent, a restart finding the same rows; no
+selector on a store with two humans refused `identity_ambiguous` with nothing written; a
+selector naming nobody `not_found`; `config.json` `humanId` then `humanEmail` (case does not
+matter), an unknown email creating the joining PC's human once and finding it at the next
+start; the environment ahead of `config.json`; the agent among the human's own principals by
+name, another human's name never crossing over; `lookupInstallHuman` and
+`describeIdentityCheck` for `fr doctor` (ambiguous with the humans listed, bound, an email
+not yet in the store, a missing id) creating nothing; on a single-human store the first run
+creating the human (`source: "created"`) and the next start binding without a selector
+(`"only"`); the bound id recorded in `config.json` when the daemon started from it, never
+from an environment override, and read back ahead of the email; `runSetup` persisting
+`humanEmail` and `humanId`, keeping them across runs and refusing a malformed email.
+`cli.test.ts` spawns `fr setup --email` / `--human-id` and `fr doctor --json` (the `identity`
+check naming an unknown configured id and the remedy).
+
 `security-daemon.test.ts` and `security-command-actor.test.ts` (security review 2026-10-20,
 ADR 0011, 0025, 0030, 0041): every route but `/health` needs the exact bearer (a prefix, a
 suffix, a query token or a Basic header is 401; the query token only on the SSE GETs),
@@ -1388,6 +1434,11 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 ## Known issues
 
+- `fr setup --email` on a solo install whose human was created with an empty email (every
+  install before ADR 0082) makes the next start create a second human, since the email
+  matches nobody and the daemon never adopts a row the selector does not name; `fr doctor`
+  says so beforehand and `fr setup --human-id <id>` binds to the existing row. Once a daemon
+  has started from its `config.json` the recorded `humanId` wins and the email is not consulted.
 - A level 0 or 1 session that files its plan ends `paused`, which `session.active()` counts as
   active, so the agent cannot start again until a human closes it; the `plan:<session>` approval
   starts nothing on the desktop daemon (BLOCKERS.md, the J.6 / J.7 row).

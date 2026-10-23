@@ -267,11 +267,50 @@ describe("fr CLI", { timeout: 180_000 }, () => {
     expect(readInstallRecord(dirs)).toEqual(current);
   });
 
-  it("doctor reports prerequisites", async () => {
+  it("setup --email and --human-id persist the install's identity selector", async () => {
+    const r = await fr("setup", "--non-interactive", "--email", "J@Example.test");
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("Identity: j@example.test");
+    const cfg = JSON.parse(readFileSync(join(home, "config", "config.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(cfg.humanEmail).toBe("j@example.test");
+    expect(cfg.humanId).toBeUndefined();
+    const bound = await fr("setup", "--non-interactive", "--human-id", "h-123");
+    expect(bound.code).toBe(0);
+    expect(bound.stdout).toContain("Identity: bound to human h-123");
+    const again = JSON.parse(readFileSync(join(home, "config", "config.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(again).toMatchObject({ humanEmail: "j@example.test", humanId: "h-123" });
+    const bad = await fr("setup", "--non-interactive", "--email", "nope");
+    expect(bad.code).not.toBe(0);
+    expect(`${bad.stdout}${bad.stderr}`).toContain("not an email address");
+  });
+
+  it("doctor reports prerequisites and the human the install binds to", async () => {
     const r = await fr("doctor", "--json");
-    const checks = JSON.parse(r.stdout) as { name: string; ok: boolean }[];
+    const checks = JSON.parse(r.stdout) as { name: string; ok: boolean; detail: string }[];
     expect(checks.find((c) => c.name === "node")?.ok).toBe(true);
     expect(checks.find((c) => c.name === "git")?.ok).toBe(true);
+    // The config from the setups above names human h-123, which the store does not hold yet.
+    const identity = checks.find((c) => c.name === "identity");
+    expect(identity?.ok).toBe(false);
+    expect(identity?.detail).toContain("h-123");
+    expect(identity?.detail).toContain("FORERUNNER_HUMAN");
+    // The environment override is read the way the daemon reads it.
+    const over = await run([process.execPath, TSX, CLI, "doctor", "--json"], {
+      env: { ...env(), FORERUNNER_HUMAN: "" },
+      allowFailure: true,
+      timeoutMs: 60_000,
+    });
+    expect(
+      (JSON.parse(over.stdout) as { name: string; ok: boolean }[]).find(
+        (c) => c.name === "identity",
+      )?.ok,
+    ).toBe(false);
   });
 
   it("kill writes a request that a running runtime picks up", async () => {

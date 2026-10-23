@@ -9,6 +9,7 @@ export * from "./conversation/agent.ts";
 export * from "./daemon/adapters.ts";
 export * from "./daemon/api-types.ts";
 export * from "./daemon/compose.ts";
+export * from "./daemon/identity.ts";
 export * from "./daemon/restart.ts";
 export * from "./daemon/sandbox-port.ts";
 export * from "./daemon/server.ts";

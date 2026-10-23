@@ -284,6 +284,7 @@ export function daemonFor(
     conversation: deps.conversation,
     gitHost: install.github,
     human: { id: humanId, name: install.human.name, timezone: install.human.timezone },
+    identity: { humanId, source: "option", selector: humanId },
     agent: { id: agentId, name: install.agent.name },
     billingSourceId: `bs-${install.name.toLowerCase()}`,
     chfPerUsd: () => SCENARIO_CHF_PER_USD,
