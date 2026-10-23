@@ -74,6 +74,8 @@ Status: accepted | superseded by NNNN
 | 0057 | Opus fast mode per project: the speed parameter on the same model id, variant price rows named `<id>-fast`, API-only sources |
 | 0058 | Project docs: in the repository by pull request, the status doc rewritten per session |
 | 0059 | Cross-project promotion in the loop: who reviews a proposal and when, the offer rule, what an accepted offer does |
+| 0060 | Monthly jobs: the scheduler's monthly kind, where the calibration and handover reports live, and the stuck-place rule |
+| 0062 | Merge after an accepting review: an unattended `merge_pr` call behind the hooks, the checks rule in the tool, and what is never merged automatically |
 | 0065 | Shared secrets: wrapped to the named agents' install keys, both humans approve, served by reference |
 | 0066 | Settings -> Capabilities -> Email: the capability's routes on the daemon, a page per agent, the full-discretion confirmation as the page's own step, the command audit read from the shared state |
 | 0068 | Runner unlock card: the device auto-answers only inside the window it set, the biometric prompt still runs, a key bridge returns only the wrapped answer (the daemon on the desktop, the Keystore store on Android) |
@@ -81,4 +83,3 @@ Status: accepted | superseded by NNNN
 | 0082 | Install identity on a shared store: an install names its human; the store's first row is never it |
 | 0083 | Private memory next to a shared state: a local SQLite index routed by scope, and the Postgres adapter's refusal |
 | 0084 | Email routes: a mount that identifies humans without an identity port fails closed per request, and an owner-check refusal is an audited 403 that stands without its row |
-| 0062 | Merge after an accepting review: an unattended `merge_pr` call behind the hooks, the checks rule in the tool, and what is never merged automatically |
