@@ -1005,7 +1005,22 @@ scope is marked `stale` on the card and proposed again. The memory views (`list`
 `pin`, `remove`) back the daemon's `/memory` routes and stop at the human boundary: a private
 scope or row of another human's agent answers `not_found`; `remove` retires the row and
 deletes its file. Events: `memory.loaded`, `memory.over_budget`, `memory.load_failed`,
-`memory.recorded`, `memory.lessons_rejected`, `memory.record_failed`.
+`memory.recorded`, `memory.lessons_rejected`, `memory.record_failed`. `MemoryRecallRequest`
+takes an optional `countTokens` so a caller measures the budget with its provider's counter
+(the conversation agent does).
+
+A lesson the human states in chat or voice (spec O.2, [ADR 0061](../decisions/0061-chat-retrieval-budgets-and-stated-lessons.md))
+reaches memory through the command registry: the daemon passes `memoryCommandPort(memory)` as
+`CommandPorts.memory`, so `memory.record` (commands.md) calls `MemoryLoop.recordStated`. It
+refuses an agent that is not a principal (or the conversation agent) owned by the asking human
+(`autonomy_insufficient`), runs the same injection screen as every lesson candidate (a match is
+`injection_suspected`, quoted back as "Not done: not recorded: ..."), and writes through
+`rememberFromSession` into that agent's private memory with the human as `author_human`, the
+command's source (`human:<id>;chat:<conversation session>`) and `STATED_LESSON_CONFIDENCE`
+(0.8); the memory lint's reason (a text under 20 characters) comes back the same way. The result
+carries the lesson id, the stored text (read back in the sentence) and, for a near-duplicate
+merge, the superseded row; `forgetStated` (the undo) retires the lesson, removes its file and
+reactivates the superseded row, for the owning human only.
 
 Cross-project sharing (spec G.6, [ADR 0059](../decisions/0059-cross-project-promotion-in-the-loop.md)).
 `MemoryLoop.record` proposes every critic or project-level shared lesson it records that is
@@ -1137,6 +1152,10 @@ commit. Without a repository the file under the workspace is updated. The result
 `handoff.docs` on the session row; a failure is `docs.status_failed` with the message and
 the session ends as it would have. Not scaffolded from here: a project created by the
 `project.create` command (chat, voice) in `@forerunner/commands` (Known issues).
+`docsDirFor(project)` is where the chat's docs search reads the set (spec J.1, ADR 0061),
+without cloning or fetching: a local folder the project is linked to (an absolute `repos[0]`,
+spec A.4), else this install's docs clone `<worktreeRoot>/<project id>` (made by the scaffold
+and the status updates), else the workspace; null when none exists yet.
 
 ### Conversation agent (`src/conversation/agent.ts`)
 
@@ -1160,6 +1179,31 @@ global stops never cut the human's channel.
 Transcripts are events on a per-agent conversation session (`chat.human`, `chat.reply`,
 `chat.confirmed`, `chat.cancelled`, `chat.forwarded`, and the executor's `change` events).
 Without a command port the chat is read-only.
+
+**Docs search and lessons in the context (spec J.1, O.2, [ADR 0061](../decisions/0061-chat-retrieval-budgets-and-stated-lessons.md)).**
+On the model path `context()` adds to the volatile first message (never to the cached system
+prompt: they change with every question) what `retrieve()` finds for the human's words: the
+principal's lessons through `ConversationDeps.memory.recall` (the daemon's `MemoryLoop`, the
+principal grant: its own private scope plus shared, for the active project and global ones),
+only when the agent is a principal or conversation agent owned by the asking human, so nothing
+of another human's memory is read; and the project's best doc sections through
+`searchDocs` (memory.md, "Docs search") in the directory `ConversationDeps.docsDir(projectId)`
+names (the daemon: `ProjectDocs.docsDirFor`), wrapped in the data envelope
+(`wrapUntrusted(..., "repo_file", "project docs")`; an instruction-like passage is logged)
+with each section labelled `[<path> > <heading>]` so the answer can cite it. Each part has its
+own budget, `ConversationDeps.retrieval` (`docsMaxTokens`, default `DEFAULT_CHAT_DOCS_TOKENS`
+1,200; `lessonsMaxTokens`, default `DEFAULT_CHAT_LESSONS_TOKENS` 600; 0 turns a part off),
+measured with the provider's `countTokens` on the exact text sent: the lessons block is
+recalled under the budget with that counter and dropped if it still measures over; the docs are
+searched under the budget, the wrapped block measured, and searched again with the overshoot
+taken off (at most three tries) until the envelope fits, never sent over. A failure costs the
+context, never the answer (`chat lessons not retrieved`, `chat docs not searched` warnings).
+`ChatReply.sources` (`docs`: path and heading; `lessons`: ids) and the `chat.reply` event
+(`sources`, and `retrieval` with `budget`, `tokens`, `hits`, `dropped` per part) say what the
+model was given. The built-in prompt asks to name the bracketed path and to record a stated
+lesson with the memory tool; a lesson the human states by pattern ("remember that ...",
+"lesson: ...") never reaches the model: the parser makes it `memory.record`, which acts at once
+(low risk) and reads the stored text back (see "Memory" under the core loop).
 
 **During a live session (spec O.9, ADR 0078).** Once the deterministic paths have had their
 turn (a yes or no to a pending card, "undo", a parsed command, a parser question, text carrying
@@ -1999,6 +2043,25 @@ the PR on the host with an allowed `audit_log` row, at level 2 it writes the
 both. `hooks.test.ts` has the unattended rule itself (refused at 2 and for an
 always-human class at 4 without asking, allowed at 3, an attended call still asks).
 
+`conversation.test.ts`, "chat context: project docs search and the principal's lessons" (spec
+J.1, O.2, ADR 0061; the agent over the registry with a `MemoryLoop` as both the recall port and
+the registry's memory port, a temp checkout as the docs dir): a question about a doc gets the
+matching section in the volatile message inside the data envelope with its
+`[docs/runbook.md > Runbook > Deploy]` label, a section sharing no term left out, nothing in the
+system prompt, the scripted answer naming the path, `sources` and the `chat.reply` event listing
+it; a 61-file docs tree cut to `docsMaxTokens: 500` measured with the provider's counter on the
+envelope as sent, the event's `tokens` equal to that count and `dropped > 0`; the relevant
+lesson of the principal in the context and an unrelated one not, under the 600-token default;
+"remember that ..." recorded without a model call as a private lesson of the principal for the
+active project with the human and the conversation session as source, read back in the
+sentence, in the change log, in the context of the next question and retired by "undo"; the
+model's `memory_record` tool recording a lesson stated in other words; another human's private
+lesson on the same project never in the context, a turn naming that human's agent retrieving no
+lessons and refused when it tries to record into it. `loop-docs.test.ts` also proves
+`docsDirFor` (nothing before a scaffold and nothing cloned to find out, the workspace, the docs
+clone, a linked folder first); `docs-scaffold.test.ts` drives the composed daemon's `/chat` to
+search a project's workspace docs and record a stated lesson into `rt.memory`.
+
 `loop-docs.test.ts` (spec G.5, ADR 0058; the runner with `ProjectDocs` on a `MemoryGitHost`
 whose repository clones from a local bare repo): a session whose executor pushed a branch and
 opened its PR gets `docs/status.md` scaffolded and committed on that branch (the session id,
@@ -2425,6 +2488,14 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 - The conversation agent, intake planning and the model watch's evals do not read the
   `fast_mode` flag. A human who adopts an Opus rung for planning or chat gets standard-speed
   calls there (ADR 0057).
+- Chat retrieval (ADR 0061): the docs search reads and ranks the doc set on every model turn
+  (no index or cache; bounded by the memory package's file caps) and ranks lexically, so a
+  question worded unlike the doc finds nothing. The docs clone `docsDirFor` reads is whatever
+  branch the last scaffold or status update checked out; it is not fetched for the chat. A
+  project linked to a host repository that was never scaffolded on this install has no docs
+  dir until the first scaffold or status update. The registry's `conversation-agent` prompt
+  (`evals/registry`, synced from the registry repository) does not yet mention the cited paths
+  or the memory tool; the docs block header and the lessons header say it to the model.
 - B.5 history: a milestone or session row holds the reason and author of its *last* change
   (as a task row does); the full before -> after trail is the audit log's `milestone.change`
   rows (daemon route) and `project.plan` rows (the plan writer's join), and for a session plan

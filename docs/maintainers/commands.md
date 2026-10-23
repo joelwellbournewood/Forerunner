@@ -38,7 +38,8 @@ raise its own limits without a human, and text from pages, files or email is nev
 
 `CommandContext` carries the actor (`{kind: "human" | "agent", id}`), the human the change is
 for, the principal agent, the active project, the store, the Clock, the ports (session start,
-kill switch, pause/resume, the CHF rate, the "costly session" threshold, who shares a project),
+kill switch, pause/resume, the CHF rate, the "costly session" threshold, who shares a project,
+lesson memory),
 the source (`ui | chat | voice | email | api | palette`), the words used, the time zone, the
 requesting device and the conversation session that receives the activity event. Who the
 actor is depends on the caller: the runtime's routes, the palette, the phone and email
@@ -75,6 +76,18 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `request.answer` | project | the request's own risk | no | `human_request.answer` |
 | `email.mode.set` | global | high | yes | `extension` kind `capability`, name `email:<agentId>`, `config.settings.mode` |
 | `device.revoke` | global | high | no | `device.revoked` |
+| `memory.record` | project | low | yes (retire the lesson; a merged one restores the lesson it superseded) | `ports.memory.recordLesson`: a lesson in the private memory of the human's own principal, for the named or active project (none: every project), source `human:<id>;<chat|voice|...>:<conversation session>` |
+
+`memory.record` (spec O.2, ADR 0061) is how a lesson the human states in chat or voice reaches
+the principal's memory: "remember that ...", "lesson: ..." by pattern, or the model's
+`memory_record` tool for the same thing in other words. It is low risk (no limit, no spend,
+nothing outside the human's own memory), so it acts at once and the sentence reads the stored
+text back: `Recorded a lesson in Alice's memory for PharmaWatch: "...". Undo.` (up to 300
+characters). The command refuses a context without a principal agent or an agent the human
+does not own; the port (`MemoryCommandPort`: `recordLesson`, `forgetLesson`) is the runtime's
+`memoryCommandPort(MemoryLoop)`, which also runs the lesson injection screen and the memory
+lint (a text under 20 characters is refused with the lint's reason). Without the port the
+command is refused with `unavailable`.
 
 `budget.set` stores money in USD micro-units with the CHF figure beside it (ADR 0008; the rate
 comes from `ports.chfPerUsd`): a temporary session budget is `project.settings.
@@ -211,7 +224,7 @@ agent's scope or a later start of the agent (`KillScope.startId`, ADR 0049). A r
 
 `IntentParser.parse(text, ctx) -> {commands, question?, matched, unmatched}`. The guard runs
 first: `ctx.source === "content"` or the runtime's `DATA_ENVELOPE_OPEN`/`CLOSE` markers in the
-text throw `ForerunnerError("injection_suspected")`. Notes and "make this a task" are matched on
+text throw `ForerunnerError("injection_suspected")`. Lessons, notes and "make this a task" are matched on
 the whole text (they may contain "and"); everything else is split on `, ; and und then dann`
 and each clause goes through the patterns, in English and German:
 
@@ -225,9 +238,12 @@ and each clause goes through the patterns, in English and German:
 | set autonomy to 3, set the autonomy of X to 4, Autonomie auf 3 | `autonomy.set` |
 | start a session [on X] [on my PC / in the cloud] [with 10 francs], starte eine Session auf meinem PC | `session.start` |
 | stop everything / stop all, stopp alles; stop; pause | `session.stop {all}`; `session.stop {agent}`; `session.pause` |
-| note: ..., idea: ..., correction: ..., Notiz:, Idee:, Korrektur: | `note.add` |
+| remember that ..., lesson: ..., lesson learned: ..., merk dir, dass ..., Lektion: ..., Lehre: ... | `memory.record` |
+| note: ..., idea: ..., correction: ..., Notiz:, Idee:, Korrektur:, remember ..., merk dir ... | `note.add` |
 | make this a task, mach daraus eine Aufgabe | `task.create` from `ctx.lastMessage` |
 
+A lesson ("remember that", "lesson:") is matched before a note, so "remember that X" records X
+in memory while "remember to X" and "note that X" stay next-session notes (ADR 0061).
 "it" is the project switched to earlier in the same sentence, else the active project.
 Project names resolve against `ctx.projects` (exact, containing, word overlap); several matches
 or none give one question with the candidate names as options. Times are read in
@@ -306,7 +322,10 @@ settings-screen path, a risen risk refused when the yes arrives), `security-comm
 confirmed by the wrong kind of answer, a guessed email token or another actor, a web or runner
 device does not confirm a high-risk change without a second factor), `commands.test.ts` (the
 PharmaWatch sentence exactly, every command's risk, writes and undo, prototype keys as unknown
-settings), `intent.test.ts` (the two spec sentences, thirty English and German phrases,
+settings; `memory.record` acting at once at low risk with the read-back sentence, the source
+naming the human and the conversation session, another project or no project, undo through the
+port, refused without an agent or without the port), `intent.test.ts` (the two spec sentences,
+thirty-six English and German phrases including the lesson phrases and "remember to" staying a note,
 ambiguity questions, budget tails that are not a time, invalid values as a question, the
 envelope refusal, the model port, time parsing with `rest`), and `scenario.test.ts` (the
 Android scenario end to end and the phase 5 gate: ui, chat and voice produce the same change
@@ -315,7 +334,7 @@ log sentences with the effect and the surcharge both ways, the yes a medium-risk
 the flag written on one project only; a corrected fast row from `ports.pricingTable` quoted in
 the card and the sentence).
 
-Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 133 tests).
+Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 139 tests).
 
 ## Known issues
 
@@ -341,4 +360,5 @@ confirmation; the runtime hooks enforce the levels at tool time); I.1 partially 
 is the only way caps change, with the ceiling check); R.4, R.5 and R.7 partially (remote
 session commands from a paired phone, the Android scenario, biometric for high-risk
 confirmations); data model `command` and `change_log`; phase 5 gate "same change log entry
-by voice, chat or UI" (`scenario.test.ts`).
+by voice, chat or UI" (`scenario.test.ts`); O.2 and J.1 with the runtime (`memory.record`, a
+lesson stated in chat recorded in the principal's memory, `packages/runtime/test/conversation.test.ts`).
