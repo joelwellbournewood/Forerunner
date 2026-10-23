@@ -79,3 +79,19 @@ driver, 4 of 20 with 4ff4fb1's. The page log shows why:
 - Tests: `apps/mobile/e2e/cdp.test.ts` (the nav that moves between the measurement and the
   press: 82a6295's and 4ff4fb1's drivers click Home, the guard clicks Inbox; a page that never
   settles; a lost click; `describePage`; the runner's step order).
+
+## Alternatives considered
+
+- **Only the runner's wait for Home's list.** Closes this one step, but every later click in
+  the smoke (Approve, Confirm, the Remote controls, Undo) can meet the same re-render between
+  measurement and press; the driver would still send it to whatever is at the point.
+- **Re-check the hit test just before the mouse events.** Narrows the window but keeps it:
+  the check and the press are separate CDP round trips, and the page can re-render between
+  them. Only a check at the time of the event closes it.
+- **Dispatch the click from inside the page (`el.click()`).** No race, but the event is
+  untrusted and skips the WebView's input path, which is what the smoke is there to exercise
+  on a device.
+- **Retry when nothing reached the page.** Rejected: a late event from the first attempt
+  could click twice; `cdp.click_lost` fails instead.
+- **Fix the app's CSS for Chromium 83 in this item.** Outside the brief and not testable here
+  (no emulator); listed as open in apps.md and BLOCKERS.md.
