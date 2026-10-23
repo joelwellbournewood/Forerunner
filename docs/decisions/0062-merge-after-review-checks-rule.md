@@ -37,10 +37,14 @@ have moved, a peer may have pushed to the branch since the review.
      is never merged. A clean rebase keeps the reviewed change. Since CI must then see the
      rebased head, every check the reviewed head had is required again on the new head, and a
      missing one counts as pending.
-   - The host's check runs on the head decide, taking the latest run per name. Any `failure`,
-     `cancelled`, `timed_out` or `action_required` refuses. A queued or running check is waited
-     for, polling every 30 s for up to 10 minutes. No check runs at all means the host has no
-     CI and the merge goes on. `mergeable: false` is a conflict.
+   - The host's check runs and commit statuses on the head decide, taking the latest run per
+     name and the latest status per context. Any `failure`, `cancelled`, `timed_out` or
+     `action_required` run and any `failure` or `error` status refuses. A queued or running
+     check or a `pending` status is waited for, polling every 30 s for up to 10 minutes and
+     never past the session's wall-clock cap (the wait ends one poll before it). Nothing
+     reported on the head while the base branch's head reports checks or statuses is pending
+     too: the host has CI that has not reported on this head yet. Only nothing on either means
+     the host has no CI, and the merge goes on. `mergeable: false` is a conflict.
    - The merge is pinned to the checked head (`mergePullRequest(..., { sha })`), so a push
      between the last look and the merge fails on the host.
 4. **What goes to the human.** A failed check, a check still running at the end of the wait, a
@@ -52,7 +56,10 @@ have moved, a peer may have pushed to the branch since the review.
 
 Never merged automatically: below level 3; a PR whose head is not the reviewed commit; one
 with a failed or still-running check; one with a conflict (on the host or in the rebase); a
-task closed without a review (tier 0); a task whose reviewed commit is unknown.
+task closed without a review (tier 0); a tier 3 task, whose accepting verdict becomes the
+human sign-off (spec H) and is merged by the human who signs it off; a task whose reviewed
+commit is unknown. A stop of the kill switch during the step ends the session `killed`; it is
+never recorded as the level's refusal nor filed as a request.
 
 ## Consequences
 
@@ -61,7 +68,8 @@ task closed without a review (tier 0); a task whose reviewed commit is unknown.
 - A rebase before the merge pushes to the task branch (with a lease, never the default branch).
   That push is part of the admitted `merge_pr` call, not a separate routine action.
 - CI slower than the wait leaves the PR to the human, and no later session retries the merge by
-  itself (runtime.md Known issues). Commit statuses (the older status API) are not read.
+  itself (runtime.md Known issues). A repository whose CI runs only on pushes to the base
+  branch reports nothing on a PR head, so its PRs wait out the bound and go to the human.
 - The session grant in the daemon names `merge_pr`, and no tool registry offers it to a model.
   A specialist's token, an intersection with its spec, never carries it.
 
@@ -73,9 +81,12 @@ task closed without a review (tier 0); a task whose reviewed commit is unknown.
 - **Call `GitHost.mergePullRequest` directly from the runner.** Rejected: the merge would
   bypass the hooks (no token check, no audit row, no autonomy decision). Limits are enforced by
   the hooks, never by the caller's good behaviour.
-- **Merge without waiting for checks, or treat "no checks yet" after a rebase as green.**
+- **Merge without waiting for checks, or treat "no checks yet" as green.**
   Rejected: right after a push the host may not have created its check runs yet, so "none"
-  would merge an untested rebased head. Requiring the reviewed head's checks again closes that.
+  would merge an untested head. Requiring the reviewed head's checks again after a rebase, and
+  treating an empty head as pending when the base branch reports CI, closes that.
+- **Read check runs only.** Rejected: Jenkins and many external CIs and deploy previews report
+  through commit statuses, so a red status would be merged.
 - **A sweep at the next session for PRs whose checks were still running.** Deferred: it needs
   a durable "merge pending" marker on the task and a rule for how stale an acceptance may be.
   The bounded wait plus a request covers the common case.

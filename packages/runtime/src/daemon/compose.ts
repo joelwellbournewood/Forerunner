@@ -174,7 +174,12 @@ import {
 } from "../session/findings.ts";
 import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
 import { type PlanApprovalSyncResult, syncPlanApprovals } from "../session/plan-approval.ts";
-import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
+import {
+  SessionRunner,
+  type SessionStartOptions,
+  StaticPlanner,
+  type TaskExecutor,
+} from "../session/runner.ts";
 import { Scheduler, type StartRequest } from "../session/triggers.ts";
 import { readInstallRecord } from "../setup/install-record.ts";
 import {
@@ -580,6 +585,12 @@ export interface RuntimeApp {
    * call through the daemon's hooks; level 3 merges, below it the PR stays open.
    */
   merge: ReviewedPrMerge;
+  /**
+   * The grant a session of this agent on `projectId` starts with (ADR 0044), as `startSession`
+   * computes it: the tools (`merge_pr` among them, J.9), the worktrees root, the git host's and
+   * the project's domains, the granted secret names.
+   */
+  sessionGrant(projectId?: string | null): Promise<SessionStartOptions["grant"]>;
   /** The command registry (spec Q): the only way chat, voice, the UI and the phone change state. */
   commands: CommandLoop;
   /**
@@ -2432,6 +2443,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     privateMemory: privateStore,
     docs,
     merge,
+    sessionGrant: async (projectId) =>
+      sessionGrant(
+        projectId ? await store.project.mustGet(projectId) : null,
+        await sharedSecretNamesFor(store, agent.id),
+      ),
     commands,
     voice,
     events,
