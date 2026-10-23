@@ -1,4 +1,6 @@
 import { ForerunnerError } from "@forerunner/platform";
+// The module path, not the package index: the index imports this package back (a cycle).
+import { FAST_MODE_SETTING, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import type { HumanRow, JsonValue, ProjectRow } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
@@ -75,6 +77,18 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     description: "One milestone, flat task list, critic tier 0 by default.",
     effect: (value) =>
       value === true ? SMALL_PROJECT_MODE_EFFECT.on : SMALL_PROJECT_MODE_EFFECT.off,
+  },
+  [FAST_MODE_SETTING]: {
+    key: FAST_MODE_SETTING,
+    label: "Opus fast mode",
+    scope: "project",
+    // It raises what every Opus call of the project costs: a yes before it changes.
+    risk: "medium",
+    schema: z.boolean(),
+    description:
+      "Opus fast mode for urgent work (research preview, API only, priced separately): Opus runs of the project on an API key ask for the fast variant.",
+    // Spec D.20, ADR 0057: the effect and the surcharge both ways, from the price table.
+    effect: (value) => fastModeEffect(value === true),
   },
   shared_with: {
     key: "shared_with",
