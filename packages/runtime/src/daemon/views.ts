@@ -1,6 +1,7 @@
 import { CostLedger, FixedRateSource } from "@forerunner/billing";
 import type { CommandDef } from "@forerunner/commands";
 import { spokenProjectSummary, staticRisk } from "@forerunner/commands";
+import { ForerunnerError } from "@forerunner/platform";
 import type {
   ChangeLogRow,
   EventRow,
@@ -15,6 +16,17 @@ import type {
   StateStore,
   TaskRow,
 } from "@forerunner/state";
+import { ENTITIES, type EntityDef, Repository } from "@forerunner/state";
+import {
+  DEFAULT_LADDER,
+  effortWithOffset,
+  INTAKE_RUN_SPECIALIST,
+  type LadderRung,
+  MODE_DEFAULTS,
+  type Mode,
+  type ModeDefault,
+  tierOfModel,
+} from "../models/ladder.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import type {
@@ -28,6 +40,9 @@ import type {
   MessageView,
   MilestoneView,
   Money,
+  PerformanceModeView,
+  PerformanceSampleView,
+  PerformanceView,
   ProjectCard,
   ProjectSummary,
   ReviewsView,
@@ -36,6 +51,7 @@ import type {
   SessionView,
   TaskView,
 } from "./api-types.ts";
+import { PERFORMANCE_DEFAULT_DAYS, PERFORMANCE_MAX_DAYS } from "./api-types.ts";
 
 export function money(usdMicro: number, chfPerUsd: number): Money {
   return { usdMicro, chfMicro: Math.round(usdMicro * chfPerUsd) };
@@ -620,5 +636,271 @@ export function commandDefView(def: CommandDef<unknown>, schema: unknown): Comma
     undoStrategy: def.undoStrategy,
     limit: def.limit === true,
     schema,
+  };
+}
+
+// ---------------------------------------------------------------------------------------
+// Performance (spec D.7, D.19): time to first token and total time per mode against target
+
+/** The labels the Performance page shows, in the spec's table order (D.8 to D.15). */
+export const MODE_LABELS: Record<Mode, string> = {
+  voice_chat: "Voice chat",
+  text_chat: "Text chat",
+  routing: "Routing, triage, summaries",
+  planning: "Session planning",
+  coder: "Coding specialist",
+  researcher: "Research specialist",
+  critic_t1: "Critic tier 1",
+  critic_t23: "Critic tier 2 and 3",
+};
+
+/**
+ * The modes whose runs read the project's speed-versus-quality offset today: the critic
+ * (`criticSettingsOf` in `@forerunner/critic`). The executor's offset is a static dependency
+ * compose never feeds from the project, and chat, voice and planning ignore it (BLOCKERS.md,
+ * D.16); the view says so per mode rather than showing an effort no run uses.
+ */
+export const OFFSET_MODES: readonly Mode[] = ["critic_t1", "critic_t23"];
+
+/** Newest measurements the view lists under the table. */
+export const PERFORMANCE_RECENT_LIMIT = 20;
+
+/**
+ * The p-th percentile by nearest rank: the smallest value with at least p% of the values at or
+ * under it (`sorted[ceil(p/100 * n) - 1]`). Null for no values.
+ */
+export function nearestRank(values: readonly number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.min(sorted.length, Math.max(1, Math.ceil((p / 100) * sorted.length)));
+  return sorted[rank - 1] ?? null;
+}
+
+/**
+ * A Run row's mode. The run table has no mode column, so it is derived from who wrote the row:
+ * the critic writes `specialist: "critic"` (tier 1 is `critic_t1`, tiers 2 and 3 `critic_t23`;
+ * the tier comes from the Review row whose evidence names the run, else from the model's rung:
+ * opus and above is a tier 2 or 3 review), the intake call writes `specialist: "intake"`
+ * (planning), the executor writes the specialist's name: `researcher` is the research mode and
+ * every other specialist runs on the coder row of the effort table, as `effortForTask` does.
+ */
+export function runMode(
+  run: Pick<RunRow, "specialist" | "model">,
+  reviewTier?: number | null,
+  ladder?: LadderRung[],
+): Mode {
+  if (run.specialist === "critic") {
+    if (typeof reviewTier === "number") return reviewTier >= 2 ? "critic_t23" : "critic_t1";
+    const rung = tierOfModel(run.model, ladder);
+    return rung === "opus" || rung === "fable" ? "critic_t23" : "critic_t1";
+  }
+  if (run.specialist === INTAKE_RUN_SPECIALIST) return "planning";
+  if (run.specialist === "researcher") return "researcher";
+  return "coder";
+}
+
+interface PerfSample extends PerformanceSampleView {
+  mode: Mode;
+}
+
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+const obj = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
+/** A chat or voice turn event as a sample, or null when it carries no measurement. */
+export function eventSample(e: EventRow): PerfSample | null {
+  const p = obj(e.payload);
+  if (e.type === "chat.reply") {
+    // Voice turns are measured to first audio by their `voice.turn` row; a reply with neither
+    // figure (a yes or no answered without a model call) is not a measurement.
+    if (p.source === "voice") return null;
+    const ttft = num(p.ttftMs);
+    const total = num(p.durationMs);
+    if (ttft === null && total === null) return null;
+    return {
+      runId: e.id,
+      source: "chat",
+      mode: "text_chat",
+      specialist: "conversation",
+      model: str(p.model),
+      effort: str(p.effort),
+      ttftMs: ttft,
+      durationMs: total,
+      at: e.created_at,
+    };
+  }
+  if (e.type === "voice.turn") {
+    const firstAudio = num(obj(p.latency).totalToFirstAudioMs);
+    if (firstAudio === null) return null;
+    return {
+      runId: e.id,
+      source: "voice",
+      mode: "voice_chat",
+      specialist: "voice",
+      model: "",
+      effort: "",
+      ttftMs: firstAudio,
+      durationMs: null,
+      at: e.created_at,
+    };
+  }
+  return null;
+}
+
+/** The figure a mode's target applies to: first token (or audio), or the whole run. */
+function measured(kind: ModeDefault["targetKind"], s: PerfSample): number | null {
+  if (kind === "first_token" || kind === "first_audio") return s.ttftMs;
+  if (kind === "total") return s.durationMs;
+  return null;
+}
+
+export interface PerformanceViewOptions {
+  /** The install's human: only the rows of their agents' sessions count. */
+  humanId: string;
+  projectId?: string | null;
+  days?: number;
+  nowIso: string;
+  /** The ladder and effort table in force (`rt.modelConfig()`); the built-ins by default. */
+  modelConfig?: { ladder: LadderRung[]; modeDefaults: Record<Mode, ModeDefault> };
+  recentLimit?: number;
+}
+
+const IN_CHUNK = 500;
+async function inChunks<T>(ids: string[], read: (chunk: string[]) => Promise<T[]>): Promise<T[]> {
+  const out: T[] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK)
+    out.push(...(await read(ids.slice(i, i + IN_CHUNK))));
+  return out;
+}
+
+/**
+ * The Performance view (spec D.7, D.19) from the store: every Run row (executor, critic,
+ * intake), `chat.reply` and `voice.turn` event created in the window, on a session of one of
+ * the human's agents (and of the project, when one is named), grouped by mode with the median
+ * and p90 by nearest rank of time to first token and total time, the target, met or not, and
+ * the effort in force from the effort table and the project's offset.
+ */
+export async function performanceView(
+  store: StateStore,
+  opts: PerformanceViewOptions,
+): Promise<PerformanceView> {
+  const days = Math.min(PERFORMANCE_MAX_DAYS, Math.max(1, opts.days ?? PERFORMANCE_DEFAULT_DAYS));
+  const nowMs = Date.parse(opts.nowIso);
+  const from = new Date(nowMs - days * 86_400_000).toISOString();
+  const to = opts.nowIso;
+  const config = opts.modelConfig ?? { ladder: DEFAULT_LADDER, modeDefaults: MODE_DEFAULTS };
+  const projectId = opts.projectId ?? null;
+  let offset: -1 | 0 | 1 = 0;
+  if (projectId) {
+    const project = await store.project.get(projectId);
+    if (!project) throw new ForerunnerError("not_found", `project ${projectId} not found`);
+    const o = obj(project.settings).speed_quality_offset;
+    if (o === -1 || o === 0 || o === 1) offset = o;
+  }
+
+  const runs = (
+    await store.run.rows(
+      `SELECT * FROM ${store.run.qt} WHERE "created_at" >= ? AND "created_at" <= ? ORDER BY "created_at", "id"`,
+      [from, to],
+    )
+  ).filter((r) => r.ttft_ms !== null || r.duration_ms !== null);
+  const events = await new Repository<EventRow>(
+    store.event.db,
+    ENTITIES.event as EntityDef,
+    store.event.clock,
+  ).rows(
+    `SELECT * FROM "event" WHERE "type" IN (?, ?) AND "created_at" >= ? AND "created_at" <= ? ORDER BY "created_at", "id"`,
+    ["chat.reply", "voice.turn", from, to],
+  );
+
+  // Ownership and project: the sessions the rows sit on, kept when their agent is the human's.
+  const agents = new Set(
+    (await store.agent.list({ owner_human_id: opts.humanId })).map((a) => a.id),
+  );
+  const sessionIds = [...new Set([...runs, ...events].map((r) => r.session_id))];
+  const sessions = await inChunks(sessionIds, (ids) => store.session.list({ id: ids }));
+  const inScope = new Set(
+    sessions
+      .filter((s) => agents.has(s.agent_id) && (!projectId || s.project_id === projectId))
+      .map((s) => s.id),
+  );
+
+  // The critic's tier: the Review row whose evidence names the run (`run:<id>`).
+  const criticRuns = runs.filter((r) => r.specialist === "critic" && inScope.has(r.session_id));
+  const reviewTier = new Map<string, number>();
+  if (criticRuns.length) {
+    const reviewSessions = [...new Set(criticRuns.map((r) => r.session_id))];
+    const reviews = await inChunks(reviewSessions, (ids) => store.review.list({ session_id: ids }));
+    for (const rv of reviews)
+      for (const ev of rv.evidence)
+        if (typeof ev === "string" && ev.startsWith("run:")) reviewTier.set(ev.slice(4), rv.tier);
+  }
+
+  const samples: PerfSample[] = [];
+  for (const r of runs) {
+    if (!inScope.has(r.session_id)) continue;
+    samples.push({
+      runId: r.id,
+      source: "run",
+      mode: runMode(r, reviewTier.get(r.id), config.ladder),
+      specialist: r.specialist,
+      model: r.model,
+      effort: r.effort,
+      ttftMs: r.ttft_ms,
+      durationMs: r.duration_ms,
+      at: r.created_at,
+    });
+  }
+  for (const e of events) {
+    if (!inScope.has(e.session_id)) continue;
+    const s = eventSample(e);
+    if (s) samples.push(s);
+  }
+
+  const modes: PerformanceModeView[] = (Object.keys(MODE_DEFAULTS) as Mode[]).map((mode) => {
+    const d = config.modeDefaults[mode] ?? MODE_DEFAULTS[mode];
+    const mine = samples.filter((s) => s.mode === mode);
+    const ttfts = mine.map((s) => s.ttftMs).filter((v): v is number => v !== null);
+    const totals = mine.map((s) => s.durationMs).filter((v): v is number => v !== null);
+    const figures = mine
+      .map((s) => measured(d.targetKind, s))
+      .filter((v): v is number => v !== null);
+    const hasTarget = d.targetKind !== "by_task" && d.targetMs > 0 && figures.length > 0;
+    const p90 = nearestRank(figures, 90);
+    const offsetApplied = OFFSET_MODES.includes(mode);
+    return {
+      mode,
+      label: MODE_LABELS[mode],
+      targetMs: d.targetMs,
+      targetKind: d.targetKind,
+      tier: d.tier,
+      baseEffort: d.effort,
+      effort: offsetApplied ? effortWithOffset(d.effort, offset) : d.effort,
+      offsetApplied,
+      samples: mine.length,
+      ttftP50Ms: nearestRank(ttfts, 50),
+      ttftP90Ms: nearestRank(ttfts, 90),
+      totalP50Ms: nearestRank(totals, 50),
+      totalP90Ms: nearestRank(totals, 90),
+      withinTargetShare: hasTarget
+        ? figures.filter((v) => v <= d.targetMs).length / figures.length
+        : null,
+      met: hasTarget && p90 !== null ? p90 <= d.targetMs : null,
+      lastAt: mine.reduce<string | null>((a, s) => (a === null || s.at > a ? s.at : a), null),
+    };
+  });
+
+  const recent = [...samples]
+    .sort((a, b) => (a.at === b.at ? b.runId.localeCompare(a.runId) : b.at.localeCompare(a.at)))
+    .slice(0, opts.recentLimit ?? PERFORMANCE_RECENT_LIMIT);
+  return {
+    generatedAt: opts.nowIso,
+    projectId,
+    days,
+    from,
+    effortOffset: offset,
+    modes,
+    recent,
   };
 }

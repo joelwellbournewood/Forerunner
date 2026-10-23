@@ -794,8 +794,11 @@ export type ReviewsView = z.infer<typeof ReviewsView>;
 /** What a mode's target measures: first token, first audio, the whole run, or set by the task. */
 export const PERFORMANCE_TARGET_KINDS = ["first_token", "first_audio", "total", "by_task"] as const;
 export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
-/** Where a measurement came from: a Run row, a `chat.reply` row, a `voice.turn` row, an intake call. */
-export const PERFORMANCE_SOURCES = ["run", "chat", "voice", "intake"] as const;
+/** Where a measurement came from: a Run row, a `chat.reply` event, a `voice.turn` event. */
+export const PERFORMANCE_SOURCES = ["run", "chat", "voice"] as const;
+/** The window `GET /performance` covers without `?days=`, and the longest it accepts. */
+export const PERFORMANCE_DEFAULT_DAYS = 7;
+export const PERFORMANCE_MAX_DAYS = 90;
 
 export const PerformanceModeView = z.object({
   /** One of the ladder's modes (ladder.ts `Mode`). */
@@ -806,34 +809,37 @@ export const PerformanceModeView = z.object({
   targetKind: z.enum(PERFORMANCE_TARGET_KINDS),
   /** The rung the mode starts on in the effort table in force. */
   tier: z.string(),
-  /** The table's effort for the mode before the project's speed-versus-quality offset. */
+  /** The table's effort for the mode (built-ins plus the adopted models.json), before the offset. */
   baseEffort: z.enum(EFFORT_LEVELS),
-  /** The effort in force: the base shifted by the offset (spec D.7, the lowest that passes). */
+  /** The effort in force: the base, shifted by the project's offset where the code applies it. */
   effort: z.enum(EFFORT_LEVELS),
+  /** True when the project's speed-versus-quality offset reaches this mode's runs today. */
+  offsetApplied: z.boolean(),
   /** Measurements in the window. */
   samples: z.number().int().nonnegative(),
-  /** Percentiles by nearest rank over the samples that carry the figure; null without one. */
+  /** Median and 90th percentile by nearest rank over the samples that carry the figure. */
   ttftP50Ms: z.number().nullable(),
   ttftP90Ms: z.number().nullable(),
   totalP50Ms: z.number().nullable(),
   totalP90Ms: z.number().nullable(),
-  /** Share of samples whose measured figure met the target; null without samples or target. */
+  /** Share of the samples whose measured figure met the target; null without samples or target. */
   withinTargetShare: z.number().min(0).max(1).nullable(),
-  /** p90 of the measured figure at or under the target; null without samples or target. */
+  /** The p90 of the measured figure at or under the target; null without samples or target. */
   met: z.boolean().nullable(),
-  /** When the newest measurement in the window was taken. */
+  /** When the newest measurement in the window was taken; null without one. */
   lastAt: z.string().nullable(),
 });
 export type PerformanceModeView = z.infer<typeof PerformanceModeView>;
 
 export const PerformanceSampleView = z.object({
-  /** The Run row id, or the event id of a chat, voice or intake measurement. */
+  /** The Run row id, or the event id of a chat or voice turn. */
   runId: z.string(),
   source: z.enum(PERFORMANCE_SOURCES),
   mode: z.string(),
   specialist: z.string(),
   model: z.string(),
   effort: z.string(),
+  /** First token; for a voice turn, end of turn to first audio. */
   ttftMs: z.number().nullable(),
   durationMs: z.number().nullable(),
   at: z.string(),
@@ -846,7 +852,7 @@ export const PerformanceView = z.object({
   /** The window: the last `days` days, from `from` to `generatedAt`. */
   days: z.number().int().positive(),
   from: z.string(),
-  /** The project's speed-versus-quality offset applied to the efforts (0 for all projects). */
+  /** The project's speed-versus-quality offset (-1, 0, +1); 0 for all projects. */
   effortOffset: z.number().int(),
   modes: z.array(PerformanceModeView),
   /** The newest measurements across modes, newest first. */
@@ -1626,7 +1632,7 @@ export const DAEMON_ROUTES = {
   costs: "GET /costs?projectId=&from=&to=",
   costEstimates: "GET /costs/estimates (estimate-versus-actual accuracy, EstimateAccuracyView)",
   performance:
-    "GET /performance?projectId=&days= (PerformanceView, spec D.7, D.19: per mode the samples, p50 and p90 by nearest rank of time to first token and total time, the target, met or not, the effort in force; from the Run rows, the chat and voice turns and the intake calls of the last days, 7 by default, at most 90; the install's human's agents only; 400 for a bad days)",
+    "GET /performance?projectId=&days= (PerformanceView, spec D.7, D.19: per mode the samples, p50 and p90 by nearest rank of time to first token and total time, the target, met or not, the effort in force; from the Run rows and the chat and voice turns of the last days, 7 by default, at most 90; the install's human's agents only; 400 for a bad days, 404 for an unknown project)",
   auditExport:
     "GET /audit/export?agentId=&sessionId=&from=&to=&format=jsonl|csv (spec S.9: the audit log as a file download, streamed in pages; the install's human's rows and their agents' with the summaries as stored; Content-Disposition names the file; 404 for another human's agent, 400 for a bad format, timestamp or window)",
   settings: "GET /settings?scope=&scopeId=",
