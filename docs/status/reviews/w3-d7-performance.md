@@ -490,3 +490,75 @@ packages/runtime/test` 1 file / 4 tests skipped (Docker sandbox, no daemon); `pn
 @forerunner/ui test` 46 files / 301 tests (`performance.test.tsx` 7, `client.test.ts` 17,
 `contracts.test.ts` 8); `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok.
 Requirements after the rebase: 187 done, 36 in progress, 5 todo.
+
+## Rebase (onto 4ff4fb1)
+
+2026-10-23: the branch (start 093d5b9, merge base cac6fee) was rebased with
+`git rebase origin/ccr-4d8a843c-1k9syk` onto 4ff4fb1 (73 base commits ahead of the merge base:
+the merges of w2-l6-speak, w3-c5-specialist-approval, w3-d16-slider, w3-e4-recheck and
+w5-android-high-risk). All 20 commits replayed; the base was not merged into the branch.
+Conflicts and their resolution (the original commit being replayed first):
+
+1. 030a22a `packages/runtime/src/session/intake.ts` imports: the base imports `capEffort`,
+   `modeEffort`, `speedQualityOffsetOf` (the D.16 slider), the branch `INTAKE_RUN_SPECIALIST`.
+   One import with all of them. The branch's intake Run row wrote `effort: planning.effort`
+   (the table's); against the base's code the call now runs at `effort` (the slider's shift,
+   held at the project manager's `max_effort`), so the row stores that value.
+2. fbe8ad0 `packages/runtime/src/daemon/views.ts` imports: the base added
+   `spokenProjectSummary` (Read aloud), the branch `ForerunnerError`. Kept both.
+3. 7788694 `docs/maintainers/runtime.md`: the base added the "Read aloud" paragraph where the
+   branch added the "Performance view" section. Kept both, the base's first. The Ladder
+   paragraph (`INTAKE_RUN_SPECIALIST`) and the base's new slider paragraph merged on their own.
+4. 773dc7c `docs/status/PROGRESS.md`, Log: the base added the entries of w3-d16-slider (rebase,
+   review, build), w3-e4-recheck (rebase, review, build) and w5-android-high-risk (rebase,
+   build and review); the branch its build entry. Kept all, the branch's entry first.
+   "Next" item list: the base's lines are kept verbatim (they hold two copies of the same
+   items, left by an earlier merge on the base); the branch's annotation of w3-d7-performance
+   is merged into both mentions.
+5. 5551130 `packages/runtime/src/daemon/compose.ts`: the base passes the intake
+   `maxEffort` (project manager's `max_effort`), the branch `promptVersion`. Kept both.
+   `intake.ts` `IntakeDeps`: both fields with their doc comments. The intake Run row: the
+   base-shaped `effort` (conflict 1) with the branch's `prompt_version`.
+6. 093d5b9 `docs/status/PROGRESS.md` item list: the same lines as conflict 4; the annotation
+   became the branch's "built, reviewed and fixed ... rebased" in both mentions (updated to
+   4ff4fb1 in the status commit after the rebase).
+
+What merged without a textual conflict but no longer matched the base's code, fixed in two
+follow-up commits:
+
+- **The effort in force.** The branch showed the project's offset on the critic tiers only
+  (`OFFSET_MODES`), because before D.16 nothing else read it. The base's slider (w3-d16-slider)
+  now shifts every mode's effort (executor per run, conversation agent per turn, intake per
+  planning session, critic per review) and each consumer holds it at the registry's
+  `max_effort`. `OFFSET_MODES` now lists every mode with a run (routing has none);
+  `effort` is `capEffort(modeEffort(...))` as the consumers compute it, with the caps from
+  `effortCapsOf(rt.registry)` shown per mode as the new `maxEffort`; `riskEffort` is capped the
+  same way. The BLOCKERS residual "the offset reaches only the critic tiers until D.16" closed.
+- **The effort a measurement records.** The branch's `chat.reply` row wrote `textChat.effort`
+  (the table's); the base's agent computes the turn's effort from the slider and the cap. The
+  row stores that `effort` now, so a sample's effort is the one the turn ran at.
+- **Chat turns per project.** The base's `daemon/conversation-session.ts` opens the agent's one
+  conversation session without a project (for voice and speech), and the conversation agent
+  keeps the session of the first turn; the view scoped chat turns by the session's
+  `project_id`, so a project's view lost its chat turns (found by the new `effort-offset.test.ts`
+  assertion). The reply row now carries the turn's `projectId` and the view scopes a reply by it.
+- **apps.md** (base, slider section): "The Performance view is untouched: it shows response
+  times per mode, not the slider" became the sentence that it shows the effort the slider
+  yields, without moving it. The fake daemon applies the slider position Settings left in its
+  state; the fixture carries `maxEffort`.
+
+Tests added for these: `performance-view.test.ts` (the slider in every mode, the registry caps,
+a lower cap, chat turns scoped by their own project; 9 tests), `performance-route.test.ts`
+(the slider at -1 and the shipped caps per mode on the composed daemon), `intake.test.ts` (the
+Run row's effort at +1 and under a cap; fails with the table's effort), `effort-offset.test.ts`
+(a typed chat turn's effort per slider position is the view's, for the mode and the sample),
+`conversation.test.ts` (the reply row's `projectId`), `apps/ui/test/performance.test.tsx`
+(the fake daemon's slider and the cap in the title; 8 tests).
+
+Checks on the rebased tree: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, none
+an error, none in the branch's files); `pnpm exec vitest run --project unit
+packages/runtime/test` 135 files / 1219 passed, 1 skipped; `pnpm exec vitest run --project
+integration packages/runtime/test` 1 file / 4 tests skipped (Docker sandbox, no daemon);
+`pnpm --filter @forerunner/ui test` 48 files / 326 tests; `node scripts/docs-check.mjs --base
+origin/ccr-4d8a843c-1k9syk` ok. Requirements after the rebase: 190 done, 33 in progress,
+5 todo.

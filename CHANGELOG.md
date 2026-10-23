@@ -36,8 +36,9 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   with `since` and lists reviews and review line comments (E.1; ADR 0075).
 - The daemon serves the Performance view (`GET /performance?projectId=&days=`) from the Run
   rows and the chat and voice turns: per mode p50 and p90 of first token and total time
-  against target, met or not, and the effort in force; the intake call writes a Run row and
-  chat replies record their total time (D.7, D.19).
+  against target, met or not, and the effort in force (the project's speed-versus-quality
+  slider in every mode it reaches, held at the registry's `max_effort`); the intake call writes
+  a Run row and chat replies record their total time, effort and project (D.7, D.19).
 - Settings → Capabilities → Email: the capability's routes on the daemon, a page per agent
   with the mode picker and the full-discretion confirmation, pause and resume from the tray,
   the command audit (S.15, S.28, S.29, T.14, L.3; ADR 0066).
