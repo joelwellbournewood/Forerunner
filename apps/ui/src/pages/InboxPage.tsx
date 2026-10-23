@@ -6,7 +6,7 @@ import {
   type InboxView,
   type MessageView,
 } from "../api/client.ts";
-import { UnlockCard, useAutoUnlock } from "../components/UnlockCard.tsx";
+import { UnlockCard, useUnlockWindow } from "../components/UnlockCard.tsx";
 import {
   Badge,
   Button,
@@ -18,13 +18,12 @@ import {
 } from "../components/ui.tsx";
 import {
   daemonRunnerKeys,
+  desktopUnlockWindowStore,
   type PreparedAnswer,
   type RunnerKeyBridge,
-  type UnlockWindowStore,
   unlockChallengeOf,
-  unlockWindowStore,
 } from "../lib/runner-unlock.ts";
-import { browserStorage, type KeyValueStore, storageKey } from "../lib/storage.ts";
+import { browserStorage, type KeyValueStore } from "../lib/storage.ts";
 import { relativeTime } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
@@ -225,24 +224,15 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
     [client, humanId],
   );
 
-  // Cloud runner unlock (spec S.12, ADR 0068): the key bridge, this device's window record and
-  // the auto-answer while that window is open.
+  // Cloud runner unlock (spec S.12, ADR 0068): the key bridge and this device's window record.
+  // The auto-answer inside that window runs app-wide (`RunnerAutoUnlock` in the Shell), which
+  // reads the same record, so a window set here takes effect on every page at once.
   const bridge = useMemo(() => runnerKeys ?? daemonRunnerKeys(client), [runnerKeys, client]);
-  const windows = useMemo<UnlockWindowStore>(
-    () =>
-      unlockWindowStore(
-        unlockWindows ?? browserStorage(),
-        storageKey(null, `runnerUnlockWindow.${humanId ?? "unknown"}`),
-      ),
+  const windows = useMemo(
+    () => (humanId ? desktopUnlockWindowStore(unlockWindows ?? browserStorage(), humanId) : null),
     [unlockWindows, humanId],
   );
-  const [windowUntil, setWindowUntil] = useState<string | null>(() => windows.get());
-  useEffect(() => setWindowUntil(windows.get()), [windows]);
-  const [unlockNotice, setUnlockNotice] = useState<string | null>(null);
-  const openRequests = useMemo(
-    () => (inbox.data?.requests ?? []).filter((r) => r.status === "open"),
-    [inbox.data],
-  );
+  const windowUntil = useUnlockWindow(windows);
 
   // The page keeps the header badge in step with what it loaded, and reloads when the
   // install stream (`inbox.changed` on /events, or the poll) reports a count it has not seen,
@@ -270,22 +260,11 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
     async (request: HumanRequestView, prepared: PreparedAnswer) => {
       await client.answerRequest(request.id, { version: request.version, answer: prepared.value });
       // The window is recorded only once the answer that carries it was accepted.
-      if (prepared.window !== undefined) {
-        windows.set(prepared.window);
-        setWindowUntil(prepared.window);
-      }
+      if (prepared.window !== undefined) windows?.set(prepared.window);
       reload();
     },
     [client, windows, reload],
   );
-  useAutoUnlock({
-    requests: openRequests,
-    bridge,
-    windowUntil,
-    now,
-    send: sendUnlock,
-    notify: setUnlockNotice,
-  });
 
   const markRead = async (message: MessageView) => {
     const updated = await client.markRead(message.id);
@@ -321,15 +300,6 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
         </Button>
       </div>
       {inbox.error ? <ErrorBanner message={inbox.error} onRetry={inbox.reload} /> : null}
-      {unlockNotice ? (
-        <p
-          className="rounded border border-blue-300 p-2 text-sm dark:border-blue-800"
-          role="status"
-          data-testid="unlock-notice"
-        >
-          {unlockNotice}
-        </p>
-      ) : null}
 
       <h2 className="font-semibold">Requests</h2>
       {requests.length === 0 ? (

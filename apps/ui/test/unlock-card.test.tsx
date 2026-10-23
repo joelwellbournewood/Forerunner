@@ -169,6 +169,33 @@ describe("desktop unlock card", () => {
     expectNoKeyAnywhere(key, harness);
   });
 
+  it("auto-answers on any page, not only the inbox, including a challenge filed while it sits there", async () => {
+    const { key, harness, challenge, request } = setup();
+    localStorage.setItem(WINDOW_KEY, new Date(Date.now() + 3_600_000).toISOString());
+    renderApp("/", harness);
+    await waitFor(() =>
+      expect(postedCalls(harness, `/requests/${request.id}/answer`)).toHaveLength(1),
+    );
+    expect(screen.queryByTestId("unlock-card")).not.toBeInTheDocument();
+    expect(challenge.unwrap(answerOf(harness, request.id) as UnlockAnswer).equals(key)).toBe(true);
+    expect(await screen.findByTestId("unlock-notice")).toHaveTextContent(
+      `Unlocked cloud runner "${RUNNER}" automatically`,
+    );
+
+    // The runner restarts while the app stays on the home page: the streamed blocking count
+    // brings the new challenge and it is answered too.
+    const next = runnerChallenge(RUNNER);
+    const second = unlockRequest(next.card, { id: "req_unlock_on_home" });
+    harness.daemon.state.requests.push(second);
+    // The provider turns `inbox.changed` on /events into this dispatch (as in inbox.test.tsx).
+    harness.store.dispatch({ type: "blockingCount", count: 7 });
+    await waitFor(() =>
+      expect(postedCalls(harness, `/requests/${second.id}/answer`)).toHaveLength(1),
+    );
+    expect(next.unwrap(answerOf(harness, second.id) as UnlockAnswer).equals(key)).toBe(true);
+    expectNoKeyAnywhere(key, harness);
+  });
+
   it("does not auto-answer after the window ended", async () => {
     const { harness, request } = setup();
     localStorage.setItem(WINDOW_KEY, new Date(Date.now() - 60_000).toISOString());

@@ -11,7 +11,7 @@ import {
   wrapVaultKey,
 } from "@forerunner/vault/runner-unlock";
 import type { DaemonClient } from "../api/client.ts";
-import type { KeyValueStore } from "./storage.ts";
+import { type KeyValueStore, storageKey } from "./storage.ts";
 
 export {
   AUTO_UNLOCK_WINDOW_HOURS,
@@ -207,13 +207,44 @@ export async function prepareAnswer(
 export interface UnlockWindowStore {
   get(): string | null;
   set(until: string | null): void;
+  /**
+   * Called after every `set` through any store on the same storage key, so the inbox card
+   * (which sets the window) and the app-level auto-answer (which reads it) agree at once.
+   */
+  subscribe(listener: () => void): () => void;
 }
+
+const windowListeners = new Map<string, Set<() => void>>();
 
 export function unlockWindowStore(storage: KeyValueStore, key: string): UnlockWindowStore {
   return {
     get: () => storage.get(key),
-    set: (until) => (until ? storage.set(key, until) : storage.remove(key)),
+    set: (until) => {
+      if (until) storage.set(key, until);
+      else storage.remove(key);
+      for (const listener of [...(windowListeners.get(key) ?? [])]) listener();
+    },
+    subscribe: (listener) => {
+      let set = windowListeners.get(key);
+      if (!set) {
+        set = new Set();
+        windowListeners.set(key, set);
+      }
+      set.add(listener);
+      return () => {
+        set.delete(listener);
+        if (set.size === 0) windowListeners.delete(key);
+      };
+    },
   };
+}
+
+/** The desktop's window record for this human (ADR 0068): browser storage by default. */
+export function desktopUnlockWindowStore(
+  storage: KeyValueStore,
+  humanId: string,
+): UnlockWindowStore {
+  return unlockWindowStore(storage, storageKey(null, `runnerUnlockWindow.${humanId}`));
 }
 
 /** The window rule of the protocol over the device's record. */

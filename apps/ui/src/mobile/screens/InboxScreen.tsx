@@ -1,10 +1,10 @@
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 import {
   describeStateError,
   type HumanRequestView,
   type MessageView,
 } from "../../api/state-client.ts";
-import { UnlockCard, useAutoUnlock } from "../../components/UnlockCard.tsx";
+import { UnlockCard } from "../../components/UnlockCard.tsx";
 import {
   Badge,
   Button,
@@ -13,7 +13,7 @@ import {
   INPUT_CLASS,
   Loading,
 } from "../../components/ui.tsx";
-import { type PreparedAnswer, unlockChallengeOf } from "../../lib/runner-unlock.ts";
+import { unlockChallengeOf } from "../../lib/runner-unlock.ts";
 import { relativeTime } from "../../lib/time.ts";
 import { renderCard } from "../change-card.ts";
 import { sortMessages, sortRequests } from "../inbox-sort.ts";
@@ -24,32 +24,17 @@ import { MobileController, useMobileController, useMobileState } from "../store.
  * choice answers, free text; a high-risk request shows that it needs biometrics and the
  * answer is sent only after the prompt succeeded (the flag travels inside the signature).
  * A cloud runner unlock (spec S.12, ADR 0068) renders as the unlock card; inside the window
- * this phone set, the next challenge is answered without a choice (the fingerprint still).
+ * this phone set, the next challenge is answered without a choice (the fingerprint still) by
+ * `MobileShell`, on every screen.
  */
 export function InboxScreen() {
   const controller = useMobileController();
   const inbox = useMobileState((s) => s.inbox);
   const stage = useMobileState((s) => s.stage);
-  const windowUntil = useMobileState((s) => s.unlockWindowUntil);
-  const [unlockNotice, setUnlockNotice] = useState<string | null>(null);
-  const open = useMemo(() => (inbox?.requests ?? []).filter((r) => r.status === "open"), [inbox]);
-  const sendUnlock = useCallback(
-    (request: HumanRequestView, prepared: PreparedAnswer) =>
-      controller.answerUnlock(request, prepared),
-    [controller],
-  );
-  useAutoUnlock({
-    requests: stage === "paired" ? open : [],
-    bridge: controller.runnerKeys,
-    windowUntil,
-    now: controller.env.now,
-    send: sendUnlock,
-    notify: setUnlockNotice,
-  });
 
   if (stage !== "paired") return null;
   if (!inbox) return <Loading what="inbox" />;
-  const requests = sortRequests(open);
+  const requests = sortRequests(inbox.requests.filter((r) => r.status === "open"));
   const messages = sortMessages(inbox.messages);
 
   return (
@@ -65,15 +50,6 @@ export function InboxScreen() {
           Refresh
         </Button>
       </div>
-      {unlockNotice ? (
-        <p
-          className="rounded border border-blue-300 p-2 text-sm dark:border-blue-800"
-          role="status"
-          data-testid="m-unlock-notice"
-        >
-          {unlockNotice}
-        </p>
-      ) : null}
       <h2 className="font-semibold">Approvals and requests</h2>
       {requests.length === 0 ? (
         <EmptyState testId="m-no-requests">Nothing waits on you.</EmptyState>

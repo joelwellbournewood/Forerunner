@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   AUTO_UNLOCK_WINDOW_HOURS,
   type PreparedAnswer,
@@ -8,6 +8,7 @@ import {
   shortDuration,
   type UnlockChallengeCard,
   type UnlockChoice,
+  type UnlockWindowStore,
   unlockChallengeOf,
   windowOpen,
 } from "../lib/runner-unlock.ts";
@@ -202,10 +203,24 @@ export function UnlockCard({
   );
 }
 
+const noWindow = () => () => {};
+const nullWindow = () => null;
+
+/** The window record of `store` (null store: none), re-read whenever any store sets it. */
+export function useUnlockWindow(store: UnlockWindowStore | null): string | null {
+  return useSyncExternalStore(
+    store ? store.subscribe : noWindow,
+    store ? store.get : nullWindow,
+    store ? store.get : nullWindow,
+  );
+}
+
 /**
  * Auto-unlock (ADR 0068): while the window this device set is open, the next unlock challenge
  * is answered without a choice (once, leaving the window as it is) and a notice says so. Each
- * request is tried once; a failure leaves the card for the human.
+ * request is tried once; a failure leaves the card for the human. Mounted once per app, at the
+ * shell (desktop `RunnerAutoUnlock` in `Shell`, the phone's `MobileShell`), so it answers on
+ * every screen, not only while the inbox is open.
  */
 export function useAutoUnlock<R extends UnlockRequestLike>(opts: {
   requests: R[];

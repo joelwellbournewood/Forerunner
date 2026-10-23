@@ -1,6 +1,9 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { BrowserRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation } from "react-router";
+import type { HumanRequestView } from "../api/state-client.ts";
+import { useAutoUnlock } from "../components/UnlockCard.tsx";
 import { Badge, Button, Loading } from "../components/ui.tsx";
+import type { PreparedAnswer } from "../lib/runner-unlock.ts";
 import { applyTheme } from "../store/theme.ts";
 import { ChangesScreen } from "./screens/ChangesScreen.tsx";
 import { ChatScreen } from "./screens/ChatScreen.tsx";
@@ -107,6 +110,27 @@ function MobileShell() {
   const active = activeMobileProject(state);
   const onPairing = location.pathname === "/pair";
 
+  // Cloud runner auto-unlock (spec S.12, ADR 0068): inside the window this phone set, the next
+  // challenge is answered without a choice on whatever screen is open (the fingerprint still).
+  const [unlockNotice, setUnlockNotice] = useState<string | null>(null);
+  const openRequests = useMemo(
+    () => (state.inbox?.requests ?? []).filter((r) => r.status === "open"),
+    [state.inbox],
+  );
+  const sendUnlock = useCallback(
+    (request: HumanRequestView, prepared: PreparedAnswer) =>
+      controller.answerUnlock(request, prepared),
+    [controller],
+  );
+  useAutoUnlock({
+    requests: state.stage === "paired" ? openRequests : [],
+    bridge: controller.runnerKeys,
+    windowUntil: state.unlockWindowUntil,
+    now: controller.env.now,
+    send: sendUnlock,
+    notify: setUnlockNotice,
+  });
+
   if (state.stage === "loading") {
     return (
       <div className="p-4">
@@ -155,6 +179,14 @@ function MobileShell() {
           data-testid="m-push-notice"
         >
           {state.notices[0].title}: {state.notices[0].body}
+        </output>
+      ) : null}
+      {unlockNotice ? (
+        <output
+          className="border-b border-blue-200 bg-blue-50 px-3 py-1.5 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200"
+          data-testid="m-unlock-notice"
+        >
+          {unlockNotice}
         </output>
       ) : null}
       <main className="flex-1 overflow-auto p-3 pb-20">

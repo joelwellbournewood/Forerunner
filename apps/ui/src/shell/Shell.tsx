@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 import { describeError } from "../api/client.ts";
+import { RunnerAutoUnlock } from "../components/RunnerAutoUnlock.tsx";
 import { Badge, Button } from "../components/ui.tsx";
 import { NewProjectDialog } from "../pages/NewProjectDialog.tsx";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
@@ -353,6 +354,8 @@ export function Shell() {
               <code>fr daemon</code>, then reload.
             </div>
           ) : null}
+          {/* Cloud runner auto-unlock inside the window this computer set (ADR 0068). */}
+          <RunnerAutoUnlock />
           <Outlet />
         </main>
         <CommandPalette

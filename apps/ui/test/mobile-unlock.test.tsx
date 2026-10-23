@@ -158,6 +158,24 @@ describe("phone unlock card", () => {
     expectNoKeyAnywhere(key, h);
   });
 
+  it("answers inside the window on any screen, not only the inbox", async () => {
+    const { key, h, challenge, request } = await setup({
+      windowUntil: new Date(NOW_MS + 3_600_000).toISOString(),
+    });
+    const user = userEvent.setup();
+    renderMobile("/", h);
+    await confirmBiometric(user);
+    await waitFor(() => expect(postedCalls(h, `/requests/${request.id}/answer`)).toHaveLength(1));
+    expect(screen.queryByTestId("m-unlock-card")).toBeNull();
+    const call = answerCall(h, request.id);
+    expect(call).toMatchObject({ signed: true, biometric: true });
+    expect(challenge.unwrap(call.body.answer as UnlockAnswer).equals(key)).toBe(true);
+    expect(await screen.findByTestId("m-unlock-notice")).toHaveTextContent(
+      `Unlocked cloud runner "${RUNNER}" automatically`,
+    );
+    expectNoKeyAnywhere(key, h);
+  });
+
   it("is read-only in a browser without a keyring, and on a phone without the runner's key", async () => {
     const browser = await setup({ keyring: false });
     const first = renderMobile("/inbox", browser.h);

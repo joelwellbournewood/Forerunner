@@ -75,6 +75,10 @@ storage `runnerUnlockWindow.<human>`; phone: `forerunner.mobile.<install>.runner
 recorded only after the service accepted the answer and dropped by "clear". While it is open the
 next challenge (a runner that restarted and lost its cached key) is answered once, leaving the
 window as it is, and a notice says so; each request is tried once and a failure leaves the card.
+The auto-answer runs once per app at the shell (desktop `RunnerAutoUnlock` in `Shell`, the
+phone's `MobileShell`), not in the inbox screen, so it works whatever screen is open: a runner
+waits at most ten minutes per challenge and three attempts, and a window that only worked with
+the inbox open would not be a window (review finding 2).
 A device that did not set the window asks. This keeps auto-answer an explicit consent on the
 device that answers, and works on the phone, which cannot read `notify_prefs`.
 
