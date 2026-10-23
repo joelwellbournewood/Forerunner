@@ -301,7 +301,7 @@ Findings:
    they write, so the human's comment and review under the same login fire; proven by
    `githost-watcher.test.ts` "the human's comment under the token's own login fires; the
    agent's marked one does not" (fails on the starting commit's watcher), with the mark's
-   adapter tests in `githost-feedback.test.ts` and `github.test.ts` (93f7eb8).
+   adapter tests in `githost-feedback.test.ts` and `github.test.ts` (45d8a6c).
 
 2. **medium**: `packages/runtime/src/session/githost-watcher.ts:380` (and `:424`). The
    baseline is global: `initializedAt` is set even when a PR's read threw during the first
@@ -366,7 +366,7 @@ Findings:
    the list, where the base branch also inserted its first bullet (B.5 history), so the merge
    conflicts. Verified with `git merge-tree --write-tree HEAD origin/ccr-4d8a843c-1k9syk`
    (the only conflicted file). Needed: put the bullet at the end of the list.
-   Resolution: fixed in 2d1d27a and 93f7eb8: the bullet sits mid-list (after the Cloudflare
+   Resolution: fixed in 2d1d27a and 45d8a6c: the bullet sits mid-list (after the Cloudflare
    bullet, clear of the base's first and last bullets), and the adapter test spells the mark
    instead of adding an import line where the base adds one; `git merge-tree --write-tree HEAD
    origin/ccr-4d8a843c-1k9syk` now reports no conflicted file, and the trial merge typechecks
