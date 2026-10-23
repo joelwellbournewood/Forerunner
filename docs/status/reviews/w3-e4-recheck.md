@@ -67,23 +67,105 @@ not lost: the next brief carries it).
 
 ### Commands and results (2026-10-23, Linux build box)
 
-- `pnpm install --frozen-lockfile` — done.
-- `pnpm typecheck` — exit 0.
-- `pnpm lint` — exit 0 (warnings pre-existing, none in touched files beyond the existing ones).
-- `pnpm exec vitest run --project unit packages/runtime/test` — 114 test files passed, 989
-  tests passed, 1 skipped.
-- `pnpm exec vitest run --project unit packages/runtime/test/closeout-sessions.test.ts
-  packages/runtime/test/loop-critic.test.ts packages/runtime/test/session.test.ts` — 3 files,
-  40 tests passed.
-- `pnpm exec vitest run --project integration packages/runtime/test` — 1 file, 4 tests skipped
-  (needs Postgres; `FORERUNNER_TEST_PG` unset).
-- `pnpm exec vitest run --project e2e tests/e2e/scenarios/01-good-day.scenario.test.ts
-  tests/e2e/scenarios/04-collision.scenario.test.ts` (E.4's other test files) — 2 files, 2
-  tests passed.
-- `pnpm check` — lint, paths (984 files ok), typecheck, unit project 269 files passed / 2678
-  tests passed, 4 skipped, 1 todo; link-check ok (105 files); secret-scan clean (1407 files).
-  Its `docs:check` step has no `origin/main` in this clone and checks nothing, so:
-- `node scripts/docs-check.mjs --base e2bfb1e` and `--base 1490c6d` — `docs-check: ok (10 files)`.
+Output excerpts are copied from the terminal; colour codes stripped.
+
+```
+$ pnpm install --frozen-lockfile
+Done in 20.1s using pnpm v10.28.0
+
+$ pnpm typecheck; echo "typecheck exit=$?"
+apps/mobile typecheck: Done
+apps/desktop typecheck: Done
+apps/approvals-web typecheck: Done
+apps/ui typecheck: Done
+typecheck exit=0            # and `grep -c "error TS"` on the full output: 0
+
+$ pnpm lint; echo "lint exit=$?"
+Checked 1158 files in 2s. No fixes applied.
+Found 59 warnings.          # pre-existing; no errors
+lint exit=0
+
+$ pnpm exec vitest run --project unit packages/runtime/test
+ Test Files  114 passed (114)
+      Tests  989 passed | 1 skipped (990)
+
+$ pnpm exec vitest run --project unit packages/runtime/test/closeout-sessions.test.ts \
+    packages/runtime/test/loop-critic.test.ts packages/runtime/test/session.test.ts
+ ✓ unit packages/runtime/test/session.test.ts (13 tests)
+ ✓ unit packages/runtime/test/closeout-sessions.test.ts (12 tests)
+ ✓ unit packages/runtime/test/loop-critic.test.ts (15 tests)
+ Test Files  3 passed (3)
+      Tests  40 passed (40)
+
+# the same closeout file with the end re-check in runner.ts replaced by `void 0` (reverted after)
+ × a requires_ack stop sent during the last task is read before the summary cache and the handoff are written, ...
+ × an ordinary message sent during the last task is read before the writes and named in the handoff; ...
+ × a pause from the pause port during the last task is acknowledged and the row ends stopped, not left paused
+ × a session already stopped for another reason keeps its reason; ...
+      Tests  4 failed | 8 passed (12)
+# with the checklist carry-over disabled (reverted after)
+      Tests  1 failed | 11 passed (12)   # the ordinary-message test
+
+$ pnpm exec vitest run --project integration packages/runtime/test
+ Test Files  1 skipped (1)
+      Tests  4 skipped (4)  # needs Postgres; FORERUNNER_TEST_PG unset
+
+$ pnpm exec vitest run --project e2e tests/e2e/scenarios/01-good-day.scenario.test.ts \
+    tests/e2e/scenarios/04-collision.scenario.test.ts
+ Test Files  2 passed (2)
+      Tests  2 passed (2)
+
+$ pnpm check
+check-paths: ok (984 files).
+ Test Files  269 passed (269)
+      Tests  2678 passed | 4 skipped | 1 todo (2683)
+docs-check: cannot diff against origin/main (...); nothing to check.   # no origin/main in this clone
+link-check: ok (105 files).
+secret-scan: clean (1407 files).
+
+$ node scripts/docs-check.mjs --base e2bfb1e
+docs-check: ok (11 files).
+$ node scripts/docs-check.mjs --base 1490c6d
+docs-check: ok (10 files).   # before this report's commit
+
+$ git log --oneline 1490c6d..HEAD     # exactly this run's commits (before the commit adding this text)
+336696a status: build report for w3-e4-recheck
+92ae3a1 status: E.4 rows name the carry-over of a message read at the session end
+8f6514f runtime: a message read at the end of a session reaches the next session's brief
+f6b45d4 status: E.4 done, its blocker row resolved, progress log for w3-e4-recheck
+7698dd9 runtime: the session-end handoff says what was written after an end-of-session stop
+
+$ git format-patch --stdout 1490c6d..HEAD > /tmp/pre.patch
+$ git worktree add -q --detach /tmp/clean 1490c6d && cd /tmp/clean
+$ git rev-parse --short HEAD; git status --short | wc -l
+1490c6d
+0
+$ git apply --check -v /tmp/pre.patch
+Checking patch packages/runtime/test/loop-critic.test.ts...
+Checking patch docs/status/BLOCKERS.md...
+Checking patch docs/status/PROGRESS.md...
+Checking patch docs/status/reviews/w3-e4-recheck.md...
+apply --check exit=0
+$ git worktree remove --force /tmp/clean
+```
+
+The exported `/mnt/session/outputs/w3-e4-recheck.patch` is regenerated after the commit that
+adds this text and checked again the same way; that final result is appended to the copy of
+this report in `/mnt/session/outputs/w3-e4-recheck-report.md` (a committed file cannot hold
+the check of the patch that contains it).
+
+### Branch history below the starting commit
+
+The branch held two commits from an earlier, interrupted attempt before this run started:
+fdc5f8e "runtime: the inbox is re-checked before the session-end writes" (the runner change)
+and 1490c6d "wip: files left uncommitted at the end of the build run (not verified)" (the
+E.4 tests). Both carry the trailer `Claude-Build: github-actions build-item w3-e4-recheck
+build` of that run, and 1490c6d is not in the `area: what changed` form. They sit below the
+starting commit (1490c6d), so they are not in the exported patch, and rewriting them would
+need a rebase, which the working rules forbid. This run read both, ran their tests, and kept
+their content. Everything after them is in this run's five commits, all in the
+`area: what changed` form with the trailer `Claude-Build: managed-agent w3-e4-recheck build`.
+The integration step can squash or reword the two older commits when it merges the branch.
 
 ### Left open
 
