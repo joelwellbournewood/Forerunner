@@ -1939,6 +1939,53 @@ before it records the result, so no recording stays in the shared store once the
 the row. Replays of the same `clientId` are refused like plan and chat envelopes. Tests:
 `test/voice-relay.test.ts` (the drop on every outcome, the expiry, the duration bound).
 
+**Performance view (spec D.7, D.19; `views.ts#performanceView`).** `GET
+/performance?projectId=&days=` answers `PerformanceView` (`api-types.ts`), the shape the
+Performance page reads. It is built from the store at request time, no cache and no table of
+its own:
+
+- *Sources.* Every Run row created in the window that carries `ttft_ms` or `duration_ms` (a
+  row still `running` with neither is no measurement), every `chat.reply` event carrying
+  `ttftMs` or `durationMs` (the conversation agent's model turns; a yes, no or undo answered
+  by the registry has neither, and a reply with `source: "voice"` is left to its voice turn),
+  and every `voice.turn` event carrying `latency.totalToFirstAudioMs` (end of turn to first
+  audio, the figure the 1.2 s target is about; reported in the `ttft` columns).
+- *Mode derivation.* The run table has no mode column, so `runMode` derives it from who wrote
+  the row: `specialist: "critic"` is `critic_t1` or `critic_t23` by the tier of the Review row
+  whose evidence names the run (`run:<id>`), and without one by the model's rung (opus and
+  above is tier 2 or 3); `specialist: "intake"` (`INTAKE_RUN_SPECIALIST`, the intake call's
+  Run row) is `planning`; `researcher` is `researcher`; every other specialist is `coder`, as
+  `effortForTask` treats it. `chat.reply` is `text_chat`, `voice.turn` is `voice_chat`.
+  Nothing writes a `routing` run today, so that row shows its target and no samples.
+- *Scope.* Only rows on sessions of the install's human's agents count (a shared store holds
+  other humans'), and with `projectId` only that project's sessions; an unknown project is
+  404. The window is the last `days` days up to now on `created_at`: 7 by default
+  (`PERFORMANCE_DEFAULT_DAYS`), capped at 90 (`PERFORMANCE_MAX_DAYS`); a `days` that is not a
+  positive integer is 400 (`validation`, `reason: "bad_query"`).
+- *Figures.* Per mode, in the effort table's order: `samples`, the median and the 90th
+  percentile by nearest rank (`nearestRank`: `sorted[ceil(p/100 * n) - 1]`) of first token and
+  of total time, each over the samples that carry the figure; the target (`targetMs`,
+  `targetKind`) from the effort table in force (`rt.modelConfig()`); `withinTargetShare` and
+  `met` (the p90 of the figure the target measures, first token / first audio or total, at or
+  under the target), both null without a sample or without a numeric target (coder,
+  researcher, critic tiers 2 and 3); `lastAt`. `recent` lists the 20 newest measurements with
+  their source (`run`, `chat`, `voice`).
+- *Effort in force (the D.7 half).* `tier` and `baseEffort` from the table in force (an effort
+  the model watch adopted shows here), and `effort` shifted by the project's
+  `speed_quality_offset` for the modes whose code applies it (`OFFSET_MODES`: the critic
+  tiers, `offsetApplied: true`); the executor, chat, voice and planning do not read the
+  offset yet (D.16), so their `effort` stays the table's. Without a project the offset is 0.
+
+What feeds it: the executor and the critic write their Run rows as before; the intake call
+now writes one (`specialist: "intake"`, its tokens, cost, first token and duration, written in
+the `finally` so a failed call is measured too; a refused row is logged and the intake goes
+on); the conversation agent's `chat.reply` row now carries `durationMs` (the loop's measured
+run time), `model`, `effort` and `source` next to `ttftMs`. Tests:
+`performance-view.test.ts` (nearest rank, mode derivation, seeded rows across modes, targets,
+the window, ownership, the effort in force), `performance-route.test.ts` (the route on the
+composed daemon with a chat turn through `POST /chat`, 400 and 404), `intake.test.ts` (the
+intake Run row), `conversation.test.ts` (the reply row's timing).
+
 **Core loop routes (ADR 0036, all in `DAEMON_ROUTES`).** Reviews tab (spec K.2):
 `GET /projects/:id/reviews` and `GET /tasks/:id/reviews` answer `ReviewsView` (every review
 with its findings, the open finding count, verdict counts, the grade trend oldest first and
@@ -2162,7 +2209,8 @@ targets from spec table D; effort offset from the project slider; retry ladder
 (improve brief → split/change specialist → escalate under ceiling → human). `tierOfModel`
 also places a fast-mode variant id (`claude-opus-5-5-fast`) on its base model's rung; the
 per-project fast mode itself is in `src/models/fast-mode.ts` (see "Opus fast mode per project"
-under Drivers, ADR 0057).
+under Drivers, ADR 0057). `INTAKE_RUN_SPECIALIST` (`"intake"`) names the intake call's Run row,
+which the Performance view reads as the planning mode.
 
 **The speed-versus-quality slider (spec D.16).** Each project's `settings.speed_quality_offset`
 (-1 speed, 0 balanced, +1 quality; `settings.set` in `@forerunner/commands`, the Settings
