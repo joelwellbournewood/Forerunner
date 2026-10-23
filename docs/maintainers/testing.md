@@ -897,7 +897,10 @@ and its read receipt, the settings screen (`POST /commands/execute`, then
 is wired in `UiClient` but the week no longer needs it (nothing freezes the agent since
 RT-P5-2 closed). What the week never opens (extensions, updates, the model watch, Cloudflare, desktop control,
 data, costs, the mirror, the sandbox, the sync gate, the vault) is an `absent` stand-in that
-throws `unavailable` naming the field when a route reaches it. `UiClient` records every call
+throws `unavailable` naming the field when a route reaches it. Its `syncApprovals` mirrors
+the daemon's memory, blocked-findings and sign-off halves and reports the plan half (ADR
+0053, `plans`) as zeros: the week's projects run at autonomy 2, so no plan request is filed
+and none is synced; the real step is covered by `packages/runtime/test/plan-approval-daemon.test.ts`. `UiClient` records every call
 for the evidence. The screens are not rendered.
 
 *The phone.* `PhoneApprovals` lists the inbox and answers a request as the app does after a
