@@ -40,6 +40,12 @@ Requirements checked:
   with both bullets kept, `pnpm typecheck` is clean and
   `pnpm exec vitest run --project unit packages/runtime/test packages/capabilities/test` passes
   (152 files, 1394 passed, 1 skipped). No semantic conflict in `runner.ts` or `compose.ts`.
+  After the fixes the J.9 Known issues bullet sits at the end of the list, and the same trial
+  merge is conflict-free: typecheck is clean and runtime plus capabilities give 152 files,
+  1403 passed, 1 skipped.
+- `pnpm check`: everything passes except `scripts/closeout-docs.test.ts` "every ADR ... is
+  indexed in the README" for ADR 0062. The brief forbids editing `docs/decisions/README.md`
+  (the index row is added centrally), and that failure was already there at the build's head.
 - Privacy and security: no secret in rows, logs or the request text (the token goes to `GitOps`
   auth only); the `unattended` flag is set only by runtime code, never from model input; an
   always-human class stays refused unattended at level 4. Holds.
@@ -53,6 +59,7 @@ Requirements checked:
    level-3 merge through the daemon. Verified: with the `MERGE_PR_TOOL` entry deleted from
    `sessionGrant`, all 13 tests of `loop-merge.test.ts` still pass, while a real level-3 session
    in the daemon would be refused as `tool_not_allowed` and never merge.
+   Resolution: fixed in 8431c06: `RuntimeApp.sessionGrant(projectId)` returns the grant `startSession` computes, and the two daemon tests (`composeRuntime` on the fake git host as its configured API base, the token in the vault) issue their token from it; level 3 merges the PR on the host with an allowed `audit_log` row and level 2 writes the `autonomy_insufficient` row. With `MERGE_PR_TOOL` deleted from the grant both now fail.
 
 2. **medium**, `packages/runtime/src/loop/merge.ts:370`. The kill switch does not stop the
    merge step. A `killed` error from `beforeToolCall` (the token revoked by `KillSwitch.stop`
@@ -64,6 +71,7 @@ Requirements checked:
    the hooks): before the fix the session status is `completed`. A stop *during* the checks
    wait is already handled, since `afterToolCall` throws `killed` on the revoked token. The
    added test for that path passed before the fix and stays as a regression test.
+   Resolution: fixed in 8431c06: `ReviewedPrMerge` rethrows a `killed` refusal of the hooks, and an error thrown while the session's signal is aborted, as `killed`. The test "the kill switch pressed as the merge step starts" now ends the session `killed` with no merge and nothing on the task; the during-the-wait test stays as a regression.
 
 3. **medium**, `packages/runtime/src/loop/merge.ts:207`, `:252`. Only check runs are read.
    Commit statuses, the status API that Jenkins, many external CIs and deploy previews report
@@ -72,6 +80,7 @@ Requirements checked:
    implements statuses (`testenv/src/githost/routes-checks.ts`), so this can be tested here.
    The build only listed it as a known issue. Verified with the added test (a
    `failure` status `ci/jenkins` beside a green check run): before the fix the PR is merged.
+   Resolution: fixed in 685620d and 8431c06: `GitHost.listCommitStatuses` (GitHub combined status, `MemoryGitHost.setCommitStatuses`), and `judgeChecks` refuses a `failure`/`error` status and waits on a `pending` one; tested on the fake host (red status beside a green check is never merged; pending waits, green merges), on `MemoryGitHost` (`error` refuses) and in `github.test.ts` (the endpoint and mapping).
 
 4. **medium**, `packages/runtime/src/loop/merge.ts:39`, `judgeChecks` `"none"`. "No check runs
    on the head" is read as "the host has no CI" and the PR is merged at once. A repository
@@ -79,6 +88,7 @@ Requirements checked:
    is still queueing the workflow, the head simply has no check yet. Verified with the added
    test (`main` has a green `ci/test`, the PR head has none yet): before the fix the PR is
    merged without any check on its head.
+   Resolution: fixed in 8431c06: when the head reports nothing, the tool looks at the base branch's head; checks or statuses there make the verdict `checks_pending` (then a request after the bounded wait), and only nothing on either is "no CI". Tested on the fake host and on `MemoryGitHost` (where no CI on either side still merges).
 
 5. **medium**, `packages/runtime/src/loop/merge.ts:227`, `:357`. The checks wait (10 minutes
    by default) and the run deadline ignore the session's wall-clock cap (spec I, "wall-clock cap
@@ -86,6 +96,7 @@ Requirements checked:
    for a running check. `beforeToolCall` checks the wall clock once at admission; the loop never
    does. Verified with the added test (a session of 2 minutes with a running check): before the fix
    the session is still waiting after 3 simulated minutes.
+   Resolution: fixed in 8431c06: the per-call tool's wait is `min(checksWaitMs, session deadline - now - one poll)` and the run deadline is capped at the session's, so the last look, the merge and the audit row run on a live token. The two-minute-session test now ends with `checks_pending` before the session's two minutes are up.
 
 6. **low**, `docs/decisions/0062-merge-after-review-checks-rule.md:50`,
    `docs/maintainers/runtime.md:752`. A tier 3 task (deep review plus human sign-off, spec H)
@@ -94,3 +105,4 @@ Requirements checked:
    `syncSignoffAnswers`. So a tier 3 PR is never merged automatically. That is the right
    behaviour (the human who signs off is there to merge), but the ADR's "never merged
    automatically" list and runtime.md name only tier 0, and no test pins it.
+   Resolution: fixed in 8431c06: a test pins that a tier 3 accepting review goes to the sign-off with no `merge_pr` call and the PR open; ADR 0062's never-merged list, its alternatives and runtime.md (core loop, Known issues) now name tier 3, the kill switch, commit statuses and push-only CI.
