@@ -202,3 +202,104 @@ unchanged (`git diff` between the old and new HEAD is empty).
   the `webview:` lines say why. No "asking the biometric prompt" line means the CDP click
   missed the button below the fold (the driver's coordinate assumption, apps.md Known
   issues). A refusal line with no visible error means a locator problem.
+
+## Review
+
+Independent adversarial review of the build above (stage REVIEW AND FIX), on the branch at
+66b3d28, against the brief and against the base branch `ccr-4d8a843c-1k9syk` at f1948dd
+(the branch forks from 82a6295; the base has moved on by 0387401 and others since).
+
+Verdict: **revise**. Score: **76/100**. The UI half does what the brief asks and is well
+tested; the console forwarding works; but the forwarding is placed where it collides with the
+base's typed CDP driver (a merge breaks `pnpm typecheck`), the new bound leaves the simulated
+prompt dialog open behind the refusal, and a few docs claim more than the code or Chrome do.
+
+### Requirements checked
+
+- [x] Each brief candidate (1 status not available, 2 `authenticate` rejection shapes, 3 a
+  call that never settles, 4 test id / re-render, 5 plugin not registered or not permitted)
+  has a test that drives `InboxScreen` with a port behaving that way and asserts the refusal
+  names "biometric" and that no `/requests/req_cap/answer` call is made
+  (`apps/ui/test/mobile-inbox.test.tsx`; ran: 42 files / 263 tests pass).
+- [x] A bounded wait ends in the refusal (UI `BIOMETRIC_TIMEOUT_MS` 60 s, shell
+  `PROMPT_LIMIT` 45 s), both inside the smoke's 180 s; a late success is dropped.
+- [x] Happy path (enrolled, prompt passes, answer signed with the assertion) still green,
+  both the simulated-prompt test and the new port-driven one.
+- [x] Adapter (`shellBiometric`), Rust registration (`lib.rs`) and capability
+  (`capabilities/mobile.json` naming `biometric:allow-status` and
+  `biometric:allow-authenticate`) checked against the vendored sources of
+  tauri-plugin-biometric 2.4.0 (`BiometricPlugin.kt` `status` resolves
+  `{ isAvailable: false, biometryType, error: "Biometrics not enrolled.", errorCode:
+  "biometryNotEnrolled" }`; `models.rs` `Status`) and tauri 2.12.4 (`run_mobile_plugin`
+  blocks on `rx.recv()`).
+- [x] `run.mjs` expectation left unchanged, with the reason stated (ADR 0085 item 6).
+- [x] Runner forwards `Runtime.consoleAPICalled` and `Runtime.exceptionThrown` after
+  `Runtime.enable` on the session it already holds, prefixed `webview:`, with tests in
+  `apps/mobile/e2e/cdp.test.ts` (ran: 1 file / 22 tests pass).
+- [x] Docs: apps.md mobile section, testing.md, e2e README, ADR 0085 and its index row,
+  BLOCKERS emulator row, PROGRESS entry; R.5 / V.3 unchanged (their status cannot change
+  before an emulator run passes): correct.
+- [ ] Merges cleanly in meaning with the base branch: no (finding 1).
+- [ ] Refusal leaves the screen in a usable state on every port: not for the simulated prompt
+  (finding 2).
+- [x] Security / privacy: the console lines and the logcat line carry reasons only, never the
+  ticket, key or token (`grep console. apps/ui/src` finds only the three new
+  `forerunner: high-risk answer` lines); the capability grants nothing beyond
+  `biometric:default`.
+
+### Findings
+
+1. **medium**: `apps/mobile/e2e/cdp.mjs:914-1030`, `apps/mobile/e2e/cdp.test.ts:19-21`,
+   `apps/mobile/e2e/run.mjs:43`. Semantic conflict with the base. The forwarding functions
+   were added to `cdp.mjs` and imported from it, but the base's 0387401 ("the CDP driver
+   evaluates without eval ...") gave `cdp.mjs` a typed declaration file `cdp.d.mts` and
+   dropped the `@ts-expect-error` on that import. After a merge, `cdp.d.mts` does not declare
+   `forwardPageConsole`, `formatConsoleEvent` or `formatException`, so `pnpm typecheck`
+   fails. Verified: in a scratch worktree, `git merge origin/ccr-4d8a843c-1k9syk` conflicts
+   in `cdp.test.ts`, `run.mjs`, `docs/decisions/README.md` and `docs/maintainers/apps.md`;
+   after keeping both sides, `tsc -p tsconfig.node.json` reports
+   `cdp.test.ts(22,3): error TS2305: Module '"./cdp.mjs"' has no exported member
+   'formatConsoleEvent'` and the same for the other two names. Fix: move the forwarding into
+   its own module with its own declaration file, so neither side's `cdp.mjs` nor
+   `cdp.d.mts` has to change. Then re-run the merge check.
+2. **medium**: `apps/ui/src/mobile/store.tsx:781-822` (with the simulated prompt at
+   `store.tsx:357-379`). The new bound refuses the answer but leaves a pending simulated
+   prompt open. In the web and test build (`biometric: "prompt"`), when
+   `biometricTimeoutMs` runs out, the card shows the refusal while
+   `m-biometric-dialog` stays on screen. A later tap on its Confirm silently issues a
+   ticket that nothing redeems, and nothing is sent. The human sees a refusal and an open
+   "confirm" dialog at the same time. Verified with a throwaway test (simulated prompt,
+   `biometricTimeoutMs: 300`): after `m-request-error` appeared,
+   `queryByTestId("m-biometric-dialog") !== null` was `true`, and clicking
+   `m-biometric-confirm` posted nothing (test deleted afterwards). Fix: on any refusal of
+   the step, dismiss a pending simulated prompt. Test: the dialog is gone once the refusal
+   shows.
+3. **low**: `docs/decisions/0085-high-risk-refusal-on-a-phone-that-cannot-confirm.md`
+   (Consequences) and `docs/maintainers/apps.md` (Known issues). The real-device
+   counterpart of finding 2 is not documented. When `wait_bounded` gives up after
+   `PROMPT_LIMIT`, the plugin's `BiometricActivity` stays on screen: tauri-plugin-biometric
+   2.4.0 has no cancel command (`BiometricPlugin.kt` has only `status` and `authenticate`),
+   and the platform thread stays blocked in `run_mobile_plugin` until the human closes the
+   prompt. A touch after the bound does nothing; the phone has already refused. Verified by
+   reading `BiometricPlugin.kt` / `BiometricActivity.kt` and `biometric.rs`
+   `wait_bounded`. Fix: say so in the ADR and the Known issues.
+4. **low**: `apps/mobile/e2e/cdp.test.ts:683`, `docs/maintainers/apps.md:1051`. Both say
+   Chrome reports nothing from before `Runtime.enable` ("the page's console goes nowhere
+   (Chrome reports nothing either)"; "nothing before enable"). V8 does the opposite: its
+   `V8RuntimeAgentImpl::enable` replays the console messages and exceptions it kept for the
+   context group. So the runner also prints what the app logged before the attach, which is
+   useful, but the docs and the test's comment describe it wrongly. Fix the comment and the
+   doc. The fake keeps its simpler behaviour, and the comment says so.
+5. **low**: `apps/mobile/e2e/cdp.mjs:971-979`. `formatConsoleEvent` appends the call site
+   to the last line of the joined text. When an argument has a multi-line description (an
+   `Error` with its stack), the location lands at the end of the stack's last line, after the
+   other arguments. The test pins that output (`cdp.test.ts:709`: `"webview:       at send
+   (...) 42 null undefined Object (http://tauri.localhost/assets/index.js:1:4121)"`). A
+   `grep 'webview: \[error\]'` then shows the message without its location. Fix: put the
+   call site on the head line. Test: the error case has the location on its first line.
+6. **low**: `docs/status/BLOCKERS.md:21` (Android emulator row). The row contradicts
+   itself. Its new head says the attach works on the real WebView (run 39952987240). The
+   retained "Earlier" text still says the driver "has not met a real WebView yet:
+   `android.yml` was not dispatched on 2026-10-23", and it counts `cdp.test.ts` at 17 tests
+   (22 now). Verified by reading the row. Fix: reword the retained history so it is past
+   tense and true.
