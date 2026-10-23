@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import type { BillingSource } from "@forerunner/billing";
+import { type BillingSource, BUILTIN_PRICING, type PricingTable } from "@forerunner/billing";
 import {
   type Clock,
   errorMessage,
@@ -35,12 +35,20 @@ import {
   TASK_MEMORY_BUDGET_SETTING,
   tierForAttempt,
 } from "../loop/ports.ts";
+import {
+  decideFastMode,
+  FAST_MODE_AUDIT_TOOL,
+  type FastModeDecision,
+  fastModeAuditLine,
+  fastModeOf,
+} from "../models/fast-mode.ts";
 import { effortForTask, modelIdFor, startingTier } from "../models/ladder.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
 import type { EffortLevel, ModelProvider, ModelTier, Usage } from "../provider/types.ts";
 import { RUN_COMMAND_TOOL, type SpecialistDriver, TOOL_UNMAPPED_AUDIT } from "../registry/tools.ts";
 import { CLAUDE_CODE_PREFIX } from "../registry/types.ts";
 import type { Sandbox } from "../sandbox/types.ts";
+import { pricingFor as tablePricingFor } from "../wiring/billing-ports.ts";
 import {
   BILLING_PICK_AUDIT_TOOL,
   planShareAfter,
@@ -154,7 +162,19 @@ export interface LoopTaskExecutorDeps {
   tokens: TokenIssuer;
   driver: LoopAgentDriver;
   provider: ModelProvider;
+  /** Pricing of a loop run when `pricingFor` is absent (one table row for every rung). */
   pricing: RunPricing;
+  /**
+   * Pricing of a loop run by the model id its records name (the rung's id, or the fast-mode
+   * variant, ADR 0057): the daemon prices every run at its own rung from the table in force.
+   * Absent: `pricing` for a standard run, the `pricingTable` row for a fast-mode run.
+   */
+  pricingFor?: (modelId: string) => RunPricing;
+  /**
+   * The price table in force (built-ins plus `<config>/pricing.json`), read per run: fast mode
+   * applies only to an Opus id whose variant has a row (ADR 0057). Default: the built-ins.
+   */
+  pricingTable?: () => PricingTable;
   tools: ToolRegistry;
   /**
    * Tools for one run, built at run start (bridged extension tools are merged here so a
@@ -392,6 +412,18 @@ export class LoopTaskExecutor implements TaskExecutor {
       choice.driver === "sdk"
         ? modelIdFor(tier, this.sdkDeps().providerName ?? "anthropic", modelConfig?.ladder)
         : modelIdFor(tier, this.deps.provider.name, modelConfig?.ladder);
+    // Fast mode (spec D.20, ADR 0057): the project's flag routes an Opus rung on an API-style
+    // source to the variant; the Run row, the ledger and the estimate name and price it.
+    const fast = decideFastMode({
+      enabled: fastModeOf(project?.settings),
+      tier,
+      model,
+      driver: choice.driver,
+      sourceKind: choice.pick?.source.kind ?? null,
+      provider: this.deps.provider,
+      pricing: this.deps.pricingTable?.() ?? BUILTIN_PRICING,
+    });
+    const runModel = fast.kind === "applied" ? fast.variant : model;
     const effort = effortForTask(
       spec.name === "coder" ? "coder" : spec.name === "researcher" ? "researcher" : "coder",
       brief.riskTier,
@@ -415,7 +447,7 @@ export class LoopTaskExecutor implements TaskExecutor {
       task_id: task.id,
       session_id: session.id,
       specialist: spec.name,
-      model,
+      model: runModel,
       provider: choice.driver === "sdk" ? SDK_RUN_PROVIDER : this.deps.provider.name,
       effort,
       prompt_version: spec.promptVersion,
@@ -446,6 +478,14 @@ export class LoopTaskExecutor implements TaskExecutor {
       humanId: token.claims.ownerHumanId,
     };
     if (choice.pick) await this.auditPick(choice.pick, runIds, task.id, tier);
+    if (fast.kind !== "off") {
+      await this.auditFastMode(fast, runIds, task, tier, choice);
+      if (fast.kind === "ignored")
+        this.deps.onEvent?.(task.id, {
+          type: "warning",
+          message: `fast mode is on for this project but this run stays at the standard speed: ${fast.reason}`,
+        });
+    }
     // The attempt count is the state workflow's (failed -> ready, spec D.2); a run does not
     // count itself, or the ladder would advance twice per failure.
     await store.task.patch(task.id, { specialist: spec.name });
@@ -547,10 +587,11 @@ export class LoopTaskExecutor implements TaskExecutor {
           system: spec.prompt,
           messages: [{ role: "user", content: userText }],
           tools,
-          pricing: this.deps.pricing,
+          pricing: this.loopPricing(runModel, fast),
           timeoutMs: spec.timeoutMs,
           maxTurns: spec.maxTurns,
           effort,
+          ...(fast.kind === "applied" ? { speed: "fast" as const } : {}),
           cwd: worktree,
           label,
           onEvent,
@@ -689,6 +730,62 @@ export class LoopTaskExecutor implements TaskExecutor {
           }
         : { kind: pick.source.kind === "plan_credits" ? "plan_credits" : "api" };
     return { sourceId: pick.source.id, driver: pick.driver, pick, billing };
+  }
+
+  /**
+   * The loop run's pricing by the model its records name: `pricingFor` when the composition
+   * passes it; else the flat `pricing` for a standard run and the variant's table row for a
+   * fast-mode run (a fast run is never priced at the standard rate).
+   */
+  private loopPricing(runModel: string, fast: FastModeDecision): RunPricing {
+    if (this.deps.pricingFor) return this.deps.pricingFor(runModel);
+    if (fast.kind === "applied")
+      return tablePricingFor(runModel, this.deps.pricingTable?.() ?? BUILTIN_PRICING);
+    return this.deps.pricing;
+  }
+
+  /**
+   * The fast-mode decision as an audit row on the run (ADR 0057): applied, or ignored with the
+   * reason ("API only" for a subscription or plan credits). Written only when the project's
+   * flag met an Opus rung; a flag that changes nothing writes nothing.
+   */
+  private async auditFastMode(
+    fast: Exclude<FastModeDecision, { kind: "off" }>,
+    ids: RunIds,
+    task: TaskRow,
+    tier: ModelTier,
+    choice: RunBillingChoice,
+  ): Promise<void> {
+    try {
+      await this.deps.store.auditLog.append({
+        session_id: ids.sessionId,
+        run_id: ids.runId,
+        agent_id: ids.agentId,
+        human_id: ids.humanId,
+        tool: FAST_MODE_AUDIT_TOOL,
+        input_summary: JSON.stringify({
+          taskId: task.id,
+          projectId: task.project_id,
+          runId: ids.runId,
+          tier,
+          model: fast.model,
+          ...(fast.kind === "applied" ? { variant: fast.variant } : {}),
+          sourceId: choice.sourceId,
+          kind: choice.pick?.source.kind ?? null,
+          driver: choice.driver,
+        }),
+        result_summary: fastModeAuditLine(fast),
+        allowed: true,
+        denied_reason: null,
+        cost_usd_micro: 0,
+        occurred_at: this.deps.clock.nowIso(),
+      });
+    } catch (e) {
+      this.logger.error("fast-mode decision not audited", {
+        runId: ids.runId,
+        error: errorMessage(e),
+      });
+    }
   }
 
   /** The pick as an audit row on the run: the source, the driver and the router's reason. */

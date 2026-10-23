@@ -30,6 +30,7 @@ export * from "./injection/scan.ts";
 export * from "./jobs/index.ts";
 export * from "./loop/index.ts";
 export * from "./models/eval-runner.ts";
+export * from "./models/fast-mode.ts";
 export * from "./models/ladder.ts";
 export * from "./models/price-list.ts";
 /** Model settings files (ladder and effort overrides); namespaced: its tier and effort lists mirror ladder.ts. */

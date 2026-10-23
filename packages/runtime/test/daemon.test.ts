@@ -148,6 +148,23 @@ describe("local daemon", () => {
       risk: "high",
     });
     expect(settings.find((s) => s.key === "project.budget")).toMatchObject({ scope: "project" });
+    // Opus fast mode (D.20, ADR 0057): per project, off by default, the surcharge both ways.
+    const fast = settings.find((s) => s.key === "project.fast_mode" && s.scopeId === projectId);
+    expect(fast).toMatchObject({ scope: "project", value: false, risk: "medium" });
+    expect(str(fast?.description)).toContain("API only");
+    expect(str(fast?.description)).toContain("On: Opus runs of this project on an API key");
+    expect(str(fast?.description)).toContain("USD 24 / 120");
+    expect(str(fast?.description)).toContain("Off: Opus runs of this project go back");
+    await rt.store.project.update(projectId, (await rt.store.project.mustGet(projectId)).version, {
+      settings: { ...(await rt.store.project.mustGet(projectId)).settings, fast_mode: true },
+    });
+    const after = await jsonList(await req("/settings"));
+    expect(after.find((s) => s.key === "project.fast_mode" && s.scopeId === projectId)?.value).toBe(
+      true,
+    );
+    await rt.store.project.update(projectId, (await rt.store.project.mustGet(projectId)).version, {
+      settings: { ...(await rt.store.project.mustGet(projectId)).settings, fast_mode: false },
+    });
   });
 
   it("starts a session through the scheduler and exposes it with its events; kill works", async () => {

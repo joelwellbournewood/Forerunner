@@ -1,3 +1,4 @@
+import { fastModeVariantId } from "@forerunner/billing";
 import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import { z } from "zod";
 import { ContextPipeline, DEFAULT_CONTEXT_SETTINGS } from "../context/pipeline.ts";
@@ -42,6 +43,12 @@ export interface RunRequest {
   timeoutMs: number;
   maxTokensPerCall?: number;
   effort?: EffortLevel;
+  /**
+   * Fast mode (spec D.20, ADR 0057): every call of the run asks the provider for `speed:
+   * "fast"` on `model`, and the run's records (the hooks' ledger rows, `run_start`) name the
+   * variant `<model>-fast`. `pricing` must then be the variant's; the executor sets both.
+   */
+  speed?: "fast";
   phase?: "work" | "review";
   /** Hard cap on model calls in this run (defence in depth under the session step cap). */
   maxTurns?: number;
@@ -186,13 +193,15 @@ export class LoopAgentDriver {
       req.timeoutMs,
     );
 
+    // The model the run's records name: the fast-mode variant when the run asks for it.
+    const recordedModel = req.speed === "fast" ? fastModeVariantId(req.model) : req.model;
     const ctx: RunContext = {
       token: req.token,
       budget: req.budget,
       signal: controller.signal,
       runDeadlineMs,
       phase: req.phase ?? "work",
-      model: req.model,
+      model: recordedModel,
       provider: req.provider.name,
       billingSourceId: req.billingSourceId,
       ...(req.billing ? { billing: req.billing } : {}),
@@ -227,7 +236,7 @@ export class LoopAgentDriver {
     // One compressor per run: a cross-turn reference can only name a result in this transcript.
     const compressor = pipeline.beginRun({ maxChars: maxToolResultChars });
 
-    emit({ type: "run_start", runId: claims.runId, model: req.model });
+    emit({ type: "run_start", runId: claims.runId, model: recordedModel });
     try {
       for (let turn = 1; ; turn++) {
         if (turn > maxTurns) {
@@ -259,6 +268,7 @@ export class LoopAgentDriver {
               tools: toolDefs,
               max_tokens: maxOut,
               effort: req.effort,
+              ...(req.speed ? { speed: req.speed } : {}),
               cache: { system: true, tools: true },
               compression: bypass,
               signal: controller.signal,

@@ -14,6 +14,7 @@ import { writeKillRequest } from "../enforcement/killfile.ts";
 import { estimateAccuracyView } from "../estimates/view.ts";
 import { createExtensionsRoutes } from "../extensions/routes.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
+import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
 import { createNotificationRoutes } from "../notifications/routes.ts";
@@ -1403,6 +1404,16 @@ export function createDaemonApp(
           scopeId: p.id,
           value: p.settings.handover ?? null,
           description: `Monthly handover test on ${p.name}: enabled, day, time, budget_usd, seed (off until enabled)`,
+          risk: "medium",
+        },
+        {
+          // Opus fast mode (spec D.20, ADR 0057): the effect and the surcharge both ways, from
+          // the price table in force; changed through `settings.set` like any SETTING_SPECS key.
+          key: `project.${FAST_MODE_SETTING}`,
+          scope: "project",
+          scopeId: p.id,
+          value: fastModeOf(p.settings),
+          description: fastModeDescription(rt.pricingTable()),
           risk: "medium",
         },
       ]),

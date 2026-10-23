@@ -1,3 +1,4 @@
+import type { PricingTable } from "@forerunner/billing";
 import type { Clock } from "@forerunner/platform";
 import type { ActionClass, StartRequest } from "@forerunner/runtime";
 import type {
@@ -97,6 +98,12 @@ export interface CommandPorts {
    * route does, so an answer said in chat or voice acts like one given in the inbox.
    */
   requestAnswered?(requestId: string): Promise<void>;
+  /**
+   * The price table in force (built-ins plus `<config>/pricing.json` and adopted rows), for a
+   * setting whose effect quotes a price (`fast_mode`, spec D.20, ADR 0057). Default: the
+   * built-in table.
+   */
+  pricingTable?(): PricingTable;
 }
 
 export interface CommandContext {

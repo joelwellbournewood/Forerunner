@@ -236,6 +236,8 @@ async function finishedTask(
     ledger?: boolean;
     status?: TaskRow["status"];
     runs?: number;
+    /** The model the runs name (a fast-mode variant for an urgent run, ADR 0057). */
+    model?: string;
   },
 ): Promise<TaskRow> {
   await w.clock.advance(60_000);
@@ -259,7 +261,7 @@ async function finishedTask(
       task_id: task.id,
       session_id: w.session,
       specialist: over.specialist ?? "coder",
-      model: "fake-sonnet",
+      model: over.model ?? "fake-sonnet",
       provider: "fake",
       effort: "medium",
       cost_usd_micro: Math.round(over.actual / runs),
@@ -333,6 +335,30 @@ describe("estimate model: learning from run rows and the cost ledger", () => {
     expect(await m.refresh(w.store)).toBe(1);
     expect(m.stats()[0]?.samples).toBe(10);
     expect(await m.refresh(w.store)).toBe(0);
+  });
+
+  it("a task with a fast-mode run is not a sample: urgent work's surcharge never inflates the standard estimate (D.20)", async () => {
+    const w = await world();
+    worlds.push(w);
+    for (let i = 0; i < 6; i++)
+      await finishedTask(w, { estimate: 1_000_000, actual: 1_000_000, ledger: true });
+    // Urgent work in a fast-mode project: the same tasks at six times the cost (ADR 0057).
+    for (let i = 0; i < 4; i++)
+      await finishedTask(w, {
+        estimate: 1_000_000,
+        actual: 6_000_000,
+        ledger: true,
+        model: "claude-opus-5-5-fast",
+      });
+    const m = await EstimateModel.fromStore(w.store, { defaults });
+    expect(m.stats()[0]).toMatchObject({ specialist: "coder", kind: "tier1", samples: 6 });
+    const r = m.estimate({ specialist: "coder", risk_tier: 1, est_cost_usd_micro: 1_000_000 });
+    expect(r.costRatio).toBeCloseTo(1, 5);
+    // Folded once and skipped: a refresh neither counts nor re-reads them.
+    expect(await m.refresh(w.store)).toBe(0);
+    await finishedTask(w, { estimate: 1_000_000, actual: 6_000_000, model: "fake-opus-fast" });
+    expect(await m.refresh(w.store)).toBe(0);
+    expect(m.stats()[0]?.samples).toBe(6);
   });
 
   it("without a task estimate the cold-start figure is the estimate, so defaults get calibrated too", async () => {

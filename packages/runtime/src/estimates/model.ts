@@ -22,6 +22,7 @@
  * twice however often refresh() runs, and neither the query nor the memory grows with the
  * install's history (ADR 0019, amendment).
  */
+import { isFastModeVariant } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
 import type { StateStore, TaskRow, TaskStatus } from "@forerunner/state";
 
@@ -444,12 +445,18 @@ export class EstimateModel implements EstimatePort {
       this.prune();
       return 0;
     }
-    const byTask = new Map<string, { cost: number; wall: number; finished: number }>();
+    const byTask = new Map<
+      string,
+      { cost: number; wall: number; finished: number; fast: boolean }
+    >();
     for (let i = 0; i < fresh.length; i += RUN_LIST_CHUNK) {
       const ids = fresh.slice(i, i + RUN_LIST_CHUNK).map((t) => t.id);
       for (const r of await store.run.list({ task_id: ids })) {
         if (!r.task_id || r.outcome === "running" || r.outcome === "") continue;
-        const acc = byTask.get(r.task_id) ?? { cost: 0, wall: 0, finished: 0 };
+        const acc = byTask.get(r.task_id) ?? { cost: 0, wall: 0, finished: 0, fast: false };
+        // A fast-mode run (its Run row names the `<id>-fast` variant, spec D.20, ADR 0057) costs
+        // the research-preview surcharge: the task is no sample of what the work costs.
+        if (isFastModeVariant(r.model)) acc.fast = true;
         acc.cost += r.cost_usd_micro;
         acc.wall += r.duration_ms ?? 0;
         acc.finished += 1;
@@ -470,7 +477,7 @@ export class EstimateModel implements EstimatePort {
     for (const t of fresh) {
       this.remember(t.id, t.updated_at);
       const runs = byTask.get(t.id);
-      if (!runs || runs.finished === 0) continue;
+      if (!runs || runs.finished === 0 || runs.fast) continue;
       const sample = this.sampleForTask(t, {
         usdMicro: ledger.get(t.id) ?? runs.cost,
         wallMs: runs.wall,

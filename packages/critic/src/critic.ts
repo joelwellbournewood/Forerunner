@@ -1,7 +1,14 @@
+import type { BillingSourceKind, PricingTable } from "@forerunner/billing";
+import { BUILTIN_PRICING } from "@forerunner/billing";
 import { type Clock, errorMessage, ForerunnerError, log, newId } from "@forerunner/platform";
 import {
   type ContextPipeline,
+  decideFastMode,
   type EffortLevel,
+  FAST_MODE_AUDIT_TOOL,
+  type FastModeDecision,
+  fastModeAuditLine,
+  fastModeOf,
   type LadderRung,
   type LoopAgentDriver,
   type Mode,
@@ -131,6 +138,20 @@ export interface CriticDeps {
   /** Model calls allowed per review. Default 3: the review call, the tool result, a closing turn. */
   maxTurns?: number;
   maxTokensPerCall?: number;
+  /**
+   * Opus fast mode (spec D.20, ADR 0057): the billing facts the per-review decision needs
+   * besides the project's `fast_mode` flag, read at every review: the kind of the source the
+   * critic is billed to (`billingSourceId`; null for an API-style source the composition
+   * does not name) and the price table in force (the variant needs its own row). Absent: an
+   * API-style source and the built-in table, as for the executor without a billing port.
+   */
+  fastMode?: () => Promise<CriticFastModeFacts> | CriticFastModeFacts;
+}
+
+/** What the critic's fast-mode decision reads from the composition (ADR 0057). */
+export interface CriticFastModeFacts {
+  sourceKind: BillingSourceKind | null;
+  pricing: PricingTable;
 }
 
 export interface ReviewContext {
@@ -223,14 +244,44 @@ export class CriticService {
   async settingsFor(
     ctx: Pick<ReviewContext, "sessionToken" | "projectSettings" | "ceiling" | "effortOffset">,
   ): Promise<CriticSettings> {
-    let settings = ctx.projectSettings;
-    if (settings === undefined) {
-      const projectId = ctx.sessionToken.claims.projectId;
-      settings = projectId
-        ? ((await this.deps.store.project.get(projectId))?.settings ?? null)
-        : null;
-    }
-    return mergeSettings({ ...ctx, projectSettings: settings });
+    return mergeSettings({ ...ctx, projectSettings: await this.projectSettingsOf(ctx) });
+  }
+
+  /** The project's settings object a review runs under (see `settingsFor`). */
+  private async projectSettingsOf(
+    ctx: Pick<ReviewContext, "sessionToken" | "projectSettings">,
+  ): Promise<JsonObject | null> {
+    if (ctx.projectSettings !== undefined) return ctx.projectSettings;
+    const projectId = ctx.sessionToken.claims.projectId;
+    return projectId ? ((await this.deps.store.project.get(projectId))?.settings ?? null) : null;
+  }
+
+  /**
+   * Opus fast mode for this review (spec D.20, ADR 0057): the project's flag on an Opus pick
+   * goes fast on an API-style source and a provider that offers it; the same rules as a
+   * specialist run (`decideFastMode`), on the loop driver the critic always uses.
+   */
+  private async fastModeFor(
+    pick: CriticModelPick,
+    projectSettings: JsonObject | null,
+    provider: { name: string; fastMode?: boolean },
+  ): Promise<{ decision: FastModeDecision; sourceKind: BillingSourceKind | null }> {
+    const enabled = fastModeOf(projectSettings);
+    if (!enabled || pick.tier !== "opus") return { decision: { kind: "off" }, sourceKind: null };
+    const facts = (await this.deps.fastMode?.()) ?? {
+      sourceKind: null,
+      pricing: BUILTIN_PRICING,
+    };
+    const decision = decideFastMode({
+      enabled,
+      tier: pick.tier,
+      model: pick.model,
+      driver: "loop",
+      sourceKind: facts.sourceKind,
+      provider,
+      pricing: facts.pricing,
+    });
+    return { decision, sourceKind: facts.sourceKind };
   }
 
   /**
@@ -268,9 +319,13 @@ export class CriticService {
     const { clock, store } = this.deps;
     const tier = input.tier as Exclude<ReviewTier, 0>;
     const t0 = clock.monotonic();
-    const pick = this.pickFor(tier, await this.settingsFor(ctx), ctx.timeoutMs);
+    const projectSettings = await this.projectSettingsOf(ctx);
+    const pick = this.pickFor(tier, mergeSettings({ ...ctx, projectSettings }), ctx.timeoutMs);
     if (ctx.timeoutMs !== undefined) pick.timeoutMs = ctx.timeoutMs;
     const provider = this.deps.providers.get(this.deps.providerName);
+    // Fast mode (spec D.20, ADR 0057): the run's records and price name the variant.
+    const { decision: fast, sourceKind } = await this.fastModeFor(pick, projectSettings, provider);
+    const runModel = fast.kind === "applied" ? fast.variant : pick.model;
     const parent = this.deps.tokens.verify(ctx.sessionToken, clock.now());
     const runId = newId(clock.now());
     const taskId = input.subject.kind === "task" ? input.subject.taskId : undefined;
@@ -357,6 +412,15 @@ export class CriticService {
       }),
     );
     const label = subjectLabel(input.subject);
+    if (fast.kind !== "off") {
+      if (persist)
+        await this.auditFastMode(fast, { runId, taskId, tier, pick, parent, sourceKind });
+      if (fast.kind === "ignored")
+        ctx.onEvent?.({
+          type: "warning",
+          message: `fast mode is on for this project but this review stays at the standard speed: ${fast.reason}`,
+        });
+    }
 
     let result: RunResult;
     try {
@@ -369,7 +433,8 @@ export class CriticService {
         system: `${this.deps.prompt.prompt}${SYSTEM_SUFFIX}`,
         messages: [{ role: "user", content: rendered.text }],
         tools,
-        pricing: this.deps.pricing(pick.model),
+        pricing: this.deps.pricing(runModel),
+        ...(fast.kind === "applied" ? { speed: "fast" as const } : {}),
         timeoutMs: pick.timeoutMs,
         maxTurns: this.deps.maxTurns ?? 3,
         maxTokensPerCall: this.deps.maxTokensPerCall ?? 8192,
@@ -403,7 +468,7 @@ export class CriticService {
     });
     const output: ReviewOutput = {
       ...built,
-      model: pick.model,
+      model: runModel,
       tier,
       durationMs: Math.max(0, Math.round(clock.monotonic() - t0)),
       costUsdMicro: result.costUsdMicro,
@@ -435,7 +500,7 @@ export class CriticService {
         task_id: taskId ?? null,
         session_id: parent.sessionId,
         specialist: "critic",
-        model: pick.model,
+        model: runModel,
         provider: provider.name,
         effort: pick.effort,
         prompt_version: this.deps.prompt.promptVersion,
@@ -487,6 +552,56 @@ export class CriticService {
       openFindings,
       resolved: submitted?.resolved ?? [],
     });
+  }
+
+  /**
+   * The fast-mode decision as an audit row on the review's run (ADR 0057), as the executor
+   * writes one for a specialist run: applied, or ignored with the reason ("API only" for a
+   * subscription or plan credits). A failed append is logged, never fatal to the review.
+   */
+  private async auditFastMode(
+    fast: Exclude<FastModeDecision, { kind: "off" }>,
+    at: {
+      runId: string;
+      taskId: string | undefined;
+      tier: ReviewTier;
+      pick: CriticModelPick;
+      parent: { sessionId: string; ownerHumanId: string; projectId?: string };
+      sourceKind: BillingSourceKind | null;
+    },
+  ): Promise<void> {
+    try {
+      await this.deps.store.auditLog.append({
+        session_id: at.parent.sessionId,
+        run_id: at.runId,
+        agent_id: this.deps.criticAgentId,
+        human_id: at.parent.ownerHumanId,
+        tool: FAST_MODE_AUDIT_TOOL,
+        input_summary: JSON.stringify({
+          specialist: "critic",
+          taskId: at.taskId ?? null,
+          projectId: at.parent.projectId ?? null,
+          runId: at.runId,
+          reviewTier: at.tier,
+          tier: at.pick.tier,
+          model: fast.model,
+          ...(fast.kind === "applied" ? { variant: fast.variant } : {}),
+          sourceId: this.deps.billingSourceId,
+          kind: at.sourceKind,
+          driver: "loop",
+        }),
+        result_summary: fastModeAuditLine(fast),
+        allowed: true,
+        denied_reason: null,
+        cost_usd_micro: 0,
+        occurred_at: this.deps.clock.nowIso(),
+      });
+    } catch (e) {
+      this.logger.error("critic fast-mode decision not audited", {
+        runId: at.runId,
+        error: errorMessage(e),
+      });
+    }
   }
 
   /** Turn what the model returned into findings and a ruled verdict; conservative when it returned nothing. */

@@ -10,6 +10,12 @@ export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
 export type ModelTier = "haiku" | "sonnet" | "opus" | "fable";
 
+/**
+ * Inference speed (spec D.20, ADR 0057). "fast" asks a provider that offers it (`fastMode`)
+ * for its fast mode on the same model id; absent means the provider's standard speed.
+ */
+export type SpeedMode = "standard" | "fast";
+
 export interface ModelRef {
   provider: string; // "anthropic" | "fake" | ...
   /** Provider model id, e.g. claude-haiku-5-5 */
@@ -60,6 +66,12 @@ export interface ModelRequest {
   effort?: EffortLevel;
   /** Only honoured by providers that accept it; Anthropic adapters drop it. */
   temperature?: number;
+  /**
+   * Fast mode (spec D.20, ADR 0057): set only by the executor, only on a provider whose
+   * `fastMode` is true, only for a project with `fast_mode` on and an API-style source. The
+   * model id stays the base id; the run's records name the variant (`<id>-fast`).
+   */
+  speed?: SpeedMode;
   /** Mark stable prefixes (system prompt, project brief) for prompt caching. */
   cache?: { system?: boolean; tools?: boolean };
   /** Opaque metadata recorded with the run (prompt version, task id). Never sent as instructions. */
@@ -114,6 +126,11 @@ export interface ModelResponse {
 
 export interface ModelProvider {
   readonly name: string;
+  /**
+   * True when the provider honours `ModelRequest.speed = "fast"` (the Anthropic Messages
+   * adapter). Absent or false: the executor never asks it for fast mode (ADR 0057).
+   */
+  readonly fastMode?: boolean;
   /** Models this provider offers, ranked cheapest first inside each tier. */
   listModels(): Promise<ModelRef[]>;
   /** Streams events; the final event is message_end or error. */

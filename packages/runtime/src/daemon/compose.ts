@@ -1611,6 +1611,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // The tables in force at every review's pick (ADR 0039): an adopted sonnet or opus rung
     // moves the tier-1 and tier-2/3 reviews with the executor and the chat.
     modelConfig: () => modelConfig.get(),
+    // Opus fast mode (spec D.20, ADR 0057): the project's flag reaches the Opus reviews when
+    // the source the critic is billed to is API-style, priced from the table in force.
+    fastMode: async () => ({
+      sourceKind: (await store.billingSource.get(billingSourceId))?.kind ?? null,
+      pricing: pricingTable,
+    }),
   });
   // `withMemory: false` is the handover test's executor (spec P.15 "only the repo and docs",
   // ADR 0060): its specialists get no lesson, the shared scope included.
@@ -1625,6 +1631,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       pricing: provider
         ? livePricing(provider, () => rungModelFor(provider, "sonnet"))
         : { estimate: () => 0, cost: () => 0 },
+      // Every loop run priced by the model its records name, from the table in force: its own
+      // rung, or the fast-mode variant of the Opus rung (spec D.20, ADR 0057).
+      ...(provider
+        ? { pricingFor: (modelId: string) => pricingForProvider(provider, modelId, pricingTable) }
+        : {}),
+      pricingTable: () => pricingTable,
       tools,
       toolsFor: toolsForRun,
       sandbox: sandboxPort,
@@ -2269,6 +2281,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     startUndoState,
     ports: {
       chfPerUsd: async () => chfPerUsd(),
+      // The prices in force for an effect that quotes one (fast_mode, ADR 0057).
+      pricingTable: () => pricingTable,
       ...sessionPorts,
       // session.pause is the graceful stop: the row reads `paused` at once and a session
       // running in this process ends at the next task boundary (the runner reads the pause

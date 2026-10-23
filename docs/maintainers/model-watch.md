@@ -217,6 +217,15 @@ canonicalisation is `validation`).
 | `UnconfiguredPriceListSource` | Production when no URL is set: every fetch is `unavailable` naming the variable, the report says so, and every model outside the pricing table is unpriced. Nothing is guessed. |
 | `FixturePriceListSource(list)` | Tests and installs that pin prices by hand. |
 
+**Fast-mode variants (spec D.20, ADR 0057).** The Opus fast-mode rate has its own price rows
+named for the variant (`claude-opus-5-5-fast`, `claude-opus-4-6-fast`; `billing.md`), so the
+watch reads the variant's rate like any other row: a price list that names
+`claude-opus-5-5-fast` produces a repricing of that row alone (`diffPrices`) and an adoption
+writes it to `<config>/pricing.json`, which the executor's fast-mode pricing and the Settings
+texts read through the table in force. A variant is never a provider listing (the provider
+lists the base id), so `diffModels` neither proposes nor retires it; the evals run the
+standard speed. `test/fast-mode.test.ts` pins the repricing.
+
 ### The eval runner (`eval-runner.ts`, ADR 0029)
 
 `LoopEvalRunner` implements `EvalRunnerPort` inside the runtime (`@forerunner/evals` depends on
