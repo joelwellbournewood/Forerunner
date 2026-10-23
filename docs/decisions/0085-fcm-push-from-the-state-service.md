@@ -32,8 +32,10 @@ configured.
    `budget` (decided like the runtime's `sessionEnded` producer, from the runner's
    `handoff.stop_reason`: `budget_exceeded`, or a session stopped at its cap, is the urgent
    stop; `budget_finish_current`, new work stopped at 80 %, or 80 % of the cap on a row that
-   records spend while it runs, is the normal warning; see "Review amendment") and `message` (an unread message to the human, or to the human's agent from another
-   human's agent). Each goes to every non-revoked device of the human with a `push_token`.
+   records spend while it runs, is the normal warning; see "Review amendment") and
+   `message` (an unread message from another human's agent to the human or the human's
+   agent; from the human's own agent only when it needs them: question, request, warning or
+   ack required). Each goes to every non-revoked device of the human with a `push_token`.
 2. **FCM HTTP v1, `node:crypto` only.** `FcmSender` (`src/push/fcm.ts`) posts
    `POST https://fcm.googleapis.com/v1/projects/<project>/messages:send` with
    `Authorization: Bearer <access token>`. The access token is minted from the service account

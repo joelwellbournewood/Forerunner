@@ -1,7 +1,7 @@
 import { type Clock, log } from "@forerunner/platform";
 import { isQuietAt, resolvePrefs } from "@forerunner/runtime/notifications/prefs";
 import { KIND_URGENCY, type Urgency } from "@forerunner/runtime/notifications/types";
-import type { DeviceRow, SessionRow, StateStore } from "@forerunner/state";
+import type { DeviceRow, MessageRow, SessionRow, StateStore } from "@forerunner/state";
 import type { ChangeBus, ChangeEvent } from "../realtime.ts";
 import type { PushMessage, PushSender } from "./fcm.ts";
 
@@ -13,7 +13,9 @@ import type { PushMessage, PushSender } from "./fcm.ts";
  * - approval: a `human_request` opened for the human (blocking ones are urgent);
  * - session: a session of the human's agent completed, failed or stopped;
  * - budget: a session stopped at its budget cap (urgent) or crossed the warning share of it;
- * - message: a new message to the human, or to the human's agent from another human's agent.
+ * - message: a new message from another human's agent to the human or the human's agent, or
+ *   from the human's own agent to the human when it needs them (question, request, warning,
+ *   ack required).
  *
  * Quiet hours are the human's own (`human.notify_prefs`, the rule of ADR 0017 via
  * `isQuietAt`): urgent kinds go through; the others are held in memory and sent when the window
@@ -324,12 +326,14 @@ export class PushFanout {
         const row = await store.message.get(id);
         // Unread only: a message the human already read on another device is not news.
         if (!row || row.read_at !== null) return [];
-        if (!row.to_human_id) {
-          // A message to the human's agent is pushed only when it comes from another human's agent.
-          const from = await store.agent.get(row.from_agent_id);
-          if (!from || from.owner_human_id === e.humanId) return [];
-        } else if (row.to_human_id !== e.humanId) {
-          return [];
+        if (row.to_human_id && row.to_human_id !== e.humanId) return [];
+        const from = await store.agent.get(row.from_agent_id);
+        if (!from) return [];
+        if (from.owner_human_id === e.humanId) {
+          // The human's own agent: a note to itself is never pushed, and a message to the human
+          // only when it needs them (the attention rule of the runtime's `peerMessage`). The
+          // session summary every session ends with is plain `info`; the session push says it.
+          if (!row.to_human_id || !needsAttention(row)) return [];
         }
         return [
           {
@@ -364,6 +368,11 @@ export function messageOf(n: PushNotice): PushMessage {
     },
     priority: n.urgency === "urgent" ? "high" : "normal",
   };
+}
+
+/** Questions, requests, warnings and messages awaiting an ack need the human (`peerMessage`). */
+function needsAttention(m: MessageRow): boolean {
+  return m.requires_ack || m.type === "question" || m.type === "request" || m.type === "warning";
 }
 
 /** Session ends that mean the budget stopped the work (the runner's `handoff.stop_reason`). */

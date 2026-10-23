@@ -453,6 +453,37 @@ describe("push fan-out from the state service (spec R.6)", () => {
     expect(h.google.sent[0]?.message.android?.priority).toBe("NORMAL");
   });
 
+  it("a session end and its summary message buzz once; the own agent's questions and other humans' messages are pushed", async () => {
+    await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
+    // What the runner writes at the end of a session: the status and a plain `info` summary
+    // from Ada's own agent to Ada.
+    await h.store.session.patch(h.seed.session.id, { status: "completed" });
+    await h.store.message.send({
+      from_agent_id: h.seed.alice.id,
+      to_human_id: h.seed.ada.id,
+      type: "info",
+      body: "session summary",
+    });
+    await h.tick();
+    expect(h.google.sent.map((s) => s.message.data?.kind)).toEqual(["session"]);
+    const question = await h.store.message.send({
+      from_agent_id: h.seed.alice.id,
+      to_human_id: h.seed.ada.id,
+      type: "question",
+      body: "which branch?",
+    });
+    const fromBob = await h.store.message.send({
+      from_agent_id: h.seed.bobAgent.id,
+      to_human_id: h.seed.ada.id,
+      type: "info",
+      body: "fyi",
+    });
+    await h.tick();
+    expect(
+      h.google.sent.filter((s) => s.message.data?.kind === "message").map((s) => s.message.data?.id),
+    ).toEqual([question.id, fromBob.id]);
+  });
+
   it("quiet hours hold normal kinds until the window ends; urgent ones go through", async () => {
     await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
     // 09:00 UTC is inside Ada's 08:00-10:00 window.
