@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   describeStateError,
   type HumanRequestView,
   type MessageView,
 } from "../../api/state-client.ts";
+import { UnlockCard, useAutoUnlock } from "../../components/UnlockCard.tsx";
 import {
   Badge,
   Button,
@@ -12,6 +13,7 @@ import {
   INPUT_CLASS,
   Loading,
 } from "../../components/ui.tsx";
+import { type PreparedAnswer, unlockChallengeOf } from "../../lib/runner-unlock.ts";
 import { relativeTime } from "../../lib/time.ts";
 import { renderCard } from "../change-card.ts";
 import { sortMessages, sortRequests } from "../inbox-sort.ts";
@@ -21,15 +23,33 @@ import { MobileController, useMobileController, useMobileState } from "../store.
  * Inbox on the phone (spec K.4, J.3, R.5): approvals first (blocking, then newest), multiple
  * choice answers, free text; a high-risk request shows that it needs biometrics and the
  * answer is sent only after the prompt succeeded (the flag travels inside the signature).
+ * A cloud runner unlock (spec S.12, ADR 0068) renders as the unlock card; inside the window
+ * this phone set, the next challenge is answered without a choice (the fingerprint still).
  */
 export function InboxScreen() {
   const controller = useMobileController();
   const inbox = useMobileState((s) => s.inbox);
   const stage = useMobileState((s) => s.stage);
+  const windowUntil = useMobileState((s) => s.unlockWindowUntil);
+  const [unlockNotice, setUnlockNotice] = useState<string | null>(null);
+  const open = useMemo(() => (inbox?.requests ?? []).filter((r) => r.status === "open"), [inbox]);
+  const sendUnlock = useCallback(
+    (request: HumanRequestView, prepared: PreparedAnswer) =>
+      controller.answerUnlock(request, prepared),
+    [controller],
+  );
+  useAutoUnlock({
+    requests: stage === "paired" ? open : [],
+    bridge: controller.runnerKeys,
+    windowUntil,
+    now: controller.env.now,
+    send: sendUnlock,
+    notify: setUnlockNotice,
+  });
 
   if (stage !== "paired") return null;
   if (!inbox) return <Loading what="inbox" />;
-  const requests = sortRequests(inbox.requests.filter((r) => r.status === "open"));
+  const requests = sortRequests(open);
   const messages = sortMessages(inbox.messages);
 
   return (
@@ -45,6 +65,15 @@ export function InboxScreen() {
           Refresh
         </Button>
       </div>
+      {unlockNotice ? (
+        <p
+          className="rounded border border-blue-300 p-2 text-sm dark:border-blue-800"
+          role="status"
+          data-testid="m-unlock-notice"
+        >
+          {unlockNotice}
+        </p>
+      ) : null}
       <h2 className="font-semibold">Approvals and requests</h2>
       {requests.length === 0 ? (
         <EmptyState testId="m-no-requests">Nothing waits on you.</EmptyState>
@@ -73,6 +102,8 @@ function RequestCard({ request }: { request: HumanRequestView }) {
   const [queued, setQueued] = useState(false);
   const high = MobileController.isHighRisk(request);
   const card = request.changeCard;
+  const challenge = unlockChallengeOf(request);
+  const windowUntil = useMobileState((s) => s.unlockWindowUntil);
 
   const send = async (value: unknown) => {
     if (busy) return;
@@ -119,7 +150,18 @@ function RequestCard({ request }: { request: HumanRequestView }) {
           ))}
         </ol>
       ) : null}
-      {card && typeof card === "object" && !Array.isArray(card) ? (
+      {challenge ? (
+        <UnlockCard
+          request={request}
+          card={challenge}
+          bridge={controller.runnerKeys}
+          windowUntil={windowUntil}
+          now={controller.env.now}
+          onSend={(prepared) => controller.answerUnlock(request, prepared)}
+          testIdPrefix="m-"
+        />
+      ) : null}
+      {!challenge && card && typeof card === "object" && !Array.isArray(card) ? (
         <pre
           className="mt-2 overflow-auto whitespace-pre-wrap rounded bg-neutral-100 p-2 text-xs dark:bg-neutral-900"
           data-testid="m-request-card"
@@ -132,7 +174,7 @@ function RequestCard({ request }: { request: HumanRequestView }) {
           High risk: answering asks for your fingerprint or face first.
         </p>
       ) : null}
-      {request.options.length > 0 ? (
+      {!challenge && request.options.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-2" data-testid="m-options">
           {request.options.map((o) => (
             <Button
@@ -147,25 +189,27 @@ function RequestCard({ request }: { request: HumanRequestView }) {
           ))}
         </div>
       ) : null}
-      <form
-        className="mt-2 flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (text.trim()) void send(text.trim());
-        }}
-      >
-        <input
-          className={INPUT_CLASS}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Or answer in your own words…"
-          aria-label="Free-text answer"
-          data-testid="m-free-text"
-        />
-        <Button type="submit" disabled={busy || !text.trim()} data-testid="m-send-free-text">
-          Send
-        </Button>
-      </form>
+      {challenge ? null : (
+        <form
+          className="mt-2 flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (text.trim()) void send(text.trim());
+          }}
+        >
+          <input
+            className={INPUT_CLASS}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Or answer in your own words…"
+            aria-label="Free-text answer"
+            data-testid="m-free-text"
+          />
+          <Button type="submit" disabled={busy || !text.trim()} data-testid="m-send-free-text">
+            Send
+          </Button>
+        </form>
+      )}
       {queued ? (
         <p className="mt-2 text-xs text-neutral-500" data-testid="m-answer-queued">
           Queued; sent when the phone reconnects.

@@ -22,7 +22,7 @@ import {
  */
 const SPKI = Buffer.from("302a300506032b656e032100", "hex");
 
-export function runnerChallenge(runnerId = "runner-eu", ttlMs = 10 * 60_000) {
+export function runnerChallenge(runnerId = "runner-eu", ttlMs = 10 * 60_000, now = Date.now()) {
   const pair = generateKeyPairSync("x25519");
   const raw = pair.publicKey.export({ format: "der", type: "spki" }).subarray(SPKI.length);
   const nonce = randomBytes(32);
@@ -33,7 +33,7 @@ export function runnerChallenge(runnerId = "runner-eu", ttlMs = 10 * 60_000) {
     challengeId: randomUUID(),
     runnerPublicKey: Buffer.from(raw).toString("base64"),
     nonce: nonce.toString("base64"),
-    expiresAt: new Date(Date.now() + ttlMs).toISOString(),
+    expiresAt: new Date(now + ttlMs).toISOString(),
   };
   /** The runner's unwrap: throws for a tampered answer or one wrapped to another challenge. */
   const unwrap = (answer: UnlockAnswer): Buffer => {
@@ -57,7 +57,12 @@ export function runnerChallenge(runnerId = "runner-eu", ttlMs = 10 * 60_000) {
 /** The request a runner start files (kind credential, high risk, blocking). */
 export function unlockRequest(
   card: ReturnType<typeof runnerChallenge>["card"],
-  overrides: { id?: string; projectId?: string | null; projectName?: string | null } = {},
+  overrides: {
+    id?: string;
+    projectId?: string | null;
+    projectName?: string | null;
+    now?: number;
+  } = {},
 ) {
   return {
     id: overrides.id ?? `req_unlock_${card.challengeId.slice(0, 8)}`,
@@ -77,7 +82,7 @@ export function unlockRequest(
     changeCard: card,
     status: "open" as const,
     answer: null,
-    createdAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+    createdAt: new Date((overrides.now ?? Date.now()) - 2 * 60_000).toISOString(),
     version: 1,
   };
 }
