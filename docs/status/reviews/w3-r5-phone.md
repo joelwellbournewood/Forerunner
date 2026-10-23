@@ -166,3 +166,105 @@ after this report was committed.
 - **The PC's spoken audio** does not travel back; the phone speaks the reply text with its
   own speech synthesis.
 - **Turns longer than 5 s** are released at 5 s (the JSON body cap; ADR 0080 item 5).
+
+## Review
+
+Item `w3-r5-phone`, stage REVIEW AND FIX, reviewed 2026-10-23 at the starting commit
+`5eee27a` (the build's four commits plus the `wip:` snapshot `34bfcdb`, on top of
+`82a6295`; the named base `ccr-4d8a843c-1k9syk` is at `f1948dd` and was not merged in).
+
+**Verdict: revise.** **Score: 62 / 100.** The three screens exist, are in the nav and are
+tested against the fake service, and the PC side of the voice relay is real and tested on
+the composed runtime. But a review verdict that the service refuses still tells the agent
+"Approved", the phone decides the biometric rule from a cached inbox, the "no audio stays
+in the shared store" promise of ADR 0080 does not hold on the refusal paths, and two claims
+in the docs about the Upload screen and the 5 s cap do not match the code.
+
+### Requirements checked
+
+- R.5 "Upload photos, files and documents to a project": Upload screen in the nav, file and
+  camera inputs, name, project, cap shown and enforced, signed multipart, phase progress,
+  offline queue with `clientId` idempotency (`UploadScreen.tsx`, `uploads.ts`,
+  `projects.ts`). Met, except finding 6.
+- R.5 "Review PRs and critic findings, comment, approve or reject": Reviews screen, PR link,
+  findings, comment, approve / reject answering the task's approval, biometric for high
+  risk (ADR 0045). Partly met: findings 1, 2, 3.
+- R.5 "chat and voice with your agent (module O)": push-to-talk relayed as `kind: "voice"`
+  through the remote command path, the typed line without a recorder, the reply shown and
+  spoken (`ChatScreen.tsx`, `voice.ts`, `relay.ts`, `watcher.ts`). Met, with findings 4, 5.
+- Each screen with a `mobile-*.test.tsx`: `mobile-upload`, `mobile-reviews`,
+  `mobile-voice` exist and pass (45 files, 267 tests in `@forerunner/ui`).
+- "then the emulator run": not possible on this box (no Android SDK); the emulator smoke
+  does not touch the new screens at all (finding 7).
+- R.3 offline (uploads queued through a queue flushed on reconnect): met; R.4 remote command
+  path reused for voice: met.
+- ADR 0080 present and indexed; `apps.md`, `runtime.md`, `state-service.md`, requirements
+  R.5 row, BLOCKERS R.5 row and PROGRESS updated. R.5 kept `in progress` correctly.
+- Privacy: audio in the shared store (finding 4); audit rows carry no audio or transcript
+  (checked `appendAudit`: input names command, device, kind, clientId only).
+- Semantic conflicts with the base `f1948dd` (finding 8).
+
+### Findings
+
+1. **high** — `services/state-api/src/routes/reviews.ts:121-150` (base code the new
+   Reviews screen now drives). `POST /reviews/:id/approve|reject` sends the
+   `decision` message "Approved review … " to the responsible agent *before* it answers the
+   task's approval request. When the answer is refused (high risk without the biometric
+   flag: 403 `biometric_required`; a stale `requestVersion`: 409; another human's request:
+   403), the call fails but the agent has already been told the review was approved or
+   rejected. Verified with a throwaway test on the real service harness (a `risk: "high"`
+   approval on the reviewed task, the phone approving without the flag): status 403
+   `biometric_required`, and the message table went from 0 to 1 row with the body
+   `Approved review … of "Write the parser"`. The fake service checks the flag first, so
+   `mobile-reviews.test.tsx` "the service refuses a high-risk verdict without the biometric
+   flag" passes against behaviour the real service does not have.
+2. **medium** — `apps/ui/src/mobile/store.tsx:1088-1130` (`reviewRequest`,
+   `reviewVerdict`). Whether a verdict needs the biometric prompt is decided from the
+   phone's cached inbox only. A high-risk approval filed after the last inbox load (the
+   critic and the approval land together, the human opens Reviews from a notice) is not in
+   the cache: the verdict goes without the prompt, the service answers 403
+   `biometric_required`, and the screen offers no way to give the biometric (every retry
+   takes the same path); with finding 1 the agent was told "Approved" each time. Verified by
+   reading the path: `reviewRequest` reads `this.state.inbox?.requests`, nothing reloads it
+   before the verdict, and the 403 is shown as an error with no prompt.
+3. **medium** — `services/state-api/src/routes/reviews.ts:132-134`. The verdict picks the
+   first open approval on the task among *all* humans' requests of the project
+   (`open({ projectId })`) and then `answerRequestAs` refuses it with 403 "not your request"
+   when it belongs to the other human of a shared project. Ada can then never approve or
+   reject the review from the phone (or anywhere), although her verdict is only a message.
+   Verified by reading `answerRequestAs` (`assertRequestOwner`) and the route.
+4. **medium** (privacy) — `packages/runtime/src/remote/watcher.ts:332-365, 578-620`. The
+   recording is dropped from the shared `remote_command` row only inside `runVoice`. A voice
+   row that never reaches it keeps its audio forever: a malformed envelope (an over-long
+   recording), a device of another human or a revoked one (`authorize` throws), a
+   duplicate. And while the PC is offline the row (with its audio) waits indefinitely and
+   is then run whenever the PC comes back, long after the phone stopped watching (about
+   2 min, `ChatScreen.watch`), so a stale "stop it" or "yes" acts hours later. ADR 0080
+   item 7 ("Once the turn ran (or failed)") and its Consequences ("the seconds between the
+   phone's post and the PC's pick-up") say otherwise. Verified with a throwaway test: a
+   voice row with 300,000 base64 characters failed `malformed voice envelope` and its
+   params were still 300,073 characters long afterwards.
+5. **low** — `packages/runtime/src/voice/relay.ts:20-25`, `watcher.ts:139-152`.
+   `VOICE_RELAY_MAX_PCM_BYTES` is documented as "the longest turn at the highest rate the
+   relay accepts", but the envelope accepts 8 to 48 kHz and 1 or 2 channels and the cap is
+   on bytes only: 8 kHz mono carries 10 s, 48 kHz stereo is refused after 0.83 s. "At most
+   5 s" (ADR 0080 item 5, `runtime.md`) is not what the code enforces. Verified by
+   arithmetic on the constants and the schema.
+6. **medium** — `apps/ui/src/mobile/screens/UploadScreen.tsx:33-39`, `uploads.ts:1513`.
+   A queued file that does not fit the 2 MiB persistence budget is held in memory only and
+   lost if the app closes, but the screen shows the same "Offline: queued, sent when the
+   phone reconnects." as for a persisted one; `QueuedUpload.persisted` is read nowhere.
+   The build report ("The screen and the docs say so") and ADR 0080 item 1 claim the screen
+   tells the human. Verified with `grep persisted apps/ui/src` (only `uploads.ts`).
+7. **medium** — `apps/mobile/e2e/run.mjs:311-395`. The brief's next step is "then the
+   emulator run", but the emulator smoke covers pairing, the inbox, the Remote card and the
+   change log only; Upload, Reviews and the Chat voice turn are never opened, so a green
+   `android.yml` run would not show the new screens work in the WebView. The BLOCKERS R.5
+   row names "the raw-CDP smoke extended to Upload, Reviews and Chat" as what must run.
+   Verified by reading `smoke()`.
+8. **low** — `docs/maintainers/apps.md` (Android app, "Known issues", first bullet).
+   Against the base `f1948dd` the branch has one textual conflict: the base deleted the
+   stale "PC does not consume plan/chat" bullet that this branch rewrote. Verified with
+   `git merge-tree --write-tree HEAD f1948dd` (the only conflict; `compose.ts`,
+   `runtime.md`, the status files and the ADR index merge cleanly, and ADR 0080 is a free
+   number on the base).
