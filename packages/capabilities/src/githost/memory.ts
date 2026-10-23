@@ -2,6 +2,7 @@ import { ForerunnerError } from "@forerunner/platform";
 import {
   type CheckRunInfo,
   type CommentInfo,
+  type CommitStatusInfo,
   type FileContent,
   FORERUNNER_TASK_ID_FIELD,
   type GitHost,
@@ -30,6 +31,7 @@ interface Repo extends RepoInfo {
   issues: IssueInfo[];
   comments: Map<number, CommentInfo[]>;
   checks: Map<string, CheckRunInfo[]>;
+  statuses: Map<string, CommitStatusInfo[]>;
   releases: ReleaseInfo[];
   nextNumber: number;
 }
@@ -124,6 +126,7 @@ export class MemoryGitHost implements GitHost {
       issues: [],
       comments: new Map(),
       checks: new Map(),
+      statuses: new Map(),
       releases: [],
       nextNumber: 1,
     };
@@ -281,6 +284,14 @@ export class MemoryGitHost implements GitHost {
 
   setCheckRuns(repo: RepoRef, ref: string, runs: CheckRunInfo[]): void {
     this.repo(repo).checks.set(ref, runs);
+  }
+
+  async listCommitStatuses(repo: RepoRef, ref: string): Promise<CommitStatusInfo[]> {
+    return this.repo(repo).statuses.get(ref) ?? [];
+  }
+
+  setCommitStatuses(repo: RepoRef, ref: string, statuses: CommitStatusInfo[]): void {
+    this.repo(repo).statuses.set(ref, statuses);
   }
 
   async createRelease(

@@ -24,7 +24,11 @@ with their milestone.
   reviewed commit, the one the checks ran on): GitHub and the fake host refuse with 409 ("Head
   branch was modified") when the head moved, `MemoryGitHost` answers the same message, so the
   runtime's merge step after an accepting review (`packages/runtime/src/loop/merge.ts`, spec
-  J.9, ADR 0062) never merges a commit nobody reviewed. `listRepos({ org })`, `listRepos({ user })` (a user's public repositories)
+  J.9, ADR 0062) never merges a commit nobody reviewed. `listCommitStatuses(repo, ref)` reads
+  the combined status (`GET /commits/<ref>/status`, the latest status per context: the status
+  API Jenkins and many external CIs report through) beside `listCheckRuns`, so the merge step
+  refuses a red status as it refuses a red check run; `MemoryGitHost.setCommitStatuses` sets
+  them for tests. `listRepos({ org })`, `listRepos({ user })` (a user's public repositories)
   and `listRepos()` (every repository the token is affiliated with) follow the `Link:
   rel="next"` header page by page up to `MAX_LIST_PAGES` (100), `pageSize` items per page
   (1 to 100, default 100; `nextPageUrl` parses the header), so a source scan (spec A.4,
@@ -262,7 +266,8 @@ action), U.9 (run event with counts on a session).
 
 ## Tests
 
-`github.test.ts` sends the merge's `sha` pin to the stub and has `MemoryGitHost` refuse a merge
+`github.test.ts` reads commit statuses from the combined-status endpoint, sends the merge's
+`sha` pin to the stub and has `MemoryGitHost` refuse a merge
 pinned to a head the PR no longer has; `git.test.ts` has `isAncestor` false while the base has
 moved and true after the rebase. The runtime's merge step on the fake git host is
 `packages/runtime/test/loop-merge.test.ts`.

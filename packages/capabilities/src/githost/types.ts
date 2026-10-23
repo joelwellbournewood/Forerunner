@@ -63,6 +63,17 @@ export interface CheckRunInfo {
   detailsUrl: string | null;
 }
 
+/**
+ * A commit status (the older status API, the one Jenkins and many external CIs report
+ * through), the latest per `context` on a commit.
+ */
+export interface CommitStatusInfo {
+  id: number;
+  context: string;
+  state: "pending" | "success" | "failure" | "error";
+  targetUrl: string | null;
+}
+
 export interface ReleaseInfo {
   id: number;
   tagName: string;
@@ -218,6 +229,8 @@ export interface GitHost {
   ): Promise<IssueInfo[]>;
   commentOnIssue(repo: RepoRef, number: number, body: string): Promise<CommentInfo>;
   listCheckRuns(repo: RepoRef, ref: string): Promise<CheckRunInfo[]>;
+  /** The latest commit status per context on `ref` (the combined status's entries). */
+  listCommitStatuses(repo: RepoRef, ref: string): Promise<CommitStatusInfo[]>;
   createRelease(
     repo: RepoRef,
     opts: { tagName: string; name: string; body: string; draft?: boolean; prerelease?: boolean },
