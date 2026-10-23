@@ -1,7 +1,7 @@
 # w2-l6-speak: TTS for summaries and alerts
 
-No build report was committed on the branch. The work is in commits `ac576a2` (commands),
-`d5d6350` (runtime, ADR 0063) and `f18c418` (UI), merged with the base at `a99dc03`.
+The build is in commits `ac576a2` (commands), `d5d6350` (runtime, ADR 0063) and `f18c418` (UI).
+`a99dc03` merges the base into the branch. No build report was committed on the branch.
 
 ## Review
 
@@ -9,80 +9,101 @@ Verdict: revise
 
 Score: 62
 
-Reviewed `git diff origin/ccr-4d8a843c-1k9syk...HEAD` (46 files) against the brief. Commands
-run on this branch, all green: `pnpm exec vitest run --project unit packages/runtime/test`
-(116 files, 1001 passed, 1 skipped), the targeted speak, notification and `packages/commands/test`
-suites (14 files, 220 passed), `pnpm --filter @forerunner/ui test` (42 files, 255 passed),
-`pnpm typecheck` (clean), `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` (ok),
-`node scripts/check-paths.mjs` (ok). Two throwaway tests (findings 2 and 3) were written,
-run and deleted.
+Reviewed `git diff origin/ccr-4d8a843c-1k9syk...HEAD` (46 files) against the brief, as an
+independent reviewer starting at `dc07c10`. These commands ran green on this branch:
+- `pnpm typecheck` (clean)
+- `pnpm exec vitest run --project unit packages/runtime/test/speak-route.test.ts packages/runtime/test/notifications-voice.test.ts packages/commands/test` (11 files, 159 tests passed)
 
-What works: `POST /projects/:id/speak` and `POST /sessions/:id/speak` synthesise sentence by
-sentence through the registry's TTS with no model call. The text is echoed. Cancel is
-immediate. Another human's project or session is refused with 403. Exactly one `voice.speak`
-event row and one audit row are written, with no audio. The UI's Read aloud button follows
-its own utterance and plays the frames through Web Audio. The `summary.speak` command parses
-in English and German. `voice_alerts` sits in `notify_prefs` and the settings command. The
-voice channel's redaction assertion, quiet-hours skip and urgent-only rule are tested.
+A throwaway test, `packages/runtime/test/zz-throwaway.test.ts`, proved findings 2, 3 and 4.
+It was run once and deleted.
 
-The second clause of L.6 is not met end to end: nothing makes a voice alert audible. The
-delivery rows and the docs say it is.
+Requirements checked:
+- [x] `POST /projects/:id/speak` synthesises the cached one-screen summary sentence by sentence through the registry's TTS (`pickTts`), with no model call (`speak-route.test.ts`, FakeTts calls in order).
+- [x] `POST /sessions/:id/speak` reads a session's summary.
+- [x] The text is echoed in `SpeakView.sentences`.
+- [x] Audio is streamed as the voice loop's `audio` frame over SSE (`GET /speak/:id/events`).
+- [x] A cancel is immediate (`POST /speak/:id/cancel`).
+- [x] Another human's project or session is refused with 403 `forbidden` (route).
+- [x] Exactly one `voice.speak` event row and one `voice.speak` audit row per utterance. No audio and no text go into the audit row.
+- [~] One voice at a time: this holds for sequential calls only (finding 3).
+- [~] `summary.speak` is a registry command, low risk, needs no confirmation, and parses in English and German. By chat it is never audible (finding 1), and it skips the ownership rule the route has (finding 6).
+- [x] `voice` channel enabled per human through `notify_prefs.voice_alerts` and the `voice_alerts` setting.
+- [~] Urgent notifications are spoken (ADR 0017 urgency). In practice nobody hears them: no client plays the frames (finding 1).
+- [x] Quiet hours skip the voice and the toast still goes (`notifications-voice.test.ts`).
+- [x] Disabled means no voice row.
+- [~] "Falls back to the next channel otherwise" holds only with the default chain. A per-kind list naming only `voice` falls back to nothing (finding 4).
+- [~] A delivery row is logged for every attempt, but a TTS failure is logged as `delivered` (finding 2).
+- [x] The channel never speaks a secret: it asserts with `redact`, and a test covers it.
+- [~] The UI has a "Read aloud" button on the project summary and the session view, with tests. The Web Audio playback is untested (finding 7), and leaving the page does not cancel the daemon's utterance (finding 8).
+- [~] Docs: voice.md, notifications.md, runtime.md, commands.md and apps.md were all touched. notifications.md, apps.md, the ADR and `lib/speech.ts` claim playback that does not exist (finding 1).
+- [x] ADR 0063 written in the template's form.
 
 Findings:
 
 1. **high**: voice alerts and `summary.speak` by chat are never audible, yet they are recorded as spoken.
-   - Where: `packages/runtime/src/daemon/compose.ts:1891-1914` (the `VoiceChannel` and its `speak` adapter), `packages/runtime/src/daemon/compose.ts:2188-2199` (the command's `speak` port), `packages/runtime/src/daemon/server.ts` (`onSpeak`, the `speak.started` frame).
-   - What is wrong: the speaker's default sink is `pacedSink` (`packages/voice/src/loop.ts:800`), which only sleeps for each chunk's duration and produces no sound. The only consumer of `/speak/:id/events` is `apps/ui/src/lib/speech.ts`, and that runs only for an utterance the UI started itself with the Read aloud button. Nothing subscribes to `speak.started`: grep finds no consumer in `apps/desktop` (`src-tauri/src/sse.rs` handles `notification`, `restart.requested` and similar frames, not `speak.started`) and none in `apps/ui`.
-   - Effect on alerts: an urgent alert goes to `SpeakSessions.say()`, plays silently into the paced sink, and is recorded as `voice:delivered` "spoken: N sentence(s)…". The `notify.voice` audit row says `allowed: true`. The channel's own gate, "a desktop shell holds the event stream (someone is at the machine to hear it)", counts exactly the Rust sidecar, which discards the frame.
-   - Effect on chat: `summary.speak` typed in chat answers "Reading the summary of X aloud." and nothing is heard. The alert also cancels a Read aloud the UI is playing (one voice), so the one audible path is cut off in favour of a silent one.
-   - The docs say the opposite of the code: `docs/maintainers/notifications.md:377-379` ("the daemon's paced sink and the UI's Web Audio playback do (`apps.md`), so an alert is heard with the app window open"), `docs/maintainers/apps.md:411-413` ("a spoken alert is heard only through the daemon's own sink") and ADR 0063 Consequences, line 75 ("Humans who enable voice alerts hear `budget_stop`…").
-   - Verified: read `pacedSink`; grepped `apps/` for `speak.started`, `speakEvents` and `/speak/` (only `lib/speech.ts`, reached from `ReadAloud`, and the UI's fake daemon); read `sse.rs` `parse_daemon_event`. The daemon test `notifications-voice.test.ts:414` passes only because it inspects `FakeTts.calls`, not whether any client played the frames.
-   - Smallest correct fix: in the UI's existing `/events` subscription, attach a player to every `speak.started` whose `source` is not `ui` (call `playSpeech(client, id)`; the webview already plays Web Audio), so alerts and chat-initiated reads play while the window is open. Make the voice channel's precondition "a client that plays speech is attached", not `shells.count()`. Until then, record the alert as `skipped`/`unavailable` ("no player attached") rather than `delivered`. Correct the three doc passages. If L.6's alert half cannot be closed here, return L.6 as in progress with this as the open point.
+   - Where: `packages/runtime/src/daemon/compose.ts:1896-1914` (the `VoiceChannel` with `shellsConnected: () => shells.count()`) and `compose.ts:2145-2156` (the command's `speak` port).
+   - What is wrong: the speaker's default sink is `pacedSink` (`packages/voice/src/loop.ts`), which only sleeps for each chunk's duration and produces no sound. The only player of `/speak/:id/events` is `apps/ui/src/lib/speech.ts`, and it runs only for an utterance the UI started itself through `ReadAloud`.
+   - Nothing subscribes to `speak.started`: `apps/desktop/src-tauri/src/sse.rs` does not, and `apps/ui/src/api/sse.ts` drops the frame as an unknown event.
+   - Effect on alerts: an urgent alert is "spoken" into the paced sink and recorded as `voice:delivered` "spoken: N sentence(s)…". The `notify.voice` audit row says `allowed: true`. The channel's precondition counts exactly the clients that cannot play: the Rust sidecar is a "shell", and the UI's EventSource is not.
+   - Effect on chat: `summary.speak` typed in chat answers "Reading the summary of X aloud." and nothing is heard.
+   - The docs say the opposite of the code:
+     - `docs/maintainers/notifications.md:377-379` ("the daemon's paced sink and the UI's Web Audio playback do … so an alert is heard with the app window open")
+     - `docs/maintainers/apps.md:412-413` ("heard only through the daemon's own sink")
+     - ADR 0063 Consequences ("Humans who enable voice alerts hear `budget_stop`…")
+     - `apps/ui/src/lib/speech.ts:12` ("the desktop shell, which plays the same frames")
+   - Verified: read `pacedSink`. Grepped `apps/` for `speak.started` (no consumer) and for `AudioContext` (only `lib/speech.ts`). Read `parseDaemonEvent` and `DAEMON_EVENT_NAMES`. `notifications-voice.test.ts` passes only because it inspects `FakeTts.calls`, not whether any client played the frames.
+   - Fix needed:
+     - The UI's `/events` stream declares itself a speech player when it can play (`?speech=play`), and the daemon counts those streams.
+     - The voice channel and the command port require a speech player attached; otherwise they skip with the reason, or fall back to text.
+     - `speak.started` says who plays it (`player: "requester"` for the Read aloud routes, `"any"` otherwise), and the UI plays every `"any"` utterance.
+     - Correct the four passages.
+     - Tests: the daemon counts players and skips with no player; the UI plays a `speak.started` utterance.
 
 2. **medium**: a TTS failure mid-alert is recorded as a delivered voice alert.
-   - Where: `packages/runtime/src/daemon/compose.ts:1911` and the copied adapter in `packages/runtime/test/notifications-voice.test.ts:128-138`.
-   - What is wrong: `Utterance.done` resolves (it does not reject) with `state: "failed"` when the provider throws. The adapter maps only `cancelled` to `interrupted` and returns every other state as success, so `VoiceChannel.send` (`voice.ts:98-104`) answers `{ ok: true, detail: "spoken: 1 sentence(s), 0 chunk(s)…" }`.
-   - Verified: a throwaway test wired `SpeakSessions` to a TTS whose `synthesize` throws "engine crashed", behind `VoiceChannel` and `Notifier`. The notification's `voice` delivery came back `delivered`. The test was deleted afterwards.
-   - Smallest correct fix: return the record's state (or `error`) from the `speak` port, and in `VoiceChannel.send` map `failed` to `{ ok: false, reason: redact(error.message), retryable: true }`. Add a test with a throwing TTS.
+   - Where: `packages/runtime/src/daemon/compose.ts:1904-1912` and `packages/runtime/src/notifications/channels/voice.ts:98-104`, plus the copied adapter in `packages/runtime/test/notifications-voice.test.ts:128-138`.
+   - What is wrong: `Utterance.done` resolves (it does not reject) with `state: "failed"` when the provider throws. The adapter maps only `cancelled` to `interrupted`, so `VoiceChannel.send` answers `{ ok: true, detail: "spoken: …" }`.
+   - Verified: the throwaway test gave `SpeakSessions` a TTS whose `synthesize` throws "engine crashed". `done` resolved with `state: "failed"`, `error: { code: "provider_error" }`. Under this adapter that is a delivered row.
+   - Fix needed: report the state and error through the port, and map `failed` to `{ ok: false }` with the redacted reason. The failure is retryable only when nothing was heard. Add a test with a throwing TTS behind the notifier.
 
 3. **medium**: "one voice at a time" does not hold for concurrent requests.
    - Where: `packages/runtime/src/voice/speak.ts:368-387` (`SpeakSessions.say`).
-   - What is wrong: `this.current?.cancel()` runs after `await pickTts(...)`, and `this.speaking` is set only after a second await (`sessionIdFor()`). Two `say()` calls that overlap (two urgent notifications dispatched together through `notifyLater`, or an alert and a Read aloud press) both see `current === null` and both play to the end. The voice loop's replies (`VoiceSessions`) are not coordinated with the speaker at all, so an alert can also talk over a voice turn.
-   - Verified: a throwaway test ran `Promise.all([speech.say(a), speech.say(b)])` on `FakeTts` and the simulated clock. Both utterances ended `done`, neither `cancelled`. The test was deleted afterwards. The route test `speak-route.test.ts:360` only covers calls made one after the other.
-   - Smallest correct fix: reserve the slot synchronously at the top of `say()`, for example a generation counter or a `this.pending` promise chain, so the newest request cancels whatever started before it. Add a concurrent-`say` test.
+   - What is wrong: `this.current?.cancel()` runs after `await pickTts(...)`. `this.speaking` is set only after a second await (`sessionIdFor()`). Two overlapping `say()` calls both see `current === null` and both play to the end. Overlapping calls happen with two urgent notifications dispatched together through `notifyLater`, or an alert and a Read aloud press.
+   - Verified: the throwaway test ran `Promise.all([say(a), say(b)])` on `FakeTts` and the simulated clock. It printed `F3 done done`: both utterances played to the end, neither was cancelled. `speak-route.test.ts:360` only covers calls made one after the other.
+   - The voice loop (`VoiceSessions`) is not coordinated either: an alert can talk over an open voice conversation.
+   - Fix needed: serialise the start of `say()` so the newest request cancels whatever started before it. Add a concurrent test. Skip voice alerts while a voice session is open, with the reason.
 
-4. **medium**: a per-kind list naming only `voice` drops the toast for an urgent alert, contradicting ADR 0063 point 5.
-   - Where: `packages/runtime/src/notifications/prefs.ts:184` and `packages/runtime/test/notifications-voice.test.ts:293-299`.
-   - What is wrong: `channelsFor` filters `voice` out of an explicit list, so `channels: { budget_stop: ["voice"] }` leaves an empty chain and no desktop, Telegram, Signal or email attempt. The record's outcome is `delivered` only because of the announcer. With finding 1 nothing is heard, so the alert reaches nobody. With the voice skipped (quiet hours, no shell, voice alerts off) the outcome is `no_channel`. The ADR says voice "never replaces a delivery … the toast stays", and the test asserts the opposite ("that is the delivery"). The `PUT /notifications/prefs` schema accepts `voice` in a list because it is now in `CHANNEL_NAMES`.
-   - Verified: read `channelsFor` and `dispatch`. The cited test asserts `["voice:delivered"]` with no chain row.
-   - Smallest correct fix: when filtering `voice` leaves an explicit list empty, fall back to the default chain (or reject `voice` in per-kind lists in `NotificationPrefsPatch`). Change the test to expect the toast plus the voice row.
+4. **medium**: a per-kind list naming only `voice` drops the toast, contradicting ADR 0063 point 5.
+   - Where: `packages/runtime/src/notifications/prefs.ts:184` and the test `packages/runtime/test/notifications-voice.test.ts:293-299`.
+   - What is wrong: `channelsFor` filters `voice` out of an explicit list, so `channels: { budget_stop: ["voice"] }` leaves an empty chain and no desktop, Telegram, Signal or email attempt. The record is `delivered` only because of the announcer. With the voice skipped (quiet hours, nobody at the machine) the outcome is `no_channel` and the alert reaches nobody.
+   - The ADR says voice "never replaces a delivery … the toast stays". The test asserts the opposite ("that is the delivery").
+   - Verified: the throwaway test printed `F4 []` for `channelsFor("budget_stop", { channels: { budget_stop: ["voice"] } })`.
+   - Fix needed: when an explicit list holds no chain channel, use the default chain. Change the test to expect the toast plus the voice row.
 
 5. **low**: audio frames sent before the client subscribes are lost, so the start of a summary can be cut.
-   - Where: `packages/runtime/src/voice/speak.ts:192-198` (audio is never buffered) and `apps/ui/src/lib/speech.ts:150-153` (subscribes after the `POST` returned).
-   - What is wrong: `say()` starts synthesis and paced playback before the route answers 201. The UI opens `GET /speak/:id/events?afterSeq=0` only afterwards. A local TTS that returns its first chunk faster than the browser's round trip plus the EventSource connect drops the first frames, and the first words are silent. The SSE test (`speak-route.test.ts:280`) hides this: the simulated clock does not move until the stream is attached.
-   - Verified: by reading the code. No timing test was written, because the simulated clock cannot show the race.
-   - Smallest correct fix: hold playback until the first stream subscriber attaches or a short grace period passes, or keep the audio of the current sentence in the buffer for replay. Alternatively let the client open the stream before starting (`POST … { start: false }`, then a start call).
+   - Where: `packages/runtime/src/voice/speak.ts` (`run`: audio is never buffered, and playback starts at once) and `apps/ui/src/lib/speech.ts:147` (subscribes after the `POST` returned, or after `speak.started` arrived).
+   - What is wrong: synthesis and paced playback start before the route answers 201. A local TTS that returns its first chunk faster than the round trip plus the EventSource connect drops the first frames, so the first words are silent.
+   - Verified: by reading the code. The SSE route test hides the race because the simulated clock does not move until the stream is attached.
+   - Fix needed: hold playback until the first stream subscriber attaches, or until a short grace period on the clock has passed. Add a test.
 
 6. **low**: `summary.speak` lacks the ownership refusal the route has.
-   - Where: `packages/commands/src/commands/summary.ts:85-95` (`resolveProject`, `packages/commands/src/commands/shared.ts:50`).
-   - What is wrong: `POST /projects/:id/speak` refuses another human's project with 403, but "read me the summary of <their project>" on a shared state resolves any active project by name and reads it aloud, or returns it as text. This is not new exposure: `GET /projects/:id/summary` has no ownership check either. It is inconsistent with the brief's "refused for another human's project".
-   - Verified: by reading `resolveProject` and the executor. No per-human gate exists for project-scoped commands.
-   - Smallest correct fix: in `run`/`plan`, apply the same `ownsProject` rule (move it to a shared place, or pass it as a port) and throw `forbidden`.
+   - Where: `packages/commands/src/commands/summary.ts:69,85` (`resolveProject`).
+   - What is wrong: `POST /projects/:id/speak` refuses another human's project with 403. "read me the summary of <their project>" on a shared state resolves it and reads it aloud, or returns it as text. That breaks the brief's "refused for another human's project".
+   - Verified: by reading `resolveProject` (`shared.ts:50`), which matches every active or paused project, and `ownership.ts`, which lives in the runtime only.
+   - Fix needed: move the `ownsProject` rule to `@forerunner/commands` and apply it in `plan` and `run`. Add a test.
 
 7. **low**: the UI's audio playback is untested.
    - Where: `apps/ui/src/lib/speech.ts` (`decodeFrame`, `play`, the EventSource branch).
-   - What is wrong: jsdom has no EventSource or AudioContext, so the UI tests only exercise the polling fallback and the button states. PCM decoding, sample-rate handling, back-to-back scheduling and the `speak.done`/`error` handling have no test, although `PlaybackOptions` already takes an injectable `eventSource` and `audio`.
-   - Verified: read `project.test.tsx` and `session.test.tsx` and grepped `apps/ui/test` for `decodeFrame` and `playSpeech` (no hits).
-   - Smallest correct fix: one test feeding a fake EventSource two `audio` frames and a `speak.done`, with a fake `AudioOutput`, asserting the decoded samples, the start times and `done === "done"`.
+   - What is wrong: jsdom has no EventSource or AudioContext, so the UI tests only exercise the polling fallback. PCM decoding, back-to-back scheduling and `speak.done` handling have no test, although `PlaybackOptions` takes an injectable `eventSource` and `audio`.
+   - Verified: grepped `apps/ui/test` for `decodeFrame` and `playSpeech` (no hits).
+   - Fix needed: a test feeding a fake EventSource two `audio` frames and `speak.done` into a fake `AudioOutput`.
 
 8. **low**: navigating away from a page that is reading aloud leaves the daemon speaking.
    - Where: `apps/ui/src/components/ReadAloud.tsx:48-53`.
-   - What is wrong: the unmount cleanup stops local playback but never calls `cancelSpeak`. The daemon's utterance runs on, holds the one-voice slot and writes a `done` row for text nobody heard.
+   - What is wrong: the unmount cleanup stops local playback but never calls `cancelSpeak`. The utterance runs on, holds the one-voice slot and writes a `done` row for text nobody heard.
    - Verified: by reading the code.
-   - Smallest correct fix: in the cleanup, call `client.cancelSpeak(current.id)` when an utterance is in flight.
+   - Fix needed: cancel the in-flight utterance on unmount, with a test.
 
 9. **low**: a JSDoc comment is left orphaned at the end of `server.ts`.
-   - Where: `packages/runtime/src/daemon/server.ts:1711`.
-   - What is wrong: the function moved to `conversation-session.ts`, but its doc comment ("The principal's conversation session…") stays as the file's last line, attached to nothing.
-   - Verified: by reading the file.
-   - Smallest correct fix: delete the line.
+   - Where: `packages/runtime/src/daemon/server.ts` (last line).
+   - What is wrong: `conversationSessionId` moved to `conversation-session.ts`, but its doc comment stayed as the file's last line, attached to nothing.
+   - Verified: `tail -3 server.ts`.
