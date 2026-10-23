@@ -102,6 +102,44 @@ describe("Performance view", () => {
     expect(view).toMatchObject({ days: 30, projectId: "proj_atlas" });
   });
 
+  it("shows the project's slider in every mode it reaches, held at the registry's max_effort", async () => {
+    const h = createHarness();
+    // The slider at quality (+1), as Settings leaves it (settings-slider.test.tsx).
+    h.daemon.state.speedQuality.proj_atlas = 1;
+    const view = await h.client.performance({ projectId: "proj_atlas" });
+    expect(RuntimePerformanceView.safeParse(view).success).toBe(true);
+    expect(view.effortOffset).toBe(1);
+    const mode = (name: string) => {
+      const m = view.modes.find((x) => x.mode === name);
+      if (!m) throw new Error(name);
+      return m;
+    };
+    // Chat's low one step up; planning's high to xhigh; the critic's medium to high.
+    expect(mode("text_chat")).toMatchObject({ effort: "medium", maxEffort: "medium" });
+    expect(mode("planning")).toMatchObject({ effort: "xhigh", maxEffort: "max" });
+    expect(mode("critic_t1")).toMatchObject({ effort: "high" });
+    // The coder at medium goes to high; a risky task's high stays at the coder's cap, so it adds
+    // nothing; the researcher's high is held at its cap.
+    expect(mode("coder")).toMatchObject({ effort: "high", riskEffort: null, riskTierFrom: null });
+    expect(mode("researcher")).toMatchObject({ effort: "high", maxEffort: "high" });
+    // No run reads the slider for routing.
+    expect(mode("routing")).toMatchObject({ effort: "low", offsetApplied: false });
+    expect(effortLabel(mode("text_chat"))).toBe("medium (table low)");
+    // All projects: no slider.
+    expect((await h.client.performance()).effortOffset).toBe(0);
+
+    renderApp("/performance", h);
+    const table = await screen.findByTestId("performance-modes");
+    const coder = within(table)
+      .getAllByTestId("performance-mode")
+      .find((r) => r.dataset.mode === "coder");
+    if (!coder) throw new Error("no coder row");
+    expect(within(coder).getByTestId("effort")).toHaveAttribute(
+      "title",
+      expect.stringContaining("held at high"),
+    );
+  });
+
   it("shows a daemon failure as an error with a retry, not as a missing route", async () => {
     renderApp(
       "/performance",

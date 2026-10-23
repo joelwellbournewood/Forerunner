@@ -2900,11 +2900,29 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const window = Math.min(days, 90);
     const generated = Date.parse(PERFORMANCE.generatedAt);
+    // The project's speed-versus-quality slider shifts each mode it reaches one step, held at
+    // the registry cap (`maxEffort`), as the daemon's view computes the effort in force.
+    const offset = projectId ? (state.speedQuality[projectId] ?? 0) : 0;
+    const scale = ["low", "medium", "high", "xhigh", "max"] as const;
+    const shift = (e: (typeof scale)[number], cap: (typeof scale)[number] | null) => {
+      const i = Math.min(scale.length - 1, Math.max(0, scale.indexOf(e) + offset));
+      return scale[cap === null ? i : Math.min(i, scale.indexOf(cap))] ?? e;
+    };
     return c.json({
       ...PERFORMANCE,
       projectId,
       days: window,
       from: new Date(generated - window * 86_400_000).toISOString(),
+      effortOffset: offset,
+      modes: PERFORMANCE.modes.map((m) => {
+        if (!m.offsetApplied) return m;
+        const effort = shift(m.baseEffort, m.maxEffort);
+        // A risky task's effort is shown only where it differs from the mode's.
+        const risk = m.riskEffort === null ? null : shift(m.riskEffort, m.maxEffort);
+        return risk === effort
+          ? { ...m, effort, riskEffort: null, riskTierFrom: null }
+          : { ...m, effort, riskEffort: risk };
+      }),
     });
   });
 

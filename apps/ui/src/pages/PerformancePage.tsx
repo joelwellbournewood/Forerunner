@@ -184,7 +184,7 @@ export function PerformancePage() {
                       m.offsetApplied
                         ? "the project's speed-versus-quality offset applies"
                         : "the speed-versus-quality offset does not reach this mode yet"
-                    }`}
+                    }${m.maxEffort ? `, held at ${m.maxEffort} (the registry's max_effort)` : ""}`}
                   >
                     {effortLabel(m)}
                   </td>
