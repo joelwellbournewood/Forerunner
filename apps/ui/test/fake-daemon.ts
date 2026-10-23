@@ -20,6 +20,7 @@ import type {
 } from "@forerunner/runtime/daemon/api-types";
 import {
   AnswerRequestBody,
+  ChangeMilestoneBody,
   ChatRequestBody,
   CreateProjectBody,
   CreateTaskBody,
@@ -43,6 +44,7 @@ import type {
   DataAssetView,
   ExtensionPermissions,
   ExtensionView,
+  MilestoneView,
   ModelWatchReportSummary,
   QueueItemView,
 } from "../src/api/contracts.ts";
@@ -148,6 +150,7 @@ export interface FakeDaemonState {
   changes: ChangeLogView[];
   consolidation: ConsolidationProposalView[];
   queue: QueueItemView[];
+  milestones: MilestoneView[];
   dataAssets: DataAssetView[];
   pendingCommands: Map<string, PendingCommand>;
   missingRoutes: string[];
@@ -199,6 +202,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     changes: clone(CHANGES),
     consolidation: clone(CONSOLIDATION),
     queue: clone(QUEUE),
+    milestones: clone(MILESTONES),
     dataAssets: clone(DATA_ASSETS),
     pendingCommands: new Map(),
     missingRoutes: [...(options.missingRoutes ?? [])],
@@ -288,6 +292,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.changes = clone(CHANGES);
     state.consolidation = clone(CONSOLIDATION);
     state.queue = clone(QUEUE);
+    state.milestones = clone(MILESTONES);
     state.dataAssets = clone(DATA_ASSETS);
     state.pendingCommands.clear();
     state.missingRoutes = [...(options.missingRoutes ?? [])];
@@ -1902,7 +1907,29 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!state.projects.some((p) => p.id === id)) {
       return errorBody(c, 404, "not_found", "no such project");
     }
-    return c.json(MILESTONES.filter((m) => m.projectId === id));
+    return c.json(state.milestones.filter((m) => m.projectId === id));
+  });
+  // Spec B.5: a milestone change needs the reason and the version; the daemon answers a
+  // missing reason or a stale version as 409 conflict and records the human as author.
+  app.post("/milestones/:id", async (c) => {
+    const m = state.milestones.find((x) => x.id === c.req.param("id"));
+    if (!m) return errorBody(c, 404, "not_found", "no such milestone");
+    const parsed = ChangeMilestoneBody.safeParse(await c.req.json());
+    if (!parsed.success) return errorBody(c, 409, "conflict", parsed.error.message);
+    if (parsed.data.version !== m.version) {
+      return errorBody(c, 409, "conflict", "milestone changed since you loaded it");
+    }
+    const { reason, name, successCriteria, targetDate, status } = parsed.data;
+    if (name !== undefined) m.name = name;
+    if (successCriteria !== undefined) m.successCriteria = successCriteria;
+    if (targetDate !== undefined) m.targetDate = targetDate;
+    if (status !== undefined) m.status = status;
+    m.reason = reason;
+    m.authorHuman = ME.id;
+    m.authorAgent = null;
+    m.version += 1;
+    m.updatedAt = new Date().toISOString();
+    return c.json(m);
   });
 
   app.get("/projects/:id/data", (c) => {

@@ -84,6 +84,8 @@ describe("proposed routes", () => {
       "dataAssets",
       "registerDataAsset",
       "removeDataAsset",
+      "milestones",
+      "changeMilestone",
     ]) {
       expect(served in DAEMON_ROUTES).toBe(true);
       expect(served in PROPOSED_ROUTES).toBe(false);
@@ -99,7 +101,7 @@ describe("proposed routes", () => {
     );
     expect(pathFromSpec("GET /performance?projectId= (PerformanceView)")).toBe("/performance");
     expect(verbFromSpec(DAEMON_ROUTES.removeDataAsset)).toBe("DELETE");
-    expect(() => proposedPath("milestones", {})).toThrow(/missing param id/);
+    expect(() => proposedPath("docs", {})).toThrow(/missing param id/);
   });
 });
 

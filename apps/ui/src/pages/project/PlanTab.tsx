@@ -1,8 +1,23 @@
-import { useMemo } from "react";
-import type { ProjectCard, TaskView } from "../../api/client.ts";
-import type { MilestoneView } from "../../api/contracts.ts";
+import { type FormEvent, useMemo, useState } from "react";
+import {
+  type ChangeMilestoneInput,
+  describeError,
+  type ProjectCard,
+  type TaskView,
+} from "../../api/client.ts";
+import { MILESTONE_STATUSES, type MilestoneView } from "../../api/contracts.ts";
+import { Dialog } from "../../components/Dialog.tsx";
 import { RouteMissing } from "../../components/RouteMissing.tsx";
-import { Badge, ErrorBanner, Loading, statusTone, type Tone } from "../../components/ui.tsx";
+import {
+  Badge,
+  Button,
+  ErrorBanner,
+  Field,
+  INPUT_CLASS,
+  Loading,
+  statusTone,
+  type Tone,
+} from "../../components/ui.tsx";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
 
@@ -12,6 +27,10 @@ export interface MilestoneRow {
   targetDate: string | null;
   status: MilestoneView["status"] | "derived";
   successCriteria: string[];
+  /** Reason for the last change (spec B.5); "" when never changed or derived. */
+  reason: string;
+  /** The row's version for an edit; null for a derived row, which cannot be edited. */
+  version: number | null;
   tasks: TaskView[];
   done: number;
 }
@@ -30,6 +49,8 @@ export function milestonesFromTasks(project: ProjectCard, tasks: TaskView[]): Mi
       targetDate: project.nextMilestone.targetDate,
       status: "derived",
       successCriteria: [],
+      reason: "",
+      version: null,
       tasks: [],
       done: 0,
     });
@@ -42,6 +63,8 @@ export function milestonesFromTasks(project: ProjectCard, tasks: TaskView[]): Mi
       targetDate: null,
       status: "derived" as const,
       successCriteria: [],
+      reason: "",
+      version: null,
       tasks: [],
       done: 0,
     };
@@ -62,6 +85,8 @@ export function milestoneRows(milestones: MilestoneView[], tasks: TaskView[]): M
       targetDate: m.targetDate,
       status: m.status,
       successCriteria: m.successCriteria,
+      reason: m.reason,
+      version: m.version,
       tasks: [],
       done: 0,
     }));
@@ -72,6 +97,8 @@ export function milestoneRows(milestones: MilestoneView[], tasks: TaskView[]): M
     targetDate: null,
     status: "derived",
     successCriteria: [],
+    reason: "",
+    version: null,
     tasks: [],
     done: 0,
   };
@@ -404,6 +431,8 @@ export interface SmallProjectMilestone {
   targetDate: string | null;
   status: MilestoneView["status"] | "derived";
   successCriteria: string[];
+  reason: string;
+  version: number | null;
 }
 
 /**
@@ -427,6 +456,8 @@ export function smallProjectMilestone(
             targetDate: open.targetDate,
             status: open.status,
             successCriteria: open.successCriteria,
+            reason: open.reason,
+            version: open.version,
           }
         : null,
       others: sorted.filter((m) => m.id !== open?.id),
@@ -441,10 +472,214 @@ export function smallProjectMilestone(
           targetDate: next.targetDate,
           status: "derived",
           successCriteria: [],
+          reason: "",
+          version: null,
         }
       : null,
     others: [],
   };
+}
+
+/** What the milestone dialog edits: the route's row with the version the change is checked against. */
+export interface EditableMilestone {
+  id: string;
+  name: string;
+  targetDate: string | null;
+  status: MilestoneView["status"];
+  successCriteria: string[];
+  version: number;
+}
+
+export interface MilestoneForm {
+  name: string;
+  targetDate: string;
+  status: MilestoneView["status"];
+  /** One success criterion per line. */
+  criteria: string;
+  reason: string;
+}
+
+export function milestoneFormFor(m: EditableMilestone | null): MilestoneForm {
+  return {
+    name: m?.name ?? "",
+    targetDate: m?.targetDate ?? "",
+    status: m?.status ?? "planned",
+    criteria: (m?.successCriteria ?? []).join("\n"),
+    reason: "",
+  };
+}
+
+/**
+ * The body `POST /milestones/:id` gets (spec B.5): every editable field with the row's
+ * version and the human's reason. Blank criteria lines are dropped; a blank date is null.
+ */
+export function milestoneChangeBody(
+  m: EditableMilestone,
+  form: MilestoneForm,
+): ChangeMilestoneInput {
+  return {
+    version: m.version,
+    reason: form.reason.trim(),
+    name: form.name.trim(),
+    successCriteria: form.criteria
+      .split(/\r?\n/)
+      .map((c) => c.trim())
+      .filter((c) => c !== ""),
+    targetDate: form.targetDate.trim() === "" ? null : form.targetDate.trim(),
+    status: form.status,
+  };
+}
+
+/** A row that can be edited: one the route served (a derived row has no version). */
+function editable(m: {
+  id: string;
+  name: string;
+  targetDate: string | null;
+  status: MilestoneView["status"] | "derived";
+  successCriteria: string[];
+  version: number | null;
+}): EditableMilestone | null {
+  if (m.version === null || m.status === "derived") return null;
+  return {
+    id: m.id,
+    name: m.name,
+    targetDate: m.targetDate,
+    status: m.status,
+    successCriteria: m.successCriteria,
+    version: m.version,
+  };
+}
+
+/** The reason of a milestone's last change, as the Plan tab shows it under the row (spec B.5). */
+function MilestoneReason({ reason }: { reason: string }) {
+  if (reason === "") return null;
+  return (
+    <p className="mt-1 text-xs text-neutral-500" data-testid="milestone-reason">
+      Last change: {reason}
+    </p>
+  );
+}
+
+/**
+ * Edit a milestone (spec B.5): name, target date, status and success criteria under one
+ * required reason, posted with the row's version. The daemon's refusal (a stale version, a
+ * bad date) stays in the dialog. Mount with `key={milestone.id}` so the form starts from the row.
+ */
+function MilestoneDialog({
+  milestone,
+  onClose,
+  onSaved,
+}: {
+  milestone: EditableMilestone | null;
+  onClose: () => void;
+  onSaved: (updated: MilestoneView) => void;
+}) {
+  const client = useClient();
+  const [form, setForm] = useState<MilestoneForm>(() => milestoneFormFor(milestone));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const patch = (part: Partial<MilestoneForm>) => setForm((prev) => ({ ...prev, ...part }));
+  const ready = form.reason.trim() !== "" && form.name.trim() !== "";
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!milestone || busy || !ready) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await client.changeMilestone(
+        milestone.id,
+        milestoneChangeBody(milestone, form),
+      );
+      onSaved(updated);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      open={milestone !== null}
+      onClose={onClose}
+      title={milestone ? `Edit milestone: ${milestone.name}` : ""}
+      testId="milestone-dialog"
+    >
+      <form onSubmit={submit} className="space-y-3">
+        <Field label="Name">
+          <input
+            className={INPUT_CLASS}
+            value={form.name}
+            onChange={(e) => patch({ name: e.target.value })}
+            required
+            data-testid="milestone-name"
+          />
+        </Field>
+        <Field label="Target date" hint="A calendar date, YYYY-MM-DD; empty for none.">
+          <input
+            className={INPUT_CLASS}
+            value={form.targetDate}
+            onChange={(e) => patch({ targetDate: e.target.value })}
+            placeholder="YYYY-MM-DD"
+            pattern="\d{4}-\d{2}-\d{2}"
+            data-testid="milestone-target-date"
+          />
+        </Field>
+        <Field label="Status">
+          <select
+            className={INPUT_CLASS}
+            value={form.status}
+            onChange={(e) => patch({ status: e.target.value as MilestoneView["status"] })}
+            data-testid="milestone-status"
+          >
+            {MILESTONE_STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Success criteria" hint="One per line.">
+          <textarea
+            className={INPUT_CLASS}
+            rows={3}
+            value={form.criteria}
+            onChange={(e) => patch({ criteria: e.target.value })}
+            data-testid="milestone-criteria"
+          />
+        </Field>
+        <Field label="Reason" hint="Required. Recorded on the milestone with you as the author.">
+          <input
+            className={INPUT_CLASS}
+            value={form.reason}
+            onChange={(e) => patch({ reason: e.target.value })}
+            required
+            autoFocus
+            data-testid="milestone-reason"
+          />
+        </Field>
+        {error ? <ErrorBanner message={error} /> : null}
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            type="submit"
+            disabled={busy || !ready}
+            data-testid="confirm-milestone"
+          >
+            {busy ? "Saving\u2026" : "Save"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+/** Replace one milestone in the loaded list after an edit. */
+function replaceMilestone(
+  prev: MilestoneView[] | null,
+  updated: MilestoneView,
+): MilestoneView[] | null {
+  return prev ? prev.map((m) => (m.id === updated.id ? updated : m)) : prev;
 }
 
 /**
@@ -467,6 +702,7 @@ function SmallProjectPlan({
     [project, milestones.data],
   );
   const done = all.filter((t) => t.status === "done").length;
+  const [editing, setEditing] = useState<EditableMilestone | null>(null);
   return (
     <div className="space-y-5" data-testid="plan">
       <p
@@ -508,6 +744,14 @@ function SmallProjectPlan({
                 <span className="ml-auto text-xs text-neutral-500">
                   {done} / {all.length} tasks done
                 </span>
+                {editable(current) ? (
+                  <Button
+                    onClick={() => setEditing(editable(current))}
+                    data-testid="edit-milestone"
+                  >
+                    Edit
+                  </Button>
+                ) : null}
               </div>
               {current.successCriteria.length > 0 ? (
                 <ul className="mt-1 list-disc pl-5 text-xs text-neutral-600 dark:text-neutral-400">
@@ -516,6 +760,7 @@ function SmallProjectPlan({
                   ))}
                 </ul>
               ) : null}
+              <MilestoneReason reason={current.reason} />
             </>
           ) : (
             <p className="text-neutral-500">No milestone yet; the agent plans it from the brief.</p>
@@ -556,6 +801,15 @@ function SmallProjectPlan({
       </section>
 
       <DependencyGraphSection tasks={tasks.data} />
+      <MilestoneDialog
+        key={editing?.id ?? "none"}
+        milestone={editing}
+        onClose={() => setEditing(null)}
+        onSaved={(updated) => {
+          milestones.setData((prev) => replaceMilestone(prev, updated));
+          setEditing(null);
+        }}
+      />
     </div>
   );
 }
@@ -595,6 +849,7 @@ export function PlanTab({
   // The timeline draws the route's milestones, or, on a daemon without the route, the derived
   // ones (the card's dated next milestone on the axis, the ids the tasks reference after it).
   const showTimeline = milestones.data !== null || (milestones.routeMissing && tasks.data !== null);
+  const [editing, setEditing] = useState<EditableMilestone | null>(null);
 
   if (project.smallProjectMode) {
     return <SmallProjectPlan project={project} tasks={tasks} milestones={milestones} />;
@@ -648,6 +903,11 @@ export function PlanTab({
                 <span className="ml-auto text-xs text-neutral-500">
                   {m.done} / {m.tasks.length} tasks done
                 </span>
+                {editable(m) ? (
+                  <Button onClick={() => setEditing(editable(m))} data-testid="edit-milestone">
+                    Edit
+                  </Button>
+                ) : null}
               </div>
               {m.successCriteria.length > 0 ? (
                 <ul className="mt-1 list-disc pl-5 text-xs text-neutral-600 dark:text-neutral-400">
@@ -656,6 +916,7 @@ export function PlanTab({
                   ))}
                 </ul>
               ) : null}
+              <MilestoneReason reason={m.reason} />
               {m.tasks.length > 0 ? (
                 <ul className="mt-1 flex flex-wrap gap-1">
                   {m.tasks.map((t) => (
@@ -673,6 +934,15 @@ export function PlanTab({
       </section>
 
       <DependencyGraphSection tasks={tasks.data} />
+      <MilestoneDialog
+        key={editing?.id ?? "none"}
+        milestone={editing}
+        onClose={() => setEditing(null)}
+        onSaved={(updated) => {
+          milestones.setData((prev) => replaceMilestone(prev, updated));
+          setEditing(null);
+        }}
+      />
     </div>
   );
 }
