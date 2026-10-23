@@ -1208,12 +1208,22 @@ export class SessionRunner {
       stop_reason: stopReason,
       // What the re-check before these writes read (spec E.4): ids and kinds, never the words
       // (another agent's message is data); `stopped_by` is the stop or pause this session
-      // ended on, null when it ended for another reason.
+      // ended on, null when it ended for another reason. A session that ended on it also says
+      // what was and was not written after it was read (`after_stop`).
       ...(endInbox.read.length
         ? {
             end_inbox: {
               read: endInbox.read,
               stopped_by: stoppedAtEnd ? endStop : null,
+              ...(stoppedAtEnd
+                ? {
+                    after_stop: endWritesAccount({
+                      statusDoc: docsOutcome !== null,
+                      summaryCache: project !== null,
+                      handoffs: peerIds.length > 0,
+                    }),
+                  }
+                : {}),
             },
           }
         : {}),
@@ -1883,7 +1893,9 @@ function summarize(x: {
       : []),
     ...summarizeMerges(x.merges ?? []),
     ...(x.heard ? [summarizeHeard(x.heard)] : []),
-    ...(x.endInbox?.read.length ? [summarizeEndInbox(x.endInbox, x.stoppedAtEnd ?? false)] : []),
+    ...(x.endInbox?.read.length
+      ? [summarizeEndInbox(x.endInbox, x.stoppedAtEnd ?? false, x.skipped.length)]
+      : []),
     `Spent $${(x.spent / 1e6).toFixed(2)}.`,
   ];
   return parts.join(" ");
@@ -1905,14 +1917,35 @@ function summarizeMerges(merges: readonly MergeOutcome[]): string[] {
 }
 
 /** The summary line for the messages read right before the session-end writes. */
-function summarizeEndInbox(end: InboxRecheck, stopped: boolean): string {
+function summarizeEndInbox(end: InboxRecheck, stopped: boolean, skipped: number): string {
   const n = end.read.length;
   const head = `Read before the session-end writes: ${n} message${n === 1 ? "" : "s"}.`;
   const by = stopped ? end.interrupt : null;
   if (!by) return head;
+  const left = skipped
+    ? ` The ${skipped} task${skipped === 1 ? "" : "s"} not started stay${skipped === 1 ? "s" : ""} for the next session.`
+    : "";
   return by.kind === "pause"
-    ? `${head} A pause (message ${by.id}) ended the session; no task was left to defer.`
-    : `${head} A stop (message ${by.id}) ended the session: the task states above were written as each task ended, and nothing further was started.`;
+    ? `${head} A pause (message ${by.id}) ended the session; ${skipped ? "nothing more was deferred." : "no task was left to defer."}${left}`
+    : `${head} A stop (message ${by.id}) ended the session: the task states above were written as each task ended, and nothing further was started.${left}`;
+}
+
+/**
+ * What a session that ended on a stop or pause read before the session-end writes still wrote
+ * after reading it, and what it did not (spec E.4): the record of the session is written so the
+ * next session and the peers know where it stopped; no further task is claimed or started.
+ */
+function endWritesAccount(x: { statusDoc: boolean; summaryCache: boolean; handoffs: boolean }): {
+  written: string[];
+  not_written: string[];
+} {
+  const written = ["task_states"];
+  const notWritten = ["task_claims"];
+  (x.statusDoc ? written : notWritten).push("status_doc");
+  (x.summaryCache ? written : notWritten).push("summary_cache");
+  (x.handoffs ? written : notWritten).push("handoffs");
+  written.push("human_note", "session_record");
+  return { written, not_written: notWritten };
 }
 
 /**

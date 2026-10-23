@@ -581,7 +581,16 @@ describe("closeout: the inbox is re-checked before the session-end writes (E.4)"
       done: [a.id, b.id],
       next: [],
       stop_reason: "stopped_by_message",
-      end_inbox: { read: [entry], stopped_by: entry },
+      end_inbox: {
+        read: [entry],
+        stopped_by: entry,
+        // What was and was not written after the stop was read: the record of the session is
+        // written with the stop named; no further task was claimed (no docs port here).
+        after_stop: {
+          written: ["task_states", "summary_cache", "handoffs", "human_note", "session_record"],
+          not_written: ["task_claims", "status_doc"],
+        },
+      },
     });
     expect(JSON.stringify(res.handoff)).not.toContain("hotfix");
     expect((await w.store.session.mustGet(res.sessionId)).handoff).toEqual(res.handoff);
@@ -640,6 +649,10 @@ describe("closeout: the inbox is re-checked before the session-end writes (E.4)"
         stopped_by: null,
       },
     });
+    expect((res.handoff as { end_inbox: object }).end_inbox).not.toHaveProperty("after_stop");
+    // The peers' handoff message is the summary: the message is summarised there.
+    const handoffs = await w.store.message.list({ to_agent_id: w.bob, type: "handoff" } as never);
+    expect(handoffs[0]?.body).toContain("Read before the session-end writes: 1 message.");
     expect(res.summary).toContain("Session completed.");
     expect(res.summary).toContain("Read before the session-end writes: 1 message.");
     expect(res.summary).not.toContain("ended the session");

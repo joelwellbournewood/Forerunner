@@ -505,6 +505,35 @@ project summary cache, sends a handoff (requires ack) to the project's peers
 session summary, handoff and spend; with a docs port it also writes the session's status
 update into the project's `docs/status.md` (below, "Project docs").
 
+**The inbox before the session-end writes (spec E.4).** Step 4 of `runner.ts` starts with one
+more `recheckInbox(..., { atEnd: true })`, so a message that landed during the last task is
+delivered and read (`read_at`) before the status doc, the summary cache, the peers' handoffs,
+the note to the human and the session record are written; those writes stay where and as they
+were (the task states were written as each task ended). What the re-check read is recorded as
+a `session.end_inbox` event (ids, the first stop or pause, whether the session ended on it),
+`handoff.end_inbox` (`read`: id, type, sender and kind `stop` / `pause` / `message` of each,
+never the words; `stopped_by`) and a summary line, "Read before the session-end writes: N
+message(s).", which the peers' handoff message and the human's note carry. A stop or pause
+(body starting with stop, halt or pause, not a handoff) ends a session that would otherwise
+end `completed` or `budget_finish_current` as `stopped` with `stop_reason: stopped_by_message`;
+the summary names the message, and `handoff.end_inbox.after_stop` says what was still written
+after it was read (`task_states`, `summary_cache`, `handoffs`, `human_note`, `session_record`,
+`status_doc` when the docs port wrote it) and what was not (`task_claims`: no further task was
+claimed or started, plus any of those writes that did not apply). A pause at the end defers
+nothing (no task is left) and is acknowledged by reading it; the row goes `paused -> stopped`
+instead of staying `paused`. A stop or pause carrying `requires_ack` is marked acted on (here
+and between tasks), an ack-required `info` / `warning` / `decision` / `handoff` too, as
+between tasks. A session that already ended for another reason (killed, out of budget, plan
+filed, failed) keeps its reason; the stop is named in `end_inbox.read` with `stopped_by: null`.
+A said line (O.9) is left alone at the end for the next session's brief. A failing re-check is
+a warning event (`inbox.recheck_failed`), never fatal. Tests:
+`closeout-sessions.test.ts` ("the inbox is re-checked before the session-end writes (E.4)"):
+a `requires_ack` stop sent during the last task is read before the summary cache, the handoff
+and the human note are written (the `read_at` seen by each write equals the message's), both
+task states stay `done`, the handoff names it; an ordinary message is read and summarised in the
+handoff while the session completes; a pause from the pause port ends the row `stopped`; a
+session out of budget keeps `budget_exceeded`; an empty inbox adds nothing.
+
 **What you say during a live session (spec O.9, ADR 0078; `src/session/live-chat.ts`).** A
 free-form line the human types or speaks to the conversation agent while a session of the
 principal runs is posted to the principal's own inbox as an `info` message from and to the
