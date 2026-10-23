@@ -148,21 +148,25 @@ describe("dev-postgres.sh", () => {
 
 describe("PowerShell scripts", () => {
   const reason = "pwsh is not installed; the .ps1 parse check runs where it is (Windows CI)";
-  it.skipIf(!hasPwsh)(`parse without errors (${reason})`, () => {
-    for (const name of ["fresh-install.ps1", "dev-postgres.ps1"]) {
-      const file = join(scriptsDir, name).replace(/'/g, "''");
-      const r = spawnSync(
-        "pwsh",
-        [
-          "-NoProfile",
-          "-Command",
-          `$errors = $null; [System.Management.Automation.Language.Parser]::ParseFile('${file}', [ref]$null, [ref]$errors) | Out-Null; if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Output $_.Message }; exit 1 } else { exit 0 }`,
-        ],
-        { encoding: "utf8", timeout: 60_000 },
-      );
-      expect(r.status, `${name}: ${r.stdout}${r.stderr}`).toBe(0);
-    }
-  });
+  it.skipIf(!hasPwsh)(
+    `parse without errors (${reason})`,
+    () => {
+      for (const name of ["fresh-install.ps1", "dev-postgres.ps1"]) {
+        const file = join(scriptsDir, name).replace(/'/g, "''");
+        const r = spawnSync(
+          "pwsh",
+          [
+            "-NoProfile",
+            "-Command",
+            `$errors = $null; [System.Management.Automation.Language.Parser]::ParseFile('${file}', [ref]$null, [ref]$errors) | Out-Null; if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Output $_.Message }; exit 1 } else { exit 0 }`,
+          ],
+          { encoding: "utf8", timeout: 60_000 },
+        );
+        expect(r.status, `${name}: ${r.stdout}${r.stderr}`).toBe(0);
+      }
+    },
+    120_000,
+  );
 
   it.skipIf(!hasPwsh)(
     `fresh-install.ps1 -DryRun -NonInteractive lists every step and exits 0 (${reason})`,
@@ -183,5 +187,8 @@ describe("PowerShell scripts", () => {
       expect(r.stdout).toContain("would run: pnpm install --frozen-lockfile");
       expect(r.stdout).toContain("dry run complete");
     },
+    // A cold Windows runner takes well over the 20 s default to start pwsh and run the dry run
+    // (CI run 95 timed out at 20 s); the spawn itself is bounded at 120 s above.
+    180_000,
   );
 });

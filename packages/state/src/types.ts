@@ -117,17 +117,33 @@ export type DeviceKind = (typeof DEVICE_KINDS)[number];
 export const SOURCE_KINDS = [
   "github_org",
   "github_user",
+  "github_repo",
   "gitlab",
   "git_remote",
   "local_folder",
 ] as const;
 export type SourceKind = (typeof SOURCE_KINDS)[number];
 
+/** What a scan of a source proposes a project for: a repository on a git host or a folder. */
+export const SOURCE_CANDIDATE_KINDS = ["repo", "folder"] as const;
+export type SourceCandidateKind = (typeof SOURCE_CANDIDATE_KINDS)[number];
+
+/**
+ * proposed: a project can be created from it; accepted: it was (project_id names it);
+ * duplicate: an existing project or another source's candidate already covers it, never
+ * proposed; gone: a rescan no longer found it (back to proposed when it reappears).
+ */
+export const SOURCE_CANDIDATE_STATUSES = ["proposed", "accepted", "duplicate", "gone"] as const;
+export type SourceCandidateStatus = (typeof SOURCE_CANDIDATE_STATUSES)[number];
+
 export const COST_KINDS = ["api", "subscription", "plan_credits"] as const;
 export type CostKind = (typeof COST_KINDS)[number];
 
 export const SECRET_SCOPES = ["human", "agent", "project", "shared"] as const;
 export type SecretScope = (typeof SECRET_SCOPES)[number];
+/** pending until every required human approved; active; cancelled by a refusal; revoked by the owner. */
+export const SECRET_GRANT_STATUSES = ["pending", "active", "cancelled", "revoked"] as const;
+export type SecretGrantStatus = (typeof SECRET_GRANT_STATUSES)[number];
 
 export const EXTENSION_KINDS = [
   "connector",
@@ -433,6 +449,8 @@ export interface DeviceRow extends BaseRow {
   revoked_at: string | null;
   paired_at: string;
   push_token: string | null;
+  /** Raw X25519 public key (base64) of the install that holds this device's vault; shared secrets are wrapped to it. */
+  wrap_public_key: string | null;
 }
 export type NewDevice = New<
   DeviceRow,
@@ -449,6 +467,26 @@ export interface SourceRow extends BaseRow {
   scan_result: JsonValue;
 }
 export type NewSource = New<SourceRow, "kind" | "display_name" | "locator">;
+
+export interface SourceCandidateRow extends BaseRow {
+  source_id: string;
+  kind: SourceCandidateKind;
+  name: string;
+  locator: string;
+  key: string;
+  proposed_name: string;
+  status: SourceCandidateStatus;
+  existing_install: boolean;
+  install_marker: string | null;
+  project_id: string | null;
+  is_git: boolean;
+  details: JsonValue;
+  last_seen_at: string;
+}
+export type NewSourceCandidate = New<
+  SourceCandidateRow,
+  "source_id" | "kind" | "name" | "locator" | "key" | "proposed_name" | "last_seen_at"
+>;
 
 export interface CostLedgerRow extends BaseRow {
   human_id: string;
@@ -486,6 +524,32 @@ export type NewSecretRef = New<
   SecretRefRow,
   "name" | "scope" | "owner_human_id" | "kind" | "created_by"
 >;
+
+/** One wrapped copy of a shared secret: for one agent on one install. Ciphertext only. */
+export interface SecretGrantBlob {
+  agent_id: string;
+  device_id: string;
+  blob: JsonObject;
+}
+
+export interface SecretGrantRow extends BaseRow {
+  name: string;
+  owner_human_id: string;
+  kind: string;
+  why: string;
+  agent_ids: string[];
+  required_human_ids: string[];
+  /** human id -> { at, request_id }. */
+  approvals: JsonObject;
+  request_ids: string[];
+  blobs: SecretGrantBlob[];
+  status: SecretGrantStatus;
+  activated_at: string | null;
+  last_served: string | null;
+  ended_at: string | null;
+  ended_reason: string | null;
+}
+export type NewSecretGrant = New<SecretGrantRow, "name" | "owner_human_id">;
 
 export interface ExtensionRow extends BaseRow {
   kind: ExtensionKind;

@@ -1,17 +1,24 @@
 import type { FindingSeverity, JsonValue, PatternStats, ReviewVerdict } from "@forerunner/state";
 
 /**
- * The critic's contract (spec H). A review takes a subject (a task or a session), a risk tier
- * and evidence only: the diff, the files, the check and test output, the acceptance criteria,
- * the worker's final report treated as claims. It never takes the worker's transcript or
- * reasoning (H.1); `ReviewEvidence` has no field for it and the renderer sends nothing else.
+ * The critic's contract (spec H). A review takes a subject (a task, a session, or a lesson
+ * proposed for the shared store), a risk tier and evidence only: the diff, the files, the
+ * check and test output, the acceptance criteria, the worker's final report treated as claims.
+ * It never takes the worker's transcript or reasoning (H.1); `ReviewEvidence` has no field for
+ * it and the renderer sends nothing else.
  */
 export type ReviewTier = 0 | 1 | 2 | 3;
 export const REVIEW_TIERS: readonly ReviewTier[] = [0, 1, 2, 3] as const;
 
+/**
+ * What is reviewed. A `lesson` subject is a memory lesson proposed for cross-project
+ * promotion (spec G.6): the review row carries no task, the token's session, and a `human`
+ * verdict files no sign-off request (nothing to sign off; the proposal stays pending).
+ */
 export type ReviewSubject =
   | { kind: "task"; taskId: string }
-  | { kind: "session"; sessionId: string };
+  | { kind: "session"; sessionId: string }
+  | { kind: "lesson"; lessonId: string };
 
 /** One automated check as the critic sees it: a name, pass or fail, and the output that proves it. */
 export interface CheckResultEvidence {

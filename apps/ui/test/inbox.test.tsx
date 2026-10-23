@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { sortMessages, sortRequests } from "../src/pages/InboxPage.tsx";
+import { intakeCardOf, sortMessages, sortRequests } from "../src/pages/InboxPage.tsx";
 import { MESSAGES, REQUESTS } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
@@ -80,6 +80,125 @@ describe("Inbox", () => {
     await waitFor(() => expect(screen.getAllByTestId("request")).toHaveLength(1));
     expect(screen.getByTestId("blocking-count")).toHaveTextContent("0 blocking");
     expect(screen.getAllByTestId("request")[0]).toHaveAttribute("data-request-id", "req_2");
+  });
+
+  it("renders an intake proposal (spec A.2) as a readable plan card with its options", async () => {
+    const harness = createHarness();
+    harness.daemon.state.requests.unshift({
+      id: "req_intake",
+      projectId: "proj_atlas",
+      projectName: "Atlas",
+      taskId: null,
+      sessionId: "sess_9",
+      kind: "approval",
+      why: 'Intake for "Atlas": 1 milestone(s), 2 task(s), 2 doc(s) and a first-session plan.',
+      steps: ["Milestone: Foundations (2 task(s), by 2026-11-01)"],
+      options: ["approve", "reject"],
+      blocking: true,
+      risk: "medium",
+      changeCard: {
+        key: "intake:proj_atlas",
+        project_id: "proj_atlas",
+        docs_target: "repository",
+        cost_usd_micro: 12_000,
+        applied_at: null,
+        proposal: {
+          plan: {
+            reason: "planned from the brief",
+            milestones: [
+              {
+                name: "Foundations",
+                successCriteria: ["CI green"],
+                targetDate: "2026-11-01",
+                tasks: [
+                  {
+                    key: "scaffold",
+                    title: "Scaffold the repository",
+                    outcome: "skeleton",
+                    acceptanceCriteria: [],
+                    priority: 8,
+                    dependsOn: [],
+                    specialist: "coder",
+                  },
+                  {
+                    key: "ci",
+                    title: "Set up CI",
+                    outcome: "tests run",
+                    acceptanceCriteria: [],
+                    priority: 6,
+                    dependsOn: ["scaffold"],
+                    riskTier: 2,
+                  },
+                ],
+              },
+            ],
+            tasks: [],
+          },
+          docs: { "README.md": "# Atlas\n", "docs/overview.md": "# Overview\n" },
+          firstSession: {
+            summary: "Scaffold first.",
+            items: [
+              { key: "scaffold", estimateUsdMicro: 400_000 },
+              { key: "ci", estimateUsdMicro: 250_000 },
+            ],
+          },
+        },
+      },
+      status: "open",
+      answer: null,
+      createdAt: "2026-10-19T22:00:00.000Z",
+      version: 1,
+    });
+    renderApp("/inbox", harness);
+    const card = await screen.findByTestId("intake-card");
+    const milestones = within(card).getByTestId("intake-milestones");
+    expect(milestones).toHaveTextContent("Foundations");
+    expect(milestones).toHaveTextContent("by 2026-11-01");
+    expect(milestones).toHaveTextContent("Scaffold the repository");
+    expect(milestones).toHaveTextContent("tier default, priority 8, coder");
+    expect(milestones).toHaveTextContent("Set up CI");
+    expect(milestones).toHaveTextContent("tier 2, priority 6, after scaffold");
+    const docs = within(card).getByTestId("intake-docs");
+    expect(docs).toHaveTextContent("Docs (2): README.md, docs/overview.md");
+    expect(docs).toHaveTextContent("as a pull request");
+    const first = within(card).getByTestId("intake-first-session");
+    expect(first).toHaveTextContent("First session (USD 0.65): Scaffold first.");
+    expect(first).toHaveTextContent("Scaffold the repository (~USD 0.40)");
+    expect(first).toHaveTextContent("Set up CI (~USD 0.25)");
+    expect(card).toHaveTextContent(
+      "Planning call: USD 0.01. Nothing is written until you approve.",
+    );
+    // The request keeps its ordinary controls: the options and the raw card behind details.
+    const request = card.closest('[data-testid="request"]') as HTMLElement;
+    expect(request).toHaveAttribute("data-request-id", "req_intake");
+    expect(
+      within(request)
+        .getAllByTestId("option")
+        .map((b) => b.textContent),
+    ).toEqual(["approve", "reject"]);
+    expect(within(request).getByText("Change card")).toBeInTheDocument();
+    // Other requests render no intake card.
+    expect(screen.getAllByTestId("intake-card")).toHaveLength(1);
+  });
+
+  it("intakeCardOf reads only intake cards that carry a proposal", () => {
+    expect(intakeCardOf(null)).toBeNull();
+    expect(intakeCardOf({ target: "staging", reversible: true })).toBeNull();
+    expect(intakeCardOf({ key: "intake:p", proposal: "not an object" })).toBeNull();
+    const view = intakeCardOf({
+      key: "intake:p",
+      proposal: {
+        plan: { milestones: [], tasks: [{ title: "Loose", priority: 3 }] },
+        docs: {},
+        firstSession: { summary: "s", items: [{ key: "ghost", estimateUsdMicro: 5 }] },
+      },
+    });
+    expect(view?.looseTasks.map((t) => t.title)).toEqual(["Loose"]);
+    expect(view?.firstSession.items).toEqual([
+      { key: "ghost", title: "ghost", estimateUsdMicro: 5 },
+    ]);
+    expect(view?.docsTarget).toBeNull();
+    expect(view?.costUsdMicro).toBeNull();
   });
 
   it("marks a message read", async () => {

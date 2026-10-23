@@ -1025,12 +1025,16 @@ export function defineStateSuite(target: SuiteTarget): void {
 
     describe("lessons", () => {
       it("keeps private lessons private: agent B cannot read agent A's through the repo API", async () => {
-        await store.lesson.add({
+        // On Postgres the private scope never enters the shared store (ADR 0083, the case
+        // below): the add is refused and Alice's private row simply does not exist here.
+        const privateAdd = store.lesson.add({
           scope: "agent_private",
           owner_agent_id: s.alice.id,
           text: "Alice secret habit",
           tags: ["habit"],
         });
+        if (store.dialect === "postgres") await expectCode(privateAdd, "MEMORY_SCOPE_VIOLATION");
+        else await privateAdd;
         const shared = await store.lesson.add({
           scope: "shared",
           text: "Shared habit",
@@ -1058,17 +1062,65 @@ export function defineStateSuite(target: SuiteTarget): void {
           (await store.lesson.search({ scope: "agent_private", ownerAgentId: s.alice.id })).map(
             (l) => l.text,
           ),
-        ).toEqual(["Alice secret habit"]);
+        ).toEqual(store.dialect === "postgres" ? [] : ["Alice secret habit"]);
         expect(
           (await store.lesson.search({ scope: "shared", tags: ["habit"] })).map((l) => l.id),
         ).toEqual([shared.id]);
         expect((await store.lesson.search({ scope: "critic" })).map((l) => l.id)).toEqual([
           critic.id,
         ]);
+        // The scope rule runs before the owner check, so the shared store refuses this add for
+        // its scope; the local store refuses it for the missing owner.
         await expectCode(
           store.lesson.add({ scope: "agent_private", text: "no owner" }),
-          "validation",
+          store.dialect === "postgres" ? "MEMORY_SCOPE_VIOLATION" : "validation",
         );
+      });
+
+      it("keeps private rows out of the shared store: Postgres refuses an agent_private write, SQLite accepts it", async () => {
+        // Spec "private memory ... never leave[s] that PC"; ADR 0002: private rows exist only in
+        // the local SQLite, the Postgres adapter throws MEMORY_SCOPE_VIOLATION on a private write.
+        const shared = await store.lesson.add({ scope: "shared", text: "Shared habit" });
+        const privateWrite = () =>
+          store.lesson.add({
+            scope: "agent_private",
+            owner_agent_id: s.alice.id,
+            text: "Alice secret habit",
+          });
+        if (store.dialect === "postgres") {
+          const err = await expectCode(privateWrite(), "MEMORY_SCOPE_VIOLATION");
+          expect(err.details).toMatchObject({ scope: "agent_private", dialect: "postgres" });
+          await expectCode(
+            store.lesson.update(shared.id, shared.version, {
+              scope: "agent_private",
+              owner_agent_id: s.alice.id,
+            }),
+            "MEMORY_SCOPE_VIOLATION",
+          );
+          await expectCode(
+            store.lesson.patch(shared.id, { scope: "agent_private", owner_agent_id: s.alice.id }),
+            "MEMORY_SCOPE_VIOLATION",
+          );
+          await expectCode(
+            store.lesson.supersede(shared.id, {
+              text: "Shared habit, now private",
+              scope: "agent_private",
+              owner_agent_id: s.alice.id,
+            }),
+            "MEMORY_SCOPE_VIOLATION",
+          );
+          expect(await store.lesson.count({ scope: "agent_private" })).toBe(0);
+          const untouched = await store.lesson.mustGet(shared.id);
+          expect(untouched.scope).toBe("shared");
+          expect(untouched.version).toBe(shared.version);
+          expect(untouched.superseded_by).toBeNull();
+        } else {
+          const row = await privateWrite();
+          expect(row.scope).toBe("agent_private");
+          const next = await store.lesson.supersede(row.id, { text: "Alice newer habit" });
+          expect(next.scope).toBe("agent_private");
+          expect(await store.lesson.count({ scope: "agent_private" })).toBe(2);
+        }
       });
 
       it("searches by tags, text and status; touch, retire and supersede behave", async () => {
@@ -1623,6 +1675,121 @@ export function defineStateSuite(target: SuiteTarget): void {
         expect((await store.secretRef.markUsed(ref.id)).last_used).toBe(clock.nowIso());
       });
 
+      it("secret grants (spec S.13): pending until every named human approved, blobs only for the named agent's install, ended grants drop their blobs", async () => {
+        const cols = allColumns(ENTITIES.secret_grant as EntityDef).map((c) => c.name);
+        expect(cols.some((c) => /value|secret$|password|token$/.test(c))).toBe(false);
+        const blob = {
+          v: 1,
+          ciphertext: "Y3Q=",
+          tag: "dGFn",
+          iv: "aXY=",
+          salt: "cw==",
+          ephemeralPublicKey: "ZQ==",
+        };
+        const grant = await store.secretGrant.propose({
+          name: "org_deploy_token",
+          owner_human_id: s.human.id,
+          agent_ids: [s.bob.id],
+          required_human_ids: [s.human2.id],
+          blobs: [{ agent_id: s.bob.id, device_id: "bob-pc", blob }],
+          author_human: s.human.id,
+        });
+        expect(grant.status).toBe("pending");
+        expect(grant.activated_at).toBeNull();
+        // Pending: nothing is served, to anyone.
+        expect(
+          await store.secretGrant.blobFor("org_deploy_token", s.bob.id, "bob-pc"),
+        ).toBeUndefined();
+        expect(await store.secretGrant.activeFor(s.bob.id)).toEqual([]);
+        expect((await store.secretGrant.forHuman(s.human2.id)).map((g) => g.id)).toEqual([
+          grant.id,
+        ]);
+        expect((await store.secretGrant.forHuman(s.human.id)).map((g) => g.id)).toEqual([grant.id]);
+        expect(await store.secretGrant.forHuman("nobody")).toEqual([]);
+        // Only a required human's approval counts; the owner is not in the list.
+        await expectCode(
+          store.secretGrant.approve(grant.id, grant.version, s.human.id, null),
+          "validation",
+        );
+        const active = await store.secretGrant.approve(
+          grant.id,
+          grant.version,
+          s.human2.id,
+          "req-1",
+        );
+        expect(active.status).toBe("active");
+        expect(active.activated_at).toBe(clock.nowIso());
+        expect(active.approvals).toEqual({
+          [s.human2.id]: { at: clock.nowIso(), request_id: "req-1" },
+        });
+        await expectCode(
+          store.secretGrant.approve(grant.id, active.version, s.human2.id, "req-1"),
+          "validation",
+        );
+        // Served only for the named agent on the install the blob was wrapped for.
+        const served = await store.secretGrant.blobFor("org_deploy_token", s.bob.id, "bob-pc");
+        expect(served?.blob.blob).toEqual(blob);
+        expect(
+          await store.secretGrant.blobFor("org_deploy_token", s.bob.id, "bob-phone"),
+        ).toBeUndefined();
+        expect(
+          await store.secretGrant.blobFor("org_deploy_token", s.alice.id, "bob-pc"),
+        ).toBeUndefined();
+        expect(await store.secretGrant.blobFor("other", s.bob.id, "bob-pc")).toBeUndefined();
+        expect(await store.secretGrant.activeNamesFor(s.bob.id)).toEqual(["org_deploy_token"]);
+        expect(await store.secretGrant.activeNamesFor(s.alice.id)).toEqual([]);
+        expect((await store.secretGrant.markServed(grant.id)).last_served).toBe(clock.nowIso());
+        // Revoked: the blobs are gone with the status, and the grant is terminal.
+        const revoked = await store.secretGrant.end(
+          grant.id,
+          active.version + 1,
+          "revoked",
+          "owner revoked",
+          s.human.id,
+        );
+        expect(revoked).toMatchObject({
+          status: "revoked",
+          blobs: [],
+          ended_reason: "owner revoked",
+        });
+        expect(
+          await store.secretGrant.blobFor("org_deploy_token", s.bob.id, "bob-pc"),
+        ).toBeUndefined();
+        await expectCode(
+          store.secretGrant.end(grant.id, revoked.version, "cancelled", "x"),
+          "validation",
+        );
+        expect((await store.secretGrant.forOwner(s.human.id, "revoked")).map((g) => g.id)).toEqual([
+          grant.id,
+        ]);
+        // A refusal cancels a pending grant; an active one can only be revoked.
+        const second = await store.secretGrant.propose({
+          name: "org_deploy_token",
+          owner_human_id: s.human.id,
+          agent_ids: [s.bob.id],
+          required_human_ids: [s.human2.id],
+          blobs: [{ agent_id: s.bob.id, device_id: "bob-pc", blob }],
+        });
+        const cancelled = await store.secretGrant.end(
+          second.id,
+          second.version,
+          "cancelled",
+          "refused",
+        );
+        expect(cancelled).toMatchObject({ status: "cancelled", blobs: [] });
+        // Nobody to ask (only the owner's own agents): active at once.
+        const own = await store.secretGrant.propose({
+          name: "own_token",
+          owner_human_id: s.human.id,
+          agent_ids: [s.alice.id],
+          blobs: [{ agent_id: s.alice.id, device_id: "ada-pc", blob }],
+        });
+        expect(own.status).toBe("active");
+        expect((await store.secretGrant.blobFor("own_token", s.alice.id, "ada-pc"))?.grant.id).toBe(
+          own.id,
+        );
+      });
+
       it("budget windows move ok -> warn80 -> stopped and a zero cap never stops", async () => {
         const w = await store.budgetWindow.open({
           scope: "project",
@@ -1766,6 +1933,52 @@ export function defineStateSuite(target: SuiteTarget): void {
           scan_result: { repos: ["a", "b"] },
           status: "connected",
         });
+        // Source discovery (spec A.4): a chosen repository is a source kind of its own, and
+        // the candidates a scan finds are rows keyed by their normalised locator per source.
+        const chosen = await store.source.insert({
+          kind: "github_repo",
+          display_name: "acme/alpha",
+          locator: "acme/alpha",
+          credential_ref: "secret:github_token",
+        });
+        expect((await store.source.byLocator("github_repo", "acme/alpha"))?.id).toBe(chosen.id);
+        const cand = await store.sourceCandidate.insert({
+          source_id: src.id,
+          kind: "repo",
+          name: "alpha",
+          locator: "acme/alpha",
+          key: "github:acme/alpha",
+          proposed_name: "alpha",
+          last_seen_at: clock.nowIso(),
+        });
+        expect(cand).toMatchObject({
+          status: "proposed",
+          existing_install: false,
+          install_marker: null,
+          project_id: null,
+          is_git: true,
+          details: {},
+        });
+        expect((await store.sourceCandidate.byKey(src.id, "github:acme/alpha"))?.id).toBe(cand.id);
+        expect((await store.sourceCandidate.forSource(src.id)).map((c) => c.id)).toEqual([cand.id]);
+        await expect(
+          store.sourceCandidate.insert({
+            source_id: src.id,
+            kind: "repo",
+            name: "alpha",
+            locator: "acme/alpha",
+            key: "github:acme/alpha",
+            proposed_name: "alpha",
+            last_seen_at: clock.nowIso(),
+          }),
+        ).rejects.toThrow();
+        const accepted = await store.sourceCandidate.patch(cand.id, {
+          status: "accepted",
+          project_id: s.project.id,
+        });
+        expect(accepted.project_id).toBe(s.project.id);
+        expect(await store.sourceCandidate.deleteForSource(src.id)).toBe(1);
+        expect(await store.sourceCandidate.forSource(src.id)).toEqual([]);
 
         const m2 = await store.milestone.insert({
           project_id: s.project.id,

@@ -25,6 +25,7 @@ import { registerInboxRoutes } from "./routes/inbox.ts";
 import { registerProjectRoutes } from "./routes/projects.ts";
 import { registerRemoteRoutes } from "./routes/remote.ts";
 import { registerReviewRoutes } from "./routes/reviews.ts";
+import { registerSecretRoutes } from "./routes/secrets.ts";
 import { registerSessionRoutes } from "./routes/sessions.ts";
 import { registerSyncRoutes } from "./routes/sync.ts";
 
@@ -298,6 +299,7 @@ export function createApp(deps: AppDeps): StateApiApp {
   registerCostRoutes(app, ctx);
   registerAuditRoutes(app, ctx);
   registerReviewRoutes(app, ctx);
+  registerSecretRoutes(app, ctx);
   registerSyncRoutes(app, ctx);
 
   if (deps.startPoller !== false) poller.start();

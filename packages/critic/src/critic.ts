@@ -28,7 +28,7 @@ import type {
   StateStore,
 } from "@forerunner/state";
 import { docDriftFor } from "./docs-drift.ts";
-import { type RenderOptions, renderEvidence } from "./evidence.ts";
+import { type RenderOptions, renderEvidence, subjectLabel } from "./evidence.ts";
 import { fingerprintOf } from "./fingerprint.ts";
 import { SIGNOFF_OPTIONS, signoffCard } from "./followup.ts";
 import {
@@ -356,10 +356,7 @@ export class CriticService {
         if (!captured) captured = r;
       }),
     );
-    const subjectLabel =
-      input.subject.kind === "task"
-        ? `task ${input.subject.taskId}`
-        : `session ${input.subject.sessionId}`;
+    const label = subjectLabel(input.subject);
 
     let result: RunResult;
     try {
@@ -378,7 +375,7 @@ export class CriticService {
         maxTokensPerCall: this.deps.maxTokensPerCall ?? 8192,
         effort: pick.effort,
         phase: "review",
-        label: `critic tier ${tier} on ${subjectLabel}`,
+        label: `critic tier ${tier} on ${label}`,
         onEvent: ctx.onEvent,
         // ADR 0003: every critic call bypasses the context layer's compression, on the session
         // pipeline when one is wired so its records show the bypass.
@@ -714,8 +711,10 @@ export class CriticService {
       resolvedIds.push(f.id);
     }
 
+    // A lesson subject has nothing to sign off: a human verdict leaves the promotion pending
+    // and the memory view shows it; no blocking request is filed (spec G.6).
     let humanRequestId: string | undefined;
-    if (out.verdict === "human") {
+    if (out.verdict === "human" && input.subject.kind !== "lesson") {
       const worst = maxSeverity(out.findings);
       const req = await store.humanRequest.insert({
         human_id: ctx.humanId === undefined ? claims.ownerHumanId : ctx.humanId,
@@ -837,8 +836,20 @@ function validateInput(input: ReviewInput): void {
       `review tier must be 0, 1, 2 or 3; got ${String(input.tier)}`,
     );
   }
-  if (!input.subject || (input.subject.kind !== "task" && input.subject.kind !== "session")) {
-    throw new ForerunnerError("validation", "review subject must be a task or a session");
+  const subject = input.subject as { kind?: unknown } | undefined;
+  const subjectId =
+    subject?.kind === "task"
+      ? (subject as { taskId?: unknown }).taskId
+      : subject?.kind === "session"
+        ? (subject as { sessionId?: unknown }).sessionId
+        : subject?.kind === "lesson"
+          ? (subject as { lessonId?: unknown }).lessonId
+          : undefined;
+  if (typeof subjectId !== "string" || subjectId.length === 0) {
+    throw new ForerunnerError(
+      "validation",
+      "review subject must be a task, a session or a lesson with its id",
+    );
   }
   if (!Array.isArray(input.evidence?.acceptanceCriteria)) {
     throw new ForerunnerError("validation", "evidence.acceptanceCriteria must be an array");

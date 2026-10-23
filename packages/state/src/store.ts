@@ -1,6 +1,6 @@
 import { type Clock, ForerunnerError, systemClock } from "@forerunner/platform";
 import { openPostgres, type PostgresOptions } from "./db/postgres.ts";
-import { openSqlite } from "./db/sqlite.ts";
+import { openSqlite, type SqliteOptions } from "./db/sqlite.ts";
 import type { Database, Dialect } from "./db/types.ts";
 import { type MigrateResult, migrate } from "./migrations/index.ts";
 import { createRepos, type Repos } from "./repos/index.ts";
@@ -14,6 +14,7 @@ export interface OpenStoreOptions {
   /** Run pending migrations on open. Default true. */
   migrate?: boolean;
   postgres?: Omit<PostgresOptions, "schema">;
+  sqlite?: SqliteOptions;
 }
 
 export interface StateStore extends Repos {
@@ -82,7 +83,7 @@ export async function openStore(opts: OpenStoreOptions): Promise<StateStore> {
   const parsed = parseStoreUrl(opts.url);
   const db: Database =
     parsed.dialect === "sqlite"
-      ? await openSqlite(parsed.location)
+      ? await openSqlite(parsed.location, opts.sqlite ?? {})
       : await openPostgres(parsed.url, {
           ...(opts.postgres ?? {}),
           ...(opts.schema ? { schema: opts.schema } : {}),

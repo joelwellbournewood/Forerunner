@@ -11,6 +11,33 @@ import type { LessonFiles } from "./files.ts";
 
 export type MemoryScope = LessonScope;
 
+/**
+ * The lesson store the memory functions write and read. `LessonRepo` is one; with a shared
+ * state the runtime hands in a `ScopedLessonStore` that keeps the private scope in a local
+ * SQLite index and every other scope in the shared store (ADR 0002, ADR 0083).
+ */
+export type LessonStore = Pick<
+  LessonRepo,
+  | "get"
+  | "mustGet"
+  | "exists"
+  | "list"
+  | "count"
+  | "insert"
+  | "insertMany"
+  | "add"
+  | "update"
+  | "patch"
+  | "updateWhere"
+  | "overwriteEnvelope"
+  | "delete"
+  | "search"
+  | "touch"
+  | "retire"
+  | "supersede"
+  | "setPinned"
+>;
+
 /** Fixed render and walk order (ADR 0002): private, critic, shared. */
 export const SCOPE_ORDER: readonly MemoryScope[] = ["agent_private", "critic", "shared"];
 
@@ -46,7 +73,7 @@ export interface LessonDoc {
 
 /** Everything the memory functions need; built once per runtime by `createMemory`. */
 export interface MemoryContext {
-  repo: LessonRepo;
+  repo: LessonStore;
   files: LessonFiles;
   embedder: Embedder;
   clock: Clock;

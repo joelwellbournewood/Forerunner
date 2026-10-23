@@ -1,4 +1,6 @@
+import { ForerunnerError } from "@forerunner/platform";
 import type { DecisionRow, HumanRequestRow, StateStore } from "@forerunner/state";
+import { type ActionClass, ALWAYS_HUMAN } from "../enforcement/autonomy.ts";
 import { approvalKeyFor } from "../enforcement/hooks.ts";
 import type {
   ApprovalOutcome,
@@ -71,10 +73,29 @@ export class StateAudit implements AuditPort {
   }
 }
 
+/** The part of `change_card` this port reads and writes on an approval row. */
+interface ApprovalChangeCard {
+  key?: string;
+  actionClass?: string;
+  /** When an always-human "yes" was handed out; a spent row never approves again. */
+  consumedAt?: string;
+  /** The run the "yes" was handed to. */
+  consumedByRun?: string;
+}
+
 /**
- * Approvals become HumanRequests. A request for the same tool and input that was already
- * answered "yes" in this session counts as approved; "no" as denied; otherwise it is pending
- * and the run pauses until the human answers (the session resumes it later).
+ * Approvals become HumanRequests, matched by `change_card.key` within the session. An open
+ * row for the same key keeps the call pending; a "no" denies it for the session; a "yes"
+ * approves it. For an always-human class (`ALWAYS_HUMAN`: delete, purchase, credential,
+ * permission, capability grant) the "yes" admits exactly one call: the row is marked spent
+ * (`consumedAt`, `consumedByRun`; an envelope update, so the version moves) as the answer is
+ * handed out, before the call runs, and the next identical request files a new row and waits.
+ * Spent when handed out rather than after the call, so a call that then fails for another
+ * reason (a secret not granted, a network error) has used its answer and the human is asked
+ * afresh: conservative on purpose for the classes that always need a human. Two consumers of
+ * one "yes" cannot both take it (optimistic concurrency: the loser asks afresh). Every other
+ * class's "yes" holds for the session. A withdrawn or expired row holds nothing: the next
+ * request files a new one.
  */
 export class StateApprovals implements ApprovalPort {
   constructor(private readonly store: StateStore) {}
@@ -83,12 +104,37 @@ export class StateApprovals implements ApprovalPort {
     const key = approvalKey(req);
     const existing = await this.store.humanRequest.list(
       { session_id: req.sessionId, kind: "approval" },
-      { orderBy: [{ column: "created_at", direction: "desc" }] },
+      {
+        orderBy: [
+          { column: "created_at", direction: "desc" },
+          { column: "id", direction: "desc" },
+        ],
+      },
     );
-    const same = existing.find((r) => (r.change_card as { key?: string } | null)?.key === key);
-    if (same) {
-      if (same.status === "answered") return isYes(same.answer) ? "approved" : "denied";
-      return "pending";
+    const rows = existing.filter((r) => cardOf(r).key === key);
+    if (rows.some((r) => r.status === "open")) return "pending";
+    const latest = rows.find((r) => r.status === "answered");
+    if (latest) {
+      if (!isYes(latest.answer)) return "denied";
+      const card = cardOf(latest);
+      const oneShot = isAlwaysHuman(req.actionClass) || isAlwaysHuman(card.actionClass);
+      if (!oneShot) return "approved";
+      if (!card.consumedAt) {
+        try {
+          await this.store.humanRequest.update(latest.id, latest.version, {
+            change_card: {
+              ...(latest.change_card ?? {}),
+              consumedAt: this.store.clock.nowIso(),
+              consumedByRun: req.runId,
+            },
+          });
+          return "approved";
+        } catch (e) {
+          // Another consumer took the "yes" between the read and the write: ask afresh.
+          if (!(e instanceof ForerunnerError && e.code === "version_conflict")) throw e;
+        }
+      }
+      // spent: a new question below
     }
     await this.store.humanRequest.insert({
       human_id: req.humanId,
@@ -114,14 +160,24 @@ export class StateApprovals implements ApprovalPort {
   }
 }
 
+function cardOf(row: Pick<HumanRequestRow, "change_card">): ApprovalChangeCard {
+  return (row.change_card ?? {}) as ApprovalChangeCard;
+}
+
+function isAlwaysHuman(actionClass: string | undefined): boolean {
+  return actionClass !== undefined && ALWAYS_HUMAN.has(actionClass as ActionClass);
+}
+
 /**
  * The durable key of an approval (`change_card.key`): the hooks' collision-resistant key, a
- * SHA-256 of the canonical input, so an answer for one input never admits another whose
- * 32-bit string hash happened to match. A row written with the old key no longer matches,
- * which fails closed: the human is asked again once.
+ * SHA-256 of the canonical raw input (`req.key`, computed by the hooks before the input was
+ * cut for the card; else computed here from `req.input`, which must then be the raw input),
+ * so an answer for one input never admits another that displays alike or whose 32-bit string
+ * hash happened to match. A row written under a former key no longer matches, which fails
+ * closed: the human is asked again once.
  */
-export function approvalKey(req: Pick<ApprovalRequest, "tool" | "input">): string {
-  return approvalKeyFor(req.tool, req.input);
+export function approvalKey(req: Pick<ApprovalRequest, "tool" | "input" | "key">): string {
+  return req.key ?? approvalKeyFor(req.tool, req.input);
 }
 
 export function isYes(answer: unknown): boolean {

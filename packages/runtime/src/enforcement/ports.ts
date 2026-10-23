@@ -84,10 +84,24 @@ export interface ApprovalRequest {
   actionClass: string;
   risk: "low" | "medium" | "high";
   why: string;
+  /** The input as it may be shown and stored: the hooks cut long strings for display. */
   input: unknown;
+  /**
+   * The key the approval is remembered under, `approvalKeyFor(tool, rawInput)`: the SHA-256 of
+   * the canonical raw input, computed before `input` was cut for display, so two inputs that
+   * display alike never share a key. A durable port files and matches its rows on it. Absent,
+   * the port computes the key from `input`, which must then be the raw input.
+   */
+  key?: string;
   estimateUsdMicro?: number;
 }
 
+/**
+ * "approved" admits the call the request is for. For an always-human class (`ALWAYS_HUMAN`)
+ * that is one call: a durable port spends the answer as it hands it out, so the next identical
+ * request is "pending" again behind a new question. Every other "approved" holds for the run
+ * (the hooks keep it in `ctx.approvals`) and, durably, for the session.
+ */
 export type ApprovalOutcome = "approved" | "denied" | "pending";
 
 export interface ApprovalPort {

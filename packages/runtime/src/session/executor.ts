@@ -48,6 +48,7 @@ import {
   type TaskBillingPort,
 } from "./billing.ts";
 import { screenLessons } from "./lessons.ts";
+import { renderHeardLines } from "./live-chat.ts";
 import {
   lessonsFromReport,
   type PlanItem,
@@ -449,7 +450,16 @@ export class LoopTaskExecutor implements TaskExecutor {
     // count itself, or the ladder would advance twice per failure.
     await store.task.patch(task.id, { specialist: spec.name });
 
-    const userText = lessonsBlock ? `${renderBrief(brief)}\n\n${lessonsBlock}` : renderBrief(brief);
+    // What the human said during the session (spec O.9): quoted data after the brief and the
+    // lessons, never a field of the brief; an instruction-shaped line is named in the session
+    // log by its id and rules, never by its words.
+    const heard = renderHeardLines(ctx.heard ?? []);
+    for (const f of heard.flagged)
+      this.deps.onEvent?.(task.id, {
+        type: "warning",
+        message: `a line the human said during the session (message ${f.id}) contained instruction-like passages (${f.rules.join(", ")}); passed to the specialist as data`,
+      });
+    const userText = [renderBrief(brief), lessonsBlock, heard.block].filter((t) => t).join("\n\n");
     const label = `${spec.name} on ${task.title}`;
     const onEvent = (ev: RunEvent) => this.deps.onEvent?.(task.id, ev);
     // Tools for this run; with a worktree and a sandbox port, commands run inside the sandbox

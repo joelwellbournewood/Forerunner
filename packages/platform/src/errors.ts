@@ -16,6 +16,7 @@ export type ErrorCode =
   | "claim_conflict"
   | "version_conflict"
   | "not_found"
+  | "identity_ambiguous"
   | "validation"
   | "brief_incomplete"
   | "findings_open"
@@ -26,6 +27,8 @@ export type ErrorCode =
   | "not_supported"
   | "unavailable"
   | "injection_suspected"
+  /** A private-memory row was about to enter a shared store (ADR 0002; spelled as the ADR names it). */
+  | "MEMORY_SCOPE_VIOLATION"
   | "internal";
 
 export class ForerunnerError extends Error {

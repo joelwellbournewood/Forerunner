@@ -204,6 +204,55 @@ describe("consolidate (project boundary)", () => {
     await w.close();
   });
 
+  it("never merges a project copy accepted from an offer back into its global origin", async () => {
+    // Spec G.6: a promoted lesson is global; accepting its offer for a project makes a pinned
+    // project-level copy whose source names the origin. The copy is the same text, so the
+    // duplicate rule would otherwise propose merging it and, keeping the pinned copy, make
+    // that one global: the pin would then apply to every project. The pair is left alone.
+    const origin = await remember(w.ctx, {
+      scope: "shared",
+      text: TEXTS.windows,
+      tags: ["general", "windows"],
+      source: "promotion:les_origin;approved_by:rev_1",
+    });
+    const copy = await remember(
+      w.ctx,
+      {
+        scope: "shared",
+        text: TEXTS.windows,
+        tags: ["general", "windows"],
+        projectId: w.project2,
+        pinned: true,
+        source: `promotion:${origin.lesson.id};human:${w.humanId}`,
+      },
+      { noDedup: true },
+    );
+    expect(copy.action).toBe("inserted");
+    const report = await consolidate(w.ctx, { scope: "shared" });
+    expect(report.merged).toEqual([]);
+    expect(report.contradictions).toEqual([]);
+    // A stray duplicate in the project links both through the union; the copy is left out of
+    // that group and the stray merges into the global origin as usual.
+    const stray = await remember(
+      w.ctx,
+      { scope: "shared", text: TEXTS.windowsDup, tags: ["windows"], projectId: w.project2 },
+      { noDedup: true },
+    );
+    const again = await consolidate(w.ctx, { scope: "shared" });
+    expect(again.merged).toEqual([
+      {
+        keptId: origin.lesson.id,
+        retiredIds: [stray.lesson.id],
+        cosine: expect.any(Number),
+        projectId: null,
+      },
+    ]);
+    await consolidate(w.ctx, { scope: "shared", apply: true });
+    expect((await w.store.lesson.mustGet(copy.lesson.id)).status).toBe("active");
+    expect((await w.store.lesson.mustGet(copy.lesson.id)).project_id).toBe(w.project2);
+    expect((await w.store.lesson.mustGet(stray.lesson.id)).superseded_by).toBe(origin.lesson.id);
+  });
+
   it("keeps the surviving lesson global when any merged lesson was global", async () => {
     const scoped = await remember(w.ctx, {
       scope: "shared",

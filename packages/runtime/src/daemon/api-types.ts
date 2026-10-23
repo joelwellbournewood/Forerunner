@@ -1,5 +1,26 @@
 import { z } from "zod";
 
+export type {
+  SourceCandidateStatus,
+  SourceKind,
+} from "../sources/types.ts";
+/** Source discovery shapes (spec A.4): the `/sources` routes' bodies and answers. */
+export {
+  AcceptCandidateBody,
+  AcceptCandidateView,
+  AddSourceBody,
+  RemoveSourceView,
+  ScanResultView,
+  ScanSummary,
+  SOURCE_CANDIDATE_STATUSES,
+  SOURCES_ROUTES,
+  SourceCandidateStatusSchema,
+  SourceCandidateView,
+  SourceKindSchema,
+  SourceView,
+  SUPPORTED_SOURCE_KINDS,
+} from "../sources/types.ts";
+
 /**
  * Local daemon API contract (ADR 0011). The desktop and Android shells, the approvals web
  * page and the CLI talk to the runtime through this API; the UI never touches the database.
@@ -316,7 +337,56 @@ export const CreateProjectBody = z.object({
   repos: z.array(z.string()).optional(),
   autonomyLevel: z.number().int().min(0).max(4).optional(),
   budgetUsdMicro: z.number().int().nonnegative().optional(),
+  /**
+   * PM intake (spec A.2, ADR 0055): true runs the intake in the background once the project
+   * exists, so the proposal (plan, doc set, first-session plan) lands in the inbox; the card
+   * answers at once. Off by default: a client that wants the plan asks for it, or calls
+   * `POST /projects/:id/intake` later.
+   */
+  intake: z.boolean().optional(),
 });
+
+/** `POST /projects/:id/intake`: an optional brief in place of the one kept at creation. */
+export const IntakeRequestBody = z.object({
+  brief: z.string().optional(),
+});
+
+/** The intake filed (or reused) its proposal; the inbox holds the request (`202`). */
+export const IntakeProposalView = z.object({
+  pending: z.literal(true),
+  projectId: z.string(),
+  requestId: z.string(),
+  /** An open proposal for the project already existed; no model call was made. */
+  reused: z.boolean(),
+  summary: z.object({
+    milestones: z.number().int(),
+    tasks: z.number().int(),
+    docs: z.number().int(),
+    firstSessionTasks: z.number().int(),
+  }),
+  /** The first-session plan's estimate, USD micro-units. */
+  estimateUsdMicro: z.number().int(),
+  /** What the one planning call cost; 0 when reused. */
+  costUsdMicro: z.number().int(),
+  /** Where the doc set goes on approval. */
+  docsTarget: z.enum(["repository", "workspace"]),
+});
+export type IntakeProposalView = z.infer<typeof IntakeProposalView>;
+
+/** `GET /projects/:id/intake`: the project's latest intake and what became of it. */
+export const IntakeStatusView = z.object({
+  projectId: z.string(),
+  state: z.enum(["none", "pending", "approved", "rejected", "skipped", "failed"]),
+  requestId: z.string().nullable(),
+  /** The card's outcome once answered: `approved`, `rejected`, or why it was skipped. */
+  outcome: z.string().nullable(),
+  appliedAt: z.string().nullable(),
+  /** Where the docs went on approval (target, paths written, kept and scaffolded, PR url). */
+  docs: z.unknown().nullable(),
+  /** Why the last automatic intake failed (`state: "failed"`). */
+  error: z.string().nullable(),
+});
+export type IntakeStatusView = z.infer<typeof IntakeStatusView>;
 
 export const CreateTaskBody = z.object({
   title: z.string().min(3),
@@ -610,6 +680,28 @@ export const UpdateLessonBody = z.object({
 export type UpdateLessonBody = z.infer<typeof UpdateLessonBody>;
 
 export const PinLessonBody = z.object({ pinned: z.boolean() });
+
+/** A cross-project offer (spec G.6): a promoted lesson matched to another project by its tags. */
+export const LessonOfferView = z.object({
+  requestId: z.string(),
+  status: z.string(),
+  lessonId: z.string(),
+  text: z.string(),
+  tags: z.array(z.string()),
+  confidence: z.number(),
+  projectId: z.string(),
+  projectName: z.string(),
+  sharedTags: z.array(z.string()),
+  createdAt: z.string(),
+  answer: z.unknown().nullable(),
+  appliedAt: z.string().nullable(),
+  copyId: z.string().nullable(),
+  version: z.number().int(),
+});
+export type LessonOfferView = z.infer<typeof LessonOfferView>;
+
+export const AnswerOfferBody = z.object({ answer: z.enum(["accept", "dismiss"]) });
+export type AnswerOfferBody = z.infer<typeof AnswerOfferBody>;
 
 export const ConsolidationReportView = z.object({
   scope: z.enum(["agent_private", "critic", "shared"]),
@@ -1042,6 +1134,133 @@ export type DaemonSseEvent =
  * `Authorization: Bearer <token>` where the token comes from the daemon file in the runtime
  * directory (desktop shell) or from a device pairing (phone, web).
  */
+// ---------------------------------------------------------------------------------------------
+// Agent email (spec S.15 to S.29, T.14): the Settings -> Capabilities -> Email page
+
+export const EMAIL_MODES = [
+  "off",
+  "read_only",
+  "draft_only",
+  "allowlist",
+  "full_discretion",
+] as const;
+export type EmailMode = (typeof EMAIL_MODES)[number];
+
+/**
+ * The agent's email configuration as `GET|PUT /agents/:agentId/email/settings` serve it: the
+ * daemon's browser-safe copy of `AgentEmailConfigSchema` in
+ * `packages/capabilities/src/email/types.ts` (which pulls `@forerunner/platform`). Field for
+ * field; the mirror is more lenient (plain strings where the capability validates addresses,
+ * domains, secret references and the marker) but never narrower.
+ * `test/email-routes-wiring.test.ts` parses the daemon's answer with both and compares the
+ * key sets so drift fails before a screen does. Mailbox credentials are secret references
+ * (`secret:<name>`), never values: the capability refuses anything else on PUT.
+ */
+export const EmailImapView = z.object({
+  host: z.string(),
+  port: z.number().int(),
+  secure: z.boolean(),
+  user: z.string(),
+  passwordRef: z.string(),
+  folder: z.string(),
+  draftsFolder: z.string(),
+});
+export const EmailSmtpView = z.object({
+  host: z.string(),
+  port: z.number().int(),
+  secure: z.boolean(),
+  user: z.string(),
+  passwordRef: z.string(),
+});
+export const EmailMailboxView = z.object({
+  /** The agent's own address, never the human's personal inbox (S.15). */
+  address: z.string(),
+  imap: EmailImapView.nullable(),
+  smtp: EmailSmtpView.nullable(),
+});
+export type EmailMailboxView = z.infer<typeof EmailMailboxView>;
+export const EmailSendingSettingsView = z.object({
+  mode: z.enum(EMAIL_MODES),
+  allowlist: z.object({ addresses: z.array(z.string()), domains: z.array(z.string()) }),
+  dailySendCap: z.number().int().min(0),
+  perRecipientDailyCap: z.number().int().min(0),
+  signature: z.object({ enabled: z.boolean(), text: z.string() }),
+  /** One-click pause (S.28): every send is held while true. */
+  paused: z.boolean(),
+  dailyDigest: z.boolean(),
+  mailbox: EmailMailboxView.nullable(),
+});
+export const EmailCommandSettingsView = z.object({
+  enabled: z.boolean(),
+  registeredHumanAddress: z.string().nullable(),
+  /** The private subject tag, e.g. "[FR-7k2q]"; `POST .../email/rotate-marker` replaces it. */
+  marker: z.string(),
+  pollIntervalMs: z.number().int(),
+  perEmailCapChfMicro: z.number().int(),
+  perEmailCapUsdMicro: z.number().int().nullable(),
+  dailyTaskCap: z.number().int(),
+  autonomyLevel: z.number().int().min(0).max(4),
+});
+export const EmailSettingsView = z.object({
+  settings: EmailSendingSettingsView,
+  commands: EmailCommandSettingsView,
+});
+export type EmailSettingsView = z.infer<typeof EmailSettingsView>;
+
+/** The PUT body: a partial on either half (`AgentEmailConfigPatch`); the capability merges and validates. */
+export interface EmailSettingsPatchBody {
+  settings?: Partial<
+    Omit<z.infer<typeof EmailSendingSettingsView>, "mailbox"> & {
+      mailbox: {
+        address: string;
+        imap: Partial<z.infer<typeof EmailImapView>> | null;
+        smtp: Partial<z.infer<typeof EmailSmtpView>> | null;
+      } | null;
+    }
+  >;
+  commands?: Partial<z.infer<typeof EmailCommandSettingsView>>;
+}
+
+/** One sent copy as `GET /agents/:agentId/email/sent` lists it (S.26), newest first. */
+export const EmailSentRowView = z.looseObject({
+  id: z.string(),
+  kind: z.string(),
+  messageId: z.string(),
+  to: z.array(z.string()),
+  cc: z.array(z.string()),
+  subject: z.string(),
+  text: z.string(),
+  mode: z.string(),
+  signature: z.boolean(),
+  toHuman: z.boolean(),
+  sentAt: z.string(),
+});
+export type EmailSentRowView = z.infer<typeof EmailSentRowView>;
+export const EmailSentView = z.object({ rows: z.array(EmailSentRowView), since: z.string() });
+export type EmailSentView = z.infer<typeof EmailSentView>;
+
+/**
+ * One email command as `GET /agents/:agentId/email/commands` lists it (T.14): the email, its
+ * interpretation and its result are one `email.command` audit row; `obeyed` false carries the
+ * gate's reason in `deniedReason` (`ignored: <reason>`).
+ */
+export const EmailCommandRowView = z.object({
+  id: z.string(),
+  occurredAt: z.string(),
+  obeyed: z.boolean(),
+  deniedReason: z.string().nullable(),
+  sessionId: z.string().nullable(),
+  email: z.record(z.string(), z.unknown()),
+  result: z.record(z.string(), z.unknown()),
+});
+export type EmailCommandRowView = z.infer<typeof EmailCommandRowView>;
+export const EmailCommandsView = z.object({ rows: z.array(EmailCommandRowView) });
+export type EmailCommandsView = z.infer<typeof EmailCommandsView>;
+export const EmailPausedView = z.object({ paused: z.boolean() });
+export type EmailPausedView = z.infer<typeof EmailPausedView>;
+export const EmailMarkerView = z.object({ marker: z.string() });
+export type EmailMarkerView = z.infer<typeof EmailMarkerView>;
+
 export const DAEMON_ROUTES = {
   health: "GET /health",
   me: "GET /me",
@@ -1078,6 +1297,10 @@ export const DAEMON_ROUTES = {
     "PUT /projects/:id/settings { version, settings } (merged; mirror schedule follows)",
   mirrorSync:
     "POST /projects/:id/mirror/sync { full? } (one-way GitHub Projects mirror run: 200 MirrorRunView, or 202 MirrorSyncPendingView while the human decides)",
+  intake:
+    "POST /projects/:id/intake (IntakeRequestBody -> 202 IntakeProposalView: PM intake, spec A.2, ADR 0055; one planning-rung model call turns the brief into the plan, the standard doc set and a first-session plan, filed as one blocking approval request whose card carries the whole proposal (change_card.key intake:<project>); an open proposal is reused without a call; nothing is written until the answer in the inbox: approve writes milestones and tasks (applyProjectPlan), the docs as a pull request on the project's repository or into its workspace directory, and the first-session plan onto the summary cache and the next-session queue; reject writes a queue note only; 409 conflict with cause validation when the model's reply is malformed; 503 without a model provider; 404 for an unknown project)",
+  intakeStatus:
+    "GET /projects/:id/intake (IntakeStatusView: the latest intake request and its outcome, where the docs went, or why the last automatic intake failed)",
   extensions: "GET /extensions?kind=",
   extensionCatalog: "GET /extensions/catalog",
   extension: "GET /extensions/:id",
@@ -1109,6 +1332,14 @@ export const DAEMON_ROUTES = {
   consolidation: "GET /memory/consolidation (ConsolidationProposalView[], newest first)",
   runConsolidation:
     "POST /memory/consolidation/run (report only; files the approval request the inbox answers; ConsolidationRunView)",
+  proposeLesson:
+    "POST /memory/lessons/:id/propose (spec G.6: tags the lesson general and proposes it for the shared store; the critic decides at the next session end; LessonView of the proposal; 404 for another human's private row)",
+  memoryPromotions:
+    "GET /memory/promotions (LessonView[]: this human's proposals the critic has not decided yet)",
+  memoryOffers:
+    "GET /memory/offers?limit= (LessonOfferView[], newest first: promoted lessons offered to this human's other projects by tag overlap)",
+  answerOffer:
+    "POST /memory/offers/:id/answer { answer: accept|dismiss } (applied at once: accept pins a copy in the project's shared memory, dismiss leaves it by relevance; one audit row; LessonOfferView)",
   commands: "GET /commands (the registry: CommandDefView[])",
   parseCommand:
     "POST /commands/parse { text, source?: text|voice|phone|ui, projectId?, deviceId? } (CommandParseView; nothing runs)",
@@ -1143,6 +1374,18 @@ export const DAEMON_ROUTES = {
   desktopRevoke:
     "POST /desktop/revoke { reason? } (live revocation: interrupts and drops desktop actions, refuses until resume; open to any caller)",
   desktopResume: "POST /desktop/resume (the signed-in human resumes; DesktopStatus)",
+  sources:
+    "GET /sources (SourceView[]: the daemon's human's connected sources with the counts of their candidates; spec A.4)",
+  addSource:
+    "POST /sources { kind: github_org|github_user|github_repo|local_folder, locator, displayName?, credentialRef? } (201 SourceView; a GitHub kind names its token as secret:<name>, default secret:github_token, and a token value is refused; 400 for gitlab and git_remote (later), a bad login, a relative or missing folder; 409 conflict when the same source is connected already)",
+  source: "GET /sources/:id (SourceView; 403 forbidden for another human's source)",
+  scanSource:
+    "POST /sources/:id/scan (ScanResultView: one candidate per repository or folder, proposed, or duplicate when a project or another source already covers it, accepted ones kept, ones no longer found gone; existingInstall with the marker; a failed scan sets the source's status to error and answers 503 for a host or credential problem)",
+  sourceCandidates: "GET /sources/:id/candidates?status= (SourceCandidateView[])",
+  acceptCandidate:
+    "POST /sources/candidates/:id/accept { name?, goal?, autonomyLevel?, budgetUsdMicro? } (201 AcceptCandidateView: the project created through the same path as POST /projects with no brief; 409 conflict for an accepted, duplicate or gone candidate, a repo a project took meanwhile, or a taken name)",
+  removeSource:
+    "DELETE /sources/:id ({ ok, id, candidatesRemoved }; projects created from it stay)",
   dataAssets: "GET /projects/:id/data (DataAssetView[])",
   registerDataAsset:
     "POST /projects/:id/data { locator, kind?, mode?, name?, sizeBytes? } | multipart file (+ kind, name) (201 DataAssetView; 413 above the upload cap)",
@@ -1151,6 +1394,19 @@ export const DAEMON_ROUTES = {
   dataAsset: "GET /data/:id (DataAssetView)",
   dataSample: "GET /data/:id/sample?rows=&bytes= (DataSample, capped by the data limits)",
   removeDataAsset: "DELETE /data/:id ({ ok, id, deletedFromDisk }; needs the daemon's human)",
+  emailSettings:
+    "GET /agents/:agentId/email/settings (EmailSettingsView; the daemon's human must own the agent, else 403 tool_not_allowed)",
+  updateEmailSettings:
+    "PUT /agents/:agentId/email/settings { settings?, commands? } (EmailSettingsView after the merge; 400 validation, credentials as secret references only; one email.settings audit row)",
+  emailSent:
+    "GET /agents/:agentId/email/sent?limit=&since= (EmailSentView: the owner's copies, newest first, 7 days by default)",
+  pauseEmail:
+    "POST /agents/:agentId/email/pause (EmailPausedView { paused: true }; every send is held until resume; the tray's one click, S.28)",
+  resumeEmail: "POST /agents/:agentId/email/resume (EmailPausedView { paused: false })",
+  rotateEmailMarker:
+    "POST /agents/:agentId/email/rotate-marker (EmailMarkerView; the old command marker stops working at once)",
+  emailCommands:
+    "GET /agents/:agentId/email/commands?limit= (EmailCommandsView: every email command with its interpretation and result, newest first, T.14)",
   voiceStatus:
     "GET /voice/status (VoiceStatusView: available with the providers picked, or the reason voice is unavailable)",
   startVoiceSession:

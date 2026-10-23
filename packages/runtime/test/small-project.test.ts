@@ -9,6 +9,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import {
   applyProjectPlan,
   defaultRiskTier,
+  MAX_PLAN_MILESTONES,
   MAX_PLAN_TASKS,
   milestoneMerge,
   PLAN_AUDIT_TOOL,
@@ -261,6 +262,52 @@ describe("small-project mode: writing a plan (B.6)", () => {
     await store.close();
   });
 
+  it("flag on: with only closed milestones on file the one milestone is created after them, at a free order_index, and later plans join it", async () => {
+    const { store, project } = await worldWith(true);
+    // Milestones from before the mode was switched on, both closed: the mode's one milestone
+    // follows them the way a phase does outside the mode, never at an order_index taken.
+    await store.milestone.insert({
+      project_id: project.id,
+      name: "Kickoff",
+      order_index: 0,
+      status: "done",
+    });
+    await store.milestone.insert({
+      project_id: project.id,
+      name: "Old plan",
+      order_index: 1,
+      status: "cancelled",
+    });
+    const applied = await applyProjectPlan(store, project, PLAN, { humanId: "h1" });
+    expect(applied.reusedMilestone).toBeNull();
+    expect(applied.milestones.map((m) => [m.name, m.order_index, m.status])).toEqual([
+      ["Tiny", 2, "planned"],
+    ]);
+    const rows = await store.milestone.forProject(project.id);
+    expect(rows.map((m) => [m.name, m.order_index])).toEqual([
+      ["Kickoff", 0],
+      ["Old plan", 1],
+      ["Tiny", 2],
+    ]);
+    expect(new Set(rows.map((m) => m.order_index)).size).toBe(rows.length);
+    const only = applied.milestones[0]?.id;
+    const tasks = await store.task.forProject(project.id);
+    expect(tasks).toHaveLength(4);
+    expect(new Set(tasks.map((t) => t.milestone_id))).toEqual(new Set([only]));
+    // The closed milestones are never joined: a later plan goes to the open one.
+    const again = await applyProjectPlan(
+      store,
+      project,
+      { tasks: [{ title: "Write the FAQ", outcome: "FAQ answers it" }] },
+      { humanId: "h1" },
+    );
+    expect(again.milestones).toEqual([]);
+    expect(again.reusedMilestone?.id).toBe(only);
+    expect(again.tasks[0]?.milestone_id).toBe(only);
+    expect(await store.milestone.forProject(project.id)).toHaveLength(3);
+    await store.close();
+  });
+
   it("flag off: one milestone per phase after the existing ones, the loose task without a milestone", async () => {
     const { store, project } = await worldWith(false);
     await store.milestone.insert({ project_id: project.id, name: "Kickoff", order_index: 0 });
@@ -353,6 +400,14 @@ describe("small-project mode: writing a plan (B.6)", () => {
     }));
     const err = await validationError(applyProjectPlan(store, project, { tasks }, {}));
     expect(err.message).toMatch(new RegExp(String(MAX_PLAN_TASKS)));
+    expect(await store.task.forProject(project.id)).toHaveLength(0);
+    const milestones = Array.from({ length: MAX_PLAN_MILESTONES + 1 }, (_, i) => ({
+      name: `Phase ${i}`,
+      tasks: [{ title: `Task of phase ${i}`, outcome: "one more" }],
+    }));
+    const over = await validationError(applyProjectPlan(store, project, { milestones }, {}));
+    expect(over.message).toMatch(new RegExp(String(MAX_PLAN_MILESTONES)));
+    expect(await store.milestone.forProject(project.id)).toHaveLength(0);
     expect(await store.task.forProject(project.id)).toHaveLength(0);
     await store.close();
   });
