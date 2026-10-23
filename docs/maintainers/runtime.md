@@ -26,7 +26,7 @@ expired (compared as NaN it counted as "never expires" before; `test/security-to
 | --- | --- |
 | `beforeModelCall(ctx, estimate)` | token valid and not revoked, kill state, session wall clock, run deadline, step cap, run cap, session cap with 80% finish-current and review reserve, outer caps (task, project, month, plan share) via `CapsPort` |
 | `afterModelCall(ctx, usage, usd)` | records spend in `SessionBudget` and the ledger |
-| `beforeToolCall(ctx, tool, input)` | token/kill, step, tool allowlist, zod schema, path containment for `pathFields` (`pathInsideRoot`: inside a root as written and once the symlinks of the path's existing part are resolved, so a committed `link -> ~/.ssh/id_ed25519` or a linked directory in the worktree is refused for reads and writes alike, and a link that cannot be resolved counts as outside), domain allowlist for `domainFields`, autonomy decision (may ask `ApprovalPort`; the key an approval is remembered under is `tool:<SHA-256 of the canonical raw input>`, `approvalKeyFor`, computed before the input is cut for the card and handed to the port as `ApprovalRequest.key`, which `StateApprovals` writes into `change_card.key` beside the display copy (`input`), so two inputs that display alike never share a key; an approval of an always-human class (`ALWAYS_HUMAN`) admits one call and is taken out of `ctx.approvals` as it is used, and the durable port spends its row the same way (ADR 0052), so the resume path re-makes the paused call once, in the same run or a later run of the session, and every further identical delete, purchase or send asks again behind a new request, while any other approval holds for the run and, durably, for the session; pending pauses the run; skipped for a tool with `gate: "registry"`, a command of the command registry whose executor confirms by risk itself, so the change card is the one approval and the hooks file no second request), secret-ref resolution for granted names only; denials are audited, a call on a revoked, expired or forged token or after a stop too (the row carries the token's own id and run, unverified, spec S.9) |
+| `beforeToolCall(ctx, tool, input)` | token/kill, step, tool allowlist, zod schema, path containment for `pathFields` (`pathInsideRoot`: inside a root as written and once the symlinks of the path's existing part are resolved, so a committed `link -> ~/.ssh/id_ed25519` or a linked directory in the worktree is refused for reads and writes alike, and a link that cannot be resolved counts as outside), domain allowlist for `domainFields`, autonomy decision (may ask `ApprovalPort`; the key an approval is remembered under is `tool:<SHA-256 of the canonical raw input>`, `approvalKeyFor`, computed before the input is cut for the card and handed to the port as `ApprovalRequest.key`, which `StateApprovals` writes into `change_card.key` beside the display copy (`input`), so two inputs that display alike never share a key; an approval of an always-human class (`ALWAYS_HUMAN`) admits one call and is taken out of `ctx.approvals` as it is used, and the durable port spends its row the same way (ADR 0052), so the resume path re-makes the paused call once, in the same run or a later run of the session, and every further identical delete, purchase or send asks again behind a new request, while any other approval holds for the run and, durably, for the session; pending pauses the run; skipped for a tool with `gate: "registry"`, a command of the command registry whose executor confirms by risk itself, so the change card is the one approval and the hooks file no second request), secret-ref resolution for granted names only (an allowed decision carries `approvalKey`, the key above over the input before resolution, which the agent loop hands the tool as `ToolExecutionContext.approvalKey` so a tool that asks a human itself, the Cloudflare deployer, matches the hooks' row although it sees the resolved input); denials are audited, a call on a revoked, expired or forged token or after a stop too (the row carries the token's own id and run, unverified, spec S.9) |
 | `afterToolCall(ctx, tool, input, result)` | redacts resolved secrets, wraps untrusted output in the data envelope and scans it for injection, audits. Every audit summary the hooks write (input and result, on the allow, deny and pending paths) is scrubbed first: the run's resolved secret values in every encoding (`SecretsPort.redact`), then the platform's credential shapes as a last line for a value the model obtained elsewhere and pasted into a later input, with `secret:<name>` references kept, since the name is what the audit is meant to carry |
 
 The per-session accounting is `SessionBudget` (`src/enforcement/budget.ts`): run and session
@@ -453,9 +453,10 @@ rows for the key: an open one keeps the call pending; a "no" denies it for the s
 "yes" to an always-human class (`ALWAYS_HUMAN`, delete, purchase, credential, permission,
 capability grant) is handed out once and the row marked spent in the same update
 (`change_card.consumedAt`, `consumedByRun`, the envelope's version moving with it; a
-`version_conflict` means another consumer took it and the caller asks afresh), so the resume
-path (the daemon or the cloud runner re-making the paused call in a later run of the session)
-runs it once and the next identical call files a new request and waits; a "yes" to any other
+`version_conflict` means another consumer took it and the caller asks afresh), so a later run
+of the same session that re-makes the paused call runs it once and the next identical call
+files a new request and waits (no production path makes such a run yet: see Known issues, a
+paused call's answer is not consumed by a later session); a "yes" to any other
 class holds for the session; a withdrawn or expired row holds nothing (ADR 0052). The answer
 is spent when handed out, before the call runs, so a call that then fails for another reason
 needs a fresh answer: conservative for the classes that always need a human.
@@ -506,7 +507,10 @@ project's own tasks and the rows are written dependencies first; an unknown refe
 a duplicate key, an empty plan or one over the caps (`MAX_PLAN_MILESTONES` 20,
 `MAX_PLAN_TASKS` 200) is refused as `validation` (409 `conflict` on the route, ADR 0025) with
 nothing written. Milestone target dates are calendar dates (`YYYY-MM-DD`). The project card
-carries `smallProjectMode` and `defaultRiskTier` so the UI computes neither. The email
+carries `smallProjectMode` and `defaultRiskTier` so the UI computes neither, and its
+`nextMilestone` is the open milestone (`views.ts#openMilestone`: the first `planned` or `active`
+row by order, the one the plan writer joins), so a `done` or `cancelled` row from before the mode
+is never named as next. The email
 command's task insert (`packages/capabilities/src/email/commands.ts`) calls the helper too
 (review of 2026-10-23), so no creation path names a tier of its own. A new milestone follows
 the project's existing ones in the mode as well: a small project whose milestones from before
@@ -982,38 +986,55 @@ already:
 
 `syncApprovals()` (extension grants, model watch decisions, memory consolidations, the
 blocked-findings answers, the critic sign-off answers, the session plan answers and the intake
-answers) runs at compose and after every `POST /requests/:id/answer`, so an answer in the inbox
-takes effect at once, and on the approvals poll (`ComposeOptions.approvalsPollMs`, `FORERUNNER_APPROVALS_POLL_MS`,
+answers) runs at compose, after every `POST /requests/:id/answer` and after every
+`request.answer` command (chat, voice, the palette, the phone's relayed chat: the command
+calls `CommandPorts.requestAnswered`, which the daemon wires to `syncApprovals`), so an answer
+takes effect at once whichever way it is given, and on the approvals poll (`ComposeOptions.approvalsPollMs`, `FORERUNNER_APPROVALS_POLL_MS`,
 `DEFAULT_APPROVALS_POLL_MS` = 5 s): an answer given on the phone or in the web approvals
 lands in the shared state through the state service and reaches no route of this daemon, so
 the poll applies it within seconds, the way the remote watcher picks up the phone's commands.
 The poll runs only where answers can come from another device, the remote commands'
 condition (`remoteCommandsEnabled`: shared state, services running); a daemon on a local
-`sqlite:` store has no poll, its own answer route being the only answer path. The poll skips
-while the schema sync gate is paused and stops with `close()`.
+`sqlite:` store has no poll: its answers all come through its answer route or its command
+registry, and both sync at once. Runs are serialised (a promise chain), so the route, a
+command, the poll and the compose-time call never act on the same answers side by side. The
+poll skips while the schema sync gate is paused and stops with `close()`.
 
 **Plan answers (`syncPlanApprovals`, `src/session/plan-approval.ts`, ADR 0053).** The step
 scans the human's answered blocking approvals whose card key starts with `plan:` and that
 carry no `applied_at` (`unappliedAnswers` in `findings.ts`, now exported with a key
 predicate), skips another agent's requests (a shared store), and acts once per request:
-`approve` with a `plan_id` marks the card (`applied_at`, `outcome: "starting"`) before it asks
-the scheduler (`scheduler.requestStart({ trigger: "message", planApproved: plan_id })`, the
+`approve` with a `plan_id` claims the card (`markPlanAnswer`: `applied_at`,
+`outcome: "starting"`, written with the row's version, so a producer that finds the version
+moved and the card marked starts nothing) before it asks the scheduler
+(`scheduler.requestStart({ trigger: "message", planApproved: plan_id, budgetUsdMicro })`, the
 entry's id being the start's identity, ADR 0049) and then records the scheduler's answer
-(`started`, `queued`, `deferred`) and the `start_id`; `startSession` passes
-`req.planApproved` to the runner, which verifies it against the plan it computes. `reject`
+(`started`, `queued`, `deferred`) and the `start_id`; `budgetUsdMicro` is the filing session's
+`budget_cap_usd_micro`, so the follow-up cuts the plan under the cap the human saw;
+`startSession` passes `req.planApproved` to the runner, which verifies it against the plan it
+computes. Of several approved plans of one project in a sync only the newest filed is started;
+the older ones are `superseded` (`superseded_by` the started request, an audit row, no start). `reject`
 records `rejected` and starts nothing (the tasks stay `ready`; the next session proposes them
 again); an answer outside the options is `unrecognized_answer`; a card without `plan_id` (an
 earlier build's request) is `unbound_plan`, never run as approved; a start the port throws
 on is `start_failed` with the error, the human gets a warning message, and the request is not
-retried. Each outcome is one audit row `session.plan_approval` (`PLAN_APPROVAL_AUDIT_TOOL`:
-the request, plan and start ids and the outcome, never the plan text). Marking before asking
-is what makes "at most one session per answered request" hold across the route, the poll and
-a restart. A filing session an earlier build left `paused` with `plan_awaiting_approval` is
+retried. A start the scheduler took but whose `runner.start` rejects in the background
+(`claim_conflict` while a cloud session of the agent runs, `provider_auth`, the schema gate) is
+reported the same way by `reportingPlanStartFailures`, which wraps the daemon's session start
+(`reportPlanStartFailure` finds the request by its `plan_id`; one warning per request). A row
+whose handling throws is logged (`plan answer not applied`) and left for the next sync; the
+other rows still act. Each outcome is one audit row `session.plan_approval` (`PLAN_APPROVAL_AUDIT_TOOL`:
+the request, plan and start ids and the outcome, never the plan text). The conditional claim
+before asking, the serialised `syncApprovals` and the cloud runner's inbox trigger sharing the
+mark (it skips marked plan rows and claims the one it starts) are what make "at most one
+session per answered request" hold across the route, the commands, the poll, a restart and the
+cloud runner. A filing session an earlier build left `paused` with `plan_awaiting_approval` is
 closed (`paused -> stopped`) first so the start is not refused. The step runs only while the
 services run (`startServices`): a CLI one-shot composes the runtime but starts no session.
 `syncApprovals()` returns it as `plans: { started, rejected, skipped }`. Tests:
 `plan-approval.test.ts` (the sync on a fake port and through the real scheduler and runner),
-`plan-approval-daemon.test.ts` (the answer route and the poll).
+`plan-approval-daemon.test.ts` (the answer route, the command registry, the conversation
+agent's command path and the poll).
 
 **Eval runner (`src/models/eval-runner.ts`).** `@forerunner/evals` depends on this package, so
 the daemon cannot import it. `LoopEvalRunner` reads the specialist's eval set (the same task
@@ -1601,12 +1622,19 @@ runs nothing, a level 0 proposal approved runs as the follow-up; the plan identi
 membership count, specialist and estimate do not) and the answer shapes; `syncPlanApprovals` on
 a fake port (one start bound to the id, the card and the audit row, a second sync starting
 nothing; queued and deferred answers; a rejected plan leaving the tasks ready; an answer outside
-the options; a card without the id; a start the port refuses warned once and not retried;
+the options; a card without the id; a start the port refuses warned once and not retried; a
+start that fails in the background marked `start_failed` and warned once; two approved plans
+of one project, the older superseded; two overlapping syncs making one start; a card another
+producer marked left alone; a failing row left for the next sync; a plan cut to budget run
+under the filing session's cap;
 another agent's request left alone; an old `paused` filing row closed first) and through the
 real scheduler and runner (two syncs, one completed session); on the composed daemon the inbox
 answer route starts the plan it was filed for once with the task done and the session view
-naming the approved plan, a rejected plan starts nothing, and an approve written to the shared
-state from another device starts it within the approvals poll, once.
+naming the approved plan, `request.answer` through `POST /commands/execute` and through the
+conversation agent's command path starts it at once on a local store, a rejected plan starts
+nothing, and an approve written to the shared state from another device starts it within the
+approvals poll, once. A bound start whose tasks are no longer ready, and a level 0 or 1
+session with no ready task, file no request and end `completed` ("Nothing to plan").
 
 `compose-memory.test.ts` (spec G.1, S.10, ADR 0083): `privateIndexUrl` is null for a `sqlite:`
 state and `<data>/memory/private.sqlite` for a `postgres://` one; a daemon composed with an
@@ -1738,7 +1766,8 @@ kept as it is; a plan of loose tasks only) and off (a milestone per phase, loose
 unassigned, tier 1 unless named); `applyProjectPlan` on an in-memory store (one milestone row
 and a flat list with dependencies resolved to ids and the reason and author on every row; a
 second plan joining the open milestone; with only closed milestones on file the one milestone
-created after them at a free `order_index` and joined by the next plan; phases after existing
+created after them at a free `order_index`, named by the project card's `nextMilestone` and
+joined by the next plan; phases after existing
 milestones with the loose task under none; dependants after dependencies whatever the plan
 order and a dependency on an existing task; an unknown dependency, a cycle, another project's
 task, an empty plan and a duplicate key refused with nothing written; the task and milestone
@@ -2115,11 +2144,19 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   first on every call, but it should adopt `realPathOf` so the tools fail closed on their own
   too. A link created between the check and the read (a race inside the worktree) is not
   covered; the sandbox adapter mounts only the worktree so such an escape cannot reach the host.
-- `StateApprovals` matches approval rows within one session (`session_id`). A tool call that
-  paused a task (`needs_human`) and was answered after the session ended is asked once more
-  when a later session re-plans the task, because the new session's lookup does not see the
-  old row; one extra question, never one fewer. Matching across the sessions of one task is
-  open with the J.7 item (a paused session resumed by its approval).
+- `StateApprovals` matches approval rows within one session (`session_id`), and nothing on
+  the production path re-makes a paused call in that session: a pending approval ends the
+  run `needs_human`, the session moves on and ends, and its task stays `needs_human` until a
+  human moves it back to `ready`. `StartRequest` carries no session id, the daemon's answer
+  route only runs `syncApprovals` (which starts approved session plans, never a paused tool
+  call) and the scheduler and the cloud runner's `InboxTrigger` always start a new session.
+  That new session lists rows under its own `session_id`, does not see the answered row,
+  files a new one and pauses the task again, so a hooks approval (always-human or not)
+  answered after its session ended is never consumed: every later session that re-plans the
+  task asks again and stops there. It fails closed (no call runs without a "yes" in its own
+  session) but a task blocked on an approval cannot progress. Keying the lookup on the task
+  as well, or resuming the paused session from its answer, is open with the J.7 item
+  (verified 2026-10-23 on `state-ports.ts`, `triggers.ts` `StartRequest`, `runner.ts`).
 - On the SDK path a built-in file tool's output (`Read`, `Grep`) is scanned and flagged but
   cannot be rewritten from the `PostToolUse` hook (the SDK applies `updatedMCPToolOutput` to
   MCP tools), so the subprocess sees the file as is. `scrubEnv` withholds `SSH_AUTH_SOCK` from
