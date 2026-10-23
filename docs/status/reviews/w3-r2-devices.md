@@ -339,3 +339,43 @@ unit packages/runtime/test` 134 files, 1216 passed, 1 skipped (`devices-routes.t
 `pnpm exec vitest run --project unit services/state-api/test` 12 files / 160 passed
 (`desktop-devices.test.ts` 4). The branch adds no integration file; the packages' existing
 integration files need Postgres and were not run.
+
+### Rebase onto 38ae8cc
+
+Stage REBASE, 2026-10-23 (third rebase). `wave/w3-r2-devices` (dac82c0, 16 commits on
+4ff4fb1) rebased onto `origin/ccr-4d8a843c-1k9syk` at 38ae8cc (47 base commits since 4ff4fb1:
+the merges of w3-d4-specialist-settings, D.4 / ADR 0072, and w3-r5-phone, R.5 / ADR 0080) with
+`git rebase origin/ccr-4d8a843c-1k9syk`; no merge of the base. Every conflict kept both sides:
+
+| Commit | File | Resolution |
+| --- | --- | --- |
+| Devices section | `apps/ui/src/api/client.ts` | the base's `ModelSettingsView` / `ModelSettingsViewSchema` imports kept next to the branch's `PairingStartView` / `PairingStartViewSchema` (Biome's order) |
+| Devices section | `apps/ui/src/pages/SettingsPage.tsx` | both imports, `DevicesSection` before `ModelSettingsSection` (Biome's order); `<DevicesSection />` before `<SourcesSection />`, the base's `<ModelSettingsSection />` after the fast-mode card, both render |
+| Devices section | `apps/ui/test/fixtures.ts` | the base's `ModelSettingsView` type import next to the branch's `PairingStartView` |
+| docs (R.2 done) | `docs/maintainers/apps.md` | the `/settings` page row: the base's row (with D.4's **Models per agent and specialist** section and `GET /settings/models`) with the branch's **Devices** clause before the Sources clause and the three `/devices` routes appended to the route list; one row |
+| docs (R.2 done) | `docs/status/BLOCKERS.md` | the branch's R.2 row and the base's R.5 row (built, emulator run open); the base's V.1 row kept (counts updated in the rebase doc commit) |
+| docs (R.2 done) | `docs/status/PROGRESS.md` | the branch's build entry above the base's newer log entries (w3-d4 rebased onto 4ff4fb1, w3-r5-phone build, review and rebases); "Next" list: the branch's R.2 clause and the base's R.5 clause ("built on its branch 2026-10-23, emulator run open") on their lines |
+| Devices review fixes | `apps/ui/test/fake-daemon.ts` | the base's `ModelSettingsView`, `ModelSettingValueView` type imports next to the branch's `PairingStartView` |
+| Devices review fixes | `docs/maintainers/apps.md` | the same `/settings` row: the base's row with the branch's Devices clause in its review-fix wording (live list while pairing, loopback warning, store-fallback note) |
+| docs after the review, Biome format, rebase onto cac6fee, rebase onto 4ff4fb1 | `docs/status/BLOCKERS.md` | each time the branch's R.2 row in that commit's wording, the base's R.5 row kept |
+| rebase onto 4ff4fb1 | `docs/status/PROGRESS.md` | "Next" list: the branch's "rebased onto 4ff4fb1" R.2 clause and the base's R.5 clause |
+
+Merged without a conflict and checked by reading the result against the base's code:
+`packages/runtime/src/daemon/compose.ts` (the base's model settings view and voice relay wiring
+untouched; `DeviceManager` built and returned as `devices`), `server.ts` (the base's
+`GET /settings/models` and voice routes kept, `createDeviceRoutes` mounted), `api-types.ts`
+(the base's model settings views and `...DEVICES_ROUTES` both in `DAEMON_ROUTES`),
+runtime.md, state-service.md, requirements.md and CHANGELOG. The base's `settings-models`
+route-missing case (which counts the fixture's settings rows) passes with the Devices section
+on the page. Requirement totals on the rebased branch: 190 done, 33 in progress, 5 todo (the
+base has 189 / 34 / 5; R.2 is the difference); BLOCKERS.md V.1 carries them.
+
+Checks after the rebase: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, none in a
+file the branch touches: `biome check` over the branch's 19 changed code files reports none);
+`node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok (28 files);
+`pnpm --filter @forerunner/ui test` 53 files / 360 tests passed (`settings-devices.test.tsx`
+11, `settings.test.tsx` 10, `settings-models.test.tsx` 8); `pnpm exec vitest run --project
+unit packages/runtime/test` 138 files, 1276 passed, 1 skipped (`devices-routes.test.ts` 11);
+`pnpm exec vitest run --project unit services/state-api/test` 12 files / 163 passed
+(`desktop-devices.test.ts` 4); `--project integration` over both packages: 2 files / 7 tests
+skipped (they need Postgres; the branch adds no integration file).
