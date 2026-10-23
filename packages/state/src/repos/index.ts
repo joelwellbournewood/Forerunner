@@ -24,6 +24,7 @@ import { AgentRepo, HumanRepo } from "./people.ts";
 import { MilestoneRepo, ProjectRepo } from "./project.ts";
 import { QueueRepo, RemoteCommandRepo } from "./remote.ts";
 import { FindingRepo, ReviewRepo } from "./review.ts";
+import { SecretGrantRepo } from "./secret-grant.ts";
 import { RunRepo, SessionRepo } from "./session.ts";
 import { TaskRepo } from "./task.ts";
 
@@ -43,6 +44,7 @@ export * from "./people.ts";
 export * from "./project.ts";
 export * from "./remote.ts";
 export * from "./review.ts";
+export * from "./secret-grant.ts";
 export * from "./session.ts";
 export * from "./task.ts";
 
@@ -69,6 +71,7 @@ export interface Repos {
   sourceCandidate: SourceCandidateRepo;
   costLedger: CostLedgerRepo;
   secretRef: SecretRefRepo;
+  secretGrant: SecretGrantRepo;
   extension: ExtensionRepo;
   dataAsset: DataAssetRepo;
   release: ReleaseRepo;
@@ -103,6 +106,7 @@ export function createRepos(db: Database, clock: Clock): Repos {
     sourceCandidate: new SourceCandidateRepo(db, clock),
     costLedger: new CostLedgerRepo(db, clock),
     secretRef: new SecretRefRepo(db, clock),
+    secretGrant: new SecretGrantRepo(db, clock),
     extension: new ExtensionRepo(db, clock),
     dataAsset: new DataAssetRepo(db, clock),
     release: new ReleaseRepo(db, clock),

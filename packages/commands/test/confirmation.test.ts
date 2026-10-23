@@ -25,6 +25,7 @@ function device(kind: DeviceRow["kind"], extra: Partial<DeviceRow> = {}): Device
     revoked_at: null,
     paired_at: "",
     push_token: null,
+    wrap_public_key: null,
     ...extra,
   };
 }

@@ -27,6 +27,11 @@ schema and the snapshot disagree.
   column, the old table dropped, the new one renamed, the unique `(kind, locator)` index
   recreated; nothing referenced `source` before this migration) and a `DROP CONSTRAINT` /
   `ADD CONSTRAINT` pair on Postgres. The DDL is the generator's output written out and frozen.
+- `src/migrations/0004-shared-secrets.ts` (spec S.13, ADR 0065): hand written and frozen:
+  `device.wrap_public_key` (the install's X25519 wrapping key, nullable) and the
+  `secret_grant` table with its two indexes; its DDL is the generator's output at the time
+  of writing, pasted as literals so a later schema change cannot alter a shipped migration.
+  It is v4, not v3, because the sources migration shipped first on the release branch.
 - `src/migrations/index.ts`: `MIGRATIONS` (ascending) and `migrate(db, { clock?, migrations? })`.
   `migrate` creates `schema_migrations (version PK, name, applied_at)` if missing, then applies
   every pending migration inside **one transaction** (both dialects have transactional DDL) and
@@ -101,11 +106,13 @@ of kind `skill` named `memory-format`), tested on fixture directories for both p
 ## Tests
 
 - `packages/state/test/schema.test.ts`: snapshot equality for both dialects (v1 frozen by
-  hash; the generator's output minus the v2 columns, the v3 table and the v3 enum value equals
-  v1), v1 + v2 + v3 applied equals the generator's schema (SQLite shape), a v1 database
-  migrated forward (v2 defaults) and a v2 database migrated forward (`source` rows survive
-  the rebuild with their version and unique index, `github_repo` accepted, candidates
-  round-trip with the foreign key to their source), generator output shape (types, checks,
+  hash; the generator's output minus the v2 columns, the v3 table and the v3 enum value,
+  the v4 column and the v4 table equals v1), v1 + v2 + v3 + v4 applied equals the
+  generator's schema (SQLite shape), a v1 database migrated forward (v2 defaults, v3 and v4
+  applied in the same run) and a v2 database migrated forward twice over: `source` rows
+  survive the rebuild with their version and unique index, `github_repo` accepted,
+  candidates round-trip with the foreign key to their source; devices read back without a
+  wrapping key and take one, secret grants can be filed, generator output shape (types, checks,
   FKs, indexes, triggers), `migrate` applies once and records with the clock, contiguity
   check, a failing statement rolls back the whole run, doc currency.
 - `packages/state/test/suite.ts` (run by `sqlite.test.ts` and `postgres.integration.test.ts`):

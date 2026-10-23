@@ -141,6 +141,9 @@ export type CostKind = (typeof COST_KINDS)[number];
 
 export const SECRET_SCOPES = ["human", "agent", "project", "shared"] as const;
 export type SecretScope = (typeof SECRET_SCOPES)[number];
+/** pending until every required human approved; active; cancelled by a refusal; revoked by the owner. */
+export const SECRET_GRANT_STATUSES = ["pending", "active", "cancelled", "revoked"] as const;
+export type SecretGrantStatus = (typeof SECRET_GRANT_STATUSES)[number];
 
 export const EXTENSION_KINDS = [
   "connector",
@@ -446,6 +449,8 @@ export interface DeviceRow extends BaseRow {
   revoked_at: string | null;
   paired_at: string;
   push_token: string | null;
+  /** Raw X25519 public key (base64) of the install that holds this device's vault; shared secrets are wrapped to it. */
+  wrap_public_key: string | null;
 }
 export type NewDevice = New<
   DeviceRow,
@@ -519,6 +524,32 @@ export type NewSecretRef = New<
   SecretRefRow,
   "name" | "scope" | "owner_human_id" | "kind" | "created_by"
 >;
+
+/** One wrapped copy of a shared secret: for one agent on one install. Ciphertext only. */
+export interface SecretGrantBlob {
+  agent_id: string;
+  device_id: string;
+  blob: JsonObject;
+}
+
+export interface SecretGrantRow extends BaseRow {
+  name: string;
+  owner_human_id: string;
+  kind: string;
+  why: string;
+  agent_ids: string[];
+  required_human_ids: string[];
+  /** human id -> { at, request_id }. */
+  approvals: JsonObject;
+  request_ids: string[];
+  blobs: SecretGrantBlob[];
+  status: SecretGrantStatus;
+  activated_at: string | null;
+  last_served: string | null;
+  ended_at: string | null;
+  ended_reason: string | null;
+}
+export type NewSecretGrant = New<SecretGrantRow, "name" | "owner_human_id">;
 
 export interface ExtensionRow extends BaseRow {
   kind: ExtensionKind;
