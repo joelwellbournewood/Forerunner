@@ -41,7 +41,7 @@ import {
   TIER_VALUES,
   TimeoutMinutesSchema,
 } from "../registry/types.ts";
-import { MODE_DEFAULTS, type Mode, type ModeDefault } from "./ladder.ts";
+import { compareTiers, MODE_DEFAULTS, type Mode, type ModeDefault } from "./ladder.ts";
 
 /** The settings D.4 names, as the `model_config` and frontmatter keys spell them. */
 export const RUN_SETTING_FIELDS = [
@@ -165,6 +165,12 @@ export interface ResolveRunSettingsInput {
   override?: RunSettingsOverride;
   /** The provider's capability flags; default: no temperature, no fast mode. */
   capabilities?: ProviderCapabilities;
+  /**
+   * The ladder ceiling the run is under (spec D.3 and "top tier only by explicit project
+   * setting"): a rung above it, from the file or the override, resolves to the ceiling.
+   * Absent: no cap here (the executor caps a specialist run with `startingTier`).
+   */
+  ceiling?: ModelTier;
 }
 
 /** The settings in force for one run (pure; see the module comment for the order). */
@@ -214,6 +220,11 @@ export function resolveRunSettings(input: ResolveRunSettingsInput): ResolvedRunS
   if (o.tier !== undefined) {
     values.tier = o.tier;
     sources.tier = "agent";
+  }
+  const ceiling = input.ceiling;
+  if (ceiling) {
+    if (compareTiers(defaults.tier, ceiling) > 0) defaults.tier = ceiling;
+    if (compareTiers(values.tier, ceiling) > 0) values.tier = ceiling;
   }
   if (o.effort !== undefined) {
     values.effort = o.effort;

@@ -2193,7 +2193,11 @@ shifts, and the result is held at the registry entry's `max_effort` (`capEffort`
 executor's `effortForTask(mode, risk, slider, table with the override's effort)`, the intake's
 `effortWithOffset(planning.effort, slider)`, the chat's the same on `text_chat` (a spoken turn
 keeps D.16's `voice_chat` row as its base; the principal's chat override applies to typed
-turns). The loop sends `temperature`
+turns). The rung stays under the ladder ceiling everywhere (spec D.3, "top tier only by explicit project setting"): the executor
+through `startingTier` and the project's ceiling, the intake through `resolveRunSettings`'
+`ceiling` (its `projectCeiling` port, `critic_ceiling`, default Opus), the chat at the default
+ceiling; the settings view shows the agent modes capped at the default ceiling, so a stored
+`fable` reads as the Opus that runs. The loop sends `temperature`
 only to a provider whose flag accepts it and `speed` only to one with `fastMode`
 (`providerCapabilities`).
 

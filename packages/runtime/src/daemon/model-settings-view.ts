@@ -5,6 +5,7 @@
  * from; temperature only when the provider in use accepts one. Pure: the route hands it rows.
  */
 import {
+  DEFAULT_CEILING,
   type LadderRung,
   MODE_DEFAULTS,
   type Mode,
@@ -87,6 +88,8 @@ export function buildModelSettingsView(input: ModelSettingsViewInput): ModelSett
         modeDefaults,
         override: modeOverride(parsed.config, mode),
         capabilities,
+        // What runs: the chat and the intake stay under the default ceiling (spec D.3).
+        ceiling: DEFAULT_CEILING,
       }),
       input,
     ),

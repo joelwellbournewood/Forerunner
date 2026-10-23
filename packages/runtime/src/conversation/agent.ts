@@ -17,6 +17,7 @@ import type {
 } from "../loop/ports.ts";
 import {
   capEffort,
+  DEFAULT_CEILING,
   effortWithOffset,
   MODE_DEFAULTS,
   modelIdFor,
@@ -347,6 +348,8 @@ export class ConversationAgent {
       modeDefaults: modelConfig?.modeDefaults ?? MODE_DEFAULTS,
       override: modeOverride(parseAgentModelConfig(agent.model_config).config, "text_chat"),
       capabilities: providerCapabilities(this.deps.provider),
+      // A chat turn is no project's work: the default ceiling (Opus), never the top rung.
+      ceiling: DEFAULT_CEILING,
     });
     // The turn's wall clock: the run's timeout plus room for the command tools around it.
     const turnMs = Math.max(60_000, textChat.timeoutMs + 30_000);

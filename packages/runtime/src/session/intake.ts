@@ -27,6 +27,7 @@ import { SessionBudget } from "../enforcement/budget.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import {
   capEffort,
+  DEFAULT_CEILING,
   effortWithOffset,
   MODE_DEFAULTS,
   modelIdFor,
@@ -34,7 +35,12 @@ import {
 } from "../models/ladder.ts";
 import { modeOverride, parseAgentModelConfig, resolveRunSettings } from "../models/run-settings.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
-import { type EffortLevel, type ModelProvider, providerCapabilities } from "../provider/types.ts";
+import {
+  type EffortLevel,
+  type ModelProvider,
+  type ModelTier,
+  providerCapabilities,
+} from "../provider/types.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
 import {
   applyProjectPlan,
@@ -239,6 +245,11 @@ export interface IntakeDeps {
    * model it uses. Absent: `pricing`.
    */
   pricingFor?: (modelId: string) => RunPricing;
+  /**
+   * The project's ladder ceiling (`critic_ceiling`, spec D.3), as the executor reads it: the
+   * principal's planning rung never goes above it. Absent or undefined: the default ceiling.
+   */
+  projectCeiling?: (settings: JsonObject | null | undefined) => ModelTier | undefined;
   billingSourceId: string;
   modelConfig: () => EffectiveModelConfig;
   /** The PM role prompt from the registry; a built-in line without it. */
@@ -648,6 +659,8 @@ export class IntakeService {
         "planning",
       ),
       capabilities: providerCapabilities(provider),
+      // Opus by default; the top rung only where the project raised its ceiling (spec D.3).
+      ceiling: this.deps.projectCeiling?.(project.settings) ?? DEFAULT_CEILING,
     });
     const model = modelIdFor(planning.tier, provider.name, config.ladder);
     const pricing = this.deps.pricingFor?.(model) ?? (this.deps.pricing as RunPricing);

@@ -48,6 +48,24 @@ describe("resolveRunSettings (spec D.4, ADR 0072)", () => {
     expect(under.effort).toBe("low");
   });
 
+  it("keeps the rung under the ceiling it is given, whatever the override asks", () => {
+    const capped = resolveRunSettings({
+      mode: "planning",
+      override: { tier: "fable" },
+      ceiling: "opus",
+    });
+    expect(capped.tier).toBe("opus");
+    expect(capped.sources.tier).toBe("agent");
+    expect(resolveRunSettings({ mode: "planning", override: { tier: "fable" } }).tier).toBe(
+      "fable",
+    );
+    expect(
+      resolveRunSettings({ mode: "planning", override: { tier: "fable" }, ceiling: "fable" }).tier,
+    ).toBe("fable");
+    const low = resolveRunSettings({ mode: "planning", ceiling: "haiku" });
+    expect([low.tier, low.defaults.tier]).toEqual(["haiku", "haiku"]);
+  });
+
   it("orders the table, then the specialist file, then the agent's override", () => {
     const specialist = { tier: "haiku" as const, maxTokens: 2000, timeoutMs: 10 * 60_000 };
     const fileOnly = resolveRunSettings({ mode: "coder", specialist });
@@ -232,6 +250,18 @@ describe("the settings screen's view (GET /settings/models)", () => {
       speedMode: "standard",
     });
     expect(v.configError).toBeNull();
+  });
+
+  it("shows the rung and the effort that can run: the agent modes under the default ceiling, a specialist under its max_effort", () => {
+    const v = view(false, {
+      modes: { planning: { tier: "fable" } },
+      specialists: { coder: { effort: "max" } },
+    });
+    expect(v.agents[0]?.modes[0]).toMatchObject({
+      model: "fake-opus",
+      tier: { value: "opus", source: "agent" },
+    });
+    expect(v.specialists[0]?.settings.effort).toMatchObject({ value: "high", source: "agent" });
   });
 
   it("carries temperature only when the provider's flag is true", () => {

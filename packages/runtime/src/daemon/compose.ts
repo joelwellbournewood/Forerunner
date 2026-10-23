@@ -1874,6 +1874,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       : null,
     // Priced as the model the call uses: the principal's planning rung may differ (spec D.4).
     ...(provider ? { pricingFor: (model: string) => livePricing(provider, () => model) } : {}),
+    // The planning rung stays under the project's ceiling, as a specialist run does (D.3).
+    projectCeiling: (settings) => criticSettingsOf(settings).ceiling,
     billingSourceId,
     modelConfig: () => modelConfig.get(),
     prompt: registry.principals.get("project-manager")?.prompt,

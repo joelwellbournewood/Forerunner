@@ -240,6 +240,19 @@ describe("conversation agent over the command registry", () => {
     await w.store.close();
   });
 
+  it("a chat turn never runs above the default ceiling: a top-rung override runs on Opus (spec D.3)", async () => {
+    const w = await setup([textReply("first", { ttftMs: 0 })], {
+      agentDeps: { modelId: undefined },
+    });
+    const row = await w.store.agent.mustGet(w.alice);
+    await w.store.agent.update(w.alice, row.version, {
+      model_config: { modes: { text_chat: { tier: "fable" } } },
+    });
+    await w.chat("what's next on the game?");
+    expect(w.provider.calls[0]?.request.model).toBe("fake-opus");
+    await w.store.close();
+  });
+
   it("a plain sentence no pattern understands goes to the model, not to the parser's fallback question", async () => {
     const w = await setup([textReply("Hello! Ask me about your projects.")]);
     const res = await w.chat("hello there");
