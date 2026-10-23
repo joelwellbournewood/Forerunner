@@ -130,6 +130,9 @@ served (`GET /inbox?humanId=human_j ... ok`) in the failing runs too.
 | `node scripts/docs-check.mjs --base 4ff4fb1` | `docs-check: ok (10 files)` |
 | `pnpm check` | exit 0: `pnpm test` 295 files, 3014 passed, 4 skipped, 1 todo; link-check ok; secret-scan clean. Its `docs:check` step has no `origin/main` and checks nothing, hence the explicit run above |
 | stand-in runs (table above) | as listed |
+| `git log --oneline 4ff4fb1..HEAD` | exactly this item's commits (the code commit, the docs commit, this report and its export-check amendment); no merge of the base |
+| `git format-patch --stdout 4ff4fb1..HEAD > /mnt/session/outputs/w6-android-inbox.patch` | the patch, one mail per commit above |
+| `git worktree add /tmp/verify 4ff4fb1 && cd /tmp/verify && git apply --check /mnt/session/outputs/w6-android-inbox.patch` | exit 0, no output (the patch applies cleanly on a clean checkout of the starting commit 4ff4fb1); re-run after the last commit, the worktree removed afterwards |
 
 ### Left open, and why
 
