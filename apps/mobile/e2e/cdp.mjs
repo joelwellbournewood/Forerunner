@@ -9,6 +9,9 @@
  *     `pickPageTarget` chooses the app's page; `socketUrlFor` keeps the forwarded host and port;
  *   - `CdpClient` is an id-correlated request/response channel over Node 22's global
  *     `WebSocket` with a timeout per request; events are ignored unless a listener asks;
+ *   - `forwardPageConsole` is such a listener: after `Runtime.enable` it writes every
+ *     `Runtime.consoleAPICalled` and `Runtime.exceptionThrown` of the page to the runner's
+ *     stdout as `webview: [level] ...` lines (`formatConsoleEvent`, `formatException`);
  *   - `Page` and `Locator` cover the handful of Playwright calls the smoke uses, with the same
  *     meaning: `getByTestId`, `getByRole(role, { name, exact })` (headings h1-h6, buttons,
  *     links, explicit roles; name from aria-labelledby, aria-label, labels or text; hidden
@@ -971,6 +974,119 @@ export class Locator {
   async evaluate(fnSource, options = {}) {
     const res = await this.#resolve("evaluate", String(fnSource), options.timeout, false);
     return res.value;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The page's console on the runner's stdout
+// ---------------------------------------------------------------------------------------------
+
+/** One forwarded line at most this long (a minified stack or a dumped object stays readable). */
+export const MAX_FORWARDED_LINE = 2_000;
+
+/**
+ * The text of one `Runtime.RemoteObject` the way DevTools prints it in a console line:
+ * strings as they are, other primitives by value, `-0`, `NaN`, bigints by their
+ * unserialisable value, objects and errors by their description.
+ * @param {Record<string, any> | undefined} arg
+ */
+export function remoteObjectText(arg) {
+  if (!arg || typeof arg !== "object") return String(arg);
+  if (arg.type === "string") return String(arg.value ?? "");
+  if (arg.type === "undefined") return "undefined";
+  if (arg.unserializableValue !== undefined) return String(arg.unserializableValue);
+  if ("value" in arg && arg.subtype !== "error") {
+    return typeof arg.value === "object" && arg.value !== null
+      ? JSON.stringify(arg.value)
+      : String(arg.value);
+  }
+  if (typeof arg.description === "string" && arg.description) return arg.description;
+  if (arg.subtype === "null") return "null";
+  return arg.className ? String(arg.className) : String(arg.type ?? "?");
+}
+
+function frameText(frame) {
+  if (!frame || typeof frame !== "object") return "";
+  const url = typeof frame.url === "string" && frame.url ? frame.url : "<anonymous>";
+  // CDP line and column numbers are 0-based; DevTools shows them 1-based.
+  const line = Number.isFinite(frame.lineNumber) ? frame.lineNumber + 1 : "?";
+  const column = Number.isFinite(frame.columnNumber) ? frame.columnNumber + 1 : "?";
+  return `${url}:${line}:${column}`;
+}
+
+/** Every line of `text` gets the prefix, so a grep for it finds multi-line stacks whole. */
+function prefixed(prefix, text) {
+  return String(text)
+    .split(/\r?\n/)
+    .map((line) =>
+      line.length > MAX_FORWARDED_LINE ? `${line.slice(0, MAX_FORWARDED_LINE)}…` : line,
+    )
+    .map((line, i) => (i === 0 ? `${prefix} ${line}` : `${prefix}   ${line}`))
+    .join("\n");
+}
+
+/**
+ * `Runtime.consoleAPICalled` as one console line: `webview: [warn] text (url:line:col)`;
+ * the call site is added for warnings, errors and assertions.
+ * @param {Record<string, any>} params
+ * @param {string} [prefix]
+ */
+export function formatConsoleEvent(params, prefix = "webview:") {
+  const level = typeof params?.type === "string" ? params.type : "log";
+  const args = Array.isArray(params?.args) ? params.args : [];
+  let text = args.map(remoteObjectText).join(" ");
+  if (level === "warning" || level === "error" || level === "assert" || level === "trace") {
+    const frame = params?.stackTrace?.callFrames?.[0];
+    if (frame) text += ` (${frameText(frame)})`;
+  }
+  return prefixed(prefix, `[${level === "warning" ? "warn" : level}] ${text}`);
+}
+
+/**
+ * `Runtime.exceptionThrown` (an uncaught error or an unhandled rejection) as
+ * `webview: [exception] Uncaught TypeError: ... (url:line:col)` with the stack below it.
+ * @param {Record<string, any>} params
+ * @param {string} [prefix]
+ */
+export function formatException(params, prefix = "webview:") {
+  const details = params?.exceptionDetails ?? {};
+  const head = typeof details.text === "string" && details.text ? details.text : "Uncaught";
+  const description = details.exception ? remoteObjectText(details.exception) : "";
+  const where =
+    typeof details.url === "string" && details.url
+      ? ` (${frameText(details)})`
+      : details.stackTrace?.callFrames?.[0]
+        ? ` (${frameText(details.stackTrace.callFrames[0])})`
+        : "";
+  // Chrome's description of an Error is "TypeError: msg\n    at ..."; the head says "Uncaught".
+  const [first, ...stack] = description ? description.split(/\r?\n/) : [""];
+  const body = first && first !== head ? `${head} ${first}` : head;
+  return prefixed(prefix, [`[exception] ${body}${where}`, ...stack].join("\n"));
+}
+
+/**
+ * Forwards the page's console messages and uncaught exceptions to `write` (the runner's
+ * stdout) over the CDP session the smoke already holds: listens for
+ * `Runtime.consoleAPICalled` and `Runtime.exceptionThrown`, then sends `Runtime.enable`.
+ * Diagnostics never fail the smoke: when the page refuses `Runtime.enable` the reason is
+ * written as a `webview:` line and the smoke goes on. Returns a function that stops it.
+ * @param {CdpClient} client
+ * @param {{ write?: (line: string) => void, prefix?: string, timeoutMs?: number }} [options]
+ * @returns {Promise<{ stop: () => void, enabled: boolean }>}
+ */
+export async function forwardPageConsole(client, options = {}) {
+  const write = options.write ?? ((line) => console.log(line));
+  const prefix = options.prefix ?? "webview:";
+  const stop = client.onEvent(({ method, params }) => {
+    if (method === "Runtime.consoleAPICalled") write(formatConsoleEvent(params, prefix));
+    else if (method === "Runtime.exceptionThrown") write(formatException(params, prefix));
+  });
+  try {
+    await client.send("Runtime.enable", {}, { timeoutMs: options.timeoutMs });
+    return { stop, enabled: true };
+  } catch (error) {
+    write(`${prefix} [runner] console forwarding unavailable: ${describeError(error)}`);
+    return { stop, enabled: false };
   }
 }
 

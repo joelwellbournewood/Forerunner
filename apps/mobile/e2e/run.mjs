@@ -21,7 +21,10 @@
  *      code, approve a request, refuse a high-risk answer without a biometric assertion, the
  *      scenario-9 sentence -> ONE change card -> confirm -> the fake records project.switch +
  *      budget.set + session.start and the simulated PC starts the session, the change log
- *      shows the entry and Undo sends the inverse plan.
+ *      shows the entry and Undo sends the inverse plan. From the attach on, the page's console
+ *      messages and uncaught exceptions are printed here as `webview: [level] ...` lines
+ *      (`forwardPageConsole`: `Runtime.enable`, `Runtime.consoleAPICalled`,
+ *      `Runtime.exceptionThrown` on the same page session).
  *
  * Skips are visible: without adb, a device, an AVD, or (with `--no-build`) a debug APK, the
  * script prints `SKIP: <reason>` and exits 0 after cleaning up; with FR_ANDROID_REQUIRE=1
@@ -37,7 +40,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { connectPage, describeFailure } from "./cdp.mjs";
+import { connectPage, describeFailure, forwardPageConsole } from "./cdp.mjs";
 
 // The runner's one clock (Node-only tooling, ADR 0054): every wait here and the CDP driver's
 // polls read it.
@@ -356,7 +359,9 @@ async function smoke(page, stateUrl, adminToken, timeoutMs) {
     (await calls()).filter((c) => c.path === "/requests/req_cap/answer").length === 0,
     "no high-risk answer left the phone",
   );
-  console.log("PASS: high-risk answer needs the platform prompt (not enrolled: refused)");
+  console.log(
+    `PASS: high-risk answer needs the platform prompt (not enrolled: refused: ${errorText.trim()})`,
+  );
 
   // 4. Scenario 9: one sentence, ONE card, confirm, the PC starts, the log shows it with Undo.
   await page.getByTestId("m-nav").getByText("Remote").click();
@@ -493,6 +498,12 @@ async function main() {
   });
   cleanups.push(() => client.close());
   console.log(`PASS: attached to the WebView page ${target.url} (${target.title})`);
+  // The page's console and uncaught exceptions on this run's stdout (`webview:` lines), over
+  // the same page session: a failing step then shows what the app said (android.yml run
+  // 39952987240 failed scenario 3 with no page output at all).
+  const forwarding = await forwardPageConsole(client);
+  cleanups.push(() => forwarding.stop());
+  if (forwarding.enabled) console.log("forwarding the WebView console as webview: lines");
   await smoke(page, stateUrl, adminToken, args.timeoutMs);
   console.log("PASS: Android emulator smoke complete");
 }
