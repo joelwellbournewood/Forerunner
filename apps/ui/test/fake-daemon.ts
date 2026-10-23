@@ -38,6 +38,7 @@ import { serve } from "@hono/node-server";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
+import type { HumanView } from "../src/api/client.ts";
 import type {
   ChangeCardView,
   DataAssetView,
@@ -121,6 +122,12 @@ export interface FakeDaemonOptions {
    * unreachable (`{"/updates": {status: 503, code: "unavailable", message: "feed down"}}`).
    */
   failing?: Record<string, { status: number; code: string; message: string }>;
+  /**
+   * Overrides of the `/me` answer, e.g. `desktopDeviceId: null` (a daemon that registered no
+   * desktop row) or another id (a row this fake does not know, so a device confirmation
+   * naming it is refused like the real executor refuses an unknown device).
+   */
+  me?: Partial<HumanView>;
 }
 
 type Listener = (event: string, data: unknown) => void;
@@ -175,6 +182,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   const eventDelayMs = options.eventDelayMs ?? 150;
   const heartbeatMs = options.heartbeatMs ?? 1000;
   const tokenDelayMs = options.tokenDelayMs ?? 5;
+  // The human as `/me` answers (`options.me` shapes the answer only); the one device row this
+  // fake has is the fixture's own desktop (`ME.desktopDeviceId`, ADR 0030), the only id a
+  // device confirmation may name, whatever `/me` said.
+  const me: HumanView = { ...ME, ...options.me };
   let counter = 100;
   const nextId = (prefix: string) => `${prefix}_${++counter}`;
 
@@ -324,7 +335,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       },
     }),
   );
-  app.get("/me", (c) => c.json(ME));
+  app.get("/me", (c) => c.json(me));
   app.get("/agents", (c) => c.json(AGENTS));
 
   app.get("/projects", (c) => c.json(state.projects));
@@ -1747,7 +1758,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       return c.json(result);
     }
     if (body.answer === "device") {
-      if (!body.deviceId) return errorBody(c, 400, "validation", "deviceId is required");
+      // As the daemon's route: an answer without an id is this PC's own row; an id is
+      // checked as given, and one that is no paired device of the human is refused by the
+      // registry's policy ("unknown device; pair it first"), the card staying open.
+      const deviceId = body.deviceId ?? ME.desktopDeviceId;
+      if (deviceId !== ME.desktopDeviceId) {
+        const result: CommandResultJson = {
+          status: "refused",
+          reason: "unknown device; pair it first",
+          code: "approval_required",
+          card: pending.card,
+          pendingId: id,
+          commands: names,
+        };
+        return c.json(result);
+      }
     } else if (pending.decision === "needs_device") {
       const result: CommandResultJson = {
         status: "refused",

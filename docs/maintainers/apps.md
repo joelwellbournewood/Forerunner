@@ -137,8 +137,12 @@ The settings screen is a client of the command registry (spec Q.1, ADR 0037):
 dialog posts `executeCommands({ commands: [one], wordsUsed: "Settings: <key> to <value>",
 source: "ui" })` (the change log row reads `ui`, where chat and voice read theirs),
 shows the daemon's card through `CommandResult`, answers `needs_yes` with `{ answer: "tap" }`
-and `needs_device` with `{ answer: "device", deviceId: <installId> }` (the daemon checks the
-device), and shows the sentence with Undo (`POST /changes/:id/undo`). `ChangeCard` renders the
+and `needs_device` with `{ answer: "device", deviceId: <me.desktopDeviceId> }` (this PC's own
+device row as `GET /me` names it, ADR 0030: the daemon checks the row like any paired device
+and refuses an id it does not know, which the dialog shows as a refusal with the card still
+open; when `/me` names no row the answer goes without an id and the daemon-token route answers
+with its own desktop row), and shows the sentence with Undo (`POST /changes/:id/undo`). The
+daemon status block shows the row as "This PC: paired device <id>". `ChangeCard` renders the
 spec Q.4 card (what, old → new, scope, duration, impact, undo hint, the parts of a plan) from
 the daemon's `card` through `parseChangeCard` (lenient: unknown fields kept, missing ones
 defaulted).
@@ -223,8 +227,12 @@ request in the inbox for pending installs (answering it approves or denies), wid
 into `pending_approval`, and emit `extension.changed`; `POST /updates/apply` emits
 `restart.requested` and bumps the version `/health` reports; the command routes mirror the
 daemon (one card and one change log row per request, low risk acts, medium needs a yes or a
-tap, high needs `{ answer: "device" }`, `confirm: "tap"` runs a medium change at once, the
-`SOURCE_OF` mapping `text → chat`, `voice → voice`, `phone → chat`, `ui → ui`, undo rows). Run directly
+tap, high needs `{ answer: "device" }` naming the one device row the fake has, the fixture's
+`ME.desktopDeviceId` (any other id is refused `approval_required` "unknown device; pair it
+first" with the card kept, as the real executor does; no id means that row, as the daemon's
+route does), `confirm: "tap"` runs a medium change at once, the `SOURCE_OF` mapping
+`text → chat`, `voice → voice`, `phone → chat`, `ui → ui`, undo rows; the `me` option
+overrides the `/me` answer, e.g. `desktopDeviceId: null` or a row the fake does not have). Run directly
 (`pnpm exec tsx test/fake-daemon.ts`) it reads `FAKE_DAEMON_PORT`, `FAKE_DAEMON_TOKEN` and
 `FAKE_DAEMON_EVENT_DELAY_MS`.
 
@@ -234,8 +242,9 @@ Before the bundle runs, a shell may set `window.__FORERUNNER__ = { daemonUrl, da
 installId, platform, shellVersion }` (type `ShellInjection` in `api/config.ts`). The desktop
 shell reads `daemon.json` from the runtime directory (ADR 0011) and injects the URL and token
 through an origin-guarded initialization script (see "Desktop shell" below); `installId`
-namespaces the two persisted conveniences and is the device id the settings screen offers for
-a high-risk confirmation; `platform` and `shellVersion` show in Settings. The Android shell
+namespaces the two persisted conveniences (it is not a device the daemon knows: a high-risk
+confirmation names the daemon's own desktop row from `/me`); `platform` and `shellVersion`
+show in Settings. The Android shell
 does not reach the daemon directly (spec R): it injects `stateUrl` and mounts `src/mobile`.
 The desktop CSP (`apps/desktop/src-tauri/tauri.conf.json`) already allows
 `http://127.0.0.1:*`.
@@ -314,8 +323,10 @@ save and names the missing route), `download` (`saveTextFile`: the Blob's type a
 anchor's `download` name clicked once and removed, the URL revoked later, false without object
 URLs),
 `changes` (rows with words / commands / before / after, undo and the undo row, filters,
-missing route), `settings` (scope on every row, command mapping, autonomy by one step: card →
-yes → sentence → undo → the change log row, high risk needs this device, cancel and refusal),
+missing route), `settings` (scope on every row, the paired-device line, command mapping,
+autonomy by one step: card → yes → sentence → undo → the change log row, high risk needs this
+device: the `/me` row's id is posted and performs, an id the fake does not know is shown as
+the daemon's refusal with the card kept, no id when `/me` names none, cancel and refusal),
 `shell` (matcher, palette filter, g-sequences incl. `g c` / `g t` / `g u`, switcher, kill
 switch, persistence).
 
@@ -350,9 +361,6 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
 - The settings screen's changes are logged with source `ui` (`POST /commands/execute` with
   `source: "ui"`), but the Changes screen's undo (`POST /changes/:id/undo`, no body) is still
   logged as `chat` by the daemon; a `source` on that route and on `undoChange` would close it.
-- A high-risk confirmation from the desktop sends `installId` as the device id; the daemon
-  accepts it only once the desktop registers as a device (ADR 0030, item 3). Until then the
-  dialog shows the daemon's refusal as such.
 - The daemon's `GET /memory/scopes` lists the human's own principals only; the peers' agents
   come from `GET /agents` and show the daemon's answer (403 or an empty list).
 - Permissions are shown, approved and denied; narrowing or widening them from the panel

@@ -55,6 +55,8 @@ export const ME: HumanView = {
   timezone: "Europe/Zurich",
   defaultAutonomy: 2,
   monthlyCap: money(187_500_000),
+  // The daemon's own `desktop` device row (ADR 0030): what a high-risk confirmation names.
+  desktopDeviceId: "device_this_pc",
 };
 
 export const AGENTS: AgentView[] = [

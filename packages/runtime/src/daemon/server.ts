@@ -434,6 +434,8 @@ export function createDaemonApp(
       timezone: h.timezone,
       defaultAutonomy: h.default_autonomy,
       monthlyCap: money(h.monthly_cap_usd_micro, chf()),
+      // This PC's own device row: what a high-risk confirmation from the desktop app names.
+      desktopDeviceId: rt.remote.device?.id ?? null,
       agent: rt.agent,
       // The registry's record wins (a switch by chat, voice or the UI all land there).
       activeProjectId:
@@ -1084,10 +1086,34 @@ export function createDaemonApp(
     const id = c.req.param("id");
     let r: CommandResultView;
     if (body.answer === "device") {
-      if (!body.deviceId) throw new ForerunnerError("validation", "deviceId is required");
+      // The bearer of the daemon token is the human at this PC, and this PC is a paired
+      // device (its row, `/me.desktopDeviceId`). An answer that names no device is answered
+      // by that row, noted in the audit log; one that names a device is checked as given,
+      // so a foreign, revoked or unknown id is refused by the registry's policy.
+      const deviceId = body.deviceId ?? rt.remote.device?.id;
+      if (!deviceId) {
+        throw new ForerunnerError(
+          "validation",
+          "deviceId is required: this daemon has no desktop device row to answer for",
+        );
+      }
+      if (!body.deviceId) {
+        await rt.store.auditLog.append({
+          tool: "daemon.confirm_device",
+          allowed: true,
+          denied_reason: null,
+          agent_id: rt.agent.id,
+          human_id: rt.human.id,
+          input_summary: JSON.stringify({ pendingId: id, deviceId, given: null }),
+          result_summary: "device answer without an id: this PC's own desktop row answers",
+          cost_usd_micro: 0,
+          occurred_at: rt.clock.nowIso(),
+          author_agent: rt.agent.id,
+        });
+      }
       r = await rt.commands.confirm(id, {
         kind: "device",
-        deviceId: body.deviceId,
+        deviceId,
         biometric: body.biometric === true,
         by,
       });

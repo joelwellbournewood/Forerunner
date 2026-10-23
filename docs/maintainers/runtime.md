@@ -1108,17 +1108,35 @@ change card and one change log row; `source` is `text`, `voice`, `phone` or `ui`
 registry's record. `ChatReplyView.pendingConfirmation` carries the commands and the decision,
 `actions[].undoToken` the change log id while undoable, and `question` the parser's question.
 
+**This PC as the paired device (ADR 0030; the P1 of the 2026-10-23 triage).** A high-risk
+card (`needs_device`) from the desktop app is confirmed on the desktop's own device row: the
+daemon registers it on every store (`registerDesktopDevice`, below), `GET /me` names it as
+`desktopDeviceId`, and the settings screen sends `{ answer: "device", deviceId: <that id> }`;
+the registry's policy then checks the row like any other device (a `desktop` of the same
+human, not revoked), so an id that is no device row (the shell's install id, which the UI used
+to send; another install's row) is refused with `approval_required` "unknown device; pair it
+first" and the card stays open. A device answer that names no id on this daemon-token route is
+the human at this PC: the route substitutes the daemon's own row and writes one `audit_log`
+row `daemon.confirm_device` (`input_summary` `{ pendingId, deviceId, given: null }`) before
+the registry checks it; a daemon without a row (only a hand-built runtime) answers
+`validation`. A phone still needs `biometric: true`, a web or runner device is refused as
+before (`packages/commands`, `security-commands.test.ts`).
+
 **Remote control of the PC (`src/remote/`, spec R.4, R.8, Q.12; ADR 0032 item 4, ADR 0033
 items 8b and 9, [ADR 0041](../decisions/0041-pc-remote-commands-owner-filter-and-presence.md)).**
 On a shared state the daemon is the consumer of the phone's `target: "pc"` remote commands
-and the PC the cloud runner's PC-wins rule looks for. `composeRuntime` builds, when
-`remoteCommandsEnabled(env, stateUrl, services, opts.remote?.enabled)` says so (never without
-the background services; then the option, then `FORERUNNER_REMOTE_COMMANDS` `1`/`0`, else on
-for every state URL that is not `sqlite:`), exposed as `RuntimeApp.remote`:
+and the PC the cloud runner's PC-wins rule looks for. `composeRuntime` registers the daemon's
+own `desktop` device row on every store, shared or local (`RuntimeApp.remote.device`, never
+null in a composed runtime: it is the paired device a high-risk change from the desktop app
+is confirmed on, ADR 0030, and `GET /me` names it), and builds the heartbeat and the watcher
+only when `remoteCommandsEnabled(env, stateUrl, services, opts.remote?.enabled)` says so
+(never without the background services; then the option, then `FORERUNNER_REMOTE_COMMANDS`
+`1`/`0`, else on for every state URL that is not `sqlite:`; `remote.enabled`, `watcher` and
+`presence` read false and null otherwise), exposed as `RuntimeApp.remote`:
 
 | Piece | What it does | Enforced where |
 | --- | --- | --- |
-| `registerDesktopDevice` | one `device` row of kind `desktop` per install for the human: the public key (a random identifier, never used to authenticate) is kept in `<config>/desktop-device.json`; the row under that key is reused (same human, not revoked), else a non-revoked row of the human named `FORERUNNER_DEVICE_NAME` (default the host name), else a fresh one | the row is what the phone can address a command to (`targetDeviceId`) |
+| `registerDesktopDevice` | one `device` row of kind `desktop` per install for the human, on every store: the public key (a random identifier, never used to authenticate) is kept in `<config>/desktop-device.json`; the row under that key is reused (same human, not revoked), else a non-revoked row of the human named `FORERUNNER_DEVICE_NAME` (default the host name), else a fresh one | the row is the device the settings screen names for a high-risk confirmation (`/me.desktopDeviceId`, checked by the registry's policy) and what the phone can address a command to (`targetDeviceId`) |
 | `DesktopPresence` | stamps the row's `last_seen` at start and every `FORERUNNER_PRESENCE_HEARTBEAT_MS` (default 60 000; the runner's window `FORERUNNER_RUNNER_PC_ONLINE_MS` is 3 min) | `services/cloud-runner/src/presence.ts` reads it: a desktop seen within the window keeps the runner off the agent's schedules |
 | `RemoteCommandWatcher` | polls `store.remoteCommand.pickUp("pc", { deviceId, agentId })` every `FORERUNNER_REMOTE_POLL_MS` (default 500 ms; the daemon reads the shared Postgres directly, ADR 0024, so no service client is involved): the store hands over only rows whose issuing device belongs to the human who owns this agent (first line); `authorize` loads the issuing device and refuses an unknown, revoked or foreign one (`failed`, `forbidden: ...`, audit row) without acting (second line). Then: a `kind: "plan"` envelope runs through `CommandLoop.compose` as the PC (source `phone`, the daemon's desktop row as the context device, so the registry's session commands call the ports instead of enqueueing another remote command); low risk acts, the phone's tap (`confirmedAt`, counted by `isFreshTap` only within the card's own life, `DEFAULT_TAP_MAX_AGE_MS` = 10 min, plus 2 min of clock skew; a tap the outbox replayed from long ago leaves the card `needs_yes` for the inbox) answers a medium card, a high-risk card stays a `human_request` (`needs_device`) and the row completes with `status: "pending"` and the `pendingId`; a `kind: "chat"` envelope is one `ConversationAgent.chat` turn (`failed`, `provider_auth` without a model credential); plain `kill` (stop everything and freeze), `stop` (the agent's runs, freeze lifted), `start` (freeze lifted, `Scheduler.requestStart` with `trigger: "remote"`; the row's result is `{ kind: "start", result, startId }`, the scheduler entry's id being the start's identity the undo of the registry's remote `session.start` row acts on, ADR 0049), `pause` (the registry's `session.pause`, whose daemon ports in `src/wiring/session-ports.ts` make it the graceful stop: the row reads `paused` at once and, for a session registered with the kill switch in this process, the agent gets a `pause: <reason> (session <id>)` message that the runner reads between tasks, so the task in flight finishes, no new one starts and the runner closes the session with its handoff, `paused -> stopped`, `stop_reason: stopped_by_message`, the remaining tasks in `handoff.next`; a session running elsewhere gets the status only; the undo, `resumeSession`, withdraws the unread message and puts a `paused` row back to `running`, and a closed session stays closed), and the registry's own `session.*` rows; a start or scope naming another agent is refused. `syncAnswered` (every drain) applies inbox answers to the cards still pending in the executor: an approval confirms a `needs_yes` card as a tap and a `needs_device` card as a device confirmation naming the daemon's desktop row with `biometric: false` (the state service enforced the signature and `confirm:high` on the phone's answer; the daemon's route is the human at the PC), a rejection cancels, another human's answer is ignored; an approval the executor refuses (this daemon's desktop row revoked, the risk rose since the card was shown) is not counted as applied: it is warned once, audited (`allowed: false`, input `kind: "card"` with the pending id, the decision and the command names) and the dead card is cancelled so no drain repeats it (`stats.refusedCards`), while a `version_conflict` (another answer in flight) is simply retried on the next drain. Every row ends `done` or `failed` with a result the phone reads back plus one `audit_log` row `daemon.remote_command` naming the command, the device, the envelope's `clientId` and the plan's command names, never the parameters. One tap acts once: the state service already enqueues a device's envelope once per `clientId` (`state-service.md`, "Once per tap"), and as the second line `replayOf` refuses an envelope (plan or chat) whose (issuing device, `clientId`) this daemon handled before, found in this process's memory (`SEEN_MAX` pairs) or in an audit row of the last `duplicateWindowMs` (`DEFAULT_DUPLICATE_WINDOW_MS`, 30 days, longer than the service's seven-day record; the audit input of every handled envelope names its `clientId`, which is what the lookup reads): the row ends `failed` with `status: "duplicate"`, `code: "duplicate"`, the first row's id as `duplicateOf` and its own audit row, before anything is composed, so a copy that slipped past the service (two service instances, a restored backup, a row older than the service's week) never starts a second session or raises a budget twice (`stats.duplicates`). The lookup is per row, not a lock: two daemons of one human taking two copies at the same instant could both act (Known issues). A kill reaches the kill switch within one poll, so a session stops within 2 s of the tap. | the command registry's policy (ADR 0030), the kill switch, the scheduler; `RemoteCommandRepo.pickUp`'s owner filter in `packages/state` (`ownerHumanId` / `agentId`: a subquery on `device.owner_human_id`, through `agent` for the agent, both dialects) |
 
@@ -1369,7 +1387,11 @@ answer per change: the registry confirms by risk, a yes for medium, the paired d
 high, and the hooks hold no command tool; `test/conversation.test.ts`, `test/hooks.test.ts`),
 Q.11 and Q.12 for the settings screen's route (`source: "ui"` on the change log row, the same
 executor and policy as chat and voice; `test/loop-routes.test.ts`, `apps/ui/test/settings.test.tsx`,
-`tests/e2e/scenarios/phase5-gate.integration.test.ts`).
+`tests/e2e/scenarios/phase5-gate.integration.test.ts`); Q.8 on a solo install (the daemon's
+desktop row exists on a `sqlite:` store with the remote services off, `/me.desktopDeviceId`
+names it, that id performs the high-risk change, the shell's install id is refused as an
+unknown device with the card kept, an id-less device answer is this PC with its audit row;
+`test/loop-routes.test.ts` "a solo install's desktop is the paired device").
 O.1, O.3, O.5, O.7, O.9, O.10 and Q.4, Q.5 for voice through the daemon (a text or audio turn
 through the one loop with every latency stage measured; a risky command read back and waiting
 for the yes, a wrong answer doing nothing, a yes or a tap applied through the registry with

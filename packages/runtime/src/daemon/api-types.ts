@@ -444,6 +444,12 @@ export const HumanView = z.object({
   timezone: z.string(),
   defaultAutonomy: z.number().int(),
   monthlyCap: Money,
+  /**
+   * The daemon's own `desktop` device row: the paired device this PC is (ADR 0030), which the
+   * settings screen names when it confirms a high-risk change (`POST /commands/:id/confirm`
+   * with `answer: "device"`). Null only when the daemon registered none.
+   */
+  desktopDeviceId: z.string().nullable(),
 });
 
 export const SettingView = z.object({
@@ -721,7 +727,11 @@ export type CommandResultJson = z.infer<typeof CommandResultViewSchema>;
 
 export const CommandConfirmBody = z.object({
   answer: z.enum(["yes", "no", "tap", "device"]),
-  /** For `device`: the paired device that confirms; a phone also needs `biometric: true`. */
+  /**
+   * For `device`: the paired device that confirms (`/me.desktopDeviceId` for this PC); a
+   * phone also needs `biometric: true`. Left out, the daemon-token holder is the human at this
+   * PC and the daemon's own desktop row answers (an audit row says so).
+   */
   deviceId: z.string().optional(),
   biometric: z.boolean().optional(),
 });

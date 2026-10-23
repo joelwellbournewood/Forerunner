@@ -563,9 +563,12 @@ export interface RuntimeApp {
    */
   shells: ShellPresence;
   /**
-   * Remote control of this PC (spec R.4, R.8; ADR 0041): the daemon's own `desktop` device
-   * row, the watcher that executes the phone's `target: "pc"` commands and the heartbeat the
-   * cloud runner's PC-wins rule reads. All null when `remoteCommandsEnabled` said no.
+   * This PC as a device and the remote control of it (spec R.4, R.8; ADR 0030, ADR 0041):
+   * the daemon's own `desktop` device row (registered on every store: it is the paired device
+   * a high-risk change from the desktop app is confirmed on, and `GET /me` names its id;
+   * null only in a hand-built runtime), the watcher that executes the phone's `target: "pc"`
+   * commands and the heartbeat the cloud runner's PC-wins rule reads, both null when
+   * `remoteCommandsEnabled` said no.
    */
   remote: {
     enabled: boolean;
@@ -1962,24 +1965,30 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // Background services: the daemon starts them; a CLI one-shot (startServices: false) only
   // uses the composed objects and never connects a connector or ticks the scheduler.
   const services = opts.startServices !== false;
+  // This PC as a paired device (ADR 0030: a high-risk change from the desktop app is
+  // confirmed on the desktop's own device row, ADR 0041 item 6): the daemon registers itself
+  // as a `desktop` device of the human on every store, shared or local. `GET /me` names the
+  // row's id, the settings screen sends it with a high-risk confirmation and the registry's
+  // policy checks the row like any other device; on a `sqlite:` store, where no phone can
+  // reach this daemon, nothing else reads the row. The identity file under the config dir
+  // keeps the row stable across restarts.
+  const remoteDevice: DeviceRow = await registerDesktopDevice({
+    store,
+    dirs,
+    humanId: human.id,
+    name: opts.remote?.deviceName ?? env.FORERUNNER_DEVICE_NAME?.trim() ?? osFacts(env).hostname,
+    platform: currentPlatform(),
+  });
   // Remote control of this PC (spec R.4, R.8; ADR 0032 item 4, ADR 0033 items 8b and 9, ADR
-  // 0041): on a shared state the daemon registers itself as a `desktop` device of the human,
-  // heartbeats that row (the cloud runner's PC-wins rule reads it) and polls the phone's
-  // `target: "pc"` commands. The store's pick-up is keyed on this agent's owner; the watcher
-  // checks the issuing device again and runs plans through the command registry, chat
-  // through the conversation agent, and the plain verbs through the kill switch and scheduler.
+  // 0041): on a shared state the daemon heartbeats its desktop row (the cloud runner's
+  // PC-wins rule reads it) and polls the phone's `target: "pc"` commands. The store's pick-up
+  // is keyed on this agent's owner; the watcher checks the issuing device again and runs
+  // plans through the command registry, chat through the conversation agent, and the plain
+  // verbs through the kill switch and scheduler.
   const remoteEnabled = remoteCommandsEnabled(env, stateUrl, services, opts.remote?.enabled);
-  let remoteDevice: DeviceRow | null = null;
   let remoteWatcher: RemoteCommandWatcher | null = null;
   let presence: DesktopPresence | null = null;
   if (remoteEnabled) {
-    remoteDevice = await registerDesktopDevice({
-      store,
-      dirs,
-      humanId: human.id,
-      name: opts.remote?.deviceName ?? env.FORERUNNER_DEVICE_NAME?.trim() ?? osFacts(env).hostname,
-      platform: currentPlatform(),
-    });
     presence = new DesktopPresence({
       store,
       clock,
@@ -2070,7 +2079,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     bridgedTools: extensions.bridgedTools().length,
     mirrors: mirrorSchedules.size,
     services,
-    remote: remoteEnabled ? (remoteDevice?.name ?? "on") : "off",
+    desktopDevice: remoteDevice.name,
+    remote: remoteEnabled ? "on" : "off",
   });
 
   return {

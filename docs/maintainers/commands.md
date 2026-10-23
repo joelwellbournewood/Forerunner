@@ -115,6 +115,12 @@ human's answer counts; an agent's own yes is refused. `policy.check(decision, an
 returns `confirmed`/`declined` or throws `ForerunnerError("approval_required")` with the reason
 (a chat or email yes for high risk: "not enough ... confirm in the app on a paired device").
 
+The desktop's own row is the daemon's (`registerDesktopDevice` in `packages/runtime`, on
+every store since the 2026-10-23 triage; `GET /me` names it as `desktopDeviceId` and the
+settings screen sends that id), so the rule holds with a real row on a solo install too: an
+id that is no device row (the shell's install id) is refused as "unknown device; pair it
+first" and the card stays open (`runtime.md`, "This PC as the paired device").
+
 Every answer is tied to the human the change is for (`ctx.humanId`, the pending entry's
 human): a yes, a tap or an email token from another human (a shared store, a shared project)
 is refused, and a device answer that names another human is refused even on the owner's own

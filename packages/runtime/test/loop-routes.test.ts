@@ -583,6 +583,86 @@ describe("core loop routes", () => {
     expect(cancelled.status).toBe("refused");
   });
 
+  it("a solo install's desktop is the paired device: /me names the daemon's own desktop row, its id confirms a high-risk change, a foreign id is refused, and an answer without an id is this PC", async () => {
+    // On a `sqlite:` store the remote services stay off (no phone can reach this daemon), yet
+    // the daemon's own `desktop` device row exists: it is the paired device the settings
+    // screen confirms a high-risk change on (ADR 0030, the P1 of BLOCKERS.md).
+    expect(rt.remote.enabled).toBe(false);
+    expect(rt.remote.watcher).toBeNull();
+    expect(rt.remote.presence).toBeNull();
+    const desktop = rt.remote.device;
+    expect(desktop).toMatchObject({ kind: "desktop", owner_human_id: rt.human.id, revoked: false });
+    const me = await json(await req("/me"));
+    expect(me.desktopDeviceId).toBe(desktop?.id);
+
+    const ask = async (amountChf: number) => {
+      const r = CommandResultViewSchema.parse(
+        await json(
+          await req("/commands/execute", {
+            method: "POST",
+            body: JSON.stringify({
+              commands: [{ name: "budget.set", params: { scope: "month", amountChf } }],
+              wordsUsed: `Settings: human.monthly_cap to ${amountChf}`,
+              source: "ui",
+            }),
+          }),
+        ),
+      );
+      expect(r.decision).toBe("needs_device");
+      return r.pendingId ?? "";
+    };
+    const confirm = async (pendingId: string, body: Record<string, unknown>) =>
+      CommandResultViewSchema.parse(
+        await json(
+          await req(`/commands/${pendingId}/confirm`, {
+            method: "POST",
+            body: JSON.stringify(body),
+          }),
+        ),
+      );
+
+    // The shell's install id (what the UI used to send) is not a device row: refused, and the
+    // card stays open for a proper answer.
+    const first = await ask(600);
+    const foreign = await confirm(first, { answer: "device", deviceId: "install-uuid-of-shell" });
+    expect(foreign.status).toBe("refused");
+    expect(foreign.code).toBe("approval_required");
+    expect(foreign.reason).toContain("unknown device");
+    expect((await jsonList(await req("/commands/pending"))).map((p) => p.id)).toContain(first);
+    // The id `/me` names performs the change.
+    const ok = await confirm(first, { answer: "device", deviceId: me.desktopDeviceId });
+    expect(ok.status).toBe("done");
+    expect((await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro).toBe(750_000_000);
+    // The pending id is the card's `human_request` row: its answer names the device.
+    const row = await rt.store.humanRequest.mustGet(first);
+    expect(row.status).toBe("answered");
+    expect(row.answer).toMatchObject({
+      verdict: "confirmed",
+      kind: "device",
+      device_id: desktop?.id,
+      biometric: false,
+    });
+
+    // A device answer without an id on the daemon-token route is this PC (an older shell):
+    // the daemon substitutes its own row and writes an audit row saying so.
+    const second = await ask(700);
+    const mapped = await confirm(second, { answer: "device" });
+    expect(mapped.status).toBe("done");
+    expect((await rt.store.human.mustGet(rt.human.id)).monthly_cap_usd_micro).toBe(875_000_000);
+    const audit = (await rt.store.auditLog.list()).filter(
+      (r) => r.tool === "daemon.confirm_device",
+    );
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ allowed: true, human_id: rt.human.id });
+    expect(JSON.parse(audit[0]?.input_summary ?? "{}")).toMatchObject({
+      pendingId: second,
+      deviceId: desktop?.id,
+      given: null,
+    });
+    // Restore the cap the later tests count on.
+    await rt.store.human.patch(rt.human.id, { monthly_cap_usd_micro: 625_000_000 });
+  });
+
   it("chat, voice and the UI produce the same change log entry for the same change", async () => {
     const before = (await rt.store.changeLog.list()).length;
     const ui = CommandResultViewSchema.parse(
