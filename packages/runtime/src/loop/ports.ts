@@ -1,4 +1,4 @@
-import type { JsonObject, SessionRow, TaskRow } from "@forerunner/state";
+import type { JsonObject, ProjectRow, SessionRow, TaskRow } from "@forerunner/state";
 import type { ToolSpec } from "../agent/tools.ts";
 import type { SessionBudget } from "../enforcement/budget.ts";
 import type { SignedToken } from "../enforcement/token.ts";
@@ -282,4 +282,61 @@ export interface ConversationCommands {
   undo(changeLogId: string | null, turn: CommandTurn): Promise<CommandResultView>;
   /** The active project the registry keeps for the human. */
   activeProject(humanId: string): Promise<string | null>;
+}
+
+// ---------------------------------------------------------------------------------------
+// Project docs (spec G.5: the PM keeps the standard doc set current)
+// ---------------------------------------------------------------------------------------
+
+/** The session's outcome as task titles, for the entry in `docs/status.md`. */
+export interface SessionStatusUpdate {
+  sessionId: string;
+  /** ISO-8601 UTC instant the session ended, from the Clock. */
+  endedAt: string;
+  done: string[];
+  inFlight: string[];
+  blocked: string[];
+  next: string[];
+  /** One line: the stop reason, the spend. */
+  note?: string;
+}
+
+/** Where the scaffold went: a branch and pull request of the repository, or the data dir. */
+export interface DocsScaffoldOutcome {
+  location: "repo" | "data_dir";
+  branch?: string;
+  prUrl?: string | null;
+  /** The directory the docs were written to (the data dir without a repository). */
+  dir?: string;
+  /** Repo-relative POSIX paths written, and the ones found and left alone. */
+  created: string[];
+  existing: string[];
+}
+
+export interface SessionStatusOutcome {
+  location: "repo" | "data_dir";
+  /** Repo-relative POSIX path of the doc (`docs/status.md`). */
+  path: string;
+  /** Repository: the branch the update was committed to and the pull request carrying it. */
+  branch?: string;
+  prUrl?: string | null;
+  dir?: string;
+  /** True when the doc did not exist and was scaffolded first. */
+  created: boolean;
+}
+
+export interface ProjectDocsPort {
+  /** Scaffold the missing docs of the standard set for a new project; never overwrites. */
+  scaffoldProject(project: ProjectRow): Promise<DocsScaffoldOutcome>;
+  /**
+   * Write the session's update into `docs/status.md`: on the session's pull request branch
+   * when it opened one (`prBranch`), else on a small PR of its own; without a repository
+   * under the project's data directory.
+   */
+  writeSessionStatus(input: {
+    project: ProjectRow;
+    session: SessionRow;
+    update: SessionStatusUpdate;
+    prBranch?: string | null;
+  }): Promise<SessionStatusOutcome>;
 }

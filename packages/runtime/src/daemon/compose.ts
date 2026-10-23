@@ -52,6 +52,7 @@ import {
   type JsonValue,
   type NewAuditLog,
   openStore,
+  type ProjectRow,
   REVIEW_VERDICTS,
   type ReviewVerdict,
   type StateStore,
@@ -91,6 +92,7 @@ import {
 import { ExtensionRegistry } from "../extensions/registry.ts";
 import { CommandLoop, sessionCapFromSettings, sessionCommandPorts } from "../loop/commands.ts";
 import { CriticLoop } from "../loop/critic.ts";
+import { ProjectDocs, parseRepoRef } from "../loop/docs.ts";
 import {
   isMemoryConsolidationRequest,
   MemoryLoop,
@@ -502,6 +504,12 @@ export interface RuntimeApp {
   criticAgent: { id: string; name: string };
   /** Memory in the loop (spec G): recall under budget, lessons at session end, consolidation, views. */
   memory: MemoryLoop;
+  /**
+   * Project docs (spec G.5): the standard doc set scaffolded at project creation (a branch and
+   * pull request with a repository, the data dir without) and `docs/status.md` updated at
+   * session end.
+   */
+  docs: ProjectDocs;
   /** The command registry (spec Q): the only way chat, voice, the UI and the phone change state. */
   commands: CommandLoop;
   /**
@@ -1435,22 +1443,39 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           });
       },
     });
+  // A project's repository (`repos[0]`, as owner/name or a clone URL) on the git host: the
+  // PR executor's target and the project docs' target are the same resolution.
+  const repoOfProject = async (project: ProjectRow | null | undefined) => {
+    const ref = parseRepoRef(project?.repos[0] ?? "");
+    if (!ref) return null;
+    const info = await gitHost.getRepo(ref);
+    return { clone: info.cloneUrl, repo: ref, base: info.defaultBranch };
+  };
+  const gitIdentity = {
+    name: `${agent.name} (Forerunner)`,
+    email: human.email || "forerunner@localhost",
+  };
   const executor = new PrTaskExecutor({
     store,
     clock,
     host: gitHost,
     inner: { execute: (ctx) => makeLoop().execute(ctx), withWorktree: (dir) => makeLoop(dir) },
-    repoFor: async (task) => {
-      const project = await store.project.get(task.project_id);
-      const full = project?.repos[0];
-      if (!full?.includes("/")) return null;
-      const [owner, name] = full.split("/") as [string, string];
-      const info = await gitHost.getRepo({ owner, name });
-      return { clone: info.cloneUrl, repo: { owner, name }, base: info.defaultBranch };
-    },
+    repoFor: async (task) => repoOfProject(await store.project.get(task.project_id)),
     worktreeRoot: dirs.worktrees,
     token: ghToken ?? undefined,
-    identity: { name: `${agent.name} (Forerunner)`, email: human.email || "forerunner@localhost" },
+    identity: gitIdentity,
+  });
+  // Project docs (spec G.5, ADR 0058): the standard doc set on a branch and PR of the
+  // project's repository, or under the project's data dir without one.
+  const docs = new ProjectDocs({
+    store,
+    clock,
+    host: gitHost,
+    repoFor: repoOfProject,
+    worktreeRoot: join(dirs.worktrees, "docs"),
+    projectsRoot: dataAssets.projectsRoot,
+    token: ghToken ?? undefined,
+    identity: gitIdentity,
   });
   const runner = new SessionRunner({
     store,
@@ -1462,6 +1487,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     context,
     critic,
     memory,
+    docs,
     schemaSync,
     // Actual versus estimate at task.finished feeds the next plan (spec I).
     onTaskFinished: ({ task, item, result, durationMs }) => {
@@ -2110,6 +2136,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     critic,
     criticAgent: { id: criticAgent.id, name: criticAgent.name },
     memory,
+    docs,
     commands,
     voice,
     events,

@@ -490,6 +490,13 @@ export function createDaemonApp(
         author_human: rt.human.id,
       });
     }
+    // The standard doc set (spec G.5): a pull request on the linked repository, or the
+    // project's data dir. The gap is recorded on the project; the creation never fails on it.
+    try {
+      await rt.docs.scaffoldProject(p);
+    } catch (e) {
+      logger.warn("project docs not scaffolded", { projectId: p.id, error: errorMessage(e) });
+    }
     rt.events.emit("project", { id: p.id });
     rt.conversation?.setActiveProject(rt.human.id, p.id);
     return c.json(await projectCard(rt.store, p.id, chf(), rt.human.id), 201);
