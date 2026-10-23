@@ -167,7 +167,9 @@ describe("FCM sender (HTTP v1, OAuth2 from the service account)", () => {
       attempts: 1,
       httpStatus: 404,
     });
-    google.script("tok-bare", [{ status: 404, body: { error: { code: 404, status: "NOT_FOUND" } } }]);
+    google.script("tok-bare", [
+      { status: 404, body: { error: { code: 404, status: "NOT_FOUND" } } },
+    ]);
     expect(await s.send("tok-bare", message)).toMatchObject({ status: "failed", httpStatus: 404 });
     // A sender pointed at the wrong path gets the fake's generic 404 for every token.
     const misrouted = new FcmSender({
@@ -284,7 +286,9 @@ describe("push fan-out from the state service (spec R.6)", () => {
     expect((await h.store.device.get(padded.deviceId))?.push_token).toBe(`${PHONE_TOKEN}-2`);
     await h.store.humanRequest.insert({ human_id: h.seed.ada.id, kind: "decision", why: "x" });
     await h.tick();
-    expect(h.google.attempts.map((a) => a.token).sort()).toEqual([PHONE_TOKEN, `${PHONE_TOKEN}-2`].sort());
+    expect(h.google.attempts.map((a) => a.token).sort()).toEqual(
+      [PHONE_TOKEN, `${PHONE_TOKEN}-2`].sort(),
+    );
   });
 
   it("PUT /devices/:id/push-token refreshes the token, signed, for the device itself only", async () => {
@@ -465,12 +469,12 @@ describe("push fan-out from the state service (spec R.6)", () => {
       status: "completed",
     });
     await h.tick();
-    expect(
-      h.google.sent.map((s) => [s.message.data?.kind, s.message.notification?.title]),
-    ).toEqual([
-      ["budget", "Budget warning"],
-      ["session", "Session finished"],
-    ]);
+    expect(h.google.sent.map((s) => [s.message.data?.kind, s.message.notification?.title])).toEqual(
+      [
+        ["budget", "Budget warning"],
+        ["session", "Session finished"],
+      ],
+    );
     expect(h.google.sent[0]?.message.android?.priority).toBe("NORMAL");
   });
 
@@ -501,7 +505,9 @@ describe("push fan-out from the state service (spec R.6)", () => {
     });
     await h.tick();
     expect(
-      h.google.sent.filter((s) => s.message.data?.kind === "message").map((s) => s.message.data?.id),
+      h.google.sent
+        .filter((s) => s.message.data?.kind === "message")
+        .map((s) => s.message.data?.id),
     ).toEqual([question.id, fromBob.id]);
   });
 

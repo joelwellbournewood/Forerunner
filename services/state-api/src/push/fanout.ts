@@ -344,15 +344,15 @@ export class PushFanout {
         }
         return [
           {
-          kind: "message",
-          urgency: KIND_URGENCY.peer_message,
-          humanId: e.humanId,
-          key: `message:${id}`,
-          title: "New message",
-          body: "Open the inbox to read it.",
-          link: "/inbox",
-          refId: id,
-          projectId: row.project_id,
+            kind: "message",
+            urgency: KIND_URGENCY.peer_message,
+            humanId: e.humanId,
+            key: `message:${id}`,
+            title: "New message",
+            body: "Open the inbox to read it.",
+            link: "/inbox",
+            refId: id,
+            projectId: row.project_id,
           },
         ];
       }
