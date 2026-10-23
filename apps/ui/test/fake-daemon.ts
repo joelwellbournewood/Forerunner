@@ -6,6 +6,7 @@ import type {
   ConsolidationProposalView,
   ConsolidationReportView,
   DesktopControlView,
+  DaemonDeviceView,
   EmailCommandRowView,
   EmailSentRowView,
   EmailSettingsPatchBody,
@@ -78,6 +79,7 @@ import {
   COSTS,
   DATA_ASSETS,
   DECISIONS,
+  DEVICES,
   DOC_CONTENTS,
   DOCS,
   EMAIL_COMMANDS,
@@ -95,6 +97,7 @@ import {
   MODEL_WATCH_REPORTS,
   money,
   OFFERS,
+  PAIRING,
   PEERS,
   PERFORMANCE,
   PROJECTS,
@@ -155,6 +158,16 @@ export interface FakeDaemonOptions {
    */
   missingRoutes?: string[];
   /**
+   * Settings -> Devices: false makes the fake answer like a daemon without a state service
+   * (`pairingAvailable: false`, `POST /devices/pairing` 503 unavailable). Default true.
+   */
+  pairingAvailable?: boolean;
+  /**
+   * The time a pairing's ten-minute expiry counts from (epoch ms); the wall clock by default.
+   * The Devices tests share one stepped clock between the fake and the section.
+   */
+  now?: () => number;
+  /**
    * Exact paths the fake answers with an error body and status, e.g. the release feed being
    * unreachable (`{"/updates": {status: 503, code: "unavailable", message: "feed down"}}`).
    */
@@ -206,6 +219,9 @@ export interface FakeDaemonState {
   /** Source discovery (spec A.4): connected sources and what their scans found. */
   sources: SourceView[];
   sourceCandidates: SourceCandidateView[];
+  /** Settings -> Devices (spec R.2): the human's devices and the pairings started. */
+  devices: DaemonDeviceView[];
+  pairings: number;
   pendingCommands: Map<string, PendingCommand>;
   /** Email settings per agent id (Settings -> Capabilities -> Email), as the daemon stores them. */
   email: Record<string, EmailSettingsView>;
@@ -300,6 +316,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     dataAssets: clone(DATA_ASSETS),
     sources: clone(SOURCES),
     sourceCandidates: clone(SOURCE_CANDIDATES),
+    devices: clone(DEVICES),
+    pairings: 0,
     pendingCommands: new Map(),
     email: clone(EMAIL_SETTINGS),
     emailSent: clone(EMAIL_SENT),
@@ -404,6 +422,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.dataAssets = clone(DATA_ASSETS);
     state.sources = clone(SOURCES);
     state.sourceCandidates = clone(SOURCE_CANDIDATES);
+    state.devices = clone(DEVICES);
+    state.pairings = 0;
     state.pendingCommands.clear();
     state.email = clone(EMAIL_SETTINGS);
     state.emailSent = clone(EMAIL_SENT);
@@ -2648,6 +2668,56 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     m.version += 1;
     m.updatedAt = new Date().toISOString();
     return c.json(m);
+  });
+
+  // Settings -> Devices (spec R.2): the daemon's /devices routes, mirroring
+  // packages/runtime/src/devices: the list with this install marked, a pairing (503 without
+  // a state service), the revocation (400 for this install's own device, 404 unknown).
+  const pairingAvailable = options.pairingAvailable ?? true;
+  app.get("/devices", (c) => c.json({ devices: state.devices, pairingAvailable }));
+  app.post("/devices/pairing", async (c) => {
+    if (!pairingAvailable) {
+      return c.json(
+        {
+          code: "unavailable",
+          message:
+            "pairing needs the state service: set FORERUNNER_STATE_API_URL and keep its admin token in the vault",
+        },
+        503,
+      );
+    }
+    const body = (await c.req.json().catch(() => ({}))) as { kind?: string };
+    if (body.kind !== undefined && body.kind !== "phone" && body.kind !== "web") {
+      return errorBody(c, 400, "validation", "invalid request body");
+    }
+    state.pairings++;
+    const issuedAt = options.now?.() ?? Date.now();
+    return c.json(
+      {
+        ...PAIRING,
+        kind: body.kind ?? "phone",
+        expiresAt: new Date(issuedAt + 10 * 60_000).toISOString(),
+      },
+      201,
+    );
+  });
+  app.post("/devices/:id/revoke", (c) => {
+    const d = state.devices.find((x) => x.id === c.req.param("id"));
+    if (!d) return errorBody(c, 404, "not_found", "device not found");
+    if (d.current) {
+      return errorBody(
+        c,
+        400,
+        "validation",
+        "this is the device the app runs on; revoke it from another device",
+      );
+    }
+    if (!d.revoked) {
+      d.revoked = true;
+      d.revokedAt = "2026-10-23T09:01:00.000Z";
+      d.version++;
+    }
+    return c.json({ device: d, tokensRevoked: 1 });
   });
 
   // Source discovery (spec A.4): the daemon's /sources routes. A scan of a fresh source

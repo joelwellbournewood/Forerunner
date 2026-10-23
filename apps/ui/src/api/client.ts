@@ -28,6 +28,7 @@ import {
   type CreateProjectBody as CreateProjectBodySchema,
   type CreateTaskBody as CreateTaskBodySchema,
   DAEMON_ROUTES,
+  type DaemonDeviceView,
   type DecisionView,
   DecisionView as DecisionViewSchema,
   type DesktopControlView,
@@ -35,6 +36,8 @@ import {
   DesktopRevokeView as DesktopRevokeViewSchema,
   type DesktopStatusView,
   DesktopStatusView as DesktopStatusViewSchema,
+  type DeviceListView,
+  DeviceListView as DeviceListViewSchema,
   type EmailCommandRowView,
   type EmailCommandsView,
   EmailCommandsView as EmailCommandsViewSchema,
@@ -74,6 +77,8 @@ import {
   MirrorSyncView as MirrorSyncViewSchema,
   type ModelSettingsView,
   ModelSettingsView as ModelSettingsViewSchema,
+  type PairingStartView,
+  PairingStartView as PairingStartViewSchema,
   type PeerFeedView,
   PeerFeedView as PeerFeedViewSchema,
   type PendingChangeView,
@@ -95,6 +100,8 @@ import {
   type RunnerUnlockAnswerView,
   RunnerUnlockAnswerView as RunnerUnlockAnswerViewSchema,
   type RunnerUnlockWrapBody,
+  type RevokeDeviceView,
+  RevokeDeviceView as RevokeDeviceViewSchema,
   type RunView,
   RunView as RunViewSchema,
   type ScanResultView,
@@ -110,6 +117,7 @@ import {
   type SpeakBody,
   type SpeakView,
   SpeakView as SpeakViewSchema,
+  type StartPairingBody,
   type StartSessionBody as StartSessionBodySchema,
   type TaskView,
   TaskView as TaskViewSchema,
@@ -189,11 +197,13 @@ export type {
   ConsolidationProposalView,
   ConsolidationRunView,
   CostView,
+  DaemonDeviceView,
   DataAssetView,
   DecisionView,
   DesktopControlView,
   DesktopRevokeView,
   DesktopStatusView,
+  DeviceListView,
   DocContentView,
   DocView,
   EmailCommandRowView,
@@ -224,6 +234,7 @@ export type {
   ModelWatchReportsView,
   ModelWatchReportView,
   ModelWatchRunView,
+  PairingStartView,
   PeerFeedView,
   PendingChangeView,
   PerformanceModeView,
@@ -235,6 +246,7 @@ export type {
   RemoveSourceView,
   ReviewsView,
   ReviewView,
+  RevokeDeviceView,
   RollbackResult,
   RunView,
   ScanResultView,
@@ -616,6 +628,12 @@ export interface DaemonClient {
   ): Promise<SourceCandidateView[]>;
   acceptCandidate(id: string, body?: AcceptCandidateBody): Promise<AcceptCandidateView>;
   removeSource(id: string): Promise<RemoveSourceView>;
+
+  // Settings -> Devices (spec R.2): the daemon proxies the state service; the admin token
+  // stays in the daemon.
+  devices(signal?: AbortSignal): Promise<DeviceListView>;
+  startPairing(body?: StartPairingBody): Promise<PairingStartView>;
+  revokeDevice(id: string): Promise<RevokeDeviceView>;
 }
 
 function isAbort(error: unknown): boolean {
@@ -978,6 +996,9 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     acceptCandidate: (id, body) =>
       post(routePath("acceptCandidate", { id }), AcceptCandidateViewSchema, body ?? {}),
     removeSource: (id) => del(routePath("removeSource", { id }), RemoveSourceViewSchema),
+    devices: (signal) => get(routePath("devices"), DeviceListViewSchema, undefined, signal),
+    startPairing: (body) => post(routePath("startPairing"), PairingStartViewSchema, body ?? {}),
+    revokeDevice: (id) => post(routePath("revokeDevice", { id }), RevokeDeviceViewSchema, {}),
     auditExport: async (filter, signal) => {
       const format: AuditExportFormat = filter?.format ?? "jsonl";
       const res = await raw({
