@@ -1429,7 +1429,8 @@ event or at the end of a stream that had none, whatever that last event was: an 
 aborted`, a thrown `AbortError`, or a clean `message_end` (the Anthropic SDK exits its iterator
 without throwing after an abort, so the adapter used to end a killed stream as a complete
 message; the kill-switch probe of 2026-10-23 recorded that call as `ok`, `usd 0`). A call whose
-`message_end` arrived before the signal fired completed and stays `ok`; `error` otherwise. The
+`message_end` arrived before the signal fired completed and stays `ok`, also when the stream
+then throws the abort (an iterator still waiting on the open body); `error` otherwise. The
 usage in the row is the `message_end` figure when it came, else the input side the adapter
 reports on `message_start` (input, cache read and cache write tokens; the row's note then
 says `input usage from message_start, output tokens not reported`), else none (`no usage
@@ -1678,7 +1679,7 @@ is `pnpm --filter @forerunner/live test`, which skips every live case).
 
 ### Tests
 
-`pnpm --filter @forerunner/live test`: 46 unit tests over 5 files (parser, quoted values with
+`pnpm --filter @forerunner/live test`: 47 unit tests over 5 files (parser, quoted values with
 trailing comments, credential sources and the subscription token from the file or the
 environment, its redaction and its absence from the description; ledger round trip and
 validation, `subscription` rows kept with their kind and note and adding nothing to the totals
@@ -1689,11 +1690,11 @@ is sent, error and abort rows, credentials redacted from an error event and from
 error before the record, the note and the audit row, no credential-looking value in the
 ledger or the records; the status rule on hand-written inner providers that wait for the
 signal (`metered.test.ts`): a stream that ends cleanly with `message_end` after the abort is
-`aborted` with the usage it reported, the probe's shape (no `message_start`, an empty
-`message_end`) is `aborted` at USD 0, a stream that throws `AbortError` after a
+`aborted` with the usage it reported, the probe's shape (no event before the stop, then an
+empty `message_end`) is `aborted` at USD 0 with no first token, a stream that throws `AbortError` after a
 `message_start` with usage is `aborted` with the input tokens in the row and the
 `message_start` note (and `no usage reported` without one), a call whose `message_end` came
-before the stop stays `ok`, nothing in flight afterwards in every case; the API-key half's
+before the stop stays `ok` (also when its stream then throws `AbortError`), nothing in flight afterwards in every case; the API-key half's
 evidence file and the per-task comparison
 (`report.test.ts`): read from the report directory or the named path, the comparison made only
 for the same run, a file from another run flagged stale and listed with the reason, not made

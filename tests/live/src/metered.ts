@@ -24,7 +24,8 @@ import type { SpendRow } from "./ledger.ts";
  * call settled (its final event, or the end of a stream that had none), whatever that last
  * event was: an `error: aborted`, a thrown `AbortError`, or a clean `message_end` (the
  * Anthropic SDK exits its iterator without throwing after an abort). A call whose
- * `message_end` arrived before the signal fired completed, and stays `ok`. The usage is the
+ * `message_end` arrived before the signal fired completed, and stays `ok` (also when the stream
+ * then throws the abort). The usage is the
  * `message_end` figure when it came, else the input side reported on `message_start`
  * (noted in the row), else none (`no usage reported`).
  */
@@ -149,8 +150,12 @@ export class MeteredProvider implements ModelProvider {
         yield ev;
       }
     } catch (e) {
-      status = signalAborted() ? "aborted" : "error";
-      reason = this.redact(errorMessage(e));
+      // A throw after a message_end that came before the signal fired is the abort reaching a
+      // complete message (an iterator still waiting on the open body): the call stays ok.
+      if (!(abortedAtEnd === false && usage !== null && signalAborted())) {
+        status = signalAborted() ? "aborted" : "error";
+        reason = this.redact(errorMessage(e));
+      }
       throw e;
     } finally {
       // A consumer that stops iterating early (a kill, a timeout) lands here too.

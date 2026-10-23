@@ -65,10 +65,12 @@ const START_USAGE: Usage = {
  * request's abort signal the way the SDK's iterator does, and then either ends cleanly with a
  * `message_end` (the Anthropic SDK exits its iterator without throwing after an abort) or
  * throws an `AbortError` (the fetch path). `opened` resolves once the first chunk is out.
+ * `opens: false` yields nothing before the wait (the response arrived, the message had not
+ * opened when the stop landed: the probe's shape).
  */
 function cutOffProvider(
   after: "message_end" | "throw",
-  opts: { startUsage?: Usage; endUsage?: Usage } = {},
+  opts: { startUsage?: Usage; endUsage?: Usage; opens?: boolean } = {},
 ): { provider: ModelProvider; opened: Promise<void> } {
   let opened: () => void = () => undefined;
   const openedPromise = new Promise<void>((resolve) => {
@@ -79,12 +81,14 @@ function cutOffProvider(
     listModels: async () => [],
     countTokens: (t: string) => Math.ceil(t.length / 4),
     async *stream(req: ModelRequest): AsyncIterable<StreamEvent> {
-      yield {
-        type: "message_start",
-        model: req.model,
-        ...(opts.startUsage ? { usage: opts.startUsage } : {}),
-      };
-      yield { type: "text_delta", text: "the first words of a long answer" };
+      if (opts.opens !== false) {
+        yield {
+          type: "message_start",
+          model: req.model,
+          ...(opts.startUsage ? { usage: opts.startUsage } : {}),
+        };
+        yield { type: "text_delta", text: "the first words of a long answer" };
+      }
       opened();
       await new Promise<void>((resolve) => {
         if (req.signal?.aborted) resolve();
@@ -216,7 +220,7 @@ describe("metered provider", () => {
 
   it("the probe's shape: aborted before the message opened, the stream ended cleanly with no usage", async () => {
     const w = world({ replies: [] });
-    const inner = cutOffProvider("message_end");
+    const inner = cutOffProvider("message_end", { opens: false });
     const provider = new MeteredProvider(inner.provider, w.budget, {
       clock: w.clock,
       onCall: (c) => {
@@ -228,7 +232,8 @@ describe("metered provider", () => {
     await inner.opened;
     ac.abort(new Error("kill switch"));
     await p;
-    expect(w.calls.at(-1)).toMatchObject({ status: "aborted", usd: 0, tokensIn: 0 });
+    expect(w.calls.at(-1)).toMatchObject({ status: "aborted", usd: 0, tokensIn: 0, ttftMs: null });
+    expect(w.calls.at(-1)?.reason).toMatch(/abort signal fired before the call settled/);
     expect(w.ledger.rows()[0]?.note).toMatch(/^aborted: /);
     expect(w.budget.snapshot().inFlightUsd).toBe(0);
   });
@@ -292,6 +297,53 @@ describe("metered provider", () => {
     expect((await it.next()).done).toBe(true);
     expect(w.calls).toHaveLength(1);
     expect(w.calls[0]).toMatchObject({ status: "ok", tokensIn: 90, tokensOut: 5 });
+    expect(w.ledger.rows()[0]?.note).toBeUndefined();
+    expect(w.budget.snapshot().inFlightUsd).toBe(0);
+  });
+
+  it("a call whose message_end arrived before the stop stays ok when the stream then throws AbortError", async () => {
+    // A provider whose iterator waits on the open body after the message's last event (as the
+    // SDK's does) throws once the stop lands: the message was complete, the status rule keeps ok.
+    const w = world({ replies: [] });
+    const endUsage: Usage = { ...START_USAGE, output_tokens: 40 };
+    const inner: ModelProvider = {
+      name: "trailing-abort",
+      listModels: async () => [],
+      countTokens: (t: string) => Math.ceil(t.length / 4),
+      async *stream(r: ModelRequest): AsyncIterable<StreamEvent> {
+        yield { type: "message_start", model: r.model, usage: START_USAGE };
+        yield { type: "text_delta", text: "a whole answer" };
+        yield { type: "message_end", stop_reason: "end_turn", usage: endUsage };
+        await new Promise<void>((resolve) => {
+          if (r.signal?.aborted) resolve();
+          else r.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        throw new DOMException("This operation was aborted", "AbortError");
+      },
+      complete: () => Promise.reject(new Error("unused")),
+    };
+    const provider = new MeteredProvider(inner, w.budget, {
+      clock: w.clock,
+      onCall: (c) => {
+        w.calls.push(c);
+      },
+    });
+    const ac = new AbortController();
+    const it = provider.stream(req("fake-sonnet", { signal: ac.signal }))[Symbol.asyncIterator]();
+    for (;;) {
+      const { value, done } = await it.next();
+      if (done || value.type === "message_end") break;
+    }
+    ac.abort(new Error("kill switch"));
+    await expect(it.next()).rejects.toThrow(/This operation was aborted/);
+    expect(w.calls).toHaveLength(1);
+    expect(w.calls[0]).toMatchObject({
+      status: "ok",
+      tokensIn: 1200,
+      tokensOut: 40,
+      cacheRead: 300,
+    });
+    expect(w.calls[0]?.reason).toBeUndefined();
     expect(w.ledger.rows()[0]?.note).toBeUndefined();
     expect(w.budget.snapshot().inFlightUsd).toBe(0);
   });
