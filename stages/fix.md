@@ -1,0 +1,4 @@
+Stage FIX. An independent review of this branch is in `docs/status/reviews/ITEM.md`. For every finding: verify it first (a finding can be wrong; when it is, say so with evidence); fix a real one at the root together with the test the review asks for; then append a `Resolution:` line under that finding in the review file (`fixed in <commit>` with one sentence, or `not a defect: <why>`). The original build brief is quoted below; a fix must not regress what it asked for. Before you finish, `pnpm typecheck`, `pnpm lint`, the whole test directory of every package you touched and `node scripts/docs-check.mjs` must pass. Your final message is one line per finding with its resolution.
+
+Overriding the line above about not pushing: as your very last action, commit anything still uncommitted and run `git push -u origin wave/ITEM` once (the workflow push that follows may fail for a token reason that is not yours).
+

@@ -1,0 +1,4 @@
+Stage BUILD. Build the item described below completely: code, tests, the maintainer doc of every module you touch, an ADR when the brief calls for one, and the rows in docs/requirements.md, docs/status/BLOCKERS.md and docs/status/PROGRESS.md that the brief names. The definition of done is the one in AGENTS.md. Before you finish, `pnpm typecheck`, `pnpm lint`, the whole test directory of every package you touched and `node scripts/docs-check.mjs` must pass (run `pnpm check` when there is time). Commit in small steps as you go. Your final message is at most 25 lines: what was built, which tests prove it, what you left open and why.
+
+Overriding the line above about not pushing: as your very last action, commit anything still uncommitted and run `git push -u origin wave/ITEM` once (the workflow push that follows may fail for a token reason that is not yours).
+
