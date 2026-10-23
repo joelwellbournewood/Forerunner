@@ -38,11 +38,14 @@ const URL_USERINFO = /([a-z][\w+.-]*:\/\/[^\s:@/]*:)([^\s@/]+)@/gi;
 
 /**
  * Keys whose value is masked whatever its shape: the usual names, `credential(s)`, `passwd`,
- * `passphrase`, and any `*_key` / `*-key` / `*Key` / `*KEY` / bare `key` in any case (private,
- * signing, vault, session keys; `PRIVATE_KEY` and the other env-style names of a dumped
- * `process.env` included); a public key is an identifier and stays. The camel-case form needs
- * a case switch before the suffix (a lower-case letter or digit, then `Key` or `KEY`), so that
- * `monkey`, `hockey` or `MONKEY` is not a credential while `signingKey` and `signingKEY` are.
+ * `passphrase`, any `*_key` / `*-key` / bare `key` in any case (private, signing, vault,
+ * session keys; `PRIVATE_KEY` and the other env-style names of a dumped `process.env`
+ * included), and the camel-case `*Key` / `*KEY` after a lower-case letter or digit
+ * (`signingKey`, `signingKEY`); a public key is an identifier and stays. The camel-case form
+ * needs that case switch before the suffix so that `monkey`, `hockey` or `MONKEY` is not a
+ * credential, which also means an all-capitals name with no separator (`PRIVATEKEY`) is not
+ * matched by name: no rule tells it from `TURKEY`. Its value is still caught when it has one
+ * of the known shapes above.
  */
 const SECRET_KEY_NAME =
   /(secret|token|password|passwd|passphrase|credential|api[_-]?key|authorization|cookie)/i;

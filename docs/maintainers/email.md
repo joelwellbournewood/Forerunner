@@ -184,7 +184,7 @@ runtime's own requests; `EmailPolicy.resolveApproval` for `send_email`, `new_rec
 | `locks.ts` | `KeyedLock`: in-process serialization per agent for the cap checks and command handling |
 | `commands.ts` | `EmailCommandGate`, `EmailCommandHandler` (`handle` once per message, `duplicate`, `error` row), `ModelCommandClassifier`, `parseYesNo`, `pickProject`, `effectivePerEmailCapUsdMicro`, `defaultTaskEstimate` |
 | `tools.ts` | `emailTools`/`registerEmailTools`: `email_send` (`external_send`, high; routes through `EmailPolicy`), `email_list` and `email_read` (`read`, low; `untrusted` output, references only, the owner's command marker replaced by `[command marker]` through `hideCommandMarker`), `email_draft` (`routine_reversible`, low) |
-| `routes.ts` | `createEmailRoutes(deps, app)` / `emailRouteTable(deps)`; with `humanFor` and `identity` set, every route under `/agents/:agentId` refuses (403, `tool_not_allowed`, `details.reason: "not_owner"`) a signed-in human who is not the agent's owner; a mount with `humanFor` and no `identity` fails closed (403, `reason: "identity_port_missing"`, one error log line at construction); every refusal is an `email.settings` audit row with `allowed = false` and the reason as `denied_reason` (`EmailOwnerRefusal`) |
+| `routes.ts` | `createEmailRoutes(deps, app)` / `emailRouteTable(deps)`; with `humanFor` and `identity` set, every route under `/agents/:agentId` refuses (403, `tool_not_allowed`, `details.reason: "not_owner"`) a signed-in human who is not the agent's owner; a mount with `humanFor` and no `identity` fails closed (403, `reason: "identity_port_missing"`, one error log line at construction); every refusal is an `email.settings` audit row with `allowed = false`, the reason as `denied_reason` (`EmailOwnerRefusal`) and `result_summary` `{ status: "refused", reason }`, and stands (403, one `warn` line) when that row cannot be written (ADR 0084) |
 | `ports.ts` | production adapters (`StoreIdentityLookup`, `HumanRequestApprovalPort`, `StoreEventSink`) and fakes (`StaticIdentity`, `FakeApprovalPort`, `FixedRate`, `MemoryEventSink`, `FakeCloudSessions`) |
 | `money.ts` | micro-unit helpers mirroring `@forerunner/billing` (`chfToUsdMicro`, `formatUsdMicroAsChf`, `localDayKey`) |
 
@@ -246,11 +246,20 @@ owner. Three mount shapes exist and the table decides at construction which one 
 | `humanFor` without `identity` | cannot be made | fails closed: 403 `tool_not_allowed`, `reason: "identity_port_missing"` on every route under `/agents/:agentId`, and one `error` log line at construction naming the fix |
 
 A refusal never changes a row and is itself audited: an `email.settings` row with `allowed =
-false`, `denied_reason` the reason, `input_summary` `{ action, refused }` (`read_settings`,
-`update`, `read_sent`, `pause`, `resume`, `rotate_marker`, `read_commands`), `human_id` and
-`author_human` the signed-in human, `agent_id` the agent that was aimed at, so the owner of
-that agent sees the attempt in their audit. The sent log and the command audit filter on their
-own tool names and never pick these rows up.
+false`, `denied_reason` the reason (the stable code, the key to filter on), `input_summary`
+`{ action, refused }` (`read_settings`, `update`, `read_sent`, `pause`, `resume`,
+`rotate_marker`, `read_commands`), `result_summary` `{ status: "refused", reason }` (JSON,
+like the `{ status: "blocked", reason }` of a blocked send, so a reader that parses the
+column never throws on these rows), `human_id` and `author_human` the signed-in human,
+`agent_id` the agent that was aimed at, so the owner of that agent sees the attempt in their
+audit. The sent log and the command audit filter on their own tool names and never pick these
+rows up. The refusal stands whatever the audit store does: when the row cannot be written the
+request still answers 403 with its code and reason, and the gap is one `warn` line
+(`owner-check refusal not audited`, with the agent, the action, the reason and the store's
+message) rather than a 500 carrying that message to the UI. The fail-closed shape and the
+per-request refusal (rather than a throw at construction) are ADR 0084; the daemon must pass
+`identity` beside `humanFor` (`new StoreIdentityLookup(store.agent, store.human)`, as in the
+snippet above), or every Settings -> Email and tray pause/resume call answers 403.
 
 `StartCloudSessionPort.start` receives `humanId`, `capUsdMicro` and `autonomyLevel`; the cloud
 runner picks the owner's billing source (subscription on a personal runner, else an API key,
@@ -345,8 +354,11 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
   the cross-human write and every other route under `/agents/:agentId`, the human's own agent
   and an anonymous request included, logs the misconfiguration once at construction, changes
   nothing and audits each refusal; with `identity` the owner is served, the other human is
-  refused (`not_owner`) on all seven routes with one audited refusal each naming the action,
-  and an unknown agent is refused too; a mount without `humanFor` applies no check.
+  refused (`not_owner`) on all seven routes with one audited refusal each naming the action
+  and carrying `result_summary` `{ status: "refused", reason }`, and an unknown agent is
+  refused too; a mount without `humanFor` applies no check; with an audit store whose
+  `append` throws, both refusals stay 403 `tool_not_allowed` with their reason, nothing
+  changes and the missing row is a `warn` line.
 - `security-email.test.ts` (security review): every test is an attack from a real input and
   asserts what the code does with it: a forged `Authentication-Results` header naming the
   trusted host plus a bogus signature is data; a display name spelling the owner's address;
@@ -423,8 +435,10 @@ same file; the live e2e runs under `tests/e2e/`.
   no longer applies no check (the medium finding of the 2026-10-20/21 review): it fails closed
   and refuses every request under `/agents/:agentId` with `identity_port_missing`, so a daemon
   that forgets the identity port sees every Settings -> Email call fail with 403 and one
-  `error` log line at startup rather than a silent cross-human write. The daemon must pass its
-  identity lookup when it mounts them.
+  `error` log line at startup rather than a silent cross-human write (ADR 0084). The daemon
+  must pass its identity lookup when it mounts them. A refusal whose audit row could not be
+  written is still refused, but its only record is then the `warn` line, not a row the
+  agent's owner sees in their audit.
 - The private command marker is replaced only on the model-facing paths (`email_read`,
   `email_list`, the classifier's subject). The sent log, the `email.command` audit rows and the
   `source.subject` a cloud session is started with keep it; the first two are the owner's

@@ -35,12 +35,14 @@ keeps scheme, user and host; the user may be empty, as in `redis://:password@hos
 `amqp://:password@host`). `redactDeep(data)` applies it to every string at any depth and
 replaces the value under a secret-named key whatever its shape: `isSecretKeyName` matches
 `secret`, `token`, `password`, `passwd`, `passphrase`, `credential(s)`, `api_key`,
-`authorization`, `cookie`, and any `*_key` / `*-key` / `*Key` / `*KEY` / bare `key` in any
-case (`private_key`, `PRIVATE_KEY`, `Private_Key`, `SIGNING_KEY`, `vaultKey`, `signingKEY`, the
-env-style names of a dumped `process.env`), except a public key (`public_key`, `PublicKey`),
-which is an identifier; a word that merely ends in "key" (`monkey`, `MONKEY`) is not a
-credential, which is why the camel-case form needs a case switch before the suffix (a
-lower-case letter or digit, then `Key` or `KEY`). The two rules are pinned by
+`authorization`, `cookie`, any `*_key` / `*-key` / bare `key` in any case (`private_key`,
+`PRIVATE_KEY`, `Private_Key`, `SIGNING_KEY`, the env-style names of a dumped `process.env`),
+and the camel-case `*Key` / `*KEY` after a lower-case letter or digit (`vaultKey`,
+`signingKEY`), except a public key (`public_key`, `PublicKey`), which is an identifier; a word
+that merely ends in "key" (`monkey`, `MONKEY`) is not a credential, which is why the
+camel-case form needs that case switch before the suffix, and why an all-capitals name with
+no separator (`PRIVATEKEY`, `DEPLOYKEY`) is not matched by name (see Known issues). The two
+rules are pinned by
 `test/security-log-critic.test.ts` (verified 2026-10-23: `PRIVATE_KEY`, `Private_Key`,
 `signingKEY`, `redis://:password@host/0` and `amqp://:pw@h` are masked; `public_key` and
 `monkey` stay). There is no depth at which data passes in clear: a cycle is cut with
@@ -68,6 +70,12 @@ upper-case `*_KEY` names, the key-name rule in every case (`PRIVATE_KEY`, `Priva
 
 ## Known issues
 
+- `isSecretKeyName` has no rule for an all-capitals key name with no separator (`PRIVATEKEY`,
+  `SIGNINGKEY`, `DEPLOYKEY`): nothing tells such a name from `TURKEY` or `HOTKEY`, so only the
+  value-shape patterns (a PEM block, a known token prefix, a long base64 run next to the word
+  "key") catch its value; `APIKEY` is matched by `SECRET_KEY_NAME`. Write env names with the
+  underscore (`PRIVATE_KEY`). A rule for the bare form would mask every plain word in
+  capitals, which `security-log-critic.test.ts` pins as staying.
 - `shell.killTree` on Linux only kills the process group when the child was started detached;
   otherwise it falls back to the direct pid. The runtime starts sandboxes detached.
 - Wayland: desktop control is limited to what the xdg-desktop-portal allows.

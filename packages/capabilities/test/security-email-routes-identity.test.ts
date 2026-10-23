@@ -5,8 +5,10 @@
  * agent's email settings, which is the cross-human attack the owner check exists to close.
  * Fixed: such a mount refuses (403, `tool_not_allowed`, `reason: identity_port_missing`) every
  * request under `/agents/:agentId`, and every owner-check refusal is an `email.settings` audit
- * row with `allowed = false`, like the policy's blocked sends.
+ * row with `allowed = false`, like the policy's blocked sends; the refusal stands when that
+ * row cannot be written.
  */
+import type { AuditLogRepo } from "@forerunner/state";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createEmailRoutes,
@@ -138,6 +140,12 @@ describe("email routes: the owner check without an identity port", () => {
       action: "update",
       refused: "identity_port_missing",
     });
+    // The result is JSON like every other email row's (`{ status: "blocked", reason }` of a
+    // blocked send), so a reader that parses `result_summary` never throws on a refusal.
+    expect(JSON.parse(rows[0]?.result_summary ?? "")).toEqual({
+      status: "refused",
+      reason: "identity_port_missing",
+    });
   });
 
   it("every route under /agents/:agentId is refused on such a mount, the human's own agent included; nothing changes", async () => {
@@ -209,7 +217,10 @@ describe("email routes: the owner check without an identity port", () => {
       "rotate_marker",
       "read_commands",
     ]);
-    for (const r of refused) expect(r.human_id).toBe(world.human.id);
+    for (const r of refused) {
+      expect(r.human_id).toBe(world.human.id);
+      expect(JSON.parse(r.result_summary)).toEqual({ status: "refused", reason: "not_owner" });
+    }
     // The owner's own successful change is the only allowed row on their agent.
     const ownRows = await world.store.auditLog.list({
       agentId: world.agentId,
@@ -226,6 +237,49 @@ describe("email routes: the owner check without an identity port", () => {
       params: { agentId: other.agentId },
     });
     expect(res.status).toBe(200);
+    expect(await refusals(world, other.agentId)).toHaveLength(0);
+  });
+
+  // The audit row is written before the 403 is thrown; an audit store that fails must not turn
+  // the refusal into a 500 `internal` with the store's message as the UI's error text. The
+  // request stays refused with its own code and reason, and the missing row is a warn line.
+  it("a refusal stays a 403 tool_not_allowed when the audit store cannot record it; the gap is logged", async () => {
+    world = await emailWorld();
+    const other = await otherHumansAgent(world);
+    // The real repo with `append` failing: `list` still reads what is there (nothing).
+    const failing: AuditLogRepo = Object.create(world.store.auditLog, {
+      append: {
+        value: async () => {
+          throw new Error("audit store unavailable");
+        },
+      },
+    });
+    const cases: [identity: EmailRouteDeps["identity"], reason: string][] = [
+      [world.identity, "not_owner"],
+      [undefined, "identity_port_missing"],
+    ];
+    for (const [identity, reason] of cases) {
+      const app = mount(world, { audit: failing, identity });
+      const { result: res, lines } = await captureLogs(() =>
+        app.call("PUT", "/agents/:agentId/email/settings", {
+          params: { agentId: other.agentId },
+          human: world.human.id,
+          body: { commands: { registeredHumanAddress: "owner@example.test" } },
+        }),
+      );
+      expect(res.status, reason).toBe(403);
+      expect(res.body.error).toMatchObject({
+        code: "tool_not_allowed",
+        details: { agentId: other.agentId, reason },
+      });
+      expect(
+        lines.some((l) => l.startsWith("warn") && l.includes("not audited") && l.includes(reason)),
+        reason,
+      ).toBe(true);
+    }
+    expect((await world.settings.get(other.agentId)).commands.registeredHumanAddress).toBe(
+      "k@example.test",
+    );
     expect(await refusals(world, other.agentId)).toHaveLength(0);
   });
 });

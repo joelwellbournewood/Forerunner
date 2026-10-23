@@ -5,7 +5,7 @@
  * needs no dependency on hono; the orchestrator does `createEmailRoutes(deps, new Hono())` and
  * mounts the result. Every mutation is recorded as an audit row, and so is every refusal of
  * the owner check (an `email.settings` row with `allowed = false`), the way the policy records
- * a blocked send.
+ * a blocked send; a refusal stands whether or not its row could be written.
  */
 import { type Clock, ForerunnerError, log } from "@forerunner/platform";
 import type { AuditLogRepo, JsonObject } from "@forerunner/state";
@@ -108,7 +108,13 @@ export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
       "email routes identify the human but have no identity port: a signed-in human cannot be checked against the agent's owner, so every request under /agents/:agentId is refused until the mount passes `identity`",
     );
   }
-  /** An owner-check refusal is an audit row with allowed = false, like a blocked send. */
+  /**
+   * An owner-check refusal is an audit row with allowed = false, like a blocked send, with the
+   * same JSON result shape (`{ status, reason }`) so a reader that parses `result_summary`
+   * never throws on it. The refusal stands whatever the audit store does: a row that cannot
+   * be written must not turn the 403 into a 500 carrying the store's message, so the failure
+   * is one warn line naming the agent, the action and the reason instead.
+   */
   const recordRefusal = async (
     c: EmailRouteContext,
     agentId: string,
@@ -117,18 +123,27 @@ export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
   ): Promise<void> => {
     if (!deps.audit) return;
     const human = deps.humanFor?.(c) ?? null;
-    await deps.audit.append({
-      tool: EMAIL_SETTINGS_TOOL,
-      allowed: false,
-      denied_reason: reason,
-      agent_id: agentId,
-      human_id: human,
-      input_summary: JSON.stringify({ action, refused: reason }),
-      result_summary: "refused",
-      cost_usd_micro: 0,
-      occurred_at: deps.clock.nowIso(),
-      author_human: human,
-    });
+    try {
+      await deps.audit.append({
+        tool: EMAIL_SETTINGS_TOOL,
+        allowed: false,
+        denied_reason: reason,
+        agent_id: agentId,
+        human_id: human,
+        input_summary: JSON.stringify({ action, refused: reason }),
+        result_summary: JSON.stringify({ status: "refused", reason }),
+        cost_usd_micro: 0,
+        occurred_at: deps.clock.nowIso(),
+        author_human: human,
+      });
+    } catch (e) {
+      logger.warn("owner-check refusal not audited", {
+        agentId,
+        action,
+        reason,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   };
   /** Audits the refusal and returns the error to throw (`throw await refusal(...)`). */
   const refusal = async (
