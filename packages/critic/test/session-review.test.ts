@@ -51,6 +51,9 @@ describe("session review (H.6)", () => {
         estimateUsdMicro: 100_000,
       }));
       await w.store.session.patch(w.ids.session, {
+        // A plan write carries its reason and author (spec B.5).
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
         plan: { items, estimateUsdMicro: 300_000, summary: "three tasks" },
         summary: "Done: 3. All green. Cost: USD 0.30.",
         status: "completed",
@@ -113,6 +116,9 @@ describe("session review (H.6)", () => {
         model: "fake-sonnet",
       });
       await w.store.session.patch(w.ids.session, {
+        // A plan write carries its reason and author (spec B.5).
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
         plan: { items: [], estimateUsdMicro: 0, summary: "" },
         summary: "Done: 1.",
         status: "completed",
@@ -156,6 +162,9 @@ describe("session review (H.6)", () => {
       const draft = await w.newTask({ status: "draft", title: "Draft thing" });
       await w.store.session.patch(w.ids.session, {
         budget_cap_usd_micro: 1_000_000,
+        // A plan write carries its reason and author (spec B.5).
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
         plan: {
           items: [
             { taskId: draft.id, title: draft.title, estimateUsdMicro: 900_000 },
@@ -195,6 +204,9 @@ describe("session review (H.6)", () => {
       const a = await w.newTask({ status: "done", title: "A" });
       const b = await w.newTask({ status: "done", title: "B" });
       await w.store.session.patch(w.ids.session, {
+        // A plan write carries its reason and author (spec B.5).
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
         plan: {
           items: [
             { taskId: a.id, estimateUsdMicro: 50_000 },
@@ -245,6 +257,9 @@ describe("session review (H.6)", () => {
     try {
       const a = await w.newTask({ status: "done", title: "A" });
       await w.store.session.patch(w.ids.session, {
+        // A plan write carries its reason and author (spec B.5).
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
         plan: {
           items: [{ taskId: a.id, title: "A", estimateUsdMicro: 200_000 }],
           estimateUsdMicro: 200_000,

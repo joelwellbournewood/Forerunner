@@ -906,6 +906,9 @@ describe("CriticService: persistence, resolution and patterns (H.3, H.5)", () =>
       const done = await w.newTask({ status: "done", title: "done one" });
       const open = await w.newTask({ status: "in_progress", title: "open one" });
       await w.store.session.patch(w.ids.session, {
+        // A plan write carries its reason and author (spec B.5).
+        reason: "planned for the test",
+        author_agent: w.ids.owner,
         plan: {
           items: [
             { taskId: done.id, title: done.title, estimateUsdMicro: 1000 },
