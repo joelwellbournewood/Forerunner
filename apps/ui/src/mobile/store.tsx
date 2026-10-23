@@ -20,8 +20,13 @@ import {
   type RemoteChatEnvelope,
   type RemoteCommandView,
   type RemotePlanEnvelope,
+  type RemoteVoiceEnvelope,
+  type ReviewVerdictResult,
+  type ReviewView,
   StateApiError,
   type StateClient,
+  type UploadFile,
+  type UploadView,
   verbForPlan,
 } from "../api/state-client.ts";
 import {
@@ -84,6 +89,15 @@ import {
   writeJson,
 } from "./storage.ts";
 import { deviceTimezone, localParts } from "./time.ts";
+import { UploadQueue } from "./uploads.ts";
+import {
+  encodeTurn,
+  type RecordedTurn,
+  type Speaker,
+  type VoiceRecorder,
+  webRecorder,
+  webSpeaker,
+} from "./voice.ts";
 
 /**
  * The phone's state and actions (spec R). One controller owns the state-service client, the
@@ -266,6 +280,13 @@ export interface MobileEnv {
     current(): Promise<string | null>;
     listen(cb: (url: string) => void): () => void;
   } | null;
+  /**
+   * Push-to-talk capture (ADR 0080); absent or null when this page cannot record, and the
+   * Chat screen relays the typed line instead.
+   */
+  recorder?: VoiceRecorder | null;
+  /** Speaks the PC's reply to a voice turn; absent or null = shown only. */
+  speaker?: Speaker | null;
   /** Stream options passed through to the change feed. */
   live?: boolean;
   pollIntervalMs?: number;
@@ -284,6 +305,7 @@ const UNLOCK_WINDOW_KEY = "runnerUnlockWindow";
  * sensor and confirm, and well inside the emulator smoke's 180 s wait for the refusal.
  */
 export const BIOMETRIC_TIMEOUT_MS = 60_000;
+const UPLOADS_KEY = "uploads";
 
 let webSigner: Promise<WebCryptoSigner> | null = null;
 /** One ticket book for the page: the simulated prompt issues, the lazily made signer redeems. */
@@ -324,6 +346,9 @@ export function envFromGlobals(injection: ShellInjection | undefined): MobileEnv
     timezone: deviceTimezone(),
     scan: shell ? scanQr : null,
     deepLink: shell ? shellDeepLink : null,
+    // The shell has no microphone command yet (ADR 0080): there the typed line is relayed.
+    recorder: shell ? null : webRecorder(),
+    speaker: webSpeaker(),
   };
 }
 
@@ -350,6 +375,7 @@ export class MobileController {
   readonly store: MobileStore;
   readonly changeLog: ChangeLog;
   readonly outbox: LocalOutbox;
+  readonly uploads: UploadQueue;
   readonly biometric: BiometricPort;
   readonly runnerKeys: RunnerKeyBridge;
   private client: StateClient;
@@ -379,6 +405,7 @@ export class MobileController {
       (env.inShell ? secureStoreRunnerKeys(env.secure) : noKeyringBridge(NO_KEYRING_REASON));
     this.changeLog = new ChangeLog(env.storage, mobileKey(installId, CHANGES_KEY));
     this.outbox = new LocalOutbox(env.storage, mobileKey(installId, OUTBOX_KEY));
+    this.uploads = new UploadQueue(env.storage, mobileKey(installId, UPLOADS_KEY));
     if (env.biometric === "prompt") {
       const tickets = env.signer.tickets;
       if (!tickets) {
@@ -410,7 +437,12 @@ export class MobileController {
       env.signer,
       { fetch: env.fetch, now: env.now },
     );
-    this.store.dispatch({ type: "patch", patch: { outboxPending: this.outbox.size() } });
+    this.store.dispatch({ type: "patch", patch: { outboxPending: this.pendingCount() } });
+  }
+
+  /** Queued actions plus queued uploads: what the header's "n queued" counts. */
+  pendingCount(): number {
+    return this.outbox.size() + this.uploads.size();
   }
 
   get state(): MobileState {
@@ -545,6 +577,7 @@ export class MobileController {
   async forgetDevice(): Promise<void> {
     await this.dropIdentity();
     this.outbox.clear();
+    this.uploads.clear();
     this.changeLog.clear();
     this.patch({ outboxPending: 0, notice: null });
     this.bumpChanges();
@@ -561,7 +594,7 @@ export class MobileController {
     this.losingAuth = true;
     try {
       await this.dropIdentity();
-      const queued = this.outbox.size();
+      const queued = this.pendingCount();
       const kept =
         queued === 0
           ? ""
@@ -883,7 +916,7 @@ export class MobileController {
           createdAt: new Date(this.env.now()).toISOString(),
           label: `answer to "${request.why.slice(0, 40)}"`,
         });
-        this.patch({ outboxPending: this.outbox.size(), syncMode: "offline" });
+        this.patch({ outboxPending: this.pendingCount(), syncMode: "offline" });
         this.note("Offline: your answer is queued and will be sent when the phone reconnects.");
         return { queued: true };
       }
@@ -918,7 +951,7 @@ export class MobileController {
           createdAt: new Date(this.env.now()).toISOString(),
           label: "read receipt",
         });
-        this.patch({ outboxPending: this.outbox.size(), syncMode: "offline" });
+        this.patch({ outboxPending: this.pendingCount(), syncMode: "offline" });
         return;
       }
       throw error;
@@ -994,7 +1027,7 @@ export class MobileController {
           createdAt: envelope.confirmedAt,
           label: card.what,
         });
-        this.patch({ outboxPending: this.outbox.size(), syncMode: "offline" });
+        this.patch({ outboxPending: this.pendingCount(), syncMode: "offline" });
         this.note(
           "Offline: the change is queued and will reach your PC when the phone reconnects.",
         );
@@ -1054,17 +1087,169 @@ export class MobileController {
           createdAt: new Date(this.env.now()).toISOString(),
           label: `${kind} for ${projectId}`,
         });
-        this.patch({ outboxPending: this.outbox.size(), syncMode: "offline" });
+        this.patch({ outboxPending: this.pendingCount(), syncMode: "offline" });
         return { queued: true };
       }
       throw error;
     }
   }
 
+  // ---------------------------------------------------------------------------------
+  // Uploads (spec R.5; ADR 0080)
+
+  /** The cap the service last reported; null until a list said it. */
+  uploadMaxBytes: number | null = null;
+
+  async loadUploads(projectId: string): Promise<UploadView[]> {
+    const r = await this.client.uploads(projectId);
+    if (r.maxBytes !== null) this.uploadMaxBytes = r.maxBytes;
+    return r.uploads;
+  }
+
+  /**
+   * Send a photo, file or document to the project, signed. Over the known cap it is refused
+   * here, before any byte leaves; unreachable, it is queued under its clientId and sent on
+   * reconnect (the service makes the resend idempotent).
+   */
+  async uploadFile(
+    projectId: string,
+    file: UploadFile,
+    kind = "upload",
+  ): Promise<{ queued: boolean; upload: UploadView | null }> {
+    const cap = this.uploadMaxBytes;
+    if (cap !== null && file.bytes.byteLength > cap) {
+      throw new StateApiError(
+        "payload_too_large",
+        `${file.name} is ${formatBytes(file.bytes.byteLength)}; the limit is ${formatBytes(cap)}`,
+        413,
+        { maxBytes: cap },
+      );
+    }
+    const clientId = newClientId();
+    try {
+      const upload = await this.client.upload(projectId, file, { clientId, kind });
+      return { queued: false, upload };
+    } catch (error) {
+      if (error instanceof StateApiError && error.code === "ui.network") {
+        this.uploads.enqueue({
+          clientId,
+          projectId,
+          file,
+          kind,
+          createdAt: new Date(this.env.now()).toISOString(),
+        });
+        this.patch({ outboxPending: this.pendingCount(), syncMode: "offline" });
+        this.note(
+          `Offline: ${file.name} is queued and will be uploaded when the phone reconnects.`,
+        );
+        return { queued: true, upload: null };
+      }
+      if (error instanceof StateApiError && error.status === 413) {
+        const max = error.details.maxBytes;
+        if (typeof max === "number") this.uploadMaxBytes = max;
+      }
+      throw error;
+    }
+  }
+
+  private async flushUploads(): Promise<void> {
+    const report = await this.uploads.flush(this.client);
+    this.patch({ outboxPending: this.pendingCount() });
+    if (report.sent.length > 0) {
+      this.note(
+        `Uploaded ${report.sent.length} queued file${report.sent.length === 1 ? "" : "s"}.`,
+      );
+    }
+    if (report.rejected.length > 0) {
+      this.note(
+        `${report.rejected.length} queued upload${report.rejected.length === 1 ? " was" : "s were"} refused: ${report.rejected
+          .map((r) => `${r.name} (${r.code})`)
+          .join(", ")}`,
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------------
+  // PR and critic review (spec R.5)
+
+  loadReviews(projectId: string): Promise<ReviewView[]> {
+    return this.client.reviews(projectId);
+  }
+
+  /** The open approval request a verdict on this review answers (the task's), if the inbox has it. */
+  reviewRequest(review: ReviewView): HumanRequestView | null {
+    if (!review.taskId) return null;
+    return (
+      this.state.inbox?.requests.find(
+        (r) => r.status === "open" && r.kind === "approval" && r.taskId === review.taskId,
+      ) ?? null
+    );
+  }
+
+  async commentReview(review: ReviewView, text: string): Promise<void> {
+    await this.client.commentReview(review.id, text);
+  }
+
+  /**
+   * Approve or reject a review. The verdict answers the task's open approval request; when
+   * that request is high risk the biometric prompt runs first and its flag travels inside
+   * the signature (ADR 0045, ADR 0009). Never queued: the verdict needs the request's current
+   * version and, when high risk, a live signature.
+   */
+  async reviewVerdict(
+    review: ReviewView,
+    verdict: "approve" | "reject",
+    comment: string,
+  ): Promise<ReviewVerdictResult> {
+    const request = this.reviewRequest(review);
+    const high = request ? MobileController.isHighRisk(request) : false;
+    const biometric = high
+      ? await this.assertHighRisk(
+          `${verdict === "approve" ? "Approve" : "Reject"}: ${(review.taskTitle ?? review.id).slice(0, 80)}`,
+        )
+      : null;
+    const result = await this.client.reviewVerdict(
+      review.id,
+      verdict,
+      {
+        ...(comment.trim() ? { body: comment.trim() } : {}),
+        ...(request ? { requestVersion: request.version } : {}),
+      },
+      { biometric },
+    );
+    await this.loadInbox();
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------------
+  // Voice (spec R.5, O; ADR 0080)
+
+  /**
+   * One push-to-talk turn relayed to the PC's voice loop as a remote command: the recording
+   * when there is one, else the typed line. The PC's reply comes back as the result.
+   */
+  async sendVoice(
+    input: { recorded: RecordedTurn } | { transcript: string },
+    projectId: string | null,
+  ): Promise<RemoteCommandView> {
+    const envelope: RemoteVoiceEnvelope = {
+      v: 1,
+      kind: "voice",
+      projectId,
+      clientId: newClientId(),
+      ...("recorded" in input
+        ? { audio: encodeTurn(input.recorded) }
+        : { transcript: input.transcript.trim() }),
+    };
+    return this.client.sendRemote({ target: "pc", command: "start", params: envelope });
+  }
+
   async flushOutbox(): Promise<void> {
-    if (this.state.stage !== "paired" || this.outbox.size() === 0) return;
+    if (this.state.stage !== "paired") return;
+    if (this.uploads.size() > 0) await this.flushUploads();
+    if (this.outbox.size() === 0) return;
     const report = await this.outbox.flush(this.client);
-    this.patch({ outboxPending: this.outbox.size() });
+    this.patch({ outboxPending: this.pendingCount() });
     for (const applied of report.applied) {
       // A queued plan's clientId is its change-log entry id; link the remote command now.
       const id = (applied.result as { id?: unknown } | null)?.id;
@@ -1139,4 +1324,10 @@ export function useMobileState<T>(selector: (state: MobileState) => T): T {
 
 export function activeMobileProject(state: MobileState): ProjectCard | null {
   return state.projects.find((p) => p.id === state.activeProjectId) ?? null;
+}
+
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }

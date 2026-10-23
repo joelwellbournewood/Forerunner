@@ -11,8 +11,10 @@ import { HomeScreen } from "./screens/HomeScreen.tsx";
 import { InboxScreen } from "./screens/InboxScreen.tsx";
 import { PairingScreen } from "./screens/PairingScreen.tsx";
 import { RemoteScreen } from "./screens/RemoteScreen.tsx";
+import { ReviewsScreen } from "./screens/ReviewsScreen.tsx";
 import { SessionScreen } from "./screens/SessionScreen.tsx";
 import { SettingsScreen } from "./screens/SettingsScreen.tsx";
+import { UploadScreen } from "./screens/UploadScreen.tsx";
 import {
   activeMobileProject,
   envFromGlobals,
@@ -64,6 +66,8 @@ export function MobileRoutes() {
         <Route path="pair" element={<PairingScreen />} />
         <Route path="inbox" element={<InboxScreen />} />
         <Route path="chat" element={<ChatScreen />} />
+        <Route path="reviews" element={<ReviewsScreen />} />
+        <Route path="upload" element={<UploadScreen />} />
         <Route path="remote" element={<RemoteScreen />} />
         <Route path="changes" element={<ChangesScreen />} />
         <Route path="settings" element={<SettingsScreen />} />
@@ -78,6 +82,8 @@ const NAV = [
   { to: "/", label: "Home", end: true },
   { to: "/inbox", label: "Inbox", end: false },
   { to: "/chat", label: "Chat", end: false },
+  { to: "/reviews", label: "Reviews", end: false },
+  { to: "/upload", label: "Upload", end: false },
   { to: "/remote", label: "Remote", end: false },
   { to: "/settings", label: "Settings", end: false },
 ];

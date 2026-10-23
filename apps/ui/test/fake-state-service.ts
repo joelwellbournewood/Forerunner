@@ -50,6 +50,20 @@ export interface FakeStateOptions {
   pcAutoCompleteMs?: number | null;
   signatureWindowMs?: number;
   now?: () => number;
+  /** The upload size cap the service reports and enforces (default 1 MiB). */
+  uploadMaxBytes?: number;
+  /** The simulated PC has no voice (no STT/TTS pair): voice turns fail with `unavailable`. */
+  voiceUnavailable?: boolean;
+}
+
+/** A failure the simulated PC reports as a failed command. */
+class FakePcError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 export interface FakeDevice {
@@ -109,6 +123,51 @@ interface QueueItem {
   version: number;
 }
 
+export interface FakeUpload {
+  id: string;
+  projectIds: string[];
+  name: string;
+  sizeBytes: number;
+  kind: string;
+  registeredBy: string;
+  createdAt: string;
+  /** Not in the view: what the test inspects. */
+  clientId: string | null;
+  contentType: string;
+  bytes: Uint8Array;
+}
+
+export interface FakeFinding {
+  id: string;
+  reviewId: string;
+  taskId: string | null;
+  severity: string;
+  description: string;
+  requiredAction: string;
+  status: string;
+  resolvedByRun: string | null;
+  version: number;
+}
+
+export interface FakeReview {
+  id: string;
+  projectId: string;
+  taskId: string | null;
+  taskTitle: string | null;
+  prUrl: string | null;
+  sessionId: string | null;
+  criticModel: string;
+  tier: number;
+  grade: number;
+  confidence: number;
+  verdict: string;
+  evidence: unknown[];
+  summary: string;
+  findings: FakeFinding[];
+  createdAt: string;
+  version: number;
+}
+
 interface ChangeEvent {
   seq: number;
   type: string;
@@ -140,6 +199,10 @@ export interface FakeStateState {
   sessions: SessionView[];
   events: EventView[];
   queue: QueueItem[];
+  uploads: FakeUpload[];
+  reviews: FakeReview[];
+  /** Review comments and verdicts as the service turns them into messages to the agent. */
+  reviewMessages: { reviewId: string; kind: "comment" | "approve" | "reject"; body: string }[];
   calls: RecordedCall[];
   /** Access log lines, as a real service would log them: never a token or a key. */
   log: string[];
@@ -289,6 +352,86 @@ export const FAKE_REQUESTS: HumanRequestView[] = [
   },
 ];
 
+export const FAKE_REVIEWS: FakeReview[] = [
+  {
+    id: "rev_parser",
+    projectId: "proj_pharma",
+    taskId: "task_1",
+    taskTitle: "Feed parser",
+    prUrl: "https://git.example.test/pharmawatch/pull/12",
+    sessionId: "sess_night",
+    criticModel: "critic-model",
+    tier: 2,
+    grade: 82,
+    confidence: 0.8,
+    verdict: "accept",
+    evidence: [],
+    summary: "Parser handles the three feeds; one fixture is missing.",
+    findings: [
+      {
+        id: "find_fixture",
+        reviewId: "rev_parser",
+        taskId: "task_1",
+        severity: "minor",
+        description: "The EMA feed has no fixture.",
+        requiredAction: "Add a recorded EMA fixture.",
+        status: "open",
+        resolvedByRun: null,
+        version: 1,
+      },
+      {
+        id: "find_retry",
+        reviewId: "rev_parser",
+        taskId: "task_1",
+        severity: "major",
+        description: "Network errors are swallowed without a retry.",
+        requiredAction: "Retry twice, then report.",
+        status: "open",
+        resolvedByRun: null,
+        version: 1,
+      },
+    ],
+    createdAt: "2026-10-20T06:40:00.000Z",
+    version: 1,
+  },
+  {
+    id: "rev_deploy",
+    projectId: "proj_pharma",
+    taskId: "task_2",
+    taskTitle: "Deploy pipeline",
+    prUrl: "https://git.example.test/pharmawatch/pull/13",
+    sessionId: null,
+    criticModel: "critic-model",
+    tier: 3,
+    grade: 74,
+    confidence: 0.6,
+    verdict: "revise",
+    evidence: [],
+    summary: "Deploys to production without a manual gate.",
+    findings: [],
+    createdAt: "2026-10-20T05:40:00.000Z",
+    version: 1,
+  },
+  {
+    id: "rev_game",
+    projectId: "proj_game",
+    taskId: "task_9",
+    taskTitle: "Trading loop",
+    prUrl: null,
+    sessionId: null,
+    criticModel: "critic-model",
+    tier: 1,
+    grade: 90,
+    confidence: 0.9,
+    verdict: "accept",
+    evidence: [],
+    summary: "Clean.",
+    findings: [],
+    createdAt: "2026-10-19T20:00:00.000Z",
+    version: 1,
+  },
+];
+
 export const FAKE_MESSAGES: MessageView[] = [
   {
     id: "msg_handoff",
@@ -367,6 +510,9 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
     sessions: [],
     events: [],
     queue: [],
+    uploads: [],
+    reviews: clone(FAKE_REVIEWS),
+    reviewMessages: [],
     calls: [],
     log: [],
     seq: 0,
@@ -453,7 +599,12 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
       later(() => {
         const current = state.remoteCommands.find((r) => r.id === id);
         if (current?.status !== "picked_up") return;
-        complete(current, executeOnPc(current));
+        try {
+          complete(current, executeOnPc(current));
+        } catch (e) {
+          if (!(e instanceof FakePcError)) throw e;
+          complete(current, { error: e.message, code: e.code }, true);
+        }
       }, pcAutoCompleteMs);
     }, pcAutoCompleteMs);
   };
@@ -500,6 +651,33 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
     const params = row.params;
     if (params.kind === "chat" && typeof params.text === "string") {
       return { reply: `PC agent: I read "${params.text}". Nothing to do.` };
+    }
+    if (params.kind === "voice") {
+      // The PC's voice loop (ADR 0080): a recording is "transcribed" by its length, a typed
+      // line is taken as said; the audio leaves the row once the turn ran.
+      const audio = params.audio as { pcm?: string; sampleRate?: number } | undefined;
+      const said =
+        typeof params.transcript === "string"
+          ? params.transcript
+          : `(${audio?.pcm ? Buffer.from(audio.pcm, "base64").byteLength : 0} bytes of audio)`;
+      if (audio?.pcm) {
+        row.params = {
+          ...params,
+          audio: { dropped: true, sampleRate: audio.sampleRate ?? null },
+        };
+      }
+      if (options.voiceUnavailable) {
+        throw new FakePcError("unavailable", "voice is not available on this PC");
+      }
+      const reply = `PC voice: you said ${said}.`;
+      return {
+        kind: "voice",
+        source: audio?.pcm ? "audio" : "text",
+        said,
+        reply,
+        heard: reply,
+        pending: null,
+      };
     }
     if (params.kind === "plan" && Array.isArray(params.plan)) {
       const executed: string[] = [];
@@ -739,6 +917,9 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
     state.sessions = [];
     state.events = [];
     state.queue = [];
+    state.uploads = [];
+    state.reviews = clone(FAKE_REVIEWS);
+    state.reviewMessages = [];
     state.calls = [];
     state.log = [];
     state.replay.clear();
@@ -1192,6 +1373,156 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
     );
     return c.json(row, 201);
   });
+
+  // ---------------------------------------------------------------------------------
+  // Uploads (the service's `/projects/:id/uploads`, ADR 0080)
+
+  const uploadMaxBytes = options.uploadMaxBytes ?? 1024 * 1024;
+  const uploadView = (u: FakeUpload) => ({
+    id: u.id,
+    projectIds: u.projectIds,
+    name: u.name,
+    sizeBytes: u.sizeBytes,
+    kind: u.kind,
+    registeredBy: u.registeredBy,
+    createdAt: u.createdAt,
+  });
+  app.get("/projects/:id/uploads", (c) => {
+    const projectId = c.req.param("id");
+    return c.json({
+      uploads: state.uploads.filter((u) => u.projectIds.includes(projectId)).map(uploadView),
+      maxBytes: uploadMaxBytes,
+    });
+  });
+  app.post("/projects/:id/uploads", async (c) => {
+    const p = principalOf(c);
+    const signedError = requireSigned(c, p);
+    if (signedError) return signedError;
+    const scopeError = requireScope(c, p, "write:queue");
+    if (scopeError) return scopeError;
+    const projectId = c.req.param("id");
+    if (!state.projects.some((x) => x.id === projectId))
+      return errorBody(c, 404, "not_found", "project not found");
+    const form = await c.req.parseBody({ all: false });
+    // Duck-typed: under jsdom the global File is not the class Hono's parser makes.
+    const file = form.file as unknown as
+      | { name: string; type: string; size: number; arrayBuffer(): Promise<ArrayBuffer> }
+      | string
+      | undefined;
+    if (!file || typeof file === "string" || typeof file.arrayBuffer !== "function")
+      return errorBody(c, 400, "validation", "multipart field 'file' is required");
+    if (file.size > uploadMaxBytes) {
+      return c.json(
+        {
+          code: "payload_too_large",
+          message: "upload exceeds the size cap",
+          details: { maxBytes: uploadMaxBytes },
+        },
+        413,
+      );
+    }
+    const clientId = typeof form.clientId === "string" ? form.clientId : null;
+    const registeredBy = p.kind === "device" ? p.device.ownerHumanId : "runtime";
+    if (clientId) {
+      const existing = state.uploads.find(
+        (u) => u.clientId === clientId && u.registeredBy === registeredBy,
+      );
+      if (existing) return c.json(uploadView(existing), 200);
+    }
+    const row: FakeUpload = {
+      id: nextId("asset"),
+      projectIds: [projectId],
+      name: (file.name || "upload").replace(/[^A-Za-z0-9._-]+/g, "_"),
+      sizeBytes: file.size,
+      kind: typeof form.kind === "string" && form.kind ? form.kind : "upload",
+      registeredBy,
+      createdAt: nowIso(),
+      clientId,
+      contentType: file.type,
+      bytes: new Uint8Array(await file.arrayBuffer()),
+    };
+    state.uploads.push(row);
+    return c.json(uploadView(row), 201);
+  });
+
+  // ---------------------------------------------------------------------------------
+  // Reviews (the service's `/reviews`): PRs with the critic's findings, comment, verdict
+
+  const reviewView = (r: FakeReview) => {
+    const { projectId: _projectId, ...view } = r;
+    return view;
+  };
+  app.get("/reviews", (c) => {
+    const projectId = c.req.query("projectId");
+    const rows = state.reviews.filter((r) => !projectId || r.projectId === projectId);
+    return c.json({ reviews: rows.map(reviewView) });
+  });
+  app.get("/reviews/:id", (c) => {
+    const row = state.reviews.find((r) => r.id === c.req.param("id"));
+    if (!row) return errorBody(c, 404, "not_found", "review not found");
+    return c.json(reviewView(row));
+  });
+  app.post("/reviews/:id/comment", async (c) => {
+    const p = principalOf(c);
+    const signedError = requireSigned(c, p);
+    if (signedError) return signedError;
+    const scopeError = requireScope(c, p, "write:approvals");
+    if (scopeError) return scopeError;
+    const row = state.reviews.find((r) => r.id === c.req.param("id"));
+    if (!row) return errorBody(c, 404, "not_found", "review not found");
+    const body = (await c.req.json().catch(() => null)) as { body?: string } | null;
+    if (!body?.body) return errorBody(c, 400, "validation", "body is required");
+    state.reviewMessages.push({ reviewId: row.id, kind: "comment", body: body.body });
+    return c.json({ messageId: nextId("msg") }, 201);
+  });
+  for (const verdict of ["approve", "reject"] as const) {
+    app.post(`/reviews/:id/${verdict}`, async (c) => {
+      const p = principalOf(c);
+      const signedError = requireSigned(c, p);
+      if (signedError) return signedError;
+      const scopeError = requireScope(c, p, "write:approvals");
+      if (scopeError) return scopeError;
+      const row = state.reviews.find((r) => r.id === c.req.param("id"));
+      if (!row) return errorBody(c, 404, "not_found", "review not found");
+      const body = ((await c.req.json().catch(() => null)) ?? {}) as {
+        body?: string;
+        requestVersion?: number;
+      };
+      // The open approval request on the task is answered with the verdict; a high-risk
+      // one needs the biometric flag inside the signature, as `/requests/:id/answer`.
+      const request = state.requests.find(
+        (r) => r.status === "open" && r.kind === "approval" && r.taskId === row.taskId,
+      );
+      if (request) {
+        if (request.risk === "high" && p.kind === "device" && !p.biometric) {
+          return errorBody(
+            c,
+            403,
+            "biometric_required",
+            "high-risk confirmation needs the biometric assertion flag",
+          );
+        }
+        const version = body.requestVersion ?? request.version;
+        if (version !== request.version)
+          return errorBody(c, 409, "version_conflict", "stale version");
+        request.status = "answered";
+        request.answer = { decision: verdict, comment: body.body ?? "", reviewId: row.id };
+        request.version += 1;
+        announce(
+          "human_request.changed",
+          { id: request.id, version: request.version, status: request.status },
+          { humanId: HUMAN_J.id, projectId: request.projectId },
+        );
+      }
+      state.reviewMessages.push({ reviewId: row.id, kind: verdict, body: body.body ?? "" });
+      announce(
+        "review.changed",
+        { id: row.id, verdictFromHuman: verdict },
+        { humanId: HUMAN_J.id, projectId: row.projectId },
+      );
+      return c.json({ messageId: nextId("msg"), answeredRequestId: request?.id ?? null });
+    });
+  }
 
   // ---------------------------------------------------------------------------------
   // Remote commands

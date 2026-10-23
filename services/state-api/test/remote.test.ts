@@ -219,6 +219,29 @@ describe("remote commands", () => {
     expect(await h.store.remoteCommand.count()).toBe(7);
   });
 
+  it("a phone's push-to-talk turn of the longest relayed length fits the JSON body cap (ADR 0080)", async () => {
+    // 5 s of 16 kHz mono 16-bit PCM, base64: the PC's VOICE_RELAY_MAX_MS.
+    const pcm = Buffer.alloc(16_000 * 2 * 5, 7).toString("base64");
+    const envelope = (audio: string) => ({
+      target: "pc",
+      command: "start",
+      params: {
+        v: 1,
+        kind: "voice",
+        projectId: h.seed.project.id,
+        clientId: `voice-${audio.length}`,
+        audio: { pcm: audio, sampleRate: 16_000, channels: 1, durationMs: 5_000 },
+      },
+    });
+    const ok = await phone.post("/remote/commands", envelope(pcm));
+    expect(ok.status).toBe(201);
+    const row = await json<{ params: { audio: { pcm: string } } }>(ok);
+    expect(row.params.audio.pcm).toHaveLength(pcm.length);
+    // Twice as long is over the body cap: refused, never stored.
+    const tooLong = await phone.post("/remote/commands", envelope(pcm + pcm));
+    expect(tooLong.status).toBe(413);
+  });
+
   it("validates the command name and the target device's owner", async () => {
     expect(
       (await phone.post("/remote/commands", { target: "pc", command: "format-disk", params: {} }))
