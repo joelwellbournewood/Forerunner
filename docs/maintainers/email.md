@@ -1,8 +1,9 @@
 # Agent email
 
 > Status: implemented in `packages/capabilities/src/email/` (phase 6). The orchestrator wires
-> the ports listed under "Ports to wire"; the cloud runner's mail watcher calls
-> `Mailbox.watch` and `EmailCommandHandler.handle`.
+> the ports listed under "Ports to wire" and mounts the routes (ADR 0066); the cloud runner's
+> mail watcher calls `Mailbox.watch` and `EmailCommandHandler.handle`; the Settings ->
+> Capabilities -> Email page is `apps/ui/src/pages/EmailSettingsPage.tsx` (apps.md).
 
 ## Purpose
 
@@ -182,9 +183,9 @@ runtime's own requests; `EmailPolicy.resolveApproval` for `send_email`, `new_rec
 | `auth.ts` | `AuthVerifier` port and the three verifiers |
 | `mailbox.ts` | `Mailbox` interface, `ImapSmtpMailbox` (imapflow + nodemailer, IDLE push with a polling fallback, credentials resolved per call through `MailboxSecrets`, library errors scrubbed), `defaultSmtpFactory` (implicit TLS when `secure`, else `requireTLS`: STARTTLS mandatory, never `ignoreTLS`), `loopbackSmtpFactory` (plaintext, 127.0.0.1/::1/localhost only, refuses any other host; the `TestMailbox` default), `TestMailbox` over the testenv server, `pollLoop`, `buildOutboundRaw` |
 | `locks.ts` | `KeyedLock`: in-process serialization per agent for the cap checks and command handling |
-| `commands.ts` | `EmailCommandGate`, `EmailCommandHandler` (`handle` once per message, `duplicate`, `error` row), `ModelCommandClassifier`, `parseYesNo`, `pickProject`, `effectivePerEmailCapUsdMicro`, `defaultTaskEstimate` |
+| `commands.ts` | `EmailCommandGate`, `EmailCommandHandler` (`handle` once per message, `duplicate`, `error` row), `emailCommandAudit` / `emailCommandRows` (the command audit for the UI as a reader over the audit log alone, `EmailCommandAuditRow`; the handler's `commandAudit` delegates to it, the daemon serves it without a handler), `ModelCommandClassifier`, `parseYesNo`, `pickProject`, `effectivePerEmailCapUsdMicro`, `defaultTaskEstimate` |
 | `tools.ts` | `emailTools`/`registerEmailTools`: `email_send` (`external_send`, high; routes through `EmailPolicy`), `email_list` and `email_read` (`read`, low; `untrusted` output, references only, the owner's command marker replaced by `[command marker]` through `hideCommandMarker`), `email_draft` (`routine_reversible`, low) |
-| `routes.ts` | `createEmailRoutes(deps, app)` / `emailRouteTable(deps)`; with `humanFor` and `identity` set, every route under `/agents/:agentId` refuses (403, `tool_not_allowed`) a signed-in human who is not the agent's owner |
+| `routes.ts` | `createEmailRoutes(deps, app)` / `emailRouteTable(deps)`; with `humanFor` and `identity` set, every route under `/agents/:agentId` refuses (403, `tool_not_allowed`) a signed-in human who is not the agent's owner. The daemon mounts the table with both (`packages/runtime/src/daemon/server.ts`, ADR 0066); the seven routes are in `DAEMON_ROUTES` and their views in `api-types.ts` |
 | `ports.ts` | production adapters (`StoreIdentityLookup`, `HumanRequestApprovalPort`, `StoreEventSink`) and fakes (`StaticIdentity`, `FakeApprovalPort`, `FixedRate`, `MemoryEventSink`, `FakeCloudSessions`) |
 | `money.ts` | micro-unit helpers mirroring `@forerunner/billing` (`chfToUsdMicro`, `formatUsdMicroAsChf`, `localDayKey`) |
 
@@ -272,6 +273,20 @@ and `external_send`; the agent's settings row (`email:<agentId>`) is the spec's 
 the catalog entry is the panel's. `RuntimeApp.capabilities.email` exposes the ports and the
 presence switch. The email command watcher stays on the cloud runner.
 
+The daemon mounts `emailRouteTable()` (ADR 0066; `server.ts`, adapted to Hono's context like
+the desktop routes) over the same ports: `settings`, `sentLog` and `identity` from
+`rt.capabilities.email.ports`, `audit: rt.store.auditLog`, `humanFor: () => rt.human.id` (the
+daemon's single human is the signed-in human) and `commandAudit: emailCommandAudit({ auditLog,
+clock })`. So `GET|PUT /agents/:agentId/email/settings`, `GET .../sent`, `POST .../pause`,
+`POST .../resume`, `POST .../rotate-marker` and `GET .../commands` are served behind the
+bearer check, another human's agent and an unknown id answer 403 before any read or write,
+every change is one `email.settings` audit row, and the tray's click (`apps/desktop`,
+"Pause email") flips `settings.paused` so the policy holds the very next send. The views the
+routes serve (`EmailSettingsView`, `EmailSentView`, `EmailCommandsView`, `EmailPausedView`,
+`EmailMarkerView`) are the daemon's browser-safe copy of the schemas here;
+`packages/runtime/test/email-routes-wiring.test.ts` parses the daemon's answer with both and
+compares the key sets, so a field added on one side fails there.
+
 ## How to change it
 
 - New blocked class: add the rule list in `policy.ts`, extend `BlockedClass`, add a case to the
@@ -322,6 +337,15 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
 - `email-routes.test.ts`: the seven routes over a fake app: settings GET/PUT with audit and
   validation, pause/resume enforced by the policy, marker rotation invalidates the old marker,
   sent log newest first, command audit.
+- `packages/runtime/test/email-routes-wiring.test.ts` (runtime, ADR 0066): the seven routes
+  on the composed daemon behind the bearer check and listed in `DAEMON_ROUTES`; the daemon's
+  view and the capability's schema agree on the key sets; `PUT` picks the mode and the mailbox
+  (a credential value refused, references kept), the policy sends to a stranger at once, one
+  `email.settings` row by the daemon's human; the tray's `pause` holds the next send through
+  the policy as `queued` and `resume` releases it, with the `pause` and `resume` rows; the sent
+  log and the command audit (rows written as the runner's handler writes them) newest first
+  with the limit; `rotate-marker`; another human's agent and an unknown id refused with 403
+  on every route and no settings row created.
 - `security-email.test.ts` (security review): every test is an attack from a real input and
   asserts what the code does with it: a forged `Authentication-Results` header naming the
   trusted host plus a bogus signature is data; a display name spelling the owner's address;
@@ -362,11 +386,12 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
   under 60 s and the capped cloud session, watched mailbox end to end, ask-which-project then
   threaded answer, note, attachments never opened, per-email cap, daily task cap with rollover,
   injection flagged and not acted on (scenario 6), paused, unclear, completion summary, command
-  audit); idempotency and serialization (the same message handled twice acts once and is
-  marked seen, two concurrent deliveries act once, a watcher restart with catch-up replays
-  nothing, the daily task cap holds under concurrent commands, a stranger's subject line is
-  redacted in the audit rows); approvals by reply with the same checks, autonomy decided in
-  code, policy approvals by reply sent once.
+  audit, and `emailCommandAudit` over the audit log alone answering the handler's rows, the
+  limit, and nothing for another agent); idempotency and serialization (the same message
+  handled twice acts once and is marked seen, two concurrent deliveries act once, a watcher
+  restart with catch-up replays nothing, the daily task cap holds under concurrent commands, a
+  stranger's subject line is redacted in the audit rows); approvals by reply with the same
+  checks, autonomy decided in code, policy approvals by reply sent once.
 
 Phase 6 gate evidence ("an emailed task is acknowledged within 1 minute and completed in the
 cloud; a spoofed or forwarded email is ignored"): `email-commands.test.ts` "gate scenario" and
@@ -390,14 +415,16 @@ same file; the live e2e runs under `tests/e2e/`.
   does), or add an IMAP flag claim (`\Flagged` set-and-check) if several must share one.
 - Sends held while paused are not resent on resume (see limit 5); the owner's record is the
   `email.queued` rows.
-- The daemon mounts no email settings routes yet (`createEmailRoutes` is a table for the
-  caller's app); the settings row is written by the cloud runner's routes, the CLI or a test
-  through `EmailSettingsStore`, and the daemon picks a changed mode or mailbox up at the next
-  session start (`emailPresence`), the policy at the next call.
+- The daemon picks a changed mode or mailbox up at the next session start (`emailPresence`:
+  the tools join or leave the run), the policy at the next call; a session already running
+  keeps the tools it was offered and the policy refuses the next send.
 - The routes' owner check needs both `humanFor` and `identity`: a mount with `humanFor` alone
   cannot tell the humans apart, warns once in the log and applies no owner check (every
-  agent's settings stay reachable to any signed-in human, as before). The daemon must pass
-  its identity lookup when it mounts them.
+  agent's settings stay reachable to any signed-in human, as before). The daemon passes both
+  (`server.ts`, ADR 0066); any other host of the table must too.
+- A mode change from the page is not a change-log row and has no undo: its record is the
+  `email.settings` audit row (ADR 0066). Wrapping the `PUT` in an `email.mode` registry
+  command is a later change to `packages/commands`.
 - The private command marker is replaced only on the model-facing paths (`email_read`,
   `email_list`, the classifier's subject). The sent log, the `email.command` audit rows and the
   `source.subject` a cloud session is started with keep it; the first two are the owner's
@@ -418,7 +445,11 @@ In the daemon (ADR 0047, `packages/runtime/test/capabilities-wiring.test.ts`): L
 S.17 (off offers nothing, read only sends nothing: absent at run start, refused and audited
 under a running session), S.20 (full discretion sends to a stranger inside the limits), S.25
 (an inbound instruction is reported, never acted on), S.26 (the `email.send` row), S.27 (the
-signature). In the module:
+signature); (ADR 0066, `packages/runtime/test/email-routes-wiring.test.ts`): S.15 (the mode
+per agent through the daemon's routes, the owner check), S.28 (the tray's pause route holds
+the next send), S.29 (full discretion picked through the route), T.14 (the command audit
+served newest first); the page itself is `apps/ui/test/email-settings.test.tsx` (apps.md).
+In the module:
 S.1, S.2, S.4 (mailbox credentials by reference, values scrubbed), S.6 (paid sign-ups, terms,
 always-human classes through `requestCommandApproval`), S.9 (audit row per outward action),
 S.15, S.16, S.17, S.18, S.19, S.20, S.21, S.22, S.23, S.24, S.25, S.26, S.27, S.28 (the flag
@@ -427,9 +458,11 @@ app's), T.1, T.2, T.3, T.4, T.5, T.6, T.7, T.8, T.9, T.10, T.11, T.12, T.14. T.1
 runner's (the port passes the human id so the runner can pick the billing source).
 
 Requirements close-out (2026-10-20): S.16 to S.27 are `done` on the suites above plus
-`closeout-email.test.ts`; S.15, S.28 and S.29 stay `in progress` because the daemon mounts no
-email routes and `apps/ui` has no Settings -> Capabilities -> Email page (the mode picker, the
-full-discretion warning and the tray's pause route), see `docs/status/BLOCKERS.md`.
+`closeout-email.test.ts`. S.15, S.28 and S.29 closed on 2026-10-23 (ADR 0066): the daemon
+mounts the routes (`email-routes-wiring.test.ts`) and `apps/ui` has the Settings ->
+Capabilities -> Email page with the mode picker per agent, the full-discretion sentence before
+the change and in the confirmation, pause and resume, the limits, the allowlist, the mailbox
+by reference, the marker and the lists (`apps/ui/test/email-settings.test.tsx`).
 
 Email commands close-out (2026-10-20): T.3 to T.12 are `done` on `email-commands.test.ts`,
 `email-auth.test.ts`, `email-inbound.test.ts`, `email-settings.test.ts`, `email-routes.test.ts`
@@ -438,5 +471,7 @@ the acknowledgement within a minute, the completion in the thread). T.1 stays `i
 `closeout-email-commands.test.ts` proves the toggle and the replies in every mode that reads
 mail, but in mode `off` the policy refuses even the reply to the owner while the runner's
 watcher reads only the command toggle, a conflict inside the spec that an ADR has to settle.
-T.14 stays `in progress`: the audit row and `GET .../email/commands` exist, no app mounts or
-shows them. Both have rows in `docs/status/BLOCKERS.md`.
+T.14 closed on 2026-10-23: the daemon serves `GET .../email/commands` from the shared state
+(`emailCommandAudit`, `email-routes-wiring.test.ts`) and the page lists every command with
+when, from, the interpretation, the result and the reason it was ignored, newest first
+(`email-settings.test.tsx`). T.1 keeps its row in `docs/status/BLOCKERS.md`.

@@ -1012,6 +1012,133 @@ export type DaemonSseEvent =
  * `Authorization: Bearer <token>` where the token comes from the daemon file in the runtime
  * directory (desktop shell) or from a device pairing (phone, web).
  */
+// ---------------------------------------------------------------------------------------------
+// Agent email (spec S.15 to S.29, T.14): the Settings -> Capabilities -> Email page
+
+export const EMAIL_MODES = [
+  "off",
+  "read_only",
+  "draft_only",
+  "allowlist",
+  "full_discretion",
+] as const;
+export type EmailMode = (typeof EMAIL_MODES)[number];
+
+/**
+ * The agent's email configuration as `GET|PUT /agents/:agentId/email/settings` serve it: the
+ * daemon's browser-safe copy of `AgentEmailConfigSchema` in
+ * `packages/capabilities/src/email/types.ts` (which pulls `@forerunner/platform`). Field for
+ * field; the mirror is more lenient (plain strings where the capability validates addresses,
+ * domains, secret references and the marker) but never narrower.
+ * `test/email-routes-wiring.test.ts` parses the daemon's answer with both and compares the
+ * key sets so drift fails before a screen does. Mailbox credentials are secret references
+ * (`secret:<name>`), never values: the capability refuses anything else on PUT.
+ */
+export const EmailImapView = z.object({
+  host: z.string(),
+  port: z.number().int(),
+  secure: z.boolean(),
+  user: z.string(),
+  passwordRef: z.string(),
+  folder: z.string(),
+  draftsFolder: z.string(),
+});
+export const EmailSmtpView = z.object({
+  host: z.string(),
+  port: z.number().int(),
+  secure: z.boolean(),
+  user: z.string(),
+  passwordRef: z.string(),
+});
+export const EmailMailboxView = z.object({
+  /** The agent's own address, never the human's personal inbox (S.15). */
+  address: z.string(),
+  imap: EmailImapView.nullable(),
+  smtp: EmailSmtpView.nullable(),
+});
+export type EmailMailboxView = z.infer<typeof EmailMailboxView>;
+export const EmailSendingSettingsView = z.object({
+  mode: z.enum(EMAIL_MODES),
+  allowlist: z.object({ addresses: z.array(z.string()), domains: z.array(z.string()) }),
+  dailySendCap: z.number().int().min(0),
+  perRecipientDailyCap: z.number().int().min(0),
+  signature: z.object({ enabled: z.boolean(), text: z.string() }),
+  /** One-click pause (S.28): every send is held while true. */
+  paused: z.boolean(),
+  dailyDigest: z.boolean(),
+  mailbox: EmailMailboxView.nullable(),
+});
+export const EmailCommandSettingsView = z.object({
+  enabled: z.boolean(),
+  registeredHumanAddress: z.string().nullable(),
+  /** The private subject tag, e.g. "[FR-7k2q]"; `POST .../email/rotate-marker` replaces it. */
+  marker: z.string(),
+  pollIntervalMs: z.number().int(),
+  perEmailCapChfMicro: z.number().int(),
+  perEmailCapUsdMicro: z.number().int().nullable(),
+  dailyTaskCap: z.number().int(),
+  autonomyLevel: z.number().int().min(0).max(4),
+});
+export const EmailSettingsView = z.object({
+  settings: EmailSendingSettingsView,
+  commands: EmailCommandSettingsView,
+});
+export type EmailSettingsView = z.infer<typeof EmailSettingsView>;
+
+/** The PUT body: a partial on either half (`AgentEmailConfigPatch`); the capability merges and validates. */
+export interface EmailSettingsPatchBody {
+  settings?: Partial<
+    Omit<z.infer<typeof EmailSendingSettingsView>, "mailbox"> & {
+      mailbox: {
+        address: string;
+        imap: Partial<z.infer<typeof EmailImapView>> | null;
+        smtp: Partial<z.infer<typeof EmailSmtpView>> | null;
+      } | null;
+    }
+  >;
+  commands?: Partial<z.infer<typeof EmailCommandSettingsView>>;
+}
+
+/** One sent copy as `GET /agents/:agentId/email/sent` lists it (S.26), newest first. */
+export const EmailSentRowView = z.looseObject({
+  id: z.string(),
+  kind: z.string(),
+  messageId: z.string(),
+  to: z.array(z.string()),
+  cc: z.array(z.string()),
+  subject: z.string(),
+  text: z.string(),
+  mode: z.string(),
+  signature: z.boolean(),
+  toHuman: z.boolean(),
+  sentAt: z.string(),
+});
+export type EmailSentRowView = z.infer<typeof EmailSentRowView>;
+export const EmailSentView = z.object({ rows: z.array(EmailSentRowView), since: z.string() });
+export type EmailSentView = z.infer<typeof EmailSentView>;
+
+/**
+ * One email command as `GET /agents/:agentId/email/commands` lists it (T.14): the email, its
+ * interpretation and its result are one `email.command` audit row; `obeyed` false carries the
+ * gate's reason in `deniedReason` (`ignored: <reason>`).
+ */
+export const EmailCommandRowView = z.object({
+  id: z.string(),
+  occurredAt: z.string(),
+  obeyed: z.boolean(),
+  deniedReason: z.string().nullable(),
+  sessionId: z.string().nullable(),
+  email: z.record(z.string(), z.unknown()),
+  result: z.record(z.string(), z.unknown()),
+});
+export type EmailCommandRowView = z.infer<typeof EmailCommandRowView>;
+export const EmailCommandsView = z.object({ rows: z.array(EmailCommandRowView) });
+export type EmailCommandsView = z.infer<typeof EmailCommandsView>;
+export const EmailPausedView = z.object({ paused: z.boolean() });
+export type EmailPausedView = z.infer<typeof EmailPausedView>;
+export const EmailMarkerView = z.object({ marker: z.string() });
+export type EmailMarkerView = z.infer<typeof EmailMarkerView>;
+
 export const DAEMON_ROUTES = {
   health: "GET /health",
   me: "GET /me",
@@ -1121,6 +1248,19 @@ export const DAEMON_ROUTES = {
   dataAsset: "GET /data/:id (DataAssetView)",
   dataSample: "GET /data/:id/sample?rows=&bytes= (DataSample, capped by the data limits)",
   removeDataAsset: "DELETE /data/:id ({ ok, id, deletedFromDisk }; needs the daemon's human)",
+  emailSettings:
+    "GET /agents/:agentId/email/settings (EmailSettingsView; the daemon's human must own the agent, else 403 tool_not_allowed)",
+  updateEmailSettings:
+    "PUT /agents/:agentId/email/settings { settings?, commands? } (EmailSettingsView after the merge; 400 validation, credentials as secret references only; one email.settings audit row)",
+  emailSent:
+    "GET /agents/:agentId/email/sent?limit=&since= (EmailSentView: the owner's copies, newest first, 7 days by default)",
+  pauseEmail:
+    "POST /agents/:agentId/email/pause (EmailPausedView { paused: true }; every send is held until resume; the tray's one click, S.28)",
+  resumeEmail: "POST /agents/:agentId/email/resume (EmailPausedView { paused: false })",
+  rotateEmailMarker:
+    "POST /agents/:agentId/email/rotate-marker (EmailMarkerView; the old command marker stops working at once)",
+  emailCommands:
+    "GET /agents/:agentId/email/commands?limit= (EmailCommandsView: every email command with its interpretation and result, newest first, T.14)",
   voiceStatus:
     "GET /voice/status (VoiceStatusView: available with the providers picked, or the reason voice is unavailable)",
   startVoiceSession:
