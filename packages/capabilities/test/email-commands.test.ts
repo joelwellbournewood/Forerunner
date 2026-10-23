@@ -446,6 +446,8 @@ describe("EmailCommandHandler: what it does with the owner's mail", () => {
     world = await emailWorld({ projects: ["Sample", "Tiny"] });
     const tiny = world.projects[1];
     if (!tiny) throw new Error("no Tiny project");
+    const sample = world.projects[0];
+    if (!sample) throw new Error("no Sample project");
     await world.store.project.update(tiny.id, tiny.version, { small_project_mode: true });
     world.provider.pushReplies(
       interpretation(
@@ -476,7 +478,7 @@ describe("EmailCommandHandler: what it does with the owner's mail", () => {
     );
     if (normal.kind !== "task") throw new Error(`unexpected ${normal.kind}`);
     expect(await world.store.task.mustGet(normal.taskId)).toMatchObject({
-      project_id: world.projects[0]?.id,
+      project_id: sample.id,
       risk_tier: 1,
     });
   });

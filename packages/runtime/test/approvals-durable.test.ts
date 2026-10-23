@@ -245,6 +245,45 @@ describe("durable always-human approvals (StateApprovals over the real store)", 
     }
   });
 
+  // The loop hands a tool the hooks' approval key and display copy of the input, so a tool
+  // that asks a human itself (the Cloudflare deployer) matches the hooks' row and never shows
+  // the input it executes with (resolved secret values) on its own card.
+  it("through the loop driver: the tool gets the hooks' approval key and display input in its context", async () => {
+    const w = await world();
+    try {
+      const seen: Array<{ approvalKey?: string; approvalInput?: unknown }> = [];
+      const capture: ToolSpec<{ pr: number }> = {
+        ...mergeTool,
+        async execute(input, ctx) {
+          seen.push({ approvalKey: ctx.approvalKey, approvalInput: ctx.approvalInput });
+          return { content: `merged #${input.pr}` };
+        },
+      };
+      const driver = new LoopAgentDriver({ hooks: w.hooks, kill: w.h.kill, clock: w.h.clock });
+      const result = await driver.run({
+        token: w.ctx("r1", { allowedTools: ["merge_pr"] }).token,
+        budget: budget(w.session, 5_000_000, w.h.clock),
+        provider: new ScriptedProvider(
+          [{ tools: [{ name: "merge_pr", input: { pr: 7 } }] }, { text: "done" }],
+          w.h.clock,
+        ),
+        model: "fake-haiku",
+        billingSourceId: "bs",
+        system: "s",
+        messages: [{ role: "user", content: "merge it" }],
+        tools: new ToolRegistry().register(capture),
+        pricing: flatPricing,
+        timeoutMs: 60_000,
+      });
+      expect(result.outcome).toBe("completed");
+      expect(seen).toEqual([
+        { approvalKey: approvalKeyFor("merge_pr", { pr: 7 }), approvalInput: { pr: 7 } },
+      ]);
+    } finally {
+      await w.store.close();
+    }
+  });
+
   it("through the loop driver: a run ends needs_human, the next run executes the delete once and a third identical delete pauses again", async () => {
     const w = await world();
     try {

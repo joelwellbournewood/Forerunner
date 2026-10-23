@@ -172,7 +172,11 @@ import {
   syncSignoffAnswers,
 } from "../session/findings.ts";
 import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
-import { type PlanApprovalSyncResult, syncPlanApprovals } from "../session/plan-approval.ts";
+import {
+  type PlanApprovalSyncResult,
+  reportingPlanStartFailures,
+  syncPlanApprovals,
+} from "../session/plan-approval.ts";
 import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
 import { Scheduler, type StartRequest } from "../session/triggers.ts";
 import { readInstallRecord } from "../setup/install-record.ts";
@@ -2030,51 +2034,60 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // and this human's memory); only a session syncs with peers, so only it waits on the gate.
     if (isModelWatchRequest(req)) return modelWatch.run();
     if (isMemoryConsolidationRequest(req)) return memory.propose();
-    await schemaSync.assertCanSync("session.start");
-    if (!provider)
-      throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
-    const project = req.projectId ? await store.project.mustGet(req.projectId) : null;
-    // What the run is offered is decided now: the capability rows and settings as they stand.
-    await refreshCapabilities();
-    // The cap the command registry wrote (a temporary override while its window is open, else
-    // the permanent setting), so a session the scheduler starts honours "give it 20 francs
-    // tonight" exactly as one started by the command (spec Q.12).
-    const cap = sessionCapFromSettings(
-      project?.settings,
-      clock.now(),
-      DEFAULT_SESSION_CAP_USD_MICRO,
-    ).usdMicro;
-    const budgetUsdMicro = (req as { budgetUsdMicro?: number }).budgetUsdMicro ?? cap;
-    const result = await runner.start({
-      agentId: req.agentId,
-      projectId: req.projectId,
-      trigger: req.trigger,
-      budgetCapUsdMicro: budgetUsdMicro,
-      // The approved plan's id from the inbox answer (`syncPlanApprovals`); never a bare true.
-      ...(req.planApproved ? { planApproved: req.planApproved } : {}),
-      appVersion,
-      grant: sessionGrant(project, await sharedSecretNamesFor(store, req.agentId)),
-      onEvent: (type, payload) =>
-        events.emit("session", { type, payload, agentId: req.agentId, projectId: req.projectId }),
-    });
-    // Session end (spec E.5 "notify human"): the outcome, the counts and the summary; a
-    // budget stop becomes the urgent `budget_stop` (the producer decides by `stopReason`).
-    notifyLater(
-      notifications.sessionEnded(human.id, {
-        sessionId: result.sessionId,
-        status: result.status,
-        stopReason: result.stopReason,
-        summary: result.summary,
-        spentUsdMicro: result.spentUsdMicro,
-        completed: result.completed,
-        needsHuman: result.needsHuman,
-        projectId: req.projectId ?? null,
-        agentName: await agentNameOf(req.agentId),
-      }),
-      `session ${result.sessionId} ended`,
-    );
-    return result;
+    return runSession(req);
   };
+  // The scheduler runs a start in the background and only logs a rejection: one bound to an
+  // approved plan is reported on the plan request and the human is warned (ADR 0053).
+  const runSession = reportingPlanStartFailures(
+    { store, clock, humanId: human.id, agentId: agent.id },
+    async (req: StartRequest) => {
+      await schemaSync.assertCanSync("session.start");
+      if (!provider)
+        throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
+      const project = req.projectId ? await store.project.mustGet(req.projectId) : null;
+      // What the run is offered is decided now: the capability rows and settings as they stand.
+      await refreshCapabilities();
+      // The cap the command registry wrote (a temporary override while its window is open, else
+      // the permanent setting), so a session the scheduler starts honours "give it 20 francs
+      // tonight" exactly as one started by the command (spec Q.12).
+      const cap = sessionCapFromSettings(
+        project?.settings,
+        clock.now(),
+        DEFAULT_SESSION_CAP_USD_MICRO,
+      ).usdMicro;
+      // A start bound to an approved plan carries the filing session's cap (`syncPlanApprovals`).
+      const budgetUsdMicro = req.budgetUsdMicro ?? cap;
+      const result = await runner.start({
+        agentId: req.agentId,
+        projectId: req.projectId,
+        trigger: req.trigger,
+        budgetCapUsdMicro: budgetUsdMicro,
+        // The approved plan's id from the inbox answer (`syncPlanApprovals`); never a bare true.
+        ...(req.planApproved ? { planApproved: req.planApproved } : {}),
+        appVersion,
+        grant: sessionGrant(project, await sharedSecretNamesFor(store, req.agentId)),
+        onEvent: (type, payload) =>
+          events.emit("session", { type, payload, agentId: req.agentId, projectId: req.projectId }),
+      });
+      // Session end (spec E.5 "notify human"): the outcome, the counts and the summary; a
+      // budget stop becomes the urgent `budget_stop` (the producer decides by `stopReason`).
+      notifyLater(
+        notifications.sessionEnded(human.id, {
+          sessionId: result.sessionId,
+          status: result.status,
+          stopReason: result.stopReason,
+          summary: result.summary,
+          spentUsdMicro: result.spentUsdMicro,
+          completed: result.completed,
+          needsHuman: result.needsHuman,
+          projectId: req.projectId ?? null,
+          agentName: await agentNameOf(req.agentId),
+        }),
+        `session ${result.sessionId} ended`,
+      );
+      return result;
+    },
+  );
   // Mirror requests run the mirror, the model watch its weekly check, everything else a session.
   // The scheduler's mirror runs go through the gate like `mirrorSync` (same audit site): a
   // paused install keeps its schedules but no run reads the shared state or pushes to GitHub.
@@ -2107,6 +2120,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // running in this process ends at the next task boundary (the runner reads the pause
       // message between tasks); its undo withdraws the message (wiring/session-ports.ts).
       ...sessionPausePorts({ store, kill, agentId: agent.id, humanId: human.id }),
+      // An answer by chat, voice, the palette or the phone applies at once, as the inbox
+      // route's does (an approved plan starts its follow-up, ADR 0053). The answer stands
+      // when the sync fails: the next sync (an answer, the poll, a restart) applies it.
+      requestAnswered: async (requestId) => {
+        if (schemaSync.paused) return;
+        try {
+          await syncApprovals();
+        } catch (e) {
+          logger.warn("answer not applied yet", { requestId, error: errorMessage(e) });
+        }
+      },
     },
   });
   const mirrorSchedules = new Set<string>();
@@ -2125,7 +2149,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     }
     return [...mirrorSchedules];
   };
-  const syncApprovals = async () => {
+  // One sync at a time: the answer route, the command registry's request.answer, the poll and
+  // the compose-time call each read the answered requests and then act, so two that overlap
+  // would both find the same answer unapplied (the plan mark is conditional as well).
+  let syncChain: Promise<unknown> = Promise.resolve();
+  const syncApprovals = () => {
+    const run = syncChain.then(() => syncApprovalsOnce());
+    syncChain = run.catch(() => undefined);
+    return run;
+  };
+  const syncApprovalsOnce = async () => {
     await schemaSync.assertCanSync("approvals.sync");
     const out = {
       extensions: await extensions.syncApprovals({ humanId: human.id }),
@@ -2306,7 +2339,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // Answers given on another device (the phone, the web approvals) land in the shared state
   // and reach no route of this daemon: the approvals poll applies them within
   // `approvalsPollMs`, the way the remote watcher picks up the phone's commands. Only where
-  // answers can come from elsewhere; the daemon's own answer route applies at once.
+  // answers can come from elsewhere; the daemon's answer route and the `request.answer`
+  // command (chat, voice, the palette: the `requestAnswered` port) apply at once.
   const approvalsPollMs = positiveMs(
     opts.approvalsPollMs ?? env.FORERUNNER_APPROVALS_POLL_MS,
     DEFAULT_APPROVALS_POLL_MS,

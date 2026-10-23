@@ -31,6 +31,13 @@ export interface CloudflareApprovalRequest extends ApprovalRequest {
   env?: DeployEnv;
   /** True for the always-human money class: the answer is spent by one action. */
   oneShot: boolean;
+  /**
+   * What a card this port files shows as the input: the hooks' display copy, before secret
+   * references were resolved. `input` is what the tool executes with (secret values
+   * resolved), so it is only shown when no display copy came with the call (a direct caller,
+   * which resolved nothing).
+   */
+  displayInput?: unknown;
 }
 
 export type CloudflareApprovalAnswer = ApprovalOutcome;
@@ -57,10 +64,21 @@ function displayForm(v: unknown): unknown {
   return v;
 }
 
+/**
+ * The key of the tool call: the caller's `req.key` when it has one (the hooks' key, computed
+ * on the input before secret references were resolved, handed to the tool as
+ * `ToolExecutionContext.approvalKey`), else the hash of `req.input`. The tool sees the resolved
+ * input, so without the hooks' key a deploy whose input carries a `secret:` reference would
+ * never match the hooks' row and the human would be asked twice.
+ */
+function callKey(req: CloudflareApprovalRequest): string {
+  return approvalKey({ tool: req.tool, input: req.input, key: req.key });
+}
+
 /** The key under which this module files its own requests. */
 export function cloudflareApprovalKey(req: CloudflareApprovalRequest): string {
   const kind = req.oneShot ? "money" : "autonomy";
-  return `cloudflare:${req.operation}:${kind}:${req.scope}:${approvalKey({ tool: req.tool, input: req.input })}`;
+  return `cloudflare:${req.operation}:${kind}:${req.scope}:${callKey(req)}`;
 }
 
 /**
@@ -104,9 +122,10 @@ export class HumanRequestCloudflareApprovals implements CloudflareApprovalPort {
     }
     if (!req.oneShot) {
       // The runtime hooks may have asked for this very tool call already (same action class).
-      // Their row is keyed on the raw input (the card's cut copy is display only), so a long
-      // script body matches too.
-      const hookKey = approvalKey({ tool: req.tool, input: req.input });
+      // Their row is keyed on the parsed input before secret resolution (the card's cut copy
+      // is display only), which `req.key` carries when the tool was handed it; a long script
+      // body and a `secret:` reference match too.
+      const hookKey = callKey(req);
       const hookRow = existing.find((r) => {
         const card = r.change_card as CloudflareChangeCard | null;
         return card?.key === hookKey && card.actionClass === req.actionClass;
@@ -139,7 +158,8 @@ export class HumanRequestCloudflareApprovals implements CloudflareApprovalPort {
         env: req.env ?? null,
         actionClass: req.actionClass,
         oneShot: req.oneShot,
-        input: JSON.parse(JSON.stringify(displayForm(req.input) ?? null)),
+        // Never the resolved input: it carries the values of the call's `secret:` references.
+        input: JSON.parse(JSON.stringify(displayForm(req.displayInput ?? req.input) ?? null)),
       },
       author_agent: req.agentId,
     });

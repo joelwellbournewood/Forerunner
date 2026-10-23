@@ -59,12 +59,30 @@ key is computed from, and what happens to the other classes.
   call after the answer is admitted, in the same run or a later one of the session.
 - A row written before this change under the display-copy key no longer matches an input
   whose strings were cut; the human is asked once more, which fails closed.
-- Approvals are still matched within one session. A call answered after its session ended is
-  asked again by the session that re-plans the task; that is one question too many, never one
-  too few, and is noted with the J.7 item (`runtime.md`, Known issues).
+- Approvals are still matched within one session, and no production path re-makes a paused
+  call in its own session: `StartRequest` carries no session id, the daemon's answer route
+  only runs `syncApprovals`, and the scheduler and the cloud runner start a new session. A
+  call answered after its session ended is therefore never consumed: each later session that
+  re-plans the task lists rows under its own `session_id`, files a new row and pauses the task
+  again. That fails closed (nothing runs without a "yes") but leaves the task blocked; keying
+  the lookup on the task as well, or resuming the paused session, is open with the J.7 item
+  (`runtime.md`, Known issues). The resume behaviour of the first bullet holds for a later run of the
+  same session, which the tests drive directly.
 - Tests: `packages/runtime/test/approvals-durable.test.ts` (the former critic scratch file,
   its `it.fails` now passing) and the long-input case in
   `packages/capabilities/test/cloudflare-tools.test.ts`.
+
+## Amendment (2026-10-23, review of w5-review-findings)
+
+- A tool that files its own approval card (the Cloudflare deployer's port) never shows the
+  input it executes with: that input has the call's `secret:` references resolved. The hooks
+  return, beside `approvalKey`, their display copy of the parsed input
+  (`ToolCallDecision.approvalInput`: references unresolved, long strings cut, the same copy
+  their own card shows); the agent loop hands both to the tool in its context
+  (`ToolExecutionContext.approvalKey`, `approvalInput`), and the Cloudflare port shows
+  `displayInput` on its card. Rejected alternative: scrubbing the resolved input with the
+  run's resolver (`SecretsPort.redact`) inside the port, which would need the resolver in the
+  capability and would show `[REDACTED]` where the human should see which secret is bound.
 
 ## Alternatives considered
 

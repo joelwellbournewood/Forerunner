@@ -6,6 +6,7 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { projectCard } from "../src/daemon/views.ts";
 import {
   applyProjectPlan,
   defaultRiskTier,
@@ -302,6 +303,10 @@ describe("small-project mode: writing a plan (B.6)", () => {
     ]);
     expect(new Set(rows.map((m) => m.order_index)).size).toBe(rows.length);
     const only = applied.milestones[0]?.id;
+    // The project card names the open milestone, never the cancelled one before it.
+    const card = await projectCard(store, project.id, 1, "h1");
+    expect(card.nextMilestone?.id).toBe(only);
+    expect(card.nextMilestone?.name).toBe("Tiny");
     const tasks = await store.task.forProject(project.id);
     expect(tasks).toHaveLength(4);
     expect(new Set(tasks.map((t) => t.milestone_id))).toEqual(new Set([only]));

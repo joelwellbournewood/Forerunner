@@ -68,6 +68,7 @@ export const requestAnswer: CommandDef<RequestAnswerParams> = {
   async run(p, ctx) {
     const r = await findRequest(p, ctx);
     await ctx.store.humanRequest.answer(r.id, r.version, p.answer, ctx.humanId);
+    await ctx.ports.requestAnswered?.(r.id);
     return {
       before: { request_id: r.id, status: r.status, answer: r.answer },
       after: { request_id: r.id, status: "answered", answer: p.answer },

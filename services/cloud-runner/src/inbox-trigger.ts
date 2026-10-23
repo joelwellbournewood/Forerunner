@@ -2,7 +2,9 @@ import { type Clock, errorMessage, log } from "@forerunner/platform";
 import {
   approvedPlanIdOf,
   isPlanRequest,
+  markPlanAnswer,
   planAnswer,
+  planAnswerApplied,
   type StartRequest,
 } from "@forerunner/runtime";
 import type { HumanRequestRow, MessageRow, StateStore } from "@forerunner/state";
@@ -24,7 +26,12 @@ import type { HumanRequestRow, MessageRow, StateStore } from "@forerunner/state"
  *    starts a plain session that proposes the plan again), a rejected plan starts nothing.
  *
  * Each item triggers at most once (the ids are remembered until the message is read or the
- * answer falls out of the look-back). When `shouldDefer` says a PC is online the items stay
+ * answer falls out of the look-back). An approved plan is acted on once across processes as
+ * well: the trigger shares the daemon's mark (`markPlanAnswer`, ADR 0053), so a plan request
+ * whose card carries `applied_at` is not triggered on, and the one a start binds to is
+ * claimed (a write conditional on the row's version) before the start is asked for and
+ * marked with the scheduler's answer after; an older approved plan in the same check is
+ * marked `superseded`. The start carries the cap of the session that filed the plan. When `shouldDefer` says a PC is online the items stay
  * untouched for the PC and the next check waits `deferMs` (ADR 0033: a PC daemon that is
  * online wins). The same holds when the scheduler's start reports "skipped" (a PC came online
  * between `shouldDefer` and the start): the items are remembered only once the scheduler owns
@@ -41,7 +48,7 @@ export type InboxStartRequest = StartRequest;
 export type InboxRequestOutcome = "started" | "queued" | "deferred" | "skipped" | "failed";
 
 export interface InboxTriggerDeps {
-  store: Pick<StateStore, "message" | "humanRequest">;
+  store: Pick<StateStore, "message" | "humanRequest" | "session">;
   clock: Clock;
   agentId: string;
   /** A session of the agent runs (or the kill switch holds it): the check waits. */
@@ -153,7 +160,9 @@ export class InboxTrigger {
         r.session_id !== null &&
         r.answered_at !== null &&
         Date.parse(r.answered_at) > floor &&
-        !this.seenAnswers.has(r.id),
+        !this.seenAnswers.has(r.id) &&
+        // A plan the PC's daemon (or an earlier check) acted on is not acted on again.
+        !(isPlanRequest(r) && planAnswerApplied(r)),
     );
     if (messages.length === 0 && answers.length === 0) return null;
 
@@ -172,7 +181,25 @@ export class InboxTrigger {
       for (const m of messages) this.seenMessages.set(m.id, Date.parse(m.created_at));
       for (const r of answers) this.seenAnswers.set(r.id, Date.parse(r.answered_at ?? ""));
     };
-    const req = this.requestFor(messages, answers);
+    // Claim the approved plan the start binds to; one another runner claimed first is its own.
+    let planned = this.requestFor(messages, answers);
+    let claimed: HumanRequestRow | null = null;
+    while (planned.planRow) {
+      const row: HumanRequestRow = planned.planRow;
+      claimed = await markPlanAnswer(this.deps.store, this.deps.clock, row, "starting");
+      if (claimed) break;
+      this.logger.info("approved plan already acted on by another runner", { id: row.id });
+      this.seenAnswers.set(row.id, Date.parse(row.answered_at ?? ""));
+      answers.splice(answers.indexOf(row), 1);
+      planned = this.requestFor(messages, answers);
+    }
+    const { planRow, superseded } = planned;
+    let req = planned.req;
+    if (req && planRow?.session_id) {
+      const filing = await this.deps.store.session.get(planRow.session_id);
+      if (filing && filing.budget_cap_usd_micro > 0)
+        req = { ...req, budgetUsdMicro: filing.budget_cap_usd_micro };
+    }
     if (!req) {
       // Only rejected plans: nothing to run, and nothing to look at again.
       remember();
@@ -184,6 +211,21 @@ export class InboxTrigger {
       planApproved: req.planApproved ?? null,
     });
     const outcome = await this.deps.request(req);
+    if (planRow && claimed) {
+      if (outcome === "skipped") {
+        // Released for the PC that came online: its daemon's sync acts on the plan.
+        await this.deps.store.humanRequest
+          .update(claimed.id, claimed.version, { change_card: planRow.change_card })
+          .catch((e) => this.logger.warn("plan claim not released", { error: errorMessage(e) }));
+      } else {
+        const result = outcome === "failed" ? "start_failed" : outcome;
+        await markPlanAnswer(this.deps.store, this.deps.clock, claimed, result);
+        for (const r of superseded)
+          await markPlanAnswer(this.deps.store, this.deps.clock, r, "superseded", {
+            superseded_by: planRow.id,
+          });
+      }
+    }
     if (outcome === "skipped") {
       // A PC came online after shouldDefer looked: the items stay for it, as a deferral does.
       this.counters.deferred++;
@@ -202,20 +244,32 @@ export class InboxTrigger {
     return req;
   }
 
-  private requestFor(messages: MessageRow[], answers: HumanRequestRow[]): InboxStartRequest | null {
+  private requestFor(
+    messages: MessageRow[],
+    answers: HumanRequestRow[],
+  ): {
+    req: InboxStartRequest | null;
+    /** The approved plan request the start binds to. */
+    planRow: HumanRequestRow | null;
+    /** Older approved plans of the same check: marked `superseded` once the start is made. */
+    superseded: HumanRequestRow[];
+  } {
     // The newest approved plan's id binds the start (`answers` is newest first); an older
-    // approved plan in the same check is superseded by it and the runner, finding another
-    // plan, asks again. A card without a plan id starts the session unbound: it proposes again.
-    let planApproved: string | undefined;
+    // approved plan in the same check is superseded by it. A card without a plan id starts
+    // the session unbound: it proposes again.
+    let planRow: HumanRequestRow | null = null;
+    const superseded: HumanRequestRow[] = [];
     let rejectedPlans = 0;
     const useful: HumanRequestRow[] = [];
     for (const r of answers) {
       if (isPlanRequest(r)) {
         if (planAnswer(r.answer) === "approve") {
           const id = approvedPlanIdOf(r);
-          if (id && planApproved === undefined) planApproved = id;
-          else if (id) this.logger.info("older approved plan superseded in this check", { id });
-          else this.logger.warn("approved plan names no plan id; proposing again", { id: r.id });
+          if (id && planRow === null) planRow = r;
+          else if (id) {
+            superseded.push(r);
+            this.logger.info("older approved plan superseded in this check", { id });
+          } else this.logger.warn("approved plan names no plan id; proposing again", { id: r.id });
           useful.push(r);
         } else {
           rejectedPlans++;
@@ -226,7 +280,7 @@ export class InboxTrigger {
     }
     if (messages.length === 0 && useful.length === 0) {
       if (rejectedPlans > 0) this.logger.info("plan rejected; no session", { rejectedPlans });
-      return null;
+      return { req: null, planRow: null, superseded: [] };
     }
     const projects = new Set<string>();
     for (const m of messages) if (m.project_id) projects.add(m.project_id);
@@ -237,12 +291,17 @@ export class InboxTrigger {
     if (useful.length > 0)
       parts.push(`${useful.length} answered request${useful.length === 1 ? "" : "s"}`);
     const [only] = projects.size === 1 ? [...projects] : [undefined];
+    const planApproved = planRow ? approvedPlanIdOf(planRow) : null;
     return {
-      agentId: this.deps.agentId,
-      ...(only ? { projectId: only } : {}),
-      trigger: "message",
-      reason: parts.join(", "),
-      ...(planApproved ? { planApproved } : {}),
+      req: {
+        agentId: this.deps.agentId,
+        ...(only ? { projectId: only } : {}),
+        trigger: "message",
+        reason: parts.join(", "),
+        ...(planApproved ? { planApproved } : {}),
+      },
+      planRow,
+      superseded,
     };
   }
 }

@@ -5,27 +5,26 @@
  * a tiny layout stand-in (`data-box="x y w h"` boxes, `elementFromPoint` over them), so the
  * locator semantics the smoke relies on (role and accessible name, test ids, innermost text,
  * `filter({ has })`, strictness, visibility waits) run for real and not as string matches.
+ * The page also carries a CSP stand-in: `eval` and `Function` refuse like a page whose policy
+ * has no 'unsafe-eval' (the app bundle's), so in-page code that builds code from a string
+ * fails here as it would in the WebView. Types: `cdp.d.mts` (driver), `jsdom.d.ts` (jsdom).
  */
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-// @ts-expect-error jsdom ships no types in this workspace; the shape used here is `FakeDom`
 import { JSDOM, VirtualConsole } from "jsdom";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
 import {
   CdpClient,
   CdpError,
+  type CdpTarget,
   connectPage,
+  describeFailure,
   listTargets,
   Page,
   pickPageTarget,
   socketUrlFor,
-  // @ts-expect-error plain JS module
 } from "./cdp.mjs";
-
-interface FakeDom {
-  window: { eval(code: string): unknown; close(): void; document: { title: string } };
-}
 
 type Target = {
   id: string;
@@ -45,7 +44,9 @@ interface FakeDevTools {
   listRequests: number;
   handlers: Map<string, Handler>;
   targets: () => Target[];
-  dom: FakeDom;
+  dom: JSDOM;
+  /** Runs code in the page's realm with the realm's own eval (the CSP stand-in only shadows the page's globals). */
+  exec(code: string): unknown;
   sockets: Set<WsSocket>;
   /** Send an event frame (no id) to every open socket. */
   emit(method: string, params: Params): void;
@@ -131,6 +132,15 @@ const LAYOUT = `(() => {
   document.addEventListener("change", (e) => window.__inputs.push(["change:" + e.target.getAttribute("data-testid"), e.target.value]));
 })();`;
 
+/** CSP stand-in: the page's `eval` and `Function` refuse, as under `default-src 'self'` without 'unsafe-eval'. */
+const CSP_STANDIN = `(() => {
+  const refuse = () => {
+    throw new EvalError("Refused to evaluate a string as JavaScript because 'unsafe-eval' is not an allowed source of script (CSP stand-in)");
+  };
+  window.eval = refuse;
+  window.Function = refuse;
+})();`;
+
 const INSERT_TEXT = (text: string) => `(() => {
   const el = document.activeElement;
   if (!el || typeof el.value !== "string") return false;
@@ -166,7 +176,7 @@ function defaultHandlers(): Map<string, Handler> {
   const handlers = new Map<string, Handler>();
   handlers.set("Runtime.evaluate", async (params, fake) => {
     try {
-      let value: unknown = fake.dom.window.eval(String(params.expression));
+      let value: unknown = fake.exec(String(params.expression));
       if (params.awaitPromise && value && typeof (value as Promise<unknown>).then === "function") {
         value = await value;
       }
@@ -182,12 +192,12 @@ function defaultHandlers(): Map<string, Handler> {
     }
   });
   handlers.set("Input.insertText", (params, fake) => {
-    fake.dom.window.eval(INSERT_TEXT(String(params.text)));
+    fake.exec(INSERT_TEXT(String(params.text)));
     return {};
   });
   handlers.set("Input.dispatchMouseEvent", (params, fake) => {
     if (params.type === "mouseReleased") {
-      fake.dom.window.eval(CLICK_AT(Number(params.x), Number(params.y)));
+      fake.exec(CLICK_AT(Number(params.x), Number(params.y)));
     }
     return {};
   });
@@ -201,13 +211,19 @@ async function startFakeDevTools(
     listPath?: "/json/list" | "/json";
   } = {},
 ): Promise<FakeDevTools> {
-  const dom: FakeDom = new JSDOM(options.html ?? FIXTURE, {
+  const dom = new JSDOM(options.html ?? FIXTURE, {
     url: APP_URL,
     runScripts: "outside-only",
+    // requestAnimationFrame runs (at 60 Hz), as in a foreground WebView
+    pretendToBeVisual: true,
     // a link click asks jsdom to navigate, which it reports as "not implemented": keep it quiet
     virtualConsole: new VirtualConsole(),
   });
-  dom.window.eval(LAYOUT);
+  // The realm's own eval, kept before the CSP stand-in shadows `window.eval`: it plays the
+  // DevTools side (Runtime.evaluate), which a page's CSP does not govern.
+  const exec = dom.window.eval;
+  exec(LAYOUT);
+  exec(CSP_STANDIN);
   const wss = new WebSocketServer({ noServer: true });
   const listPath = options.listPath ?? "/json/list";
   const server: Server = createServer((req, res) => {
@@ -255,6 +271,7 @@ async function startFakeDevTools(
     handlers: defaultHandlers(),
     targets: () => [],
     dom,
+    exec,
     sockets: new Set(),
     emit(method, params) {
       for (const ws of fake.sockets) ws.send(JSON.stringify({ method, params }));
@@ -293,8 +310,8 @@ async function openPage(fake: FakeDevTools, timeoutMs = 2_000): Promise<Page> {
   return new Page(client, { timeoutMs, pollMs: 20 });
 }
 
-const clicks = (fake: FakeDevTools) => fake.dom.window.eval("window.__clicks") as string[];
-const inputs = (fake: FakeDevTools) => fake.dom.window.eval("window.__inputs") as string[][];
+const clicks = (fake: FakeDevTools) => fake.exec("window.__clicks") as string[];
+const inputs = (fake: FakeDevTools) => fake.exec("window.__inputs") as string[][];
 const mouse = (fake: FakeDevTools) =>
   fake.calls.filter((c) => c.method === "Input.dispatchMouseEvent").map((c) => c.params);
 
@@ -326,8 +343,10 @@ describe("page target selection", () => {
       ],
     });
     const targets = await listTargets(fake.httpBase);
-    expect(targets.map((t: Target) => t.id)).toEqual(["W", "OTHER", "APP"]);
-    const picked = pickPageTarget(targets, { prefer: (t: Target) => t.url.includes("/m") });
+    expect(targets.map((t) => t.id)).toEqual(["W", "OTHER", "APP"]);
+    const picked = pickPageTarget(targets, {
+      prefer: (t: CdpTarget) => String(t.url).includes("/m"),
+    });
     expect(picked.id).toBe("APP");
     // Without a preference the first page target wins; workers never do.
     expect(pickPageTarget(targets).id).toBe("OTHER");
@@ -379,11 +398,11 @@ describe("CdpClient", () => {
     });
     const client = await CdpClient.connect(`ws://127.0.0.1:${fake.port}/devtools/page/PAGE1`);
     const order: string[] = [];
-    const slow = client.send("Test.slow").then((r: { which: string }) => {
+    const slow = client.send<{ which: string }>("Test.slow").then((r) => {
       order.push(r.which);
       return r;
     });
-    const fast = client.send("Test.fast").then((r: { which: string }) => {
+    const fast = client.send<{ which: string }>("Test.fast").then((r) => {
       order.push(r.which);
       return r;
     });
@@ -491,12 +510,21 @@ describe("Page and locators over Runtime.evaluate", () => {
     const error = page.getByTestId("m-request-error");
     expect(await error.count()).toBe(1);
     expect(await error.isVisible()).toBe(false);
+    // Attached but hidden is not enough: the wait times out and says it waited for "visible".
+    expect(await failure(error.waitFor({ timeout: 60 }))).toMatchObject({
+      code: "cdp.timeout",
+      message: expect.stringContaining("visible"),
+    });
+    let unhidden = false;
     setTimeout(() => {
-      fake.dom.window.eval(
+      fake.exec(
         'document.querySelector("[data-testid=m-request-error]").removeAttribute("hidden")',
       );
+      unhidden = true;
     }, 120);
     await error.waitFor({ timeout: 2_000 });
+    expect(unhidden).toBe(true);
+    expect(await error.isVisible()).toBe(true);
     expect(await error.innerText()).toMatch(/biometric/i);
     expect(await failure(page.getByTestId("never-there").waitFor({ timeout: 100 }))).toMatchObject({
       code: "cdp.timeout",
@@ -512,9 +540,48 @@ describe("Page and locators over Runtime.evaluate", () => {
     expect(mouse(fake)[1]).toMatchObject({ x: 40, y: 160, button: "left", clickCount: 1 });
     expect(mouse(fake)[2]).toMatchObject({ x: 40, y: 160, button: "left", clickCount: 1 });
     expect(clicks(fake)).toEqual(["m-option"]);
-    expect(fake.dom.window.eval("window.__scrolled")).toBe(1);
+    expect(fake.exec("window.__scrolled")).toBe(1);
     await page.getByTestId("m-nav").getByText("Remote").click();
     expect(clicks(fake)).toEqual(["m-option", "Remote"]);
+  });
+
+  it("clicks where the element settles when its box still moves after scrollIntoView", async () => {
+    const fake = await startFakeDevTools();
+    const page = await openPage(fake);
+    // A scroll still in flight: the first scrollIntoView moves the button once, just after the
+    // call returns (before the next animation frame and before any CDP mouse event).
+    fake.exec(`(() => {
+      const el = document.querySelector("[data-testid=m-pair-submit]");
+      el.scrollIntoView = function () {
+        if (this.__moved) return;
+        this.__moved = true;
+        setTimeout(() => this.setAttribute("data-box", "0 500 100 20"), 0);
+      };
+    })()`);
+    await page.getByTestId("m-pair-submit").click({ timeout: 2_000 });
+    expect(mouse(fake).map((p) => p.type)).toEqual(["mouseMoved", "mousePressed", "mouseReleased"]);
+    expect(mouse(fake)[1]).toMatchObject({ x: 50, y: 510 });
+    expect(mouse(fake)[2]).toMatchObject({ x: 50, y: 510 });
+    expect(clicks(fake)).toEqual(["m-pair-submit"]);
+  });
+
+  it("evaluate splices the function source into the expression; the page never evaluates a string (CSP)", async () => {
+    const fake = await startFakeDevTools();
+    const page = await openPage(fake);
+    // The stand-in refuses a string eval in the page, like the bundle's CSP.
+    expect(() => fake.exec("window.eval('1')")).toThrow(/unsafe-eval/);
+    const fn = '(el) => el.getAttribute("data-request-id") + ":" + el.tagName';
+    expect(await page.getByTestId("m-request").last().evaluate(fn)).toBe("req_cap:LI");
+    const sent = fake.calls
+      .filter((c) => c.method === "Runtime.evaluate")
+      .map((c) => String(c.params.expression))
+      .filter((e) => e.includes('"evaluate"'));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain(`, "evaluate", (${fn}))`);
+    expect(sent[0]).not.toMatch(/\beval\s*\(|new\s+Function|\bFunction\s*\(/);
+    expect(
+      await failure(page.getByTestId("m-result").evaluate("42", { timeout: 500 })),
+    ).toMatchObject({ code: "cdp.bad_function" });
   });
 
   it("refuses an ambiguous click at once and reports an element that intercepts the click", async () => {
@@ -524,7 +591,7 @@ describe("Page and locators over Runtime.evaluate", () => {
       code: "cdp.strict_mode",
       message: expect.stringContaining("2 elements"),
     });
-    fake.dom.window.eval(
+    fake.exec(
       'const o = document.createElement("div"); o.id = "overlay"; o.setAttribute("data-box", "0 140 300 40"); document.body.appendChild(o);',
     );
     expect(
@@ -546,10 +613,10 @@ describe("Page and locators over Runtime.evaluate", () => {
     await page.getByTestId("m-pair-code").fill("ABCD-1234");
     const inserts = fake.calls.filter((c) => c.method === "Input.insertText");
     expect(inserts.map((c) => c.params.text)).toEqual(["http://127.0.0.1:8788", "ABCD-1234"]);
-    expect(fake.dom.window.eval('document.querySelector("[data-testid=m-pair-url]").value')).toBe(
+    expect(fake.exec('document.querySelector("[data-testid=m-pair-url]").value')).toBe(
       "http://127.0.0.1:8788",
     );
-    expect(fake.dom.window.eval('document.querySelector("[data-testid=m-pair-code]").value')).toBe(
+    expect(fake.exec('document.querySelector("[data-testid=m-pair-code]").value')).toBe(
       "ABCD-1234",
     );
     expect(inputs(fake)).toEqual([
@@ -563,9 +630,7 @@ describe("Page and locators over Runtime.evaluate", () => {
     fake.handlers.set("Input.insertText", () => ({}));
     const page = await openPage(fake);
     await page.getByTestId("m-pair-code").fill("XYZ");
-    expect(fake.dom.window.eval('document.querySelector("[data-testid=m-pair-code]").value')).toBe(
-      "XYZ",
-    );
+    expect(fake.exec('document.querySelector("[data-testid=m-pair-code]").value')).toBe("XYZ");
     expect(inputs(fake)).toEqual([
       ["m-pair-code", "XYZ"],
       ["change:m-pair-code", "XYZ"],
@@ -595,7 +660,7 @@ describe("connectPage", () => {
       },
     });
     const { page, client, target } = await connectPage(fake.httpBase, {
-      prefer: (t: Target) => t.url.includes("/m"),
+      prefer: (t: CdpTarget) => String(t.url).includes("/m"),
       waitForTargetMs: 5_000,
       pollMs: 20,
       timeoutMs: 2_000,
@@ -612,5 +677,25 @@ describe("connectPage", () => {
     expect(
       await failure(connectPage(fake.httpBase, { waitForTargetMs: 150, pollMs: 20 })),
     ).toMatchObject({ code: "cdp.no_page_target" });
+  });
+});
+
+describe("describeFailure (the runner's FAIL line)", () => {
+  it("keeps a CdpError's stable code and details next to the message", async () => {
+    const fake = await startFakeDevTools();
+    const client = await CdpClient.connect(`ws://127.0.0.1:${fake.port}/devtools/page/PAGE1`);
+    let protocolError: unknown;
+    try {
+      await client.send("Nope.method");
+    } catch (error) {
+      protocolError = error;
+    }
+    client.close();
+    expect(describeFailure(protocolError)).toBe(
+      `FAIL: Nope.method: 'Nope.method' wasn't found [cdp.protocol_error] {"code":-32601,"method":"Nope.method"}`,
+    );
+    expect(describeFailure(new CdpError("cdp.timeout", "slow"))).toBe("FAIL: slow [cdp.timeout]");
+    expect(describeFailure(new Error("plain"))).toBe("FAIL: plain");
+    expect(describeFailure("text")).toBe("FAIL: text");
   });
 });

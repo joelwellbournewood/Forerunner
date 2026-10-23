@@ -185,6 +185,93 @@ describe("plan approval on the desktop daemon", () => {
     ).toBe(true);
   });
 
+  it("'approve' through the command registry (POST /commands/execute, then the yes) starts the plan at once on a local store", async () => {
+    const projectId = await assistedProject(rt, "Palette");
+    const task = await readyTask(rt, projectId, "Write the readme");
+    expect(
+      (
+        await req("/sessions", {
+          method: "POST",
+          body: JSON.stringify({ agentId: rt.agent.id, projectId, budgetUsdMicro: CAP }),
+        })
+      ).status,
+    ).toBe(202);
+    const { session: filed, request } = await planFiled(rt, projectId);
+    const executed = (await (
+      await req("/commands/execute", {
+        method: "POST",
+        body: JSON.stringify({
+          commands: [
+            { name: "request.answer", params: { request: request.id, answer: "approve" } },
+          ],
+          wordsUsed: "palette: approve the plan",
+        }),
+      })
+    ).json()) as Json;
+    // The plan request is medium risk: the change card asks for a yes first.
+    expect(executed.status).toBe("pending");
+    const confirmed = (await (
+      await req(`/commands/${String(executed.pendingId)}/confirm`, {
+        method: "POST",
+        body: JSON.stringify({ answer: "yes" }),
+      })
+    ).json()) as Json;
+    expect(confirmed.status).toBe("done");
+    // No poll runs on this store (no remote control): the command's own sync started it.
+    expect(card(await rt.store.humanRequest.mustGet(request.id))).toMatchObject({
+      outcome: "started",
+    });
+    const follow = await waitFor(async () =>
+      (await sessionsOf(rt, projectId)).find(
+        (s) => s.trigger === "message" && s.status === "completed",
+      ),
+    );
+    expect(follow.id).not.toBe(filed.id);
+    // The follow-up planned under the cap of the session the human approved the plan of.
+    expect(follow.budget_cap_usd_micro).toBe(CAP);
+    expect((await rt.store.task.mustGet(task.id)).status).toBe("done");
+    await waitFor(async () => (rt.scheduler.isActive(rt.agent.id) ? undefined : true));
+  });
+
+  it("'approve' said in chat or voice (the conversation agent's command path) starts the plan", async () => {
+    const projectId = await assistedProject(rt, "Voice");
+    const task = await readyTask(rt, projectId, "Add a changelog");
+    expect(
+      (
+        await req("/sessions", {
+          method: "POST",
+          body: JSON.stringify({ agentId: rt.agent.id, projectId, budgetUsdMicro: CAP }),
+        })
+      ).status,
+    ).toBe(202);
+    const { request } = await planFiled(rt, projectId);
+    if (!rt.conversation) throw new Error("no conversation agent");
+    const turn = {
+      humanId: rt.human.id,
+      agentId: rt.agent.id,
+      activeProjectId: projectId,
+      sessionId: await rt.conversation.conversationSessionId(rt.agent.id, null),
+      source: "voice" as const,
+      wordsUsed: "approve the plan",
+    };
+    const asked = await rt.commands.execute(
+      { name: "request.answer", params: { request: request.id, answer: "approve" } },
+      turn,
+    );
+    expect(asked.status).toBe("pending");
+    const done = await rt.commands.confirmByText(String(asked.pendingId), "yes", turn);
+    expect(done.status).toBe("done");
+    expect(card(await rt.store.humanRequest.mustGet(request.id))).toMatchObject({
+      outcome: "started",
+    });
+    await waitFor(async () =>
+      (await rt.store.task.mustGet(task.id)).status === "done" ? true : undefined,
+    );
+    // The follow-up has ended before the next case starts one (the simulated clock never
+    // ticks the scheduler, so a start queued behind it would wait forever).
+    await waitFor(async () => (rt.scheduler.isActive(rt.agent.id) ? undefined : true));
+  });
+
   it("a rejected plan starts nothing and the task stays ready", async () => {
     const projectId = await assistedProject(rt, "Reject");
     const task = await readyTask(rt, projectId, "Add a changelog");

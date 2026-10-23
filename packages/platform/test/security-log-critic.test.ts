@@ -72,4 +72,20 @@ describe("logger: redaction gaps found by the critic", () => {
     const out = redactDeep({ PUBLIC_KEY: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPublicFixture" });
     expect(out.PUBLIC_KEY).toContain("ssh-ed25519");
   });
+
+  // Review of 2026-10-23: an all-capitals name with no separator (`PRIVATEKEY`, `DEPLOYKEY`,
+  // a hand-written env name) passed in clear although platform-notes.md says `*KEY` is masked
+  // in any case. Such a name is masked now; `PUBLICKEY` stays an identifier, and the plain
+  // words in capitals pinned above (`MONKEY`, `TURKEY`, `HOCKEY`) stay.
+  it("an all-capitals *KEY name with no separator is masked, PUBLICKEY is not", () => {
+    for (const name of ["PRIVATEKEY", "SIGNINGKEY", "DEPLOYKEY", "VAULT2KEY", "SSH_HOSTKEY"]) {
+      expect(isSecretKeyName(name), name).toBe(true);
+    }
+    expect(isSecretKeyName("PUBLICKEY")).toBe(false);
+    const out = JSON.stringify(
+      redactDeep({ env: { PRIVATEKEY: RAW, DEPLOYKEY: RAW }, PUBLICKEY: "ssh-ed25519 Fixture" }),
+    );
+    expect(out).not.toContain(RAW);
+    expect(out).toContain("ssh-ed25519 Fixture");
+  });
 });

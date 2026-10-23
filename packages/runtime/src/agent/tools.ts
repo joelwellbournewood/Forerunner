@@ -20,6 +20,18 @@ export interface ToolExecutionContext {
   signal: AbortSignal;
   /** Working directory for this run (the task worktree), if any. */
   cwd?: string;
+  /**
+   * The hooks' approval key for this call (`ToolCallDecision.approvalKey`: the SHA-256 of the
+   * parsed input before secret references were resolved). A tool that asks a human itself
+   * passes it on, so it matches the hooks' row instead of hashing the resolved input.
+   */
+  approvalKey?: string;
+  /**
+   * The hooks' display copy of this call's input (`ToolCallDecision.approvalInput`: secret
+   * references unresolved). A tool that files an approval card itself shows this, never the
+   * input it executes with, which carries resolved secret values.
+   */
+  approvalInput?: unknown;
 }
 
 export interface ToolResult {

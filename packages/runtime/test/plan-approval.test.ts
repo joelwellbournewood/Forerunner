@@ -1,10 +1,11 @@
-import { SimulatedClock } from "@forerunner/platform";
+import { ForerunnerError, SimulatedClock } from "@forerunner/platform";
 import { type HumanRequestRow, openStore, type StateStore } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
 import {
   approvedPlanIdOf,
+  markPlanAnswer,
   PLAN_APPROVAL_AUDIT_TOOL,
   parsePlanId,
   planAnswer,
@@ -12,6 +13,8 @@ import {
   planHash,
   planIdOf,
   planKeyOf,
+  reportingPlanStartFailures,
+  reportPlanStartFailure,
   syncPlanApprovals,
 } from "../src/session/plan-approval.ts";
 import {
@@ -146,16 +149,20 @@ function startPort(answer: "started" | "queued" | "deferred" = "started") {
 }
 
 /** Runs a level 1 session that files its plan; returns the open plan request. */
-async function filePlan(w: World, exec = fakeExecutor()): Promise<HumanRequestRow> {
+async function filePlan(
+  w: World,
+  exec = fakeExecutor(),
+  budgetCapUsdMicro = 1_000_000,
+): Promise<HumanRequestRow> {
   const res = await runner(w, exec).start({
     agentId: w.alice,
     projectId: w.project,
     trigger: "manual",
-    budgetCapUsdMicro: 1_000_000,
+    budgetCapUsdMicro,
     grant,
   });
   expect(res.stopReason).toBe("plan_awaiting_approval");
-  const [req] = await w.store.humanRequest.open({ humanId: w.human });
+  const [req] = await w.store.humanRequest.list({ session_id: res.sessionId });
   if (!req) throw new Error("no plan request");
   return req;
 }
@@ -251,6 +258,8 @@ describe("syncPlanApprovals", () => {
         trigger: "message",
         reason: `plan approved (request ${req.id})`,
         planApproved: planId,
+        // The cap of the session that filed the plan: the follow-up cuts it as the human saw.
+        budgetUsdMicro: 1_000_000,
       },
     ]);
     const applied = await w.store.humanRequest.mustGet(req.id);
@@ -424,6 +433,206 @@ describe("syncPlanApprovals", () => {
     // At most one start per answered request, even when that start failed.
     expect(await syncPlanApprovals(deps)).toEqual({ started: 0, rejected: 0, skipped: 0 });
     expect(calls).toBe(1);
+  });
+
+  it("a start that fails in the background (claim_conflict) marks the card start_failed and warns the human once", async () => {
+    await addTask(w, "T1");
+    const req = await filePlan(w);
+    await answer(w, req, "approve");
+    const report = { store: w.store, clock: w.clock, humanId: w.human, agentId: w.alice };
+    // The real scheduler: `requestStart` answers "started" and the rejection lands in its log.
+    const scheduler = new Scheduler({
+      clock: w.clock,
+      start: reportingPlanStartFailures(report, async () => {
+        throw new ForerunnerError("claim_conflict", "a cloud session of the agent is active");
+      }),
+    });
+    const deps = { ...report, start: (r: StartRequest) => scheduler.requestStart(r) };
+    expect(await syncPlanApprovals(deps)).toEqual({ started: 1, rejected: 0, skipped: 0 });
+    await settle(async () => scheduler.log.some((e) => e.result === "error"));
+    await settle(
+      async () => card(await w.store.humanRequest.mustGet(req.id)).outcome === "start_failed",
+    );
+    expect(card(await w.store.humanRequest.mustGet(req.id))).toMatchObject({
+      outcome: "start_failed",
+      error: "a cloud session of the agent is active",
+    });
+    const warnings = (await w.store.message.inbox({ humanId: w.human }, { limit: 50 })).filter(
+      (m) => m.type === "warning" && m.body.includes(req.id),
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.body).toContain("could not be started");
+    expect((await auditRows(w)).map((r) => r.allowed)).toEqual([true, false]);
+    // Not retried, and a second report of the same start warns no further.
+    expect(await syncPlanApprovals(deps)).toEqual({ started: 0, rejected: 0, skipped: 0 });
+    await reportPlanStartFailure(report, approvedPlanIdOf(req) ?? "", new Error("again"));
+    expect(
+      (await w.store.message.inbox({ humanId: w.human }, { limit: 50 })).filter(
+        (m) => m.type === "warning",
+      ),
+    ).toHaveLength(1);
+  });
+
+  // w5-review-findings review: the cloud runner's inbox trigger writes `start_failed` itself
+  // when its scheduler answers "failed"; the background report that follows must still warn.
+  it("a card a producer already marked start_failed without a warning is still reported once", async () => {
+    await addTask(w, "T1");
+    const req = await filePlan(w);
+    const answered = await answer(w, req, "approve");
+    const claimed = await markPlanAnswer(w.store, w.clock, answered, "starting");
+    if (!claimed) throw new Error("not claimed");
+    expect(await markPlanAnswer(w.store, w.clock, claimed, "start_failed")).not.toBeNull();
+    const report = { store: w.store, clock: w.clock, humanId: w.human, agentId: w.alice };
+    const planId = approvedPlanIdOf(req) ?? "";
+    await reportPlanStartFailure(report, planId, new Error("presence check failed"));
+    await reportPlanStartFailure(report, planId, new Error("again"));
+    expect(card(await w.store.humanRequest.mustGet(req.id))).toMatchObject({
+      outcome: "start_failed",
+      error: "presence check failed",
+    });
+    const warnings = (await w.store.message.inbox({ humanId: w.human }, { limit: 50 })).filter(
+      (m) => m.type === "warning" && m.body.includes(req.id),
+    );
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("two approved plans of the same tasks in one sync: the newest starts, the older is superseded", async () => {
+    await addTask(w, "T1");
+    const older = await filePlan(w);
+    w.clock.advance(60_000);
+    const newer = await filePlan(w);
+    expect(newer.id).not.toBe(older.id);
+    await answer(w, older, "approve");
+    await answer(w, newer, "approve");
+    const port = startPort();
+    const deps = {
+      store: w.store,
+      clock: w.clock,
+      humanId: w.human,
+      agentId: w.alice,
+      start: port.start,
+    };
+    expect(await syncPlanApprovals(deps)).toEqual({ started: 1, rejected: 0, skipped: 1 });
+    expect(port.requests.map((r) => r.planApproved)).toEqual([approvedPlanIdOf(newer)]);
+    expect(card(await w.store.humanRequest.mustGet(newer.id))).toMatchObject({
+      outcome: "started",
+    });
+    expect(card(await w.store.humanRequest.mustGet(older.id))).toMatchObject({
+      outcome: "superseded",
+      superseded_by: newer.id,
+    });
+    const audit = await auditRows(w);
+    expect(audit.map((r) => JSON.parse(r.result_summary ?? "{}").outcome).sort()).toEqual([
+      "started",
+      "superseded",
+    ]);
+    expect(await syncPlanApprovals(deps)).toEqual({ started: 0, rejected: 0, skipped: 0 });
+  });
+
+  it("two overlapping syncs of one approved plan make one start", async () => {
+    await addTask(w, "T1");
+    const req = await filePlan(w);
+    await answer(w, req, "approve");
+    const port = startPort();
+    const deps = {
+      store: w.store,
+      clock: w.clock,
+      humanId: w.human,
+      agentId: w.alice,
+      start: port.start,
+    };
+    const [a, b] = await Promise.all([syncPlanApprovals(deps), syncPlanApprovals(deps)]);
+    expect((a?.started ?? 0) + (b?.started ?? 0)).toBe(1);
+    expect(port.requests).toHaveLength(1);
+    expect(await auditRows(w)).toHaveLength(1);
+  });
+
+  it("a card another producer marked (the cloud runner's inbox trigger) is left alone", async () => {
+    await addTask(w, "T1");
+    const req = await filePlan(w);
+    const answered = await answer(w, req, "approve");
+    const port = startPort();
+    const deps = {
+      store: w.store,
+      clock: w.clock,
+      humanId: w.human,
+      agentId: w.alice,
+      start: port.start,
+    };
+    // The cloud runner claimed the answer after this sync read it: the claim wins.
+    const stale = answered;
+    expect(await markPlanAnswer(w.store, w.clock, answered, "started")).not.toBeNull();
+    expect(await markPlanAnswer(w.store, w.clock, stale, "starting")).toBeNull();
+    expect(await syncPlanApprovals(deps)).toEqual({ started: 0, rejected: 0, skipped: 0 });
+    expect(port.requests).toEqual([]);
+    expect(card(await w.store.humanRequest.mustGet(req.id)).outcome).toBe("started");
+  });
+
+  it("a row that fails is logged and left for the next sync; the other rows still act", async () => {
+    await addTask(w, "T1");
+    const first = await filePlan(w);
+    w.clock.advance(60_000);
+    const second = await filePlan(w);
+    await answer(w, first, "reject");
+    await answer(w, second, "approve");
+    const port = startPort();
+    const update = w.store.humanRequest.update.bind(w.store.humanRequest);
+    let failed = 0;
+    w.store.humanRequest.update = (async (...args: Parameters<typeof update>) => {
+      if (args[0] === second.id && failed === 0) {
+        failed++;
+        throw new Error("database is locked");
+      }
+      return update(...args);
+    }) as typeof update;
+    const deps = {
+      store: w.store,
+      clock: w.clock,
+      humanId: w.human,
+      agentId: w.alice,
+      start: port.start,
+    };
+    expect(await syncPlanApprovals(deps)).toEqual({ started: 0, rejected: 1, skipped: 0 });
+    expect(card(await w.store.humanRequest.mustGet(second.id)).applied_at).toBeUndefined();
+    expect(await syncPlanApprovals(deps)).toEqual({ started: 1, rejected: 0, skipped: 0 });
+    expect(port.requests.map((r) => r.planApproved)).toEqual([approvedPlanIdOf(second)]);
+  });
+
+  it("the follow-up plans under the cap the human saw: a plan cut to one task runs that task and files nothing", async () => {
+    const t1 = await addTask(w, "T1");
+    const t2 = await addTask(w, "T2");
+    const exec = fakeExecutor();
+    // 600k cap, 20 % reserve: 480k of work fits one 400k task; the project's 1M fits both.
+    const req = await filePlan(w, exec, 600_000);
+    expect((card(req).plan as { items: unknown[] }).items).toHaveLength(1);
+    await answer(w, req, "approve");
+    const sessions = runner(w, exec);
+    const scheduler = new Scheduler({
+      clock: w.clock,
+      start: (r) =>
+        sessions.start({
+          agentId: r.agentId,
+          projectId: r.projectId,
+          trigger: r.trigger,
+          // What the daemon's start does: the request's cap, else the project's.
+          budgetCapUsdMicro: r.budgetUsdMicro ?? 1_000_000,
+          ...(r.planApproved ? { planApproved: r.planApproved } : {}),
+          grant,
+        }),
+    });
+    const deps = {
+      store: w.store,
+      clock: w.clock,
+      humanId: w.human,
+      agentId: w.alice,
+      start: (r: StartRequest) => scheduler.requestStart(r),
+    };
+    expect(await syncPlanApprovals(deps)).toEqual({ started: 1, rejected: 0, skipped: 0 });
+    await settle(async () => (await w.store.task.mustGet(t1.id)).status === "done");
+    await settle(async () => !scheduler.isActive(w.alice));
+    expect(exec.executed).toEqual([t1.id]);
+    expect((await w.store.task.mustGet(t2.id)).status).toBe("ready");
+    expect(await w.store.humanRequest.open({ humanId: w.human })).toEqual([]);
   });
 
   it("another agent's plan request on a shared store is left to its own daemon", async () => {

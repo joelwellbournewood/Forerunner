@@ -95,6 +95,29 @@ start, exactly once.
 - Approval of a plan that was cut to budget approves the cut plan; a follow-up with a different
   session cap that cuts differently is a changed plan and is asked again.
 
+## Amendment (2026-10-23, review findings of w1-plan-approval)
+
+- Every answer path syncs: the `request.answer` command calls `CommandPorts.requestAnswered`,
+  which the daemon wires to `syncApprovals`, so "approve" said in chat or voice on a local
+  store starts the plan at once (no poll runs there).
+- "Marking first" did not hold across processes or overlapping syncs (a blind patch). The mark
+  is now `markPlanAnswer`, a write conditional on the row's version: whoever marks first acts,
+  the other starts nothing. `syncApprovals` is serialised in the daemon, and the cloud
+  runner's inbox trigger shares the mark (it skips marked plan rows, claims the one it binds a
+  start to, records the scheduler's answer, releases the claim when the start is skipped for a
+  PC that came online).
+- Of several approved plans of one project in a sync (or a trigger check) only the newest filed
+  starts; the older ones are marked `superseded`.
+- A start that fails after the scheduler took it (`runner.start` rejecting in the background)
+  is reported on the request (`start_failed`) and the human is warned once
+  (`reportingPlanStartFailures`), on the PC daemon and on the cloud runner alike (review of
+  w5-review-findings: with the shared mark, a cloud start that failed in the background spent
+  the approval silently).
+- The follow-up carries the filing session's cap (`StartRequest.budgetUsdMicro`), which
+  replaces the consequence above that a different cap asks again: the plan is cut as the human
+  saw it. Learned estimates that drift between the two sessions can still change the cut.
+- An empty plan at level 0 or 1 files no request: the session ends `completed`.
+
 ## Alternatives considered
 
 - **Exclude `paused` from `SessionRepo.active`.** Frees the start but breaks the remote

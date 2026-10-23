@@ -21,7 +21,12 @@
  *
  * Every element lookup runs inside the page through `Runtime.evaluate` with the query steps
  * as JSON; nothing is cached between calls, so a re-render never leaves a stale handle.
- * Errors carry a stable `code` (`cdp.*`). No dependency outside Node.
+ * Nothing in the page builds code from a string (no eval, no new Function): the bundle's CSP
+ * has no 'unsafe-eval'. Errors carry a stable `code` (`cdp.*`). No dependency outside Node.
+ *
+ * Node-only tooling, so two repository conventions are relaxed on purpose (ADR 0054): the
+ * clock defaults to `Date.now` (callers pass `now`), and errors are this module's `CdpError`
+ * rather than `ForerunnerError` (no workspace import in the emulator runner).
  */
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
@@ -39,6 +44,31 @@ export class CdpError extends Error {
     this.code = code;
     this.details = details ?? {};
   }
+}
+
+/**
+ * The runner's `FAIL:` line: the message, then a `CdpError`'s stable code in brackets and its
+ * details as JSON when there are any.
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function describeFailure(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const code =
+    error && typeof error === "object" && typeof error.code === "string" ? error.code : "";
+  const details =
+    error && typeof error === "object" && error.details && typeof error.details === "object"
+      ? error.details
+      : null;
+  let line = `FAIL: ${message}${code ? ` [${code}]` : ""}`;
+  if (details && Object.keys(details).length > 0) {
+    try {
+      line += ` ${JSON.stringify(details)}`;
+    } catch {
+      line += ` (details not serialisable: ${Object.keys(details).join(", ")})`;
+    }
+  }
+  return line;
 }
 
 function sleep(ms) {
@@ -488,8 +518,9 @@ function pageScript(steps, action, arg) {
     };
   }
   if (action === "evaluate") {
-    const fn = win.eval(`(${arg})`);
-    return { value: fn(el) };
+    // `arg` is the caller's function itself, spliced into the expression by buildExpression.
+    if (typeof arg !== "function") return { error: "not_a_function" };
+    return { value: arg(el) };
   }
   if (action === "clickPoint") {
     if (!visible(el)) return { error: "not_visible" };
@@ -497,12 +528,34 @@ function pageScript(steps, action, arg) {
     if (typeof el.scrollIntoView === "function") {
       el.scrollIntoView({ block: "center", inline: "center" });
     }
-    const rect = el.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    const hit = doc.elementFromPoint(x, y);
-    const hitOk = Boolean(hit) && (hit === el || el.contains(hit));
-    return { x, y, hitOk, hit: describe(hit) };
+    const before = el.getBoundingClientRect();
+    // One animation frame (or 100 ms when frames are not running) between two reads of the
+    // box: a smooth scroll or a transition still moving the element is reported as unstable
+    // and the caller polls again instead of clicking where the element used to be.
+    return new Promise((resolve) => {
+      let done = false;
+      const settle = () => {
+        if (done) return;
+        done = true;
+        const rect = el.getBoundingClientRect();
+        if (
+          rect.left !== before.left ||
+          rect.top !== before.top ||
+          rect.width !== before.width ||
+          rect.height !== before.height
+        ) {
+          resolve({ error: "unstable" });
+          return;
+        }
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const hit = doc.elementFromPoint(x, y);
+        const hitOk = Boolean(hit) && (hit === el || el.contains(hit));
+        resolve({ x, y, hitOk, hit: describe(hit) });
+      };
+      if (typeof win.requestAnimationFrame === "function") win.requestAnimationFrame(settle);
+      win.setTimeout(settle, 100);
+    });
   }
   if (action === "focusForFill") {
     if (!visible(el)) return { error: "not_visible" };
@@ -554,8 +607,14 @@ function pageScript(steps, action, arg) {
 
 const PAGE_SCRIPT_SOURCE = String(pageScript);
 
+/**
+ * The `Runtime.evaluate` expression for one in-page call. Data goes in as JSON; for
+ * `evaluate` the caller's function source is spliced in as a function expression, so the page
+ * never builds code from a string (no eval, no new Function: the bundle's CSP forbids both).
+ */
 function buildExpression(steps, action, arg) {
-  return `(${PAGE_SCRIPT_SOURCE})(${JSON.stringify(steps)}, ${JSON.stringify(action)}, ${JSON.stringify(arg ?? null)})`;
+  const argSource = action === "evaluate" ? `(${arg})` : JSON.stringify(arg ?? null);
+  return `(${PAGE_SCRIPT_SOURCE})(${JSON.stringify(steps)}, ${JSON.stringify(action)}, ${argSource})`;
 }
 
 function describeSteps(steps) {
@@ -805,6 +864,9 @@ export class Locator {
           if (r.error === "not_editable") {
             throw new CdpError("cdp.not_editable", `${this} is not an editable field (${r.tag})`);
           }
+          if (r.error === "not_a_function") {
+            throw new CdpError("cdp.bad_function", `${this}: evaluate() needs a function source`);
+          }
           return undefined;
         }
         if (wantVisible && r.visible === false) {
@@ -901,7 +963,8 @@ export class Locator {
 
   /**
    * Runs `(el) => ...` (given as source text) on the single matched element and returns its
-   * JSON value.
+   * JSON value. The source is spliced into the `Runtime.evaluate` expression as a function
+   * expression; the page never evaluates a string (CSP, ADR 0054).
    * @param {string} fnSource
    * @param {{ timeout?: number }} [options]
    */

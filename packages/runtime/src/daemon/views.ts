@@ -41,6 +41,17 @@ export function money(usdMicro: number, chfPerUsd: number): Money {
   return { usdMicro, chfMicro: Math.round(usdMicro * chfPerUsd) };
 }
 
+/**
+ * The open milestone of a project: the first `planned` or `active` row by order, the one the
+ * plan writer joins in small-project mode. `done` and `cancelled` rows are closed, so a
+ * milestone cancelled before the mode never shows as the card's next milestone.
+ */
+export function openMilestone<M extends Pick<MilestoneRow, "status">>(
+  rows: readonly M[],
+): M | undefined {
+  return rows.find((m) => m.status === "planned" || m.status === "active");
+}
+
 export async function projectCard(
   store: StateStore,
   projectId: string,
@@ -50,7 +61,7 @@ export async function projectCard(
   const p = await store.project.mustGet(projectId);
   const spend = await store.costLedger.sum({ projectId: p.id });
   const milestones = await store.milestone.forProject(p.id, { limit: 50 });
-  const next = milestones.find((m) => m.status !== "done");
+  const next = openMilestone(milestones);
   const waiting = await store.humanRequest.count({
     status: "open",
     project_id: p.id,

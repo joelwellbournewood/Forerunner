@@ -77,6 +77,21 @@ export interface ToolCallDecision {
   allowed: true;
   input: unknown;
   claims: CapabilityClaims;
+  /**
+   * The key this call's approval is remembered under (`approvalKeyFor` over the parsed input,
+   * before secret references are resolved). The executor hands it to the tool as
+   * `ToolExecutionContext.approvalKey`, so a tool that asks a human on its own (the Cloudflare
+   * deployer) finds the hooks' row for the call even though it sees the resolved input.
+   */
+  approvalKey: string;
+  /**
+   * The call's input as the hooks show it on an approval card: parsed, before secret
+   * references are resolved (`secret:<name>` stays a reference), long strings cut. The
+   * executor hands it to the tool as `ToolExecutionContext.approvalInput`, so a tool that files
+   * its own approval card (the Cloudflare deployer) shows this copy instead of `input`, which
+   * carries the resolved secret values.
+   */
+  approvalInput: unknown;
 }
 
 export interface ToolCallPending {
@@ -358,7 +373,13 @@ export class EnforcementHooks {
       if (e instanceof ForerunnerError) throw await deny(e.code, e.message, e.details);
       throw e;
     }
-    return { allowed: true, input: resolved, claims };
+    return {
+      allowed: true,
+      input: resolved,
+      claims,
+      approvalKey,
+      approvalInput: redactForDisplay(input),
+    };
   }
 
   /** After a tool call: redact secrets, wrap untrusted output, audit. */

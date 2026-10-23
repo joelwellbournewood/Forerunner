@@ -153,6 +153,8 @@ function actorOf(
     autonomy: autonomy.level,
     planApproved: autonomy.planApproved,
     tool,
+    ...(ctx.approvalKey ? { approvalKey: ctx.approvalKey } : {}),
+    ...(ctx.approvalInput !== undefined ? { approvalInput: ctx.approvalInput } : {}),
   };
 }
 

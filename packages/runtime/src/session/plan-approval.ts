@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { type Clock, errorMessage, log } from "@forerunner/platform";
+import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import type { HumanRequestRow, JsonObject, JsonValue, StateStore } from "@forerunner/state";
 import { unappliedAnswers } from "./findings.ts";
 import type { PlanItem } from "./runner.ts";
@@ -26,9 +26,11 @@ import type { StartOutcome, StartRequest } from "./triggers.ts";
  * scenario harness); the daemon and the cloud runner always bind.
  *
  * Every answered request is acted on once: the card records `applied_at`, the outcome and the
- * scheduler's `start_id`, written before the start is asked for, so a second sync (the poll,
- * the route, a restart) finds nothing to do. A rejected plan starts nothing and the tasks stay
- * `ready` for the next session to propose again.
+ * scheduler's `start_id` (`markPlanAnswer`), claimed with a write conditional on the row's
+ * version before the start is asked for, so a second sync (the poll, the route, a restart, an
+ * overlapping sync) and the cloud runner's trigger, which shares the mark, find nothing to
+ * do. A rejected plan starts nothing and the tasks stay `ready` for the next session to
+ * propose again.
  */
 export const PLAN_KEY_PREFIX = "plan:";
 export const PLAN_APPROVAL_OPTIONS = ["approve", "reject"] as const;
@@ -108,10 +110,61 @@ export function planApprovalOf(
 }
 
 // ---------------------------------------------------------------------------------------
+// Acting on an answer: the mark both producers share
+
+/** Whether an answered plan request was acted on (its card carries `applied_at`). */
+export function planAnswerApplied(row: Pick<HumanRequestRow, "change_card">): boolean {
+  return Boolean((row.change_card as JsonObject | null)?.applied_at);
+}
+
+function markOf(row: Pick<HumanRequestRow, "change_card">): string {
+  const card = (row.change_card ?? {}) as JsonObject;
+  return JSON.stringify([card.applied_at ?? null, card.outcome ?? null]);
+}
+
+/**
+ * Records what became of an answered plan request on its card: `applied_at`, the `outcome`
+ * and `extra`. The write is conditional on the version the caller read, so of two producers
+ * of a start (the daemon's sync and the cloud runner's inbox trigger on a shared store, or
+ * two overlapping syncs of one daemon) exactly one marks a request first; the other gets
+ * null and starts nothing. A version that moved for another reason (the row was not marked
+ * meanwhile) is read again and the mark retried. The claimer's later marks pass the row it
+ * got back, so a report written in between (`reportPlanStartFailure`) is kept.
+ */
+export async function markPlanAnswer(
+  store: Pick<StateStore, "humanRequest">,
+  clock: Clock,
+  row: HumanRequestRow,
+  outcome: string,
+  extra: JsonObject = {},
+): Promise<HumanRequestRow | null> {
+  let current = row;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const card = (current.change_card ?? {}) as JsonObject;
+    try {
+      return await store.humanRequest.update(current.id, current.version, {
+        change_card: { ...card, applied_at: clock.nowIso(), outcome, ...extra },
+      });
+    } catch (e) {
+      if (!(e instanceof ForerunnerError && e.code === "version_conflict")) throw e;
+      const fresh = await store.humanRequest.get(current.id);
+      // Marked meanwhile: by the other producer's claim, or by a report after this claim.
+      if (!fresh || markOf(fresh) !== markOf(current)) return null;
+      current = fresh;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------------------
 // The daemon's sync step
 
 /** Why an answered plan request started nothing (`change_card.outcome`). */
-export type PlanApprovalSkip = "unrecognized_answer" | "unbound_plan" | "start_failed";
+export type PlanApprovalSkip =
+  | "unrecognized_answer"
+  | "unbound_plan"
+  | "start_failed"
+  | "superseded";
 
 export interface PlanApprovalSyncResult {
   /** Approved plans handed to the scheduler (started, queued or deferred). */
@@ -133,6 +186,105 @@ export interface PlanApprovalSyncDeps {
   start: PlanStartPort;
 }
 
+export type PlanReportDeps = Pick<PlanApprovalSyncDeps, "store" | "clock" | "humanId" | "agentId">;
+
+function auditPlanAnswer(
+  deps: PlanReportDeps,
+  row: HumanRequestRow,
+  allowed: boolean,
+  result: JsonObject,
+): Promise<unknown> {
+  return deps.store.auditLog.append({
+    session_id: row.session_id,
+    run_id: null,
+    agent_id: deps.agentId,
+    human_id: deps.humanId,
+    tool: PLAN_APPROVAL_AUDIT_TOOL,
+    input_summary: JSON.stringify({
+      requestId: row.id,
+      planId: approvedPlanIdOf(row),
+      answer: planAnswer(row.answer),
+    }),
+    result_summary: JSON.stringify(result),
+    allowed,
+    cost_usd_micro: 0,
+    occurred_at: deps.clock.nowIso(),
+  });
+}
+
+/** The warning the human gets when the plan they approved could not be started. */
+async function warnStartFailed(deps: PlanReportDeps, row: HumanRequestRow, error: string) {
+  await deps.store.message.send({
+    from_agent_id: deps.agentId,
+    to_human_id: deps.humanId,
+    project_id: row.project_id,
+    type: "warning",
+    body: `The plan you approved (request ${row.id}) could not be started: ${error}. Start the agent by hand; it will propose the plan again.`,
+    requires_ack: false,
+    author_agent: deps.agentId,
+  });
+}
+
+/**
+ * A start bound to an approved plan failed after the scheduler took it: `runner.start`
+ * rejects in the background (`claim_conflict` while another runner's session of the agent is
+ * active on a shared store, `provider_auth`, the schema-sync gate), which `requestStart`
+ * never reports to its caller. The request's card says `start_failed` with the error, one
+ * audit row is written and the human is warned once; the request is not retried (the next
+ * session proposes the plan again). The daemon's and the cloud runner's session starts call
+ * it (compose.ts, cloud-runner runner.ts). "Once" is the card's `failure_reported_at`, not its
+ * outcome: the cloud runner's inbox trigger may have written `start_failed` itself (its
+ * scheduler answered "failed") before this report runs, and the human is still warned.
+ */
+export async function reportPlanStartFailure(
+  deps: PlanReportDeps,
+  planApproved: string | undefined,
+  e: unknown,
+): Promise<void> {
+  const parsed = planApproved ? parsePlanId(planApproved) : null;
+  if (!parsed) return;
+  const rows = await deps.store.humanRequest.list({ session_id: parsed.sessionId }, { limit: 50 });
+  const row = rows.find((r) => approvedPlanIdOf(r) === planApproved);
+  if (!row || (row.change_card as JsonObject).failure_reported_at) return;
+  const error = errorMessage(e);
+  await deps.store.humanRequest.patch(row.id, {
+    change_card: {
+      ...(row.change_card as JsonObject),
+      applied_at: deps.clock.nowIso(),
+      outcome: "start_failed",
+      error,
+      failure_reported_at: deps.clock.nowIso(),
+    },
+  });
+  await auditPlanAnswer(deps, row, false, { outcome: "start_failed", error });
+  log("plan-approval").warn("approved plan could not be started", { requestId: row.id, error });
+  await warnStartFailed(deps, row, error);
+}
+
+/**
+ * The scheduler's start port with `reportPlanStartFailure` on a rejection of a start bound to
+ * an approved plan; the rejection still propagates (the scheduler logs it).
+ */
+export function reportingPlanStartFailures<R>(
+  deps: PlanReportDeps,
+  start: (req: StartRequest) => Promise<R>,
+): (req: StartRequest) => Promise<R> {
+  return async (req) => {
+    try {
+      return await start(req);
+    } catch (e) {
+      if (req.planApproved) {
+        await reportPlanStartFailure(deps, req.planApproved, e).catch((err) =>
+          log("plan-approval").warn("plan start failure not reported", {
+            error: errorMessage(err),
+          }),
+        );
+      }
+      throw e;
+    }
+  };
+}
+
 /**
  * A filing session an earlier build left `paused` (it ends `stopped` now) would make every
  * start of the agent a `claim_conflict`; it is closed along `paused -> stopped` before the
@@ -147,103 +299,120 @@ async function closeFilingSession(store: StateStore, sessionId: string | null): 
   await store.session.setStatus(session.id, session.version, "stopped");
 }
 
-/** Act once on every answered plan request of the human that was not acted on yet. */
+/**
+ * Act once on every answered plan request of the human that was not acted on yet. Of several
+ * approved plans of one project in a sync only the newest filed is started; the older ones
+ * are marked `superseded` (a second start would plan the same tasks, or none, again). The
+ * follow-up plans under the cap of the session that filed the plan, so the plan it computes
+ * is the one the human saw. A row that fails is logged and left for the next sync.
+ */
 export async function syncPlanApprovals(
   deps: PlanApprovalSyncDeps,
 ): Promise<PlanApprovalSyncResult> {
   const logger = log("plan-approval");
-  const { store, clock } = deps;
   const out: PlanApprovalSyncResult = { started: 0, rejected: 0, skipped: 0 };
   const rows = await unappliedAnswers(
-    store,
+    deps.store,
     deps.humanId,
     (key) => key?.startsWith(PLAN_KEY_PREFIX) === true,
   );
+  /** project id ("" for none) -> the request whose plan was handed to the scheduler. */
+  const startedFor = new Map<string, string>();
   for (const row of rows) {
     // Another agent's plan (a shared store) is its own daemon's business.
     if (row.author_agent !== deps.agentId) continue;
-    const card = (row.change_card ?? {}) as JsonObject;
-    const answer = planAnswer(row.answer);
-    const planId = approvedPlanIdOf(row);
-    const mark = (outcome: string, extra: JsonObject = {}) =>
-      store.humanRequest.patch(row.id, {
-        change_card: { ...card, applied_at: clock.nowIso(), outcome, ...extra },
-      });
-    const audit = (allowed: boolean, result: JsonObject) =>
-      store.auditLog.append({
-        session_id: row.session_id,
-        run_id: null,
-        agent_id: deps.agentId,
-        human_id: deps.humanId,
-        tool: PLAN_APPROVAL_AUDIT_TOOL,
-        input_summary: JSON.stringify({ requestId: row.id, planId, answer }),
-        result_summary: JSON.stringify(result),
-        allowed,
-        cost_usd_micro: 0,
-        occurred_at: clock.nowIso(),
-      });
-    if (!answer) {
-      out.skipped++;
-      await mark("unrecognized_answer");
-      await audit(false, { outcome: "unrecognized_answer" });
-      continue;
-    }
-    if (answer === "reject") {
-      out.rejected++;
-      await mark("rejected");
-      await audit(false, { outcome: "rejected" });
-      logger.info("plan rejected; nothing starts, the tasks stay", {
-        requestId: row.id,
-        sessionId: row.session_id,
-      });
-      continue;
-    }
-    if (!planId) {
-      // A plan request without the plan's identity (filed by an earlier build) cannot be
-      // run as approved: the next session proposes the plan again.
-      out.skipped++;
-      await mark("unbound_plan");
-      await audit(false, { outcome: "unbound_plan" });
-      logger.warn("plan approval ignored: the request names no plan id", { requestId: row.id });
-      continue;
-    }
-    await closeFilingSession(store, row.session_id);
-    // Marked before the start is asked for: an answered request starts at most one session.
-    await mark("starting");
-    const req: StartRequest = {
-      agentId: deps.agentId,
-      ...(row.project_id ? { projectId: row.project_id } : {}),
-      trigger: "message",
-      reason: `plan approved (request ${row.id})`,
-      planApproved: planId,
-    };
     try {
-      const entry = await deps.start(req);
-      await mark(entry.result, { start_id: entry.id });
-      await audit(true, { outcome: entry.result, startId: entry.id });
-      out.started++;
-      logger.info("approved plan handed to the scheduler", {
-        requestId: row.id,
-        sessionId: row.session_id,
-        outcome: entry.result,
-        startId: entry.id,
-      });
+      const outcome = await applyPlanAnswer(deps, row, startedFor);
+      if (outcome) out[outcome]++;
     } catch (e) {
-      const error = errorMessage(e);
-      out.skipped++;
-      await mark("start_failed", { error });
-      await audit(false, { outcome: "start_failed", error });
-      logger.warn("approved plan could not be started", { requestId: row.id, error });
-      await store.message.send({
-        from_agent_id: deps.agentId,
-        to_human_id: deps.humanId,
-        project_id: row.project_id,
-        type: "warning",
-        body: `The plan you approved (request ${row.id}) could not be started: ${error}. Start the agent by hand; it will propose the plan again.`,
-        requires_ack: false,
-        author_agent: deps.agentId,
-      });
+      logger.warn("plan answer not applied", { requestId: row.id, error: errorMessage(e) });
     }
   }
   return out;
+}
+
+async function applyPlanAnswer(
+  deps: PlanApprovalSyncDeps,
+  row: HumanRequestRow,
+  startedFor: Map<string, string>,
+): Promise<keyof PlanApprovalSyncResult | null> {
+  const logger = log("plan-approval");
+  const { store, clock } = deps;
+  const answer = planAnswer(row.answer);
+  const planId = approvedPlanIdOf(row);
+  if (!answer) {
+    if (!(await markPlanAnswer(store, clock, row, "unrecognized_answer"))) return null;
+    await auditPlanAnswer(deps, row, false, { outcome: "unrecognized_answer" });
+    return "skipped";
+  }
+  if (answer === "reject") {
+    if (!(await markPlanAnswer(store, clock, row, "rejected"))) return null;
+    await auditPlanAnswer(deps, row, false, { outcome: "rejected" });
+    logger.info("plan rejected; nothing starts, the tasks stay", {
+      requestId: row.id,
+      sessionId: row.session_id,
+    });
+    return "rejected";
+  }
+  if (!planId) {
+    // A plan request without the plan's identity (filed by an earlier build) cannot be
+    // run as approved: the next session proposes the plan again.
+    if (!(await markPlanAnswer(store, clock, row, "unbound_plan"))) return null;
+    await auditPlanAnswer(deps, row, false, { outcome: "unbound_plan" });
+    logger.warn("plan approval ignored: the request names no plan id", { requestId: row.id });
+    return "skipped";
+  }
+  await closeFilingSession(store, row.session_id);
+  const group = row.project_id ?? "";
+  const newer = startedFor.get(group);
+  if (newer) {
+    if (!(await markPlanAnswer(store, clock, row, "superseded", { superseded_by: newer })))
+      return null;
+    await auditPlanAnswer(deps, row, false, { outcome: "superseded", supersededBy: newer });
+    logger.info("older approved plan superseded by the newest in this sync", {
+      requestId: row.id,
+      supersededBy: newer,
+    });
+    return "skipped";
+  }
+  // Claimed before the start is asked for: an answered request starts at most one session,
+  // across the route, the poll, a restart and the cloud runner's inbox trigger.
+  const claimed = await markPlanAnswer(store, clock, row, "starting");
+  if (!claimed) return null;
+  startedFor.set(group, row.id);
+  const filing = row.session_id ? await store.session.get(row.session_id) : undefined;
+  const cap = filing?.budget_cap_usd_micro ?? 0;
+  const req: StartRequest = {
+    agentId: deps.agentId,
+    ...(row.project_id ? { projectId: row.project_id } : {}),
+    trigger: "message",
+    reason: `plan approved (request ${row.id})`,
+    planApproved: planId,
+    ...(cap > 0 ? { budgetUsdMicro: cap } : {}),
+  };
+  let entry: { id: string; result: StartOutcome };
+  try {
+    entry = await deps.start(req);
+  } catch (e) {
+    const error = errorMessage(e);
+    await markPlanAnswer(store, clock, claimed, "start_failed", {
+      error,
+      failure_reported_at: clock.nowIso(),
+    });
+    await auditPlanAnswer(deps, row, false, { outcome: "start_failed", error });
+    logger.warn("approved plan could not be started", { requestId: row.id, error });
+    await warnStartFailed(deps, row, error);
+    return "skipped";
+  }
+  // Conditional on the claim: a start that already failed in the background
+  // (`reportPlanStartFailure`) keeps its `start_failed`.
+  await markPlanAnswer(store, clock, claimed, entry.result, { start_id: entry.id });
+  await auditPlanAnswer(deps, row, true, { outcome: entry.result, startId: entry.id });
+  logger.info("approved plan handed to the scheduler", {
+    requestId: row.id,
+    sessionId: row.session_id,
+    outcome: entry.result,
+    startId: entry.id,
+  });
+  return "started";
 }

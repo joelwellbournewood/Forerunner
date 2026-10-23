@@ -30,7 +30,9 @@ named are the same number.
    per phase after the project's existing milestones (`order_index`), loose tasks under none.
    In the mode: exactly one milestone, and the project keeps exactly one, so a later plan joins
    the project's open milestone (`planned` or `active`, first by order) instead of adding a
-   second; the one milestone is the planned one when the plan names a single milestone, else
+   second; otherwise the one milestone is created, after any milestone on file from before
+   the mode (a done or cancelled one keeps its `order_index`), and the card's next milestone
+   is that open one, never a closed row before it; the one milestone is the planned one when the plan names a single milestone, else
    one named after the project with every phase's success criteria once each and the latest
    target date; every task joins it in plan order, so the list is flat. `dependsOn` takes plan
    keys or ids of the project's own tasks; rows are written dependencies first; an unknown
