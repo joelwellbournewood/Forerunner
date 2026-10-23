@@ -25,6 +25,7 @@ export type WebhookEventName =
   | "push"
   | "pull_request"
   | "pull_request_review"
+  | "pull_request_review_comment"
   | "issues"
   | "issue_comment"
   | "check_run"

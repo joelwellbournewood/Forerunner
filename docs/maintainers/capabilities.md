@@ -35,8 +35,16 @@ with their milestone.
   `GitHostWatcher` reads both, plus `listCheckRuns` on the PR head, to fire the `ci` and
   `pr_comment` session triggers (`runtime.md` § Triggers). The fake git host honours `since`
   on `GET /repos/:o/:r/issues/:n/comments`; `MemoryGitHost` filters by `createdAt` and
-  records reviews `reviewPullRequest` submits. `githost-feedback.test.ts` proves paging,
-  `since` and the reviews mapping against the fake host and the memory host.
+  records reviews `reviewPullRequest` submits. `listPullRequestReviewComments(repo, n,
+  { since })` lists the review line comments (`ReviewCommentInfo`: the comment plus
+  `reviewId`, `path`, `line`, `inReplyTo`) from `GET /pulls/:n/comments`, every page, oldest
+  first; `MemoryGitHost.addReviewComment` is its test seam. The agent's mark:
+  `commentOnPullRequest` and `reviewPullRequest` append `AGENT_TEXT_MARKER`
+  (`<!-- forerunner:agent -->`, hidden on GitHub; `markAgentText`, once) in both adapters, and
+  `isAgentText` tells the poller the agent's own text from the human's when the token is the
+  human's PAT and both write under one login. `githost-feedback.test.ts` proves paging,
+  `since`, the reviews and review-comments mapping and the mark against the fake host and the
+  memory host; `github.test.ts` the mark on the stub.
 - `GitOps` (`git.ts`) runs local git with argv arrays: clone, fetch, branch, commit, rebase onto
   the base before a PR (conflicts are reported by file and the rebase aborted, leaving the tree
   clean), push with `--force-with-lease` only when asked and never on the default branch,

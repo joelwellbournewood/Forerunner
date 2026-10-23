@@ -23,6 +23,7 @@ import {
   FORERUNNER_TASK_ID_FIELD,
   type GitHost,
   type IssueInfo,
+  markAgentText,
   type ProjectFieldInfo,
   type ProjectFieldSpec,
   type ProjectInfo,
@@ -33,6 +34,7 @@ import {
   type ReleaseInfo,
   type RepoInfo,
   type RepoRef,
+  type ReviewCommentInfo,
   type ReviewInfo,
   type UpsertItemResult,
 } from "./types.ts";
@@ -351,9 +353,10 @@ export class GitHubHost implements GitHost {
   }
 
   async commentOnPullRequest(repo: RepoRef, number: number, body: string): Promise<CommentInfo> {
+    // Marked as the agent's (ADR 0075): the poller must not take its own comment for feedback.
     return toComment(
       await this.request<Json>("POST", `${this.repoPath(repo)}/issues/${number}/comments`, {
-        body,
+        body: markAgentText(body),
       }),
     );
   }
@@ -380,6 +383,22 @@ export class GitHubHost implements GitHost {
     ).map(toReview);
   }
 
+  async listPullRequestReviewComments(
+    repo: RepoRef,
+    number: number,
+    opts: { since?: string } = {},
+  ): Promise<ReviewCommentInfo[]> {
+    const params = new URLSearchParams({
+      per_page: String(this.pageSize),
+      sort: "created",
+      direction: "asc",
+    });
+    if (opts.since) params.set("since", opts.since);
+    return (
+      await this.paged<Json>(`${this.repoPath(repo)}/pulls/${number}/comments?${params}`)
+    ).map(toReviewComment);
+  }
+
   async reviewPullRequest(
     repo: RepoRef,
     number: number,
@@ -387,7 +406,7 @@ export class GitHubHost implements GitHost {
   ): Promise<{ id: number }> {
     const r = await this.request<Json>("POST", `${this.repoPath(repo)}/pulls/${number}/reviews`, {
       event: opts.event,
-      body: opts.body,
+      body: markAgentText(opts.body),
     });
     return { id: Number(r.id) };
   }
@@ -953,6 +972,17 @@ function toComment(r: Json): CommentInfo {
     author: String((r.user as Json)?.login ?? ""),
     createdAt: String(r.created_at ?? ""),
     htmlUrl: String(r.html_url ?? ""),
+  };
+}
+
+function toReviewComment(r: Json): ReviewCommentInfo {
+  const line = r.line ?? r.original_line;
+  return {
+    ...toComment(r),
+    reviewId: r.pull_request_review_id == null ? null : Number(r.pull_request_review_id),
+    path: String(r.path ?? ""),
+    line: typeof line === "number" ? line : null,
+    inReplyTo: r.in_reply_to_id == null ? null : Number(r.in_reply_to_id),
   };
 }
 

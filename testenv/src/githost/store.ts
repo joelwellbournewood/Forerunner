@@ -55,6 +55,20 @@ export interface ReviewRecord {
   submittedAt: string;
 }
 
+/** A review (line) comment: in a review, or a reply to one (`inReplyTo`). */
+export interface ReviewCommentRecord {
+  id: number;
+  reviewId: number | null;
+  user: string;
+  body: string;
+  path: string;
+  line: number | null;
+  commitId: string;
+  inReplyTo: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PullData {
   headRef: string;
   headSha: string;
@@ -68,6 +82,7 @@ export interface PullData {
   mergeableState: "clean" | "dirty" | "unknown";
   draft: boolean;
   reviews: ReviewRecord[];
+  reviewComments: ReviewCommentRecord[];
 }
 
 export interface IssueRecord {
@@ -577,6 +592,26 @@ export class HostStore {
       pull_request_url: this.api(`/repos/${repo.fullName}/pulls/${issue.number}`),
       commit_id: r.commitId,
       submitted_at: r.submittedAt,
+      author_association: "OWNER",
+    };
+  }
+
+  reviewCommentJson(repo: RepoRecord, issue: IssueRecord, rc: ReviewCommentRecord): Json {
+    return {
+      id: rc.id,
+      node_id: this.nodeId("PullRequestReviewComment", rc.id),
+      url: this.api(`/repos/${repo.fullName}/pulls/comments/${rc.id}`),
+      html_url: this.api(`/${repo.fullName}/pull/${issue.number}#discussion_r${rc.id}`),
+      pull_request_url: this.api(`/repos/${repo.fullName}/pulls/${issue.number}`),
+      pull_request_review_id: rc.reviewId,
+      in_reply_to_id: rc.inReplyTo ?? undefined,
+      path: rc.path,
+      line: rc.line,
+      commit_id: rc.commitId,
+      body: rc.body,
+      user: this.userJsonByLogin(rc.user),
+      created_at: rc.createdAt,
+      updated_at: rc.updatedAt,
       author_association: "OWNER",
     };
   }

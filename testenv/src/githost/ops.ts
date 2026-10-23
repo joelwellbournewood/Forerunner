@@ -449,6 +449,7 @@ export class RepoOps {
         mergeableState: "unknown",
         draft: input.draft,
         reviews: [],
+        reviewComments: [],
       },
     };
     repo.issues.set(issue.number, issue);

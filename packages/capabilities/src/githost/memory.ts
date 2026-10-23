@@ -6,6 +6,7 @@ import {
   FORERUNNER_TASK_ID_FIELD,
   type GitHost,
   type IssueInfo,
+  markAgentText,
   type ProjectFieldInfo,
   type ProjectFieldSpec,
   type ProjectInfo,
@@ -16,6 +17,7 @@ import {
   type ReleaseInfo,
   type RepoInfo,
   type RepoRef,
+  type ReviewCommentInfo,
   type ReviewInfo,
   type UpsertItemResult,
 } from "./types.ts";
@@ -31,6 +33,7 @@ interface Repo extends RepoInfo {
   issues: IssueInfo[];
   comments: Map<number, CommentInfo[]>;
   reviews: Map<number, ReviewInfo[]>;
+  reviewComments: Map<number, ReviewCommentInfo[]>;
   checks: Map<string, CheckRunInfo[]>;
   releases: ReleaseInfo[];
   nextNumber: number;
@@ -126,6 +129,7 @@ export class MemoryGitHost implements GitHost {
       issues: [],
       comments: new Map(),
       reviews: new Map(),
+      reviewComments: new Map(),
       checks: new Map(),
       releases: [],
       nextNumber: 1,
@@ -213,7 +217,7 @@ export class MemoryGitHost implements GitHost {
     const r = this.repo(repo);
     const c: CommentInfo = {
       id: this.nextId++,
-      body,
+      body: markAgentText(body),
       author: this.login,
       createdAt: new Date(0).toISOString(),
       htmlUrl: `memory://${r.fullName}/c/${this.nextId - 1}`,
@@ -236,6 +240,24 @@ export class MemoryGitHost implements GitHost {
     return this.repo(repo).reviews.get(number) ?? [];
   }
 
+  async listPullRequestReviewComments(
+    repo: RepoRef,
+    number: number,
+    opts: { since?: string } = {},
+  ): Promise<ReviewCommentInfo[]> {
+    const all = this.repo(repo).reviewComments.get(number) ?? [];
+    const since = opts.since;
+    return since ? all.filter((c) => c.createdAt >= since) : all;
+  }
+
+  /** Test seam: a review line comment written by someone (the memory host has no other way). */
+  addReviewComment(repo: RepoRef, number: number, c: Omit<ReviewCommentInfo, "id">): number {
+    const r = this.repo(repo);
+    const id = this.nextId++;
+    r.reviewComments.set(number, [...(r.reviewComments.get(number) ?? []), { id, ...c }]);
+    return id;
+  }
+
   async reviewPullRequest(
     repo: RepoRef,
     number: number,
@@ -248,7 +270,7 @@ export class MemoryGitHost implements GitHost {
     )[opts.event];
     const review: ReviewInfo = {
       id,
-      body: opts.body,
+      body: markAgentText(opts.body),
       author: this.login,
       state,
       submittedAt: new Date(0).toISOString(),
