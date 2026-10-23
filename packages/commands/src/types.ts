@@ -38,6 +38,7 @@ export const COMMAND_NAMES = [
   "request.answer",
   "email.mode.set",
   "device.revoke",
+  "memory.record",
 ] as const;
 export type CommandName = (typeof COMMAND_NAMES)[number];
 
@@ -69,6 +70,40 @@ export interface KillReportLike {
   killedProcesses: number;
 }
 
+/** A lesson the human stated (spec O.2, ADR 0061), for the principal's private memory. */
+export interface LessonRecordPortRequest {
+  /** The principal agent whose private memory receives it. */
+  agentId: string;
+  /** The human who stated it; the port refuses an agent this human does not own. */
+  humanId: string;
+  /** The project the lesson is about; null for every project of the agent. */
+  projectId: string | null;
+  text: string;
+  tags: string[];
+  /** `human:<id>;<chat|voice|...>:<conversation session id>` (the memory source grammar). */
+  source: string;
+}
+
+export interface LessonRecordPortResult {
+  lessonId: string;
+  /** The text as stored (trimmed, normalised): what the sentence reads back. */
+  text: string;
+  /** `merged` when a near-duplicate lesson was superseded by this one. */
+  action: "inserted" | "merged";
+  supersededId?: string | null;
+}
+
+/** The memory the registry writes to: the runtime's `MemoryLoop` behind `memoryCommandPort`. */
+export interface MemoryCommandPort {
+  recordLesson(req: LessonRecordPortRequest): Promise<LessonRecordPortResult>;
+  /** Undo: retire the recorded lesson and put back the one it superseded, if any. */
+  forgetLesson(req: {
+    lessonId: string;
+    restoreId?: string | null;
+    humanId: string;
+  }): Promise<void>;
+}
+
 /**
  * What commands need from the rest of the system. Everything durable is the state store;
  * these ports are the live runtime (sessions, kill switch) and the billing rate.
@@ -90,6 +125,8 @@ export interface CommandPorts {
   resumeSession?(sessionId: string, reason: string): Promise<void>;
   /** Starting a session above this budget is "costly" and needs a yes. Default USD 2. */
   costlySessionUsdMicro?: number;
+  /** Lesson memory (`memory.record`); absent: the command is refused as unavailable. */
+  memory?: MemoryCommandPort;
   /** Humans who share a project with the asking human. Default: project.settings.shared_with. */
   sharedWith?(projectId: string, humanId: string): Promise<string[]>;
   /**

@@ -212,7 +212,10 @@ export class IntentParser {
     if (!trimmed) return { commands: [], matched: "none", unmatched: [] };
 
     // A note or a task may contain "and": match them on the whole text before splitting.
-    const whole = this.matchNote(clean(trimmed)) ?? this.matchTask(clean(trimmed), ctx);
+    const whole =
+      this.matchLesson(clean(trimmed)) ??
+      this.matchNote(clean(trimmed)) ??
+      this.matchTask(clean(trimmed), ctx);
     if (whole) return this.finish([whole], ctx, []);
 
     const clauses = trimmed.split(SPLIT_RE).map(clean).filter(Boolean);
@@ -327,6 +330,7 @@ export class IntentParser {
   private matchClause(clause: string, ctx: IntentContext, project: string | null): Match | null {
     return (
       this.matchBack(clause) ??
+      this.matchLesson(clause) ??
       this.matchNote(clause) ??
       this.matchTask(clause, ctx) ??
       this.matchMonthlyCap(clause) ??
@@ -408,9 +412,23 @@ export class IntentParser {
     return this.project(m[1], ctx);
   }
 
+  /**
+   * A lesson the human states (spec O.2, ADR 0061): "remember that ...", "lesson: ...",
+   * "lesson learned: ...", "merk dir, dass ...", "Lektion: ...". It goes to the principal's
+   * memory (`memory.record`); "remember to ..." and "note that ..." stay next-session notes.
+   */
+  private matchLesson(c: string): Match | null {
+    const m =
+      /^(?:remember\s+that|lessons?(?:\s+learned)?|lektion|lehre|merke?\s+dir,?\s+dass)\s*[:,-]?\s+(.+)$/is.exec(
+        c,
+      );
+    if (!m?.[1]) return null;
+    return { command: { name: "memory.record", params: { text: m[1].trim() } } };
+  }
+
   private matchNote(c: string): Match | null {
     const m =
-      /^(?:(note|idea|correction|notiz|idee|korrektur|merke?(?:\s+dir)?|remember)|note\s+that|merk\s+dir,?\s+dass)\s*[:,-]?\s+(.+)$/is.exec(
+      /^(?:(note|idea|correction|notiz|idee|korrektur|merke?(?:\s+dir)?|remember)|note\s+that)\s*[:,-]?\s+(.+)$/is.exec(
         c,
       );
     if (!m?.[2]) return null;
