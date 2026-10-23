@@ -602,6 +602,67 @@ describe("Page and locators over Runtime.evaluate", () => {
     ]);
   });
 
+  it("keeps the guard up until the click of a missed press arrives, so late release events never reach the page (review finding 1)", async () => {
+    const fake = await startFakeDevTools({
+      html: `<!doctype html><html><head><title>Forerunner</title></head><body>
+<main><section data-testid="m-home" data-box="0 0 300 100"><h1>Projects</h1></section></main>
+<nav data-testid="m-nav" aria-label="Main" data-box="0 100 300 40">
+  <a href="/inbox" data-box="0 100 100 40"><span>Inbox</span></a>
+</nav></body></html>`,
+    });
+    // The nav moves on the first press; every release's mouseup and click reach the page
+    // 150 ms after the CDP answer (queued behind it), at the point of that release.
+    let shifted = false;
+    fake.handlers.set("Input.dispatchMouseEvent", (params, f) => {
+      if (!shifted && params.type === "mousePressed") {
+        shifted = true;
+        f.exec(`(() => {
+          document.querySelector("[data-testid=m-home]").setAttribute("data-box", "0 0 300 400");
+          document.querySelector("[data-testid=m-nav]").setAttribute("data-box", "0 400 300 40");
+          document.querySelector("a[href='/inbox']").setAttribute("data-box", "0 400 100 40");
+        })()`);
+      }
+      const types =
+        params.type === "mousePressed"
+          ? ["mousedown"]
+          : params.type === "mouseReleased"
+            ? ["mouseup", "click"]
+            : [];
+      const delay = params.type === "mouseReleased" ? 150 : -1;
+      f.exec(`(() => {
+        const fire = () => {
+          const el = document.elementFromPoint(${Number(params.x)}, ${Number(params.y)});
+          for (const type of ${JSON.stringify(types)}) {
+            if (el) el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+          }
+        };
+        if (${delay} < 0) fire(); else setTimeout(fire, ${delay});
+      })()`);
+      return {};
+    });
+    fake.exec(`window.__ups = [];
+      document.addEventListener("mouseup", (e) => window.__ups.push(e.target.getAttribute("data-testid") || e.target.textContent.trim()));`);
+    await openPage(fake).then((page) => page.getByTestId("m-nav").getByText("Inbox").click());
+    // Let any straggler arrive before looking.
+    await new Promise((r) => setTimeout(r, 400));
+    // One click on Inbox (the old guard let a second one through), none on Home.
+    expect(clicks(fake)).toEqual(["Inbox"]);
+    expect(fake.exec("window.__ups")).toEqual(["Inbox"]);
+    expect(mouse(fake).filter((p) => p.type === "mousePressed")).toHaveLength(2);
+  });
+
+  it("counts a click that replaced the document as landed, not lost (review finding 2)", async () => {
+    const fake = await startFakeDevTools();
+    // The release navigates: the new document has no guard and no event record.
+    fake.handlers.set("Input.dispatchMouseEvent", (params, f) => {
+      if (params.type === "mouseReleased") f.exec("delete window.__forerunnerCdpClickGuard");
+      return {};
+    });
+    const page = await openPage(fake);
+    await page.getByRole("button", { name: "Approve" }).click({ timeout: 2_000 });
+    expect(mouse(fake).filter((p) => p.type === "mousePressed")).toHaveLength(1);
+  });
+
   it("fails naming what got the click when the element keeps moving away from the point", async () => {
     const fake = await startFakeDevTools({
       html: `<!doctype html><html><head><title>Forerunner</title></head><body>

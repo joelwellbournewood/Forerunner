@@ -950,7 +950,8 @@ export class Locator {
    * cancelled before the page sees them and the click is measured and sent again; when it
    * keeps missing until `timeout`, `cdp.click_missed` names what was at the point. A click
    * none of whose events reached the page is `cdp.click_lost` (never retried: a late event
-   * could otherwise click twice).
+   * could otherwise click twice). A click that replaced the document (a navigation) counts as
+   * landed: the guard went with the old document.
    * @param {{ timeout?: number }} [options]
    */
   async click(options = {}) {
@@ -963,6 +964,7 @@ export class Locator {
       if (point.hitOk) {
         await this.page.mouseClick(point.x, point.y);
         const outcome = await this.#clickOutcome();
+        if (outcome.navigated) return;
         if (outcome.missed === null && outcome.events.length > 0) return;
         if (outcome.missed === null) {
           throw new CdpError(
@@ -973,6 +975,7 @@ export class Locator {
         }
         lastHit = outcome.missed;
         if (this.page.now() - t0 >= timeout) {
+          await this.page.run([], "clickOutcome", "disarm").catch(() => undefined);
           throw new CdpError(
             "cdp.click_missed",
             `${this}: moved before the click landed; ${lastHit} was at (${Math.round(point.x)}, ${Math.round(point.y)}) instead (the click was stopped before the page saw it)`,
@@ -994,17 +997,29 @@ export class Locator {
   }
 
   /**
-   * What the click guard saw: waits up to `CLICK_SETTLE_MS` for the click event (or a miss),
-   * then disarms the guard.
+   * What the click guard saw: waits up to `CLICK_SETTLE_MS` for the attempt's click event (a
+   * miss on the press does not end the wait: the release's events may still be on their way
+   * and must meet the guard), then disarms the guard, or keeps it up after a miss whose click
+   * never came, until the retry arms its own. `navigated` when the guard is gone: only a new
+   * document (the click navigated) drops it.
    */
   async #clickOutcome() {
     const t0 = this.page.now();
     for (;;) {
       const seen = await this.page.run([], "clickOutcome", null);
-      const settled = seen.missed !== null || seen.events.includes("click") || !seen.armed;
-      if (settled || this.page.now() - t0 >= CLICK_SETTLE_MS) {
-        const out = await this.page.run([], "clickOutcome", "disarm");
-        return { events: out.events ?? seen.events, missed: out.missed ?? seen.missed };
+      // The guard is gone only when the measured document was replaced: the click navigated.
+      if (!seen.armed) return { events: seen.events, missed: null, navigated: true };
+      // A miss does not settle the attempt: the release's `mouseup` and `click` may still be
+      // queued behind the CDP answer, and they must meet the guard too (review finding 1).
+      const settled = seen.events.includes("click");
+      const late = this.page.now() - t0 >= CLICK_SETTLE_MS;
+      if (settled || late) {
+        // A miss whose click never came keeps the guard up: the retry's measurement replaces
+        // it, so a straggler from this attempt is still stopped until then.
+        const keep = seen.missed !== null && !settled;
+        const out = await this.page.run([], "clickOutcome", keep ? null : "disarm");
+        if (!out.armed) return { events: seen.events, missed: null, navigated: true };
+        return { events: out.events, missed: out.missed, navigated: false };
       }
       await sleep(Math.min(this.page.pollMs, 50));
     }

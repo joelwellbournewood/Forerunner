@@ -49,7 +49,11 @@ driver, 4 of 20 with 4ff4fb1's. The page log shows why:
    `click`. An event whose target is the element or inside it passes; any other is cancelled
    (`preventDefault`, `stopImmediatePropagation`) before every page listener and recorded.
    After the mouse events, `Locator.click` reads the record (`clickOutcome`, waiting up to
-   1 s for the `click`) and disarms the guard. A miss is retried from a fresh measurement
+   1 s for the attempt's `click`; a miss on the press does not end that wait, since the
+   release's events may still be queued and must meet the guard too) and disarms the guard;
+   after a miss whose `click` never came the guard stays up until the retry arms its own.
+   A guard that is gone means the document was replaced: the click navigated, and counts as
+   landed (review of 2026-10-23, findings 1 and 2). A miss is retried from a fresh measurement
    until the timeout, then `cdp.click_missed` names what was at the point. A click with no
    event at all is `cdp.click_lost` and is not retried (a late event could click twice). The
    guard disarms itself after 15 s if nobody reads it.
@@ -69,8 +73,10 @@ driver, 4 of 20 with 4ff4fb1's. The page log shows why:
 
 - A re-render between the measurement and the press can no longer send a click to another
   element: the misplaced events never reach the page, and the click is retried. Scenario 3's
-  failure on 82a6295 ("a click that did not reach the scrolled-to Confirm button", ADR 0086)
-  is in the same class and is covered by the same guard.
+  suspected cause on 82a6295 ("a click that did not reach the scrolled-to Confirm button",
+  ADR 0086, a coordinate-space mismatch below the fold) is not fixed by the guard: every
+  retry presses the same wrong point. The guard only makes it visible, as `cdp.click_missed`
+  naming what was at the point, where before it passed silently.
 - In the Chromium 83 stand-in with the same slow IPC, the smoke's pairing and inbox steps
   passed 20 of 20 runs with the guard alone, and the whole `smoke()` of `run.mjs` passes.
   The emulator run itself is still to be dispatched; the cause is reasoned from the stand-in

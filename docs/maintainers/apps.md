@@ -1046,7 +1046,8 @@ apps/mobile/
   e2e/cdp.mjs        raw CDP client and DOM driver for the smoke (ADR 0054): /json/list, page socket,
                      Runtime.evaluate queries, Input.* clicks and fills; no eval in the page (CSP);
                      the click guard (ADR 0087): events that land outside the measured element
-                     are stopped in the page and the click is sent again; describePage for the
+                     are stopped in the page (the guard stays up until the attempt's click
+                     arrives) and the click is sent again; describePage for the
                      runner's page: lines; cdp.test.ts against a fake endpoint
   e2e/cdp.d.mts      types of cdp.mjs for the test (keep in step); e2e/jsdom.d.ts: the jsdom slice it uses
   src-tauri/
@@ -1270,7 +1271,9 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   40000764444): a nav that moves down between the measurement and the press (the base's
   driver clicked Home there) gets the click on its retry and Home sees no event, a page that
   never settles ends in `cdp.click_missed` naming what was at the point with no click
-  received, a click with no event in the page is `cdp.click_lost`; `describePage` (URL,
+  received, a click with no event in the page is `cdp.click_lost`, release events that
+  arrive after the CDP answer still meet the guard after a missed press (one click on Inbox,
+  none on Home), a click that replaced the document counts as landed; `describePage` (URL,
   title, capped screen text) and `run.mjs`'s step order (Home's list before the nav click,
   each screen's heading after it, the page read before the cleanups); `evaluate` with the function source spliced into
   the expression (no `eval` call sent, the CSP stand-in in force), `cdp.bad_function` for a

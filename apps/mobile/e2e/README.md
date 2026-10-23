@@ -132,8 +132,10 @@ the page lets through only the pointer, mouse and click events that land on it. 
 element moved in between (on the emulator's old WebView the app's stylesheet does not apply
 and the bottom nav sits in the flow, so it moves when Home's list arrives: run 40000764444),
 the misplaced events are stopped before the page sees them and the click is measured and
-sent again; `cdp.click_missed` (names what was at the point) and `cdp.click_lost` (no event
-reached the page) are the failures.
+sent again. The guard stays up until the attempt's `click` has arrived, so release events
+queued behind the CDP answer are stopped too; a click that navigates (the guard went with the
+old document) counts as landed. `cdp.click_missed` (names what was at the point) and
+`cdp.click_lost` (no event reached the page) are the failures.
 
 Biometrics on the emulator (high-risk answers need the platform prompt, spec R.7): enrol a
 fingerprint once under Settings → Security → Fingerprint (set a PIN first), then when the

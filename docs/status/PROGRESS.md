@@ -32,7 +32,7 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   stops events that land outside the measured element and retries the click
   (`cdp.click_missed`, `cdp.click_lost`); the runner waits for Home's list and each screen's
   heading, prints `webview engine:` and, after a failure, `page:` lines. Tests:
-  `apps/mobile/e2e/cdp.test.ts` (30, five new). Open: the app's layout on a pre-99 WebView.
+  `apps/mobile/e2e/cdp.test.ts` (32 after the review, seven new). Open: the app's layout on a pre-99 WebView.
   Report: `docs/status/reviews/w6-android-inbox.md`.
 
 ### 2026-10-23 (item w3-d16-slider rebased onto cac6fee)
