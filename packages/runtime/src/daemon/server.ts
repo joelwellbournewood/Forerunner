@@ -1189,24 +1189,26 @@ export function createDaemonApp(
     if (body.answer === "device") {
       // The bearer of the daemon token is the human at this PC, and this PC is a paired
       // device (its row, `/me.desktopDeviceId`). An answer that names no device is answered
-      // by that row, noted in the audit log; one that names a device is checked as given,
-      // so a foreign, revoked or unknown id is refused by the registry's policy.
-      const deviceId = body.deviceId ?? rt.remote.device?.id;
+      // by that row, noted in the audit log, and so is the literal `desktop` an older settings
+      // screen sent when the shell had no install id; any other id is checked as given, so a
+      // foreign, revoked or unknown id is refused by the registry's policy.
+      const thisPc = !body.deviceId || body.deviceId === "desktop";
+      const deviceId = thisPc ? rt.remote.device?.id : body.deviceId;
       if (!deviceId) {
         throw new ForerunnerError(
           "validation",
           "deviceId is required: this daemon has no desktop device row to answer for",
         );
       }
-      if (!body.deviceId) {
+      if (thisPc) {
         await rt.store.auditLog.append({
           tool: "daemon.confirm_device",
           allowed: true,
           denied_reason: null,
           agent_id: rt.agent.id,
           human_id: rt.human.id,
-          input_summary: JSON.stringify({ pendingId: id, deviceId, given: null }),
-          result_summary: "device answer without an id: this PC's own desktop row answers",
+          input_summary: JSON.stringify({ pendingId: id, deviceId, given: body.deviceId ?? null }),
+          result_summary: "device answer naming no device row: this PC's own desktop row answers",
           cost_usd_micro: 0,
           occurred_at: rt.clock.nowIso(),
           author_agent: rt.agent.id,

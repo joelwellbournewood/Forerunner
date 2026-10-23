@@ -109,8 +109,9 @@ this module holds the rules and the two sides.
   only inside the blobs.
 - **In the daemon.** `composeRuntime` creates the install wrapping key in the vault
   (`ensureInstallWrapKey`) and registers it on the desktop device row (`registerDesktopDevice`
-  takes `wrapPublicKey`; the row is registered whenever remote control is on, or was asked
-  for explicitly, so `FORERUNNER_REMOTE_COMMANDS=0` also leaves this install without a key), wires `SharedSecretVault` under the hooks' resolver with
+  takes `wrapPublicKey`; the row is registered whenever the daemon runs its services, remote
+  control is on, or it was asked for explicitly, so a solo daemon has a key too and only a
+  one-shot or the cloud runner (no services, no option) has none), wires `SharedSecretVault` under the hooks' resolver with
   the `secret.shared_resolved` audit row, and exposes `rt.sharedSecrets` (`propose`, `revoke`,
   `list`, `names`). `routes.ts` mounts `POST /secrets/shared { name, agentIds, why?, kind? }`
   (201 `{ grant, requestIds, targets }`), `GET /secrets/shared` and
@@ -1457,25 +1458,28 @@ registry's record. `ChatReplyView.pendingConfirmation` carries the commands and 
 
 **This PC as the paired device (ADR 0030; the P1 of the 2026-10-23 triage).** A high-risk
 card (`needs_device`) from the desktop app is confirmed on the desktop's own device row: the
-daemon registers it on every store (`registerDesktopDevice`, below), `GET /me` names it as
+daemon registers it on every store, local or shared (`registerDesktopDevice`, below), `GET /me` names it as
 `desktopDeviceId`, and the settings screen sends `{ answer: "device", deviceId: <that id> }`;
 the registry's policy then checks the row like any other device (a `desktop` of the same
 human, not revoked), so an id that is no device row (the shell's install id, which the UI used
 to send; another install's row) is refused with `approval_required` "unknown device; pair it
-first" and the card stays open. A device answer that names no id on this daemon-token route is
-the human at this PC: the route substitutes the daemon's own row and writes one `audit_log`
-row `daemon.confirm_device` (`input_summary` `{ pendingId, deviceId, given: null }`) before
-the registry checks it; a daemon without a row (only a hand-built runtime) answers
-`validation`. A phone still needs `biometric: true`, a web or runner device is refused as
+first" and the card stays open. A device answer that names no id on this daemon-token route,
+or names the literal `desktop` an older settings screen sent when the shell had no install
+id, is the human at this PC: the route substitutes the daemon's own row and writes one
+`audit_log` row `daemon.confirm_device` (`input_summary` `{ pendingId, deviceId, given }`,
+`given` null or `"desktop"`) before the registry checks it; a runtime without a row (a
+one-shot, the cloud runner, a hand-built one) answers `validation`. A phone still needs `biometric: true`, a web or runner device is refused as
 before (`packages/commands`, `security-commands.test.ts`).
 
 **Remote control of the PC (`src/remote/`, spec R.4, R.8, Q.12; ADR 0032 item 4, ADR 0033
 items 8b and 9, [ADR 0041](../decisions/0041-pc-remote-commands-owner-filter-and-presence.md)).**
 On a shared state the daemon is the consumer of the phone's `target: "pc"` remote commands
 and the PC the cloud runner's PC-wins rule looks for. `composeRuntime` registers the daemon's
-own `desktop` device row on every store, shared or local (`RuntimeApp.remote.device`, never
-null in a composed runtime: it is the paired device a high-risk change from the desktop app
-is confirmed on, ADR 0030, and `GET /me` names it), and builds the heartbeat and the watcher
+own `desktop` device row on every store, shared or local (`RuntimeApp.remote.device`: it is
+the paired device a high-risk change from the desktop app is confirmed on, ADR 0030, and
+`GET /me` names it; registered whenever the background services run, remote control is on
+or `opts.remote.enabled` is true, so it is null only in a one-shot and in the cloud runner,
+which composes without services and keeps its own `runner` row), and builds the heartbeat and the watcher
 only when `remoteCommandsEnabled(env, stateUrl, services, opts.remote?.enabled)` says so
 (never without the background services; then the option, then `FORERUNNER_REMOTE_COMMANDS`
 `1`/`0`, else on for every state URL that is not `sqlite:`; `remote.enabled`, `watcher` and
@@ -2004,11 +2008,14 @@ answer per change: the registry confirms by risk, a yes for medium, the paired d
 high, and the hooks hold no command tool; `test/conversation.test.ts`, `test/hooks.test.ts`),
 Q.11 and Q.12 for the settings screen's route (`source: "ui"` on the change log row, the same
 executor and policy as chat and voice; `test/loop-routes.test.ts`, `apps/ui/test/settings.test.tsx`,
-`tests/e2e/scenarios/phase5-gate.integration.test.ts`); Q.8 on a solo install (the daemon's
-desktop row exists on a `sqlite:` store with the remote services off, `/me.desktopDeviceId`
-names it, that id performs the high-risk change, the shell's install id is refused as an
-unknown device with the card kept, an id-less device answer is this PC with its audit row;
-`test/loop-routes.test.ts` "a solo install's desktop is the paired device").
+`tests/e2e/scenarios/phase5-gate.integration.test.ts`); Q.8 on a solo install (a daemon
+composed with its services on a `sqlite:` store has its desktop row with the remote services
+off, `/me.desktopDeviceId` names it, that id performs the high-risk change, the shell's
+install id is refused as an unknown device with the card kept, an id-less or `desktop`
+device answer is this PC with its audit row, a phone row without biometric is still refused;
+a one-shot without services or the option registers no row and `/me` names none;
+`test/loop-routes.test.ts` "a solo daemon's own desktop device" and "a one-shot without
+services").
 O.1, O.3, O.5, O.7, O.9, O.10 and Q.4, Q.5 for voice through the daemon (a text or audio turn
 through the one loop with every latency stage measured; a risky command read back and waiting
 for the yes, a wrong answer doing nothing, a yes or a tap applied through the registry with

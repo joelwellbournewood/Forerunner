@@ -821,8 +821,9 @@ export const CommandConfirmBody = z.object({
   answer: z.enum(["yes", "no", "tap", "device"]),
   /**
    * For `device`: the paired device that confirms (`/me.desktopDeviceId` for this PC); a
-   * phone also needs `biometric: true`. Left out, the daemon-token holder is the human at this
-   * PC and the daemon's own desktop row answers (an audit row says so).
+   * phone also needs `biometric: true`. Left out (or the literal `desktop` an older settings
+   * screen sent), the daemon-token holder is the human at this PC and the daemon's own
+   * desktop row answers (an audit row says so).
    */
   deviceId: z.string().optional(),
   biometric: z.boolean().optional(),
