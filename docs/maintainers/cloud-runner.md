@@ -184,9 +184,15 @@ session with trigger `message` when it finds
   started (older ones are the next session's business), or
 - a request a session filed (`session_id` set, `author_agent` the agent) that the human
   answered after the runner started. A plan approval (`change_card.key` `plan:<session>`)
-  answered `approve` starts the session with `planApproved`; a rejected plan starts nothing.
-  The runner's own unlock challenges and the email approvals have no `session_id` and never
-  count, nor do another agent's requests.
+  answered `approve` starts the session with `planApproved` set to the card's `plan_id`
+  (`plan:<session>#<sha256 of the planned task ids in order>`, `runtime.md` "Plan approval",
+  ADR 0053): the runner plans again and runs only while the plan is still that plan, else it
+  files the changed plan as a new request and runs nothing, so a task added after the human
+  looked never runs on the old approval. The newest approved plan in a check binds the start
+  (an older one is superseded and proposed again by the runner); a plan card without a
+  `plan_id` (an earlier build's request) starts a plain session that proposes the plan again. A
+  rejected plan starts nothing. The runner's own unlock challenges and the email approvals have
+  no `session_id` and never count, nor do another agent's requests.
 
 Each item triggers at most once (ids are remembered until the message is read or the answer
 leaves the 24 h look-back). A check waits while a session of the agent runs or the kill switch
@@ -336,7 +342,9 @@ or a sidecar on `network_mode: "service:runner"`.
   plaintext key material into a log line, a row or an error (`redactKey`, the no-leak assertion).
 - **The precedence rule**: `PcPresence.check()` is the single place; a new signal (a lease
   table, a state-service presence endpoint) goes there with a test in `presence-billing.test.ts`.
-- **Inbox triggers**: what counts is `InboxTrigger.check()` in `inbox-trigger.ts`, and nothing
+- **Inbox triggers**: what counts is `InboxTrigger.check()` in `inbox-trigger.ts` (the plan
+  request's shape and answer words come from `@forerunner/runtime`'s `plan-approval.ts`:
+  `isPlanRequest`, `approvedPlanIdOf`, `planAnswer`, so the daemon and the runner agree), and nothing
   else starts a `message` session on the runner; a new source (CI results, PR comments) is a
   new filter there with a case in `inbox-trigger.test.ts`.
 - **Billing**: a provider rule change is a change to `DEFAULT_ROUTING_POLICY` in the billing
@@ -362,7 +370,7 @@ file-backed SQLite, testenv mail server on 127.0.0.1, SimulatedClock):
 | --- | --- |
 | `config.test.ts` | defaults, required URL, every issue listed, overrides, lists and booleans, header verifier needs authserv-ids, inbox poll off with 0 and never under 1 s, no credential in the description (a password with a literal `@` included), a non-loopback health host listed with the other issues |
 | `health.test.ts` | the Hono app in process (`/health`, `/ready` 503 then 200, 404, query strings, `cache-control: no-store`, HEAD allowed, other methods 405, a failing status function answered 500 with the message and none of its data) and over a loopback socket on a free port; `localhost` accepted, a non-loopback host refused before binding; close releases the port |
-| `inbox-trigger.test.ts` | a peer's message triggers once (own notes, read and pre-start messages never; two projects give no project); waiting while a session runs; an answered session question, an approved plan carrying `planApproved`; a rejected plan, the unlock challenge and another agent's question ignored; a PC online defers with a back-off; a start the scheduler skipped leaves the items for the next check; polling on the clock |
+| `inbox-trigger.test.ts` | a peer's message triggers once (own notes, read and pre-start messages never; two projects give no project); waiting while a session runs; an answered session question, an approved plan carrying its `plan_id` as `planApproved`, a plan card without the id starting a plain session; a rejected plan, the unlock challenge and another agent's question ignored; two approved plans in one check (the newest binds); a PC online defers with a back-off; a start the scheduler skipped leaves the items for the next check; polling on the clock |
 | `vault-unlock.test.ts` | challenge and answer against the real file vault; wrong key, tampered answer, stale challenge, expiry (withdrawn), deny; the key absent from every log line, audit row and request row; the window: cached re-unlock, forgetting at the end, shortened / cleared window, policy ask, window set by the answer, absurd window refused |
 | `presence-billing.test.ts` | desktop seen / stale / revoked / other human / runner kind; active pc session; billing: shared vs personal runner, `personalRunner` opt-in, missing credential and disabled source skipped, other human's agent refused; the router decides (`BillingRouter.pick` called once with `runner: "cloud", purpose: "session"`, a `never` policy skips the subscription on a personal runner, `runnerRoutingPolicy` per runner kind, the plan-share rule falls back to the API key at the cap) |
 | `remote.test.ts` | kill within one poll (runs aborted, freeze, result and audit rows), stop lifts the freeze, start resumes and asks the scheduler, pause refused, pc-targeted and other-runner commands untouched; another human's phone (start of its agent, kill) and a start naming another agent refused with `forbidden: ...`, the runner's run untouched |
