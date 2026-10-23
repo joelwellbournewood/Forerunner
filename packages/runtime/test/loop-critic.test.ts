@@ -96,10 +96,18 @@ describe("critic in the loop", () => {
     const open = await w.store.finding.openFor(task.id);
     expect(open).toHaveLength(1);
     expect(open[0]?.description).toBe("No test covers clamp");
-    const inbox = await w.store.message.inbox({ agentId: w.alice }, { unreadOnly: true });
-    expect(inbox.some((m) => m.type === "request" && m.body.includes("Revision requested"))).toBe(
-      true,
+    // The owner's revision request lands during the last task: the re-check before the
+    // session-end writes reads it (spec E.4) and names it in the handoff; no reply exists yet,
+    // so it is not acted on and the next session's brief carries it.
+    const inbox = await w.store.message.inbox({ agentId: w.alice });
+    const revision = inbox.find(
+      (m) => m.type === "request" && m.body.includes("Revision requested"),
     );
+    expect(revision?.read_at).not.toBeNull();
+    expect(revision?.acted_at).toBeNull();
+    expect(result.handoff).toMatchObject({
+      end_inbox: { read: [{ id: revision?.id, type: "request", kind: "message" }] },
+    });
     expect(result.summary).toContain("Sent back by the critic: 1");
     await w.close();
   });

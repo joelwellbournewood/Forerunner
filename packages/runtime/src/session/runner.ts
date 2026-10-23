@@ -1758,7 +1758,8 @@ export class SessionRunner {
    * the session obeys is acted on by stopping (`acted_at`), whatever its type.
    *
    * `atEnd` is the re-check before the session-end writes (spec E.4): no task follows, so a
-   * said line is left untouched for the next session's brief.
+   * said line is left untouched for the next session's brief, and an ordinary message is read
+   * but not acted on (the next session's brief carries it, `checklist.ts`).
    */
   private async recheckInbox(
     agentId: string,
@@ -1800,7 +1801,10 @@ export class SessionRunner {
       read.push(entry);
       if (entry.kind !== "message") interrupt ??= entry;
       await emit("inbox.message", { id: m.id, type: m.type, from: m.from_agent_id, sessionId });
-      if (m.requires_ack && (entry.kind !== "message" || ACK_BY_READING.has(m.type))) {
+      // At the end no plan follows to take an ordinary message in: it is read and named in the
+      // handoff, and the next session's brief carries it and acts on it (checklist.ts).
+      const actByReading = !opts.atEnd && ACK_BY_READING.has(m.type);
+      if (m.requires_ack && (entry.kind !== "message" || actByReading)) {
         await this.deps.store.message.markActed(m.id);
         await emit("inbox.acted", {
           id: m.id,

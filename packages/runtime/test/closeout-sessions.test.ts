@@ -613,6 +613,9 @@ describe("closeout: the inbox is re-checked before the session-end writes (E.4)"
       interrupt: { id: stopId, kind: "stop" },
       stopped: true,
     });
+    // The stop was obeyed there: the next session's brief does not carry it.
+    const next = await run(executorByTitle(w));
+    expect(next.brief.inbox.unread.some((m) => m.id === stopId)).toBe(false);
   });
 
   it("an ordinary message sent during the last task is read before the writes and named in the handoff; the session still completes", async () => {
@@ -638,8 +641,8 @@ describe("closeout: the inbox is re-checked before the session-end writes (E.4)"
     expect(res.stopReason).toBe("completed");
     const note = await w.store.message.mustGet(noteId);
     expect(note.read_at).not.toBeNull();
-    // An ack-required info message is acted on by reading it, as between tasks.
-    expect(note.acted_at).not.toBeNull();
+    // No plan follows to take it in: read, not acted on; the next session's brief carries it.
+    expect(note.acted_at).toBeNull();
     expect(at.cache).toBe(note.read_at);
     expect(at.handoff).toBe(note.read_at);
     expect(res.handoff).toMatchObject({
@@ -656,6 +659,21 @@ describe("closeout: the inbox is re-checked before the session-end writes (E.4)"
     expect(res.summary).toContain("Session completed.");
     expect(res.summary).toContain("Read before the session-end writes: 1 message.");
     expect(res.summary).not.toContain("ended the session");
+
+    // The next session's brief carries the message once (read, so not in the unread count) and
+    // its startup acts on it, as an ack-required info message taken into the plan.
+    await addTask(w, "Next");
+    const next = await run(executorByTitle(w));
+    const carried = next.brief.inbox.unread.filter((m) => m.id === noteId);
+    expect(carried).toEqual([
+      expect.objectContaining({ id: noteId, type: "info", readAtLastSessionEnd: true }),
+    ]);
+    expect((await w.store.message.mustGet(noteId)).acted_at).not.toBeNull();
+    expect(next.handoff).not.toHaveProperty("end_inbox");
+    // Carried once: the session after that does not see it again.
+    await addTask(w, "After");
+    const after = await run(executorByTitle(w));
+    expect(after.brief.inbox.unread.some((m) => m.id === noteId)).toBe(false);
   });
 
   it("a pause from the pause port during the last task is acknowledged and the row ends stopped, not left paused", async () => {
