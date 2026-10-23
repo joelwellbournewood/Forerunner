@@ -135,3 +135,82 @@ container engine).
   speed parameter to pass.
 - **Planning and chat never go fast** (no fast-mode price on those paths either).
 - Independent review and the merge are the next stages.
+
+## Review
+
+Reviewer: independent adversarial review (managed agent), 2026-10-23, of `1219933..a4a4e61`
+on `wave/w3-d4-specialist-settings` against the brief, the spec (D.3, D.4, D.8 to D.15, the
+"Model ladder" open decision), ADR 0072 and the base `ccr-4d8a843c-1k9syk` at `f1948dd`.
+
+Verdict: **revise**. Score: **76/100**. The resolution order, the capability flags, the speed
+composition with D.20 and the write path are sound and well tested; two realistic paths let a
+setting step over a limit the rest of the runtime keeps (a specialist's `max_effort`, the ladder
+ceiling), and the branch does not merge cleanly with the base.
+
+### Requirements checked
+
+- [x] `max_tokens`, `speed_mode`, `temperature` in the specialist frontmatter, validated, optional,
+  defaults from the effort table per mode (`registry/types.ts`, `ladder.ts`, `registry.test.ts`).
+- [x] Provider capability flag for temperature (`ProviderCapabilities.acceptsTemperature`, plus
+  `fastMode`); the Anthropic adapter declares none and never sends one; the fake declares either.
+- [x] The loop's per-call `max_tokens` honoured from the run; `temperature` sent only when accepted;
+  `speed` sent only to a provider with fast mode (`run-settings-runs.test.ts`).
+- [x] Speed mode composable with D.20: the same parameter `speed`, the same beta header, the same
+  API-only rule, `project.settings.fast_mode` read only, stated in ADR 0072 point 6.
+- [x] Per-agent overrides in `model_config` with the same keys, written by `model.settings.set`
+  with a card, a change log row and an undo, own principal only.
+- [x] Settings UI shows model, effort, max tokens, speed mode, timeout per agent mode and
+  specialist with defaults and sources; temperature column only when the flag is true.
+- [~] Effort per specialist: the override ignores the specialist's `max_effort` (finding 1).
+- [~] Model per agent: the principal's mode override ignores the ladder ceiling (finding 2).
+- [x] Docs: adding-a-specialist.md, adding-a-provider.md, runtime.md, apps.md, commands.md,
+  testing.md, ADR 0072 indexed; requirements D.4 `done`; BLOCKERS and PROGRESS rows.
+- [~] Merge with the base: textual conflicts in five files (finding 5).
+- Ran: `pnpm typecheck` (exit 0); the eight D.4 test files (7 runtime/commands files, 90 tests
+  passed); a trial merge of the base into a throwaway worktree, conflicts resolved as a union,
+  `pnpm typecheck` exit 0 and 16 files / 206 tests passed (D.4 files, executor, loop-merge,
+  conversation, all of packages/commands).
+
+### Findings
+
+1. **medium**: `packages/runtime/src/session/executor.ts:458` (effort), `packages/commands/src/
+   commands/model-settings.ts:114`, `apps/ui/src/pages/ModelSettingsSection.tsx` (`OPTIONS.effort`).
+   A specialist's `max_effort` is never applied: an agent override `specialists.coder.effort: max`
+   (coder's file says `max_effort: high`) is accepted by `model.settings.set`, offered by the
+   UI's select, and sent to the provider as `effort: "max"`. `adding-a-specialist.md` says the
+   runtime raises effort "never above `max_effort`", and the view even ships `maxEffort` unused.
+   Verified with a throwaway executor test (`modelConfig: { specialists: { coder: { effort:
+   "max" } } }` → `provider.calls[0].request.effort === "max"`, passed). Needed: the executor
+   clamps the run's effort at the file's `max_effort` (with a warning), the command refuses an
+   effort above it, the UI lists only the efforts up to it; tests for each.
+2. **medium**: `packages/runtime/src/session/intake.ts:636`, `packages/runtime/src/conversation/
+   agent.ts:281`, `packages/runtime/src/models/run-settings.ts` (`resolveRunSettings`). The
+   principal's `modes.planning.tier` / `modes.text_chat.tier` override is used as is: `fable` (the
+   top rung, above the default ceiling Opus; spec "Model ladder: top tier only by explicit
+   project setting", D.3) is accepted by the command and becomes the intake's and the chat's
+   model, while a specialist override is capped by `startingTier` under the project ceiling.
+   Verified with a throwaway test (`resolveRunSettings({ mode: "planning", override: { tier:
+   "fable" } }).tier === "fable"`, passed) and by reading both call sites (`modelIdFor(tier, …)`,
+   no ceiling). Needed: the agent modes capped at the ceiling (the project's for the intake, the
+   default for the chat), the screen showing the rung that runs; tests.
+3. **low**: `docs/maintainers/adding-a-specialist.md:57`, `docs/decisions/0072-...md` point 4. The
+   doc says nothing about `default_effort` not being a run's base: since before this item the
+   executor takes the effort table row (so the model watch's adopted effort applies), and the new
+   screen shows e.g. data-analyst at "medium, effort table" while its file says `default_effort:
+   high`. A maintainer reading the field table expects the file's value. Verified by reading
+   `effortForTask` and `grep default_effort packages/runtime/src` (only `specialistSpecFrom` copies
+   it; nothing reads `SpecialistSpec.defaultEffort`). Needed: state it in the field table and the
+   ADR (the spec D.4 asks for defaults from the effort table, so the behaviour stays).
+4. **low**: `apps/ui/test/fake-daemon.ts:1723` (the `model.settings.set` fake) and
+   `apps/ui/test/settings-models.test.tsx` ("changes a specialist's max tokens"). The fake's
+   sentence is "Set the max_tokens of the coder specialist …" but the daemon's command says "Set
+   the max tokens per call of …" (`MODEL_SETTING_LABELS`), so the UI test asserts a sentence the
+   real daemon never produces. Verified by comparing the two strings with
+   `packages/commands/test/model-settings.test.ts`. Needed: the fake uses the command's labels.
+5. **low**: `packages/commands/src/types.ts:95`, `packages/runtime/src/daemon/compose.ts:2113`,
+   `apps/ui/test/fake-daemon.ts:142`, `docs/maintainers/runtime.md` (Known issues, first entry),
+   `docs/maintainers/apps.md:350`. Each addition sits at the same anchor where the base added
+   something (`requestAnswered`, `me`, the B.5 known issue, the `settings` test list), so
+   merging into `ccr-4d8a843c-1k9syk` stops on five conflicts. No semantic conflict: the union
+   typechecks and the tests pass (trial merge above). Needed: move the additions to anchors the
+   base did not touch and prove a trial merge is conflict-free.
