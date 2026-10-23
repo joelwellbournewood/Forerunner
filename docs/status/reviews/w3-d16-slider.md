@@ -67,8 +67,8 @@ it and finished it:
 ### Commands run and results (2026-10-23, Linux sandbox)
 
 - `pnpm install --frozen-lockfile`: done.
-- `pnpm typecheck`: clean (node packages and the four apps).
-- `pnpm lint`: exit 0, 59 warnings. The base had the same 59 warnings before my changes, so none are new.
+- `pnpm typecheck`: exit 0 (the node packages and the four apps; output below).
+- `pnpm lint`: exit 0, 59 warnings. The base had the same 59 warnings before my changes, so none are new (output below).
 - `pnpm exec vitest run --project unit packages/runtime/test`: 115 files, 991 passed, 1 skipped (992).
 - `pnpm exec vitest run --project unit packages/runtime/test/effort-offset.test.ts`: 1 file, 7 passed.
 - `pnpm exec vitest run --project integration packages/runtime/test`: 1 file (`sandbox.integration.test.ts`), 4 skipped because no container engine is available. Not affected by this item.
@@ -76,6 +76,51 @@ it and finished it:
 - `pnpm --filter @forerunner/ui test`: 43 files, 254 passed.
 - `node scripts/docs-check.mjs --base 759e1b7`: ok (18 files). With `--base origin/ccr-4d8a843c-1k9syk`: ok (21 files). Without `--base`, it reports that there is no `origin/main` to diff against and exits 0.
 - `pnpm check` (lint, lint:paths, typecheck, all unit tests, docs:check, docs:links, secrets:scan): exit 0. 271 files, 2683 passed, 4 skipped, 1 todo (2688); link-check ok (105 files); secret-scan clean (1410 files).
+
+### Raw output of the gating checks
+
+`pnpm typecheck` (exit 0), the last lines:
+
+```
+$ pnpm typecheck
+> forerunner@0.1.0 typecheck /workspace/repo
+> tsc -p tsconfig.node.json --noEmit && pnpm -r --filter "./apps/*" --if-present typecheck
+Scope: 4 of 21 workspace projects
+apps/desktop typecheck: Done
+apps/mobile typecheck: Done
+apps/approvals-web typecheck: Done
+apps/ui typecheck: Done
+typecheck exit 0
+```
+
+`pnpm lint` (exit 0). The same 59 warnings appear on the starting commit without my changes:
+
+```
+$ pnpm lint
+> forerunner@0.1.0 lint /workspace/repo
+> biome check .
+Checked 1161 files in 2s. No fixes applied.
+Found 59 warnings.
+lint exit 0
+```
+
+`git apply --check` of the exported patch against a clean checkout of the starting commit:
+
+```
+$ git format-patch --stdout 759e1b7..HEAD > w3-d16-slider.patch
+$ git worktree add /tmp/clean 759e1b7 && cd /tmp/clean
+$ git apply --check w3-d16-slider.patch; echo "git apply --check exit $?"
+git apply --check exit 0
+$ git apply --stat w3-d16-slider.patch | tail -1
+ 19 files changed, 992 insertions(+), 51 deletions(-)
+```
+
+That run covered the five commits before this report update. I repeated the same check on the
+final exported `/mnt/session/outputs/w3-d16-slider.patch`, which includes this commit, and it
+also exited 0. The final run's output is appended to the exported copy of this report,
+`/mnt/session/outputs/w3-d16-slider-report.md`. `git log --oneline 759e1b7..HEAD` lists only
+this item's commits. Every commit ends with the trailer
+`Claude-Build: managed-agent w3-d16-slider build`.
 
 ### Left open and why
 
