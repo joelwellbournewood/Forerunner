@@ -225,7 +225,8 @@ registry, and the shells talk to it over the daemon's `/voice` routes (`DAEMON_R
 ### Read aloud: summaries and alerts (L.6, A.6; ADR 0063)
 
 Outside a voice turn the daemon reads a text through the same registry's TTS with
-`SpeakSessions` (`packages/runtime/src/voice/speak.ts`): `splitSentences` on the text, one
+`SpeakSessions` (`packages/runtime/src/voice/speak.ts`; the TTS preference is read at every
+utterance, from the same source as the voice sessions'): `splitSentences` on the text, one
 sentence synthesised ahead of playback, the loop's `audio` frame streamed to the player, the
 sink paced on the clock; no STT and no model call, so it works without a model credential.
 One voice at a time (a new utterance cancels the one in flight; starts are serialised, so two

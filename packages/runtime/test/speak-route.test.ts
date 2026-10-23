@@ -606,6 +606,54 @@ describe("speak without a TTS provider", () => {
   });
 });
 
+describe("the speaker's provider preference", () => {
+  it("is read at every utterance: a changed preference picks the other TTS for the next read", async () => {
+    const clock = new SimulatedClock("2026-11-03T09:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    try {
+      const human = await store.human.insert({ name: "J", email: "j@example.test" });
+      const agent = await store.agent.insert({
+        name: "Alice",
+        owner_human_id: human.id,
+        kind: "principal",
+        memory_location: "",
+      });
+      const session = await store.session.insert({ agent_id: agent.id });
+      const a = new FakeTts({ clock, chunks: 1, name: "tts-a" });
+      const b = new FakeTts({ clock, chunks: 1, name: "tts-b" });
+      let preferred = "tts-a";
+      const speech = new SpeakSessions({
+        registry: new VoiceProviderRegistry().registerTts(a).registerTts(b),
+        // The base's preference shape (spec O.4): here as the environment override would give it.
+        preferences: async () => ({
+          stt: null,
+          tts: { name: preferred, source: "env", extensionId: null, extension: null },
+          skipped: [],
+        }),
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        sessionIdFor: async () => session.id,
+        sink: () => collectingSink(),
+        awaitListenerMs: 0,
+      });
+      const subject = { kind: "notification", id: "n", notificationKind: "budget_stop" } as const;
+      const first = await speech.say({ text: "One.", subject, source: "notification" });
+      expect(first.provider.name).toBe("tts-a");
+      await drive(clock, first.done);
+      preferred = "tts-b";
+      const second = await speech.say({ text: "Two.", subject, source: "notification" });
+      expect(second.provider.name).toBe("tts-b");
+      await drive(clock, second.done);
+      expect(a.calls.map((c) => c.text)).toEqual(["One."]);
+      expect(b.calls.map((c) => c.text)).toEqual(["Two."]);
+    } finally {
+      await store.close();
+    }
+  });
+});
+
 describe("one voice under concurrent requests", () => {
   it("two overlapping say() calls: the later one cancels the earlier, never both to the end", async () => {
     const clock = new SimulatedClock("2026-11-03T09:00:00Z");

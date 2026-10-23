@@ -2540,7 +2540,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // `/events?speech=play`) attaches to its stream and plays it; playback waits for that.
   const speechSessions = new SpeakSessions({
     registry: voiceRegistry,
-    // Read per utterance from the same source as the voice sessions' providers.
+    // Read per utterance from the same source as the voice sessions' providers, so the TTS
+    // the human chose for the voice chat (the Extensions panel, spec O.4) is the one that
+    // reads summaries and alerts.
     preferences: voicePreferenceSource,
     hasSecret: vaultHasSecret(vault),
     store,
