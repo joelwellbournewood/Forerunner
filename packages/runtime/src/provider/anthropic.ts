@@ -127,6 +127,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
     }
     const open = new Map<number, { id: string; name: string; json: string }>();
     let stopReason: StopReason = "end_turn";
+    let stopped = false;
     const usage = {
       input_tokens: 0,
       output_tokens: 0,
@@ -194,16 +195,20 @@ export class AnthropicMessagesProvider implements ModelProvider {
               usage.cache_creation_input_tokens = ev.usage.cache_creation_input_tokens;
             break;
           case "message_stop":
+            stopped = true;
             break;
         }
       }
     } catch (e) {
-      yield req.signal?.aborted ? aborted() : mapError(e);
-      return;
+      if (!stopped) {
+        yield req.signal?.aborted ? aborted() : mapError(e);
+        return;
+      }
     }
     // The SDK's iterator exits without throwing when the request's signal aborts, so a
-    // killed call would otherwise end as a complete message with stop_reason end_turn.
-    if (req.signal?.aborted) {
+    // killed call would otherwise end as a complete message with stop_reason end_turn. A
+    // message whose message_stop came before the abort is complete, with its full usage.
+    if (req.signal?.aborted && !stopped) {
       yield aborted();
       return;
     }

@@ -230,6 +230,49 @@ describe("AnthropicMessagesProvider", () => {
     });
   });
 
+  it("an abort after message_stop came still ends with the complete message_end and its usage", async () => {
+    // The whole message is in the body, which stays open until the signal aborts: the stop lands
+    // after the API's last word and before the SDK's iterator returns.
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      const chunk = happyEvents
+        .map((e) => `event: ${(e as { type: string }).type}\ndata: ${JSON.stringify(e)}\n\n`)
+        .join("");
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+          init?.signal?.addEventListener(
+            "abort",
+            () => controller.error(new DOMException("The operation was aborted.", "AbortError")),
+            { once: true },
+          );
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    };
+    const p = new AnthropicMessagesProvider({ apiKey: "k", fetch: fetchImpl, maxRetries: 0 });
+    const ac = new AbortController();
+    const events = [];
+    for await (const ev of p.stream({
+      model: "claude-haiku-5-5",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 10,
+      signal: ac.signal,
+    })) {
+      events.push(ev);
+      if (ev.type === "tool_use_end") setTimeout(() => ac.abort(new Error("kill switch")), 10);
+    }
+    expect(events.at(-1)).toEqual({
+      type: "message_end",
+      stop_reason: "tool_use",
+      usage: {
+        input_tokens: 12,
+        output_tokens: 9,
+        cache_read_input_tokens: 4,
+        cache_creation_input_tokens: 0,
+      },
+    });
+  });
+
   it("an abort before the response arrives is `error: aborted`, not a provider error", async () => {
     const fetchImpl: typeof fetch = (_input, init) =>
       new Promise((_resolve, reject) => {
