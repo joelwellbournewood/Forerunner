@@ -20,7 +20,9 @@ import {
   type CdpTarget,
   connectPage,
   describeFailure,
+  describePage,
   listTargets,
+  PAGE_TEXT_LINES,
   Page,
   pickPageTarget,
   socketUrlFor,
@@ -546,6 +548,176 @@ describe("Page and locators over Runtime.evaluate", () => {
     expect(clicks(fake)).toEqual(["m-option", "Remote"]);
   });
 
+  it("never lets a click land on what moved under the point after it was measured (android.yml run 40000764444)", async () => {
+    // The emulator's WebView applies none of the app's Tailwind v4 rules (cascade layers need
+    // Chrome 99+), so the bottom nav sits in the flow right under Home's project list. The
+    // runner clicked "Inbox" while `/projects` was still on its way: the driver measured the
+    // nav item, the list arrived and pushed the nav down, and the mouse events went to the old
+    // point, now inside Home's section. The route stayed `/`, and `m-request` had 0 matches.
+    const fake = await startFakeDevTools({
+      html: `<!doctype html><html><head><title>Forerunner</title></head><body>
+<main><section data-testid="m-home" data-box="0 0 300 100"><h1>Projects</h1></section></main>
+<nav data-testid="m-nav" aria-label="Main" data-box="0 100 300 40">
+  <a href="/inbox" data-box="0 100 100 40"><span>Inbox</span></a>
+</nav></body></html>`,
+    });
+    // Real event order at the point: pointer and mouse down on press, up and click on release.
+    // The first mouse event of the click is when the project list lands and the nav moves.
+    let shifted = false;
+    fake.handlers.set("Input.dispatchMouseEvent", (params, f) => {
+      if (!shifted) {
+        shifted = true;
+        f.exec(`(() => {
+          document.querySelector("[data-testid=m-home]").setAttribute("data-box", "0 0 300 400");
+          document.querySelector("[data-testid=m-nav]").setAttribute("data-box", "0 400 300 40");
+          document.querySelector("a[href='/inbox']").setAttribute("data-box", "0 400 100 40");
+        })()`);
+      }
+      const types =
+        params.type === "mousePressed"
+          ? ["pointerdown", "mousedown"]
+          : params.type === "mouseReleased"
+            ? ["pointerup", "mouseup", "click"]
+            : [];
+      f.exec(`(() => {
+        const el = document.elementFromPoint(${Number(params.x)}, ${Number(params.y)});
+        for (const type of ${JSON.stringify(types)}) {
+          if (el) el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true,
+            clientX: ${Number(params.x)}, clientY: ${Number(params.y)} }));
+        }
+      })()`);
+      return {};
+    });
+    fake.exec(`window.__downs = [];
+      document.addEventListener("mousedown", (e) => window.__downs.push(e.target.getAttribute("data-testid") || e.target.textContent.trim()));`);
+    await openPage(fake).then((page) => page.getByTestId("m-nav").getByText("Inbox").click());
+    // The misplaced press and click were stopped before the page saw them; the retry
+    // measured the nav where it now is and clicked there.
+    expect(clicks(fake)).toEqual(["Inbox"]);
+    expect(fake.exec("window.__downs")).toEqual(["Inbox"]);
+    const presses = mouse(fake).filter((p) => p.type === "mousePressed");
+    expect(presses.map((p) => [p.x, p.y])).toEqual([
+      [50, 120],
+      [50, 420],
+    ]);
+  });
+
+  it("keeps the guard up until the click of a missed press arrives, so late release events never reach the page (review finding 1)", async () => {
+    const fake = await startFakeDevTools({
+      html: `<!doctype html><html><head><title>Forerunner</title></head><body>
+<main><section data-testid="m-home" data-box="0 0 300 100"><h1>Projects</h1></section></main>
+<nav data-testid="m-nav" aria-label="Main" data-box="0 100 300 40">
+  <a href="/inbox" data-box="0 100 100 40"><span>Inbox</span></a>
+</nav></body></html>`,
+    });
+    // The nav moves on the first press; every release's mouseup and click reach the page
+    // 150 ms after the CDP answer (queued behind it), at the point of that release.
+    let shifted = false;
+    fake.handlers.set("Input.dispatchMouseEvent", (params, f) => {
+      if (!shifted && params.type === "mousePressed") {
+        shifted = true;
+        f.exec(`(() => {
+          document.querySelector("[data-testid=m-home]").setAttribute("data-box", "0 0 300 400");
+          document.querySelector("[data-testid=m-nav]").setAttribute("data-box", "0 400 300 40");
+          document.querySelector("a[href='/inbox']").setAttribute("data-box", "0 400 100 40");
+        })()`);
+      }
+      const types =
+        params.type === "mousePressed"
+          ? ["mousedown"]
+          : params.type === "mouseReleased"
+            ? ["mouseup", "click"]
+            : [];
+      const delay = params.type === "mouseReleased" ? 150 : -1;
+      f.exec(`(() => {
+        const fire = () => {
+          const el = document.elementFromPoint(${Number(params.x)}, ${Number(params.y)});
+          for (const type of ${JSON.stringify(types)}) {
+            if (el) el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+          }
+        };
+        if (${delay} < 0) fire(); else setTimeout(fire, ${delay});
+      })()`);
+      return {};
+    });
+    fake.exec(`window.__ups = [];
+      document.addEventListener("mouseup", (e) => window.__ups.push(e.target.getAttribute("data-testid") || e.target.textContent.trim()));`);
+    await openPage(fake).then((page) => page.getByTestId("m-nav").getByText("Inbox").click());
+    // Let any straggler arrive before looking.
+    await new Promise((r) => setTimeout(r, 400));
+    // One click on Inbox (the old guard let a second one through), none on Home.
+    expect(clicks(fake)).toEqual(["Inbox"]);
+    expect(fake.exec("window.__ups")).toEqual(["Inbox"]);
+    expect(mouse(fake).filter((p) => p.type === "mousePressed")).toHaveLength(2);
+  });
+
+  it("counts a click that replaced the document as landed, not lost (review finding 2)", async () => {
+    const fake = await startFakeDevTools();
+    // The release navigates: the new document has no guard and no event record.
+    fake.handlers.set("Input.dispatchMouseEvent", (params, f) => {
+      if (params.type === "mouseReleased") f.exec("delete window.__forerunnerCdpClickGuard");
+      return {};
+    });
+    const page = await openPage(fake);
+    await page.getByRole("button", { name: "Approve" }).click({ timeout: 2_000 });
+    expect(mouse(fake).filter((p) => p.type === "mousePressed")).toHaveLength(1);
+  });
+
+  it("fails naming what got the click when the element keeps moving away from the point", async () => {
+    const fake = await startFakeDevTools({
+      html: `<!doctype html><html><head><title>Forerunner</title></head><body>
+<main><section data-testid="m-home" data-box="0 0 300 100"><h1>Projects</h1></section></main>
+<nav data-testid="m-nav" aria-label="Main" data-box="0 100 300 40">
+  <a href="/inbox" data-box="0 100 100 40"><span>Inbox</span></a>
+</nav></body></html>`,
+    });
+    // Every press moves the nav one row further down before it lands: a page that never
+    // settles under the pointer.
+    let row = 100;
+    fake.handlers.set("Input.dispatchMouseEvent", (params, f) => {
+      if (params.type === "mousePressed") {
+        row += 100;
+        f.exec(`(() => {
+          document.querySelector("[data-testid=m-home]").setAttribute("data-box", "0 0 300 ${row}");
+          document.querySelector("[data-testid=m-nav]").setAttribute("data-box", "0 ${row} 300 40");
+          document.querySelector("a[href='/inbox']").setAttribute("data-box", "0 ${row} 100 40");
+        })()`);
+      }
+      const types =
+        params.type === "mousePressed"
+          ? ["mousedown"]
+          : params.type === "mouseReleased"
+            ? ["mouseup", "click"]
+            : [];
+      f.exec(`(() => {
+        const el = document.elementFromPoint(${Number(params.x)}, ${Number(params.y)});
+        for (const type of ${JSON.stringify(types)}) {
+          if (el) el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+        }
+      })()`);
+      return {};
+    });
+    const page = await openPage(fake);
+    expect(
+      await failure(page.getByTestId("m-nav").getByText("Inbox").click({ timeout: 400 })),
+    ).toMatchObject({
+      code: "cdp.click_missed",
+      message: expect.stringMatching(/<h1> "Projects" was at \(50, \d+\) instead/),
+    });
+    // Nothing on the page ever received one of the misplaced clicks.
+    expect(clicks(fake)).toEqual([]);
+  });
+
+  it("reports a click whose mouse events never reached the page", async () => {
+    const fake = await startFakeDevTools();
+    fake.handlers.set("Input.dispatchMouseEvent", () => ({}));
+    const page = await openPage(fake);
+    expect(
+      await failure(page.getByRole("button", { name: "Approve" }).click({ timeout: 2_000 })),
+    ).toMatchObject({ code: "cdp.click_lost", message: expect.stringContaining("Approve") });
+    expect(mouse(fake).filter((p) => p.type === "mousePressed")).toHaveLength(1);
+  });
+
   it("clicks where the element settles when its box still moves after scrollIntoView", async () => {
     const fake = await startFakeDevTools();
     const page = await openPage(fake);
@@ -698,6 +870,59 @@ describe("describeFailure (the runner's FAIL line)", () => {
     expect(describeFailure(new CdpError("cdp.timeout", "slow"))).toBe("FAIL: slow [cdp.timeout]");
     expect(describeFailure(new Error("plain"))).toBe("FAIL: plain");
     expect(describeFailure("text")).toBe("FAIL: text");
+  });
+});
+
+describe("describePage (the runner's page: lines)", () => {
+  it("names the route and the title and lists the screen's text, capped", async () => {
+    const fake = await startFakeDevTools({
+      html: `<!doctype html><html><head><title>Forerunner</title></head><body>
+<header>Forerunner</header>
+<main><h1>Projects</h1>
+<p>1 request blocks work until you answer.</p>
+${Array.from({ length: 30 }, (_, i) => `<p>line ${i} ${"x".repeat(i === 3 ? 200 : 1)}</p>`).join("\n")}
+</main></body></html>`,
+    });
+    const page = await openPage(fake);
+    const shown = (await describePage(page)).split("\n");
+    expect(shown[0]).toBe(`url ${APP_URL} (Forerunner)`);
+    // The text of <main> only (not the header), one trimmed line each.
+    expect(shown[1]).toBe("  Projects");
+    expect(shown[2]).toBe("  1 request blocks work until you answer.");
+    expect(shown).toHaveLength(1 + PAGE_TEXT_LINES + 1);
+    expect(shown.at(-1)).toBe(`(${32 - PAGE_TEXT_LINES} more lines)`);
+    expect(shown.find((l) => l.startsWith("  line 3"))?.length).toBeLessThanOrEqual(2 + 161);
+    // The expression is plain DevTools-side code: no eval or Function inside the page.
+    const sent = fake.calls.filter((c) => c.method === "Runtime.evaluate").at(-1);
+    expect(String(sent?.params.expression)).not.toMatch(/\beval\s*\(|new\s+Function/);
+  });
+
+  it("run.mjs waits for Home's list before the nav click, checks each screen opened, and prints page: lines on a failure", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("./run.mjs", import.meta.url), "utf8");
+    const at = (needle: string) => {
+      const i = source.indexOf(needle);
+      expect(i, needle).toBeGreaterThan(0);
+      return i;
+    };
+    const projects = at('getByRole("heading", { name: "Projects" }).waitFor(');
+    const list = at('getByTestId("m-project-card").first().waitFor(');
+    const inboxClick = at('getByTestId("m-nav").getByText("Inbox").click()');
+    const inboxHeading = at('getByRole("heading", { name: "Inbox", exact: true }).waitFor(');
+    const cards = at('getByTestId("m-request").first()');
+    expect(list).toBeGreaterThan(projects);
+    expect(inboxClick).toBeGreaterThan(list);
+    expect(inboxHeading).toBeGreaterThan(inboxClick);
+    expect(cards).toBeGreaterThan(inboxHeading);
+    expect(at('getByRole("heading", { name: "Remote control" }).waitFor(')).toBeGreaterThan(
+      at('getByTestId("m-nav").getByText("Remote").click()'),
+    );
+    // The page is read before the cleanups close the socket, and printed after the FAIL line.
+    const read = at("await describePage(attachedPage)");
+    expect(at("await cleanup();\n    if (error instanceof Skip)")).toBeGreaterThan(read);
+    expect(at("console.error(`page: ")).toBeGreaterThan(
+      at("console.error(describeFailure(error))"),
+    );
   });
 });
 

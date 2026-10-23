@@ -31,6 +31,8 @@
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_POLL_MS = 100;
+/** How long a click's events may take to reach the page after the CDP answer (ms). */
+const CLICK_SETTLE_MS = 1_000;
 
 export class CdpError extends Error {
   /**
@@ -502,6 +504,51 @@ function pageScript(steps, action, arg) {
     return current;
   };
 
+  // The click guard (android.yml run 40000764444). Between the box read below and the CDP
+  // mouse events, the page may re-render and move the element (a list arriving above an
+  // in-flow nav): the events then land on whatever is at the old point now. The guard sits
+  // in the capture phase on `window`, ahead of every page listener: a pointer, mouse or
+  // click event whose target is outside the measured element is cancelled and stopped
+  // before the page sees it, and recorded; one inside passes. `clickOutcome` reads the
+  // record and removes the guard, so the driver can measure again and retry a blocked click.
+  const GUARD_KEY = "__forerunnerCdpClickGuard";
+  const GUARDED = ["pointerdown", "mousedown", "pointerup", "mouseup", "click"];
+  const disarmClickGuard = () => {
+    const guard = win[GUARD_KEY];
+    if (!guard) return null;
+    for (const type of GUARDED) win.removeEventListener(type, guard.listener, true);
+    win.clearTimeout(guard.timer);
+    delete win[GUARD_KEY];
+    return guard;
+  };
+  const armClickGuard = (el) => {
+    disarmClickGuard();
+    const guard = { events: [], missed: null, listener: null, timer: null };
+    guard.listener = (event) => {
+      const t = event.target;
+      const inside =
+        Boolean(t) && (t === el || (typeof el.contains === "function" && el.contains(t)));
+      guard.events.push(event.type);
+      if (inside) return;
+      if (guard.missed === null) guard.missed = describe(t && t.nodeType === 1 ? t : null);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    for (const type of GUARDED) win.addEventListener(type, guard.listener, true);
+    // A guard nobody reads (the driver gave up) does not outlive the click for long.
+    guard.timer = win.setTimeout(disarmClickGuard, 15_000);
+    win[GUARD_KEY] = guard;
+  };
+  if (action === "clickOutcome") {
+    const guard = win[GUARD_KEY];
+    if (!guard) return { armed: false, events: [], missed: null };
+    // The release's click may still be queued behind the CDP answer: the caller polls until
+    // `click` (or a miss) is in, and only then asks to disarm.
+    const out = { armed: true, events: guard.events.slice(), missed: guard.missed };
+    if (arg === "disarm") disarmClickGuard();
+    return out;
+  }
+
   const found = query([doc], steps);
   if (action === "count") return { count: found.length };
   if (action === "probe") return { count: found.length, visible: found.filter(visible).length };
@@ -551,6 +598,7 @@ function pageScript(steps, action, arg) {
         const y = rect.top + rect.height / 2;
         const hit = doc.elementFromPoint(x, y);
         const hitOk = Boolean(hit) && (hit === el || el.contains(hit));
+        if (hitOk) armClickGuard(el);
         resolve({ x, y, hitOk, hit: describe(hit) });
       };
       if (typeof win.requestAnimationFrame === "function") win.requestAnimationFrame(settle);
@@ -896,7 +944,14 @@ export class Locator {
 
   /**
    * Scrolls the element into view and clicks its centre through CDP mouse events once the
-   * hit test lands on it (or inside it).
+   * hit test lands on it (or inside it). The in-page click guard (see `pageScript`) checks
+   * every pointer, mouse and click event of that click against the element: when the element
+   * moved between the measurement and the events, the events that land elsewhere are
+   * cancelled before the page sees them and the click is measured and sent again; when it
+   * keeps missing until `timeout`, `cdp.click_missed` names what was at the point. A click
+   * none of whose events reached the page is `cdp.click_lost` (never retried: a late event
+   * could otherwise click twice). A click that replaced the document (a navigation) counts as
+   * landed: the guard went with the old document.
    * @param {{ timeout?: number }} [options]
    */
   async click(options = {}) {
@@ -908,7 +963,27 @@ export class Locator {
       const point = await this.#resolve("clickPoint", null, remaining, false);
       if (point.hitOk) {
         await this.page.mouseClick(point.x, point.y);
-        return;
+        const outcome = await this.#clickOutcome();
+        if (outcome.navigated) return;
+        if (outcome.missed === null && outcome.events.length > 0) return;
+        if (outcome.missed === null) {
+          throw new CdpError(
+            "cdp.click_lost",
+            `${this}: no pointer, mouse or click event of the click at (${Math.round(point.x)}, ${Math.round(point.y)}) reached the page`,
+            { events: outcome.events },
+          );
+        }
+        lastHit = outcome.missed;
+        if (this.page.now() - t0 >= timeout) {
+          await this.page.run([], "clickOutcome", "disarm").catch(() => undefined);
+          throw new CdpError(
+            "cdp.click_missed",
+            `${this}: moved before the click landed; ${lastHit} was at (${Math.round(point.x)}, ${Math.round(point.y)}) instead (the click was stopped before the page saw it)`,
+            { hit: lastHit, events: outcome.events },
+          );
+        }
+        await sleep(this.page.pollMs);
+        continue;
       }
       lastHit = point.hit;
       if (this.page.now() - t0 >= timeout) {
@@ -918,6 +993,35 @@ export class Locator {
         );
       }
       await sleep(this.page.pollMs);
+    }
+  }
+
+  /**
+   * What the click guard saw: waits up to `CLICK_SETTLE_MS` for the attempt's click event (a
+   * miss on the press does not end the wait: the release's events may still be on their way
+   * and must meet the guard), then disarms the guard, or keeps it up after a miss whose click
+   * never came, until the retry arms its own. `navigated` when the guard is gone: only a new
+   * document (the click navigated) drops it.
+   */
+  async #clickOutcome() {
+    const t0 = this.page.now();
+    for (;;) {
+      const seen = await this.page.run([], "clickOutcome", null);
+      // The guard is gone only when the measured document was replaced: the click navigated.
+      if (!seen.armed) return { events: seen.events, missed: null, navigated: true };
+      // A miss does not settle the attempt: the release's `mouseup` and `click` may still be
+      // queued behind the CDP answer, and they must meet the guard too (review finding 1).
+      const settled = seen.events.includes("click");
+      const late = this.page.now() - t0 >= CLICK_SETTLE_MS;
+      if (settled || late) {
+        // A miss whose click never came keeps the guard up: the retry's measurement replaces
+        // it, so a straggler from this attempt is still stopped until then.
+        const keep = seen.missed !== null && !settled;
+        const out = await this.page.run([], "clickOutcome", keep ? null : "disarm");
+        if (!out.armed) return { events: seen.events, missed: null, navigated: true };
+        return { events: out.events, missed: out.missed, navigated: false };
+      }
+      await sleep(Math.min(this.page.pollMs, 50));
     }
   }
 
@@ -972,6 +1076,40 @@ export class Locator {
     const res = await this.#resolve("evaluate", String(fnSource), options.timeout, false);
     return res.value;
   }
+}
+
+/** At most this many lines of screen text in `describePage`. */
+export const PAGE_TEXT_LINES = 20;
+
+/**
+ * What the page shows, for the runner's `page:` lines after a failure: the URL (so the route
+ * is visible: a nav click that did not navigate leaves `/`), the title, and the first
+ * `PAGE_TEXT_LINES` non-empty lines of the visible text of `<main>` (else `<body>`), each
+ * capped at 160 characters. Read through one `Runtime.evaluate` expression; nothing in the
+ * page evaluates a string.
+ * @param {Page} page
+ * @returns {Promise<string>}
+ */
+export async function describePage(page) {
+  const info = await page.evaluate(`(() => {
+    const root = document.querySelector("main") || document.body;
+    const text = root ? (typeof root.innerText === "string" ? root.innerText : root.textContent) : "";
+    return { url: location.href, title: document.title, text: String(text || "") };
+  })()`);
+  const lines = String(info?.text ?? "")
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const shown = lines
+    .slice(0, PAGE_TEXT_LINES)
+    .map((l) => (l.length > 160 ? `${l.slice(0, 160)}…` : l));
+  const more =
+    lines.length > PAGE_TEXT_LINES ? [`(${lines.length - PAGE_TEXT_LINES} more lines)`] : [];
+  return [
+    `url ${info?.url ?? "?"} (${info?.title ?? ""})`,
+    ...(shown.length ? shown.map((l) => `  ${l}`) : ["  (no text)"]),
+    ...more,
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------------------------

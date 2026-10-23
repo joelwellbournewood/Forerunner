@@ -24,6 +24,12 @@ export declare class CdpError extends Error {
 /** The runner's `FAIL:` line: message, `[code]` and the details as JSON when present. */
 export declare function describeFailure(error: unknown): string;
 
+/** At most this many lines of screen text in `describePage`. */
+export declare const PAGE_TEXT_LINES: number;
+
+/** The runner's `page:` lines after a failure: URL, title and the visible text of `<main>`. */
+export declare function describePage(page: Page): Promise<string>;
+
 export declare function listTargets(
   httpBase: string,
   options?: { fetchImpl?: typeof fetch; timeoutMs?: number },
@@ -110,6 +116,11 @@ export declare class Locator {
   count(): Promise<number>;
   isVisible(): Promise<boolean>;
   waitFor(options?: TimeoutOptions & { state?: "visible" | "attached" }): Promise<void>;
+  /**
+   * Clicks the centre through CDP mouse events; an in-page guard stops events that land
+   * outside the element (it moved after the measurement) and the click is sent again
+   * (`cdp.click_missed` at the timeout; `cdp.click_lost` when no event reached the page).
+   */
   click(options?: TimeoutOptions): Promise<void>;
   fill(value: string, options?: TimeoutOptions): Promise<void>;
   innerText(options?: TimeoutOptions): Promise<string>;

@@ -76,6 +76,22 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   spoken yes answers the last read-back) and drops the audio from the shared row. Both
   screens are in the nav. R.5 stays `in progress` until the emulator run (BLOCKERS.md, R.5).
   Build report: `docs/status/reviews/w3-r5-phone.md`.
+### 2026-10-23 (item w6-android-inbox built on `wave/w6-android-inbox`, review pending)
+- Android emulator smoke, scenario 2 (`android.yml` run 40000764444 on 4ff4fb1: 0 `m-request`
+  cards after pairing): the four suspects of the brief are ruled out (the unlock card gates
+  nothing and makes no service call, the high-risk store changes leave pairing, refresh and
+  the sync loop alone, the phone sends no push token); the cause is a click race in the CDP
+  driver that predates 82a6295. The API 30 emulator's Chromium 83-class WebView drops the
+  app's Tailwind v4 rules (cascade layers), so the bottom nav sits in the flow under Home's
+  project list; the runner's "Inbox" click was measured before `/projects` answered and
+  landed on Home once the list pushed the nav down. Reproduced in a Chromium 83 browser
+  stand-in with slow shell IPC (82a6295's driver 8 of 20 runs failed, 4ff4fb1's 4 of 20,
+  the fix 0 of 20; the full `smoke()` 10 of 10). Fix (ADR 0087): the driver's click guard
+  stops events that land outside the measured element and retries the click
+  (`cdp.click_missed`, `cdp.click_lost`); the runner waits for Home's list and each screen's
+  heading, prints `webview engine:` and, after a failure, `page:` lines. Tests:
+  `apps/mobile/e2e/cdp.test.ts` (32 after the review, seven new). Open: the app's layout on a pre-99 WebView.
+  Report: `docs/status/reviews/w6-android-inbox.md`.
 
 ### 2026-10-23 (item w3-d16-slider rebased onto cac6fee)
 - `wave/w3-d16-slider` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
