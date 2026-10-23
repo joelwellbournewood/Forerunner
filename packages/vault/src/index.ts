@@ -36,6 +36,28 @@ export {
   SecretResolver,
 } from "./refs.ts";
 export {
+  AUTO_UNLOCK_SETTING,
+  AUTO_UNLOCK_WINDOW_HOURS,
+  autoUnlockUntilOf,
+  autoUnlockWindowEnd,
+  decodeStoredKey,
+  MAX_AUTO_UNLOCK_WINDOW_MS,
+  parseUnlockChallenge,
+  RunnerUnlockError,
+  runnerKeySecretName,
+  runnerKeySecureStoreKey,
+  shouldAutoAnswer,
+  UNLOCK_CARD_KIND,
+  UNLOCK_HKDF_INFO_PREFIX,
+  UNLOCK_KEY_BYTES,
+  UNLOCK_OPTIONS,
+  UNLOCK_PROTOCOL_VERSION,
+  type UnlockAnswer as DeviceUnlockAnswer,
+  type UnlockChallengeCard as DeviceUnlockChallengeCard,
+  type WrapOptions as UnlockWrapOptions,
+  wrapVaultKey,
+} from "./runner-unlock.ts";
+export {
   assertSecretName,
   assertSecretValue,
   isValidSecretName,

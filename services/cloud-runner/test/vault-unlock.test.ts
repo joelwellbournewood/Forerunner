@@ -1,7 +1,15 @@
 import { randomBytes } from "node:crypto";
 import { join, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
-import { EncryptedFileVault } from "@forerunner/vault";
+import {
+  autoUnlockWindowEnd,
+  decodeStoredKey,
+  EncryptedFileVault,
+  parseUnlockChallenge,
+  runnerKeySecretName,
+  runnerKeySecureStoreKey,
+  wrapVaultKey,
+} from "@forerunner/vault";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   answerUnlockChallenge,
@@ -322,5 +330,58 @@ describe("vault unlock: the auto-unlock window", () => {
     } finally {
       await other.store.close();
     }
+  });
+});
+
+describe("vault unlock: the WebCrypto device side the apps use (ADR 0068)", () => {
+  it("an answer wrapped by wrapVaultKey unlocks the real runner and sets the window", async () => {
+    const pending = w.unlock.ensureUnlocked("runner start");
+    const { row, card } = await openRequest(w);
+    expect(parseUnlockChallenge(row.change_card)).toEqual(card);
+    const until = autoUnlockWindowEnd(8, w.clock.now());
+    const keyCopy = new Uint8Array(w.key);
+    const reply = await wrapVaultKey(card, keyCopy, {
+      now: w.clock.now(),
+      autoUnlockUntil: until,
+    });
+    // The caller's copy is untouched (the caller zeroes it); the answer carries ciphertext only.
+    expect(Buffer.from(keyCopy).equals(w.key)).toBe(true);
+    for (const enc of keyEncodings(w.key)) expect(JSON.stringify(reply)).not.toContain(enc);
+    await answer(w, row.id, reply);
+    expect(await pending).toMatchObject({ via: "human", requestId: row.id, unlockedUntil: until });
+    expect(w.vault.locked).toBe(false);
+    expect(
+      shouldAutoAnswer((await w.store.human.mustGet(w.humanId)).notify_prefs, w.clock.now()),
+    ).toBe(true);
+  });
+
+  it("a WebCrypto answer with the wrong key or to an expired challenge is refused", async () => {
+    const pending = w.unlock.ensureUnlocked("runner start");
+    const first = await openRequest(w);
+    await expect(
+      wrapVaultKey(first.card, w.key, { now: Date.parse(first.card.expiresAt) }),
+    ).rejects.toMatchObject({ code: "expired" });
+    await expect(wrapVaultKey({ kind: "other" }, w.key)).rejects.toMatchObject({
+      code: "not_a_challenge",
+    });
+    await expect(wrapVaultKey(first.card, new Uint8Array(16))).rejects.toMatchObject({
+      code: "bad_key",
+    });
+    await answer(w, first.row.id, await wrapVaultKey(first.card, randomBytes(32)));
+    const second = await openRequest(w, first.row.id);
+    await answer(w, second.row.id, await wrapVaultKey(second.card, w.key));
+    expect(await pending).toMatchObject({ via: "human", requestId: second.row.id });
+    const refusals = (await auditTools(w)).filter((a) => a.tool === UNLOCK_AUDIT_TOOLS.refused);
+    expect(refusals.map((r) => r.result.refusal)).toEqual(["wrong_key"]);
+  });
+
+  it("the key names and the stored-key decoder", () => {
+    expect(runnerKeySecretName("Runner One/eu")).toBe("cloud_runner_vault_key:runner-one-eu");
+    expect(runnerKeySecureStoreKey("Runner One/eu")).toBe("runner-vault-key-Runner-One-eu");
+    expect(decodeStoredKey(w.key.toString("base64"))).toEqual(new Uint8Array(w.key));
+    expect(decodeStoredKey("c2hvcnQ=")).toBeNull();
+    expect(decodeStoredKey("not base64!")).toBeNull();
+    expect(decodeStoredKey(null)).toBeNull();
+    expect(() => autoUnlockWindowEnd(24 * 8, 0)).toThrow(/up to a week/);
   });
 });
