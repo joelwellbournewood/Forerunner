@@ -9,6 +9,7 @@ import {
   SESSION_CAP_KEY,
   SETTING_SPECS,
   SMALL_PROJECT_MODE_EFFECT,
+  spokenProjectSummary,
 } from "../src/index.ts";
 import { TOMORROW_0600, world } from "./helpers.ts";
 
@@ -787,6 +788,187 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
         }),
       ).code,
     ).toBe("not_found");
+    await w.store.close();
+  });
+});
+
+describe("summary.speak (spec A.6 readable aloud, L.6 TTS for summaries)", () => {
+  it("spokenProjectSummary is one short plain-text string with every field of the screen", async () => {
+    const w = await world();
+    const p = await w.store.project.update(w.pharma.id, w.pharma.version, {
+      summary_cache: {
+        last_session: {
+          id: "s-1",
+          ended_at: "2026-10-20T06:00:00.000Z",
+          summary: "Indexed the docs.",
+          stop_reason: "completed",
+        },
+        next_steps: ["Review PR 12", "Plan the deploy", "Write the ADR", "A fourth step"],
+        open_questions: 1,
+      },
+    });
+    const spoken = spokenProjectSummary(p, 2_500_000, 0.8);
+    expect(spoken).toBe(
+      "PharmaWatch. Goal: Watch pharma news. Stage: idea. Last session: Indexed the docs. Next: Review PR 12; Plan the deploy; Write the ADR. 1 open question. Spent 2.00 francs.",
+    );
+    expect(spokenProjectSummary(w.game, 0, 0.8)).toContain("No session yet.");
+    expect(spokenProjectSummary(w.game, 0, 0.8)).toContain("0 open questions.");
+    await w.store.close();
+  });
+
+  it("is low risk, runs without a confirmation, speaks through the port and echoes the text", async () => {
+    const w = await world();
+    const spoken: Array<{ text: string; projectId: string; source: string }> = [];
+    w.ports.speak = async (req) => {
+      spoken.push({ text: req.text, projectId: req.projectId, source: req.source });
+      return { spoken: true, id: "speak-1" };
+    };
+    const r = done(
+      await w.executor.execute({
+        name: "summary.speak",
+        params: {},
+        ctx: w.ctx({ source: "ui", wordsUsed: "read me the summary" }),
+      }),
+    );
+    const text = spokenProjectSummary(w.pharma, 0, 0.8);
+    expect(spoken).toEqual([{ text, projectId: w.pharma.id, source: "ui" }]);
+    expect(r.sentence).toBe(`Reading the summary of PharmaWatch aloud. ${text}`);
+    expect(r.card).toMatchObject({
+      command: "summary.speak",
+      what: "the summary of PharmaWatch",
+      newValue: "read aloud",
+      impact: { risk: "low" },
+      reversible: false,
+      projectName: "PharmaWatch",
+      usesActiveProject: true,
+    });
+    expect(r.undoToken).toBeNull();
+    const [row] = await w.store.changeLog.list();
+    expect(row).toMatchObject({ source: "ui", words_used: "read me the summary" });
+    expect(row?.after).toMatchObject({
+      project_id: w.pharma.id,
+      spoken: true,
+      speak_id: "speak-1",
+    });
+    // A named project; the port says voice is unavailable: the text is the reply instead.
+    w.ports.speak = async () => ({ spoken: false, reason: "no TTS provider available" });
+    const named = done(
+      await w.executor.execute({
+        name: "summary.speak",
+        params: { project: "the game" },
+        ctx: w.ctx({ source: "chat" }),
+      }),
+    );
+    const game = spokenProjectSummary(w.game, 0, 0.8);
+    expect(named.sentence).toBe(
+      `Voice is unavailable (no TTS provider available). Summary of Game: ${game}`,
+    );
+    expect(named.card.usesActiveProject).toBe(false);
+    await w.store.close();
+  });
+
+  it("in a voice session the text itself is the sentence (the loop speaks it); without a port the text is the reply", async () => {
+    const w = await world();
+    let called = 0;
+    w.ports.speak = async () => {
+      called++;
+      return { spoken: true, id: "x" };
+    };
+    const voice = done(
+      await w.executor.execute({
+        name: "summary.speak",
+        params: {},
+        ctx: w.ctx({ source: "voice", wordsUsed: "read me the summary" }),
+      }),
+    );
+    expect(voice.sentence).toBe(spokenProjectSummary(w.pharma, 0, 0.8));
+    expect(called).toBe(0);
+    delete w.ports.speak;
+    const plain = done(
+      await w.executor.execute({ name: "summary.speak", params: {}, ctx: w.ctx() }),
+    );
+    expect(plain.sentence).toBe(
+      `Voice is unavailable. Summary of PharmaWatch: ${spokenProjectSummary(w.pharma, 0, 0.8)}`,
+    );
+    expect(
+      refused(
+        await w.executor.execute({
+          name: "summary.speak",
+          params: { project: "nowhere" },
+          ctx: w.ctx(),
+        }),
+      ).code,
+    ).toBe("not_found");
+    await w.store.close();
+  });
+
+  it("refuses another human's project on a shared state, as the daemon's speak route does", async () => {
+    const w = await world();
+    let called = 0;
+    w.ports.speak = async () => {
+      called++;
+      return { spoken: true, id: "x" };
+    };
+    const theirs = await w.store.project.insert({
+      name: "Mara's Lab",
+      goal: "Hers",
+      autonomy_level: 2,
+      settings: { members: ["agent-of-mara"] },
+      author_human: w.other.id,
+    });
+    for (const params of [{ project: theirs.id }, { project: "Mara's Lab" }]) {
+      const r = refused(
+        await w.executor.execute({ name: "summary.speak", params, ctx: w.ctx({ source: "chat" }) }),
+      );
+      expect(r.code).toBe("not_found");
+      expect(r.reason).toContain("is not yours");
+    }
+    // The active project pointing at it is refused too, and nothing of it was read or spoken.
+    const active = refused(
+      await w.executor.execute({
+        name: "summary.speak",
+        params: {},
+        ctx: w.ctx({ activeProjectId: theirs.id }),
+      }),
+    );
+    expect(active.code).toBe("not_found");
+    expect(called).toBe(0);
+    // Shared with this human: allowed.
+    const shared = await w.store.project.update(theirs.id, theirs.version, {
+      settings: { members: ["agent-of-mara"], shared_with: [w.human.id] },
+    });
+    done(
+      await w.executor.execute({
+        name: "summary.speak",
+        params: { project: shared.id },
+        ctx: w.ctx({ source: "chat" }),
+      }),
+    );
+    expect(called).toBe(1);
+    await w.store.close();
+  });
+
+  it("voice_alerts is a low-risk global setting written to notify_prefs", async () => {
+    const w = await world();
+    expect(SETTING_SPECS.voice_alerts).toMatchObject({ scope: "global", risk: "low" });
+    const r = done(
+      await w.executor.execute({
+        name: "settings.set",
+        params: { key: "voice_alerts", value: true },
+        ctx: w.ctx(),
+      }),
+    );
+    expect(r.sentence).toBe("Set voice alerts from unset to true. Undo.");
+    expect((await w.store.human.mustGet(w.human.id)).notify_prefs.voice_alerts).toBe(true);
+    expect(
+      refused(
+        await w.executor.execute({
+          name: "settings.set",
+          params: { key: "voice_alerts", value: "yes" },
+          ctx: w.ctx(),
+        }),
+      ).code,
+    ).toBe("validation");
     await w.store.close();
   });
 });

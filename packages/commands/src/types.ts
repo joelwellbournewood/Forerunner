@@ -35,6 +35,7 @@ export const COMMAND_NAMES = [
   "capability.grant",
   "settings.set",
   "note.add",
+  "summary.speak",
   "request.answer",
   "email.mode.set",
   "device.revoke",
@@ -141,7 +142,23 @@ export interface CommandPorts {
    * built-in table.
    */
   pricingTable?(): PricingTable;
+  /**
+   * Read a text aloud through the voice provider (`summary.speak`, spec A.6, L.6): the runtime's
+   * speaker over the registry's TTS. Absent, or answering `spoken: false` with the reason, the
+   * command puts the text in its sentence instead.
+   */
+  speak?(req: SpeakPortRequest): Promise<SpeakPortResult>;
 }
+
+export interface SpeakPortRequest {
+  text: string;
+  projectId: string;
+  projectName: string;
+  humanId: string;
+  source: CommandSource;
+}
+
+export type SpeakPortResult = { spoken: true; id: string } | { spoken: false; reason: string };
 
 export interface CommandContext {
   actor: Actor;

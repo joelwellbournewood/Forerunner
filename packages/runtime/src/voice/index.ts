@@ -2,5 +2,6 @@
 export * from "./bridge.ts";
 export * from "./providers.ts";
 export * from "./sessions.ts";
+export * from "./speak.ts";
 export * from "./text-turn.ts";
 export * from "./views.ts";

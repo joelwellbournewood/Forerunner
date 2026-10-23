@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router";
+import { ReadAloud } from "../../components/ReadAloud.tsx";
 import { Badge, Button, ErrorBanner, Loading, Money } from "../../components/ui.tsx";
 import { formatDateTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
@@ -23,44 +23,13 @@ export function SummaryTab({ projectId }: { projectId: string }) {
   );
 }
 
-function speechAvailable(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    "speechSynthesis" in window &&
-    typeof SpeechSynthesisUtterance !== "undefined"
-  );
-}
-
-/** The daemon's cached one-screen summary with a "Read aloud" button (Web Speech). */
+/** The daemon's cached one-screen summary with "Read aloud" through the voice provider. */
 function SummaryCard({ projectId }: { projectId: string }) {
   const client = useClient();
   const summary = useAsync(
     (signal) => client.projectSummary(projectId, signal),
     [client, projectId],
   );
-  const [speaking, setSpeaking] = useState(false);
-  const canSpeak = speechAvailable();
-
-  useEffect(() => {
-    return () => {
-      if (speechAvailable()) window.speechSynthesis.cancel();
-    };
-  }, []);
-
-  const speak = () => {
-    if (!summary.data || !canSpeak) return;
-    const synth = window.speechSynthesis;
-    if (speaking) {
-      synth.cancel();
-      setSpeaking(false);
-      return;
-    }
-    const utterance = new SpeechSynthesisUtterance(summary.data.spoken);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-    setSpeaking(true);
-    synth.speak(utterance);
-  };
 
   if (summary.loading && !summary.data) return <Loading what="summary" />;
   if (summary.error && !summary.data)
@@ -78,20 +47,9 @@ function SummaryCard({ projectId }: { projectId: string }) {
         <span className="text-sm text-neutral-600 dark:text-neutral-400">
           Spent <Money value={data.spend} />
         </span>
-        <Button
-          className="ml-auto"
-          onClick={speak}
-          disabled={!canSpeak}
-          title={
-            canSpeak
-              ? "Read the summary aloud"
-              : "Speech synthesis is not available in this webview"
-          }
-          data-testid="read-aloud"
-          aria-pressed={speaking}
-        >
-          {speaking ? "Stop reading" : "Read aloud"}
-        </Button>
+        <span className="ml-auto">
+          <ReadAloud start={() => client.speakProject(projectId)} fallbackText={data.spoken} />
+        </span>
         <Button variant="ghost" onClick={summary.reload}>
           Refresh
         </Button>

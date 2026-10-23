@@ -1,6 +1,6 @@
 import { CostLedger, FixedRateSource } from "@forerunner/billing";
 import type { CommandDef } from "@forerunner/commands";
-import { staticRisk } from "@forerunner/commands";
+import { spokenProjectSummary, staticRisk } from "@forerunner/commands";
 import type {
   ChangeLogRow,
   EventRow,
@@ -142,17 +142,8 @@ export async function projectSummary(
   };
   const spend = await store.costLedger.sum({ projectId: p.id });
   const next = s.next_steps ?? [];
-  const spoken = [
-    `${p.name}.`,
-    `Goal: ${p.goal}.`,
-    `Stage: ${p.stage}.`,
-    s.last_session ? `Last session: ${s.last_session.summary}` : "No session yet.",
-    next.length ? `Next: ${next.slice(0, 3).join("; ")}.` : "",
-    `${s.open_questions ?? 0} open question${(s.open_questions ?? 0) === 1 ? "" : "s"}.`,
-    `Spent ${(Math.round(spend.usd_micro * chfPerUsd) / 1e6).toFixed(2)} francs.`,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  // One text for the screen's "Read aloud" and for the `summary.speak` command (spec A.6).
+  const spoken = spokenProjectSummary(p, spend.usd_micro, chfPerUsd);
   return {
     goal: p.goal,
     stage: p.stage,

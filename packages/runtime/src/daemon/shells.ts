@@ -34,7 +34,19 @@ export function isShellStream(facts: ShellStreamFacts): boolean {
   return facts.bearerHeader;
 }
 
-/** The shells attached to this daemon, counted by `/events` and read by the desktop channel. */
+/** The `speech` value that marks a client that plays the `speak.started` utterances (ADR 0063). */
+export const SPEECH_PLAYER = "play";
+
+/**
+ * Whether an `/events` stream plays speech: it declared `?speech=play` (the UI does where it
+ * has Web Audio and EventSource). Counted separately from the toast shells: the desktop
+ * sidecar shows toasts but plays no audio, the UI's window plays audio but shows no toast.
+ */
+export function isSpeechPlayerStream(facts: { speech?: string | undefined }): boolean {
+  return (facts.speech ?? "").trim().toLowerCase() === SPEECH_PLAYER;
+}
+
+/** The shells (or speech players) attached to this daemon, counted by `/events` and read by the desktop channel. */
 export class ShellPresence {
   private attached = 0;
 

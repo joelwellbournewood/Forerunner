@@ -156,6 +156,15 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     schema: z.enum(["desktop", "email", "telegram", "signal", "push"]),
     description: "Where notifications go.",
   },
+  voice_alerts: {
+    key: "voice_alerts",
+    label: "voice alerts",
+    scope: "global",
+    risk: "low",
+    schema: z.boolean(),
+    description:
+      "Speak urgent notifications aloud through the voice provider while the desktop app is open, outside quiet hours (ADR 0063).",
+  },
   default_autonomy: {
     key: "default_autonomy",
     label: "the default autonomy for new projects",

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { describeError, type EventView, type SessionView } from "../api/client.ts";
 import { type StreamMode, subscribeSessionEvents } from "../api/sse.ts";
+import { ReadAloud } from "../components/ReadAloud.tsx";
 import {
   Badge,
   Button,
@@ -231,13 +232,20 @@ export function SessionPage() {
             />
           </div>
         </div>
-        {session.summary ? (
-          <p
-            className="text-sm text-neutral-700 dark:text-neutral-300"
-            data-testid="session-summary"
-          >
-            {session.summary}
-          </p>
+        {session.summary && session.summary !== "conversation" ? (
+          <div className="flex flex-wrap items-start gap-2">
+            <p
+              className="flex-1 text-sm text-neutral-700 dark:text-neutral-300"
+              data-testid="session-summary"
+            >
+              {session.summary}
+            </p>
+            <ReadAloud
+              start={() => client.speakSession(id)}
+              fallbackText={session.summary}
+              testId="session-read-aloud"
+            />
+          </div>
         ) : null}
       </header>
 

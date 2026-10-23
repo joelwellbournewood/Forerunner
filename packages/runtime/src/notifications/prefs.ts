@@ -53,6 +53,7 @@ export const NotificationPrefsPatch = z
       .enum([...CHANNEL_NAMES, "push"])
       .nullable()
       .optional(),
+    voice_alerts: z.boolean().optional(),
   })
   .strict();
 export type NotificationPrefsPatch = z.infer<typeof NotificationPrefsPatch>;
@@ -66,6 +67,7 @@ export const DEFAULT_PREFS: Readonly<NotificationPrefs> = Object.freeze({
   signal_number: null,
   email: null,
   notify_channel: null,
+  voice_alerts: false,
 });
 
 /**
@@ -91,6 +93,7 @@ export function readPrefs(json: JsonObject | null | undefined): NotificationPref
     signal_number: field("signal_number", shape.signal_number, undefined) ?? null,
     email: field("email", shape.email, undefined) ?? null,
     notify_channel: field("notify_channel", shape.notify_channel, undefined) ?? null,
+    voice_alerts: field("voice_alerts", shape.voice_alerts, undefined) ?? false,
   };
 }
 
@@ -127,6 +130,7 @@ export function writePrefs(
   if (patch.signal_number !== undefined) next.signal_number = patch.signal_number;
   if (patch.email !== undefined) next.email = patch.email;
   if (patch.notify_channel !== undefined) next.notify_channel = patch.notify_channel;
+  if (patch.voice_alerts !== undefined) next.voice_alerts = patch.voice_alerts;
   return { ...(existing ?? {}), ...toJson(next) };
 }
 
@@ -148,6 +152,7 @@ function toJson(p: NotificationPrefs): JsonObject {
     signal_number: p.signal_number,
     email: p.email,
     notify_channel: p.notify_channel,
+    voice_alerts: p.voice_alerts,
   };
 }
 
@@ -164,18 +169,28 @@ export function resolvePrefs(
   };
 }
 
+/** The channels of the fallback chain: every name but the announcing ones (ADR 0063). */
+export const CHAIN_CHANNELS: readonly ChannelName[] = CHANNEL_NAMES.filter((c) => c !== "voice");
+
 /**
  * Ordered channels for a kind (ADR 0017): the explicit per-kind list when set, otherwise the
  * preferred channel (`notify_channel`, desktop for "push" and when unset) followed by the
- * remaining channels in `CHANNEL_NAMES` order. The notifier skips channels that are not
- * configured and stops at the first delivery.
+ * remaining chain channels in `CHANNEL_NAMES` order. The notifier skips channels that are
+ * not configured and stops at the first delivery. `voice` announces and is never a step here
+ * (a preferred or listed `voice` is ignored by the chain; the announcer still runs), and it
+ * never replaces a delivery (ADR 0063): a list naming only `voice` gets the default chain, so
+ * the toast still goes (an empty list stays empty).
  */
 export function channelsFor(kind: NotificationKind, prefs: NotificationPrefs): ChannelName[] {
-  const explicit = prefs.channels[kind];
-  if (explicit) return [...explicit];
+  const listed = prefs.channels[kind];
+  const explicit = listed?.filter((c) => c !== "voice");
+  // An empty list stays empty (the human muted the kind); a voice-only list gets the chain.
+  if (listed && explicit && (explicit.length > 0 || listed.length === 0)) return explicit;
   const preferred: ChannelName =
-    prefs.notify_channel && prefs.notify_channel !== "push" ? prefs.notify_channel : "desktop";
-  return [preferred, ...CHANNEL_NAMES.filter((c) => c !== preferred)];
+    prefs.notify_channel && prefs.notify_channel !== "push" && prefs.notify_channel !== "voice"
+      ? prefs.notify_channel
+      : "desktop";
+  return [preferred, ...CHAIN_CHANNELS.filter((c) => c !== preferred)];
 }
 
 function minutesOf(hhmm: string): number {

@@ -33,6 +33,7 @@ export const NotificationPrefsView = z.object({
     signal_number: z.string().nullable(),
     email: z.string().nullable(),
     notify_channel: z.enum([...CHANNEL_NAMES, "push"]).nullable(),
+    voice_alerts: z.boolean(),
   }),
   resolved: z.object({ timezone: z.string(), email: z.string().nullable() }),
   channels: z.array(ChannelStatusView),

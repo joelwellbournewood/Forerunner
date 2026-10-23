@@ -35,8 +35,11 @@ import { createUpdateRoutes } from "../update/screen.ts";
 import type { SchemaSyncStatus } from "../update/sync.ts";
 import type { VoiceBridgeEntry } from "../voice/bridge.ts";
 import type { AudioChunk } from "../voice/pkg.ts";
+import type { SpeakEntry } from "../voice/speak.ts";
 import {
   decodePcm,
+  speakEventView,
+  speakView,
   voiceAnswerView,
   voiceEventView,
   voiceSessionView,
@@ -79,6 +82,8 @@ import {
   type PendingChangeView,
   PinLessonBody,
   type PlanProjectView,
+  SpeakBody,
+  type SpeakStartedView,
   StartSessionBody,
   StartVoiceSessionBody,
   type SyncHealth,
@@ -92,10 +97,12 @@ import {
 } from "./api-types.ts";
 import { createAuditRoutes } from "./audit-export.ts";
 import type { RuntimeApp } from "./compose.ts";
+import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord } from "./create-project.ts";
+import { ownsProject, ownsSession } from "./ownership.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
-import { CLIENT_HEADER, isShellStream } from "./shells.ts";
+import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
 import {
   changeLogView,
   commandDefView,
@@ -239,6 +246,67 @@ export function createDaemonApp(
       streams.delete(close);
     }
   };
+  /**
+   * A numbered event stream as SSE: replay what the stream missed after `afterSeq`, then go
+   * live; events that arrive during the replay are held and written in order once, never
+   * twice. Ends with the source (a stopped voice session, an ended utterance) or the client.
+   */
+  const streamNumbered = <E extends { seq: number }>(
+    c: Parameters<typeof streamSSE>[0],
+    source: {
+      eventsAfter(seq: number): E[];
+      subscribe(listener: (entry: E) => void): () => void;
+      ended(): boolean;
+    },
+    afterSeq: number,
+    frame: (entry: E) => { event: string; data: string },
+  ) =>
+    streamSSE(c, async (stream) => {
+      const write = (entry: E) => stream.writeSSE({ ...frame(entry), id: String(entry.seq) });
+      let replaying = true;
+      let last = afterSeq;
+      const held: E[] = [];
+      const unsubscribe = source.subscribe((entry) => {
+        if (replaying) {
+          held.push(entry);
+          return;
+        }
+        if (entry.seq <= last) return;
+        last = entry.seq;
+        void write(entry);
+      });
+      try {
+        for (const entry of source.eventsAfter(afterSeq)) {
+          last = entry.seq;
+          await write(entry);
+        }
+        replaying = false;
+        for (const entry of held.splice(0)) {
+          if (entry.seq <= last) continue;
+          last = entry.seq;
+          await write(entry);
+        }
+        let ticks = 0;
+        await streamUntilClosed(stream, 1000, async () => {
+          if (++ticks % 15 === 0)
+            await stream.writeSSE({
+              event: "heartbeat",
+              data: JSON.stringify({ at: rt.clock.nowIso() }),
+            });
+          return !source.ended();
+        });
+      } finally {
+        unsubscribe();
+      }
+    });
+  /** `?afterSeq=` of a numbered stream: a resume point that is not a number is refused. */
+  const afterSeqOf = (c: { req: { query(name: string): string | undefined } }): number => {
+    const rawAfter = c.req.query("afterSeq");
+    const afterSeq = rawAfter === undefined || rawAfter === "" ? 0 : Number(rawAfter);
+    if (!Number.isFinite(afterSeq) || afterSeq < 0)
+      throw new ForerunnerError("validation", "afterSeq must be a non-negative number");
+    return afterSeq;
+  };
 
   app.onError((err, c) => {
     if (err instanceof ForerunnerError) {
@@ -282,7 +350,7 @@ export function createDaemonApp(
     }),
   );
 
-  // Bearer token on every route. EventSource cannot set headers, so the two SSE routes also
+  // Bearer token on every route. EventSource cannot set headers, so the SSE routes also
   // accept the token as a query parameter; nothing else does, and query strings of those
   // routes are never logged.
   app.use("*", async (c, next) => {
@@ -292,7 +360,8 @@ export function createDaemonApp(
       c.req.method === "GET" &&
       (c.req.path === "/events" ||
         /^\/sessions\/[^/]+\/events$/.test(c.req.path) ||
-        /^\/voice\/sessions\/[^/]+\/events$/.test(c.req.path));
+        /^\/voice\/sessions\/[^/]+\/events$/.test(c.req.path) ||
+        /^\/speak\/[^/]+\/events$/.test(c.req.path));
     const got = header.startsWith("Bearer ")
       ? header.slice(7)
       : sseRoute
@@ -1504,60 +1573,87 @@ export function createDaemonApp(
   app.get("/voice/sessions/:id/events", async (c) => {
     const session = rt.voice.mustGet(c.req.param("id"));
     const bridge = session.bridge;
-    // A resume point that is not a number is refused, never a silent replay of nothing.
-    const rawAfter = c.req.query("afterSeq");
-    const afterSeq = rawAfter === undefined || rawAfter === "" ? 0 : Number(rawAfter);
-    if (!Number.isFinite(afterSeq) || afterSeq < 0)
-      throw new ForerunnerError("validation", "afterSeq must be a non-negative number");
+    const afterSeq = afterSeqOf(c);
     const accept = c.req.header("accept") ?? "";
     if (!accept.includes("text/event-stream")) {
       return c.json(bridge.eventsAfter(afterSeq).map((e) => voiceEventView(e, chf())));
     }
-    return streamSSE(c, async (stream) => {
-      const write = (entry: VoiceBridgeEntry) =>
-        stream.writeSSE({
-          event: "voice.event",
-          data: JSON.stringify(voiceEventView(entry, chf())),
-          id: String(entry.seq),
-        });
-      // Replay what the stream missed, then go live; events that arrive during the replay
-      // are held and written in order once, never twice.
-      let replaying = true;
-      let last = afterSeq;
-      const held: VoiceBridgeEntry[] = [];
-      const unsubscribe = bridge.subscribe((entry) => {
-        if (replaying) {
-          held.push(entry);
-          return;
-        }
-        if (entry.seq <= last) return;
-        last = entry.seq;
-        void write(entry);
-      });
-      try {
-        for (const entry of bridge.eventsAfter(afterSeq)) {
-          last = entry.seq;
-          await write(entry);
-        }
-        replaying = false;
-        for (const entry of held.splice(0)) {
-          if (entry.seq <= last) continue;
-          last = entry.seq;
-          await write(entry);
-        }
-        let ticks = 0;
-        await streamUntilClosed(stream, 1000, async () => {
-          if (++ticks % 15 === 0)
-            await stream.writeSSE({
-              event: "heartbeat",
-              data: JSON.stringify({ at: rt.clock.nowIso() }),
-            });
-          return !bridge.ended;
-        });
-      } finally {
-        unsubscribe();
-      }
+    return streamNumbered<VoiceBridgeEntry>(
+      c,
+      {
+        eventsAfter: (seq) => bridge.eventsAfter(seq),
+        subscribe: (l) => bridge.subscribe(l),
+        ended: () => bridge.ended,
+      },
+      afterSeq,
+      (entry) => ({ event: "voice.event", data: JSON.stringify(voiceEventView(entry, chf())) }),
+    );
+  });
+
+  // -------------------------------------------------------------------------------------
+  // Read aloud (spec A.6, L.6; ADR 0063): the project summary or a session summary through
+  // the registry's TTS, streamed as a voice turn's reply is. No model call; another human's
+  // project or session is refused; one voice at a time; the text is echoed; one `voice.speak`
+  // row and audit row per utterance, never audio.
+
+  const who = () => ({ humanId: rt.human.id, agentId: rt.agent.id });
+
+  app.post("/projects/:id/speak", async (c) => {
+    const body = await parse(c, SpeakBody);
+    const p = await rt.store.project.mustGet(c.req.param("id"));
+    if (!ownsProject(p, who())) return c.json({ ...NOT_YOURS, message: "not your project" }, 403);
+    const summary = await projectSummary(rt.store, p.id, chf());
+    const u = await rt.speech.say({
+      text: summary.spoken,
+      subject: { kind: "project", id: p.id, name: p.name },
+      source: "ui",
+      player: "requester",
+      ...(body.language ? { language: body.language } : {}),
     });
+    return c.json(speakView(u), 201);
+  });
+
+  app.post("/sessions/:id/speak", async (c) => {
+    const body = await parse(c, SpeakBody);
+    const s = await rt.store.session.mustGet(c.req.param("id"));
+    const agent = await rt.store.agent.get(s.agent_id);
+    if (!ownsSession(s, agent, who()))
+      return c.json({ ...NOT_YOURS, message: "not your session" }, 403);
+    const text = s.summary === "conversation" ? "" : s.summary.trim();
+    if (!text) throw new ForerunnerError("validation", "the session has no summary yet");
+    const u = await rt.speech.say({
+      text,
+      subject: { kind: "session", id: s.id, projectId: s.project_id },
+      source: "ui",
+      player: "requester",
+      ...(body.language ? { language: body.language } : {}),
+    });
+    return c.json(speakView(u), 201);
+  });
+
+  app.get("/speak/:id", (c) => c.json(speakView(rt.speech.mustGet(c.req.param("id")))));
+
+  app.post("/speak/:id/cancel", async (c) =>
+    c.json(speakView(await rt.speech.cancel(c.req.param("id")))),
+  );
+
+  app.get("/speak/:id/events", async (c) => {
+    const u = rt.speech.mustGet(c.req.param("id"));
+    const afterSeq = afterSeqOf(c);
+    const accept = c.req.header("accept") ?? "";
+    if (!accept.includes("text/event-stream")) {
+      return c.json(u.eventsAfter(afterSeq).map((e) => speakEventView(e)));
+    }
+    return streamNumbered<SpeakEntry>(
+      c,
+      {
+        eventsAfter: (seq) => u.eventsAfter(seq),
+        subscribe: (l) => u.subscribe(l),
+        ended: () => u.ended,
+      },
+      afterSeq,
+      (entry) => ({ event: "speak.event", data: JSON.stringify(speakEventView(entry)) }),
+    );
   });
 
   app.get("/events", (c) =>
@@ -1601,12 +1697,19 @@ export function createDaemonApp(
       // The desktop control indicator (spec S.32): the shells show a banner while `on` is true.
       const onDesktopIndicator = (p: DesktopIndicatorPayload) =>
         void stream.writeSSE({ event: DESKTOP_INDICATOR_EVENT, data: JSON.stringify(p) });
+      // Something is being read aloud (ADR 0063): a speech player attaches to
+      // `/speak/:id/events`; a stream that declared `?speech=play` counts as one.
+      const onSpeak = (p: SpeakStartedView) =>
+        void stream.writeSSE({ event: "speak.started", data: JSON.stringify(p) });
       const detachShell = isShellStream({
         client: c.req.query("client"),
         clientHeader: c.req.header(CLIENT_HEADER),
         bearerHeader: (c.req.header("authorization") ?? "").startsWith("Bearer "),
       })
         ? rt.shells.attach()
+        : () => undefined;
+      const detachPlayer = isSpeechPlayerStream({ speech: c.req.query("speech") })
+        ? rt.speechPlayers.attach()
         : () => undefined;
       rt.events.on("session", onSession);
       rt.events.on("inbox", onInbox);
@@ -1615,6 +1718,7 @@ export function createDaemonApp(
       rt.events.on("restart", onRestart);
       rt.events.on("notification", onNotification);
       rt.events.on(DESKTOP_INDICATOR_EVENT, onDesktopIndicator);
+      rt.events.on("speak", onSpeak);
       try {
         await onInbox();
         await streamUntilClosed(stream, 15_000, async () => {
@@ -1632,7 +1736,9 @@ export function createDaemonApp(
         rt.events.off("restart", onRestart);
         rt.events.off("notification", onNotification);
         rt.events.off(DESKTOP_INDICATOR_EVENT, onDesktopIndicator);
+        rt.events.off("speak", onSpeak);
         detachShell();
+        detachPlayer();
       }
     }),
   );
@@ -1726,30 +1832,3 @@ export async function startDaemon(
 }
 
 export type { EventView };
-
-/** The principal's conversation session: the activity log of changes made outside a chat turn. */
-async function conversationSessionId(rt: RuntimeApp): Promise<string> {
-  if (rt.conversation) return rt.conversation.conversationSessionId(rt.agent.id, null);
-  const existing = await rt.store.session.list(
-    { agent_id: rt.agent.id, trigger: "manual", summary: "conversation" } as never,
-    { limit: 1 },
-  );
-  if (existing[0]) return existing[0].id;
-  const row = await rt.store.session.insert({
-    agent_id: rt.agent.id,
-    project_id: null,
-    trigger: "manual",
-    plan: {},
-    budget_cap_usd_micro: 0,
-    step_cap: 1_000_000,
-    spent_usd_micro: 0,
-    steps: 0,
-    started_at: rt.clock.nowIso(),
-    status: "planned",
-    summary: "conversation",
-    handoff: {},
-    runner: "pc",
-    author_agent: rt.agent.id,
-  });
-  return row.id;
-}

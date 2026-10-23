@@ -28,8 +28,18 @@ export type ChannelResult =
 
 export interface Channel {
   readonly name: ChannelName;
+  /**
+   * An announcing channel (ADR 0063: the voice channel) runs for urgent notifications after
+   * the fallback chain, on top of its delivery, and never ends the chain.
+   */
+  readonly announce?: boolean;
   /** Null when the channel can be used for this human; otherwise why not (shown in settings). */
   configured(ctx: ChannelContext): string | null;
+  /**
+   * Why this channel does not take this one notification right now (quiet hours, nobody at
+   * the machine); null to send. The notifier records the reason as a `skipped` delivery.
+   */
+  accepts?(n: Notification, ctx: ChannelContext): string | null;
   send(n: Notification, ctx: ChannelContext): Promise<ChannelResult>;
 }
 

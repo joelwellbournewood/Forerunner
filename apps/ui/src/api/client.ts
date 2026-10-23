@@ -102,6 +102,9 @@ import {
   SourceCandidateView as SourceCandidateViewSchema,
   type SourceView,
   SourceView as SourceViewSchema,
+  type SpeakBody,
+  type SpeakView,
+  SpeakView as SpeakViewSchema,
   type StartSessionBody as StartSessionBodySchema,
   type TaskView,
   TaskView as TaskViewSchema,
@@ -234,6 +237,7 @@ export type {
   SourceCandidateStatus,
   SourceCandidateView,
   SourceView,
+  SpeakView,
   TaskView,
   UpdateLessonBody,
   UpdateProjectSettingsBody,
@@ -409,6 +413,12 @@ export interface DaemonClient {
   createProject(body: CreateProjectBody): Promise<ProjectCard>;
   project(id: string, signal?: AbortSignal): Promise<ProjectCard>;
   projectSummary(id: string, signal?: AbortSignal): Promise<ProjectSummary>;
+  // Read aloud (spec A.6, L.6; ADR 0063): the daemon's voice provider reads a summary;
+  // `lib/speech.ts` follows the utterance's stream and plays the frames.
+  speakProject(id: string, body?: SpeakBody): Promise<SpeakView>;
+  speakSession(id: string, body?: SpeakBody): Promise<SpeakView>;
+  speak(id: string, signal?: AbortSignal): Promise<SpeakView>;
+  cancelSpeak(id: string): Promise<SpeakView>;
   tasks(
     projectId: string,
     filter?: { status?: string; limit?: number },
@@ -716,6 +726,10 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("project", { id }), ProjectCardSchema, undefined, signal),
     projectSummary: (id, signal) =>
       get(routePath("projectSummary", { id }), ProjectSummarySchema, undefined, signal),
+    speakProject: (id, body) => post(routePath("speakProject", { id }), SpeakViewSchema, body),
+    speakSession: (id, body) => post(routePath("speakSession", { id }), SpeakViewSchema, body),
+    speak: (id, signal) => get(routePath("speak", { id }), SpeakViewSchema, undefined, signal),
+    cancelSpeak: (id) => post(routePath("cancelSpeak", { id }), SpeakViewSchema),
     tasks: (projectId, filter, signal) =>
       get(
         routePath("tasks", { id: projectId }),

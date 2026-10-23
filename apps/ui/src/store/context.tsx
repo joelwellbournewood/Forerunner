@@ -7,7 +7,18 @@ import {
   useSyncExternalStore,
 } from "react";
 import { type DaemonClient, describeError } from "../api/client.ts";
-import { type StreamOptions, type StreamSubscription, subscribeDaemonEvents } from "../api/sse.ts";
+import {
+  type EventSourceFactory,
+  type StreamOptions,
+  type StreamSubscription,
+  subscribeDaemonEvents,
+} from "../api/sse.ts";
+import {
+  type AudioOutput,
+  canPlaySpeech,
+  createSpeechAnnouncer,
+  type SpeechAnnouncer,
+} from "../lib/speech.ts";
 import {
   defaultAgent,
   desktopControlFromIndicator,
@@ -31,6 +42,13 @@ export interface AppProviderProps {
   bootstrap?: boolean;
   /** Options of the `/events` subscription (tests inject an EventSource and timers). */
   streamOptions?: StreamOptions;
+  /**
+   * The browser seams of the speech player (tests inject fakes). By default the browser's
+   * EventSource, and the window is a speech player when it has EventSource and Web Audio
+   * (`canPlaySpeech`); with `audio` given it is one. An `eventSource` given here is also the
+   * `/events` stream's, over `streamOptions.eventSource`.
+   */
+  realtime?: { eventSource?: EventSourceFactory; audio?: () => AudioOutput | null };
   children: ReactNode;
 }
 
@@ -39,12 +57,22 @@ export function AppProvider({
   store,
   bootstrap = true,
   streamOptions,
+  realtime,
   children,
 }: AppProviderProps) {
   useEffect(() => {
     if (!bootstrap) return;
     const controller = new AbortController();
     let stream: StreamSubscription | null = null;
+    // The window plays what the daemon reads aloud on its own (voice alerts, summary.speak by
+    // chat; ADR 0063) and says so on /events, so the daemon knows someone can hear it.
+    const announcer: SpeechAnnouncer | null =
+      realtime?.audio || canPlaySpeech()
+        ? createSpeechAnnouncer(client, {
+            ...(realtime && "eventSource" in realtime ? { eventSource: realtime.eventSource } : {}),
+            ...(realtime?.audio ? { audio: realtime.audio } : {}),
+          })
+        : null;
     void bootstrapStore(client, store, controller.signal).then((ok) => {
       if (!ok || controller.signal.aborted) return;
       const me = store.getState().me;
@@ -54,7 +82,9 @@ export function AppProvider({
         me.id,
         {
           onEvent: (event) => {
-            if (event.event === "inbox.changed") {
+            if (event.event === "speak.started") {
+              announcer?.started(event.data);
+            } else if (event.event === "inbox.changed") {
               store.dispatch({ type: "blockingCount", count: event.data.blockingCount });
             } else if (event.event === "project.changed") {
               void client
@@ -104,14 +134,19 @@ export function AppProvider({
             if (mode === "sse") void refreshDesktopControl(client, store);
           },
         },
-        streamOptions,
+        {
+          ...streamOptions,
+          speechPlayer: announcer !== null,
+          ...(realtime && "eventSource" in realtime ? { eventSource: realtime.eventSource } : {}),
+        },
       );
     });
     return () => {
       controller.abort();
       stream?.close();
+      announcer?.close();
     };
-  }, [client, store, bootstrap, streamOptions]);
+  }, [client, store, bootstrap, streamOptions, realtime]);
 
   useEffect(() => {
     applyTheme(store.getState().theme);

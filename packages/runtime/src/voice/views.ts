@@ -9,6 +9,8 @@ import type {
   ChatPendingView,
   ChatReplyView,
   CommandResultJson,
+  SpeakEventView,
+  SpeakView,
   VoiceAnswerView,
   VoiceApprovalView,
   VoiceEventView,
@@ -24,6 +26,7 @@ import type { CommandResultView } from "../loop/ports.ts";
 import type { VoiceApproval, VoiceBridgeEntry, VoiceTurn } from "./bridge.ts";
 import { type AudioChunk, bytesToPcm, type LatencyReport, toInt16 } from "./pkg.ts";
 import type { VoiceAvailability, VoiceSession } from "./sessions.ts";
+import type { SpeakEntry, SpeakRecord, Utterance } from "./speak.ts";
 
 export function chatPendingView(p: PendingConfirmation, chf: number): ChatPendingView {
   return {
@@ -233,6 +236,63 @@ export function voiceEventView(entry: VoiceBridgeEntry, chf: number): VoiceEvent
       const data = { ...rest };
       delete data.turn;
       return { ...base, data };
+    }
+  }
+}
+
+/** An utterance as `GET /speak/:id` answers it: the record plus the sentences and the provider. */
+export function speakView(u: Utterance): SpeakView {
+  const r = u.record();
+  return {
+    ...speakRecordView(r),
+    sentences: [...u.sentences],
+    provider: { ...u.provider },
+    conversationSessionId: u.conversationSessionId,
+    lastSeq: u.lastSeq,
+  };
+}
+
+function speakRecordView(
+  r: SpeakRecord,
+): Omit<SpeakView, "sentences" | "provider" | "conversationSessionId" | "lastSeq"> {
+  return {
+    id: r.id,
+    subject: r.subject,
+    source: r.source,
+    state: r.state,
+    text: r.text,
+    heard: r.heard,
+    unspokenText: r.unspokenText,
+    audioChunks: r.audioChunks,
+    audioStored: false,
+    firstAudioMs: r.firstAudioMs,
+    startedAt: r.startedAt,
+    endedAt: r.endedAt,
+    error: r.error,
+  };
+}
+
+/** One frame of `GET /speak/:id/events`; an audio frame has the voice loop's shape. */
+export function speakEventView(entry: SpeakEntry): SpeakEventView {
+  const e = entry.event;
+  const base = { seq: entry.seq, at: entry.at, type: e.type };
+  switch (e.type) {
+    case "audio":
+      return {
+        ...base,
+        data: {
+          sentenceIndex: e.sentenceIndex,
+          sampleRate: e.chunk.sampleRate,
+          channels: e.chunk.channels,
+          timestampMs: e.chunk.timestampMs,
+          pcm: encodePcm(e.chunk),
+        },
+      };
+    case "speak.done":
+      return { ...base, data: { record: speakRecordView(e.record) } };
+    default: {
+      const { type: _type, ...rest } = e as { type: string } & Record<string, unknown>;
+      return { ...base, data: { ...rest } };
     }
   }
 }

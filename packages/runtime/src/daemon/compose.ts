@@ -147,8 +147,12 @@ import {
   type ProducerHooks,
   producers,
   SignalChannel,
+  speakThrough,
   TelegramChannel,
   type TelegramFetch,
+  VOICE_IN_CONVERSATION,
+  VOICE_NO_PLAYER,
+  VoiceChannel,
 } from "../notifications/index.ts";
 import { isQuietAt, resolvePrefs } from "../notifications/prefs.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
@@ -220,6 +224,7 @@ import { SchemaSync } from "../update/sync.ts";
 import {
   buildVoiceRegistry,
   resolveVoicePreferences,
+  SpeakSessions,
   type VoicePreferences,
   VoiceSessions,
   vaultHasSecret,
@@ -267,6 +272,8 @@ import {
 } from "../wiring/notification-ports.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
+import type { SpeakStartedView } from "./api-types.ts";
+import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord } from "./create-project.ts";
 import {
   bindInstallHuman,
@@ -478,6 +485,8 @@ export interface ComposeOptions {
     /** Stopped sessions kept for a late `GET` or stream (default 8) and for how long (default 10 min). */
     keepStopped?: number;
     retainStoppedMs?: number;
+    /** How long a read-aloud waits for its player's stream before playing (default 1.5 s). */
+    awaitListenerMs?: number;
   };
 }
 
@@ -657,6 +666,12 @@ export interface RuntimeApp {
    * `/voice` routes; `status()` says whether a provider pair is usable and why not.
    */
   voice: VoiceSessions;
+  /**
+   * Read aloud (spec A.6, L.6; ADR 0063): the project and session summaries and urgent
+   * notifications through the registry's TTS, behind the `/speak` routes, the `summary.speak`
+   * command and the voice notification channel. Needs no model credential.
+   */
+  speech: SpeakSessions;
   /** Signed updates (spec M) over this process's store. */
   updates: UpdateManager;
   updateConfig: UpdateConfig;
@@ -716,6 +731,11 @@ export interface RuntimeApp {
    * `shells.ts` says which do); the desktop channel falls back to the OS notifier at zero.
    */
   shells: ShellPresence;
+  /**
+   * The `/events` streams that play speech (`?speech=play`, ADR 0063: the UI where it has Web
+   * Audio); the voice channel speaks and `summary.speak` reads aloud only with one attached.
+   */
+  speechPlayers: ShellPresence;
   /**
    * This PC as a device and the remote control of it (spec R.4, R.8; ADR 0030, ADR 0041):
    * the daemon's own `desktop` device row (registered on every store: it is the paired device
@@ -1988,6 +2008,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // EventSource, the phone's web view and a browser tab receive the frame but show nothing,
   // so with none of the shells attached the OS notifier runs.
   const shells = new ShellPresence();
+  // The clients that play `speak.started` utterances (ADR 0063); without one nothing is heard,
+  // so the voice channel skips and `summary.speak` answers with the text.
+  const speechPlayers = new ShellPresence();
+  // The voice loop's sessions are composed later; an alert never talks over an open one.
+  let voiceBusy: () => string | null = () => null;
   // The bot token is checked for existence (never read here) so the settings screen says so
   // and the notifier skips the channel instead of failing every send before the fallback.
   const telegram = new SecretCheckedChannel(
@@ -2000,6 +2025,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     vault,
     { name: parseSecretRef(notifyConfig.telegramTokenRef), label: "bot token" },
   );
+  // The speaker (ADR 0063) is composed after the command registry and the voice registry;
+  // the voice channel and the `speak` command port reach it through this binding, and a
+  // request before it exists (none in practice: nothing dispatches during compose) is refused.
+  let speech: SpeakSessions | null = null;
+  const speaker = (): SpeakSessions => {
+    if (!speech) throw new ForerunnerError("unavailable", "the speaker is not composed yet");
+    return speech;
+  };
   const notifier = new Notifier({
     clock,
     channels: [
@@ -2011,6 +2044,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
               platform: opts.notifications?.platform,
               osFallback: osNotifier,
               ...osTools,
+            }),
+            // Urgent alerts read aloud on top of the toast, with a shell attached and outside
+            // quiet hours, when the human turned voice alerts on (ADR 0063).
+            new VoiceChannel({
+              clock,
+              playersConnected: () => speechPlayers.count(),
+              busy: () => voiceBusy(),
+              speak: speakThrough(speaker),
             }),
           ]
         : []),
@@ -2349,6 +2390,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // memory.record (spec O.2, ADR 0061): a lesson stated in chat or voice goes into the
       // principal's private memory through the same loop the sessions use.
       memory: memoryCommandPort(memory),
+      // summary.speak (spec A.6): the speaker over the registry's TTS; without a usable
+      // provider the command answers with the text instead (the reason comes back here).
+      speak: async (req) => {
+        // Nothing would play it: the command answers with the text instead of a silent "aloud".
+        if (speechPlayers.count() <= 0) return { spoken: false, reason: VOICE_NO_PLAYER };
+        try {
+          const u = await speaker().say({
+            text: req.text,
+            subject: { kind: "project", id: req.projectId, name: req.projectName },
+            source: req.source,
+          });
+          return { spoken: true, id: u.id };
+        } catch (e) {
+          return { spoken: false, reason: errorMessage(e) };
+        }
+      },
     },
   });
   const mirrorSchedules = new Set<string>();
@@ -2444,17 +2501,20 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       : buildVoiceRegistry({ env, vault, clock }));
   const fixedVoicePreferences = opts.voice?.preferred;
   const voiceRows = voiceExtensionRows(extensions);
+  // One source of the preferred providers for the voice sessions and the speaker (below), so
+  // the TTS chosen in the Extensions panel is the one that reads summaries and alerts too.
+  const voicePreferenceSource = fixedVoicePreferences
+    ? () => fixedVoicePreferences
+    : () =>
+        resolveVoicePreferences({
+          env,
+          extensions: voiceRows,
+          hasSecret: vaultHasSecret(vault),
+          registered: { stt: voiceRegistry.sttNames(), tts: voiceRegistry.ttsNames() },
+        });
   const voice = new VoiceSessions({
     registry: voiceRegistry,
-    preferences: fixedVoicePreferences
-      ? () => fixedVoicePreferences
-      : () =>
-          resolveVoicePreferences({
-            env,
-            extensions: voiceRows,
-            hasSecret: vaultHasSecret(vault),
-            registered: { stt: voiceRegistry.sttNames(), tts: voiceRegistry.ttsNames() },
-          }),
+    preferences: voicePreferenceSource,
     hasSecret: vaultHasSecret(vault),
     conversation: () => conversation,
     commands,
@@ -2473,6 +2533,39 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       ? { retainStoppedMs: opts.voice.retainStoppedMs }
       : {}),
   });
+  voiceBusy = () => (voice.open().length > 0 ? VOICE_IN_CONVERSATION : null);
+  // Read aloud (spec A.6, L.6; ADR 0063): one speaker over the same registry, TTS only, no
+  // model call; one voice at a time. Every utterance is announced on the bus (`speak`, the
+  // `speak.started` frame on `/events`, with who plays it) so a speech player (the UI with
+  // `/events?speech=play`) attaches to its stream and plays it; playback waits for that.
+  const speechSessions = new SpeakSessions({
+    registry: voiceRegistry,
+    // Read per utterance from the same source as the voice sessions' providers, so the TTS
+    // the human chose for the voice chat (the Extensions panel, spec O.4) is the one that
+    // reads summaries and alerts.
+    preferences: voicePreferenceSource,
+    hasSecret: vaultHasSecret(vault),
+    store,
+    clock,
+    humanId: human.id,
+    agentId: agent.id,
+    sessionIdFor: () => conversationSessionId({ conversation, agent, store, clock }),
+    ...(opts.voice?.sink ? { sink: opts.voice.sink } : {}),
+    ...(opts.voice?.awaitListenerMs !== undefined
+      ? { awaitListenerMs: opts.voice.awaitListenerMs }
+      : {}),
+    onStart: (u) => {
+      const payload: SpeakStartedView = {
+        id: u.id,
+        subject: u.subject,
+        source: u.source,
+        player: u.player,
+        sentences: u.sentences.length,
+      };
+      events.emit("speak", payload);
+    },
+  });
+  speech = speechSessions;
   // Background services: the daemon starts them; a CLI one-shot (startServices: false) only
   // uses the composed objects and never connects a connector or ticks the scheduler.
   const services = opts.startServices !== false;
@@ -2759,6 +2852,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       ),
     commands,
     voice,
+    speech: speechSessions,
     events,
     appVersion,
     startedAt: clock.now(),
@@ -2780,6 +2874,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     notifier,
     notifications,
     shells,
+    speechPlayers,
     remote: {
       enabled: remoteEnabled,
       device: remoteDevice,
@@ -2822,6 +2917,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     intake,
     async close() {
       await voice.close();
+      await speechSessions.close();
       stopApprovalsPoll();
       remoteWatcher?.stop();
       githostWatcher?.stop();

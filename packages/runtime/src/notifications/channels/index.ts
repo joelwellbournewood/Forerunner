@@ -3,3 +3,4 @@ export * from "./email.ts";
 export * from "./signal.ts";
 export * from "./telegram.ts";
 export * from "./types.ts";
+export * from "./voice.ts";

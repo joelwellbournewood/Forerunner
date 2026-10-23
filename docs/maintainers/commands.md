@@ -71,8 +71,9 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `session.stop` | session / global | low | no | ports.kill or a `remote_command` row |
 | `session.pause` | session | low | yes (resume) | ports or `session.status` |
 | `capability.grant` | global | high | yes | `extension.permissions`, `enabled` |
-| `settings.set` | by key | by key (`SETTING_SPECS`) | yes | project settings/columns or human prefs/columns; a key with an `effect` (`small_project_mode`, spec B.6; `fast_mode`, spec D.20; the monthly jobs' `calibration`, global in `human.notify_prefs`, and `handover`, per project, ADR 0060) says what changes in the card's new value and the sentence, both ways |
+| `settings.set` | by key | by key (`SETTING_SPECS`) | yes | project settings/columns or human prefs/columns; a key with an `effect` (`small_project_mode`, spec B.6; `fast_mode`, spec D.20; the monthly jobs' `calibration`, global in `human.notify_prefs`, and `handover`, per project, ADR 0060) says what changes in the card's new value and the sentence, both ways; `voice_alerts` (global, low, boolean) is the voice notification channel's switch in `human.notify_prefs` (ADR 0063) |
 | `note.add` | project | low | yes (dismiss) | `queue_item` |
+| `summary.speak` | project | low | no (stop the playback in the app) | nothing; `ports.speak` reads the one-screen summary aloud (spec A.6, L.6; ADR 0063). By chat or from the UI the sentence is "Reading the summary of X aloud. <text>"; in a voice session the sentence is the text itself (the loop speaks it, no second voice); without a port, a usable provider or an app window that plays speech (the daemon's port answers "no app window open to play speech", so nothing claims "aloud" into silence) "Voice is unavailable (reason). Summary of X: <text>". `after` says whether it was spoken and by which path. Another human's project (the named one or the active one) is refused as `not_found` "the project "X" is not yours" before anything is read, by `ownsProject` (`src/ownership.ts`: members, `shared_with`, author, or no owner facts at all), the one rule the daemon's speak route uses too. `spokenProjectSummary(project, spendUsdMicro, chfPerUsd)` is the one builder of the text, used by the daemon's `GET /projects/:id/summary` too |
 | `request.answer` | project | the request's own risk | no | `human_request.answer` |
 | `email.mode.set` | global | high | yes | `extension` kind `capability`, name `email:<agentId>`, `config.settings.mode` |
 | `device.revoke` | global | high | no | `device.revoked` |
@@ -245,6 +246,7 @@ and each clause goes through the patterns, in English and German:
 | stop everything / stop all, stopp alles; stop; pause | `session.stop {all}`; `session.stop {agent}`; `session.pause` |
 | remember that ..., lesson: ..., lesson learned: ..., merk dir, dass ..., Lektion: ..., Lehre: ... | `memory.record` |
 | note: ..., idea: ..., correction: ..., Notiz:, Idee:, Korrektur:, remember ..., merk dir ... | `note.add` |
+| read me the summary [of X] [aloud], speak the project summary for X, summary, lies mir die Zusammenfassung [von X] vor | `summary.speak` (the active project unless one is named; "Which project?" when neither) |
 | make this a task, mach daraus eine Aufgabe | `task.create` from `ctx.lastMessage` |
 
 A lesson ("remember that", "lesson:") is matched before a note, so "remember that X" records X
@@ -333,8 +335,10 @@ PharmaWatch sentence exactly, every command's risk, writes and undo, prototype k
 settings; `memory.record` acting at once at low risk with the read-back sentence, the source
 naming the human and the conversation session, another project or no project, undo through the
 port, refused without an agent or without the port, an agent actor's lesson refused unless
-grounded in the human's words), `intent.test.ts` (the two spec sentences,
-thirty-six English and German phrases including the lesson phrases and "remember to" staying a note, seven questions and ordinary sentences that are not lessons,
+grounded in the human's words; `summary.speak` through the port, in a voice session and without
+voice, another human's project refused by id, by name and as the active project and allowed once
+shared, the `voice_alerts` setting), `intent.test.ts` (the two spec sentences,
+forty-four English and German phrases including the lesson phrases, "remember to" staying a note and the summary phrases, seven questions and ordinary sentences that are not lessons,
 ambiguity questions, budget tails that are not a time, invalid values as a question, the
 envelope refusal, the model port, time parsing with `rest`), and `scenario.test.ts` (the
 Android scenario end to end and the phase 5 gate: ui, chat and voice produce the same change
@@ -343,7 +347,7 @@ log sentences with the effect and the surcharge both ways, the yes a medium-risk
 the flag written on one project only; a corrected fast row from `ports.pricingTable` quoted in
 the card and the sentence).
 
-Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 150 tests).
+Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 163 tests).
 
 ## Known issues
 

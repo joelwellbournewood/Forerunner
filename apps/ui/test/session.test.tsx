@@ -27,6 +27,19 @@ describe("Live session view", () => {
     expect(screen.queryByTestId("event-raw")).not.toBeInTheDocument();
   });
 
+  it("reads the session summary aloud through the daemon", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/sessions/sess_1", harness);
+    await screen.findByTestId("session-header");
+    expect(screen.getByTestId("session-summary")).toBeInTheDocument();
+    await user.click(screen.getByTestId("session-read-aloud"));
+    const text = await screen.findByTestId("session-read-aloud-text");
+    expect(text.textContent?.trim().length).toBeGreaterThan(0);
+    expect(postedCalls(harness, "/sessions/sess_1/speak")).toHaveLength(1);
+    expect(screen.getByTestId("session-read-aloud")).toHaveTextContent("Stop reading");
+  });
+
   it("filters by level and toggles raw output", async () => {
     const user = userEvent.setup();
     renderApp("/sessions/sess_1");

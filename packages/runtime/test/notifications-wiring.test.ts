@@ -192,6 +192,7 @@ describe("notifications wired into the daemon", () => {
       telegram: { configured: false, reason: "no Telegram chat id" },
       signal: { configured: false, reason: "no Signal sender account configured" },
       email: { configured: false, reason: "no email sender: enable the agent email capability" },
+      voice: { configured: false, reason: "voice alerts are off (set voice_alerts to true)" },
     });
 
     const saved = await put("/notifications/prefs", {
@@ -617,6 +618,7 @@ describe("notifications wired into the daemon", () => {
       ["telegram", "skipped"],
       ["signal", "skipped"],
       ["email", "skipped"],
+      ["voice", "skipped"],
     ]);
     expect(rt.notifier.recent({ humanId: rt.human.id, limit: 200 }).length).toBe(before);
   });

@@ -4,6 +4,8 @@ import {
   EventView as EventViewSchema,
   type SessionView,
   SessionView as SessionViewSchema,
+  SpeakStartedView as SpeakStartedSchema,
+  type SpeakStartedView,
 } from "@forerunner/runtime/daemon/api-types";
 import { z } from "zod";
 import { type DaemonClient, routePath } from "./client.ts";
@@ -44,6 +46,8 @@ export type DaemonEvent =
   | { event: "restart.requested"; data: RestartRequested }
   /** Desktop control's on-screen indicator (spec S.32): the banner shows while `on`. */
   | { event: "desktop.indicator"; data: DesktopIndicatorEventData }
+  /** Something is being read aloud (ADR 0063); a speech player plays `player: "any"` ones. */
+  | { event: "speak.started"; data: SpeakStartedView }
   | { event: "heartbeat"; data: { at: string } };
 
 const InboxChanged = z.object({ blockingCount: z.number().int() });
@@ -94,6 +98,10 @@ export function parseDaemonEvent(event: string, rawData: string): DaemonEvent | 
       const p = DesktopIndicatorEventData.safeParse(data);
       return p.success ? { event, data: p.data } : null;
     }
+    case "speak.started": {
+      const p = SpeakStartedSchema.safeParse(data);
+      return p.success ? { event, data: p.data } : null;
+    }
     case "heartbeat": {
       const p = Heartbeat.safeParse(data);
       return p.success ? { event, data: p.data } : null;
@@ -111,6 +119,7 @@ export const DAEMON_EVENT_NAMES = [
   "extension.changed",
   "restart.requested",
   "desktop.indicator",
+  "speak.started",
   "heartbeat",
 ] as const;
 
@@ -303,12 +312,15 @@ export function indicatorFromStatus(control: {
  * The install-wide stream. In polling mode it reads `/inbox` for the blocking count,
  * `/sessions?status=running` for session changes and `/desktop/status` for the desktop
  * control indicator (a daemon without the desktop routes leaves the indicator as it is).
+ * `speechPlayer` declares this window a speech player (`?speech=play`, ADR 0063): the daemon
+ * then counts it as someone who hears voice alerts and `summary.speak`, so pass it only where
+ * the window plays the frames.
  */
 export function subscribeDaemonEvents(
   client: DaemonClient,
   humanId: string,
   handlers: StreamHandlers,
-  options: StreamOptions = {},
+  options: StreamOptions & { speechPlayer?: boolean } = {},
 ): StreamSubscription {
   const poller: Poller = {
     async tick() {
@@ -328,7 +340,8 @@ export function subscribeDaemonEvents(
       handlers.onEvent({ event: "heartbeat", data: { at: new Date().toISOString() } });
     },
   };
-  return runStream(client.url(routePath("events"), undefined, true), poller, handlers, options);
+  const query = options.speechPlayer ? { speech: "play" } : undefined;
+  return runStream(client.url(routePath("events"), query, true), poller, handlers, options);
 }
 
 /**

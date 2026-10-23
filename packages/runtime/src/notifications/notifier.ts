@@ -97,6 +97,8 @@ export class Notifier {
   private readonly logger = log("notify");
   private readonly retry: RetryPolicy;
   private readonly byName = new Map<ChannelName, Channel>();
+  /** Announcing channels (ADR 0063): run after the chain for urgent records, never end it. */
+  private readonly announcers: Channel[] = [];
   private readonly state = new Map<string, HumanState>();
   private readonly recentRecords: NotificationRecord[] = [];
   private ticking: Promise<void> | null = null;
@@ -104,7 +106,10 @@ export class Notifier {
   constructor(private readonly deps: NotifierDeps) {
     this.emitter = deps.emitter ?? new NotificationEmitter();
     this.retry = { ...DEFAULT_RETRY, ...(deps.retry ?? {}) };
-    for (const c of deps.channels) this.byName.set(c.name, c);
+    for (const c of deps.channels) {
+      this.byName.set(c.name, c);
+      if (c.announce) this.announcers.push(c);
+    }
   }
 
   /** Route one notification. Resolves once it is delivered, held, bundled or deduped. */
@@ -264,7 +269,10 @@ export class Notifier {
     return this.prefsView(saved);
   }
 
-  /** One test notification to every configured channel, outside quiet hours and dedupe. */
+  /**
+   * One test notification to every configured channel, outside quiet hours and dedupe; an
+   * announcing channel speaks its test too, so "Send a test" is heard.
+   */
   async sendTest(humanId: string): Promise<Delivery[]> {
     const ctx = await this.context(humanId);
     const out: Delivery[] = [];
@@ -354,22 +362,19 @@ export class Notifier {
     return { prefs, resolved: { timezone: resolved.timezone, email: resolved.email }, channels };
   }
 
-  /** Try the channels in preference order; stop at the first delivery. */
+  /**
+   * Try the channels in preference order; stop at the first delivery. Then the announcing
+   * channels for an urgent record (ADR 0063): on top of the delivery, never instead of it.
+   */
   private async dispatch(record: NotificationRecord, ctx: ChannelContext): Promise<void> {
     const n = record.notification;
     let tried = 0;
     for (const name of channelsFor(n.kind, ctx.prefs)) {
       const channel = this.byName.get(name);
-      if (!channel) continue;
-      const why = channel.configured(ctx);
+      if (!channel || channel.announce) continue;
+      const why = channel.configured(ctx) ?? channel.accepts?.(n, ctx) ?? null;
       if (why) {
-        record.deliveries.push({
-          channel: name,
-          status: "skipped",
-          reason: why,
-          attempts: 0,
-          at: this.deps.clock.nowIso(),
-        });
+        record.deliveries.push(this.skipped(name, why));
         continue;
       }
       tried++;
@@ -377,6 +382,20 @@ export class Notifier {
       record.deliveries.push(d);
       await this.audit(n, d, record.id);
       if (d.status === "delivered") break;
+    }
+    if (record.urgency === "urgent") {
+      for (const channel of this.announcers) {
+        // Off for this human: not wired as far as this record is concerned, no row.
+        if (channel.configured(ctx)) continue;
+        const why = channel.accepts?.(n, ctx) ?? null;
+        if (why) {
+          record.deliveries.push(this.skipped(channel.name, why));
+          continue;
+        }
+        const d = await this.attempt(channel, n, { ...ctx, recordId: record.id });
+        record.deliveries.push(d);
+        await this.audit(n, d, record.id);
+      }
     }
     const delivered = record.deliveries.some((d) => d.status === "delivered");
     record.outcome = delivered ? "delivered" : tried === 0 ? "no_channel" : "failed";
@@ -394,6 +413,10 @@ export class Notifier {
     }
     await this.event(record);
     this.remember(record);
+  }
+
+  private skipped(channel: ChannelName, reason: string): Delivery {
+    return { channel, status: "skipped", reason, attempts: 0, at: this.deps.clock.nowIso() };
   }
 
   /** One channel with retries and exponential backoff on the clock. */
