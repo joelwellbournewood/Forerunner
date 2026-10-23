@@ -205,6 +205,7 @@ Findings:
    - Fix: run the voice and chat cases on a table in force where the two modes differ (a
      `models.json` effort override for `voice_chat`). Then a voice turn that took the chat
      default fails the test.
+   Resolution: fixed in 2e87526: the chat/voice daemon composes with an adopted `models.json` (`voice_chat` medium, `text_chat` low), the voice case expects low/medium/medium (the last held at the conversation agent's cap) while chat expects low/low/medium, and the same mutation now fails the file (1 of 10 failed).
 
 2. **low**, `packages/runtime/src/session/executor.ts:396-401`, `effort-offset.test.ts`.
    - The executor's `researcher` branch and the coder's tier-2+ rule under a live slider are
@@ -213,6 +214,7 @@ Findings:
      `executor` and `ladder` still pass (3 files, 17 tests).
    - Fix: an executor-level test that runs a researcher task and a tier-2 coder task at -1, 0
      and +1, moving the project row between runs of the same executor.
+   Resolution: fixed in 2e87526: the new block "the executor per run" runs a researcher and a tier-2 and tier-1 coder on one `LoopTaskExecutor` at each position, with the row moved between runs and the Run row's effort checked; mapping the researcher to the coder mode now fails it.
 
 3. **medium**, `packages/runtime/src/session/executor.ts:396-401`,
    `packages/runtime/src/daemon/compose.ts:785-797`.
@@ -237,6 +239,7 @@ Findings:
    - The principals are not affected under the built-in table: chat and voice at +1 reach
      `medium`, the conversation agent's cap, and planning at +1 reaches `xhigh`, below the
      project manager's `max`.
+   Resolution: fixed in 2e87526: `capEffort` in `ladder.ts`, with `SpecialistSpec.maxEffort` filled from the registry in `compose.ts` and applied by the executor. The same cap applies to the conversation agent and the intake from their principals' `max_effort`, because an adopted table can lift those modes too. Tests: the researcher at quality stays at high (it moves to xhigh with a max cap), the tier-2 coder stays at high, the composition hands researcher/coder `high` and science-evaluator `max`, voice at quality is held at medium, and an intake with a `high` cap holds planning. Removing any one of the four caps fails `effort-offset.test.ts`. runtime.md documents the cap.
 
 4. **low**, `apps/ui/test/fake-daemon.ts:1724`.
    - The fake refuses every invalid slider value with "Too big: expected number to be <=1",
@@ -245,3 +248,4 @@ Findings:
      (verified with a throwaway `settings.set` test in `packages/commands/test`, deleted).
    - A UI test against the fake would therefore show a message the real daemon never sends.
    - Fix: the fake gives each refusal the daemon's text, and a UI test covers the -2 refusal.
+   Resolution: fixed in 6a45e69: the fake builds the zod message `settings.set` gives (too small, too big, not an int, not a number). `settings-slider.test.tsx` checks -2, +2, 0.5 and "1" against it with nothing written, and `speed-quality.test.ts` pins the daemon's reasons for +2 and -2, so the two cannot drift apart unnoticed.

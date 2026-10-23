@@ -18,6 +18,15 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-d16-slider reviewed and fixed on `wave/w3-d16-slider`)
+- Independent review of the D.16 build (`docs/status/reviews/w3-d16-slider.md`, `## Review`):
+  verdict revise, 74/100, four findings, all fixed on the branch. The slider no longer lifts a
+  specialist, the conversation agent or the intake above its registry `max_effort` (the
+  researcher at quality stays at high; the critic already capped). `effort-offset.test.ts`
+  now tells voice from chat on an adopted table and runs the researcher and the tier-2 coder
+  from the project row. The UI's fake daemon refuses an off-scale position in the daemon's
+  words. D.16 stays `done`; the BLOCKERS.md row is dropped when the branch merges.
+
 ### 2026-10-23 (item w3-d16-slider built on `wave/w3-d16-slider`, review pending)
 - D.16 speed-versus-quality slider: every mode's effort is the default shifted one step by the
   project's `speed_quality_offset`, read from the project row per run (executor), per turn
