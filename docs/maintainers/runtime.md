@@ -237,7 +237,10 @@ questions and the allowance), `test/executor.test.ts` (the redacted error artifa
 
 **Opus fast mode per project (`src/models/fast-mode.ts`; spec D.20, [ADR 0057](../decisions/0057-opus-fast-mode.md)).**
 A project's `settings.fast_mode` (off by default; `settings.set` key `fast_mode`, medium risk)
-routes every Opus rung of the project's specialist runs to the fast-mode variant. After the
+routes every Opus rung of the project's specialist runs and critic reviews to the fast-mode
+variant. The critic side is described in `critic.md`: `CriticLoopDeps.fastMode` is passed through
+to `CriticDeps.fastMode`. The daemon gives it the kind of the critic's billing source, read
+from the store at every review, and the price table in force. For a specialist run, after the
 billing pick and the rung's model id, the executor calls `decideFastMode` with the flag
 (`fastModeOf`: a literal `true` only), the tier, the model, the driver, the picked source's
 kind (null without a billing port: the composition's one API-style source), the provider and
@@ -263,8 +266,9 @@ records name, from the table in force: its own rung, or the variant; before this
 was priced at the sonnet rung) and `pricingTable`, and lists `project.fast_mode` per project in
 `GET /settings` with `fastModeDescription(table in force)`: what the flag is and its effect
 both ways with the two rates (`fastModeEffect(on)`, the same text the change card and the
-change log sentence carry). Critic reviews, the conversation agent, intake planning and model
-watch evals do not read the flag (ADR 0057). Tests: `test/fast-mode.test.ts`.
+change log sentence carry). The conversation agent, intake planning and the model watch's
+evals do not read the flag. None of them runs on Opus by default (ADR 0057). Tests:
+`test/fast-mode.test.ts`; for the critic, `packages/critic/test/fast-mode.test.ts`.
 
 ### Context layer (`src/context/`, ADR 0003)
 
@@ -2114,9 +2118,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   variant (an over-statement, never an under-statement). The change card's effect sentence is
   priced from the built-in table (`SettingSpec.effect` has no access to the overrides), while the
   Settings row's description uses the table in force; the two differ only after an override of
-  an Opus or fast row. Critic reviews on Opus (tier 2 and 3) stay at the standard speed: the
-  critic runs on the composition's single billing source with no per-task pick, and its job is
-  independent quality, not urgency.
+  an Opus or fast row.
+- The conversation agent, intake planning and the model watch's evals do not read the
+  `fast_mode` flag. A human who adopts an Opus rung for planning or chat gets standard-speed
+  calls there (ADR 0057).
 - B.5 history: a milestone or session row holds the reason and author of its *last* change
   (as a task row does); the full before -> after trail is the audit log's `milestone.change`
   rows (daemon route) and `project.plan` rows (the plan writer's join), and for a session plan

@@ -40,6 +40,28 @@ default `opus` when neither is set. A caller can lower the ceiling for one revie
 it above the project's. `modelFor(tier, ctx)` is the synchronous view of the same pick from the
 settings in the context alone (plans, UI).
 
+Opus fast mode (spec D.20, [ADR 0057](../decisions/0057-opus-fast-mode.md)): a review whose
+pick lands on the Opus rung (tiers 2 and 3 by default) of a project with `settings.fast_mode`
+on goes through the runtime's `decideFastMode`, the same rules a specialist run follows, on the
+loop driver. `CriticDeps.fastMode()` supplies the kind of the source the critic is billed to
+(`billingSourceId`) and the price table in force; the daemon reads the source row from the
+store at every review. Without the dep, the decision assumes an API-style source and the
+built-in table. Applied: every call carries `speed: "fast"` on the unchanged model id, and the
+variant (`<id>-fast`) is used everywhere the review is recorded:
+- the run's pricing (`deps.pricing(variant)`, so the estimate before each call and the actual
+  read the variant's rate);
+- the hooks' ledger rows;
+- the Run row's `model`;
+- `ReviewOutput.model` (so the Review row's `critic_model`).
+
+Ignored, the review stays standard. The reasons are a `subscription` or `plan_credits` source
+("API only"), a provider without `fastMode`, and a missing variant price row. An ignored
+decision is also a `warning` event on `ctx.onEvent`. Applied or ignored, a persisted review
+writes one `model.fast_mode` audit row on its run, with `specialist: "critic"`, the review
+tier, the rung, the model, the variant, the source and its kind. A calibration run
+(`persist: false`) writes nothing. A review below the Opus rung, or a project with the flag
+off, is unchanged and writes nothing.
+
 Checks: `ctx.checks` (argv commands, `ctx.cwd` the worktree) are run through the `CheckRunner`
 (`tier0.ts#runChecks`; the default `ProcessCheckRunner` uses `platform.run` with a timeout per
 command and resolves a relative command `cwd` under the worktree) at tiers 0, 2 and 3, before
@@ -338,6 +360,15 @@ this one, so the runner is loaded with a dynamic import (or injected through `ev
 `pnpm vitest run --project unit packages/critic/test` (fake provider, in-memory SQLite, no
 network):
 
+- `fast-mode.test.ts` (spec D.20, ADR 0057):
+  - With the flag on, a tier-2 review on the Opus rung of an API source carries
+    `speed: "fast"`. The Run row, the ledger rows and `ReviewOutput.model` name the variant at
+    its price, and one audit row says applied.
+  - A project with the flag off, and a tier-1 review on the sonnet rung, are unchanged with no
+    audit row.
+  - A subscription source is ignored with an "API only" audit row and a warning.
+  - Without the facts dep, a provider without fast mode is noted and never asked.
+  - Calibration (`persist: false`) writes no audit row.
 - `tier0.test.ts`: pass-share grade, required and optional checks, missing criteria, no checks
   (low confidence), the check runner, relative and absolute command `cwd` resolution, and a
   real process with exit code and timeout.
@@ -464,6 +495,7 @@ line), H.5 (findings tracked to resolution, patterns to lesson
 proposals), H.6 (session review: plan, cost, honesty), H.7 (calibration report against the eval
 set), G.6 (the `lesson` subject: critic approval before a lesson is promoted to the shared store), B.4 (no close with open findings or failed required checks), D.2 (retry ladder), D.3
 (ceiling from project settings), D.14 and D.15 (critic model and effort per tier), P.14 (doc
-drift at tier 2+), D.5 and D.19 (the critic's own Run row: model, effort, prompt version,
+drift at tier 2+), D.20 (Opus fast mode reaches the project's Opus reviews on an API-style
+source, `fast-mode.test.ts`), D.5 and D.19 (the critic's own Run row: model, effort, prompt version,
 tokens, cost, first-token time and total time as whole milliseconds; a refused row audited and
 logged, never silent).

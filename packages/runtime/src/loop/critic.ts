@@ -101,6 +101,12 @@ export interface CriticLoopDeps {
    * the next review without a restart. Absent: the built-in tables.
    */
   modelConfig?: () => EffectiveModelConfig;
+  /**
+   * Opus fast mode (spec D.20, ADR 0057): the kind of the critic's billing source and the
+   * price table in force, read at every review, so a project's `fast_mode` reaches its Opus
+   * reviews on an API-style source. Absent: the critic package's default (API-style, built-ins).
+   */
+  fastMode?: CriticDeps["fastMode"];
 }
 
 export interface DiffResult {
@@ -232,6 +238,7 @@ export class CriticLoop implements CriticPort {
       criticAgentId: deps.criticAgentId,
       ...(context ? { context } : {}),
       ...(deps.checkRunner ? { checkRunner: deps.checkRunner } : {}),
+      ...(deps.fastMode ? { fastMode: deps.fastMode } : {}),
     };
     const modelConfig = deps.modelConfig;
     if (!modelConfig) return base;

@@ -61,14 +61,21 @@ or the budget by hand (BLOCKERS.md row D.20). Open points:
    `project.fast_mode` per project in `GET /settings` with both sentences priced from the table
    in force, and the Settings page shows them on an Opus fast mode card with a toggle that runs
    the same command.
-5. **Which runs: every Opus rung of the project's specialist runs.** The executor decides per
-   run, after the billing pick (`decideFastMode`): off unless the flag is on and the run's rung
+5. **Which runs: every Opus rung of the project's specialist runs and critic reviews.** The
+   executor decides per run, after the billing pick (`decideFastMode`): off unless the flag is on and the run's rung
    is Opus; then ignored, in this order, for a `subscription` or `plan_credits` source
    (`fastModeBillable`: API-style sources only, "API only"), for the Agent SDK path (it has no
    speed parameter), for a provider without `fastMode`, and for an Opus id whose `<id>-fast`
    row is missing (a run is never priced from a guess); otherwise applied. A run without a
-   billing port is on the composition's API-style source and may go fast.
-6. **Every decision that touches a run is on record.** Applied or ignored, the executor writes
+   billing port is on the composition's API-style source and may go fast. The critic makes the
+   same decision for every review whose pick lands on the Opus rung (tiers 2 and 3 by default)
+   on the loop driver. Its source is the composition's loop source (`billingSourceId`), whose
+   kind the daemon reads from the store at every review (`CriticDeps.fastMode`), so a
+   subscription-billed critic is ignored as "API only". Speed does not change the model or
+   the evidence, so the review stays independent. The conversation agent, intake planning and
+   the model watch's evals do not run on Opus by default and do not read the flag.
+6. **Every decision that touches a run is on record.** Applied or ignored, the executor (and,
+   for a persisted review, the critic, with `specialist: "critic"` and the review tier) writes
    one `model.fast_mode` audit row on the run (task, project, run, tier, model, the variant
    when applied, source, kind, driver; the result "applied: ..." or "ignored (API only): ..."
    / "ignored: <reason>"), and an ignored decision is a warning on the session log. A flag that
@@ -85,10 +92,10 @@ or the budget by hand (BLOCKERS.md row D.20). Open points:
 - A fast request that the API served at the standard speed would still be recorded and priced
   as the variant: the adapter does not read `usage.speed` yet. That over-states, never
   under-states, the cost; reading it is a follow-up in the adapter and the loop driver.
-- Critic reviews (Opus at tiers 2 and 3), intake planning, the conversation agent and the
-  model watch's evals stay at the standard speed. The critic runs on the composition's single
-  billing source with no per-task pick and its purpose is an independent check, not urgency;
-  the others do not run on Opus by default.
+- Critic reviews at tiers 2 and 3 go fast with the project's specialist runs on an API-style
+  source, so urgent work is not held up by a standard-speed review of a fast change. Intake
+  planning, the conversation agent and the model watch's evals stay at the standard speed:
+  they do not run on Opus by default.
 - The change card's effect sentence is priced from the built-in table (`SettingSpec.effect`
   sees only the value), the Settings row from the table in force; they differ only after an
   override of an Opus or fast row.
@@ -109,5 +116,7 @@ or the budget by hand (BLOCKERS.md row D.20). Open points:
 - **Routing a subscription run to an API key when the flag is on.** That changes who pays
   behind the human's back; the router's policy stays the human's, and the flag is ignored with
   a note instead.
-- **Applying the flag to critic reviews too.** Rejected for now (see Consequences); it needs a
-  billing pick on the critic path first.
+- **Leaving critic reviews at the standard speed.** This was the first build's choice. It was
+  reversed in review: the critic's source is a known row whose kind the API-only rule can
+  read, and the spec routes every Opus rung of the project's runs, of which tier-2 and tier-3
+  reviews are the largest share.

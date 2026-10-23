@@ -1559,6 +1559,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // The tables in force at every review's pick (ADR 0039): an adopted sonnet or opus rung
     // moves the tier-1 and tier-2/3 reviews with the executor and the chat.
     modelConfig: () => modelConfig.get(),
+    // Opus fast mode (spec D.20, ADR 0057): the project's flag reaches the Opus reviews when
+    // the source the critic is billed to is API-style, priced from the table in force.
+    fastMode: async () => ({
+      sourceKind: (await store.billingSource.get(billingSourceId))?.kind ?? null,
+      pricing: pricingTable,
+    }),
   });
   const makeLoop = (worktree?: string) =>
     new LoopTaskExecutor({
