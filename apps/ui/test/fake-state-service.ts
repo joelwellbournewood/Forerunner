@@ -1494,7 +1494,13 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
         (r) => r.status === "open" && r.kind === "approval" && r.taskId === row.taskId,
       );
       if (request) {
-        if (request.risk === "high" && p.kind === "device" && !p.biometric) {
+        const card = request.changeCard;
+        const cardRisk =
+          card && typeof card === "object" && !Array.isArray(card)
+            ? ((card as { impact?: { risk?: unknown }; risk?: unknown }).impact?.risk ??
+              (card as { risk?: unknown }).risk)
+            : null;
+        if ((request.risk === "high" || cardRisk === "high") && p.kind === "device" && !p.biometric) {
           return errorBody(
             c,
             403,
