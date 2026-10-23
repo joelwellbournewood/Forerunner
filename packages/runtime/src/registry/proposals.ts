@@ -158,6 +158,10 @@ export function proposeSpecialist(
     max_budget_usd: data.max_budget_usd,
     max_turns: data.max_turns,
     timeout_minutes: data.timeout_minutes,
+    // The D.4 settings (ADR 0072) only when the proposal names them; absent = the effort table.
+    ...(data.max_tokens !== undefined ? { max_tokens: data.max_tokens } : {}),
+    ...(data.speed_mode !== undefined ? { speed_mode: data.speed_mode } : {}),
+    ...(data.temperature !== undefined ? { temperature: data.temperature } : {}),
     risk_tier_floor: data.risk_tier_floor,
     eval_set: data.eval_set,
     status: data.status,
