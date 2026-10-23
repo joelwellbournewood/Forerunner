@@ -2897,12 +2897,6 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   rows (daemon route) and `project.plan` rows (the plan writer's join), and for a session plan
   the `session.planned` event. A future caller of `MilestoneRepo.change` outside those two
   paths records the reason on the row but writes no history row unless it appends one.
-- D.4 (ADR 0072): a specialist's or an agent's `speed_mode` narrows the project's Opus fast mode
-  (spec D.20) for specialist runs only; the intake and the chat never go fast. The critic's
-  model, effort and per-call output follow its review tiers and the effort table (the critic
-  package's 8192 equals the table's row) and are not overridable per agent, and its fast mode
-  follows the project's flag alone. The Agent SDK path has no per-call output cap or speed
-  parameter; it takes the rung, effort and timeout.
 - An approved plan the scheduler answers `queued` (the agent is busy) holds the scheduler's
   single pending slot per agent, which a later trigger replaces (`triggers.ts`: the newest
   request wins the slot); the approval is recorded as handed over (`outcome: "queued"`) and
@@ -3070,6 +3064,12 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   start (savings views only; calls are priced from the table in force); an adopt answered in a
   CLI one-shot (`fr models watch` composes its own runtime) reaches a running daemon at its
   next start, answers in the inbox or the updates screen apply at once.
+- D.4 (ADR 0072): a specialist's or an agent's `speed_mode` narrows the project's Opus fast mode
+  (spec D.20) for specialist runs only; the intake and the chat never go fast. The critic's
+  model, effort and per-call output follow its review tiers and the effort table (the critic
+  package's 8192 equals the table's row) and are not overridable per agent, and its fast mode
+  follows the project's flag alone. The Agent SDK path has no per-call output cap or speed
+  parameter; it takes the rung, effort and timeout.
 - Desktop control: the Android app and the approvals web page show no indicator (they do not
   read the PC daemon's `/events`; ADR 0067); `screenshotsToModel` is always false because the
   runtime does not forward image artifacts; the module's audit rows carry no token id
