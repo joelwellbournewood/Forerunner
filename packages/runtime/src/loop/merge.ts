@@ -229,6 +229,12 @@ async function mergeChecked(
     pr = await host.getPullRequest(ref.repo, ref.number);
     if (pr.merged || pr.state !== "open")
       return { status: "closed", message: "the pull request was closed meanwhile", rebased };
+    const stale = rebased && pr.head.sha === input.head_sha;
+    if (stale && clock.now() + pollMs <= deadline) {
+      // The host has not seen the rebase push yet: wait for it, as for a running check.
+      await clock.sleep(pollMs, ctx.signal);
+      continue;
+    }
     if (pr.head.sha !== head)
       return {
         status: "head_moved",

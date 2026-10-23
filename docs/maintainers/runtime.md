@@ -740,7 +740,8 @@ rebase conflicts); the host's check runs on the head decide (`judgeChecks`, the 
 name: a failed, cancelled, timed-out or action-required one refuses, `checks_failed`; a
 running one is polled every `checksPollMs`, default 30 s, for up to `checksWaitMs`, default 10
 min, then `checks_pending`; none reported means the host has no CI; after a rebase every check
-the reviewed head had must pass again on the new head); `mergeable: false` is a conflict; the
+the reviewed head had must pass again on the new head, and a host still showing the old head
+right after the push is waited for); `mergeable: false` is a conflict; the
 merge is pinned to the checked head (`mergePullRequest(…, { sha })`). Every refusal of the tool
 files one non-blocking `decision` request for the human (why, steps, "I merged it" / "Leave it
 open"); every outcome is written on the task row (`reason`, versioned with the agent), comes
@@ -1681,7 +1682,8 @@ with a request naming the check or the file; a base moved elsewhere is rebased o
 and the rebased head merged; a rejecting review makes no `merge_pr` call. The tool on a
 `MemoryGitHost` with a simulated clock: a running check is waited for and merged once green,
 one still queued at the end of the wait is not, a conflicting PR is refused before the merge
-call. The daemon's `RuntimeApp.merge` on its own hooks writes the level-2 refusal as an
+call; on a real worktree and bare repository, a host that still shows the reviewed head right
+after the rebase push is waited for and the rebased head merged (not taken for a moved head). The daemon's `RuntimeApp.merge` on its own hooks writes the level-2 refusal as an
 `audit_log` row. `hooks.test.ts` has the unattended rule itself (refused at 2 and for an
 always-human class at 4 without asking, allowed at 3, an attended call still asks).
 

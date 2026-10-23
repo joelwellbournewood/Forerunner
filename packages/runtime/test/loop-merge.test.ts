@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { GitHubHost, GitOps, MemoryGitHost, PrTaskExecutor } from "@forerunner/capabilities";
-import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { appDirs, join, run, SimulatedClock } from "@forerunner/platform";
 import type { SessionRow } from "@forerunner/state";
 import { FakeGitHost, FakeProvider, type ScriptedReply } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
@@ -468,6 +468,78 @@ describe("the merge_pr tool's checks rule (ADR 0062)", () => {
     );
     expect(res.artifacts).toMatchObject({ status: "conflict" });
     expect((await host.getPullRequest(PR_REPO, pr.number)).merged).toBe(false);
+  });
+
+  it("after the rebase push a host that still shows the old head is waited for, not taken for a moved head", {
+    timeout: 60_000,
+  }, async () => {
+    const clock = new SimulatedClock("2026-10-23T09:00:00Z");
+    const root = mkdtempSync(join(tmpdir(), "fr-merge-stale-"));
+    roots.push(root);
+    const bare = join(root, "r.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({ cwd: join(root, "seed"), identity });
+    await seed.clone(bare);
+    writeFileSync(join(root, "seed", "README.md"), "# r\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    const wt = join(root, "wt");
+    const git = new GitOps({ cwd: wt, identity });
+    await git.clone(bare);
+    await git.createBranch("feat", "origin/main");
+    writeFileSync(join(wt, "feature.ts"), "export const f = 1;\n");
+    await git.commitAll("feature");
+    await git.push("feat");
+    const reviewed = await git.headSha();
+    writeFileSync(join(root, "seed", "notes.md"), "notes\n");
+    await seed.commitAll("main moved");
+    await seed.push("main");
+    // A host whose PR head is the branch in the bare repo, except that the first look after
+    // the rebase push still shows the reviewed head (GitHub's lag after a push).
+    const branchSha = async () =>
+      (await run(["git", "--git-dir", bare, "rev-parse", "refs/heads/feat"])).stdout.trim();
+    let staleOnce = true;
+    let merged: string | null = null;
+    const host = {
+      async getPullRequest() {
+        let sha = await branchSha();
+        if (sha !== reviewed && staleOnce) {
+          staleOnce = false;
+          sha = reviewed;
+        }
+        return {
+          number: 1,
+          title: "t",
+          body: "",
+          state: merged ? "closed" : "open",
+          merged: merged !== null,
+          mergeable: true,
+          head: { ref: "feat", sha },
+          base: { ref: "main", sha: "" },
+          htmlUrl: "https://git.example/o/r/pull/1",
+          draft: false,
+        };
+      },
+      async listCheckRuns() {
+        return [];
+      },
+      async mergePullRequest(_repo: unknown, _n: number, opts: { sha?: string } = {}) {
+        merged = opts.sha ?? null;
+        return { merged: true, sha: "merge-1", message: "merged" };
+      },
+    } as unknown as MemoryGitHost;
+    const tool = mergePrTool({ host, clock, identity, checksWaitMs: 60_000, checksPollMs: 10_000 });
+    const pending = tool.execute(
+      { pr_url: "https://git.example/o/r/pull/1", head_sha: reviewed, worktree: wt },
+      ctx(),
+    );
+    // Let the rebase and push run, then move the clock past one poll.
+    for (let i = 0; i < 200 && staleOnce; i++) await new Promise((r) => setTimeout(r, 20));
+    await clock.advance(10_000);
+    const res = await pending;
+    expect(res.artifacts).toMatchObject({ status: "merged", rebased: true });
+    expect(merged).toBe(await branchSha());
+    expect(merged).not.toBe(reviewed);
   });
 });
 
