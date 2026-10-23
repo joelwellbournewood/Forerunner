@@ -138,6 +138,7 @@ import {
   TelegramChannel,
   type TelegramFetch,
 } from "../notifications/index.ts";
+import { isQuietAt, resolvePrefs } from "../notifications/prefs.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
 import { ProviderRegistry } from "../provider/registry.ts";
 import type { ModelProvider, ModelTier } from "../provider/types.ts";
@@ -171,6 +172,11 @@ import {
   syncBlockedByFindings,
   syncSignoffAnswers,
 } from "../session/findings.ts";
+import {
+  DEFAULT_GITHOST_POLL_MS,
+  fileCursorStore,
+  GitHostWatcher,
+} from "../session/githost-watcher.ts";
 import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
 import { type PlanApprovalSyncResult, syncPlanApprovals } from "../session/plan-approval.ts";
 import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
@@ -389,6 +395,20 @@ export interface ComposeOptions {
    */
   approvalsPollMs?: number;
   /**
+   * CI results and PR comments start sessions (spec E.1, ADR 0075): the git host poller over
+   * the open PRs of this install's agent. `enabled` overrides `githostWatchEnabled` (on when
+   * the background services run and a real git host is configured, i.e. the vault holds the
+   * GitHub token or a host was injected; `FORERUNNER_GITHOST_WATCH=1|0` overrides too);
+   * `pollMs` (`FORERUNNER_GITHOST_POLL_MS`, default `DEFAULT_GITHOST_POLL_MS`, a minute) is
+   * the poll; `cursorPath` (default `<data>/githost/cursor-<agent>.json`) is where the
+   * cursor survives a restart.
+   */
+  githostWatch?: {
+    enabled?: boolean;
+    pollMs?: number;
+    cursorPath?: string;
+  };
+  /**
    * Per-task billing and the Agent SDK path (ADR 0044). `personalRunner`: whether this
    * install is the human's own runner (the PC: true; `FORERUNNER_RUNNER_PERSONAL=0` says no);
    * `probe` replaces the vault-and-ledger probe (tests); `hostCommands` lets `cc:Bash` run
@@ -480,6 +500,26 @@ export function remoteCommandsEnabled(
   if (flag === "1") return true;
   if (flag === "0") return false;
   return !stateUrl.trim().toLowerCase().startsWith("sqlite");
+}
+
+/**
+ * Whether the daemon polls the git host for CI results and PR comments (spec E.1, ADR 0075):
+ * only when the background services run; then `override` (tests), else
+ * `FORERUNNER_GITHOST_WATCH` ("1" on, "0" off), else on exactly when a real host is there (the
+ * GitHub token in the vault or an injected host; the in-memory stand-in has nothing to poll).
+ */
+export function githostWatchEnabled(
+  env: NodeJS.ProcessEnv,
+  services: boolean,
+  realHost: boolean,
+  override?: boolean,
+): boolean {
+  if (!services) return false;
+  if (override !== undefined) return override;
+  const flag = env.FORERUNNER_GITHOST_WATCH?.trim();
+  if (flag === "1") return true;
+  if (flag === "0") return false;
+  return realHost;
 }
 
 /** What a manual mirror sync came back with: the run, or the approval it waits on. */
@@ -651,6 +691,12 @@ export interface RuntimeApp {
     watcher: RemoteCommandWatcher | null;
     presence: DesktopPresence | null;
   };
+  /**
+   * CI results and PR comments as session triggers (spec E.1, ADR 0075): the git host poller
+   * firing `ci` and `pr_comment` through the scheduler, or null when `githostWatchEnabled`
+   * said no.
+   */
+  githostWatcher: GitHostWatcher | null;
   /**
    * Shared secrets (spec S.13, ADR 0065): the vault the hooks resolve through (this install's
    * own vault, then the wrapped copies for this agent), the service over the shared store, the
@@ -2263,6 +2309,59 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       pollMs: positiveMs(opts.remote?.pollMs ?? env.FORERUNNER_REMOTE_POLL_MS, 500),
     });
   }
+  // CI results and PR comments start sessions (spec E.1, ADR 0075): the agent's open PRs (the
+  // task rows' `pr_url`) are polled on the clock; a failed check or a green head fires `ci`,
+  // a comment or review by anyone but the agent fires `pr_comment`, through the scheduler (one
+  // active session per agent). The comment reaches the agent's inbox quoted as data; an
+  // instruction-like one is audited and reported like any flagged content. Quiet hours are the
+  // human's notification window (`notify_prefs.quiet_hours`): the PRs wait until it ends.
+  const githostWatcher = githostWatchEnabled(
+    env,
+    services,
+    ghToken !== null || opts.gitHost !== undefined,
+    opts.githostWatch?.enabled,
+  )
+    ? new GitHostWatcher({
+        store,
+        clock,
+        host: gitHost,
+        agentIds: [agent.id],
+        humanId: human.id,
+        start: (req) => scheduler.requestStart(req),
+        cursorStore: fileCursorStore(
+          opts.githostWatch?.cursorPath ??
+            join(dirs.data, "githost", `cursor-${safeSegment(agent.id, "agent")}.json`),
+        ),
+        isQuietHours: async (_agentId, now) => {
+          const h = await store.human.get(human.id);
+          if (!h) return false;
+          const prefs = resolvePrefs(h);
+          return isQuietAt(prefs.quiet_hours, prefs.timezone, now);
+        },
+        // A paused install reads nothing from the shared state and starts nothing.
+        enabled: () => !schemaSync.paused,
+        onInjection: async (report, origin, projectId) => {
+          const rules = [...new Set(report.matches.map((m) => m.rule))].sort();
+          await store.auditLog.append({
+            agent_id: agent.id,
+            human_id: human.id,
+            tool: INJECTION_FLAGGED_AUDIT,
+            input_summary: `githost: ${origin}`,
+            result_summary: `ignored: ${report.matches.length} instruction-like passage(s), rules ${rules.join(", ")}, score ${report.score}; quoted as data in the inbox; the human was notified`,
+            allowed: true,
+            occurred_at: clock.nowIso(),
+          });
+          notifyLater(
+            notifications.injectionFlagged(human.id, report, { origin, projectId }),
+            `injection flagged in ${origin}`,
+          );
+        },
+        pollMs: positiveMs(
+          opts.githostWatch?.pollMs ?? env.FORERUNNER_GITHOST_POLL_MS,
+          DEFAULT_GITHOST_POLL_MS,
+        ),
+      })
+    : null;
   const killWatcher = new KillFileWatcher(kill, clock, dirs.runtime);
   if (services) killWatcher.start();
   mkdirSync(evalWorkRoot, { recursive: true });
@@ -2278,6 +2377,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // The PC's heartbeat and the phone's commands (only built when the services run).
   presence?.start();
   remoteWatcher?.start();
+  githostWatcher?.start();
   // Answers given on another device (the phone, the web approvals) land in the shared state
   // and reach no route of this daemon: the approvals poll applies them within
   // `approvalsPollMs`, the way the remote watcher picks up the phone's commands. Only where
@@ -2438,6 +2538,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       watcher: remoteWatcher,
       presence,
     },
+    githostWatcher,
     sharedSecrets: {
       vault: sharedSecrets,
       service: sharedSecretService,
@@ -2470,6 +2571,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       await voice.close();
       stopApprovalsPoll();
       remoteWatcher?.stop();
+      githostWatcher?.stop();
       await browserManager.closeAll().catch((e: unknown) => {
         logger.warn("browser sessions did not close cleanly", { error: errorMessage(e) });
       });
