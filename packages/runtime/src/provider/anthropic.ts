@@ -10,16 +10,23 @@ import {
   type ModelRequest,
   type ModelResponse,
   type ModelTier,
+  type ProviderDeclaredCapabilities,
   type StopReason,
   type StreamEvent,
 } from "./types.ts";
 
 /**
  * Anthropic Messages API adapter. Streams, maps effort to output_config.effort, marks stable
- * prefixes for prompt caching, never sends temperature (current Claude models reject it),
- * sends `speed: "fast"` with the fast-mode beta header when the request asks (ADR 0057).
+ * prefixes for prompt caching, never sends temperature (current Claude models reject it) and
+ * sends `speed: "fast"` with the fast-mode beta header when the request asks (spec D.20, ADR
+ * 0057), on an API key and an Opus model id only (ADR 0072).
  * The credential is passed in by the billing router; this class never reads env itself.
  */
+
+/** Fast mode is an API-only research preview for Opus (spec D.20): never on a subscription. */
+export function fastModeApplies(modelId: string, auth: "api_key" | "subscription"): boolean {
+  return auth === "api_key" && tierFromId(modelId) === "opus";
+}
 export interface AnthropicProviderOptions {
   apiKey?: string;
   /** OAuth token from `claude setup-token` (subscription). Exactly one of apiKey/authToken is set. */
@@ -35,8 +42,6 @@ export interface AnthropicProviderOptions {
 
 export class AnthropicMessagesProvider implements ModelProvider {
   readonly name = "anthropic";
-  /** Fast mode (ADR 0057): `speed: "fast"` on the model id, with the fast-mode beta header. */
-  readonly fastMode = true;
   private readonly client: Anthropic;
   private readonly clock: Clock;
   private readonly opts: AnthropicProviderOptions;
@@ -58,6 +63,19 @@ export class AnthropicMessagesProvider implements ModelProvider {
       fetch: opts.fetch,
       maxRetries: opts.maxRetries ?? 2,
     });
+  }
+
+  /**
+   * Fast mode (ADR 0057): `speed: "fast"` on the model id, with the fast-mode beta header; on an
+   * API key only, never on a subscription token (spec D.20 "API only", ADR 0072).
+   */
+  get fastMode(): boolean {
+    return !!this.opts.apiKey;
+  }
+
+  /** Never a temperature: current Claude models reject one (ADR 0072). */
+  get capabilities(): ProviderDeclaredCapabilities {
+    return { acceptsTemperature: false };
   }
 
   /** Where this adapter sends requests (undefined: the SDK default). */
@@ -116,8 +134,12 @@ export class AnthropicMessagesProvider implements ModelProvider {
     if (req.effort) params.output_config = { effort: req.effort };
     if (req.metadata) params.metadata = { user_id: req.metadata.user_id };
     // Fast mode (spec D.20, ADR 0057): the same model id with the speed parameter; the beta
-    // header is what the API asks for with `speed` on the models that need it.
-    const fast = req.speed === "fast";
+    // header is what the API asks for with `speed` on the models that need it. Sent only where
+    // fast mode exists (ADR 0072): a subscription token or a non-Opus model gets a standard
+    // call, never an error.
+    const fast =
+      req.speed === "fast" &&
+      fastModeApplies(req.model, this.opts.apiKey ? "api_key" : "subscription");
     if (fast) params.speed = "fast";
 
     const aborted = (): StreamEvent => ({

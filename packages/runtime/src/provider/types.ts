@@ -11,10 +11,47 @@ export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelTier = "haiku" | "sonnet" | "opus" | "fable";
 
 /**
- * Inference speed (spec D.20, ADR 0057). "fast" asks a provider that offers it (`fastMode`)
- * for its fast mode on the same model id; absent means the provider's standard speed.
+ * Speed mode of a model call (spec D.4 and D.20; ADRs 0057 and 0072): "standard", or "fast"
+ * where the provider offers it (`fastMode`; Anthropic: Opus fast mode, research preview, API
+ * only, priced apart) on the same model id; absent means the provider's standard speed.
  */
 export type SpeedMode = "standard" | "fast";
+
+/**
+ * What a provider declares it accepts beyond the common request (spec D.4, ADR 0072). Only the
+ * temperature flag lives here; fast mode is the provider's own `fastMode` flag (D.20, ADR 0057).
+ */
+export interface ProviderDeclaredCapabilities {
+  /** The provider accepts a sampling temperature (current Claude models reject one). */
+  acceptsTemperature?: boolean;
+}
+
+/**
+ * What the loop, the settings view and the settings command read about a provider (ADR 0072):
+ * a field the provider does not accept is never sent and never shown.
+ */
+export interface ProviderCapabilities {
+  /** The provider accepts a sampling temperature (`capabilities.acceptsTemperature`). */
+  acceptsTemperature: boolean;
+  /** The provider honours `speed: "fast"` (`ModelProvider.fastMode`, D.20, ADR 0057). */
+  fastMode: boolean;
+}
+
+/** What a provider that declares nothing gets: no temperature, no fast mode. */
+export const DEFAULT_PROVIDER_CAPABILITIES: ProviderCapabilities = {
+  acceptsTemperature: false,
+  fastMode: false,
+};
+
+/** A provider's capabilities: its declared temperature flag and its `fastMode`, defaults filled in. */
+export function providerCapabilities(
+  p: Pick<ModelProvider, "capabilities" | "fastMode">,
+): ProviderCapabilities {
+  return {
+    acceptsTemperature: p.capabilities?.acceptsTemperature === true,
+    fastMode: p.fastMode === true,
+  };
+}
 
 export interface ModelRef {
   provider: string; // "anthropic" | "fake" | ...
@@ -64,12 +101,17 @@ export interface ModelRequest {
   tools?: ToolDefinition[];
   max_tokens: number;
   effort?: EffortLevel;
-  /** Only honoured by providers that accept it; Anthropic adapters drop it. */
+  /**
+   * Only sent to providers whose capabilities say `acceptsTemperature` (the loop drops it
+   * otherwise); the Anthropic adapter never sends it.
+   */
   temperature?: number;
   /**
-   * Fast mode (spec D.20, ADR 0057): set only by the executor, only on a provider whose
-   * `fastMode` is true, only for a project with `fast_mode` on and an API-style source. The
-   * model id stays the base id; the run's records name the variant (`<id>-fast`).
+   * Fast mode (spec D.20 and D.4; ADRs 0057 and 0072): set only by the executor after
+   * `decideFastMode` applied it (a project with `fast_mode` on, an Opus rung, an API-style
+   * source, the run's speed mode not `standard` by an explicit setting), and sent by the loop
+   * only to a provider whose `fastMode` is true. The model id stays the base id; the run's
+   * records name the variant (`<id>-fast`).
    */
   speed?: SpeedMode;
   /** Mark stable prefixes (system prompt, project brief) for prompt caching. */
@@ -128,9 +170,12 @@ export interface ModelProvider {
   readonly name: string;
   /**
    * True when the provider honours `ModelRequest.speed = "fast"` (the Anthropic Messages
-   * adapter). Absent or false: the executor never asks it for fast mode (ADR 0057).
+   * adapter on an API key). Absent or false: the executor never asks it for fast mode and the
+   * loop never sends `speed` (ADRs 0057 and 0072).
    */
   readonly fastMode?: boolean;
+  /** What this provider accepts beyond the common request; absent: no temperature (ADR 0072). */
+  readonly capabilities?: ProviderDeclaredCapabilities;
   /** Models this provider offers, ranked cheapest first inside each tier. */
   listModels(): Promise<ModelRef[]>;
   /** Streams events; the final event is message_end or error. */
