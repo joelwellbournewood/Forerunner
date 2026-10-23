@@ -79,23 +79,208 @@ reaches) are recorded in `docs/maintainers/runtime.md`.
   example moved to `milestones`), `apps/ui/test/contracts.test.ts` (`performance` is served,
   not proposed).
 
-### Commands run and results (2026-10-23)
+### Commands run and results (2026-10-23, output copied from the terminal)
 
-| Command | Result |
-| --- | --- |
-| `pnpm install --frozen-lockfile` | done |
-| `pnpm typecheck` | clean (node packages and the apps) |
-| `pnpm lint` | 0 errors (59 warnings, the same count as before the change) |
-| `pnpm exec vitest run --project unit packages/runtime/test` | 116 files passed; 994 tests passed, 1 skipped |
-| `pnpm exec vitest run --project unit packages/runtime/test/performance-view.test.ts packages/runtime/test/performance-route.test.ts packages/runtime/test/intake.test.ts packages/runtime/test/conversation.test.ts` | 4 files, 36 tests passed |
-| `pnpm exec vitest run --project integration packages/runtime/test` | 1 file, 4 tests skipped (sandbox: no container engine on the box) |
-| `pnpm --filter @forerunner/ui test` | 42 files, 255 tests passed |
-| `node scripts/docs-check.mjs --base 42b41f6` (and `--base origin/ccr-4d8a843c-1k9syk`) | ok (25 files) |
-| `node scripts/docs-check.mjs` | no `origin/main` in this clone: "nothing to check" |
-| `pnpm check` | exit 0: lint, typecheck, 271 test files / 2683 tests passed (4 skipped, 1 todo), secret scan clean |
+The output below is what the commands printed, after stripping the ANSI colour codes.
+Vitest's per-test lines and the runtime's log lines are filtered out with `grep`, and the
+filters are named. Every command was run on the final tree of this branch. The trailer fix
+was a message-only rewrite of my own seven commits (`git filter-branch --msg-filter` over
+`42b41f6..HEAD`; no rebase, no base merged); it left the tree unchanged, at `9be2868`.
 
-The Playwright spec (`apps/ui/e2e/performance.spec.ts`) was updated but not run here (no
-browser on the box).
+**Commits in the patch** (`git log --oneline 42b41f6..HEAD`, trailer
+`Claude-Build: managed-agent w3-d7-performance build` on each). These are the seven commits;
+the report revision adds one more on top:
+
+```
+df2b96a status: the build report of w3-d7-performance
+7a92e1c status: D.7 and D.19 done; the Performance view blocker row records what was built
+305b0b8 docs: runtime.md and apps.md describe the daemon's Performance view
+e3322bd ui: the Performance e2e spec checks the window and that no route is missing
+ceace9b ui: the Performance page reads the daemon's GET /performance shape
+85d6233 runtime: GET /performance serves the Performance view from the Run rows and the turns
+6774d71 runtime: the intake call writes a Run row and chat replies carry their total time
+```
+
+**Typecheck**
+
+```
+$ pnpm typecheck
+
+> forerunner@0.1.0 typecheck /workspace/repo
+> tsc -p tsconfig.node.json --noEmit && pnpm -r --filter "./apps/*" --if-present typecheck
+
+Scope: 4 of 21 workspace projects
+apps/approvals-web typecheck$ tsc -p tsconfig.json --noEmit
+apps/mobile typecheck$ echo 'no TypeScript in the mobile shell; see @forerunner/ui'
+apps/desktop typecheck$ echo 'no TypeScript in the desktop shell; see @forerunner/ui'
+apps/ui typecheck$ tsc -p tsconfig.json --noEmit
+apps/mobile typecheck: no TypeScript in the mobile shell; see @forerunner/ui
+apps/desktop typecheck: no TypeScript in the desktop shell; see @forerunner/ui
+apps/desktop typecheck: Done
+apps/mobile typecheck: Done
+apps/approvals-web typecheck: Done
+apps/ui typecheck: Done
+exit=0
+```
+
+**Lint**: no errors. The 59 warnings are all in files this patch does not touch, and the
+patch's own files have no diagnostics at all.
+
+```
+$ pnpm lint
+    197 │   });
+    198 │ });
+  
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 39.
+Checked 1160 files in 2s. No fixes applied.
+Found 59 warnings.
+exit=0
+
+$ pnpm exec biome check <the 19 .ts/.tsx files this patch changes>
+Checked 19 files in 121ms. No fixes applied.
+exit=0
+```
+
+**Runtime unit tests, the whole package** (filtered with `grep -E "Test Files|Tests |Duration|FAIL"`)
+
+```
+$ pnpm exec vitest run --project unit packages/runtime/test
+ Test Files  116 passed (116)
+      Tests  994 passed | 1 skipped (995)
+   Duration  82.57s (transform 7.27s, setup 0ms, import 121.39s, tests 106.11s, environment 14ms)
+exit=0
+```
+
+**The tests of this item** (filtered to the per-file lines and the summary)
+
+```
+$ pnpm exec vitest run --project unit packages/runtime/test/performance-view.test.ts packages/runtime/test/performance-route.test.ts packages/runtime/test/intake.test.ts packages/runtime/test/conversation.test.ts
+ ✓  unit  packages/runtime/test/performance-route.test.ts (3 tests) 320ms
+ ✓  unit  packages/runtime/test/conversation.test.ts (15 tests) 489ms
+ ✓  unit  packages/runtime/test/intake.test.ts (11 tests) 1152ms
+ ✓  unit  packages/runtime/test/performance-view.test.ts (7 tests) 160ms
+ Test Files  4 passed (4)
+      Tests  36 passed (36)
+exit=0
+```
+
+**The new route test fails without the route**: the starting commit's `server.ts` was
+restored temporarily and then put back.
+
+```
+$ (start commit server.ts restored) pnpm exec vitest run --project unit packages/runtime/test/performance-route.test.ts
+     ✓ is in the route table and needs the bearer token 2ms
+     × serves every mode from the store: a chat turn and the Run rows, per project, in the window 9ms
+     × refuses a bad days with 400 and an unknown project with 404 2ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL   unit  packages/runtime/test/performance-route.test.ts > GET /performance on the daemon > serves every mode from the store: a chat turn and the Run rows, per project, in the window
+AssertionError: expected 404 to be 200 // Object.is equality
+ FAIL   unit  packages/runtime/test/performance-route.test.ts > GET /performance on the daemon > refuses a bad days with 400 and an unknown project with 404
+AssertionError: expected 404 to be 400 // Object.is equality
+ Test Files  1 failed (1)
+      Tests  2 failed | 1 passed (3)
+```
+
+**Runtime integration tests.** Nothing ran: the only integration file in the package is the
+sandbox one, and it skips when no container engine is reachable. This item does not touch
+the sandbox, and there are no integration tests for the Performance view (it needs no
+Postgres; its tests are unit tests over in-memory SQLite and the composed daemon).
+
+```
+$ pnpm exec vitest run --project integration packages/runtime/test
+stderr | packages/runtime/test/sandbox.integration.test.ts
+2026-10-23T14:35:55.858Z WARN  [sandbox:detect] no container engine reachable {"reason":"docker: failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory; podman: podman not on PATH"}
+ ↓  integration  packages/runtime/test/sandbox.integration.test.ts (4 tests | 4 skipped)
+ Test Files  1 skipped (1)
+      Tests  4 skipped (4)
+   Duration  526ms (transform 227ms, setup 0ms, import 376ms, tests 0ms, environment 0ms)
+```
+
+**UI tests** (filtered to the touched test files and the summary)
+
+```
+$ pnpm --filter @forerunner/ui test
+ ✓ test/performance.test.tsx (7 tests) 573ms
+ ✓ test/client.test.ts (17 tests) 219ms
+ ✓ test/state-client.test.ts (12 tests) 350ms
+ ✓ test/contracts.test.ts (8 tests) 66ms
+ Test Files  42 passed (42)
+      Tests  255 passed (255)
+exit=0
+```
+
+**Docs check.** This clone has no `origin/main` (`git fetch origin main` answers "couldn't
+find remote ref main"), so the bare command has nothing to diff against and checks nothing.
+The script's own base setting, `DOCS_CHECK_BASE` or `--base`, runs the real check against the
+starting commit and against the base branch, and both pass:
+
+```
+$ node scripts/docs-check.mjs
+fatal: ambiguous argument 'origin/main...HEAD': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'
+docs-check: cannot diff against origin/main (Command failed: git diff --name-only origin/main...HEAD
+fatal: ambiguous argument 'origin/main...HEAD': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'
+); nothing to check.
+exit=0
+
+$ DOCS_CHECK_BASE=42b41f6e793c3a4faaa04fb6ba5cd1d4361da470 node scripts/docs-check.mjs
+docs-check: ok (26 files).
+exit=0
+
+$ node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk
+docs-check: ok (26 files).
+exit=0
+```
+
+**`pnpm check`** (filtered to the step headers and the results; the inner docs check hits the
+same missing `origin/main` as above):
+
+```
+> pnpm lint && pnpm lint:paths && pnpm typecheck && pnpm test && pnpm docs:check && pnpm docs:links && pnpm secrets:scan
+> biome check .
+Checked 1160 files in 2s. No fixes applied.
+Found 59 warnings.
+> node scripts/check-paths.mjs
+check-paths: ok (986 files).
+> tsc -p tsconfig.node.json --noEmit && pnpm -r --filter "./apps/*" --if-present typecheck
+> vitest run --project unit
+ Test Files  271 passed (271)
+      Tests  2683 passed | 4 skipped | 1 todo (2688)
+> node scripts/docs-check.mjs
+docs-check: cannot diff against origin/main (Command failed: git diff --name-only origin/main...HEAD
+> node scripts/link-check.mjs
+link-check: ok (106 files).
+secret-scan: clean (1410 files).
+exit=0
+```
+
+**Export and `git apply --check` against a clean checkout of the starting commit.** These
+commands were run after this report was committed, so the patch they check contains this
+report:
+
+```
+$ git format-patch --stdout 42b41f6e793c3a4faaa04fb6ba5cd1d4361da470..HEAD > /mnt/session/outputs/w3-d7-performance.patch
+$ git worktree add /tmp/verify 42b41f6e793c3a4faaa04fb6ba5cd1d4361da470
+$ cd /tmp/verify && git apply --check /mnt/session/outputs/w3-d7-performance.patch; echo "exit=$?"
+exit=0
+```
+
+`git apply --check` prints nothing when the patch applies; the exit status 0 is the proof.
+The patch then holds the eight commits `42b41f6..HEAD`, the seven above plus this report's
+revision.
+
+```
+$ git log --oneline 42b41f6..HEAD | wc -l
+8
+```
+
+The Playwright spec (`apps/ui/e2e/performance.spec.ts`) was updated but not run here, because
+there is no browser on the box.
 
 ### Left open and why
 
@@ -109,3 +294,6 @@ browser on the box).
   time is not recorded in the `voice.turn` row, so the voice total columns stay empty.
 - **Live figures**: D.8 to D.15 live measurements stay in `gates.md` ("Response-time
   targets"); those rows stay `in progress` per their own BLOCKERS row.
+- **Runtime integration tests skipped**: the package's only integration file (the sandbox)
+  needs Docker or Podman, and neither is on the box (output above). The Performance view has
+  no integration test of its own: the brief asks for none, and it needs no Postgres.
