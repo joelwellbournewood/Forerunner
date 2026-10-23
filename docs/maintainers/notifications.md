@@ -250,6 +250,22 @@ All of it is in `packages/runtime/src/daemon/compose.ts` ("Notifications") and
    names, so the delivery is logged on that session). `peerMessage`, `emailCommandReceived`
    and `injectionFlagged` have no daemon source yet (Known issues).
 
+### Android push from the state service (spec R.6, ADR 0085)
+
+The phone is not a channel of this notifier: the daemon runs on the PC and the phone talks to
+the shared state service. Push to Android is sent by the state service itself
+(`services/state-api/src/push/`, `state-service.md`, "Push to Android") through FCM HTTP v1,
+for the four kinds of R.6: approval (`request_opened` / `request_blocking`), finished session
+(`session_ended`), budget (`budget_stop`, plus an 80 % warning that has no runtime kind and
+counts as normal) and message (`peer_message`). It reuses this module's rules rather than
+copying them: `KIND_URGENCY` gives the urgency, and quiet hours are the human's
+`notify_prefs` read with `resolvePrefs` and decided by `isQuietAt`, so a window set in
+Settings holds the same notices on the desktop and on the phone; urgent kinds go through on
+both. Normal and info push notices inside the window are held and sent when it ends (there is
+no digest for push). Without a Firebase service account the service's push is a visible no-op
+(`/health` `push.mode: "polling"`) and the Android app raises the same notices in-app from its
+change feed (ADR 0032 item 6).
+
 ## How to change it
 
 - **Add a kind**: append it to `NOTIFICATION_KINDS` and `KIND_URGENCY` in `types.ts` (the
@@ -343,8 +359,10 @@ Signal tests injected `run` and `which`).
   installed later needs a daemon restart.
 - Telegram is one-way (no polling for replies). The Signal channel needs `signal-cli` and a
   registered sender number, which the setup wizard does not yet guide.
-- `notify_channel: "push"` is treated as desktop first until the Android push service exists;
-  the Android client reads the same preferences.
+- `notify_channel: "push"` is treated as desktop first by this notifier: Android push is sent
+  by the state service in addition, not as a fallback channel here (ADR 0085), and only once
+  the app's Firebase wiring exists (`docs/status/BLOCKERS.md`); the Android client reads the
+  same preferences.
 - The email sender is resolved once at compose from the agent's email settings row: a mailbox
   configured while the daemon runs takes effect at the next daemon start (the settings screen
   shows "no email sender" until then). Re-reading the row on a settings change is a follow-up.

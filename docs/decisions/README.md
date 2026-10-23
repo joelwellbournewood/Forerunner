@@ -79,3 +79,4 @@ Status: accepted | superseded by NNNN
 | 0082 | Install identity on a shared store: an install names its human; the store's first row is never it |
 | 0083 | Private memory next to a shared state: a local SQLite index routed by scope, and the Postgres adapter's refusal |
 | 0084 | Email routes: a mount that identifies humans without an identity port fails closed per request, and an owner-check refusal is an audited 403 that stands without its row |
+| 0085 | Android push from the state service: FCM HTTP v1 with the service account by reference, the four kinds to every device with a token, the human's quiet hours, dead tokens cleared with an audit row, a visible no-op unconfigured; the app's Firebase wiring waits for a project |

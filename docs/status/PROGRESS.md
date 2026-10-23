@@ -18,6 +18,24 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (w4-fcm-sender: the state-service half of Android push, R.6)
+- Built on `wave/w4-fcm-sender`, not yet reviewed or merged. The state service sends Android
+  push through FCM HTTP v1 (`services/state-api/src/push/`): an OAuth2 access token minted
+  from the service account (RS256 JWT, `node:crypto`), the account named by
+  `FORERUNNER_FCM_SERVICE_ACCOUNT_REF` and resolved like the admin token, never a value in
+  config or logs; the change bus fans out approvals, finished sessions, budget warnings (80 %
+  and the cap) and messages to every device of the human with a `push_token`, holding normal
+  kinds through the human's quiet hours (the runtime's `isQuietAt` rule) and sending them
+  when the window ends; 5xx / 429 retried with backoff; a 404 / `UNREGISTERED` token cleared
+  with a `push.token_cleared` audit row; without a service account a visible no-op
+  (`/health` `push.mode: "polling"` with the reason). Pairing stores `pushToken`;
+  `PUT /devices/:id/push-token` (signed) takes refreshes. ADR 0085 (the brief said 0084,
+  which was already taken). Tests: `services/state-api/test/push.test.ts` (17) against fake
+  OAuth and FCM endpoints over loopback HTTP; the DeviceRepo push-token case in
+  `packages/state/test/suite.ts`. R.6 and K.8 stay `in progress`: the Android app's Firebase
+  wiring (google-services.json, firebase-messaging, the messaging service, `fcmToken`) waits
+  for a Firebase project (BLOCKERS.md, FCM row). Report: `docs/status/reviews/w4-fcm-sender.md`.
+
 ### 2026-10-23 (fifteen bounded items merged; wave 1 reviewed, its fix stage and waves 2 to 4 stopped at the credit limit; triage; live probe on the new key)
 - Base b31c2e5 (the handover of 2026-10-21). Fifteen items were built on `wave/<id>` branches
   and merged (`git log b31c2e5..HEAD --merges`). Wave 1, the handover's item 1: always-human
@@ -162,7 +180,8 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
 3. Build the unbuilt items one at a time, each with an independent review before the merge
    (the BLOCKERS.md row of each names the gap and the fix): w2-chat-memory (J.1, O.2),
    w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
-   (S.12), w4-fcm-sender (R.6, the service side), w3-c5-specialist-approval (C.5),
+   (S.12), w4-fcm-sender (R.6, the service side; built on its branch 2026-10-23, review and
+   merge pending), w3-c5-specialist-approval (C.5),
    w3-d4-specialist-settings (D.4), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
    w3-r5-phone (R.5), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay

@@ -56,6 +56,8 @@ mirror, status and comments sync back), phase 2 gate (48 simulated hours offline
 | `src/outbox.ts` | the client outbox contract, `MemoryOutbox`, `flushOutbox`, the service's `IdempotencyStore` |
 | `src/state-file.ts` | `JsonState` (atomic JSON files under `<data>/state-api/`) |
 | `src/errors.ts` | `ApiError`, `ForerunnerError` code to HTTP status mapping |
+| `src/push/fcm.ts` | `FcmSender`: FCM HTTP v1 (`POST <api>/v1/projects/<project>/messages:send`) with an OAuth2 access token minted from the service account (RS256 JWT, `node:crypto` only), cached until a minute before expiry; retries 5xx / 429 / network errors with doubling backoff (Retry-After honoured), re-mints once on 401, reports 404 / `UNREGISTERED` as `unregistered`; `parseServiceAccount` |
+| `src/push/fanout.ts` | `PushFanout`: the change bus to push for the four kinds (approval, finished session, budget warning, message), quiet hours, held notices, token invalidation with an audit row, `status()` for `/health` |
 
 ### Request pipeline
 
@@ -96,7 +98,14 @@ never includes headers (the platform logger redacts anyway).
    or with whitespace inside is refused as the same replay (`replayKey` in `src/auth/replay.ts`).
    Signed reads are not replay-checked. `GET /me` shows the principal, scopes and expiry (and
    the install id for admin callers).
-4. Lost phone: desktop `POST /devices/:id/revoke` → `DeviceRepo.revoke` plus token deletion;
+4. Push token (spec R.6, ADR 0085): the `pushToken` of step 2 is stored on the device row
+   (`device.push_token`). FCM rotates registration tokens, so the app sends the new one with
+   `PUT /devices/:id/push-token { pushToken: string | null }`, signed like every device
+   mutation; only the device itself (or the desktop's admin token) may set it, `null` stops
+   push to the device, every change is a `push.token_set` audit row (who set it and whether a
+   token is registered, never the token) and a `device.changed` event. Device views carry
+   `pushRegistered`, never the token.
+5. Lost phone: desktop `POST /devices/:id/revoke` → `DeviceRepo.revoke` plus token deletion;
    the next request of that device is refused (`401 unauthorized`), and an open `GET /events`
    or `GET /sessions/:id/events` stream of that device ends on its next wake: `sseLoop` runs
    the stream's `stillAllowed` check (`deviceStillActive` in `src/sse.ts`, one device-row read)
@@ -120,9 +129,10 @@ biometric API succeeded for that action. Admin callers hold every scope and do n
 
 | Route | Notes |
 | --- | --- |
-| `GET /health` | public: `version`, `schema { code, applied, state: current/pending/ahead }`, `compatibleSchemaVersion`, `time`, realtime and mirror status |
+| `GET /health` | public: `version`, `schema { code, applied, state: current/pending/ahead }`, `compatibleSchemaVersion`, `time`, realtime and mirror status, `push { mode: fcm\|polling, enabled, reason, projectId, holding, counters { sent, failed, held, invalidated }, lastError }` (see Push) |
 | `GET /me` | principal, scopes, expiry |
-| `GET /devices?humanId=`, `GET /devices/:id`, `POST /devices/:id/revoke` | devices see their own human's; revoke is admin |
+| `GET /devices?humanId=`, `GET /devices/:id`, `POST /devices/:id/revoke` | devices see their own human's; revoke is admin; views say `pushRegistered` |
+| `PUT /devices/:id/push-token { pushToken: string \| null }` | signed; the device itself or admin (another device 403, unknown 404, revoked 409); stores or clears the FCM token, `push.token_set` audit row, `device.changed` |
 | `GET /projects`, `GET /projects/:id`, `GET /projects/:id/milestones` | `ProjectCard` with spend, budget, waiting count, health, next milestone, latest critic grade |
 | `GET /projects/:id/tasks?status=&limit=&offset=`, `GET /tasks/:id`, `POST /tasks/:id/transition { version, to, reason }` | workflow graph and version check from `TaskRepo.transition` |
 | `GET /inbox?humanId=|agentId=&unreadOnly=1`, `GET /messages/:id`, `POST /messages`, `POST /messages/:id/receipt { state: delivered|read|acted }` | receipts are monotonic, first wins, and come only from the addressee (the human, or the owner of the agent addressed): the sender's device may read its message but never acknowledge it, so a `requires_ack` handoff cannot be self-acknowledged |
@@ -176,6 +186,46 @@ already-seen `(table, id, version)` are dropped; the connection reconnects with 
 after a per-table high-water mark are announced, so writes the runtimes make directly to
 Postgres are seen too. No triggers; `packages/state` is unchanged. Realtime is best effort:
 the session log stream and the inbox fetch from the database on every wake or poll.
+
+### Push to Android (spec R.6, ADR 0085)
+
+`PushFanout` (`src/push/fanout.ts`) subscribes to the change bus, so it sees the service's
+own writes, other instances' (NOTIFY) and the poller's view of what the runtimes wrote
+directly. Four kinds become a push, each once per key:
+
+| Kind | Raised by | Urgency (ADR 0017) |
+| --- | --- | --- |
+| `approval` | `human_request.changed` with status `open` and a `human_id` | `request_blocking` urgent, `request_opened` normal |
+| `session` | `session.changed` to `completed`, `failed` or `stopped` | `session_ended` normal |
+| `budget` | a running session at 80 % of its `budget_cap_usd_micro` (`BUDGET_WARNING_SHARE`), or a session stopped / failed at its cap | warning normal, stop `budget_stop` urgent |
+| `message` | an unread message to the human, or to the human's agent from another human's agent | `peer_message` info |
+
+Each notice goes to every non-revoked device of the human with a `push_token`
+(`DeviceRepo.pushTargets`). Quiet hours are the human's own (`human.notify_prefs`, read with
+`resolvePrefs` and decided by `isQuietAt` from `@forerunner/runtime/notifications/prefs`, the
+same rule the desktop notifier uses): urgent kinds go through; the others are held in memory
+(at most `MAX_HELD`, 1,000; the oldest dropped with a warning) and sent by `flushHeld`, which
+runs on every poller tick, once the human's window is over. Payloads are data-minimal: a
+generic title and body, and `data { kind, id, link, projectId? }` for the app's deep link;
+request reasons, message text and project names never go through Google. Urgent notices are
+sent with Android priority `HIGH`, the rest `NORMAL`.
+
+`FcmSender` (`src/push/fcm.ts`) posts one message per token. A 404 or an `UNREGISTERED` error
+code means the token is dead: the fan-out clears `push_token` (unless the device sent a new
+one in between) and writes a `push.token_cleared` audit row (device id, platform, the FCM
+code). 5xx, 429 and network errors are retried up to four attempts with 0.5 s doubling
+backoff, capped at 30 s, `Retry-After` honoured; another 4xx fails at once. A failure is
+logged with the HTTP status and FCM's error code only and shown as `lastError` in `/health`.
+
+The service account comes by reference only: `FORERUNNER_FCM_SERVICE_ACCOUNT_REF` names a
+vault secret holding the service-account JSON, which `main.ts` resolves like the admin token
+(`resolvePushSender`). Without the reference push is a visible no-op: `/health` says
+`push { mode: "polling", enabled: false, reason: "FCM not configured ..." }` and the app's
+change feed raises the notices in-app (ADR 0032 item 6). A reference that resolves to
+nothing or to a file that is not a service account (missing field, a key that is not PEM)
+also leaves push off, with that reason in `/health` and a warning in the log: push is
+optional, so the service still starts. Neither the key, the access token nor a registration
+token appears in config, logs, `/health`, audit rows or responses (tested).
 
 ### Remote control (spec R.4)
 
@@ -296,6 +346,8 @@ Environment:
 | `FORERUNNER_STATE_API_MIGRATE` | unset | `1` applies pending migrations on start (an empty database is always migrated; a newer database refuses to start) |
 | `FORERUNNER_CHF_PER_USD` | ledger rate | fallback conversion for USD-only figures |
 | `FORERUNNER_MIRROR_REPO` / `_TOKEN_REF` / `_INTERVAL_MS` / `_API_URL` | off | GitHub mirror: `owner/name`, vault name of the token, pass interval (60 s), API base URL (api.github.com) |
+| `FORERUNNER_FCM_SERVICE_ACCOUNT_REF` | off | Android push: vault name of the Firebase service-account JSON (injected as `FORERUNNER_SECRET_<NAME>`); unset = push off, visible in `/health` |
+| `FORERUNNER_FCM_PROJECT_ID` / `FORERUNNER_FCM_API_URL` | the account's `project_id` / `https://fcm.googleapis.com` | Firebase project override and FCM API base URL (a stand-in in tests) |
 
 ## How to change it
 
@@ -330,6 +382,7 @@ Environment:
 | `outbox.test.ts` | `flushOutbox` ordering, rejection, transport failure; `IdempotencyStore` persistence, TTL and `run()` under overlapping calls; `/sync/outbox` batch, duplicates, two batches in flight with one clientId apply once, scope per action, end to end |
 | `security-state-api.test.ts` | the security review's attacks, each from a real input: a replayed mutation under another base64 spelling of the same signature (refused), a signature over another body / path / method, skew, pairing and token misuse, ownership on every route (another human's inbox, requests, costs, sessions; a decision of another project cannot be superseded through this project's route), revocation (tokens gone, the key cannot pair again, an open change feed ends instead of streaming on), the change feed never carries another human's private events (messages, requests, remote commands, `session.event` / `session.changed` of another human's agent; `Last-Event-ID` resume filtered the same way), input bounds (body size, batch size, the idempotency store capped per device), per-device rate limits, the remote command flow |
 | `main.test.ts` | config defaults and validation, admin token by env or reference, `startService` boot / health / stop, refuses a newer schema; mirror wiring from `FORERUNNER_MIRROR_*` with the token by reference (`/health`, a pass on the interval against `MemoryGitHost`, `runOnce`, stops with the service), refuses a missing token reference or a malformed repo |
+| `push.test.ts` | spec R.6 against a fake OAuth token endpoint (verifies the RS256 JWT, its claims and the grant type) and a fake FCM HTTP v1 endpoint (bearer, project, scripted per token), both real loopback HTTP (`fake-google.ts`): one minted access token reused, 5xx retried with doubling backoff and given up after four attempts, Retry-After on 429, no retry on 400, `UNREGISTERED` reported once, token endpoint 5xx retried and a 401 re-minted, the sender built by `resolvePushSender` from the reference and env; the pairing `pushToken` stored and never served; `PUT /devices/:id/push-token` (unsigned 401, another device 403, empty 400, clear, admin, 404, audit rows without the token); each of the four kinds sent to every device of the human with a token (not to tokenless devices or other humans), once, data-minimal; budget stop urgent and own-agent messages not pushed; quiet hours hold a normal request, an urgent one goes through, the held one goes out at the end of the window (`/health` holding); the unregistered token cleared with a `push.token_cleared` audit row and push resuming after a refresh; a final failure counted in `/health`; no key, access token or registration token in any log line (debug level), `/health` or audit row; no service account = no request and `mode: polling` with the reason; a bad reference or key leaves push off with the reason, not the content |
 | `audit-export.test.ts` | spec S.9: a phone's export holds its human's rows and their agents' rows only (JSON lines in time order, the download headers), CSV with the header and the formula guard, filters by agent / session / window (`to` exclusive), another human's agent and an unknown one 404, another human's `humanId` 403 and its own accepted, 401 without a token, the narrowest device (`read` only) may export, bad format / timestamp / window 400, the admin's whole log and one human's rows by `humanId` or `agentId`, 1003 rows streamed through three `list` calls capped at the page size |
 
 | `shared-secrets.test.ts` | spec S.13 on two profiles with two humans (Ada's and Bob's installs as `HttpSharedSecretService` clients over `app.request`, their phones as signed devices): wrap targets (installs with a key only, phones 403, unknown agent 404), propose (the grant pending with one blob, Bob's inbox shows the `shared_secret_grant` card, Ada's inbox nothing, both humans list the grant and a third cannot, nothing served while pending), validation (a device cannot propose; a blob for another human's install, a malformed blob, a bad name, an unknown agent, a named agent without a copy), approval (unsigned 401, without biometric 403 `biometric_required`, Ada's phone 403 on Bob's card; Bob's signed biometric yes activates it and the `secret_ref` mirror; the blob served to Bob's install for Bob's agent and refused for Alice, for Ada's install, for Bob's phone id, for another name, and to a device principal; Bob's install resolves the value by reference and caches nothing), refusal (cancelled, blobs dropped, nothing served, a fresh proposal afterwards), revoke (Bob's phone 403, Ada's phone unsigned 401 then signed 200, the runtime too, a pending grant's card withdrawn, idempotent after a re-sign), a second Bob install re-shared for; every store table and every response body scanned for the value in every encoding |
@@ -363,5 +416,13 @@ directory (`helpers.ts` sets `uploadsDir` and `serviceStateDir`; `close()` remov
   embedder, and a pass runs at most every `FORERUNNER_MIRROR_INTERVAL_MS`.
 - Signed mutations are single use, which means a client library that resends a cached
   request verbatim on timeout gets `401`; the outbox client re-signs every attempt.
+- Push notices held for quiet hours live in the instance's memory: a restart inside the
+  window drops them (the app's change feed and inbox still show the items), and with several
+  instances each one fans out what its bus sees, so enable push on one instance (like the
+  mirror). The "sent once" keys are per instance as well.
+- The Android app's Firebase wiring (google-services.json, `firebase-messaging`, a
+  `FirebaseMessagingService`, `KeystorePlugin.info` returning `fcmToken`) waits for a
+  Firebase project (`docs/status/BLOCKERS.md`); until then no device sends a `pushToken` and
+  the service's push stays idle even when configured.
 - `cost_ledger` is not polled (sums are computed on request); a `cost_ledger.changed`
   event exists in the type union for a future opt-in.

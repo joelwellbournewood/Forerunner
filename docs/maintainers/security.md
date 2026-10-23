@@ -160,6 +160,23 @@ other human without the value ever leaving the owner's install in clear.
   `redact(text)`; it remembers the values it resolved. It matches the runtime's `SecretsPort`
   and is what `packages/runtime` wires into `beforeToolCall` / `afterToolCall`.
 
+### Service-side credentials by reference (state service)
+
+The state service has no vault of its own; its credentials are named by reference and the
+runner that starts it injects the value as `FORERUNNER_SECRET_<NAME>` (`envSecretResolver`
+in `services/state-api/src/main.ts`): the admin token
+(`FORERUNNER_STATE_API_ADMIN_TOKEN_REF`), the GitHub mirror token
+(`FORERUNNER_MIRROR_TOKEN_REF`) and the Firebase service account for Android push
+(`FORERUNNER_FCM_SERVICE_ACCOUNT_REF`, spec R.6, ADR 0085). The service-account JSON holds
+an RSA private key; it is resolved once at start, parsed into the `FcmSender` and lives in
+that object only. Config holds the reference name, never the value; the RS256 JWT is signed
+with `node:crypto` and exchanged for a one-hour access token kept in memory; errors about a
+bad account name the missing field, never the content; logs, `/health`, audit rows and
+responses carry the reference name, the project id, HTTP statuses and FCM error codes, never
+the key, the access token or a device's registration token (`push.test.ts` checks every log
+line at debug level). Grant the service account the `Firebase Cloud Messaging API Admin`
+role only, and rotate it by replacing the vault value and restarting the service.
+
 ### What is never logged
 
 Values, in any form. Allowed in logs and errors: backend, service name, file path, secret

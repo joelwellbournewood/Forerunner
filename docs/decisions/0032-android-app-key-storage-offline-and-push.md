@@ -122,7 +122,9 @@ no Firebase project exists (`docs/status/BLOCKERS.md`).
    `fcmToken`, the token registered at pairing as `pushToken` (`device.push_token` already
    exists in the schema), and the state service sending through FCM HTTP v1 with a service
    account resolved by reference. Nothing in the app depends on push: every screen reads the
-   service itself.
+   service itself. (2026-10-23: the state-service half, the sender, the token at pairing and
+   `PUT /devices/:id/push-token`, is built; ADR 0085. The app half above still waits for a
+   Firebase project.)
 7. **Pairing link and QR.** The desktop encodes `fr://pair?u=<service url>&c=<code>[&h=<human>]`
    in its QR; the barcode plugin or the camera app (deep link, scheme `fr`) hands it to the
    UI, which pre-fills the pairing form; a typed code and URL always work. The shell remembers
