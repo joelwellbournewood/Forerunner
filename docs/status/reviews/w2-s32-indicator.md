@@ -289,6 +289,11 @@ S.32 asks for.
    read's answer until after the frame, and on the branch it fails: 1 failed, 9 passed.
    Fix: order frames and reads, so that a read started before the latest frame (or before a
    later read that already landed) is dropped.
+
+   Resolution: fixed in 25a396a. The store now orders frames and status reads
+   (`desktopOrder`, the `desktopRead` action and `readToken`), so a read started before a
+   frame or a later read is dropped. The race test passes, and `store.test.ts` pins the
+   reducer's order. Docs: `apps.md`, ADR 0067 point 5.
 2. **high**: `apps/desktop/src-tauri/src/actions.rs:413-439` (`probe_desktop`) and
    `events.rs:78,171-181`. The tray has the same race. `run_events` spawns `probe_desktop` as
    the stream opens and goes straight on to read frames. `probe_desktop` awaits
@@ -299,6 +304,12 @@ S.32 asks for.
    `ShellState.desktop` under the same lock. Fix: a token per read in `state.rs`; a frame
    always wins; a read applies only if nothing newer landed since it started. Needs a unit
    test in `state.rs`.
+
+   Resolution: fixed in 576aabe. `ShellState` orders frames and reads (`DesktopOrder`,
+   `begin_desktop_read`, `apply_desktop_read`, `apply_desktop_frame`). `probe_desktop` takes
+   a token before the GET and drops a stale answer, and frames and the stop's answer always
+   apply. The new test `a_desktop_status_read_never_overwrites_a_newer_frame` is in
+   `state.rs`; `cargo test` gives 74 passed. Docs: `apps.md`, ADR 0067 point 6.
 3. **medium**: `apps/ui/src/shell/DesktopControlBanner.tsx:113-136` and
    `apps/ui/src/store/context.tsx:214-234`. The amber "Desktop control is stopped … Resume
    desktop control" line follows `status.revoked` whatever caused the revoke.
@@ -318,3 +329,32 @@ S.32 asks for.
    panel revokes to the Extensions panel (no amber line), and re-read the status when the
    indicator goes from on to off so a stop from any shell offers resume. Tests in
    `desktop-indicator.test.tsx`.
+
+   Resolution: fixed in 25a396a. The new `desktopControlFromStatus` counts a revoke as a stop
+   only when its reason is not the Extensions panel's. An on-to-off frame re-reads the
+   status, so a tray stop offers resume at once. The new UI test "a stop from the tray offers
+   resume at once; a revoke by the Extensions panel shows no stopped line" covers both and
+   fails on the branch. A `store.test.ts` case covers the mapping, and
+   `desktop-controller.test.ts` now pins the panel's reason string. Docs: `apps.md`,
+   `desktop-control.md`, ADR 0067 point 4.
+
+### After the fixes
+
+- `pnpm typecheck`: exit 0. `pnpm lint`: exit 0 (0 errors; the base's 59 warnings).
+- `pnpm --filter @forerunner/ui test`: 43 files, 269 tests passed (265 before the review: two
+  new `desktop-indicator` tests and two new `store` tests).
+- `pnpm exec vitest run --project unit packages/capabilities/test`: 35 files, 380 passed.
+  `--project integration`: 3 files, 21 passed, 1 skipped (Postgres).
+- `pnpm exec vitest run --project unit packages/runtime/test`: 116 files, 1001 passed,
+  1 skipped. `--project integration`: 1 file, 4 skipped (no sandbox engine).
+- `apps/desktop/src-tauri` with
+  `CARGO_TARGET_DIR=/home/user/Forerunner/apps/desktop/src-tauri/target`:
+  `cargo fmt --check` clean, `cargo clippy --all-targets -- -D warnings` clean,
+  `cargo test` 74 passed, 0 failed.
+- `node scripts/docs-check.mjs --base 907a602`: ok.
+- `pnpm check`: exit 0. Its unit run: 271 files, 2696 passed, 4 skipped, 1 todo. Link check
+  ok, secret scan clean. Its `docs:check` step has no `origin/main` in this clone, so it was
+  run with `--base` as above.
+- Base check: a throwaway merge of HEAD with `origin/ccr-4d8a843c-1k9syk` merged cleanly.
+  On the merge, `pnpm typecheck` was clean, and `desktop-indicator`, `store`, `settings` and
+  `sse` passed (4 files, 35 tests). The worktree was removed afterwards.
