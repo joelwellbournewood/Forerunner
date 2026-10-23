@@ -17,6 +17,8 @@ import type {
   ReviewsView,
   ReviewView,
   SessionView,
+  SourceCandidateView,
+  SourceView,
   TaskView,
 } from "@forerunner/runtime/daemon/api-types";
 import {
@@ -81,6 +83,8 @@ import {
   RUNS,
   SESSIONS,
   SETTINGS,
+  SOURCE_CANDIDATES,
+  SOURCES,
   SUMMARIES,
   TASKS,
   UPDATES_FEED,
@@ -154,6 +158,9 @@ export interface FakeDaemonState {
   promotions: LessonView[];
   queue: QueueItemView[];
   dataAssets: DataAssetView[];
+  /** Source discovery (spec A.4): connected sources and what their scans found. */
+  sources: SourceView[];
+  sourceCandidates: SourceCandidateView[];
   pendingCommands: Map<string, PendingCommand>;
   missingRoutes: string[];
   failing: Record<string, { status: number; code: string; message: string }>;
@@ -207,6 +214,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     promotions: clone(PROMOTIONS),
     queue: clone(QUEUE),
     dataAssets: clone(DATA_ASSETS),
+    sources: clone(SOURCES),
+    sourceCandidates: clone(SOURCE_CANDIDATES),
     pendingCommands: new Map(),
     missingRoutes: [...(options.missingRoutes ?? [])],
     failing: { ...(options.failing ?? {}) },
@@ -298,6 +307,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.promotions = clone(PROMOTIONS);
     state.queue = clone(QUEUE);
     state.dataAssets = clone(DATA_ASSETS);
+    state.sources = clone(SOURCES);
+    state.sourceCandidates = clone(SOURCE_CANDIDATES);
     state.pendingCommands.clear();
     state.missingRoutes = [...(options.missingRoutes ?? [])];
     state.failing = { ...(options.failing ?? {}) };
@@ -1983,6 +1994,157 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       return errorBody(c, 404, "not_found", "no such project");
     }
     return c.json(MILESTONES.filter((m) => m.projectId === id));
+  });
+
+  // Source discovery (spec A.4): the daemon's /sources routes. A scan of a fresh source
+  // finds two repositories or folders named after the locator, one an existing install; a
+  // scan of the fixture source is idempotent; accepting a proposal creates a project card.
+  const summarise = (sourceId: string) => {
+    const rows = state.sourceCandidates.filter((c) => c.sourceId === sourceId);
+    const s = { total: rows.length, proposed: 0, accepted: 0, duplicate: 0, gone: 0, installs: 0 };
+    for (const c of rows) {
+      s[c.status]++;
+      if (c.existingInstall) s.installs++;
+    }
+    return s;
+  };
+  const sourceWithCounts = (src: SourceView): SourceView => ({
+    ...src,
+    candidates: summarise(src.id),
+  });
+  app.get("/sources", (c) => c.json(state.sources.map(sourceWithCounts)));
+  app.post("/sources", async (c) => {
+    const body = (await c.req.json()) as {
+      kind?: string;
+      locator?: string;
+      displayName?: string;
+      credentialRef?: string;
+    };
+    if (!body.kind || !body.locator?.trim()) {
+      return errorBody(c, 400, "validation", "kind and locator are required");
+    }
+    if (body.kind === "gitlab" || body.kind === "git_remote") {
+      return errorBody(c, 400, "not_supported", `${body.kind} sources come later`);
+    }
+    const github = body.kind !== "local_folder";
+    const ref = github ? body.credentialRef?.trim() || "secret:github_token" : null;
+    if (ref !== null && !ref.startsWith("secret:")) {
+      return errorBody(
+        c,
+        400,
+        "validation",
+        "a GitHub source needs a secret reference of the form secret:<name>; a token value is never stored",
+      );
+    }
+    if (state.sources.some((s) => s.kind === body.kind && s.locator === body.locator?.trim())) {
+      return errorBody(c, 409, "conflict", `${body.kind} ${body.locator} is already connected`);
+    }
+    const now = new Date().toISOString();
+    const empty = { total: 0, proposed: 0, accepted: 0, duplicate: 0, gone: 0, installs: 0 };
+    const view: SourceView = {
+      id: nextId("src"),
+      kind: body.kind as SourceView["kind"],
+      displayName: body.displayName?.trim() || body.locator.trim(),
+      locator: body.locator.trim(),
+      credentialRef: ref,
+      status: "connected",
+      lastScanAt: null,
+      scanSummary: null,
+      error: null,
+      candidates: empty,
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+    };
+    state.sources.push(view);
+    return c.json(view, 201);
+  });
+  app.post("/sources/candidates/:id/accept", async (c) => {
+    const cand = state.sourceCandidates.find((x) => x.id === c.req.param("id"));
+    if (!cand) return errorBody(c, 404, "not_found", "no such candidate");
+    if (cand.status !== "proposed") {
+      return errorBody(c, 409, "conflict", `${cand.locator} is ${cand.status}`);
+    }
+    const body = (await c.req.json().catch(() => ({}))) as { name?: string; goal?: string };
+    const name = body.name?.trim() || cand.proposedName;
+    const project: ProjectCard = {
+      ...clone(PROJECTS[0] as ProjectCard),
+      id: nextId("proj"),
+      name,
+      goal: body.goal?.trim() || `Project from the repository ${cand.locator}`,
+      stage: "planning",
+      health: "idle",
+      waitingOnYou: 0,
+      lastSessionAt: null,
+    };
+    state.projects.push(project);
+    cand.status = "accepted";
+    cand.projectId = project.id;
+    cand.version += 1;
+    emit("project.changed", { id: project.id });
+    return c.json({ candidate: cand, project: { id: project.id, name } }, 201);
+  });
+  app.get("/sources/:id", (c) => {
+    const src = state.sources.find((s) => s.id === c.req.param("id"));
+    return src ? c.json(sourceWithCounts(src)) : errorBody(c, 404, "not_found", "no such source");
+  });
+  app.post("/sources/:id/scan", (c) => {
+    const src = state.sources.find((s) => s.id === c.req.param("id"));
+    if (!src) return errorBody(c, 404, "not_found", "no such source");
+    const now = new Date().toISOString();
+    if (!state.sourceCandidates.some((x) => x.sourceId === src.id)) {
+      const folder = src.kind === "local_folder";
+      for (const [name, install] of [
+        ["one", false],
+        ["two", true],
+      ] as const) {
+        state.sourceCandidates.push({
+          id: nextId("cand"),
+          sourceId: src.id,
+          kind: folder ? "folder" : "repo",
+          name,
+          locator: `${src.locator}/${name}`,
+          key: folder
+            ? `folder:${src.locator}/${name}`
+            : `github:${src.locator.toLowerCase()}/${name}`,
+          proposedName: name,
+          status: "proposed",
+          existingInstall: install,
+          installMarker: install ? ".forerunner/project.json" : null,
+          projectId: null,
+          isGit: true,
+          details: {},
+          lastSeenAt: now,
+          createdAt: now,
+          updatedAt: now,
+          version: 1,
+        });
+      }
+    }
+    src.lastScanAt = now;
+    src.scanSummary = summarise(src.id);
+    src.updatedAt = now;
+    src.version += 1;
+    const candidates = state.sourceCandidates.filter((x) => x.sourceId === src.id);
+    return c.json({ source: sourceWithCounts(src), candidates, summary: src.scanSummary });
+  });
+  app.get("/sources/:id/candidates", (c) => {
+    const src = state.sources.find((s) => s.id === c.req.param("id"));
+    if (!src) return errorBody(c, 404, "not_found", "no such source");
+    const status = c.req.query("status");
+    return c.json(
+      state.sourceCandidates.filter(
+        (x) => x.sourceId === src.id && (!status || x.status === status),
+      ),
+    );
+  });
+  app.delete("/sources/:id", (c) => {
+    const src = state.sources.find((s) => s.id === c.req.param("id"));
+    if (!src) return errorBody(c, 404, "not_found", "no such source");
+    const n = state.sourceCandidates.filter((x) => x.sourceId === src.id).length;
+    state.sourceCandidates = state.sourceCandidates.filter((x) => x.sourceId !== src.id);
+    state.sources = state.sources.filter((s) => s.id !== src.id);
+    return c.json({ ok: true, id: src.id, candidatesRemoved: n });
   });
 
   app.get("/projects/:id/data", (c) => {

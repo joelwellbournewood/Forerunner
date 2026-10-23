@@ -306,7 +306,7 @@ binds to, ADR 0082; `config.json` never holds a secret), `status` (directories, 
 configured store without creating anything: `identity` ok with the human and its selector,
 "created at the daemon's first start", or failing with the store's humans and the remedies
 when the start would be `identity_ambiguous` or `not_found`), `kill` (writes a kill request file), `dirs`, `daemon`, `audit export` (the
-audit log to a file, in the table below). The kill request file
+audit log to a file, in the table below), `sources` (source discovery, in the table below). The kill request file
 in the runtime directory is polled by `KillFileWatcher` in every running runtime, so the CLI,
 the tray and the app can stop sessions across processes on both platforms.
 
@@ -329,6 +329,7 @@ rename). `cli.test.ts` covers the written record and the parser.
 | `fr models watch\|report` | `registerModelWatchCli` over the composed runtime's `modelWatch` | Runs the weekly model watch now, lists reports. |
 | `fr mirror sync\|enable\|disable` | `registerMirrorCli` over the composed runtime's `store` and `mirror` | One-way GitHub Projects mirror. |
 | `fr audit export [--agent <id>] [--session <id>] [--from <iso>] [--to <iso>] [--format jsonl\|csv] [--out <path>] [--force]` | `registerAuditCli` (`src/cli/audit.ts`) over the composed runtime's `store`, `clock` and `human`, `startServices: false` | Spec S.9, ADR 0050: the install's human's audit rows and their agents' (plus the install-level rows that name nobody) through the daemon's export module (`src/daemon/audit-export.ts`), paged, as JSON lines or CSV, the summaries as stored. Flags are checked before the runtime is composed; `--out` defaults to `forerunner-audit-<UTC stamp>.<format>` in the current directory (parent directories are created); an existing file is refused unless `--force`; another human's agent is `not_found`; prints `N rows written to <path> (<format>)`. |
+| `fr sources list [--json]\|add <kind> <locator> [--name <n>] [--credential secret:<name>]\|scan <id> [--json]\|candidates <id> [--status <s>] [--json]\|accept <candidateId> [--name <n>] [--goal <g>]\|remove <id>` | `registerSourcesCli` (`src/sources/cli.ts`) over the composed runtime's `sources` and `human`, `startServices: false` | Spec A.4, ADR 0056: the same `SourceDiscovery` as the daemon's `/sources` routes. `add` refuses a token value (a `secret:<name>` reference only), `scan` prints the counts and one line per candidate (status, locator, proposed name, existing install, project), `accept` creates the project through the same path as `POST /projects`, `remove` keeps every project. |
 
 Commands that need the whole product compose it once through `composeRuntime` (the same
 wiring as the daemon) with `startServices: false`, a one-shot: the composed objects exist but no
@@ -1361,6 +1362,83 @@ Both stop with `close()`. The project's escalation ceiling is wired here too: `m
 `tierForAttempt` escalates the third retry under the project's `critic_ceiling` (a project capped
 at sonnet never runs opus) instead of the ladder's default ceiling.
 
+### Source discovery (`src/sources/`, spec A.4, [ADR 0056](../decisions/0056-source-discovery.md))
+
+The human connects *sources* and a scan proposes projects from them; nothing is typed in
+one by one. `SourceDiscovery` (`discovery.ts`) is the one object behind the daemon's
+`/sources` routes (`routes.ts`, mounted in `createDaemonApp` behind the bearer check) and
+`fr sources` (`cli.ts`); `types.ts` holds the zod wire shapes (re-exported from
+`daemon/api-types.ts` so the UI reads the daemon's own schemas) and `locators.ts` the
+normalisation. Rows are `source` and `source_candidate` (`packages/state`, migration 0003).
+
+- **Kinds.** `github_org`, `github_user`, `github_repo` (a chosen repository) and
+  `local_folder`; `gitlab` and `git_remote` exist in the enum for later and `add` refuses
+  them with `not_supported` ("come later"). A GitHub source carries `credential_ref`
+  (`secret:<name>`, default `secret:github_token`, the name `fr setup` stores); `add` refuses
+  anything that is not a `secret:` reference without echoing it, so a pasted token never
+  reaches a row, a log or the audit log. A folder source takes no credential; its path must
+  be absolute, exist and not be a symlink; it is stored normalised (no trailing separator).
+  The same source twice (login or key compared lower-cased, folders by `folderKey`) is a
+  409 `conflict`.
+- **Scan.** An org lists its repositories through the git host port (`listRepos({ org })`,
+  paged through `Link`, capabilities.md); an account lists the token's own repositories
+  filtered to that owner when the login is the token's (private ones included), else the
+  user's public ones (`listRepos({ user })`); a chosen repository is `getRepo`; a folder
+  that is itself a repository (`.git`), carries the marker or is this install's own checkout
+  is one candidate, otherwise its immediate subfolders are (symlinks and dot-folders
+  skipped; `isGit` says whether a subfolder has a `.git`). The host for a GitHub source is
+  built at scan time from the vault by the source's reference (`githubHostForSecretRef`,
+  one `secret.resolve` audit row naming the secret) unless `ComposeOptions.gitHost` was
+  injected, which then stands in for every source. A scan that throws records
+  `status: "error"` and the redacted reason in `scan_result.error` on the source, writes a
+  denied `source.scan` audit row and rethrows (503 on the route for a host or credential
+  problem); the next scan clears it.
+- **Existing install.** A candidate is marked `existing_install` with `install_marker`
+  `.forerunner/project.json` when that file exists at the root (through `getFile` on the
+  default branch for a repository, the file system for a folder), or `install_record` when
+  the folder is the checkout named by this install's `install.json`
+  (`readInstallRecord(dirs)`). The marker file is the convention this item introduces;
+  nothing writes it yet (the first session on a managed repository is the place, ADR 0056).
+- **Duplicates, never twice.** Every candidate has a `key` (`locators.ts`):
+  `github:<owner>/<name>` lower-cased for a repository, whatever the spelling
+  (`owner/name`, `.git`, `github.com/…`, `https://…/tree/…`, `git@…:…`, `ssh://…`), and
+  `folder:<normalised path>` (lower-cased on Windows) for a folder; `keysOfProject` reads
+  a project's `repos` entries the same way. A scan loads every project's keys once (capped
+  at 10,000 projects) and marks a candidate `duplicate` with `project_id` when a project
+  covers it, or when another source already has it `proposed` or `accepted`
+  (`details.duplicate_of` names that candidate), so one repository is never proposed twice
+  across sources. `accept` re-checks the projects at that moment (a project created
+  meanwhile turns the candidate `duplicate` and refuses) and refuses a taken project name
+  before anything is created.
+- **Rescan is idempotent.** Candidates are upserted by `(source_id, key)`: a new one is
+  `proposed` (or `duplicate`), an existing one keeps its id and gets `last_seen_at`, its
+  facts and a recomputed status, one not found becomes `gone` and comes back `proposed`
+  when found again; an `accepted` candidate stays accepted whatever a later scan finds.
+  The proposed name is the repository or folder name, qualified with the owner or the
+  parent folder when a project of that name exists already (unless it is the duplicate).
+- **Accept.** `accept(candidateId, { name?, goal?, autonomyLevel?, budgetUsdMicro? })`
+  creates the project through `createProjectRecord` (`daemon/create-project.ts`, the same
+  function `POST /projects` calls: stage `planning`, the agent as member, the `project`
+  event, the conversation's active project) with `repos: [locator]` (`owner/name`, or the
+  folder path) and **no brief**: the intake into docs, milestones and tasks is spec A.2.
+  The candidate becomes `accepted` with `project_id`; the same key in any other source
+  turns `duplicate` of that project. `PrTaskExecutor.repoFor` in `compose.ts` treats an
+  absolute path in `repos[0]` as "no host repository" (the inner executor runs without the
+  branch-and-PR flow) instead of splitting it as `owner/name`.
+- **Remove.** Deletes the candidates and the source in one transaction; projects are never
+  touched. **Owner rule.** Every row carries `author_human`; `list` shows the actor's own
+  sources and every other operation on another human's source throws `tool_not_allowed`
+  with `details.forbidden`, which the routes answer as 403 `forbidden` (the inbox's
+  `NOT_YOURS`, ADR 0041 item 4). Audit rows: `source.add`, `source.scan` (counts, or the
+  denial), `source.accept`, `source.remove`; summaries carry references, never values.
+
+Routes (`SOURCES_ROUTES`, documented in `DAEMON_ROUTES`): `GET /sources`, `POST /sources`,
+`GET /sources/:id`, `POST /sources/:id/scan`, `GET /sources/:id/candidates?status=`,
+`POST /sources/candidates/:id/accept`, `DELETE /sources/:id`. Errors: 400 `validation` /
+`not_supported`, 404 `not_found`, 403 `forbidden`, 409 `conflict` (`details.cause:
+validation`, the daemon's convention for a refused write), 503 for `provider_*` and
+`unavailable`.
+
 ### Specialist registry (`src/registry/`)
 
 The loader for `forerunner-registry` content: specialist, principal and critic definitions as
@@ -1485,6 +1563,31 @@ the view (tagged `general`, owner as proposer, human approval), another human's 
 `not_found` here and their proposal is theirs to review. `loop-routes.test.ts` covers the
 routes (propose, pending, offers in the inbox, accept applied with the copy, bad or repeated
 answers refused, the audit row once).
+
+`sources.test.ts` (spec A.4, ADR 0056) against the fake git host and a temp folder:
+locator normalisation (every spelling of a repository to one key, folders, a project's
+`repos`); `add` validation (a token value refused and nothing stored, bad logins, a relative
+or missing folder, a file, a credential on a folder, other hosts "later", the same source
+twice; the audit row names the reference, never the token); an org scanned through
+`GitHubHost` with `pageSize: 2` (two pages seen by the host): one proposal per repo, the
+repo a project links by URL a `duplicate` with its `project_id`, the repo with
+`.forerunner/project.json` an `existing_install`; accept (project with the repo and no
+brief, the candidate accepted; a second accept, a duplicate, a taken name refused with
+`details.conflict`); an idempotent rescan after a new repo (ids stable, accepted and
+duplicate kept); a user source (the token's own login) and a chosen repository (URL form
+stored as `owner/name`, duplicate of the project; a repository another source proposes is
+`duplicate_of` it); a local folder (subfolders, `isGit`, the marker file, this install's
+checkout as `install_record`, `gone` and back on rescan, accept with the path, a gone
+candidate refused); a failing host recorded on the source and rethrown; remove (candidates
+gone, projects kept) and the owner rule (hidden from the list, every operation refused).
+`sources-routes.test.ts`: the routes over an in-memory host (shapes, 201/400/404/409/403
+`forbidden`, the owner rule, 503 or 500 for a failing host) and in the composed daemon (401
+without the bearer, a typed project linking a repo by URL seen as the duplicate, an accepted
+proposal as a project card with `repos: ["owner/name"]`, an empty summary cache and the
+agent as member, a folder source, remove keeps the projects). `sources-cli.test.ts`: the
+subcommands and flags, the whole flow through `buildProgram()` with a composed stand-in
+(`startServices: false`), a token value, an unknown kind and a missing folder refused before
+anything is stored.
 
 `small-project.test.ts` (spec B.6, ADR 0051): `defaultRiskTier` by flag; `shapeProjectPlan`
 with the flag on (one milestone named after the project, the phases' criteria once each, the
@@ -1775,6 +1878,14 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   open no PR each file their own small status PR, which merge in order; a session whose last
   PR was force-pushed by its next attempt keeps the status commit, since the attempt branches
   from `origin/<branch>`.
+- Source discovery (A.4): the `.forerunner/project.json` marker is read, never written; a
+  project Forerunner manages carries no marker until a later item writes one at the first
+  session, so today only a repository or folder marked by hand (or this install's own
+  checkout) shows as an existing install. The install check costs one `contents` call per
+  repository on a host scan (a large organisation scans slowly within the rate limit). A
+  project created from a local folder links the path in `repos`; the PR executor then runs
+  the inner executor without a host repository (no branch-and-PR flow) rather than
+  working in that folder. GitLab and plain git remotes are refused at `add`.
 - The task workflow has no `needs_human -> done` edge, so an accepted critic sign-off closes
   the task along the graph's own edges (`ready -> claimed -> in_progress -> in_review -> done`)
   in one store transaction (`syncSignoffAnswers`); a direct edge for a human's acceptance is a

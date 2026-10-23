@@ -97,7 +97,7 @@ apps/ui/
 | `/changes` | the change log newest first: source, scope, project, undo state, who asked and when, the sentence, the words used, revert time, commands / before / after behind details, Undo while undoable; project filter and "undoable only" | `GET /changes?projectId=&undoable=`, `POST /changes/:id/undo` |
 | `/performance` | per mode: target (first token / first audio / total / by task), samples, first-token p50/p95, total p50/p95, within-target share, a bar of the p95 against the target (met/missed in words); recent runs; estimate accuracy (overall and per specialist and kind); project filter; "Audit log" with a format select (JSON lines / CSV) and **Export audit log** (spec S.9): fetches the daemon's file through `client.auditExport`, saves it under the daemon's name with `saveTextFile` (`src/lib/download.ts`: a Blob behind an object URL on a hidden anchor, clicked once) and reports `Exported N rows to <file>`; says so when the browser cannot save files or the daemon lacks the route, pointing at `fr audit export` | `GET /performance?projectId=` (proposed), `GET /costs/estimates`, `GET /audit/export?format=` |
 | `/updates` | app: running and installed version, channel, state, the available release with changelog, size and "Update and restart", previous version with "Roll back and restart", last rollback, rejected releases, last error; connector updates (installed vs available); model updates; model watch: latest report with recommendations to adopt/ignore/remind, "Run now", recent reports. Asks the feed first and falls back to the local state with a banner | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback`, `GET /model-watch/reports`, `/latest`, `POST /model-watch/run`, `POST /model-watch/reports/:id/answer` |
-| `/settings` | theme override, daemon connection status (with links to Updates and Extensions), every setting grouped by scope with the scope badge; rows that map to a command have Change: a dialog with the current value, the change card from the daemon, Yes/No (a tap; a high-risk card asks this paired device), the sentence with Undo, a link to Changes; other rows say read-only | `GET /settings`, `POST /commands/execute`, `POST /commands/:id/confirm`, `POST /changes/:id/undo` |
+| `/settings` | theme override, daemon connection status (with links to Updates and Extensions), the **Sources** section (spec A.4: connected GitHub orgs, accounts, repositories and local folders with their last scan's counts; connect one by kind, locator, display name and, for a GitHub kind, the token's vault reference, never a value; Scan or Rescan, Candidates, Remove with a confirmation that says projects stay; each candidate with its status, the existing-install mark, a link to the project it is or duplicates, and Create project on a proposal, which refreshes the project list; a daemon without the route shows a note), every setting grouped by scope with the scope badge; rows that map to a command have Change: a dialog with the current value, the change card from the daemon, Yes/No (a tap; a high-risk card asks this paired device), the sentence with Undo, a link to Changes; other rows say read-only | `GET /settings`, `POST /commands/execute`, `POST /commands/:id/confirm`, `POST /changes/:id/undo` |
 
 ### API client
 
@@ -106,7 +106,9 @@ apps/ui/
 extensions, updates, model watch, reviews, memory and consolidation, commands and the change
 log) plus the proposed routes (`queue`, `enqueue`, `dismissQueueItem`, `milestones`,
 `dataAssets`, `registerDataAsset`, `removeDataAsset`, `importProject`, `docs`, `doc`,
-`performance`), `auditExport(filter?)` (spec S.9: `GET /audit/export` with `agentId`, `sessionId`,
+`performance`), the source discovery methods (spec A.4: `sources`, `addSource`, `scanSource`,
+`sourceCandidates`, `acceptCandidate`, `removeSource` over `DAEMON_ROUTES`, their schemas
+read straight from `daemon/api-types`, no mirror), `auditExport(filter?)` (spec S.9: `GET /audit/export` with `agentId`, `sessionId`,
 `from`, `to` and `format`; the body as text with the row count and the base name from
 `Content-Disposition`, `filenameFromDisposition` / `countExportRows`) and `url()` / `raw()`
 for the stream helpers. Paths come from `routePath(name,
@@ -205,7 +207,11 @@ not. Theme: `system | light | dark`, resolved to `<html data-theme>` and `color-
 `test/fake-daemon.ts` exports `createFakeDaemon(options)` (a Hono app over `test/fixtures.ts`
 with mutable state: projects, tasks, sessions, events, requests, messages, kill flag, pending
 chat confirmation, extensions, the daemon version, model watch reports, reviews, lessons,
-consolidation proposals, the change log, pending commands, the queue, data assets; decisions,
+consolidation proposals, the change log, pending commands, the queue, data assets, sources and
+their candidates (the `/sources` routes: a scan of a fresh source finds two candidates named
+after the locator, one an existing install, a scan of the fixture source changes nothing,
+accepting a proposal adds a project card and emits `project.changed`, a token value instead
+of a reference is refused with the daemon's message); decisions,
 the peer feed, milestones, docs and performance are served read-only) and
 `startFakeDaemon({ port })` (`@hono/node-server` on 127.0.0.1). Its `/health` answer is the
 `HEALTH` fixture with the extension counts derived from the extension state (3 enabled, 1
@@ -322,6 +328,13 @@ URLs),
 `changes` (rows with words / commands / before / after, undo and the undo row, filters,
 missing route), `settings` (scope on every row, command mapping, autonomy by one step: card →
 yes → sentence → undo → the change log row, high risk needs this device, cancel and refusal),
+`sources` (spec A.4: counts and kind labels; the fixture source with its reference and counts,
+its candidates with statuses, the install mark and the duplicate's project link, Create
+project on a proposal posting to the accept route with the project landing in the store and
+the counts updated; a folder source connected (the posted body), scanned to two proposals,
+removed after the confirmation; a pasted token refused by the daemon and shown; the missing
+route), `contracts` also parses the source fixtures with the daemon's schemas and checks the
+route table,
 `shell` (matcher, palette filter, g-sequences incl. `g c` / `g t` / `g u`, switcher, kill
 switch, persistence).
 

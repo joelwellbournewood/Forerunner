@@ -19,6 +19,7 @@ import {
   desktop,
   type GitHost,
   GitHubHost,
+  githubHostForSecretRef,
   MemoryGitHost,
   MIRROR_APPROVE_OPTION,
   type MirrorApprovalAnswer,
@@ -39,6 +40,7 @@ import {
   currentPlatform,
   errorMessage,
   ForerunnerError,
+  isAbsolute,
   join,
   log,
   osFacts,
@@ -158,6 +160,7 @@ import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
 import { type PlanApprovalSyncResult, syncPlanApprovals } from "../session/plan-approval.ts";
 import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
 import { Scheduler, type StartRequest } from "../session/triggers.ts";
+import { readInstallRecord } from "../setup/install-record.ts";
 import {
   describePlanAllowance,
   PLAN_USD_MONTHLY_ENV,
@@ -165,6 +168,7 @@ import {
   resolvePlanAllowance,
 } from "../setup/plan-allowance.ts";
 import { readConfig, rememberBoundHuman, SECRET_NAMES, type SetupConfig } from "../setup/wizard.ts";
+import { SourceDiscovery } from "../sources/discovery.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 import { readUpdateConfig, UpdateConfig } from "../update/config.ts";
 import type { UpdateManager } from "../update/install.ts";
@@ -219,6 +223,7 @@ import {
 } from "../wiring/notification-ports.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
+import { createProjectRecord } from "./create-project.ts";
 import {
   bindInstallHuman,
   type InstallIdentity,
@@ -599,6 +604,12 @@ export interface RuntimeApp {
     assets: DataAssets;
     importer: DataImporter;
   };
+  /**
+   * Source discovery (spec A.4, ADR 0056): the one `SourceDiscovery` behind the `/sources`
+   * routes and `fr sources`; a GitHub source's host comes from the vault by the source's
+   * credential reference at scan time (an injected `gitHost` stands in for every source).
+   */
+  sources: SourceDiscovery;
   /** One-way GitHub Projects mirror. */
   mirror: ProjectsMirror;
   sandbox: { port: RunSandboxPort; detection: EngineDetection };
@@ -1552,7 +1563,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     clock,
     host: gitHost,
     inner: { execute: (ctx) => makeLoop().execute(ctx), withWorktree: (dir) => makeLoop(dir) },
-    repoFor: async (task) => repoOfProject(await store.project.get(task.project_id)),
+    repoFor: async (task) => {
+      const project = await store.project.get(task.project_id);
+      const full = project?.repos[0];
+      // A local folder linked by a source scan (spec A.4) is not a host repository: the
+      // inner executor runs without the branch-and-PR flow, as for a project without one.
+      if (!full?.includes("/") || isAbsolute(full)) return null;
+      return repoOfProject(project);
+    },
     worktreeRoot: dirs.worktrees,
     token: ghToken ?? undefined,
     identity: gitIdentity,
@@ -2216,6 +2234,48 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // Quiet-hours holds and the daily digest are flushed on the clock; a one-shot sends at once
   // or holds in memory and never ticks.
   const stopNotifier = services ? notifier.start() : () => undefined;
+
+  // Source discovery (spec A.4, ADR 0056): a GitHub source's host from the vault by the
+  // source's own credential reference (never a value in the row), an injected host standing
+  // in for every source in tests; an accepted proposal creates the project the way
+  // POST /projects does; the install record tells a scanned folder that is this checkout.
+  const sources = new SourceDiscovery({
+    store,
+    clock,
+    hostFor: async (source) =>
+      opts.gitHost ??
+      githubHostForSecretRef({
+        vault,
+        ref: source.credential_ref ?? undefined,
+        baseUrl: config?.githubApiBase,
+        clock,
+        fetchImpl: opts.fetchImpl,
+        audit: (name) => {
+          void store.auditLog.append({
+            human_id: human.id,
+            tool: "secret.resolve",
+            input_summary: `secret:${name} for source ${source.id}`,
+            result_summary: "github host",
+            allowed: true,
+            occurred_at: clock.nowIso(),
+          });
+        },
+      }),
+    createProject: async (input) => {
+      const p = await createProjectRecord(
+        { store, human: { id: human.id }, agent: { id: agent.id }, events, conversation },
+        {
+          name: input.name,
+          goal: input.goal,
+          repos: input.repos,
+          ...(input.autonomyLevel !== undefined ? { autonomyLevel: input.autonomyLevel } : {}),
+          ...(input.budgetUsdMicro !== undefined ? { budgetUsdMicro: input.budgetUsdMicro } : {}),
+        },
+      );
+      return { id: p.id, name: p.name };
+    },
+    installRecord: () => readInstallRecord(dirs),
+  });
   logger.info("runtime composed", {
     stateUrl: stateUrl.replace(/\/\/[^@]*@/, "//[REDACTED]@"),
     vault: vault.backend,
@@ -2293,6 +2353,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     estimates,
     desktop: { controller: desktopController, allowlist: desktopAllowlist, detect: desktopDetect },
     data: { assets: dataAssets, importer: dataImporter },
+    sources,
     mirror,
     sandbox: { port: sandboxPort, detection: sandboxDetection },
     notifier,

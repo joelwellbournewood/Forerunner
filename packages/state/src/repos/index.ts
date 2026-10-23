@@ -17,6 +17,7 @@ import {
   ExtensionRepo,
   ReleaseRepo,
   SecretRefRepo,
+  SourceCandidateRepo,
   SourceRepo,
 } from "./misc.ts";
 import { AgentRepo, HumanRepo } from "./people.ts";
@@ -65,6 +66,7 @@ export interface Repos {
   changeLog: ChangeLogRepo;
   device: DeviceRepo;
   source: SourceRepo;
+  sourceCandidate: SourceCandidateRepo;
   costLedger: CostLedgerRepo;
   secretRef: SecretRefRepo;
   extension: ExtensionRepo;
@@ -98,6 +100,7 @@ export function createRepos(db: Database, clock: Clock): Repos {
     changeLog: new ChangeLogRepo(db, clock),
     device: new DeviceRepo(db, clock),
     source: new SourceRepo(db, clock),
+    sourceCandidate: new SourceCandidateRepo(db, clock),
     costLedger: new CostLedgerRepo(db, clock),
     secretRef: new SecretRefRepo(db, clock),
     extension: new ExtensionRepo(db, clock),

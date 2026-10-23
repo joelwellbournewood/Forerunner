@@ -1812,6 +1812,52 @@ export function defineStateSuite(target: SuiteTarget): void {
           scan_result: { repos: ["a", "b"] },
           status: "connected",
         });
+        // Source discovery (spec A.4): a chosen repository is a source kind of its own, and
+        // the candidates a scan finds are rows keyed by their normalised locator per source.
+        const chosen = await store.source.insert({
+          kind: "github_repo",
+          display_name: "acme/alpha",
+          locator: "acme/alpha",
+          credential_ref: "secret:github_token",
+        });
+        expect((await store.source.byLocator("github_repo", "acme/alpha"))?.id).toBe(chosen.id);
+        const cand = await store.sourceCandidate.insert({
+          source_id: src.id,
+          kind: "repo",
+          name: "alpha",
+          locator: "acme/alpha",
+          key: "github:acme/alpha",
+          proposed_name: "alpha",
+          last_seen_at: clock.nowIso(),
+        });
+        expect(cand).toMatchObject({
+          status: "proposed",
+          existing_install: false,
+          install_marker: null,
+          project_id: null,
+          is_git: true,
+          details: {},
+        });
+        expect((await store.sourceCandidate.byKey(src.id, "github:acme/alpha"))?.id).toBe(cand.id);
+        expect((await store.sourceCandidate.forSource(src.id)).map((c) => c.id)).toEqual([cand.id]);
+        await expect(
+          store.sourceCandidate.insert({
+            source_id: src.id,
+            kind: "repo",
+            name: "alpha",
+            locator: "acme/alpha",
+            key: "github:acme/alpha",
+            proposed_name: "alpha",
+            last_seen_at: clock.nowIso(),
+          }),
+        ).rejects.toThrow();
+        const accepted = await store.sourceCandidate.patch(cand.id, {
+          status: "accepted",
+          project_id: s.project.id,
+        });
+        expect(accepted.project_id).toBe(s.project.id);
+        expect(await store.sourceCandidate.deleteForSource(src.id)).toBe(1);
+        expect(await store.sourceCandidate.forSource(src.id)).toEqual([]);
 
         const m2 = await store.milestone.insert({
           project_id: s.project.id,

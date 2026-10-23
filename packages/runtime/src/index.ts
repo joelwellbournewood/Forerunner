@@ -47,6 +47,8 @@ export * from "./session/index.ts";
 export * from "./setup/install-record.ts";
 export * from "./setup/validators.ts";
 export * from "./setup/wizard.ts";
+/** Source discovery (spec A.4): connected sources, scans, proposals, the routes and the CLI. */
+export * from "./sources/index.ts";
 /** Signed updates (spec M); namespaced because its catalog port shares names with the extensions catalog. */
 export * as updates from "./update/index.ts";
 export * from "./voice/index.ts";

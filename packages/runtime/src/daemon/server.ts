@@ -20,6 +20,7 @@ import { createNotificationRoutes } from "../notifications/routes.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { applyProjectPlan, defaultRiskTier, ProjectPlanBody } from "../session/project-plan.ts";
 import { defaultPeers } from "../session/runner.ts";
+import { createSourcesRoutes } from "../sources/routes.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
 import type { SchemaSyncStatus } from "../update/sync.ts";
 import type { VoiceBridgeEntry } from "../voice/bridge.ts";
@@ -80,6 +81,7 @@ import {
 } from "./api-types.ts";
 import { createAuditRoutes } from "./audit-export.ts";
 import type { RuntimeApp } from "./compose.ts";
+import { createProjectRecord } from "./create-project.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
 import { CLIENT_HEADER, isShellStream } from "./shells.ts";
@@ -423,6 +425,12 @@ export function createDaemonApp(
       actor: () => ({ humanId: rt.human.id }),
     }),
   );
+  // Source discovery (spec A.4, ADR 0056): connected sources, scans, proposals and accepts;
+  // the daemon's human is the actor and another human's source answers 403 forbidden.
+  app.route(
+    "/",
+    createSourcesRoutes({ discovery: rt.sources, actor: () => ({ humanId: rt.human.id }) }),
+  );
   // Audit log export (spec S.9, ADR 0050): `GET /audit/export` streams the install's human's
   // rows and their agents' in pages, as JSON lines or CSV, with the summaries as stored.
   app.route(
@@ -469,32 +477,8 @@ export function createDaemonApp(
 
   app.post("/projects", async (c) => {
     const body = await parse(c, CreateProjectBody);
-    const p = await rt.store.project.insert({
-      name: body.name,
-      goal: body.goal,
-      repos: body.repos ?? [],
-      stage: "planning",
-      status: "active",
-      budget_usd_micro: body.budgetUsdMicro ?? 0,
-      autonomy_level: body.autonomyLevel ?? 2,
-      summary_cache: body.brief ? { brief: body.brief } : {},
-      data_assets: [],
-      settings: { members: [rt.agent.id] },
-      small_project_mode: false,
-      active: true,
-      author_human: rt.human.id,
-    });
-    if (body.brief) {
-      await rt.store.queue.enqueue({
-        project_id: p.id,
-        human_id: rt.human.id,
-        kind: "note",
-        text: `Project brief:\n${body.brief}`,
-        priority: 5,
-        status: "queued",
-        author_human: rt.human.id,
-      });
-    }
+    // The same path an accepted source proposal takes (create-project.ts, spec A.4).
+    const p = await createProjectRecord(rt, body);
     // The standard doc set (spec G.5): a pull request on the linked repository, or the
     // project's data dir. The gap is recorded on the project; the creation never fails on it.
     // A creation that asks for the intake (spec A.2) leaves the set to the intake's approval,
@@ -508,8 +492,6 @@ export function createDaemonApp(
         logger.warn("project docs not scaffolded", { projectId: p.id, error: errorMessage(e) });
       }
     }
-    rt.events.emit("project", { id: p.id });
-    rt.conversation?.setActiveProject(rt.human.id, p.id);
     // PM intake (spec A.2): asked for, the proposal is drafted in the background and lands in
     // the inbox; the card answers now. A failure is recorded on the project (the status route).
     if (body.intake === true) void rt.intake.enqueue(p.id).catch(() => undefined);

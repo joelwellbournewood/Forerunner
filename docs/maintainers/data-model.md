@@ -770,7 +770,7 @@ Carries the common columns (see Invariants).
 
 | Column | Type | Nullable | Default | References | Description |
 | --- | --- | --- | --- | --- | --- |
-| `kind` | text (`github_org`, `github_user`, `gitlab`, `git_remote`, `local_folder`) | no |  |  | Source kind. |
+| `kind` | text (`github_org`, `github_user`, `github_repo`, `gitlab`, `git_remote`, `local_folder`) | no |  |  | Source kind. |
 | `display_name` | text | no |  |  | Display name. |
 | `locator` | text | no |  |  | URL, org/user name or folder path. |
 | `credential_ref` | text | yes |  |  | Secret reference name used to access it. |
@@ -781,6 +781,34 @@ Carries the common columns (see Invariants).
 Indexes:
 
 - unique on (`kind`, `locator`)
+
+### source_candidate
+
+What a scan of a source found: one proposed project per repository or folder, with duplicate and existing-install detection (spec A.4).
+
+Carries the common columns (see Invariants).
+
+| Column | Type | Nullable | Default | References | Description |
+| --- | --- | --- | --- | --- | --- |
+| `source_id` | text | no |  | `source.id` | The source the scan belongs to. |
+| `kind` | text (`repo`, `folder`) | no |  |  | Repository on a git host, or a folder. |
+| `name` | text | no |  |  | Repository or folder name. |
+| `locator` | text | no |  |  | What a project's repos entry carries: owner/name, or the absolute folder path. |
+| `key` | text | no |  |  | Normalised duplicate key (github:owner/name lower-cased, folder:<path>); unique per source. |
+| `proposed_name` | text | no |  |  | Project name a scan proposes. |
+| `status` | text (`proposed`, `accepted`, `duplicate`, `gone`) | no | `"proposed"` |  | proposed, accepted, duplicate or gone. |
+| `existing_install` | bool | no | `false` |  | A Forerunner install was detected in it. |
+| `install_marker` | text | yes |  |  | What marked the install: the .forerunner/project.json file or the install record. |
+| `project_id` | text | yes |  | `project.id` | The project this candidate became, or the one it duplicates. |
+| `is_git` | bool | no | `true` |  | A git repository (always for a host repo; a folder with .git). |
+| `details` | json | no | `{}` |  | Host facts: url, default branch, private, duplicate_of. |
+| `last_seen_at` | timestamp | no |  |  | Last scan that found it. |
+
+Indexes:
+
+- unique on (`source_id`, `key`)
+- index on (`key`)
+- index on (`status`)
 
 ### task
 

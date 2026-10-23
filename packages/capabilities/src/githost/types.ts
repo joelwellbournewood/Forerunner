@@ -161,7 +161,11 @@ export interface GitHost {
   readonly baseUrl: string;
   whoAmI(): Promise<{ login: string }>;
   getRepo(repo: RepoRef): Promise<RepoInfo>;
-  listRepos(opts?: { org?: string }): Promise<RepoInfo[]>;
+  /**
+   * Repositories of an organisation (`org`), the public ones of a user (`user`) or every one
+   * the token is affiliated with (neither); the adapter follows the host's pagination.
+   */
+  listRepos(opts?: { org?: string; user?: string }): Promise<RepoInfo[]>;
   createRepo(opts: {
     owner?: string;
     name: string;

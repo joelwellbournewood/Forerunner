@@ -16,6 +16,8 @@ import type {
   ReleaseRow,
   ReleaseStatus,
   SecretRefRow,
+  SourceCandidateRow,
+  SourceCandidateStatus,
   SourceKind,
   SourceRow,
 } from "../types.ts";
@@ -39,6 +41,39 @@ export class SourceRepo extends Repository<SourceRow> {
     now: string = this.clock.nowIso(),
   ): Promise<SourceRow> {
     return this.patch(id, { last_scan: now, scan_result: scanResult, status });
+  }
+}
+
+/** Candidates a scan found (spec A.4): keyed by their normalised locator per source. */
+export class SourceCandidateRepo extends Repository<SourceCandidateRow> {
+  constructor(db: Database, clock: Clock) {
+    super(db, ENTITIES.source_candidate as EntityDef, clock);
+  }
+
+  forSource(sourceId: string, status?: SourceCandidateStatus): Promise<SourceCandidateRow[]> {
+    return this.list(
+      { source_id: sourceId, ...(status ? { status } : {}) },
+      { orderBy: [{ column: "name" }, { column: "created_at" }] },
+    );
+  }
+
+  async byKey(sourceId: string, key: string): Promise<SourceCandidateRow | undefined> {
+    const [row] = await this.list({ source_id: sourceId, key }, { limit: 1 });
+    return row;
+  }
+
+  /** Every source's candidates with this key (the duplicate check across sources). */
+  withKey(key: string): Promise<SourceCandidateRow[]> {
+    return this.list({ key }, { orderBy: "created_at" });
+  }
+
+  /** Removes a source's candidates; returns how many went. Projects are never touched. */
+  async deleteForSource(sourceId: string): Promise<number> {
+    const rows = await this.db.query<{ n: unknown }>(
+      `DELETE FROM ${this.qt} WHERE "source_id" = ? RETURNING 1 AS n`,
+      [sourceId],
+    );
+    return rows.length;
   }
 }
 

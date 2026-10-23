@@ -23,6 +23,7 @@ import {
   type SetupConfig,
   type SetupReport,
 } from "../setup/wizard.ts";
+import { registerSourcesCli } from "../sources/cli.ts";
 import { registerUpdateCli } from "../update/cli.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 import { registerAuditCli } from "./audit.ts";
@@ -352,6 +353,16 @@ export function buildProgram(deps: CliDeps = {}): Command {
     open: async () => {
       const rt = await openRuntime({ startServices: false });
       return { store: rt.store, mirror: rt.mirror };
+    },
+    out,
+  });
+
+  // Source discovery (spec A.4): connect, scan, accept and remove sources through the same
+  // SourceDiscovery as the daemon's /sources routes; a one-shot.
+  registerSourcesCli(program, {
+    open: async () => {
+      const rt = await openRuntime({ startServices: false });
+      return { sources: rt.sources, human: rt.human };
     },
     out,
   });
