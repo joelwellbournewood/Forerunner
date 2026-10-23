@@ -1,13 +1,15 @@
 import { ForerunnerError } from "@forerunner/platform";
+// Deep imports (browser-safe, no runtime index): the runtime package imports this package, so
+// reading the schemas through `@forerunner/runtime` would meet a half-initialised module.
 import {
   AGENT_SETTING_MODES,
   AgentModelConfigSchema,
   type AgentSettingMode,
-  NAME_RE,
   RUN_SETTING_FIELDS,
   type RunSettingField,
   RunSettingsOverrideSchema,
-} from "@forerunner/runtime";
+} from "@forerunner/runtime/models/run-settings";
+import { NAME_RE } from "@forerunner/runtime/registry/types";
 import type { AgentRow, JsonObject, JsonValue } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
