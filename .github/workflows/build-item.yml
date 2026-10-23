@@ -1,0 +1,151 @@
+name: Build item
+
+# One bounded build, review or fix of a Forerunner item on a hosted runner, billed to the
+# repository's Anthropic API key instead of a Claude Code plan (docs/status/PROGRESS.md,
+# "Where to pick up"). The orchestrating session dispatches it with the item's brief as the
+# prompt; the run works on branch `wave/<item>` (created from the release branch when it does
+# not exist yet) and pushes that branch when it ends. Nothing here touches the release branch.
+#
+# Secrets and variables (repository settings): ANTHROPIC_API_KEY (secret), ANTHROPIC_WORKSPACE_ID
+# (variable; a user-scoped key needs the workspace on every request).
+
+on:
+  workflow_dispatch:
+    inputs:
+      item:
+        description: "Item id; the run works on branch wave/<item>"
+        required: true
+        type: string
+      stage:
+        description: "What this run does"
+        required: true
+        default: build
+        type: choice
+        options: [build, review, fix]
+      prompt:
+        description: "The full instructions for this stage (the item brief, the rules, the report shape)"
+        required: true
+        type: string
+      base:
+        description: "Branch a new wave/<item> branch starts from"
+        required: false
+        default: ccr-4d8a843c-1k9syk
+        type: string
+      model:
+        description: "Model id for the run"
+        required: false
+        default: claude-opus-5-5
+        type: string
+      budget_usd:
+        description: "Spend cap for the run (USD, client-side estimate)"
+        required: false
+        default: "12"
+        type: string
+      max_turns:
+        description: "Turn cap for the run"
+        required: false
+        default: "400"
+        type: string
+      rust:
+        description: "Install the Tauri Linux libraries and the Rust toolchain (items that touch apps/desktop/src-tauri)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: build-item-${{ inputs.item }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    name: ${{ inputs.stage }} ${{ inputs.item }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.base }}
+      - name: Check out the item branch (continue it when it exists, else start it from the base)
+        run: |
+          git config user.name "Claude Code (API build)"
+          git config user.email "noreply@anthropic.com"
+          git fetch origin
+          if git show-ref --verify --quiet "refs/remotes/origin/wave/${{ inputs.item }}"; then
+            git checkout -B "wave/${{ inputs.item }}" "origin/wave/${{ inputs.item }}"
+          else
+            git checkout -B "wave/${{ inputs.item }}" "origin/${{ inputs.base }}"
+          fi
+          echo "branch wave/${{ inputs.item }} at $(git rev-parse --short HEAD); base ${{ inputs.base }} at $(git rev-parse --short origin/${{ inputs.base }})"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Tauri Linux libraries and Rust (only when asked)
+        if: ${{ inputs.rust }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libasound2-dev libxdo-dev
+      - uses: dtolnay/rust-toolchain@stable
+        if: ${{ inputs.rust }}
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ inputs.rust }}
+        with:
+          workspaces: apps/desktop/src-tauri
+      - name: Claude Code (${{ inputs.stage }})
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          settings: |
+            {
+              "env": {
+                "ANTHROPIC_CUSTOM_HEADERS": "anthropic-workspace-id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}",
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1"
+              }
+            }
+          claude_args: |
+            --model ${{ inputs.model }}
+            --max-turns ${{ inputs.max_turns }}
+            --max-budget-usd ${{ inputs.budget_usd }}
+            --effort high
+            --allowedTools "Edit,Write,Read,Glob,Grep,MultiEdit,Bash(pnpm *),Bash(node *),Bash(npx *),Bash(git *),Bash(cargo *),Bash(ls *),Bash(ls),Bash(cat *),Bash(sed *),Bash(grep *),Bash(rg *),Bash(find *),Bash(wc *),Bash(mkdir *),Bash(cp *),Bash(mv *),Bash(rm *),Bash(diff *),Bash(sort *),Bash(uniq *),Bash(cut *),Bash(tr *),Bash(head *),Bash(tail *),Bash(echo *),Bash(printf *),Bash(test *),Bash(true),Bash(pwd),Bash(env),Bash(which *),Bash(jq *),Bash(python3 *),Bash(timeout *),Bash(sha256sum *),Bash(touch *)"
+          prompt: |
+            You are running inside a GitHub Actions checkout of the Forerunner repository (the
+            working rules are in AGENTS.md, which is in your context). The current directory is a
+            clone of branch `wave/${{ inputs.item }}`; dependencies are installed. Stage: ${{ inputs.stage }}.
+            The branch started from `${{ inputs.base }}`; if the branch already carries commits or a
+            "wip:" snapshot from an earlier attempt, read them (`git log origin/${{ inputs.base }}..HEAD`,
+            `git show --stat HEAD`) and continue from there. If `git merge-base --is-ancestor origin/${{ inputs.base }} HEAD`
+            fails, first run `git merge --no-edit origin/${{ inputs.base }}` and resolve the conflicts
+            (both sides are additive: keep both; run `pnpm typecheck` before any formatter).
+            Commit on this branch as you go ("area: what changed" plus a body saying why; end the body
+            with the two trailer lines exactly: "Co-Authored-By: Claude Code (API build) <noreply@anthropic.com>"
+            and "Claude-Build: github-actions build-item ${{ inputs.item }} ${{ inputs.stage }}").
+            Do not push (the workflow pushes the branch when you finish), do not rebase, never touch
+            another branch, never edit .github/workflows. The machine is a 4-core runner: run the
+            targeted suites, then the whole test directory of each package you touched.
+
+            ${{ inputs.prompt }}
+      - name: Push the item branch
+        if: ${{ always() }}
+        run: |
+          git status --short | head -20
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -q -m "wip: files left uncommitted at the end of the ${{ inputs.stage }} run (not verified)" || true
+          fi
+          git push -u origin "wave/${{ inputs.item }}"
+          echo "pushed wave/${{ inputs.item }} at $(git rev-parse --short HEAD)"
