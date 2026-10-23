@@ -4,9 +4,13 @@ Item: Known issues closed: a replayed phone plan envelope runs once; the executo
 rung reads the project's critic ceiling. Requirements R.4, V.3 (scenario 9 todo), H.4 (critic
 ceiling), V.4 (known issues). ADR: none (no decision was made: the code paths already existed).
 Branch `wave/w3-misc-replay-ceiling`, starting commit c786f82 (base `ccr-4d8a843c-1k9syk` at
-e2bfb1e plus two commits from an earlier attempt on this branch, kept).
+82a6295 plus two commits from an earlier attempt on this branch, kept).
 
 ## Build report
+
+(Commit ids corrected at review, finding 5: the report first named ids from a local
+history that was never pushed; each is replaced by the commit on the branch with the same
+subject, and the base by the real merge base 82a6295.)
 
 ### What was found
 
@@ -50,7 +54,7 @@ passing test").
   `packages/runtime/test/remote-wiring.test.ts`: the same haiku cap through the composed
   daemon. (Earlier attempt's commit c786f82, kept; this attempt fixed its type error:
   `Record<string, unknown>` is not a `JsonObject`, so `pnpm typecheck` failed on it, commit
-  b57f8cb.)
+  ceefcd2.)
 - Docs: `docs/maintainers/testing.md` (both Known issues bullets replaced by "Closed" records;
   scenario 9's table row and R.4 coverage name the replay case), `docs/maintainers/runtime.md`
   (the ceiling read per `execute`, the haiku and per-run tests), `docs/maintainers/state-service.md`
@@ -78,10 +82,10 @@ Unit tests of the route and watcher (already present): `services/state-api/test/
 
 - `pnpm install --frozen-lockfile`: done.
 - `pnpm typecheck`: first run failed (`executor-ceiling.test.ts(103,44) TS2322`, from the earlier
-  attempt); after b57f8cb exit 0.
+  attempt); after ceefcd2 exit 0.
 - `pnpm lint`: exit 0 (59 warnings, none in touched files; 0 errors).
 - `node scripts/docs-check.mjs --base $(cat /tmp/start-sha)`: `docs-check: ok (6 files).`;
-  `--base e2bfb1e`: `docs-check: ok (9 files).`
+  `--base 82a6295`: `docs-check: ok (9 files).`
 - `pnpm exec vitest run --project unit packages/runtime/test`: 114 files passed, 986 tests passed,
   1 skipped.
 - `pnpm exec vitest run --project unit services/state-api/test`: 10 files, 131 tests passed.
@@ -103,21 +107,21 @@ The exported series (`git log --oneline c786f82..HEAD`), every commit in the for
 `managed-agent w3-misc-replay-ceiling build`):
 
 ```
-<report commit> docs: build report ... (this file, amended with the apply check)
-5d2270e e2e, runtime: scenario 9 replays the plan envelope; the ceiling tests pin haiku and the per-run read
-478d320 e2e, runtime: take back the earlier attempt's tests to re-land them under this build's trailer
-604918f docs: build report for w3-misc-replay-ceiling
-b57f8cb runtime: the ceiling test types the project settings as JsonObject
-8a61e40 docs: requirements, blockers and progress record the replay and ceiling item
-528d230 docs: the replay and ceiling Known issues are closed; maintainer docs name the tests
+c6336f8 docs: the build report shows the apply check and the commit trailers
+d16edf7 e2e, runtime: scenario 9 replays the plan envelope; the ceiling tests pin haiku and the per-run read
+cfa0237 e2e, runtime: take back the earlier attempt's tests to re-land them under this build's trailer
+79d6eba docs: build report for w3-misc-replay-ceiling
+ceefcd2 runtime: the ceiling test types the project settings as JsonObject
+8e8645b docs: requirements, blockers and progress record the replay and ceiling item
+ae53f03 docs: the replay and ceiling Known issues are closed; maintainer docs name the tests
 ```
 
 The earlier attempt's two commits (14594ad, c786f82) sit below the starting commit and carry
 another build's trailer (`github-actions build-item`). The branch history cannot be rewritten
-(no rebase, the starting commit is on origin), so 478d320 takes their test changes back and
-5d2270e re-applies them unchanged (plus b57f8cb's typing fix): the scenario 9 replay case and
+(no rebase, the starting commit is on origin), so cfa0237 takes their test changes back and
+d16edf7 re-applies them unchanged (plus ceefcd2's typing fix): the scenario 9 replay case and
 the ceiling tests now enter the repository through a commit carrying this build's trailer. The
-tree after 5d2270e is byte-identical to the tree after 604918f (`git diff 604918f 5d2270e`
+tree after d16edf7 is byte-identical to the tree after 79d6eba (`git diff 79d6eba d16edf7`
 prints nothing); after it, `executor-ceiling.test.ts` + `remote-wiring.test.ts` 2 files, 11
 tests passed, scenario 9 1 file, 2 tests passed.
 
@@ -134,7 +138,7 @@ $ grep -c '^From [0-9a-f]\{40\}' /tmp/pre.patch
 6
 ```
 
-That run covered the series up to 5d2270e. The final export
+That run covered the series up to d16edf7. The final export
 (`git format-patch --stdout c786f82..HEAD > /mnt/session/outputs/w3-misc-replay-ceiling.patch`,
 7 commits with this report's commit) is checked the same way after this commit; its output is
 appended to the copy of this report in `/mnt/session/outputs/w3-misc-replay-ceiling-report.md`.
