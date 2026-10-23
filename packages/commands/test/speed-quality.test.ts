@@ -82,7 +82,16 @@ describe("speed-versus-quality slider (D.16)", () => {
   it("refuses a position past one step and writes nothing", async () => {
     const w = await world();
     const r = await w.executor.execute({ ...set(2), ctx: w.ctx() });
-    expect(r.status).toBe("refused");
+    expect(r).toMatchObject({
+      status: "refused",
+      code: "validation",
+      reason: "speed_quality_offset: Too big: expected number to be <=1",
+    });
+    // The other direction says so (the UI's fake daemon repeats these words).
+    expect(await w.executor.execute({ ...set(-2), ctx: w.ctx() })).toMatchObject({
+      status: "refused",
+      reason: "speed_quality_offset: Too small: expected number to be >=-1",
+    });
     expect((await w.store.project.mustGet(w.game.id)).settings.speed_quality_offset).toBe(
       undefined,
     );

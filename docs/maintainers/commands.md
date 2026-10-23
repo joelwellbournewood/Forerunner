@@ -313,7 +313,8 @@ default effort one step higher (slower, more thorough) ...". The runtime reads t
 the project row per run, turn and planning session (`runtime.md`, "The speed-versus-quality
 slider"); the Settings screen renders the key as a slider (`apps.md`). `test/speed-quality.test.ts`
 covers the three positions, the card and the sentence in both directions, the change log rows,
-undo and a refused +2.
+undo, and a refused +2 and -2 with the validation reason each way (the UI's fake daemon repeats
+those words).
 
 **Change the risk table.** `ConfirmationPolicy.decide` and the risk functions of the commands;
 `confirmation.test.ts` holds the matrix.

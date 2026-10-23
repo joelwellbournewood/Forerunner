@@ -1897,8 +1897,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         // does (`SPEED_QUALITY_EFFECT` in @forerunner/commands).
         const value = params.value;
         if (!project) return refuse("the project must exist");
-        if (value !== -1 && value !== 0 && value !== 1)
-          return refuse("speed_quality_offset: Too big: expected number to be <=1");
+        if (value !== -1 && value !== 0 && value !== 1) {
+          // The daemon's words: `settings.set` joins the zod issues of
+          // `z.number().int().min(-1).max(1)` after the key.
+          const issue =
+            typeof value !== "number"
+              ? `Invalid input: expected number, received ${value === null ? "null" : typeof value}`
+              : !Number.isInteger(value)
+                ? "Invalid input: expected int, received number"
+                : value < -1
+                  ? "Too small: expected number to be >=-1"
+                  : "Too big: expected number to be <=1";
+          return refuse(`speed_quality_offset: ${issue}`);
+        }
         const from = state.speedQuality[project.id];
         const effect = SPEED_QUALITY_EFFECT[value];
         const what = `the speed-versus-quality slider for ${project.name}`;

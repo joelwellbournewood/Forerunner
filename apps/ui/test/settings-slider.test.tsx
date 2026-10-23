@@ -1,13 +1,15 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { createClient } from "../src/api/client.ts";
 import {
   commandForSetting,
   SPEED_QUALITY_POSITIONS,
   speedQualityLabel,
   speedQualityPosition,
 } from "../src/pages/SettingsPage.tsx";
-import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
+import { createFakeDaemon } from "./fake-daemon.ts";
+import { createHarness, fetchFromApp, postedCalls, renderApp, testConfig } from "./helpers.tsx";
 
 /**
  * The speed-versus-quality slider in Settings (spec D.16): the project's
@@ -143,5 +145,33 @@ describe("the speed-versus-quality slider", () => {
       "Undone: Set the speed-versus-quality slider for Atlas from 1 to -1",
     );
     expect(harness.daemon.state.speedQuality.proj_atlas).toBe(1);
+  });
+
+  it("the fake refuses an off-scale position in the daemon's words, each way, and writes nothing", async () => {
+    const daemon = createFakeDaemon({ token: "tok" });
+    const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
+    const send = (value: unknown) =>
+      client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "speed_quality_offset", value, project: "proj_atlas" },
+          },
+        ],
+        wordsUsed: `slider to ${String(value)}`,
+        source: "ui",
+        projectId: "proj_atlas",
+      });
+    // The messages `settings.set` in @forerunner/commands gives for the same values.
+    const cases: [unknown, string][] = [
+      [-2, "speed_quality_offset: Too small: expected number to be >=-1"],
+      [2, "speed_quality_offset: Too big: expected number to be <=1"],
+      [0.5, "speed_quality_offset: Invalid input: expected int, received number"],
+      ["1", "speed_quality_offset: Invalid input: expected number, received string"],
+    ];
+    for (const [value, reason] of cases) {
+      expect(await send(value)).toMatchObject({ status: "refused", reason, code: "validation" });
+    }
+    expect(daemon.state.speedQuality.proj_atlas).toBeUndefined();
   });
 });

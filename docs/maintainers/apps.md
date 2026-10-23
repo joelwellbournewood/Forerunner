@@ -451,7 +451,8 @@ with nothing changed, cancel and refusal; `client`: the literal `desktop` is thi
 behind `settings.set`, out-of-range and fractional values refused, the row read by position,
 a move by the range input up to quality and by the stop name down to speed, the posted body
 with `source: "ui"` and the position in the words used, the effect sentence both ways in the
-result and the fake's change log, undo back to the previous position),
+result and the fake's change log, undo back to the previous position; the fake refusing -2,
++2, 0.5 and "1" in the daemon's words with nothing written),
 `sources` (spec A.4: counts and kind labels; the fixture source with its reference and counts,
 its candidates with statuses, the install mark and the duplicate's project link, Create
 project on a proposal posting to the accept route with the project landing in the store and
