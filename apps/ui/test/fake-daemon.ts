@@ -129,6 +129,8 @@ export interface RecordedCall {
 }
 
 export interface FakeDaemonOptions {
+  /** The daemon has no usable voice provider: a speak start answers 503 with the reason. */
+  voiceUnavailable?: boolean;
   /** Bearer token the fake expects; random when omitted. */
   token?: string;
   /** Spacing of the scripted events after POST /sessions; 150 ms by default. */
@@ -624,6 +626,75 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       },
     );
   });
+  // Read aloud (spec A.6, L.6): the daemon reads a summary through its voice provider. The
+  // fake answers `speaking` on the start and `done` on the next read, keeps the sentences
+  // (the UI shows them) and records the cancel.
+  const utterances = new Map<string, Record<string, unknown>>();
+  const startSpeak = (c: Context, subject: Record<string, unknown>, text: string): Response => {
+    const id = `speak_${utterances.size + 1}`;
+    const view = {
+      id,
+      subject,
+      source: "ui",
+      state: "speaking",
+      text,
+      sentences: text.split(/(?<=[.!?])\s+/).filter(Boolean),
+      heard: "",
+      unspokenText: null,
+      audioChunks: 0,
+      audioStored: false,
+      firstAudioMs: null,
+      provider: { name: "fake-tts", kind: "fake", policy: "fake", reason: "fake" },
+      conversationSessionId: "sess_conv",
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      error: null,
+      lastSeq: 0,
+    };
+    utterances.set(id, view);
+    return c.json(view, 201);
+  };
+  app.post("/projects/:id/speak", (c) => {
+    const id = c.req.param("id");
+    const p = state.projects.find((x) => x.id === id);
+    if (!p) return errorBody(c, 404, "not_found", "no such project");
+    if (options.voiceUnavailable)
+      return c.json({ code: "unavailable", message: "no TTS provider available" }, 503);
+    const text = SUMMARIES[id]?.spoken ?? `${p.name} has not run yet.`;
+    return startSpeak(c, { kind: "project", id, name: p.name }, text);
+  });
+  app.post("/sessions/:id/speak", (c) => {
+    const id = c.req.param("id");
+    const s = state.sessions.find((x) => x.id === id);
+    if (!s) return errorBody(c, 404, "not_found", "no such session");
+    if (!s.summary) return errorBody(c, 409, "conflict", "the session has no summary yet");
+    return startSpeak(c, { kind: "session", id, projectId: s.projectId }, s.summary);
+  });
+  // Still speaking for the first two reads (the UI polls once a second where it has no
+  // EventSource), then done with everything heard.
+  const reads = new Map<string, number>();
+  app.get("/speak/:id", (c) => {
+    const u = utterances.get(c.req.param("id"));
+    if (!u) return errorBody(c, 404, "not_found", "no such utterance");
+    const n = (reads.get(String(u.id)) ?? 0) + 1;
+    reads.set(String(u.id), n);
+    if (u.state !== "speaking" || n <= 2) return c.json(u);
+    const ended = { ...u, state: "done", heard: u.text, endedAt: new Date().toISOString() };
+    utterances.set(String(u.id), ended);
+    return c.json(ended);
+  });
+  app.post("/speak/:id/cancel", (c) => {
+    const u = utterances.get(c.req.param("id"));
+    if (!u) return errorBody(c, 404, "not_found", "no such utterance");
+    const cancelled = { ...u, state: "cancelled", endedAt: new Date().toISOString() };
+    utterances.set(String(u.id), cancelled);
+    return c.json(cancelled);
+  });
+  app.get("/speak/:id/events", (c) =>
+    utterances.has(c.req.param("id"))
+      ? c.json([])
+      : errorBody(c, 404, "not_found", "no such utterance"),
+  );
   app.get("/projects/:id/tasks", (c) => {
     const id = c.req.param("id");
     const status = c.req.query("status");

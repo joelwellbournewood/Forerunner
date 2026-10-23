@@ -15,12 +15,40 @@ describe("Project page", () => {
     expect(screen.getByTestId("project-tabs")).toHaveTextContent(
       "SummaryPlanTasksDocsReviewsCostsDataChat",
     );
-    // jsdom has no speech synthesis: the button says why instead of failing silently.
-    expect(screen.getByTestId("read-aloud")).toBeDisabled();
-    expect(screen.getByTestId("read-aloud")).toHaveAttribute(
-      "title",
-      expect.stringMatching(/not available/),
-    );
+    expect(screen.getByTestId("read-aloud")).toBeEnabled();
+    expect(screen.getByTestId("read-aloud")).toHaveTextContent("Read aloud");
+  });
+
+  it("Read aloud asks the daemon to speak the summary, shows the text being read, and Stop cancels it", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("read-aloud"));
+    // The daemon's voice provider reads it (spec A.6): the button posts to the speak route
+    // and the echoed text is shown while it reads.
+    const text = await screen.findByTestId("read-aloud-text");
+    expect(text).toHaveTextContent("Atlas is in the build stage.");
+    expect(text).toHaveTextContent("One question waits for you.");
+    expect(postedCalls(harness, "/projects/proj_atlas/speak")).toHaveLength(1);
+    expect(screen.getByTestId("read-aloud")).toHaveTextContent("Stop reading");
+    expect(screen.getByTestId("read-aloud")).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByTestId("read-aloud"));
+    await waitFor(() => expect(postedCalls(harness, "/speak/speak_1/cancel")).toHaveLength(1));
+    expect(screen.queryByTestId("read-aloud-text")).not.toBeInTheDocument();
+    expect(screen.getByTestId("read-aloud")).toHaveTextContent("Read aloud");
+  });
+
+  it("without a voice provider the button says why (jsdom has no browser speech either)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ voiceUnavailable: true });
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("read-aloud"));
+    const notice = await screen.findByTestId("read-aloud-notice");
+    expect(notice).toHaveTextContent("Voice unavailable: no TTS provider available");
+    expect(screen.queryByTestId("read-aloud-text")).not.toBeInTheDocument();
+    expect(screen.getByTestId("read-aloud")).toHaveTextContent("Read aloud");
   });
 
   it("derives milestones from the card and the tasks (the fallback without a milestones route)", () => {
