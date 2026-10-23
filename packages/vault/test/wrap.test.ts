@@ -3,16 +3,16 @@ import { isForerunnerError } from "@forerunner/platform";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MemoryVault } from "../src/memory.ts";
 import {
-  INSTALL_WRAP_KEY_NAME,
   ensureInstallWrapKey,
   generateWrapKeyPair,
+  INSTALL_WRAP_KEY_NAME,
   isWrappedSecret,
   parseWrappedSecret,
+  unwrapSecret,
   valueEncodings,
   WRAP_PROTOCOL_VERSION,
   type WrapBinding,
   wrapSecret,
-  unwrapSecret,
 } from "../src/wrap.ts";
 import { captureOutput, caught, freshValue, stringify } from "./helpers.ts";
 

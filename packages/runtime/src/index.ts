@@ -36,14 +36,14 @@ export * from "./models/watch-cli.ts";
 export * from "./models/watch-routes.ts";
 export * from "./notifications/index.ts";
 export * from "./provider/anthropic.ts";
-/** Shared secrets (spec S.13, ADR 0065): grants, the resolving vault adapter, the owner-side proposal. */
-export * from "./secrets/index.ts";
 export * from "./provider/registry.ts";
 export * from "./provider/types.ts";
 export * from "./registry/index.ts";
 /** Remote commands for the PC and the desktop presence heartbeat (spec R.4, R.8; ADR 0041). */
 export * from "./remote/index.ts";
 export * from "./sandbox/index.ts";
+/** Shared secrets (spec S.13, ADR 0065): grants, the resolving vault adapter, the owner-side proposal. */
+export * from "./secrets/index.ts";
 export * from "./session/index.ts";
 export * from "./setup/install-record.ts";
 export * from "./setup/validators.ts";
