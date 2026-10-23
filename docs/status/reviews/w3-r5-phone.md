@@ -288,5 +288,5 @@ in the docs about the Upload screen and the 5 s cap do not match the code.
 | `pnpm exec vitest run --project unit services/state-api/test` | 10 files, 134 tests passed |
 | `pnpm exec vitest run --project unit apps/mobile/e2e` | 1 file, 17 tests passed |
 | `pnpm exec vitest run --project integration packages/runtime/test services/state-api/test` | 2 files, 7 tests skipped (no Postgres, no container engine) |
-| `node scripts/docs-check.mjs --base 5eee27a` | `docs-check: ok (18 files)` |
+| `node scripts/docs-check.mjs --base 5eee27a` | `docs-check: ok (19 files)` |
 | `pnpm check` | exit 0 (270 files; 2685 passed, 4 skipped, 1 todo; link-check ok; secret scan clean; its docs-check skips without `origin/main`) |
