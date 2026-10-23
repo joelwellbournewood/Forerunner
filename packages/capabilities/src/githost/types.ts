@@ -47,6 +47,16 @@ export interface CommentInfo {
   htmlUrl: string;
 }
 
+/** A submitted review of a pull request (its summary text, not the line comments). */
+export interface ReviewInfo {
+  id: number;
+  body: string;
+  author: string;
+  state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
+  submittedAt: string | null;
+  htmlUrl: string;
+}
+
 export interface CheckRunInfo {
   id: number;
   name: string;
@@ -193,7 +203,17 @@ export interface GitHost {
     opts?: { method?: "merge" | "squash" | "rebase"; title?: string },
   ): Promise<{ merged: boolean; sha: string | null; message: string }>;
   commentOnPullRequest(repo: RepoRef, number: number, body: string): Promise<CommentInfo>;
-  listPullRequestComments(repo: RepoRef, number: number): Promise<CommentInfo[]>;
+  /**
+   * Every conversation comment of the pull request, oldest first (the adapter follows the
+   * host's pagination). `since` (ISO-8601) keeps the comments updated at or after it.
+   */
+  listPullRequestComments(
+    repo: RepoRef,
+    number: number,
+    opts?: { since?: string },
+  ): Promise<CommentInfo[]>;
+  /** Every review of the pull request, oldest first (the adapter follows the pagination). */
+  listPullRequestReviews(repo: RepoRef, number: number): Promise<ReviewInfo[]>;
   reviewPullRequest(
     repo: RepoRef,
     number: number,

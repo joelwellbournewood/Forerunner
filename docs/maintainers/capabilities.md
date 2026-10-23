@@ -26,6 +26,17 @@ with their milestone.
   (1 to 100, default 100; `nextPageUrl` parses the header), so a source scan (spec A.4,
   `packages/runtime/src/sources`) sees an organisation whole; `github.test.ts` serves two
   pages from its stub.
+- PR feedback (spec E.1, ADR 0075): `listPullRequestComments(repo, n, { since })` walks every
+  page of the conversation comments (GitHub lists the oldest first, so a single page of 100
+  would never show a new comment on a long PR) and passes `since` (comments updated at or
+  after the instant); `listPullRequestReviews(repo, n)` lists the submitted reviews as
+  `ReviewInfo` (`id`, `author`, `state`: `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`,
+  `DISMISSED`, `PENDING`, `body`, `submittedAt`, `htmlUrl`). The runtime's
+  `GitHostWatcher` reads both, plus `listCheckRuns` on the PR head, to fire the `ci` and
+  `pr_comment` session triggers (`runtime.md` § Triggers). The fake git host honours `since`
+  on `GET /repos/:o/:r/issues/:n/comments`; `MemoryGitHost` filters by `createdAt` and
+  records reviews `reviewPullRequest` submits. `githost-feedback.test.ts` proves paging,
+  `since` and the reviews mapping against the fake host and the memory host.
 - `GitOps` (`git.ts`) runs local git with argv arrays: clone, fetch, branch, commit, rebase onto
   the base before a PR (conflicts are reported by file and the rebase aborted, leaving the tree
   clean), push with `--force-with-lease` only when asked and never on the default branch,
