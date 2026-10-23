@@ -222,6 +222,7 @@ the same thing.
    resolves left `startPairing()` pending after 2 s, with no error. The test was deleted
    afterwards. Fix: abort each call after a bounded time and report it as `unavailable`,
    with a test.
+   Resolution: fixed in 0f2d76c. Every admin call aborts after `DEVICE_SERVICE_TIMEOUT_MS` (15 s; `timeoutMs` in tests) and is reported as 503 `unavailable` "state service did not answer within … ms". A body cut off mid-read is reported the same way. Test: `devices-routes.test.ts` "gives up on a service that never answers…" (fails before the fix).
 2. **medium**: `packages/runtime/src/devices/manager.ts:117-149` (`revoke`). When a service is
    configured, a revocation fails with 503 if the service is unreachable or answers 5xx,
    even when the device row is in the daemon's store. In hybrid mode that store is the same
@@ -231,6 +232,7 @@ the same thing.
    store, a service `fetch` that throws `fetch failed`. `revoke()` rejected `unavailable`
    and the row stayed `revoked: false`. Fix: when the service cannot be reached and the row is
    in the store, revoke it in the store and say so, with a test.
+   Resolution: fixed in 0f2d76c. When the service call fails as `unavailable` and the row is in the daemon's store, the row is revoked there. The answer carries `via: "store"` and `serviceError`; the audit row and the app's note (3fa9d4f) say so. A 404 from the service itself, or a row only the service has, still fails. Tests: `devices-routes.test.ts` "revokes a lost phone in the shared store when the service is down, hung or refuses the token" and "does not touch the store when the service refuses…"; `settings-devices.test.tsx` "says so when the daemon revoked in the shared store…".
 3. **medium**: `packages/runtime/src/devices/manager.ts:117-158`. A revocation from Settings →
    Devices writes an audit row but no `change_log` row. The schema describes the change log
    as "Every change made by conversation or UI", spec Q says nothing is UI-only, and the
@@ -240,6 +242,7 @@ the same thing.
    after `revoke()` the store had `changeLog.list()` = 0 rows. Fix: the revocation records a
    `change_log` row (`device.revoke`, source `ui`, scope `global`, `irreversible`, before
    and after, the sentence), with a test.
+   Resolution: fixed in 0f2d76c. `DeviceManager.revoke` now records the same `change_log` row the registry's `device.revoke` writes: commands, before and after, scope `global`, source `ui`, `irreversible`, the same sentence, and the daemon's agent. It writes one row per actual change (none for a repeat), both through the service and through the store. Test: `devices-routes.test.ts` "writes the change log row of device.revoke…" (fails before the fix).
 4. **low**: `apps/ui/src/pages/DevicesSection.tsx:296` (`closePairing`, the only reload while
    a pairing is shown). When the phone completes the pairing, the section keeps showing the
    used QR and its countdown. The new phone appears only after the human clicks Done or
@@ -248,6 +251,7 @@ the same thing.
    called by Done, Refresh and after a revoke. The apps.md Known issues says the same. Fix:
    while a pairing is shown, poll the list; when a device paired after the start appears,
    close the panel and say it is paired, with a test.
+   Resolution: fixed in 3fa9d4f. While a code is live, the section re-reads `GET /devices` every `pollMs` (3 s). When a device it did not have at the start appears, it closes the panel with "<name> is paired and listed below". Test: `settings-devices.test.tsx` "lists the phone and closes the pairing on its own…". With the interval stubbed out, that test fails (checked: 1 failed, 10 passed).
 5. **low**: `packages/runtime/src/devices/manager.ts:112` and
    `apps/ui/src/pages/DevicesSection.tsx:87`. The QR encodes the daemon's own service URL. A
    daemon that reaches the service at a loopback address (`http://localhost:8787` from
@@ -255,13 +259,16 @@ the same thing.
    with a network error and nothing explains why. Verified by reading the code: `serviceUrl`
    is passed through unchanged, and nothing checks it. Fix: the panel warns when the
    service host is loopback (`localhost`, `127.0.0.0/8`, `::1`), with a test.
+   Resolution: fixed in 3fa9d4f. `isLoopbackUrl` detects `localhost`, `*.localhost`, `127.0.0.0/8` and `::1`. For such a URL, the pairing panel warns that a phone cannot reach it and says which variable to set. Test: `settings-devices.test.tsx` "warns that a phone cannot reach a loopback service URL in the QR".
 6. **low**: `apps/ui/test/fixtures.ts`, `docs/maintainers/apps.md`, `docs/maintainers/runtime.md`.
    `git merge-tree --write-tree HEAD origin/ccr-4d8a843c-1k9syk` reports content conflicts in
    these three files: both sides append next to the same anchors. Every other shared file
    (`client.ts`, `SettingsPage.tsx`, `fake-daemon.ts`, `server.ts`, `compose.ts`,
    `api-types.ts`) auto-merges.
+   Resolution: not a defect: these are textual conflicts in a series that must not merge the base (stage rule), and they are resolved at integration. `git merge-tree` shows that both sides add next to the same anchors (fixtures appended before `SOURCES`, doc rows and paragraphs). No semantic conflict: the base's `/me.desktopDeviceId` and this branch's `current` flag both read `rt.remote.device`, and every code file auto-merges.
 7. **low**: `docs/maintainers/state-service.md:341`. The new `desktop-devices.test.ts` row
    comes after the blank line that ends the test table, so Markdown renders it as a stray
    paragraph of pipes. The base's `shared-secrets.test.ts` row has the same problem. Verified
    by reading the file: the line before the new row is blank, and the table ends at
    `audit-export.test.ts`. Fix: put the row inside the table.
+   Resolution: fixed in 58c0dc5. The `desktop-devices.test.ts` row was moved into the table, and the stray blank line before the base's `shared-secrets.test.ts` row was removed, so both rows now render in the table.
