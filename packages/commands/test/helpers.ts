@@ -15,6 +15,7 @@ import {
   type CommandRegistry,
   defaultRegistry,
   type KillScope,
+  type LessonRecordPortRequest,
   type SessionStartPortRequest,
 } from "../src/index.ts";
 
@@ -26,7 +27,14 @@ export const TOMORROW_0600 = "2026-10-21T04:00:00.000Z";
 export const RATE = 0.8;
 export const TZ = "Europe/Zurich";
 
+/** A lesson the fake memory port holds (the runtime's port is `MemoryLoop`). */
+export interface FakeLesson extends LessonRecordPortRequest {
+  id: string;
+  status: "active" | "retired";
+}
+
 export interface FakePorts extends CommandPorts {
+  lessons: FakeLesson[];
   starts: SessionStartPortRequest[];
   kills: { scope: KillScope | "all"; reason: string }[];
   failStart?: Error;
@@ -110,8 +118,24 @@ export async function world(): Promise<World> {
     runner: "pc",
   });
   const ports: FakePorts = {
+    lessons: [],
     starts: [],
     kills: [],
+    memory: {
+      recordLesson: async (req) => {
+        const lesson: FakeLesson = {
+          ...req,
+          id: `lesson-${ports.lessons.length + 1}`,
+          status: "active",
+        };
+        ports.lessons.push(lesson);
+        return { lessonId: lesson.id, text: req.text.trim(), action: "inserted" };
+      },
+      forgetLesson: async (req) => {
+        const lesson = ports.lessons.find((l) => l.id === req.lessonId);
+        if (lesson) lesson.status = "retired";
+      },
+    },
     chfPerUsd: async () => RATE,
     startSession: async (req) => {
       if (ports.failStart) throw ports.failStart;

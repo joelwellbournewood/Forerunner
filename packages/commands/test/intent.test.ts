@@ -175,6 +175,35 @@ describe("IntentParser: English and German phrases", () => {
       "correction - the API is v2 not v1",
       { name: "note.add", params: { text: "the API is v2 not v1", kind: "correction" } },
     ],
+    // A lesson stated in chat is recorded in memory (spec O.2, ADR 0061), not queued as a note.
+    [
+      "remember that the staging deploy needs the VPN and the admin token",
+      {
+        name: "memory.record",
+        params: { text: "the staging deploy needs the VPN and the admin token" },
+      },
+    ],
+    [
+      "Lesson: always pin the Godot version in CI",
+      { name: "memory.record", params: { text: "always pin the Godot version in CI" } },
+    ],
+    [
+      "lesson learned - flaky tests come from the shared tmp dir",
+      { name: "memory.record", params: { text: "flaky tests come from the shared tmp dir" } },
+    ],
+    [
+      "Merk dir, dass der Kunde nur PDF liest",
+      { name: "memory.record", params: { text: "der Kunde nur PDF liest" } },
+    ],
+    [
+      "Lektion: nie freitags deployen",
+      { name: "memory.record", params: { text: "nie freitags deployen" } },
+    ],
+    // "remember to ..." is something to do next session, still a note.
+    [
+      "remember to rotate the logs",
+      { name: "note.add", params: { text: "to rotate the logs", kind: "note" } },
+    ],
   ])("%s", async (text, expected) => {
     const r = await parser.parse(text, ctx());
     expect(r.question).toBeUndefined();
@@ -201,6 +230,21 @@ describe("IntentParser: English and German phrases", () => {
     const q = await parser.parse("make this a task", ctx());
     expect(q.commands).toEqual([]);
     expect(q.question?.text).toMatch(/task/i);
+  });
+
+  // Review w2-chat-memory finding 1: the lesson nouns need an explicit separator and a
+  // question is never a stated lesson; none of these may write the principal's memory.
+  it.each([
+    "lessons from the last sprint?",
+    "Lesson plans for the tutorial are due Friday",
+    "lessons learned in the retro were good",
+    "Lehre mich, wie man deployt",
+    "Lektion drei ist zu lang",
+    "remember that time the deploy broke?",
+    "merk dir, dass wir was vergessen haben?",
+  ])("'%s' is not recorded as a lesson", async (text) => {
+    const r = await parser.parse(text, ctx());
+    expect(r.commands.map((c) => c.name)).not.toContain("memory.record");
   });
 });
 

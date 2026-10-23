@@ -227,4 +227,44 @@ describe("project docs at session end (spec G.5)", () => {
     expect(failed?.payload.warning).toContain("git host down");
     await w.close();
   });
+
+  it("docsDirsFor lists where G.5 keeps the doc set: a linked folder, the docs clone, the workspace", async () => {
+    const w = await loopWorld();
+    const { root, bare } = await bareRepo();
+    const { docs } = await docsFor(w, root, bare);
+    const project = await w.store.project.mustGet(w.project);
+    // Nothing written yet: no dir, and nothing is cloned to find out.
+    expect(docs.docsDirsFor(project)).toEqual([]);
+    expect(existsSync(join(root, "worktrees"))).toBe(false);
+    // A project without a repository: its data-dir workspace once scaffolded.
+    const workspace = join(root, "projects", w.project, WORKSPACE_DIR);
+    await docs.scaffoldProject(project);
+    expect(docs.docsDirsFor(project)).toEqual([workspace]);
+    // With a repository: the docs clone the scaffold made comes first.
+    const withRepo = await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    await docs.scaffoldProject(withRepo);
+    expect(docs.docsDirsFor(withRepo)).toEqual([join(root, "worktrees", w.project), workspace]);
+    // A linked local folder (spec A.4) wins: the human's own checkout.
+    const folder = join(root, "seed");
+    const linked = await w.store.project.patch(w.project, { repos: [folder] });
+    expect(docs.docsDirsFor(linked)[0]).toBe(folder);
+    await w.close();
+  });
+
+  it("a project linked to a local folder keeps its G.5 doc set in the workspace, and docsDirsFor lists both", async () => {
+    // Review w2-chat-memory finding 4: the daemon's repoFor is null for a local path
+    // (`parseRepoRef`), so the scaffold and the status updates write the workspace; the chat
+    // must search it beside the folder's own docs.
+    const w = await loopWorld();
+    const { root } = await bareRepo();
+    const { docs } = await docsFor(w, root, null);
+    const folder = join(root, "seed");
+    const project = await w.store.project.patch(w.project, { repos: [folder] });
+    const out = await docs.scaffoldProject(project);
+    expect(out.location).toBe("data_dir");
+    const workspace = join(root, "projects", w.project, WORKSPACE_DIR);
+    expect(existsSync(join(workspace, "docs", "status.md"))).toBe(true);
+    expect(docs.docsDirsFor(project)).toEqual([folder, workspace]);
+    await w.close();
+  });
 });

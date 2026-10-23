@@ -7,7 +7,7 @@ import {
   scaffoldDocs,
   writeStatusUpdate,
 } from "@forerunner/memory";
-import { type Clock, errorMessage, join, log, safeSegment } from "@forerunner/platform";
+import { type Clock, errorMessage, isAbsolute, join, log, safeSegment } from "@forerunner/platform";
 import type { ProjectRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
 import type {
   DocsScaffoldOutcome,
@@ -85,6 +85,27 @@ export class ProjectDocs implements ProjectDocsPort {
   /** `<projectsRoot>/<project id>/workspace`: the doc set of a project without a repository. */
   workspaceDir(projectId: string): string {
     return join(this.deps.projectsRoot, safeSegment(projectId, "project"), WORKSPACE_DIR);
+  }
+
+  /**
+   * Where the chat's docs search reads a project's doc set (spec J.1, ADR 0061), in order,
+   * without cloning or fetching anything: a local folder the project is linked to (an absolute
+   * `repos[0]`, spec A.4: the human's own docs), this install's docs clone of its repository
+   * (`<worktreeRoot>/<project id>`, kept by the scaffold and the status updates), and the
+   * data-dir workspace, where G.5 writes the set of a project without a host repository, a
+   * linked folder's project included (`parseRepoRef` is null for a path; review finding 4).
+   * Only the roots that exist; empty when none does yet. The search lets the first root win
+   * on the same repo-relative path.
+   */
+  docsDirsFor(project: ProjectRow): string[] {
+    const out: string[] = [];
+    const linked = project.repos[0]?.trim();
+    if (linked && isAbsolute(linked) && existsSync(linked)) out.push(linked);
+    const clone = join(this.deps.worktreeRoot, safeSegment(project.id, "project"));
+    if (existsSync(join(clone, ".git"))) out.push(clone);
+    const workspace = this.workspaceDir(project.id);
+    if (existsSync(workspace)) out.push(workspace);
+    return out;
   }
 
   async scaffoldProject(project: ProjectRow): Promise<DocsScaffoldOutcome> {

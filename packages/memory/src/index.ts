@@ -1,5 +1,6 @@
 export * from "./consolidation.ts";
 export * from "./docs.ts";
+export * from "./docs-search.ts";
 export * from "./embedding.ts";
 export * from "./files.ts";
 export * from "./polarity.ts";
