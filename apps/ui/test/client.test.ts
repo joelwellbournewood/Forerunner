@@ -453,6 +453,13 @@ describe("daemon client", () => {
       status: 400,
       code: "validation",
     });
+    // As the daemon: decimal digits only.
+    for (const bad of ["0x10", "1e1", "7.0", "+7"]) {
+      const res = await daemon.app.request(`/performance?days=${bad}`, {
+        headers: { authorization: "Bearer tok" },
+      });
+      expect(res.status).toBe(400);
+    }
     await expect(client.performance({ projectId: "proj_missing" })).rejects.toMatchObject({
       status: 404,
       code: "not_found",

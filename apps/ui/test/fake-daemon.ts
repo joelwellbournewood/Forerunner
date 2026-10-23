@@ -2888,7 +2888,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   // unknown project 404, as the daemon answers.
   app.get("/performance", (c) => {
     const raw = c.req.query("days");
-    const days = raw === undefined || raw === "" ? 7 : Number(raw);
+    // Decimal digits only, as the daemon parses it.
+    const days =
+      raw === undefined || raw === "" ? 7 : /^[0-9]+$/.test(raw) ? Number(raw) : Number.NaN;
     if (!Number.isInteger(days) || days < 1) {
       return errorBody(c, 400, "validation", "days must be a positive integer");
     }

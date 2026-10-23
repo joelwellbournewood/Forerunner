@@ -1410,7 +1410,8 @@ export function createDaemonApp(
     const raw = c.req.query("days");
     let days = PERFORMANCE_DEFAULT_DAYS;
     if (raw !== undefined && raw !== "") {
-      const n = Number(raw);
+      // Decimal digits only: Number() would also take "0x10", "1e1", " 7" or "7.0".
+      const n = /^[0-9]+$/.test(raw) ? Number(raw) : Number.NaN;
       if (!Number.isInteger(n) || n < 1)
         throw new ForerunnerError("validation", "days must be a positive integer", {
           details: { reason: "bad_query", param: "days" },

@@ -163,11 +163,13 @@ describe("GET /performance on the daemon", () => {
   });
 
   it("refuses a bad days with 400 and an unknown project with 404", async () => {
-    for (const bad of ["0", "-3", "1.5", "week"]) {
+    // Decimal digits only: no hex, exponent, padding or fraction that Number() would accept.
+    for (const bad of ["0", "-3", "1.5", "week", "0x10", "1e1", "%207", "7.0", "+7"]) {
       const res = await req(`/performance?days=${bad}`);
       expect(res.status).toBe(400);
       expect(await res.json()).toMatchObject({ code: "validation", details: { param: "days" } });
     }
+    expect((await view("/performance?days=007")).days).toBe(7);
     const missing = await req("/performance?projectId=proj_missing");
     expect(missing.status).toBe(404);
     expect(await missing.json()).toMatchObject({ code: "not_found" });

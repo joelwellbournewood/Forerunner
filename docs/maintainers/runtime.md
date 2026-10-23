@@ -1965,7 +1965,7 @@ its own:
   other humans'), and with `projectId` only that project's sessions; an unknown project is
   404. The window is the last `days` days up to now on `created_at`: 7 by default
   (`PERFORMANCE_DEFAULT_DAYS`), capped at 90 (`PERFORMANCE_MAX_DAYS`); a `days` that is not a
-  positive integer is 400 (`validation`, `reason: "bad_query"`).
+  positive integer in decimal digits (`0x10`, `1e1`, `7.0`, `+7` included) is 400 (`validation`, `reason: "bad_query"`).
 - *Figures.* Per mode, in the effort table's order: `samples`, the median and the 90th
   percentile by nearest rank (`nearestRank`: `sorted[ceil(p/100 * n) - 1]`) of first token and
   of total time, each over the samples that carry the figure; the target (`targetMs`,
