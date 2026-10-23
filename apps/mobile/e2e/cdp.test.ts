@@ -1,0 +1,616 @@
+/**
+ * The raw CDP driver of the Android emulator smoke (`cdp.mjs`) against a fake DevTools
+ * endpoint: `node:http` serves `/json/list`, a `ws` server answers the page target's socket,
+ * and `Runtime.evaluate` runs the driver's in-page code against a jsdom document that carries
+ * a tiny layout stand-in (`data-box="x y w h"` boxes, `elementFromPoint` over them), so the
+ * locator semantics the smoke relies on (role and accessible name, test ids, innermost text,
+ * `filter({ has })`, strictness, visibility waits) run for real and not as string matches.
+ */
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+// @ts-expect-error jsdom ships no types in this workspace; the shape used here is `FakeDom`
+import { JSDOM, VirtualConsole } from "jsdom";
+import { afterEach, describe, expect, it } from "vitest";
+import { WebSocketServer, type WebSocket as WsSocket } from "ws";
+import {
+  CdpClient,
+  CdpError,
+  connectPage,
+  listTargets,
+  Page,
+  pickPageTarget,
+  socketUrlFor,
+  // @ts-expect-error plain JS module
+} from "./cdp.mjs";
+
+interface FakeDom {
+  window: { eval(code: string): unknown; close(): void; document: { title: string } };
+}
+
+type Target = {
+  id: string;
+  type: string;
+  title: string;
+  url: string;
+  webSocketDebuggerUrl?: string;
+};
+
+type Params = Record<string, unknown>;
+type Handler = (params: Params, fake: FakeDevTools) => unknown;
+
+interface FakeDevTools {
+  httpBase: string;
+  port: number;
+  calls: Array<{ method: string; params: Params }>;
+  listRequests: number;
+  handlers: Map<string, Handler>;
+  targets: () => Target[];
+  dom: FakeDom;
+  sockets: Set<WsSocket>;
+  /** Send an event frame (no id) to every open socket. */
+  emit(method: string, params: Params): void;
+  close(): Promise<void>;
+}
+
+const APP_URL = "http://tauri.localhost/m";
+
+const FIXTURE = `<!doctype html><html><head><title>Forerunner</title></head><body>
+<main>
+  <section>
+    <h1 data-box="0 0 300 20">Pair this phone</h1>
+    <h2 hidden>Projects</h2>
+    <form>
+      <input data-testid="m-pair-url" data-box="0 30 300 20" value="">
+      <input data-testid="m-pair-code" data-box="0 60 300 20" value="old">
+      <button type="button" data-testid="m-pair-submit" data-box="0 90 100 20">Pair</button>
+    </form>
+  </section>
+  <ol>
+    <li data-testid="m-request" data-request-id="req_merge" data-box="0 120 300 60">
+      <p>Merge the PR</p>
+      <button type="button" data-testid="m-option" data-box="0 150 80 20">Approve</button>
+    </li>
+    <li data-testid="m-request" data-request-id="req_cap" data-box="0 200 300 80">
+      <p data-testid="m-request-high">High risk: answering asks for your fingerprint first.</p>
+      <button type="button" data-testid="m-option" data-box="0 240 80 20">Confirm</button>
+      <div data-testid="m-request-error" hidden data-box="0 260 300 20">
+        This answer needs the biometric step first.
+      </div>
+    </li>
+  </ol>
+  <a href="/changes" data-box="0 300 100 20">Change log</a>
+  <div data-testid="m-result" data-status="done" data-box="0 330 300 20">done</div>
+  <span data-testid="m-blocking-count" data-box="0 360 100 20">0 blocking</span>
+</main>
+<nav data-testid="m-nav" aria-label="Main" data-box="0 400 300 40">
+  <a href="/inbox" data-box="0 400 100 40"><span>Inbox</span></a>
+  <a href="/remote" data-box="100 400 100 40"><span>Remote</span></a>
+</nav>
+</body></html>`;
+
+/** Layout stand-in for jsdom: boxes from `data-box`, hit testing over them, click and input recording. */
+const LAYOUT = `(() => {
+  const boxOf = (el) => {
+    for (let n = el; n && n.nodeType === 1; n = n.parentNode) {
+      const b = n.getAttribute("data-box");
+      if (b) { const [x, y, w, h] = b.split(/[ ,]+/).map(Number); return { x, y, w, h }; }
+    }
+    return { x: 0, y: 0, w: 0, h: 0 };
+  };
+  const hiddenNow = (el) => {
+    for (let n = el; n && n.nodeType === 1; n = n.parentNode) {
+      if (n.hasAttribute("hidden") || (n.style && n.style.display === "none")) return true;
+    }
+    return false;
+  };
+  Element.prototype.getBoundingClientRect = function () {
+    const b = hiddenNow(this) ? { x: 0, y: 0, w: 0, h: 0 } : boxOf(this);
+    return { x: b.x, y: b.y, left: b.x, top: b.y, width: b.w, height: b.h, right: b.x + b.w, bottom: b.y + b.h };
+  };
+  Element.prototype.getClientRects = function () {
+    const r = this.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 ? [r] : [];
+  };
+  Element.prototype.scrollIntoView = function () { window.__scrolled = (window.__scrolled || 0) + 1; };
+  document.elementFromPoint = (x, y) => {
+    let hit = null;
+    for (const el of document.querySelectorAll("*")) {
+      if (hiddenNow(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0 && x >= r.left && x < r.right && y >= r.top && y < r.bottom) hit = el;
+    }
+    return hit;
+  };
+  window.__clicks = [];
+  document.addEventListener("click", (e) => {
+    const t = e.target;
+    window.__clicks.push(t.getAttribute("data-testid") || t.textContent.trim());
+  });
+  window.__inputs = [];
+  document.addEventListener("input", (e) => window.__inputs.push([e.target.getAttribute("data-testid"), e.target.value]));
+  document.addEventListener("change", (e) => window.__inputs.push(["change:" + e.target.getAttribute("data-testid"), e.target.value]));
+})();`;
+
+const INSERT_TEXT = (text: string) => `(() => {
+  const el = document.activeElement;
+  if (!el || typeof el.value !== "string") return false;
+  const s = el.selectionStart ?? el.value.length;
+  const e = el.selectionEnd ?? el.value.length;
+  el.value = el.value.slice(0, s) + ${JSON.stringify(text)} + el.value.slice(e);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+})()`;
+
+const CLICK_AT = (x: number, y: number) => `(() => {
+  const el = document.elementFromPoint(${x}, ${y});
+  if (el) el.click();
+  return el ? el.tagName : null;
+})()`;
+
+/** The code and message of a rejection (Error properties are not enumerable, so no toMatchObject). */
+async function failure(p: Promise<unknown>): Promise<{ code: string; message: string }> {
+  try {
+    await p;
+  } catch (error) {
+    return { code: (error as CdpError).code, message: (error as Error).message };
+  }
+  throw new Error("expected a rejection");
+}
+
+const fakes: FakeDevTools[] = [];
+afterEach(async () => {
+  for (const f of fakes.splice(0)) await f.close();
+});
+
+function defaultHandlers(): Map<string, Handler> {
+  const handlers = new Map<string, Handler>();
+  handlers.set("Runtime.evaluate", async (params, fake) => {
+    try {
+      let value: unknown = fake.dom.window.eval(String(params.expression));
+      if (params.awaitPromise && value && typeof (value as Promise<unknown>).then === "function") {
+        value = await value;
+      }
+      if (value === undefined) return { result: { type: "undefined" } };
+      return { result: { type: typeof value, value: JSON.parse(JSON.stringify(value)) } };
+    } catch (error) {
+      const description =
+        error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      return {
+        result: { type: "object", subtype: "error", description },
+        exceptionDetails: { text: "Uncaught", exception: { description } },
+      };
+    }
+  });
+  handlers.set("Input.insertText", (params, fake) => {
+    fake.dom.window.eval(INSERT_TEXT(String(params.text)));
+    return {};
+  });
+  handlers.set("Input.dispatchMouseEvent", (params, fake) => {
+    if (params.type === "mouseReleased") {
+      fake.dom.window.eval(CLICK_AT(Number(params.x), Number(params.y)));
+    }
+    return {};
+  });
+  return handlers;
+}
+
+async function startFakeDevTools(
+  options: {
+    html?: string;
+    targets?: (fake: FakeDevTools) => Target[];
+    listPath?: "/json/list" | "/json";
+  } = {},
+): Promise<FakeDevTools> {
+  const dom: FakeDom = new JSDOM(options.html ?? FIXTURE, {
+    url: APP_URL,
+    runScripts: "outside-only",
+    // a link click asks jsdom to navigate, which it reports as "not implemented": keep it quiet
+    virtualConsole: new VirtualConsole(),
+  });
+  dom.window.eval(LAYOUT);
+  const wss = new WebSocketServer({ noServer: true });
+  const listPath = options.listPath ?? "/json/list";
+  const server: Server = createServer((req, res) => {
+    if (req.url === listPath) {
+      fake.listRequests += 1;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify(fake.targets()));
+      return;
+    }
+    res.statusCode = 404;
+    res.end("not found");
+  });
+  server.on("upgrade", (req, socket, head) => {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      fake.sockets.add(ws);
+      ws.on("close", () => fake.sockets.delete(ws));
+      ws.on("message", async (raw) => {
+        const msg = JSON.parse(raw.toString()) as { id: number; method: string; params?: Params };
+        const params = msg.params ?? {};
+        fake.calls.push({ method: msg.method, params });
+        const handler = fake.handlers.get(msg.method);
+        if (!handler) {
+          ws.send(
+            JSON.stringify({
+              id: msg.id,
+              error: { code: -32601, message: `'${msg.method}' wasn't found` },
+            }),
+          );
+          return;
+        }
+        const result = await handler(params, fake);
+        if (result === null) return; // a handler that never answers
+        ws.send(JSON.stringify({ id: msg.id, result }));
+      });
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const httpBase = `http://127.0.0.1:${port}`;
+  const fake: FakeDevTools = {
+    httpBase,
+    port,
+    calls: [],
+    listRequests: 0,
+    handlers: defaultHandlers(),
+    targets: () => [],
+    dom,
+    sockets: new Set(),
+    emit(method, params) {
+      for (const ws of fake.sockets) ws.send(JSON.stringify({ method, params }));
+    },
+    async close() {
+      for (const ws of fake.sockets) ws.terminate();
+      wss.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      dom.window.close();
+    },
+  };
+  fake.targets =
+    options.targets?.bind(null, fake) ??
+    (() => [
+      {
+        id: "SW1",
+        type: "service_worker",
+        title: "worker",
+        url: "http://tauri.localhost/sw.js",
+        webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/SW1`,
+      },
+      {
+        id: "PAGE1",
+        type: "page",
+        title: "Forerunner",
+        url: APP_URL,
+        webSocketDebuggerUrl: `ws://localhost:${port}/devtools/page/PAGE1`,
+      },
+    ]);
+  fakes.push(fake);
+  return fake;
+}
+
+async function openPage(fake: FakeDevTools, timeoutMs = 2_000): Promise<Page> {
+  const client = await CdpClient.connect(`ws://127.0.0.1:${fake.port}/devtools/page/PAGE1`);
+  return new Page(client, { timeoutMs, pollMs: 20 });
+}
+
+const clicks = (fake: FakeDevTools) => fake.dom.window.eval("window.__clicks") as string[];
+const inputs = (fake: FakeDevTools) => fake.dom.window.eval("window.__inputs") as string[][];
+const mouse = (fake: FakeDevTools) =>
+  fake.calls.filter((c) => c.method === "Input.dispatchMouseEvent").map((c) => c.params);
+
+describe("page target selection", () => {
+  it("lists /json/list and picks the preferred page target over workers and other pages", async () => {
+    const fake = await startFakeDevTools({
+      targets: (f) => [
+        {
+          id: "W",
+          type: "service_worker",
+          title: "worker",
+          url: "http://tauri.localhost/sw.js",
+          webSocketDebuggerUrl: `ws://127.0.0.1:${f.port}/devtools/page/W`,
+        },
+        {
+          id: "OTHER",
+          type: "page",
+          title: "about:blank",
+          url: "about:blank",
+          webSocketDebuggerUrl: `ws://127.0.0.1:${f.port}/devtools/page/OTHER`,
+        },
+        {
+          id: "APP",
+          type: "page",
+          title: "Forerunner",
+          url: APP_URL,
+          webSocketDebuggerUrl: `ws://127.0.0.1:${f.port}/devtools/page/APP`,
+        },
+      ],
+    });
+    const targets = await listTargets(fake.httpBase);
+    expect(targets.map((t: Target) => t.id)).toEqual(["W", "OTHER", "APP"]);
+    const picked = pickPageTarget(targets, { prefer: (t: Target) => t.url.includes("/m") });
+    expect(picked.id).toBe("APP");
+    // Without a preference the first page target wins; workers never do.
+    expect(pickPageTarget(targets).id).toBe("OTHER");
+  });
+
+  it("falls back to /json when /json/list is missing, and reports no page target", async () => {
+    const fake = await startFakeDevTools({
+      listPath: "/json",
+      targets: (f) => [
+        {
+          id: "W",
+          type: "service_worker",
+          title: "worker",
+          url: "x",
+          webSocketDebuggerUrl: `ws://127.0.0.1:${f.port}/devtools/page/W`,
+        },
+      ],
+    });
+    const targets = await listTargets(fake.httpBase);
+    expect(targets).toHaveLength(1);
+    expect(() => pickPageTarget(targets)).toThrow(CdpError);
+    try {
+      pickPageTarget(targets);
+    } catch (error) {
+      expect((error as CdpError).code).toBe("cdp.no_page_target");
+    }
+  });
+
+  it("builds the socket URL from the forwarded port, whatever host the target names", () => {
+    expect(
+      socketUrlFor("http://127.0.0.1:9333", {
+        webSocketDebuggerUrl: "ws://localhost:9222/devtools/page/ABC",
+      }),
+    ).toBe("ws://127.0.0.1:9333/devtools/page/ABC");
+    expect(() => socketUrlFor("http://127.0.0.1:9333", {})).toThrow(CdpError);
+  });
+});
+
+describe("CdpClient", () => {
+  it("correlates responses by id, ignores events, and surfaces protocol errors", async () => {
+    const fake = await startFakeDevTools();
+    fake.handlers.set("Test.slow", async () => {
+      await new Promise((r) => setTimeout(r, 80));
+      return { which: "slow" };
+    });
+    fake.handlers.set("Test.fast", (_params, f) => {
+      f.emit("Runtime.executionContextCreated", { context: { id: 1 } });
+      return { which: "fast" };
+    });
+    const client = await CdpClient.connect(`ws://127.0.0.1:${fake.port}/devtools/page/PAGE1`);
+    const order: string[] = [];
+    const slow = client.send("Test.slow").then((r: { which: string }) => {
+      order.push(r.which);
+      return r;
+    });
+    const fast = client.send("Test.fast").then((r: { which: string }) => {
+      order.push(r.which);
+      return r;
+    });
+    expect(await fast).toEqual({ which: "fast" });
+    expect(await slow).toEqual({ which: "slow" });
+    expect(order).toEqual(["fast", "slow"]);
+    expect(await failure(client.send("Nope.method"))).toMatchObject({
+      code: "cdp.protocol_error",
+      message: expect.stringContaining("Nope.method"),
+    });
+    client.close();
+  });
+
+  it("times out a request that never gets an answer", async () => {
+    const fake = await startFakeDevTools();
+    fake.handlers.set("Test.never", () => null);
+    const client = await CdpClient.connect(`ws://127.0.0.1:${fake.port}/devtools/page/PAGE1`);
+    expect(await failure(client.send("Test.never", {}, { timeoutMs: 50 }))).toMatchObject({
+      code: "cdp.timeout",
+      message: expect.stringContaining("Test.never"),
+    });
+    client.close();
+  });
+
+  it("rejects every pending request when the socket closes", async () => {
+    const fake = await startFakeDevTools();
+    fake.handlers.set("Test.never", () => null);
+    const client = await CdpClient.connect(`ws://127.0.0.1:${fake.port}/devtools/page/PAGE1`);
+    const pending = client.send("Test.never", {}, { timeoutMs: 5_000 });
+    for (const ws of fake.sockets) ws.close();
+    expect(await failure(pending)).toMatchObject({ code: "cdp.closed" });
+    expect(await failure(client.send("Test.fast"))).toMatchObject({ code: "cdp.closed" });
+  });
+
+  it("fails the connect when nothing listens on the socket", async () => {
+    const fake = await startFakeDevTools();
+    const port = fake.port;
+    await fake.close();
+    fakes.pop();
+    expect(
+      await failure(
+        CdpClient.connect(`ws://127.0.0.1:${port}/devtools/page/PAGE1`, { timeoutMs: 1_000 }),
+      ),
+    ).toMatchObject({ code: "cdp.connect_failed" });
+  });
+});
+
+describe("Page and locators over Runtime.evaluate", () => {
+  it("evaluates by value and turns a page exception into a CdpError", async () => {
+    const fake = await startFakeDevTools();
+    const page = await openPage(fake);
+    expect(await page.evaluate("1 + 2")).toBe(3);
+    expect(await page.title()).toBe("Forerunner");
+    const call = fake.calls.find((c) => c.method === "Runtime.evaluate");
+    expect(call?.params).toMatchObject({ returnByValue: true, awaitPromise: true });
+    expect(await failure(page.evaluate("(() => { throw new Error('boom') })()"))).toMatchObject({
+      code: "cdp.evaluate_failed",
+      message: expect.stringContaining("boom"),
+    });
+  });
+
+  it("finds headings, buttons and links by role and accessible name (substring, case-insensitive, exact on request; hidden excluded)", async () => {
+    const fake = await startFakeDevTools();
+    const page = await openPage(fake);
+    expect(await page.getByRole("heading", { name: "Pair this phone" }).count()).toBe(1);
+    expect(await page.getByRole("heading", { name: "pair this PHONE" }).count()).toBe(1);
+    expect(await page.getByRole("heading", { name: "Pair", exact: true }).count()).toBe(0);
+    expect(await page.getByRole("heading", { name: "Projects" }).count()).toBe(0);
+    expect(await page.getByRole("button", { name: "Approve" }).count()).toBe(1);
+    expect(await page.getByRole("button").count()).toBe(3);
+    expect(await page.getByRole("link", { name: "Change log" }).count()).toBe(1);
+    expect(await page.getByRole("link", { name: "Change log" }).getAttribute("href")).toBe(
+      "/changes",
+    );
+  });
+
+  it("scopes chained queries, picks the innermost text match, and filters by a descendant", async () => {
+    const fake = await startFakeDevTools();
+    const page = await openPage(fake);
+    const inbox = page.getByTestId("m-nav").getByText("Inbox");
+    expect(await inbox.count()).toBe(1);
+    expect(await inbox.evaluate("(el) => el.tagName")).toBe("SPAN");
+    expect(await page.getByText("Inbox").count()).toBe(1);
+    expect(await page.getByTestId("m-request").count()).toBe(2);
+    const high = page.getByTestId("m-request").filter({ has: page.getByTestId("m-request-high") });
+    expect(await high.count()).toBe(1);
+    expect(await high.getAttribute("data-request-id")).toBe("req_cap");
+    expect(await page.getByTestId("m-request").first().getAttribute("data-request-id")).toBe(
+      "req_merge",
+    );
+    expect(await page.getByTestId("m-request").nth(1).getAttribute("data-request-id")).toBe(
+      "req_cap",
+    );
+    expect(await page.locator('[data-testid="m-result"][data-status="done"]').count()).toBe(1);
+    expect(await page.getByTestId("m-blocking-count").getByText("0 blocking").count()).toBe(1);
+    expect(await page.getByTestId("m-request-high").innerText()).toMatch(/fingerprint/);
+    expect(
+      await failure(page.getByTestId("missing").getAttribute("x", { timeout: 60 })),
+    ).toMatchObject({ code: "cdp.timeout", message: expect.stringContaining("not found") });
+  });
+
+  it("waitFor resolves once the element is visible and times out naming the locator", async () => {
+    const fake = await startFakeDevTools();
+    const page = await openPage(fake);
+    const error = page.getByTestId("m-request-error");
+    expect(await error.count()).toBe(1);
+    expect(await error.isVisible()).toBe(false);
+    setTimeout(() => {
+      fake.dom.window.eval(
+        'document.querySelector("[data-testid=m-request-error]").removeAttribute("hidden")',
+      );
+    }, 120);
+    await error.waitFor({ timeout: 2_000 });
+    expect(await error.innerText()).toMatch(/biometric/i);
+    expect(await failure(page.getByTestId("never-there").waitFor({ timeout: 100 }))).toMatchObject({
+      code: "cdp.timeout",
+      message: expect.stringContaining('getByTestId("never-there")'),
+    });
+  });
+
+  it("clicks at the centre of the element with CDP mouse events after scrolling it into view", async () => {
+    const fake = await startFakeDevTools();
+    const page = await openPage(fake);
+    await page.getByTestId("m-request").first().getByRole("button", { name: "Approve" }).click();
+    expect(mouse(fake).map((p) => p.type)).toEqual(["mouseMoved", "mousePressed", "mouseReleased"]);
+    expect(mouse(fake)[1]).toMatchObject({ x: 40, y: 160, button: "left", clickCount: 1 });
+    expect(mouse(fake)[2]).toMatchObject({ x: 40, y: 160, button: "left", clickCount: 1 });
+    expect(clicks(fake)).toEqual(["m-option"]);
+    expect(fake.dom.window.eval("window.__scrolled")).toBe(1);
+    await page.getByTestId("m-nav").getByText("Remote").click();
+    expect(clicks(fake)).toEqual(["m-option", "Remote"]);
+  });
+
+  it("refuses an ambiguous click at once and reports an element that intercepts the click", async () => {
+    const fake = await startFakeDevTools();
+    const page = await openPage(fake);
+    expect(await failure(page.getByTestId("m-request").click({ timeout: 5_000 }))).toMatchObject({
+      code: "cdp.strict_mode",
+      message: expect.stringContaining("2 elements"),
+    });
+    fake.dom.window.eval(
+      'const o = document.createElement("div"); o.id = "overlay"; o.setAttribute("data-box", "0 140 300 40"); document.body.appendChild(o);',
+    );
+    expect(
+      await failure(page.getByRole("button", { name: "Approve" }).click({ timeout: 300 })),
+    ).toMatchObject({
+      code: "cdp.click_intercepted",
+      message: expect.stringContaining("overlay"),
+    });
+    expect(clicks(fake)).toEqual([]);
+    expect(
+      await failure(page.getByTestId("m-request-error").click({ timeout: 150 })),
+    ).toMatchObject({ code: "cdp.timeout", message: expect.stringContaining("visible") });
+  });
+
+  it("fills through Input.insertText after focusing and selecting, replacing the old value", async () => {
+    const fake = await startFakeDevTools();
+    const page = await openPage(fake);
+    await page.getByTestId("m-pair-url").fill("http://127.0.0.1:8788");
+    await page.getByTestId("m-pair-code").fill("ABCD-1234");
+    const inserts = fake.calls.filter((c) => c.method === "Input.insertText");
+    expect(inserts.map((c) => c.params.text)).toEqual(["http://127.0.0.1:8788", "ABCD-1234"]);
+    expect(fake.dom.window.eval('document.querySelector("[data-testid=m-pair-url]").value')).toBe(
+      "http://127.0.0.1:8788",
+    );
+    expect(fake.dom.window.eval('document.querySelector("[data-testid=m-pair-code]").value')).toBe(
+      "ABCD-1234",
+    );
+    expect(inputs(fake)).toEqual([
+      ["m-pair-url", "http://127.0.0.1:8788"],
+      ["m-pair-code", "ABCD-1234"],
+    ]);
+  });
+
+  it("falls back to the native value setter with input and change events when insertText changes nothing", async () => {
+    const fake = await startFakeDevTools();
+    fake.handlers.set("Input.insertText", () => ({}));
+    const page = await openPage(fake);
+    await page.getByTestId("m-pair-code").fill("XYZ");
+    expect(fake.dom.window.eval('document.querySelector("[data-testid=m-pair-code]").value')).toBe(
+      "XYZ",
+    );
+    expect(inputs(fake)).toEqual([
+      ["m-pair-code", "XYZ"],
+      ["change:m-pair-code", "XYZ"],
+    ]);
+    expect(await failure(page.getByTestId("m-result").fill("x", { timeout: 100 }))).toMatchObject({
+      code: "cdp.not_editable",
+    });
+  });
+});
+
+describe("connectPage", () => {
+  it("waits for the page target to appear, connects to it, and drives the page", async () => {
+    let polls = 0;
+    const fake = await startFakeDevTools({
+      targets: (f) => {
+        polls += 1;
+        if (polls < 3) return [];
+        return [
+          {
+            id: "PAGE1",
+            type: "page",
+            title: "Forerunner",
+            url: APP_URL,
+            webSocketDebuggerUrl: `ws://localhost:${f.port}/devtools/page/PAGE1`,
+          },
+        ];
+      },
+    });
+    const { page, client, target } = await connectPage(fake.httpBase, {
+      prefer: (t: Target) => t.url.includes("/m"),
+      waitForTargetMs: 5_000,
+      pollMs: 20,
+      timeoutMs: 2_000,
+    });
+    expect(target.id).toBe("PAGE1");
+    expect(fake.listRequests).toBeGreaterThanOrEqual(3);
+    expect(await page.title()).toBe("Forerunner");
+    await page.getByRole("heading", { name: "Pair this phone" }).waitFor({ timeout: 1_000 });
+    client.close();
+  });
+
+  it("gives up with a stable code when no page target appears in time", async () => {
+    const fake = await startFakeDevTools({ targets: () => [] });
+    expect(
+      await failure(connectPage(fake.httpBase, { waitForTargetMs: 150, pollMs: 20 })),
+    ).toMatchObject({ code: "cdp.no_page_target" });
+  });
+});

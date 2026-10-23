@@ -15,11 +15,13 @@
  *      http://127.0.0.1:<port> through `adb reverse`;
  *   4. installs and launches the app, forwards the WebView's DevTools socket
  *      (`localabstract:webview_devtools_remote_<pid>`, debug builds only) and drives the
- *      page with Playwright over CDP: pair by code, approve a request, refuse a high-risk
- *      answer without a biometric assertion, the scenario-9 sentence -> ONE change card ->
- *      confirm -> the fake records project.switch + budget.set + session.start and the
- *      simulated PC starts the session, the change log shows the entry and Undo sends the
- *      inverse plan.
+ *      page over raw CDP on its page target (`cdp.mjs`, ADR 0054: `GET /json/list`, then
+ *      `Runtime.evaluate` and `Input.*` over the page's WebSocket; the Android WebView
+ *      refuses browser-level CDP, so Playwright's `connectOverCDP` cannot attach): pair by
+ *      code, approve a request, refuse a high-risk answer without a biometric assertion, the
+ *      scenario-9 sentence -> ONE change card -> confirm -> the fake records project.switch +
+ *      budget.set + session.start and the simulated PC starts the session, the change log
+ *      shows the entry and Undo sends the inverse plan.
  *
  * Skips are visible: without adb, a device, an AVD, or (with `--no-build`) a debug APK, the
  * script prints `SKIP: <reason>` and exits 0 after cleaning up; with FR_ANDROID_REQUIRE=1
@@ -34,7 +36,8 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { connectPage } from "./cdp.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mobileDir = resolve(here, "..");
@@ -45,6 +48,8 @@ const APP_ID = "app.forerunner.mobile";
 const ACTIVITY = `${APP_ID}/.MainActivity`;
 const SENTENCE =
   "switch to the game, give it 15 francs until tomorrow and start a session on my PC";
+// Per click, fill or CDP request (the waits in smoke() carry --timeout); Playwright's default was the same.
+const ACTION_TIMEOUT_MS = 30_000;
 
 const args = parseArgs(process.argv.slice(2));
 const require_ = (fromDir) => createRequire(join(fromDir, "package.json"));
@@ -299,18 +304,6 @@ async function findDevtoolsSocket(adb, timeoutMs) {
   return null;
 }
 
-async function waitForPage(browser, timeoutMs) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < timeoutMs) {
-    for (const context of browser.contexts()) {
-      const page = context.pages()[0];
-      if (page) return page;
-    }
-    await sleep(500);
-  }
-  throw new Error("no page in the WebView");
-}
-
 function assert(condition, message) {
   if (!condition) throw new Error(`smoke assertion failed: ${message}`);
 }
@@ -486,13 +479,16 @@ async function main() {
       // gone with the device
     }
   });
-  // @playwright/test is CommonJS: imported from ESM its exports sit on `default` (run 6 on the
-  // hosted emulator read `chromium` off the namespace and got undefined).
-  const pwModule = await import(pathToFileURL(require_(uiDir).resolve("@playwright/test")).href);
-  const playwright = pwModule.chromium ? pwModule : pwModule.default;
-  const browser = await playwright.chromium.connectOverCDP(`http://127.0.0.1:${devtoolsPort}`);
-  cleanups.push(() => browser.close().catch(() => {}));
-  const page = await waitForPage(browser, 30_000);
+  // Raw CDP on the page target (cdp.mjs, ADR 0054): the WebView lists its page on
+  // /json/list and answers Runtime.evaluate and Input.* on that page's socket; it refuses the
+  // browser-level commands Playwright's connectOverCDP starts with (run 7).
+  const { client, page, target } = await connectPage(`http://127.0.0.1:${devtoolsPort}`, {
+    prefer: (t) => /forerunner/i.test(String(t.title)) || /tauri\.localhost/i.test(String(t.url)),
+    waitForTargetMs: 30_000,
+    timeoutMs: ACTION_TIMEOUT_MS,
+  });
+  cleanups.push(() => client.close());
+  console.log(`PASS: attached to the WebView page ${target.url} (${target.title})`);
   await smoke(page, stateUrl, adminToken, args.timeoutMs);
   console.log("PASS: Android emulator smoke complete");
 }

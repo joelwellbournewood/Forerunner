@@ -806,6 +806,8 @@ apps/mobile/
   package.json       tauri CLI scripts; test:emulator -> e2e/run.mjs
   e2e/run.mjs        emulator run (build, boot, install, fake service, CDP smoke); README.md has the
                      adb / gradle commands by hand
+  e2e/cdp.mjs        raw CDP client and DOM driver for the smoke (ADR 0054): /json/list, page socket,
+                     Runtime.evaluate queries, Input.* clicks and fills; cdp.test.ts against a fake endpoint
   src-tauri/
     Cargo.toml, tauri.conf.json (no static window; deep-link scheme "fr"; CSP allows 127.0.0.1 and 10.0.2.2)
     capabilities/default.json (core, deep-link, log), mobile.json (biometric, barcode-scanner; Android/iOS only)
@@ -943,12 +945,29 @@ quiet hours. The FCM wiring is listed in ADR 0032 item 6.
   string without the prompt's ticket and consuming it on use, push stand-in);
   `cargo clippy -D warnings`, `cargo fmt --check`.
 - `apps/mobile/e2e/run.mjs`: the emulator smoke (CI's Android job; skips visibly here, and
-  every skip, the release-APK one included, fails under `FR_ANDROID_REQUIRE=1`).
+  every skip, the release-APK one included, fails under `FR_ANDROID_REQUIRE=1`). It attaches
+  to the WebView over raw CDP on the page target (`e2e/cdp.mjs`, ADR 0054), not Playwright:
+  the Android WebView refuses the browser-level commands `connectOverCDP` starts with.
+- `apps/mobile/e2e/cdp.test.ts` (unit project): the driver against a fake DevTools endpoint
+  (`node:http` serving `/json/list` and `/json`, a `ws` server answering the page socket, a
+  jsdom document with `data-box` layout boxes and `elementFromPoint` over them): page-target
+  selection (workers never, the preferred page over the first), socket URL on the forwarded
+  port, id-correlated responses with events ignored, protocol errors, request timeout, close
+  rejecting the pending requests, connect failure; `getByRole` (heading, button, link; name as
+  substring, case-insensitive, `exact`, hidden excluded), chained scopes, innermost text
+  match (the scope root included), `filter({ has })`, `first` / `nth`, `count`,
+  `getAttribute`, `innerText`; `waitFor` resolving when the element becomes visible and
+  timing out with the locator named; `click` as `mouseMoved` / `mousePressed` /
+  `mouseReleased` at the box centre after `scrollIntoView`, strict-mode refusal, an
+  intercepting overlay reported; `fill` through `Input.insertText` after focus and select-all,
+  the native-setter fallback with `input` and `change`, `not_editable`; `connectPage` waiting
+  for the target and giving up with `cdp.no_page_target`.
 
 ```
 pnpm --filter @forerunner/ui test -- test/mobile- test/state-
 pnpm --filter @forerunner/ui exec playwright test e2e/mobile-
 cd apps/mobile/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+pnpm exec vitest run --project unit apps/mobile/e2e
 node apps/mobile/e2e/run.mjs
 ```
 
@@ -971,6 +990,15 @@ node apps/mobile/e2e/run.mjs
   rows and `undoOf`.
 - Push is the polling stand-in (`docs/status/BLOCKERS.md`, Firebase row); notices appear only
   while the app is open.
+- The raw CDP driver (`e2e/cdp.mjs`) has run against the fake endpoint and jsdom only; its
+  first run against the WebView is the next `android.yml` dispatch (BLOCKERS.md, emulator
+  row). Two assumptions it makes about the WebView are untested here: `Input.insertText`
+  commits like an IME (otherwise `fill` falls back to the native value setter and says so
+  through the value check), and `Input.dispatchMouseEvent` coordinates are the layout
+  viewport's CSS pixels (what `getBoundingClientRect` returns; the bundle's viewport meta is
+  `width=device-width, initial-scale=1`, so no page scale applies). The driver covers the
+  calls `smoke()` makes and nothing more: no keyboard shortcuts, no touch events, no frames,
+  no screenshots.
 - The CI Android job's release build is the uploaded artefact; `test:emulator` then builds a
   debug APK of its own for the smoke (x86_64, a few minutes on top), because a release
   WebView has debugging off. Passing `--debug` in the workflow's build step would save that
