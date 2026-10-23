@@ -1060,6 +1060,9 @@ e2e tests/e2e/scenarios`, the step named "Phase 3 and 4 gate harnesses and the n
 `tests/e2e/scenarios` runs in CI from the commit that adds it (no Postgres, no Docker, no
 network there either); the step's name predates the phase 5 and 7 harnesses. The gate rows
 cite the local runs and the step, with the CI link of the first run that carried the file.
+The workflow runs on every pull request, on a push to `main`, `claude/**` or `ccr-**`, and by
+hand (`workflow_dispatch` from the Actions tab or the API on any branch), so a build branch
+outside those patterns can still get its CI evidence for `gates.md`.
 
 ### How to change it
 
