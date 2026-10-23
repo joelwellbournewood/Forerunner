@@ -112,6 +112,59 @@ runner's `candidate` input; this build keeps it and builds on it). Base branch
 | `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` | `docs-check: ok (19 files)` (bare `node scripts/docs-check.mjs` exits 0, but there is no `origin/main` in this clone, so it checks nothing) |
 | `pnpm check` | exit 0: lint, lint:paths, typecheck, unit tests (271 files; 2694 tests passed, 4 skipped, 1 todo), docs:check, link-check ok (106 files), secret-scan clean (1412 files) |
 
+### Pasted output of the gating commands
+
+`pnpm typecheck` (exit code 0, the tail of the output):
+
+```
+apps/approvals-web typecheck$ tsc -p tsconfig.json --noEmit
+apps/desktop typecheck$ echo 'no TypeScript in the desktop shell; see @forerunner/ui'
+apps/mobile typecheck$ echo 'no TypeScript in the mobile shell; see @forerunner/ui'
+apps/ui typecheck$ tsc -p tsconfig.json --noEmit
+apps/desktop typecheck: Done
+apps/mobile typecheck: Done
+apps/approvals-web typecheck: Done
+apps/ui typecheck: Done
+$ echo $?
+0
+```
+
+`pnpm lint` (exit code 0; the 59 warnings are in files this item does not touch, and
+`biome check` on the files this item changed reports none):
+
+```
+Checked 1162 files in 3s. No fixes applied.
+Found 59 warnings.
+$ echo $?
+0
+```
+
+`node scripts/docs-check.mjs --base 16bb864`:
+
+```
+docs-check: ok (18 files).
+```
+
+### Patch export and verification
+
+```
+$ git format-patch --stdout $(cat /tmp/start-sha)..HEAD > /mnt/session/outputs/w3-c5-specialist-approval.patch
+$ git worktree add --detach /tmp/verify 16bb864   # a clean checkout of the starting commit
+$ cd /tmp/verify && git status --short | wc -l
+0
+$ git apply --check -v /mnt/session/outputs/w3-c5-specialist-approval.patch
+Checking patch packages/runtime/src/registry/approval.ts...
+...
+Checking patch docs/status/reviews/w3-c5-specialist-approval.md...
+$ echo $?
+0
+```
+
+The check ran on the patch before this section was added and again on the final export,
+which includes this commit. Both exited 0. `git log --oneline 16bb864..HEAD` lists exactly
+this item's seven commits. Each one ends with the trailer
+`Claude-Build: managed-agent w3-c5-specialist-approval build`.
+
 ### Left open, and why
 
 - **A live approval run on the real provider.** The tests use the fake provider. A live run
