@@ -94,6 +94,51 @@ Unit tests of the route and watcher (already present): `services/state-api/test/
   docs:check has no `origin/main` in this clone and checks nothing (run by hand above with
   `--base`); `link-check: ok (106 files)`; `secret-scan: clean (1407 files)`.
 
+### Commits and trailers
+
+The exported series (`git log --oneline c786f82..HEAD`), every commit in the form
+`area: what changed` with a body saying why and the trailer
+`Claude-Build: managed-agent w3-misc-replay-ceiling build` (checked with
+`git log --format='%h %(trailers:key=Claude-Build,valueonly)' c786f82..HEAD`: every line reads
+`managed-agent w3-misc-replay-ceiling build`):
+
+```
+<report commit> docs: build report ... (this file, amended with the apply check)
+5d2270e e2e, runtime: scenario 9 replays the plan envelope; the ceiling tests pin haiku and the per-run read
+478d320 e2e, runtime: take back the earlier attempt's tests to re-land them under this build's trailer
+604918f docs: build report for w3-misc-replay-ceiling
+b57f8cb runtime: the ceiling test types the project settings as JsonObject
+8a61e40 docs: requirements, blockers and progress record the replay and ceiling item
+528d230 docs: the replay and ceiling Known issues are closed; maintainer docs name the tests
+```
+
+The earlier attempt's two commits (14594ad, c786f82) sit below the starting commit and carry
+another build's trailer (`github-actions build-item`). The branch history cannot be rewritten
+(no rebase, the starting commit is on origin), so 478d320 takes their test changes back and
+5d2270e re-applies them unchanged (plus b57f8cb's typing fix): the scenario 9 replay case and
+the ceiling tests now enter the repository through a commit carrying this build's trailer. The
+tree after 5d2270e is byte-identical to the tree after 604918f (`git diff 604918f 5d2270e`
+prints nothing); after it, `executor-ceiling.test.ts` + `remote-wiring.test.ts` 2 files, 11
+tests passed, scenario 9 1 file, 2 tests passed.
+
+### Patch export and apply check
+
+```
+$ git format-patch --stdout $(cat /tmp/start-sha)..HEAD > /tmp/pre.patch    # start-sha = c786f82
+$ git worktree add --detach /tmp/clean c786f82 && cd /tmp/clean
+$ git rev-parse --short HEAD
+c786f82
+$ git apply --check /tmp/pre.patch; echo "git apply --check exit=$?"
+git apply --check exit=0
+$ grep -c '^From [0-9a-f]\{40\}' /tmp/pre.patch
+6
+```
+
+That run covered the series up to 5d2270e. The final export
+(`git format-patch --stdout c786f82..HEAD > /mnt/session/outputs/w3-misc-replay-ceiling.patch`,
+7 commits with this report's commit) is checked the same way after this commit; its output is
+appended to the copy of this report in `/mnt/session/outputs/w3-misc-replay-ceiling-report.md`.
+
 ### Left open
 
 - The watcher's lookup is per row, not a lock: two daemons of one human picking two copies at
