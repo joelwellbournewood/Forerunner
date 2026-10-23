@@ -299,17 +299,20 @@ Findings:
    `handoff.stop_reason: "budget_exceeded"`, spent 960 000 of 1 000 000, produced
    `["session","Session stopped","NORMAL"]`; a `completed` session with
    `budget_finish_current` produced only `["session","Session finished"]`.
+   Resolution: fixed in 29fd1fd: `sessionNotices` reads `handoff.stop_reason` like the runtime's `sessionEnded` (`budget_exceeded` = urgent stop, through quiet hours; `budget_finish_current` = warning plus the end notice), keeping spend against the cap as a second signal (tests "a budget stop as the runner writes it ..." and "a session that stopped new work at 80 % ...", both failing on the old code).
 2. **medium**, `services/state-api/src/push/fanout.ts:174-189`. Held notices are sent at the
    end of the quiet window without re-reading their row: a request answered on the desktop at
    night, or a message read meanwhile, still buzzes the phone in the morning with "A request
    waits on you". Verified with a throwaway test: a request opened inside 08:00-10:00,
    answered at 09:00, was pushed at 10:00 (`[["approval",true]]`).
+   Resolution: fixed in 9319445: the flush re-reads each held approval and message and drops an answered request or a read message, counted as `expired` in `/health` (test "a held notice whose request was answered or whose message was read meanwhile is dropped", failing on the old code).
 3. **medium**, `services/state-api/src/push/fcm.ts:233`. `res.status === 404` alone is
    treated as UNREGISTERED. FCM reports a dead token as 404 with the `FcmError` code
    `UNREGISTERED`; a 404 without it comes from a wrong `FORERUNNER_FCM_API_URL`, a proxy or a
    wrong path, and then every device of every human loses its token (plus an audit row
    claiming the token was cleared) on the first notice. Verified with a throwaway test: a
    scripted bare 404 (`<html>not found</html>`) left the device's `push_token` `null`.
+   Resolution: fixed in 40bc4d2: only the FcmError code `UNREGISTERED` reports a dead token; a bare 404 is a counted failure that keeps every token (tests "a 404 without FCM's UNREGISTERED code ... is a failure" and "a misrouted 404 keeps the device's token", both failing on the old code).
 4. **low**, `services/state-api/src/push/fanout.ts:336-357`. Every message to the human is
    pushed, including the session summary the runner sends from the human's own agent at every
    session end (`runner.ts:1231-1241`, `type: "info"`), so each finished session buzzes twice
@@ -317,11 +320,13 @@ Findings:
    plain `info` message as `info` and only questions, requests, warnings and `requires_ack`
    as needing attention. Verified with a throwaway test: a completed session plus its summary
    message produced `["message","session"]`.
+   Resolution: fixed in 04e0216: a message from the human's own agent is pushed only when it needs them (question, request, warning, `requires_ack`), so the session summary no longer double-buzzes (test "a session end and its summary message buzz once; ...", failing on the old code).
 5. **low**, `services/state-api/src/push/fanout.ts:215-236`. Targets are device rows, not
    tokens: when one app install pairs twice (a re-pair without revoking the old row) both rows
    carry the same FCM token and every notice is sent twice; an UNREGISTERED answer clears only
    the first row, and the twin is sent to again on the next notice. Verified with a throwaway
    test: two rows with one token gave 2 sends for one request.
+   Resolution: fixed in 87ca69d: `deliver` groups targets by token, sends once per token and clears every row holding a dead one (test "one token on two device rows (a re-pair) is sent once and cleared from both when dead").
 6. **medium**, `services/state-api/src/push/fcm.ts:270` and `:299`. Neither the FCM request
    nor the OAuth token request has a timeout. A connection that stalls (no response, no reset)
    never resolves: the notice is never retried, `flushHeld` is single-flight so every later
@@ -329,17 +334,26 @@ Findings:
    `app.close()` waits on `push.stop()` -> `idle()` forever. Verified by reading the code and by
    the new test (fix commit) that hangs the fake endpoint: without the timeout the send never
    settles.
+   Resolution: fixed in 2e986de: both fetches carry `AbortSignal.timeout` (10 s, `timeoutMs`) and a timeout is retried like a network error (test "a stalled FCM connection is aborted after the timeout and retried", which times out on the old code; `fake-google.ts` gained a `HANG` response).
 7. **low**, `services/state-api/test/push.test.ts` (the `PUT /devices/:id/push-token` case)
    versus `docs/maintainers/state-service.md:135` and the build report. The route's
    `revoked 409` branch (`routes/devices.ts`) is documented as tested and is not: no test
    revokes a device and sets its token. Verified by `grep -n 409 services/state-api/test/push.test.ts`
    (no match).
+   Resolution: fixed in 7dc3a1c: the `PUT` case now revokes a device and gets 409 with the token left unset.
 8. **low**, `services/state-api/src/routes/devices.ts:21`. `POST /pairing/complete` takes
    `pushToken: z.string().max(512).optional()` without trimming, so `"  "` is stored as a
    token (`pushRegistered: true`) and every notice is sent to it and fails as a 400 (not
    cleared, counted as a failure), while `PUT /devices/:id/push-token` refuses the same value.
    Verified by reading the schema against `PushTokenBody` (`trim().min(1)`) and
    `DeviceRepo.pushTargets` (filters only `""`).
+   Resolution: fixed in 7dc3a1c: the pairing schema trims and `PairingService` stores a blank token as null (test "pairing stores the pushToken ..." now pairs with `"   "` and a padded token; fails on the old code).
 9. **low**, `docs/decisions/README.md` (last row). `git merge-tree --write-tree HEAD
    origin/ccr-4d8a843c-1k9syk` reports a content conflict: the branch appends the 0085 row at
    the end of the index and the base appended a 0062 row there too. No code conflict.
+   Resolution: not a defect: textual only, and the branch must not merge the base. A throwaway merge of HEAD with f1948dd in a detached worktree (discarded) conflicted only on that line; keeping both rows, `pnpm typecheck` passed and `services/state-api/test` plus `packages/state/test` passed on the merged tree (17 files, 257 tests). Whoever merges keeps both index rows.
+
+After the fixes: `pnpm typecheck` exit 0, `pnpm lint` exit 0 (59 warnings, all pre-existing),
+`services/state-api/test` 11 files / 156 tests, `packages/state/test` 6 files / 97 tests,
+`node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok (27 files), `pnpm check`
+EXIT 0 (270 files, 2699 passed, 4 skipped, 1 todo).
