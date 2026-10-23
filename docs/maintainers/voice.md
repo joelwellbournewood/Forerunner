@@ -226,21 +226,29 @@ registry, and the shells talk to it over the daemon's `/voice` routes (`DAEMON_R
 
 Outside a voice turn the daemon reads a text through the same registry's TTS with
 `SpeakSessions` (`packages/runtime/src/voice/speak.ts`): `splitSentences` on the text, one
-sentence synthesised ahead of playback, the loop's `audio` frame streamed to the shell, the
+sentence synthesised ahead of playback, the loop's `audio` frame streamed to the player, the
 sink paced on the clock; no STT and no model call, so it works without a model credential.
-One voice at a time (a new utterance cancels the one in flight), a cancel is immediate. Routes
+One voice at a time (a new utterance cancels the one in flight; starts are serialised, so two
+overlapping requests never both play), a cancel is immediate. Playback holds until the first
+stream subscribed or 1.5 s passed (`DEFAULT_AWAIT_LISTENER_MS`): audio frames are live only,
+and the player attaches after the `POST` or the `speak.started` frame. Routes
 (`DAEMON_ROUTES`): `POST /projects/:id/speak` (the cached one-screen summary, spec A.6),
 `POST /sessions/:id/speak` (a session's summary), `GET /speak/:id`, `POST /speak/:id/cancel`,
 `GET /speak/:id/events` (JSON after `afterSeq`, or SSE `speak.event` frames: every `sentence`
 up front, `audio`, `speaking_start`, `speaking_end`, `error`, `speak.done`; `?token=`
-accepted), plus a `speak.started` frame on `/events` so a shell can attach and play. Another
+accepted), plus a `speak.started` frame on `/events` (with `player`: `requester` for the
+routes, `any` for an alert or `summary.speak`) so a speech player attaches and plays. What is
+heard is what the app window plays through Web Audio (`apps.md`, "Speech player": its
+`/events?speech=play` stream counts in `rt.speechPlayers`); the daemon's sink only paces the
+frames and the desktop sidecar plays nothing. Another
 human's project or session is refused (`forbidden`); a session without a summary is
 `validation`; no usable TTS is 503 `unavailable` with the reason. Recorded: one `voice.speak`
 row on the conversation session (the text as heard, never audio) and one `voice.speak` audit
 row (counts and the provider, never the text). The same speaker is behind the `summary.speak`
 command ("read me the summary", `commands.md`) and the `voice` notification channel, which
-reads urgent alerts aloud on top of the toast when voice alerts are on, a shell is attached
-and it is not quiet hours (`notifications.md`). `runtime.md` ("Read aloud") has the wiring;
+reads urgent alerts aloud on top of the toast when voice alerts are on, a speech player is
+attached, no voice session is open and it is not quiet hours (`notifications.md`); both fall
+back to text or a `skipped` row when no speech player is attached. `runtime.md` ("Read aloud") has the wiring;
 the UI's button is in `apps.md`.
 
 The desktop shell (`apps/desktop`), the Android app (`apps/mobile`) and the approvals web page
@@ -367,7 +375,9 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
   raced against the abort.
 - The shells do not call the `/voice` routes yet (above, "How the shell reaches it") and do
   not play the `/speak/:id/events` frames either: the UI plays them itself through Web Audio
-  in the webview (`apps.md`); the desktop sidecar ignores the `speak.started` frame for now. The
+  in the webview (`apps.md`); the desktop sidecar ignores the `speak.started` frame, so with
+  the app window closed nothing is spoken (alerts are skipped, `summary.speak` answers with
+  the text). The
   daemon's bridge is exercised by `packages/runtime/test/voice-route.test.ts` and scenario 3
   still carries its own copy (`tests/e2e/src/scenario-voice.ts`) until it is pointed at
   `VoiceBridge`. The conversation agent's own per-human copy of a pending card outlives a

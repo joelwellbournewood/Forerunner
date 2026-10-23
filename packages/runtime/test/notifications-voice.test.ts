@@ -11,15 +11,23 @@ import {
   NotificationEmitter,
   type NotificationRecord,
   Notifier,
+  speakThrough,
   spokenAlert,
   VOICE_ALERTS_OFF,
-  VOICE_NO_SHELL,
+  VOICE_IN_CONVERSATION,
+  VOICE_NO_PLAYER,
   VOICE_NOT_URGENT,
   VOICE_QUIET_HOURS,
   VOICE_SECRET_SHAPE,
   VoiceChannel,
 } from "../src/notifications/index.ts";
-import { collectingSink, FakeTts, VoiceProviderRegistry } from "../src/voice/pkg.ts";
+import {
+  type AudioChunk,
+  collectingSink,
+  FakeTts,
+  type TtsProvider,
+  VoiceProviderRegistry,
+} from "../src/voice/pkg.ts";
 import { SpeakSessions, VOICE_SPEAK_AUDIT_TOOL } from "../src/voice/speak.ts";
 import { defaultChannels, note, type RecordedEvent } from "./notifications-helpers.ts";
 
@@ -27,9 +35,10 @@ import { defaultChannels, note, type RecordedEvent } from "./notifications-helpe
  * The voice notification channel (spec L.6 "TTS for alerts"; ADR 0063) over the notifier and
  * the daemon: an urgent notification is read aloud through the registry's TTS (the fake
  * provider on the simulated clock) on top of the toast when the human turned voice alerts on,
- * a desktop shell is attached and it is not quiet hours; otherwise the delivery row says why
- * and the other channels have already delivered. A credential shape is never spoken. Every
- * spoken alert leaves a `notify.voice` audit row and a `voice.speak` row.
+ * an app window that plays speech is attached (`/events?speech=play`), no voice conversation
+ * is open and it is not quiet hours; otherwise the delivery row says why and the other
+ * channels have already delivered. A provider failure is not a delivery. A credential shape is
+ * never spoken. Every spoken alert leaves a `notify.voice` audit row and a `voice.speak` row.
  */
 const REGISTRY = join(process.cwd(), "evals", "registry");
 type Json = Record<string, unknown>;
@@ -72,7 +81,8 @@ interface VoiceWorld {
   tts: FakeTts;
   humanId: string;
   sessionId: string;
-  shells: { count: number };
+  players: { count: number };
+  busy: { reason: string | null };
   events: RecordedEvent[];
   logs: LogRecord[];
   store: Awaited<ReturnType<typeof openStore>>;
@@ -83,7 +93,9 @@ async function voiceWorld(opts: {
   start?: string;
   prefs?: Record<string, unknown>;
   ttsAvailable?: boolean;
-  shells?: number;
+  players?: number;
+  /** A provider in place of the fake one (a crashing engine). */
+  provider?: TtsProvider;
 }): Promise<VoiceWorld> {
   const clock = new SimulatedClock(opts.start ?? DAY);
   const store = await openStore({ url: "sqlite::memory:", clock });
@@ -113,7 +125,7 @@ async function voiceWorld(opts: {
     available: opts.ttsAvailable !== false,
   });
   const speech = new SpeakSessions({
-    registry: new VoiceProviderRegistry().registerTts(tts),
+    registry: new VoiceProviderRegistry().registerTts(opts.provider ?? tts),
     store,
     clock,
     humanId: human.id,
@@ -121,21 +133,14 @@ async function voiceWorld(opts: {
     sessionIdFor: async () => session.id,
     sink: () => collectingSink(),
   });
-  const shells = { count: opts.shells ?? 1 };
+  const players = { count: opts.players ?? 1 };
+  const busy: { reason: string | null } = { reason: null };
+  // The daemon's own adapter (compose.ts uses the same `speakThrough`).
   const voice = new VoiceChannel({
     clock,
-    shellsConnected: () => shells.count,
-    speak: async (req) => {
-      const u = await speech.say({ text: req.text, subject: req.subject, source: "notification" });
-      const r = await u.done;
-      return {
-        id: u.id,
-        sentences: u.sentences.length,
-        audioChunks: r.audioChunks,
-        provider: r.provider,
-        interrupted: r.state === "cancelled",
-      };
-    },
+    playersConnected: () => players.count,
+    busy: () => busy.reason,
+    speak: speakThrough(() => speech),
   });
   const { voice: _fake, ...fakes } = defaultChannels(clock);
   const events: RecordedEvent[] = [];
@@ -161,7 +166,8 @@ async function voiceWorld(opts: {
     tts,
     humanId: human.id,
     sessionId: session.id,
-    shells,
+    players,
+    busy,
     events,
     logs,
     store,
@@ -262,24 +268,24 @@ describe("voice notification channel", () => {
     ).toBe(true);
   });
 
-  it("nobody at the desktop: skipped; a normal notification is never spoken, listed or not", async () => {
+  it("no app window plays speech: skipped; a normal notification is never spoken, listed or not", async () => {
     w = await voiceWorld({
-      shells: 0,
+      players: 0,
       prefs: { channels: { session_ended: ["voice", "desktop"] } },
     });
     const r = await drive(w.clock, w.notifier.notify(urgent(w.humanId)));
     expect(r.deliveries.map((d) => `${d.channel}:${d.status}:${d.reason}`)).toEqual([
       "desktop:delivered:desktop",
-      `voice:skipped:${VOICE_NO_SHELL}`,
+      `voice:skipped:${VOICE_NO_PLAYER}`,
     ]);
-    w.shells.count = 1;
+    w.players.count = 1;
     const normal = await drive(w.clock, w.notifier.notify(note(w.humanId)));
     expect(normal.deliveries.map((d) => d.channel)).toEqual(["desktop"]);
     expect(w.tts.calls).toEqual([]);
     expect(
       new VoiceChannel({
         clock: w.clock,
-        shellsConnected: () => 1,
+        playersConnected: () => 1,
         speak: async () => {
           throw new Error("not called");
         },
@@ -290,12 +296,115 @@ describe("voice notification channel", () => {
     ).toBe(VOICE_NOT_URGENT);
   });
 
-  it("an explicit list naming only voice: the announcer still speaks and that is the delivery", async () => {
+  it("an explicit list naming only voice never replaces the toast: the default chain runs, then the voice", async () => {
     w = await voiceWorld({ prefs: { channels: { budget_stop: ["voice"] } } });
     const r = await drive(w.clock, w.notifier.notify(urgent(w.humanId)));
     expect(r.outcome).toBe("delivered");
-    expect(r.deliveries.map((d) => `${d.channel}:${d.status}`)).toEqual(["voice:delivered"]);
+    expect(r.deliveries.map((d) => `${d.channel}:${d.status}`)).toEqual([
+      "desktop:delivered",
+      "voice:delivered",
+    ]);
     expect(w.tts.calls.length).toBeGreaterThan(0);
+    // With the voice skipped (quiet hours) the toast is still there: never `no_channel`.
+    const night = await voiceWorld({
+      start: NIGHT,
+      prefs: { channels: { budget_stop: ["voice"] }, quiet_hours: QUIET },
+    });
+    try {
+      const q = await drive(night.clock, night.notifier.notify(urgent(night.humanId)));
+      expect(q.outcome).toBe("delivered");
+      expect(q.deliveries.map((d) => `${d.channel}:${d.status}`)).toEqual([
+        "desktop:delivered",
+        "voice:skipped",
+      ]);
+    } finally {
+      await night.close();
+    }
+  });
+
+  it("a provider that fails mid-alert is not a delivery: failed with the reason, retried only while nothing was heard", async () => {
+    let calls = 0;
+    const crashing: TtsProvider = {
+      name: "crashing-tts",
+      kind: "fake",
+      async isAvailable() {
+        return { ok: true, reason: "test" };
+      },
+      synthesize(): AsyncIterable<AudioChunk> {
+        calls++;
+        return {
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.reject(new Error("engine crashed")),
+          }),
+        };
+      },
+    };
+    w = await voiceWorld({ provider: crashing });
+    const r = await drive(w.clock, w.notifier.notify(urgent(w.humanId)));
+    expect(r.outcome).toBe("delivered");
+    const voice = r.deliveries.find((d) => d.channel === "voice");
+    expect(voice).toMatchObject({ status: "failed", reason: "engine crashed", attempts: 2 });
+    // Each attempt is a fresh utterance whose first sentence crashed (the next one may have
+    // started synthesising ahead of it).
+    expect(calls).toBeGreaterThanOrEqual(2);
+    const audits = await w.store.auditLog.list({ tool: "notify.voice" } as never);
+    expect(audits.at(-1)?.allowed).toBe(false);
+  });
+
+  it("a provider that fails after audio was heard is not retried (the alert would repeat)", async () => {
+    const chunk: AudioChunk = {
+      pcm: new Int16Array(160),
+      sampleRate: 16000,
+      channels: 1,
+      timestampMs: 0,
+    };
+    let calls = 0;
+    const halfway: TtsProvider = {
+      name: "halfway-tts",
+      kind: "fake",
+      async isAvailable() {
+        return { ok: true, reason: "test" };
+      },
+      async *synthesize(): AsyncIterable<AudioChunk> {
+        calls++;
+        if (calls % 2 === 1) {
+          yield chunk;
+          return;
+        }
+        throw new Error("engine crashed on the second sentence");
+      },
+    };
+    w = await voiceWorld({ provider: halfway });
+    const r = await drive(w.clock, w.notifier.notify(urgent(w.humanId)));
+    expect(r.deliveries.find((d) => d.channel === "voice")).toMatchObject({
+      status: "unavailable",
+      reason: "engine crashed on the second sentence",
+      attempts: 1,
+    });
+  });
+
+  it("an open voice conversation: the alert is not spoken over it, the toast goes", async () => {
+    w = await voiceWorld({});
+    w.busy.reason = VOICE_IN_CONVERSATION;
+    const r = await drive(w.clock, w.notifier.notify(urgent(w.humanId)));
+    expect(r.deliveries.map((d) => `${d.channel}:${d.status}:${d.reason}`)).toEqual([
+      "desktop:delivered:desktop",
+      `voice:skipped:${VOICE_IN_CONVERSATION}`,
+    ]);
+    expect(w.tts.calls).toEqual([]);
+  });
+
+  it("two urgent alerts dispatched together: the newer cuts the older short, and the cut one is not a delivery", async () => {
+    w = await voiceWorld({});
+    const a = w.notifier.notify(urgent(w.humanId, { title: "First alert" }));
+    const b = w.notifier.notify(urgent(w.humanId, { title: "Second alert" }));
+    const [ra, rb] = await drive(w.clock, Promise.all([a, b]));
+    const statuses = [ra, rb].map((r) => r.deliveries.find((d) => d.channel === "voice")?.status);
+    expect(statuses.sort()).toEqual(["delivered", "unavailable"]);
+    const cut = [ra, rb]
+      .flatMap((r) => r.deliveries)
+      .find((d) => d.channel === "voice" && d.status === "unavailable");
+    expect(cut?.reason).toBe("cut short by a newer utterance");
   });
 
   it("never speaks a secret: a credential shape in the text is refused, not spoken, not logged", async () => {
@@ -411,7 +520,7 @@ describe("voice alerts wired into the daemon", () => {
     await rt?.close();
   });
 
-  it("the prefs route lists the channel; on, with a shell attached, a blocking request is spoken", async () => {
+  it("the prefs route lists the channel; on, with a speech player attached, a blocking request is spoken and the player told", async () => {
     const before = await json(await req("/notifications/prefs"));
     expect((before.prefs as Json).voice_alerts).toBe(false);
     expect((before.channels as Json[]).find((c) => c.name === "voice")).toEqual({
@@ -431,15 +540,46 @@ describe("voice alerts wired into the daemon", () => {
       configured: true,
       reason: null,
     });
-    // A shell on /events (token in the header, nothing declared): someone is at the desktop.
+    // A shell on /events (token in the header, nothing declared) shows toasts but plays no
+    // audio: the voice is skipped, nothing is "spoken" into a room where nothing plays it.
     const res = await req("/events", { headers: { accept: "text/event-stream" } });
     const reader = res.body?.getReader();
     if (!reader) throw new Error("no body");
     await reader.read();
     expect(rt.shells.count()).toBe(1);
+    expect(rt.speechPlayers.count()).toBe(0);
+    const silent = nextRecord("request_blocking");
+    await insertRequest(true, "A first approval.");
+    const unheard = await drive(clock, silent);
+    expect(unheard.deliveries.map((d) => `${d.channel}:${d.status}:${d.reason}`)).toEqual([
+      "desktop:delivered:shell",
+      `voice:skipped:${VOICE_NO_PLAYER}`,
+    ]);
+    expect(tts.calls).toHaveLength(0);
+    // The UI's window declares itself a speech player (`?speech=play`, token in the query as
+    // an EventSource sends it): now the alert is spoken and the frame tells it to play.
+    const playerRes = await app.request(`/events?token=${token}&speech=play`, {
+      headers: { accept: "text/event-stream" },
+    });
+    const player = playerRes.body?.getReader();
+    if (!player) throw new Error("no player body");
+    await player.read();
+    expect(rt.speechPlayers.count()).toBe(1);
+    expect(rt.shells.count()).toBe(1);
+    let playerText = "";
+    const sawStarted = (async () => {
+      while (!playerText.includes("event: speak.started")) {
+        const { value, done } = await player.read();
+        if (done) break;
+        playerText += new TextDecoder().decode(value);
+      }
+    })();
     const pending = nextRecord("request_blocking");
     await insertRequest(true, "Deploy to production needs your approval.");
     const record = await drive(clock, pending);
+    await sawStarted;
+    expect(playerText).toContain('"player":"any"');
+    expect(playerText).toContain('"source":"notification"');
     expect(record.deliveries.map((d) => `${d.channel}:${d.status}:${d.reason}`)).toEqual([
       "desktop:delivered:shell",
       "voice:delivered:spoken: 2 sentence(s), 4 chunk(s) via fake-tts",
@@ -455,14 +595,16 @@ describe("voice alerts wired into the daemon", () => {
     expect(plain.deliveries.map((d) => d.channel)).toEqual(["desktop"]);
     expect(tts.calls).toHaveLength(2);
     await reader.cancel();
+    await player.cancel();
     await new Promise((r) => setTimeout(r, 20));
-    // With the shell gone the next urgent one is skipped as "no desktop shell attached".
+    expect(rt.speechPlayers.count()).toBe(0);
+    // With the player gone the next urgent one is skipped as "no app window open to play speech".
     const again = nextRecord("request_blocking");
     await insertRequest(true, "Another approval.");
     const skipped = await drive(clock, again);
     expect(skipped.deliveries.find((d) => d.channel === "voice")).toMatchObject({
       status: "skipped",
-      reason: VOICE_NO_SHELL,
+      reason: VOICE_NO_PLAYER,
     });
     expect(tts.calls).toHaveLength(2);
   });

@@ -4,9 +4,10 @@
  * `Utterance` is one text synthesised sentence by sentence (`splitSentences`) through the TTS
  * provider the registry's policy picked, with no model call and no STT, so it works without a
  * model credential. Playback takes the voice loop's path: `audio` events carry the PCM frames
- * the daemon streams to the shell (`GET /speak/:id/events`, the same frame as a voice turn's)
- * and the sink paces them on the clock. One voice at a time: a new utterance cancels the one
- * in flight; a cancel is immediate. What is recorded: one `voice.speak` row on the human's
+ * the daemon streams to the player (`GET /speak/:id/events`, the same frame as a voice turn's;
+ * the app window plays them, the sink here only paces them on the clock), held until the
+ * player's stream attached or a short grace passed. One voice at a time: a new utterance
+ * cancels the one in flight, starts are serialised; a cancel is immediate. What is recorded: one `voice.speak` row on the human's
  * conversation session (the text as heard, never audio) and one `voice.speak` audit row
  * (counts and the provider, never the text).
  */
@@ -34,12 +35,21 @@ export type SpeakSubject =
 /** Who asked: a command's source, or the notifier. */
 export type SpeakSource = CommandSource | "notification";
 
+/**
+ * Who plays the frames (ADR 0063): `requester` when the caller follows the utterance it asked
+ * for itself (the UI's Read aloud button), `any` when every attached speech player should
+ * (an alert, `summary.speak` by chat). Carried on the `speak.started` frame.
+ */
+export type SpeakPlayer = "requester" | "any";
+
 export interface SpeakRequest {
   text: string;
   subject: SpeakSubject;
   source: SpeakSource;
   /** BCP-47 for the provider. */
   language?: string;
+  /** Who plays it; default `any`. */
+  player?: SpeakPlayer;
 }
 
 export type SpeakState = "speaking" | "done" | "cancelled" | "failed";
@@ -92,6 +102,12 @@ export interface UtteranceOptions {
   persist?: (record: SpeakRecord) => Promise<void>;
   /** Events kept for `eventsAfter`; audio events are never kept. */
   bufferSize?: number;
+  /**
+   * Playback waits for the first stream subscriber up to this long (on the clock), so the
+   * player that attaches after the `POST` or the `speak.started` frame hears the first words
+   * (audio frames are live only). 0 plays at once. Synthesis runs meanwhile.
+   */
+  awaitListenerMs?: number;
 }
 
 interface ReadyItem {
@@ -108,6 +124,7 @@ export class Utterance {
   readonly id: string;
   readonly subject: SpeakSubject;
   readonly source: SpeakSource;
+  readonly player: SpeakPlayer;
   readonly text: string;
   readonly sentences: string[];
   readonly provider: VoiceProviderPick;
@@ -126,6 +143,8 @@ export class Utterance {
   private readonly emitter = new EventEmitter();
   private readonly buffer: SpeakEntry[] = [];
   private seq = 0;
+  private listened = false;
+  private listenerArrived: (() => void) | null = null;
   private readonly t0: number;
   private readonly logger = log("voice:speak");
 
@@ -133,6 +152,7 @@ export class Utterance {
     this.id = opts.id;
     this.subject = opts.request.subject;
     this.source = opts.request.source;
+    this.player = opts.request.player ?? "any";
     this.text = opts.request.text;
     this.sentences = splitSentences(opts.request.text);
     this.provider = opts.provider;
@@ -159,7 +179,34 @@ export class Utterance {
 
   subscribe(listener: (entry: SpeakEntry) => void): () => void {
     this.emitter.on("event", listener);
+    if (!this.listened) {
+      this.listened = true;
+      this.listenerArrived?.();
+    }
     return () => this.emitter.off("event", listener);
+  }
+
+  /** Whether a stream subscribed; playback holds until one did or the grace passed. */
+  get hasListener(): boolean {
+    return this.listened;
+  }
+
+  /** Resolves once a subscriber attached, the grace period passed or the utterance aborted. */
+  private untilListener(signal: AbortSignal): Promise<void> {
+    const graceMs = this.opts.awaitListenerMs ?? 0;
+    if (this.listened || graceMs <= 0 || signal.aborted) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const ac = new AbortController();
+      const finish = () => {
+        this.listenerArrived = null;
+        signal.removeEventListener("abort", finish);
+        ac.abort();
+        resolve();
+      };
+      this.listenerArrived = finish;
+      signal.addEventListener("abort", finish, { once: true });
+      this.opts.clock.sleep(graceMs, ac.signal).then(finish, finish);
+    });
   }
 
   /** Buffered events after `seq` (audio chunks are never replayed). */
@@ -267,7 +314,12 @@ export class Utterance {
     })();
 
     const play = (async () => {
+      let held = false;
       for await (const item of ready) {
+        if (!held) {
+          held = true;
+          await this.untilListener(signal);
+        }
         if (signal.aborted) break;
         markPlayStarted(item.index);
         let started = false;
@@ -351,15 +403,21 @@ export interface SpeakSessionsDeps {
   /** Finished utterances kept for a late `GET` or stream: at most `keepDone`, none older than `retainDoneMs`. */
   keepDone?: number;
   retainDoneMs?: number;
+  /** How long playback waits for its player's stream (`UtteranceOptions.awaitListenerMs`). */
+  awaitListenerMs?: number;
 }
 
 export const DEFAULT_KEEP_DONE = 8;
 export const DEFAULT_RETAIN_DONE_MS = 10 * 60_000;
+/** A player attaches within a round trip; past this the frames go to the paced sink alone. */
+export const DEFAULT_AWAIT_LISTENER_MS = 1500;
 
 /** The daemon's speaker: picks the TTS provider per utterance and keeps one voice at a time. */
 export class SpeakSessions {
   private readonly all = new Map<string, Utterance>();
   private speaking: Utterance | null = null;
+  /** Starts run one after the other, so the newest request always cancels the one before. */
+  private starting: Promise<unknown> = Promise.resolve();
   private readonly logger = log("voice:speak");
 
   constructor(private readonly deps: SpeakSessionsDeps) {}
@@ -369,8 +427,18 @@ export class SpeakSessions {
     return this.speaking && this.speaking.state === "speaking" ? this.speaking : null;
   }
 
-  /** Start reading `text` aloud; refused with `unavailable` and the reason when no TTS can run. */
-  async say(req: SpeakRequest): Promise<Utterance> {
+  /**
+   * Start reading `text` aloud; refused with `unavailable` and the reason when no TTS can run.
+   * One voice (spec L.6): starts are serialised, so of two overlapping requests the later one
+   * cancels the earlier, whatever the provider pick and the session lookup cost.
+   */
+  say(req: SpeakRequest): Promise<Utterance> {
+    const started = this.starting.then(() => this.start(req));
+    this.starting = started.catch(() => undefined);
+    return started;
+  }
+
+  private async start(req: SpeakRequest): Promise<Utterance> {
     this.sweep();
     const text = req.text.trim();
     if (!text) throw new ForerunnerError("validation", "nothing to read aloud");
@@ -388,6 +456,7 @@ export class SpeakSessions {
       clock: this.deps.clock,
       conversationSessionId,
       persist: (record) => this.persist(record),
+      awaitListenerMs: this.deps.awaitListenerMs ?? DEFAULT_AWAIT_LISTENER_MS,
     });
     this.all.set(utterance.id, utterance);
     this.speaking = utterance;

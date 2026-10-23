@@ -147,8 +147,11 @@ import {
   type ProducerHooks,
   producers,
   SignalChannel,
+  speakThrough,
   TelegramChannel,
   type TelegramFetch,
+  VOICE_IN_CONVERSATION,
+  VOICE_NO_PLAYER,
   VoiceChannel,
 } from "../notifications/index.ts";
 import { isQuietAt, resolvePrefs } from "../notifications/prefs.ts";
@@ -482,6 +485,8 @@ export interface ComposeOptions {
     /** Stopped sessions kept for a late `GET` or stream (default 8) and for how long (default 10 min). */
     keepStopped?: number;
     retainStoppedMs?: number;
+    /** How long a read-aloud waits for its player's stream before playing (default 1.5 s). */
+    awaitListenerMs?: number;
   };
 }
 
@@ -726,6 +731,11 @@ export interface RuntimeApp {
    * `shells.ts` says which do); the desktop channel falls back to the OS notifier at zero.
    */
   shells: ShellPresence;
+  /**
+   * The `/events` streams that play speech (`?speech=play`, ADR 0063: the UI where it has Web
+   * Audio); the voice channel speaks and `summary.speak` reads aloud only with one attached.
+   */
+  speechPlayers: ShellPresence;
   /**
    * This PC as a device and the remote control of it (spec R.4, R.8; ADR 0030, ADR 0041):
    * the daemon's own `desktop` device row (registered on every store: it is the paired device
@@ -1998,6 +2008,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // EventSource, the phone's web view and a browser tab receive the frame but show nothing,
   // so with none of the shells attached the OS notifier runs.
   const shells = new ShellPresence();
+  // The clients that play `speak.started` utterances (ADR 0063); without one nothing is heard,
+  // so the voice channel skips and `summary.speak` answers with the text.
+  const speechPlayers = new ShellPresence();
+  // The voice loop's sessions are composed later; an alert never talks over an open one.
+  let voiceBusy: () => string | null = () => null;
   // The bot token is checked for existence (never read here) so the settings screen says so
   // and the notifier skips the channel instead of failing every send before the fallback.
   const telegram = new SecretCheckedChannel(
@@ -2034,22 +2049,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             // quiet hours, when the human turned voice alerts on (ADR 0063).
             new VoiceChannel({
               clock,
-              shellsConnected: () => shells.count(),
-              speak: async (req) => {
-                const u = await speaker().say({
-                  text: req.text,
-                  subject: req.subject,
-                  source: "notification",
-                });
-                const r = await u.done;
-                return {
-                  id: u.id,
-                  sentences: u.sentences.length,
-                  audioChunks: r.audioChunks,
-                  provider: r.provider,
-                  interrupted: r.state === "cancelled",
-                };
-              },
+              playersConnected: () => speechPlayers.count(),
+              busy: () => voiceBusy(),
+              speak: speakThrough(speaker),
             }),
           ]
         : []),
@@ -2391,6 +2393,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // summary.speak (spec A.6): the speaker over the registry's TTS; without a usable
       // provider the command answers with the text instead (the reason comes back here).
       speak: async (req) => {
+        // Nothing would play it: the command answers with the text instead of a silent "aloud".
+        if (speechPlayers.count() <= 0) return { spoken: false, reason: VOICE_NO_PLAYER };
         try {
           const u = await speaker().say({
             text: req.text,
@@ -2529,9 +2533,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       ? { retainStoppedMs: opts.voice.retainStoppedMs }
       : {}),
   });
+  voiceBusy = () => (voice.open().length > 0 ? VOICE_IN_CONVERSATION : null);
   // Read aloud (spec A.6, L.6; ADR 0063): one speaker over the same registry, TTS only, no
   // model call; one voice at a time. Every utterance is announced on the bus (`speak`, the
-  // `speak.started` frame on `/events`) so a shell can attach to its stream and play it.
+  // `speak.started` frame on `/events`, with who plays it) so a speech player (the UI with
+  // `/events?speech=play`) attaches to its stream and plays it; playback waits for that.
   const speechSessions = new SpeakSessions({
     registry: voiceRegistry,
     // Read per utterance from the same source as the voice sessions' providers.
@@ -2543,11 +2549,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     agentId: agent.id,
     sessionIdFor: () => conversationSessionId({ conversation, agent, store, clock }),
     ...(opts.voice?.sink ? { sink: opts.voice.sink } : {}),
+    ...(opts.voice?.awaitListenerMs !== undefined
+      ? { awaitListenerMs: opts.voice.awaitListenerMs }
+      : {}),
     onStart: (u) => {
       const payload: SpeakStartedView = {
         id: u.id,
         subject: u.subject,
         source: u.source,
+        player: u.player,
         sentences: u.sentences.length,
       };
       events.emit("speak", payload);
@@ -2862,6 +2872,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     notifier,
     notifications,
     shells,
+    speechPlayers,
     remote: {
       enabled: remoteEnabled,
       device: remoteDevice,

@@ -1247,11 +1247,16 @@ export const SpeakEventView = z.object({
 });
 export type SpeakEventView = z.infer<typeof SpeakEventView>;
 
-/** The `speak.started` frame on `GET /events`: a shell attaches to the utterance's stream to play it. */
+/**
+ * The `speak.started` frame on `GET /events`: a speech player attaches to the utterance's
+ * stream to play it. `player` says who plays it: `requester` (the Read aloud button that asked
+ * follows it itself) or `any` (an alert, `summary.speak` by chat: every speech player plays it).
+ */
 export const SpeakStartedView = z.object({
   id: z.string(),
   subject: SpeakSubjectView,
   source: z.string(),
+  player: z.enum(["requester", "any"]),
   sentences: z.number().int(),
 });
 export type SpeakStartedView = z.infer<typeof SpeakStartedView>;
@@ -1627,5 +1632,5 @@ export const DAEMON_ROUTES = {
   speakEvents:
     "GET /speak/:id/events?afterSeq= (JSON SpeakEventView[]; 409 when afterSeq is not a number) | Accept: text/event-stream (SSE speak.event frames: sentence, audio with the voice loop's PCM frame, speaking_start, speaking_end, error, speak.done; heartbeat; ?token= accepted)",
   events:
-    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, notification, desktop.indicator, speak.started, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts)",
+    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, notification, desktop.indicator, speak.started, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts; ?speech=play marks a stream whose client plays the speak.started utterances)",
 } as const;

@@ -177,11 +177,15 @@ export const CHAIN_CHANNELS: readonly ChannelName[] = CHANNEL_NAMES.filter((c) =
  * preferred channel (`notify_channel`, desktop for "push" and when unset) followed by the
  * remaining chain channels in `CHANNEL_NAMES` order. The notifier skips channels that are
  * not configured and stops at the first delivery. `voice` announces and is never a step here
- * (a preferred or listed `voice` is ignored by the chain; the announcer still runs).
+ * (a preferred or listed `voice` is ignored by the chain; the announcer still runs), and it
+ * never replaces a delivery (ADR 0063): a list naming only `voice` gets the default chain, so
+ * the toast still goes (an empty list stays empty).
  */
 export function channelsFor(kind: NotificationKind, prefs: NotificationPrefs): ChannelName[] {
-  const explicit = prefs.channels[kind];
-  if (explicit) return explicit.filter((c) => c !== "voice");
+  const listed = prefs.channels[kind];
+  const explicit = listed?.filter((c) => c !== "voice");
+  // An empty list stays empty (the human muted the kind); a voice-only list gets the chain.
+  if (listed && explicit && (explicit.length > 0 || listed.length === 0)) return explicit;
   const preferred: ChannelName =
     prefs.notify_channel && prefs.notify_channel !== "push" && prefs.notify_channel !== "voice"
       ? prefs.notify_channel

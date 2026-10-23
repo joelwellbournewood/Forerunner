@@ -1,6 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { openStore } from "@forerunner/state";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -11,8 +12,17 @@ import {
 } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
-import { FakeTts, splitSentences } from "../src/voice/pkg.ts";
-import { VOICE_SPEAK_AUDIT_TOOL } from "../src/voice/speak.ts";
+import {
+  collectingSink,
+  FakeTts,
+  splitSentences,
+  VoiceProviderRegistry,
+} from "../src/voice/pkg.ts";
+import {
+  DEFAULT_AWAIT_LISTENER_MS,
+  SpeakSessions,
+  VOICE_SPEAK_AUDIT_TOOL,
+} from "../src/voice/speak.ts";
 
 /**
  * The speak routes (spec A.6 "readable aloud", L.6 "TTS for summaries"; ADR 0063): the project
@@ -228,7 +238,8 @@ describe("speak routes on the composed daemon", () => {
       error: null,
     });
     expect(ended.endedAt).not.toBeNull();
-    expect(ended.firstAudioMs).toBe(200);
+    // Nobody attached to the stream: playback held for the grace period, then went to the sink.
+    expect(ended.firstAudioMs).toBe(DEFAULT_AWAIT_LISTENER_MS);
     // Every sentence synthesised in order, each one finished (none aborted).
     const calls = tts.calls.slice(callsBefore);
     expect(calls.map((c) => c.text)).toEqual(view.sentences);
@@ -357,6 +368,48 @@ describe("speak routes on the composed daemon", () => {
     expect((await events(started.id)).some((e) => e.type === "speak.done")).toBe(true);
   });
 
+  it("playback waits for the player's stream: a late subscriber still gets the first words", async () => {
+    const started = SpeakView.parse(await json(await post(`/sessions/${sessionId}/speak`, {})));
+    // The TTS has the first chunk after 200 ms; the player attaches at 400 ms (a slow round
+    // trip). Without the hold the first frames would already be gone (audio is live only).
+    for (let t = 0; t < 400; t += STEP_MS) {
+      await settle(24);
+      await clock.advance(STEP_MS);
+    }
+    await settle(24);
+    expect(tts.calls.some((c) => c.text === "Three tasks done." && c.firstChunkAtMs !== null)).toBe(
+      true,
+    );
+    expect(SpeakView.parse(await json(await req(`/speak/${started.id}`))).audioChunks).toBe(0);
+    const ac = new AbortController();
+    const res = await app.request(`/speak/${started.id}/events?token=${token}&afterSeq=0`, {
+      headers: { accept: "text/event-stream" },
+      signal: ac.signal,
+    });
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error("no body");
+    let text = "";
+    const read = (async () => {
+      while (!text.includes('"type":"audio"')) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += new TextDecoder().decode(value);
+      }
+    })();
+    await drive(clock, read, 2_000);
+    const firstAudio = text
+      .split("\n")
+      .filter((l) => l.startsWith("data: "))
+      .map((l) => JSON.parse(l.slice(6)) as { type: string; data: Json })
+      .find((f) => f.type === "audio");
+    expect(firstAudio?.data).toMatchObject({ sentenceIndex: 0, timestampMs: 0 });
+    ac.abort();
+    const ended = await untilEnded(started.id);
+    expect(ended.state).toBe("done");
+    expect(ended.firstAudioMs).toBeGreaterThanOrEqual(400);
+    expect(ended.firstAudioMs).toBeLessThan(DEFAULT_AWAIT_LISTENER_MS);
+  });
+
   it("one voice: a new utterance cancels the one in flight", async () => {
     const first = SpeakView.parse(await json(await post(`/projects/${projectId}/speak`, {})));
     await drive(clock, settle(4), 300);
@@ -416,6 +469,25 @@ describe("speak routes on the composed daemon", () => {
       matched: "pattern",
       commands: [{ name: "summary.speak", params: { project: projectId } }],
     });
+    const summary = ProjectSummary.parse(await json(await req(`/projects/${projectId}/summary`)));
+    // No app window plays speech: nothing would be heard, so the summary is the reply.
+    const unheard = await json(
+      await post("/commands/execute", {
+        commands: [{ name: "summary.speak", params: { project: projectId } }],
+      }),
+    );
+    expect(unheard.sentence).toBe(
+      `Voice is unavailable (no app window open to play speech). Summary of PharmaWatch: ${summary.spoken}`,
+    );
+    expect(rt.speech.current).toBeNull();
+    // The UI's window attaches as a speech player; the command now reads aloud.
+    const playerRes = await app.request(`/events?token=${token}&speech=play`, {
+      headers: { accept: "text/event-stream" },
+    });
+    const player = playerRes.body?.getReader();
+    if (!player) throw new Error("no player body");
+    await player.read();
+    expect(rt.speechPlayers.count()).toBe(1);
     const callsBefore = tts.calls.length;
     const r = await json(
       await post("/commands/execute", {
@@ -424,7 +496,6 @@ describe("speak routes on the composed daemon", () => {
       }),
     );
     expect(r.status).toBe("done");
-    const summary = ProjectSummary.parse(await json(await req(`/projects/${projectId}/summary`)));
     expect(r.sentence).toBe(`Reading the summary of PharmaWatch aloud. ${summary.spoken}`);
     const current = rt.speech.current;
     if (!current) throw new Error("nothing speaking");
@@ -433,11 +504,23 @@ describe("speak routes on the composed daemon", () => {
     const ended = await untilEnded(current.id);
     expect(ended.state).toBe("done");
     expect(tts.calls.slice(callsBefore).map((c) => c.text)).toEqual(current.sentences);
-    const change = (await rt.store.changeLog.list()).find((c) =>
-      c.commands.some((x) => (x as { name: string }).name === "summary.speak"),
+    const change = (await rt.store.changeLog.list()).find(
+      (c) =>
+        c.commands.some((x) => (x as { name: string }).name === "summary.speak") &&
+        (c.after as { speak_id?: string | null } | null)?.speak_id === current.id,
     );
     expect(change).toMatchObject({ source: "chat", undo_state: "irreversible" });
     expect(change?.after).toMatchObject({ spoken: true, via: "speaker", speak_id: current.id });
+    // Another human's project is refused by the command as by the route.
+    const theirs = await json(
+      await post("/commands/execute", {
+        commands: [{ name: "summary.speak", params: { project: otherProjectId } }],
+      }),
+    );
+    expect(theirs.status).not.toBe("done");
+    expect(JSON.stringify(theirs)).toContain("is not yours");
+    expect(tts.calls.some((c) => c.text.startsWith("Mara"))).toBe(false);
+    await player.cancel();
   });
 
   it("finished utterances are dropped beyond the kept count and after the retention window", async () => {
@@ -494,6 +577,13 @@ describe("speak without a TTS provider", () => {
         small_project_mode: false,
         active: true,
       });
+      // A speech player is attached, so the reason is the provider's.
+      const playerRes = await app.request(`/events?token=${token}&speech=play`, {
+        headers: { accept: "text/event-stream" },
+      });
+      const player = playerRes.body?.getReader();
+      if (!player) throw new Error("no player body");
+      await player.read();
       const res = await post(`/projects/${p.id}/speak`, {});
       expect(res.status).toBe(503);
       expect(await json(res)).toMatchObject({
@@ -509,8 +599,53 @@ describe("speak without a TTS provider", () => {
       expect(String(r.sentence)).toMatch(
         /^Voice is unavailable \(.*no TTS provider available.*\)\. Summary of Gamma: Gamma\. Goal: Ship the thing\./,
       );
+      await player.cancel();
     } finally {
       await rt.close();
+    }
+  });
+});
+
+describe("one voice under concurrent requests", () => {
+  it("two overlapping say() calls: the later one cancels the earlier, never both to the end", async () => {
+    const clock = new SimulatedClock("2026-11-03T09:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    try {
+      const human = await store.human.insert({
+        name: "J",
+        email: "j@example.test",
+        timezone: "Europe/Zurich",
+      });
+      const agent = await store.agent.insert({
+        name: "Alice",
+        owner_human_id: human.id,
+        kind: "principal",
+        memory_location: "",
+      });
+      const session = await store.session.insert({ agent_id: agent.id });
+      const tts = new FakeTts({ clock, chunks: 1 });
+      const speech = new SpeakSessions({
+        registry: new VoiceProviderRegistry().registerTts(tts),
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        sessionIdFor: async () => session.id,
+        sink: () => collectingSink(),
+        awaitListenerMs: 0,
+      });
+      const subject = { kind: "notification", id: "n", notificationKind: "budget_stop" } as const;
+      // Both start before either has picked its provider or found its session row.
+      const [first, second] = await Promise.all([
+        speech.say({ text: "First alert. It has two sentences.", subject, source: "notification" }),
+        speech.say({ text: "Second alert.", subject, source: "notification" }),
+      ]);
+      const [a, b] = await drive(clock, Promise.all([first.done, second.done]));
+      expect(a.state).toBe("cancelled");
+      expect(b.state).toBe("done");
+      expect(speech.current).toBeNull();
+    } finally {
+      await store.close();
     }
   });
 });

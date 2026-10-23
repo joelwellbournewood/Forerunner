@@ -102,7 +102,7 @@ import { createProjectRecord } from "./create-project.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
-import { CLIENT_HEADER, isShellStream } from "./shells.ts";
+import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
 import {
   changeLogView,
   commandDefView,
@@ -1607,6 +1607,7 @@ export function createDaemonApp(
       text: summary.spoken,
       subject: { kind: "project", id: p.id, name: p.name },
       source: "ui",
+      player: "requester",
       ...(body.language ? { language: body.language } : {}),
     });
     return c.json(speakView(u), 201);
@@ -1624,6 +1625,7 @@ export function createDaemonApp(
       text,
       subject: { kind: "session", id: s.id, projectId: s.project_id },
       source: "ui",
+      player: "requester",
       ...(body.language ? { language: body.language } : {}),
     });
     return c.json(speakView(u), 201);
@@ -1695,7 +1697,8 @@ export function createDaemonApp(
       // The desktop control indicator (spec S.32): the shells show a banner while `on` is true.
       const onDesktopIndicator = (p: DesktopIndicatorPayload) =>
         void stream.writeSSE({ event: DESKTOP_INDICATOR_EVENT, data: JSON.stringify(p) });
-      // Something is being read aloud (ADR 0063): a shell attaches to `/speak/:id/events`.
+      // Something is being read aloud (ADR 0063): a speech player attaches to
+      // `/speak/:id/events`; a stream that declared `?speech=play` counts as one.
       const onSpeak = (p: SpeakStartedView) =>
         void stream.writeSSE({ event: "speak.started", data: JSON.stringify(p) });
       const detachShell = isShellStream({
@@ -1704,6 +1707,9 @@ export function createDaemonApp(
         bearerHeader: (c.req.header("authorization") ?? "").startsWith("Bearer "),
       })
         ? rt.shells.attach()
+        : () => undefined;
+      const detachPlayer = isSpeechPlayerStream({ speech: c.req.query("speech") })
+        ? rt.speechPlayers.attach()
         : () => undefined;
       rt.events.on("session", onSession);
       rt.events.on("inbox", onInbox);
@@ -1732,6 +1738,7 @@ export function createDaemonApp(
         rt.events.off(DESKTOP_INDICATOR_EVENT, onDesktopIndicator);
         rt.events.off("speak", onSpeak);
         detachShell();
+        detachPlayer();
       }
     }),
   );
@@ -1825,5 +1832,3 @@ export async function startDaemon(
 }
 
 export type { EventView };
-
-/** The principal's conversation session: the activity log of changes made outside a chat turn. */
