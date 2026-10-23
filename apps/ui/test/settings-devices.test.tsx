@@ -280,6 +280,8 @@ describe("Settings -> Devices (spec R.2)", () => {
     expect(await screen.findByTestId("devices-note")).toHaveTextContent(
       "Alice's Pixel is revoked in the shared store (the state service failed: state service unreachable: fetch failed); its next request is refused.",
     );
-    await waitFor(() => expect(activeRows().map((row) => row.dataset.device)).toEqual(["dev_desktop"]));
+    await waitFor(() =>
+      expect(activeRows().map((row) => row.dataset.device)).toEqual(["dev_desktop"]),
+    );
   });
 });

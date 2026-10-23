@@ -315,8 +315,7 @@ export function DevicesSection({
   // The device ids known when the pairing started: a new one in the list is the phone that
   // just paired. Null until a list is known (a pairing started before the first load).
   const knownIds = useRef<Set<string> | null>(null);
-  const pairingLive =
-    pairing.status === "shown" && Date.parse(pairing.view.expiresAt) > now;
+  const pairingLive = pairing.status === "shown" && Date.parse(pairing.view.expiresAt) > now;
   const reload = list.reload;
 
   // While a code is live, re-read the list so the phone shows up without Done or Refresh.
