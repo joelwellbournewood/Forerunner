@@ -1661,7 +1661,9 @@ specs, navigate as an HTTP fetch through the same `SitePolicy` and hop cap, read
 `extractFromHtml`, the rest `not_supported`); `agentEmailPorts` (`src/wiring/email-ports.ts`)
 builds the email capability's ports once (settings row, identity, sent log, approvals, policy,
 the mailbox opened by reference from the vault on first use) for the four `email_*` tools and
-the notifier's email channel alike. Neither set is in the built-in `ToolRegistry`: a
+the notifier's email channel alike; its settings store writes to the audit log, and compose
+binds `settings.onCommandsSwitchedOff` to the `email_commands_off` notification (ADR 0081: a
+mode change to off turns email commands off and the owner is told). Neither set is in the built-in `ToolRegistry`: a
 presence switch per capability (`CapabilityPresence`) decides whether `toolsForRun()` and the
 session grant carry them, read at compose, at every session start (`startSession` calls
 `rt.capabilities.refresh()` before the runner starts), on every extension event of the
@@ -2537,7 +2539,9 @@ the capability's schema agreeing on the key sets, `PUT` picking the mode and the
 `email.settings` row by the daemon's human, the tray's `pause` holding the next send as
 `queued` and `resume` releasing it, the sent log and the command audit newest first with the
 limit, `rotate-marker`, another human's agent and an unknown id refused with 403 on every
-route and no settings row created.
+route and no settings row created; ADR 0081: `PUT` mode off over commands on turns them off
+with the `commands_switched_off` audit row and the `email_commands_off` notification, and `PUT`
+commands on at mode off is a 400 carrying `COMMANDS_NEED_SENDING_MODE`.
 
 `shared-secret-resolver.test.ts` (spec S.13, ADR 0065; two installs on one store, each with
 its own `MemoryVault` and wrapping key): the proposal wraps per named agent install, files the
