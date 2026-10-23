@@ -165,7 +165,6 @@ interface ExecOptions {
   /** The price table in force (D.20): fast mode needs the variant's row. Default: built-ins. */
   pricingTable?: PricingTable;
   pricingFor?: (model: string) => RunPricing;
-  effortOffset?: -1 | 0 | 1;
 }
 
 async function runTask(o: ExecOptions = {}) {
@@ -188,7 +187,6 @@ async function runTask(o: ExecOptions = {}) {
     onEvent: (_t, ev) => events.push(ev),
     ...(o.pricingTable ? { pricingTable: () => o.pricingTable as PricingTable } : {}),
     ...(o.pricingFor ? { pricingFor: o.pricingFor } : {}),
-    ...(o.effortOffset !== undefined ? { effortOffset: o.effortOffset } : {}),
   });
   const token = issue(h, {
     agentId: w.agent,
@@ -294,10 +292,14 @@ describe("the executor honours the D.4 settings of a specialist run", () => {
     expect(warnings(override.events).join("\n")).toMatch(
       /coder runs at effort medium, its max_effort/,
     );
-    // The project slider's +1 (medium -> high) stops at the cap too.
-    const offset = await runTask({ spec: capped, effortOffset: 1 });
+    // The project's speed-versus-quality slider at +1 (spec D.16, medium -> high) stops at the
+    // cap too; the slider is read from the project row the run loads.
+    const quality = { speed_quality_offset: 1 };
+    const offset = await runTask({ spec: capped, projectSettings: quality });
     expect(offset.provider.calls[0]?.request.effort).toBe("medium");
-    expect((await runTask({ effortOffset: 1 })).provider.calls[0]?.request.effort).toBe("high");
+    expect(
+      (await runTask({ projectSettings: quality })).provider.calls[0]?.request.effort,
+    ).toBe("high");
     // Without the cap the override is what runs.
     const free = await runTask({ modelConfig: { specialists: { coder: { effort: "max" } } } });
     expect(free.provider.calls[0]?.request.effort).toBe("max");
