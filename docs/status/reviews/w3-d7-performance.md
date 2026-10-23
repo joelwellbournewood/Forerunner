@@ -297,3 +297,115 @@ there is no browser on the box.
 - **Runtime integration tests skipped**: the package's only integration file (the sandbox)
   needs Docker or Podman, and neither is on the box (output above). The Performance view has
   no integration test of its own: the brief asks for none, and it needs no Postgres.
+
+## Review
+
+Reviewer: independent review stage (`w3-d7-performance`, REVIEW AND FIX), starting commit
+`61adc32`, base `ccr-4d8a843c-1k9syk` at `f1948dd` (not merged in).
+
+**Verdict: revise. Score: 72/100.** The route, the view, the page and the fake daemon are
+there and they match each other. The tests pass: 36 tests in the four runtime files, 255 UI
+tests, and typecheck and lint are clean. But on realistic failure paths the figures are
+wrong. A Run row that never reached a model counts as a response-time sample, so a refused
+critic call "meets" the 30 s target in 3 ms. The new intake Run row also drops the prompt
+version that D.5 (`done`) requires of every run.
+
+### Requirements checked
+
+- D.19 "each run records time to first token and total time": executor and critic rows
+  (unchanged), the intake call's new Run row, `chat.reply` `ttftMs` and `durationMs`. Met.
+  The intake row breaks D.5 (finding 2).
+- D.19 "the Performance view shows these per mode against target": `GET /performance` from
+  the store, eight modes, n, p50 and p90 by nearest rank, target, met, `lastAt`. Met, but
+  failed runs skew the figures (finding 1).
+- D.7 "each mode has a response-time target that the UI measures and shows": the page shows
+  every mode with its target, the "route not available" state is gone, and the client
+  validates with the runtime schema. Met.
+- D.7 effort rule, "the effort in force from the ladder and the project's offset": the table
+  in force and the offset where the code applies it (critic). The risk-tier raise is not
+  shown (finding 3).
+- The window: 7 days by default, `?days=`, capped at 90, 400 and 404. Met, but `days` parsing
+  is loose (finding 4).
+- Ownership: only rows on sessions of the install's human's agents count. Verified in
+  `performance-view.test.ts`, where Bob's run and chat turn are excluded. No privacy
+  regression; the route sits behind the bearer token (401 test).
+- The fake daemon is kept in sync: the fixture parses with the runtime schema, and 400 and
+  404 behave as the daemon does. Met.
+- Docs: runtime.md and apps.md describe the view. apps.md still lists the data routes as
+  proposed (finding 6).
+- Status rows: requirements D.7 and D.19 are `done` and the counts (185/38/5) were verified by
+  grep. The BLOCKERS row and the PROGRESS entry are present.
+- Semantic conflicts with the base: a throwaway merge of `origin/ccr-4d8a843c-1k9syk` in a
+  worktree conflicts textually in `contracts.ts`, `contracts.test.ts` and `apps.md`. With
+  those resolved, typecheck passes, the UI has 42 files / 262 tests passing and the 4 runtime
+  files have 36 passing. One drift remains (finding 5).
+
+### Findings
+
+1. **medium**, `packages/runtime/src/daemon/views.ts:801` (Run rows) and `:714` (`chat.reply`):
+   a Run row counts as a measurement whenever it carries `duration_ms`. Some runs never reach
+   a model but still carry it:
+   - the executor's `endRunWithError`, on a refused lease or a missing vault secret, writes
+     outcome `error` with a duration of a few ms and no `ttft_ms`;
+   - a budget refusal before the call;
+   - an intake call that throws before the driver.
+
+   These rows count as samples with a near-zero total. The total median is pulled down, and
+   for the total-kind targets (critic tier 1, planning, routing) they count as "within
+   target". Chat replies with no first token are treated the same way. The view already
+   excludes a registry reply with no model call, so the rule is inconsistent.
+
+   *Verified* with a throwaway test (deleted): one critic run of 45 s plus one `error` run of
+   3 ms with no `ttft_ms` gives `totalP50Ms: 3` and `withinTargetShare: 0.5` for critic
+   tier 1.
+
+   *Fix:* a Run row or chat turn is a measurement when it has a first token, or when it timed
+   out (a real over-target). Add a regression test.
+2. **medium**, `packages/runtime/src/session/intake.ts:745`: the intake call's new Run row
+   writes `prompt_version: ""`. D.5 (`done`) says every run stores model, version, settings
+   and prompt version. The executor and the critic store theirs. The PM prompt comes from the
+   registry (`registry.principals.get("project-manager")`), and that entry has a
+   `promptVersion` that compose does not pass on.
+
+   *Verified* by reading the code. `intake.test.ts` asserts specialist, model, effort, timing
+   and cost on the row, but not `prompt_version`, so the empty value passes.
+
+   *Fix:* pass the PM prompt's version into `IntakeService`, store it, and use a named
+   built-in version when there is no registry prompt. Assert it in `intake.test.ts`.
+3. **low**, `packages/runtime/src/daemon/views.ts` (`modes` map) against `models/ladder.ts:96-98`:
+   "the effort in force" shows one effort per mode, but `effortForTask` raises the coder to
+   `high` at risk tier 2 and above, and critic tier 2/3 to `max` at risk tier 3. A tier-2
+   coding task runs at `high` while the page says `medium`. The spec's effort rule cannot be
+   seen on exactly the tasks where it changes.
+
+   *Verified* by reading `effortForTask`. No test covers the view's effort on a risky task.
+
+   *Fix:* add the raised effort per mode (`riskEffort`, `riskTierFrom`) with the offset
+   applied as for `effort`. Show it on the page and in the fixture. Test it in the view, route
+   and UI tests.
+4. **low**, `packages/runtime/src/daemon/server.ts:1250` and `apps/ui/test/fake-daemon.ts:2417`:
+   `days` is parsed with `Number()`, so `?days=0x10` is read as a 16-day window, `1e1` as 10
+   days, and `" 7"` and `7.0` as 7. The documented contract is "a positive integer".
+
+   *Verified* with `node -e` on the same expression: all four are accepted.
+
+   *Fix:* accept decimal digits only, in the daemon and in the fake. Extend the 400 cases in
+   `performance-route.test.ts` and in `client.test.ts`.
+5. **low**, `apps/ui/test/client.test.ts:253` and the following lines: the "missing route"
+   example was moved from `performance` to `milestones`. The base branch now serves
+   `milestones` (its `contracts.test.ts` lists `milestones` and `changeMilestone` as served,
+   and it moved its own missing-param example to `docs`). After a merge, the test would be
+   proving "route missing" with a route the daemon serves. It still passes only because the
+   fake's `missingRoutes` forces a 404.
+
+   *Verified* with the throwaway merge described above (passes, but on a served route).
+
+   *Fix:* use `docs`, which stays proposed on both branches.
+6. **low**, `docs/maintainers/apps.md:109-110`: the client paragraph this branch rewrote still
+   lists `dataAssets`, `registerDataAsset` and `removeDataAsset` among the proposed routes.
+   The `contracts.ts` header (also rewritten here) and `contracts.test.ts` say they are
+   served, so the doc and the code disagree.
+
+   *Verified* by reading `contracts.test.ts:80-90`, which lists them as served.
+
+   *Fix:* list them with the served routes.
