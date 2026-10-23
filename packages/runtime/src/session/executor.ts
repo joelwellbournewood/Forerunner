@@ -49,8 +49,8 @@ import {
   type Mode,
   type ModeDefault,
   modelIdFor,
-  specialistMode,
   projectCeilingOf,
+  specialistMode,
   speedQualityOffsetOf,
   startingTier,
 } from "../models/ladder.ts";
