@@ -147,5 +147,5 @@ jobs:
             git add -A
             git commit -q -m "wip: files left uncommitted at the end of the ${{ inputs.stage }} run (not verified)" || true
           fi
-          git push -u origin "wave/${{ inputs.item }}"
+          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" "HEAD:refs/heads/wave/${{ inputs.item }}"
           echo "pushed wave/${{ inputs.item }} at $(git rev-parse --short HEAD)"
