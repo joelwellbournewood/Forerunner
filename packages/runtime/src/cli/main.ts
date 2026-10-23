@@ -29,6 +29,7 @@ import { registerSourcesCli } from "../sources/cli.ts";
 import { registerUpdateCli } from "../update/cli.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 import { registerAuditCli } from "./audit.ts";
+import { registerSpecialistsCli } from "./specialists.ts";
 
 /**
  * `fr`: the Forerunner command line. Used by the setup wizard, the fresh-install scripts, the
@@ -394,6 +395,13 @@ export function buildProgram(deps: CliDeps = {}): Command {
       }),
     out,
     cwd: deps.cwd ?? (() => process.cwd()),
+  });
+
+  // Proposed specialists (spec C.5, ADR 0071): approve runs the eval set and promotes on a
+  // pass, reject withdraws; the same steps as an inbox answer, as a one-shot.
+  registerSpecialistsCli(program, {
+    open: () => openRuntime({ startServices: false }),
+    out,
   });
 
   return program;
