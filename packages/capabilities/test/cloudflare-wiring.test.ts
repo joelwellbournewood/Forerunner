@@ -332,6 +332,51 @@ describe("cloudflare wired into the daemon", () => {
     expect(rows.map((r) => r.id)).toEqual([filed.id]);
   });
 
+  // w5-review-findings review: the deployer hands the port the tool's input after the hooks
+  // resolved its `secret:` references; for a request the port files itself (the one-shot money
+  // class: here Workers Logpush) it copied that input onto the inbox card, so the secret's
+  // value reached `change_card.input`, the inbox, the phone and the shared state. The card
+  // shows the input as the hooks saw it (the reference), never the value.
+  it("a money approval the Cloudflare port files itself shows a secret: reference, never the resolved value", async () => {
+    const { run, ctx } = runContext(2, [SIGNING_SECRET]);
+    const deploy = tool("cloudflare_deploy");
+    const input = {
+      env: "staging",
+      target: {
+        kind: "worker",
+        name: "logged",
+        scriptPath: join("dist", "worker.js"),
+        logpush: true,
+        bindings: [{ type: "secret_text", name: "SIGNING", text: `secret:${SIGNING_SECRET}` }],
+      },
+      hosts: [`app.${ZONE_A_NAME}`],
+    };
+    const loggedRows = async () =>
+      (await rt.store.humanRequest.list({ session_id: SESSION, kind: "approval" } as never)).filter(
+        (r) => JSON.stringify(r.change_card ?? {}).includes('"logged"'),
+      );
+    const first = await rt.hooks.beforeToolCall(run, deploy, input);
+    expect(first).toMatchObject({ allowed: false, pending: true });
+    const [filed] = await loggedRows();
+    if (!filed) throw new Error("the hooks filed no approval for the deploy");
+    await rt.store.humanRequest.answer(filed.id, filed.version, "yes", rt.human.id);
+    const second = await rt.hooks.beforeToolCall(run, deploy, input);
+    expect(second.allowed).toBe(true);
+    if (!second.allowed) return;
+    const result = await deploy.execute(second.input, {
+      ...ctx,
+      approvalKey: second.approvalKey,
+      approvalInput: second.approvalInput,
+    });
+    await rt.hooks.afterToolCall(run, deploy, second.input, result);
+    expect(result.artifacts?.pending).toBeTruthy();
+    const rows = await loggedRows();
+    const money = rows.find((r) => (r.change_card as { oneShot?: boolean }).oneShot === true);
+    if (!money) throw new Error("the port filed no money approval");
+    expect(JSON.stringify(money.change_card)).toContain(`secret:${SIGNING_SECRET}`);
+    expect(JSON.stringify(rows)).not.toContain(SIGNING_VALUE);
+  });
+
   it("serves the panel routes behind the bearer token: settings by reference, the token's real scopes, 404 for an unknown project", async () => {
     expect((await req(`/cloudflare/projects/${projectId}/settings`, {}, false)).status).toBe(401);
     const settings = await req(`/cloudflare/projects/${projectId}/settings`);

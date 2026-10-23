@@ -68,6 +68,12 @@ export interface DeployActor {
    * so the hooks' row matches although `tool.input` carries resolved values.
    */
   approvalKey?: string;
+  /**
+   * The hooks' display copy of that tool call's input (`ToolExecutionContext.approvalInput`,
+   * secret references unresolved). Passed on as the approval's `displayInput`: a card the port
+   * files itself shows it, never `tool.input`, which carries resolved secret values.
+   */
+  approvalInput?: unknown;
 }
 
 export interface WorkerDeployRequest {
@@ -833,6 +839,7 @@ export class CloudflareDeployer {
     const tool = actor.tool?.name ?? `cloudflare.${g.operation}`;
     const input = actor.tool?.input ?? g.request;
     const key = actor.tool ? actor.approvalKey : undefined;
+    const displayInput = actor.tool ? actor.approvalInput : undefined;
     const base = {
       sessionId: actor.sessionId,
       runId: actor.runId,
@@ -843,6 +850,7 @@ export class CloudflareDeployer {
       tool,
       input,
       ...(key ? { key } : {}),
+      ...(displayInput !== undefined ? { displayInput } : {}),
       operation: g.operation,
       scope: g.scope,
       env: g.env ?? undefined,

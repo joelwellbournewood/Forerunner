@@ -172,6 +172,9 @@ describe("enforcement hooks: tool calls", () => {
     const granted = ctx(h, issue(h, { allowedTools: ["use_secret"], grantedSecrets: ["gh"] }));
     const d = await h.hooks.beforeToolCall(granted, secretTool, { token: "secret:gh" });
     expect(d.allowed && (d.input as { token: string }).token).toBe("REAL-VALUE");
+    // The display copy a tool shows on its own approval card keeps the reference, never the
+    // value (w5-review-findings review: the Cloudflare port's money card carried the value).
+    expect(d.allowed && d.approvalInput).toEqual({ token: "secret:gh" });
     const out = await h.hooks.afterToolCall(
       granted,
       secretTool,
