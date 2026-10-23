@@ -1,6 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { cloudflare, desktop } from "@forerunner/capabilities";
+import { email as agentEmail, cloudflare, desktop } from "@forerunner/capabilities";
 import { errorMessage, ForerunnerError, join, log, osFacts } from "@forerunner/platform";
 import type { LessonStatus } from "@forerunner/state";
 import { serve } from "@hono/node-server";
@@ -401,6 +401,33 @@ export function createDaemonApp(
     clock: rt.clock,
     detect: rt.desktop.detect,
     audit: new StateAudit(rt.store),
+    humanFor: () => rt.human.id,
+  })) {
+    app.on(route.method, route.path, (c) =>
+      route.handler({
+        req: {
+          param: (name) => c.req.param(name as never) as string | undefined,
+          query: (name) => c.req.query(name),
+          json: () => c.req.json(),
+          header: (name) => c.req.header(name),
+        },
+        json: (body, status) => c.json(body, (status ?? 200) as ContentfulStatusCode),
+      }),
+    );
+  }
+  // Agent email (spec S.15, S.28, S.29, T.14; ADR 0066): the Settings -> Capabilities -> Email
+  // routes (settings per agent, the sent log, pause and resume for the tray, marker rotation,
+  // the command audit) over the capability's own ports. The daemon's human is the signed-in
+  // human and the identity port the owner check: another human's agent answers 403 before
+  // any read or write. Every change is one `email.settings` audit row; the policy reads the
+  // settings row per call, so a changed mode or a pause holds the very next send.
+  for (const route of agentEmail.emailRouteTable({
+    settings: rt.capabilities.email.ports.settings,
+    sentLog: rt.capabilities.email.ports.sentLog,
+    identity: rt.capabilities.email.ports.identity,
+    clock: rt.clock,
+    audit: rt.store.auditLog,
+    commandAudit: agentEmail.emailCommandAudit({ auditLog: rt.store.auditLog, clock: rt.clock }),
     humanFor: () => rt.human.id,
   })) {
     app.on(route.method, route.path, (c) =>

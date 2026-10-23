@@ -6,6 +6,7 @@ import {
   type CommandOutcome,
   EMAIL_COMMAND_TOOL,
   EMAIL_INBOUND_FLAGGED_TOOL,
+  emailCommandAudit,
   parseYesNo,
   pickProject,
 } from "../src/email/index.ts";
@@ -749,6 +750,12 @@ describe("EmailCommandHandler: what it does with the owner's mail", () => {
       result: { outcome: "question" },
     });
     expect(await world.handler.commandAudit(world.agentId, { limit: 1 })).toHaveLength(1);
+    // The daemon serves the same rows without a handler (the watcher runs on the cloud
+    // runner): the reader over the audit log alone is the handler's own.
+    const reader = emailCommandAudit({ auditLog: world.store.auditLog, clock: world.clock });
+    expect(await reader(world.agentId)).toEqual(audit);
+    expect(await reader(world.agentId, { limit: 1 })).toEqual(audit.slice(0, 1));
+    expect(await reader("someone-else")).toEqual([]);
   });
 });
 

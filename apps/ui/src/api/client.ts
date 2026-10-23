@@ -29,6 +29,20 @@ import {
   DAEMON_ROUTES,
   type DecisionView,
   DecisionView as DecisionViewSchema,
+  type EmailCommandRowView,
+  type EmailCommandsView,
+  EmailCommandsView as EmailCommandsViewSchema,
+  type EmailMarkerView,
+  EmailMarkerView as EmailMarkerViewSchema,
+  type EmailMode,
+  type EmailPausedView,
+  EmailPausedView as EmailPausedViewSchema,
+  type EmailSentRowView,
+  type EmailSentView,
+  EmailSentView as EmailSentViewSchema,
+  type EmailSettingsPatchBody,
+  type EmailSettingsView,
+  EmailSettingsView as EmailSettingsViewSchema,
   ErrorBody,
   type EventView,
   EventView as EventViewSchema,
@@ -159,6 +173,15 @@ export type {
   DecisionView,
   DocContentView,
   DocView,
+  EmailCommandRowView,
+  EmailCommandsView,
+  EmailMarkerView,
+  EmailMode,
+  EmailPausedView,
+  EmailSentRowView,
+  EmailSentView,
+  EmailSettingsPatchBody,
+  EmailSettingsView,
   EstimateAccuracyView,
   EventView,
   ExtensionView,
@@ -481,6 +504,23 @@ export interface DaemonClient {
   ): Promise<ChangeLogView[]>;
   undoChange(changeId: string): Promise<CommandResultJson>;
 
+  // Agent email (spec S.15, S.28, S.29, T.14; ADR 0066): the Settings -> Capabilities -> Email
+  // page; a daemon without the routes shows the "route not available" state.
+  emailSettings(agentId: string, signal?: AbortSignal): Promise<EmailSettingsView>;
+  updateEmailSettings(agentId: string, body: EmailSettingsPatchBody): Promise<EmailSettingsView>;
+  emailSent(
+    agentId: string,
+    filter?: { limit?: number; since?: string },
+    signal?: AbortSignal,
+  ): Promise<EmailSentView>;
+  pauseEmail(agentId: string): Promise<EmailPausedView>;
+  resumeEmail(agentId: string): Promise<EmailPausedView>;
+  rotateEmailMarker(agentId: string): Promise<EmailMarkerView>;
+  emailCommands(
+    agentId: string,
+    filter?: { limit?: number },
+    signal?: AbortSignal,
+  ): Promise<EmailCommandsView>;
   // Proposed routes (ADR 0032); pages degrade when `isRouteMissing(error)`.
   queue(
     projectId: string,
@@ -568,7 +608,13 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       text = "";
     }
     try {
-      const parsed = ErrorBody.safeParse(JSON.parse(text));
+      const body = JSON.parse(text) as unknown;
+      // The daemon's own routes answer the ErrorBody flat; the capability routes it mounts
+      // (email, desktop, Cloudflare) wrap the same fields under `error`.
+      const nested = (body as { error?: unknown } | null)?.error;
+      const parsed = ErrorBody.safeParse(body).success
+        ? ErrorBody.safeParse(body)
+        : ErrorBody.safeParse(nested);
       if (parsed.success) {
         return new ApiError(parsed.data.code, parsed.data.message, res.status, parsed.data.details);
       }
@@ -788,6 +834,29 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       ),
     undoChange: (changeId) =>
       post(routePath("undoChange", { id: changeId }), CommandResultViewSchema, {}),
+    emailSettings: (agentId, signal) =>
+      get(routePath("emailSettings", { agentId }), EmailSettingsViewSchema, undefined, signal),
+    updateEmailSettings: (agentId, body) =>
+      put(routePath("updateEmailSettings", { agentId }), EmailSettingsViewSchema, body),
+    emailSent: (agentId, filter, signal) =>
+      get(
+        routePath("emailSent", { agentId }),
+        EmailSentViewSchema,
+        { limit: filter?.limit, since: filter?.since },
+        signal,
+      ),
+    pauseEmail: (agentId) => post(routePath("pauseEmail", { agentId }), EmailPausedViewSchema, {}),
+    resumeEmail: (agentId) =>
+      post(routePath("resumeEmail", { agentId }), EmailPausedViewSchema, {}),
+    rotateEmailMarker: (agentId) =>
+      post(routePath("rotateEmailMarker", { agentId }), EmailMarkerViewSchema, {}),
+    emailCommands: (agentId, filter, signal) =>
+      get(
+        routePath("emailCommands", { agentId }),
+        EmailCommandsViewSchema,
+        { limit: filter?.limit },
+        signal,
+      ),
     queue: (projectId, filter, signal) =>
       get(proposedPath("queue", { id: projectId }), QueueList, { status: filter?.status }, signal),
     enqueue: (projectId, body) =>

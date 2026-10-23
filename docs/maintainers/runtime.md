@@ -1227,7 +1227,21 @@ are mounted as described above. The notification routes (`GET|PUT /notifications
 `POST /notifications/test`, `GET /notifications/recent`, `GET /notifications/pending`) and the
 Cloudflare panel routes (`GET /cloudflare/projects/:projectId/settings|token`) are mounted the
 same way (see "Notifications" and "Cloudflare deploys" above), as is the audit log export
-(`GET /audit/export`, next paragraph). Each sub-app keeps its module's error mapping.
+(`GET /audit/export`, next paragraph). The agent email routes (ADR 0066; spec S.15, S.28,
+S.29, T.14) are the capability's `emailRouteTable()` adapted to Hono's context like the
+desktop routes: `GET|PUT /agents/:agentId/email/settings`, `GET /agents/:agentId/email/sent`,
+`POST /agents/:agentId/email/pause|resume|rotate-marker` and
+`GET /agents/:agentId/email/commands`, over `rt.capabilities.email.ports` (settings, sent log,
+identity), `rt.store.auditLog` (one `email.settings` row per change) and
+`emailCommandAudit({ auditLog, clock })` (the command audit read from the shared state, no
+handler in the daemon), with `humanFor: () => rt.human.id` so another human's agent and an
+unknown id answer 403 `tool_not_allowed` before any read or write; the views are
+`EmailSettingsView`, `EmailSettingsPatchBody`, `EmailSentView`, `EmailCommandsView`,
+`EmailPausedView` and `EmailMarkerView` in `api-types.ts`, the daemon's browser-safe copy of
+the capability's schemas (key sets compared in `test/email-routes-wiring.test.ts`). The tray's
+"Pause email" calls the pause route; the policy reads the row per send, so the next send is
+held. Each sub-app keeps its module's error mapping (the capability routes answer
+`{ error: { code, message, details } }`, which the UI client reads as a typed error).
 
 **Audit log export (`src/daemon/audit-export.ts`, spec S.9, [ADR 0050](../decisions/0050-audit-log-export.md)).**
 `createAuditRoutes({ store, clock, humanId })` serves
@@ -1589,6 +1603,15 @@ subcommands and flags, the whole flow through `buildProgram()` with a composed s
 (`startServices: false`), a token value, an unknown kind and a missing folder refused before
 anything is stored.
 
+`email-routes-wiring.test.ts` (spec S.15, S.28, S.29, T.14; ADR 0066): the seven email routes
+on the composed daemon behind the bearer check and in `DAEMON_ROUTES`, the daemon's view and
+the capability's schema agreeing on the key sets, `PUT` picking the mode and the mailbox
+(credential value refused) with the policy sending to a stranger at once and one
+`email.settings` row by the daemon's human, the tray's `pause` holding the next send as
+`queued` and `resume` releasing it, the sent log and the command audit newest first with the
+limit, `rotate-marker`, another human's agent and an unknown id refused with 403 on every
+route and no settings row created.
+
 `small-project.test.ts` (spec B.6, ADR 0051): `defaultRiskTier` by flag; `shapeProjectPlan`
 with the flag on (one milestone named after the project, the phases' criteria once each, the
 latest date, every task under it in plan order, tier 0 unless named; a single planned milestone
@@ -1762,6 +1785,9 @@ G.5 (the standard doc set scaffolded at project creation as a pull request on th
 repository or under the project's data dir, `docs/status.md` updated at session end on the
 session's PR or one of its own; the critic's drift check unchanged). Tests:
 `test/docs-scaffold.test.ts`, `test/loop-docs.test.ts`, `packages/memory/test/docs.test.ts`.
+S.15, S.28, S.29 and T.14 (the email settings routes mounted with the owner check, the
+tray's pause holding the next send, full discretion picked through the route, the command
+audit served; ADR 0066, `test/email-routes-wiring.test.ts`; the page is the UI's, apps.md).
 K.6 and L.5 (extensions reachable from the daemon, revoked live), S.7 (task commands in a
 sandbox with only the worktree and the token's domains), I.3 (estimate error tracked and fed
 back to the planner), D.6 and D.21 (weekly model watch scheduled, decided in the inbox), M.3,
@@ -1978,9 +2004,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   while the process is exiting, so a slow channel may not finish before the restart.
 - Browser and email (ADR 0047): the browser mode is decided at compose, so a Chromium that
   exists but fails to launch is not demoted to the static reader at run time (the navigation
-  fails with the launch error, audited); the daemon mounts no email settings routes, so the
-  mode and the mailbox are changed through the capability's routes elsewhere, the CLI or the
-  store; the critic and the conversation agent run the driver outside the executor and raise
+  fails with the launch error, audited); the email settings routes are mounted (ADR 0066) but
+  a mode or mailbox changed through them reaches a running session only at the policy (the
+  tools join or leave at the next session start); the critic and the conversation agent run
+  the driver outside the executor and raise
   no `run` bus event, so a flagged read there is logged by the hooks but not notified; the
   per-agent browser block list is not read (the project's is); scenario 6 still wires its own
   research install instead of `composeRuntime` (`testing.md`).

@@ -5,6 +5,10 @@ import type {
   CommandResultJson,
   ConsolidationProposalView,
   ConsolidationReportView,
+  EmailCommandRowView,
+  EmailSentRowView,
+  EmailSettingsPatchBody,
+  EmailSettingsView,
   EventView,
   HumanRequestView,
   LessonOfferView,
@@ -26,6 +30,7 @@ import {
   ChatRequestBody,
   CreateProjectBody,
   CreateTaskBody,
+  EMAIL_MODES,
   KillBody,
   StartSessionBody,
   TransitionTaskBody,
@@ -61,6 +66,9 @@ import {
   DECISIONS,
   DOC_CONTENTS,
   DOCS,
+  EMAIL_COMMANDS,
+  EMAIL_SENT,
+  EMAIL_SETTINGS,
   ESTIMATES,
   EVENTS,
   EXTENSIONS,
@@ -162,6 +170,11 @@ export interface FakeDaemonState {
   sources: SourceView[];
   sourceCandidates: SourceCandidateView[];
   pendingCommands: Map<string, PendingCommand>;
+  /** Email settings per agent id (Settings -> Capabilities -> Email), as the daemon stores them. */
+  email: Record<string, EmailSettingsView>;
+  /** Sent copies and the command audit of every agent, oldest first (answered newest first). */
+  emailSent: EmailSentRowView[];
+  emailCommands: EmailCommandRowView[];
   missingRoutes: string[];
   failing: Record<string, { status: number; code: string; message: string }>;
 }
@@ -217,6 +230,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     sources: clone(SOURCES),
     sourceCandidates: clone(SOURCE_CANDIDATES),
     pendingCommands: new Map(),
+    email: clone(EMAIL_SETTINGS),
+    emailSent: clone(EMAIL_SENT),
+    emailCommands: clone(EMAIL_COMMANDS),
     missingRoutes: [...(options.missingRoutes ?? [])],
     failing: { ...(options.failing ?? {}) },
   };
@@ -310,6 +326,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.sources = clone(SOURCES);
     state.sourceCandidates = clone(SOURCE_CANDIDATES);
     state.pendingCommands.clear();
+    state.email = clone(EMAIL_SETTINGS);
+    state.emailSent = clone(EMAIL_SENT);
+    state.emailCommands = clone(EMAIL_COMMANDS);
     state.missingRoutes = [...(options.missingRoutes ?? [])];
     state.failing = { ...(options.failing ?? {}) };
     return c.json({ ok: true });
@@ -346,6 +365,155 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   );
   app.get("/me", (c) => c.json(ME));
   app.get("/agents", (c) => c.json(AGENTS));
+
+  // ---------------------------------------------------------------------------------------
+  // Agent email (spec S.15, S.28, S.29, T.14; ADR 0066): the capability's seven routes as
+  // `emailRouteTable` serves them on the daemon. Errors come wrapped under `error`, the
+  // capability routes' shape (`{ error: { code, message, details } }`), not the daemon's flat
+  // body. The signed-in human (ME) must own the agent; another human's agent or an unknown
+  // one is 403 `tool_not_allowed` before any read or write. PUT merges a partial patch the
+  // way `mergeEmailConfig` does (allowlist and signature merged one level deep) and refuses
+  // an unknown mode or a mailbox credential that is not a secret reference with 400.
+  // ---------------------------------------------------------------------------------------
+
+  const emailError = (c: Context, status: 400 | 403, code: string, message: string) =>
+    c.json({ error: { code, message, details: {}, retryable: false } }, status);
+  const emailAgentOf = (c: Context): string | Response => {
+    const agentId = c.req.param("agentId") ?? "";
+    const agent = AGENTS.find((a) => a.id === agentId);
+    if (!agent || agent.ownerHumanId !== ME.id) {
+      return emailError(
+        c,
+        403,
+        "tool_not_allowed",
+        "the signed-in human does not own this agent; its email settings are not theirs to read or change",
+      );
+    }
+    return agentId;
+  };
+  const defaultEmail = (agentId: string): EmailSettingsView => ({
+    ...clone(EMAIL_SETTINGS.agent_critic as EmailSettingsView),
+    commands: {
+      ...clone((EMAIL_SETTINGS.agent_critic as EmailSettingsView).commands),
+      marker: `[FR-${agentId.slice(-4)}]`,
+    },
+  });
+  const emailOf = (agentId: string): EmailSettingsView => {
+    state.email[agentId] ??= defaultEmail(agentId);
+    return state.email[agentId] as EmailSettingsView;
+  };
+  const SECRET_REF = /^secret:[a-z][a-z0-9_.:-]{0,127}$/;
+  app.get("/agents/:agentId/email/settings", (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    return c.json(emailOf(agentId));
+  });
+  app.put("/agents/:agentId/email/settings", async (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    const body = (await c.req.json().catch(() => null)) as EmailSettingsPatchBody | null;
+    if (!body || typeof body !== "object") {
+      return emailError(c, 400, "validation", "body must be an object");
+    }
+    const current = emailOf(agentId);
+    const patch = body.settings ?? {};
+    if (patch.mode !== undefined && !(EMAIL_MODES as readonly string[]).includes(patch.mode)) {
+      return emailError(
+        c,
+        400,
+        "validation",
+        `invalid email settings: settings.mode: ${patch.mode}`,
+      );
+    }
+    for (const ref of [patch.mailbox?.imap?.passwordRef, patch.mailbox?.smtp?.passwordRef]) {
+      if (ref !== undefined && !SECRET_REF.test(ref)) {
+        return emailError(
+          c,
+          400,
+          "validation",
+          "invalid email settings: passwordRef: must be a secret reference (secret:<name>), never a value",
+        );
+      }
+    }
+    const mailbox =
+      patch.mailbox === undefined
+        ? current.settings.mailbox
+        : patch.mailbox === null
+          ? null
+          : {
+              address: patch.mailbox.address,
+              imap: patch.mailbox.imap
+                ? {
+                    host: "",
+                    port: 993,
+                    secure: true,
+                    user: "",
+                    passwordRef: "",
+                    folder: "INBOX",
+                    draftsFolder: "Drafts",
+                    ...patch.mailbox.imap,
+                  }
+                : null,
+              smtp: patch.mailbox.smtp
+                ? {
+                    host: "",
+                    port: 587,
+                    secure: false,
+                    user: "",
+                    passwordRef: "",
+                    ...patch.mailbox.smtp,
+                  }
+                : null,
+            };
+    const next: EmailSettingsView = {
+      settings: {
+        ...current.settings,
+        ...patch,
+        allowlist: { ...current.settings.allowlist, ...(patch.allowlist ?? {}) },
+        signature: { ...current.settings.signature, ...(patch.signature ?? {}) },
+        mailbox,
+      },
+      commands: { ...current.commands, ...(body.commands ?? {}) },
+    };
+    state.email[agentId] = next;
+    return c.json(next);
+  });
+  app.get("/agents/:agentId/email/sent", (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    const limit = Number(c.req.query("limit") ?? 50);
+    const rows = state.emailSent.filter((r) => r.agentId === agentId).reverse();
+    return c.json({ rows: rows.slice(0, limit), since: "2026-10-13T08:00:00.000Z" });
+  });
+  app.post("/agents/:agentId/email/pause", (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    const cfg = emailOf(agentId);
+    cfg.settings.paused = true;
+    return c.json({ paused: true });
+  });
+  app.post("/agents/:agentId/email/resume", (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    const cfg = emailOf(agentId);
+    cfg.settings.paused = false;
+    return c.json({ paused: false });
+  });
+  app.post("/agents/:agentId/email/rotate-marker", (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    const cfg = emailOf(agentId);
+    cfg.commands.marker = `[FR-${nextId("m").slice(-4)}]`;
+    return c.json({ marker: cfg.commands.marker });
+  });
+  app.get("/agents/:agentId/email/commands", (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    const limit = Number(c.req.query("limit") ?? 50);
+    // The fixtures belong to Alice's agent; another agent of hers has none yet.
+    const rows = agentId === "agent_alice" ? [...state.emailCommands].reverse() : [];
+    return c.json({ rows: rows.slice(0, limit) });
+  });
 
   app.get("/projects", (c) => c.json(state.projects));
   app.post("/projects", async (c) => {

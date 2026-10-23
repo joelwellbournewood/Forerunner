@@ -446,6 +446,36 @@ export function SettingsPage() {
 
       <SourcesSection />
 
+      <div
+        className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+        data-testid="capabilities-section"
+      >
+        <h2 className="font-semibold">Capabilities</h2>
+        <ul className="mt-2 space-y-1 text-sm">
+          <li>
+            <Link
+              to="/settings/capabilities/email"
+              className="font-medium text-blue-700 hover:underline dark:text-blue-300"
+              data-testid="capability-email"
+            >
+              Email
+            </Link>
+            <span className="text-neutral-600 dark:text-neutral-400">
+              {" "}
+              — a mailbox and a sending mode per agent, the limits that stay on, pause, the command
+              audit.
+            </span>
+          </li>
+          <li className="text-neutral-600 dark:text-neutral-400">
+            The browser and desktop control are switched on in{" "}
+            <Link to="/extensions" className="text-blue-700 hover:underline dark:text-blue-300">
+              Extensions
+            </Link>
+            .
+          </li>
+        </ul>
+      </div>
+
       <div>
         <div className="flex flex-wrap items-baseline gap-3">
           <h2 className="font-semibold">All settings</h2>
