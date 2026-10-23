@@ -169,7 +169,8 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   w3-d4-specialist-settings, w3-d7-performance, w3-d16-slider,
   w3-e1-triggers, w3-e4-recheck, w3-docs-p7-p11, w3-r2-devices, w3-r5-phone, w3-t1-mode-off,
   w3-misc-replay-ceiling; each is named on its requirement row in BLOCKERS.md.
-  w3-c5-specialist-approval (C.5, ADR 0071) is built on its branch, awaiting review. Build cost in
+  w3-c5-specialist-approval (C.5, ADR 0071) is built and reviewed on its branch (six review
+  findings fixed, see its review), awaiting merge. Build cost in
   COST.md (wave 1 and 2a and the triage agent measured, the stopped waves not).
 - Live: the human provided a new API key and workspace (`.env.build`,
   `FORERUNNER_LIVE_BUDGET_USD=200`, per-run cap 15 USD unchanged). One probe of the phase 1
@@ -272,8 +273,9 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    its branch 2026-10-23, the findings fixed, awaiting the merge), w2-s12-unlock-card (S.12), w4-fcm-sender (R.6, the service side), w3-c5-specialist-approval (C.5),
    w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
    (S.12), w4-fcm-sender (R.6, the service side; built on its branch 2026-10-23, review and
-   merge pending), w3-c5-specialist-approval (C.5; built on its branch with ADR 0071, awaiting
-   review and merge, see its build report in `docs/status/reviews/w3-c5-specialist-approval.md`),
+   merge pending), w3-c5-specialist-approval (C.5; built on its branch with ADR 0071, reviewed
+   with six findings fixed, awaiting merge, see its review in
+   `docs/status/reviews/w3-c5-specialist-approval.md`),
    w3-d4-specialist-settings (D.4), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
    w3-r5-phone (R.5), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay

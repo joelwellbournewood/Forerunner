@@ -3,6 +3,11 @@
 Date: 2026-10-23
 Status: accepted
 
+Amended 2026-10-23 by the review of `wave/w3-c5-specialist-approval`
+(`docs/status/reviews/w3-c5-specialist-approval.md`): points 1, 3 and 7 now name the
+ownership rule, the one-shot rule, the live-evaluation lock and its recovery, and the monthly
+testing share.
+
 ## Context
 
 Spec C.5: "PM can propose a new specialist; it goes live only after human approval and
@@ -24,8 +29,10 @@ recorded, what promotion writes, and how the answer is applied exactly once.
    `specialist:<name>`; the card carries the summary (description and rationale), the
    `prompt_version` shown, `eval_task_count`, the `threshold`, the tools, domains, budget,
    tier and risk floor. Filing is idempotent (an open request with the key is returned).
-   `propose()` writes the proposal and files in one call; the daemon files at start for
-   proposals on disk without a request. A proposal is filed only for the install's own human.
+   `propose()` writes the proposal and files in one call; the daemon's `syncApprovals` (at
+   start, on the answer route, on the poll) files for proposals on disk without a request,
+   never for one whose request is open or answered and not yet applied. A proposal is filed
+   only for the install's own human; `proposal.json`'s `approval.requestId` names the request.
 2. **The threshold is the registry's, counted on decided tasks.** A run passes when the set
    ran at least `MIN_EVAL_TASKS_FOR_ACTIVATION` (10) tasks, at least 10 of them were decided
    mechanically (`passed + failed`; rubric tasks waiting on the critic, `needs_model`, are not
@@ -40,10 +47,11 @@ recorded, what promotion writes, and how the answer is applied exactly once.
    active); the pricing is the table in force. Every call is under the enforcement hooks with
    a token per task owned by the approving human, so the monthly cap, the kill switch and the
    audit log apply. Before the first call the run's worst case, the sum of its tasks' brief
-   budgets, must fit the approval eval budget: the smaller of USD 5
-   (`DEFAULT_APPROVAL_EVAL_BUDGET_USD_MICRO`, the model watch's per-run figure) and 20% of the
-   human's monthly cap (`APPROVAL_TESTING_SHARE`, the spec's testing share), else nothing
-   runs (`over_budget`).
+   budgets, must fit the approval eval budget: USD 5 per run
+   (`DEFAULT_APPROVAL_EVAL_BUDGET_USD_MICRO`, the model watch's per-run figure) and no more than
+   what is left this UTC month of the human's testing share, 20% of the monthly cap
+   (`APPROVAL_TESTING_SHARE`), after earlier approval runs (their cost is summed from the
+   `registry.specialist_approval` audit rows of the month), else nothing runs (`over_budget`).
 4. **Results are recorded in `proposal.json`.** `evalResult` (and appended to
    `evalHistory`): `passed`, `passRate`, `total`, `passedTasks`, `failedTasks`, `needsModel`,
    `decided`, `threshold`, `provider`, `model`, `effort`, the evaluated `promptVersion`,
@@ -68,11 +76,22 @@ recorded, what promotion writes, and how the answer is applied exactly once.
    human's inbox. It is not asked again by itself; `fr specialists approve <name>` files a new
    request and applies it. Reject withdraws: `proposed/<name>/` is removed, the record is
    copied onto the card, the name is free.
-7. **Applied once, by its own human.** Every answered request is claimed with a versioned
+7. **Applied once, by its own human, by the install that holds the proposal.** Only the
+   install whose `proposal.json` names the request applies it, so the cloud runner or a second
+   install of the same human on a shared store never consumes the answer. Only the daemon
+   applies inbox answers (`startServices: false` one-shots apply none, as with plan
+   approvals); `fr specialists approve` applies an answer already given first, otherwise
+   answers its own request, and waits. Every answered request is claimed with a versioned
    write (`applied_at`, outcome `evaluating`) before anything runs, so the answer route, the
-   approvals poll, a restart and the CLI never evaluate one answer twice; the daemon runs the
-   evaluation in the background after the claim (`settled()`, awaited by `close()`), a CLI
-   one-shot waits. An answer by anyone but the addressee, an unreadable answer, and a proposal
+   approvals poll and the CLI never evaluate one answer twice; the daemon runs the
+   evaluation in the background after the claim (`settled()`, awaited by `close()`). From the
+   claim on, `proposal.json` records `approval.status: "evaluating"` with the `pid` and a
+   per-process token. While that run is live (in this process, or its pid alive and the
+   claim younger than the set's worst case, tasks x `timeout_minutes` + 15 minutes), filing,
+   approving or rejecting the name is refused (`claim_conflict`). A run that ended without a
+   result (an exit, a crash, a kill) is recovered by the next sync or CLI call: the card and
+   the record say `interrupted`, a note goes to the inbox, a new request is filed, and
+   nothing re-runs without a new approve. An answer by anyone but the addressee, an unreadable answer, and a proposal
    whose prompt version is no longer the card's (edited after filing) run nothing, are
    recorded, and the proposal is filed again. The CLI path (`fr specialists approve|reject`)
    answers the open request as the install's human through the same steps.
@@ -85,8 +104,12 @@ recorded, what promotion writes, and how the answer is applied exactly once.
   `adding-a-specialist.md`, Known issues.
 - The running daemon's registry `files` and `hash` are not recomputed on promotion; the next
   start's registry hash includes the new file.
-- The eval run in production costs real money, bounded per approval by point 3 and per call
-  by the hooks; tests run it on the fake provider.
+- The eval run in production costs real money, bounded per approval and per month by point 3
+  and per call by the hooks; tests run it on the fake provider.
+- An answered request whose proposal was deleted by hand is never applied (no install holds a
+  `proposal.json` naming it); it stays answered.
+- No agent tool calls `propose` yet; proposals come from code, by hand or a registry pull and
+  are filed by the daemon's next sync (BLOCKERS.md, row C.5).
 
 ## Alternatives considered
 

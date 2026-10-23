@@ -191,8 +191,13 @@ issues a capability token for a non-runnable specialist, so a prompt cannot acti
 
 ### The approval flow (`src/registry/approval.ts`, ADR 0071)
 
-The PM proposes through `RuntimeApp.specialistApprovals.propose(...)` (proposeSpecialist plus
-the request); a proposal already on disk without a request is filed at the daemon's start.
+`RuntimeApp.specialistApprovals.propose(...)` writes a proposal (proposeSpecialist) and files
+its request in one call. No agent-facing tool calls it yet: the PM has no `propose_specialist`
+tool, so today a proposal comes from code, by hand or from a registry pull. A proposal that
+reaches `proposed/` without a request (written directly, pulled, hand-written) is filed by the
+daemon's next approvals sync (`fileMissing()`, run from `syncApprovals` on the answer route
+and the approvals poll, and at start); one whose request is open, or answered and waiting to
+be applied, is not filed again.
 
 1. **The request.** One blocking `approval` request for the proposal's human, options
    approve / reject, `change_card.key` `specialist:<name>`, the card carrying the summary
@@ -200,15 +205,22 @@ the request); a proposal already on disk without a request is filed at the daemo
    `threshold` (`pass_rate` 0.9, `min_tasks` 10), the tools, domains, budget, tier and
    `risk_tier_floor`. Filing again returns the open request. `proposal.json` gets
    `approval: { status: "pending", requestId }`.
-2. **Approve** (in the inbox, or `fr specialists approve <name>` headless). The answer is
-   claimed once (versioned write of `applied_at`), then:
+2. **Approve** (in the inbox, or `fr specialists approve <name>` headless). Only the install
+   whose `proposal.json` names the request applies it (`approval.requestId`): the cloud
+   runner or a second install of the same human on a shared store has no such proposal and
+   leaves the answer alone. Only the daemon applies inbox answers; a one-shot (`fr ...`,
+   `startServices: false`) applies none, and `fr specialists approve <name>` applies an answer
+   already given first, or files and answers a request. The answer is claimed once
+   (versioned write of `applied_at`), and from the claim on `proposal.json` says
+   `approval: { status: "evaluating", requestId, pid, process }`, then:
    - refused, recorded and filed again: an answer by anyone but the proposal's human, an
      answer that is neither approve nor reject, a proposal whose prompt version is no longer
      the card's (edited after filing);
    - kept proposed without a model call: fewer than 10 tasks in `evals/<name>/`, a worst case
-     (the sum of the tasks' `budgetUsdMicro`) above the approval eval budget (the smaller of
-     USD 5 and 20% of the human's monthly cap, the spec's testing share), no model configured,
-     a specialist of that name already active;
+     (the sum of the tasks' `budgetUsdMicro`) above the approval eval budget (USD 5 per run,
+     and never more than what is left this UTC month of the testing share, 20% of the human's
+     monthly cap, after earlier approval runs, whose cost the `registry.specialist_approval`
+     audit rows carry), no model configured, a specialist of that name already active;
    - otherwise the eval set runs through the eval runner (the model watch's `LoopEvalRunner`
      with the proposal as `candidate`; the composed provider at the rung of `default_tier`,
      `default_effort`; every call under the enforcement hooks and the human's caps).
@@ -229,6 +241,13 @@ the request); a proposal already on disk without a request is filed at the daemo
    `fr specialists approve <name>` (a new request is filed and applied), or reject.
 6. **Reject** withdraws: `proposed/<name>/` is removed, the record stays on the card and in the
    audit log (`registry.specialist_approval`), and the name is free.
+7. **A live evaluation locks the name.** While `approval.status` is `evaluating` and its run is
+   live (running in this process, or its `pid` alive and the claim younger than the set's
+   worst case: tasks x `timeout_minutes` plus 15 minutes), `file`, `approve` and `reject` of
+   the name are refused with `claim_conflict`. One whose process is gone or that overran is
+   recovered by the next sync or CLI call: the card's outcome becomes `interrupted`,
+   `approval.status` too, a note goes to the inbox and a new request is filed. Nothing is
+   re-run without a new approve.
 
 `fr specialists list` shows the pending proposals, their eval-set size, last result and open
 request, and the proposals the loader refused.
@@ -323,11 +342,13 @@ agree across platforms.
 
 ## Tests
 
-- `packages/runtime/test/specialist-approval.test.ts` (18) and `specialists-cli.test.ts` (3):
+- `packages/runtime/test/specialist-approval.test.ts` (24) and `specialists-cli.test.ts` (5):
   the approval flow end to end (see runtime.md, Tests): request filed once, approve -> evals on
   the fake provider -> pass -> active; 8 of 10 -> stays proposed with the result; reject ->
-  withdrawn; another human refused; applied once; the sync script carries the promotion; the
-  daemon route and `fr specialists`.
+  withdrawn; another human refused; applied once; another install over the same store leaves
+  the answer alone; a dead or overrun evaluation recovered, a live one locking the name; the
+  month's testing share; the sync script carries the promotion; the daemon route, a proposal
+  filed by the next sync, a one-shot applying no inbox answer, and `fr specialists`.
 - `packages/runtime/test/registry.test.ts` (30 tests): frontmatter scalars, lists, nested
   maps, block scalars, every rejected construct with its line, CRLF and BOM handling,
   `Object.prototype` key names and `__proto__`, serializer round-trip including lone `\r`,
@@ -404,7 +425,14 @@ Run: `pnpm vitest run --project unit packages/runtime/test/registry.test.ts eval
 - The approval gate (ADR 0071): pass = at least 10 mechanically decided tasks at 90% or
   better on the composed provider at the proposal's default tier; the result lives in
   `proposal.json` (and moves to `specialists/<name>/` with the promotion); the run is capped
-  before the first call by the smaller of USD 5 and 20% of the human's monthly cap.
+  before the first call by USD 5 and by what is left of the month's testing share (20% of the
+  human's monthly cap) after earlier approval runs.
+- No agent tool proposes a specialist yet (the PM cannot call `propose` from a session); a
+  proposal comes from code, by hand or from a registry pull and is filed by the daemon's next
+  approvals sync. Recorded in BLOCKERS.md, row C.5.
+- An answered request whose proposal was deleted by hand is never applied (only the install
+  whose `proposal.json` names it may apply it, and that file is gone); it stays answered in
+  the inbox history.
 
 - Prompt files are markdown with a strict YAML-subset frontmatter instead of JSON or full
   YAML: diffable prompts, no dependency, errors with line numbers.
