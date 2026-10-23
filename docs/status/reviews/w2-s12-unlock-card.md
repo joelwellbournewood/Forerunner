@@ -58,6 +58,7 @@ Findings:
    its store and wraps only to the challenge on an open `credential` request of this human,
    with a test that a free-standing card, an answered request, another human's request and a
    non-unlock request are all refused.
+   Resolution: fixed in 97fa4fd; the route takes `{ requestId, autoUnlockUntil? }`, reads the challenge from the stored open request of this human (404 unknown, 403 another human's, 409 not open, 400 not an unlock), and `runner-unlock-routes.test.ts` proves a free-standing card, an answered request, another human's request and a non-unlock request are refused.
 2. **medium** `apps/ui/src/pages/InboxPage.tsx:281` and
    `apps/ui/src/mobile/screens/InboxScreen.tsx:41`: `useAutoUnlock` runs inside the inbox
    page / screen, so the "auto-unlock window" answers only while the human has the inbox open.
@@ -68,6 +69,7 @@ Findings:
    level (desktop `Shell`, phone `MobileShell`) from the inbox the app keeps anyway, with one
    shared window record so the page and the shell agree, and a test that answers from the
    home screen on both.
+   Resolution: fixed in 786c50d; `RunnerAutoUnlock` in the desktop `Shell` (reads the inbox on mount, on every streamed blocking count and every minute while a window is open) and `useAutoUnlock` in `MobileShell` answer from any screen over one shared, subscribable window record; `unlock-card.test.tsx` and `mobile-unlock.test.tsx` now prove an answer from the home screen, including a challenge filed while the app sits there.
 3. **medium** `docs/status/BLOCKERS.md:44`, `docs/maintainers/cloud-runner.md:427`,
    `docs/decisions/0068-runner-unlock-card-window-and-key-bridge.md:87`: the stand-in for
    getting the runner's key onto the desktop is "storing the key on the device with
@@ -78,8 +80,15 @@ Findings:
    `fr runner-key import|status|remove` command that stores the runner's `vault.key` (raw 32
    bytes or base64) in the same vault the daemon opens, never printing it, with a test; docs
    and the status rows name it.
+   Resolution: fixed in 8cf54b9; `fr runner-key import <runner> <file>` (raw `vault.key` or base64), `status` and `remove` write `cloud_runner_vault_key:<runner>` in the profile's vault the daemon opens, never printing the key; `runner-key-cli.test.ts` proves the stored key is what the daemon route then wraps, and the docs and status rows name the command.
 4. **low** `apps/ui/test/fake-daemon.ts:149`: the `runnerKeys` option is appended at the end of
    `FakeDaemonOptions`, exactly where the base (c713755) appends its `me` option, so the branch
    no longer merges cleanly (`git merge-tree --write-tree HEAD origin/ccr-4d8a843c-1k9syk`:
    "CONFLICT (content): Merge conflict in apps/ui/test/fake-daemon.ts"). Fix: place the option
    away from the base's hunk.
+   Resolution: fixed in 52c6ead; the option sits before `missingRoutes`, and `git merge-tree` with the base reports no conflict.
+
+After the fixes: `pnpm typecheck` and `pnpm lint` clean, `node scripts/docs-check.mjs --base
+<start>` ok, the touched packages' tests green (counts in
+`/mnt/session/outputs/w2-s12-unlock-card-report.md`), and a throwaway merge of the branch with
+the base (c713755) typechecks and passes the unlock, inbox and settings tests.
