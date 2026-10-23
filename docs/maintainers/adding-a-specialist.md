@@ -365,13 +365,15 @@ agree across platforms.
 
 ## Tests
 
-- `packages/runtime/test/specialist-approval.test.ts` (24) and `specialists-cli.test.ts` (5):
+- `packages/runtime/test/specialist-approval.test.ts` (25) and `specialists-cli.test.ts` (5):
   the approval flow end to end (see runtime.md, Tests): request filed once, approve -> evals on
   the fake provider -> pass -> active; 8 of 10 -> stays proposed with the result; reject ->
   withdrawn; another human refused; applied once; another install over the same store leaves
   the answer alone; a dead or overrun evaluation recovered, a live one locking the name; the
   month's testing share; the sync script carries the promotion; the daemon route, a proposal
-  filed by the next sync, a one-shot applying no inbox answer, and `fr specialists`.
+  filed by the next sync, a one-shot applying no inbox answer, and `fr specialists`; a
+  proposal naming `max_tokens`, `speed_mode` and `temperature` goes live with them unchanged
+  (the promotion's field comparison includes the three D.4 keys).
 - `packages/runtime/test/registry.test.ts` (34 tests; four for D.4): `max_tokens`,
   `speed_mode` and `temperature` parse and stay on the definition, are unset in the ten
   repository specialists so the effort table's row applies (and `timeout_minutes` and the tier

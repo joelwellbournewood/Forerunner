@@ -2301,9 +2301,11 @@ read once; the poll runs on the clock and stops. The composed daemon builds the 
 option's interval, polls on the clock, fires `ci` into the scheduler's log once, defers in the
 human's quiet hours, records a flagged comment as `injection.flagged` and stops on close.
 
-`specialist-approval.test.ts` (24) and `specialists-cli.test.ts` (5) (spec C.5, ADR 0071): a
+`specialist-approval.test.ts` (25) and `specialists-cli.test.ts` (5) (spec C.5, ADR 0071): a
 proposal files one blocking request with the summary and the eval-set size and filing again
-returns it; approve runs the eval set through the real `LoopEvalRunner` on the scripted fake
+returns it; a proposal naming the D.4 run settings (`max_tokens`, `speed_mode`,
+`temperature`, ADR 0072) goes live with them as evaluated (the promotion's field comparison
+covers them); approve runs the eval set through the real `LoopEvalRunner` on the scripted fake
 provider (two calls per task, the proposal's prompt) and a pass at or above 90% (9 of 10
 included) moves the files to `specialists/` with `status: active`, runnable in the loader,
 the result (pass rate, counts, model, date, threshold) in `proposal.json`; 8 of 10 stays
