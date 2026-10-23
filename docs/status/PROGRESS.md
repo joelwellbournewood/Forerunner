@@ -21,7 +21,7 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 ### 2026-10-23 (item w5-android-high-risk: the high-risk refusal on a phone without biometrics; the runner shows the WebView console)
 - `android.yml` run 39952987240 (82a6295) attached to the real WebView, paired and approved,
   then saw no refusal after Confirm on the high-risk card. Built on
-  `wave/w5-android-high-risk` (ADR 0085, not merged): every failure of the biometric step is a
+  `wave/w5-android-high-risk` (ADR 0086, not merged): every failure of the biometric step is a
   refusal with the platform's reason in bounded time (shell 45 s, UI 60 s); the capability
   names `biometric:allow-status` and `biometric:allow-authenticate`; `run.mjs` forwards the
   page's console and uncaught exceptions as `webview:` lines. Tests: `apps/ui` 42 files /

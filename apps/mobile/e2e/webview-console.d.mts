@@ -1,5 +1,5 @@
 /**
- * Types for `webview-console.mjs` (the emulator runner's `webview:` lines, ADR 0085), so
+ * Types for `webview-console.mjs` (the emulator runner's `webview:` lines, ADR 0086), so
  * `cdp.test.ts` type-checks its calls. Keep in step with `webview-console.mjs`. The client is
  * structural: the driver's `CdpClient` (`cdp.mjs`) fits it.
  */

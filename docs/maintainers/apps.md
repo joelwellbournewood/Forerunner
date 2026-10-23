@@ -991,7 +991,7 @@ apps/mobile/
   e2e/run.mjs        emulator run (build, boot, install, fake service, CDP smoke); README.md has the
                      adb / gradle commands by hand
   e2e/webview-console.mjs  forwardPageConsole: the page's console and uncaught exceptions as
-                     `webview:` lines on the runner's stdout (ADR 0085); its own module, typed by
+                     `webview:` lines on the runner's stdout (ADR 0086); its own module, typed by
                      webview-console.d.mts, so the driver below is untouched; tested in cdp.test.ts
   e2e/cdp.mjs        raw CDP client and DOM driver for the smoke (ADR 0054): /json/list, page socket,
                      Runtime.evaluate queries, Input.* clicks and fills; no eval in the page (CSP);
@@ -1052,7 +1052,7 @@ the simulated dialog says it is simulated and draws its ticket from `WebCryptoSi
 which applies the same rule. A cancelled prompt sends nothing. High-risk answers are never
 queued.
 
-**A phone that cannot confirm** (ADR 0085; `android.yml` run 39952987240, an emulator without
+**A phone that cannot confirm** (ADR 0086; `android.yml` run 39952987240, an emulator without
 an enrolled fingerprint). Everything the biometric step can do other than resolve a ticketed
 assertion in time is a refusal: `null`, a rejection of any shape (string, `Error`, a plugin's
 `{ message, code }`), a synchronous throw, a malformed outcome, a prompt that does not answer.
@@ -1254,7 +1254,7 @@ node apps/mobile/e2e/run.mjs
   while the app is open.
 - The raw CDP driver (`e2e/cdp.mjs`) met the real WebView in `android.yml` run 39952987240
   (82a6295): the attach, pairing by code (fills) and the approval (a click near the top of
-  the inbox) passed; scenario 3 then saw no refusal on the high-risk card. ADR 0085 fixes
+  the inbox) passed; scenario 3 then saw no refusal on the high-risk card. ADR 0086 fixes
   the paths in the app that could leave the card without a refusal and makes the runner
   print the page's console; the cause of that run is not confirmed on a device (no emulator
   on the build box), so the next run's `webview:` lines decide between a biometric step that

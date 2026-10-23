@@ -1,4 +1,4 @@
-# 0085 — A high-risk answer on a phone that cannot confirm: every failure of the biometric step is a refusal, in bounded time, with the platform's reason; the emulator runner shows the page's console
+# 0086 — A high-risk answer on a phone that cannot confirm: every failure of the biometric step is a refusal, in bounded time, with the platform's reason; the emulator runner shows the page's console
 
 Date: 2026-10-23
 Status: accepted

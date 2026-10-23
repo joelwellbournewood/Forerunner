@@ -25,7 +25,7 @@ tauri 2.12.4 (`cargo fetch`):
 So the root cause from the app's side is candidate 3, a biometric step with no bound. The
 other explanation the code allows, a CDP click that never reached the scrolled-to Confirm
 button, is outside the app. The new `webview:` lines tell the two apart on the next run
-(ADR 0085, Consequences).
+(ADR 0086, Consequences).
 
 **Code.**
 - `apps/ui/src/mobile/store.tsx`: `assertHighRisk` races the port against
@@ -53,7 +53,7 @@ button, is outside the app. The new `webview:` lines tell the two apart on the n
   nothing sent, within 180 s) was right. The new bounds (45 s / 60 s) satisfy it. The only
   other change is that scenario 3's PASS line now prints the refusal text.
 
-**Docs.** ADR 0085 (and its index row). `docs/maintainers/apps.md` (Android app: the "phone
+**Docs.** ADR 0086 (and its index row). `docs/maintainers/apps.md` (Android app: the "phone
 that cannot confirm" paragraph, the file map, Tests, Known issues). `docs/maintainers/testing.md`
 (the runner's `webview:` lines). `apps/mobile/e2e/README.md`. The `docs/status/BLOCKERS.md`
 emulator row (the run, the fix, the next step). A `docs/status/PROGRESS.md` log entry.
@@ -232,11 +232,11 @@ prompt dialog open behind the refusal, and a few docs claim more than the code o
   `{ isAvailable: false, biometryType, error: "Biometrics not enrolled.", errorCode:
   "biometryNotEnrolled" }`; `models.rs` `Status`) and tauri 2.12.4 (`run_mobile_plugin`
   blocks on `rx.recv()`).
-- [x] `run.mjs` expectation left unchanged, with the reason stated (ADR 0085 item 6).
+- [x] `run.mjs` expectation left unchanged, with the reason stated (ADR 0086 item 6).
 - [x] Runner forwards `Runtime.consoleAPICalled` and `Runtime.exceptionThrown` after
   `Runtime.enable` on the session it already holds, prefixed `webview:`, with tests in
   `apps/mobile/e2e/cdp.test.ts` (ran: 1 file / 22 tests pass).
-- [x] Docs: apps.md mobile section, testing.md, e2e README, ADR 0085 and its index row,
+- [x] Docs: apps.md mobile section, testing.md, e2e README, ADR 0086 and its index row,
   BLOCKERS emulator row, PROGRESS entry; R.5 / V.3 unchanged (their status cannot change
   before an emulator run passes): correct.
 - [ ] Merges cleanly in meaning with the base branch: no (finding 1).
@@ -287,7 +287,7 @@ prompt dialog open behind the refusal, and a few docs claim more than the code o
    the open dialog with the refusal" fails without the change (`expected <div role="dialog"
    …> to be null`) and passes with it; it also proves that a second Confirm opens a fresh
    dialog that sends the signed answer.
-3. **low**: `docs/decisions/0085-high-risk-refusal-on-a-phone-that-cannot-confirm.md`
+3. **low**: `docs/decisions/0086-high-risk-refusal-on-a-phone-that-cannot-confirm.md`
    (Consequences) and `docs/maintainers/apps.md` (Known issues). The real-device
    counterpart of finding 2 is not documented. When `wait_bounded` gives up after
    `PROMPT_LIMIT`, the plugin's `BiometricActivity` stays on screen: tauri-plugin-biometric
@@ -296,7 +296,7 @@ prompt dialog open behind the refusal, and a few docs claim more than the code o
    prompt. A touch after the bound does nothing; the phone has already refused. Verified by
    reading `BiometricPlugin.kt` / `BiometricActivity.kt` and `biometric.rs`
    `wait_bounded`. Fix: say so in the ADR and the Known issues.
-   Resolution: fixed in 4750717. ADR 0085 (Consequences) and apps.md (Android app, Known
+   Resolution: fixed in 4750717. ADR 0086 (Consequences) and apps.md (Android app, Known
    issues) now state it. There is no code fix without a cancel command in the plugin.
 4. **low**: `apps/mobile/e2e/cdp.test.ts:683`, `docs/maintainers/apps.md:1051`. Both say
    Chrome reports nothing from before `Runtime.enable` ("the page's console goes nowhere
@@ -306,7 +306,7 @@ prompt dialog open behind the refusal, and a few docs claim more than the code o
    useful, but the docs and the test's comment describe it wrongly. Fix the comment and the
    doc. The fake keeps its simpler behaviour, and the comment says so.
    Resolution: fixed in b90ed52. The test comments, apps.md (Tests), the e2e README and
-   ADR 0085 item 5 now say V8 replays the earlier messages on enable, and that the fake
+   ADR 0086 item 5 now say V8 replays the earlier messages on enable, and that the fake
    does not.
 5. **low**: `apps/mobile/e2e/cdp.mjs:971-979`. `formatConsoleEvent` appends the call site
    to the last line of the joined text. When an argument has a multi-line description (an
