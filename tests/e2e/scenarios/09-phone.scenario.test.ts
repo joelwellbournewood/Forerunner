@@ -450,9 +450,18 @@ describe("scenario 9: from the phone, by talking", () => {
   // answers 200 with the first row, `enqueueRemoteCommandOnce`), and a copy that slipped past
   // the service anyway (a second service instance or a restored backup writing the same
   // envelope into the shared store) is refused by the PC's watcher as a `duplicate` of the
-  // first row before anything is composed. Runs after the first case, whose undo left the
-  // sample project active and the game without an override.
+  // first row before anything is composed. The case sets up its own starting point (the
+  // sample project active, as the desktop UI leaves it), so it runs alone as well as after the
+  // first case, whose undo leaves the same state.
   it("a plan envelope the outbox replays (same device and clientId) runs once", async () => {
+    const uiTurn = commandTurnFor(w.alice, sessionId, { source: "text", wordsUsed: "" });
+    if ((await commands.activeProject(w.j.id)) !== w.project.id) {
+      const prior = await commands.execute(
+        { name: "project.switch", params: { project: w.project.id } },
+        uiTurn,
+      );
+      expect(prior.status).toBe("done");
+    }
     expect(await commands.activeProject(w.j.id)).toBe(w.project.id);
     const changesBefore = new Set((await w.store.changeLog.list()).map((r) => r.id));
     const requestsBefore = new Set((await w.store.humanRequest.list()).map((r) => r.id));
