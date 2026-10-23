@@ -34,6 +34,14 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   not webhooks; the dedupe rule). Tests: `githost-watcher.test.ts` (13),
   `githost-wiring.test.ts` (5), `githost-feedback.test.ts` (3). Report:
   `docs/status/reviews/w3-e1-triggers.md`.
+- Review of w3-e1-triggers (verdict revise, six findings, all fixed on the branch): the agent's
+  own text is its token's login plus a hidden mark the port appends (`AGENT_TEXT_MARKER`), so
+  the human's comments under their own PAT fire `pr_comment`; the baseline is per PR, so a
+  transient error in the first poll never fires a PR's history; the excerpt in the inbox is a
+  JSON string with the envelope's markers neutralised; review line comments are read
+  (`listPullRequestReviewComments`, fake host `GET|POST /pulls/:n/comments`) and fire
+  `pr_comment`; a draft review fires once submitted; the runtime.md Known issues bullet moved
+  clear of the base's. Tests: `githost-watcher.test.ts` (18), `githost-feedback.test.ts` (4).
 
 ### 2026-10-23 (fifteen bounded items merged; wave 1 reviewed, its fix stage and waves 2 to 4 stopped at the credit limit; triage; live probe on the new key)
 - Base b31c2e5 (the handover of 2026-10-21). Fifteen items were built on `wave/<id>` branches
