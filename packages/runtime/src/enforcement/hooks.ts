@@ -60,6 +60,14 @@ export interface RunContext {
   approvals?: Set<string>;
   /** Working directory of the run; relative paths in tool inputs resolve against it. */
   cwd?: string;
+  /**
+   * The runtime's own step, not a model's request (the merge after an accepting review, ADR
+   * 0062): an action the autonomy level does not free is refused as `autonomy_insufficient`
+   * with its audit row instead of filing an approval request, since no run waits on the
+   * answer; the human does the action themself. An approval already in `approvals` still
+   * admits the call.
+   */
+  unattended?: boolean;
 }
 
 export interface HookDeps {
@@ -311,6 +319,13 @@ export class EnforcementHooks {
       throw await deny(
         "autonomy_insufficient",
         `action class ${tool.actionClass} is never allowed`,
+      );
+    }
+    if (decision === "approval_required" && ctx.unattended) {
+      throw await deny(
+        "autonomy_insufficient",
+        `autonomy level ${claims.autonomy} does not free ${tool.actionClass} for an unattended step; a human does it`,
+        { actionClass: tool.actionClass, autonomy: claims.autonomy },
       );
     }
     if (decision === "approval_required") {

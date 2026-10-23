@@ -273,6 +273,49 @@ describe("enforcement hooks: tool calls", () => {
     ).rejects.toMatchObject({ code: "killed" });
   });
 
+  it("an unattended step (no one asked, no one waits) is refused as autonomy_insufficient where the level does not free its class, with the audit row and no approval request (ADR 0062)", async () => {
+    const mergeTool: ToolSpec<{ number: number }> = {
+      name: "merge_pr",
+      description: "merge a reviewed pull request",
+      schema: z.object({ number: z.number() }),
+      actionClass: "merge_pr",
+      risk: "medium",
+      async execute() {
+        return { content: "merged" };
+      },
+    };
+    // AutoApprove would say yes: the refusal must not depend on what an approval port answers.
+    const approvals = new AutoApprove("approved");
+    const h = harness({ approvals });
+    const at2 = ctx(h, issue(h, { allowedTools: ["merge_pr"], autonomy: 2 }), {
+      unattended: true,
+    });
+    await expect(h.hooks.beforeToolCall(at2, mergeTool, { number: 7 })).rejects.toMatchObject({
+      code: "autonomy_insufficient",
+      details: { tool: "merge_pr" },
+    });
+    expect(approvals.requests).toEqual([]);
+    expect(h.audit.entries.at(-1)).toMatchObject({ tool: "merge_pr", allowed: false });
+    expect(h.audit.entries.at(-1)?.deniedReason).toMatch(/^autonomy_insufficient: /);
+    // At level 3 the class is free: the same call passes without a request.
+    const at3 = ctx(h, issue(h, { runId: "run-3", allowedTools: ["merge_pr"], autonomy: 3 }), {
+      unattended: true,
+    });
+    expect((await h.hooks.beforeToolCall(at3, mergeTool, { number: 7 })).allowed).toBe(true);
+    // An always-human class stays refused unattended at every level, 4 included.
+    const at4 = ctx(h, issue(h, { runId: "run-4", allowedTools: ["delete_repo"], autonomy: 4 }), {
+      unattended: true,
+    });
+    await expect(
+      h.hooks.beforeToolCall(at4, deleteRepoTool, { repo: "o/r" }),
+    ).rejects.toMatchObject({ code: "autonomy_insufficient" });
+    expect(approvals.requests).toEqual([]);
+    // Attended (a model's call), level 2 asks as before.
+    const asked = ctx(h, issue(h, { runId: "run-5", allowedTools: ["merge_pr"], autonomy: 2 }));
+    expect((await h.hooks.beforeToolCall(asked, mergeTool, { number: 7 })).allowed).toBe(true);
+    expect(approvals.requests.map((r) => r.tool)).toEqual(["merge_pr"]);
+  });
+
   it("wraps untrusted tool output as data and flags injection", async () => {
     const h = harness();
     const c = ctx(h, issue(h, { allowedDomains: ["example.com"] }));
