@@ -761,8 +761,10 @@ inbox, answers requests (high risk with the platform biometric prompt), relays q
 natural-language control to the PC as remote commands, and shows the change log with Undo.
 Heavy work stays on the PC or the cloud runner (R.8).
 
-Requirements covered: R.1 (Tauri 2 Android target sharing the UI; APK signed by
-`scripts/android-keystore.mjs`; Play track and update channel pending), R.2 (pairing by QR /
+Requirements covered: R.1 (Tauri 2 Android target sharing the UI; the release APK signed by
+Gradle with the keystore `scripts/android-keystore.mjs` prepares and verified by
+`scripts/android-apk-verify.mjs` in CI, see `release.md` "Signing"; Play track and update
+channel pending), R.2 (pairing by QR /
 `fr://` deep link / typed code; own key; forget here, revoke on the desktop), R.3 (state
 service client, live SSE with polling fallback, offline outbox flushed on reconnect), R.4
 (start / pause / stop / kill as remote commands with `target: "pc"`; the live session log
@@ -822,6 +824,9 @@ apps/mobile/
                        fr://pair link parser
     src/dirs.rs        app_dirs(): mirror of packages/platform/src/paths.ts appDirs()
     src/push.rs        PushPort: PollingPush (shipped) and FcmPush (seam), configured(token)
+    gen/android/app/build.gradle.kts
+                       the Tauri-generated Gradle module (kept after `android init`), plus the release
+                       signing config read from gen/android/keystore.properties when the file exists
     gen/android/app/src/main/java/app/forerunner/mobile/KeystorePlugin.kt
                        AES-256-GCM key in the Android Keystore (StrongBox when present) that wraps the
                        seed and the token; info (model, strongBox, biometric, fcmToken when FCM exists)
@@ -962,6 +967,9 @@ quiet hours. The FCM wiring is listed in ADR 0032 item 6.
   intercepting overlay reported; `fill` through `Input.insertText` after focus and select-all,
   the native-setter fallback with `input` and `change`, `not_editable`; `connectPage` waiting
   for the target and giving up with `cdp.no_page_target`.
+- `scripts/android-keystore.test.ts` and `scripts/android-apk-verify.test.ts` (`release.md`
+  "Tests"): the Gradle signing config reads what the keystore script writes, the workflows
+  verify the release APK with `apksigner` before uploading it.
 
 ```
 pnpm --filter @forerunner/ui test -- test/mobile- test/state-
@@ -999,12 +1007,13 @@ node apps/mobile/e2e/run.mjs
   `width=device-width, initial-scale=1`, so no page scale applies). The driver covers the
   calls `smoke()` makes and nothing more: no keyboard shortcuts, no touch events, no frames,
   no screenshots.
-- The CI Android job's release build is the uploaded artefact; `test:emulator` then builds a
-  debug APK of its own for the smoke (x86_64, a few minutes on top), because a release
-  WebView has debugging off. Passing `--debug` in the workflow's build step would save that
-  time (the workflow is the orchestrator's file). The debug Gradle build has not run on the
-  build box (no emulator, no KVM); the Kotlin plugin compiles against the `tauri-android`
-  project the Tauri CLI generates.
+- The CI Android job builds twice: the release APK (signed from `keystore.properties`,
+  verified by `scripts/android-apk-verify.mjs`, uploaded as the artefact) and then, inside
+  `test:emulator`, a debug APK for the smoke (x86_64, a few minutes on top), because a release
+  WebView has debugging off. Both are needed: the release build is the signature check,
+  the debug one the smoke. Neither Gradle build has run on the build box (no Android SDK, no
+  emulator, no KVM); the Kotlin plugin and the signing config compile against the
+  `tauri-android` project the Tauri CLI generates, in the Android workflow.
 - `test/fake-state-service.ts` imports the service's `auth/crypto.ts` by relative path; a
   workspace dependency on the service package would be cleaner once `apps/ui/package.json`
   may change.
