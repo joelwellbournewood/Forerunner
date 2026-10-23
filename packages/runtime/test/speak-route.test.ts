@@ -654,6 +654,48 @@ describe("the speaker's provider preference", () => {
   });
 });
 
+describe("the composed speaker follows the voice sessions' preference source", () => {
+  it("the environment override read by resolveVoicePreferences picks the TTS of the next read, without a restart", async () => {
+    // Spec O.4 (base) meets L.6: compose hands the speaker the same preference getter as the
+    // voice sessions (the Extensions panel's rows under FORERUNNER_VOICE_TTS), read per utterance.
+    const clock = new SimulatedClock("2026-11-03T09:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-speak-prefs-"));
+    const env: NodeJS.ProcessEnv = { FORERUNNER_HOME: home };
+    const a = new FakeTts({ clock, chunks: 1, name: "tts-a" });
+    const b = new FakeTts({ clock, chunks: 1, name: "tts-b" });
+    const rt = await composeRuntime({
+      env,
+      dirs: appDirs({ env }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+      voice: { registry: new VoiceProviderRegistry().registerTts(a).registerTts(b) },
+    });
+    try {
+      const subject = { kind: "notification", id: "n", notificationKind: "budget_stop" } as const;
+      const read = async (text: string) => {
+        const u = await rt.speech.say({ text, subject, source: "notification" });
+        u.cancel();
+        await drive(clock, u.done);
+        return u.provider.name;
+      };
+      const byPolicy = await read("One.");
+      const other = byPolicy === "tts-a" ? "tts-b" : "tts-a";
+      env.FORERUNNER_VOICE_TTS = other;
+      expect(await read("Two.")).toBe(other);
+      delete env.FORERUNNER_VOICE_TTS;
+      expect(await read("Three.")).toBe(byPolicy);
+    } finally {
+      await rt.close();
+    }
+  });
+});
+
 describe("one voice under concurrent requests", () => {
   it("two overlapping say() calls: the later one cancels the earlier, never both to the end", async () => {
     const clock = new SimulatedClock("2026-11-03T09:00:00Z");

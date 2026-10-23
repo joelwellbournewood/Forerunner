@@ -347,7 +347,7 @@ log sentences with the effect and the surcharge both ways, the yes a medium-risk
 the flag written on one project only; a corrected fast row from `ports.pricingTable` quoted in
 the card and the sentence).
 
-Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 162 tests).
+Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 163 tests).
 
 ## Known issues
 
