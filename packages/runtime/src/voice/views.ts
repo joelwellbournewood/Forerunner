@@ -142,6 +142,11 @@ export function voiceStatusView(a: VoiceAvailability): VoiceStatusView {
       stt: a.statuses.stt.map((s) => ({ ...s })),
       tts: a.statuses.tts.map((s) => ({ ...s })),
     },
+    preferences: {
+      stt: a.preferences.stt ? { ...a.preferences.stt } : null,
+      tts: a.preferences.tts ? { ...a.preferences.tts } : null,
+      skipped: a.preferences.skipped.map((s) => ({ ...s })),
+    },
     sessions: a.sessions,
     maxSessions: a.maxSessions,
     modes: [...VOICE_MODES],

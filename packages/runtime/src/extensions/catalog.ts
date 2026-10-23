@@ -43,6 +43,21 @@ export type ConnectorTransport = z.infer<typeof ConnectorTransport>;
 
 export const CATALOG_ID_RE = /^[a-z][a-z0-9-]*$/;
 
+const ProviderNames = z.array(z.string().min(1)).min(1);
+
+/**
+ * Voice capabilities only (spec O.4): the provider names, as registered in the voice
+ * registry, the entry stands for on each side, in order of preference. Enabling the row in
+ * the Extensions panel makes the first registered one the preferred provider.
+ */
+export const VoiceCatalogProviders = z
+  .object({ stt: ProviderNames.optional(), tts: ProviderNames.optional() })
+  .strict()
+  .refine((v) => v.stt !== undefined || v.tts !== undefined, {
+    message: "a voice entry names an STT or a TTS provider",
+  });
+export type VoiceCatalogProviders = z.infer<typeof VoiceCatalogProviders>;
+
 export const CatalogEntry = z
   .object({
     id: z.string().regex(CATALOG_ID_RE, "catalog ids are lowercase letters, digits and dashes"),
@@ -59,10 +74,19 @@ export const CatalogEntry = z
     permissions: ExtensionPermissions.default({ ...EMPTY_PERMISSIONS }),
     /** Minimum autonomy level before the capability may act at all. */
     requiresAutonomy: z.number().int().min(0).max(4).optional(),
+    /** Voice capabilities: the providers the entry stands for (chosen by enabling the row). */
+    voice: VoiceCatalogProviders.optional(),
     tags: z.array(z.string()).default([]),
   })
   .strict()
   .superRefine((e, ctx) => {
+    if (e.voice && e.kind !== "capability") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["voice"],
+        message: "only a capability stands for voice providers",
+      });
+    }
     if (e.kind === "connector" && !e.transport) {
       ctx.addIssue({
         code: "custom",

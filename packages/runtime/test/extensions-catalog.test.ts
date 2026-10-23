@@ -43,6 +43,18 @@ describe("extension catalog", () => {
       expect(Array.isArray(github.transport.args)).toBe(true);
     }
     expect(file.entries.find((e) => e.id === "desktop-control")?.requiresAutonomy).toBe(3);
+    // The voice entries name the providers they stand for (spec O.4: chosen in the panel); a
+    // cloud entry's key is the secret its row is granted, by reference.
+    const voice = (id: string) => file.entries.find((e) => e.id === id);
+    expect(voice("voice-local")?.voice).toEqual({
+      stt: ["faster-whisper"],
+      tts: ["kokoro", "piper"],
+    });
+    expect(voice("voice-deepgram")?.voice).toEqual({ stt: ["deepgram"] });
+    expect(voice("voice-deepgram")?.permissions.secrets).toEqual(["deepgram_api_key"]);
+    expect(voice("voice-cartesia")?.voice).toEqual({ tts: ["cartesia"] });
+    expect(voice("voice-elevenlabs")?.voice).toEqual({ tts: ["elevenlabs"] });
+    for (const e of file.entries) if (!e.id.startsWith("voice-")) expect(e.voice).toBeUndefined();
     // nothing hardcoded to an org, host or user path
     const text = JSON.stringify(file);
     expect(text).not.toMatch(/\/home\/|C:\\\\Users|joel|wellbourne/i);
@@ -62,6 +74,18 @@ describe("extension catalog", () => {
     expect(() =>
       parseCatalogEntry({ ...good, transport: { type: "http", url: "ftp://x" } }),
     ).toThrow();
+    // Only a capability stands for voice providers, and it names at least one.
+    expect(() => parseCatalogEntry({ ...good, voice: { stt: ["deepgram"] } })).toThrow(
+      /only a capability/,
+    );
+    const capability = { ...good, kind: "capability", transport: undefined };
+    expect(() => parseCatalogEntry({ ...capability, voice: {} })).toThrow(/invalid catalog entry/);
+    expect(() => parseCatalogEntry({ ...capability, voice: { stt: [] } })).toThrow(
+      /invalid catalog entry/,
+    );
+    expect(parseCatalogEntry({ ...capability, voice: { tts: ["kokoro", "piper"] } }).voice).toEqual(
+      { tts: ["kokoro", "piper"] },
+    );
   });
 
   it("merges a remote catalog over http without letting it override built-in ids", async () => {

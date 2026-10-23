@@ -106,6 +106,10 @@
       "description": "Local voice: faster-whisper for STT, Kokoro or Piper for TTS. Free and private; runs on this machine.",
       "version": "1.0.0",
       "module": "@forerunner/voice/local",
+      "voice": {
+        "stt": ["faster-whisper"],
+        "tts": ["kokoro", "piper"]
+      },
       "permissions": {
         "tools": [],
         "actionClasses": ["read"],
@@ -123,6 +127,9 @@
       "description": "Cloud STT through Deepgram for the lowest latency.",
       "version": "1.0.0",
       "module": "@forerunner/voice/deepgram",
+      "voice": {
+        "stt": ["deepgram"]
+      },
       "permissions": {
         "tools": [],
         "actionClasses": ["read"],
@@ -140,6 +147,9 @@
       "description": "Cloud TTS through Cartesia.",
       "version": "1.0.0",
       "module": "@forerunner/voice/cartesia",
+      "voice": {
+        "tts": ["cartesia"]
+      },
       "permissions": {
         "tools": [],
         "actionClasses": ["read"],
@@ -157,6 +167,9 @@
       "description": "Cloud TTS through ElevenLabs.",
       "version": "1.0.0",
       "module": "@forerunner/voice/elevenlabs",
+      "voice": {
+        "tts": ["elevenlabs"]
+      },
       "permissions": {
         "tools": [],
         "actionClasses": ["read"],
@@ -241,7 +254,9 @@
         "type": "stdio",
         "command": "npx",
         "args": ["-y", "@modelcontextprotocol/server-github"],
-        "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "secret:github_pat" }
+        "env": {
+          "GITHUB_PERSONAL_ACCESS_TOKEN": "secret:github_pat"
+        }
       },
       "permissions": {
         "tools": [],

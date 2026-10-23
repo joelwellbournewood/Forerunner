@@ -76,6 +76,16 @@ import {
  */
 
 /** The TokenIssuer's revocation entry point (the kill switch holds the same issuer). */
+/** An enabled row that came from the catalog, with the entry it was installed from. */
+export interface EnabledCatalogExtension {
+  extensionId: string;
+  name: string;
+  catalogId: string;
+  entry: CatalogEntry;
+  /** The permissions in force (what the human granted), never a secret value. */
+  permissions: ExtensionPermissions;
+}
+
 export interface TokenRevoker {
   revokeWhere(pred: (c: CapabilityClaims) => boolean): string[];
 }
@@ -259,6 +269,32 @@ export class ExtensionRegistry {
   /** The raw row (fresh read) for the gate. */
   row(id: string): Promise<ExtensionRow | undefined> {
     return this.deps.extensions.get(id);
+  }
+
+  /**
+   * The enabled rows that came from the catalog, each with its entry, for a module that
+   * follows the panel's choice (the voice preferences read the `voice-*` capabilities, spec
+   * O.4). A pending or disabled row, or one whose entry left the catalog, is not listed. A
+   * fresh read every time, so a toggle in the panel is seen at the next call.
+   */
+  async enabledCatalogEntries(kind?: ExtensionPanelKind): Promise<EnabledCatalogExtension[]> {
+    const rows = await this.deps.extensions.enabled();
+    const out: EnabledCatalogExtension[] = [];
+    for (const row of rows) {
+      if (row.status !== ROW_STATUS_INSTALLED) continue;
+      if (kind && panelKind(row.kind) !== kind) continue;
+      const catalogId = configOf(row).catalogId;
+      const entry = catalogId ? this.deps.catalog.get(catalogId) : undefined;
+      if (!catalogId || !entry) continue;
+      out.push({
+        extensionId: row.id,
+        name: row.name,
+        catalogId,
+        entry,
+        permissions: parsePermissions(row.permissions),
+      });
+    }
+    return out;
   }
 
   /** Extension that owns `toolName`, from the rows' granted (and pending) tool lists. */

@@ -76,6 +76,14 @@ describe("VoiceProviderRegistry", () => {
       });
     const chosen = await reg.selectStt({ preferred: "deepgram", hasSecret: () => true });
     expect(chosen).toMatchObject({ name: "deepgram", policy: "preferred" });
+    expect(chosen.reason).toBe('"deepgram" selected in Extensions');
+    // The caller names where the choice came from (the panel row, or an environment override).
+    const byRow = await reg.selectStt({
+      preferred: "deepgram",
+      preferredBy: "selected in Extensions (voice-deepgram)",
+      hasSecret: () => true,
+    });
+    expect(byRow.reason).toBe('"deepgram" selected in Extensions (voice-deepgram)');
     const missing = await reg.selectStt({ preferred: "whisper-cpp", hasSecret: () => true });
     expect(missing.name).toBe("faster-whisper");
     expect(missing.reason).toContain('preferred "whisper-cpp" is not registered');

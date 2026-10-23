@@ -68,6 +68,8 @@ import {
   type TransitionTaskBody as TransitionTaskBodySchema,
   type UpdateLessonBody,
   type UpdateProjectSettingsBody,
+  type VoiceStatusView,
+  VoiceStatusView as VoiceStatusViewSchema,
 } from "@forerunner/runtime/daemon/api-types";
 import { z } from "zod";
 import type { DaemonConfig } from "./config.ts";
@@ -174,6 +176,7 @@ export type {
   UpdateLessonBody,
   UpdateProjectSettingsBody,
   UpdatesView,
+  VoiceStatusView,
 };
 
 /** Types the contract defines only as schemas. */
@@ -396,6 +399,11 @@ export interface DaemonClient {
     permissions: UpdatePermissionsInput,
   ): Promise<ExtensionView>;
   removeExtension(id: string): Promise<void>;
+  /**
+   * Voice providers (spec O.4): the pair the next voice session uses and what the panel's
+   * `voice-*` rows chose, with the reason for every row that is not in force.
+   */
+  voiceStatus(signal?: AbortSignal): Promise<VoiceStatusView>;
 
   // Updates screen (spec M)
   /** Asks the release feed (network). */
@@ -658,6 +666,8 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     denyExtension: async (id) => {
       await post(routePath("denyExtension", { id }), OkView, {});
     },
+    voiceStatus: (signal) =>
+      get(routePath("voiceStatus"), VoiceStatusViewSchema, undefined, signal),
     updateExtensionPermissions: (id, permissions) =>
       put(routePath("extensionPermissions", { id }), ExtensionViewSchema, { permissions }),
     removeExtension: async (id) => {
