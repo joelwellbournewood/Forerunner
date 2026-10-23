@@ -17,13 +17,14 @@ import type {
 } from "../loop/ports.ts";
 import {
   capEffort,
+  effortWithOffset,
   MODE_DEFAULTS,
-  modeEffort,
   modelIdFor,
   speedQualityOffsetOf,
 } from "../models/ladder.ts";
+import { modeOverride, parseAgentModelConfig, resolveRunSettings } from "../models/run-settings.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
-import type { EffortLevel, ModelProvider } from "../provider/types.ts";
+import { type EffortLevel, type ModelProvider, providerCapabilities } from "../provider/types.ts";
 import { FORWARDED_SENTENCE, type HeardSource, heardMessageBody } from "../session/live-chat.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { isYes } from "../wiring/state-ports.ts";
@@ -332,21 +333,33 @@ export class ConversationAgent {
       tools.register(t);
     // The chat mode's tier, effort and target from the tables in force (ADR 0039).
     const modelConfig = this.deps.modelConfig?.();
-    const textChat = modelConfig?.modeDefaults.text_chat ?? MODE_DEFAULTS.text_chat;
+    // Then the principal's own chat settings (spec D.4, ADR 0072: `model_config.modes.text_chat`).
+    // Speed mode stays standard on a chat turn: it has no fast-mode price (ADR 0072).
+    const textChat = resolveRunSettings({
+      mode: "text_chat",
+      modeDefaults: modelConfig?.modeDefaults ?? MODE_DEFAULTS,
+      override: modeOverride(parseAgentModelConfig(agent.model_config).config, "text_chat"),
+      capabilities: providerCapabilities(this.deps.provider),
+    });
+    // The turn's wall clock: the run's timeout plus room for the command tools around it.
+    const turnMs = Math.max(60_000, textChat.timeoutMs + 30_000);
     const model =
       this.deps.modelId ?? modelIdFor(textChat.tier, this.deps.provider.name, modelConfig?.ladder);
     // The effort (spec D.16): a spoken turn takes the voice mode's default, a typed one the
-    // chat mode's, shifted by the active project's speed-versus-quality slider as its row
-    // reads now, so a slider change applies to the next turn. The rung stays the chat one the
-    // composition prices the turn at.
+    // chat mode's (the principal's `modes.text_chat.effort` when set, spec D.4), shifted by the
+    // active project's speed-versus-quality slider as its row reads now, so a slider change
+    // applies to the next turn. The rung stays the chat one the composition prices the turn at.
     // Held at the registry's `max_effort` for the conversation agent.
+    const baseEffort =
+      turn.source === "voice"
+        ? (modelConfig?.modeDefaults.voice_chat ?? MODE_DEFAULTS.voice_chat).effort
+        : textChat.effort;
     const effort = capEffort(
-      modeEffort(
-        turn.source === "voice" ? "voice_chat" : "text_chat",
+      effortWithOffset(
+        baseEffort,
         speedQualityOffsetOf(
           projectId ? (await store.project.get(projectId))?.settings : undefined,
         ),
-        modelConfig?.modeDefaults,
       ),
       this.deps.maxEffort,
     );
@@ -354,7 +367,7 @@ export class ConversationAgent {
       sessionId,
       budgetUsdMicro: this.deps.turnBudgetUsdMicro ?? 50_000,
       stepCap: 12,
-      deadlineMs: clock.now() + 60_000,
+      deadlineMs: clock.now() + turnMs,
       reserveShare: 0.15,
     });
     const token = this.deps.tokens.issue({
@@ -374,7 +387,7 @@ export class ConversationAgent {
       // confirmation policy guards the rest by risk.
       autonomy: 4,
       planApproved: true,
-      expiresAt: new Date(clock.now() + 60_000).toISOString(),
+      expiresAt: new Date(clock.now() + turnMs).toISOString(),
     });
     let ttft: number | null = null;
     const events: RunEvent[] = [];
@@ -392,9 +405,10 @@ export class ConversationAgent {
       messages: [{ role: "user", content: `${context.volatile}\n\n${req.text}` }],
       tools,
       pricing: this.deps.pricing,
-      timeoutMs: 30_000,
-      maxTokensPerCall: 400,
+      timeoutMs: textChat.timeoutMs,
+      maxTokensPerCall: textChat.maxTokens,
       effort,
+      ...(textChat.temperature !== null ? { temperature: textChat.temperature } : {}),
       maxTurns: 4,
       label: "conversation",
       protected: true,

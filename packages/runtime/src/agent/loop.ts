@@ -15,7 +15,7 @@ import type {
   ToolResultBlock,
   Usage,
 } from "../provider/types.ts";
-import { collectStream } from "../provider/types.ts";
+import { collectStream, providerCapabilities } from "../provider/types.ts";
 import type { ToolRegistry, ToolSpec } from "./tools.ts";
 
 /**
@@ -23,6 +23,9 @@ import type { ToolRegistry, ToolSpec } from "./tools.ts";
  * the Anthropic Messages adapter in production for specialists that do not need the full Claude
  * Code tool set. Every model call and tool call passes through EnforcementHooks.
  */
+/** `max_tokens` per call when the run names none (the effort table's coding row, ADR 0072). */
+export const DEFAULT_MAX_TOKENS_PER_CALL = 4096;
+
 export interface RunPricing {
   estimate(inputTokens: number, maxOutputTokens: number): number;
   cost(usage: Usage): number;
@@ -41,14 +44,22 @@ export interface RunRequest {
   tools: ToolRegistry;
   pricing: RunPricing;
   timeoutMs: number;
+  /** `max_tokens` of every call (spec D.4: the agent's or specialist's setting). Default 4096. */
   maxTokensPerCall?: number;
   effort?: EffortLevel;
   /**
-   * Fast mode (spec D.20, ADR 0057): every call of the run asks the provider for `speed:
-   * "fast"` on `model`, and the run's records (the hooks' ledger rows, `run_start`) name the
-   * variant `<model>-fast`. `pricing` must then be the variant's; the executor sets both.
+   * Fast mode (spec D.20 and D.4; ADRs 0057 and 0072): every call of the run asks the provider
+   * for `speed: "fast"` on `model`, and the run's records (the hooks' ledger rows, `run_start`)
+   * name the variant `<model>-fast`. `pricing` must then be the variant's; the executor sets
+   * both after `decideFastMode` applied it. The loop still drops the parameter for a provider
+   * whose `fastMode` is not true.
    */
   speed?: "fast";
+  /**
+   * Sampling temperature (spec D.4): sent only when the provider's capabilities say
+   * `acceptsTemperature`; dropped for every other provider (the Anthropic adapter is one).
+   */
+  temperature?: number;
   phase?: "work" | "review";
   /** Hard cap on model calls in this run (defence in depth under the session step cap). */
   maxTurns?: number;
@@ -235,6 +246,11 @@ export class LoopAgentDriver {
     const maxToolResultChars = req.maxToolResultChars ?? 60_000;
     // One compressor per run: a cross-turn reference can only name a result in this transcript.
     const compressor = pipeline.beginRun({ maxChars: maxToolResultChars });
+    // What the provider accepts (ADR 0072): a temperature or a speed it does not take is never
+    // sent, whatever the run asked for.
+    const caps = providerCapabilities(req.provider);
+    const sendSpeed = req.speed === "fast" && caps.fastMode;
+    const sendTemperature = req.temperature !== undefined && caps.acceptsTemperature;
 
     emit({ type: "run_start", runId: claims.runId, model: recordedModel });
     try {
@@ -246,7 +262,7 @@ export class LoopAgentDriver {
         const inputTokens = req.provider.countTokens(
           req.system + JSON.stringify(messages) + JSON.stringify(toolDefs),
         );
-        const maxOut = req.maxTokensPerCall ?? 4096;
+        const maxOut = req.maxTokensPerCall ?? DEFAULT_MAX_TOKENS_PER_CALL;
         const estimate = req.pricing.estimate(inputTokens, maxOut);
         const pre = await this.deps.hooks.beforeModelCall(ctx, estimate);
         if (pre.decision === "finish_current" && !finishCurrent) {
@@ -268,7 +284,8 @@ export class LoopAgentDriver {
               tools: toolDefs,
               max_tokens: maxOut,
               effort: req.effort,
-              ...(req.speed ? { speed: req.speed } : {}),
+              ...(sendSpeed ? { speed: "fast" as const } : {}),
+              ...(sendTemperature ? { temperature: req.temperature } : {}),
               cache: { system: true, tools: true },
               compression: bypass,
               signal: controller.signal,
