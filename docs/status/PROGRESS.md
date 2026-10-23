@@ -25,7 +25,7 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   refusal with the platform's reason in bounded time (shell 45 s, UI 60 s); the capability
   names `biometric:allow-status` and `biometric:allow-authenticate`; `run.mjs` forwards the
   page's console and uncaught exceptions as `webview:` lines. Tests: `apps/ui` 42 files /
-  272 tests, `apps/mobile/e2e/cdp.test.ts` 22, `cargo test` 30. R.5, R.7 and V.3 keep their
+  263 tests, `apps/mobile/e2e/cdp.test.ts` 22, `cargo test` 30. R.5, R.7 and V.3 keep their
   status until the emulator run passes; the BLOCKERS.md emulator row names the next step
   (merge, dispatch `android.yml`). Report: `docs/status/reviews/w5-android-high-risk.md`.
 
