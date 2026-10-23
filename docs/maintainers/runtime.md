@@ -1686,6 +1686,16 @@ the model watch's `diffPrices` repricing the variant's own row, and the Anthropi
 form (an injected fetch: `speed: "fast"` and `anthropic-beta: fast-mode-2026-02-01` with the
 field, neither without). `daemon.test.ts` checks the `project.fast_mode` row of `GET /settings`
 (off by default, medium risk, both effects with the rates, `true` after the setting changes).
+`fast-mode-wiring.test.ts` runs the composed daemon with a stub provider named `anthropic` that
+offers fast mode, and a `pricing.json` that corrects `claude-opus-5-5-fast` to 30 / 150.
+- The change card from the command loop and the `/settings` row quote 30 / 150 and 7.5x.
+- In a fast-mode project, a risk-tier-3 task's coder run and its tier-3 review both carry
+  `speed: "fast"` on `claude-opus-5-5`.
+- Both Run rows name `claude-opus-5-5-fast`, priced from the corrected row.
+- Both `model.fast_mode` rows say applied and name the source kind read from the store.
+
+Removing the executor's `pricingFor`/`pricingTable`, the critic's `fastMode` or the command
+loop's `pricingTable` port from `compose.ts` makes this test fail.
 
 `closeout-autonomy.test.ts`, `plan-approval.test.ts` and `plan-approval-daemon.test.ts` (spec
 J.6, J.7; ADR 0053): the runner files the plan of a level 0 or 1 session as a blocking request
