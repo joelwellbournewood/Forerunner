@@ -194,6 +194,9 @@ export const ENTITIES: Record<string, EntityDef> = {
       ts("target_date", "Target date, if any.", { nullable: true }),
       text("status", "Lifecycle status.", { default: "planned", enum: MILESTONE_STATUSES }),
       int("order_index", "Display and planning order inside the project.", { default: 0 }),
+      text("reason", "Reason for the last change (versioned with author; spec B.5).", {
+        default: "",
+      }),
     ],
     indexes: [{ columns: ["project_id", "order_index"] }],
   },
@@ -259,6 +262,9 @@ export const ENTITIES: Record<string, EntityDef> = {
       text("device_id", "Device that ran it.", nullableRef("device")),
       int("headroom_saved_tokens", "Tokens the Headroom proxy saved during the session.", {
         default: 0,
+      }),
+      text("reason", "Reason for the last change to the plan (versioned with author; spec B.5).", {
+        default: "",
       }),
     ],
     indexes: [{ columns: ["agent_id", "status"] }, { columns: ["project_id"] }],

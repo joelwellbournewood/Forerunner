@@ -778,7 +778,15 @@ describe("ProjectsMirror", () => {
 
     // A milestone edit does not bump the task's version: the cursor hides it until the task
     // changes or a full run re-asserts the board (documented; the board is informational).
-    await w.store.milestone.update(ms.id, ms.version, { name: "Launch v2" });
+    await w.store.milestone.change(
+      ms.id,
+      ms.version,
+      { name: "Launch v2" },
+      "renamed for the board",
+      {
+        agentId: w.agentId,
+      },
+    );
     const quiet = await w.mirror.sync(w.projectId);
     expect(quiet).toMatchObject({ changed: 0, skipped: 2 });
     const full = await w.mirror.sync(w.projectId, { full: true });

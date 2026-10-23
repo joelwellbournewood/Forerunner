@@ -1598,6 +1598,142 @@ export function defineStateSuite(target: SuiteTarget): void {
       });
     });
 
+    describe("reasons on milestone and plan changes (B.5)", () => {
+      it("a milestone change carries the reason and the actor, bumps the version and refuses a stale one", async () => {
+        const m = await store.milestone.insert({ project_id: s.project.id, name: "M1" });
+        expect(m.reason).toBe("");
+        await clock.advance(1_000);
+        const changed = await store.milestone.change(
+          m.id,
+          m.version,
+          { status: "active", target_date: "2026-04-01" },
+          "kickoff moved up",
+          { humanId: s.human.id },
+        );
+        expect(changed).toMatchObject({
+          status: "active",
+          target_date: "2026-04-01",
+          reason: "kickoff moved up",
+          author_human: s.human.id,
+          author_agent: null,
+          version: 2,
+          updated_at: clock.nowIso(),
+        });
+        expect(await store.milestone.mustGet(m.id)).toEqual(changed);
+        const err = await expectCode(
+          store.milestone.change(m.id, m.version, { name: "stale" }, "late edit", {
+            agentId: s.alice.id,
+          }),
+          "version_conflict",
+        );
+        expect(err.details).toMatchObject({ expected: 1, actual: 2, table: "milestone" });
+        expect((await store.milestone.mustGet(m.id)).name).toBe("M1");
+        const again = await store.milestone.change(
+          changed.id,
+          changed.version,
+          { name: "M1 renamed" },
+          "renamed after the review",
+          { agentId: s.alice.id },
+        );
+        expect(again).toMatchObject({
+          name: "M1 renamed",
+          reason: "renamed after the review",
+          author_agent: s.alice.id,
+          author_human: null,
+          version: 3,
+        });
+      });
+
+      it("a milestone change without a reason or an actor is a validation error on every write path", async () => {
+        const m = await store.milestone.insert({ project_id: s.project.id, name: "M2" });
+        for (const reason of ["", "   "]) {
+          const err = await expectCode(
+            store.milestone.change(m.id, m.version, { name: "x" }, reason, {
+              humanId: s.human.id,
+            }),
+            "validation",
+          );
+          expect(err.details).toMatchObject({ table: "milestone", missing: "reason" });
+        }
+        const noActor = await expectCode(
+          store.milestone.change(m.id, m.version, { name: "x" }, "why", {}),
+          "validation",
+        );
+        expect(noActor.details).toMatchObject({ table: "milestone", missing: "actor" });
+        // The generic update and patch are no back door: both go through the same check.
+        await expectCode(store.milestone.update(m.id, m.version, { name: "x" }), "validation");
+        await expectCode(store.milestone.patch(m.id, { status: "done" }), "validation");
+        await expectCode(
+          store.milestone.patch(m.id, { status: "done", reason: "closing" }),
+          "validation",
+        );
+        const viaPatch = await store.milestone.patch(m.id, {
+          status: "done",
+          reason: "closing",
+          author_human: s.human.id,
+        });
+        expect(viaPatch).toMatchObject({ status: "done", reason: "closing", version: 2 });
+        expect((await store.milestone.mustGet(m.id)).name).toBe("M2");
+      });
+
+      it("a session plan change carries the reason and the actor; other session writes need none", async () => {
+        const plan = { items: [{ taskId: "t1" }], summary: "one task" };
+        await clock.advance(1_000);
+        const planned = await store.session.setPlan(
+          s.session.id,
+          s.session.version,
+          plan,
+          "planned from the brief",
+          { agentId: s.alice.id },
+        );
+        expect(planned).toMatchObject({
+          plan,
+          reason: "planned from the brief",
+          author_agent: s.alice.id,
+          author_human: null,
+          version: 2,
+          updated_at: clock.nowIso(),
+        });
+        await expectCode(
+          store.session.setPlan(s.session.id, s.session.version, plan, "stale", {
+            agentId: s.alice.id,
+          }),
+          "version_conflict",
+        );
+        const blank = await expectCode(
+          store.session.setPlan(planned.id, planned.version, plan, " ", { agentId: s.alice.id }),
+          "validation",
+        );
+        expect(blank.details).toMatchObject({ table: "session", missing: "reason" });
+        await expectCode(
+          store.session.setPlan(planned.id, planned.version, plan, "no actor", {}),
+          "validation",
+        );
+        // A plan written through the generic update or patch needs the same reason and actor.
+        await expectCode(store.session.patch(planned.id, { plan: { items: [] } }), "validation");
+        await expectCode(
+          store.session.update(planned.id, planned.version, { plan: { items: [] }, reason: "cut" }),
+          "validation",
+        );
+        const cut = await store.session.update(planned.id, planned.version, {
+          plan: { items: [] },
+          reason: "cut to the budget",
+          author_agent: s.alice.id,
+        });
+        expect(cut).toMatchObject({ plan: { items: [] }, reason: "cut to the budget", version: 3 });
+        // Spend, status and summary writes are not plan changes and carry no reason.
+        const spent = await store.session.recordSpend(cut.id, 10);
+        expect(spent.reason).toBe("cut to the budget");
+        const started = await store.session.start(spent.id, spent.version);
+        const summarised = await store.session.patch(started.id, { summary: "halfway" });
+        expect(summarised).toMatchObject({
+          summary: "halfway",
+          reason: "cut to the budget",
+          plan: { items: [] },
+        });
+      });
+    });
+
     describe("audit log", () => {
       it("is append-only with filters by actor, tool, allowed and time", async () => {
         expect("update" in store.auditLog).toBe(false);

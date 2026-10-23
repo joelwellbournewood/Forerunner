@@ -32,6 +32,39 @@ export interface WhereClause {
   params: unknown[];
 }
 
+/** Who made a change: the agent, the human, or both. Where a reason is required, so is one of them. */
+export interface Actor {
+  agentId?: string | null;
+  humanId?: string | null;
+}
+
+/** Author columns of a patch, from an Actor. */
+export function authorColumns(actor: Actor): Pick<BaseRow, "author_agent" | "author_human"> {
+  return { author_agent: actor.agentId ?? null, author_human: actor.humanId ?? null };
+}
+
+/**
+ * Spec B.5: a change that must carry its reason is refused unless the patch names a non-blank
+ * `reason` and an author (`author_agent` or `author_human`). Repositories whose rows carry a
+ * reason call this from `updateWhere`, so the generic `update` and `patch` are no back door.
+ * The ForerunnerError("validation") says which is missing in `details.missing`.
+ */
+export function requireChangeReason(table: string, patch: Record<string, unknown>): void {
+  const reason = patch.reason;
+  if (typeof reason !== "string" || reason.trim() === "") {
+    throw new ForerunnerError("validation", `${table}: a change needs a reason (spec B.5)`, {
+      details: { table, missing: "reason" },
+    });
+  }
+  if (!patch.author_agent && !patch.author_human) {
+    throw new ForerunnerError(
+      "validation",
+      `${table}: a change needs its author, an agent or a human (spec B.5)`,
+      { details: { table, missing: "actor" } },
+    );
+  }
+}
+
 export class Repository<T extends BaseRow> {
   readonly table: string;
   protected readonly columns: ReturnType<typeof columnMap>;

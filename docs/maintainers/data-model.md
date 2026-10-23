@@ -52,6 +52,16 @@ same agent, or `claim_expires` is in the past, and the task is `ready`, `claimed
 claimed or in-progress tasks to `ready`. Another agent cannot start a claimed task; it gets
 `{ ok: false, reason: "held_by" }` and can only message about it.
 
+### Reasons on plan, task and milestone changes
+
+Spec B.5: every change to a plan, task or milestone is versioned with author and reason.
+`task.reason`, `milestone.reason` and `session.reason` (the session plan) hold the reason for
+the last change next to the envelope's `author_agent` / `author_human` and `version`.
+`TaskRepo.transition`, `MilestoneRepo.change` and `SessionRepo.setPlan` take the reason and
+the actor as arguments; a milestone update or a session patch that carries `plan` without
+a non-blank reason and an author is refused with `ForerunnerError("validation")` on every
+write path (`update` and `patch` included), so a caller cannot skip them.
+
 ### Findings block close
 
 `task.transition(..., "done")` is refused with `ForerunnerError("findings_open")` while the task
@@ -552,6 +562,7 @@ Carries the common columns (see Invariants).
 | `target_date` | timestamp | yes |  |  | Target date, if any. |
 | `status` | text (`planned`, `active`, `done`, `cancelled`) | no | `"planned"` |  | Lifecycle status. |
 | `order_index` | int | no | `0` |  | Display and planning order inside the project. |
+| `reason` | text | no | `""` |  | Reason for the last change (versioned with author; spec B.5). |
 
 Indexes:
 
@@ -792,6 +803,7 @@ Carries the common columns (see Invariants).
 | `runner` | text (`pc`, `cloud`) | no | `"pc"` |  | Where it ran. |
 | `device_id` | text | yes |  | `device.id` | Device that ran it. |
 | `headroom_saved_tokens` | int | no | `0` |  | Tokens the Headroom proxy saved during the session. |
+| `reason` | text | no | `""` |  | Reason for the last change to the plan (versioned with author; spec B.5). |
 
 Indexes:
 

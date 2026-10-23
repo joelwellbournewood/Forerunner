@@ -1,8 +1,8 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { email as agentEmail, cloudflare, desktop } from "@forerunner/capabilities";
-import { errorMessage, ForerunnerError, join, log, osFacts } from "@forerunner/platform";
-import type { LessonStatus } from "@forerunner/state";
+import { errorMessage, ForerunnerError, join, log, osFacts, redact } from "@forerunner/platform";
+import type { LessonStatus, MilestoneRow } from "@forerunner/state";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -20,7 +20,13 @@ import { createNotificationRoutes } from "../notifications/routes.ts";
 import { createSharedSecretRoutes } from "../secrets/routes.ts";
 import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
 import { buildPeerFeed } from "../session/peers.ts";
-import { applyProjectPlan, defaultRiskTier, ProjectPlanBody } from "../session/project-plan.ts";
+import {
+  applyProjectPlan,
+  defaultRiskTier,
+  describeMilestoneChange,
+  MILESTONE_AUDIT_TOOL,
+  ProjectPlanBody,
+} from "../session/project-plan.ts";
 import { defaultPeers } from "../session/runner.ts";
 import { createSourcesRoutes } from "../sources/routes.ts";
 import { createUpdateRoutes } from "../update/screen.ts";
@@ -41,6 +47,7 @@ import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
 import {
   AnswerOfferBody,
   AnswerRequestBody,
+  ChangeMilestoneBody,
   type ChatReplyView,
   ChatRequestBody,
   CommandConfirmBody,
@@ -625,6 +632,42 @@ export function createDaemonApp(
       tasks: applied.tasks.map((t) => taskView(t, chf())),
     };
     return c.json(view, 201);
+  });
+
+  // Milestones (spec B.5): the rows with the reason and author of their last change, and a
+  // change from the app that records the human's reason with the version check; each change
+  // also leaves its history (before -> after, the reason) as one audit row in the same
+  // transaction, so a refused change leaves none.
+  app.get("/projects/:id/milestones", async (c) => {
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    const rows = await rt.store.milestone.forProject(project.id);
+    return c.json(rows.map(milestoneView));
+  });
+
+  app.post("/milestones/:id", async (c) => {
+    const body = await parse(c, ChangeMilestoneBody);
+    const patch: Partial<MilestoneRow> = {};
+    if (body.name !== undefined) patch.name = body.name;
+    if (body.successCriteria !== undefined) patch.success_criteria = body.successCriteria;
+    if (body.targetDate !== undefined) patch.target_date = body.targetDate;
+    if (body.status !== undefined) patch.status = body.status;
+    const m = await rt.store.transaction(async (tx) => {
+      const before = await tx.milestone.mustGet(c.req.param("id"));
+      const after = await tx.milestone.change(before.id, body.version, patch, body.reason, {
+        humanId: rt.human.id,
+      });
+      await tx.auditLog.append({
+        tool: MILESTONE_AUDIT_TOOL,
+        allowed: true,
+        human_id: rt.human.id,
+        agent_id: null,
+        input_summary: redact(describeMilestoneChange(before, after)),
+        result_summary: redact(`reason: ${after.reason}`),
+      });
+      return after;
+    });
+    rt.events.emit("project", { id: m.project_id });
+    return c.json(milestoneView(m));
   });
 
   app.post("/tasks/:id/transition", async (c) => {

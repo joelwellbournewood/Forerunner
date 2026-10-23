@@ -232,6 +232,8 @@ export interface MilestoneRow extends BaseRow {
   target_date: string | null;
   status: MilestoneStatus;
   order_index: number;
+  /** Reason for the last change, set with the author on every update (spec B.5). */
+  reason: string;
 }
 export type NewMilestone = New<MilestoneRow, "project_id" | "name">;
 
@@ -307,6 +309,8 @@ export interface SessionRow extends BaseRow {
   device_id: string | null;
   /** Headroom proxy `/stats` tokens_saved delta between session start and end (ADR 0003). */
   headroom_saved_tokens: number;
+  /** Reason for the last change to the plan, set with the author (spec B.5). */
+  reason: string;
 }
 export type NewSession = New<SessionRow, "agent_id">;
 

@@ -252,6 +252,34 @@ function describeMerge(open: MilestoneRow, merged: MilestoneMerge): string {
     : text;
 }
 
+/** `tool` of the audit row the daemon writes for each milestone change made from the app (B.5). */
+export const MILESTONE_AUDIT_TOOL = "milestone.change";
+
+/**
+ * The history of a milestone change (spec B.5), as the audit row's `input_summary`: the row's
+ * version step and each field that moved, before -> after. The reason goes in the row's
+ * `result_summary`, as on the plan writer's join row.
+ */
+export function describeMilestoneChange(before: MilestoneRow, after: MilestoneRow): string {
+  const parts: string[] = [];
+  if (after.name !== before.name) {
+    parts.push(`name ${JSON.stringify(before.name)} -> ${JSON.stringify(after.name)}`);
+  }
+  const added = after.success_criteria.filter((c) => !before.success_criteria.includes(c));
+  const removed = before.success_criteria.filter((c) => !after.success_criteria.includes(c));
+  const quote = (list: string[]) => list.map((c) => JSON.stringify(c)).join(", ");
+  if (added.length > 0) parts.push(`success criteria added: ${quote(added)}`);
+  if (removed.length > 0) parts.push(`success criteria removed: ${quote(removed)}`);
+  if (after.target_date !== before.target_date) {
+    parts.push(`target date ${before.target_date ?? "none"} -> ${after.target_date ?? "none"}`);
+  }
+  if (after.status !== before.status) parts.push(`status ${before.status} -> ${after.status}`);
+  const text = `milestone ${JSON.stringify(before.name)} (${before.id}) v${before.version} -> v${after.version}: ${parts.length > 0 ? parts.join("; ") : "no field changed"}`;
+  return text.length > MAX_AUDIT_SUMMARY_CHARS
+    ? `${text.slice(0, MAX_AUDIT_SUMMARY_CHARS - 1)}…`
+    : text;
+}
+
 interface Placed {
   task: ShapedTask;
   milestone: ShapedMilestone | null;
@@ -321,9 +349,10 @@ export interface AppliedPlan {
  * (`planned` or `active`, first by order) when it has one, so a small project keeps exactly
  * one; otherwise the one milestone is created, after any milestone on file from before the
  * mode (a done or cancelled one keeps its order). The joined milestone keeps its name and
- * takes what the plan adds (`milestoneMerge`: new success criteria, a later target date) with
- * the plan's author on the row; milestone rows carry no reason yet (B.5), so the change and
- * the plan's reason go to the audit log as one `project.plan` row. `dependsOn` entries are
+ * takes what the plan adds (`milestoneMerge`: new success criteria, a later target date) as a
+ * versioned change with the plan's author and reason on the row (spec B.5, like every task
+ * row the plan writes); what was added and the plan's reason also go to the audit log as one
+ * `project.plan` row. `dependsOn` entries are
  * plan keys or ids of the project's own tasks; anything else, a cycle, a duplicate key, an
  * empty plan or one over the caps is refused with `validation` and nothing is written.
  */
@@ -372,6 +401,7 @@ export async function applyProjectPlan(
       success_criteria: m.successCriteria,
       target_date: m.targetDate,
       order_index: orderIndex,
+      reason: plan.reason,
       ...authorColumns,
     });
 
@@ -391,11 +421,16 @@ export async function applyProjectPlan(
         merged = milestoneMerge(open, only);
         reused = open;
         if (merged) {
-          reused = await tx.milestone.update(open.id, open.version, {
-            success_criteria: [...open.success_criteria, ...merged.successCriteria],
-            ...(merged.targetDate === null ? {} : { target_date: merged.targetDate }),
-            ...authorColumns,
-          });
+          reused = await tx.milestone.change(
+            open.id,
+            open.version,
+            {
+              success_criteria: [...open.success_criteria, ...merged.successCriteria],
+              ...(merged.targetDate === null ? {} : { target_date: merged.targetDate }),
+            },
+            plan.reason,
+            author,
+          );
           await tx.auditLog.append({
             tool: PLAN_AUDIT_TOOL,
             allowed: true,

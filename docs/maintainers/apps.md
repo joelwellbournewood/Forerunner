@@ -84,7 +84,7 @@ apps/ui/
 | `/` | Home: project cards (stage, next milestone, health, spend vs budget, waiting-on-you, latest critic grade), New project dialog (a pasted brief sends `intake: true`, so the PM intake drafts the plan, the doc set and the first-session plan in the background and the proposal lands in the inbox; spec A.2, ADR 0055) | store (`GET /projects`), `POST /projects` |
 | `/projects/:id/:tab?` | Project page; tabs `summary`, `plan`, `tasks`, `docs`, `reviews`, `costs`, `data`, `chat` (default `summary`); opening a project makes it active | `GET /projects/:id` and the tab routes below |
 | `summary` tab | the cached one-screen summary with Read aloud; **Next session** (queue items by priority with type badges, add note/task/correction/idea with a priority, dismiss; consumed items collapsed); **Peers** (per agent: online, active claims with expiry, open PRs, last handoff done/in flight/blocked/next, files in flight); **Decisions** (question, chosen option, the others, rationale, who, supersedes) | `GET /projects/:id/summary`, `GET /projects/:id/queue`, `POST /projects/:id/queue`, `POST /queue/:id/dismiss` (proposed), `GET /projects/:id/peers`, `GET /projects/:id/decisions` |
-| `plan` tab | milestone **timeline** (SVG: dated milestones on a time axis with today's tick, undated ones after), milestones with status, success criteria and their tasks, the task **dependency graph** (layered SVG, a task after everything it depends on); without a milestones route the timeline and the list are derived from the tasks and the card (the card's dated next milestone on the axis, the ids the tasks reference after it) behind a route-missing notice; today's tick comes from a `now` prop (wall clock by default, injected in tests); in **small-project mode** (spec B.6, the card's `smallProjectMode`) the tab shows instead the one milestone (the open one from the route, or the card's next milestone without it; milestones on file from before the mode are named, not hidden), the tasks as a **flat list** in the daemon's order with no grouping and no timeline, and the graph | `GET /projects/:id/tasks`, `GET /projects/:id/milestones` (proposed) |
+| `plan` tab | milestone **timeline** (SVG: dated milestones on a time axis with today's tick, undated ones after), milestones with status, success criteria and their tasks, the task **dependency graph** (layered SVG, a task after everything it depends on); without a milestones route the timeline and the list are derived from the tasks and the card (the card's dated next milestone on the axis, the ids the tasks reference after it) behind a route-missing notice; today's tick comes from a `now` prop (wall clock by default, injected in tests); in **small-project mode** (spec B.6, the card's `smallProjectMode`) the tab shows instead the one milestone (the open one from the route, or the card's next milestone without it; milestones on file from before the mode are named, not hidden), the tasks as a **flat list** in the daemon's order with no grouping and no timeline, and the graph; every milestone the route served (never a derived one) has **Edit**: a dialog with name, target date, status and success criteria (one per line) under a **required reason**, posted with the row's `version` (spec B.5; the daemon's refusal, a stale version or a bad date, stays in the dialog), and the reason of the last change is shown under the milestone | `GET /projects/:id/tasks`, `GET /projects/:id/milestones`, `POST /milestones/:id` |
 | `tasks` tab | task log table with filters, transitions with a reason, New task dialog (its risk tier offers "project default (tier N)" from the card's `defaultRiskTier` and sends no `riskTier` unless one is picked, so the daemon applies the project's default: 0 in small-project mode, B.6) | `GET /projects/:id/tasks`, `/runs`, `POST /projects/:id/tasks`, `POST /tasks/:id/transition` |
 | `docs` tab | the standard doc set with present/missing/drift state, size and date; a document opens in a reader | `GET /projects/:id/docs`, `GET /projects/:id/docs/:path` (proposed) |
 | `reviews` tab | counts (reviews, open findings, average grade, verdicts), the grade trend chart with the accept line, every review newest first (grade, verdict, tier, confidence, model, task, session link, summary, evidence, findings with severity and status), verdict filter | `GET /projects/:id/reviews` |
@@ -106,9 +106,9 @@ apps/ui/
 `createClient(config, fetchImpl?)` returns a `DaemonClient` with one method per entry of
 `DAEMON_ROUTES` (phase-1 routes, decisions, peers, project settings and the mirror, estimates,
 extensions, updates, model watch, reviews, memory and consolidation, commands and the change
-log) plus the proposed routes (`queue`, `enqueue`, `dismissQueueItem`, `milestones`,
-`dataAssets`, `registerDataAsset`, `removeDataAsset`, `importProject`, `docs`, `doc`,
-`performance`), the source discovery methods (spec A.4: `sources`, `addSource`, `scanSource`,
+log, `milestones` and `changeMilestone`) plus the proposed routes (`queue`, `enqueue`,
+`dismissQueueItem`, `dataAssets`, `registerDataAsset`, `removeDataAsset`, `importProject`,
+`docs`, `doc`, `performance`), the source discovery methods (spec A.4: `sources`, `addSource`, `scanSource`,
 `sourceCandidates`, `acceptCandidate`, `removeSource` over `DAEMON_ROUTES`, their schemas
 read straight from `daemon/api-types`, no mirror), the agent email routes (`emailSettings`,
 `updateEmailSettings`, `emailSent`, `pauseEmail`, `resumeEmail`, `rotateEmailMarker`,
@@ -220,12 +220,14 @@ not. Theme: `system | light | dark`, resolved to `<html data-theme>` and `color-
 `test/fake-daemon.ts` exports `createFakeDaemon(options)` (a Hono app over `test/fixtures.ts`
 with mutable state: projects, tasks, sessions, events, requests, messages, kill flag, pending
 chat confirmation, extensions, the daemon version, model watch reports, reviews, lessons,
-consolidation proposals, the change log, pending commands, the queue, data assets, sources and
-their candidates (the `/sources` routes: a scan of a fresh source finds two candidates named
-after the locator, one an existing install, a scan of the fixture source changes nothing,
-accepting a proposal adds a project card and emits `project.changed`, a token value instead
-of a reference is refused with the daemon's message); decisions,
-the peer feed, milestones, docs and performance are served read-only) and
+consolidation proposals, the change log, pending commands, the queue, data assets, milestones
+(`POST /milestones/:id` mirrors the daemon: the version check and a required reason, 409
+`conflict` otherwise, the human as author), sources and their candidates (the `/sources`
+routes: a scan of a fresh source finds two candidates named after the locator, one an
+existing install, a scan of the fixture source changes nothing, accepting a proposal adds a
+project card and emits `project.changed`, a token value instead of a reference is refused
+with the daemon's message); decisions, the peer feed, docs and performance are served
+read-only) and
 `startFakeDaemon({ port })` (`@hono/node-server` on 127.0.0.1). Its `/health` answer is the
 `HEALTH` fixture with the extension counts derived from the extension state (3 enabled, 1
 pending with the fixtures). It requires the bearer token on every route (and accepts `?token=`
@@ -309,8 +311,11 @@ proposed routes vs `DAEMON_ROUTES`, `parseChangeCard`), `money`, `sse` (parser, 
 name incl. `extension.changed` and `restart.requested`, EventSource path, polling fallback,
 chat stream), `store` (persistence, restart, extensions version), `app`, `home`, `project`
 (summary, derived milestones fallback, costs, every tab filled), `project-tabs` (graph layout
-incl. a cut cycle, timeline positions, timeline and graph render, the timeline and derived
-milestones when the route is missing, today's tick from an injected `now`, docs with drift
+incl. a cut cycle, timeline positions, timeline and graph render, the milestone edit dialog:
+the reason of the last change on the row, no Edit on a derived row, Save disabled without a
+reason, the posted body with the version, the reason and every field, the row and the timeline
+updated, and a stale version keeping the dialog open with the daemon's refusal (B.5), the
+timeline and derived milestones when the route is missing, today's tick from an injected `now`, docs with drift
 and a reader, data register / remove / import, queue add / dismiss, peers, decisions, solo
 project and missing queue route, cost per accepted), `small-project` (B.6: the flat Plan tab
 list with the one milestone from the route or, without it, the card, milestones from before
@@ -385,10 +390,11 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
   in `server.ts` matching the fake would make the two identical and belongs to the daemon.
 - Proposed routes the daemon does not serve yet (the pages show "route not available" until
   it does): `GET/POST /projects/:id/queue`, `POST /queue/:id/dismiss`,
-  `GET /projects/:id/milestones` (the Plan tab derives the timeline and the milestones
-  meanwhile), `GET/POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/import`,
+  `GET/POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/import`,
   `GET /projects/:id/docs[/:path]`, `GET /performance`. Shapes are in `contracts.ts` and the
-  fixtures.
+  fixtures. `GET /projects/:id/milestones` is served since B.5 landed; the Plan tab still
+  derives the timeline and the milestones from the tasks and the card against an older daemon
+  without it, and offers no Edit on those derived rows.
 - The settings screen's changes are logged with source `ui` (`POST /commands/execute` with
   `source: "ui"`), but the Changes screen's undo (`POST /changes/:id/undo`, no body) is still
   logged as `chat` by the daemon; a `source` on that route and on `undoChange` would close it.

@@ -181,6 +181,12 @@ describe("small-project mode: writing a plan (B.6)", () => {
     expect(tasks.map((t) => t.risk_tier).sort()).toEqual([0, 0, 0, 2]);
     expect(tasks.every((t) => t.reason === "planned from the brief")).toBe(true);
     expect(tasks.every((t) => t.author_human === "h1")).toBe(true);
+    // B.5: the milestone row carries the plan's reason and author like every task row.
+    expect(milestones[0]).toMatchObject({
+      reason: "planned from the brief",
+      author_human: "h1",
+      author_agent: null,
+    });
     expect(applied.tasks.map((t) => t.title)).toEqual([
       "Scaffold the app",
       "Add CI",
@@ -222,13 +228,17 @@ describe("small-project mode: writing a plan (B.6)", () => {
       target_date: "2027-01-15",
       version: (opened?.version ?? 0) + 1,
       author_agent: "a1",
+      author_human: null,
+      // B.5: the join is a change to the milestone, so the row carries the plan's reason.
+      reason: "analytics added after the review",
     });
+    expect(opened?.reason).toBe("planned from the brief");
     const rows = await store.milestone.forProject(project.id);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toEqual(second.reusedMilestone);
     expect(second.tasks[0]?.milestone_id).toBe(opened?.id);
     expect(second.tasks[0]?.author_agent).toBe("a1");
-    // Milestone rows carry no reason yet (B.5): the join and the plan's reason go to the audit log.
+    // The join (what was added) and the plan's reason also go to the audit log.
     const audit = await store.auditLog.list({ tool: PLAN_AUDIT_TOOL });
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({ allowed: true, agent_id: "a1", human_id: null });
@@ -255,6 +265,7 @@ describe("small-project mode: writing a plan (B.6)", () => {
       { humanId: "h1" },
     );
     expect(third.merged).toBeNull();
+    // Nothing changed on the milestone, so no new version and the earlier reason stands.
     expect(third.reusedMilestone).toEqual(second.reusedMilestone);
     expect(await store.milestone.forProject(project.id)).toEqual([second.reusedMilestone]);
     expect(await store.auditLog.list({ tool: PLAN_AUDIT_TOOL })).toHaveLength(1);
@@ -510,6 +521,8 @@ describe("small-project mode: the daemon (B.6)", () => {
       targetDate: "2026-12-01",
       status: "planned",
       orderIndex: 0,
+      reason: "planned from the brief",
+      version: 1,
     });
     expect(view.reusedMilestone).toBeNull();
     expect(view.merged).toBeNull();

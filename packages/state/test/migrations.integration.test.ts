@@ -47,11 +47,11 @@ describe.skipIf(!PG)(
 
         const forward = await migrate(db, { clock });
         // Every shipped migration applies on a v1 database: 0002 (headroom), 0003 (sources),
-        // 0004 (shared secrets).
-        expect(forward.applied).toEqual([2, 3, 4]);
-        expect(await appliedVersions(db)).toEqual([1, 2, 3, 4]);
+        // 0004 (shared secrets), 0005 (change reasons).
+        expect(forward.applied).toEqual([2, 3, 4, 5]);
+        expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5]);
         // Idempotent: ADD COLUMN IF NOT EXISTS makes a re-run of the statements harmless too.
-        expect(await migrate(db, { clock })).toEqual({ applied: [], version: 4 });
+        expect(await migrate(db, { clock })).toEqual({ applied: [], version: 5 });
 
         const repos = createRepos(db, clock);
         const run = await repos.run.mustGet("r1");
@@ -59,6 +59,8 @@ describe.skipIf(!PG)(
         expect(run.context_transforms).toEqual([]);
         expect(run.headroom_used).toBe(false);
         expect((await repos.session.mustGet("s1")).headroom_saved_tokens).toBe(0);
+        // The v5 column reads back empty on a row from before it.
+        expect((await repos.session.mustGet("s1")).reason).toBe("");
         const patched = await repos.run.patch("r1", {
           context_transforms: ["logs", "dedup-cross"],
           headroom_used: true,

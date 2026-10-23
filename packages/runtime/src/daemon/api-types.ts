@@ -103,6 +103,8 @@ export const TaskView = z.object({
 });
 export type TaskView = z.infer<typeof TaskView>;
 
+export const MILESTONE_STATUSES = ["planned", "active", "done", "cancelled"] as const;
+
 export const MilestoneView = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -110,12 +112,35 @@ export const MilestoneView = z.object({
   successCriteria: z.array(z.string()),
   /** A calendar date (YYYY-MM-DD) or null. */
   targetDate: z.string().nullable(),
-  status: z.enum(["planned", "active", "done", "cancelled"]),
+  status: z.enum(MILESTONE_STATUSES),
   orderIndex: z.number().int(),
+  /** Reason for the last change, with its author (spec B.5): "" on a row never changed. */
+  reason: z.string(),
+  authorAgent: z.string().nullable(),
+  authorHuman: z.string().nullable(),
   createdAt: z.string(),
+  updatedAt: z.string(),
   version: z.number().int(),
 });
 export type MilestoneView = z.infer<typeof MilestoneView>;
+
+/** Milestone target dates are calendar dates, the way the Plan tab's timeline reads them. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * `POST /milestones/:id` (spec B.5): a change to a milestone made from the app. The reason is
+ * the human's words and is required; the daemon records it on the row with the human as
+ * author and the version check, so a stale `version` is a 409 conflict.
+ */
+export const ChangeMilestoneBody = z.object({
+  version: z.number().int(),
+  reason: z.string().trim().min(1).max(500),
+  name: z.string().trim().min(1).max(200).optional(),
+  successCriteria: z.array(z.string().trim().min(1)).max(50).optional(),
+  targetDate: z.string().regex(DATE_ONLY, "a calendar date, YYYY-MM-DD").nullable().optional(),
+  status: z.enum(MILESTONE_STATUSES).optional(),
+});
+export type ChangeMilestoneBody = z.infer<typeof ChangeMilestoneBody>;
 
 /** `POST /projects/:id/plan` (spec B.6): the rows the plan became. */
 export const PlanProjectView = z.object({
@@ -1244,6 +1269,10 @@ export const DAEMON_ROUTES = {
   planProject:
     "POST /projects/:id/plan (ProjectPlanBody -> 201 PlanProjectView: the plan written as milestone and task rows; one milestone and a flat task list in small-project mode, spec B.6, where a later plan joins the project's open milestone (reusedMilestone), which keeps its name and takes the plan's new success criteria and a later target date (merged says what was added; an audit row project.plan carries the plan's reason); an unknown dependency, a cycle, an empty plan or one over the caps is refused as 409 conflict with cause validation (ADR 0025) and nothing is written; 404 for an unknown project)",
   transitionTask: "POST /tasks/:id/transition",
+  milestones:
+    "GET /projects/:id/milestones (MilestoneView[] in planning order, each with the reason and author of its last change, spec B.5; 404 for an unknown project)",
+  changeMilestone:
+    "POST /milestones/:id (ChangeMilestoneBody { version, reason, name?, successCriteria?, targetDate?, status? } -> MilestoneView: the change recorded with the human as author and the reason on the row, spec B.5; a missing or blank reason and a stale version are 409 conflict with cause validation / version_conflict, ADR 0025, and nothing moves; 404 for an unknown milestone)",
   runs: "GET /projects/:id/runs?limit=",
   sessions: "GET /sessions?agentId=&projectId=&status=",
   startSession: "POST /sessions",

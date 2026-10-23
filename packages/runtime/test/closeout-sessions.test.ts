@@ -376,11 +376,13 @@ describe("closeout: the PM in code picks the specialist and caps the depth (C.1,
       { title: "Fix bug", specialist: "coder", depth: 0, maxDepth: 2 },
     ]);
     expect(started.map((p) => p.specialist)).toEqual(["tester", "coder"]);
-    // The plan the agent acted on is the one on the session row.
+    // The plan the agent acted on is the one on the session row, with its author and reason (B.5).
     const session = await w.store.session.mustGet(res.sessionId);
     expect(
       (session.plan as { items: { specialist: string }[] }).items.map((i) => i.specialist),
     ).toEqual(["tester", "coder"]);
+    expect(session.author_agent).toBe(w.alice);
+    expect(session.reason).toBe("2 ready task(s) in priority order");
   });
 });
 

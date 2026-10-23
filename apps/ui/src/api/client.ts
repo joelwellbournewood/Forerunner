@@ -6,6 +6,7 @@ import {
   AgentView as AgentViewSchema,
   type ChangeLogView,
   ChangeLogView as ChangeLogViewSchema,
+  type ChangeMilestoneBody as ChangeMilestoneBodySchema,
   type ChatReplyView,
   ChatReplyView as ChatReplyViewSchema,
   type ChatRequestBody,
@@ -124,6 +125,7 @@ import {
   ImportResultView as ImportResultViewSchema,
   MilestoneList,
   type MilestoneView,
+  MilestoneView as MilestoneViewSchema,
   type ModelWatchAnswerInput,
   type ModelWatchAnswerView,
   ModelWatchAnswerView as ModelWatchAnswerViewSchema,
@@ -229,6 +231,8 @@ export type HumanView = z.infer<typeof HumanViewSchema>;
 export type SettingView = z.infer<typeof SettingViewSchema>;
 export type CreateProjectBody = z.infer<typeof CreateProjectBodySchema>;
 export type TransitionTaskBody = z.infer<typeof TransitionTaskBodySchema>;
+/** `POST /milestones/:id` (spec B.5): the change with the human's reason and the row's version. */
+export type ChangeMilestoneInput = z.input<typeof ChangeMilestoneBodySchema>;
 export type KillBody = z.infer<typeof KillBodySchema>;
 
 /** Shapes the contract leaves open (ADR 0025): lists are bare arrays, kill reports its state. */
@@ -530,6 +534,7 @@ export interface DaemonClient {
   enqueue(projectId: string, body: EnqueueInput): Promise<QueueItemView>;
   dismissQueueItem(id: string): Promise<QueueItemView>;
   milestones(projectId: string, signal?: AbortSignal): Promise<MilestoneView[]>;
+  changeMilestone(id: string, body: ChangeMilestoneInput): Promise<MilestoneView>;
   dataAssets(projectId: string, signal?: AbortSignal): Promise<DataAssetView[]>;
   registerDataAsset(projectId: string, body: RegisterDataAssetInput): Promise<DataAssetView>;
   removeDataAsset(id: string): Promise<void>;
@@ -864,7 +869,9 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     dismissQueueItem: (id) =>
       post(proposedPath("dismissQueueItem", { id }), QueueItemViewSchema, {}),
     milestones: (projectId, signal) =>
-      get(proposedPath("milestones", { id: projectId }), MilestoneList, undefined, signal),
+      get(routePath("milestones", { id: projectId }), MilestoneList, undefined, signal),
+    changeMilestone: (id, body) =>
+      post(routePath("changeMilestone", { id }), MilestoneViewSchema, body),
     dataAssets: (projectId, signal) =>
       get(routePath("dataAssets", { id: projectId }), DataAssetList, undefined, signal),
     registerDataAsset: (projectId, body) =>

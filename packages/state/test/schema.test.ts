@@ -17,6 +17,7 @@ import { MIGRATION_0001 } from "../src/migrations/0001-initial.ts";
 import { MIGRATION_0002 } from "../src/migrations/0002-headroom-savings.ts";
 import { MIGRATION_0003 } from "../src/migrations/0003-sources.ts";
 import { MIGRATION_0004 } from "../src/migrations/0004-shared-secrets.ts";
+import { MIGRATION_0005 } from "../src/migrations/0005-change-reasons.ts";
 import {
   createTableSql,
   generateInitialMigration,
@@ -204,33 +205,38 @@ describe("migrations", () => {
     expect(MIGRATIONS[1]).toBe(MIGRATION_0002);
     expect(MIGRATIONS[2]).toBe(MIGRATION_0003);
     expect(MIGRATIONS[3]).toBe(MIGRATION_0004);
+    expect(MIGRATIONS[4]).toBe(MIGRATION_0005);
     expect(MIGRATIONS.map((m) => m.version)).toEqual(MIGRATIONS.map((_, i) => i + 1));
     // v1 is the generator's output for the v1 subset: the v2 columns, the v3 table
     // (source_candidate with its indexes) and the v3 enum value, the v4 column
-    // (device.wrap_public_key) and the v4 table (secret_grant with its indexes) are the only
-    // differences.
+    // (device.wrap_public_key), the v4 table (secret_grant with its indexes) and the v5
+    // columns (milestone.reason, session.reason; task.reason, which v1 had, stays) are the
+    // only differences.
+    const addedInV5: Record<string, RegExp> = { milestone: /"reason"/, session: /"reason"/ };
     const generated = generateInitialMigration();
     const strip = (stmts: string[]) =>
       stmts
         .filter((s) => !/"source_candidate"|"secret_grant"/.test(s))
-        .map((s) =>
-          s
+        .map((s) => {
+          const table = /^CREATE TABLE IF NOT EXISTS "([a-z_]+)"/.exec(s)?.[1];
+          const v5 = table === undefined ? undefined : addedInV5[table];
+          return s
             .split("\n")
             .filter(
               (line) =>
                 !/"context_transforms"|"headroom_used"|"headroom_saved_tokens"|"wrap_public_key"/.test(
                   line,
-                ),
+                ) && !v5?.test(line),
             )
             .join("\n")
             .replace(/,\n {2}PRIMARY KEY/g, ",\n  PRIMARY KEY")
-            .replace("'github_user', 'github_repo', 'gitlab'", "'github_user', 'gitlab'"),
-        );
+            .replace("'github_user', 'github_repo', 'gitlab'", "'github_user', 'gitlab'");
+        });
     expect(strip(generated.sqlite)).toEqual(MIGRATION_0001.up.sqlite);
     expect(strip(generated.postgres)).toEqual(MIGRATION_0001.up.postgres);
   });
 
-  it("v1 + v2 + v3 + v4 applied in order equals the generator's schema for the current declaration (SQLite)", async () => {
+  it("every migration applied in order equals the generator's schema for the current declaration (SQLite)", async () => {
     const migrated = await openSqlite(":memory:");
     const generated = await openSqlite(":memory:");
     try {
@@ -275,8 +281,8 @@ describe("migrations", () => {
       );
       expect(v1Columns).not.toContain("context_transforms");
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [2, 3, 4], version: 4 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [2, 3, 4, 5], version: 5 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5]);
 
       const repos = createRepos(db, clock);
       const run = await repos.run.mustGet("r1");
@@ -325,7 +331,7 @@ describe("migrations", () => {
           ["src2", at, at, "github_repo", "acme/alpha", "acme/alpha"],
         ),
       ).rejects.toThrow();
-      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4], version: 4 });
+      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5], version: 5 });
 
       const repos = createRepos(db, clock);
       const kept = await repos.source.mustGet("src1");
@@ -402,8 +408,8 @@ describe("migrations", () => {
         (await db.query(`SELECT name FROM sqlite_master WHERE name = 'secret_grant'`)).length,
       ).toBe(0);
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4], version: 4 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5], version: 5 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5]);
 
       const repos = createRepos(db, clock);
       const device = await repos.device.mustGet("d1");
@@ -425,6 +431,80 @@ describe("migrations", () => {
         kind: "phone",
       });
       expect(fresh.wrap_public_key).toBeNull();
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("migrates a v2 database forward: milestone and session rows read back with an empty reason and take one through the repositories (B.5)", async () => {
+    const db = await openSqlite(":memory:");
+    try {
+      const clock = new SimulatedClock("2026-10-23T10:00:00.000Z");
+      const at = clock.nowIso();
+      expect(await migrate(db, { clock, migrations: [MIGRATION_0001, MIGRATION_0002] })).toEqual({
+        applied: [1, 2],
+        version: 2,
+      });
+      await db.query(
+        `INSERT INTO "human" ("id", "created_at", "updated_at", "name", "email") VALUES (?, ?, ?, ?, ?)`,
+        ["h1", at, at, "Ada", "ada@example.test"],
+      );
+      await db.query(
+        `INSERT INTO "agent" ("id", "created_at", "updated_at", "name", "owner_human_id") VALUES (?, ?, ?, ?, ?)`,
+        ["a1", at, at, "Alice", "h1"],
+      );
+      await db.query(
+        `INSERT INTO "project" ("id", "created_at", "updated_at", "name") VALUES (?, ?, ?, ?)`,
+        ["p1", at, at, "Demo"],
+      );
+      await db.query(
+        `INSERT INTO "milestone" ("id", "created_at", "updated_at", "project_id", "name") VALUES (?, ?, ?, ?, ?)`,
+        ["m1", at, at, "p1", "Release 0.1"],
+      );
+      await db.query(
+        `INSERT INTO "session" ("id", "created_at", "updated_at", "agent_id") VALUES (?, ?, ?, ?)`,
+        ["s1", at, at, "a1"],
+      );
+      for (const table of ["milestone", "session"]) {
+        const v2Columns = (await db.query<SqliteColumn>(`PRAGMA table_info("${table}")`)).map(
+          (c) => c.name,
+        );
+        expect(v2Columns).not.toContain("reason");
+      }
+
+      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5], version: 5 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5]);
+
+      const repos = createRepos(db, clock);
+      const milestone = await repos.milestone.mustGet("m1");
+      expect(milestone.reason).toBe("");
+      expect((await repos.session.mustGet("s1")).reason).toBe("");
+      const changed = await repos.milestone.change(
+        "m1",
+        milestone.version,
+        { status: "active" },
+        "started after the kickoff",
+        { humanId: "h1" },
+      );
+      expect(changed).toMatchObject({
+        status: "active",
+        reason: "started after the kickoff",
+        author_human: "h1",
+        version: 2,
+      });
+      const planned = await repos.session.setPlan("s1", 1, { items: [] }, "nothing ready", {
+        agentId: "a1",
+      });
+      expect(planned).toMatchObject({
+        plan: { items: [] },
+        reason: "nothing ready",
+        author_agent: "a1",
+        version: 2,
+      });
+      // Fresh inserts through the repositories fill the v5 default.
+      const fresh = await repos.milestone.insert({ project_id: "p1", name: "Release 0.2" });
+      expect(fresh.reason).toBe("");
+      expect((await repos.session.insert({ agent_id: "a1" })).reason).toBe("");
     } finally {
       await db.close();
     }

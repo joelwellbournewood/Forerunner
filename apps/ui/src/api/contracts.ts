@@ -13,7 +13,7 @@ import { z } from "zod";
  *    runtime's schema and the mirror so drift fails a test before it reaches a screen.
  *
  * 2. Proposed shapes for routes the daemon does not serve yet (the next-session queue,
- *    milestones, data assets and imports, project docs, performance). The paths live in
+ *    data assets and imports, project docs, performance). The paths live in
  *    `PROPOSED_ROUTES`; `proposedPath()` prefers the daemon's `DAEMON_ROUTES` entry of the same
  *    name as soon as one exists, and the pages render a visible "route not available" state
  *    (`isRouteMissing`) until the daemon serves the route. Reviews, memory, commands and the
@@ -412,7 +412,7 @@ export interface EnqueueInput {
 }
 
 // ---------------------------------------------------------------------------------------
-// Proposed: milestones (spec B, K.2 Plan tab)
+// Milestones (spec B, K.2 Plan tab; B.5 reasons): a mirror of the daemon's MilestoneView
 // ---------------------------------------------------------------------------------------
 
 export const MILESTONE_STATUSES = ["planned", "active", "done", "cancelled"] as const;
@@ -425,7 +425,12 @@ export const MilestoneView = z.object({
   targetDate: z.string().nullable(),
   status: z.enum(MILESTONE_STATUSES),
   orderIndex: z.number().int(),
+  /** Reason for the last change, with its author (spec B.5); "" on a row never changed. */
+  reason: z.string(),
+  authorAgent: z.string().nullable(),
+  authorHuman: z.string().nullable(),
   createdAt: z.string(),
+  updatedAt: z.string(),
   version: z.number().int(),
 });
 export type MilestoneView = z.infer<typeof MilestoneView>;
@@ -543,7 +548,6 @@ export const PROPOSED_ROUTES = {
   queue: "GET /projects/:id/queue?status= (QueueItemView[])",
   enqueue: "POST /projects/:id/queue { kind, text, priority? }",
   dismissQueueItem: "POST /queue/:id/dismiss",
-  milestones: "GET /projects/:id/milestones (MilestoneView[])",
   importProject: "POST /projects/:id/import { source, locator } (202 ImportResultView)",
   docs: "GET /projects/:id/docs (DocView[])",
   doc: "GET /projects/:id/docs/:path",

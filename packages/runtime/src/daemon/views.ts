@@ -109,7 +109,11 @@ export function milestoneView(m: MilestoneRow): MilestoneView {
     targetDate: m.target_date,
     status: m.status,
     orderIndex: m.order_index,
+    reason: m.reason,
+    authorAgent: m.author_agent,
+    authorHuman: m.author_human,
     createdAt: m.created_at,
+    updatedAt: m.updated_at,
     version: m.version,
   };
 }
