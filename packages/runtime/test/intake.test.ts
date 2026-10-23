@@ -546,7 +546,7 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       projectsRoot: rt.data.assets.projectsRoot,
       worktreeRoot: join(home, "wt-builtin"),
     });
-    const projectId = await createProject({ name: "Lambda", goal: "g", brief: "b" });
+    const projectId = await createProject({ name: "Sigma", goal: "g", brief: "b" });
     await expect(service.propose(projectId)).rejects.toMatchObject({ code: "validation" });
     const runs = (await rt.store.run.list({ specialist: INTAKE_RUN_SPECIALIST } as never)).filter(
       (r) => r.prompt_version === INTAKE_BUILTIN_PROMPT_VERSION,
@@ -574,7 +574,7 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
         projectsRoot: rt.data.assets.projectsRoot,
         worktreeRoot: join(home, "wt-effort"),
       });
-    const projectId = await createProject({ name: "Mu", goal: "g", brief: "b" });
+    const projectId = await createProject({ name: "Tau", goal: "g", brief: "b" });
     const project = await rt.store.project.mustGet(projectId);
     await rt.store.project.update(projectId, project.version, {
       settings: { ...project.settings, speed_quality_offset: 1 },
