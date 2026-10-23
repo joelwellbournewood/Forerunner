@@ -2,8 +2,9 @@
 //!
 //! The stream is read from Rust with the token in the `Authorization` header: it keeps
 //! working while the window is hidden in the tray (a hidden webview may be throttled), the
-//! token never goes into a URL, and the tray learns kill-switch and inbox changes from the
-//! same source. `notification` events become OS notifications exactly as received: quiet
+//! token never goes into a URL, and the tray learns kill-switch, inbox and desktop-control
+//! changes from the same source (`desktop.indicator`, spec S.32; ADR 0067: every (re)opened
+//! stream re-reads `GET /desktop/status`, since frames sent while it was down are lost). `notification` events become OS notifications exactly as received: quiet
 //! hours and channel choice are the daemon's decision (spec K.8, phase 5).
 
 use std::time::{Duration, Instant};
@@ -74,6 +75,7 @@ async fn run_events(app: AppHandle) {
             Ok(res) => {
                 set_stream(&app, StreamMode::Live);
                 log::info!("subscribed to /events");
+                tauri::async_runtime::spawn(actions::probe_desktop(app.clone()));
                 let mut parser = SseParser::new();
                 let mut body = res.bytes_stream();
                 while let Some(chunk) = body.next().await {
@@ -163,6 +165,17 @@ fn handle_event(app: &AppHandle, event: DaemonEvent) {
             let state = shared(app);
             let mut s = lock(&state);
             s.status.blocking_count = blocking_count;
+            drop(s);
+            tray::refresh(app);
+        }
+        DaemonEvent::DesktopIndicator(indicator) => {
+            log::info!(
+                "desktop control {}",
+                if indicator.on { "active" } else { "ended" }
+            );
+            let state = shared(app);
+            let mut s = lock(&state);
+            s.desktop.apply(&indicator);
             drop(s);
             tray::refresh(app);
         }

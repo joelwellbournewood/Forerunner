@@ -1,5 +1,5 @@
 //! What the shell does: attach to or start the daemon, react to its exit, and the tray
-//! actions (kill switch, resume, pause email, update and restart). Every action talks to the
+//! actions (kill switch, resume, pause email, stop desktop control, update and restart). Every action talks to the
 //! daemon through `DaemonClient`; nothing here enforces a limit on its own, the daemon does.
 
 use std::time::{Duration, Instant};
@@ -20,6 +20,7 @@ use crate::restart::{
     ExitAction, decide_after_exit, external_daemon_gone, external_exit_code, read_restart_request,
     remove_restart_request,
 };
+use crate::sse::parse_desktop_indicator;
 use crate::state::{Busy, EmailAction, SharedState, StreamMode, lock};
 use crate::supervisor::{
     EXTERNAL_GRACE, daemon_log_path, spawn_daemon, wait_for_daemon, wait_for_external, watch_exit,
@@ -400,6 +401,73 @@ pub async fn resume(app: AppHandle) {
     }
 }
 
+/// The desktop-control routes the tray uses, as `desktopRouteTable()` in
+/// `packages/capabilities/src/desktop/routes.ts` names them. The status carries
+/// `desktopControl` (spec S.32; ADR 0067); revoke is "Stop desktop control".
+pub const DESKTOP_STATUS_PATH: &str = "/desktop/status";
+pub const DESKTOP_REVOKE_PATH: &str = "/desktop/revoke";
+
+/// Re-read desktop control from `GET /desktop/status` (on every (re)opened `/events` stream:
+/// frames sent while it was down are lost). A daemon without the route, or a failed read,
+/// leaves the state as it is; the next frame or reconnect corrects it.
+pub async fn probe_desktop(app: AppHandle) {
+    let Some(client) = current_client(&app) else {
+        return;
+    };
+    let indicator = match client.get_json(DESKTOP_STATUS_PATH).await {
+        Ok((200, v)) => v.get("desktopControl").and_then(parse_desktop_indicator),
+        Ok((status, v)) => {
+            log::info!(
+                "{DESKTOP_STATUS_PATH} answered {}",
+                error_message(status, &v)
+            );
+            None
+        }
+        Err(e) => {
+            log::warn!("{DESKTOP_STATUS_PATH} failed: {e}");
+            None
+        }
+    };
+    if let Some(indicator) = indicator {
+        {
+            let state = shared(&app);
+            let mut s = lock(&state);
+            s.desktop.apply(&indicator);
+        }
+        tray::refresh(&app);
+    }
+}
+
+/// "Stop desktop control": `POST /desktop/revoke` interrupts the action in flight, drops the
+/// queued ones and refuses desktop actions until resumed; the tray follows the status the
+/// daemon answers (the `desktop.indicator` off frame says the same).
+pub async fn desktop_stop(app: AppHandle) {
+    let Some(client) = current_client(&app) else {
+        return;
+    };
+    let body = json!({ "reason": "stopped from the tray" });
+    match client.post_json(DESKTOP_REVOKE_PATH, &body).await {
+        Ok((status, v)) if (200..300).contains(&status) => {
+            let indicator = v
+                .get("status")
+                .and_then(|s| s.get("desktopControl"))
+                .and_then(parse_desktop_indicator);
+            if let Some(indicator) = indicator {
+                let state = shared(&app);
+                let mut s = lock(&state);
+                s.desktop.apply(&indicator);
+            }
+            tray::refresh(&app);
+        }
+        Ok((status, v)) => fail_dialog(
+            &app,
+            "Stop desktop control failed",
+            &error_message(status, &v),
+        ),
+        Err(e) => fail_dialog(&app, "Stop desktop control failed", &e),
+    }
+}
+
 /// The email routes the tray uses, as `emailRouteTable()` in
 /// `packages/capabilities/src/email/routes.ts` names them (`:agentId` filled in). The probe
 /// reads the settings route; pause and resume are the toggle.
@@ -687,6 +755,29 @@ mod tests {
             );
             assert_eq!(path, template.replace(":agentId", "a-1"));
         }
+    }
+
+    /// The desktop control routes (`desktopRouteTable()`), read at compile time.
+    const DESKTOP_ROUTES_TS: &str =
+        include_str!("../../../../packages/capabilities/src/desktop/routes.ts");
+    /// The controller whose `status()` carries `desktopControl` with `active`.
+    const DESKTOP_CONTROLLER_TS: &str =
+        include_str!("../../../../packages/capabilities/src/desktop/controller.ts");
+
+    #[test]
+    fn desktop_paths_and_the_status_field_match_the_capability_source() {
+        assert!(DESKTOP_ROUTES_TS.contains("export function desktopRouteTable("));
+        for path in [DESKTOP_STATUS_PATH, DESKTOP_REVOKE_PATH] {
+            assert!(
+                DESKTOP_ROUTES_TS.contains(&format!("path: \"{path}\"")),
+                "{path} is not in desktopRouteTable()"
+            );
+        }
+        assert!(
+            DESKTOP_CONTROLLER_TS.contains("desktopControl: {")
+                && DESKTOP_CONTROLLER_TS.contains("active: this.indicatorActive,"),
+            "DesktopController.status() no longer reports desktopControl.active"
+        );
     }
 
     #[test]
