@@ -33,6 +33,7 @@ import type { HumanRequestRow, JsonValue, ReleaseRow, StateStore } from "@foreru
 import { z } from "zod";
 import type { ProviderRegistry } from "../provider/registry.ts";
 import type { EffortLevel, ModelRef, ModelTier } from "../provider/types.ts";
+import type { SpecialistDef } from "../registry/types.ts";
 import type { Schedule, Scheduler, StartRequest } from "../session/triggers.ts";
 import type { LadderRung, Mode } from "./ladder.ts";
 import type { PriceList, PriceListSource } from "./price-list.ts";
@@ -112,6 +113,12 @@ export interface EvalRunInput {
   /** The pricing table to cost the runs with: the effective table plus the report's proposal, so a candidate is priced. */
   pricing: PricingTable;
   signal?: AbortSignal;
+  /**
+   * The approval gate (spec C.5, ADR 0071): run this pending proposal's eval set instead of
+   * the registry's runnable entry. Only a `proposed` definition named `specialist` is
+   * accepted; the run is what decides whether it may become runnable.
+   */
+  candidate?: SpecialistDef;
 }
 
 export interface EvalRunOutcome {
