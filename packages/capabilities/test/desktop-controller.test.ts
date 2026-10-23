@@ -124,6 +124,63 @@ describe("DesktopController", () => {
     expect(w.indicator.events.map((e) => e.type)).toEqual(["on", "off", "on"]);
   });
 
+  it("status().desktopControl names the app, session and agent while on and is empty when off (S.32)", async () => {
+    const w = world();
+    expect(w.controller.status().desktopControl).toEqual({
+      active: false,
+      app: null,
+      sessionId: null,
+      agentId: null,
+      since: null,
+    });
+    const since = w.clock.nowIso();
+    await w.controller.focus(ctx(), "code");
+    expect(w.controller.status().desktopControl).toEqual({
+      active: true,
+      app: "code",
+      sessionId: "s1",
+      agentId: "alice",
+      since,
+    });
+    await w.clock.advance(1000);
+    expect(w.controller.status()).toMatchObject({
+      indicatorOn: false,
+      desktopControl: { active: false, app: null, sessionId: null, agentId: null, since: null },
+    });
+  });
+
+  it("an indicator already on is sent again only when the app becomes known or the session changes", async () => {
+    const w = world({ allowlist: ["code", "firefox"] });
+    // The first action names no window: the banner says "the desktop" until one is known.
+    await w.controller.listWindows(ctx());
+    expect(w.indicator.events.map((e) => e.type)).toEqual(["on"]);
+    expect(w.indicator.events[0]?.reason?.app).toBeUndefined();
+    const firstAt = w.indicator.events[0]?.reason?.at;
+    await w.clock.advance(10);
+    await w.controller.focus(ctx(), "code");
+    expect(w.indicator.events.map((e) => e.type)).toEqual(["on", "on"]);
+    expect(w.indicator.events[1]?.reason).toMatchObject({
+      app: "code",
+      sessionId: "s1",
+      at: firstAt,
+      message: "Forerunner agent alice is controlling code",
+    });
+    // Same app, same session: nothing more is sent.
+    await w.controller.typeText(ctx(), "x");
+    await w.controller.pressKey(ctx(), "Return");
+    expect(w.indicator.events).toHaveLength(2);
+    // Another application in the same burst: the banner follows it.
+    await w.controller.focus(ctx(), "firefox");
+    expect(w.indicator.events[2]?.reason).toMatchObject({ app: "firefox", sessionId: "s1" });
+    // Another session: named, and the previous session's app is not carried over to it.
+    await w.controller.listWindows(ctx({ sessionId: "s2", runId: "r2" }));
+    expect(w.indicator.events[3]?.reason).toMatchObject({ sessionId: "s2", runId: "r2" });
+    expect(w.indicator.events[3]?.reason?.app).toBeUndefined();
+    expect(w.controller.status().desktopControl).toMatchObject({ sessionId: "s2", app: null });
+    await w.controller.endRun("r2");
+    expect(w.indicator.events.map((e) => e.type)).toEqual(["on", "on", "on", "on", "off"]);
+  });
+
   it("endRun turns the indicator off at once when nothing else is active", async () => {
     const w = world();
     await w.controller.typeText(ctx(), "x");

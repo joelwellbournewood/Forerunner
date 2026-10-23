@@ -6,7 +6,9 @@ import {
   createDaemonApp,
   DAEMON_ROUTES,
   DESKTOP_INDICATOR_EVENT,
+  DesktopIndicatorEventData,
   type DesktopIndicatorPayload,
+  DesktopStatusView,
   type RunContext,
   type RuntimeApp,
   SessionBudget,
@@ -381,11 +383,29 @@ describe("desktop control wired into the daemon", () => {
         runId: focused.runId,
       });
       expect(on.at).toBe(clock.nowIso());
+      // A shell that (re)connects re-reads the same state from the status view (ADR 0067).
+      const during = DesktopStatusView.parse(await json(await req("/desktop/status")));
+      expect(during.desktopControl).toEqual({
+        active: true,
+        app: "code",
+        sessionId: SESSION,
+        agentId: rt.agent.id,
+        since: on.at,
+      });
+      expect(DesktopIndicatorEventData.parse(on)).toMatchObject({ on: true, app: "code" });
       // The run's teardown (the executor's `run_end` in the daemon) turns the indicator off.
       await rt.desktop.controller.endRun(focused.runId);
       const off = await nextFrame(reader, DESKTOP_INDICATOR_EVENT, (p) => !p.on);
       expect(off).toEqual({ on: false });
       expect(indicator.at(-1)).toEqual({ on: false });
+      const after = DesktopStatusView.parse(await json(await req("/desktop/status")));
+      expect(after.desktopControl).toEqual({
+        active: false,
+        app: null,
+        sessionId: null,
+        agentId: null,
+        since: null,
+      });
     } finally {
       await reader.cancel();
     }

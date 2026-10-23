@@ -97,6 +97,7 @@ describe("desktop routes", () => {
       adapter: "fake",
       revoked: false,
       indicatorOn: false,
+      desktopControl: { active: false, app: null, sessionId: null, agentId: null, since: null },
       detection: { platform: "linux", available: true, missing: ["wmctrl"] },
     });
   });
