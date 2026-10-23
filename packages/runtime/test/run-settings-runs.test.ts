@@ -297,9 +297,9 @@ describe("the executor honours the D.4 settings of a specialist run", () => {
     const quality = { speed_quality_offset: 1 };
     const offset = await runTask({ spec: capped, projectSettings: quality });
     expect(offset.provider.calls[0]?.request.effort).toBe("medium");
-    expect(
-      (await runTask({ projectSettings: quality })).provider.calls[0]?.request.effort,
-    ).toBe("high");
+    expect((await runTask({ projectSettings: quality })).provider.calls[0]?.request.effort).toBe(
+      "high",
+    );
     // Without the cap the override is what runs.
     const free = await runTask({ modelConfig: { specialists: { coder: { effort: "max" } } } });
     expect(free.provider.calls[0]?.request.effort).toBe("max");

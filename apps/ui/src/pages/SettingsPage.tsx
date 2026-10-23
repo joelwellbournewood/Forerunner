@@ -410,16 +410,16 @@ export function SettingChangeDialog({
                     ))}
                   </select>
                 ) : (
-                <input
-                  className={INPUT_CLASS}
-                  type={command.inputType}
-                  min={command.min}
-                  max={command.max}
-                  step={command.step}
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  data-testid="setting-value"
-                />
+                  <input
+                    className={INPUT_CLASS}
+                    type={command.inputType}
+                    min={command.min}
+                    max={command.max}
+                    step={command.step}
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    data-testid="setting-value"
+                  />
                 )}
               </Field>
             )}

@@ -219,10 +219,7 @@ describe("conversation agent over the command registry", () => {
   });
 
   it("the principal's chat effort is the base the project's slider shifts; a spoken turn keeps voice_chat's (D.4 with D.16)", async () => {
-    const w = await setup([
-      textReply("typed", { ttftMs: 0 }),
-      textReply("spoken", { ttftMs: 0 }),
-    ]);
+    const w = await setup([textReply("typed", { ttftMs: 0 }), textReply("spoken", { ttftMs: 0 })]);
     const project = await w.store.project.mustGet(w.game);
     await w.store.project.update(w.game, project.version, {
       settings: { ...project.settings, speed_quality_offset: 1 },
