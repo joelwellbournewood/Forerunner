@@ -109,6 +109,7 @@ import {
   privateIndexUrl,
   scheduleMemoryConsolidation,
 } from "../loop/memory.ts";
+import { MERGE_PR_TOOL, ReviewedPrMerge } from "../loop/merge.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
 import { modelIdFor } from "../models/ladder.ts";
 import {
@@ -574,6 +575,11 @@ export interface RuntimeApp {
    * session end.
    */
   docs: ProjectDocs;
+  /**
+   * The merge of a reviewed PR after an accepting review (spec J.9, ADR 0062): one `merge_pr`
+   * call through the daemon's hooks; level 3 merges, below it the PR stays open.
+   */
+  merge: ReviewedPrMerge;
   /** The command registry (spec Q): the only way chat, voice, the UI and the phone change state. */
   commands: CommandLoop;
   /**
@@ -1641,6 +1647,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     token: ghToken ?? undefined,
     identity: gitIdentity,
   });
+  // The merge of a reviewed PR (spec J.9, ADR 0062): after an accepting review one `merge_pr`
+  // call through the hooks on the task worktree; level 3 merges at the reviewed head once the
+  // host's checks pass, below it the hooks refuse and the PR stays open for the human.
+  const merge = new ReviewedPrMerge({
+    store,
+    clock,
+    tokens,
+    hooks,
+    host: gitHost,
+    worktreeRoot: dirs.worktrees,
+    token: ghToken ?? undefined,
+    identity: gitIdentity,
+  });
   const runner = new SessionRunner({
     store,
     clock,
@@ -1652,6 +1671,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     critic,
     memory,
     docs,
+    merge,
     schemaSync,
     // Actual versus estimate at task.finished feeds the next plan (spec I).
     onTaskFinished: ({ task, item, result, durationMs }) => {
@@ -2007,6 +2027,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       ...capabilityTools().map((t) => t.name),
       ...extensions.bridgedTools().map((t) => t.name),
       ...(hasOauth ? claudeCodeToolNames() : []),
+      // The runtime's merge step (J.9, ADR 0062); no model is offered it (no registry has it).
+      MERGE_PR_TOOL,
     ],
     allowedPaths: [dirs.worktrees],
     allowedDomains: [
@@ -2409,6 +2431,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     memory,
     privateMemory: privateStore,
     docs,
+    merge,
     commands,
     voice,
     events,

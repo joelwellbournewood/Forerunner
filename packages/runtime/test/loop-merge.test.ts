@@ -1,10 +1,14 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { GitHubHost, MemoryGitHost, PrTaskExecutor } from "@forerunner/capabilities";
-import { join, SimulatedClock } from "@forerunner/platform";
-import { FakeGitHost, type ScriptedReply } from "@forerunner/testenv";
+import { GitHubHost, GitOps, MemoryGitHost, PrTaskExecutor } from "@forerunner/capabilities";
+import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import type { SessionRow } from "@forerunner/state";
+import { FakeGitHost, FakeProvider, type ScriptedReply } from "@forerunner/testenv";
+import { MemoryVault } from "@forerunner/vault";
 import { afterEach, describe, expect, it } from "vitest";
+import { composeRuntime } from "../src/daemon/compose.ts";
+import { SessionBudget } from "../src/enforcement/budget.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import {
   AllowAllCaps,
@@ -464,5 +468,114 @@ describe("the merge_pr tool's checks rule (ADR 0062)", () => {
     );
     expect(res.artifacts).toMatchObject({ status: "conflict" });
     expect((await host.getPullRequest(PR_REPO, pr.number)).merged).toBe(false);
+  });
+});
+
+describe("the daemon's merge step (spec J.9)", { timeout: 120_000 }, () => {
+  it("is composed on the daemon's hooks: at level 2 the refusal is an audit_log row and the PR on the host stays open", async () => {
+    const clock = new SimulatedClock("2026-10-23T09:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-merge-daemon-"));
+    roots.push(home);
+    const env = { FORERUNNER_HOME: home };
+    const dirs = appDirs({ env });
+    const host = new MemoryGitHost("alice");
+    const rt = await composeRuntime({
+      env,
+      dirs,
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new FakeProvider({ replies: [], clock, latency: "none" }),
+      registryDir: join(process.cwd(), "evals", "registry"),
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+      gitHost: host,
+    });
+    try {
+      await host.createRepo({ owner: "o", name: "r", private: true });
+      const pr = await host.createPullRequest(
+        { owner: "o", name: "r" },
+        { title: "Add feature", body: "", head: "fr/feature", base: "main" },
+      );
+      const project = await rt.store.project.insert({
+        name: "App",
+        goal: "Ship the app",
+        repos: ["o/r"],
+        stage: "build",
+        status: "active",
+        budget_usd_micro: 10_000_000,
+        autonomy_level: 2,
+        summary_cache: {},
+        data_assets: [],
+        settings: { members: [rt.agent.id] },
+        small_project_mode: false,
+        active: true,
+      });
+      const task = await rt.store.task.insert({
+        project_id: project.id,
+        title: "Add feature",
+        outcome: "feature exists",
+        acceptance_criteria: ["works"],
+        risk_tier: 1,
+        status: "done",
+        priority: 1,
+        depends_on: [],
+        budget_usd_micro: 1_000_000,
+        est_cost_usd_micro: 0,
+        actual_cost_usd_micro: 0,
+        attempt: 0,
+        reason: "critic accepted",
+        pr_url: pr.htmlUrl,
+        author_agent: rt.agent.id,
+      });
+      // The task worktree the PR executor would have left (the reviewed commit is its HEAD).
+      const git = new GitOps({ cwd: join(dirs.worktrees, task.id), identity });
+      await git.init();
+      writeFileSync(join(dirs.worktrees, task.id, "feature.ts"), "export const f = 1;\n");
+      await git.commitAll("feature");
+      const token = rt.tokens.issue({
+        runId: "run-session",
+        sessionId: "s-merge",
+        agentId: rt.agent.id,
+        ownerHumanId: rt.human.id,
+        projectId: project.id,
+        allowedTools: [MERGE_PR_TOOL],
+        allowedPaths: [dirs.worktrees],
+        allowedDomains: ["o"],
+        grantedSecrets: [],
+        budgetUsdMicro: 1_000_000,
+        depth: 0,
+        maxDepth: 2,
+        autonomy: 2,
+        planApproved: false,
+        expiresAt: new Date(clock.now() + 3_600_000).toISOString(),
+      });
+      const outcome = await rt.merge.mergeReviewed({
+        task,
+        session: { id: "s-merge" } as SessionRow,
+        token,
+        budget: new SessionBudget({
+          sessionId: "s-merge",
+          budgetUsdMicro: 1_000_000,
+          stepCap: 10,
+          deadlineMs: clock.now() + 3_600_000,
+          reserveShare: 0.1,
+        }),
+        signal: new AbortController().signal,
+        agentId: rt.agent.id,
+      });
+      expect(outcome).toMatchObject({ status: "not_allowed", taskId: task.id });
+      const rows = (await rt.store.auditLog.list({ sessionId: "s-merge" })).filter(
+        (r) => r.tool === MERGE_PR_TOOL,
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.allowed).toBe(false);
+      expect(rows[0]?.denied_reason).toMatch(/^autonomy_insufficient: /);
+      expect((await host.getPullRequest({ owner: "o", name: "r" }, pr.number)).state).toBe("open");
+    } finally {
+      await rt.close();
+    }
   });
 });
