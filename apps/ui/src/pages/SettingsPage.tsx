@@ -18,6 +18,7 @@ import { formatDuration } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import type { ThemePreference } from "../store/store.ts";
+import { SourcesSection } from "./SourcesSection.tsx";
 
 type Scope = SettingView["scope"];
 const SCOPES: readonly Scope[] = ["global", "human", "agent", "project"];
@@ -442,6 +443,8 @@ export function SettingsPage() {
           ) : null}
         </dl>
       </div>
+
+      <SourcesSection />
 
       <div>
         <div className="flex flex-wrap items-baseline gap-3">

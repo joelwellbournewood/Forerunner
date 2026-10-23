@@ -1,4 +1,8 @@
 import {
+  type AcceptCandidateBody,
+  type AcceptCandidateView,
+  AcceptCandidateView as AcceptCandidateViewSchema,
+  type AddSourceBody,
   AgentView as AgentViewSchema,
   type ChangeLogView,
   ChangeLogView as ChangeLogViewSchema,
@@ -54,14 +58,23 @@ import {
   ProjectCard as ProjectCardSchema,
   type ProjectSummary,
   ProjectSummary as ProjectSummarySchema,
+  type RemoveSourceView,
+  RemoveSourceView as RemoveSourceViewSchema,
   type ReviewsView,
   ReviewsView as ReviewsViewSchema,
   type ReviewView,
   type RunView,
   RunView as RunViewSchema,
+  type ScanResultView,
+  ScanResultView as ScanResultViewSchema,
   type SessionView,
   SessionView as SessionViewSchema,
   SettingView as SettingViewSchema,
+  type SourceCandidateStatus,
+  type SourceCandidateView,
+  SourceCandidateView as SourceCandidateViewSchema,
+  type SourceView,
+  SourceView as SourceViewSchema,
   type StartSessionBody as StartSessionBodySchema,
   type TaskView,
   TaskView as TaskViewSchema,
@@ -123,6 +136,9 @@ import {
 } from "./contracts.ts";
 
 export type {
+  AcceptCandidateBody,
+  AcceptCandidateView,
+  AddSourceBody,
   ApplyUpdateResult,
   CatalogView,
   ChangeLogView,
@@ -165,11 +181,16 @@ export type {
   ProjectSettingsView,
   ProjectSummary,
   QueueItemView,
+  RemoveSourceView,
   ReviewsView,
   ReviewView,
   RollbackResult,
   RunView,
+  ScanResultView,
   SessionView,
+  SourceCandidateStatus,
+  SourceCandidateView,
+  SourceView,
   TaskView,
   UpdateLessonBody,
   UpdateProjectSettingsBody,
@@ -201,6 +222,8 @@ export const ChangeLogList = z.array(ChangeLogViewSchema);
 export const CommandDefList = z.array(CommandDefViewSchema);
 export const PendingChangeList = z.array(PendingChangeViewSchema);
 export const ConsolidationList = z.array(ConsolidationProposalViewSchema);
+export const SourceList = z.array(SourceViewSchema);
+export const SourceCandidateList = z.array(SourceCandidateViewSchema);
 
 /** Query of GET /memory; `agentId` is required for the private scope. */
 export interface MemoryFilter {
@@ -467,6 +490,18 @@ export interface DaemonClient {
    * whole with the name the daemon gave it, ready for `saveTextFile`.
    */
   auditExport(filter?: AuditExportFilter, signal?: AbortSignal): Promise<AuditExportFile>;
+
+  // Source discovery (spec A.4): connected sources, scans, proposals, accept and remove.
+  sources(signal?: AbortSignal): Promise<SourceView[]>;
+  addSource(body: AddSourceBody): Promise<SourceView>;
+  scanSource(id: string): Promise<ScanResultView>;
+  sourceCandidates(
+    id: string,
+    filter?: { status?: SourceCandidateStatus },
+    signal?: AbortSignal,
+  ): Promise<SourceCandidateView[]>;
+  acceptCandidate(id: string, body?: AcceptCandidateBody): Promise<AcceptCandidateView>;
+  removeSource(id: string): Promise<RemoveSourceView>;
 }
 
 function isAbort(error: unknown): boolean {
@@ -764,6 +799,19 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         { projectId: filter?.projectId },
         signal,
       ),
+    sources: (signal) => get(routePath("sources"), SourceList, undefined, signal),
+    addSource: (body) => post(routePath("addSource"), SourceViewSchema, body),
+    scanSource: (id) => post(routePath("scanSource", { id }), ScanResultViewSchema, {}),
+    sourceCandidates: (id, filter, signal) =>
+      get(
+        routePath("sourceCandidates", { id }),
+        SourceCandidateList,
+        { status: filter?.status },
+        signal,
+      ),
+    acceptCandidate: (id, body) =>
+      post(routePath("acceptCandidate", { id }), AcceptCandidateViewSchema, body ?? {}),
+    removeSource: (id) => del(routePath("removeSource", { id }), RemoveSourceViewSchema),
     auditExport: async (filter, signal) => {
       const format: AuditExportFormat = filter?.format ?? "jsonl";
       const res = await raw({
