@@ -1,5 +1,26 @@
 import { z } from "zod";
 
+export type {
+  SourceCandidateStatus,
+  SourceKind,
+} from "../sources/types.ts";
+/** Source discovery shapes (spec A.4): the `/sources` routes' bodies and answers. */
+export {
+  AcceptCandidateBody,
+  AcceptCandidateView,
+  AddSourceBody,
+  RemoveSourceView,
+  ScanResultView,
+  ScanSummary,
+  SOURCE_CANDIDATE_STATUSES,
+  SOURCES_ROUTES,
+  SourceCandidateStatusSchema,
+  SourceCandidateView,
+  SourceKindSchema,
+  SourceView,
+  SUPPORTED_SOURCE_KINDS,
+} from "../sources/types.ts";
+
 /**
  * Local daemon API contract (ADR 0011). The desktop and Android shells, the approvals web
  * page and the CLI talk to the runtime through this API; the UI never touches the database.
@@ -1113,6 +1134,18 @@ export const DAEMON_ROUTES = {
   desktopRevoke:
     "POST /desktop/revoke { reason? } (live revocation: interrupts and drops desktop actions, refuses until resume; open to any caller)",
   desktopResume: "POST /desktop/resume (the signed-in human resumes; DesktopStatus)",
+  sources:
+    "GET /sources (SourceView[]: the daemon's human's connected sources with the counts of their candidates; spec A.4)",
+  addSource:
+    "POST /sources { kind: github_org|github_user|github_repo|local_folder, locator, displayName?, credentialRef? } (201 SourceView; a GitHub kind names its token as secret:<name>, default secret:github_token, and a token value is refused; 400 for gitlab and git_remote (later), a bad login, a relative or missing folder; 409 conflict when the same source is connected already)",
+  source: "GET /sources/:id (SourceView; 403 forbidden for another human's source)",
+  scanSource:
+    "POST /sources/:id/scan (ScanResultView: one candidate per repository or folder, proposed, or duplicate when a project or another source already covers it, accepted ones kept, ones no longer found gone; existingInstall with the marker; a failed scan sets the source's status to error and answers 503 for a host or credential problem)",
+  sourceCandidates: "GET /sources/:id/candidates?status= (SourceCandidateView[])",
+  acceptCandidate:
+    "POST /sources/candidates/:id/accept { name?, goal?, autonomyLevel?, budgetUsdMicro? } (201 AcceptCandidateView: the project created through the same path as POST /projects with no brief; 409 conflict for an accepted, duplicate or gone candidate, a repo a project took meanwhile, or a taken name)",
+  removeSource:
+    "DELETE /sources/:id ({ ok, id, candidatesRemoved }; projects created from it stay)",
   dataAssets: "GET /projects/:id/data (DataAssetView[])",
   registerDataAsset:
     "POST /projects/:id/data { locator, kind?, mode?, name?, sizeBytes? } | multipart file (+ kind, name) (201 DataAssetView; 413 above the upload cap)",
