@@ -1,10 +1,6 @@
 import { type Clock, log } from "@forerunner/platform";
 import { isQuietAt, resolvePrefs } from "@forerunner/runtime/notifications/prefs";
-import {
-  KIND_URGENCY,
-  type NotificationKind,
-  type Urgency,
-} from "@forerunner/runtime/notifications/types";
+import { KIND_URGENCY, type Urgency } from "@forerunner/runtime/notifications/types";
 import type { DeviceRow, StateStore } from "@forerunner/state";
 import type { ChangeBus, ChangeEvent } from "../realtime.ts";
 import type { PushMessage, PushSender } from "./fcm.ts";
@@ -271,7 +267,7 @@ export class PushFanout {
       case "human_request.changed": {
         if (e.payload.status !== "open") return null;
         const row = await store.humanRequest.get(id);
-        if (!row || row.status !== "open" || !row.human_id) return null;
+        if (row?.status !== "open" || !row.human_id) return null;
         return {
           kind: "approval",
           urgency: KIND_URGENCY[row.blocking ? "request_blocking" : "request_opened"],
@@ -319,7 +315,11 @@ export class PushFanout {
             link,
           };
         }
-        if (row.status === "running" && cap > 0 && row.spent_usd_micro >= cap * BUDGET_WARNING_SHARE) {
+        if (
+          row.status === "running" &&
+          cap > 0 &&
+          row.spent_usd_micro >= cap * BUDGET_WARNING_SHARE
+        ) {
           return {
             ...base,
             kind: "budget",

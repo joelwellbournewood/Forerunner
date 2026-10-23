@@ -14,8 +14,8 @@ import { ApiError, toApiError } from "./errors.ts";
 import type { App, Ctx, Env, RouteContext } from "./http.ts";
 import type { GitHubMirror } from "./mirror/github.ts";
 import { IdempotencyStore } from "./outbox.ts";
-import type { PushSender } from "./push/fcm.ts";
 import { PushFanout } from "./push/fanout.ts";
+import type { PushSender } from "./push/fcm.ts";
 import { TokenBucketLimiter } from "./ratelimit.ts";
 import { ChangeBus, ChangePoller, type PostgresNotifier } from "./realtime.ts";
 import { registerAuditRoutes } from "./routes/audit.ts";
@@ -139,9 +139,7 @@ export function createApp(deps: AppDeps): StateApiApp {
       replay.sweep();
       // Notices held for quiet hours go out once the human's window has ended.
       if (push.enabled) {
-        push
-          .flushHeld()
-          .catch((e) => logger.warn("held push flush failed", { error: String(e) }));
+        push.flushHeld().catch((e) => logger.warn("held push flush failed", { error: String(e) }));
       }
     },
   });

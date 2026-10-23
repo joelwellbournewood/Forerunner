@@ -133,7 +133,8 @@ export function registerDeviceRoutes(app: App, ctx: RouteContext, publicApp: App
     const body = await parseBody(c, PushTokenBody);
     const current = await ctx.store.device.get(id);
     if (!current) throw new ApiError(404, "not_found", "device not found");
-    if (current.revoked) throw new ApiError(409, "version_conflict", "device is revoked", { revoked: true });
+    if (current.revoked)
+      throw new ApiError(409, "version_conflict", "device is revoked", { revoked: true });
     const row =
       current.push_token === body.pushToken
         ? current
