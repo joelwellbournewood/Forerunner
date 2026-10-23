@@ -6,7 +6,7 @@ origin/ccr-4d8a843c-1k9syk` is clean).
 
 ## Review
 
-Verdict: **revise**. Score: 78/100 (as built at 2b96212).
+Verdict: **revise**. Score: 78/100 (as built at 2b96212; every finding below is resolved).
 
 The core of the brief is built and proven: `MeteredProvider` (`tests/live/src/metered.ts`)
 classifies a call as `aborted` whenever the request's signal had fired when the call settled,
@@ -69,6 +69,11 @@ Findings:
    that the branch introduced. Needs: `collectStream` keeps the `message_start` usage, the loop
    adds a cut-off call's reported usage and cost to the run before it rethrows the abort, and a
    loop test proves it.
+
+   Resolution: fixed in 3df8a3e. `collectStream` keeps the `message_start` usage, and the loop
+   adds a cut-off call's reported usage and cost before it rethrows the abort. Proven by
+   `loop.test.ts` "a call the kill switch cuts off keeps the input tokens…" (fails without
+   the fix: usage 0, cost 0).
 2. **low**, `tests/live/test/metered.test.ts:217` and `docs/maintainers/testing.md:1692`. The
    case "the probe's shape: aborted before the message opened" uses `cutOffProvider`, which
    always yields `message_start` and a `text_delta` before it waits. The message *had* opened,
@@ -76,6 +81,10 @@ Findings:
    zero usage, not the shape that its name and the doc claim. Verified by reading
    `cutOffProvider` (lines 70-90). Needs: the fake can open with no events, and the case uses
    that option.
+
+   Resolution: fixed in ef6f8f7. `cutOffProvider` takes `opens: false` (no event before the
+   stop), the probe's case uses it and also asserts no first token and the abort-signal reason,
+   and testing.md describes the shape correctly.
 3. **low**, `tests/live/src/metered.ts:151-154`. The documented status rule (metered.ts header,
    testing.md "The status of a call") says that a call whose `message_end` arrived before the
    signal fired "completed, and stays `ok`". If the inner stream then throws an `AbortError`
@@ -84,8 +93,15 @@ Findings:
    `aborted` with the reason of the throw. Verified by tracing: `abortedAtEnd` is `false`, so
    the `finally` takes the `else if` branch, and that branch only touches `status === "ok"`.
    Needs: the status rule holds on the throw path too, with a test.
+
+   Resolution: fixed in ef6f8f7. The `catch` keeps `ok` when a `message_end` came before the
+   signal; the new `metered.test.ts` case "…stays ok when the stream then throws AbortError"
+   failed before the change (`aborted`) and passes after it.
 4. **low**, `docs/decisions/0040-live-model-harness.md:37-39`. The ADR still says that "the
    Anthropic adapter yields usage only on `message_end`, so an aborted call's billed input
    tokens are not visible to the harness", which disagrees with the code after this branch.
    Verified with `git grep "usage only on"`. Needs: an amendment note in the ADR (the decision
    stands; the stated limitation narrowed).
+
+   Resolution: fixed in 610c3ab. ADR 0040 decision 2 now carries a dated amendment that names
+   what the ledger now records and what stays outside it.
