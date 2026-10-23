@@ -385,7 +385,7 @@ modes with a medium card for a rung and for fast; bad values, an unknown special
 neither targets, another human's agent and the critic refused; a temperature refused without
 the port or the flag and stored with it; an effort above a specialist's `max_effort` refused).
 
-Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 163 tests).
+Run: `pnpm exec vitest run --project unit packages/commands/test` (12 files, 171 tests).
 
 ## Known issues
 

@@ -14,9 +14,25 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending: the hosted emulator boots and launches the app (run 6), the raw-CDP attach is merged (ADR 0054) and not yet dispatched; the Settings → Capabilities → Email page (ADR 0066), PM intake (ADR 0055) and what you say during a live session (ADR 0078) landed 2026-10-23 | gates.md § Phase 5 |
 | 6 | Capabilities | injection suite, live revocation, overnight cloud-runner session, emailed task and spoofed email passed on the fake provider and the in-process mail server; live halves pending a real mailbox and host | gates.md § Phase 6 |
 | 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts) | gates.md § Phase 7 |
-| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 186 done, 37 in progress, 5 todo (S.32 merged from `wave/w2-s32-indicator` in c83a15d; D.16 `done` on `wave/w3-d16-slider`, reviewed and rebased onto cac6fee, merged in 443139a; D.4 done on its item branch, rebased onto cac6fee, 2026-10-23); security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
+| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 189 done, 34 in progress, 5 todo (S.32 merged from `wave/w2-s32-indicator` in c83a15d; D.16 `done` on `wave/w3-d16-slider`, reviewed and rebased onto cac6fee, merged in 443139a; D.4 done on its item branch, rebased onto 4ff4fb1, 2026-10-23); security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
 
 ## Log
+
+### 2026-10-23 (item w3-d4-specialist-settings rebased onto 4ff4fb1)
+- `wave/w3-d4-specialist-settings` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1), which
+  had since merged w2-l6-speak (L.6), w3-c5-specialist-approval (C.5), w3-d16-slider (D.16),
+  w3-e4-recheck (E.4) and w5-android-high-risk. Conflicts in the intake, the chat and the
+  executor (D.16's slider and `max_effort` cap next to D.4's resolved effort: the agent's
+  effort is the base the slider shifts, then the cap; a spoken turn keeps `voice_chat`), the
+  command ports and compose (`speak` next to `modelSettings`), the daemon's imports, the UI's
+  Settings dialog (D.16's slider next to D.4's select) and fake daemon, five maintainer docs,
+  the ADR index, BLOCKERS and this file; both sides kept
+  (`docs/status/reviews/w3-d4-specialist-settings.md`, "Rebase onto 4ff4fb1"). The approval
+  gate (C.5) now compares the D.4 keys before a promotion; two branch tests were moved to the
+  base's current names (D.16's slider instead of the removed `effortOffset`, the fixture's
+  settings count). ADR 0072 has a second rebase amendment. Requirements 189 done, 34 in
+  progress, 5 todo of 228. Counts: runtime 136 files / 1256 passed, 1 skipped; commands 12 /
+  171; critic 14 / 116; billing 10 / 92; testenv 10 / 142; UI 49 / 330. Not merged yet.
 
 ### 2026-10-23 (item w3-d16-slider rebased onto cac6fee)
 - `wave/w3-d16-slider` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the

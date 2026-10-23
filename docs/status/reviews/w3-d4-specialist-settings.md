@@ -303,3 +303,90 @@ docs after the rebase).
 - No base test was changed. Intermediate commits of the series do not all typecheck (the
   test files of `b6030de` and the review commits still name `decideSpeed` until the
   "tests, ui: the D.4 speed tests against D.20's decideFastMode" commit); the head does.
+
+## Rebase onto 4ff4fb1
+
+Stage REBASE, 2026-10-23: `wave/w3-d4-specialist-settings` (start `dd41063`) rebased with
+`git rebase origin/ccr-4d8a843c-1k9syk` onto the release head `4ff4fb1`, which had merged,
+since the first rebase's base `cac6fee`, w2-l6-speak (L.6, `summary.speak`), w3-c5-specialist-
+approval (C.5, the approval gate, ADR 0071), w3-d16-slider (D.16, the speed-versus-quality
+slider), w3-e4-recheck (E.4) and w5-android-high-risk. No merge of the base; the series is the
+branch's 23 commits replayed (none skipped, none squashed) and six new commits after them.
+
+### Conflicts and how each was resolved
+
+| Commit (original) | File | Resolution |
+| --- | --- | --- |
+| `c86d79d` honour | `session/intake.ts` | imports of both (D.16's `capEffort`, `speedQualityOffsetOf`, `effortWithOffset` in place of `modeEffort`; D.4's run-settings); the planning effort = D.4's resolved `planning.effort` (table row or the principal's override) shifted by D.16's slider and held at the PM's `max_effort`; timeout, max tokens and temperature from D.4's resolution |
+| `c86d79d` honour | `conversation/agent.ts` | same composition: a spoken turn's base is D.16's `voice_chat` row, a typed one D.4's resolved `text_chat` effort (the principal's override when set); then the slider and the conversation agent's `max_effort`; D.4's timeout, max tokens, temperature |
+| `c86d79d` honour | `session/executor.ts` | imports of both; D.4's mode (`specialistMode`), resolution and agent effort override (`withModeEffort`) fed to `effortForTask` with D.16's slider (`speedQualityOffsetOf(project.settings)`, the base removed `deps.effortOffset`), then D.16's `capEffort(…, spec.maxEffort)`; D.4's fast-mode preference warning kept |
+| `57e3e50` command | `commands/types.ts` | ports `speak` (base, L.6) and `modelSettings` (D.4), both kept; the comment opener `/**` the textual merge lost before `modelSettings` restored |
+| `57e3e50` command | `daemon/compose.ts` | imports: the base's `SpecialistApprovals` (C.5) and D.4's `DEFAULT_PROVIDER_CAPABILITIES`, `providerCapabilities`; command ports `speak` (base) and `modelSettings` (D.4), the `speak` closure's closing brace restored between them |
+| `57e3e50` command | `daemon/server.ts` | imports `ownsProject, ownsSession` (base) and `buildModelSettingsView` (D.4) |
+| `e49fda2` UI | `apps/ui/src/pages/SettingsPage.tsx` | `SettingCommand` carries both: D.16's `inputType: "slider"`, `positions`, `display` and D.4's `options`; D.16's `SliderInput` kept and D.4's export of `SettingChangeDialog` (used by the model settings section) applied to it; the dialog body: the slider for a slider setting, otherwise D.4's select for a setting with `options`, otherwise the typed input |
+| `e49fda2` UI | `apps/ui/test/fake-daemon.ts` | state `speedQuality` (D.16) and `modelSettings`, `acceptsTemperature` (D.4), both in the interface and the initial state |
+| `f23f7f3` docs | `adding-a-specialist.md` | Tests: the base's approval-flow bullet (C.5) then D.4's `registry.test.ts` bullet (count set to the real one in the last commit); Decisions: the base's three C.5 bullets then D.4's ADR 0072 bullet; Requirement IDs: one paragraph with the base's "C.5 (proposal and the approval gate, ADR 0071)" and D.4's longer D.4 clause |
+| `f23f7f3` docs | `apps.md` | the `/settings` row: D.4's row (model settings section, `GET /settings/models`) with the base's D.16 slider clause in the dialog sentence; the slider paragraph then the model-settings dialog paragraph; the "new setting" bullet with the base's slider sentence and D.4's new-field sentence; the test list with `settings-slider` (D.16) then `settings-models` (D.4) |
+| `f23f7f3` docs | `commands.md` | the base's test count kept here (set to the real count in the last commit) |
+| `f23f7f3` docs | `runtime.md` | the base's speed-versus-quality slider paragraph, then D.4's effort-table columns and the "Settings per agent and specialist" section, extended by one sentence saying how the two compose (the D.4 effort is the base the slider shifts, held at `max_effort`; a spoken chat turn keeps the `voice_chat` base) |
+| `a0cfb4e` status | `decisions/README.md` | 0071 (base, C.5) and 0072 (D.4) in number order |
+| `a0cfb4e` status | `BLOCKERS.md` | the base's C.5 row (built, reviewed) and D.4's D.4 row (built) |
+| `a0cfb4e` status | `PROGRESS.md` | phase 8 row: the base's row with D.4's clause added to the parenthesis (the totals set to the real count in the last commit); log: the base's entries (D.16, E.4, w5-android-high-risk) and the D.4 build entry; handover item 3: the base's text with D.4's clause in place of the bare `w3-d4-specialist-settings (D.4)` |
+| `90cf8f8` finding 6 | `session/intake.ts` | D.4's `pricingFor(model)` line and the D.16 effort composition, both kept (adjacent additions) |
+| `006920a` findings 1, 3 | `session/executor.ts` | one `SpecialistSpec.maxEffort` (both sides added it, the base for D.16, the branch for finding 1) with one doc naming the mode default, the coder rule, the slider and the override; the effort asked = `effortForTask` with D.16's slider and D.4's override, then capped with the base's `capEffort` and D.4's warning when the cap bites (the duplicate `effortIndex` comparison dropped); `specialistSpecFrom` already fills `maxEffort` on the base |
+| `006920a` findings 1, 3 | `apps.md` | **missed at this step** (the `/settings` row and the `settings-models` test entry were committed with conflict markers); resolved in the next step's commit `2df76ea` (below), which touches the same row |
+| `2df76ea` finding 2 | `apps.md` | the `/settings` row: the branch's latest wording (the rung that runs, efforts up to `max_effort`) with the base's D.16 slider clause; the test list: `settings-slider` (D.16) then `settings-models` (8) |
+| `2df76ea` finding 2 | `runtime.md` | the D.16 composition sentence and the finding-2 ceiling sentence, one after the other in the "Who reads it" paragraph |
+| `2df76ea` finding 2 | `conversation/agent.ts`, `session/intake.ts` | imports: the base's `capEffort`, `speedQualityOffsetOf` with `effortWithOffset`, D.4's `DEFAULT_CEILING`, and in the intake `EffortLevel` (D.16's `maxEffort` dep) with `ModelTier` (D.4's `projectCeiling` port) |
+| `e3f93e5` status | `BLOCKERS.md` | the base's C.5 row, the branch's reviewed D.4 row |
+| `e3f93e5` status | `PROGRESS.md` | log: the base's entries, then the D.4 review entry above the D.4 build entry; handover item 3: the base's text with D.4's "built and reviewed" clause |
+| `bee587f` status | `commands.md` | the test count line kept from the base here, set to the real count in the last commit |
+| `bee587f` status | `BLOCKERS.md` | the base's C.5 row, the branch's D.4 row after the first rebase |
+| `bee587f` status | `PROGRESS.md` | phase 8 row: one row with both parentheses merged (S.32 merged in c83a15d, D.16 merged in 443139a, D.4 on its branch; totals set to the real count in the last commit); log: the base's entries, then the branch's first-rebase entry above its review and build entries; handover item 3 with the branch's latest D.4 clause |
+
+### Semantic reconciliations after the replay (new commits)
+
+- `tests: the D.4 max_effort case moves the project's slider`: D.16 removed the executor's
+  `effortOffset` dependency; `run-settings-runs.test.ts` still passed one (through a spread, so
+  no type error) and failed on its uncapped +1 case. It now sets `speed_quality_offset: 1` on
+  the project row, which is what the cap has to hold against. Same intent, the base's name.
+- `ui tests: the route-missing case counts the fixture's settings rows`: D.16 added a fifth
+  settings row to the UI fixture; `settings-models.test.tsx` asserted four. It now compares
+  with `SETTINGS.length` (the rest of Settings intact on an older daemon).
+- `registry: the approval gate compares the D.4 run settings`: C.5's `COMPARED_FIELDS`
+  (evaluated file = promoted file) gains `max_tokens`, `speed_mode`, `temperature`;
+  `specialist-approval.test.ts` "promotes the D.4 run settings a proposal names exactly as they
+  were evaluated" (it passes without the list change too, since the promotion only rewrites the
+  status line; it proves the keys survive the gate, the list entry is the guard).
+- `runtime tests, docs: the principal's D.4 effort is the base the D.16 slider shifts`:
+  `conversation.test.ts` (typed turn: override medium + quality = high; spoken turn: voice_chat
+  low + quality = medium; `maxEffort: medium` holds it) and `intake.test.ts` (planning override
+  low: low, medium at +1, low at -1). Both fail if either side's effort is dropped in the
+  resolution. ADR 0072 "Amendment (rebase onto D.16 and C.5)"; runtime.md test list.
+- `style: Biome format and import order`: formatting of the resolved files only.
+- `docs: D.4 rows, counts and the rebase record after the rebase onto 4ff4fb1`: this section,
+  the BLOCKERS D.4 and V.1 rows, the PROGRESS phase 8 row and log, the commands test count.
+
+### After the rebase
+
+- `pnpm typecheck` exit 0 (run before any formatter); `pnpm lint` exit 0 (59 warnings, the
+  base's count; one import-order error from a resolution fixed in the style commit).
+- `pnpm exec vitest run --project unit packages/runtime/test`: 136 files, 1256 passed, 1
+  skipped (`run-settings.test.ts` 16, `run-settings-runs.test.ts` 15,
+  `model-settings-routes.test.ts` 6, `registry.test.ts` 34, `anthropic-provider.test.ts` 11,
+  `conversation.test.ts` 27, `intake.test.ts` 14, `specialist-approval.test.ts` 25,
+  `effort-offset.test.ts` 11, `fast-mode.test.ts` 16, `fast-mode-wiring.test.ts` 2). One run
+  under load failed `voice-route.test.ts` "a text turn produces the reply events" on its
+  wall-clock `withinTarget`; re-run alone twice, 17 of 17 passed both times, and the next full
+  run was green.
+- `packages/commands/test` 12 files, 171 passed; `packages/critic/test` 14 files, 116 passed;
+  `packages/billing/test` 10 files, 92 passed; `testenv/test` 10 files, 142 passed;
+  `pnpm --filter @forerunner/ui test` 49 files, 330 passed. The runtime's integration file
+  (`sandbox.integration.test.ts`) skipped its 4 tests (no container engine).
+- `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok; requirements counted
+  from `docs/requirements.md`: 189 done, 34 in progress, 5 todo of 228.
+- No base test's intent was changed; the two branch tests above were moved to the base's names.
+- Intermediate commits do not all typecheck (as after the first rebase: the test files of the
+  original tests commit name `decideSpeed` until the "D.4 speed tests against D.20's
+  decideFastMode" commit; one intermediate commit, `006920a`'s replay, carries the apps.md
+  conflict markers resolved one commit later); the head does.
