@@ -1972,6 +1972,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
               .find((a) => a.id === params.agent && a.editable)
               ?.modes.find((m) => m.mode === params.mode);
       if (!settings) return refuse("no such agent mode or specialist", "not_found");
+      const maxEffort =
+        typeof params.specialist === "string"
+          ? state.modelSettings.specialists.find((x) => x.name === params.specialist)?.maxEffort
+          : undefined;
+      const efforts = ["low", "medium", "high", "xhigh", "max"];
+      if (
+        field === "effort" &&
+        typeof params.value === "string" &&
+        maxEffort &&
+        efforts.indexOf(params.value) > efforts.indexOf(maxEffort)
+      )
+        return refuse(
+          `effort: the ${params.specialist} specialist runs at most at ${maxEffort} (its max_effort)`,
+        );
       const current = settings[key] as ModelSettingValueView | undefined;
       if (!current || typeof current !== "object") return refuse("no such setting");
       const value = params.value as string | number | null;

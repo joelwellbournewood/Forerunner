@@ -107,7 +107,9 @@ whole document is checked against `AgentModelConfigSchema` before the write). Ex
 (another human's agent is `not_found`, the critic is refused: spec H sets its model). The ports
 `ctx.ports.modelSettings` give the runnable specialists (an unknown name is `not_found`) and the
 provider's capability flags: a temperature is refused unless `acceptsTemperature` is true (with
-no port, always). The sentence reads "Set the max tokens per call of the coder specialist for
+no port, always); and, through `maxEffort(name)`, a specialist's registry `max_effort`: an
+`effort` above it is refused (`validation`, "runs at most at high (its max_effort)"), because the
+executor would cap the run there anyway (the agent's own modes have no such cap). The sentence reads "Set the max tokens per call of the coder specialist for
 Alice from the default to 8000. Undo." The schemas are imported by deep path
 (`@forerunner/runtime/models/run-settings`), because the runtime package imports this one and
 the index would be half-initialised at that point.

@@ -150,6 +150,13 @@ describe("GET /settings/models and model.settings.set (spec D.4)", () => {
     expect(unknown).toMatchObject({ status: "refused", code: "not_found" });
     const badSpeed = await d.execute({ specialist: "coder", field: "speed_mode", value: "warp" });
     expect(badSpeed).toMatchObject({ status: "refused", code: "validation" });
+    // The registry's coder says max_effort high: max is refused, high is taken.
+    const tooHard = await d.execute({ specialist: "coder", field: "effort", value: "max" }, "tap");
+    expect(tooHard).toMatchObject({ status: "refused", code: "validation" });
+    expect(tooHard.reason).toMatch(/at most at high/);
+    expect(
+      (await d.execute({ specialist: "coder", field: "effort", value: "high" }, "tap")).status,
+    ).toBe("done");
   });
 
   it("prices a chat turn as the rung the human chose, not the table's (composed daemon)", async () => {

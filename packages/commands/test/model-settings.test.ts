@@ -173,4 +173,29 @@ describe("model.settings.set", () => {
     expect(MODEL_SETTING_LABELS.temperature).toBe("the temperature");
     await w.store.close();
   });
+
+  it("refuses a specialist's effort above its max_effort; the agent's own modes have no such cap", async () => {
+    const w = await world();
+    w.ports.modelSettings = {
+      ...withPorts(false),
+      maxEffort: (name) => (name === "coder" ? "high" : undefined),
+    };
+    const set = (params: Record<string, unknown>) =>
+      w.executor.execute({
+        name: "model.settings.set",
+        params,
+        ctx: w.ctx(),
+        confirmation: tap(w.human.id),
+      });
+    const over = refused(await set({ specialist: "coder", field: "effort", value: "max" }));
+    expect(over.reason).toMatch(/coder specialist runs at most at high \(its max_effort\)/);
+    done(await set({ specialist: "coder", field: "effort", value: "high" }));
+    done(await set({ specialist: "researcher", field: "effort", value: "max" }));
+    done(await set({ mode: "planning", field: "effort", value: "max" }));
+    expect((await w.store.agent.mustGet(w.agent.id)).model_config).toEqual({
+      modes: { planning: { effort: "max" } },
+      specialists: { coder: { effort: "high" }, researcher: { effort: "max" } },
+    });
+    await w.store.close();
+  });
 });

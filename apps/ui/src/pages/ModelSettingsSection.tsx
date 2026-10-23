@@ -78,6 +78,19 @@ export interface ModelSettingTarget {
   specialist?: string;
   /** "Alice · planning" or "coder": for the dialog title and description. */
   subject: string;
+  /** A specialist's `max_effort`: the effort list stops there (the daemon refuses more). */
+  maxEffort?: string;
+}
+
+/** The values a field offers for a target: a specialist's efforts stop at its `max_effort`. */
+export function optionsFor(
+  field: ModelSettingField,
+  target: Pick<ModelSettingTarget, "maxEffort">,
+): readonly string[] | undefined {
+  const all = OPTIONS[field];
+  if (!all || field !== "effort" || !target.maxEffort) return all;
+  const cap = all.indexOf(target.maxEffort);
+  return cap < 0 ? all : all.slice(0, cap + 1);
 }
 
 const show = (v: string | number | null) => (v === null ? "none" : String(v));
@@ -96,7 +109,7 @@ export function modelSettingCommand(
     ...(target.mode !== undefined ? { mode: target.mode } : {}),
     ...(target.specialist !== undefined ? { specialist: target.specialist } : {}),
   };
-  const options = OPTIONS[field];
+  const options = optionsFor(field, target);
   const rule = NUMBER_RULES[field];
   const defaultLabel = `default (${show(current.default)}, ${SOURCE_LABELS[current.defaultSource]})`;
   const command: SettingCommand = {
@@ -225,6 +238,7 @@ export function rowsOf(view: ModelSettingsView): Row[] {
         agent: s.overridesAgentId,
         specialist: s.name,
         subject: `the ${s.name} specialist`,
+        maxEffort: s.maxEffort,
       },
     });
   return rows;

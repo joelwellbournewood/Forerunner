@@ -161,6 +161,7 @@ interface ExecOptions {
   capabilities?: Partial<ProviderCapabilities>;
   fastModePricing?: (model: string) => RunPricing | null;
   pricingFor?: (model: string) => RunPricing;
+  effortOffset?: -1 | 0 | 1;
 }
 
 async function runTask(o: ExecOptions = {}) {
@@ -183,6 +184,7 @@ async function runTask(o: ExecOptions = {}) {
     onEvent: (_t, ev) => events.push(ev),
     ...(o.fastModePricing ? { fastModePricing: o.fastModePricing } : {}),
     ...(o.pricingFor ? { pricingFor: o.pricingFor } : {}),
+    ...(o.effortOffset !== undefined ? { effortOffset: o.effortOffset } : {}),
   });
   const token = issue(h, {
     agentId: w.agent,
@@ -274,6 +276,26 @@ describe("the executor honours the D.4 settings of a specialist run", () => {
     expect(opus.provider.calls[0]?.request.model).toBe("fake-opus");
     // Same tokens, five times the price: the override is not priced at the sonnet rung.
     expect(opus.res.costUsdMicro).toBe(5 * table.res.costUsdMicro);
+  });
+
+  it("never runs a specialist above its max_effort: not by the agent's override, not by the offset", async () => {
+    const capped = { ...coder, maxEffort: "medium" as const };
+    const override = await runTask({
+      spec: capped,
+      modelConfig: { specialists: { coder: { effort: "max" } } },
+    });
+    expect(override.provider.calls[0]?.request.effort).toBe("medium");
+    expect(override.run).toMatchObject({ effort: "medium" });
+    expect(warnings(override.events).join("\n")).toMatch(
+      /coder runs at effort medium, its max_effort/,
+    );
+    // The project slider's +1 (medium -> high) stops at the cap too.
+    const offset = await runTask({ spec: capped, effortOffset: 1 });
+    expect(offset.provider.calls[0]?.request.effort).toBe("medium");
+    expect((await runTask({ effortOffset: 1 })).provider.calls[0]?.request.effort).toBe("high");
+    // Without the cap the override is what runs.
+    const free = await runTask({ modelConfig: { specialists: { coder: { effort: "max" } } } });
+    expect(free.provider.calls[0]?.request.effort).toBe("max");
   });
 
   it("gives the run the overridden timeout: the brief names it instead of the file's", async () => {

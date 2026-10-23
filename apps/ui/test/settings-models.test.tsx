@@ -1,7 +1,12 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { columnsFor, modelSettingCommand, rowsOf } from "../src/pages/ModelSettingsSection.tsx";
+import {
+  columnsFor,
+  modelSettingCommand,
+  optionsFor,
+  rowsOf,
+} from "../src/pages/ModelSettingsSection.tsx";
 import { MODEL_SETTINGS } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
@@ -184,6 +189,32 @@ describe("Settings: models per agent and specialist", () => {
         (c) => c.field,
       ),
     ).not.toContain("temperature");
+  });
+
+  it("offers a specialist's effort only up to its max_effort", async () => {
+    const user = userEvent.setup();
+    renderApp("/settings", createHarness({ acceptsTemperature: false }));
+    const coder = await rowOf("specialist", "coder");
+    await user.click(
+      within(within(coder).getByTestId("model-setting-effort")).getByTestId("model-setting-change"),
+    );
+    const dialog = await screen.findByTestId("setting-dialog");
+    const options = within(within(dialog).getByTestId("setting-value"))
+      .getAllByRole("option")
+      .map((o) => o.getAttribute("value"));
+    // The fixture's coder says max_effort high: no xhigh, no max.
+    expect(options).toEqual(["default", "low", "medium", "high"]);
+    const target = {
+      agent: "agent_alice",
+      specialist: "coder",
+      subject: "coder",
+      maxEffort: "high",
+    };
+    const effort = MODEL_SETTINGS.specialists[0]?.settings.effort;
+    if (!effort) throw new Error("fixture");
+    expect(modelSettingCommand(target, "effort", effort).command.params("max")).toBeNull();
+    expect(optionsFor("effort", {})).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(optionsFor("tier", { maxEffort: "low" })).toEqual(["haiku", "sonnet", "opus", "fable"]);
   });
 
   it("names the missing route on an older daemon and keeps the rest of the page", async () => {

@@ -104,8 +104,9 @@ export interface SpecialistSpec {
   defaultTier: ModelTier;
   defaultEffort: EffortLevel;
   /**
-   * The registry entry's `max_effort`: the run's effort (the mode default, the tier-2+ coder
-   * rule, the project's speed-versus-quality slider) is held at it. Unset means no cap.
+   * The registry entry's `max_effort`: no run of this specialist goes above it, whatever the
+   * mode default, the tier-2+ coder rule, the project's speed-versus-quality slider (spec D.16)
+   * or the agent's override (spec D.4, ADR 0072) ask. Unset means no cap.
    */
   maxEffort?: EffortLevel;
   allowedTools: string[];
@@ -507,17 +508,21 @@ export class LoopTaskExecutor implements TaskExecutor {
         type: "warning",
         message: `${spec.name} asks for fast mode but this run stays at the standard speed: ${preferenceNote}`,
       });
-    const effort = capEffort(
-      effortForTask(
-        mode,
-        brief.riskTier,
-        speedQualityOffsetOf(project?.settings),
-        settings.sources.effort === "agent"
-          ? withModeEffort(modelConfig?.modeDefaults, mode, settings.effort)
-          : modelConfig?.modeDefaults,
-      ),
-      spec.maxEffort,
+    const asked = effortForTask(
+      mode,
+      brief.riskTier,
+      speedQualityOffsetOf(project?.settings),
+      settings.sources.effort === "agent"
+        ? withModeEffort(modelConfig?.modeDefaults, mode, settings.effort)
+        : modelConfig?.modeDefaults,
     );
+    // The specialist's `max_effort` caps whatever the rules, the slider and the override asked for.
+    const effort = capEffort(asked, spec.maxEffort ?? defaultSpec.maxEffort);
+    if (effort !== asked)
+      this.deps.onEvent?.(task.id, {
+        type: "warning",
+        message: `${spec.name} runs at effort ${effort}, its max_effort, not ${asked}`,
+      });
     // Context layer: the session's pipeline, and the proxy only when the session selected it and
     // the provider can route through it (the fake provider cannot, so headroom_used stays false).
     // On the SDK path the proxy reaches the subprocess as its environment (`sdkEnv`, ADR 0003).

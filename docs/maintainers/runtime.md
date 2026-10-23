@@ -2183,7 +2183,8 @@ warning, never applied half-way). A temperature is resolved only when the provid
 `acceptsTemperature` flag is true.
 
 Who reads it: `LoopTaskExecutor` (a specialist run: rung into `startingTier`, the agent's
-effort as the table's base before the risk rules, `maxTokensPerCall`, the timeout for the
+effort as the table's base before the risk rules, the result capped at the file's `max_effort`
+(`SpecialistSpec.maxEffort`, with a warning when the cap bites), `maxTokensPerCall`, the timeout for the
 brief, the run token, the sandbox lease and the driver, `temperature`), `ProjectIntake` (the
 principal's planning call) and `ConversationAgent` (each chat turn; the turn's budget deadline
 and token expiry are the run's timeout plus 30 s, at least 60 s). The effort in force (the

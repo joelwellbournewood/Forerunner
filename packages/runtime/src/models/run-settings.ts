@@ -33,6 +33,7 @@ import {
 } from "../provider/types.ts";
 import {
   EFFORT_VALUES,
+  effortIndex,
   MaxTokensSchema,
   NAME_RE,
   SpeedModeSchema,
@@ -120,6 +121,8 @@ export function modeOverride(
 /** What a specialist's registry file says about the D.4 settings (absent keys: the table). */
 export interface SpecialistRunDefaults {
   tier: ModelTier;
+  /** The file's `max_effort`: the effort in force never goes above it (an override included). */
+  maxEffort?: EffortLevel;
   maxTokens?: number;
   speedMode?: SpeedMode;
   timeoutMs?: number;
@@ -215,6 +218,13 @@ export function resolveRunSettings(input: ResolveRunSettingsInput): ResolvedRunS
   if (o.effort !== undefined) {
     values.effort = o.effort;
     sources.effort = "agent";
+  }
+  // A specialist never runs above its file's `max_effort` (the executor applies the same cap
+  // after the table's risk rules), so the value shown is the value that can run.
+  const maxEffort = s?.maxEffort;
+  if (maxEffort) {
+    if (effortIndex(defaults.effort) > effortIndex(maxEffort)) defaults.effort = maxEffort;
+    if (effortIndex(values.effort) > effortIndex(maxEffort)) values.effort = maxEffort;
   }
   if (o.max_tokens !== undefined) {
     values.maxTokens = o.max_tokens;

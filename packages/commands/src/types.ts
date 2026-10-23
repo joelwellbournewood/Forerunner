@@ -1,6 +1,11 @@
 import type { PricingTable } from "@forerunner/billing";
 import type { Clock } from "@forerunner/platform";
-import type { ActionClass, ProviderCapabilities, StartRequest } from "@forerunner/runtime";
+import type {
+  ActionClass,
+  EffortLevel,
+  ProviderCapabilities,
+  StartRequest,
+} from "@forerunner/runtime";
 import type {
   ChangeScope,
   ChangeSource,
@@ -157,6 +162,8 @@ export interface CommandPorts {
   modelSettings?: {
     specialists(): readonly string[];
     capabilities(): ProviderCapabilities;
+    /** A runnable specialist's `max_effort` from its registry file: no effort above it is stored. */
+    maxEffort?(specialist: string): EffortLevel | undefined;
   };
 }
 

@@ -2465,6 +2465,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // never be sent).
       modelSettings: {
         specialists: () => registry.runnableSpecialists().map((d) => d.name),
+        maxEffort: (name) => registry.specialists.get(name)?.max_effort,
         capabilities: () =>
           provider ? providerCapabilities(provider) : { ...DEFAULT_PROVIDER_CAPABILITIES },
       },

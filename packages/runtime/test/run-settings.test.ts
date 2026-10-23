@@ -30,6 +30,24 @@ describe("resolveRunSettings (spec D.4, ADR 0072)", () => {
     expect(Object.values(r.sources).every((s) => s === "table")).toBe(true);
   });
 
+  it("caps a specialist's effort at its file's max_effort, the default and the override alike", () => {
+    const capped = resolveRunSettings({
+      mode: "researcher",
+      specialist: { tier: "sonnet", maxEffort: "medium" },
+      override: { effort: "max" },
+    });
+    // The research row says high, the agent asked for max: the file allows medium.
+    expect(capped.effort).toBe("medium");
+    expect(capped.defaults.effort).toBe("medium");
+    expect(capped.sources.effort).toBe("agent");
+    const under = resolveRunSettings({
+      mode: "coder",
+      specialist: { tier: "sonnet", maxEffort: "high" },
+      override: { effort: "low" },
+    });
+    expect(under.effort).toBe("low");
+  });
+
   it("orders the table, then the specialist file, then the agent's override", () => {
     const specialist = { tier: "haiku" as const, maxTokens: 2000, timeoutMs: 10 * 60_000 };
     const fileOnly = resolveRunSettings({ mode: "coder", specialist });

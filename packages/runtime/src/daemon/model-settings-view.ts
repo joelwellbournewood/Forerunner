@@ -143,6 +143,7 @@ export function buildModelSettingsView(input: ModelSettingsViewInput): ModelSett
           modeDefaults,
           specialist: {
             tier: d.default_tier,
+            maxEffort: d.max_effort,
             timeoutMs: d.timeout_minutes * 60_000,
             ...(d.max_tokens !== undefined ? { maxTokens: d.max_tokens } : {}),
             ...(d.speed_mode !== undefined ? { speedMode: d.speed_mode } : {}),

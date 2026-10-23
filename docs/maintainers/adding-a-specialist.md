@@ -54,7 +54,7 @@ value.
 | `version` | semver string | Bump on every prompt or limit change (see prompt_version). |
 | `description` | string | One line, shown in the extensions panel. |
 | `default_tier` | `haiku\|sonnet\|opus\|fable` | Starting rung; the runtime applies the project ceiling and `startingTier` from the ladder. The loader does not check the ceiling. |
-| `default_effort`, `max_effort` | `low\|medium\|high\|xhigh\|max` | `default_effort` must not exceed `max_effort`. The runtime raises effort by tier (coder: high at tier 2+) and the project slider, never above `max_effort`. |
+| `default_effort`, `max_effort` | `low\|medium\|high\|xhigh\|max` | `default_effort` must not exceed `max_effort`. A run's effort starts from the effort table's row of the specialist's mode (spec D.4: "defaults from the effort table"; the model watch's adopted efforts apply there), not from `default_effort`, which is validated and shown in the extensions panel only. The runtime raises effort by tier (coder: high at tier 2+), the project slider and the agent's override, never above `max_effort`: the executor caps the run there with a session-log warning, `model.settings.set` refuses a higher override and the settings screen does not offer one (ADR 0072). |
 | `allowed_tools` | string[] | The ceiling of tools a token for this specialist may contain. Forerunner tool names (validated against `ToolRegistry.names()` when the loader is given them) or Claude Code tools as `cc:Read`, `cc:Edit`, `cc:Bash` (validated against `KNOWN_CLAUDE_CODE_TOOLS`). `*` is rejected anywhere. The names are the Agent SDK driver's; on the loop driver each `cc:` name becomes its built-in equivalent or is dropped with an audit row (see "How `allowed_tools` reach a run", ADR 0043). |
 | `allowed_domains` | string[] | Hosts the specialist always needs (`api.example.com`, `*.example.com`). Project grants add to this; `*` is rejected. |
 | `max_budget_usd` | number > 0 | Cap per run; the runtime takes `min(brief budget, this, parent remaining)`. |
@@ -87,6 +87,9 @@ then the human's principal agent's override in `agent.model_config.specialists.<
 `tier`, `effort`, `max_tokens`, `speed_mode`, `timeout_minutes`, `temperature`), written by the
 `model.settings.set` command from the settings screen, chat or voice. Effort keeps the table's
 base and its risk rules (coding at tier 2+ runs at high); an agent's `effort` replaces the base.
+The file's `max_effort` caps the result (the override, the risk rules and the project slider
+included): `resolveRunSettings` shows the capped value, the executor runs it and warns,
+`model.settings.set` refuses an override above it.
 `specialistSpecFrom` (`src/daemon/compose.ts`) copies the three optional keys onto the
 executor's `SpecialistSpec`; the executor resolves and hands the loop `maxTokensPerCall`, the
 timeout (brief, token expiry, sandbox lease) and, where the flags allow, `temperature` and

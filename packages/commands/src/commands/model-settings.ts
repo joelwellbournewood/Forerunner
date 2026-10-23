@@ -9,7 +9,8 @@ import {
   type RunSettingField,
   RunSettingsOverrideSchema,
 } from "@forerunner/runtime/models/run-settings";
-import { NAME_RE } from "@forerunner/runtime/registry/types";
+import type { EffortLevel } from "@forerunner/runtime/provider/types";
+import { EFFORT_VALUES, NAME_RE } from "@forerunner/runtime/registry/types";
 import type { AgentRow, JsonObject, JsonValue } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
@@ -120,6 +121,18 @@ async function target(p: ModelSettingsSetParams, ctx: CommandContext): Promise<T
       );
     }
     value = parsed.data as JsonValue;
+  }
+  // A specialist's effort never above its file's `max_effort` (the executor caps a run there):
+  // a value that could never run is refused, not stored.
+  if (p.field === "effort" && value !== null && p.specialist !== undefined) {
+    const max = ports?.maxEffort?.(p.specialist);
+    if (max && EFFORT_VALUES.indexOf(value as EffortLevel) > EFFORT_VALUES.indexOf(max)) {
+      throw new ForerunnerError(
+        "validation",
+        `effort: the ${p.specialist} specialist runs at most at ${max} (its max_effort)`,
+        { details: { field: p.field, maxEffort: max } },
+      );
+    }
   }
   // Temperature only where the provider in use accepts one (spec D.4): never stored for a
   // provider that would drop it, so the screen never shows a value that does nothing.
