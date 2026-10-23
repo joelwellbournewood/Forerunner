@@ -135,13 +135,30 @@ pub fn hotkey_set(app: AppHandle, chord: String) -> Result<HotkeyStatus, String>
         log::info!("hotkey chord refused ({}): {e}", e.kind());
         e.to_string()
     })?;
-    let plan = lock(&h.state).plan_change(&parsed);
-    let ChangePlan::Register {
-        chord: canonical,
-        then_unregister,
-    } = plan
-    else {
-        return Ok(lock(&h.state).status());
+    let next_id = Shortcut::from_str(&parsed.canonical())
+        .map(|s| s.id())
+        .map_err(|e| e.to_string())?;
+    let plan = lock(&h.state).plan_change(&parsed, next_id);
+    let (canonical, then_unregister) = match plan {
+        ChangePlan::NoChange => return Ok(lock(&h.state).status()),
+        ChangePlan::Respell { chord } => {
+            // The OS already holds this hotkey for us: adopt the spelling, keep the registration.
+            let status = {
+                let mut s = lock(&h.state);
+                s.changed(&chord, next_id);
+                if let Err(e) = crate::hotkey::save(&h.file, &chord) {
+                    s.note(format!("{chord} is active but not saved: {e}"));
+                }
+                s.status()
+            };
+            log::info!("global hotkey respelt as {chord}");
+            notify_changed(&app, &status);
+            return Ok(status);
+        }
+        ChangePlan::Register {
+            chord,
+            then_unregister,
+        } => (chord, then_unregister),
     };
     match register(&app, &canonical) {
         Ok(id) => {

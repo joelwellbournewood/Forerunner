@@ -340,6 +340,10 @@ pub struct HotkeyState {
 pub enum ChangePlan {
     /// The chord is already registered.
     NoChange,
+    /// Another spelling of the hotkey the OS already holds for us (on Windows and Linux
+    /// `CommandOrControl+Shift+Space` and `Control+Shift+Space` are one hotkey with one plugin
+    /// id): keep the registration, adopt and save the new spelling.
+    Respell { chord: String },
     /// Register `chord`; once that succeeded, unregister the old one (if any). A chord the OS
     /// refuses therefore leaves the working one in place.
     Register {
@@ -397,10 +401,13 @@ impl HotkeyState {
         self.error = Some(reason);
     }
 
-    pub fn plan_change(&self, next: &Chord) -> ChangePlan {
+    /// `next_id` is the plugin's id for `next` (`Shortcut::id()`): two spellings with the same
+    /// id are the same OS hotkey, which the plugin refuses to register twice.
+    pub fn plan_change(&self, next: &Chord, next_id: u32) -> ChangePlan {
         let chord = next.canonical();
         match &self.registered {
             Some(r) if r.chord == chord => ChangePlan::NoChange,
+            Some(r) if r.id == next_id => ChangePlan::Respell { chord },
             other => ChangePlan::Register {
                 chord,
                 then_unregister: other.clone(),
@@ -563,7 +570,7 @@ mod tests {
         // A retry of the same chord registers again; nothing to unregister.
         let same = parse_chord(DEFAULT_CHORD).unwrap();
         assert_eq!(
-            s.plan_change(&same),
+            s.plan_change(&same, 7),
             ChangePlan::Register {
                 chord: DEFAULT_CHORD.into(),
                 then_unregister: None
@@ -582,12 +589,12 @@ mod tests {
             }
         );
         // The same chord again is a no-op.
-        assert_eq!(s.plan_change(&same), ChangePlan::NoChange);
+        assert_eq!(s.plan_change(&same, 7), ChangePlan::NoChange);
         // Another chord: register it first, then let the old one go, so a chord the OS refuses
         // leaves the working one in place.
         let other = parse_chord("ctrl+alt+t").unwrap();
         assert_eq!(
-            s.plan_change(&other),
+            s.plan_change(&other, 9),
             ChangePlan::Register {
                 chord: "Control+Alt+T".into(),
                 then_unregister: Some(Registered {
@@ -608,6 +615,44 @@ mod tests {
         assert!(s.status().registered);
         assert_eq!(s.status().error, None);
         assert!(!s.is_ours(7), "the old chord is no longer ours");
+    }
+
+    /// Typing "Ctrl+Shift+Space" while the default is active must not ask the plugin for a
+    /// second registration of the hotkey it already holds (it refuses: already registered).
+    #[test]
+    fn another_spelling_of_the_held_hotkey_is_adopted_without_registering() {
+        use tauri_plugin_global_shortcut::Shortcut;
+        let id = |c: &str| Shortcut::from_str(c).expect(c).id();
+        let mut s = HotkeyState::new(DEFAULT_CHORD);
+        s.registered(id(DEFAULT_CHORD));
+        let respelt = parse_chord("ctrl+shift+space").unwrap();
+        let plan = s.plan_change(&respelt, id(&respelt.canonical()));
+        if cfg!(target_os = "macos") {
+            // CommandOrControl is Command there: a different hotkey.
+            assert!(matches!(plan, ChangePlan::Register { .. }), "{plan:?}");
+            return;
+        }
+        assert_eq!(
+            plan,
+            ChangePlan::Respell {
+                chord: "Control+Shift+Space".into()
+            }
+        );
+        s.changed("Control+Shift+Space", id("Control+Shift+Space"));
+        assert!(
+            s.is_ours(id(DEFAULT_CHORD)),
+            "the same OS hotkey stays ours"
+        );
+        assert_eq!(s.status().chord, "Control+Shift+Space");
+        assert!(s.status().registered);
+        // And back: the default spelling is again the same hotkey.
+        let default = parse_chord(DEFAULT_CHORD).unwrap();
+        assert_eq!(
+            s.plan_change(&default, id(DEFAULT_CHORD)),
+            ChangePlan::Respell {
+                chord: DEFAULT_CHORD.into()
+            }
+        );
     }
 
     #[test]
