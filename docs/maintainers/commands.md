@@ -149,6 +149,9 @@ posted: an event of type `change` on `ctx.sessionId` (the conversation session),
 the principal agent to the human (the project chat), and for a shared project a message to every
 other human (`ports.sharedWith(projectId, humanId)`, default `project.settings.shared_with`)
 prefixed with the asking human's name. A failed post never undoes the change.
+`request.answer` also calls `ports.requestAnswered(requestId)` once the answer is recorded: the
+daemon applies it at once (its `syncApprovals`), as its answer route does, so an approved plan
+said in chat or voice starts its follow-up without waiting for a poll (ADR 0053 amendment).
 
 `compose(calls, ctx)` is the bespoke request: every call is validated and planned (a
 `project.switch` earlier in the plan makes later steps apply to the new project), the cards

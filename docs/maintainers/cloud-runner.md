@@ -192,8 +192,14 @@ session with trigger `message` when it finds
   (`plan:<session>#<sha256 of the planned task ids in order>`, `runtime.md` "Plan approval",
   ADR 0053): the runner plans again and runs only while the plan is still that plan, else it
   files the changed plan as a new request and runs nothing, so a task added after the human
-  looked never runs on the old approval. The newest approved plan in a check binds the start
-  (an older one is superseded and proposed again by the runner); a plan card without a
+  looked never runs on the old approval. The trigger shares the PC daemon's mark
+  (`markPlanAnswer`): a plan request whose card carries `applied_at` is never triggered on, the
+  plan a start binds to is claimed (a write conditional on the row's version; one the daemon
+  claimed first is left to it) before the start is asked for and marked with the scheduler's
+  answer after (`started`, `queued`, `deferred`, `start_failed`), and a claim whose start was
+  skipped for a PC that came online is released for that PC. The start carries the filing
+  session's cap (`budgetUsdMicro`), so the plan is cut as the human saw it. The newest approved
+  plan in a check binds the start (an older one is marked `superseded`); a plan card without a
   `plan_id` (an earlier build's request) starts a plain session that proposes the plan again. A
   rejected plan starts nothing. The runner's own unlock challenges and the email approvals have
   no `session_id` and never count, nor do another agent's requests.
@@ -374,7 +380,7 @@ file-backed SQLite, testenv mail server on 127.0.0.1, SimulatedClock):
 | --- | --- |
 | `config.test.ts` | defaults, required URL, every issue listed, overrides, lists and booleans, header verifier needs authserv-ids, inbox poll off with 0 and never under 1 s, no credential in the description (a password with a literal `@` included), a non-loopback health host listed with the other issues |
 | `health.test.ts` | the Hono app in process (`/health`, `/ready` 503 then 200, 404, query strings, `cache-control: no-store`, HEAD allowed, other methods 405, a failing status function answered 500 with the message and none of its data) and over a loopback socket on a free port; `localhost` accepted, a non-loopback host refused before binding; close releases the port |
-| `inbox-trigger.test.ts` | a peer's message triggers once (own notes, read and pre-start messages never; two projects give no project); waiting while a session runs; an answered session question, an approved plan carrying its `plan_id` as `planApproved`, a plan card without the id starting a plain session; a rejected plan, the unlock challenge and another agent's question ignored; two approved plans in one check (the newest binds); a PC online defers with a back-off; a start the scheduler skipped leaves the items for the next check; polling on the clock |
+| `inbox-trigger.test.ts` | a peer's message triggers once (own notes, read and pre-start messages never; two projects give no project); waiting while a session runs; an answered session question, an approved plan carrying its `plan_id` as `planApproved`, a plan card without the id starting a plain session; a rejected plan, the unlock challenge and another agent's question ignored; two approved plans in one check (the newest binds, the older is marked superseded); a plan the daemon marked is not triggered on; a triggered plan is marked, so a fresh trigger and the daemon's sync start nothing again, and carries the filing session's cap; a plan the daemon claims between the read and the claim starts nothing; a claim for a skipped start is released; a PC online defers with a back-off; a start the scheduler skipped leaves the items for the next check; polling on the clock |
 | `vault-unlock.test.ts` | challenge and answer against the real file vault; wrong key, tampered answer, stale challenge, expiry (withdrawn), deny; the key absent from every log line, audit row and request row; the window: cached re-unlock, forgetting at the end, shortened / cleared window, policy ask, window set by the answer, absurd window refused |
 | `presence-billing.test.ts` | desktop seen / stale / revoked / other human / runner kind; active pc session; billing: shared vs personal runner, `personalRunner` opt-in, missing credential and disabled source skipped, other human's agent refused; the router decides (`BillingRouter.pick` called once with `runner: "cloud", purpose: "session"`, a `never` policy skips the subscription on a personal runner, `runnerRoutingPolicy` per runner kind, the plan-share rule falls back to the API key at the cap) |
 | `remote.test.ts` | kill within one poll (runs aborted, freeze, result and audit rows), stop lifts the freeze, start resumes and asks the scheduler, pause refused, pc-targeted and other-runner commands untouched; another human's phone (start of its agent, kill) and a start naming another agent refused with `forbidden: ...`, the runner's run untouched |
