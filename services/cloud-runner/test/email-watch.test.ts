@@ -6,7 +6,7 @@ import {
   TestMailbox,
 } from "@forerunner/capabilities/email/index";
 import { SimulatedClock } from "@forerunner/platform";
-import { openStore, type StateStore } from "@forerunner/state";
+import { type JsonObject, openStore, type StateStore } from "@forerunner/state";
 import {
   FakeProvider,
   generateDkimKeyPair,
@@ -16,14 +16,14 @@ import {
 } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { EmailWatch } from "../src/email-watch.ts";
-import { advanceUntil, OWNER_EMAIL, type Seed, seedWorld } from "./helpers.ts";
+import { EMAIL_WATCH_MODE_OFF_REASON, EmailWatch } from "../src/email-watch.ts";
+import { advanceUntil, captureLogs, OWNER_EMAIL, type Seed, seedWorld } from "./helpers.ts";
 
 /**
  * The mailbox watcher against the testenv mail server (DKIM, SPF, Authentication-Results):
  * a valid command from the owner is acknowledged within 60 s of simulated time and starts a
  * capped cloud session; a spoofed command is ignored as data; polling delivers when push is
- * off; a runner without commands enabled watches nothing.
+ * off; a runner without commands enabled, or at sending mode off (ADR 0081), watches nothing.
  */
 const DOMAIN = "example.test";
 const AGENT_ADDRESS = `alice@${DOMAIN}`;
@@ -63,7 +63,13 @@ interface World {
 }
 
 async function world(
-  opts: { commands?: boolean; push?: boolean; hostPush?: boolean } = {},
+  opts: {
+    commands?: boolean;
+    push?: boolean;
+    hostPush?: boolean;
+    /** Store a row from before ADR 0081: commands on at sending mode off. */
+    legacyModeOff?: boolean;
+  } = {},
 ): Promise<World> {
   const clock = new SimulatedClock("2026-03-02T22:00:00Z");
   const store = await openStore({ url: "sqlite::memory:", clock });
@@ -88,6 +94,15 @@ async function world(
       marker: MARKER,
     },
   });
+  if (opts.legacyModeOff) {
+    // The store refuses commands at mode off now; a row written before the rule is forced in.
+    const row = await store.extension.byName("capability", `email:${seed.agent.id}`);
+    if (!row) throw new Error("settings row missing");
+    const config = row.config as { settings: JsonObject; commands: JsonObject };
+    await store.extension.update(row.id, row.version, {
+      config: { settings: { ...config.settings, mode: "off" }, commands: config.commands },
+    });
+  }
   const provider = new FakeProvider({ clock, latency: "none", replies: [], onNoMatch: "throw" });
   const cloud = new RowCloudSessions(store);
   const outcomes: string[] = [];
@@ -272,5 +287,97 @@ describe("email watch: polling and configuration", () => {
     w = await world({ commands: false });
     expect(await w.watch.start()).toMatchObject({ state: "disabled" });
     expect(w.watch.status.state).toBe("disabled");
+  });
+
+  it("refuses to start at sending mode off even with commands on, with the reason in the log and the status (ADR 0081)", async () => {
+    w = await world({ legacyModeOff: true });
+    const { result, lines } = await captureLogs(() => w.watch.start());
+    expect(result).toEqual({ state: "disabled", reason: EMAIL_WATCH_MODE_OFF_REASON });
+    expect(w.watch.status).toMatchObject({
+      state: "disabled",
+      reason: EMAIL_WATCH_MODE_OFF_REASON,
+    });
+    expect(EMAIL_WATCH_MODE_OFF_REASON).toMatch(/sending mode is off/);
+    expect(
+      lines.some((l) => l.includes("email watch not started") && l.includes("sending mode is off")),
+    ).toBe(true);
+    // A command mailed now is never picked up: nothing watches, nothing starts, nothing is sent.
+    await w.server.sendFrom(OWNER_EMAIL, {
+      to: AGENT_ADDRESS,
+      subject: `${MARKER} Fix CI`,
+      text: "Please fix CI.",
+    });
+    await w.clock.advance(120_000);
+    expect(w.cloud.started).toHaveLength(0);
+    expect(w.outcomes).toEqual([]);
+    expect(w.server.outbox.filter((m) => m.from === AGENT_ADDRESS)).toHaveLength(0);
+  });
+  it("stands down with the reason in the status and the log when the mode goes to off under a running watcher (ADR 0081)", async () => {
+    w = await world();
+    expect(await w.watch.start()).toMatchObject({ state: "watching" });
+    // The owner switches the mode to off on the desktop: the store turns commands off.
+    const daemonSide = new EmailSettingsStore(w.store.extension, w.clock);
+    await daemonSide.update(w.seed.agent.id, { settings: { mode: "off" } });
+    const { lines } = await captureLogs(async () => {
+      await w.server.sendFrom(OWNER_EMAIL, {
+        to: AGENT_ADDRESS,
+        subject: `${MARKER} Fix CI`,
+        text: "Please fix CI.",
+      });
+      await advanceUntil(w.clock, () => w.watch.status.state === "disabled", 10_000);
+    });
+    // The command was data: ignored and audited, nothing started, nothing sent.
+    expect(w.outcomes).toEqual(["ignored"]);
+    expect(w.cloud.started).toHaveLength(0);
+    expect(w.server.outbox.filter((m) => m.from === AGENT_ADDRESS)).toHaveLength(0);
+    // The health view no longer says watching; it says why.
+    expect(w.watch.status).toMatchObject({
+      state: "disabled",
+      reason: "email commands are off for this agent",
+      handled: 1,
+    });
+    expect(lines.some((l) => l.includes("email watch stopped"))).toBe(true);
+    // A row from before the rule (commands on at off) is reported with the mode-off reason.
+    const row = await w.store.extension.byName("capability", `email:${w.seed.agent.id}`);
+    if (!row) throw new Error("settings row missing");
+    const config = row.config as { settings: JsonObject; commands: JsonObject };
+    await w.store.extension.update(row.id, row.version, {
+      config: { settings: config.settings, commands: { ...config.commands, enabled: true } },
+    });
+    expect(await w.watch.start()).toEqual({
+      state: "disabled",
+      reason: EMAIL_WATCH_MODE_OFF_REASON,
+    });
+  });
+
+  it("stands down with the mode-off reason when commands stay on at off (a row from before the rule) under a running poll-only watcher", async () => {
+    w = await world({ push: false });
+    expect(await w.watch.start()).toMatchObject({ state: "watching", pushActive: false });
+    const row = await w.store.extension.byName("capability", `email:${w.seed.agent.id}`);
+    if (!row) throw new Error("settings row missing");
+    const config = row.config as { settings: JsonObject; commands: JsonObject };
+    await w.store.extension.update(row.id, row.version, {
+      config: { settings: { ...config.settings, mode: "off" }, commands: config.commands },
+    });
+    await w.server.sendFrom(OWNER_EMAIL, {
+      to: AGENT_ADDRESS,
+      subject: `${MARKER} Fix CI`,
+      text: "Please fix CI.",
+    });
+    await advanceUntil(w.clock, () => w.watch.status.state === "disabled", 120_000);
+    expect(w.watch.status).toMatchObject({
+      state: "disabled",
+      reason: EMAIL_WATCH_MODE_OFF_REASON,
+    });
+    expect(w.outcomes).toEqual(["ignored"]);
+    expect(w.cloud.started).toHaveLength(0);
+    // The poll loop is stopped: a later command is not even picked up.
+    await w.server.sendFrom(OWNER_EMAIL, {
+      to: AGENT_ADDRESS,
+      subject: `${MARKER} Another`,
+      text: "And this.",
+    });
+    await w.clock.advance(180_000);
+    expect(w.outcomes).toEqual(["ignored"]);
   });
 });

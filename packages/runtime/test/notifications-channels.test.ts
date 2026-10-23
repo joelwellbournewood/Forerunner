@@ -14,6 +14,7 @@ import {
   digestState,
   EmailChannel,
   isQuietAt,
+  KIND_URGENCY,
   NotificationEmitter,
   type NotificationEventPayload,
   NotificationPrefsPatch,
@@ -806,6 +807,23 @@ describe("producers", () => {
       sessionId: "s-2",
       dedupeKey: "email-command:<abc@example.test>",
     });
+    // ADR 0081: the owner hears that switching the mode to off turned email commands off.
+    expect(
+      producers.emailCommandsOff("h-1", {
+        agentId: "alice",
+        at: "2026-10-23T08:00:00.000Z",
+        message: "Email commands were turned off because the sending mode is now off.",
+        modeBefore: "allowlist",
+      }),
+    ).toMatchObject({
+      kind: "email_commands_off",
+      humanId: "h-1",
+      title: "Email commands turned off",
+      body: "Email commands were turned off because the sending mode is now off.",
+      link: "/settings",
+      dedupeKey: "email-commands-off:alice:2026-10-23T08:00:00.000Z",
+    });
+    expect(KIND_URGENCY.email_commands_off).toBe("normal");
     const report: KillReport = {
       stoppedRuns: 3,
       killedProcesses: 1,
@@ -921,12 +939,18 @@ describe("producers", () => {
         subject: "s",
         outcome: "accepted",
       }),
+      producers.emailCommandsOff("h-1", {
+        agentId: "a",
+        at: "2026-10-23T08:00:00.000Z",
+        message: "Email commands were turned off because the sending mode is now off.",
+        modeBefore: "read_only",
+      }),
       producers.peerMessage("h-1", message),
       producers.killSwitch("h-1", report, "ui"),
       producers.killSwitch("h-1", { ...report, scope: { agentId: "a", sessionId: "s-9" } }, "ui"),
       producers.killSwitch("h-1", { ...report, scope: { agentId: "a" } }, "ui"),
     ];
-    expect(built).toHaveLength(14);
+    expect(built).toHaveLength(15);
     for (const n of built) {
       expect(shellOpens(n.link), `${n.kind} links to ${n.link}`).toBe(true);
     }

@@ -76,7 +76,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `note.add` | project | low | yes (dismiss) | `queue_item` |
 | `summary.speak` | project | low | no (stop the playback in the app) | nothing; `ports.speak` reads the one-screen summary aloud (spec A.6, L.6; ADR 0063). By chat or from the UI the sentence is "Reading the summary of X aloud. <text>"; in a voice session the sentence is the text itself (the loop speaks it, no second voice); without a port, a usable provider or an app window that plays speech (the daemon's port answers "no app window open to play speech", so nothing claims "aloud" into silence) "Voice is unavailable (reason). Summary of X: <text>". `after` says whether it was spoken and by which path. Another human's project (the named one or the active one) is refused as `not_found` "the project "X" is not yours" before anything is read, by `ownsProject` (`src/ownership.ts`: members, `shared_with`, author, or no owner facts at all), the one rule the daemon's speak route uses too. `spokenProjectSummary(project, spendUsdMicro, chfPerUsd)` is the one builder of the text, used by the daemon's `GET /projects/:id/summary` too |
 | `request.answer` | project | the request's own risk | no | `human_request.answer` |
-| `email.mode.set` | global | high | yes | `extension` kind `capability`, name `email:<agentId>`, `config.settings.mode` |
+| `email.mode.set` | global | high | yes (undo also turns email commands back on when the change turned them off) | `extension` kind `capability`, name `email:<agentId>`, `config.settings.mode`; a change to `off` also turns email commands off (ADR 0081), see below |
 | `device.revoke` | global | high | no | `device.revoked` |
 | `memory.record` | project | low | yes (retire the lesson; a merged one restores the lesson it superseded) | `ports.memory.recordLesson`: a lesson in the private memory of the human's own principal, for the named or active project (none: every project), source `human:<id>;<chat|voice|...>:<conversation session>` |
 | `model.settings.set` | global | medium for a non-null `tier` or `effort` and for `speed_mode: fast`, else low | yes | one field of the principal agent's `model_config` (`modes.<planning\|text_chat>.<field>` or `specialists.<name>.<field>`; spec D.4, ADR 0072) |
@@ -122,6 +122,18 @@ project budget is `project.budget_usd_micro` plus `settings.budget_chf_micro`; t
 ceiling is `human.monthly_cap_usd_micro` plus `notify_prefs.monthly_cap_chf_micro`. Unset
 values fall back to the billing defaults (CHF 5 per session, CHF 150 per month).
 `sessionBudgetOf(project, ctx)` and `monthlyCeilingOf(human, ctx)` are exported for the runtime.
+
+`email.mode.set` keeps ADR 0081 (email commands need a sending mode other than off): a change
+to `off` while commands are on turns them off in the same write, and the card and the sentence
+say so ("...from Read only to Off; email commands are turned off with it, because at Off the
+agent could not answer them. Undo."). With `ports.emailMode` wired (the daemon, runtime.md) the
+command hands the change to the capability's `EmailSettingsStore`, which writes the
+`email.settings` `commands_switched_off` audit row and tells the owner (`email_commands_off`
+notification); without the port (tests, a hand-built executor) the command writes the row
+itself under the same rule, drops the `email-commands` permission and appends the same audit
+row, without a notification. The run records `before.commands_enabled` and
+`after.commands_switched_off`; the undo restores the mode and, when the change turned commands
+off and the restored mode is not `off`, turns them back on (`restoreCommands`).
 
 ### The change card (`src/change-card.ts`)
 
@@ -371,7 +383,10 @@ naming the human and the conversation session, another project or no project, un
 port, refused without an agent or without the port, an agent actor's lesson refused unless
 grounded in the human's words; `summary.speak` through the port, in a voice session and without
 voice, another human's project refused by id, by name and as the active project and allowed once
-shared, the `voice_alerts` setting), `intent.test.ts` (the two spec sentences,
+shared, the `voice_alerts` setting; ADR 0081: `email.mode.set` to off turns email commands off
+with the audit row and the card saying so, the undo turns them back on, and with
+`ports.emailMode` wired the command hands the change to the port and writes nothing itself),
+`intent.test.ts` (the two spec sentences,
 forty-four English and German phrases including the lesson phrases, "remember to" staying a note and the summary phrases, seven questions and ordinary sentences that are not lessons,
 ambiguity questions, budget tails that are not a time, invalid values as a question, the
 envelope refusal, the model port, time parsing with `rest`), and `scenario.test.ts` (the

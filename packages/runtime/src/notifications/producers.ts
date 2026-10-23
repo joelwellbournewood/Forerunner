@@ -205,6 +205,24 @@ export function emailCommandReceived(
   };
 }
 
+/**
+ * Switching the sending mode to off turned email commands off (ADR 0081): the owner hears it
+ * at once, whoever changed the mode, so a command mailed afterwards is not expected to run.
+ */
+export function emailCommandsOff(
+  humanId: string,
+  e: { agentId: string; at: string; message: string; modeBefore: string },
+): Notification {
+  return {
+    kind: "email_commands_off",
+    humanId,
+    title: "Email commands turned off",
+    body: cut(e.message, 500),
+    link: "/settings",
+    dedupeKey: `email-commands-off:${e.agentId}:${e.at}`,
+  };
+}
+
 /** A message from an agent to the human (spec F); questions, requests and acks are normal. */
 export function peerMessage(humanId: string, m: MessageRow, fromName?: string): Notification {
   const attention =
@@ -386,6 +404,8 @@ export function bindProducers(notifier: NotifierLike) {
       notifier.notify(updateApplied(humanId, u)),
     emailCommandReceived: (humanId: string, e: Parameters<typeof emailCommandReceived>[1]) =>
       notifier.notify(emailCommandReceived(humanId, e)),
+    emailCommandsOff: (humanId: string, e: Parameters<typeof emailCommandsOff>[1]) =>
+      notifier.notify(emailCommandsOff(humanId, e)),
     peerMessage: (humanId: string, m: MessageRow, fromName?: string) =>
       notifier.notify(peerMessage(humanId, m, fromName)),
     killSwitch: (humanId: string, report: KillReport, reason: string) =>

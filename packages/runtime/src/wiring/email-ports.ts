@@ -59,7 +59,9 @@ export async function storedEmailConfig(
  * to open leaves the next call to try again.
  */
 export function agentEmailPorts(deps: AgentEmailDeps): AgentEmailPorts {
-  const settings = new agentEmail.EmailSettingsStore(deps.store.extension, deps.clock);
+  const settings = new agentEmail.EmailSettingsStore(deps.store.extension, deps.clock, {
+    audit: deps.store.auditLog,
+  });
   const identity = new agentEmail.StoreIdentityLookup(deps.store.agent, deps.store.human);
   const sentLog = new agentEmail.AuditSentLog(deps.store.auditLog, deps.clock);
   const approvals = new agentEmail.HumanRequestApprovalPort(deps.store.humanRequest);

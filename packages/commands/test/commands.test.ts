@@ -707,6 +707,100 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     await w.store.close();
   });
 
+  it("email.mode.set to off turns email commands off with the audit row (ADR 0081), says so on the card, and undo turns them back on", async () => {
+    const w = await world();
+    await w.store.extension.insert({
+      kind: EMAIL_EXTENSION_KIND,
+      name: emailExtensionName(w.agent.id),
+      enabled: true,
+      permissions: ["email:read_only", "email-commands", "paused"],
+      config: {
+        settings: { mode: "read_only" },
+        commands: { enabled: true, registeredHumanAddress: "alice@example.test" },
+      },
+      author_agent: w.agent.id,
+    });
+    const card = await w.executor.plan(
+      { name: "email.mode.set", params: { mode: "off" } },
+      w.ctx(),
+    );
+    const sentence =
+      "Changed the email mode of Alice from Read only to Off; email commands are turned off with it, because at Off the agent could not answer them. Undo.";
+    expect(card.sentence).toBe(sentence);
+    const r = done(
+      await w.executor.execute({
+        name: "email.mode.set",
+        params: { mode: "off" },
+        ctx: w.ctx(),
+        confirmation: deviceOk(w.phone.id),
+      }),
+    );
+    expect(r.sentence).toBe(sentence);
+    const row = await w.store.extension.byName(
+      EMAIL_EXTENSION_KIND,
+      emailExtensionName(w.agent.id),
+    );
+    expect(row).toMatchObject({
+      enabled: false,
+      permissions: ["email:off", "paused"],
+      config: {
+        settings: { mode: "off" },
+        commands: { enabled: false, registeredHumanAddress: "alice@example.test" },
+      },
+    });
+    const audit = await w.store.auditLog.list({ agentId: w.agent.id, tool: "email.settings" });
+    expect(audit.map((a) => [JSON.parse(a.input_summary), a.human_id])).toEqual([
+      [
+        {
+          action: "commands_switched_off",
+          reason: "mode_off",
+          modeBefore: "read_only",
+          modeAfter: "off",
+        },
+        w.human.id,
+      ],
+    ]);
+    done(await w.executor.undo(r.changeLogId, w.ctx()));
+    expect(
+      await w.store.extension.byName(EMAIL_EXTENSION_KIND, emailExtensionName(w.agent.id)),
+    ).toMatchObject({
+      enabled: true,
+      permissions: ["email:read_only", "email-commands", "paused"],
+      config: { settings: { mode: "read_only" }, commands: { enabled: true } },
+    });
+    await w.store.close();
+  });
+
+  it("email.mode.set goes through the daemon's settings store when the port is wired (ADR 0081)", async () => {
+    const w = await world();
+    const calls: unknown[] = [];
+    const ports = {
+      ...w.ports,
+      emailMode: async (req: unknown) => {
+        calls.push(req);
+        return { commandsSwitchedOff: true };
+      },
+    };
+    const r = done(
+      await w.executor.execute({
+        name: "email.mode.set",
+        params: { mode: "off" },
+        ctx: w.ctx({ ports }),
+        confirmation: deviceOk(w.phone.id),
+      }),
+    );
+    expect(r.sentence).toMatch(/email commands are turned off with it/);
+    expect(calls).toEqual([
+      { agentId: w.agent.id, mode: "off", authorHuman: w.human.id, restoreCommands: false },
+    ]);
+    // The row is the store's to write: the command wrote nothing of its own.
+    expect(
+      await w.store.extension.byName(EMAIL_EXTENSION_KIND, emailExtensionName(w.agent.id)),
+    ).toBeUndefined();
+    expect(await w.store.auditLog.list({ tool: "email.settings" })).toEqual([]);
+    await w.store.close();
+  });
+
   it("device.revoke by name revokes at once and cannot be undone", async () => {
     const w = await world();
     const r = done(

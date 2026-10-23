@@ -4,7 +4,7 @@ import { email as agentEmail } from "@forerunner/capabilities";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import { FakeProvider } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { DAEMON_ROUTES, EmailSettingsView } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
@@ -16,7 +16,9 @@ import { createDaemonApp } from "../src/daemon/server.ts";
  * routes (`POST /agents/:id/email/pause|resume`) flip `settings.paused` and the policy holds
  * the next send while paused; a settings change through `PUT` reaches the policy at once and
  * is one `email.settings` audit row; the command audit and the sent log read newest first;
- * another human's agent is refused. Fake provider, a fake mailbox, `sqlite::memory:`, memory
+ * another human's agent is refused; email commands cannot be on at sending mode off (ADR 0081):
+ * turning them on there is a 400 with the plain message, and switching the mode to off turns
+ * them off with an audit row and an `email_commands_off` notification to the owner. Fake provider, a fake mailbox, `sqlite::memory:`, memory
  * vault, SimulatedClock; no network.
  */
 const REGISTRY = join(process.cwd(), "evals", "registry");
@@ -317,5 +319,134 @@ describe("the email settings routes on the daemon", () => {
         agentEmail.emailExtensionName(otherAgentId),
       ),
     ).toBeFalsy();
+  });
+
+  it("ADR 0081: switching the mode to off turns email commands off, audits it and notifies the owner; turning them on at off is a 400", async () => {
+    const on = await put(settingsPath(), {
+      settings: { mode: "read_only" },
+      commands: { enabled: true, registeredHumanAddress: "j@example.test" },
+    });
+    expect(on.status).toBe(200);
+    expect((await json(on)).commands).toMatchObject({ enabled: true });
+    const off = await put(settingsPath(), { settings: { mode: "off" } });
+    expect(off.status).toBe(200);
+    expect(await json(off)).toMatchObject({
+      settings: { mode: "off" },
+      commands: { enabled: false, registeredHumanAddress: "j@example.test" },
+    });
+    const rows = await rt.store.auditLog.list({
+      agentId: rt.agent.id,
+      tool: agentEmail.EMAIL_SETTINGS_TOOL,
+    });
+    const switched = rows
+      .map((r) => JSON.parse(r.input_summary) as Record<string, unknown>)
+      .filter((i) => i.action === "commands_switched_off");
+    expect(switched).toEqual([
+      {
+        action: "commands_switched_off",
+        reason: "mode_off",
+        modeBefore: "read_only",
+        modeAfter: "off",
+      },
+    ]);
+    await vi.waitFor(() => {
+      const told = rt.notifier
+        .recent({ humanId: rt.human.id, limit: 200 })
+        .filter((r) => r.notification.kind === "email_commands_off");
+      expect(told).toHaveLength(1);
+      expect(told[0]?.notification).toMatchObject({
+        title: "Email commands turned off",
+        link: "/settings",
+      });
+      expect(told[0]?.notification.body).toMatch(/sending mode is now off/);
+    });
+    const refused = await put(settingsPath(), { commands: { enabled: true } });
+    expect(refused.status).toBe(400);
+    expect((await json(refused)).error).toMatchObject({
+      code: "validation",
+      message: agentEmail.COMMANDS_NEED_SENDING_MODE,
+    });
+    expect((await json(await req(settingsPath()))).commands).toMatchObject({ enabled: false });
+  });
+  it("ADR 0081: email.mode.set (chat, voice, the phone) to off goes through the settings store: commands off, the audit row, the owner told; undo turns them back on", async () => {
+    const on = await put(settingsPath(), {
+      settings: { mode: "allowlist" },
+      commands: { enabled: true, registeredHumanAddress: "j@example.test" },
+    });
+    expect(on.status).toBe(200);
+    const switchedRows = async () =>
+      (await rt.store.auditLog.list({ agentId: rt.agent.id, tool: agentEmail.EMAIL_SETTINGS_TOOL }))
+        .filter((r) => r.input_summary.includes("commands_switched_off"))
+        .map((r) => ({
+          input: JSON.parse(r.input_summary) as Record<string, unknown>,
+          human: r.human_id,
+        }));
+    const toldBefore = rt.notifier
+      .recent({ humanId: rt.human.id, limit: 200 })
+      .filter((r) => r.notification.kind === "email_commands_off").length;
+    const rowsBefore = (await switchedRows()).length;
+    const pending = await json(
+      await req("/commands/execute", {
+        method: "POST",
+        body: JSON.stringify({
+          commands: [{ name: "email.mode.set", params: { mode: "off" } }],
+          wordsUsed: "turn my agent's email off",
+        }),
+      }),
+    );
+    expect(pending.status).toBe("pending");
+    expect((pending.card as { sentence: string }).sentence).toBe(
+      "Changed the email mode of Alice from Allowlist to Off; email commands are turned off with it, because at Off the agent could not answer them. Undo.",
+    );
+    const phone = await rt.store.device.register({
+      owner_human_id: rt.human.id,
+      name: "Pixel",
+      platform: "android",
+      public_key: ["pk", "phone", "email"].join("-"), // not-a-secret
+      kind: "phone",
+    });
+    const done = await json(
+      await req(`/commands/${String(pending.pendingId)}/confirm`, {
+        method: "POST",
+        body: JSON.stringify({ answer: "device", deviceId: phone.id, biometric: true }),
+      }),
+    );
+    expect(done.status).toBe("done");
+    expect(await json(await req(settingsPath()))).toMatchObject({
+      settings: { mode: "off" },
+      commands: { enabled: false, registeredHumanAddress: "j@example.test" },
+    });
+    const row = await rt.store.extension.byName(
+      agentEmail.EMAIL_EXTENSION_KIND,
+      agentEmail.emailExtensionName(rt.agent.id),
+    );
+    expect(row?.enabled).toBe(false);
+    expect(row?.permissions).not.toContain("email-commands");
+    const rows = await switchedRows();
+    expect(rows).toHaveLength(rowsBefore + 1);
+    expect(rows).toContainEqual({
+      input: {
+        action: "commands_switched_off",
+        reason: "mode_off",
+        modeBefore: "allowlist",
+        modeAfter: "off",
+      },
+      human: rt.human.id,
+    });
+    await vi.waitFor(() => {
+      const told = rt.notifier
+        .recent({ humanId: rt.human.id, limit: 200 })
+        .filter((r) => r.notification.kind === "email_commands_off");
+      expect(told).toHaveLength(toldBefore + 1);
+    });
+    // The undo restores the mode and the commands the change turned off.
+    const undone = await json(
+      await req(`/changes/${String(done.changeLogId)}/undo`, { method: "POST" }),
+    );
+    expect(undone.status).toBe("done");
+    expect(await json(await req(settingsPath()))).toMatchObject({
+      settings: { mode: "allowlist" },
+      commands: { enabled: true },
+    });
   });
 });

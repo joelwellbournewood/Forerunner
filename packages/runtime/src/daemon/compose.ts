@@ -2139,6 +2139,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     }
     return row;
   };
+  // ADR 0081: a mode change to off turns email commands off in the settings store; the
+  // owner hears it here whoever changed the mode (the audit row is the store's).
+  emailPorts.settings.onCommandsSwitchedOff((e) =>
+    notifyLater(notifications.emailCommandsOff(human.id, e), "email commands off"),
+  );
   kill.onStop((report, reason) =>
     notifyLater(notifications.killSwitch(human.id, report, reason), "kill switch"),
   );
@@ -2472,6 +2477,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         maxEffort: (name) => registry.specialists.get(name)?.max_effort,
         capabilities: () =>
           provider ? providerCapabilities(provider) : { ...DEFAULT_PROVIDER_CAPABILITIES },
+      },
+      // email.mode.set goes through the capability's settings store (ADR 0081): a change to
+      // off turns email commands off there, with its audit row and the owner's notification
+      // (the `onCommandsSwitchedOff` listener above); its undo turns them back on.
+      emailMode: async ({ agentId, mode, authorHuman, restoreCommands }) => {
+        const before = await emailPorts.settings.get(agentId);
+        const next = await emailPorts.settings.update(
+          agentId,
+          { settings: { mode }, ...(restoreCommands ? { commands: { enabled: true } } : {}) },
+          { authorHuman },
+        );
+        return { commandsSwitchedOff: before.commands.enabled && !next.commands.enabled };
       },
     },
   });

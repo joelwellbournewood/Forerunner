@@ -165,6 +165,28 @@ export interface CommandPorts {
     /** A runnable specialist's `max_effort` from its registry file: no effort above it is stored. */
     maxEffort?(specialist: string): EffortLevel | undefined;
   };
+  /**
+   * Sets an agent's email sending mode through the capability's settings store (ADR 0081):
+   * a mode change to `off` turns email commands off there, with the store's audit row and the
+   * owner's notification. `restoreCommands` (an undo) turns commands back on with the mode.
+   * Absent (tests, a hand-built loop), `email.mode.set` writes the row itself under the same
+   * rule and audit row, without the notification.
+   */
+  emailMode?(req: EmailModePortRequest): Promise<EmailModePortResult>;
+}
+
+export interface EmailModePortRequest {
+  agentId: string;
+  mode: "off" | "read_only" | "draft_only" | "allowlist" | "full_discretion";
+  /** The human who made the change, when a human did. */
+  authorHuman: string | null;
+  /** Turn email commands back on with the mode (the undo of a switch-off). */
+  restoreCommands?: boolean;
+}
+
+export interface EmailModePortResult {
+  /** Email commands were on before and the mode change to off turned them off. */
+  commandsSwitchedOff: boolean;
 }
 
 export interface SpeakPortRequest {

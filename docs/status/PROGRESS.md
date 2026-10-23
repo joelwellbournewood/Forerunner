@@ -14,7 +14,7 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending: the hosted emulator boots and launches the app (run 6), the raw-CDP attach is merged (ADR 0054) and not yet dispatched; the Settings → Capabilities → Email page (ADR 0066), PM intake (ADR 0055) and what you say during a live session (ADR 0078) landed 2026-10-23 | gates.md § Phase 5 |
 | 6 | Capabilities | injection suite, live revocation, overnight cloud-runner session, emailed task and spoofed email passed on the fake provider and the in-process mail server; live halves pending a real mailbox and host | gates.md § Phase 6 |
 | 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts) | gates.md § Phase 7 |
-| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 189 done, 34 in progress, 5 todo (S.32 merged from `wave/w2-s32-indicator` in c83a15d; D.16 `done` on `wave/w3-d16-slider`, reviewed and rebased onto cac6fee, merged in 443139a; D.4 done on its item branch, rebased onto 4ff4fb1, 2026-10-23); security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
+| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 190 done, 33 in progress, 5 todo (S.32 merged from `wave/w2-s32-indicator` in c83a15d; D.16 `done` on `wave/w3-d16-slider`, reviewed and rebased onto cac6fee, merged in 443139a; D.4 done on its item branch, rebased onto 4ff4fb1, 2026-10-23; T.1 on `wave/w3-t1-mode-off`, built, rebased onto 38ae8cc, not merged); security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
 
 ## Log
 
@@ -34,6 +34,64 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   1281 passed, 1 skipped (`performance-view.test.ts` 10, `performance-route.test.ts` 4,
   `intake.test.ts` 16); UI 52 files / 353 tests (`performance.test.tsx` 9); requirements 191
   done, 32 in progress, 5 todo. Not merged yet.
+### 2026-10-24 (item w3-t1-mode-off rebased onto 38ae8cc)
+- `wave/w3-t1-mode-off` rebased onto `origin/ccr-4d8a843c-1k9syk` (38ae8cc, after the merges
+  of w3-d4-specialist-settings (D.4) and w3-r5-phone (R.5)). Conflicts in the ADR index (0080
+  next to 0081), BLOCKERS (twice: R.5 and V.1 next to T.1), this log (three times: the base's
+  entries, the item list's R.5 and T.1 clauses, the phase 8 row), apps.md (the `/settings` row
+  with the base's Models section, the email page row with the branch's ADR 0081 clause), the
+  command ports (`modelSettings` next to `emailMode`) and the daemon's command ports in
+  `compose.ts` (the same); both sides kept (`docs/status/reviews/w3-t1-mode-off.md` `## Rebase
+  onto 38ae8cc`). Requirements on the rebased branch: 190 done, 33 in progress, 5 todo of
+  228. Current counts: capabilities 36 files / 393 tests, commands 12 / 173, cloud-runner
+  9 / 64, runtime 137 / 1267 (1 skipped), UI 52 / 349 unit tests passed. Not merged yet.
+
+### 2026-10-24 (item w3-t1-mode-off rebased onto 4ff4fb1)
+- `wave/w3-t1-mode-off` rebased again onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1, after the
+  merges of w2-l6-speak, w3-c5-specialist-approval, w3-d16-slider, w3-e4-recheck and
+  w5-android-high-risk). Conflicts in this log (twice: the base's entries and the phase 8 row
+  next to the branch's), commands.md (the test list: the base's `summary.speak` and
+  `voice_alerts` cases and forty-four intent phrases next to the ADR 0081 `email.mode.set`
+  cases), the command ports (`speak` next to `emailMode`), the daemon's command ports in
+  `compose.ts` (the `speak` port next to `emailMode`) and apps.md (the `/settings` row with the
+  base's D.16 slider, the email page row with the branch's ADR 0081 clause); both sides kept
+  (`docs/status/reviews/w3-t1-mode-off.md` `## Rebase onto 4ff4fb1`). Requirements on the
+  rebased branch: 189 done, 34 in progress, 5 todo of 228. Current counts: capabilities 36
+  files / 393 tests, commands 11 / 168, cloud-runner 9 / 64, runtime 133 / 1207 (1 skipped),
+  UI 48 / 323 unit tests passed. Not merged yet.
+
+### 2026-10-24 (item w3-t1-mode-off rebased onto cac6fee)
+- `wave/w3-t1-mode-off` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in
+  BLOCKERS (K.8, L.3, T.1 and V.1), this log, commands.md (the test list), the command ports
+  (`requestAnswered` and `pricingTable` next to `emailMode`) and the daemon's command ports in
+  `compose.ts` (`requestAnswered` and `memory` next to `emailMode`); both sides kept
+  (`docs/status/reviews/w3-t1-mode-off.md` `## Rebase`). Requirements on the rebased branch:
+  186 done, 37 in progress, 5 todo. Current counts: capabilities 36 files / 393 tests,
+  commands 10 / 152, cloud-runner 9 / 64, runtime 128 / 1134 (1 skipped), UI 46 / 299 unit
+  tests passed. Not merged yet.
+
+### 2026-10-24 (item w3-t1-mode-off reviewed and fixed)
+- Independent review of the T.1 build (`docs/status/reviews/w3-t1-mode-off.md`, `## Review`):
+  verdict revise, three findings, all fixed on the branch. High: `email.mode.set` (chat,
+  voice, the phone, the agent's `email_mode_set` tool) wrote the settings row past the store,
+  so a change to off kept commands on with no audit row or notification; the daemon now hands
+  it to the settings store through `CommandPorts.emailMode` (ADR 0081 amended), the card says
+  commands go off and the undo turns them back on. Low: a running cloud-runner watcher stands
+  down with the reason in `/health` when commands go out of force under it; the email page's
+  commands toggle follows the stored value and the mode note says commands went off.
+
+### 2026-10-23 (item w3-t1-mode-off: T.1 done, ADR 0081)
+- Email commands at sending mode off, one reading decided, enforced and tested (ADR 0081):
+  commands need a sending mode other than off. The settings store refuses turning them on at
+  off with a plain message (400 on the daemon's `PUT`; the settings page of wave/w2-email-page
+  reads the same validation), a mode change to off turns them off with an `email.settings`
+  audit row and an `email_commands_off` notification to the owner, the gate obeys nothing at
+  off and the runner's `EmailWatch.start` refuses to start at off with the reason in the log
+  and the health status. Replies to the owner stay allowed in every mode where commands can be
+  on. T.1 `done` (requirements after the rebase onto cac6fee: 186 done, 37 in progress, 5
+  todo); its BLOCKERS row resolved; email.md, cloud-runner.md, notifications.md and runtime.md updated. The B.6
+  residual was left to wave/w1-b6-review as the brief says. Build report:
+  `docs/status/reviews/w3-t1-mode-off.md`.
 
 ### 2026-10-23 (item w3-d4-specialist-settings rebased onto 4ff4fb1)
 - `wave/w3-d4-specialist-settings` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1), which
@@ -553,7 +611,7 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    fixed on its branch 2026-10-23, rebased onto 38ae8cc, awaiting the merge), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
-   w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
+   w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1; built on its branch, ADR 0081, reviewed and fixed 2026-10-24, awaiting merge), w3-misc-replay-ceiling (scenario 9's replay
    `it.todo`, the executor's ceiling rung). Then an independent review of each of the ten
    items merged on 2026-10-23 without one (w4-install-identity, w4-private-memory,
    w4-android-signing, w2-a2-intake, w2-g5-docs, w2-g6-promotion, w2-a4-sources,

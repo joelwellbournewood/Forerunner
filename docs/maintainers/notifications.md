@@ -49,6 +49,7 @@ names a session appends a `notification` event to that session's log.
 | `injection_flagged` | **urgent** | `producers.injectionFlagged` with an `InjectionReport` | `/sessions/<id>` or `/inbox` |
 | `update_available` | info | `producers.updateAvailable` from the updater | `/settings` (the UI's `/updates` page once the shell lists that root) |
 | `email_command_received` | normal | `producers.emailCommandReceived` from the email command handler | `/inbox` |
+| `email_commands_off` | normal | `producers.emailCommandsOff`, bound in `compose.ts` to `EmailSettingsStore.onCommandsSwitchedOff`: switching the sending mode to off turned email commands off (ADR 0081); dedupe key `email-commands-off:<agent>:<at>` | `/settings` |
 | `peer_message` | info (`requires_ack`, question, request, warning: normal) | `producers.peerMessage` from the inbox | `/inbox` |
 | `kill_switch` | **urgent** | `producers.killSwitch` with the `KillReport` | `/sessions/<id>` when one session was stopped, else `/` |
 | `daily_digest` | normal | the notifier itself (and `POST /notifications/test`) | `/inbox` |
@@ -388,8 +389,9 @@ Signal tests injected `run` and `which`, the voice tests the voice package's `Fa
   fetch errors, missing token or chat id, custom API base and token reference, text cut;
   Signal argv and unavailability; email port, subject, deep link and failures; routes
   (round-trip, 400s, other modules' keys kept, 404, recent, test, pending); every producer,
-  including that each one links to a route the shell opens and `deepLinkFor("/")` is
-  `fr://open`.
+  including that each one links to a route the shell opens (`email_commands_off`, ADR 0081,
+  included) and `deepLinkFor("/")` is `fr://open`. The daemon raising `email_commands_off` when
+  a `PUT` switches the mode to off is `email-routes-wiring.test.ts`.
 
 ## Known issues
 

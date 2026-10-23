@@ -57,6 +57,10 @@ export const MODE_MEANINGS: Record<EmailMode, string> = {
 export const FULL_DISCRETION_WARNING =
   "With full discretion the agent can email strangers on your behalf: anyone it judges right, without asking you first. The daily and per-recipient caps, the blocked-content rules and the signature stay on.";
 
+/** Shown after a mode change to off turned email commands off (ADR 0081). */
+export const COMMANDS_TURNED_OFF_NOTE =
+  "Email commands were turned off with it: at Off the agent sends nothing, so it could not answer them.";
+
 /** "ignored: no_marker" -> "no marker"; a handler error keeps its text. */
 export function ignoredReason(row: Pick<EmailCommandRowView, "obeyed" | "deniedReason">) {
   if (row.obeyed || !row.deniedReason) return null;
@@ -176,7 +180,11 @@ function ModePicker({
       const next = await client.updateEmailSettings(agent.id, { settings: { mode } });
       onSaved(next);
       setConfirming(false);
-      setNote(`Mode set to ${MODE_LABELS[next.settings.mode]}.`);
+      // ADR 0081: the daemon turns email commands off with a change to off; say so here.
+      const commandsWentOff = config.commands.enabled && !next.commands.enabled;
+      setNote(
+        `Mode set to ${MODE_LABELS[next.settings.mode]}.${commandsWentOff ? ` ${COMMANDS_TURNED_OFF_NOTE}` : ""}`,
+      );
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -636,6 +644,9 @@ function CommandsForm({
   const c = config.commands;
   const { busy, error, saved, save } = useSave(agent.id, onSaved);
   const [enabled, setEnabled] = useState(c.enabled);
+  // The stored toggle can change under the form (a mode change to off turns commands off,
+  // ADR 0081): the box follows it so it never shows commands on that are off.
+  useEffect(() => setEnabled(c.enabled), [c.enabled]);
   const [humanAddress, setHumanAddress] = useState(c.registeredHumanAddress ?? "");
   const [dailyTaskCap, setDailyTaskCap] = useState(String(c.dailyTaskCap));
   const [autonomy, setAutonomy] = useState(String(c.autonomyLevel));

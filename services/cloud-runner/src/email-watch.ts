@@ -8,6 +8,7 @@ import {
   type EmailIdentity,
   EmailPolicy,
   EmailSettingsStore,
+  emailCommandsActive,
   HumanRequestApprovalPort,
   ImapSmtpMailbox,
   type InboundEmail,
@@ -27,22 +28,10 @@ import type { ModelProvider, RunPricing } from "@forerunner/runtime";
 import type { StateStore } from "@forerunner/state";
 import { SecretResolver, type Vault } from "@forerunner/vault";
 
-/**
- * The agent mailbox watcher (spec "Email commands: tasks by email, run in the cloud"; T.2,
- * T.10, T.13). Composes the email module the way the orchestrator does (email.md, "Ports to
- * wire") around the agent's own mailbox and feeds every inbound message to
- * `EmailCommandHandler`, which applies the verification chain in code (owner's address, DKIM,
- * SPF, marker or thread) and acts on obeyed mail. A task command starts a cloud session through
- * the runner's `StartCloudSessionPort` with the per-email cost cap and the email autonomy level;
- * the handler acknowledges within a minute and the runner sends the completion summary when
- * the session ends.
- *
- * Checking: IMAP IDLE push when the host offers it, the configured poll interval otherwise
- * (`FORERUNNER_RUNNER_MAIL_CHECK_MS`, default five minutes). `FORERUNNER_RUNNER_MAIL_PUSH=false`
- * (`push: false`) never opens the push connection: the watcher lists the unseen messages at the
- * poll interval itself (`pollOnly`). The mailbox credentials are secret references resolved from
- * the runner's vault at call time; values never sit on the watcher.
- */
+/** Why the watcher does not start at sending mode off (log line and health view). */
+export const EMAIL_WATCH_MODE_OFF_REASON =
+  "the sending mode is off: email commands need a sending mode other than off, because at off the agent could not answer them";
+
 export type EmailWatchState =
   | { state: "disabled"; reason: string }
   | { state: "watching"; address: string; pushActive: boolean; startedAt: string };
@@ -74,6 +63,22 @@ export interface EmailWatchDeps {
   onOutcome?: (outcome: CommandOutcome, message: InboundEmail) => void;
 }
 
+/**
+ * The agent mailbox watcher (spec "Email commands: tasks by email, run in the cloud"; T.2,
+ * T.10, T.13). Composes the email module the way the orchestrator does (email.md, "Ports to
+ * wire") around the agent's own mailbox and feeds every inbound message to
+ * `EmailCommandHandler`, which applies the verification chain in code (owner's address, DKIM,
+ * SPF, marker or thread) and acts on obeyed mail. A task command starts a cloud session through
+ * the runner's `StartCloudSessionPort` with the per-email cost cap and the email autonomy level;
+ * the handler acknowledges within a minute and the runner sends the completion summary when
+ * the session ends.
+ *
+ * Checking: IMAP IDLE push when the host offers it, the configured poll interval otherwise
+ * (`FORERUNNER_RUNNER_MAIL_CHECK_MS`, default five minutes). `FORERUNNER_RUNNER_MAIL_PUSH=false`
+ * (`push: false`) never opens the push connection: the watcher lists the unseen messages at the
+ * poll interval itself (`pollOnly`). The mailbox credentials are secret references resolved from
+ * the runner's vault at call time; values never sit on the watcher.
+ */
 export class EmailWatch {
   private readonly logger = log("cloud-runner:email");
   readonly settings: EmailSettingsStore;
@@ -93,7 +98,7 @@ export class EmailWatch {
 
   constructor(private readonly deps: EmailWatchDeps) {
     const { store, clock } = deps;
-    this.settings = new EmailSettingsStore(store.extension, clock);
+    this.settings = new EmailSettingsStore(store.extension, clock, { audit: store.auditLog });
     this.identity = new StoreIdentityLookup(store.agent, store.human);
     this.sentLog = new AuditSentLog(store.auditLog, clock);
     this.approvals = new HumanRequestApprovalPort(store.humanRequest);
@@ -191,14 +196,20 @@ export class EmailWatch {
   }
 
   /**
-   * Start watching when commands are enabled and a mailbox is configured; otherwise report why
-   * and watch nothing. Never throws for a configuration gap: the runner still runs schedules.
+   * Start watching when commands are enabled, the sending mode is not off (ADR 0081) and a
+   * mailbox is configured; otherwise report why (log line, `status`, the health view) and
+   * watch nothing. Never throws for a configuration gap: the runner still runs schedules.
    */
   async start(): Promise<EmailWatchState> {
     if (this.watch) return this.current;
     const config = await this.settings.get(this.deps.agentId);
     if (!config.commands.enabled) {
       this.current = { state: "disabled", reason: "email commands are off for this agent" };
+    } else if (config.settings.mode === "off") {
+      // ADR 0081: at mode off the mailbox sends nothing, so a command could not even be
+      // acknowledged; a row with commands on at mode off (written before the rule) watches
+      // nothing until the owner picks a sending mode.
+      this.current = { state: "disabled", reason: EMAIL_WATCH_MODE_OFF_REASON };
     } else if (!config.commands.registeredHumanAddress) {
       this.current = { state: "disabled", reason: "no registered human address" };
     } else if (!config.settings.mailbox) {
@@ -298,6 +309,37 @@ export class EmailWatch {
     } catch (e) {
       this.logger.warn("inbound email failed", { id: message.id, error: errorMessage(e) });
     }
+    await this.standDownWhenOff();
+  }
+
+  /**
+   * After each message: when the owner turned commands off or the sending mode to `off`
+   * (ADR 0081) while this watcher runs, stop watching and report why in `status` (the health
+   * view) and the log, instead of claiming `watching` for commands no longer in force. The
+   * gate already obeyed nothing; the message itself was handled (ignored, audited). `start`
+   * reads the settings again, so a runner restart picks commands up once they are back on.
+   */
+  private async standDownWhenOff(): Promise<void> {
+    const w = this.watch;
+    if (!w) return;
+    let config: Awaited<ReturnType<EmailSettingsStore["get"]>>;
+    try {
+      config = await this.settings.get(this.deps.agentId);
+    } catch (e) {
+      this.logger.warn("email settings unreadable; still watching", { error: errorMessage(e) });
+      return;
+    }
+    if (emailCommandsActive(config) || this.watch !== w) return;
+    const reason = config.commands.enabled
+      ? EMAIL_WATCH_MODE_OFF_REASON
+      : "email commands are off for this agent";
+    this.watch = null;
+    this.current = { state: "disabled", reason };
+    this.logger.warn("email watch stopped", { reason });
+    // Not awaited: the poll-only watch's stop waits for the message in flight, which is this.
+    void w.stop().catch((e: unknown) => {
+      this.logger.warn("email watch did not stop cleanly", { error: errorMessage(e) });
+    });
   }
 
   /** Completion summary for an email-triggered session (T.10); the handler threads it. */

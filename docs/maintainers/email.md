@@ -30,6 +30,37 @@ the caps and skip the allowlist; they are still checked for credentials and secr
 The default mode is `off`; the setup screen should say plainly that `full_discretion` lets the
 agent email strangers.
 
+### Commands need a sending mode other than off (T.1, ADR 0081)
+
+At `off` the mailbox sends nothing, not even the acknowledgement of a command, so email
+commands cannot be on at `off`. The rule lives in `EmailSettingsStore.update` (`types.ts`),
+which every writer goes through: the daemon's `PUT` (and so the settings page), the runner,
+and the command registry's `email.mode.set` (chat, voice, the phone, the agent's
+`email_mode_set` tool), which the daemon wires to this store through `ports.emailMode`
+(commands.md; a hand-built executor without the port applies the same rule and audit row
+itself, without the notification):
+
+- Turning commands on at `off` (the merged result is mode `off` with commands on, the patch
+  sets `commands.enabled: true` and commands were not in force) throws
+  `ForerunnerError("validation", COMMANDS_NEED_SENDING_MODE)` with `details.reason:
+  "commands_need_sending_mode"`; nothing is written and the daemon answers 400 with that plain
+  sentence, which the page shows.
+- Switching the mode to `off` with commands on (including a form that still sends
+  `commands.enabled: true`) turns commands off in the same write, keeps the other command
+  settings, writes one `email.settings` audit row (`input_summary` `{ action:
+  "commands_switched_off", reason: "mode_off", modeBefore, modeAfter: "off" }`, `result_summary`
+  `{ status: "commands_off", reason: "mode_off" }`) when the store has an `audit` dep, and calls
+  the `onCommandsSwitchedOff(listener)` listeners with an `EmailCommandsSwitchedOff` event
+  (agent, human, mode before, time, one sentence for the owner). The daemon binds a listener
+  that sends the owner an `email_commands_off` notification (`compose.ts`, notifications.md).
+  A failing audit store or listener is a `warn` line and never undoes the write.
+- `emailCommandsActive(config)` (toggle on and mode not `off`) is what the gate and the
+  runner's watcher read, so a row stored before the rule (commands on at `off`) obeys nothing;
+  the next write over it turns commands off as above.
+
+So "replies to the owner are always allowed" holds in every mode where commands can be on;
+`checkSend` keeps refusing everything at `off`.
+
 ## The limits that stay on (S.21-S.28)
 
 All enforced in `policy.ts`, in this order, for every send (including approved drafts):
@@ -72,7 +103,8 @@ refused with "approval already used").
 
 A message is a command only when all of these hold, checked in code in this order:
 
-1. `commands.enabled` for the agent and a `registeredHumanAddress` is set.
+1. Commands are in force (`emailCommandsActive`: `commands.enabled` and the sending mode is not
+   `off`, ADR 0081; `disabled` otherwise) and a `registeredHumanAddress` is set.
 2. The From header names exactly one address and it is the registered address.
 3. The `AuthVerifier` says DKIM passes for a domain aligned (relaxed DMARC alignment) with the
    From domain, and SPF passes.
@@ -178,7 +210,7 @@ runtime's own requests; `EmailPolicy.resolveApproval` for `send_email`, `new_rec
 
 | File | What |
 | --- | --- |
-| `types.ts` | zod schemas and defaults (`EmailSettingsSchema`, `EmailCommandSettingsSchema`, `MailboxConfigSchema` with secret references only), `EmailSettingsStore`, the port interfaces, `EmailDraft`, `SendOutcome` |
+| `types.ts` | zod schemas and defaults (`EmailSettingsSchema`, `EmailCommandSettingsSchema`, `MailboxConfigSchema` with secret references only), `EmailSettingsStore` (with the ADR 0081 rule: `COMMANDS_NEED_SENDING_MODE`, `onCommandsSwitchedOff`, the optional `audit` dep), `emailCommandsActive`, the port interfaces, `EmailDraft`, `SendOutcome` |
 | `policy.ts` | `EmailPolicy` (`checkSend`, `send`, `resolveApproval`, `dailyDigest`, `sendDailyDigest`), `detectBlockedContent`, `recipientAllowlisted`, `applySignature`, `ModelContentClassifier` |
 | `sent-log.ts` | `SentLog` over `audit_log` (`AuditSentLog`; `MemorySentLog` for tests), tool names `email.send`, `email.draft`, `email.queued`, `email.command`, `email.inbound_flagged`, `email.settings` |
 | `inbound.ts` | `parseInboundEmail` (mailparser, `wrapUntrusted`, links and attachments as references), `saveAttachments`, `parseAuthResultsHeader`, `stripQuotedText`, `hasCommandMarker`, `isReplyToThread` |
@@ -333,11 +365,16 @@ compares the key sets, so a field added on one side fails there.
 
 ## Tests
 
-Unit (`pnpm vitest run --project unit packages/capabilities/test/email-*.test.ts`, 122 tests on
+Unit (`pnpm vitest run --project unit packages/capabilities/test/email-*.test.ts`, 8 files, 128 tests on
 the testenv mail server with DKIM and SPF, an in-memory SQLite store and `SimulatedClock`):
 
 - `email-settings.test.ts`: defaults, merge and validation, credential values refused, marker
-  rotation, pause, allowlist additions, per-email cap derivation.
+  rotation, pause, allowlist additions, per-email cap derivation; ADR 0081: turning commands on
+  at mode off refused with `COMMANDS_NEED_SENDING_MODE` and nothing written, commands accepted
+  in every other mode, switching the mode to off turns them off with the `email.settings`
+  `commands_switched_off` row and the listener told (also when the form still ticks commands),
+  a row stored before the rule is not in force and the next write turns it off, a failing
+  audit store or listener never undoes the switch-off.
 - `email-policy.test.ts`: mode matrix for a stranger; replies to the human in every mode; daily
   cap with a day rollover in `Europe/Zurich`; per-recipient cap; concurrent sends cannot slip
   past the daily or per-recipient cap and a ticket answered twice at once sends once (fails
@@ -384,7 +421,9 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
   the policy as `queued` and `resume` releases it, with the `pause` and `resume` rows; the sent
   log and the command audit (rows written as the runner's handler writes them) newest first
   with the limit; `rotate-marker`; another human's agent and an unknown id refused with 403
-  on every route and no settings row created.
+  on every route and no settings row created; ADR 0081: `PUT` mode off over commands on turns
+  them off with the `commands_switched_off` row and an `email_commands_off` notification to the
+  owner, and `PUT` commands on at mode off is a 400 carrying `COMMANDS_NEED_SENDING_MODE`.
 - `security-email.test.ts` (security review): every test is an attack from a real input and
   asserts what the code does with it: a forged `Authentication-Results` header naming the
   trusted host plus a bogus signature is data; a display name spelling the owner's address;
@@ -421,7 +460,8 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
   notification carrying the rules and never the passage.
 - `email-commands.test.ts`: the gate (marker, thread reply, spoofed DKIM, bogus signature, SPF
   fail, wrong sender, forwarded by another, forwarded by the owner, quoted command, missing
-  marker, disabled, each agent obeys only its own human); the handler (question, task with ack
+  marker, disabled, each agent obeys only its own human, nothing obeyed at sending mode off
+  including a row stored before ADR 0081); the handler (question, task with ack
   under 60 s and the capped cloud session, the task's tier from the project's default (0 in
   small-project mode, else 1; B.6), watched mailbox end to end, ask-which-project then
   threaded answer, note, attachments never opened, per-email cap, daily task cap with rollover,
@@ -506,16 +546,19 @@ Requirements close-out (2026-10-20): S.16 to S.27 are `done` on the suites above
 mounts the routes (`email-routes-wiring.test.ts`) and `apps/ui` has the Settings ->
 Capabilities -> Email page with the mode picker per agent, the full-discretion sentence before
 the change and in the confirmation, pause and resume, the limits, the allowlist, the mailbox
-by reference, the marker and the lists (`apps/ui/test/email-settings.test.tsx`).
+by reference, the marker and the lists (`apps/ui/test/email-settings.test.tsx`; ADR 0081 there:
+the mode note says commands went off with a change to off, the commands toggle follows the
+stored value, and turning commands on at Off shows the 400's sentence).
 
 Email commands close-out (2026-10-20): T.3 to T.12 are `done` on `email-commands.test.ts`,
 `email-auth.test.ts`, `email-inbound.test.ts`, `email-settings.test.ts`, `email-routes.test.ts`
 and the cloud runner's `runner.test.ts` and `email-watch.test.ts` (the capped cloud session,
-the acknowledgement within a minute, the completion in the thread). T.1 stays `in progress`:
-`closeout-email-commands.test.ts` proves the toggle and the replies in every mode that reads
-mail, but in mode `off` the policy refuses even the reply to the owner while the runner's
-watcher reads only the command toggle, a conflict inside the spec that an ADR has to settle.
+the acknowledgement within a minute, the completion in the thread). T.1 closed on 2026-10-23
+(ADR 0081): commands need a sending mode other than off, enforced in the settings store
+(`email-settings.test.ts`, `email-routes-wiring.test.ts`), the gate (`email-commands.test.ts`)
+and the runner's watcher (`services/cloud-runner/test/email-watch.test.ts`), and the reply to
+the owner goes out in every mode where commands can be on (`closeout-email-commands.test.ts`).
 T.14 closed on 2026-10-23: the daemon serves `GET .../email/commands` from the shared state
 (`emailCommandAudit`, `email-routes-wiring.test.ts`) and the page lists every command with
 when, from, the interpretation, the result and the reason it was ignored, newest first
-(`email-settings.test.tsx`). T.1 keeps its row in `docs/status/BLOCKERS.md`.
+(`email-settings.test.tsx`).
