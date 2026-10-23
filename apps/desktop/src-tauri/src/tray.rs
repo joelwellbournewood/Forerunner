@@ -1,6 +1,8 @@
-//! The tray icon and its menu (spec K.8, S.8, S.28, M; ADR 0026, ADR 0031): Open, the kill
-//! switch and Resume, Pause/Resume email, Update and restart, Quit. Items are enabled from
-//! `state::tray_view`, never optimistically; Quit leaves the daemon running.
+//! The tray icon and its menu (spec K.8, S.8, S.28, S.32, M; ADR 0026, ADR 0031, ADR 0067):
+//! Open, the desktop-control state and "Stop desktop control", the kill switch and Resume,
+//! Pause/Resume email, Update and restart, Quit. Items are enabled from `state::tray_view`,
+//! never optimistically; the icon's title and tooltip name desktop control while it is
+//! active; Quit leaves the daemon running.
 
 use std::sync::Mutex;
 
@@ -15,6 +17,8 @@ use crate::windows;
 pub const TRAY_ID: &str = "forerunner";
 
 const OPEN: &str = "open";
+const DESKTOP: &str = "desktop";
+const DESKTOP_STOP: &str = "desktop_stop";
 const KILL: &str = "kill";
 const RESUME: &str = "resume";
 const EMAIL: &str = "email";
@@ -23,6 +27,8 @@ const QUIT: &str = "quit";
 
 pub struct TrayHandles {
     tray: tauri::tray::TrayIcon<Wry>,
+    desktop: MenuItem<Wry>,
+    desktop_stop: MenuItem<Wry>,
     kill: MenuItem<Wry>,
     resume: MenuItem<Wry>,
     email: MenuItem<Wry>,
@@ -33,6 +39,14 @@ pub type SharedTray = Mutex<Option<TrayHandles>>;
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, OPEN, "Open Forerunner", true, None::<&str>)?;
+    let desktop = MenuItem::with_id(app, DESKTOP, "Desktop control: off", false, None::<&str>)?;
+    let desktop_stop = MenuItem::with_id(
+        app,
+        DESKTOP_STOP,
+        "Stop desktop control (not active)",
+        false,
+        None::<&str>,
+    )?;
     let kill = MenuItem::with_id(
         app,
         KILL,
@@ -54,6 +68,9 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         app,
         &[
             &open,
+            &PredefinedMenuItem::separator(app)?,
+            &desktop,
+            &desktop_stop,
             &PredefinedMenuItem::separator(app)?,
             &kill,
             &resume,
@@ -86,6 +103,8 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let tray = builder.build(app)?;
     app.manage::<SharedTray>(Mutex::new(Some(TrayHandles {
         tray,
+        desktop,
+        desktop_stop,
         kill,
         resume,
         email,
@@ -107,6 +126,11 @@ pub fn refresh(app: &AppHandle) {
     };
     let results = [
         h.tray.set_tooltip(Some(view.tooltip.as_str())),
+        h.tray.set_title(view.title.as_deref()),
+        h.desktop.set_text(&view.desktop_text),
+        h.desktop.set_enabled(view.desktop_enabled),
+        h.desktop_stop.set_text(&view.desktop_stop_text),
+        h.desktop_stop.set_enabled(view.desktop_stop_enabled),
         h.kill.set_text(&view.kill_text),
         h.kill.set_enabled(view.kill_enabled),
         h.resume.set_text(&view.resume_text),
@@ -126,6 +150,11 @@ pub fn refresh(app: &AppHandle) {
 fn on_menu(app: &AppHandle, id: &str) {
     match id {
         OPEN => windows::show_main(app),
+        // The status item opens the window, where the banner names the app and the session.
+        DESKTOP => windows::show_main(app),
+        DESKTOP_STOP => {
+            tauri::async_runtime::spawn(actions::desktop_stop(app.clone()));
+        }
         KILL => actions::kill_switch(app.clone()),
         RESUME => {
             tauri::async_runtime::spawn(actions::resume(app.clone()));

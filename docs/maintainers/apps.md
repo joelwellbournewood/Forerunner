@@ -116,7 +116,9 @@ log, `milestones` and `changeMilestone`) plus the proposed routes (`queue`, `enq
 `sourceCandidates`, `acceptCandidate`, `removeSource` over `DAEMON_ROUTES`, their schemas
 read straight from `daemon/api-types`, no mirror), the agent email routes (`emailSettings`,
 `updateEmailSettings`, `emailSent`, `pauseEmail`, `resumeEmail`, `rotateEmailMarker`,
-`emailCommands`; views from `api-types.ts`, no mirror), `auditExport(filter?)` (spec S.9:
+`emailCommands`; views from `api-types.ts`, no mirror), the desktop control routes the banner
+uses (`desktopStatus`, `desktopRevoke(reason?)`, `desktopResume`; `DesktopStatusView` and
+`DesktopRevokeView` from `api-types.ts`, ADR 0067), `auditExport(filter?)` (spec S.9:
 `GET /audit/export` with `agentId`, `sessionId`,
 `from`, `to` and `format`; the body as text with the row count and the base name from
 `Content-Disposition`, `filenameFromDisposition` / `countExportRows`) and `url()` / `raw()`
@@ -187,9 +189,19 @@ so it needs a tap. Without the rows (an older daemon) there is no card. `fast_mo
 sessionId, handlers, { afterSeq })` open an `EventSource` on `/events` or
 `/sessions/:id/events` with the token as `?token=` (EventSource cannot send headers, ADR
 0025). Events are parsed with `parseDaemonEvent` (`session.event`, `inbox.changed`,
-`session.changed`, `project.changed`, `extension.changed`, `restart.requested`, `heartbeat`;
-unknown or malformed frames are dropped). `extension.changed` bumps `extensionsVersion` in the
-store so the Extensions panel reloads; `restart.requested` sets `restart` (the shell shows a
+`session.changed`, `project.changed`, `extension.changed`, `restart.requested`,
+`desktop.indicator`, `heartbeat`; unknown or malformed frames are dropped). `extension.changed`
+bumps `extensionsVersion` in the store so the Extensions panel reloads (and re-reads desktop
+control, which a panel toggle revokes or resumes); `desktop.indicator` sets `desktopControl`
+(`desktopControlFromIndicator`), and because a frame sent while the stream was down is lost,
+`refreshDesktopControl` re-reads `GET /desktop/status` at bootstrap and every time `onMode`
+reports `sse` (first open and every reopen), and the polling fallback turns the status into
+the frame it stands for (`indicatorFromStatus`, spec S.32, ADR 0067). The read and the stream
+are two connections, so an answer given before a frame can arrive after it: the store orders
+them (`desktopOrder`; a `desktopRead` action takes a token, and the read's answer applies only
+if no frame or later read landed since), and a stale "off" never hides a running burst's
+banner. When a frame turns control off, `refreshDesktopControl` re-reads the status so a stop
+from any shell (the tray included) shows the "stopped" line; `restart.requested` sets `restart` (the shell shows a
 banner on every page) until a heartbeat arrives from a daemon on the target version. When
 `EventSource` is missing (jsdom) or closes, the helper polls every 5 s and retries SSE every
 30 s; `onMode` reports `connecting | sse | polling | closed`. Chat uses `streamChat()` over
@@ -199,7 +211,12 @@ it, `error` frames become `ApiError`; a plain JSON `ChatReplyView` is accepted a
 ### State
 
 `createStore(config, storage)` holds `UiState` (`connection`, `me`, `agents`, `projects`,
-`activeProjectId`, `blockingCount`, `killActive`, `theme`, `restart`, `extensionsVersion`);
+`activeProjectId`, `blockingCount`, `killActive`, `theme`, `restart`, `extensionsVersion`,
+`desktopControl`: `{ active, app, sessionId, agentId, since, revoked }` or null before the
+daemon said anything, set from a frame by `desktopControlFromIndicator` and from a status by
+`desktopControlFromStatus`, where `revoked` is a stop the banner can resume and never a
+revoke by the Extensions panel (reason "… disabled|removed in the Extensions panel"); and
+`desktopOrder`, the frame/read order above);
 React reads it with `useUiState(selector)` over `useSyncExternalStore` (selectors must return
 stable values). `activeProject` and `theme` persist in `localStorage` under
 `forerunner.ui.<installId>.<name>` (`lib/storage.ts`, wrapped in try/catch; `memoryStorage()`
@@ -230,6 +247,17 @@ The header always shows the active project (button opens a switcher listing ever
 Performance, Updates, Settings; collapses behind a menu button under 768 px), the connection
 badge, the palette button and the kill switch (`POST /kill {scope:"all"}`; the button then
 reads "Resume" and posts `/kill/resume`), plus the kill banner and the restart banner.
+Above the header, as the window's first child and outside the scrolling `<main>` (so on every
+page and through navigation), `shell/DesktopControlBanner.tsx` shows desktop control while
+`desktopControl.active` (spec S.32, ADR 0067): white on red with a yellow rule,
+`role="alert"`, "Desktop control active", the agent's name (from `agents`, the id when
+unknown), the application ("the desktop" until the controller names one) and the session as
+a link to `/sessions/:id`, with "Stop desktop control" (`POST /desktop/revoke`: interrupts and
+refuses desktop actions until resumed; the sessions keep running, unlike "Stop all"). After a
+stop (from the banner, the tray or the route) an amber line says desktop control is stopped,
+with "Resume desktop control" (`POST /desktop/resume`); a revoke by the Extensions panel shows
+no such line (the panel is where it is undone, and resume alone would not undo it). A failed
+stop keeps the banner with the error.
 `Ctrl/Cmd+K` opens the palette (`shell/commands.ts` builds navigation, "Switch project: …", New
 project, Stop all/Resume, theme and shortcuts commands; `filterCommands` matches every word).
 Shortcuts (`shell/shortcuts.ts`): `g h` Home, `g i` Inbox, `g s` Settings, `g p` active
@@ -423,7 +451,21 @@ ignored reason, the sent copies newest first, the empty states; the route-missin
 card against a daemon without the routes), `client` (the capability routes' nested error body
 read as a typed 403 with its own sentence),
 `shell` (matcher, palette filter, g-sequences incl. `g c` / `g t` / `g u`, switcher, kill
-switch, persistence).
+switch, persistence), `desktop-indicator` (spec S.32, ADR 0067; an EventSource stand-in wired
+to the fake daemon's listeners, `setDesktopControl` emitting the frame as `BusIndicator`
+does: no banner while off; an `on` frame showing the banner above the header, high contrast,
+naming the agent, the app and the session with its link, `off` hiding it without a "stopped"
+line; an app becoming known updating it and "the desktop" without one; the banner on every
+page through navigation; a missed `on` and a missed `off` corrected by the re-read when the
+stream reopens; a re-read answered before a newer `on` frame and landing after it dropped
+(the banner stays); the banner at start-up from the bootstrap read; "Stop desktop control"
+posting `/desktop/revoke` with its reason and not `/kill`, the banner gone and resume posting
+`/desktop/resume`; a stop from the tray offering resume at once and a revoke by the
+Extensions panel showing no stopped line; a failed stop keeping the banner; polling reading
+the indicator from the status view). `store` also orders desktop frames and reads (a read
+started before a frame or a later read is dropped) and maps a panel revoke to `revoked:
+false`. `sse` also parses `desktop.indicator` (on with names, off, a malformed one
+dropped).
 
 Playwright (`e2e/*.spec.ts`, one worker, 6-minute global budget): home shows two projects and
 connects; kill switch; nav collapse under 768 px; project tabs, task transition, plan timeline
@@ -487,13 +529,14 @@ The Tauri 2 shell for Windows and Linux that attaches the shared UI to the local
 (ADR 0026, ADR 0031): it resolves the app directories exactly as `appDirs()` does, reads
 `<runtime>/daemon.json`, checks `/health`, starts `fr daemon` when nothing healthy is there,
 injects the daemon address and token into the webview before the UI loads, keeps a tray with
-the kill switch, "pause email", "Update and restart" and Quit, shows OS notifications for the
-daemon's `notification` events, applies the restart contract, remembers the window and handles
+the kill switch, "pause email", the desktop-control state with "Stop desktop control",
+"Update and restart" and Quit, shows OS notifications for the daemon's `notification` events, applies the restart contract, remembers the window and handles
 `fr://` deep links. No TypeScript: `apps/desktop/package.json` only runs the Tauri CLI; the UI
 comes from `apps/ui/dist`.
 
 Requirements covered: K.8 (desktop notifications, tray menu; dark mode is the UI's), S.8 (kill
-switch from the tray), S.28 (one-click "pause email" in the tray), M.3 and M.4 ("Update and
+switch from the tray), S.28 (one-click "pause email" in the tray), S.32 (the tray shows desktop
+control while active, with the UI's banner in the window; ADR 0067), M.3 and M.4 ("Update and
 restart" and the relaunch after the staged install's health check or rollback). The Android
 client (R) is `apps/mobile`, not this shell.
 
@@ -520,7 +563,8 @@ apps/desktop/src-tauri/
     window_state.rs   <config>/window-state.json, placement() against the monitors
     state.rs          ShellState (shared), tray_view(): what the tray shows, derived from facts
     actions.rs        bootstrap() attach-or-start, attached(), handle_daemon_exit(), kill switch,
-                      resume, probe_email(), email toggle, update_and_restart(),
+                      resume, probe_email(), email toggle, probe_desktop(), desktop_stop(),
+                      update_and_restart(),
                       watch_external_restart() for a daemon the shell did not start
     events.rs         the Rust /events subscription and the 10 s /health monitor
     tray.rs           tray icon, menu items, refresh() from tray_view, menu dispatch
@@ -567,8 +611,20 @@ where `<id>` is `/me`'s `agent.id`; enabled only after `GET /agents/<id>/email/s
 answered 200, disabled with the reason in its text otherwise, since menu items have no
 tooltips; a test reads `emailRouteTable()`'s source so a route rename fails it); Update and
 restart (confirm dialog → `POST /updates/apply {}`; 202 expected); Quit (the daemon keeps
-running). The icon tooltip reads "Forerunner <version> — N running sessions[, M waiting on
-you][; kill switch active][; email paused]". Left-click opens the window. Closing the window
+running). Below Open, desktop control (spec S.32, ADR 0067): an item `Desktop control:
+active (<app>)` while the daemon reports it on (enabled; it opens the window, where the banner
+names the session) and `Desktop control: off` (disabled) otherwise, and "Stop desktop control"
+(`POST /desktop/revoke {reason}`; enabled only while on and reachable). The icon tooltip reads
+"Forerunner <version> — N running sessions[, M waiting on you][; kill switch active][; email
+paused]", preceded while desktop control is on by a first line `DESKTOP CONTROL ACTIVE: <app>
+(session <id>)`; the icon title (`set_title`, shown beside the icon by Linux app indicators)
+is `Desktop control active (<app>)` while on and unset when off. While the daemon is
+unreachable the last report stays, marked "last reported", with stop disabled. The state is
+`ShellState.desktop` (`state::DesktopControl`, `apply` replaces every name on `on` and
+clears them on `off`), set through `ShellState::apply_desktop_frame` (a frame, the stop's
+answer) and `apply_desktop_read` (the re-read, applied only if no frame or later read landed
+since `begin_desktop_read`, so an answer that crossed an `on` frame never clears the tray);
+`<app>` is "the desktop" until the controller names one. Left-click opens the window. Closing the window
 hides it; the shell keeps running in the tray (`RunEvent::ExitRequested` without a code is
 prevented).
 
@@ -577,6 +633,10 @@ header, 60 s read timeout, backoff 1→15 s) and shows an OS notification (notif
 for every `notification` event: `{ title, body?, level?, route? }`, title required, truncated
 at 200/1000 characters, `route` kept only when `is_safe_route` accepts it. Quiet hours are the
 daemon's: the shell shows what it receives. `inbox.changed` updates the tooltip,
+`desktop.indicator` (`sse::DesktopIndicator`: names trimmed, control characters dropped,
+capped at 80 characters) updates the desktop-control state and the tray, and every time the
+stream opens `actions::probe_desktop` re-reads `GET /desktop/status`'s `desktopControl`
+(frames sent while the stream was down are lost; a 404 or failure leaves the state),
 `restart.requested` marks the next exit as expected and, for a daemon the shell did not start
 that nothing watches yet (`state::needs_external_watch`: the human pressed "Update and
 restart" in the UI, not the tray), starts `actions::watch_external_restart`. The `/health`
@@ -640,6 +700,9 @@ struct that carries it. `node scripts/secret-scan.mjs apps/desktop` is clean.
   `decide_after_exit`; the tests enumerate every branch. The "gone" rule for a daemon the
   shell did not start is `restart::external_daemon_gone` and `MISSES_WITHOUT_REQUEST`; a
   test in `actions` pins that the misses fit the 90 s budget.
+- **The desktop routes or the status field move**: change `actions::DESKTOP_STATUS_PATH` /
+  `DESKTOP_REVOKE_PATH`; `actions::tests::desktop_paths_and_the_status_field_match_the_capability_source`
+  reads `packages/capabilities/src/desktop/routes.ts` and `controller.ts`.
 - **The email routes move**: change `actions::email_settings_path` / `email_action_path`;
   `actions::tests::email_paths_match_the_route_table_source` fails until they match
   `packages/capabilities/src/email/routes.ts` again.
@@ -663,18 +726,24 @@ error bodies, client `Debug` hides the token); `install` (install dir → node a
 reading, staged version first); `restart` (file parsing, exit-code matching, one restart then
 give up, rollback's extra relaunch, crash/stop, file round trip, the external "gone" rule per
 signal, the external exit code); `actions` (email paths against the route table's source,
-the external watch budget); `inject` (every field, JSON escaping, dev origin added once,
+the desktop paths and `desktopControl.active` against the desktop module's source, the
+external watch budget); `inject` (every field, JSON escaping, dev origin added once,
 `Debug` hides the token); `sse` (frames across chunks and CRLF, bytes split inside a
 character, invalid bytes, the line cap, comments, blank frames, notification validation and
-truncation, restart/inbox/heartbeat/unknown); `deeplink` (documented links, rejections,
+truncation, restart/inbox/heartbeat/unknown, `desktop.indicator` on with names and off
+without them, malformed refused, control characters and the cap, the status view's
+`desktopControl` read the same way); `deeplink` (documented links, rejections,
 safe routes, navigate script, navigation policy); `window_state` (monitor check, minimum size,
 file round trip); `state` (tray view for unreachable, kill/resume, email availability and
-toggle, busy, when a restart announcement starts the external watch, `Debug` hides the
+toggle, busy, desktop control on (title, tooltip first line, item, stop enabled) and cleared
+on off, "the desktop" without an app and a new `on` replacing the names, the last report kept
+but not stoppable while unreachable, a status read never overwriting a newer frame (and the
+later of two reads winning), when a restart announcement starts the external watch, `Debug` hides the
 token); `supervisor` (log path, spawn failure logged); `events` (reconnect backoff);
 `secret`; `env`; `lib` (install id persisted, 0600). The Tauri glue (window building, tray
 wiring, dialogs) is exercised by `tauri dev` and the CI build, not by unit tests. Last run
-2026-10-20 on Linux: `cargo fmt --check` clean, `cargo clippy --all-targets -- -D warnings`
-clean, `cargo test` 68 passed, 0 failed.
+2026-10-23 on Linux (item w2-s32-indicator, review): `cargo fmt --check` clean,
+`cargo clippy --all-targets -- -D warnings` clean, `cargo test` 74 passed, 0 failed.
 
 ### Known issues
 

@@ -29,7 +29,7 @@ import type { DesktopAdapter, MouseButton } from "./adapters/types.ts";
 import { appMatches, windowAllowed } from "./allowlist.ts";
 import type { DesktopApprovalPort } from "./approvals.ts";
 import { DesktopGate, type DesktopGateContext, desktopDenial } from "./gate.ts";
-import type { Indicator } from "./indicator.ts";
+import type { Indicator, IndicatorReason } from "./indicator.ts";
 import {
   DESKTOP_CAPABILITY_NAME,
   type DesktopAction,
@@ -80,12 +80,28 @@ export interface DesktopWindowList {
   hidden: number;
 }
 
+/**
+ * What the on-screen indicator shows right now (spec S.32), for a shell that (re)connects and
+ * missed the `desktop.indicator` frames: `active` mirrors `indicatorOn`; `app`, `sessionId`
+ * and `agentId` are those of the last `on` (null when off or not known); `since` is when the
+ * indicator turned on.
+ */
+export interface DesktopControlState {
+  active: boolean;
+  app: string | null;
+  sessionId: string | null;
+  agentId: string | null;
+  since: string | null;
+}
+
 export interface DesktopStatus {
   capability: string;
   adapter: DesktopAdapter["platform"];
   revoked: boolean;
   revokedReason: string | null;
   indicatorOn: boolean;
+  /** The indicator's state with the names the banner shows (the shells re-read it on reconnect). */
+  desktopControl: DesktopControlState;
   inFlight: number;
   queued: number;
   /** Actions performed since the daemon started. */
@@ -135,6 +151,8 @@ export class DesktopController {
   private waiters: Waiter[] = [];
   private readonly inflight = new Map<AbortController, DesktopIdentity>();
   private indicatorActive = false;
+  /** The reason of the last `on` while the indicator is on; null while off. */
+  private indicatorReason: IndicatorReason | null = null;
   private cancelIdle: (() => void) | null = null;
   private seq = 0;
   private actions = 0;
@@ -337,6 +355,13 @@ export class DesktopController {
       revoked: this.gate.revoked,
       revokedReason: this.gate.reason,
       indicatorOn: this.indicatorActive,
+      desktopControl: {
+        active: this.indicatorActive,
+        app: (this.indicatorActive && this.indicatorReason?.app) || null,
+        sessionId: (this.indicatorActive && this.indicatorReason?.sessionId) || null,
+        agentId: (this.indicatorActive && this.indicatorReason?.agentId) || null,
+        since: (this.indicatorActive && this.indicatorReason?.at) || null,
+      },
       inFlight: this.inflight.size,
       queued: this.waiters.length,
       actions: this.actions,
@@ -480,20 +505,43 @@ export class DesktopController {
     return { reason, interrupted, dropped };
   }
 
+  /**
+   * On before the action. While it is already on, a new `on` is sent only when what the banner
+   * names changed (another session, or the application became known or changed), so the
+   * shells never show a stale name; the same burst on the same app sends nothing more.
+   */
   private async indicatorOnFor(identity: DesktopIdentity, target?: WindowInfo): Promise<void> {
     this.cancelIdle?.();
     this.cancelIdle = null;
-    if (this.indicatorActive) return;
-    this.indicatorActive = true;
-    await this.opts.indicator.on({
+    const app = target?.exe;
+    const current = this.indicatorReason;
+    if (
+      this.indicatorActive &&
+      current &&
+      current.sessionId === identity.sessionId &&
+      current.agentId === identity.agentId &&
+      (app === undefined || app === current.app)
+    ) {
+      return;
+    }
+    const since = this.indicatorActive && current ? current.at : this.opts.clock.nowIso();
+    const reason: IndicatorReason = {
       agentId: identity.agentId,
       sessionId: identity.sessionId,
       runId: identity.runId,
       humanId: identity.humanId,
-      ...(target ? { app: target.exe } : {}),
-      message: `Forerunner agent ${identity.agentId} is controlling ${target?.exe ?? "the desktop"}`,
-      at: this.opts.clock.nowIso(),
-    });
+      ...(app !== undefined
+        ? { app }
+        : current?.app !== undefined && current.sessionId === identity.sessionId
+          ? { app: current.app }
+          : {}),
+      message: "",
+      at: since,
+    };
+    reason.message = `Forerunner agent ${identity.agentId} is controlling ${reason.app ?? "the desktop"}`;
+    this.indicatorActive = true;
+    this.indicatorReason = reason;
+    await this.opts.indicator.on(reason);
   }
 
   private async indicatorOff(why: string): Promise<void> {
@@ -501,6 +549,7 @@ export class DesktopController {
     this.cancelIdle = null;
     if (!this.indicatorActive) return;
     this.indicatorActive = false;
+    this.indicatorReason = null;
     await this.opts.indicator.off();
     this.logger.info("indicator off", { why });
   }

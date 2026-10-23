@@ -8,6 +8,7 @@ import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import { activeProject, type ThemePreference } from "../store/store.ts";
 import { CommandPalette } from "./CommandPalette.tsx";
 import { buildCommands } from "./commands.ts";
+import { DesktopControlBanner } from "./DesktopControlBanner.tsx";
 import { ShellContext } from "./ShellContext.ts";
 import { ShortcutsHelp } from "./ShortcutsHelp.tsx";
 import { createSequenceMatcher, isEditableTarget } from "./shortcuts.ts";
@@ -24,8 +25,8 @@ const NAV = [
 ];
 
 /**
- * Always present: header with the active project (click to switch), inbox badge, the kill
- * switch, navigation (collapses under 768px), the command palette and keyboard shortcuts.
+ * Always present: the desktop control banner while an agent controls the desktop, header with
+ * the active project (click to switch), inbox badge, the kill switch, navigation (collapses under 768px), the command palette and keyboard shortcuts.
  */
 export function Shell() {
   const client = useClient();
@@ -184,6 +185,8 @@ export function Shell() {
   return (
     <ShellContext.Provider value={shellActions}>
       <div className="flex h-full flex-col bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+        {/* Above everything, on every page, outside the scrolling main (spec S.32). */}
+        <DesktopControlBanner />
         <header
           className="flex flex-wrap items-center gap-2 border-b border-neutral-200 px-3 py-2 md:gap-4 md:px-4 dark:border-neutral-800"
           data-testid="header"

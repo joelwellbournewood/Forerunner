@@ -4,7 +4,8 @@
 > port, the controller, six `ToolSpec`s, the allowlist store and the routes are in
 > `packages/capabilities/src/desktop/` (exported as the `desktop` namespace of
 > `@forerunner/capabilities`); the daemon composes them (`runtime.md` "Desktop control",
-> ADR 0039). The shells' on-screen banner reads the `desktop.indicator` frame on `/events`.
+> ADR 0039). The shells render the `desktop.indicator` frame on `/events` (ADR 0067): a banner
+> above every page of the app and a tray state in the desktop shell.
 > This file covers the module; ADR 0021 records the adapter choices.
 
 ## Purpose
@@ -172,14 +173,37 @@ nothing is ever spliced into script text. The Windows key cannot be sent through
 ## Indicator
 
 `Indicator { on(reason), off() }` is the port the shells implement with a visible banner or
-overlay (the desktop app's window and tray, the approvals web page). The controller turns it
-on before the first action of a burst (after the gate passed, before the adapter acts), keeps
-it on while actions queue, and turns it off: after `indicatorIdleMs` (default 1500 ms) with no
-further action, at once on `endRun(runId)` when nothing else is active, and at once on
-`revoke()`, a kill-switch stop or the registry disabling the capability.
-`desktop-controller.test.ts` asserts the order (`indicator:on` before the first adapter
-action, `indicator:off` last). `LogIndicator` is the fallback when no shell is attached;
+overlay. The controller turns it on before the first action of a burst (after the gate passed,
+before the adapter acts), keeps it on while actions queue, and turns it off: after
+`indicatorIdleMs` (default 1500 ms) with no further action, at once on `endRun(runId)` when
+nothing else is active, and at once on `revoke()`, a kill-switch stop or the registry
+disabling the capability. `desktop-controller.test.ts` asserts the order (`indicator:on`
+before the first adapter action, `indicator:off` last). `LogIndicator` is the fallback line;
 `CompositeIndicator` fans out to several.
+
+While the indicator is on, the controller sends another `on` only when what a banner names
+changed (ADR 0067): the application became known (the burst started with
+`desktop_list_windows`, which names no window) or changed, or another session or agent acts.
+The same burst on the same application sends nothing more; `at` keeps the time the indicator
+first turned on; a new session's `on` does not carry the previous session's application.
+
+`status()` (the body of `GET /desktop/status`) carries the indicator for a shell that missed
+frames: `desktopControl: { active, app, sessionId, agentId, since }` (`DesktopControlState`;
+names null while off, `app` null while not known). The runtime's `api-types.ts` has the
+schemas the shells parse (`DesktopIndicatorEventData`, `DesktopControlView`,
+`DesktopStatusView`, `DesktopRevokeView`).
+
+What renders it (ADR 0067; `apps.md` has the details):
+
+| Shell | What it shows while on | Where it learns it | Stop |
+| --- | --- | --- | --- |
+| `apps/ui` (the desktop window) | `DesktopControlBanner` above the header on every page: white on red, `role="alert"`, the agent's name, the app ("the desktop" until named) and the session as a link | each `desktop.indicator` frame; `GET /desktop/status` at bootstrap, on every (re)opened stream, on `extension.changed`, when control ends and on every poll; a read answered before a newer frame is dropped | "Stop desktop control" = `POST /desktop/revoke`; after any stop (not a panel revoke) "Resume desktop control" = `POST /desktop/resume` |
+| `apps/desktop` tray | tooltip first line `DESKTOP CONTROL ACTIVE: <app> (session <id>)`, icon title `Desktop control active (<app>)`, item `Desktop control: active (<app>)` | the shell's own `/events` (`sse.rs` `DesktopIndicator`, `state.rs` `DesktopControl::apply`); `GET /desktop/status` on every (re)opened stream (`actions::probe_desktop`), dropped if a frame landed meanwhile | tray item "Stop desktop control" = `POST /desktop/revoke` |
+| Android, approvals web | nothing: they read the state service, not the PC daemon's `/events`; control runs on the PC | — | — |
+
+Off clears every trace: the banner goes, the tray title is unset, the item reads
+`Desktop control: off` and the stop item is disabled. While the daemon is unreachable the tray
+keeps the last report, marked "last reported", with stop disabled.
 
 ## Screenshots
 
@@ -264,21 +288,25 @@ store and detection.
   process on Linux, a fake proc dir elsewhere); Windows argv (`-File <temp script>`, base64
   arguments, scripts on disk unchanged by input, never `-Command`), chunked SendKeys with a
   scaled timeout, SendKeys escaping and key mapping, JSON parsing, script directory lifecycle.
-- `desktop-controller.test.ts`: indicator on/off order and idle timeout, off on `endRun`, off
+- `desktop-controller.test.ts` (the panel revoke's reason, "desktop-control disabled in the
+  Extensions panel", is pinned: the UI reads it to leave that revoke to the panel): indicator on/off order and idle timeout, off on `endRun`, off
   and refusal on revoke, live revoke interrupting an in-flight action and dropping a queued
   one, typing cut short (timeout or revoke) audited with `typed N of M characters` and the
   gate reason kept, kill switch stop and frozen state, registry disable/enable, the gate matrix
   never reaching the adapter, active-window change refused, focus of unknown or disallowed
   apps, human approval through the port, screenshots under the sandbox dir with the path logged
   and the image withheld unless allowed and asked, an audit row per action, hidden windows,
-  serialisation.
+  serialisation; `status().desktopControl` naming the app, session, agent and start while on
+  and all null when off; a fresh `on` only when the app becomes known or changes or another
+  session acts (none for the same burst on the same app), `at` kept, no app carried across
+  sessions.
 - `desktop-tools.test.ts`: six tools registered with risk high and `beforeCall`, strict
   schemas, `desktop_type`'s timeout covering `MAX_TEXT_LENGTH`, `beforeCall` refusing at
   autonomy 2 without touching the adapter, `execute` gated too, the six tools end to end on the
   fake adapter, an allowed screenshot naming the artifact and path instead of claiming it was
   attached, and behind `EnforcementHooks` with a real token (level 3 runs; level 2 with a
   human's approval of the tool call still refused).
-- `desktop-routes.test.ts`: status, allowlist get/put with validation and audit, signed-in
+- `desktop-routes.test.ts`: status (with `desktopControl` off), allowlist get/put with validation and audit, signed-in
   human required when the daemon identifies one and bound to their own id (another human's id
   answers 403), resume refused anonymously while revoke stays open, revoke and resume, error
   statuses.
@@ -292,7 +320,9 @@ store and detection.
   human as a blocking request, an allowlisted application focused and typed into through the
   fake adapter with the indicator on the bus and the typed text absent from the audit row,
   a shell on `/events` receiving the indicator as the `desktop.indicator` frame (on with the
-  app, agent, session and run at the first action; off at `endRun`), autonomy 2 refused by
+  app, agent, session and run at the first action; off at `endRun`) and `GET /desktop/status`
+  answering the same state as `desktopControl` while on and nulls after off, both parsed with
+  the runtime's `DesktopStatusView` / `DesktopIndicatorEventData`, autonomy 2 refused by
   the hooks and by the gate alike, a panel toggle revoking live and a toggle on resuming,
   revoke open to any caller and resume bound to the human.
 - `packages/runtime/test/desktop-wiring.test.ts` (the allowlist file in the daemon): the
@@ -307,6 +337,10 @@ store and detection.
 No integration test drives a real desktop: CI runners have no display. A manual check on each
 platform is `fr` -> Extensions -> enable desktop control at autonomy 3, then `desktop_focus`
 on an allowlisted editor and `desktop_type`; the banner must be visible while it types.
+The shells' side is tested in `apps/ui/test/desktop-indicator.test.tsx` (banner on, names,
+off, navigation, re-read on reconnect and in polling, stop and resume) and in the desktop
+shell's `state.rs`, `sse.rs` and `actions.rs` tests (tray view on, off, unreachable; frame and
+status parsing; the routes and the status field checked against this module's source).
 
 ## Known issues
 
@@ -319,9 +353,11 @@ on an allowlisted editor and `desktop_type`; the banner must be visible while it
   so. Forwarding image artifacts into the provider message builder is a runtime change, and
   until then the daemon's binding sets `screenshotsToModel: false` for every run (no token
   claims it).
-- The daemon emits the indicator as the `desktop.indicator` frame on `/events`; the desktop
-  shell's banner and tray state and the approvals web page's banner that render it are not
-  built yet, so until they are the visible indicator is the log line (`LogIndicator`).
+- The banner is part of the app window: while the window is hidden in the tray, the tray's
+  title (Linux app indicators only; Windows shows no title) and tooltip are the visible
+  indicator. An always-on-top overlay window is not built (ADR 0067, Consequences).
+- The Android app and the approvals web page show no indicator: they do not subscribe to the
+  PC daemon's `/events` (ADR 0067 point 7).
 - The binding's `tokenId` is empty: `ToolExecutionContext` carries no token id, so the
   module's audit rows name the session, run, agent and human but not the token; the hooks'
   own audit rows for the same call do.

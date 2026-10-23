@@ -173,6 +173,18 @@ pub struct NotificationEvent {
 
 pub const TITLE_MAX: usize = 200;
 pub const BODY_MAX: usize = 1000;
+/// Longest application or id the tray repeats from a `desktop.indicator` frame.
+pub const NAME_MAX: usize = 80;
+
+/// A `desktop.indicator` frame (spec S.32; ADR 0067): desktop control turned on (with the
+/// application, session and agent the controller named) or off. The tray shows it while on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopIndicator {
+    pub on: bool,
+    pub app: Option<String>,
+    pub session_id: Option<String>,
+    pub agent_id: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DaemonEvent {
@@ -185,6 +197,7 @@ pub enum DaemonEvent {
     InboxChanged {
         blocking_count: u64,
     },
+    DesktopIndicator(DesktopIndicator),
     Heartbeat,
     Other(String),
 }
@@ -197,6 +210,42 @@ fn truncate(s: &str, max: usize) -> String {
         out.push('…');
         out
     }
+}
+
+/// A name from the daemon for the tray: trimmed, control characters dropped, capped; `None`
+/// when nothing is left.
+fn tray_name(v: Option<&Value>) -> Option<String> {
+    let raw = v.and_then(Value::as_str)?;
+    let clean: String = raw.chars().filter(|c| !c.is_control()).collect();
+    let clean = clean.trim();
+    if clean.is_empty() {
+        None
+    } else {
+        Some(truncate(clean, NAME_MAX))
+    }
+}
+
+/// The indicator from a `desktop.indicator` frame's data or from the `desktopControl` object
+/// of `GET /desktop/status` (`active` instead of `on`); `None` when neither flag is a bool.
+pub fn parse_desktop_indicator(v: &Value) -> Option<DesktopIndicator> {
+    let on = v
+        .get("on")
+        .and_then(Value::as_bool)
+        .or_else(|| v.get("active").and_then(Value::as_bool))?;
+    if !on {
+        return Some(DesktopIndicator {
+            on: false,
+            app: None,
+            session_id: None,
+            agent_id: None,
+        });
+    }
+    Some(DesktopIndicator {
+        on: true,
+        app: tray_name(v.get("app")),
+        session_id: tray_name(v.get("sessionId")),
+        agent_id: tray_name(v.get("agentId")),
+    })
 }
 
 /// Typed view of one frame; `None` when the data is not usable.
@@ -251,6 +300,10 @@ pub fn parse_daemon_event(frame: &SseFrame) -> Option<DaemonEvent> {
             Some(DaemonEvent::InboxChanged {
                 blocking_count: v.get("blockingCount").and_then(Value::as_u64)?,
             })
+        }
+        "desktop.indicator" => {
+            let v: Value = serde_json::from_str(&frame.data).ok()?;
+            parse_desktop_indicator(&v).map(DaemonEvent::DesktopIndicator)
         }
         other => Some(DaemonEvent::Other(other.to_string())),
     }
@@ -408,6 +461,73 @@ mod tests {
             Some(DaemonEvent::Notification(n)) => assert_eq!(n.route, None),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn desktop_indicator_frames_and_the_status_object_parse_to_the_same_indicator() {
+        let f = |data: &str| SseFrame {
+            event: "desktop.indicator".into(),
+            data: data.into(),
+            id: None,
+        };
+        assert_eq!(
+            parse_daemon_event(&f(
+                r#"{"on":true,"app":" code ","sessionId":"sess_1","agentId":"agent_a","runId":"r","message":"m","at":"t"}"#
+            )),
+            Some(DaemonEvent::DesktopIndicator(DesktopIndicator {
+                on: true,
+                app: Some("code".into()),
+                session_id: Some("sess_1".into()),
+                agent_id: Some("agent_a".into()),
+            }))
+        );
+        assert_eq!(
+            parse_daemon_event(&f(r#"{"on":false}"#)),
+            Some(DaemonEvent::DesktopIndicator(DesktopIndicator {
+                on: false,
+                app: None,
+                session_id: None,
+                agent_id: None,
+            }))
+        );
+        // An off frame never carries names into the tray, even if the daemon sent some.
+        match parse_daemon_event(&f(r#"{"on":false,"app":"code"}"#)) {
+            Some(DaemonEvent::DesktopIndicator(d)) => assert_eq!(d.app, None),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert_eq!(parse_daemon_event(&f(r#"{"on":"yes"}"#)), None);
+        assert_eq!(parse_daemon_event(&f("not json")), None);
+        // Control characters are dropped and a long name is capped.
+        let long = "x".repeat(500);
+        match parse_daemon_event(&f(&format!(
+            r#"{{"on":true,"app":"co\u0007de\n","sessionId":"{long}"}}"#
+        ))) {
+            Some(DaemonEvent::DesktopIndicator(d)) => {
+                assert_eq!(d.app.as_deref(), Some("code"));
+                assert_eq!(d.session_id.map(|s| s.chars().count()), Some(NAME_MAX));
+                assert_eq!(d.agent_id, None);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        // `GET /desktop/status`'s `desktopControl` (null names) reads the same way.
+        let status: Value = serde_json::from_str(
+            r#"{"active":true,"app":"code","sessionId":"sess_1","agentId":null,"since":"t"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            parse_desktop_indicator(&status),
+            Some(DesktopIndicator {
+                on: true,
+                app: Some("code".into()),
+                session_id: Some("sess_1".into()),
+                agent_id: None,
+            })
+        );
+        let off: Value = serde_json::from_str(
+            r#"{"active":false,"app":null,"sessionId":null,"agentId":null,"since":null}"#,
+        )
+        .unwrap();
+        assert_eq!(parse_desktop_indicator(&off).map(|d| d.on), Some(false));
     }
 
     #[test]

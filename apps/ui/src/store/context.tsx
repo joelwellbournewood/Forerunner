@@ -7,8 +7,14 @@ import {
   useSyncExternalStore,
 } from "react";
 import { type DaemonClient, describeError } from "../api/client.ts";
-import { type StreamSubscription, subscribeDaemonEvents } from "../api/sse.ts";
-import { defaultAgent, type UiState, type UiStore } from "./store.ts";
+import { type StreamOptions, type StreamSubscription, subscribeDaemonEvents } from "../api/sse.ts";
+import {
+  defaultAgent,
+  desktopControlFromIndicator,
+  desktopControlFromStatus,
+  type UiState,
+  type UiStore,
+} from "./store.ts";
 import { applyTheme, watchSystemTheme } from "./theme.ts";
 
 interface AppContextValue {
@@ -23,10 +29,18 @@ export interface AppProviderProps {
   store: UiStore;
   /** Load health, me, agents, projects, inbox on mount and open the /events stream. */
   bootstrap?: boolean;
+  /** Options of the `/events` subscription (tests inject an EventSource and timers). */
+  streamOptions?: StreamOptions;
   children: ReactNode;
 }
 
-export function AppProvider({ client, store, bootstrap = true, children }: AppProviderProps) {
+export function AppProvider({
+  client,
+  store,
+  bootstrap = true,
+  streamOptions,
+  children,
+}: AppProviderProps) {
   useEffect(() => {
     if (!bootstrap) return;
     const controller = new AbortController();
@@ -35,48 +49,69 @@ export function AppProvider({ client, store, bootstrap = true, children }: AppPr
       if (!ok || controller.signal.aborted) return;
       const me = store.getState().me;
       if (!me) return;
-      stream = subscribeDaemonEvents(client, me.id, {
-        onEvent: (event) => {
-          if (event.event === "inbox.changed") {
-            store.dispatch({ type: "blockingCount", count: event.data.blockingCount });
-          } else if (event.event === "project.changed") {
-            void client
-              .project(event.data.id)
-              .then((project) => store.dispatch({ type: "project.upsert", project }))
-              .catch(() => {});
-          } else if (event.event === "extension.changed") {
-            store.dispatch({ type: "extension.changed" });
-          } else if (event.event === "restart.requested") {
-            store.dispatch({ type: "restart", restart: event.data });
-          } else if (event.event === "heartbeat") {
-            store.dispatch({
-              type: "connection",
-              patch: { lastHeartbeatAt: event.data.at, status: "connected", error: null },
-            });
-            // While a restart is announced, every heartbeat re-reads /health: a daemon on the
-            // version the restart aimed at means it is back, and the banner goes.
-            const restart = store.getState().restart;
-            if (restart) {
-              client
-                .health()
-                .then((health) => {
-                  store.dispatch({ type: "connection", patch: { health } });
-                  if (health.version === restart.targetVersion) {
-                    store.dispatch({ type: "restart", restart: null });
-                  }
-                })
+      stream = subscribeDaemonEvents(
+        client,
+        me.id,
+        {
+          onEvent: (event) => {
+            if (event.event === "inbox.changed") {
+              store.dispatch({ type: "blockingCount", count: event.data.blockingCount });
+            } else if (event.event === "project.changed") {
+              void client
+                .project(event.data.id)
+                .then((project) => store.dispatch({ type: "project.upsert", project }))
                 .catch(() => {});
+            } else if (event.event === "extension.changed") {
+              store.dispatch({ type: "extension.changed" });
+              // A panel toggle of desktop-control revokes or resumes it: re-read the state.
+              void refreshDesktopControl(client, store);
+            } else if (event.event === "restart.requested") {
+              store.dispatch({ type: "restart", restart: event.data });
+            } else if (event.event === "desktop.indicator") {
+              const previous = store.getState().desktopControl;
+              store.dispatch({
+                type: "desktopControl",
+                desktopControl: desktopControlFromIndicator(event.data, previous),
+              });
+              // Control just ended: re-read whether it was a stop (from this window, the tray
+              // or the route), so the banner can offer "Resume" whoever stopped it.
+              if (previous?.active && !event.data.on) void refreshDesktopControl(client, store);
+            } else if (event.event === "heartbeat") {
+              store.dispatch({
+                type: "connection",
+                patch: { lastHeartbeatAt: event.data.at, status: "connected", error: null },
+              });
+              // While a restart is announced, every heartbeat re-reads /health: a daemon on the
+              // version the restart aimed at means it is back, and the banner goes.
+              const restart = store.getState().restart;
+              if (restart) {
+                client
+                  .health()
+                  .then((health) => {
+                    store.dispatch({ type: "connection", patch: { health } });
+                    if (health.version === restart.targetVersion) {
+                      store.dispatch({ type: "restart", restart: null });
+                    }
+                  })
+                  .catch(() => {});
+              }
             }
-          }
+          },
+          onMode: (mode) => {
+            store.dispatch({ type: "connection", patch: { streamMode: mode } });
+            // The stream (re)opened: frames sent while it was down are lost, so the desktop
+            // control banner re-reads its state from the daemon (spec S.32, ADR 0067).
+            if (mode === "sse") void refreshDesktopControl(client, store);
+          },
         },
-        onMode: (mode) => store.dispatch({ type: "connection", patch: { streamMode: mode } }),
-      });
+        streamOptions,
+      );
     });
     return () => {
       controller.abort();
       stream?.close();
     };
-  }, [client, store, bootstrap]);
+  }, [client, store, bootstrap, streamOptions]);
 
   useEffect(() => {
     applyTheme(store.getState().theme);
@@ -130,6 +165,7 @@ export async function bootstrapStore(
       patch: { error: describeError(firstFailure.reason) },
     });
   }
+  await refreshDesktopControl(client, store, signal);
   const humanId = store.getState().me?.id;
   if (humanId) {
     try {
@@ -170,6 +206,33 @@ export function useIdentity(): { humanId: string; agentId: string } | null {
   const humanId = useUiState((s) => s.me?.id ?? null);
   const agentId = useUiState((s) => defaultAgent(s)?.id ?? null);
   return useMemo(() => (humanId && agentId ? { humanId, agentId } : null), [humanId, agentId]);
+}
+
+/**
+ * Read desktop control's state from `GET /desktop/status` into the store (bootstrap, every
+ * (re)opened stream, after a stop). A daemon without the desktop routes, or a failed read,
+ * leaves the store as it is: the next frame or read corrects it.
+ */
+export async function refreshDesktopControl(
+  client: DaemonClient,
+  store: UiStore,
+  signal?: AbortSignal,
+): Promise<void> {
+  // The read and the `/events` stream are two connections: a frame sent after the daemon
+  // answered can arrive first. The token drops this answer if a frame (or a later read)
+  // landed meanwhile, so a stale "off" never hides the banner of a burst already running.
+  store.dispatch({ type: "desktopRead" });
+  const readToken = store.getState().desktopOrder.next;
+  try {
+    const status = await client.desktopStatus(signal);
+    store.dispatch({
+      type: "desktopControl",
+      desktopControl: desktopControlFromStatus(status),
+      readToken,
+    });
+  } catch {
+    // no desktop routes on this daemon, or unreachable for the moment
+  }
 }
 
 /** Reload the project list (after a create, a transition, or a project.changed event). */

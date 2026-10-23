@@ -14,9 +14,48 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending: the hosted emulator boots and launches the app (run 6), the raw-CDP attach is merged (ADR 0054) and not yet dispatched; the Settings → Capabilities → Email page (ADR 0066), PM intake (ADR 0055) and what you say during a live session (ADR 0078) landed 2026-10-23 | gates.md § Phase 5 |
 | 6 | Capabilities | injection suite, live revocation, overnight cloud-runner session, emailed task and spoofed email passed on the fake provider and the in-process mail server; live halves pending a real mailbox and host | gates.md § Phase 6 |
 | 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts) | gates.md § Phase 7 |
-| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 183 done, 40 in progress, 5 todo; security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
+| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 184 done, 39 in progress, 5 todo (S.32 on `wave/w2-s32-indicator`, built, not merged); security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
 
 ## Log
+
+### 2026-10-23 (item w2-s32-indicator rebased onto 22982fa)
+- `wave/w2-s32-indicator` rebased onto `origin/ccr-4d8a843c-1k9syk` (22982fa). Conflicts in
+  the UI's fake daemon (the base's runner keys and fast mode next to the branch's desktop
+  state), the ADR index (0067 and 0068), runtime.md, BLOCKERS (S.12 and S.32) and this log;
+  both sides kept (`docs/status/reviews/w2-s32-indicator.md` `## Rebase`). Current counts:
+  UI suite 46 files / 298 tests (`desktop-indicator.test.tsx` 11), `cargo test` 74 passed,
+  capabilities 383 and runtime 1098 unit tests passed. Not merged yet.
+
+### 2026-10-23 (item w2-s32-indicator reviewed and fixed)
+- Independent review of `wave/w2-s32-indicator` (`docs/status/reviews/w2-s32-indicator.md`
+  `## Review`): verdict revise, 72. Three findings, all fixed on the branch:
+  1. In the UI, a status re-read answered before a newer `desktop.indicator` frame overwrote
+     it and hid the banner for the whole burst. The store now orders frames and reads
+     (`desktopOrder`).
+  2. The tray had the same race (`ShellState::begin_desktop_read` / `apply_desktop_read`).
+  3. The "stopped" line followed any revoke, the Extensions panel's included, and missed a
+     tray stop. It now follows stops only, and the end of control re-reads the status.
+
+  ADR 0067 points 4 to 6 are amended. Tests: `desktop-indicator.test.tsx` 11 (from 9), two
+  more `store.test.ts` cases, `cargo test` 74 (from 73). Not merged yet.
+
+### 2026-10-23 (item w2-s32-indicator: the desktop-control indicator in the shells, S.32)
+- Built on `wave/w2-s32-indicator` from b1804e3 (ADR 0067); builder-verified, not yet
+  independently reviewed or merged. `apps/ui`: `DesktopControlBanner` above the header on
+  every page while the latest `desktop.indicator` frame is on (white on red, `role="alert"`,
+  the agent, the app and the session linked, "Stop desktop control" = `POST /desktop/revoke`,
+  then "Resume desktop control"), hidden on off; the store re-reads `GET /desktop/status` at
+  bootstrap, on every reopened `/events` stream, on `extension.changed` and in polling.
+  Daemon: `GET /desktop/status` carries `desktopControl { active, app, sessionId, agentId,
+  since }` (schemas in `api-types.ts`) and the controller sends a fresh `on` when the named app
+  or session changes. Desktop shell: the tray's tooltip line, icon title, `Desktop control:
+  active (<app>)` item and "Stop desktop control" from the same frame, cleared on off, re-read
+  on every reopened stream (`state.rs`, `sse.rs`, `actions.rs`). S.32 `done`: requirements 184
+  done, 39 in progress, 5 todo. Tests: `apps/ui/test/desktop-indicator.test.tsx` (9), UI suite
+  43 files / 265 tests, `cargo test` 73 passed, capabilities and runtime suites green
+  (`docs/status/reviews/w2-s32-indicator.md`). Open: the Android app and the approvals web page
+  show no indicator (they do not read the PC daemon's `/events`), no overlay while the window
+  is hidden, the manual check on a real desktop and the Windows run of the Rust tests.
 
 ### 2026-10-23 (item w2-s12-unlock-card, review and fix: docs/status/reviews/w2-s12-unlock-card.md)
 - The daemon's `POST /runner-unlock/wrap` takes `{ requestId }` and wraps only to the challenge on
@@ -182,8 +221,8 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    `wip:` commit is unreviewed and unverified, so start from its diff, not its claims.
 3. Build the unbuilt items one at a time, each with an independent review before the merge
    (the BLOCKERS.md row of each names the gap and the fix): w2-chat-memory (J.1, O.2),
-   w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
-   (S.12), w4-fcm-sender (R.6, the service side), w3-c5-specialist-approval (C.5),
+   w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32; built and reviewed on
+   its branch 2026-10-23, the findings fixed, awaiting the merge), w2-s12-unlock-card (S.12), w4-fcm-sender (R.6, the service side), w3-c5-specialist-approval (C.5),
    w3-d4-specialist-settings (D.4), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
    w3-r5-phone (R.5), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay

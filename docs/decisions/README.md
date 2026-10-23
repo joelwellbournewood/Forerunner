@@ -79,6 +79,7 @@ Status: accepted | superseded by NNNN
 | 0062 | Merge after an accepting review: an unattended `merge_pr` call behind the hooks, the checks rule in the tool, and what is never merged automatically |
 | 0065 | Shared secrets: wrapped to the named agents' install keys, both humans approve, served by reference |
 | 0066 | Settings -> Capabilities -> Email: the capability's routes on the daemon, a page per agent, the full-discretion confirmation as the page's own step, the command audit read from the shared state |
+| 0067 | The desktop-control indicator in the shells: a banner above every page of the app naming the agent, the app and the session with "Stop desktop control" (`POST /desktop/revoke`), a tray title, tooltip and item from the same frame, `desktopControl` on `GET /desktop/status` re-read on every (re)connect, a fresh `on` when the named app or session changes |
 | 0068 | Runner unlock card: the device auto-answers only inside the window it set, the biometric prompt still runs, a key bridge returns only the wrapped answer (the daemon on the desktop, the Keystore store on Android) |
 | 0078 | What you say during a live session: the message kind and where the next task reads it |
 | 0082 | Install identity on a shared store: an install names its human; the store's first row is never it |

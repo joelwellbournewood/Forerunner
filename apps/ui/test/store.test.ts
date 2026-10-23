@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { memoryStorage, storageKey } from "../src/lib/storage.ts";
-import { activeProject, createStore, defaultAgent } from "../src/store/store.ts";
+import {
+  activeProject,
+  createStore,
+  type DesktopControlState,
+  defaultAgent,
+  desktopControlFromStatus,
+} from "../src/store/store.ts";
 import { nextTheme, resolveTheme } from "../src/store/theme.ts";
 import { AGENTS, ME, PROJECTS } from "./fixtures.ts";
 import { testConfig } from "./helpers.tsx";
@@ -25,6 +31,73 @@ describe("ui store", () => {
     s3.dispatch({ type: "projects", projects: PROJECTS });
     expect(s3.getState().activeProjectId).toBe("proj_atlas");
     expect(stale.get(storageKey("test", "activeProject"))).toBe("proj_atlas");
+  });
+
+  it("a desktop status read lands only if no frame or later read was applied since it started (ADR 0067)", () => {
+    const store = createStore(testConfig(), memoryStorage());
+    const on: DesktopControlState = {
+      active: true,
+      app: "code",
+      sessionId: "s1",
+      agentId: "a1",
+      since: "t",
+      revoked: false,
+    };
+    const off: DesktopControlState = {
+      ...on,
+      active: false,
+      app: null,
+      sessionId: null,
+      agentId: null,
+      since: null,
+    };
+    const read = () => {
+      store.dispatch({ type: "desktopRead" });
+      return store.getState().desktopOrder.next;
+    };
+    // A read started before a frame is dropped when it lands after it.
+    const r1 = read();
+    store.dispatch({ type: "desktopControl", desktopControl: on });
+    store.dispatch({ type: "desktopControl", desktopControl: off, readToken: r1 });
+    expect(store.getState().desktopControl).toEqual(on);
+    // A read started after the frame lands.
+    const r2 = read();
+    store.dispatch({ type: "desktopControl", desktopControl: off, readToken: r2 });
+    expect(store.getState().desktopControl).toEqual(off);
+    // Two reads in flight: the later one wins whichever lands first.
+    const r3 = read();
+    const r4 = read();
+    store.dispatch({ type: "desktopControl", desktopControl: on, readToken: r4 });
+    store.dispatch({ type: "desktopControl", desktopControl: off, readToken: r3 });
+    expect(store.getState().desktopControl).toEqual(on);
+  });
+
+  it("a revoke by the Extensions panel is not a stop the banner offers to resume", () => {
+    const control = { active: false, app: null, sessionId: null, agentId: null, since: null };
+    expect(
+      desktopControlFromStatus({
+        revoked: true,
+        revokedReason: "stopped from the tray",
+        desktopControl: control,
+      }).revoked,
+    ).toBe(true);
+    for (const reason of [
+      "desktop-control disabled in the Extensions panel",
+      "desktop-control removed in the Extensions panel",
+    ]) {
+      expect(
+        desktopControlFromStatus({ revoked: true, revokedReason: reason, desktopControl: control })
+          .revoked,
+      ).toBe(false);
+    }
+    // Names are never kept while off, whatever the daemon sent.
+    expect(
+      desktopControlFromStatus({
+        revoked: false,
+        revokedReason: null,
+        desktopControl: { ...control, app: "code" },
+      }).app,
+    ).toBeNull();
   });
 
   it("persists theme and active project and notifies subscribers once per change", () => {

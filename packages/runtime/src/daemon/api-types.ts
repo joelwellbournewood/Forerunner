@@ -480,6 +480,61 @@ export const HealthView = z.object({
 });
 export type HealthView = z.infer<typeof HealthView>;
 
+/**
+ * Desktop control's on-screen indicator (spec S.32; ADR 0067): the `desktop.indicator` frame on
+ * `GET /events`. `on` with the agent, session and app being controlled; `{ on: false }` when
+ * control ends. A shell shows its banner while the latest frame is `on`.
+ */
+export const DesktopIndicatorEventData = z.object({
+  on: z.boolean(),
+  agentId: z.string().optional(),
+  sessionId: z.string().optional(),
+  runId: z.string().optional(),
+  humanId: z.string().optional(),
+  app: z.string().optional(),
+  message: z.string().optional(),
+  at: z.string().optional(),
+});
+export type DesktopIndicatorEventData = z.infer<typeof DesktopIndicatorEventData>;
+
+/**
+ * The indicator's state as `GET /desktop/status` reports it (`desktopControl`), which a shell
+ * re-reads whenever its `/events` stream (re)opens so a frame missed while disconnected never
+ * leaves the banner wrong. The names are null while `active` is false (and `app` while the
+ * controlled application is not known yet).
+ */
+export const DesktopControlView = z.object({
+  active: z.boolean(),
+  app: z.string().nullable(),
+  sessionId: z.string().nullable(),
+  agentId: z.string().nullable(),
+  since: z.string().nullable(),
+});
+export type DesktopControlView = z.infer<typeof DesktopControlView>;
+
+/** `GET /desktop/status` (and the body of `POST /desktop/resume`): the controller's status. */
+export const DesktopStatusView = z.looseObject({
+  capability: z.string(),
+  adapter: z.string(),
+  revoked: z.boolean(),
+  revokedReason: z.string().nullable(),
+  indicatorOn: z.boolean(),
+  desktopControl: DesktopControlView,
+  inFlight: z.number().int(),
+  queued: z.number().int(),
+  actions: z.number().int(),
+});
+export type DesktopStatusView = z.infer<typeof DesktopStatusView>;
+
+/** `POST /desktop/revoke`: what was stopped, plus the status after it. */
+export const DesktopRevokeView = z.looseObject({
+  reason: z.string(),
+  interrupted: z.number().int(),
+  dropped: z.number().int(),
+  status: DesktopStatusView,
+});
+export type DesktopRevokeView = z.infer<typeof DesktopRevokeView>;
+
 /** Merge a patch into `project.settings` with a version check (mirror, sandbox and other switches). */
 export const UpdateProjectSettingsBody = z.object({
   version: z.number().int(),
@@ -1150,19 +1205,7 @@ export type DaemonSseEvent =
       data: { reason: string; targetVersion: string; fromVersion: string; exitCode: number };
     }
   /** Desktop control's on-screen indicator (spec S.32): the shells show a banner while `on`. */
-  | {
-      event: "desktop.indicator";
-      data: {
-        on: boolean;
-        agentId?: string;
-        sessionId?: string;
-        runId?: string;
-        humanId?: string;
-        app?: string;
-        message?: string;
-        at?: string;
-      };
-    }
+  | { event: "desktop.indicator"; data: DesktopIndicatorEventData }
   | { event: "heartbeat"; data: { at: string } };
 
 /**
@@ -1445,7 +1488,7 @@ export const DAEMON_ROUTES = {
   cloudflareToken:
     "GET /cloudflare/projects/:projectId/token (verifyToken: status, expiry, scopes, warnings)",
   desktopStatus:
-    "GET /desktop/status (DesktopStatus plus detection: platform, display server, available, found, missing, notes)",
+    "GET /desktop/status (DesktopStatusView: the controller's status with desktopControl { active, app, sessionId, agentId, since }, plus detection: platform, display server, available, found, missing, notes)",
   desktopAllowlist:
     "GET /desktop/allowlist/:humanId ({ humanId, entries }; a human's own list only)",
   setDesktopAllowlist:
