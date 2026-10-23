@@ -12,6 +12,7 @@ mod deeplink;
 mod dirs;
 mod env;
 mod events;
+mod hotkey;
 mod inject;
 mod install;
 mod restart;
