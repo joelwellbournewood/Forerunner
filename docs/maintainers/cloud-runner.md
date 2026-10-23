@@ -424,6 +424,8 @@ on a real host and a real mailbox is pending the items in `docs/status/BLOCKERS.
   message (email.md "Known issues"); run one runner per agent mailbox.
 - The unlock card (ADR 0068) needs the runner's vault key on the answering device already:
   `cloud_runner_vault_key:<runner>` in the desktop's vault, `runner-vault-key-<runner>` in
-  the phone's secure store. There is no import screen yet (the stand-in is `pnpm fr` / a
-  script on the human's machine); a device without the key shows the card read-only. One
+  the phone's secure store. On the desktop `pnpm fr runner-key import <runner> <vault.key>`
+  stores it (runtime.md, CLI table); the phone has no import screen yet, so a phone answers only
+  once something wrote `runner-vault-key-<runner>` into its secure store. A device without the
+  key shows the card read-only. One
   unlock against a real runner host has not been run (BLOCKERS S.12).

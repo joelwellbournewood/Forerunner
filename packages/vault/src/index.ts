@@ -47,6 +47,7 @@ export {
   runnerKeySecretName,
   runnerKeySecureStoreKey,
   shouldAutoAnswer,
+  toBase64,
   UNLOCK_CARD_KIND,
   UNLOCK_HKDF_INFO_PREFIX,
   UNLOCK_KEY_BYTES,

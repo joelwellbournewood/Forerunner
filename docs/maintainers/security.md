@@ -124,7 +124,9 @@ window rule (`shouldAutoAnswer`, `autoUnlockWindowEnd`, at most a week), the key
   request of this human, never from the body: otherwise anyone holding the daemon token could
   post a card with their own X25519 key and decrypt the vault key. `GET
   /runner-unlock/:runnerId/key` says only whether it is there. Each wrap is one
-  `runner.unlock_answer_wrapped` audit row with the request, runner and challenge ids.
+  `runner.unlock_answer_wrapped` audit row with the request, runner and challenge ids. The key gets
+  into the vault with `fr runner-key import <runner> <file>` (from the runner vault's
+  `vault.key`; never an argument, never printed).
 - Android: the key lives in the shell's Keystore-wrapped secure store under
   `runner-vault-key-<runner>` (`runnerKeySecureStoreKey`). The UI reads it for the one call,
   wraps it with WebCrypto and zeroes the bytes in `finally` (the base64 string the shell

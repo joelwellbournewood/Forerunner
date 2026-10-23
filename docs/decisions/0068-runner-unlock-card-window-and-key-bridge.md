@@ -90,8 +90,10 @@ outbox (ADR 0045). The window saves the choice, not the fingerprint.
 
 - The key exists in clear on the desktop only inside the daemon process (as before, in the
   vault), and on the phone in JavaScript for one call.
-- A device must hold the runner's key before it can answer: there is no import screen yet; the
-  stand-in is storing it with `pnpm fr` or a script on the human's machine (BLOCKERS S.12).
+- A device must hold the runner's key before it can answer. On the desktop
+  `fr runner-key import <runner> <file>` stores the runner vault's `vault.key` (raw or base64)
+  under `cloud_runner_vault_key:<runner>` in the vault the daemon opens, never printing it (review
+  finding 3); the phone has no import screen yet (BLOCKERS S.12).
 - Two devices can both hold windows; each auto-answers only inside its own. Clearing on one
   device clears the runner's copy (the answer carries `null`) but not the other device's record;
   that device's next automatic answer then reaches a runner that keeps no cached key, which is

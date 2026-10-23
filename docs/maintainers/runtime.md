@@ -138,7 +138,12 @@ mounts, behind the bearer check:
   runner and challenge ids, backend, window) per wrap. The UI then sends the answer to
   `POST /requests/:id/answer` like any other answer, so the decision path is unchanged.
 
-Tests: `test/runner-unlock-routes.test.ts` against a composed runtime.
+The key gets there with `fr runner-key import <runner> <file>` (`src/secrets/runner-key-cli.ts`,
+see the CLI table).
+
+Tests: `test/runner-unlock-routes.test.ts` against a composed runtime; `test/runner-key-cli.test.ts`
+(the imported key is exactly what the wrap route hands the runner, never printed, a bad file
+stores nothing, `fr` writes the vault the daemon opens).
 
 ### Drivers
 
@@ -404,6 +409,7 @@ rename). `cli.test.ts` covers the written record and the parser.
 | `fr models watch\|report` | `registerModelWatchCli` over the composed runtime's `modelWatch` | Runs the weekly model watch now, lists reports. |
 | `fr mirror sync\|enable\|disable` | `registerMirrorCli` over the composed runtime's `store` and `mirror` | One-way GitHub Projects mirror. |
 | `fr audit export [--agent <id>] [--session <id>] [--from <iso>] [--to <iso>] [--format jsonl\|csv] [--out <path>] [--force]` | `registerAuditCli` (`src/cli/audit.ts`) over the composed runtime's `store`, `clock` and `human`, `startServices: false` | Spec S.9, ADR 0050: the install's human's audit rows and their agents' (plus the install-level rows that name nobody) through the daemon's export module (`src/daemon/audit-export.ts`), paged, as JSON lines or CSV, the summaries as stored. Flags are checked before the runtime is composed; `--out` defaults to `forerunner-audit-<UTC stamp>.<format>` in the current directory (parent directories are created); an existing file is refused unless `--force`; another human's agent is `not_found`; prints `N rows written to <path> (<format>)`. |
+| `fr runner-key import <runner> <file>\|status <runner>\|remove <runner> [--profile <name>]` | `registerRunnerKeyCli` (`src/secrets/runner-key-cli.ts`) over `openVault({ profile, env })`, the vault the daemon opens (the config's profile, else `default`) | Spec S.12, ADR 0068: puts a cloud runner's 32-byte vault key under `cloud_runner_vault_key:<runner>`, where `POST /runner-unlock/wrap` reads it when the desktop inbox's unlock card answers. The key comes from a file (the runner vault's `vault.key`, raw 32 bytes, or its base64; `parseRunnerKeyFile`), never an argument; anything else is `validation` and nothing is stored; no line prints the key. `status` says present or missing (with the import hint), `remove` deletes the entry. |
 | `fr sources list [--json]\|add <kind> <locator> [--name <n>] [--credential secret:<name>]\|scan <id> [--json]\|candidates <id> [--status <s>] [--json]\|accept <candidateId> [--name <n>] [--goal <g>]\|remove <id>` | `registerSourcesCli` (`src/sources/cli.ts`) over the composed runtime's `sources` and `human`, `startServices: false` | Spec A.4, ADR 0056: the same `SourceDiscovery` as the daemon's `/sources` routes. `add` refuses a token value (a `secret:<name>` reference only), `scan` prints the counts and one line per candidate (status, locator, proposed name, existing install, project), `accept` creates the project through the same path as `POST /projects`, `remove` keeps every project. |
 
 Commands that need the whole product compose it once through `composeRuntime` (the same

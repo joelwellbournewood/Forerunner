@@ -18,6 +18,15 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w2-s12-unlock-card, review and fix: docs/status/reviews/w2-s12-unlock-card.md)
+- The daemon's `POST /runner-unlock/wrap` takes `{ requestId }` and wraps only to the challenge on
+  a stored, open unlock request of this human (it trusted a card from the body: a key-export
+  oracle for any holder of the daemon token). The auto-unlock runs app-wide (desktop Shell,
+  phone MobileShell), not only on the inbox screen. `fr runner-key import|status|remove` puts a
+  runner's vault key where the daemon reads it (the documented `pnpm fr` stand-in did not
+  exist). Tests: runtime `runner-unlock-routes`, `runner-key-cli`; ui `unlock-card`,
+  `mobile-unlock`. Open as before: one unlock on the real host; a key import on the phone.
+
 ### 2026-10-23 (item w2-s12-unlock-card: the cloud runner unlock card, S.12, ADR 0068)
 - The desktop and Android inboxes render a runner's vault-unlock challenge as the unlock card
   (runner, project, filing time, challenge age; Unlock once / allow for 1, 8, 24 h / clear the
