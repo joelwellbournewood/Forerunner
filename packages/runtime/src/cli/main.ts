@@ -350,7 +350,7 @@ export function buildProgram(deps: CliDeps = {}): Command {
   }));
 
   // Monthly jobs (ADR 0060): the critic calibration and the handover test by hand, their
-  // reports. One-shots like the model watch; each closes the runtime it opened.
+  // reports. One-shots like the model watch (the runtime is closed by the hook).
   registerJobsCli(program, {
     open: async () => {
       const rt = await openRuntime({ startServices: false });

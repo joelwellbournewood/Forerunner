@@ -449,6 +449,88 @@ describe("monthly handover test job (P.15)", () => {
     }
   });
 
+  it("a session that never ran or left the seeded task untouched cancels it: the seed never leaks into the principal's work", async () => {
+    const h = await harness([]);
+    const { w, reportDir, notifier } = h;
+    try {
+      const project = await w.store.project.mustGet(w.project);
+      await w.store.project.update(w.project, project.version, {
+        settings: { ...project.settings, handover: { enabled: true, seed: SEED } },
+      });
+      const seededTask = async () =>
+        (await w.store.task.list({ project_id: w.project } as never)).filter(
+          (t) => t.title === SEED.title,
+        );
+
+      // 1. The session cannot start (no credential, the sync gate): failed, task cancelled.
+      const throwing = new HandoverJob({
+        store: w.store,
+        clock: w.clock,
+        humanId: w.human,
+        agentId: w.alice,
+        reportDir,
+        notifier,
+        runSession: async () => {
+          throw new Error("no model credential configured");
+        },
+      });
+      const failed = await throwing.run(w.project);
+      expect(failed).toMatchObject({ status: "failed", reason: "no model credential configured" });
+      const [first] = await seededTask();
+      expect(first?.status).toBe("cancelled");
+      const agents = await w.store.agent.list({} as never);
+      expect(agents.filter((a) => a.name === "Handover 2026-10-20").map((a) => a.status)).toEqual([
+        "retired",
+      ]);
+
+      // 2. The session ran but planned nothing (here: it only reports): the task still ready
+      // after the session is cancelled, and the report keeps the status it ended the session in.
+      const idle = new HandoverJob({
+        store: w.store,
+        clock: w.clock,
+        humanId: w.human,
+        agentId: w.alice,
+        reportDir,
+        notifier,
+        runSession: async (req) =>
+          ({
+            sessionId: (
+              await w.store.session.insert({
+                agent_id: req.agentId,
+                project_id: req.projectId,
+                trigger: "schedule",
+                plan: { items: [], estimateUsdMicro: 0, summary: "" },
+                budget_cap_usd_micro: req.budgetCapUsdMicro,
+                step_cap: 10,
+                spent_usd_micro: 0,
+                steps: 0,
+                started_at: w.clock.nowIso(),
+                status: "completed",
+                summary: "",
+                handoff: {},
+                runner: "pc",
+                author_agent: req.agentId,
+              })
+            ).id,
+            status: "completed",
+            completed: [],
+            needsHuman: [],
+            failed: [],
+            spentUsdMicro: 0,
+            summary: "nothing planned",
+            memory: null,
+          }) as never,
+      });
+      const r = await idle.run(w.project);
+      expect(r.status).toBe("ran");
+      expect(r.report?.task.status).toBe("ready");
+      const tasks = await seededTask();
+      expect(tasks.map((t) => t.status)).toEqual(["cancelled", "cancelled"]);
+    } finally {
+      await w.close();
+    }
+  });
+
   it("stuckPlaces: re-reads, failures, refusals, the task's end and the session's end; other agents' rows are ignored", () => {
     const row = (over: Partial<AuditLogRow>): AuditLogRow =>
       ({

@@ -18,7 +18,8 @@
  *    (`docsTaskFor`), when there was any stuck place;
  * 5. writes the report under `<data dir>/handover/<project>/handover-<date>.json`, sends it
  *    to the human's inbox as a message from the fresh agent, raises a `handover_report`
- *    notification, writes a `handover.run` audit row and retires the fresh agent.
+ *    notification, writes a `handover.run` audit row, cancels the seeded task if the session
+ *    left it active (it never becomes regular work) and retires the fresh agent.
  *
  * The month's report file is the dedupe across restarts (the scheduler's fired keys are the
  * first line); `force` runs again. A project below autonomy 2 is skipped with the reason
@@ -33,13 +34,14 @@ import {
   log,
   safeSegment,
 } from "@forerunner/platform";
-import type {
-  AuditLogRow,
-  JsonObject,
-  ProjectRow,
-  SessionStatus,
-  StateStore,
-  TaskStatus,
+import {
+  ACTIVE_TASK_STATUSES,
+  type AuditLogRow,
+  type JsonObject,
+  type ProjectRow,
+  type SessionStatus,
+  type StateStore,
+  type TaskStatus,
 } from "@forerunner/state";
 import type { NotifierLike } from "../notifications/producers.ts";
 import { handoverReport as handoverReportNotification } from "../notifications/producers.ts";
@@ -433,9 +435,13 @@ export class HandoverJob {
     const seedSource = opts.seed ? "setting" : settings.seed ? "setting" : "default";
     const seed = opts.seed ?? settings.seed ?? defaultHandoverSeed(date);
 
-    // 1. The fresh agent: a new row, nothing in memory names it.
+    // 1. The fresh agent: a new row, nothing in memory names it. Agent names are unique per
+    // human, so a second run on the same day (forced, or after a run that failed) counts up.
+    let name = `Handover ${date}`;
+    for (let n = 2; await store.agent.byName(this.deps.humanId, name); n++)
+      name = `Handover ${date} (${n})`;
     const fresh = await store.agent.insert({
-      name: `Handover ${date}`,
+      name,
       owner_human_id: this.deps.humanId,
       model_config: {},
       memory_location: "local",
@@ -483,6 +489,7 @@ export class HandoverJob {
     } catch (e) {
       const reason = errorMessage(e);
       this.logger.error("handover session failed to run", { projectId, error: reason });
+      await this.cancelSeed(task.id, `handover test ${date}: the session did not run`);
       await this.retire(fresh.id);
       await store.auditLog.append({
         session_id: null,
@@ -621,6 +628,9 @@ export class HandoverJob {
       token_id: null,
       author_agent: fresh.id,
     });
+    // A seeded task the session left active (not planned, stopped by the budget) is cancelled:
+    // the test is over and the principal's own sessions must not pick the seed up.
+    await this.cancelSeed(task.id, `handover test ${date}: over, the seed is not regular work`);
     await this.retire(fresh.id);
     this.logger.info("handover finished", {
       projectId,
@@ -629,6 +639,21 @@ export class HandoverJob {
       docsTaskId,
     });
     return { status: "ran", monthKey, report, messageId: message.id, notificationId };
+  }
+
+  private async cancelSeed(taskId: string, reason: string): Promise<void> {
+    try {
+      const row = await this.deps.store.task.mustGet(taskId);
+      if (!ACTIVE_TASK_STATUSES.includes(row.status)) return;
+      await this.deps.store.task.update(taskId, row.version, {
+        status: "cancelled",
+        claimed_by: null,
+        claim_expires: null,
+        reason,
+      });
+    } catch (e) {
+      this.logger.warn("could not cancel the seeded task", { taskId, error: errorMessage(e) });
+    }
   }
 
   private async retire(agentId: string): Promise<void> {
