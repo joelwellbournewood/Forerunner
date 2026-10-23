@@ -44,18 +44,26 @@ export function ReadAloud({
   const [notice, setNotice] = useState<string | null>(null);
   const [webSpeaking, setWebSpeaking] = useState(false);
   const playing = useRef<SpeechPlayback | null>(null);
+  // The utterance in flight, for the unmount cleanup (state is stale there).
+  const inFlight = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
       playing.current?.stop();
       if (webSpeechAvailable()) window.speechSynthesis.cancel();
+      // Leaving the page stops the daemon too: nobody is left to hear it, and it would hold
+      // the one voice and record a reading nobody heard.
+      const id = inFlight.current;
+      inFlight.current = null;
+      if (id) void client.cancelSpeak(id).catch(() => undefined);
     };
-  }, []);
+  }, [client]);
 
   const stop = async () => {
     const id = current?.id;
     playing.current?.stop();
     playing.current = null;
+    inFlight.current = null;
     setCurrent(null);
     setSentence(-1);
     if (webSpeaking && webSpeechAvailable()) {
@@ -79,6 +87,7 @@ export function ReadAloud({
     setNotice(null);
     try {
       const view = await start();
+      inFlight.current = view.id;
       setCurrent(view);
       const pb = playSpeech(client, view.id, {
         ...(playback ?? {}),
@@ -91,6 +100,7 @@ export function ReadAloud({
       void pb.done.then(() => {
         if (playing.current !== pb) return;
         playing.current = null;
+        inFlight.current = null;
         setCurrent(null);
         setSentence(-1);
       });

@@ -190,7 +190,7 @@ sessionId, handlers, { afterSeq })` open an `EventSource` on `/events` or
 `/sessions/:id/events` with the token as `?token=` (EventSource cannot send headers, ADR
 0025). Events are parsed with `parseDaemonEvent` (`session.event`, `inbox.changed`,
 `session.changed`, `project.changed`, `extension.changed`, `restart.requested`,
-`desktop.indicator`, `heartbeat`; unknown or malformed frames are dropped). `extension.changed`
+`desktop.indicator`, `speak.started`, `heartbeat`; unknown or malformed frames are dropped). `extension.changed`
 bumps `extensionsVersion` in the store so the Extensions panel reloads (and re-reads desktop
 control, which a panel toggle revokes or resumes); `desktop.indicator` sets `desktopControl`
 (`desktopControlFromIndicator`), and because a frame sent while the stream was down is lost,
@@ -207,6 +207,20 @@ banner on every page) until a heartbeat arrives from a daemon on the target vers
 30 s; `onMode` reports `connecting | sse | polling | closed`. Chat uses `streamChat()` over
 `POST /chat/stream`: `token` frames build the reply as they arrive, the `reply` frame finishes
 it, `error` frames become `ApiError`; a plain JSON `ChatReplyView` is accepted as well.
+
+**Speech player (ADR 0063).** The window is what makes the daemon's speech audible: the desktop
+sidecar shows toasts but plays no audio and the daemon's own sink only paces the frames. Where
+the window has EventSource and Web Audio (`canPlaySpeech()` in `lib/speech.ts`; tests pass
+`AppProvider`'s `realtime: { eventSource, audio }`), `AppProvider` opens `/events` with
+`?speech=play` (`subscribeDaemonEvents(..., { speechPlayer: true })`), so the daemon counts it
+as someone who hears voice alerts and `summary.speak`, and hands every `speak.started` frame to
+`createSpeechAnnouncer`: an utterance announced for any player (`player: "any"`: an urgent
+alert, `summary.speak` by chat) is played with `playSpeech`, one at a time (a newer one
+replaces it, as the daemon has one voice); one with `player: "requester"` is the Read aloud
+button's own and left to it. `playSpeech` resumes the AudioContext (one created without a user
+gesture may start suspended), decodes the base64 16-bit PCM frames and schedules them back to
+back. The daemon holds playback until the stream attached (`runtime.md`, "Read aloud"), so the
+first words are not lost.
 
 ### State
 
@@ -376,9 +390,15 @@ the real daemon's plain-text and empty-body 404, round trips for reviews / memor
 the change log, the proposed routes, extensions / updates / model watch), `contracts`
 (two-sided parse of the extension, updates and estimate fixtures with key-set comparison,
 proposed routes vs `DAEMON_ROUTES`, `parseChangeCard`), `money`, `sse` (parser, every event
-name incl. `extension.changed` and `restart.requested`, EventSource path, polling fallback,
-chat stream), `store` (persistence, restart, extensions version), `app`, `home`, `project`
-(summary, derived milestones fallback, costs, every tab filled), `project-tabs` (graph layout
+name incl. `extension.changed`, `restart.requested` and `speak.started` (an unknown `player`
+dropped), EventSource path, polling fallback, chat stream), `speech` (`playSpeech` with a fake
+EventSource and a fake `AudioOutput`: the PCM decoded per channel, buffers scheduled back to
+back, the sentence followed, `speak.done` / `error` / a cancelled record ending it; the speech
+player playing `player: "any"` utterances one at a time and leaving `requester` ones alone;
+`AppProvider` opening `/events?speech=play` and playing an announced alert's frames), `store`
+(persistence, restart, extensions version), `app`, `home`, `project` (summary, Read aloud
+through the daemon with Stop cancelling it, leaving the page cancelling it, the 503 notice,
+derived milestones fallback, costs, every tab filled), `project-tabs` (graph layout
 incl. a cut cycle, timeline positions, timeline and graph render, the milestone edit dialog:
 the reason of the last change on the row, no Edit on a derived row, Save disabled without a
 reason, the posted body with the version, the reason and every field, the row and the timeline
@@ -514,9 +534,12 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
   `GET /speak/:id/events`, buffers scheduled back to back; polling of `GET /speak/:id` where
   the browser has no EventSource or no AudioContext, so the screen still follows it). The
   browser's Web Speech API is used only when the daemon answers 503 (no voice provider); where
-  that is missing too (WebKitGTK without voices) the notice says so. The desktop sidecar does
-  not play the frames itself yet, so with the window closed a spoken alert is heard only
-  through the daemon's own sink.
+  that is missing too (WebKitGTK without voices) the notice says so. Leaving the page while it
+  reads cancels the daemon's utterance too. The desktop sidecar does not play the frames, so a
+  spoken alert or a `summary.speak` by chat is heard only while the app window is open (the
+  speech player above); with it closed the daemon skips the voice (`notifications.md`) and
+  the command answers with the text. A browser tab that blocks audio until clicked stays
+  silent until then; with the desktop app and a browser tab both open, both play.
 - **Export audit log** saves through an anchor `download` on an object URL, which the dev
   server and WebView2 (Windows) honour; the Linux desktop shell (WebKitGTK) registers no
   download handler yet (`apps/desktop/src-tauri`), so the click may do nothing there. The page

@@ -76,6 +76,20 @@ describe("parseDaemonEvent", () => {
       data: { on: false },
     });
     expect(parseDaemonEvent("desktop.indicator", '{"on":"yes"}')).toBeNull();
+    const started = {
+      id: "speak_1",
+      subject: { kind: "notification", id: "rec_1", notificationKind: "budget_stop" },
+      source: "notification",
+      player: "any",
+      sentences: 2,
+    };
+    expect(parseDaemonEvent("speak.started", JSON.stringify(started))).toEqual({
+      event: "speak.started",
+      data: started,
+    });
+    expect(
+      parseDaemonEvent("speak.started", JSON.stringify({ ...started, player: "everyone" })),
+    ).toBeNull();
     expect(parseDaemonEvent("session.event", "not json")).toBeNull();
     expect(parseDaemonEvent("something.else", "{}")).toBeNull();
   });

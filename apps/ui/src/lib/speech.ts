@@ -1,4 +1,4 @@
-import type { SpeakView } from "@forerunner/runtime/daemon/api-types";
+import type { SpeakStartedView, SpeakView } from "@forerunner/runtime/daemon/api-types";
 import { type DaemonClient, routePath } from "../api/client.ts";
 import type { EventSourceFactory } from "../api/sse.ts";
 
@@ -8,8 +8,15 @@ import type { EventSourceFactory } from "../api/sse.ts";
  * as a voice turn's reply) on `GET /speak/:id/events`; this follows the stream with
  * EventSource and plays the frames through Web Audio, scheduled back to back. Where the
  * browser has no EventSource or no AudioContext (jsdom, a webview without audio) it polls the
- * utterance until it ended, so the screen still follows what the daemon reads and the desktop
- * shell, which plays the same frames, is not fought over the speaker.
+ * utterance until it ended, so the screen still follows what the daemon reads.
+ *
+ * This window is the only thing that makes the daemon's speech audible: the desktop sidecar
+ * shows toasts but plays no audio, and the daemon's own sink only paces the frames. Where the
+ * window can play, its `/events` stream declares it a speech player (`?speech=play`) and
+ * `createSpeechAnnouncer` plays every utterance the daemon announces for any player (`speak.
+ * started` with `player: "any"`: a voice alert, `summary.speak` by chat); the Read aloud
+ * button plays its own (`player: "requester"`). The daemon holds playback until the stream
+ * attached (a short grace), so the first words are not lost.
  */
 export type PlaybackEnd = "done" | "cancelled" | "failed";
 
@@ -26,6 +33,8 @@ export interface AudioOutput {
   createBuffer(channels: number, frames: number, sampleRate: number): AudioBuffer;
   createBufferSource(): AudioBufferSourceNode;
   close(): Promise<void>;
+  /** A context created without a user gesture may start suspended; resumed before playing. */
+  resume?(): Promise<void>;
 }
 
 export interface PlaybackOptions {
@@ -47,6 +56,11 @@ interface AudioFrame {
 function defaultEventSource(): EventSourceFactory | undefined {
   if (typeof EventSource === "undefined") return undefined;
   return (url) => new EventSource(url);
+}
+
+/** Whether this window can play the daemon's speech (EventSource and Web Audio both exist). */
+export function canPlaySpeech(): boolean {
+  return typeof EventSource !== "undefined" && typeof AudioContext !== "undefined";
 }
 
 function defaultAudio(): AudioOutput | null {
@@ -83,6 +97,7 @@ export function playSpeech(
 ): SpeechPlayback {
   const factory = options.eventSource === undefined ? defaultEventSource() : options.eventSource;
   const audio = options.audio ? options.audio() : defaultAudio();
+  void audio?.resume?.().catch(() => undefined);
   let resolveDone: (end: PlaybackEnd) => void = () => undefined;
   const done = new Promise<PlaybackEnd>((resolve) => {
     resolveDone = resolve;
@@ -178,5 +193,46 @@ export function playSpeech(
   return {
     done,
     stop: () => finish("cancelled"),
+  };
+}
+
+export interface SpeechAnnouncer {
+  /** Told of every `speak.started` frame; plays the ones meant for any player. */
+  started(view: SpeakStartedView): void;
+  /** The utterance this window is playing for the daemon, if any. */
+  readonly playing: string | null;
+  close(): void;
+}
+
+/**
+ * The window's speech player for what the daemon reads aloud on its own (ADR 0063): a voice
+ * alert, `summary.speak` asked by chat. One at a time, as the daemon has one voice: a newer
+ * utterance replaces the one playing (the daemon has already cancelled it). Utterances the
+ * Read aloud button asked for (`player: "requester"`) are left to the button.
+ */
+export function createSpeechAnnouncer(
+  client: DaemonClient,
+  options: PlaybackOptions = {},
+): SpeechAnnouncer {
+  let current: { id: string; playback: SpeechPlayback } | null = null;
+  let closed = false;
+  return {
+    started(view) {
+      if (closed || view.player !== "any" || current?.id === view.id) return;
+      current?.playback.stop();
+      const entry = { id: view.id, playback: playSpeech(client, view.id, options) };
+      current = entry;
+      void entry.playback.done.then(() => {
+        if (current === entry) current = null;
+      });
+    },
+    get playing() {
+      return current?.id ?? null;
+    },
+    close() {
+      closed = true;
+      current?.playback.stop();
+      current = null;
+    },
   };
 }

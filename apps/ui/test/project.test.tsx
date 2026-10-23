@@ -39,6 +39,18 @@ describe("Project page", () => {
     expect(screen.getByTestId("read-aloud")).toHaveTextContent("Read aloud");
   });
 
+  it("leaving the page while it reads stops the daemon too (nobody is left to hear it)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const view = renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("read-aloud"));
+    await screen.findByTestId("read-aloud-text");
+    expect(postedCalls(harness, "/speak/speak_1/cancel")).toHaveLength(0);
+    view.unmount();
+    await waitFor(() => expect(postedCalls(harness, "/speak/speak_1/cancel")).toHaveLength(1));
+  });
+
   it("without a voice provider the button says why (jsdom has no browser speech either)", async () => {
     const user = userEvent.setup();
     const harness = createHarness({ voiceUnavailable: true });
