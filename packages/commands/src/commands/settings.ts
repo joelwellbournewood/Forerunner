@@ -84,16 +84,27 @@ export const SMALL_PROJECT_MODE_EFFECT = {
 
 /**
  * What each position of the speed-versus-quality slider (spec D.16) changes: every mode's
- * default effort (chat, voice, planning, specialists, critic) one step down or up, read by the
- * runtime at the next run, turn or planning session.
+ * default effort (chat, voice, planning, the specialists, the critic) one step down or up,
+ * read by the runtime from the project row at the next run, chat or voice turn and planning
+ * session. An effort already at the bottom (low) or the top (max) of the scale stays there.
  */
 export const SPEED_QUALITY_EFFECT = {
   speed:
-    "speed: every mode's effort is one step lower (faster and cheaper) from the next run, chat turn or planning session",
-  balanced: "balanced: every mode runs at its default effort from the next run, chat turn or planning session",
+    "speed, every mode's default effort one step lower (faster and cheaper) from the next run, turn or planning session",
+  balanced:
+    "balanced, every mode at its default effort from the next run, turn or planning session",
   quality:
-    "quality: every mode's effort is one step higher (slower, better results) from the next run, chat turn or planning session",
+    "quality, every mode's default effort one step higher (slower, more thorough) from the next run, turn or planning session",
 } as const;
+
+/** The slider's position for a value: -1 speed, +1 quality, anything else balanced. */
+export function speedQualityEffect(value: JsonValue): string {
+  return value === -1
+    ? SPEED_QUALITY_EFFECT.speed
+    : value === 1
+      ? SPEED_QUALITY_EFFECT.quality
+      : SPEED_QUALITY_EFFECT.balanced;
+}
 
 export const SETTING_SPECS: Record<string, SettingSpec> = {
   speed_quality_offset: {
@@ -104,12 +115,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     schema: z.number().int().min(-1).max(1),
     description:
       "Shifts every mode's default effort one step per project: -1 speed, 0 balanced, +1 quality.",
-    effect: (value) =>
-      value === -1
-        ? SPEED_QUALITY_EFFECT.speed
-        : value === 1
-          ? SPEED_QUALITY_EFFECT.quality
-          : SPEED_QUALITY_EFFECT.balanced,
+    effect: speedQualityEffect,
   },
   critic_ceiling: {
     key: "critic_ceiling",
