@@ -2110,7 +2110,13 @@ scheduler and stops with `close()`. The CLI one-shots and the cloud runner
 The project's escalation ceiling is wired here too: `makeLoop` passes
 `projectCeiling: (settings) => criticSettingsOf(settings).ceiling` to `LoopTaskExecutor`, so
 `tierForAttempt` escalates the third retry under the project's `critic_ceiling` (a project capped
-at sonnet never runs opus) instead of the ladder's default ceiling.
+at sonnet never runs opus, a project capped at haiku keeps the third retry at haiku) instead of
+the ladder's default ceiling. The executor reads the project row at every `execute`, so a
+ceiling the human changes applies from the next run; without a `projectCeiling` reader (the
+cloud runner's composition, the e2e worlds) it reads `critic_ceiling` itself through
+`projectCeilingOf` (`src/models/ladder.ts`: the setting when it names a rung, else
+undefined), so no composition can forget the cap. The static `ceiling` dependency is only the
+fallback for a project without the setting.
 
 ### Source discovery (`src/sources/`, spec A.4, [ADR 0056](../decisions/0056-source-discovery.md))
 
@@ -2829,11 +2835,16 @@ closed session left closed, `session.pause` and its undo through the registry;
 or by name, never revoked or another human's, `last_seen` stamped at start and on every
 interval and no more after `stop()`; `remote-wiring.test.ts`: the composed daemon registering
 its desktop row and heartbeating it on the interval, `remoteCommandsEnabled`, a project ceiling
-of sonnet never escalating the third retry to opus while the default ceiling does, a kill from
+of sonnet never escalating the third retry to opus and one of haiku keeping it at haiku while
+the default ceiling climbs to opus, a kill from
 the phone stopping a running session within 2 s, a pause from the phone ending a running
 two-task session at the task boundary (the task in flight finishes, the second never starts,
 `stopped_by_message` with the second task in `handoff.next`), both stopping with `close()`;
-`executor-ceiling.test.ts`: `projectCeiling` on the executor; `live-chat.test.ts` (spec O.9,
+`executor-ceiling.test.ts`: `projectCeiling` on the executor (a sonnet ceiling keeps the third
+retry at sonnet, a haiku ceiling, the first rung, keeps it at haiku, no ceiling climbs to opus,
+the project row is read at every run, so a ceiling changed between two runs of one executor
+takes effect, and without the reader the executor still honours the setting through
+`projectCeilingOf`, which names a rung only); `live-chat.test.ts` (spec O.9,
 ADR 0078): the said-line body round trip and its stop-word immunity, the quoted block with the
 envelope neutralised and an instruction-shaped line flagged, a free-form voice line during a
 `SessionRunner` held mid-task by a gated executor landing in the principal's inbox unread with

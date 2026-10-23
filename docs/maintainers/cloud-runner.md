@@ -113,7 +113,10 @@ The runtime's own variables apply too (`FORERUNNER_REGISTRY_DIR`, `FORERUNNER_HE
 4. Choose the billing source (below), build the session stack: `LoopTaskExecutor` with that
    source inside `PrTaskExecutor` (as the daemon), a `SessionRunner` whose planner limits an
    email session to its own task, sessions recorded with `runner: "cloud"` and the runner's
-   device id.
+   device id. The executor gets no `projectCeiling` reader; it reads the project's
+   `critic_ceiling` itself at every run (`projectCeilingOf`, runtime.md), so a task the PC left
+   at its third attempt is escalated under the project's cap here too (`test/runner.test.ts`,
+   "a third retry on the runner stays under the project's critic_ceiling").
 5. Start the scheduler (schedules from `project.settings.schedules`), the remote command
    watcher, the kill-file watcher, the inbox trigger, the email watch, the heartbeat and (when
    configured) the idle lock; open the health route; write the readiness file.

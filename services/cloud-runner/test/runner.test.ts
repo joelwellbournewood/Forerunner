@@ -253,6 +253,25 @@ describe("cloud runner", () => {
     expect(session).toMatchObject({ runner: "cloud", trigger: "manual" });
   });
 
+  it("a third retry on the runner stays under the project's critic_ceiling (spec D.3)", async () => {
+    // The runner composes its own executor (no `projectCeiling` reader): the executor reads
+    // the project's ceiling itself, so a task the PC left at attempt 3 never climbs to opus
+    // here when the project is capped at sonnet.
+    w = await world({ schedules: [] });
+    await w.store.project.patch(w.seed.project.id, { settings: { critic_ceiling: "sonnet" } });
+    const task = await addReadyTask(w.store, w.seed.project.id, "Third retry", { attempt: 3 });
+    expect(await w.runner.startSession({ projectId: w.seed.project.id, force: true })).toBe(
+      "started",
+    );
+    await waitFor(async () => {
+      const rows = await w?.store.session.list({ agent_id: w.seed.agent.id });
+      return rows?.find((s) => s.status === "completed");
+    });
+    const runs = (await w.store.run.forTask(task.id)).filter((r) => r.specialist === "coder");
+    expect(runs.length).toBeGreaterThanOrEqual(1);
+    expect(runs.map((r) => r.model)).toEqual(runs.map(() => "fake-sonnet"));
+  });
+
   it("a peer's handoff in the inbox starts a message-triggered cloud session while no PC is online", async () => {
     w = await world({ schedules: [], env: { FORERUNNER_RUNNER_INBOX_POLL_MS: "30000" } });
     expect(w.runner.scheduler.list()).toHaveLength(0);

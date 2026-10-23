@@ -49,6 +49,7 @@ import {
   type Mode,
   type ModeDefault,
   modelIdFor,
+  projectCeilingOf,
   specialistMode,
   speedQualityOffsetOf,
   startingTier,
@@ -247,7 +248,9 @@ export interface LoopTaskExecutorDeps {
   /**
    * The ceiling of the task's project from its settings (`critic_ceiling`, spec D.3), read at
    * every run so `tierForAttempt` escalates under the project's cap, not the default one.
-   * Undefined for a project without the setting falls back to `ceiling`.
+   * Omitted, the executor reads `critic_ceiling` itself (`projectCeilingOf`), so a composition
+   * that does not pass a reader (the cloud runner, a test world) still honours the project's
+   * cap. Undefined for a project without the setting falls back to `ceiling`.
    */
   projectCeiling?: (settings: JsonObject | null | undefined) => ModelTier | undefined;
   /**
@@ -426,10 +429,12 @@ export class LoopTaskExecutor implements TaskExecutor {
       projectId: task.project_id,
     });
 
-    // The ceiling is the project's (`critic_ceiling` in its settings, spec D.3) when the
-    // composition passes `projectCeiling`; the static `ceiling` is the fallback, then the
-    // ladder's default. A project capped at sonnet therefore never escalates a retry to opus.
-    const ceiling = this.deps.projectCeiling?.(project?.settings) ?? this.deps.ceiling;
+    // The ceiling is the project's (`critic_ceiling` in its settings, spec D.3), through the
+    // composition's `projectCeiling` or, without one, read here; the static `ceiling` is the
+    // fallback for a project without the setting, then the ladder's default. A project capped
+    // at sonnet therefore never escalates a retry to opus, whichever composition built this.
+    const readCeiling = this.deps.projectCeiling ?? projectCeilingOf;
+    const ceiling = readCeiling(project?.settings) ?? this.deps.ceiling;
     const tier = tierForAttempt(
       startingTier(settings.tier, brief.riskTier, ceiling),
       task.attempt,

@@ -92,6 +92,42 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   todo); its BLOCKERS row resolved; email.md, cloud-runner.md, notifications.md and runtime.md updated. The B.6
   residual was left to wave/w1-b6-review as the brief says. Build report:
   `docs/status/reviews/w3-t1-mode-off.md`.
+### 2026-10-23 (item w3-misc-replay-ceiling rebased onto 38ae8cc)
+- `wave/w3-misc-replay-ceiling` rebased onto `origin/ccr-4d8a843c-1k9syk` (38ae8cc), which had
+  since merged w3-d4-specialist-settings (D.4) and w3-r5-phone (R.5). Conflicts in
+  requirements.md (D.3 next to D.4, R.4 next to R.5: the base's D.4 and R.5 rows and the
+  branch's D.3 and R.4 test lists), this log (the base's D.4 and R.5 entries next to this
+  item's; the "Next" line with both clauses) and the executor's ladder import (D.4's
+  `specialistMode` and mode names next to `projectCeilingOf`); both sides kept
+  (`docs/status/reviews/w3-misc-replay-ceiling.md`, "Third rebase"). Current counts: runtime
+  137 files / 1268 passed, 1 skipped; cloud-runner 9 files / 62 passed; state-api 11 files /
+  159; scenario 9 2 passed, no todo; e2e 13 files / 25 passed, 1 skipped. Not merged yet.
+
+### 2026-10-23 (item w3-misc-replay-ceiling rebased onto 4ff4fb1)
+- `wave/w3-misc-replay-ceiling` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1). Conflicts
+  in this log (the base's w3-d16-slider, w3-e4-recheck and w5-android-high-risk entries next
+  to this item's) and in the executor's ladder import (the base's `capEffort` and
+  `speedQualityOffsetOf` next to `projectCeilingOf`); both sides kept
+  (`docs/status/reviews/w3-misc-replay-ceiling.md` `## Rebase`). Current counts: runtime 133
+  files / 1208 passed, 1 skipped; cloud-runner 9 files / 62 passed; state-api 11 files / 156;
+  scenario 9 2 passed, no todo. Not merged yet.
+
+### 2026-10-23 (item w3-misc-replay-ceiling built on its branch)
+- Two Known issues of `docs/maintainers/testing.md` closed (R.4, V.3 scenario 9's `it.todo`,
+  H.4 and D.3 the critic ceiling, V.4 the known-issues list). The code was already in place
+  from the runtime-gaps wave: `POST /remote/commands` enqueues a device's envelope once per
+  `clientId` (`enqueueRemoteCommandOnce`) and `RemoteCommandWatcher` refuses a replayed
+  envelope as a `duplicate`; `composeRuntime` passes `projectCeiling` so the executor reads
+  the project's `critic_ceiling` at every run. What the item adds is the proof: scenario 9's
+  todo is now a passing case (the envelope posted twice, a copy past the service, one change
+  log row, one session start), and `executor-ceiling.test.ts` / `remote-wiring.test.ts` pin a
+  haiku (tier 1) ceiling keeping the third attempt at haiku and the ceiling re-read per run.
+  Each test was shown to fail with the dedupe or the ceiling read removed. Report:
+  `docs/status/reviews/w3-misc-replay-ceiling.md`. Reviewed the same day (verdict revise, five
+  findings, all fixed on the branch): the cloud runner's executor ignored the project's
+  ceiling (the executor now reads `critic_ceiling` itself when no reader is passed), the
+  replay case was order-dependent, the V.4 blockers edit conflicted with the base, two docs
+  overstated and the build report cited commits not on the branch.
 
 ### 2026-10-23 (item w3-d4-specialist-settings rebased onto 4ff4fb1)
 - `wave/w3-d4-specialist-settings` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1), which
@@ -613,6 +649,8 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
    w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1; built on its branch, ADR 0081, reviewed and fixed 2026-10-24, awaiting merge), w3-misc-replay-ceiling (scenario 9's replay
    `it.todo`, the executor's ceiling rung). Then an independent review of each of the ten
+   w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
+   `it.todo`, the executor's ceiling rung; built and reviewed on its branch 2026-10-23, not merged). Then an independent review of each of the ten
    items merged on 2026-10-23 without one (w4-install-identity, w4-private-memory,
    w4-android-signing, w2-a2-intake, w2-g5-docs, w2-g6-promotion, w2-a4-sources,
    w2-email-page, w2-s13-shared-secrets, w3-o9-chat-to-inbox), applying what they find.
