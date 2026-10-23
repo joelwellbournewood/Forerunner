@@ -341,3 +341,52 @@ by findings 2 and 3.
    fake daemon mirrors ADR 0081, and a UI test.
 
    Resolution: fixed in f407646: the commands toggle follows the stored value, the mode note adds `COMMANDS_TURNED_OFF_NOTE` when the change turned commands off, and the fake daemon mirrors ADR 0081 (400 with the plain sentence, switch-off at off); the new `apps/ui/test/email-settings.test.tsx` case fails without the `useEffect`; apps.md and email.md updated.
+## Rebase (2026-10-24, onto `origin/ccr-4d8a843c-1k9syk` at cac6fee)
+
+The branch was rebased commit by commit onto the release head (it was built from 82a6295).
+Commit hashes named above (aaddb91, 96ddd11, f407646 and the like) are pre-rebase hashes; the
+rebased commits carry the same subjects ("commands: email.mode.set keeps ADR 0081 ...",
+"cloud-runner: the email watcher stands down ...", "ui: the email page follows the commands
+toggle ..."). Conflicts and how they were resolved:
+
+- `docs/status/BLOCKERS.md` (commit "status: T.1 done on ADR 0081 ..."): the K.8 row took the
+  base's version (it adds the R.6 state-service clause, ADR 0085; the branch had not touched
+  it); the L.3 row took the branch's clauses (T.1 to T.14 `done`, T.1 closed on ADR 0081, only
+  the real mailbox left), which supersede the base's "T.1 still open"; the T.1 row took the
+  branch's resolved text; the V.1 row kept the base's wording (S.32 by `w2-s32-indicator`)
+  merged with the branch's T.1 move, and the counts set to the real count of
+  `docs/requirements.md` after the rebase: 186 done, 37 in progress, 5 todo of 228 (the base
+  said 184 / 39 / 5, the branch 183 / 40 / 5; both were stale).
+- `docs/status/BLOCKERS.md` again (commit "status: T.1 review fixes ..."): the branch's T.1 row
+  with the review sentence, the merged V.1 row from the previous step.
+- `docs/status/PROGRESS.md`: the base's log entries (w2-s32-indicator, w2-s12-unlock-card,
+  w3-e1-triggers, w4-fcm-sender and the rest) and the branch's T.1 entries all kept, newest
+  first; the branch entry's requirement count updated to 186 / 37 / 5; the phase 8 status row
+  updated to the same count with T.1 named next to S.32.
+- `docs/maintainers/commands.md` (commit "commands: email.mode.set keeps ADR 0081 ..."): the
+  test-list sentence keeps the base's `memory.record` cases and its `intent.test.ts` text
+  (thirty-six phrases with the lesson phrases) and adds the branch's ADR 0081 `email.mode.set`
+  cases to the `commands.test.ts` part; the branch's stale "thirty English and German phrases"
+  dropped.
+- `packages/commands/src/types.ts`: the base's `requestAnswered` and `pricingTable` ports and
+  the branch's `emailMode` port all kept in `CommandPorts`, with the branch's
+  `EmailModePortRequest` / `EmailModePortResult` after the interface.
+- `packages/runtime/src/daemon/compose.ts`: the command loop's ports keep the base's
+  `requestAnswered` (applies an answer at once) and `memory` (`memoryCommandPort`) next to the
+  branch's `emailMode` (through `emailPorts.settings`, which the base still builds with
+  `agentEmailPorts` and the branch binds to `onCommandsSwitchedOff`).
+
+Auto-merged without a conflict and checked by reading: the ADR index (0081 between the base's
+0078 and 0082), `docs/maintainers/runtime.md`, `notifications.md`, `apps.md`, `email.md`,
+`cloud-runner.md`, `docs/requirements.md` (T.1 row), `apps/ui/test/fake-daemon.ts`,
+`packages/capabilities/test/email-commands.test.ts`, `packages/commands/test/commands.test.ts`,
+`packages/runtime/src/notifications/{types,producers}.ts`. The email.md count "8 files, 128
+tests" for `email-*.test.ts` re-checked: still 8 files, 128 tests.
+
+After the rebase: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, the same count as
+the base); unit tests from the root (`pnpm exec vitest run --project unit <pkg>/test`):
+capabilities 36 files, 393 passed; commands 10 files, 152 passed; cloud-runner 9 files, 64
+passed; runtime 128 files, 1134 passed, 1 skipped; `pnpm --filter @forerunner/ui test` 46
+files, 299 passed; integration (no Postgres): capabilities 3 files, 21 passed, 1 skipped,
+cloud-runner and runtime 1 file each skipped (they need Postgres or Docker), commands has no
+integration files; `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok.
