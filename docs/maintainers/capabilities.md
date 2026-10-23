@@ -20,7 +20,15 @@ with their milestone.
   (bounded by `maxRateLimitWaitSec`); 5xx retries with backoff; 401/403/404/405/409/422 map to
   `provider_auth`, `tool_not_allowed`, `not_found` and `validation` codes. A merge that GitHub
   refuses returns `{ merged: false, message }` instead of throwing so the caller can open a
-  human request. `listRepos({ org })`, `listRepos({ user })` (a user's public repositories)
+  human request. `mergePullRequest(repo, n, { sha })` pins the head the caller checked (the
+  reviewed commit, the one the checks ran on): GitHub and the fake host refuse with 409 ("Head
+  branch was modified") when the head moved, `MemoryGitHost` answers the same message, so the
+  runtime's merge step after an accepting review (`packages/runtime/src/loop/merge.ts`, spec
+  J.9, ADR 0062) never merges a commit nobody reviewed. `listCommitStatuses(repo, ref)` reads
+  the combined status (`GET /commits/<ref>/status`, the latest status per context: the status
+  API Jenkins and many external CIs report through) beside `listCheckRuns`, so the merge step
+  refuses a red status as it refuses a red check run; `MemoryGitHost.setCommitStatuses` sets
+  them for tests. `listRepos({ org })`, `listRepos({ user })` (a user's public repositories)
   and `listRepos()` (every repository the token is affiliated with) follow the `Link:
   rel="next"` header page by page up to `MAX_LIST_PAGES` (100), `pageSize` items per page
   (1 to 100, default 100; `nextPageUrl` parses the header), so a source scan (spec A.4,
@@ -29,7 +37,8 @@ with their milestone.
 - `GitOps` (`git.ts`) runs local git with argv arrays: clone, fetch, branch, commit, rebase onto
   the base before a PR (conflicts are reported by file and the rebase aborted, leaving the tree
   clean), push with `--force-with-lease` only when asked and never on the default branch,
-  changed files, log. HTTPS auth uses an `http.extraheader` config argument so the token never
+  `isAncestor(base, of)` (has the base moved past the branch; any git failure throws rather
+  than reading as "moved"), changed files, log. HTTPS auth uses an `http.extraheader` config argument so the token never
   touches disk; error output is redacted.
 - `PrTaskExecutor` (`pr-executor.ts`) wraps any task executor in the branch-and-PR flow: clone
   or fetch into a per-task worktree, branch from the base (or the existing PR branch), run the
@@ -256,6 +265,12 @@ action), U.9 (run event with counts on a session).
 ## How to change it
 
 ## Tests
+
+`github.test.ts` reads commit statuses from the combined-status endpoint, sends the merge's
+`sha` pin to the stub and has `MemoryGitHost` refuse a merge
+pinned to a head the PR no longer has; `git.test.ts` has `isAncestor` false while the base has
+moved and true after the rebase. The runtime's merge step on the fake git host is
+`packages/runtime/test/loop-merge.test.ts`.
 
 ## Known issues
 

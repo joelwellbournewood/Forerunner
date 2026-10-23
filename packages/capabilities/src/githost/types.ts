@@ -63,6 +63,17 @@ export interface CheckRunInfo {
   detailsUrl: string | null;
 }
 
+/**
+ * A commit status (the older status API, the one Jenkins and many external CIs report
+ * through), the latest per `context` on a commit.
+ */
+export interface CommitStatusInfo {
+  id: number;
+  context: string;
+  state: "pending" | "success" | "failure" | "error";
+  targetUrl: string | null;
+}
+
 export interface ReleaseInfo {
   id: number;
   tagName: string;
@@ -187,10 +198,14 @@ export interface GitHost {
     repo: RepoRef,
     opts?: { state?: "open" | "closed" | "all"; head?: string },
   ): Promise<PullRequestInfo[]>;
+  /**
+   * Merge the pull request. `sha` pins the head the caller checked (the reviewed commit, the
+   * one the checks ran on): the host refuses the merge when the head moved since (ADR 0062).
+   */
   mergePullRequest(
     repo: RepoRef,
     number: number,
-    opts?: { method?: "merge" | "squash" | "rebase"; title?: string },
+    opts?: { method?: "merge" | "squash" | "rebase"; title?: string; sha?: string },
   ): Promise<{ merged: boolean; sha: string | null; message: string }>;
   commentOnPullRequest(repo: RepoRef, number: number, body: string): Promise<CommentInfo>;
   listPullRequestComments(repo: RepoRef, number: number): Promise<CommentInfo[]>;
@@ -214,6 +229,8 @@ export interface GitHost {
   ): Promise<IssueInfo[]>;
   commentOnIssue(repo: RepoRef, number: number, body: string): Promise<CommentInfo>;
   listCheckRuns(repo: RepoRef, ref: string): Promise<CheckRunInfo[]>;
+  /** The latest commit status per context on `ref` (the combined status's entries). */
+  listCommitStatuses(repo: RepoRef, ref: string): Promise<CommitStatusInfo[]>;
   createRelease(
     repo: RepoRef,
     opts: { tagName: string; name: string; body: string; draft?: boolean; prerelease?: boolean },

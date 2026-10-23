@@ -8,4 +8,6 @@ export * from "./critic.ts";
 /** Project docs (spec G.5): the scaffold at creation and the status update at session end. */
 export * from "./docs.ts";
 export * from "./memory.ts";
+/** The merge of a reviewed pull request at autonomy 3 (spec J.9, ADR 0062). */
+export * from "./merge.ts";
 export * from "./ports.ts";

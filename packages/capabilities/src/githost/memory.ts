@@ -2,6 +2,7 @@ import { ForerunnerError } from "@forerunner/platform";
 import {
   type CheckRunInfo,
   type CommentInfo,
+  type CommitStatusInfo,
   type FileContent,
   FORERUNNER_TASK_ID_FIELD,
   type GitHost,
@@ -30,6 +31,7 @@ interface Repo extends RepoInfo {
   issues: IssueInfo[];
   comments: Map<number, CommentInfo[]>;
   checks: Map<string, CheckRunInfo[]>;
+  statuses: Map<string, CommitStatusInfo[]>;
   releases: ReleaseInfo[];
   nextNumber: number;
 }
@@ -124,6 +126,7 @@ export class MemoryGitHost implements GitHost {
       issues: [],
       comments: new Map(),
       checks: new Map(),
+      statuses: new Map(),
       releases: [],
       nextNumber: 1,
     };
@@ -192,10 +195,17 @@ export class MemoryGitHost implements GitHost {
   async mergePullRequest(
     repo: RepoRef,
     number: number,
+    opts: { sha?: string } = {},
   ): Promise<{ merged: boolean; sha: string | null; message: string }> {
     const r = this.repo(repo);
     const pr = await this.getPullRequest(repo, number);
     if (pr.state !== "open") return { merged: false, sha: null, message: "already closed" };
+    if (opts.sha && opts.sha !== pr.head.sha)
+      return {
+        merged: false,
+        sha: null,
+        message: "Head branch was modified. Review and try the merge again.",
+      };
     if (!pr.mergeable)
       return { merged: false, sha: null, message: "Pull Request is not mergeable" };
     pr.state = "closed";
@@ -274,6 +284,14 @@ export class MemoryGitHost implements GitHost {
 
   setCheckRuns(repo: RepoRef, ref: string, runs: CheckRunInfo[]): void {
     this.repo(repo).checks.set(ref, runs);
+  }
+
+  async listCommitStatuses(repo: RepoRef, ref: string): Promise<CommitStatusInfo[]> {
+    return this.repo(repo).statuses.get(ref) ?? [];
+  }
+
+  setCommitStatuses(repo: RepoRef, ref: string, statuses: CommitStatusInfo[]): void {
+    this.repo(repo).statuses.set(ref, statuses);
   }
 
   async createRelease(

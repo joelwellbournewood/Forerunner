@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import { SimulatedClock } from "@forerunner/platform";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GitHubHost } from "../src/githost/github.ts";
+import { MemoryGitHost } from "../src/githost/memory.ts";
 
 interface Seen {
   method: string;
@@ -90,6 +91,13 @@ function stub(): Promise<{
               { id: 1, name: "ci", status: "completed", conclusion: "success", details_url: null },
             ],
           });
+        if (u === "/repos/o/r/commits/abc/status?per_page=100")
+          return json(200, {
+            state: "failure",
+            statuses: [
+              { id: 9, context: "ci/jenkins", state: "failure", target_url: "https://ci.test/9" },
+            ],
+          });
         if (u === "/repos/o/missing") return json(404, { message: "Not Found" });
         // Repository listings page through the Link header the way GitHub does.
         const repoJson = (owner: string, name: string) => ({
@@ -153,6 +161,9 @@ describe("GitHubHost", () => {
     const merge = await gh.mergePullRequest({ owner: "o", name: "r" }, 7);
     expect(merge.merged).toBe(false);
     expect(merge.message).toContain("not mergeable");
+    // The merge pins the head the caller checked (ADR 0062): the host refuses a moved head.
+    await gh.mergePullRequest({ owner: "o", name: "r" }, 7, { sha: "abc123" });
+    expect(JSON.parse(s.seen.at(-1)?.body ?? "{}")).toMatchObject({ sha: "abc123" });
     const c = await gh.commentOnPullRequest({ owner: "o", name: "r" }, 7, "looks good");
     expect(c.body).toBe("looks good");
     const f = await gh.getFile({ owner: "o", name: "r" }, "docs/a.md");
@@ -170,6 +181,10 @@ describe("GitHubHost", () => {
     expect((await gh.listCheckRuns({ owner: "o", name: "r" }, "abc"))[0]?.conclusion).toBe(
       "success",
     );
+    // Commit statuses (the status API external CIs report through) from the combined status.
+    expect(await gh.listCommitStatuses({ owner: "o", name: "r" }, "abc")).toEqual([
+      { id: 9, context: "ci/jenkins", state: "failure", targetUrl: "https://ci.test/9" },
+    ]);
   });
 
   it("lists an org's, a user's and the token's repositories, following Link pagination", async () => {
@@ -203,5 +218,25 @@ describe("GitHubHost", () => {
       }),
     ).rejects.toMatchObject({ code: "not_found" });
     expect(() => new GitHubHost({ token: "" })).toThrow(/needs a token/);
+  });
+});
+
+describe("MemoryGitHost merge", () => {
+  it("refuses a merge pinned to a head the PR no longer has, merges the pinned one", async () => {
+    const host = new MemoryGitHost("alice");
+    const repo = { owner: "o", name: "r" };
+    await host.createRepo({ ...repo, private: true });
+    const pr = await host.createPullRequest(repo, {
+      title: "t",
+      body: "",
+      head: "f",
+      base: "main",
+    });
+    const moved = await host.mergePullRequest(repo, pr.number, { sha: "not-the-head" });
+    expect(moved).toMatchObject({ merged: false });
+    expect(moved.message).toContain("Head branch was modified");
+    expect((await host.getPullRequest(repo, pr.number)).state).toBe("open");
+    const ok = await host.mergePullRequest(repo, pr.number, { sha: pr.head.sha });
+    expect(ok.merged).toBe(true);
   });
 });

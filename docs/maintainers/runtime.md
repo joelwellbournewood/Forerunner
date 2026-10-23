@@ -29,7 +29,7 @@ expired (compared as NaN it counted as "never expires" before; `test/security-to
 | `beforeToolCall(ctx, tool, input)` | token/kill, step, tool allowlist, zod schema, path containment for `pathFields` (`pathInsideRoot`: inside a root as written and once the symlinks of the path's existing part are resolved, so a committed `link -> ~/.ssh/id_ed25519` or a linked directory in the worktree is refused for reads and writes alike, and a link that cannot be resolved counts as outside), domain allowlist for `domainFields`, autonomy decision (may ask `ApprovalPort`; the key an approval is remembered under is `tool:<SHA-256 of the canonical raw input>`, `approvalKeyFor`, computed before the input is cut for the card and handed to the port as `ApprovalRequest.key`, which `StateApprovals` writes into `change_card.key` beside the display copy (`input`), so two inputs that display alike never share a key; an approval of an always-human class (`ALWAYS_HUMAN`) admits one call and is taken out of `ctx.approvals` as it is used, and the durable port spends its row the same way (ADR 0052), so the resume path re-makes the paused call once, in the same run or a later run of the session, and every further identical delete, purchase or send asks again behind a new request, while any other approval holds for the run and, durably, for the session; pending pauses the run; skipped for a tool with `gate: "registry"`, a command of the command registry whose executor confirms by risk itself, so the change card is the one approval and the hooks file no second request), secret-ref resolution for granted names only (an allowed decision carries `approvalKey`, the key above over the input before resolution, which the agent loop hands the tool as `ToolExecutionContext.approvalKey` so a tool that asks a human itself, the Cloudflare deployer, matches the hooks' row although it sees the resolved input, and `approvalInput`, the hooks'
 display copy of the input with `secret:` references unresolved, handed on as
 `ToolExecutionContext.approvalInput` so such a tool's own approval card never shows a resolved
-secret value); denials are audited, a call on a revoked, expired or forged token or after a stop too (the row carries the token's own id and run, unverified, spec S.9) |
+secret value); an unattended step (`RunContext.unattended`, the runtime's own call that no run waits on: the merge after an accepting review, ADR 0062) never asks: an action the level does not free is refused as `autonomy_insufficient` with its audit row; denials are audited, a call on a revoked, expired or forged token or after a stop too (the row carries the token's own id and run, unverified, spec S.9) |
 | `afterToolCall(ctx, tool, input, result)` | redacts resolved secrets, wraps untrusted output in the data envelope and scans it for injection, audits. Every audit summary the hooks write (input and result, on the allow, deny and pending paths) is scrubbed first: the run's resolved secret values in every encoding (`SecretsPort.redact`), then the platform's credential shapes as a last line for a value the model obtained elsewhere and pasted into a later input, with `secret:<name>` references kept, since the name is what the audit is meant to carry |
 
 The per-session accounting is `SessionBudget` (`src/enforcement/budget.ts`): run and session
@@ -47,7 +47,10 @@ Action classes map to decisions per level 0–4. `destructive`, `financial`, `cr
 `permission_change` and `capability_grant` need a human at every level. Level 0 proposes only,
 level 1 runs routine work after plan approval (the approval is of one plan, bound by its
 `plan_id`: "Plan approval" under Sessions), level 2 frees routine reversible work, level 3
-also merges reviewed PRs and deploys to staging, level 4 everything else. The one exception
+also merges reviewed PRs and deploys to staging, level 4 everything else. The merge of a
+reviewed PR is a `merge_pr` tool call the session runner makes after an accepting review
+(`src/loop/merge.ts`, "Merge of a reviewed PR" under the core loop): unattended, so at level 2
+the hooks refuse it with the audit row and the PR stays open for the human. The one exception
 to the hooks asking is a tool gated by the command registry (`ToolSpec.gate: "registry"`, set
 by `CommandLoop.tools` on the conversation agent's model path): its always-human rule is the
 registry's own (a high-risk command needs the paired device, ADR 0030), applied by the
@@ -691,10 +694,10 @@ tier, the verdict moves it through the state workflow and the retry ladder, less
 at session start and out at session end, and every change by chat, voice, the UI or the phone
 runs the same command. The runner, the executor and the conversation agent reach the three
 packages only through the ports in `src/loop/ports.ts` (`CriticPort`, `MemoryPort`,
-`ConversationCommands`, `ProjectDocsPort`); `src/loop/critic.ts`, `memory.ts`, `commands.ts`
-and `docs.ts` implement them over `@forerunner/critic`, `@forerunner/memory`,
+`ConversationCommands`, `ProjectDocsPort`, `MergePort`); `src/loop/critic.ts`, `memory.ts`,
+`commands.ts`, `docs.ts` and `merge.ts` implement them over `@forerunner/critic`, `@forerunner/memory`,
 `@forerunner/commands` and `@forerunner/capabilities` (git), and `compose.ts` wires them
-(`RuntimeApp.critic`, `memory`, `commands`, `docs`, `criticAgent`). Tests run the runner
+(`RuntimeApp.critic`, `memory`, `commands`, `docs`, `merge`, `criticAgent`). Tests run the runner
 with fakes of the ports (`test/loop-memory.test.ts`) and with the real implementations on the
 fake provider (`test/loop-critic.test.ts`, `test/conversation.test.ts`, `test/loop-routes.test.ts`,
 `test/loop-commands.test.ts`, `test/signoff-answer.test.ts`, `test/approvals-poll.test.ts`).
@@ -760,6 +763,48 @@ review with `session_id` set; `critic.session_review` carries the grade and a `h
 as an escalation. Lesson proposals (repeat findings) are recorded in critic memory through the
 memory port. Events: `critic.review_started`, `critic.verdict`, `critic.review_failed`
 (the task stays in review), `critic.session_review`, `task.blocked_by_findings`.
+
+**Merge of a reviewed PR (`ReviewedPrMerge`, `src/loop/merge.ts`, spec J.9,
+[ADR 0062](../decisions/0062-merge-after-review-checks-rule.md)).** When the verdict closes a
+task (`decision: "accepted"`) and the task has a `pr_url`, the runner calls
+`SessionRunnerDeps.merge.mergeReviewed` (`MergePort`). The port reads the reviewed commit
+(the HEAD of the task worktree `<worktreeRoot>/<task id>` that `PrTaskExecutor` pushed and
+the critic diffed; without a worktree the outcome is `unverified` and nothing is merged),
+derives a token from the session's (`merge_pr` only, the worktree only, budget 0) and makes
+one `merge_pr` call through the hooks with `RunContext.unattended`: below level 3 the hooks
+refuse it as `autonomy_insufficient` with the audit row (`not_allowed`, no request: the PR
+stays open as at level 2 before), at level 3 the tool runs. The tool (`mergePrTool`) holds the
+checks rule, so it holds for any caller: the PR head must be the reviewed commit and the
+worktree's HEAD (`head_moved` otherwise); a base that moved (`GitOps.isAncestor`) is rebased
+onto in the worktree and the branch pushed with a lease (`conflict` with the files when the
+rebase conflicts); the host's check runs and commit statuses on the head decide (`judgeChecks`,
+the latest run per name and the latest status per context, `GitHost.listCheckRuns` and
+`listCommitStatuses`: a failed, cancelled, timed-out or action-required run and a `failure` or
+`error` status refuse, `checks_failed`; a running run or a `pending` status is polled every
+`checksPollMs`, default 30 s, for up to `checksWaitMs`, default 10 min, and never past the
+session's wall-clock cap (the wait ends one poll before `SessionBudget.limits.deadlineMs`, so
+the last look, the merge and its audit row run on a live token), then `checks_pending`;
+nothing on the head while the base branch's head reports checks or statuses is pending too
+(the host has CI that has not reported on this head yet); nothing on either means the host
+has no CI; after a rebase every check and status the reviewed head had must pass again on the
+new head, and a host still showing the old head right after the push is waited for);
+`mergeable: false` is a conflict; the
+merge is pinned to the checked head (`mergePullRequest(…, { sha })`). Every refusal of the tool
+files one non-blocking `decision` request for the human (why, steps, "I merged it" / "Leave it
+open"); every outcome is written on the task row (`reason`, versioned with the agent), comes
+back as `SessionResult.merges` and `handoff.merges`, is a `pr.merged` or `pr.left_open` event
+(`pr.merge_failed` when the port threw; never fatal) and is counted in the summary ("Merged 1
+reviewed pull request(s)." / "Reviewed pull requests left open for you: 1"). A merged
+branch is taken out of the session's PR branches, so the status update of `ProjectDocs` opens
+its own PR instead of committing to a merged branch. Tier 0 tasks close without a review and
+are never merged; a tier 3 task's accepting verdict becomes the human sign-off (`needs_human`,
+spec H), so it never reaches the merge either and the human who signs off merges. The kill
+switch ends the step as it ends the session: a `killed` refusal of the hooks (the revoked
+token) or a stop during the checks wait is thrown on, never recorded as the level's refusal or
+filed as a request, and the session ends `killed`. The daemon composes it on its hooks, git
+host, worktrees and identity (`RuntimeApp.merge`) and names `merge_pr` in the session grant
+(`RuntimeApp.sessionGrant(projectId)` is that grant, as `startSession` computes it); no tool
+registry offers it to a model.
 
 **Memory (`MemoryLoop`, spec G, E.5, N.4).** Private memory stays on this PC (spec "never
 leave that PC", ADR 0002, ADR 0083): with a shared state (a `FORERUNNER_STATE_URL` that is not
@@ -1733,6 +1778,36 @@ with nothing written; with a repository the docs pushed as a pull request on
 running the intake in the background and without the flag running nothing; a failed background
 intake recorded on the status route; no provider refused as `unavailable`.
 
+`loop-merge.test.ts` (spec J.9, ADR 0062; the runner with `PrTaskExecutor` and
+`ReviewedPrMerge` on the testenv fake git host over REST and git smart HTTP, its own hooks
+with an approval port that would approve anything): at level 3 an accepted task's PR is
+merged on the host (state closed, the file on `main`), one allowed `merge_pr` audit row, no
+approval asked, the task's reason, `merges`, `handoff.merges`, the `pr.merged` event and the
+summary record it; at level 2 the hooks refuse it (`autonomy_insufficient: autonomy level 2`
+audit row, no approval asked, no request) and the PR stays open; a failed check (beside a green
+one), a check still running at the end of the wait, a base that moved in the same file (the
+rebase conflicts) and a commit pushed to the PR branch after the review each leave the PR open
+with a request naming the check or the file; a failing commit status beside a green check
+run is never merged (request naming the status), a pending one is waited for and a green one
+merges; no check on the head while `main` reports one is `checks_pending` with a request, not
+a merge; a running check in a session of two minutes ends the wait inside the session's wall
+clock (`checks_pending`, not the ten-minute wait); the kill switch pressed as the merge asks
+the hooks, or during the checks wait, ends the session `killed` with no merge, no request and
+nothing written on the task; a tier 3 task's accepting review goes to the sign-off and makes no
+`merge_pr` call; a base moved elsewhere is rebased onto, pushed and the rebased head merged; a
+rejecting review makes no `merge_pr` call. The tool on a `MemoryGitHost` with a simulated
+clock: a running check is waited for and merged once green, one still queued at the end of
+the wait is not, a commit status in `error` refuses, a base with CI and a head with none is
+pending while no CI on either merges, a conflicting PR is refused before the merge call; on a
+real worktree and bare repository, a host that still shows the reviewed head right after the
+rebase push is waited for and the rebased head merged (not taken for a moved head). The
+daemon (`composeRuntime` on the fake git host as its configured API base, the token in the
+vault, a token issued from `RuntimeApp.sessionGrant`): at level 3 `RuntimeApp.merge` merges
+the PR on the host with an allowed `audit_log` row, at level 2 it writes the
+`autonomy_insufficient` refusal and the PR stays open, so a grant without `merge_pr` fails
+both. `hooks.test.ts` has the unattended rule itself (refused at 2 and for an
+always-human class at 4 without asking, allowed at 3, an attended call still asks).
+
 `loop-docs.test.ts` (spec G.5, ADR 0058; the runner with `ProjectDocs` on a `MemoryGitHost`
 whose repository clones from a local bare repo): a session whose executor pushed a branch and
 opened its PR gets `docs/status.md` scaffolded and committed on that branch (the session id,
@@ -2322,3 +2397,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   reaches an agent on its owner's PC install; the app has no screen for `rt.sharedSecrets`
   (the daemon routes exist), and the owner's `propose` is not yet a registry command with a
   change card.
+- The merge after an accepting review (J.9, ADR 0062) waits for running checks for
+  `checksWaitMs` (10 minutes, less when the session's wall clock ends sooner) inside the
+  session; CI that takes longer leaves the PR open with a request, and no later session retries
+  the merge on its own (the human merges, or a later rework and review merges again). A
+  repository whose base branch runs CI only on push (no workflow on pull requests) reports
+  nothing on a PR head, so its PRs wait out the bound and go to the human instead of merging.
+  A tier 3 task is merged by the human who signs it off, never by the step.

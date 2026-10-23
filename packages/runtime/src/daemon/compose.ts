@@ -109,6 +109,7 @@ import {
   privateIndexUrl,
   scheduleMemoryConsolidation,
 } from "../loop/memory.ts";
+import { MERGE_PR_TOOL, ReviewedPrMerge } from "../loop/merge.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
 import { modelIdFor } from "../models/ladder.ts";
 import {
@@ -177,7 +178,12 @@ import {
   reportingPlanStartFailures,
   syncPlanApprovals,
 } from "../session/plan-approval.ts";
-import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
+import {
+  SessionRunner,
+  type SessionStartOptions,
+  StaticPlanner,
+  type TaskExecutor,
+} from "../session/runner.ts";
 import { Scheduler, type StartRequest } from "../session/triggers.ts";
 import { readInstallRecord } from "../setup/install-record.ts";
 import {
@@ -581,6 +587,17 @@ export interface RuntimeApp {
    * session end.
    */
   docs: ProjectDocs;
+  /**
+   * The merge of a reviewed PR after an accepting review (spec J.9, ADR 0062): one `merge_pr`
+   * call through the daemon's hooks; level 3 merges, below it the PR stays open.
+   */
+  merge: ReviewedPrMerge;
+  /**
+   * The grant a session of this agent on `projectId` starts with (ADR 0044), as `startSession`
+   * computes it: the tools (`merge_pr` among them, J.9), the worktrees root, the git host's and
+   * the project's domains, the granted secret names.
+   */
+  sessionGrant(projectId?: string | null): Promise<SessionStartOptions["grant"]>;
   /** The command registry (spec Q): the only way chat, voice, the UI and the phone change state. */
   commands: CommandLoop;
   /**
@@ -1651,6 +1668,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     token: ghToken ?? undefined,
     identity: gitIdentity,
   });
+  // The merge of a reviewed PR (spec J.9, ADR 0062): after an accepting review one `merge_pr`
+  // call through the hooks on the task worktree; level 3 merges at the reviewed head once the
+  // host's checks pass, below it the hooks refuse and the PR stays open for the human.
+  const merge = new ReviewedPrMerge({
+    store,
+    clock,
+    tokens,
+    hooks,
+    host: gitHost,
+    worktreeRoot: dirs.worktrees,
+    token: ghToken ?? undefined,
+    identity: gitIdentity,
+  });
   const runner = new SessionRunner({
     store,
     clock,
@@ -1662,6 +1692,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     critic,
     memory,
     docs,
+    merge,
     schemaSync,
     // Actual versus estimate at task.finished feeds the next plan (spec I).
     onTaskFinished: ({ task, item, result, durationMs }) => {
@@ -2017,6 +2048,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       ...capabilityTools().map((t) => t.name),
       ...extensions.bridgedTools().map((t) => t.name),
       ...(hasOauth ? claudeCodeToolNames() : []),
+      // The runtime's merge step (J.9, ADR 0062); no model is offered it (no registry has it).
+      MERGE_PR_TOOL,
     ],
     allowedPaths: [dirs.worktrees],
     allowedDomains: [
@@ -2469,6 +2502,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     memory,
     privateMemory: privateStore,
     docs,
+    merge,
+    sessionGrant: async (projectId) =>
+      sessionGrant(
+        projectId ? await store.project.mustGet(projectId) : null,
+        await sharedSecretNamesFor(store, agent.id),
+      ),
     commands,
     voice,
     events,
