@@ -1059,7 +1059,8 @@ assertion in time is a refusal: `null`, a rejection of any shape (string, `Error
 `MobileController.assertHighRisk` races the port against `biometricTimeoutMs` (default
 `BIOMETRIC_TIMEOUT_MS`, 60 s) and throws `biometric_required` with `details.reason`; the card
 shows "This answer needs a biometric confirmation (<reason>)." under `m-request-error` and
-its buttons work again; a success that arrives late is dropped. In the shell,
+its buttons work again; a success that arrives late is dropped, and a simulated prompt still
+open when the bound runs out (web build) is closed with the refusal. In the shell,
 `assert_biometric` runs the plugin's blocking `status` / `authenticate` on their own thread
 behind `biometric::wait_bounded` (`PROMPT_LIMIT`, 45 s, inside the UI's bound), so it always
 answers: the plugin's text for a not-available status ("Biometrics not enrolled.", else its
@@ -1164,7 +1165,8 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   confirm is refused"): `InboxScreen` with a biometric port per candidate of run 39952987240
   (null; the real `shellBiometric` over a mocked bridge answering "Biometrics not enrolled."
   and rejecting with a permission error; the plugin's error object, a string, an `Error`, a
-  synchronous throw; a prompt that never settles, ended by the bounded wait; a late success
+  synchronous throw; a prompt that never settles, ended by the bounded wait; the simulated
+  dialog closed by that bound, then a second Confirm that passes; a late success
   that sends nothing; reloads under the refusal), each asserting the refusal names the
   biometric step, sits under `m-request-error` in the card that holds `m-request-high`, and
   no answer leaves the phone; plus the enrolled happy path (answer signed with the
@@ -1260,7 +1262,13 @@ node apps/mobile/e2e/run.mjs
   driver's assumption that `Input.dispatchMouseEvent` coordinates are the layout viewport's
   CSS pixels, untested below the fold: no "asking the biometric prompt" line would show it).
   The shell's `prompt()` / `platform_prompt()` compile only for Android and iOS; their first
-  compile is that run. The driver covers the
+  compile is that run.
+- When the shell's `PROMPT_LIMIT` (45 s) runs out while the platform prompt is on screen, the
+  phone has refused, but tauri-plugin-biometric 2.4.0's `BiometricActivity` stays up until
+  the human dismisses it: the plugin has no cancel command (`status` and `authenticate`
+  only), and the platform thread behind `wait_bounded` stays blocked in `run_mobile_plugin`
+  until then. A touch after the bound confirms nothing (no ticket is issued for a late
+  outcome); the human taps Confirm on the card again. Closing it needs a cancel in the plugin. The driver covers the
   calls `smoke()` makes and nothing more: no keyboard shortcuts, no touch events, no frames,
   no screenshots.
 - The CI Android job builds twice: the release APK (signed from `keystore.properties`,

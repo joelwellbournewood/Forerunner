@@ -47,7 +47,8 @@ refusal says; where the bound lives (UI, shell, both); how the next run shows th
    403, { reason })`; the screen shows "This answer needs a biometric confirmation
    (<reason>)." under the `m-request-error` test id inside the request's card, and nothing is
    sent. A success that arrives after the limit is dropped; its ticket expires unused in the
-   shell (120 s).
+   shell (120 s). A simulated prompt (web build) still open when the limit runs out is closed
+   with the refusal.
 2. **Two bounds, the shell's inside the UI's.** The UI races the port against
    `MobileEnv.biometricTimeoutMs` (default `BIOMETRIC_TIMEOUT_MS` = 60 s). The shell runs the
    plugin calls on a blocking thread behind `biometric::wait_bounded` with `PROMPT_LIMIT` =
@@ -86,6 +87,11 @@ refusal says; where the bound lives (UI, shell, both); how the next run shows th
   path ran: no "asking the biometric prompt" line means the click never reached the button
   (the CDP driver, not the app); an "asking" line followed by a refusal line means the
   refusal rendered and the locator missed it; an exception line names the throw.
+- On a phone, the shell's bound refuses but cannot close the platform prompt:
+  tauri-plugin-biometric 2.4.0 has no cancel command, so its `BiometricActivity` stays on
+  screen until the human dismisses it, and a touch after the bound confirms nothing (the late
+  outcome is dropped with its channel, no ticket is issued). apps.md lists it under Known
+  issues.
 - `BiometricPort.assert` may now reject (`BiometricRefusedError`) as well as return `null`;
   ports and tests written for "never throws" still work, because the controller treats both
   alike.

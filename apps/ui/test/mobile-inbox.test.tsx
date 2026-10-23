@@ -264,6 +264,31 @@ describe("Inbox screen: a high-risk answer on a phone that cannot confirm is ref
     h.controller.close();
   });
 
+  it("candidate 3, simulated prompt: the bound closes the open dialog with the refusal", async () => {
+    // The web build's visible stand-in waits for the human; when the bound runs out the card
+    // refuses, and the dialog must not stay up asking to confirm what was already refused.
+    const h = await createMobileHarness({ env: { biometricTimeoutMs: 300 } });
+    const user = userEvent.setup();
+    renderMobile("/inbox", h);
+    await screen.findAllByTestId("m-request");
+    const card = highCard();
+    await user.click(within(card).getByRole("button", { name: "Confirm" }));
+    expect(await screen.findByTestId("m-biometric-dialog")).toHaveTextContent(
+      /Simulated biometric prompt/,
+    );
+    const error = await within(card).findByTestId("m-request-error", {}, { timeout: 3_000 });
+    expect(error).toHaveTextContent(/the prompt did not answer within 300 ms/);
+    expect(screen.queryByTestId("m-biometric-dialog")).toBeNull();
+    expect(h.controller.state.biometricPrompt).toBeNull();
+    expect(postedCalls(h, "/requests/req_cap/answer")).toHaveLength(0);
+    // The card's buttons work again: a second Confirm opens a fresh dialog that can pass.
+    await user.click(within(card).getByRole("button", { name: "Confirm" }));
+    await user.click(await screen.findByTestId("m-biometric-confirm"));
+    await waitFor(() => expect(postedCalls(h, "/requests/req_cap/answer")).toHaveLength(1));
+    expect(postedCalls(h, "/requests/req_cap/answer")[0]).toMatchObject({ biometric: true });
+    h.controller.close();
+  });
+
   it("candidate 3, default limit: the wait is bounded at 60 s, inside the smoke's 180 s", async () => {
     const { BIOMETRIC_TIMEOUT_MS } = await import("../src/mobile/store.tsx");
     expect(BIOMETRIC_TIMEOUT_MS).toBe(60_000);

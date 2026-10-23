@@ -835,6 +835,10 @@ export class MobileController {
       console.info("forerunner: high-risk answer: the biometric prompt passed");
       return outcome;
     }
+    // A simulated prompt still open (the bound ran out while it waited for the human) closes
+    // with the refusal: a dialog asking to confirm next to "refused" would be a lie, and a tap
+    // on it would only mint a ticket nothing redeems.
+    this.state.biometricPrompt?.resolve(false);
     console.warn(
       `forerunner: high-risk answer refused on the phone: ${(why ?? "the prompt returned no ticketed assertion").slice(0, 200)}`,
     );
