@@ -29,6 +29,47 @@ function memoryPort(ctx: CommandContext): MemoryCommandPort {
   return ctx.ports.memory;
 }
 
+/** Share of a model-recorded lesson's content words that must come from the human's words. */
+export const LESSON_GROUNDING_MIN = 0.5;
+
+const GROUNDING_STOPWORDS = new Set(
+  (
+    "the and for are but not you your our with that this these those from into was were has have had " +
+    "will would should could can its it's they them their there then than when what which who why how " +
+    "all any each also just very about over only always never der die das und ist sind nicht mit von " +
+    "für auf ein eine einen dass wie was wir ihr sie"
+  ).split(" "),
+);
+
+function contentTerms(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const w of text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
+    if (w.length < 3 || GROUNDING_STOPWORDS.has(w)) continue;
+    out.add(w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w);
+  }
+  return out;
+}
+
+/**
+ * Review w2-chat-memory finding 3 (ADR 0061): the chat's context carries repository docs, so
+ * a lesson an agent (the model's `memory_record` tool) records must be grounded in what the
+ * human said this turn: at least `LESSON_GROUNDING_MIN` of its content words appear in
+ * `ctx.wordsUsed`. A human's own command (the pattern path, the UI) is the human's words.
+ */
+function assertGrounded(text: string, ctx: CommandContext): void {
+  if (ctx.actor.kind === "human") return;
+  const lesson = contentTerms(text);
+  const said = contentTerms(ctx.wordsUsed ?? "");
+  let shared = 0;
+  for (const t of lesson) if (said.has(t)) shared++;
+  if (lesson.size === 0 || shared / lesson.size < LESSON_GROUNDING_MIN)
+    throw new ForerunnerError(
+      "injection_suspected",
+      "a lesson is recorded only from what the human said; this text is not in the human's words",
+      { details: { shared, terms: lesson.size } },
+    );
+}
+
 async function target(
   p: MemoryRecordParams,
   ctx: CommandContext,
@@ -39,6 +80,7 @@ async function target(
   agentId: string;
 }> {
   if (!ctx.agentId) throw new ForerunnerError("validation", "no principal agent for this human");
+  assertGrounded(p.text, ctx);
   const agent = await ctx.store.agent.mustGet(ctx.agentId);
   if (agent.owner_human_id !== ctx.humanId)
     throw new ForerunnerError(

@@ -87,7 +87,12 @@ characters). The command refuses a context without a principal agent or an agent
 does not own; the port (`MemoryCommandPort`: `recordLesson`, `forgetLesson`) is the runtime's
 `memoryCommandPort(MemoryLoop)`, which also runs the lesson injection screen and the memory
 lint (a text under 20 characters is refused with the lint's reason). Without the port the
-command is refused with `unavailable`.
+command is refused with `unavailable`. A lesson an agent records (the conversation model's
+`memory_record` tool, whose context carries repository docs) must be grounded in the human's
+words of that turn: at least `LESSON_GROUNDING_MIN` (half) of its content words appear in
+`ctx.wordsUsed`, else it is refused as `injection_suspected`, so a doc section cannot write
+itself into the principal's memory through the model; a human actor's command is the human's
+words and is not checked.
 
 `budget.set` stores money in USD micro-units with the CHF figure beside it (ADR 0008; the rate
 comes from `ports.chfPerUsd`): a temporary session budget is `project.settings.
@@ -327,7 +332,8 @@ device does not confirm a high-risk change without a second factor), `commands.t
 PharmaWatch sentence exactly, every command's risk, writes and undo, prototype keys as unknown
 settings; `memory.record` acting at once at low risk with the read-back sentence, the source
 naming the human and the conversation session, another project or no project, undo through the
-port, refused without an agent or without the port), `intent.test.ts` (the two spec sentences,
+port, refused without an agent or without the port, an agent actor's lesson refused unless
+grounded in the human's words), `intent.test.ts` (the two spec sentences,
 thirty-six English and German phrases including the lesson phrases and "remember to" staying a note, seven questions and ordinary sentences that are not lessons,
 ambiguity questions, budget tails that are not a time, invalid values as a question, the
 envelope refusal, the model port, time parsing with `rest`), and `scenario.test.ts` (the

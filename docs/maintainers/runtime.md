@@ -2055,7 +2055,9 @@ lesson of the principal in the context and an unrelated one not, under the 600-t
 "remember that ..." recorded without a model call as a private lesson of the principal for the
 active project with the human and the conversation session as source, read back in the
 sentence, in the change log, in the context of the next question and retired by "undo"; the
-model's `memory_record` tool recording a lesson stated in other words; another human's private
+model's `memory_record` tool recording a lesson stated in other words; a lesson planted in a doc
+section and called by the model through `memory_record` refused (not in the human's words, the
+command's grounding rule) with nothing recorded; another human's private
 lesson on the same project never in the context, a turn naming that human's agent retrieving no
 lessons and refused when it tries to record into it. `loop-docs.test.ts` also proves
 `docsDirFor` (nothing before a scaffold and nothing cloned to find out, the workspace, the docs

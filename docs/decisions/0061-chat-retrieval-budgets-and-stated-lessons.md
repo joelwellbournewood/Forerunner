@@ -65,7 +65,10 @@ next-session note and recorded.
    `source: human:<id>;<chat|voice>:<conversation session>`, confidence 0.8 (the human said it,
    above a session's default 0.5, below 1 so a later contradiction is still weighed), after the
    lesson injection screen and the memory lint. The undo retires it and restores a lesson it
-   superseded.
+   superseded. Because the chat's context now carries repository docs, a lesson the model
+   records (an agent actor) must be grounded in the human's words of that turn (at least half
+   of its content words, `LESSON_GROUNDING_MIN`), enforced in the command: a doc section cannot
+   record itself through the model.
 
 ## Consequences
 
