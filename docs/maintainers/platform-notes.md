@@ -13,6 +13,11 @@ redaction), `ids`, `errors`.
 
 ## How it works
 
+**Errors (`src/errors.ts`).** Every package throws `ForerunnerError` with a stable `code`
+from the `ErrorCode` union, so the UI, logs and tests match on the code, never the message;
+a new code is added to the union here. The latest, `identity_ambiguous` (ADR 0082), is an
+install on a state store holding several humans that names none of them.
+
 | Concern | Windows | Linux | Where |
 | --- | --- | --- | --- |
 | App directories | `%APPDATA%\forerunner\config`, `%LOCALAPPDATA%\forerunner\{data,cache,logs}` | XDG: `~/.config/forerunner`, `~/.local/share/forerunner`, `~/.cache/forerunner`, `~/.local/state/forerunner/logs` | `paths.appDirs` (override: `FORERUNNER_HOME`) |

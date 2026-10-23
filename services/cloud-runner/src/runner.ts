@@ -23,6 +23,7 @@ import {
 } from "@forerunner/platform";
 import {
   type AutonomyLevel,
+  bindInstallHuman,
   composeRuntime,
   type EngineDetection,
   KillFileWatcher,
@@ -211,22 +212,20 @@ function pricingForProvider(provider: ModelProvider, modelId: string): RunPricin
   };
 }
 
+/**
+ * The human this runner serves (ADR 0082, the daemon's rule): `FORERUNNER_RUNNER_HUMAN` as an
+ * id or email, else the store's only human; several humans and no selector are
+ * `identity_ambiguous`, a selector that names nobody `not_found`. The runner never creates a
+ * human: the desktop setup does.
+ */
 async function resolveHuman(store: StateStore, selector: string | undefined): Promise<HumanRow> {
-  if (selector) {
-    const byId = await store.human.get(selector);
-    if (byId) return byId;
-    const byEmail = await store.human.byEmail(selector);
-    if (byEmail) return byEmail;
-    throw new ForerunnerError("not_found", `no human with id or email ${selector}`);
-  }
-  const [first] = await store.human.list(undefined, { limit: 1 });
-  if (!first) {
+  const { human } = await bindInstallHuman(store, { humanId: selector }, async () => {
     throw new ForerunnerError(
       "not_found",
       "the shared state has no human yet; run the desktop setup first",
     );
-  }
-  return first;
+  });
+  return human;
 }
 
 async function resolveAgent(
@@ -389,7 +388,12 @@ export async function startCloudRunner(deps: CloudRunnerDeps): Promise<CloudRunn
       registryDir: deps.registryDir,
       appVersion: config.version,
       sandboxDetection: deps.sandboxDetection,
-      identity: { humanName: human.name, email: human.email, timezone: human.timezone },
+      identity: {
+        humanId: human.id,
+        humanName: human.name,
+        email: human.email,
+        timezone: human.timezone,
+      },
       startServices: false,
     });
   } catch (e) {

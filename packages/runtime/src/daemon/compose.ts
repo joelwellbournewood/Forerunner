@@ -48,6 +48,7 @@ import {
 } from "@forerunner/platform";
 import {
   type DeviceRow,
+  type HumanRow,
   type JsonObject,
   type JsonValue,
   type NewAuditLog,
@@ -158,7 +159,7 @@ import {
   type PlanAllowance,
   resolvePlanAllowance,
 } from "../setup/plan-allowance.ts";
-import { readConfig, SECRET_NAMES, type SetupConfig } from "../setup/wizard.ts";
+import { readConfig, rememberBoundHuman, SECRET_NAMES, type SetupConfig } from "../setup/wizard.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 import { readUpdateConfig, UpdateConfig } from "../update/config.ts";
 import type { UpdateManager } from "../update/install.ts";
@@ -213,6 +214,12 @@ import {
 } from "../wiring/notification-ports.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
+import {
+  bindInstallHuman,
+  type InstallIdentity,
+  installIdentitySelectors,
+  pickPrincipal,
+} from "./identity.ts";
 import { DaemonRestarter, processExit, type RestartRequestFile } from "./restart.ts";
 import { DetectingSandboxPort } from "./sandbox-port.ts";
 import { ShellPresence } from "./shells.ts";
@@ -243,7 +250,21 @@ export interface ComposeOptions {
   chfPerUsd?: number;
   rates?: RateSource;
   appVersion?: string;
-  identity?: { humanName?: string; email?: string; timezone?: string; agentName?: string };
+  /**
+   * Who this install is (ADR 0082). `humanId` (an id or an email) binds the install to that
+   * human ahead of `FORERUNNER_HUMAN` and `config.json`; the cloud runner passes the human it
+   * resolved. `email` finds the human by email or names the one created on first run (ahead of
+   * `config.json` `humanEmail`). `humanName` and `timezone` are used only when the human is
+   * created; `agentName` picks the principal agent among the human's own (created with that
+   * name when there is none).
+   */
+  identity?: {
+    humanId?: string;
+    humanName?: string;
+    email?: string;
+    timezone?: string;
+    agentName?: string;
+  };
   /** MCP connector factory (tests use an in-memory transport). */
   connectors?: McpConnectorFactory;
   /** Extension catalog; default: the built-in one plus FORERUNNER_EXTENSION_CATALOG_URL. */
@@ -466,6 +487,8 @@ export interface RuntimeApp {
   conversation: ConversationAgent | null;
   gitHost: GitHost;
   human: { id: string; name: string; timezone: string };
+  /** How `human` was chosen (ADR 0082): the selector and where it came from. */
+  identity: InstallIdentity;
   agent: { id: string; name: string };
   /**
    * The source the loop paths are billed to (the critic, chat, the model watch's evals): the
@@ -836,22 +859,49 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const events = new EventEmitter();
   events.setMaxListeners(100);
 
-  // Identity: the first human and their principal agent are created on first run.
-  const humans = await store.human.list(undefined, { limit: 1 });
-  const human =
-    humans[0] ??
-    (await store.human.insert({
-      name: opts.identity?.humanName ?? config?.humanName ?? env.USERNAME ?? env.USER ?? "me",
-      email: opts.identity?.email ?? "",
-      timezone: opts.identity?.timezone ?? config?.timezone ?? "UTC",
-      notify_prefs: {},
-      default_autonomy: 2,
-      monthly_cap_usd_micro: Math.round(150 / (opts.chfPerUsd ?? 0.8)) * 1_000_000,
-      locale: "en",
-    }));
+  // Identity (ADR 0082): this install's own human, by selector (the caller's, FORERUNNER_HUMAN,
+  // config.json's id, then its email), never the store's first row: on a shared store that row
+  // is another person. Created on first run only when nothing names one and the store holds
+  // none (or none with the configured email); several humans and no selector refuse the start.
+  const identitySelectors = installIdentitySelectors({
+    humanId: opts.identity?.humanId,
+    email: opts.identity?.email,
+    env,
+    config,
+  });
+  let human: HumanRow;
+  let identity: InstallIdentity;
+  try {
+    ({ human, identity } = await bindInstallHuman(store, identitySelectors, (email) =>
+      store.human.insert({
+        name: opts.identity?.humanName ?? config?.humanName ?? env.USERNAME ?? env.USER ?? "me",
+        email: email ?? "",
+        timezone: opts.identity?.timezone ?? config?.timezone ?? "UTC",
+        notify_prefs: {},
+        default_autonomy: 2,
+        monthly_cap_usd_micro: Math.round(150 / (opts.chfPerUsd ?? 0.8)) * 1_000_000,
+        locale: "en",
+      }),
+    ));
+  } catch (e) {
+    await store.close().catch(() => undefined);
+    throw e;
+  }
+  logger.info("install identity", { humanId: human.id, source: identity.source });
+  // An install started from its config.json records the human it found or created there, so
+  // a later email change in the store never rebinds it; an override from the environment or
+  // the caller is for this start only and is never written.
+  if (
+    opts.config === undefined &&
+    config &&
+    (identity.source === "email" || identity.source === "only" || identity.source === "created") &&
+    rememberBoundHuman(dirs, human.id)
+  ) {
+    logger.info("install identity recorded in config.json", { humanId: human.id });
+  }
   const principals = await store.agent.principals(human.id);
   const agent =
-    principals[0] ??
+    pickPrincipal(principals, opts.identity?.agentName ?? env.FORERUNNER_AGENT_NAME) ??
     (await store.agent.insert({
       name: opts.identity?.agentName ?? env.FORERUNNER_AGENT_NAME ?? "Alice",
       owner_human_id: human.id,
@@ -2114,6 +2164,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     conversation,
     gitHost,
     human: { id: human.id, name: human.name, timezone: human.timezone },
+    identity,
     agent: { id: agent.id, name: agent.name },
     billingSourceId,
     billing: {

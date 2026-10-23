@@ -1777,8 +1777,11 @@ of the file. What it assembles, and why this way:
   install's worktrees), a `MemoryLoop` on its own root, a `PrTaskExecutor` with a
   `LoopTaskExecutor` inside (the registry's coder prompt and caps, the built-in file tools), a
   `SessionRunner` and a `Scheduler`. It is the composition `composeRuntime` makes for a daemon,
-  assembled by hand because `composeRuntime` binds an install to the store's first human; a
-  two-human world on one store needs two identities (see Known issues).
+  assembled by hand: it predates the identity selector (`composeRuntime` bound an install to
+  the store's first human until ADR 0082; `identity.humanId` now binds each install to its own
+  human, covered by `packages/runtime/test/compose-identity.test.ts` on a shared `sqlite:`
+  file) and still builds the gated provider, the scenario planner and the PR executor over
+  the fake git host itself (see Known issues).
 - **The git host** is `FakeGitHost` from testenv: both humans are users, the project's org has
   both as members, one classic `repo` token per human; each install talks REST through the
   real `GitHubHost` adapter and pushes over git HTTP with the token as a header (the bare
@@ -1931,10 +1934,15 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
 
 ### Known issues
 
-- `composeRuntime` attaches an install to the first human in the store, so the world assembles
-  the daemon's composition by hand; a change to `composeRuntime` that adds a seam (for
-  example the identity the install binds to) does not reach the world until it is mirrored
-  here. The `RuntimeApp` shape is the reference; keep the world's install in step with it.
+- The world still assembles the daemon's composition by hand. The reason it was written that
+  way is gone (`composeRuntime` binds an install by selector since ADR 0082, never to the
+  store's first human, and two installs on one store are covered by
+  `packages/runtime/test/compose-identity.test.ts`), but the world's installs also inject a
+  gated provider, a scripted planner and a PR executor over the fake git host, which
+  `composeRuntime` has no seams for yet; pointing the world at `composeRuntime` is a refactor
+  of its own. Until then a change to `composeRuntime` does not reach the world until it is
+  mirrored here (the gate-5 daemon view carries `identity` like the real `RuntimeApp`). The
+  `RuntimeApp` shape is the reference; keep the world's install in step with it.
 - The startup checklist reads the next-session queue per project
   (`store.queue.pending(project.id)` in `packages/runtime/src/session/checklist.ts`), and the
   runner consumes every item a brief carried, so on a shared project the first session of
