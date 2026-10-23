@@ -223,3 +223,123 @@ list, is in `/mnt/session/outputs/w4-fcm-sender-apply-check.txt`.
 - No live FCM send was possible (no project, no service account); the sender is proven
   against the stand-ins only.
 - The Postgres integration run of the store suite was not possible here (no Postgres).
+
+## Review
+
+Verdict: **revise**. Score: 66/100 (as built at ed433f5).
+
+Reviewed as an independent, adversarial reviewer against the brief, the base branch
+(`origin/ccr-4d8a843c-1k9syk` at f1948dd) and the runtime code that actually writes the rows
+the fan-out reads. The sender itself is sound: the RS256 JWT is verified by the fake token
+endpoint, the access token is cached and re-minted on 401, 5xx / 429 are retried with doubling
+backoff, the service account is held by reference only and no key, access token or
+registration token reaches a log line, `/health` or an audit row (`push.test.ts` checks at
+debug level; I re-read every `logger.*` call in `src/push/` and `resolvePushSender`). The
+token routes are signed and owner-checked. What is wrong is in the fan-out's reading of real
+rows: the budget kind is driven by a row shape no writer produces, held notices go out stale,
+a misconfiguration can wipe every token, and a stalled connection freezes push for good.
+Throwaway tests (`services/state-api/test/zz-probe.test.ts`, deleted after the run) proved
+findings 1 to 5.
+
+Requirements checked:
+
+- FcmSender, FCM HTTP v1 `POST .../v1/projects/<project>/messages:send` with an OAuth2 token
+  minted from the service-account JSON (RS256, `node:crypto` only): met (`src/push/fcm.ts`,
+  fake token endpoint verifies signature, `iss`, `aud`, `scope`, lifetime).
+- Service account referenced by a secret name, never a value in config or logs: met
+  (`config.ts` holds the name, `main.ts` `resolvePushSender`, `push.test.ts` log scan).
+- Called by the fan-out for the four kinds to every device of the human with a `push_token`:
+  approval and finished session met; **budget warning not met on a real path and budget stop
+  misclassified** (finding 1); message met but double-pushes every session end (finding 4);
+  a token shared by two rows is pushed twice (finding 5).
+- Quiet hours with the existing rule (`resolvePrefs` / `isQuietAt`, ADR 0017 urgency): met for
+  the hold; the flush sends notices that are no longer true (finding 2); a budget stop is held
+  as normal (finding 1).
+- Retries / backoff on 5xx: met; no request timeout, so a stalled connection is never retried
+  and blocks the flush forever (finding 6).
+- Token invalidation on 404/UNREGISTERED with an audit row: met, but any 404 (a wrong
+  `FORERUNNER_FCM_API_URL`, a proxy page) clears the token (finding 3).
+- `PollingPush`-style no-op when unconfigured, visible reason in `/health`: met
+  (`push without a service account` tests).
+- Pairing accepts `pushToken` and stores it: met; a blank / whitespace token is stored and
+  sent (finding 8).
+- `PUT /devices/:id/push-token`, signed like other device routes: met (unsigned 401, other
+  device 403, admin, 404); the documented `revoked 409` has no test (finding 7).
+- Tests against a fake FCM endpoint and a fake OAuth endpoint in services/state-api/test:
+  met (`fake-google.ts`, real loopback HTTP); the budget case proves a hand-made row
+  (finding 1).
+- Android app half stays the stand-in, no firebase-messaging / google-services.json: met
+  (`git diff --stat` touches no Gradle or Kotlin file).
+- BLOCKERS text says the service side is done and only the app's Firebase wiring waits: met.
+- Docs (state-service.md, notifications.md, apps.md, security.md), ADR: present; ADR is 0085
+  because 0084 was taken on the base (stated in the ADR header, correct). The budget rows in
+  state-service.md / ADR 0085 / notifications.md describe the wrong rule (finding 1).
+- `pnpm exec vitest run --project unit services/state-api/test`: 11 files, 148 tests green;
+  `packages/state/test`: 6 files, 97 tests green.
+- Semantic conflict with the base: none in code (the base's B.5 change-reason rule touches
+  `session.plan`, not spend, status or handoff; `device` has no reason rule). Textual
+  conflict in `docs/decisions/README.md` (finding 9).
+
+Findings:
+
+1. **high**, `services/state-api/src/push/fanout.ts:283-333`. The budget kind reads
+   `session.spent_usd_micro` against `budget_cap_usd_micro`, but the runtime never writes the
+   row that way. The session runner writes `spent_usd_micro` once, at session end
+   (`packages/runtime/src/session/runner.ts:1253-1260`, the patch before `setStatus`);
+   `SessionRepo.recordSpend` has no caller. So (a) the 80 % warning for a `running` session
+   never fires on a real path, and the real 80 % event, a session that stopped starting new
+   work (`handoff.stop_reason = "budget_finish_current"`), is pushed only as "Session
+   finished"; (b) the budget hook refuses the call that would cross the cap, so a budget stop
+   ends with `spent < cap` and `handoff.stop_reason = "budget_exceeded"`, and the fan-out
+   pushes it as a normal "Session stopped" (held through quiet hours) instead of the urgent
+   `budget_stop`, which the runtime's own producer decides by `stopReason`
+   (`packages/runtime/src/notifications/producers.ts:51-52`). The test "sends each of the four
+   kinds" proves the budget warning by patching a running row to 85 % by hand, a state no
+   writer produces. Verified with a throwaway test: a session `stopped` with
+   `handoff.stop_reason: "budget_exceeded"`, spent 960 000 of 1 000 000, produced
+   `["session","Session stopped","NORMAL"]`; a `completed` session with
+   `budget_finish_current` produced only `["session","Session finished"]`.
+2. **medium**, `services/state-api/src/push/fanout.ts:174-189`. Held notices are sent at the
+   end of the quiet window without re-reading their row: a request answered on the desktop at
+   night, or a message read meanwhile, still buzzes the phone in the morning with "A request
+   waits on you". Verified with a throwaway test: a request opened inside 08:00-10:00,
+   answered at 09:00, was pushed at 10:00 (`[["approval",true]]`).
+3. **medium**, `services/state-api/src/push/fcm.ts:233`. `res.status === 404` alone is
+   treated as UNREGISTERED. FCM reports a dead token as 404 with the `FcmError` code
+   `UNREGISTERED`; a 404 without it comes from a wrong `FORERUNNER_FCM_API_URL`, a proxy or a
+   wrong path, and then every device of every human loses its token (plus an audit row
+   claiming the token was cleared) on the first notice. Verified with a throwaway test: a
+   scripted bare 404 (`<html>not found</html>`) left the device's `push_token` `null`.
+4. **low**, `services/state-api/src/push/fanout.ts:336-357`. Every message to the human is
+   pushed, including the session summary the runner sends from the human's own agent at every
+   session end (`runner.ts:1231-1241`, `type: "info"`), so each finished session buzzes twice
+   ("Session finished" and "New message"). The runtime's `peerMessage` producer treats a
+   plain `info` message as `info` and only questions, requests, warnings and `requires_ack`
+   as needing attention. Verified with a throwaway test: a completed session plus its summary
+   message produced `["message","session"]`.
+5. **low**, `services/state-api/src/push/fanout.ts:215-236`. Targets are device rows, not
+   tokens: when one app install pairs twice (a re-pair without revoking the old row) both rows
+   carry the same FCM token and every notice is sent twice; an UNREGISTERED answer clears only
+   the first row, and the twin is sent to again on the next notice. Verified with a throwaway
+   test: two rows with one token gave 2 sends for one request.
+6. **medium**, `services/state-api/src/push/fcm.ts:270` and `:299`. Neither the FCM request
+   nor the OAuth token request has a timeout. A connection that stalls (no response, no reset)
+   never resolves: the notice is never retried, `flushHeld` is single-flight so every later
+   tick returns the same pending promise and no held notice is ever sent again, and
+   `app.close()` waits on `push.stop()` -> `idle()` forever. Verified by reading the code and by
+   the new test (fix commit) that hangs the fake endpoint: without the timeout the send never
+   settles.
+7. **low**, `services/state-api/test/push.test.ts` (the `PUT /devices/:id/push-token` case)
+   versus `docs/maintainers/state-service.md:135` and the build report. The route's
+   `revoked 409` branch (`routes/devices.ts`) is documented as tested and is not: no test
+   revokes a device and sets its token. Verified by `grep -n 409 services/state-api/test/push.test.ts`
+   (no match).
+8. **low**, `services/state-api/src/routes/devices.ts:21`. `POST /pairing/complete` takes
+   `pushToken: z.string().max(512).optional()` without trimming, so `"  "` is stored as a
+   token (`pushRegistered: true`) and every notice is sent to it and fails as a 400 (not
+   cleared, counted as a failure), while `PUT /devices/:id/push-token` refuses the same value.
+   Verified by reading the schema against `PushTokenBody` (`trim().min(1)`) and
+   `DeviceRepo.pushTargets` (filters only `""`).
+9. **low**, `docs/decisions/README.md` (last row). `git merge-tree --write-tree HEAD
+   origin/ccr-4d8a843c-1k9syk` reports a content conflict: the branch appends the 0085 row at
+   the end of the index and the base appended a 0062 row there too. No code conflict.
