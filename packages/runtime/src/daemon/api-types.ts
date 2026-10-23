@@ -660,6 +660,28 @@ export type UpdateLessonBody = z.infer<typeof UpdateLessonBody>;
 
 export const PinLessonBody = z.object({ pinned: z.boolean() });
 
+/** A cross-project offer (spec G.6): a promoted lesson matched to another project by its tags. */
+export const LessonOfferView = z.object({
+  requestId: z.string(),
+  status: z.string(),
+  lessonId: z.string(),
+  text: z.string(),
+  tags: z.array(z.string()),
+  confidence: z.number(),
+  projectId: z.string(),
+  projectName: z.string(),
+  sharedTags: z.array(z.string()),
+  createdAt: z.string(),
+  answer: z.unknown().nullable(),
+  appliedAt: z.string().nullable(),
+  copyId: z.string().nullable(),
+  version: z.number().int(),
+});
+export type LessonOfferView = z.infer<typeof LessonOfferView>;
+
+export const AnswerOfferBody = z.object({ answer: z.enum(["accept", "dismiss"]) });
+export type AnswerOfferBody = z.infer<typeof AnswerOfferBody>;
+
 export const ConsolidationReportView = z.object({
   scope: z.enum(["agent_private", "critic", "shared"]),
   ownerAgentId: z.string().nullable(),
@@ -1132,6 +1154,14 @@ export const DAEMON_ROUTES = {
   consolidation: "GET /memory/consolidation (ConsolidationProposalView[], newest first)",
   runConsolidation:
     "POST /memory/consolidation/run (report only; files the approval request the inbox answers; ConsolidationRunView)",
+  proposeLesson:
+    "POST /memory/lessons/:id/propose (spec G.6: tags the lesson general and proposes it for the shared store; the critic decides at the next session end; LessonView of the proposal; 404 for another human's private row)",
+  memoryPromotions:
+    "GET /memory/promotions (LessonView[]: this human's proposals the critic has not decided yet)",
+  memoryOffers:
+    "GET /memory/offers?limit= (LessonOfferView[], newest first: promoted lessons offered to this human's other projects by tag overlap)",
+  answerOffer:
+    "POST /memory/offers/:id/answer { answer: accept|dismiss } (applied at once: accept pins a copy in the project's shared memory, dismiss leaves it by relevance; one audit row; LessonOfferView)",
   commands: "GET /commands (the registry: CommandDefView[])",
   parseCommand:
     "POST /commands/parse { text, source?: text|voice|phone|ui, projectId?, deviceId? } (CommandParseView; nothing runs)",

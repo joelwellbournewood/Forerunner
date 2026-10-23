@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { memoryViews, sortLessons } from "../src/pages/MemoryPage.tsx";
+import { canShare, memoryViews, sortLessons } from "../src/pages/MemoryPage.tsx";
 import { AGENTS, LESSONS, ME } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
@@ -130,17 +130,122 @@ describe("Memory page", () => {
     );
   });
 
+  it("lists the offers and the pending proposals; accept and dismiss answer through the daemon", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/memory", harness);
+    const section = await screen.findByTestId("offers");
+    const pending = await within(section).findByTestId("pending-promotions");
+    expect(pending).toHaveTextContent("Waiting for the critic (1)");
+    expect(within(pending).getAllByTestId("pending-promotion")[0]).toHaveTextContent(
+      "Repeated finding",
+    );
+    // Open offers first, then the decided ones.
+    const offers = within(section).getAllByTestId("offer");
+    expect(offers.map((o) => o.dataset.offerId)).toEqual([
+      "req_offer_1",
+      "req_offer_2",
+      "req_offer_0",
+    ]);
+    expect(offers[0]).toHaveTextContent("offered to Beacon");
+    expect(offers[0]).toHaveTextContent("Keep PRs under 400");
+    expect(offers[2]).toHaveTextContent("dismissed");
+    expect(within(offers[2] as HTMLElement).queryByTestId("offer-accept")).not.toBeInTheDocument();
+    await user.click(within(offers[0] as HTMLElement).getByTestId("offer-accept"));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/memory/offers/req_offer_1/answer")).toHaveLength(1),
+    );
+    expect(postedCalls(harness, "/memory/offers/req_offer_1/answer")[0]?.body).toEqual({
+      answer: "accept",
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("offers").querySelector('[data-offer-id="req_offer_1"]'),
+      ).toHaveAttribute("data-status", "answered"),
+    );
+    const accepted = screen.getByTestId("offers").querySelector('[data-offer-id="req_offer_1"]');
+    expect(accepted).toHaveTextContent("accepted: pinned for Beacon");
+    // The daemon made the pinned project copy.
+    const copy = harness.daemon.state.lessons.find(
+      (l) => l.projectId === "proj_beacon" && l.source.startsWith("promotion:les_4"),
+    );
+    expect(copy).toMatchObject({ scope: "shared", pinned: true });
+    await user.click(
+      within(
+        screen.getByTestId("offers").querySelector('[data-offer-id="req_offer_2"]') as HTMLElement,
+      ).getByTestId("offer-dismiss"),
+    );
+    await waitFor(() =>
+      expect(postedCalls(harness, "/memory/offers/req_offer_2/answer")[0]?.body).toEqual({
+        answer: "dismiss",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("offers").querySelector('[data-offer-id="req_offer_2"]'),
+      ).toHaveTextContent("dismissed"),
+    );
+    // Accepted once: the open-offer buttons are gone from both.
+    expect(within(section).queryAllByTestId("offer-accept")).toHaveLength(0);
+  });
+
+  it("proposes a lesson for every project from its row; a global shared lesson has no Share button", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/memory", harness);
+    const lessons = await screen.findAllByTestId("lesson");
+    const second = lessons[1] as HTMLElement;
+    expect(second).toHaveAttribute("data-lesson-id", "les_2");
+    await user.click(within(second).getByTestId("lesson-share"));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/memory/lessons/les_2/propose")).toHaveLength(1),
+    );
+    expect(await within(second).findByTestId("lesson-proposed")).toHaveTextContent(
+      "critic reviews it",
+    );
+    expect(within(second).queryByTestId("lesson-share")).not.toBeInTheDocument();
+    expect(second).toHaveTextContent("general");
+    // The proposal joins the pending list without a reload.
+    await waitFor(() =>
+      expect(screen.getByTestId("pending-promotions")).toHaveTextContent(
+        "Waiting for the critic (2)",
+      ),
+    );
+    expect(harness.daemon.state.promotions.some((p) => p.source === "promotion:les_2")).toBe(true);
+    // The shared view: les_4 is already global, so it cannot be shared again.
+    const views = screen.getByTestId("memory-views");
+    await user.click(within(views).getByTestId("memory-view-shared"));
+    await waitFor(() =>
+      expect(screen.getByTestId("lessons")).toHaveAttribute("data-scope", "shared"),
+    );
+    expect(screen.queryByTestId("lesson-share")).not.toBeInTheDocument();
+    expect(canShare({ scope: "shared", projectId: null, status: "active" })).toBe(false);
+    expect(canShare({ scope: "shared", projectId: "proj_atlas", status: "active" })).toBe(true);
+    expect(canShare({ scope: "critic", projectId: null, status: "retired" })).toBe(false);
+  });
+
+  it("names the missing offers route and keeps the lessons when only the offers are absent", async () => {
+    renderApp("/memory", createHarness({ missingRoutes: ["/memory/offers"] }));
+    const section = await screen.findByTestId("offers");
+    const missing = await within(section).findByTestId("route-missing");
+    expect(missing).toHaveAttribute("data-route", "memoryOffers");
+    expect(missing).toHaveTextContent("GET /memory/offers");
+    expect(within(section).queryByTestId("offer")).not.toBeInTheDocument();
+    expect(await screen.findAllByTestId("lesson")).toHaveLength(2);
+    expect(screen.getAllByTestId("route-missing")).toHaveLength(1);
+  });
+
   it("degrades to a visible route-missing state on a daemon without memory routes", async () => {
     renderApp("/memory", createHarness({ missingRoutes: ["/memory"] }));
-    // Both the lessons and the consolidation section say which route is missing: nothing
-    // on the page disappears silently.
+    // The lessons, the offers and the consolidation section each say which route is
+    // missing: nothing on the page disappears silently.
     await waitFor(() =>
       expect(
         screen
           .getAllByTestId("route-missing")
           .map((m) => m.dataset.route)
           .sort(),
-      ).toEqual(["consolidation", "memory"]),
+      ).toEqual(["consolidation", "memory", "memoryOffers"]),
     );
     const lessons = screen
       .getAllByTestId("route-missing")

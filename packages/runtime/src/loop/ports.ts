@@ -112,11 +112,64 @@ export interface SessionReviewOutcome {
   costUsdMicro: number;
 }
 
+/**
+ * A lesson proposed for the shared store, as the critic reviews it (spec G.6): the proposal
+ * row's text, tags and confidence plus where it came from. Never the origin's private file.
+ */
+export interface PromotionCandidate {
+  /** The proposal row (shared scope, status `proposed`). */
+  id: string;
+  text: string;
+  tags: string[];
+  confidence: number;
+  originId: string | null;
+  originScope: string | null;
+  originProjectId: string | null;
+}
+
+export interface PromotionReviewRequest {
+  lesson: PromotionCandidate;
+  /** The session token: the critic's own token copies its ids and never exceeds it. */
+  token: SignedToken;
+  budget: SessionBudget;
+  /** The session's project settings (ceiling, effort offset); null for none. */
+  projectSettings?: JsonObject | null;
+  signal?: AbortSignal;
+}
+
+export interface PromotionReviewOutcome {
+  reviewId: string | null;
+  verdict: ReviewVerdictKind;
+  grade: number;
+  confidence: number;
+  summary: string;
+  /** False when the review run did not complete (limit, provider failure): nothing is decided. */
+  completed: boolean;
+  costUsdMicro: number;
+}
+
+export interface PromotionResolution {
+  /** `pending` when the review did not complete or accepted without a persisted review row. */
+  status: "promoted" | "rejected" | "pending";
+  /** Offers filed for other projects of the same human (one approval request each). */
+  offers: { projectId: string; requestId: string }[];
+}
+
+/** Proposals the critic reviews at one session's end; the rest wait for the next (spec G.6). */
+export const MAX_PROMOTION_REVIEWS_PER_SESSION = 5;
+/** Cap of one promotion review run; the session token's budget is the hard upper bound. */
+export const PROMOTION_REVIEW_BUDGET_USD_MICRO = 250_000;
+
 export interface CriticPort {
   /** Review a finished task at its tier and apply the verdict through the state workflow. */
   reviewTask(req: TaskReviewRequest): Promise<TaskReviewOutcome>;
   /** The honesty, plan and cost check of a finished session (H.6). */
   reviewSession(req: SessionReviewRequest): Promise<SessionReviewOutcome>;
+  /**
+   * A tier-1 light read of a lesson proposed for the shared store (G.6). Optional: a critic
+   * without it leaves every proposal pending.
+   */
+  reviewPromotion?(req: PromotionReviewRequest): Promise<PromotionReviewOutcome>;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -161,11 +214,20 @@ export interface MemoryRecordResult {
   merged: number;
   /** Candidates not stored: the lint rules, or `injection` with the rules an instruction-shaped text matched. */
   rejected: { text: string; error: string; injection?: string[] }[];
+  /**
+   * Shared-store proposals (proposal row ids) for the recorded critic or shared lessons tagged
+   * `general` (spec G.6); a private lesson is proposed only by its human from the memory view.
+   */
+  proposed?: string[];
 }
 
 export interface MemoryPort {
   recall(req: MemoryRecallRequest): Promise<MemoryRecallResult>;
   record(req: MemoryRecordRequest): Promise<MemoryRecordResult>;
+  /** Proposals of this human's agents the critic has not decided yet (G.6). Optional. */
+  pendingPromotions?(): Promise<PromotionCandidate[]>;
+  /** Apply the critic's decision: promote and offer, reject, or leave pending. Optional. */
+  resolvePromotion?(id: string, review: PromotionReviewOutcome): Promise<PromotionResolution>;
 }
 
 /** Memory loaded per session stays under this many tokens unless the project says otherwise (ADR 0036). */

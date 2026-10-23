@@ -1140,9 +1140,10 @@ doctor and the eval checks as argv arrays).
     `packages/runtime/src/loop/critic.ts`); `syncSignoffAnswers`
     (`packages/runtime/src/session/findings.ts`, next to `syncBlockedByFindings`) applies the
     answer once, from `syncApprovals` (`compose.ts`; `gate5-daemon.ts` mirrors it: the
-    extension, model watch, memory, blocked-findings and sign-off halves, and the intake half
-    of ADR 0055 as a zero result, since the week's projects come with their tasks and no
-    intake proposal is filed), and only
+    extension, model watch, memory, blocked-findings and sign-off halves, the `memoryOffers`
+    half that applies answered cross-project offers (spec G.6), and the intake half of ADR 0055
+    as a zero result, since the week's projects come with their tasks and no intake proposal is
+    filed), and only
     when the card's `review_id` is the task's latest review (a sign-off left open while the
     task was reviewed again is skipped as `stale` and touches nothing, ADR 0049): accept
     resolves the card's findings and the task's other open findings up to the card's review

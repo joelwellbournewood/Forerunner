@@ -6,7 +6,7 @@ import {
   log,
   newId,
 } from "@forerunner/platform";
-import type { AgentRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
+import type { AgentRow, JsonObject, SessionRow, StateStore, TaskRow } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
@@ -17,6 +17,7 @@ import {
   type CriticPort,
   DEFAULT_MEMORY_TOKEN_BUDGET,
   type LessonCandidate,
+  MAX_PROMOTION_REVIEWS_PER_SESSION,
   type MemoryPort,
   type MemoryRecallResult,
   memoryBudgetOf,
@@ -217,12 +218,23 @@ export interface SessionResult {
   /** The lessons block loaded at start, or null without a memory port. */
   memory: { tokens: number; budget: number; lessons: number } | null;
   lessonsRecorded: number;
+  /** Shared-store proposals the critic decided at the end (spec G.6); null when not wired. */
+  promotions: PromotionTally | null;
   sessionReview: SessionReviewOutcome | null;
   spentUsdMicro: number;
   steps: number;
   summary: string;
   handoff: Record<string, unknown>;
   stopReason: string;
+}
+
+export interface PromotionTally {
+  reviewed: number;
+  promoted: number;
+  rejected: number;
+  pending: number;
+  /** Offers filed for other projects of the same human. */
+  offered: number;
 }
 
 /** What the runner reports when a task's execution ends (estimate-versus-actual learning, spec I). */
@@ -1138,6 +1150,17 @@ export class SessionRunner {
         await emit("memory.record_failed", { warning: errorMessage(e) });
       }
     }
+    // Cross-project sharing (spec G.6, ADR 0059): the critic decides this human's pending
+    // shared-store proposals now, under the session token and budget, a few per session; an
+    // accepting review promotes and files the offers, any other completed one rejects, a run
+    // that did not complete leaves the proposal for the next session. Never fatal.
+    const promotions = await this.reviewPromotions({
+      token,
+      budget,
+      projectSettings: project?.settings ?? null,
+      signal: controller.signal,
+      emit,
+    });
     if (project) {
       await store.project.patch(project.id, {
         summary_cache: {
@@ -1272,6 +1295,7 @@ export class SessionRunner {
           }
         : null,
       lessonsRecorded,
+      promotions,
       sessionReview,
       spentUsdMicro: spent,
       steps: budget.snapshot().steps,
@@ -1453,6 +1477,67 @@ export class SessionRunner {
           }
         : {}),
     });
+  }
+
+  /** The promotion step of the session end (spec G.6); null when either port lacks it. */
+  private async reviewPromotions(args: {
+    token: SignedToken;
+    budget: SessionBudget;
+    projectSettings: JsonObject | null;
+    signal: AbortSignal;
+    emit: (type: string, payload: Record<string, unknown>, cost?: number) => Promise<void>;
+  }): Promise<PromotionTally | null> {
+    const memory = this.deps.memory;
+    const critic = this.deps.critic;
+    if (!memory?.pendingPromotions || !memory.resolvePromotion || !critic?.reviewPromotion)
+      return null;
+    const tally: PromotionTally = { reviewed: 0, promoted: 0, rejected: 0, pending: 0, offered: 0 };
+    let pending: Awaited<ReturnType<NonNullable<MemoryPort["pendingPromotions"]>>>;
+    try {
+      pending = (await memory.pendingPromotions()).slice(0, MAX_PROMOTION_REVIEWS_PER_SESSION);
+    } catch (e) {
+      await args.emit("memory.promotion_failed", { warning: errorMessage(e) });
+      return tally;
+    }
+    for (const candidate of pending) {
+      if (args.signal.aborted) break;
+      try {
+        const review = await critic.reviewPromotion({
+          lesson: candidate,
+          token: args.token,
+          budget: args.budget,
+          projectSettings: args.projectSettings,
+          signal: args.signal,
+        });
+        tally.reviewed++;
+        const resolved = await memory.resolvePromotion(candidate.id, review);
+        tally[resolved.status]++;
+        tally.offered += resolved.offers.length;
+        await args.emit(
+          "memory.promotion",
+          {
+            lessonId: candidate.id,
+            reviewId: review.reviewId,
+            verdict: review.verdict,
+            grade: review.grade,
+            confidence: review.confidence,
+            status: resolved.status,
+            offers: resolved.offers.length,
+            summary: review.summary,
+            ...(resolved.status === "pending"
+              ? { warning: "the promotion review did not complete; the proposal waits" }
+              : {}),
+          },
+          review.costUsdMicro,
+        );
+      } catch (e) {
+        await args.emit("memory.promotion_failed", {
+          lessonId: candidate.id,
+          warning: errorMessage(e),
+        });
+      }
+    }
+    return tally;
   }
 
   /** Decisions the human answered on the project since the last session ended (for memory). */

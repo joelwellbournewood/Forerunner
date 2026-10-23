@@ -36,6 +36,7 @@ import { DESKTOP_INDICATOR_EVENT, type DesktopIndicatorPayload } from "../wiring
 import { DecisionLog, StateAudit } from "../wiring/state-ports.ts";
 import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
 import {
+  AnswerOfferBody,
   AnswerRequestBody,
   type ChatReplyView,
   ChatRequestBody,
@@ -56,6 +57,7 @@ import {
   IntakeRequestBody,
   type IntakeStatusView,
   KillBody,
+  type LessonOfferView,
   type MemoryScopeView,
   type MemoryView,
   type MirrorRunView,
@@ -1047,6 +1049,25 @@ export function createDaemonApp(
   app.delete("/memory/lessons/:id", async (c) =>
     c.json(lessonView(await rt.memory.remove(c.req.param("id")))),
   );
+
+  // Cross-project sharing (spec G.6): the human proposes, the critic decides at the next
+  // session end, the offers are answered here or in the inbox (applied either way).
+  app.post("/memory/lessons/:id/propose", async (c) =>
+    c.json(lessonView(await rt.memory.proposeSharing(c.req.param("id")))),
+  );
+  app.get("/memory/promotions", async (c) =>
+    c.json((await rt.memory.pendingProposals()).map(lessonView)),
+  );
+  app.get("/memory/offers", async (c) => {
+    const rows = await rt.memory.offers({ limit: intQuery(c, "limit", 100, 1000) });
+    return c.json(rows satisfies LessonOfferView[]);
+  });
+  app.post("/memory/offers/:id/answer", async (c) => {
+    const body = await parse(c, AnswerOfferBody);
+    const view = await rt.memory.answerOffer(c.req.param("id"), body.answer);
+    rt.events.emit("inbox", {});
+    return c.json(view satisfies LessonOfferView);
+  });
 
   app.get("/memory/consolidation", async (c) => {
     const rows = await rt.memory.proposals({

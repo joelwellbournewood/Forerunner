@@ -661,6 +661,8 @@ export interface RuntimeApp {
     extensions: { approved: string[]; denied: string[] };
     modelWatch: number;
     memory: { applied: number; skipped: number };
+    /** Answered cross-project offers applied (spec G.6). */
+    memoryOffers: { accepted: number; dismissed: number; stale: number };
     findings: BlockedSyncResult;
     signoffs: SignoffSyncResult;
     plans: PlanApprovalSyncResult;
@@ -2049,6 +2051,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       extensions: await extensions.syncApprovals({ humanId: human.id }),
       modelWatch: await modelWatch.syncPendingAnswers(),
       memory: await memory.syncApprovals(),
+      memoryOffers: await memory.syncOffers(),
       findings: await syncBlockedByFindings({ store, clock, humanId: human.id, agentId: agent.id }),
       signoffs: await syncSignoffAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
       // An approved session plan (spec J.6, J.7; ADR 0053) becomes a "message" start bound to
