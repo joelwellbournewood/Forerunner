@@ -52,6 +52,8 @@ names a session appends a `notification` event to that session's log.
 | `peer_message` | info (`requires_ack`, question, request, warning: normal) | `producers.peerMessage` from the inbox | `/inbox` |
 | `kill_switch` | **urgent** | `producers.killSwitch` with the `KillReport` | `/sessions/<id>` when one session was stopped, else `/` |
 | `daily_digest` | normal | the notifier itself (and `POST /notifications/test`) | `/inbox` |
+| `critic_calibration` | normal | `producers.criticCalibration` from the monthly calibration job (ADR 0060): catch rate, pass rate, gate and drift; a failed run names its reason | `/sessions/<id>` or `/inbox` |
+| `handover_report` | normal | `producers.handoverReport` from the monthly handover job (ADR 0060): stuck places, the docs task, the session's end | `/sessions/<id>` |
 
 `urgencyOf(n)` is the kind's default raised (never lowered) by `n.urgency`. The four urgent
 kinds (`URGENT_KINDS`) always go through: quiet hours do not hold them and the digest never

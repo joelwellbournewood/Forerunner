@@ -294,6 +294,14 @@ verdicts, grades, the mechanical status and the cost, and writes
 `formatCalibrationReport` renders it for `docs/status/gates.md`. The eval package depends on
 this one, so the runner is loaded with a dynamic import (or injected through `evals`).
 
+Monthly (spec H.7 "so drift is visible", ADR 0060): the runtime's `CalibrationJob`
+(`packages/runtime/src/jobs/calibration.ts`, `runtime.md` "Monthly jobs") calls `calibrate()`
+once a month over the registry's eval sets under a session budget the hooks enforce, keeps
+the report under the same `<data dir>/critic/` and raises a notification with the catch rate,
+the pass rate and the drift in points against the previous report. `EvalsPort.loadEvalSet` is
+optional for that job (`loadEvalsPort()` now returns it; a caller with its own tasks leaves it
+out).
+
 ## How to change it
 
 - The prompt: edit `critic/critic.md` in the `forerunner-registry` repository and sync it to
@@ -462,7 +470,7 @@ ground and a downgraded escalate's reason in the evidence and the audit log), H.
 confidence never accepts: `low` and any number under 0.6 escalate; `medium` sits above the
 line), H.5 (findings tracked to resolution, patterns to lesson
 proposals), H.6 (session review: plan, cost, honesty), H.7 (calibration report against the eval
-set), G.6 (the `lesson` subject: critic approval before a lesson is promoted to the shared store), B.4 (no close with open findings or failed required checks), D.2 (retry ladder), D.3
+set; monthly with the drift by the runtime's job), G.6 (the `lesson` subject: critic approval before a lesson is promoted to the shared store), B.4 (no close with open findings or failed required checks), D.2 (retry ladder), D.3
 (ceiling from project settings), D.14 and D.15 (critic model and effort per tier), P.14 (doc
 drift at tier 2+), D.5 and D.19 (the critic's own Run row: model, effort, prompt version,
 tokens, cost, first-token time and total time as whole milliseconds; a refused row audited and
