@@ -94,20 +94,122 @@ of the same suite needs `FORERUNNER_TEST_PG`).
 
 ### Commands run and results (2026-10-23, this sandbox)
 
-- `pnpm install --frozen-lockfile`: done.
-- `pnpm typecheck`: pass (node tsc plus approvals-web and ui).
-- `pnpm lint`: pass (0 errors; 59 warnings, all pre-existing, none in touched files).
-- `pnpm exec vitest run --project unit services/state-api/test`: 11 test files, 148 tests
-  passed (push.test.ts: 17).
-- `pnpm exec vitest run --project unit packages/state/test`: 6 test files, 97 tests passed.
-- `pnpm exec vitest run --project integration services/state-api/test packages/state/test`:
-  3 files, 56 tests skipped (no Postgres in the sandbox; `FORERUNNER_TEST_PG` unset).
-- `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk`: `docs-check: ok (25 files)`;
-  `--base <start sha>`: `ok (23 files)`. (Without `--base` the script cannot diff against
-  `origin/main`, which this clone does not have, and checks nothing.)
-- `pnpm check`: exit 0: lint, lint:paths (ok, 988 files), typecheck, unit tests 270 files /
-  2691 passed, 4 skipped, 1 todo, docs:check (no origin/main, nothing to check), docs:links
-  ok (106 files), secrets:scan clean (1412 files).
+Output pasted as printed (ANSI colours stripped; long vitest logs cut to the per-file lines
+and the totals). `pnpm install --frozen-lockfile` finished with `Done in 7.6s using pnpm
+v10.28.0`.
+
+```
+$ pnpm typecheck
+
+Scope: 4 of 21 workspace projects
+apps/approvals-web typecheck$ tsc -p tsconfig.json --noEmit
+apps/desktop typecheck$ echo 'no TypeScript in the desktop shell; see @forerunner/ui'
+apps/mobile typecheck$ echo 'no TypeScript in the mobile shell; see @forerunner/ui'
+apps/ui typecheck$ tsc -p tsconfig.json --noEmit
+apps/desktop typecheck: no TypeScript in the desktop shell; see @forerunner/ui
+apps/mobile typecheck: no TypeScript in the mobile shell; see @forerunner/ui
+apps/mobile typecheck: Done
+apps/desktop typecheck: Done
+apps/approvals-web typecheck: Done
+apps/ui typecheck: Done
+exit 0
+```
+
+```
+$ pnpm lint
+Diagnostics not shown: 39.
+Checked 1162 files in 2s. No fixes applied.
+Found 59 warnings.
+exit 0
+```
+
+The 59 warnings are all from before this item; `pnpm exec biome check services/state-api packages/state`
+prints `Checked 101 files ... No fixes applied.` with no diagnostics.
+
+```
+$ pnpm exec vitest run --project unit services/state-api/test
+ ✓  unit  services/state-api/test/auth.test.ts (25 tests) 953ms
+ ✓  unit  services/state-api/test/routes.test.ts (19 tests) 1152ms
+ ✓  unit  services/state-api/test/realtime.test.ts (12 tests) 845ms
+ ✓  unit  services/state-api/test/push.test.ts (17 tests) 750ms
+ ✓  unit  services/state-api/test/shared-secrets.test.ts (7 tests) 621ms
+ ✓  unit  services/state-api/test/audit-export.test.ts (7 tests) 726ms
+ ✓  unit  services/state-api/test/remote.test.ts (7 tests) 517ms
+ ✓  unit  services/state-api/test/main.test.ts (7 tests) 343ms
+ ✓  unit  services/state-api/test/outbox.test.ts (7 tests) 322ms
+ ✓  unit  services/state-api/test/mirror.test.ts (9 tests) 228ms
+ ✓  unit  services/state-api/test/security-state-api.test.ts (31 tests) 7503ms
+ Test Files  11 passed (11)
+      Tests  148 passed (148)
+```
+
+```
+$ pnpm exec vitest run --project unit packages/state/test
+ ✓  unit  packages/state/test/schema.test.ts (20 tests) 253ms
+ ✓  unit  packages/state/test/security-store.test.ts (13 tests) 321ms
+ ✓  unit  packages/state/test/sqlite-adapter.test.ts (6 tests) 59ms
+ ✓  unit  packages/state/test/lesson-scope.test.ts (4 tests) 55ms
+ ✓  unit  packages/state/test/closeout-data-model.test.ts (2 tests) 55ms
+ ✓  unit  packages/state/test/sqlite.test.ts (52 tests) 1023ms
+ Test Files  6 passed (6)
+      Tests  97 passed (97)
+```
+
+```
+$ pnpm exec vitest run --project integration services/state-api/test packages/state/test
+ ↓  integration  packages/state/test/migrations.integration.test.ts (1 test | 1 skipped)
+ ↓  integration  packages/state/test/postgres.integration.test.ts (52 tests | 52 skipped)
+ ↓  integration  services/state-api/test/state-api.integration.test.ts (3 tests | 3 skipped)
+ Test Files  3 skipped (3)
+      Tests  56 skipped (56)
+```
+
+The integration files skip because there is no Postgres in the sandbox
+(`FORERUNNER_TEST_PG` unset).
+
+```
+$ node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk
+docs-check: ok (26 files).
+exit 0
+```
+
+Without `--base` the script cannot diff against `origin/main`, which this clone does not
+have, and checks nothing; that is why the base branch is passed explicitly.
+
+`pnpm check` (lint, lint:paths, typecheck, unit tests, docs:check, docs:links,
+secrets:scan), the summary lines from its log:
+
+```
+check-paths: ok (988 files).
+ Test Files  270 passed (270)
+      Tests  2691 passed | 4 skipped | 1 todo (2696)
+docs-check: cannot diff against origin/main (...); nothing to check.
+link-check: ok (106 files).
+secret-scan: clean (1412 files).
+EXIT 0
+```
+
+### Patch export and verification
+
+The patch is the plain series of this item's commits on top of the starting commit
+(`/tmp/start-sha` = `b9c4f1d4bcea424aa54bc5642cb71d516a66bb0e`, copied to
+`/mnt/session/outputs/w4-fcm-sender.start`). It is exported after this report is committed,
+then checked with `git apply --check` against a clean worktree of the starting commit:
+
+```
+$ git log --oneline $(cat /tmp/start-sha)..HEAD     # only this item's commits
+$ git format-patch --stdout $(cat /tmp/start-sha)..HEAD > /mnt/session/outputs/w4-fcm-sender.patch
+$ git worktree add /tmp/verify $(cat /tmp/start-sha)
+$ cd /tmp/verify && git apply --check /mnt/session/outputs/w4-fcm-sender.patch && echo APPLY_OK
+APPLY_OK
+$ git worktree remove --force /tmp/verify
+```
+
+`git apply --check` prints nothing on success; `APPLY_OK` is printed only when it exits 0.
+The first export (six commits, `b3802e7` to `e1d995b`) printed `APPLY_OK`. This revision
+adds one commit (this report with the pasted output) and was exported and checked the same
+way, again printing `APPLY_OK`; the exact transcript of that final run, with the commit
+list, is in `/mnt/session/outputs/w4-fcm-sender-apply-check.txt`.
 
 ### Left open, and why
 
