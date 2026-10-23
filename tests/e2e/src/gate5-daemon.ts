@@ -14,7 +14,8 @@
  * the two the week can reach) and `refreshMirrorSchedules` (no mirror settings: nothing to
  * schedule). What the week never opens (the Extensions panel, updates, the model watch, the
  * Cloudflare panel, desktop control, the Data tab, costs, the mirror, the sandbox, the schema
- * sync gate, the vault) is an `absent` stand-in: a route that reaches it fails with a clear
+ * sync gate, the vault, source discovery, the project docs port, shared secrets and the email
+ * settings page's capability ports) is an `absent` stand-in: a route that reaches it fails with a clear
  * `unavailable` error naming the field, so a gap in the harness is a failure, never a silent
  * stub. `/health` reads several of them and is not part of the week.
  */
@@ -244,15 +245,23 @@ export function daemonFor(
   const humanId = install.human.id;
   const agentId = install.agent.id;
   // The halves of `composeRuntime`'s `syncApprovals` the week can reach: the memory
-  // consolidation answers, the blocked-findings answers and the critic sign-off answers.
+  // consolidation answers, the blocked-findings answers and the critic sign-off answers. The
+  // week's projects run at autonomy 2, so no plan request is filed and none is synced here,
+  // and it files no intake proposal (the projects come with their tasks), so that half
+  // applies nothing.
   const syncApprovals: RuntimeApp["syncApprovals"] = async () => ({
     extensions: { approved: [], denied: [] },
     modelWatch: 0,
     memory: install.memory
       ? await install.memory.syncApprovals()
       : { applied: 0, skipped: 0, stale: 0 },
+    memoryOffers: install.memory
+      ? await install.memory.syncOffers()
+      : { accepted: 0, dismissed: 0, stale: 0 },
     findings: await syncBlockedByFindings({ store, clock, humanId, agentId }),
     signoffs: await syncSignoffAnswers({ store, clock, humanId, agentId }),
+    plans: { started: 0, rejected: 0, skipped: 0 },
+    intake: { applied: 0, rejected: 0, skipped: 0 },
   });
   // The daemon's approvals poll (compose.ts): an answer given on the phone lands in the
   // shared store and reaches no route of this daemon, so it is applied within the poll.
@@ -284,6 +293,7 @@ export function daemonFor(
     conversation: deps.conversation,
     gitHost: install.github,
     human: { id: humanId, name: install.human.name, timezone: install.human.timezone },
+    identity: { humanId, source: "option", selector: humanId },
     agent: { id: agentId, name: install.agent.name },
     billingSourceId: `bs-${install.name.toLowerCase()}`,
     chfPerUsd: () => SCENARIO_CHF_PER_USD,
@@ -330,6 +340,16 @@ export function daemonFor(
     "mirror",
     "sandbox",
     "mirrorSync",
+    // Mounted by the daemon at construction, never opened by the week: source discovery
+    // (ADR 0056), the project docs port (ADR 0058), shared secrets (ADR 0065) and the email
+    // settings routes over the capability's ports (ADR 0066). The email mount reads
+    // `rt.capabilities.email.ports.*` while building its table, which a missing field would
+    // turn into a TypeError before any route exists; a stand-in answers the read and fails only
+    // when a route calls it.
+    "sources",
+    "docs",
+    "sharedSecrets",
+    "capabilities",
     ...(install.memory ? [] : ["memory"]),
   ] as const;
   const view: Record<string, unknown> = { ...real };

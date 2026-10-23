@@ -331,6 +331,33 @@ describe("HumanRequestCloudflareApprovals", () => {
     expect(await port.ask(staging)).toBe("approved");
     // The same call needing a stronger class is not covered by that answer.
     expect(await port.ask({ ...staging, actionClass: "deploy_production" })).toBe("pending");
+
+    // The hooks key their row on the raw input and store a copy cut at 2000 characters for
+    // the card, so a deploy whose input carries a long string (a script body) still finds
+    // the hooks' answer, and a different long input does not.
+    const long = (tail: string) => ({
+      env: "staging",
+      target: { kind: "worker", name: "hello", script: `${"x".repeat(2_400)}${tail}` },
+    });
+    const longStaging = base({ actionClass: "deploy_staging", env: "staging", input: long("1") });
+    const longRow = await world.store.humanRequest.insert({
+      human_id: HUMAN,
+      session_id: "session-1",
+      kind: "approval",
+      why: "autonomy level 2 requires approval for deploy_staging",
+      options: ["yes", "no"],
+      blocking: true,
+      change_card: {
+        key: approvalKey({ tool: longStaging.tool, input: long("1") }),
+        tool: longStaging.tool,
+        actionClass: "deploy_staging",
+        input: { env: "staging", target: { kind: "worker", name: "hello", script: "…" } },
+      },
+      author_agent: AGENT,
+    });
+    await world.store.humanRequest.answer(longRow.id, longRow.version, "yes", HUMAN);
+    expect(await port.ask(longStaging)).toBe("approved");
+    expect(await port.ask({ ...longStaging, input: long("2") })).toBe("pending");
   });
 });
 

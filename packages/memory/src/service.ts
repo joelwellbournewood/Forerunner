@@ -1,18 +1,27 @@
 import { type Clock, ForerunnerError, systemClock } from "@forerunner/platform";
-import type { AgentKind, LessonRepo, ReviewRepo } from "@forerunner/state";
+import type { AgentKind, ReviewRepo } from "@forerunner/state";
 import { defaultEmbedder, type Embedder } from "./embedding.ts";
 import { LessonFiles } from "./files.ts";
 import { type RememberInput, type RememberResult, remember } from "./record.ts";
 import { type RecallResult, recall, renderLessons } from "./retrieval.ts";
+import { ScopedLessonStore } from "./scoped-store.ts";
 import {
   estimateTokens,
+  type LessonStore,
   type MemoryContext,
   type MemoryScope,
   type TokenCounter,
 } from "./types.ts";
 
 export interface CreateMemoryOptions {
-  store: { lesson: LessonRepo; review?: ReviewRepo; clock?: Clock };
+  /** The state store: every scope in solo mode, critic and shared next to a `privateStore`. */
+  store: { lesson: LessonStore; review?: ReviewRepo; clock?: Clock };
+  /**
+   * The local private index (ADR 0002, ADR 0083). When given, `agent_private` rows are written
+   * to and read from it only; `store` never sees the scope. The runtime opens it beside a
+   * shared (Postgres) state; a `sqlite:` state in solo mode needs none.
+   */
+  privateStore?: { lesson: LessonStore };
   /** Memory root (`<data>/memory`); default from `appDirs()`. */
   root?: string;
   files?: LessonFiles;
@@ -22,7 +31,9 @@ export interface CreateMemoryOptions {
 
 export function createMemory(opts: CreateMemoryOptions): MemoryContext {
   const ctx: MemoryContext = {
-    repo: opts.store.lesson,
+    repo: opts.privateStore
+      ? new ScopedLessonStore({ private: opts.privateStore.lesson, shared: opts.store.lesson })
+      : opts.store.lesson,
     files: opts.files ?? new LessonFiles(opts.root),
     embedder: opts.embedder ?? defaultEmbedder(),
     clock: opts.clock ?? opts.store.clock ?? systemClock,

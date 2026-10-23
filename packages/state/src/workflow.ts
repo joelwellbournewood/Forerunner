@@ -4,6 +4,7 @@ import type {
   QueueStatus,
   ReleaseStatus,
   RemoteCommandStatus,
+  SecretGrantStatus,
   SessionStatus,
   TaskStatus,
 } from "./types.ts";
@@ -78,6 +79,14 @@ export const RELEASE_TRANSITIONS: Graph<ReleaseStatus> = {
   failed: [],
 };
 
+/** Spec S.13: pending until every named human approved; a refusal cancels; the owner revokes at any time. */
+export const SECRET_GRANT_TRANSITIONS: Graph<SecretGrantStatus> = {
+  pending: ["active", "cancelled", "revoked"],
+  active: ["revoked"],
+  cancelled: [],
+  revoked: [],
+};
+
 /** Every graph, keyed by "<table>.<column>", for the generated doc. */
 export const STATUS_GRAPHS: Readonly<Record<string, Graph<string>>> = {
   "task.status": TASK_TRANSITIONS,
@@ -86,6 +95,7 @@ export const STATUS_GRAPHS: Readonly<Record<string, Graph<string>>> = {
   "remote_command.status": REMOTE_COMMAND_TRANSITIONS,
   "queue_item.status": QUEUE_ITEM_TRANSITIONS,
   "release.status": RELEASE_TRANSITIONS,
+  "secret_grant.status": SECRET_GRANT_TRANSITIONS,
 };
 
 export function canTransition<S extends string>(graph: Graph<S>, from: S, to: S): boolean {

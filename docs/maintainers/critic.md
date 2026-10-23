@@ -88,7 +88,8 @@ Independence comes from a clean context and a different tier, not a different ve
 ### Evidence format (`types.ts`)
 
 ```
-ReviewInput  { subject: {kind:"task", taskId} | {kind:"session", sessionId}; tier: 0|1|2|3;
+ReviewInput  { subject: {kind:"task", taskId} | {kind:"session", sessionId}
+                      | {kind:"lesson", lessonId}; tier: 0|1|2|3;
                evidence: ReviewEvidence }
 ReviewEvidence { diff?, changedFiles?, inputFiles?: {path, content}[], testOutput?,
                checkResults?: {name, passed, output, required?}[], checksNotRun?: string[],
@@ -214,9 +215,17 @@ rule the store enforces holds:
 | escalate | the runtime's `retryAction(attempt + 1, currentTier, ceiling)`: 1st `improve_brief`, 2nd `split_or_change_specialist`, 3rd `escalate` with `nextTier = nextRung(current, ceiling)` when under the ceiling, otherwise `human`. The task goes back to ready and the owner agent is told; the session runner applies the decision | `{ action: "retry", retry, task, attempt, nextTier, messageId, requiredActions }` or `{ action: "human", ..., reason: "retry_ladder_exhausted" }` |
 | human | `in_review -> needs_human`; the review's sign-off request is reused while open, otherwise a new blocking one is created | `{ action: "human", task, humanRequestId, reason: "verdict" }` |
 
-Every sign-off request (the one `CriticService.review` files for a `human` verdict, the one
-`applyVerdict` files when the ladder ends, and the runtime loop's own after a last-rung
-revise) has the options `SIGNOFF_OPTIONS` (`accept`, `revise`, `cancel`) and a `change_card`
+A `lesson` subject (spec G.6, [ADR 0059](../decisions/0059-cross-project-promotion-in-the-loop.md)):
+the runtime's promotion review of a lesson proposed for the shared store, a tier-1 light read
+of the lesson text (an input file and the claims) against the promotion criteria the runtime
+sends. The review and finding rows carry no task and the token's session, the run label reads
+`critic tier 1 on lesson <id>`, and a `human` verdict files no sign-off request: there is no
+task to sign off, the proposal stays pending and the memory view shows it. The verdict rules
+apply unchanged; the runtime promotes on `accept` and rejects on any other completed verdict.
+
+Every sign-off request (the one `CriticService.review` files for a `human` verdict on a task or
+session subject, the one `applyVerdict` files when the ladder ends, and the runtime loop's own
+after a last-rung revise) has the options `SIGNOFF_OPTIONS` (`accept`, `revise`, `cancel`) and a `change_card`
 built by `signoffCard` and keyed `SIGNOFF_KEY` (`critic:signoff`): the task, the review, the
 run that produced the work, the review's finding ids, the reason (`verdict` or
 `retry_ladder_exhausted`) and `applied_at: null`. The answer is applied by the runtime
@@ -350,6 +359,10 @@ network):
   project row.
 - `fingerprint.test.ts`, `schema.test.ts`, `docs-drift.test.ts` (table equality with the CI
   script and behavioural equivalence on samples).
+- `lesson-subject.test.ts`: a lesson subject at tier 1 on a clean context (`Subject: lesson
+  <id>`, the text and tags in the evidence, one tool), the review row with no task and the
+  token's session plus its critic Run row, a `human` verdict filing no sign-off request, a
+  `revise` with its finding row, and a subject without an id or of an unknown kind refused.
 - `critic.test.ts`: clean context with a decoy transcript, the issued token's claims (one tool,
   no paths, domains or secrets, budget and expiry within the parent, depth + 1) with another
   tool denied, compression bypass on the evidence and `compression: "off"` on the run, every
@@ -435,8 +448,9 @@ and `.../researcher`; the result and the report path go to `docs/status/gates.md
 - `evals` depends on `critic` and `critic` has `evals` as a dev dependency; calibration loads the
   runner dynamically. A later split of the eval task types into a leaf package removes the
   dynamic import.
-- The critic does not store lessons (by design); until the memory package consumes
-  `lessonProposals`, patterns are visible only in `ReviewOutput` and `FindingRepo.repeated()`.
+- The critic does not store lessons (by design); the runtime's critic loop records
+  `lessonProposals` in critic memory and the memory loop proposes the ones tagged `general`
+  for the shared store, which the critic reviews as a `lesson` subject (spec G.6).
 
 ## Requirement IDs covered
 
@@ -448,7 +462,7 @@ ground and a downgraded escalate's reason in the evidence and the audit log), H.
 confidence never accepts: `low` and any number under 0.6 escalate; `medium` sits above the
 line), H.5 (findings tracked to resolution, patterns to lesson
 proposals), H.6 (session review: plan, cost, honesty), H.7 (calibration report against the eval
-set), B.4 (no close with open findings or failed required checks), D.2 (retry ladder), D.3
+set), G.6 (the `lesson` subject: critic approval before a lesson is promoted to the shared store), B.4 (no close with open findings or failed required checks), D.2 (retry ladder), D.3
 (ceiling from project settings), D.14 and D.15 (critic model and effort per tier), P.14 (doc
 drift at tier 2+), D.5 and D.19 (the critic's own Run row: model, effort, prompt version,
 tokens, cost, first-token time and total time as whole milliseconds; a refused row audited and

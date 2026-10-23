@@ -3,15 +3,28 @@ import { createInterface, type Interface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
 import { registerMirrorCli } from "@forerunner/capabilities";
 import { appDirs, errorMessage, log, osFacts, run, which } from "@forerunner/platform";
+import { openStore } from "@forerunner/state";
 import { openVault } from "@forerunner/vault";
 import { Command } from "commander";
 import type { RuntimeApp } from "../daemon/compose.ts";
+import {
+  describeIdentityCheck,
+  installIdentitySelectors,
+  lookupInstallHuman,
+} from "../daemon/identity.ts";
 import type { RunningDaemon } from "../daemon/server.ts";
 import { writeKillRequest } from "../enforcement/killfile.ts";
 import { registerJobsCli } from "../jobs/cli.ts";
 import { registerModelWatchCli } from "../models/watch-cli.ts";
 import { describePlanAllowance } from "../setup/plan-allowance.ts";
-import { ensureDirs, readConfig, runSetup, type SetupReport } from "../setup/wizard.ts";
+import {
+  ensureDirs,
+  readConfig,
+  runSetup,
+  type SetupConfig,
+  type SetupReport,
+} from "../setup/wizard.ts";
+import { registerSourcesCli } from "../sources/cli.ts";
 import { registerUpdateCli } from "../update/cli.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 import { registerAuditCli } from "./audit.ts";
@@ -85,6 +98,14 @@ export function buildProgram(deps: CliDeps = {}): Command {
     .option("--non-interactive", "take values from flags or FORERUNNER_* env; never prompt", false)
     .option("--profile <name>", "install profile (lets two installs share one machine)")
     .option("--human-name <name>", "your name")
+    .option(
+      "--email <address>",
+      "your email: on a shared store the human this install binds to (created at first start when nobody has it)",
+    )
+    .option(
+      "--human-id <id>",
+      "bind this install to an existing human of the shared store by id (FORERUNNER_HUMAN overrides for one start)",
+    )
     .option("--timezone <tz>", "IANA time zone")
     .option("--github-token <token>", "GitHub fine-grained token (or FORERUNNER_GITHUB_TOKEN)")
     .option(
@@ -122,6 +143,8 @@ export function buildProgram(deps: CliDeps = {}): Command {
           nonInteractive: !!opts.nonInteractive,
           profile,
           humanName: opts.humanName,
+          humanEmail: opts.email,
+          humanId: opts.humanId,
           timezone: opts.timezone,
           githubToken: opts.githubToken,
           anthropicKey: opts.anthropicKey,
@@ -140,6 +163,7 @@ export function buildProgram(deps: CliDeps = {}): Command {
           prompt,
         });
         out(`Config: ${report.configPath}`);
+        out(`Identity: ${describeConfiguredIdentity(report.config)}`);
         out(`Install record: ${report.installRecordPath} (${report.installRecord.installDir})`);
         out(`Vault backend: ${vault.backend}`);
         for (const [k, r] of Object.entries(report.results)) {
@@ -213,11 +237,15 @@ export function buildProgram(deps: CliDeps = {}): Command {
       } catch (e) {
         checks.push({ name: "vault", ok: false, detail: String(e) });
       }
+      const config = readConfig();
       checks.push({
         name: "config",
-        ok: !!readConfig(),
-        detail: readConfig() ? "present" : "run fr setup",
+        ok: !!config,
+        detail: config ? "present" : "run fr setup",
       });
+      // Which human the next daemon start binds to (ADR 0082), read from the configured
+      // store without creating anything; a set-up install only.
+      if (config) checks.push(await identityCheck(env, config));
       if (opts.json) out(JSON.stringify(checks, null, 2));
       else for (const c of checks) out(`${c.ok ? "ok " : "!! "} ${c.name.padEnd(18)} ${c.detail}`);
       process.exitCode = checks.filter((c) => !c.ok && ["node", "git", "pnpm"].includes(c.name))
@@ -340,6 +368,16 @@ export function buildProgram(deps: CliDeps = {}): Command {
     out,
   });
 
+  // Source discovery (spec A.4): connect, scan, accept and remove sources through the same
+  // SourceDiscovery as the daemon's /sources routes; a one-shot.
+  registerSourcesCli(program, {
+    open: async () => {
+      const rt = await openRuntime({ startServices: false });
+      return { sources: rt.sources, human: rt.human };
+    },
+    out,
+  });
+
   // Audit log export (spec S.9): a one-shot over the store through the daemon's export module.
   registerAuditCli(program, {
     open: () => openRuntime({ startServices: false }),
@@ -354,6 +392,35 @@ export function buildProgram(deps: CliDeps = {}): Command {
  * The setup summary's billing line: which sources the next start registers and, for the
  * subscription, the plan allowance in force and where it came from (ADR 0044).
  */
+/** The `fr setup` summary's identity line: the selector `config.json` carries, or what first start does. */
+export function describeConfiguredIdentity(config: SetupConfig): string {
+  if (config.humanId) return `bound to human ${config.humanId}`;
+  if (config.humanEmail)
+    return `${config.humanEmail} (found in the store at first start, or created then)`;
+  return "the store's only human (created at first start; on a shared store run fr setup --email or --human-id)";
+}
+
+/** `fr doctor`'s identity line: the store opened read-only for the lookup, closed again. */
+async function identityCheck(
+  env: NodeJS.ProcessEnv,
+  config: SetupConfig,
+): Promise<{ name: string; ok: boolean; detail: string }> {
+  const name = "identity";
+  const stateUrl = env.FORERUNNER_STATE_URL ?? config.stateUrl;
+  try {
+    const store = await openStore({ url: stateUrl });
+    try {
+      const lookup = await lookupInstallHuman(store, installIdentitySelectors({ env, config }));
+      return { name, ...describeIdentityCheck(lookup) };
+    } finally {
+      await store.close().catch(() => undefined);
+    }
+  } catch (e) {
+    const reason = errorMessage(e).replace(/\/\/[^@\s]*@/g, "//[REDACTED]@");
+    return { name, ok: false, detail: `state store not reachable: ${reason}` };
+  }
+}
+
 export function billingSourcesLine(sources: SetupReport["sources"]): string {
   const allowance = sources.planAllowance
     ? `; ${describePlanAllowance(sources.planAllowance)}`

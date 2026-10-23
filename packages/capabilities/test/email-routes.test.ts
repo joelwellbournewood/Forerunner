@@ -69,6 +69,11 @@ class FakeApp implements EmailRouteApp {
   }
 }
 
+/**
+ * The production-shaped mount: the daemon identifies the signed-in human and resolves agent
+ * owners, so every call below names the owner (a mount with `humanFor` and no `identity`
+ * refuses everything, see security-email-routes-identity.test.ts).
+ */
 function appOf(w: World) {
   return createEmailRoutes(
     {
@@ -78,6 +83,7 @@ function appOf(w: World) {
       audit: w.store.auditLog,
       commandAudit: (agentId, opts) => w.handler.commandAudit(agentId, opts),
       humanFor: (c) => c.req.header?.("x-human"),
+      identity: w.identity,
     },
     new FakeApp(),
   );
@@ -110,8 +116,14 @@ describe("createEmailRoutes", () => {
   it("GET and PUT settings: defaults, merge, validation, audit; credentials stay references", async () => {
     world = await emailWorld();
     const app = appOf(world);
+    // A second agent of the same human that no test configured: the defaults.
+    const second = await world.store.agent.insert({
+      name: "Fresh",
+      owner_human_id: world.human.id,
+    });
     const fresh = await app.call("GET", "/agents/:agentId/email/settings", {
-      params: { agentId: "other-agent" },
+      params: { agentId: second.id },
+      human: world.human.id,
     });
     expect(fresh.status).toBe(200);
     expect(fresh.body).toMatchObject({
@@ -155,12 +167,14 @@ describe("createEmailRoutes", () => {
 
     const bad = await app.call("PUT", "/agents/:agentId/email/settings", {
       params: { agentId: world.agentId },
+      human: world.human.id,
       body: { settings: { mode: "yolo" } },
     });
     expect(bad.status).toBe(400);
     expect((bad.body.error as { code: string }).code).toBe("validation");
     const value = await app.call("PUT", "/agents/:agentId/email/settings", {
       params: { agentId: world.agentId },
+      human: world.human.id,
       body: {
         settings: {
           mailbox: {
@@ -174,10 +188,13 @@ describe("createEmailRoutes", () => {
     expect(value.status).toBe(400);
     const notObject = await app.call("PUT", "/agents/:agentId/email/settings", {
       params: { agentId: world.agentId },
+      human: world.human.id,
       body: null,
     });
     expect(notObject.status).toBe(400);
-    const noAgent = await app.call("GET", "/agents/:agentId/email/settings", {});
+    const noAgent = await app.call("GET", "/agents/:agentId/email/settings", {
+      human: world.human.id,
+    });
     expect(noAgent.status).toBe(400);
   });
 
@@ -196,6 +213,7 @@ describe("createEmailRoutes", () => {
     expect(outcome.status).toBe("queued");
     const resumed = await app.call("POST", "/agents/:agentId/email/resume", {
       params: { agentId: world.agentId },
+      human: world.human.id,
     });
     expect(resumed.body).toEqual({ paused: false });
     expect(
@@ -218,6 +236,7 @@ describe("createEmailRoutes", () => {
     const app = appOf(world);
     const rotated = await app.call("POST", "/agents/:agentId/email/rotate-marker", {
       params: { agentId: world.agentId },
+      human: world.human.id,
     });
     const marker = rotated.body.marker as string;
     expect(marker).toMatch(/^\[FR-[a-z2-9]{4}\]$/);
@@ -249,6 +268,7 @@ describe("createEmailRoutes", () => {
     }
     const sent = await app.call("GET", "/agents/:agentId/email/sent", {
       params: { agentId: world.agentId },
+      human: world.human.id,
       query: { limit: "2" },
     });
     expect(sent.status).toBe(200);
@@ -260,6 +280,7 @@ describe("createEmailRoutes", () => {
     await world.handler.handle(world.agentId, await inboundOf(spoof));
     const commands = await app.call("GET", "/agents/:agentId/email/commands", {
       params: { agentId: world.agentId },
+      human: world.human.id,
     });
     const audit = commands.body.rows as Array<{ obeyed: boolean; deniedReason: string | null }>;
     expect(audit).toHaveLength(1);

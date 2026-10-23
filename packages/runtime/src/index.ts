@@ -9,6 +9,7 @@ export * from "./conversation/agent.ts";
 export * from "./daemon/adapters.ts";
 export * from "./daemon/api-types.ts";
 export * from "./daemon/compose.ts";
+export * from "./daemon/identity.ts";
 export * from "./daemon/restart.ts";
 export * from "./daemon/sandbox-port.ts";
 export * from "./daemon/server.ts";
@@ -44,10 +45,14 @@ export * from "./registry/index.ts";
 /** Remote commands for the PC and the desktop presence heartbeat (spec R.4, R.8; ADR 0041). */
 export * from "./remote/index.ts";
 export * from "./sandbox/index.ts";
+/** Shared secrets (spec S.13, ADR 0065): grants, the resolving vault adapter, the owner-side proposal. */
+export * from "./secrets/index.ts";
 export * from "./session/index.ts";
 export * from "./setup/install-record.ts";
 export * from "./setup/validators.ts";
 export * from "./setup/wizard.ts";
+/** Source discovery (spec A.4): connected sources, scans, proposals, the routes and the CLI. */
+export * from "./sources/index.ts";
 /** Signed updates (spec M); namespaced because its catalog port shares names with the extensions catalog. */
 export * as updates from "./update/index.ts";
 export * from "./voice/index.ts";

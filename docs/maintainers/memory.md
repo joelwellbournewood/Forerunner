@@ -39,6 +39,8 @@ joined with `join()`; nothing is hardcoded to a user path.
   shared/
     lessons/<id>.md         export of the shared rows (same rule)
     catalog.md
+  private.sqlite            team mode only: the local index of the private rows (ADR 0083); the
+                            shared store never holds one
 ```
 
 `LessonFiles` owns one memory root and refuses any path outside it (`inside()` throws
@@ -50,12 +52,13 @@ rename), LF on write, CRLF accepted on read.
 
 | Scope | Who may read | Owner | Where the truth lives | Source of lessons |
 | --- | --- | --- | --- | --- |
-| `agent_private` | the owning agent only (`ownerAgentId` must equal the asking agent) | `owner_agent_id` required | file, row is derived | the agent's sessions, the conversation agent |
+| `agent_private` | the owning agent only (`ownerAgentId` must equal the asking agent) | `owner_agent_id` required | file, row is derived; team mode: the row is in the local private index, never in the shared store | the agent's sessions, the conversation agent |
 | `critic` | every principal, the critic | none | row (state service in team mode), file is the export | the critic's reviews and calibration |
 | `shared` | every principal, the critic | none | row, file is the export | promotion, project-level lessons recorded by the critic or a principal |
 
-Project docs (`README`, `docs/*.md` in the project repo) are the fourth place knowledge lives and
-are never written by this package beyond scaffolding missing ones (see "Project docs").
+Project docs (`README`, `docs/*.md` in the project repo) are the fourth place knowledge lives.
+This package scaffolds the missing ones and rewrites the four standard sections of
+`docs/status.md` at session end; it never touches any other existing doc (see "Project docs").
 
 `grantFor(kind, agentId)` in `src/service.ts` turns an agent kind into a `ScopeGrant`: principal
 and conversation agents get their own private scope plus shared; the critic gets critic plus
@@ -74,6 +77,33 @@ a direct caller that leaves `agentId` out is trusted to pass its own id, so runt
 go through the service. A critic or shared lesson may not cite a private lesson id either:
 `remember` resolves every lesson id in the text and refuses one that belongs to a private row
 (ADR 0002 "shared may never reference private"); promotion checks again against its destination.
+
+### Where the private rows live (`src/scoped-store.ts`, ADR 0083)
+
+Spec: "whose private memory and keys each holds ... never leave that PC". In solo mode the one
+local SQLite holds every scope. With a shared state (Postgres through the state service in
+paired and hybrid mode) the runtime opens a second SQLite, `<data>/memory/private.sqlite` (the
+state schema at the same migration version, one `lesson` table in use, foreign keys off because
+the agents and projects its rows name live in the shared store), and `createMemory({ store,
+privateStore })` wraps the two in a `ScopedLessonStore`: writes route by the row's scope
+(`agent_private` to the index, `critic` and `shared` to the shared store), reads by id look in
+the index first and then in the shared store, `search` reads the scope's store, `list` and
+`count` without a single scope union both (private first). A row never changes store: `update`,
+`patch` and `supersede` with a scope that belongs to the other store are refused with
+`MEMORY_SCOPE_VIOLATION`; promotion is the explicit copy (`proposePromotion` writes the shared
+proposal through the facade, the private origin stays home and is never superseded). Every
+memory function (`remember`, `recall`, `consolidate`, `reconcile`, promotion, the runtime's
+views) sees one `LessonStore` (the `Pick` of `LessonRepo` in `src/types.ts`) and needs no
+knowledge of the split; `mirrorRow` restores a file's envelope through
+`LessonRepo.overwriteEnvelope` instead of raw SQL for the same reason.
+
+The second, independent guard is in `packages/state`: `LessonRepo` on the Postgres dialect
+refuses an `agent_private` insert, update, patch or supersede with `MEMORY_SCOPE_VIOLATION`
+before any statement runs (`packages/state/test/lesson-scope.test.ts`; the suite case runs on
+the real adapter in the integration project), so a caller that bypasses the facade cannot put a
+private row into the shared store either. A hand-edited file whose `scope` no longer matches its
+directory is reported invalid by `LessonFiles.list` and never mirrored, so `reconcile` cannot
+move a row across the boundary.
 
 ### Lesson file (`src/files.ts`, format 1)
 
@@ -111,7 +141,8 @@ and `formatSource` convert. `flags` exist only in the file; the row has no colum
 
 The `lesson` row (`@forerunner/state`, `LessonRepo`) mirrors the file field for field plus
 `embedding` (JSON array of the vector) and `file_path`. `mirrorRow()` upserts a row so it equals
-the file exactly, including `version`, `created_at` and `updated_at`. `reconcile(files, repo,
+the file exactly, including `version`, `created_at` and `updated_at` (set through
+`LessonRepo.overwriteEnvelope`; with a private index the row goes to the store of its scope). `reconcile(files, repo,
 embedder, scope, ownerAgentId?, { deleteOrphans, writeCatalog })` walks one scope root, upserts
 rows for new or changed files (re-embedding), reports rows whose file is gone as `orphans`
 (deleted only with `deleteOrphans`), reports unparsable files in `invalid` without trusting them,
@@ -217,7 +248,7 @@ string[] }`:
 
 | Rule | Condition | Proposal | Applied change |
 | --- | --- | --- | --- |
-| Duplicate | cosine >= 0.9 within the same project or global, no polarity conflict; union-find groups; keep pinned, then most used, then most confident, then oldest | `merge: keep <id> ... [, becomes global]; retire <ids>` | losers get `superseded_by = kept`, `status = retired`; the kept lesson gets `project_id = null` when any member of the group was global (`MergeProposal.projectId`), so a merge never narrows what other projects see |
+| Duplicate | cosine >= 0.9 within the same project or global, no polarity conflict; union-find groups; keep pinned, then most used, then most confident, then oldest. A project copy accepted from a promotion offer (its `source` names the global origin, `promotion:<id>`) is never paired with that origin, and is left out of a group a third lesson links it into (ADR 0059) | `merge: keep <id> ... [, becomes global]; retire <ids>` | losers get `superseded_by = kept`, `status = retired`; the kept lesson gets `project_id = null` when any member of the group was global (`MergeProposal.projectId`), so a merge never narrows what other projects see |
 | Contradiction | shared tag, cosine >= 0.6 (no upper bound), opposite sides of a polarity pair (`always/never`, `use/avoid`, `do/don't`, `should/should not`, `prefer/avoid`) | `contradiction (flag only, not resolved): ...` | both files get `flags: [contradiction:<other>]`; rows stay active |
 | Unused | `hit_count = 0` and created more than 60 days ago, or `last_used` more than 90 days ago; never pinned | `retire: <id> ... never used / last used <date>` | `status = retired` |
 
@@ -247,6 +278,16 @@ job. `polarityConflict(a, b)` is exported for the critic and the UI.
   (ignoring `general`), excluding the origin project, most overlap first. Without an explicit
   list, a project's tags are derived from the critic and shared lessons recorded about it.
 
+The runtime drives all of this (`packages/runtime/src/loop/memory.ts`, `MemoryLoop`;
+[ADR 0059](../decisions/0059-cross-project-promotion-in-the-loop.md), runtime.md "Memory"):
+a recorded critic or project-level shared lesson tagged `general` is proposed at once, a
+private one when its human proposes it from the memory view (with `humanApproval`), the
+critic reviews the pending proposals at the end of the next session as a `lesson` subject
+(critic.md) and `promote` or `rejectPromotion` follows, `offerToProjects` runs with the
+human's project list from the state store, and an accepted offer writes a pinned project-level
+copy through `remember(..., { noDedup: true })` with `source: promotion:<promoted>;human:<id>`,
+the source the consolidation rule above recognises.
+
 ### Project docs (`src/docs.ts`)
 
 `STANDARD_DOCS` = `README.md`, `docs/overview.md`, `docs/architecture.md`, `docs/status.md`,
@@ -259,13 +300,38 @@ adrWorthy? })` returns the docs that should have changed, for the critic at tier
 were added or removed under a source directory; `docs/decisions/` when an ADR-worthy change is
 flagged and no decision file changed; `docs/data.md` for schema, migration, model or `.sql`
 files; `docs/testing.md` for test-runner or workflow config; plus every standard doc missing
-from the repo. Paths may use either separator. The PM edits the docs in a PR at session end;
-this package never rewrites an existing doc.
+from the repo. Paths may use either separator.
+
+`renderStandardDoc(doc, project)` is a doc's full scaffold text (frontmatter and body; the
+README and `docs/overview.md` list `repos` under "## Repositories" when given), so a caller
+that writes through a git host instead of the file system, or wants to know whether a file is
+still the untouched template, gets the same bytes `scaffoldDocs` writes.
+
+**The status doc (spec G.5 "PM keeps them current", ADR 0058).** `applyStatusUpdate(existing,
+update)` is the pure format of `docs/status.md` after a session and `writeStatusUpdate(repoDir,
+update)` applies it on disk (`STATUS_DOC`, scaffolding the doc from its template when the repo
+has none; `created` says so; no other doc is touched). A `StatusUpdate` carries `sessionId`,
+`endedAt` (ISO-8601 UTC from the Clock), the session's `done`, `inFlight`, `blocked` and
+`next` task titles, an optional one-line `note` and an optional `state` (the project's open
+work, used for the top sections instead of the session's lists). The result: the frontmatter
+and every section the doc already has are kept in place; the four standard sections
+(`STATUS_SECTIONS`: "## Done", "## In flight", "## Blocked", "## Next", matched by heading,
+case-insensitive) are rewritten as one bullet per title ("- nothing" when empty) and added
+before the session log when the doc lacks them; "## Sessions" (`SESSIONS_HEADING`, moved to
+the end) holds one entry per session, newest first, headed `### <YYYY-MM-DD> session <id>`
+with the lines `- Done:`, `- In flight:`, `- Blocked:`, `- Next:` (titles joined by `; `,
+"none" when empty) and `- Note:` when given; an entry for the same session id replaces the
+earlier one, so a rerun of the same session changes nothing; the log keeps the newest
+`MAX_STATUS_SESSIONS` (20). Titles are made one line and cut at 120 characters. The runtime's
+`ProjectDocs` (runtime.md, "Project docs") commits the result on the session's pull request
+branch or a small PR of its own.
 
 ### Service facade (`src/service.ts`)
 
-`createMemory({ store, root?, files?, embedder?, clock? })` builds the `MemoryContext` (`repo`,
-`files`, `embedder`, `clock`, optional `reviews`). `MemoryService`:
+`createMemory({ store, privateStore?, root?, files?, embedder?, clock? })` builds the
+`MemoryContext` (`repo`: the store's `LessonRepo`, or a `ScopedLessonStore` over the private
+index and the store when `privateStore` is given; `files`, `embedder`, `clock`, optional
+`reviews`). `MemoryService`:
 
 - `recallForSession({ grant, projectId?, brief, tags?, maxTokens = 1500, countTokens? })`: loads
   the agent's `instructions.md` first when the grant covers its private scope (charged to the
@@ -282,7 +348,9 @@ this package never rewrites an existing doc.
 `ForerunnerError` codes used: `validation` (bad input, bad file, lint), `path_not_allowed`
 (outside the root), `not_found`, `approval_required` (promotion without an accepting review or
 human approval), `autonomy_insufficient` (proposing someone else's private lesson),
-`budget_exceeded` (instructions larger than the budget), `unavailable` (file write failed).
+`budget_exceeded` (instructions larger than the budget), `unavailable` (file write failed),
+`MEMORY_SCOPE_VIOLATION` (a private row headed for the shared store, or a lesson moved across
+the private/shared boundary; spelled as ADR 0002 names it).
 
 ## How to change it
 
@@ -308,6 +376,10 @@ human approval), `autonomy_insufficient` (proposing someone else's private lesso
   `test/consolidation.test.ts`.
 - **A new standard doc**: add it to `STANDARD_DOCS` and `TEMPLATES` in `src/docs.ts` and a rule
   in `checkDocDrift` if some change should trigger it.
+- **The status format**: `STATUS_SECTIONS`, `sessionEntry` and `MAX_STATUS_SESSIONS` in
+  `src/docs.ts`; `applyStatusUpdate` must stay idempotent per session id and must keep every
+  section it does not own (`test/docs.test.ts`, "status.md updates"). A format that drops a
+  human's section is a bug, not a redesign.
 - **Team mode**: critic and shared rows live in Postgres behind the state API; `LessonFiles` is
   then an export target after each sync. The Postgres adapter must refuse `scope = private`
   writes (ADR 0002); that guard belongs in `packages/state` and is listed under Known issues.
@@ -327,9 +399,10 @@ opposite polarity 0.93, unrelated under 0.2).
 | `retrieval.test.ts` | the formula numerically, ranking by tags and similarity, budget never exceeded by the estimator or by the rendered block across budgets, caller tokenizer, pinned first and charged, touch in row and file, exclusions (retired, superseded, proposed, other project) and global inclusion, near-duplicate skip with hints, lesson cap, render order, input validation, a lint-failing row is still served and reported in `touchFailures` while the rest is touched, a row with a credential shape is never rendered (`excluded`) |
 | `scopes.test.ts` | agent B with agent A's id gets nothing (denied, no touch), private scope without owner throws, own private only, critic and shared readable by every principal, critic grant never returns a private lesson, grants by kind, private files under the owner's root, state-layer guard |
 | `record.test.ts` | validation of text, tags, confidence, source and ownership; file plus mirrored row; near-duplicate merge with supersede, tag union, carried hits; below-threshold insert; no merge across scopes, owners or projects (global merges); a merged lesson stays global when either side was global and is still recalled from another project; a critic or shared lesson citing a private id refused at write time (shared ids and private memory unaffected); a private write for another agent refused when `agentId` is given, the service forcing owner = acting agent; opposite polarity not merged; `noDedup`; source grammar |
-| `consolidation.test.ts` | polarity pairs, `consolidationDue`, duplicate merge keeping the most used with report-only then apply, the kept lesson made global when a merged member was global (and kept project-scoped when none was), contradictions flagged in both files and never resolved, contradiction above the duplicate threshold, no pairing without a shared tag or across projects, retirement by the simulated clock (never used after 60 days, stale after 90, pinned kept, young kept), custom thresholds, owner required for a private plan |
+| `consolidation.test.ts` | polarity pairs, `consolidationDue`, duplicate merge keeping the most used with report-only then apply, the kept lesson made global when a merged member was global (and kept project-scoped when none was), a project copy accepted from an offer never merged with its global origin (directly or through a third lesson, which merges into the origin while the copy stays), contradictions flagged in both files and never resolved, contradiction above the duplicate threshold, no pairing without a shared tag or across projects, retirement by the simulated clock (never used after 60 days, stale after 90, pinned kept, young kept), custom thresholds, owner required for a private plan |
 | `promotion.test.ts` | `general` tag required, idempotent proposal with source pointing at the origin, proposals not retrievable, private origin needs owner plus human approval, foreign (critic) ids refused by promotion, promotion needs an accepting review (empty, revise, missing review rejected), promoted copy active and global, shared project origin superseded, critic origin untouched, reject, offers to projects (explicit and derived) |
-| `docs.test.ts` | the eight docs, scaffold with frontmatter, existing untouched and idempotent, frontmatter parse, every drift rule including separators, missing docs reported |
+| `docs.test.ts` | the eight docs, scaffold with frontmatter, `renderStandardDoc` with name, goal and repos equal to what the scaffold writes (no repos section without repos), existing untouched and idempotent, frontmatter parse, every drift rule including separators, missing docs reported; status.md updates: from the template with the four sections and a dated session entry, a human-edited doc keeping its frontmatter, intro and own sections with only the four rewritten and missing ones added before the log, newest session first, idempotent per session id, "nothing"/"none" for empty lists, the project `state` for the sections while the entry keeps the session's lists, the log capped at `MAX_STATUS_SESSIONS`, long and multi-line titles cut to one line, `writeStatusUpdate` scaffolding the doc first and touching no other doc |
+| `scoped-store.test.ts` | the by-scope store over a private index and a shared store that refuses private writes like the Postgres adapter: `createMemory` builds it; a session's private lessons land only in the index (files in the usual roots) and critic and shared ones only in the shared store; recall unions both for the owner, the critic sees no private row, touches go to the holding store; edit, pin, retire, touch and delete locate the row; a scope change across the boundary (update, patch, supersede) is refused with `MEMORY_SCOPE_VIOLATION` while the near-duplicate merge inside the index still supersedes; promotion copies a private `general` lesson into the shared store and leaves the origin home; consolidation runs per scope on its store; `reconcile` of a private root fills the index and never the shared store; scoped and unscoped list, count and search |
 | `service.test.ts` | `rememberFromSession` records, rejects and writes the catalog; `recallForSession` loads standing notes then lessons under the budget; instructions larger than the budget refused; empty grant; the "4 simulated weeks" sketch: repeated findings recorded as shared lessons are recalled by later sessions (repeats 3, 0, 0, 0), memory per session stays under budget, hits and `last_used` advance, re-recording merges instead of duplicating |
 
 `test/postgres.integration.test.ts` (`pnpm vitest run --project integration packages/memory/test`)
@@ -341,9 +414,13 @@ in `tests/e2e` once the critic wiring lands; the sketch here is its unit-level s
 
 ## Known issues
 
-- Team mode is not wired: critic and shared rows are served from the local store, and the
-  Postgres adapter does not yet throw `MEMORY_SCOPE_VIOLATION` on a private write (ADR 0002).
-  That guard lives in `packages/state` and is tracked there.
+- The private index is a second full state schema (every table created, one used): a schema
+  migration applies to it at the next start like the state store, and a `lesson` migration that
+  backfills from other tables (`agent`, `project`) finds them empty there. A cross-store
+  `supersede` has no transaction across the two SQLite files, which is why the facade refuses it
+  instead of attempting it.
+- The private index is unencrypted on disk like the solo-mode state store; the spec's "own
+  encrypted backup" of private memory (spec "Source of truth rules") is not built.
 - No `lesson_use` table yet: usage is `hit_count` and `last_used` only; `cited` (the agent or a
   finding referenced the id) waits for the critic wiring.
 - Contradiction detection is a word heuristic (ADR 0027): contradictions without a polarity
@@ -351,8 +428,9 @@ in `tests/e2e` once the critic wiring lands; the sketch here is its unit-level s
 - `consolidate` is O(n²) over active lessons of one scope; fine for thousands, not millions
   (ADR 0001). Split by project before it matters.
 - `offerToProjects` without an explicit project list derives tags only from critic and shared
-  lessons; projects with no lessons yet are never offered anything. Pass the project list from the
-  state store when the runtime calls it.
+  lessons; projects with no lessons yet are never offered anything. The runtime passes the
+  human's project list with `settings.tags` and the tags of every scope it may read
+  (`MemoryLoop.projectTags`); a direct caller without a list keeps the narrower derivation.
 - The memory-format migrator (migrations.md, "Memory-format migrations") is still a placeholder:
   format 1 is the only format and a newer `format` is refused rather than migrated. `index.json`
   already records the format a root was indexed with, so the migrator has its trigger.

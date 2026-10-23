@@ -15,12 +15,17 @@ import {
 import {
   LESSON_SCOPES,
   LESSON_STATUSES,
-  type LessonRepo,
   type LessonRow,
   type LessonStatus,
 } from "@forerunner/state";
 import { type Embedder, vectorToJson } from "./embedding.ts";
-import { LESSON_FORMAT, type LessonDoc, type MemoryScope, rowToDoc } from "./types.ts";
+import {
+  LESSON_FORMAT,
+  type LessonDoc,
+  type LessonStore,
+  type MemoryScope,
+  rowToDoc,
+} from "./types.ts";
 
 /**
  * Lessons on disk (ADR 0002): one Markdown file with YAML frontmatter per lesson, one root per
@@ -612,7 +617,7 @@ function rowMatchesDoc(row: LessonRow, doc: LessonDoc, filePath: string, dims: n
 
 /** Insert or replace the index row so it equals the file exactly (version and timestamps too). */
 export async function mirrorRow(
-  repo: LessonRepo,
+  repo: LessonStore,
   doc: LessonDoc,
   filePath: string,
   embedder: Embedder,
@@ -639,10 +644,11 @@ export async function mirrorRow(
   const existing = await repo.get(doc.id);
   if (existing) await repo.updateWhere(fields as Partial<LessonRow>, '"id" = ?', [doc.id]);
   else await repo.insert({ ...fields, id: doc.id, created_at: doc.created_at });
-  await repo.db.query(
-    `UPDATE ${repo.qt} SET "version" = ?, "updated_at" = ?, "created_at" = ? WHERE "id" = ?`,
-    [doc.version, doc.updated_at, doc.created_at, doc.id],
-  );
+  await repo.overwriteEnvelope(doc.id, {
+    version: doc.version,
+    updated_at: doc.updated_at,
+    created_at: doc.created_at,
+  });
   return repo.mustGet(doc.id);
 }
 
@@ -680,7 +686,7 @@ export interface ReconcileReport {
  */
 export async function reconcile(
   files: LessonFiles,
-  repo: LessonRepo,
+  repo: LessonStore,
   embedder: Embedder,
   scope: MemoryScope,
   ownerAgentId: string | null = null,

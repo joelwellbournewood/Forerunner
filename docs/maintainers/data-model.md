@@ -103,6 +103,13 @@ below 80% of the cap, `warn80` from 80%, `stopped` at 100%; a cap of 0 means no 
 - `done` -> (terminal)
 - `failed` -> (terminal)
 
+`secret_grant.status`:
+
+- `pending` -> `active`, `cancelled`, `revoked`
+- `active` -> `revoked`
+- `cancelled` -> (terminal)
+- `revoked` -> (terminal)
+
 `session.status`:
 
 - `planned` -> `running`, `stopped`, `killed`
@@ -354,6 +361,7 @@ Carries the common columns (see Invariants).
 | `revoked_at` | timestamp | yes |  |  | When revoked. |
 | `paired_at` | timestamp | no |  |  | When paired. |
 | `push_token` | text | yes |  |  | Push notification token. |
+| `wrap_public_key` | text | yes |  |  | X25519 public key (raw, base64) of the install holding this device's vault; shared secrets are wrapped to it. |
 
 Indexes:
 
@@ -712,6 +720,34 @@ No envelope; primary key `version`.
 | `name` | text | no |  |  | Migration name. |
 | `applied_at` | timestamp | no |  |  | When it was applied. |
 
+### secret_grant
+
+A shared secret's grant to named agents (spec S.13): who must approve, who did, and the value wrapped per install. Never the value.
+
+Carries the common columns (see Invariants).
+
+| Column | Type | Nullable | Default | References | Description |
+| --- | --- | --- | --- | --- | --- |
+| `name` | text | no |  |  | Reference name the named agents use, e.g. org_deploy_token. |
+| `owner_human_id` | text | no |  | `human.id` | Human whose vault holds the value. |
+| `kind` | text | no | `"token"` |  | api_key, token, password, ssh_key, ... |
+| `why` | text | no | `""` |  | Why the owner shares it; shown on the approval card. |
+| `agent_ids` | json | no | `[]` |  | Agents that may read it once the grant is active. |
+| `required_human_ids` | json | no | `[]` |  | Humans other than the owner whose approval the grant needs. |
+| `approvals` | json | no | `{}` |  | Approvals given: human id -> { at, request_id }. |
+| `request_ids` | json | no | `[]` |  | Approval requests opened for the required humans. |
+| `blobs` | json | no | `[]` |  | Per (agent, device): the value wrapped to that install's key. Ciphertext only; emptied when the grant ends. |
+| `status` | text (`pending`, `active`, `cancelled`, `revoked`) | no | `"pending"` |  | Lifecycle status. |
+| `activated_at` | timestamp | yes |  |  | When the last required approval arrived. |
+| `last_served` | timestamp | yes |  |  | Last time a wrapped blob was served to an install. |
+| `ended_at` | timestamp | yes |  |  | When the grant was cancelled or revoked. |
+| `ended_reason` | text | yes |  |  | Why it ended. |
+
+Indexes:
+
+- index on (`owner_human_id`, `name`)
+- index on (`status`)
+
 ### secret_ref
 
 Names of secrets in the vault and who may use them. Never the value.
@@ -770,7 +806,7 @@ Carries the common columns (see Invariants).
 
 | Column | Type | Nullable | Default | References | Description |
 | --- | --- | --- | --- | --- | --- |
-| `kind` | text (`github_org`, `github_user`, `gitlab`, `git_remote`, `local_folder`) | no |  |  | Source kind. |
+| `kind` | text (`github_org`, `github_user`, `github_repo`, `gitlab`, `git_remote`, `local_folder`) | no |  |  | Source kind. |
 | `display_name` | text | no |  |  | Display name. |
 | `locator` | text | no |  |  | URL, org/user name or folder path. |
 | `credential_ref` | text | yes |  |  | Secret reference name used to access it. |
@@ -781,6 +817,34 @@ Carries the common columns (see Invariants).
 Indexes:
 
 - unique on (`kind`, `locator`)
+
+### source_candidate
+
+What a scan of a source found: one proposed project per repository or folder, with duplicate and existing-install detection (spec A.4).
+
+Carries the common columns (see Invariants).
+
+| Column | Type | Nullable | Default | References | Description |
+| --- | --- | --- | --- | --- | --- |
+| `source_id` | text | no |  | `source.id` | The source the scan belongs to. |
+| `kind` | text (`repo`, `folder`) | no |  |  | Repository on a git host, or a folder. |
+| `name` | text | no |  |  | Repository or folder name. |
+| `locator` | text | no |  |  | What a project's repos entry carries: owner/name, or the absolute folder path. |
+| `key` | text | no |  |  | Normalised duplicate key (github:owner/name lower-cased, folder:<path>); unique per source. |
+| `proposed_name` | text | no |  |  | Project name a scan proposes. |
+| `status` | text (`proposed`, `accepted`, `duplicate`, `gone`) | no | `"proposed"` |  | proposed, accepted, duplicate or gone. |
+| `existing_install` | bool | no | `false` |  | A Forerunner install was detected in it. |
+| `install_marker` | text | yes |  |  | What marked the install: the .forerunner/project.json file or the install record. |
+| `project_id` | text | yes |  | `project.id` | The project this candidate became, or the one it duplicates. |
+| `is_git` | bool | no | `true` |  | A git repository (always for a host repo; a folder with .git). |
+| `details` | json | no | `{}` |  | Host facts: url, default branch, private, duplicate_of. |
+| `last_seen_at` | timestamp | no |  |  | Last scan that found it. |
+
+Indexes:
+
+- unique on (`source_id`, `key`)
+- index on (`key`)
+- index on (`status`)
 
 ### task
 

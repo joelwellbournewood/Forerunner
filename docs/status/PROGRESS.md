@@ -7,16 +7,92 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | Phase | Name | Status | Gate evidence |
 | --- | --- | --- | --- |
 | 0 | Foundations | CI green on both OS (run 39352102564); fresh-install timing pending the install scripts | gates.md § Phase 0 |
-| 1 | Single agent that does real work | gate passed on the fake provider and live on both billing sources (API key in full; the subscription session through the Agent SDK driver, ADR 0044); kill under 2 s live (49 ms) | gates.md § Phase 1 |
+| 1 | Single agent that does real work | gate passed on the fake provider and live on both billing sources (API key in full; the subscription session through the Agent SDK driver, ADR 0044); kill under 2 s live (49 ms); the API-key half probed again on the new key on 2026-10-23 (4 of 5 cases, kill 129 ms; the harness's classification of the aborted call is open, item w4-metered-aborted) | gates.md § Phase 1 |
 | 2 | Two agents, one project | gate passed on the fake provider (two agents, five sessions each, claims, peer feed, PR flow, human requests); state service with device auth, realtime, receipts, decision log, GitHub Projects mirror, approvals web fallback done | gates.md § Phase 2 |
 | 3 | Critic and quality loop | gate passed live (40 of 40 seeded defects caught, 40 of 40 clean submissions accepted after ADR 0042); reviews tab done | gates.md § Phase 3 |
 | 4 | Memory, docs and learning | gate harness passed on the fake provider (four simulated weeks, retrieval under budget, consolidation applied only as approved, no cross-human lesson); memory UI done | gates.md § Phase 4 |
-| 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending (no emulator boots on the hosted runner) | gates.md § Phase 5 |
+| 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending: the hosted emulator boots and launches the app (run 6), the raw-CDP attach is merged (ADR 0054) and not yet dispatched; the Settings → Capabilities → Email page (ADR 0066), PM intake (ADR 0055) and what you say during a live session (ADR 0078) landed 2026-10-23 | gates.md § Phase 5 |
 | 6 | Capabilities | injection suite, live revocation, overnight cloud-runner session, emailed task and spoofed email passed on the fake provider and the in-process mail server; live halves pending a real mailbox and host | gates.md § Phase 6 |
 | 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts) | gates.md § Phase 7 |
-| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each) and on Windows in CI; the hosted emulator boots and launches the app (run 6), its tests pending run 7; requirements 172 done, 48 in progress, 8 todo; security suite green (45 findings fixed, 4 medium review findings open); release criteria not met, no release cut; build stopped at the credit limit on 2026-10-21 | gates.md § Phase 8 and § Release 1.0 criteria |
+| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 183 done, 40 in progress, 5 todo; security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
 
 ## Log
+
+### 2026-10-23 (fifteen bounded items merged; wave 1 reviewed, its fix stage and waves 2 to 4 stopped at the credit limit; triage; live probe on the new key)
+- Base b31c2e5 (the handover of 2026-10-21). Fifteen items were built on `wave/<id>` branches
+  and merged (`git log b31c2e5..HEAD --merges`). Wave 1, the handover's item 1: always-human
+  approvals spent per call and keyed on the raw input (S.6, S.1, J.8, J.10; ADR 0052); the
+  email routes fail closed without an identity port and the log's key-name rule and
+  `URL_USERINFO` are fixed (S.4, S.15; ADR 0084); the independent review of B.6 applied (the
+  milestone placement, the email task's default tier); an approved plan starts the session it
+  was filed for (J.6, J.7; ADR 0053); the Android smoke over raw CDP (ADR 0054). Wave 4, the
+  triage's P0s: install identity on a shared store (F.1, U.2, U.3; ADR 0082), private memory
+  next to a shared state (G.1, G.3, S.1, S.10; ADR 0083), the signed and verified Android
+  release APK (R.1, M.3). Wave 2: PM intake (A.2; ADR 0055), source discovery (A.4; ADR 0056,
+  migration 0003), project docs by pull request (G.5; ADR 0058), cross-project promotion (G.6;
+  ADR 0059), shared secrets (S.13; ADR 0065, migration 0004), the Settings → Capabilities →
+  Email page (S.15, S.28, S.29, T.14; ADR 0066). Wave 3: what you say during a live session
+  (O.9; ADR 0078). Requirements 183 done, 40 in progress, 5 todo (from 172 / 48 / 8); the
+  Unreleased section of `CHANGELOG.md` carries one entry per item.
+- Integration (the commits after the merges; the merge bodies say what was resolved): the
+  shared-secrets migration renumbered 0003 → 0004 because the sources item shipped 0003 first
+  (the schema test proves v1 + v2 + v3 + v4 equals the generator); the phase-5 gate daemon
+  stand-in gained the merged daemon's `RuntimeApp` members; the G.5 scaffold is deferred when
+  a project is created with `intake: true`, the intake replaces untouched scaffold
+  placeholders, and a session that only filed its plan skips the status write; the ADR index
+  rows 0052 to 0084 added centrally (c98eda2). Full check green on e42c730 on the Linux box
+  (the paragraph above the criteria table in gates.md: lint, paths, types, 2672 unit tests,
+  UI 252, approvals-web 57, live 42, injection 59 of 59, the nine scenarios, docs and secret
+  checks, cargo 68); the `integration` project cannot run there (no Postgres).
+- Review state: only the five wave-1 items were independently reviewed (w1-approvals accept
+  86, w1-email-identity-log accept 88, and-cdp accept 80, w1-b6-review revise 72,
+  w1-plan-approval revise 68); the session's credits ran out before the fix stage that
+  follows a review, so every finding is open on the merged code: three high (the project card
+  names a cancelled milestone as next; a plan approved by chat or voice starts nothing on a
+  local store; the daemon and the cloud trigger can start one approved plan twice) and the
+  medium ones, listed with files and fixes in BLOCKERS.md "Open review findings of
+  2026-10-23". The other ten items are builder-verified only (their tests, typecheck, docs).
+- Credit stops: waves 2b, 3 and 4 were cut mid-wave. Built but not merged (pushed to origin):
+  `wave/w2-l6-speak` (3 commits, the builder interrupted before its report, state unknown),
+  `wave/w3-b5-reasons` (2 commits, unfinished), `wave/w4-desktop-confirm` (1 commit,
+  unfinished, the triage P1). WIP snapshots (uncommitted work saved as a `wip:` commit,
+  unreviewed, unverified): `wave/w2-monthly-jobs`, `wave/w2-o1-hotkey`, `wave/w3-a3-import`,
+  `wave/w3-o4-voice-prefs`, `wave/w4-metered-aborted`. Not started: w2-chat-memory (J.1,
+  O.2), w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
+  (S.12), w4-stale-docs, w4-fcm-sender (R.6 service side) and the wave-3 items
+  w3-c5-specialist-approval, w3-d4-specialist-settings, w3-d7-performance, w3-d16-slider,
+  w3-e1-triggers, w3-e4-recheck, w3-docs-p7-p11, w3-r2-devices, w3-r5-phone, w3-t1-mode-off,
+  w3-misc-replay-ceiling; each is named on its requirement row in BLOCKERS.md. Build cost in
+  COST.md (wave 1 and 2a and the triage agent measured, the stopped waves not).
+- Live: the human provided a new API key and workspace (`.env.build`,
+  `FORERUNNER_LIVE_BUDGET_USD=200`, per-run cap 15 USD unchanged). One probe of the phase 1
+  file on it, run `2026-10-23T09:49:08.123Z`: USD 0.1170, ledger USD 6.0479 of 200
+  (1b3de7e); 4 of 5 cases passed (3 coder tasks with tier 1 reviews, the chat turn); the kill
+  switch stopped the session in 129 ms with the claims released, but the metered provider
+  recorded the call aborted mid-flight as `ok` with no usage, so the `aborted` assertion
+  failed: a harness classification defect (item w4-metered-aborted, WIP on its branch). The
+  key and the subscription token of 2026-10-20 still have to be revoked.
+- Triage (criterion 4): `docs/status/reports/triage-2026-10-23.md` (962cb18) classified every
+  known issue: 3 P0, 1 P1, 163 P2, 20 stale entries, the rest design notes. The three P0s are
+  fixed and merged the same day (install identity, private memory, Android signing); the P1
+  (a high-risk confirmation from the desktop app) is partly built on
+  `wave/w4-desktop-confirm` and not merged; the 20 stale entries are not yet edited
+  (w4-stale-docs not built). Criterion 4 is still not met.
+- Android: the raw-CDP attach is merged but `android.yml` was not dispatched, so it has not
+  met the hosted emulator; the release APK signing and the apksigner check in the workflows
+  are merged and not yet exercised in a run. The phase 5 emulator row stays pending.
+- Repository and CI: `joelwellbournewood/Forerunner` is a public repository on GitHub
+  (`visibility: public` by the REST API on 2026-10-23), so the secret scan and the
+  credentials-only-in-`.env.build` rule matter for every push; `ci.yml` now runs by hand and
+  on pushes to `ccr-**` branches (ccf9504), so the release branch has runs again: run 95 on
+  962cb18 Linux green, Windows red on one pwsh test timeout
+  (fixed by 2f8fbd9); run 97 on a5b8823 green on both OS (before the merges); run 98 on
+  1d849c8 (mid-merge) red on the missing ADR index rows (fixed by c98eda2); run 99 on
+  c98eda2 red on both OS in the integration step on two Postgres tests the merges left stale
+  (`migrations.integration.test.ts` expects `applied [2]`, now `[2, 3, 4]`; the conformance
+  "keeps private lessons private" case seeds an `agent_private` row on Postgres, refused since
+  ADR 0083); run 100 on e42c730 pending at the time of writing, its Linux job already failed
+  on the same step. Nothing was recorded as passed on today's runs; the fix is handover item 1.
 
 ### 2026-10-21 (security fixes landed, audit export, small-project mode, sign-off follow-up; build stopped at the credit limit)
 - Security: the 45 findings pinned by the review's `it.fails` tests are fixed in the state service,
@@ -57,34 +133,66 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   met, no release cut. Progress report 5 posted to the contact issue.
 
 ### Where to pick up (handover)
-In this order, each item a wave of its own with the snapshot procedure in `AGENTS.md`:
-1. Apply the open security-review findings (medium, from the review of 2026-10-20/21):
-   - `packages/platform/src/log.ts`: the key-name rule is case-inconsistent (`SECRET_KEY_NAME`
-     is case-insensitive, `KEY_SUFFIX` is not), so `PRIVATE_KEY`-style names slip through; and
-     `URL_USERINFO` needs a non-empty user, so `redis://:password@host/0` is not masked.
-   - `packages/runtime/src/wiring/state-ports.ts` and `enforcement/hooks.ts`: the always-human
-     approval consumption lives only in `ctx.approvals`; the durable `StateApprovals` port still
-     answers "approved" for an identical later request, and its key is computed from the
-     redacted input, so two inputs that redact alike share a key. Consume the durable row and
-     key on the raw canonical input.
-   - Finish the independent review of B.6 small-project mode (its tests pass; the critic stage
-     was interrupted) and apply what it finds.
-2. Close the requirement rows marked "missing in code" in `BLOCKERS.md` (A.2, A.4, B.6 is done,
-   D.20, G.5, G.6, H.7, J.1, J.7, J.9, L.6, O.1, R.6, S.13, S.15/S.29) and then the "partly
-   built" rows; each needs code, a test and its maintainer doc.
-3. Android: the hosted emulator boots, installs and launches the app (runs 6 and 7); the
-   Android WebView refuses Playwright's `connectOverCDP` (`Browser context management is not
-   supported`, run 7). Replace the attach step of `apps/mobile/e2e/run.mjs` with a raw CDP
-   client on the page target (`GET /json/list` on the forwarded devtools port, then
-   `Runtime.evaluate` and `Input.dispatchMouseEvent`/`insertText` over its WebSocket; Node 22's
-   global `WebSocket` suffices) and port the UI steps to it; then dispatch `android.yml`, record
-   the phase 5 emulator row and scenario 9's Android run, re-run every gate on the final build
-   and fill the phase 8 "re-run" row.
-4. Severity triage of the Known issues sections (V.4), then the release: tag `v1.0.0`
-   (`release.yml` builds Windows, Linux and Android artefacts, writes the changelog section and
-   signs the update manifest with `UPDATE_SIGNING_KEY`).
-Credentials: the API key and the subscription token used for the live runs must be revoked
-and re-issued; the ledger `tests/live/spend.json` carries every live call (USD 5.93).
+In this order, each item a wave of its own with the snapshot procedure in `AGENTS.md`: a
+failing test first, the maintainer doc in the same change, an independent review before the
+merge, the requirement row and its BLOCKERS.md row updated at integration.
+1. Make CI green and fix the open review findings of wave 1 (BLOCKERS.md rows "CI on the
+   integrated branch" and "Open review findings of 2026-10-23"). CI: the two Postgres tests
+   the merges left stale, `packages/state/test/migrations.integration.test.ts` (expects
+   `applied [2]`, now `[2, 3, 4]` and version 4) and the conformance case "keeps private
+   lessons private" in `packages/state/test/suite.ts` (seeds an `agent_private` row on
+   Postgres, refused since ADR 0083: seed it on SQLite only or assert the refusal as the
+   sibling case does); push and record the green run on both OS. Findings, high first:
+   `projectCard.nextMilestone` in `packages/runtime/src/daemon/views.ts` must pick `planned`
+   or `active` as the plan writer does; `request.answer` from chat, voice and the palette must
+   reach `rt.syncApprovals()` in `packages/runtime/src/daemon/compose.ts` (or the approvals
+   poll runs on local stores); the daemon's `syncPlanApprovals` and the cloud `InboxTrigger`
+   must share the `applied_at` mark so one answered plan starts one session; then the medium
+   ones (the empty-plan request, superseded approvals, the unserialised sync, `start_failed`
+   on a rejected start, the follow-up's budget cap; the ADR 0052 wording; the and-cdp
+   `waitFor` test and the `eval` under the CSP). Re-review w1-b6-review and w1-plan-approval.
+2. Finish the partly built branches, each with its tests, maintainer doc and review:
+   `wave/w4-desktop-confirm` (the triage P1, 1 commit), `wave/w3-b5-reasons` (B.5, 2 commits),
+   `wave/w2-l6-speak` (L.6, 3 commits, state unknown: read the diff before building on it);
+   then the WIP snapshots `wave/w4-metered-aborted` (the live harness's aborted-call
+   classification, needed before item 5), `wave/w2-monthly-jobs` (H.7, P.15),
+   `wave/w2-o1-hotkey` (O.1), `wave/w3-a3-import` (A.3), `wave/w3-o4-voice-prefs` (O.4); a
+   `wip:` commit is unreviewed and unverified, so start from its diff, not its claims.
+3. Build the unbuilt items one at a time, each with an independent review before the merge
+   (the BLOCKERS.md row of each names the gap and the fix): w2-chat-memory (J.1, O.2),
+   w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
+   (S.12), w4-fcm-sender (R.6, the service side), w3-c5-specialist-approval (C.5),
+   w3-d4-specialist-settings (D.4), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
+   w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
+   w3-r5-phone (R.5), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
+   `it.todo`, the executor's ceiling rung). Then an independent review of each of the ten
+   items merged on 2026-10-23 without one (w4-install-identity, w4-private-memory,
+   w4-android-signing, w2-a2-intake, w2-g5-docs, w2-g6-promotion, w2-a4-sources,
+   w2-email-page, w2-s13-shared-secrets, w3-o9-chat-to-inbox), applying what they find.
+4. The 20 stale doc entries of the triage report (section "Already fixed": the code is right,
+   the Known issues bullet is not): edit each bullet (item w4-stale-docs), then re-read the
+   triage against the items above and confirm no P0 or P1 remains (V.4).
+5. Android dispatch and the live gate re-run. Dispatch `android.yml` (the emulator job runs
+   the raw-CDP smoke, `pnpm --filter @forerunner/mobile test:emulator`, and the apksigner
+   check); on `PASS: Android emulator smoke complete` record the phase 5 emulator row and
+   scenario 9's Android run in gates.md. Live: from `tests/live`, with `ANTHROPIC_BASE_URL`
+   unset and `FORERUNNER_LIVE_BUDGET_USD` as set in `.env.build` (200), the key in
+   `FORERUNNER_ANTHROPIC_KEY` and the workspace in `FORERUNNER_ANTHROPIC_WORKSPACE_ID`, run
+   `pnpm --filter @forerunner/live test:live` (the phase 1, timing and phase 3 files; add
+   `tests/live/test/live-4-subscription.live.test.ts` once a new subscription token exists);
+   fix the aborted-call classification first (item 2) or the kill case fails on the harness
+   again; record every run in COST.md and gates.md with its ledger total.
+6. CI evidence on both OS: a green `ci.yml` run on the final build on `ubuntu-latest` and
+   `windows-latest` (the nine scenarios and the security files run there), linked from
+   gates.md phase 0 and criteria 3 and 5; `desktop.yml` on Windows for the shell; then every
+   earlier gate re-run on the final build and the phase 8 "re-run" row filled.
+7. Severity triage follow-up and the release: re-classify what the items above closed, the
+   P2 list into the release notes, then tag `v1.0.0` only when every row of the criteria
+   table in gates.md reads met (`release.yml` builds Windows, Linux and Android artefacts,
+   writes the changelog section and signs the update manifest with `UPDATE_SIGNING_KEY`).
+Credentials: the API key and the subscription token used on 2026-10-20 must be revoked and
+re-issued (the key of 2026-10-23 is the live one, in `.env.build`); the ledger
+`tests/live/spend.json` carries every live call (USD 6.05 of 200).
 
 ### 2026-10-20 (subscription path live, gate harnesses 5 and 7, daemon capabilities wired)
 - Snapshots 692a8fe/6c9919e (per-task billing source and the Agent SDK session path, ADR 0044;

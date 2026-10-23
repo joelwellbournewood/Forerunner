@@ -66,3 +66,16 @@ Status: accepted | superseded by NNNN
 | 0049 | Sign-off answers: applied only when the card's review is the task's latest (a stale one skipped and recorded), accept resolving the findings up to that review and closing the task along the graph's own edges in one transaction; the undo of a `session.start` names the scheduler's start id, an ended start refused and marked irreversible without reaching the kill switch, a running one stopped as its session only; a phone's start gets its id from the PC's watcher, recorded in the remote row's result, a row still being picked up refused for the moment |
 | 0050 | Audit log export: one module behind `GET /audit/export` on the daemon and the state service and `fr audit export`; pages of 500 through `store.auditLog.list` streamed as JSON lines or RFC 4180 CSV with a formula guard; rows as stored (summaries redacted at write time, no raw parameters); the owner scope (the human's rows and their agents', install-level rows on the install only, another human's agent not found); limits checked before any read; the file named by the server |
 | 0051 | Small-project mode: the new task's default tier chosen in one runtime function by every creation path and never by the critic; the plan writer (`POST /projects/:id/plan`) writing one milestone and a flat list under the flag, joining the project's open milestone on a later plan, phases after the existing milestones otherwise, dependencies first, caps and cycles refused before any write; the card carrying the mode and the default tier for a UI that computes neither; the settings card and sentence carrying the key's effect |
+| 0052 | Always-human approvals: one answer admits one call, spent by the durable port as it is handed out; the row keyed on the raw canonical input |
+| 0053 | Plan approval: the approved plan's identity, the filing session's end, and who starts the follow-up |
+| 0054 | Android emulator smoke over raw CDP on the WebView's page target |
+| 0055 | PM intake: one proposal in the inbox, written only on approval |
+| 0056 | Source discovery: source kinds, duplicate keys and how an existing install is told |
+| 0058 | Project docs: in the repository by pull request, the status doc rewritten per session |
+| 0059 | Cross-project promotion in the loop: who reviews a proposal and when, the offer rule, what an accepted offer does |
+| 0065 | Shared secrets: wrapped to the named agents' install keys, both humans approve, served by reference |
+| 0066 | Settings -> Capabilities -> Email: the capability's routes on the daemon, a page per agent, the full-discretion confirmation as the page's own step, the command audit read from the shared state |
+| 0078 | What you say during a live session: the message kind and where the next task reads it |
+| 0082 | Install identity on a shared store: an install names its human; the store's first row is never it |
+| 0083 | Private memory next to a shared state: a local SQLite index routed by scope, and the Postgres adapter's refusal |
+| 0084 | Email routes: a mount that identifies humans without an identity port fails closed per request, and an owner-check refusal is an audited 403 that stands without its row |
