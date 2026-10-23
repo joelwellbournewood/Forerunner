@@ -303,6 +303,33 @@ help, `Escape` closes; sequences are ignored inside text fields, chords with a m
 not. Theme: `system | light | dark`, resolved to `<html data-theme>` and `color-scheme`;
 `styles.css` binds Tailwind's `dark:` variant to that attribute with `@custom-variant`.
 
+**Conversation and the global hotkey (spec O.1, ADR 0064).** `shell/ConversationPanel.tsx` is
+a dialog opened by the desktop shell's global hotkey (`forerunner://hotkey`, see "What the
+Tauri shells inject"), the palette's "Talk to your agent" entry (hint: the chord) and the
+header's Talk button (opens without starting voice). Every voice request (a hotkey press, the
+palette, the panel's Talk button) toggles a push-to-talk turn through the daemon's `/voice`
+routes: `GET /voice/status`, then `POST /voice/sessions { mode: "push_to_talk", projectId? }`
+once per panel (reused for later turns), `POST …/press { pressed: true }`, the microphone
+(`shell/voice-capture.ts`: getUserMedia + ScriptProcessorNode, 16-bit LE mono PCM, base64)
+posted chunk by chunk to `…/audio`; the next request (or Send) stops the capture, posts
+`{ pressed: false }` and polls `GET /voice/sessions/:id` (500 ms, at most 60 s) until the turn
+count grows, then shows the transcript (`said`) and the spoken reply (`heard`). Closing the
+panel stops the capture and posts `…/stop`. When voice is unavailable (the status's reason, a
+503 from the start, a denied microphone, or a window that cannot capture audio) the panel
+shows why and focuses the text input, which talks to the same agent over `/chat/stream`.
+The chord's release is ignored. `shell/hotkey.ts` holds the chord grammar (the shell's, case
+for case: both run `test/hotkey-chords.json`), `formatChord` (Ctrl on Windows and Linux, Win
+on Windows) and the `HotkeyBridge`: live (`invoke` + `listen` from `@tauri-apps/api`) only
+inside the Tauri shell on a desktop platform, otherwise an unavailable bridge with the reason.
+Tests provide a bridge through `HotkeyContext` and a microphone through
+`VoiceCaptureContext`. Settings → Global hotkey (`shell/HotkeySettings.tsx`) shows the chord,
+whether the OS holds it ("active" / "not registered" with the shell's error), validates a new
+one client-side (reason under the field, "Will register …" preview, Save disabled while
+invalid), sends the canonical chord with `hotkey_set`, offers Reset to default and follows
+`forerunner://hotkey-changed`; in a browser, the approvals page or the Android app it reads
+"unavailable" and why. The chord is a per-install shell preference, not a daemon setting, so
+it does not run through the command registry.
+
 ### Fake daemon
 
 `test/fake-daemon.ts` exports `createFakeDaemon(options)` (a Hono app over `test/fixtures.ts`
@@ -354,7 +381,12 @@ project to `/settings`: the value is off unless `true`, and the description is t
 - the new value with `fastModeEffect(value)`;
 - the sentence.
 
-It flips the flag on apply. Run directly
+It flips the flag on apply. The `/voice` routes run on the fixture's providers
+(`state.voiceStatus`, the `VOICE_STATUS` answer the O.4 tests mutate; the `voice: { available:
+false, reason }` option makes the status say why and the start answer 503, and the status's
+`sessions` is the live count): a press, audio chunks and a release make one turn whose
+transcript is `state.nextVoiceLine` (else "what is next") and whose reply is the chat reply
+for it; sessions and their chunk counts are in `state.voiceSessions`. Run directly
 (`pnpm exec tsx test/fake-daemon.ts`) it reads `FAKE_DAEMON_PORT`, `FAKE_DAEMON_TOKEN` and
 `FAKE_DAEMON_EVENT_DELAY_MS`.
 
@@ -370,6 +402,15 @@ show in Settings. The Android shell
 does not reach the daemon directly (spec R): it injects `stateUrl` and mounts `src/mobile`.
 The desktop CSP (`apps/desktop/src-tauri/tauri.conf.json`) already allows
 `http://127.0.0.1:*`.
+
+Besides the injected global, the desktop shell talks to the UI through Tauri IPC for the
+global hotkey only (ADR 0064): the commands `hotkey_status` and `hotkey_set { chord }` (granted
+to the main window by `capabilities/hotkey.json`; both answer `{ chord, defaultChord,
+registered, error }`, `hotkey_set` rejects with the shell's message when the grammar or the OS
+refuses the chord) and two events emitted to the main window: `forerunner://hotkey`
+`{ chord, state: "pressed" }` after the window was shown and focused, and
+`forerunner://hotkey-changed` with the status after a change or a failed registration. The
+Android shell has no such commands; the UI's bridge is unavailable there.
 
 ## How to change it
 
@@ -525,7 +566,16 @@ ignored reason, the sent copies newest first, the empty states; the route-missin
 card against a daemon without the routes), `client` (the capability routes' nested error body
 read as a typed 403 with its own sentence),
 `shell` (matcher, palette filter, g-sequences incl. `g c` / `g t` / `g u`, switcher, kill
-switch, persistence), `desktop-indicator` (spec S.32, ADR 0067; an EventSource stand-in wired
+switch, persistence), `hotkey` (O.1: every case of `hotkey-chords.json` accepted with the
+shell's canonical form or refused for its reason, the platform labels, the bridge only inside
+the desktop shell, the palette's Talk entry; Settings says unavailable in a browser, shows the
+chord and its registration, refuses an invalid chord before sending, sends the canonical one,
+resets, shows the shell's refusal and a failure arriving as an event; a press opens the
+conversation and starts a push-to-talk turn — session in `push_to_talk`, press, audio chunks
+— a release does nothing, the next press sends and shows transcript and reply, a third reuses
+the session; voice unavailable or no microphone focuses the text input and the text reaches
+the agent; closing stops the capture and the session; the PCM encoding),
+`desktop-indicator` (spec S.32, ADR 0067; an EventSource stand-in wired
 to the fake daemon's listeners, `setDesktopControl` emitting the frame as `BusIndicator`
 does: no banner while off; an `on` frame showing the banner above the header, high contrast,
 naming the agent, the app and the session with its link, `off` hiding it without a "stopped"
@@ -596,6 +646,13 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
   speech player above); with it closed the daemon skips the voice (`notifications.md`) and
   the command answers with the text. A browser tab that blocks audio until clicked stays
   silent until then; with the desktop app and a browser tab both open, both play.
+- The conversation panel shows a voice turn's reply as text (`heard`); it does not play the
+  TTS audio frames the daemon streams on `GET /voice/sessions/:id/events` (audio frames are
+  live-only, never in the JSON replay the panel polls). Playing them needs an SSE reader for
+  that route; the PCM player `Read aloud` uses (`lib/speech.ts`) could play them.
+- The microphone capture (`browserMicCapture`) uses ScriptProcessorNode, deprecated but
+  present in WebView2 and WebKitGTK; it has been exercised in jsdom with a fake capture only,
+  not yet in a real desktop window with a real voice provider (no provider key here).
 - **Export audit log** saves through an anchor `download` on an object URL, which the dev
   server and WebView2 (Windows) honour; the Linux desktop shell (WebKitGTK) registers no
   download handler yet (`apps/desktop/src-tauri`), so the click may do nothing there. The page
@@ -616,21 +673,25 @@ The Tauri 2 shell for Windows and Linux that attaches the shared UI to the local
 `<runtime>/daemon.json`, checks `/health`, starts `fr daemon` when nothing healthy is there,
 injects the daemon address and token into the webview before the UI loads, keeps a tray with
 the kill switch, "pause email", the desktop-control state with "Stop desktop control",
-"Update and restart" and Quit, shows OS notifications for the daemon's `notification` events, applies the restart contract, remembers the window and handles
-`fr://` deep links. No TypeScript: `apps/desktop/package.json` only runs the Tauri CLI; the UI
-comes from `apps/ui/dist`.
+"Update and restart" and Quit, shows OS notifications for the daemon's `notification` events,
+applies the restart contract, remembers the window, handles `fr://` deep links and registers
+the global hotkey that brings up the conversation (ADR 0064). No TypeScript:
+`apps/desktop/package.json` only runs the Tauri CLI; the UI comes from `apps/ui/dist`.
 
 Requirements covered: K.8 (desktop notifications, tray menu; dark mode is the UI's), S.8 (kill
 switch from the tray), S.28 (one-click "pause email" in the tray), S.32 (the tray shows desktop
 control while active, with the UI's banner in the window; ADR 0067), M.3 and M.4 ("Update and
-restart" and the relaunch after the staged install's health check or rollback). The Android
+restart" and the relaunch after the staged install's health check or rollback), O.1 (the
+global hotkey: the shell's half; the conversation panel is the UI's). The Android
 client (R) is `apps/mobile`, not this shell.
 
 ### How it works
 
 ```
 apps/desktop/src-tauri/
-  Cargo.toml, build.rs, tauri.conf.json (no static window; deep-link scheme "fr"), capabilities/default.json
+  Cargo.toml, build.rs (app manifest: hotkey_status, hotkey_set), tauri.conf.json (no static
+  window; deep-link scheme "fr"), capabilities/default.json, capabilities/hotkey.json,
+  permissions/autogenerated/ (generated by tauri-build for the two commands; committed)
   src/
     lib.rs            run(): directories, log plugin, plugins (single-instance, notification, dialog,
                       deep-link, opener), the frshell:// splash protocol, setup (install id, tray,
@@ -655,6 +716,10 @@ apps/desktop/src-tauri/
     events.rs         the Rust /events subscription and the 10 s /health monitor
     tray.rs           tray icon, menu items, refresh() from tray_view, menu dispatch
     windows.rs        main window (build/rebuild with the injection), splash, deep-link navigation
+    hotkey.rs         the chord grammar, HotkeyState (registration state machine), <config>/hotkey.json,
+                      startup_chord(), the event and status payloads (pure, unit-tested)
+    hotkey_shell.rs   tauri-plugin-global-shortcut with one handler, install() at start, the
+                      hotkey_status / hotkey_set commands, the press handler
 ```
 
 **Directories.** `dirs::app_dirs(env, opts)` returns `config, data, cache, logs, worktrees,
@@ -763,6 +828,28 @@ resizes; on build the size is lifted to the 900×600 minimum and the position is
 when it still lands on a connected monitor. Dark mode is the UI's toggle (ADR 0025): the shell
 sets no theme and the webview follows the OS until the UI's stored override says otherwise.
 
+**Global hotkey (`hotkey.rs`, `hotkey_shell.rs`; spec O.1, ADR 0064).** At start (in `setup`,
+after the tray) the shell reads `<config>/hotkey.json` (`{ "chord": "…" }`); a missing file
+means the default `CommandOrControl+Shift+Space` (Ctrl+Shift+Space on Windows and Linux), a
+chord that no longer parses means the default plus a note for Settings. It registers the chord
+with tauri-plugin-global-shortcut (`=2.4.0`, the pinned-plugin rule); a refusal (the chord is
+taken by another application) or, on Linux, a missing X display (`DISPLAY` unset: the plugin
+works through X11/XWayland and would "succeed" without firing) is logged, kept in
+`HotkeyState` and emitted as `forerunner://hotkey-changed`; the shell never fails its start
+over it. The plugin's one handler acts on `Pressed` only and only for the registered id:
+`windows::show_main` (show, un-minimise, focus; without a main window it starts the attach
+and the press is not queued), then `forerunner://hotkey { chord, state: "pressed" }` to the
+main window. `hotkey_set { chord }` validates with the same grammar (`parse_chord`: modifiers
+`CommandOrControl|CmdOrCtrl|Mod`, `Control|Ctrl`, `Alt|Option`, `Shift`, `Super|Command|Cmd|
+Meta|Win`; keys A–Z, 0–9, F1–F24, Numpad0–9 and `NAMED_KEYS`; one key, last; a modifier other
+than Shift unless the key is a function key; CommandOrControl not with Control or Super),
+plans the change (`HotkeyState::plan_change`: the same registered chord is a no-op; otherwise
+register the new chord first and release the old one only after that succeeded, so a refused
+chord keeps the working one), saves the canonical chord and answers the status. The plugin's
+own JS commands are not granted to any window; `hotkey_status` and `hotkey_set` are granted to
+the main window only (`capabilities/hotkey.json`, enforced because `build.rs` declares them in
+the app manifest).
+
 **Logs and secrets.** The shell logs through `tauri-plugin-log` to `<logs>/desktop-shell.log`
 (stdout as well in debug builds). The token is a `Secret` (`Debug`/`Display` print
 `[redacted]`), every error string from the HTTP client passes through `redact()`, and the
@@ -789,6 +876,12 @@ struct that carries it. `node scripts/secret-scan.mjs apps/desktop` is clean.
 - **The desktop routes or the status field move**: change `actions::DESKTOP_STATUS_PATH` /
   `DESKTOP_REVOKE_PATH`; `actions::tests::desktop_paths_and_the_status_field_match_the_capability_source`
   reads `packages/capabilities/src/desktop/routes.ts` and `controller.ts`.
+- **The hotkey grammar**: change `hotkey.rs` (`parse_chord`, `NAMED_KEYS`) and
+  `apps/ui/src/shell/hotkey.ts` together and add the case to `apps/ui/test/hotkey-chords.json`;
+  both test suites run every case, and
+  `every_canonical_chord_is_accepted_by_the_plugin_parser` fails for a key the plugin does
+  not know. **Another shell command**: add it to `build.rs`'s app manifest, the
+  `generate_handler!` list in `lib.rs` and a capability (an unlisted command is refused).
 - **The email routes move**: change `actions::email_settings_path` / `email_action_path`;
   `actions::tests::email_paths_match_the_route_table_source` fails until they match
   `packages/capabilities/src/email/routes.ts` again.
@@ -826,10 +919,17 @@ on off, "the desktop" without an app and a new `on` replacing the names, the las
 but not stoppable while unreachable, a status read never overwriting a newer frame (and the
 later of two reads winning), when a restart announcement starts the external watch, `Debug` hides the
 token); `supervisor` (log path, spawn failure logged); `events` (reconnect backoff);
-`secret`; `env`; `lib` (install id persisted, 0600). The Tauri glue (window building, tray
-wiring, dialogs) is exercised by `tauri dev` and the CI build, not by unit tests. Last run
-2026-10-23 on Linux (item w2-s32-indicator, review): `cargo fmt --check` clean,
-`cargo clippy --all-targets -- -D warnings` clean, `cargo test` 74 passed, 0 failed.
+`secret`; `env`; `lib` (install id persisted, 0600); `hotkey` (O.1: the default chord is the
+shared one; every accepted and refused case of `apps/ui/test/hotkey-chords.json` with the
+same canonical form or reason as the UI; messages name the token; every canonical chord over
+all keys and four modifier sets parses with the plugin's own parser; the state machine:
+startup failure, retry of the same chord, no-op, register-then-release for another chord, a
+refused change keeps the working chord, the press id check; the startup fallback for a bad
+saved chord; no X display reported; the preference file round trip and garbage; the event and
+status JSON). The Tauri glue (window building, tray wiring, dialogs, the plugin calls in
+`hotkey_shell.rs`) is exercised by `tauri dev` and the CI build, not by unit tests. Last run
+2026-10-23 on Linux (item w2-o1-hotkey, rebase onto the release head): `cargo fmt --check`
+clean, `cargo clippy --all-targets -- -D warnings` clean, `cargo test` RUSTCOUNT passed, 0 failed.
 
 ### Known issues
 
@@ -841,6 +941,15 @@ wiring, dialogs) is exercised by `tauri dev` and the CI build, not by unit tests
 - Windows-only code (`creation_flags`, `node.exe`, `.cmd` shims, `http://tauri.localhost`)
   compiles by reasoning only: no Windows machine was available; the desktop CI workflow builds
   it on `windows-latest`.
+- Global hotkey: on Linux it works through X11 (XWayland on a Wayland desktop); a pure Wayland
+  session without XWayland gets "not registered" with the reason, and under XWayland some
+  compositors deliver the chord only while an X window has focus. A desktop-portal
+  (`org.freedesktop.portal.GlobalShortcuts`) registration would close that and is not built.
+- Global hotkey: a press while the main window does not exist yet (not attached, or being
+  rebuilt after a daemon restart) starts the attach but is not queued; the human presses again
+  once the window is up. The hotkey's registration and the press have been exercised through
+  unit tests of the pure logic only; a run in a real desktop session is not recorded in
+  `docs/status/gates.md` yet (no display here).
 - Linux tray needs an AppIndicator host (GNOME needs the AppIndicator extension); without one
   the icon is invisible but the window and the daemon work.
 - The first run against the real daemon end to end (attach, restart, deep link) is not yet
