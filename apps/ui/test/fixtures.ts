@@ -7,6 +7,7 @@ import type {
   EmailSettingsView,
   LessonOfferView,
   LessonView,
+  ModelSettingsView,
   ReviewView,
   SourceCandidateView,
   SourceView,
@@ -2074,3 +2075,142 @@ export const EMAIL_SENT: EmailSentRowView[] = [
     sentAt: "2026-10-20T10:00:00.000Z",
   },
 ];
+
+/** One D.4 value as the daemon serves it (spec D.4, ADR 0072). */
+const setting = (
+  value: string | number | null,
+  source: "table" | "specialist" | "agent" = "table",
+  dflt: string | number | null = value,
+  defaultSource: "table" | "specialist" = source === "specialist" ? "specialist" : "table",
+) => ({ value, default: dflt, source, defaultSource });
+
+/**
+ * `GET /settings/models` with every row's temperature present; the fake daemon strips the
+ * temperature (and flips the provider flag) when the provider is said not to accept one.
+ */
+export const MODEL_SETTINGS: ModelSettingsView = {
+  provider: { name: "fake", acceptsTemperature: true, fastMode: false },
+  table: [
+    {
+      mode: "planning",
+      tier: "sonnet",
+      effort: "high",
+      maxTokens: 16_000,
+      speedMode: "standard",
+      timeoutMinutes: 5,
+      targetMs: 60_000,
+    },
+    {
+      mode: "text_chat",
+      tier: "haiku",
+      effort: "low",
+      maxTokens: 400,
+      speedMode: "standard",
+      timeoutMinutes: 0.5,
+      targetMs: 1000,
+    },
+    {
+      mode: "coder",
+      tier: "sonnet",
+      effort: "medium",
+      maxTokens: 4096,
+      speedMode: "standard",
+      timeoutMinutes: 30,
+      targetMs: 0,
+    },
+    {
+      mode: "researcher",
+      tier: "sonnet",
+      effort: "high",
+      maxTokens: 4096,
+      speedMode: "standard",
+      timeoutMinutes: 30,
+      targetMs: 0,
+    },
+  ],
+  agents: [
+    {
+      id: "agent_alice",
+      name: "Alice",
+      kind: "principal",
+      editable: true,
+      note: null,
+      modes: [
+        {
+          mode: "planning",
+          model: "fake-sonnet",
+          tier: setting("sonnet"),
+          effort: setting("high"),
+          maxTokens: setting(16_000),
+          speedMode: setting("standard"),
+          timeoutMinutes: setting(5),
+          temperature: setting(null),
+        },
+        {
+          mode: "text_chat",
+          model: "fake-haiku",
+          tier: setting("haiku"),
+          effort: setting("low"),
+          maxTokens: setting(900, "agent", 400),
+          speedMode: setting("standard"),
+          timeoutMinutes: setting(0.5),
+          temperature: setting(null),
+        },
+      ],
+    },
+    {
+      id: "agent_critic",
+      name: "Critic",
+      kind: "critic",
+      editable: false,
+      note: "The critic's model and effort follow its review tiers (spec H): tier 1 and tiers 2 and 3.",
+      modes: [
+        {
+          mode: "critic_t1",
+          model: "fake-sonnet",
+          tier: setting("sonnet"),
+          effort: setting("medium"),
+          maxTokens: setting(8192),
+          speedMode: setting("standard"),
+          timeoutMinutes: setting(0.5),
+          temperature: setting(null),
+        },
+      ],
+    },
+  ],
+  specialists: [
+    {
+      name: "coder",
+      description: "Implements a scoped code change with tests.",
+      maxEffort: "high",
+      overridesAgentId: "agent_alice",
+      settings: {
+        mode: "coder",
+        model: "fake-sonnet",
+        tier: setting("sonnet", "specialist"),
+        effort: setting("medium"),
+        maxTokens: setting(4096),
+        speedMode: setting("standard"),
+        timeoutMinutes: setting(45, "specialist"),
+        temperature: setting(null),
+      },
+    },
+    {
+      name: "researcher",
+      description: "Finds and summarises sources.",
+      maxEffort: "max",
+      overridesAgentId: "agent_alice",
+      settings: {
+        mode: "researcher",
+        model: "fake-sonnet",
+        tier: setting("sonnet", "specialist"),
+        effort: setting("high"),
+        maxTokens: setting(4096),
+        speedMode: setting("fast", "specialist", "fast"),
+        timeoutMinutes: setting(40, "specialist"),
+        temperature: setting(0.2, "specialist"),
+      },
+    },
+  ],
+  configError: null,
+};

@@ -17,6 +17,8 @@ import type {
   MemoryScopeView,
   MemoryView,
   MessageView,
+  ModelSettingsView,
+  ModelSettingValueView,
   PendingChangeView,
   ProjectCard,
   ReviewsView,
@@ -89,6 +91,7 @@ import {
   ME,
   MESSAGES,
   MILESTONES,
+  MODEL_SETTINGS,
   MODEL_WATCH_REPORTS,
   money,
   OFFERS,
@@ -162,6 +165,11 @@ export interface FakeDaemonOptions {
    * naming it is refused like the real executor refuses an unknown device).
    */
   me?: Partial<HumanView>;
+  /**
+   * Whether the fake's model provider accepts a temperature (spec D.4): false strips the
+   * temperature from every row of `GET /settings/models` and refuses setting one. Default true.
+   */
+  acceptsTemperature?: boolean;
 }
 
 type Listener = (event: string, data: unknown) => void;
@@ -223,6 +231,9 @@ export interface FakeDaemonState {
   desktop: { revoked: boolean; revokedReason: string | null; control: DesktopControlView };
   /** Each project's speed-versus-quality slider (spec D.16), as its settings hold it. */
   speedQuality: Record<string, -1 | 0 | 1>;
+  /** `GET /settings/models` with every temperature; `model.settings.set` changes it. */
+  modelSettings: ModelSettingsView;
+  acceptsTemperature: boolean;
 }
 
 const DESKTOP_OFF: DesktopControlView = {
@@ -299,6 +310,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     fastMode: {},
     desktop: { revoked: false, revokedReason: null, control: { ...DESKTOP_OFF } },
     speedQuality: {},
+    modelSettings: clone(MODEL_SETTINGS),
+    acceptsTemperature: options.acceptsTemperature ?? true,
   };
 
   const emit = (event: string, data: unknown) => {
@@ -1094,6 +1107,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       return found ? c.json(found) : c.json(COSTS.proj_beacon);
     }
     return c.json(COSTS.proj_atlas);
+  });
+  // Spec D.4 (ADR 0072): temperature only for a provider that accepts one.
+  app.get("/settings/models", (c) => {
+    const view = clone(state.modelSettings);
+    view.provider.acceptsTemperature = state.acceptsTemperature;
+    if (!state.acceptsTemperature) {
+      for (const a of view.agents) for (const m of a.modes) delete m.temperature;
+      for (const sp of view.specialists) delete sp.settings.temperature;
+    }
+    return c.json(view);
   });
   app.get("/settings", (c) => {
     const scope = c.req.query("scope");
@@ -1924,6 +1947,92 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           risk,
         ),
         apply: () => ({ before: { sessionBudgetChf: 5 }, after: { sessionBudgetChf: amountChf } }),
+      };
+    }
+    if (name === "model.settings.set") {
+      // Like the daemon's command (spec D.4): one field of an agent mode or a specialist;
+      // null returns to the default; a temperature only where the provider accepts one.
+      const keys: Record<string, keyof ModelSettingsView["specialists"][number]["settings"]> = {
+        tier: "tier",
+        effort: "effort",
+        max_tokens: "maxTokens",
+        speed_mode: "speedMode",
+        timeout_minutes: "timeoutMinutes",
+        temperature: "temperature",
+      };
+      const field = typeof params.field === "string" ? params.field : "";
+      const key = keys[field];
+      if (!key) return refuse(`unknown model setting ${field}`);
+      if (field === "temperature" && params.value !== null && !state.acceptsTemperature)
+        return refuse("the provider in use does not accept a temperature; nothing to set");
+      const settings =
+        typeof params.specialist === "string"
+          ? state.modelSettings.specialists.find((x) => x.name === params.specialist)?.settings
+          : state.modelSettings.agents
+              .find((a) => a.id === params.agent && a.editable)
+              ?.modes.find((m) => m.mode === params.mode);
+      if (!settings) return refuse("no such agent mode or specialist", "not_found");
+      const maxEffort =
+        typeof params.specialist === "string"
+          ? state.modelSettings.specialists.find((x) => x.name === params.specialist)?.maxEffort
+          : undefined;
+      const efforts = ["low", "medium", "high", "xhigh", "max"];
+      if (
+        field === "effort" &&
+        typeof params.value === "string" &&
+        maxEffort &&
+        efforts.indexOf(params.value) > efforts.indexOf(maxEffort)
+      )
+        return refuse(
+          `effort: the ${params.specialist} specialist runs at most at ${maxEffort} (its max_effort)`,
+        );
+      const current = settings[key] as ModelSettingValueView | undefined;
+      if (!current || typeof current !== "object") return refuse("no such setting");
+      const value = params.value as string | number | null;
+      const risk: Risk =
+        value !== null && (field === "tier" || field === "effort" || value === "fast")
+          ? "medium"
+          : "low";
+      const subject =
+        typeof params.specialist === "string"
+          ? `the ${params.specialist} specialist for Alice`
+          : `Alice's ${params.mode === "text_chat" ? "chat" : params.mode}`;
+      // The daemon's words for each field (`MODEL_SETTING_LABELS` in packages/commands).
+      const words: Record<string, string> = {
+        tier: "the model",
+        effort: "the effort",
+        max_tokens: "the max tokens per call",
+        speed_mode: "the speed mode",
+        timeout_minutes: "the timeout in minutes",
+        temperature: "the temperature",
+      };
+      const what = `${words[field] ?? field} of ${subject}`;
+      const from = current.source === "agent" ? String(current.value) : "the default";
+      const to = value === null ? "the default" : String(value);
+      return {
+        name,
+        params,
+        risk,
+        card: card(
+          {
+            command: name,
+            what,
+            oldValue: from,
+            newValue: to,
+            scope: "global",
+            sentence: `Set ${what} from ${from} to ${to}. Undo.`,
+          },
+          risk,
+        ),
+        apply: () => {
+          const before = { ...current };
+          const next: ModelSettingValueView =
+            value === null
+              ? { ...current, value: current.default, source: current.defaultSource }
+              : { ...current, value, source: "agent" };
+          (settings as Record<string, unknown>)[key] = next;
+          return { before, after: next };
+        },
       };
     }
     if (name === "settings.set") {

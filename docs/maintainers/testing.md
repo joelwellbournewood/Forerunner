@@ -89,6 +89,13 @@ runtime, `reset()` restores the constructor script and clears calls. Every reque
 `provider.calls` as a `FakeCall` (`index, at, mode, hash, request` without `signal`, and once
 resolved `source` and `reply`); `provider.lastCall` is the most recent.
 
+**Capability flags** (spec D.4, ADR 0072). `new FakeProvider({ capabilities: {
+acceptsTemperature?, fastMode? } })` makes the fake declare what it accepts (default neither,
+like the Anthropic adapter on a subscription); `provider.capabilities` is what the loop and the
+settings view read through `providerCapabilities`. The fake records whatever request reaches
+it, so a test asserts on `calls[i].request.temperature` and `.speed` that the loop sent them
+only where the flag allows (`packages/runtime/test/run-settings-runs.test.ts`).
+
 **Streaming.** `stream()` emits `message_start`, then `thinking_delta` chunks, `text_delta`
 chunks of about 5 tokens (`chunkChars` 20, extended up to 30 to end on whitespace, so 4-8
 tokens), then per tool call `tool_use_start` (id `toolu_fake_<call>_<n>`, or the recorded id),

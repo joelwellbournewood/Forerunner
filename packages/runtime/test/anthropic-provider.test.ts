@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { AnthropicMessagesProvider, tierFromId } from "../src/provider/anthropic.ts";
+import { FAST_MODE_BETA } from "../src/models/fast-mode.ts";
+import {
+  AnthropicMessagesProvider,
+  fastModeApplies,
+  tierFromId,
+} from "../src/provider/anthropic.ts";
+import { providerCapabilities } from "../src/provider/types.ts";
 
 function sse(events: unknown[]): Response {
   const body = events
@@ -120,6 +126,51 @@ describe("AnthropicMessagesProvider", () => {
       cache_read_input_tokens: 4,
       cache_creation_input_tokens: 0,
     });
+  });
+
+  it("declares no temperature, and fast mode only on an API key (ADR 0072)", () => {
+    const api = new AnthropicMessagesProvider({ apiKey: "k", maxRetries: 0 });
+    const sub = new AnthropicMessagesProvider({ authToken: "oat", maxRetries: 0 });
+    expect(providerCapabilities(api)).toEqual({ acceptsTemperature: false, fastMode: true });
+    expect(providerCapabilities(sub)).toEqual({ acceptsTemperature: false, fastMode: false });
+    // A proxied copy keeps the credential and so the same flags.
+    expect(api.viaProxy("http://127.0.0.1:1", {}).fastMode).toBe(true);
+    expect(fastModeApplies("claude-opus-5-5", "api_key")).toBe(true);
+    expect(fastModeApplies("claude-sonnet-5-5", "api_key")).toBe(false);
+    expect(fastModeApplies("claude-opus-5-5", "subscription")).toBe(false);
+  });
+
+  it("sends speed fast with the beta header on an API key and an Opus id, nowhere else", async () => {
+    const seen: { body: Record<string, unknown>; headers: Headers }[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      seen.push({ body: JSON.parse(String(init?.body)), headers: new Headers(init?.headers) });
+      return sse(happyEvents);
+    };
+    const req = {
+      messages: [{ role: "user" as const, content: "hi" }],
+      max_tokens: 3210,
+      speed: "fast" as const,
+    };
+    const api = new AnthropicMessagesProvider({ apiKey: "k", fetch: fetchImpl, maxRetries: 0 });
+    await api.complete({ ...req, model: "claude-opus-5-5" });
+    expect(seen[0]?.body.speed).toBe("fast");
+    expect(seen[0]?.body.max_tokens).toBe(3210);
+    expect(seen[0]?.headers.get("anthropic-beta")).toContain(FAST_MODE_BETA);
+    // A non-Opus model on the same key: a standard call, never an error.
+    await api.complete({ ...req, model: "claude-sonnet-5-5" });
+    expect(seen[1]?.body.speed).toBeUndefined();
+    expect(seen[1]?.headers.get("anthropic-beta")).toBeNull();
+    // A subscription token: API only, so standard.
+    const sub = new AnthropicMessagesProvider({
+      authToken: "oat",
+      fetch: fetchImpl,
+      maxRetries: 0,
+    });
+    await sub.complete({ ...req, model: "claude-opus-5-5" });
+    expect(seen[2]?.body.speed).toBeUndefined();
+    // No speed asked: nothing sent.
+    await api.complete({ ...req, speed: undefined, model: "claude-opus-5-5" });
+    expect(seen[3]?.body.speed).toBeUndefined();
   });
 
   it("uses a subscription token as a bearer credential when given", async () => {

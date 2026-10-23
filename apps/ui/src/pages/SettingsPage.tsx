@@ -18,6 +18,7 @@ import { formatDuration } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import type { ThemePreference } from "../store/store.ts";
+import { ModelSettingsSection } from "./ModelSettingsSection.tsx";
 import { SourcesSection } from "./SourcesSection.tsx";
 
 type Scope = SettingView["scope"];
@@ -104,7 +105,7 @@ const isSlider = (key: string) =>
   (key.includes(".") ? key.split(".").pop() : key) === "speed_quality_offset";
 
 export interface SettingCommand {
-  name: "autonomy.set" | "budget.set" | "settings.set";
+  name: "autonomy.set" | "budget.set" | "settings.set" | "model.settings.set";
   /** Parameters for the typed value, or null when the value is not valid for this setting. */
   params: (value: string) => Record<string, unknown> | null;
   /** `slider`: a range over `positions` (the speed-versus-quality slider), not a typed value. */
@@ -113,6 +114,8 @@ export interface SettingCommand {
   positions?: readonly SpeedQualityPosition[];
   /** How the chosen value reads in words (the change log's words used); the raw value otherwise. */
   display?: (value: string) => string;
+  /** A fixed set of values: the dialog shows a select instead of a free input. */
+  options?: readonly { value: string; label: string }[];
   min?: number;
   max?: number;
   step?: number;
@@ -294,7 +297,8 @@ function SliderInput({
   );
 }
 
-function SettingChangeDialog({
+/** The change dialog every settings row uses (also the model settings section, spec D.4). */
+export function SettingChangeDialog({
   setting,
   command,
   onClose,
@@ -392,16 +396,31 @@ function SettingChangeDialog({
                 label={`New value${command.unit ? ` (${command.unit})` : ""}`}
                 hint={`Current: ${renderValue(setting.value)}`}
               >
-                <input
-                  className={INPUT_CLASS}
-                  type={command.inputType}
-                  min={command.min}
-                  max={command.max}
-                  step={command.step}
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  data-testid="setting-value"
-                />
+                {command.options ? (
+                  <select
+                    className={INPUT_CLASS}
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    data-testid="setting-value"
+                  >
+                    {command.options.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    className={INPUT_CLASS}
+                    type={command.inputType}
+                    min={command.min}
+                    max={command.max}
+                    step={command.step}
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                    data-testid="setting-value"
+                  />
+                )}
               </Field>
             )}
             {error ? <ErrorBanner message={error} /> : null}
@@ -689,6 +708,7 @@ export function SettingsPage() {
         rows={fastModeRows(settings.data ?? [])}
         onToggle={(setting, command) => setEditing({ setting, command })}
       />
+      <ModelSettingsSection />
 
       <div
         className="rounded border border-neutral-200 p-3 dark:border-neutral-800"

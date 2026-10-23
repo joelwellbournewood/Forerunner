@@ -1,6 +1,11 @@
 import type { PricingTable } from "@forerunner/billing";
 import type { Clock } from "@forerunner/platform";
-import type { ActionClass, StartRequest } from "@forerunner/runtime";
+import type {
+  ActionClass,
+  EffortLevel,
+  ProviderCapabilities,
+  StartRequest,
+} from "@forerunner/runtime";
 import type {
   ChangeScope,
   ChangeSource,
@@ -40,6 +45,7 @@ export const COMMAND_NAMES = [
   "email.mode.set",
   "device.revoke",
   "memory.record",
+  "model.settings.set",
 ] as const;
 export type CommandName = (typeof COMMAND_NAMES)[number];
 
@@ -148,6 +154,17 @@ export interface CommandPorts {
    * command puts the text in its sentence instead.
    */
   speak?(req: SpeakPortRequest): Promise<SpeakPortResult>;
+  /**
+   * What `model.settings.set` checks against (spec D.4, ADR 0072): the runnable specialists'
+   * names and the capability flags of the provider in use. Absent: any registry-shaped name
+   * is accepted and a temperature is refused (no provider is known to accept one).
+   */
+  modelSettings?: {
+    specialists(): readonly string[];
+    capabilities(): ProviderCapabilities;
+    /** A runnable specialist's `max_effort` from its registry file: no effort above it is stored. */
+    maxEffort?(specialist: string): EffortLevel | undefined;
+  };
 }
 
 export interface SpeakPortRequest {

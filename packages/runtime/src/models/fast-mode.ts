@@ -22,7 +22,7 @@ import {
   type PricingTable,
 } from "@forerunner/billing";
 import type { JsonObject } from "@forerunner/state";
-import type { ModelProvider, ModelTier } from "../provider/types.ts";
+import type { ModelProvider, ModelTier, SpeedMode } from "../provider/types.ts";
 import { DEFAULT_LADDER } from "./ladder.ts";
 
 /** The project settings key (`project.settings.fast_mode`), changed through `settings.set`. */
@@ -58,12 +58,25 @@ export interface FastModeInput {
   provider: Pick<ModelProvider, "name" | "fastMode">;
   /** The price table in force: the variant needs its own row. */
   pricing: PricingTable;
+  /**
+   * The run's speed mode when the specialist's file or the agent's `model_config` sets one
+   * (spec D.4, ADR 0072); absent: no preference, the project's flag decides. `standard` keeps
+   * an Opus run of a fast-mode project at the standard speed (ignored, with the reason).
+   */
+  speedMode?: SpeedMode;
 }
 
 /** Whether this run goes fast. Pure: the executor records the result. */
 export function decideFastMode(input: FastModeInput): FastModeDecision {
   if (!input.enabled || input.tier !== "opus") return { kind: "off" };
   const { model } = input;
+  if (input.speedMode === "standard") {
+    return {
+      kind: "ignored",
+      model,
+      reason: "the run's speed mode is standard (the specialist's file or the agent's settings)",
+    };
+  }
   if (input.sourceKind !== null && !fastModeBillable(input.sourceKind)) {
     return {
       kind: "ignored",

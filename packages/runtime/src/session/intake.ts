@@ -27,13 +27,20 @@ import { SessionBudget } from "../enforcement/budget.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import {
   capEffort,
+  DEFAULT_CEILING,
+  effortWithOffset,
   MODE_DEFAULTS,
-  modeEffort,
   modelIdFor,
   speedQualityOffsetOf,
 } from "../models/ladder.ts";
+import { modeOverride, parseAgentModelConfig, resolveRunSettings } from "../models/run-settings.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
-import type { EffortLevel, ModelProvider } from "../provider/types.ts";
+import {
+  type EffortLevel,
+  type ModelProvider,
+  type ModelTier,
+  providerCapabilities,
+} from "../provider/types.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
 import {
   applyProjectPlan,
@@ -66,9 +73,9 @@ export const INTAKE_OPTIONS = ["approve", "reject"] as const;
 /** The one model call's hard cap unless `project.settings.intake_budget_usd_micro` says otherwise. */
 export const DEFAULT_INTAKE_BUDGET_USD_MICRO = 2_000_000;
 /** Wall-clock cap of the one call; the planning target (60 s) is measured, this stops a hang. */
-export const INTAKE_TIMEOUT_MS = 5 * 60_000;
+export const INTAKE_TIMEOUT_MS = MODE_DEFAULTS.planning.timeoutMs;
 /** Output room for the plan and eight docs. */
-export const INTAKE_MAX_TOKENS = 16_000;
+export const INTAKE_MAX_TOKENS = MODE_DEFAULTS.planning.maxTokens;
 /** Longest brief handed to the model whole; a longer one is cut and the card says so. */
 export const MAX_BRIEF_CHARS = 600_000;
 /** Longest drafted doc the proposal may carry. */
@@ -232,6 +239,17 @@ export interface IntakeDeps {
   provider: ModelProvider | null;
   /** Pricing of the planning rung in force; null with no provider. */
   pricing: RunPricing | null;
+  /**
+   * The price of the model the intake calls (spec D.4, ADR 0072): the principal's
+   * `modes.planning.tier` may name another rung than the table's, and the call is priced as the
+   * model it uses. Absent: `pricing`.
+   */
+  pricingFor?: (modelId: string) => RunPricing;
+  /**
+   * The project's ladder ceiling (`critic_ceiling`, spec D.3), as the executor reads it: the
+   * principal's planning rung never goes above it. Absent or undefined: the default ceiling.
+   */
+  projectCeiling?: (settings: JsonObject | null | undefined) => ModelTier | undefined;
   billingSourceId: string;
   modelConfig: () => EffectiveModelConfig;
   /** The PM role prompt from the registry; a built-in line without it. */
@@ -629,15 +647,29 @@ export class IntakeService {
   }> {
     const { store, clock, driver, tokens } = this.deps;
     const provider = this.deps.provider as ModelProvider;
-    const pricing = this.deps.pricing as RunPricing;
     const config = this.deps.modelConfig();
-    const planning = config.modeDefaults.planning ?? MODE_DEFAULTS.planning;
+    // The planning mode's settings (spec D.4, ADR 0072): the effort table row, then the
+    // principal agent's `model_config.modes.planning` override. Speed mode stays standard here:
+    // the intake call has no fast-mode price (ADR 0072).
+    const planning = resolveRunSettings({
+      mode: "planning",
+      modeDefaults: config.modeDefaults,
+      override: modeOverride(
+        parseAgentModelConfig((await store.agent.get(this.deps.agent.id))?.model_config).config,
+        "planning",
+      ),
+      capabilities: providerCapabilities(provider),
+      // Opus by default; the top rung only where the project raised its ceiling (spec D.3).
+      ceiling: this.deps.projectCeiling?.(project.settings) ?? DEFAULT_CEILING,
+    });
     const model = modelIdFor(planning.tier, provider.name, config.ladder);
-    // The planning effort, shifted by the project's speed-versus-quality slider (spec D.16)
-    // as the row this session read says, so a slider change applies to the next session.
-    // Held at the registry's `max_effort` for the project manager.
+    const pricing = this.deps.pricingFor?.(model) ?? (this.deps.pricing as RunPricing);
+    // The planning effort: the table's (or the principal's override, spec D.4) shifted by the
+    // project's speed-versus-quality slider (spec D.16) as the row this session read says, so a
+    // slider change applies to the next session. Held at the registry's `max_effort` for the
+    // project manager.
     const effort = capEffort(
-      modeEffort("planning", speedQualityOffsetOf(project.settings), config.modeDefaults),
+      effortWithOffset(planning.effort, speedQualityOffsetOf(project.settings)),
       this.deps.maxEffort,
     );
     const settingBudget = (project.settings as { intake_budget_usd_micro?: unknown })
@@ -679,13 +711,13 @@ export class IntakeService {
       autonomy: project.autonomy_level as 0 | 1 | 2 | 3 | 4,
       // The call produces the plan the human then approves; it is not work on the project.
       planApproved: true,
-      expiresAt: new Date(clock.now() + INTAKE_TIMEOUT_MS + 60_000).toISOString(),
+      expiresAt: new Date(clock.now() + planning.timeoutMs + 60_000).toISOString(),
     });
     const budget = new SessionBudget({
       sessionId: session.id,
       budgetUsdMicro,
       stepCap: 4,
-      deadlineMs: clock.now() + INTAKE_TIMEOUT_MS,
+      deadlineMs: clock.now() + planning.timeoutMs,
       reserveShare: 0,
     });
     let ttft: number | null = null;
@@ -702,9 +734,10 @@ export class IntakeService {
         messages: [{ role: "user", content: this.userMessage(project, brief, truncated) }],
         tools: new ToolRegistry(),
         pricing,
-        timeoutMs: INTAKE_TIMEOUT_MS,
-        maxTokensPerCall: INTAKE_MAX_TOKENS,
+        timeoutMs: planning.timeoutMs,
+        maxTokensPerCall: planning.maxTokens,
         effort,
+        ...(planning.temperature !== null ? { temperature: planning.temperature } : {}),
         maxTurns: 1,
         label: `intake ${project.id}`,
         compression: "off",

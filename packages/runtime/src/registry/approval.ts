@@ -356,6 +356,10 @@ const COMPARED_FIELDS = [
   "max_budget_usd",
   "max_turns",
   "timeout_minutes",
+  // The run settings of spec D.4 (ADR 0072): what was evaluated is what goes live.
+  "max_tokens",
+  "speed_mode",
+  "temperature",
   "risk_tier_floor",
   "eval_set",
   "requires_sandbox",

@@ -54,12 +54,15 @@ value.
 | `version` | semver string | Bump on every prompt or limit change (see prompt_version). |
 | `description` | string | One line, shown in the extensions panel. |
 | `default_tier` | `haiku\|sonnet\|opus\|fable` | Starting rung; the runtime applies the project ceiling and `startingTier` from the ladder. The loader does not check the ceiling. |
-| `default_effort`, `max_effort` | `low\|medium\|high\|xhigh\|max` | `default_effort` must not exceed `max_effort`. The runtime raises effort by tier (coder: high at tier 2+) and the project slider, never above `max_effort`. |
+| `default_effort`, `max_effort` | `low\|medium\|high\|xhigh\|max` | `default_effort` must not exceed `max_effort`. A run's effort starts from the effort table's row of the specialist's mode (spec D.4: "defaults from the effort table"; the model watch's adopted efforts apply there), not from `default_effort`, which is validated and shown in the extensions panel only. The runtime raises effort by tier (coder: high at tier 2+), the project slider and the agent's override, never above `max_effort`: the executor caps the run there with a session-log warning, `model.settings.set` refuses a higher override and the settings screen does not offer one (ADR 0072). |
 | `allowed_tools` | string[] | The ceiling of tools a token for this specialist may contain. Forerunner tool names (validated against `ToolRegistry.names()` when the loader is given them) or Claude Code tools as `cc:Read`, `cc:Edit`, `cc:Bash` (validated against `KNOWN_CLAUDE_CODE_TOOLS`). `*` is rejected anywhere. The names are the Agent SDK driver's; on the loop driver each `cc:` name becomes its built-in equivalent or is dropped with an audit row (see "How `allowed_tools` reach a run", ADR 0043). |
 | `allowed_domains` | string[] | Hosts the specialist always needs (`api.example.com`, `*.example.com`). Project grants add to this; `*` is rejected. |
 | `max_budget_usd` | number > 0 | Cap per run; the runtime takes `min(brief budget, this, parent remaining)`. |
 | `max_turns` | integer | Model-call cap per run (defence in depth under the session step cap). |
-| `timeout_minutes` | integer | Wall-clock cap per run. |
+| `timeout_minutes` | integer, 1 to 1440 | Wall-clock cap per run. |
+| `max_tokens` | optional integer, 1 to 128000 | Output tokens per model call (spec D.4, ADR 0072). Absent: the effort table's row of the specialist's mode (`MODE_DEFAULTS[specialistMode(name)].maxTokens`: 4096 for the coding and research rows). |
+| `speed_mode` | optional `standard\|fast` | Speed preference (spec D.4, ADR 0072). Absent: no preference, the table's row (`standard` everywhere) is shown and the project's Opus fast mode (spec D.20, `project.settings.fast_mode`, ADR 0057) decides. `standard` keeps this specialist's runs at the standard speed even in a fast-mode project; `fast` takes effect only where the project allows fast mode and the run is on the Opus rung, then under D.20's rules (`decideFastMode`: the loop driver with an API-style source, a provider whose `fastMode` flag is true, a fast-mode price row); otherwise the run is standard and the session log says why. |
+| `temperature` | optional number, 0 to 1 | Sent only to a provider whose capability flag `acceptsTemperature` is true (ADR 0072); the Anthropic adapter's is false, so on Claude models it is never sent and the settings screen hides it. |
 | `risk_tier_floor` | 0..3 | The critic reviews this specialist's output at least at this tier. |
 | `eval_set` | `evals/<name>` | Must match the name; the directory may not exist yet. |
 | `status` | `active\|proposed\|retired` | Only `active` under `specialists/` is runnable. Files under `proposed/` must say `proposed`. |
@@ -72,6 +75,26 @@ Principals and the critic use the lighter `PromptFrontmatterSchema`: `name`, `ve
 
 The markdown body is the role prompt. The loader rejects empty prompts and prompts over 120
 lines (`maxPromptLines` option).
+
+### Settings in force for a run (spec D.4, ADR 0072)
+
+`resolveRunSettings` (`src/models/run-settings.ts`) gives each run its model rung, effort, max
+tokens, speed mode, timeout and temperature, lowest source first: the effort table row of the
+specialist's mode (`specialistMode`: the researcher runs in the research row, every other
+specialist in the coding row; the table in force includes the model watch's adopted efforts),
+then this file (`default_tier`, `max_tokens`, `speed_mode`, `timeout_minutes`, `temperature`),
+then the human's principal agent's override in `agent.model_config.specialists.<name>` (keys
+`tier`, `effort`, `max_tokens`, `speed_mode`, `timeout_minutes`, `temperature`), written by the
+`model.settings.set` command from the settings screen, chat or voice. Effort keeps the table's
+base and its risk rules (coding at tier 2+ runs at high); an agent's `effort` replaces the base.
+The file's `max_effort` caps the result (the override, the risk rules and the project slider
+included): `resolveRunSettings` shows the capped value, the executor runs it and warns,
+`model.settings.set` refuses an override above it.
+`specialistSpecFrom` (`src/daemon/compose.ts`) copies the three optional keys onto the
+executor's `SpecialistSpec`; the executor resolves and hands the loop `maxTokensPerCall`, the
+timeout (brief, token expiry, sandbox lease) and, where the flags allow, `temperature` and
+`speed`. The Agent SDK path takes the rung, effort and timeout; it has no per-call output cap
+or speed parameter.
 
 ### Loader (`src/registry/loader.ts`)
 
@@ -342,14 +365,23 @@ agree across platforms.
 
 ## Tests
 
-- `packages/runtime/test/specialist-approval.test.ts` (24) and `specialists-cli.test.ts` (5):
+- `packages/runtime/test/specialist-approval.test.ts` (25) and `specialists-cli.test.ts` (5):
   the approval flow end to end (see runtime.md, Tests): request filed once, approve -> evals on
   the fake provider -> pass -> active; 8 of 10 -> stays proposed with the result; reject ->
   withdrawn; another human refused; applied once; another install over the same store leaves
   the answer alone; a dead or overrun evaluation recovered, a live one locking the name; the
   month's testing share; the sync script carries the promotion; the daemon route, a proposal
-  filed by the next sync, a one-shot applying no inbox answer, and `fr specialists`.
-- `packages/runtime/test/registry.test.ts` (30 tests): frontmatter scalars, lists, nested
+  filed by the next sync, a one-shot applying no inbox answer, and `fr specialists`; a
+  proposal naming `max_tokens`, `speed_mode` and `temperature` goes live with them unchanged
+  (the promotion's field comparison includes the three D.4 keys).
+- `packages/runtime/test/registry.test.ts` (34 tests; four for D.4): `max_tokens`,
+  `speed_mode` and `temperature` parse and stay on the definition, are unset in the ten
+  repository specialists so the effort table's row applies (and `timeout_minutes` and the tier
+  come from the file), out-of-range values (0, 200000, 12.5 tokens, `turbo`, temperature 1.5
+  and -0.1, a 2000-minute timeout) are reported with the field, and a proposal writes the keys
+  it names and round-trips them. `run-settings.test.ts` and `run-settings-runs.test.ts`
+  (see runtime.md) prove the order of sources and that the request carries them. Earlier:
+  frontmatter scalars, lists, nested
   maps, block scalars, every rejected construct with its line, CRLF and BOM handling,
   `Object.prototype` key names and `__proto__`, serializer round-trip including lone `\r`,
   a `---` line inside a block and the refused shapes; the repository registry loads all ten
@@ -433,7 +465,10 @@ Run: `pnpm vitest run --project unit packages/runtime/test/registry.test.ts eval
 - An answered request whose proposal was deleted by hand is never applied (only the install
   whose `proposal.json` names it may apply it, and that file is gone); it stays answered in
   the inbox history.
-
+- ADR 0072: `max_tokens`, `speed_mode` and `temperature` are optional in the frontmatter so an
+  absent key means "the effort table's row of the mode", not a copy of today's number; an agent
+  override lives on the agent row, never in the registry file, so changing it needs no new
+  prompt version.
 - Prompt files are markdown with a strict YAML-subset frontmatter instead of JSON or full
   YAML: diffable prompts, no dependency, errors with line numbers.
 - `prompt_version` is `name@semver+sha8` of the file content, not a git revision, so it
@@ -456,7 +491,8 @@ Run: `pnpm vitest run --project unit packages/runtime/test/registry.test.ts eval
 
 C.1, C.2 (brief shape reused by eval tasks), C.3, C.4, C.5 (proposal and the approval gate,
 ADR 0071), C.6 (depth and parent budget stated in the PM prompt; enforced by the runtime token),
-D.4 (per-specialist defaults), D.5 and U.7 (prompt_version), D.11, D.12, D.13, D.14, D.15
+D.4 (per-specialist model, effort, max tokens, speed mode, timeout and temperature with the
+effort-table defaults, ADR 0072), D.5 and U.7 (prompt_version), D.11, D.12, D.13, D.14, D.15
 (defaults in the registry files), D.6 and D.21 (eval sets the model watch will use), H.1 to
 H.4 and H.6 (critic prompt), H.7 (seeded-defect variants and the expected-output driver),
 P.7 (this file), P.14 (doc drift check in the critic prompt), S.1 and S.3 (the `cc:` names

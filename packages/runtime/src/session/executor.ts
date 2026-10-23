@@ -45,12 +45,30 @@ import {
 import {
   capEffort,
   effortForTask,
+  MODE_DEFAULTS,
+  type Mode,
+  type ModeDefault,
   modelIdFor,
+  specialistMode,
   speedQualityOffsetOf,
   startingTier,
 } from "../models/ladder.ts";
+import {
+  explicitSpeedMode,
+  parseAgentModelConfig,
+  resolveRunSettings,
+  specialistOverride,
+  speedPreferenceNote,
+} from "../models/run-settings.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
-import type { EffortLevel, ModelProvider, ModelTier, Usage } from "../provider/types.ts";
+import {
+  type EffortLevel,
+  type ModelProvider,
+  type ModelTier,
+  providerCapabilities,
+  type SpeedMode,
+  type Usage,
+} from "../provider/types.ts";
 import { RUN_COMMAND_TOOL, type SpecialistDriver, TOOL_UNMAPPED_AUDIT } from "../registry/tools.ts";
 import { CLAUDE_CODE_PREFIX } from "../registry/types.ts";
 import type { Sandbox } from "../sandbox/types.ts";
@@ -86,8 +104,9 @@ export interface SpecialistSpec {
   defaultTier: ModelTier;
   defaultEffort: EffortLevel;
   /**
-   * The registry entry's `max_effort`: the run's effort (the mode default, the tier-2+ coder
-   * rule, the project's speed-versus-quality slider) is held at it. Unset means no cap.
+   * The registry entry's `max_effort`: no run of this specialist goes above it, whatever the
+   * mode default, the tier-2+ coder rule, the project's speed-versus-quality slider (spec D.16)
+   * or the agent's override (spec D.4, ADR 0072) ask. Unset means no cap.
    */
   maxEffort?: EffortLevel;
   allowedTools: string[];
@@ -95,6 +114,12 @@ export interface SpecialistSpec {
   maxBudgetUsdMicro: number;
   maxTurns: number;
   timeoutMs: number;
+  /** `max_tokens` from the registry file (spec D.4); absent: the effort table's row. */
+  maxTokens?: number;
+  /** `speed_mode` from the registry file (spec D.4); absent: the effort table's row. */
+  speedMode?: SpeedMode;
+  /** `temperature` from the registry file; sent only to a provider that accepts one. */
+  temperature?: number;
 }
 
 /** Name of the command tool the sandbox port replaces (declared in daemon/tools.ts); re-exported for the executor's callers. */
@@ -177,8 +202,10 @@ export interface LoopTaskExecutorDeps {
   pricing: RunPricing;
   /**
    * Pricing of a loop run by the model id its records name (the rung's id, or the fast-mode
-   * variant, ADR 0057): the daemon prices every run at its own rung from the table in force.
-   * Absent: `pricing` for a standard run, the `pricingTable` row for a fast-mode run.
+   * variant, ADR 0057): the rung follows the ladder, the escalation and the agent's `tier`
+   * override (spec D.4, ADR 0072), so the daemon prices every run at its own model from the
+   * table in force and the budget hooks' estimate and the recorded cost follow it. Absent:
+   * `pricing` for a standard run, the `pricingTable` row for a fast-mode run.
    */
   pricingFor?: (modelId: string) => RunPricing;
   /**
@@ -310,6 +337,33 @@ export class LoopTaskExecutor implements TaskExecutor {
     // attempt count below (rung 3, "escalate under the ceiling").
     const openFindings = await store.finding.openFor(task.id);
     const project = task.project_id ? await store.project.get(task.project_id) : undefined;
+    // Settings per agent and specialist (spec D.4, ADR 0072): the effort table row of the
+    // specialist's mode, then its registry file, then the agent's `model_config` override.
+    const modelConfig = this.deps.modelConfig?.();
+    const mode = specialistMode(defaultSpec.name);
+    const capabilities = providerCapabilities(this.deps.provider);
+    const agentConfig = parseAgentModelConfig(
+      (await store.agent.get(session.agent_id))?.model_config,
+    );
+    if (agentConfig.error)
+      this.deps.onEvent?.(task.id, {
+        type: "warning",
+        message: `the agent's model settings are malformed and were ignored (${agentConfig.error}); the registry and effort-table defaults apply`,
+      });
+    const settings = resolveRunSettings({
+      mode,
+      modeDefaults: modelConfig?.modeDefaults,
+      specialist: {
+        tier: defaultSpec.defaultTier,
+        timeoutMs: defaultSpec.timeoutMs,
+        ...(defaultSpec.maxTokens !== undefined ? { maxTokens: defaultSpec.maxTokens } : {}),
+        ...(defaultSpec.speedMode !== undefined ? { speedMode: defaultSpec.speedMode } : {}),
+        ...(defaultSpec.temperature !== undefined ? { temperature: defaultSpec.temperature } : {}),
+      },
+      override: specialistOverride(agentConfig.config, defaultSpec.name),
+      capabilities,
+    });
+    const timeoutMs = settings.timeoutMs;
     // Memory (spec G): lessons for this task, as data, under the task budget.
     let lessonsBlock = "";
     const taskMemoryBudget = memoryBudgetOf(
@@ -367,7 +421,7 @@ export class LoopTaskExecutor implements TaskExecutor {
       ),
       riskTier: task.risk_tier as 0 | 1 | 2 | 3,
       specialist: defaultSpec.name,
-      timeoutMs: defaultSpec.timeoutMs,
+      timeoutMs,
       taskId: task.id,
       projectId: task.project_id,
     });
@@ -377,7 +431,7 @@ export class LoopTaskExecutor implements TaskExecutor {
     // ladder's default. A project capped at sonnet therefore never escalates a retry to opus.
     const ceiling = this.deps.projectCeiling?.(project?.settings) ?? this.deps.ceiling;
     const tier = tierForAttempt(
-      startingTier(defaultSpec.defaultTier, brief.riskTier, ceiling),
+      startingTier(settings.tier, brief.riskTier, ceiling),
       task.attempt,
       ceiling,
     );
@@ -413,40 +467,62 @@ export class LoopTaskExecutor implements TaskExecutor {
       allowedDomains: spec.allowedDomains,
       allowedPaths: worktree ? [worktree] : sdkCwd ? [sdkCwd] : [],
       budgetUsdMicro: brief.budgetUsdMicro,
-      expiresAt: new Date(clock.now() + spec.timeoutMs).toISOString(),
+      expiresAt: new Date(clock.now() + timeoutMs).toISOString(),
     });
     // The rung and the effort come from the tables in force (built-ins plus the adopted
     // models.json), so an adoption by the model watch changes the next run, not the next start.
     // The effort is shifted by the project's speed-versus-quality slider (spec D.16), read from
     // the project row this run loaded, so a slider change applies to the next run, and held at
     // the specialist's `max_effort` from the registry (neither the tier rule nor the slider
-    // raises it past that, as the critic's own cap does).
-    const modelConfig = this.deps.modelConfig?.();
+    // raises it past that, as the critic's own cap does). An agent's effort override (spec D.4)
+    // replaces the table's base effort; the risk rules and the slider still apply.
     const model =
       choice.driver === "sdk"
         ? modelIdFor(tier, this.sdkDeps().providerName ?? "anthropic", modelConfig?.ladder)
         : modelIdFor(tier, this.deps.provider.name, modelConfig?.ladder);
-    // Fast mode (spec D.20, ADR 0057): the project's flag routes an Opus rung on an API-style
-    // source to the variant; the Run row, the ledger and the estimate name and price it.
+    // Fast mode (spec D.20, ADR 0057) composed with the speed mode (spec D.4, ADR 0072): the
+    // project's flag routes an Opus rung on an API-style source to the variant, unless the
+    // specialist's file or the agent's override sets the speed mode `standard`; the Run row,
+    // the ledger and the estimate name and price it. `decideFastMode` is the one decision.
+    const fastEnabled = fastModeOf(project?.settings);
+    const speedPreference = explicitSpeedMode(settings);
     const fast = decideFastMode({
-      enabled: fastModeOf(project?.settings),
+      enabled: fastEnabled,
       tier,
       model,
       driver: choice.driver,
       sourceKind: choice.pick?.source.kind ?? null,
       provider: this.deps.provider,
       pricing: this.deps.pricingTable?.() ?? BUILTIN_PRICING,
+      ...(speedPreference ? { speedMode: speedPreference } : {}),
     });
     const runModel = fast.kind === "applied" ? fast.variant : model;
-    const effort = capEffort(
-      effortForTask(
-        spec.name === "coder" ? "coder" : spec.name === "researcher" ? "researcher" : "coder",
-        brief.riskTier,
-        speedQualityOffsetOf(project?.settings),
-        modelConfig?.modeDefaults,
-      ),
-      spec.maxEffort,
+    // A `fast` preference the project's flag does not grant runs standard and says why.
+    const preferenceNote = speedPreferenceNote({
+      speedMode: speedPreference,
+      projectAllows: fastEnabled,
+      tier,
+    });
+    if (preferenceNote)
+      this.deps.onEvent?.(task.id, {
+        type: "warning",
+        message: `${spec.name} asks for fast mode but this run stays at the standard speed: ${preferenceNote}`,
+      });
+    const asked = effortForTask(
+      mode,
+      brief.riskTier,
+      speedQualityOffsetOf(project?.settings),
+      settings.sources.effort === "agent"
+        ? withModeEffort(modelConfig?.modeDefaults, mode, settings.effort)
+        : modelConfig?.modeDefaults,
     );
+    // The specialist's `max_effort` caps whatever the rules, the slider and the override asked for.
+    const effort = capEffort(asked, spec.maxEffort ?? defaultSpec.maxEffort);
+    if (effort !== asked)
+      this.deps.onEvent?.(task.id, {
+        type: "warning",
+        message: `${spec.name} runs at effort ${effort}, its max_effort, not ${asked}`,
+      });
     // Context layer: the session's pipeline, and the proxy only when the session selected it and
     // the provider can route through it (the fake provider cannot, so headroom_used stays false).
     // On the SDK path the proxy reaches the subprocess as its environment (`sdkEnv`, ADR 0003).
@@ -554,7 +630,7 @@ export class LoopTaskExecutor implements TaskExecutor {
           cwd,
           tools: withClaudeCodeTools(this.deps.toolsFor?.() ?? this.deps.tools),
           pricing: sdk.pricing(model),
-          timeoutMs: spec.timeoutMs,
+          timeoutMs,
           maxTurns: spec.maxTurns,
           ...(sessionContext?.sdkEnv ? { env: sessionContext.sdkEnv } : {}),
           label,
@@ -586,7 +662,7 @@ export class LoopTaskExecutor implements TaskExecutor {
             task,
             worktree,
             allowedDomains: child.claims.allowedDomains,
-            timeoutMs: spec.timeoutMs,
+            timeoutMs,
             signal: ctx.signal,
           });
           for (const w of lease.warnings) onEvent({ type: "warning", message: w });
@@ -605,10 +681,12 @@ export class LoopTaskExecutor implements TaskExecutor {
           messages: [{ role: "user", content: userText }],
           tools,
           pricing: this.loopPricing(runModel, fast),
-          timeoutMs: spec.timeoutMs,
+          timeoutMs,
           maxTurns: spec.maxTurns,
+          maxTokensPerCall: settings.maxTokens,
           effort,
           ...(fast.kind === "applied" ? { speed: "fast" as const } : {}),
+          ...(settings.temperature !== null ? { temperature: settings.temperature } : {}),
           cwd: worktree,
           label,
           onEvent,
@@ -623,9 +701,11 @@ export class LoopTaskExecutor implements TaskExecutor {
           ...(r.error ? { error: r.error } : {}),
           context: r.context,
           injectionReports: r.injectionReports.length,
-          artifacts: r.injectionReports.length
-            ? [{ injectionReports: r.injectionReports.length }]
-            : [],
+          artifacts: [
+            ...(r.injectionReports.length ? [{ injectionReports: r.injectionReports.length }] : []),
+            // A fast-mode run says so on its Run row (ADR 0072): it was priced at the fast row.
+            ...(fast.kind === "applied" ? [{ speed: "fast" }] : []),
+          ],
         };
       }
     } catch (e) {
@@ -990,4 +1070,14 @@ export function planItemFor(task: TaskRow, specialist = "coder"): PlanItem {
     specialist: task.specialist ?? specialist,
     estimateUsdMicro: task.est_cost_usd_micro || task.budget_usd_micro,
   };
+}
+
+/** The effort table with one mode's base effort replaced (an agent's override, ADR 0072). */
+function withModeEffort(
+  defaults: Record<Mode, ModeDefault> | undefined,
+  mode: Mode,
+  effort: EffortLevel,
+): Record<Mode, ModeDefault> {
+  const table = defaults ?? MODE_DEFAULTS;
+  return { ...table, [mode]: { ...table[mode], effort } };
 }

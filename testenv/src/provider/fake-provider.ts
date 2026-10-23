@@ -17,6 +17,8 @@ import type {
   ModelRef,
   ModelRequest,
   ModelResponse,
+  ProviderCapabilities,
+  ProviderDeclaredCapabilities,
   StopReason,
   StreamEvent,
   Usage,
@@ -48,6 +50,13 @@ export interface FakeProviderOptions {
   defaultMsPerChunk?: number;
   /** Target characters per text chunk; chunks end on whitespace within 1.5x. Default 20 (~5 tokens). */
   chunkChars?: number;
+  /**
+   * What the fake declares it accepts (spec D.4, ADR 0072): a test can make it a provider that
+   * takes a temperature (`capabilities.acceptsTemperature`) or has a fast mode (the provider's
+   * `fastMode` flag, D.20). Default: neither, like the Anthropic adapter on a subscription. The
+   * fake records whatever request it gets; the loop decides what to send.
+   */
+  capabilities?: Partial<ProviderCapabilities>;
 }
 
 /** One request the fake received, kept for assertions. `request` is a copy without `signal`. */
@@ -156,6 +165,9 @@ export class FakeProvider implements ModelProvider {
   readonly name = FAKE_PROVIDER_NAME;
   readonly mode: FakeMode;
   readonly calls: FakeCall[] = [];
+  readonly capabilities: ProviderDeclaredCapabilities;
+  /** Fast mode (ADRs 0057 and 0072): from `capabilities.fastMode` in the options; default false. */
+  readonly fastMode: boolean;
   private readonly clock: Clock;
   private readonly onNoMatch: "echo" | "throw";
   private readonly store: RecordingStore | undefined;
@@ -169,6 +181,8 @@ export class FakeProvider implements ModelProvider {
 
   constructor(opts: FakeProviderOptions = {}) {
     this.mode = opts.mode ?? "script";
+    this.capabilities = { acceptsTemperature: opts.capabilities?.acceptsTemperature ?? false };
+    this.fastMode = opts.capabilities?.fastMode ?? false;
     this.clock = opts.clock ?? systemClock;
     this.onNoMatch = opts.onNoMatch ?? "echo";
     this.store = opts.store;

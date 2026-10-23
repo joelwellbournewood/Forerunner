@@ -1,5 +1,5 @@
 import { canonicalModelId, fastModeBaseId } from "@forerunner/billing";
-import type { EffortLevel, ModelTier } from "../provider/types.ts";
+import type { EffortLevel, ModelTier, SpeedMode } from "../provider/types.ts";
 
 /** The model ladder (spec D, Open decisions): Haiku -> Sonnet -> Opus -> Fable, ceiling Opus by default. */
 export const TIERS: readonly ModelTier[] = ["haiku", "sonnet", "opus", "fable"] as const;
@@ -32,22 +32,113 @@ export type Mode =
 export interface ModeDefault {
   tier: ModelTier;
   effort: EffortLevel;
+  /** Output tokens per model call (ADR 0072): the `max_tokens` a run in this mode sends by default. */
+  maxTokens: number;
+  /** Speed mode by default (ADR 0072): "standard" everywhere; "fast" is asked for, never assumed. */
+  speedMode: SpeedMode;
+  /**
+   * Wall-clock timeout of one run in this mode by default (ADR 0072). A specialist's
+   * `timeout_minutes` replaces it; the agent modes (planning, chat) use it unless the agent's
+   * `model_config` overrides it.
+   */
+  timeoutMs: number;
   /** Response target in ms and what it measures. */
   targetMs: number;
   targetKind: "first_audio" | "first_token" | "total" | "by_task";
 }
 
-/** Spec table "Effort and response time". */
+const STD = "standard" as const;
+
+/**
+ * Spec table "Effort and response time" (D.8 to D.15), with the per-call output cap, the speed
+ * mode and the run timeout of each mode (ADR 0072: the spec's table names model, effort and the
+ * response target; D.4 adds max tokens, speed mode and timeout). The numbers are the ones the
+ * code used before D.4 (chat 400 tokens and 30 s, intake 16'000 tokens and 5 min, the loop's
+ * 4096 per call, the critic's 8192, its tier-1 target and 10-minute deep review), so making
+ * them settings changed no run.
+ */
 export const MODE_DEFAULTS: Record<Mode, ModeDefault> = {
-  voice_chat: { tier: "haiku", effort: "low", targetMs: 1200, targetKind: "first_audio" },
-  text_chat: { tier: "haiku", effort: "low", targetMs: 1000, targetKind: "first_token" },
-  routing: { tier: "haiku", effort: "low", targetMs: 3000, targetKind: "total" },
-  planning: { tier: "sonnet", effort: "high", targetMs: 60_000, targetKind: "total" },
-  coder: { tier: "sonnet", effort: "medium", targetMs: 0, targetKind: "by_task" },
-  researcher: { tier: "sonnet", effort: "high", targetMs: 0, targetKind: "by_task" },
-  critic_t1: { tier: "sonnet", effort: "medium", targetMs: 30_000, targetKind: "total" },
-  critic_t23: { tier: "opus", effort: "high", targetMs: 0, targetKind: "by_task" },
+  voice_chat: {
+    tier: "haiku",
+    effort: "low",
+    maxTokens: 400,
+    speedMode: STD,
+    timeoutMs: 30_000,
+    targetMs: 1200,
+    targetKind: "first_audio",
+  },
+  text_chat: {
+    tier: "haiku",
+    effort: "low",
+    maxTokens: 400,
+    speedMode: STD,
+    timeoutMs: 30_000,
+    targetMs: 1000,
+    targetKind: "first_token",
+  },
+  routing: {
+    tier: "haiku",
+    effort: "low",
+    maxTokens: 1024,
+    speedMode: STD,
+    timeoutMs: 30_000,
+    targetMs: 3000,
+    targetKind: "total",
+  },
+  planning: {
+    tier: "sonnet",
+    effort: "high",
+    maxTokens: 16_000,
+    speedMode: STD,
+    timeoutMs: 300_000,
+    targetMs: 60_000,
+    targetKind: "total",
+  },
+  coder: {
+    tier: "sonnet",
+    effort: "medium",
+    maxTokens: 4096,
+    speedMode: STD,
+    timeoutMs: 1_800_000,
+    targetMs: 0,
+    targetKind: "by_task",
+  },
+  researcher: {
+    tier: "sonnet",
+    effort: "high",
+    maxTokens: 4096,
+    speedMode: STD,
+    timeoutMs: 1_800_000,
+    targetMs: 0,
+    targetKind: "by_task",
+  },
+  critic_t1: {
+    tier: "sonnet",
+    effort: "medium",
+    maxTokens: 8192,
+    speedMode: STD,
+    timeoutMs: 30_000,
+    targetMs: 30_000,
+    targetKind: "total",
+  },
+  critic_t23: {
+    tier: "opus",
+    effort: "high",
+    maxTokens: 8192,
+    speedMode: STD,
+    timeoutMs: 600_000,
+    targetMs: 0,
+    targetKind: "by_task",
+  },
 };
+
+/**
+ * The effort-table row a specialist's defaults come from (ADR 0072): the researcher runs in the
+ * research mode, every other specialist in the coding mode (the rule the executor's effort uses).
+ */
+export function specialistMode(name: string): Mode {
+  return name === "researcher" ? "researcher" : "coder";
+}
 
 const EFFORTS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"] as const;
 

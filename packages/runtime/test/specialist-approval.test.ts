@@ -412,6 +412,27 @@ describe("specialist approval: approve runs the eval set", () => {
     expect(w.runs).toHaveLength(1);
   });
 
+  it("promotes the D.4 run settings a proposal names exactly as they were evaluated", async () => {
+    const w = await make({ replies: script(TASKS, () => true) });
+    const proposal = proposalFor(w.human);
+    proposal.frontmatter = {
+      ...proposal.frontmatter,
+      max_tokens: 2048,
+      speed_mode: "standard",
+      temperature: 0.3,
+    };
+    const { request } = await w.approvals.propose(proposal);
+    await answer(w, request, "approve");
+    expect(await w.approvals.syncAnswers()).toMatchObject({ promoted: 1 });
+    const def = loadRegistry(w.registryDir).specialist(NAME);
+    expect(def).toMatchObject({
+      runnable: true,
+      max_tokens: 2048,
+      speed_mode: "standard",
+      temperature: 0.3,
+    });
+  });
+
   it("passes at exactly the threshold (9 of 10)", async () => {
     const w = await make({ replies: script(TASKS, (i) => i !== 3) });
     const { request } = await w.approvals.propose(proposalFor(w.human));

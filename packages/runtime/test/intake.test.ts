@@ -527,4 +527,93 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     const projectId = await createProject({ name: "Kappa", goal: "g", brief: "b" });
     await expect(service.propose(projectId)).rejects.toMatchObject({ code: "unavailable" });
   });
+
+  it("keeps the principal's planning rung under the project's ceiling (spec D.3)", async () => {
+    const before = await rt.store.agent.mustGet(rt.agent.id);
+    await rt.store.agent.update(rt.agent.id, before.version, {
+      model_config: { modes: { planning: { tier: "fable" } } },
+    });
+    try {
+      const propose = async (name: string, settings: JsonObject) => {
+        const id = await createProject({ name, goal: "g", brief: "b" });
+        const project = await rt.store.project.mustGet(id);
+        await rt.store.project.update(id, project.version, { settings });
+        replies.push({ text: `\`\`\`json\n${JSON.stringify(proposal())}\n\`\`\`` });
+        const res = await req(`/projects/${id}/intake`, { method: "POST", body: "{}" });
+        expect(res.status).toBe(202);
+        return provider.calls.at(-1)?.model;
+      };
+      // The default ceiling is Opus: the top rung only by an explicit project setting.
+      expect(await propose("Mu", {})).toBe("fake-opus");
+      expect(await propose("Nu", { critic_ceiling: "fable" })).toBe("fake-fable");
+    } finally {
+      const row = await rt.store.agent.mustGet(rt.agent.id);
+      await rt.store.agent.update(rt.agent.id, row.version, { model_config: {} });
+    }
+  });
+
+  it("the principal's planning effort is the base the project's slider shifts (D.4 with D.16)", async () => {
+    const before = await rt.store.agent.mustGet(rt.agent.id);
+    await rt.store.agent.update(rt.agent.id, before.version, {
+      model_config: { modes: { planning: { effort: "low" } } },
+    });
+    try {
+      const propose = async (name: string, settings: JsonObject) => {
+        const id = await createProject({ name, goal: "g", brief: "b" });
+        const project = await rt.store.project.mustGet(id);
+        await rt.store.project.update(id, project.version, { settings });
+        replies.push({ text: `\`\`\`json\n${JSON.stringify(proposal())}\n\`\`\`` });
+        const res = await req(`/projects/${id}/intake`, { method: "POST", body: "{}" });
+        expect(res.status).toBe(202);
+        return provider.calls.at(-1)?.effort;
+      };
+      expect(await propose("Xi", {})).toBe("low");
+      expect(await propose("Omicron", { speed_quality_offset: 1 })).toBe("medium");
+      expect(await propose("Pi", { speed_quality_offset: -1 })).toBe("low");
+    } finally {
+      const row = await rt.store.agent.mustGet(rt.agent.id);
+      await rt.store.agent.update(rt.agent.id, row.version, { model_config: {} });
+    }
+  });
+
+  it("runs at the principal's planning rung and prices the call as that model (spec D.4)", async () => {
+    const before = await rt.store.agent.mustGet(rt.agent.id);
+    await rt.store.agent.update(rt.agent.id, before.version, {
+      model_config: { modes: { planning: { tier: "opus", max_tokens: 12_000 } } },
+    });
+    const priced: string[] = [];
+    const service = new IntakeService({
+      store: rt.store,
+      clock,
+      tokens: rt.tokens,
+      driver: rt.driver,
+      provider,
+      // The table's planning rung (sonnet) would price this call at 1 per token.
+      pricing: { estimate: (i, o) => i + o, cost: (u) => u.input_tokens + u.output_tokens },
+      pricingFor: (model) => {
+        priced.push(model);
+        return { estimate: (i, o) => 7 * (i + o), cost: () => 123_456 };
+      },
+      billingSourceId: rt.billingSourceId,
+      modelConfig: rt.modelConfig,
+      human: rt.human,
+      agent: rt.agent,
+      gitHost: host,
+      projectsRoot: rt.data.assets.projectsRoot,
+      worktreeRoot: join(home, "wt"),
+    });
+    try {
+      const projectId = await createProject({ name: "Lambda", goal: "g", brief: "b" });
+      replies.push({ text: `\`\`\`json\n${JSON.stringify(proposal())}\n\`\`\`` });
+      await service.propose(projectId);
+      const call = provider.calls.at(-1);
+      expect(call?.model).toBe("fake-opus");
+      expect(call?.max_tokens).toBe(12_000);
+      expect(priced).toEqual(["fake-opus"]);
+      expect((await rt.store.costLedger.sum({ projectId })).usd_micro).toBe(123_456);
+    } finally {
+      const row = await rt.store.agent.mustGet(rt.agent.id);
+      await rt.store.agent.update(rt.agent.id, row.version, { model_config: {} });
+    }
+  });
 });

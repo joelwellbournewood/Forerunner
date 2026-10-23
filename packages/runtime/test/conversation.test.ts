@@ -43,6 +43,8 @@ async function setup(
     retrieval?: ConversationDeps["retrieval"];
     /** The registry's role prompt, as the daemon passes it (replaces the built-in default). */
     prompt?: string;
+    /** Overrides of the agent's dependencies (e.g. `modelId: undefined`, `pricingFor`). */
+    agentDeps?: Partial<ConstructorParameters<typeof ConversationAgent>[0]>;
   } = {},
 ) {
   const h = harness();
@@ -140,6 +142,7 @@ async function setup(
     docsDirs: async (projectId) => (projectId === game && opts.docs ? [checkout] : []),
     ...(opts.retrieval ? { retrieval: opts.retrieval } : {}),
     ...(opts.prompt ? { prompt: opts.prompt } : {}),
+    ...opts.agentDeps,
   });
   const chat = (text: string, over: Partial<Parameters<typeof agent.chat>[0]> = {}) =>
     agent.chat({ humanId: human, agentId: alice, projectId: game, text, ...over });
@@ -194,6 +197,93 @@ describe("conversation agent over the command registry", () => {
       ),
     ).toBe(true);
     expect((await w.log()).map((e) => e.type)).toEqual(["chat.human", "chat.reply"]);
+    await w.store.close();
+  });
+
+  it("a chat turn runs at the principal's text_chat settings (spec D.4): table defaults, then model_config", async () => {
+    const w = await setup([textReply("first", { ttftMs: 0 }), textReply("second", { ttftMs: 0 })]);
+    await w.chat("what's next on the game?");
+    expect(w.provider.calls[0]?.request).toMatchObject({ max_tokens: 400, effort: "low" });
+    expect(w.provider.calls[0]?.request).not.toHaveProperty("temperature");
+    const row = await w.store.agent.mustGet(w.alice);
+    await w.store.agent.update(w.alice, row.version, {
+      model_config: {
+        modes: { text_chat: { max_tokens: 900, effort: "medium", temperature: 0.5 } },
+      },
+    });
+    await w.chat("and after that?");
+    // The fake declares no temperature: the override is kept but never sent.
+    expect(w.provider.calls[1]?.request).toMatchObject({ max_tokens: 900, effort: "medium" });
+    expect(w.provider.calls[1]?.request).not.toHaveProperty("temperature");
+    await w.store.close();
+  });
+
+  it("the principal's chat effort is the base the project's slider shifts; a spoken turn keeps voice_chat's (D.4 with D.16)", async () => {
+    const w = await setup([textReply("typed", { ttftMs: 0 }), textReply("spoken", { ttftMs: 0 })]);
+    const project = await w.store.project.mustGet(w.game);
+    await w.store.project.update(w.game, project.version, {
+      settings: { ...project.settings, speed_quality_offset: 1 },
+    });
+    const row = await w.store.agent.mustGet(w.alice);
+    await w.store.agent.update(w.alice, row.version, {
+      model_config: { modes: { text_chat: { effort: "medium" } } },
+    });
+    // Typed: the override (medium) one step up by the quality position.
+    await w.chat("what's next on the game?");
+    expect(w.provider.calls[0]?.request.effort).toBe("high");
+    // Spoken: the voice mode's table default (low) one step up; the chat override is for typed turns.
+    await w.chat("what's next on the game?", { source: "voice" });
+    expect(w.provider.calls[1]?.request.effort).toBe("medium");
+    await w.store.close();
+    // The conversation agent's max_effort still holds the result.
+    const capped = await setup([textReply("capped", { ttftMs: 0 })], {
+      agentDeps: { maxEffort: "medium" },
+    });
+    const p2 = await capped.store.project.mustGet(capped.game);
+    await capped.store.project.update(capped.game, p2.version, {
+      settings: { ...p2.settings, speed_quality_offset: 1 },
+    });
+    const r2 = await capped.store.agent.mustGet(capped.alice);
+    await capped.store.agent.update(capped.alice, r2.version, {
+      model_config: { modes: { text_chat: { effort: "medium" } } },
+    });
+    await capped.chat("what's next on the game?");
+    expect(capped.provider.calls[0]?.request.effort).toBe("medium");
+    await capped.store.close();
+  });
+
+  it("a chat turn on the principal's own chat rung is priced as that model (spec D.4)", async () => {
+    const priced: string[] = [];
+    const w = await setup([textReply("first", { ttftMs: 0 })], {
+      agentDeps: {
+        modelId: undefined,
+        pricingFor: (model) => {
+          priced.push(model);
+          return { estimate: (i, o) => i + o, cost: () => 4321 };
+        },
+      },
+    });
+    const row = await w.store.agent.mustGet(w.alice);
+    await w.store.agent.update(w.alice, row.version, {
+      model_config: { modes: { text_chat: { tier: "sonnet" } } },
+    });
+    const res = await w.chat("what's next on the game?");
+    expect(w.provider.calls[0]?.request.model).toBe("fake-sonnet");
+    expect(priced).toEqual(["fake-sonnet"]);
+    expect(res.costUsdMicro).toBe(4321);
+    await w.store.close();
+  });
+
+  it("a chat turn never runs above the default ceiling: a top-rung override runs on Opus (spec D.3)", async () => {
+    const w = await setup([textReply("first", { ttftMs: 0 })], {
+      agentDeps: { modelId: undefined },
+    });
+    const row = await w.store.agent.mustGet(w.alice);
+    await w.store.agent.update(w.alice, row.version, {
+      model_config: { modes: { text_chat: { tier: "fable" } } },
+    });
+    await w.chat("what's next on the game?");
+    expect(w.provider.calls[0]?.request.model).toBe("fake-opus");
     await w.store.close();
   });
 

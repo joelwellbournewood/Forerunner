@@ -157,7 +157,12 @@ import {
 import { isQuietAt, resolvePrefs } from "../notifications/prefs.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
 import { ProviderRegistry } from "../provider/registry.ts";
-import type { ModelProvider, ModelTier } from "../provider/types.ts";
+import {
+  DEFAULT_PROVIDER_CAPABILITIES,
+  type ModelProvider,
+  type ModelTier,
+  providerCapabilities,
+} from "../provider/types.ts";
 import { SpecialistApprovals, type SpecialistSyncResult } from "../registry/approval.ts";
 import {
   type DroppedTool,
@@ -927,6 +932,10 @@ export function specialistSpecFrom(
       maxBudgetUsdMicro: Math.round(d.max_budget_usd * 1_000_000),
       maxTurns: d.max_turns,
       timeoutMs: d.timeout_minutes * 60_000,
+      // The D.4 settings the file names (ADR 0072); absent ones come from the effort table.
+      ...(d.max_tokens !== undefined ? { maxTokens: d.max_tokens } : {}),
+      ...(d.speed_mode !== undefined ? { speedMode: d.speed_mode } : {}),
+      ...(d.temperature !== undefined ? { temperature: d.temperature } : {}),
     };
   };
 }
@@ -1863,6 +1872,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           rungModelFor(provider, modelConfig.get().modeDefaults.planning.tier),
         )
       : null,
+    // Priced as the model the call uses: the principal's planning rung may differ (spec D.4).
+    ...(provider ? { pricingFor: (model: string) => livePricing(provider, () => model) } : {}),
+    // The planning rung stays under the project's ceiling, as a specialist run does (D.3).
+    projectCeiling: (settings) => criticSettingsOf(settings).ceiling,
     billingSourceId,
     modelConfig: () => modelConfig.get(),
     prompt: registry.principals.get("project-manager")?.prompt,
@@ -2449,6 +2462,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           return { spoken: false, reason: errorMessage(e) };
         }
       },
+      // model.settings.set (spec D.4, ADR 0072): the runnable specialists and what the
+      // provider in use accepts, read per command (a temperature is refused where it would
+      // never be sent).
+      modelSettings: {
+        specialists: () => registry.runnableSpecialists().map((d) => d.name),
+        maxEffort: (name) => registry.specialists.get(name)?.max_effort,
+        capabilities: () =>
+          provider ? providerCapabilities(provider) : { ...DEFAULT_PROVIDER_CAPABILITIES },
+      },
     },
   });
   const mirrorSchedules = new Set<string>();
@@ -2532,6 +2554,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         pricing: livePricing(provider, () =>
           rungModelFor(provider, modelConfig.get().modeDefaults.text_chat.tier),
         ),
+        // A turn is priced as the model it calls: the principal's chat rung may differ (D.4).
+        pricingFor: (model: string) => livePricing(provider, () => model),
         billingSourceId,
         hooksDriver: driver,
         startSession: (req) => scheduler.request(req),

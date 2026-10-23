@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { EffortLevel, ModelTier } from "../provider/types.ts";
+import type { EffortLevel, ModelTier, SpeedMode } from "../provider/types.ts";
 
 /**
  * Registry file formats (spec C "specialists are files in forerunner-registry", spec D
@@ -26,6 +26,17 @@ export const EFFORT_VALUES = [
   "xhigh",
   "max",
 ] as const satisfies readonly EffortLevel[];
+/** Speed modes a specialist or an agent may ask for (spec D.4, ADR 0072). */
+export const SPEED_MODE_VALUES = ["standard", "fast"] as const satisfies readonly SpeedMode[];
+/**
+ * Highest `max_tokens` a setting may name: the largest output any ladder model accepts per call
+ * (ADR 0072). A provider with a lower cap answers with its own error; the setting never guesses.
+ */
+export const MAX_OUTPUT_TOKENS = 128_000;
+/** Longest run timeout a setting may name, in minutes (one day). */
+export const MAX_TIMEOUT_MINUTES = 24 * 60;
+/** Sampling temperature range a setting may name (the range every provider that accepts one shares). */
+export const TEMPERATURE_RANGE = { min: 0, max: 1 } as const;
 export const SPECIALIST_STATUSES = ["active", "proposed", "retired"] as const;
 export type SpecialistStatus = (typeof SPECIALIST_STATUSES)[number];
 
@@ -82,6 +93,30 @@ const Domain = z
     (d) => /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)*$/i.test(d),
     "domains are hostnames, optionally with a leading '*.'",
   );
+/** `max_tokens`: output tokens per model call (spec D.4); absent = the effort table's row. */
+export const MaxTokensSchema = z
+  .number()
+  .int("max_tokens is a whole number of tokens")
+  .min(1, "max_tokens must be at least 1")
+  .max(MAX_OUTPUT_TOKENS, `max_tokens is at most ${MAX_OUTPUT_TOKENS}`);
+/** `speed_mode`: "standard" or "fast" (spec D.4); absent = the effort table's row. */
+export const SpeedModeSchema = z.enum(SPEED_MODE_VALUES, {
+  message: 'speed_mode is "standard" or "fast"',
+});
+/** `timeout_minutes`: wall clock per run. */
+export const TimeoutMinutesSchema = z
+  .number()
+  .int("timeout_minutes is a whole number of minutes")
+  .positive("timeout_minutes must be above 0")
+  .max(MAX_TIMEOUT_MINUTES, `timeout_minutes is at most ${MAX_TIMEOUT_MINUTES} (one day)`);
+/**
+ * `temperature`: sampling temperature, sent only to a provider whose capability flag
+ * `acceptsTemperature` is true (spec D.4, ADR 0072); every other provider never sees it.
+ */
+export const TemperatureSchema = z
+  .number()
+  .min(TEMPERATURE_RANGE.min, "temperature is between 0 and 1")
+  .max(TEMPERATURE_RANGE.max, "temperature is between 0 and 1");
 const RiskTier = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]);
 
 const effortOrder = (
@@ -109,7 +144,13 @@ export const SpecialistFrontmatterSchema = z
     allowed_domains: z.array(Domain).default([]),
     max_budget_usd: z.number().positive("max_budget_usd must be above 0"),
     max_turns: z.number().int().positive(),
-    timeout_minutes: z.number().int().positive(),
+    timeout_minutes: TimeoutMinutesSchema,
+    /** Output tokens per call (D.4); absent: the effort table's row for the specialist's mode. */
+    max_tokens: MaxTokensSchema.optional(),
+    /** "standard" or "fast" (D.4); absent: the effort table's row. Fast needs the project's leave. */
+    speed_mode: SpeedModeSchema.optional(),
+    /** Sent only where the provider accepts a temperature (D.4); absent: the provider's own. */
+    temperature: TemperatureSchema.optional(),
     risk_tier_floor: RiskTier,
     eval_set: z.string().regex(/^evals\/[a-z][a-z0-9-]*$/, 'eval_set is "evals/<name>"'),
     status: z.enum(SPECIALIST_STATUSES),

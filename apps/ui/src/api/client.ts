@@ -72,6 +72,8 @@ import {
   MessageView as MessageViewSchema,
   type MirrorSyncView,
   MirrorSyncView as MirrorSyncViewSchema,
+  type ModelSettingsView,
+  ModelSettingsView as ModelSettingsViewSchema,
   type PeerFeedView,
   PeerFeedView as PeerFeedViewSchema,
   type PendingChangeView,
@@ -216,6 +218,7 @@ export type {
   MessageView,
   MilestoneView,
   MirrorSyncView,
+  ModelSettingsView,
   ModelWatchAnswerView,
   ModelWatchReportsView,
   ModelWatchReportView,
@@ -461,6 +464,12 @@ export interface DaemonClient {
     filter?: { scope?: string; scopeId?: string },
     signal?: AbortSignal,
   ): Promise<SettingView[]>;
+  /**
+   * Model settings per agent mode and per specialist (spec D.4, ADR 0072): model, effort, max
+   * tokens, speed mode, timeout with their defaults; temperature only where the provider
+   * accepts one. Changes go through `executeCommands` with `model.settings.set`.
+   */
+  modelSettings(signal?: AbortSignal): Promise<ModelSettingsView>;
   /** Merge a patch into a project's settings with a version check. */
   updateProjectSettings(
     projectId: string,
@@ -789,6 +798,8 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         { scope: filter?.scope, scopeId: filter?.scopeId },
         signal,
       ),
+    modelSettings: (signal) =>
+      get(routePath("modelSettings"), ModelSettingsViewSchema, undefined, signal),
     updateProjectSettings: (projectId, body) =>
       put(routePath("updateProjectSettings", { id: projectId }), ProjectSettingsViewSchema, body),
     mirrorSync: (projectId, full) =>
