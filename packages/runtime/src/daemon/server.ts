@@ -18,6 +18,7 @@ import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
 import { createNotificationRoutes } from "../notifications/routes.ts";
 import { createSharedSecretRoutes } from "../secrets/routes.ts";
+import { createRunnerUnlockRoutes } from "../secrets/runner-unlock-routes.ts";
 import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { applyProjectPlan, defaultRiskTier, ProjectPlanBody } from "../session/project-plan.ts";
@@ -469,6 +470,17 @@ export function createDaemonApp(
   // Shared secrets (spec S.13, ADR 0065): the owner proposes, lists and revokes grants of a
   // secret in this install's vault; the value is wrapped here and never in a body.
   app.route("/", createSharedSecretRoutes({ sharedSecrets: rt.sharedSecrets }));
+  // Cloud runner vault unlock (spec S.12, ADR 0068): the inbox's unlock card has the runner's
+  // vault key wrapped to the challenge here, where the OS keyring is; the key never leaves.
+  app.route(
+    "/",
+    createRunnerUnlockRoutes({
+      vault: rt.vault,
+      clock: rt.clock,
+      auditLog: rt.store.auditLog,
+      humanId: () => rt.human.id,
+    }),
+  );
 
   app.get("/me", async (c) => {
     const h = await rt.store.human.mustGet(rt.human.id);
