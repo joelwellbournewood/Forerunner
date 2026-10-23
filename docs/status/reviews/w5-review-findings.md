@@ -74,6 +74,15 @@ Findings:
    no warning exists. Fix: wrap the runner's scheduler start in `reportingPlanStartFailures`
    (covering the PC-check throw and the background rejection) and make the reporter's "warn
    once" independent of who wrote `start_failed` first.
+
+   Resolution: fixed in 5594f86: the runner's scheduler start is wrapped in
+   `reportingPlanStartFailures` (a PC-check throw and a background rejection both mark
+   `start_failed` with the error, one audit row and one warning) and the warn-once guard is the
+   card's `failure_reported_at`; tests `runner.test.ts` "an approved plan whose cloud session
+   fails in the background is marked start_failed and the human is warned" (failed before the
+   fix: no `start_failed` after 5 s) and `plan-approval.test.ts` "a card a producer already
+   marked start_failed without a warning is still reported once" (fails with the old
+   outcome-based guard).
 2. **[medium] packages/capabilities/src/cloudflare/approvals.ts:154 (deploy.ts:834,
    tools.ts `actorOf`).** A Cloudflare approval the port files itself puts the secret's
    resolved value on the inbox card. The deployer passes `actor.tool.input`, which is the input
@@ -89,3 +98,12 @@ Findings:
    (it carries the resolved input). Fix: hand the tool the hooks' own display copy of the
    input (before resolution) next to `approvalKey`, show that on the card, and fall back to the
    resolved input only for a direct caller that resolved nothing.
+
+   Resolution: fixed in 2e3e382: `ToolCallDecision.approvalInput` (the hooks' display copy,
+   references unresolved) reaches the port through `ToolExecutionContext.approvalInput`,
+   `DeployActor.approvalInput` and the request's `displayInput`, which the port's card shows;
+   tests `cloudflare-wiring.test.ts` "a money approval the Cloudflare port files itself shows a
+   secret: reference, never the resolved value" (failed before the fix), `approvals-durable.test.ts`
+   "through the loop driver: the tool gets the hooks' approval key and display input in its
+   context" (fails when the loop drops the field) and the `approvalInput` assertion in
+   `hooks.test.ts`; ADR 0052 amendment, cloudflare.md and runtime.md updated.
