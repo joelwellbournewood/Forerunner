@@ -375,9 +375,14 @@ project's own tasks and the rows are written dependencies first; an unknown refe
 a duplicate key, an empty plan or one over the caps (`MAX_PLAN_MILESTONES` 20,
 `MAX_PLAN_TASKS` 200) is refused as `validation` (409 `conflict` on the route, ADR 0025) with
 nothing written. Milestone target dates are calendar dates (`YYYY-MM-DD`). The project card
-carries `smallProjectMode` and `defaultRiskTier` so the UI computes neither. Not yet on the
-helper: the email command's task insert in `packages/capabilities` names tier 1 literally
-(`BLOCKERS.md`). Tests: `small-project.test.ts`. Requirement: B.6.
+carries `smallProjectMode` and `defaultRiskTier` so the UI computes neither. The email
+command's task insert (`packages/capabilities/src/email/commands.ts`) calls the helper too
+(review of 2026-10-23), so no creation path names a tier of its own. A new milestone follows
+the project's existing ones in the mode as well: a small project whose milestones from before
+the mode are all closed (`done`, `cancelled`) gets its one milestone after them, never a
+second row at a taken `order_index`, and the next plan joins that one. Tests:
+`small-project.test.ts`; the email path in
+`packages/capabilities/test/email-commands.test.ts`. Requirement: B.6.
 
 **The next-session queue (spec J.2).** The checklist reads the project's `queued` items
 (`store.queue.pending`, priority first) into `brief.queue.items` with each row's `id` and
@@ -1173,10 +1178,12 @@ latest date, every task under it in plan order, tier 0 unless named; a single pl
 kept as it is; a plan of loose tasks only) and off (a milestone per phase, loose tasks
 unassigned, tier 1 unless named); `applyProjectPlan` on an in-memory store (one milestone row
 and a flat list with dependencies resolved to ids and the reason and author on every row; a
-second plan joining the open milestone; phases after existing milestones with the loose task
-under none; dependants after dependencies whatever the plan order and a dependency on an
-existing task; an unknown dependency, a cycle, another project's task, an empty plan and a
-duplicate key refused with nothing written; the task cap); through `composeRuntime` and the
+second plan joining the open milestone; with only closed milestones on file the one milestone
+created after them at a free `order_index` and joined by the next plan; phases after existing
+milestones with the loose task under none; dependants after dependencies whatever the plan
+order and a dependency on an existing task; an unknown dependency, a cycle, another project's
+task, an empty plan and a duplicate key refused with nothing written; the task and milestone
+caps); through `composeRuntime` and the
 daemon: the card's `smallProjectMode` and `defaultRiskTier`, `POST /projects/:id/tasks`
 without a tier (0 under the flag, 1 without, a named tier kept, an out-of-range tier refused),
 `POST /projects/:id/plan` for a small and a phased project, the second plan reusing the
