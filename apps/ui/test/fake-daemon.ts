@@ -219,6 +219,8 @@ export interface FakeDaemonState {
    * changes it and emits the `desktop.indicator` frame the real daemon would.
    */
   desktop: { revoked: boolean; revokedReason: string | null; control: DesktopControlView };
+  /** Each project's speed-versus-quality slider (spec D.16), as its settings hold it. */
+  speedQuality: Record<string, -1 | 0 | 1>;
 }
 
 const DESKTOP_OFF: DesktopControlView = {
@@ -294,6 +296,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     runnerKeys: { ...(options.runnerKeys ?? {}) },
     fastMode: {},
     desktop: { revoked: false, revokedReason: null, control: { ...DESKTOP_OFF } },
+    speedQuality: {},
   };
 
   const emit = (event: string, data: unknown) => {
@@ -394,6 +397,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.failing = { ...(options.failing ?? {}) };
     state.runnerKeys = { ...(options.runnerKeys ?? {}) };
     state.desktop = { revoked: false, revokedReason: null, control: { ...DESKTOP_OFF } };
+    state.speedQuality = {};
     return c.json({ ok: true });
   });
   app.post("/__test/fail", async (c) => {
@@ -1028,6 +1032,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       if (s.key === "project.autonomy") {
         const p = state.projects.find((x) => x.id === s.scopeId);
         return p ? { ...s, value: p.autonomyLevel } : s;
+      }
+      if (s.key === "project.speed_quality_offset" && s.scopeId) {
+        return { ...s, value: state.speedQuality[s.scopeId] ?? 0 };
       }
       return s;
     });
@@ -1710,6 +1717,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   const refuse = (reason: string, code = "validation"): PlanOutcome => ({
     refused: { reason, code },
   });
+  /** What each slider position does, as `SPEED_QUALITY_EFFECT` in @forerunner/commands says it. */
+  const SPEED_QUALITY_EFFECT: Record<-1 | 0 | 1, string> = {
+    [-1]: "speed, every mode's default effort one step lower (faster and cheaper) from the next run, turn or planning session",
+    0: "balanced, every mode at its default effort from the next run, turn or planning session",
+    1: "quality, every mode's default effort one step higher (slower, more thorough) from the next run, turn or planning session",
+  };
   const SETTING_RISK: Record<string, Risk> = {
     speed_quality_offset: "low",
     small_project_mode: "low",
@@ -1876,6 +1889,43 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           apply: () => {
             state.fastMode[project.id] = value;
             return { before: { fast_mode: before }, after: { fast_mode: value } };
+          },
+        };
+      }
+      if (key === "speed_quality_offset") {
+        // Like the daemon (spec D.16): three positions, and the sentence says what the new one
+        // does (`SPEED_QUALITY_EFFECT` in @forerunner/commands).
+        const value = params.value;
+        if (!project) return refuse("the project must exist");
+        if (value !== -1 && value !== 0 && value !== 1)
+          return refuse("speed_quality_offset: Too big: expected number to be <=1");
+        const from = state.speedQuality[project.id];
+        const effect = SPEED_QUALITY_EFFECT[value];
+        const what = `the speed-versus-quality slider for ${project.name}`;
+        return {
+          name,
+          params,
+          risk,
+          card: card(
+            {
+              command: name,
+              what,
+              oldValue: from === undefined ? "unset" : String(from),
+              newValue: `${value} (${effect})`,
+              scope: "project",
+              sentence: `Set ${what} from ${from === undefined ? "unset" : from} to ${value}: ${effect}. Undo.`,
+              projectId: project.id,
+              projectName: project.name,
+              usesActiveProject: projectRef === undefined,
+            },
+            risk,
+          ),
+          apply: () => {
+            state.speedQuality[project.id] = value;
+            return {
+              before: { key, project_id: project.id, value: from ?? null },
+              after: { key, project_id: project.id, value },
+            };
           },
         };
       }
@@ -2275,6 +2325,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (first?.name === "autonomy.set" && project && typeof before?.autonomyLevel === "number") {
       project.autonomyLevel = before.autonomyLevel;
       emit("project.changed", { id: project.id });
+    }
+    if (
+      first?.name === "settings.set" &&
+      project &&
+      before?.key === "speed_quality_offset" &&
+      (before.value === -1 || before.value === 0 || before.value === 1 || before.value === null)
+    ) {
+      if (before.value === null) delete state.speedQuality[project.id];
+      else state.speedQuality[project.id] = before.value;
     }
     if (first?.name === "budget.set" && project && typeof before?.budgetChf === "number") {
       project.budget = money(Math.round((before.budgetChf * 1_000_000) / 0.8));

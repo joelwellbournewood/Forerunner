@@ -67,11 +67,51 @@ export const SETTING_KEYS = [
   "handover",
 ] as const;
 
+/**
+ * The speed-versus-quality slider's three positions (spec D.16): the value `settings.set`
+ * writes to the project's `speed_quality_offset`, its name and what it does. The runtime reads
+ * the value per run, chat or voice turn and planning session; the daemon's change card and
+ * change log sentence say the same in words.
+ */
+export const SPEED_QUALITY_POSITIONS = [
+  { value: -1, label: "speed", effect: "every mode's effort one step lower: faster and cheaper" },
+  { value: 0, label: "balanced", effect: "every mode at its default effort" },
+  {
+    value: 1,
+    label: "quality",
+    effect: "every mode's effort one step higher: slower, more thorough",
+  },
+] as const;
+export type SpeedQualityPosition = (typeof SPEED_QUALITY_POSITIONS)[number];
+
+/** The position of a slider value; anything but -1 or +1 (unset included) is balanced, as the runtime reads it. */
+export function speedQualityPosition(value: unknown): SpeedQualityPosition {
+  const v = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  return (
+    SPEED_QUALITY_POSITIONS.find((p) => p.value === v && p.value !== 0) ??
+    SPEED_QUALITY_POSITIONS[1]
+  );
+}
+
+/** "quality (+1)": the position's name with the value it writes. */
+export function speedQualityLabel(value: unknown): string {
+  const p = speedQualityPosition(value);
+  return `${p.label} (${p.value > 0 ? "+" : ""}${p.value})`;
+}
+
+const isSlider = (key: string) =>
+  (key.includes(".") ? key.split(".").pop() : key) === "speed_quality_offset";
+
 export interface SettingCommand {
   name: "autonomy.set" | "budget.set" | "settings.set";
   /** Parameters for the typed value, or null when the value is not valid for this setting. */
   params: (value: string) => Record<string, unknown> | null;
-  inputType: "number" | "text";
+  /** `slider`: a range over `positions` (the speed-versus-quality slider), not a typed value. */
+  inputType: "number" | "text" | "slider";
+  /** The named stops of a slider, lowest first. */
+  positions?: readonly SpeedQualityPosition[];
+  /** How the chosen value reads in words (the change log's words used); the raw value otherwise. */
+  display?: (value: string) => string;
   min?: number;
   max?: number;
   step?: number;
@@ -164,6 +204,25 @@ export function commandForSetting(s: SettingView): SettingCommand | null {
       },
     };
   }
+  if (leaf === "speed_quality_offset") {
+    // The slider (spec D.16): three stops, -1 speed, 0 balanced, +1 quality.
+    return {
+      name: "settings.set",
+      inputType: "slider",
+      min: -1,
+      max: 1,
+      step: 1,
+      positions: SPEED_QUALITY_POSITIONS,
+      initial: (current) => String(speedQualityPosition(current).value),
+      display: speedQualityLabel,
+      params: (v) => {
+        const value = asInt(v);
+        return value === null || value < -1 || value > 1
+          ? null
+          : { key: leaf, value, ...projectParam };
+      },
+    };
+  }
   if ((SETTING_KEYS as readonly string[]).includes(leaf)) {
     return {
       name: "settings.set",
@@ -175,6 +234,63 @@ export function commandForSetting(s: SettingView): SettingCommand | null {
     };
   }
   return null;
+}
+
+/**
+ * A setting with named stops (the speed-versus-quality slider, spec D.16): a range input over
+ * the stops, the stop names under it (each one picks its stop), and what the chosen stop does.
+ */
+function SliderInput({
+  command,
+  current,
+  value,
+  onChange,
+}: {
+  command: SettingCommand;
+  current: unknown;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const positions = command.positions ?? [];
+  const chosen = speedQualityPosition(value);
+  return (
+    <div className="space-y-1" data-testid="setting-slider">
+      <Field label="Speed or quality" hint={`Current: ${speedQualityLabel(current)}`}>
+        <input
+          className="w-full accent-blue-600"
+          type="range"
+          min={command.min}
+          max={command.max}
+          step={command.step}
+          value={value}
+          aria-valuetext={chosen.label}
+          onChange={(e) => onChange(e.target.value)}
+          data-testid="setting-value"
+        />
+      </Field>
+      <div className="flex justify-between text-xs" data-testid="slider-stops">
+        {positions.map((p) => (
+          <button
+            key={p.value}
+            type="button"
+            className={
+              p.value === chosen.value
+                ? "font-semibold text-blue-700 dark:text-blue-300"
+                : "text-neutral-500 hover:underline"
+            }
+            aria-pressed={p.value === chosen.value}
+            onClick={() => onChange(String(p.value))}
+            data-testid={`slider-stop-${p.label}`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <output className="block text-xs" data-testid="slider-effect">
+        {chosen.label}: {chosen.effect}, from the next run, chat or voice turn and planning session.
+      </output>
+    </div>
+  );
 }
 
 function SettingChangeDialog({
@@ -218,7 +334,7 @@ function SettingChangeDialog({
     void run(() =>
       client.executeCommands({
         commands: [{ name: command.name, params }],
-        wordsUsed: `Settings: ${setting.key} to ${value}`,
+        wordsUsed: `Settings: ${setting.key} to ${command.display ? command.display(value) : value}`,
         // The change log names the channel: this screen is `ui`, chat and voice are theirs.
         source: "ui",
         ...(setting.scope === "project" && setting.scopeId ? { projectId: setting.scopeId } : {}),
@@ -263,21 +379,30 @@ function SettingChangeDialog({
         </p>
         {result === null ? (
           <form onSubmit={submit} className="space-y-2">
-            <Field
-              label={`New value${command.unit ? ` (${command.unit})` : ""}`}
-              hint={`Current: ${renderValue(setting.value)}`}
-            >
-              <input
-                className={INPUT_CLASS}
-                type={command.inputType}
-                min={command.min}
-                max={command.max}
-                step={command.step}
+            {command.inputType === "slider" ? (
+              <SliderInput
+                command={command}
+                current={setting.value}
                 value={value}
-                onChange={(e) => setValue(e.target.value)}
-                data-testid="setting-value"
+                onChange={setValue}
               />
-            </Field>
+            ) : (
+              <Field
+                label={`New value${command.unit ? ` (${command.unit})` : ""}`}
+                hint={`Current: ${renderValue(setting.value)}`}
+              >
+                <input
+                  className={INPUT_CLASS}
+                  type={command.inputType}
+                  min={command.min}
+                  max={command.max}
+                  step={command.step}
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  data-testid="setting-value"
+                />
+              </Field>
+            )}
             {error ? <ErrorBanner message={error} /> : null}
             <div className="flex gap-2">
               <Button
@@ -650,7 +775,13 @@ export function SettingsPage() {
                           className="py-1 pr-2 font-mono text-xs"
                           data-testid="setting-value-cell"
                         >
-                          {isMoney(s.value) ? <Money value={s.value} /> : renderValue(s.value)}
+                          {isMoney(s.value) ? (
+                            <Money value={s.value} />
+                          ) : isSlider(s.key) ? (
+                            speedQualityLabel(s.value)
+                          ) : (
+                            renderValue(s.value)
+                          )}
                         </td>
                         <td className="py-1 pr-2">
                           <Badge
