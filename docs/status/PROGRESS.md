@@ -18,6 +18,14 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w2-s32-indicator rebased onto 22982fa)
+- `wave/w2-s32-indicator` rebased onto `origin/ccr-4d8a843c-1k9syk` (22982fa). Conflicts in
+  the UI's fake daemon (the base's runner keys and fast mode next to the branch's desktop
+  state), the ADR index (0067 and 0068), runtime.md, BLOCKERS (S.12 and S.32) and this log;
+  both sides kept (`docs/status/reviews/w2-s32-indicator.md` `## Rebase`). Current counts:
+  UI suite 46 files / 298 tests (`desktop-indicator.test.tsx` 11), `cargo test` 74 passed,
+  capabilities 383 and runtime 1098 unit tests passed. Not merged yet.
+
 ### 2026-10-23 (item w2-s32-indicator reviewed and fixed)
 - Independent review of `wave/w2-s32-indicator` (`docs/status/reviews/w2-s32-indicator.md`
   `## Review`): verdict revise, 72. Three findings, all fixed on the branch:

@@ -358,3 +358,31 @@ S.32 asks for.
 - Base check: a throwaway merge of HEAD with `origin/ccr-4d8a843c-1k9syk` merged cleanly.
   On the merge, `pnpm typecheck` was clean, and `desktop-indicator`, `store`, `settings` and
   `sse` passed (4 files, 35 tests). The worktree was removed afterwards.
+
+## Rebase (2026-10-23, onto `origin/ccr-4d8a843c-1k9syk` at 22982fa)
+
+The branch was rebased commit by commit onto the release head (it was built from b1804e3).
+Commit hashes named above (for example 25a396a) are the pre-rebase hashes; the rebased
+commits carry the same subjects. Conflicts and how they were resolved:
+
+- `apps/ui/test/fake-daemon.ts` (commit "ui: a desktop-control banner ..."): the base added
+  `runnerKeys` and `fastMode` to `FakeDaemonState`, its initial state and the `/__test/reset`
+  handler; the branch added `desktop` in the same three places. All fields kept.
+- `docs/decisions/README.md`: the base's 0068 row (runner unlock card) and the branch's 0067
+  row both kept, in number order.
+- `docs/maintainers/runtime.md`: the base rewrote the long test-list paragraph (the Anthropic
+  adapter details, the killed call's input tokens); the branch added one clause about
+  `GET /desktop/status`'s `desktopControl` to the desktop-wiring entry. The base's paragraph
+  kept with the branch's clause inserted.
+- `docs/status/BLOCKERS.md` (twice): the base's S.12 row (built except the real host) and the
+  branch's S.32 row both kept; the branch's stale copy of the S.12 row dropped.
+- `docs/status/PROGRESS.md`: the base's two S.12 entries and the branch's S.32 entries all
+  kept, newest first.
+
+After the rebase: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, the same count as
+the base); `pnpm --filter @forerunner/ui test` 46 files, 298 tests passed
+(`desktop-indicator.test.tsx` 11); `pnpm --filter @forerunner/approvals-web test` 10 files,
+58 passed; capabilities unit 35 files, 383 passed; runtime unit 126 files, 1098 passed,
+1 skipped; capabilities and runtime integration 3 files passed, 1 skipped, 21 tests passed,
+5 skipped; `cargo fmt --check` clean, `cargo clippy --all-targets -- -D warnings` clean,
+`cargo test` 74 passed; `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok.
