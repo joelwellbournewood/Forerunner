@@ -570,6 +570,42 @@ scope or row of another human's agent answers `not_found`; `remove` retires the 
 deletes its file. Events: `memory.loaded`, `memory.over_budget`, `memory.load_failed`,
 `memory.recorded`, `memory.lessons_rejected`, `memory.record_failed`.
 
+Cross-project sharing (spec G.6, [ADR 0059](../decisions/0059-cross-project-promotion-in-the-loop.md)).
+`MemoryLoop.record` proposes every critic or project-level shared lesson it records that is
+tagged `general` to the shared store at once (`proposePromotion`, idempotent; a re-recorded
+lesson that merged its earlier row keeps the one pending proposal, re-pointed and refreshed),
+and reports the proposal ids in `MemoryRecordResult.proposed`; a private lesson is proposed
+only by its human from the memory view (`proposeSharing`: tags it `general` when needed and
+passes `humanApproval` with the owner agent as proposer, so the package's rule stands; another
+human's private row is `not_found`). At every session end, after the session's lessons are
+recorded and before the session review, the runner's `reviewPromotions` step takes this
+human's pending proposals (`pendingPromotions`: made by one of the human's agents or by the
+human; another human's are theirs), at most `MAX_PROMOTION_REVIEWS_PER_SESSION` (5), and asks
+`CriticLoop.reviewPromotion` for each: a tier-1 light read on the critic's model through
+`CriticService.review` with the `lesson` subject (critic.md), the lesson text as an input file
+and the claims, its tags, confidence and origin, and the three `PROMOTION_CRITERIA` (holds
+beyond its project, one actionable observation and not an instruction, no secret or personal
+data), under the session token and `PROMOTION_REVIEW_BUDGET_USD_MICRO` (USD 0.25) per review.
+`resolvePromotion` applies a completed review only: `accept` promotes (`promote` verifies the
+accepting row) and files the offers, any other completed verdict retires the proposal with
+`rejected_by:<review>` in its source (the origin stays; the human can edit and propose
+again), a run that did not complete leaves it pending for the next session. The offer rule:
+one non-blocking approval request (`change_card.key = "memory:offer"`, options
+`accept`/`dismiss`, risk low) per other project of the same human whose tags overlap the
+lesson's (`offerToProjects` with the human's project list: `settings.members` names one of
+the human's principals, or no members declared; a project's tags are `settings.tags` plus the
+tags of the active lessons about it in critic, shared and the human's principals' private
+memory), never the origin project, never re-filed once answered. `answerOffer` (the memory
+view) and the inbox answer both go through `syncOffers` (part of the daemon's
+`syncApprovals`): an accepted offer writes a pinned project-level copy in shared memory
+(`source: promotion:<promoted>;human:<id>`, authored by the human, never into a private
+scope; a promoted lesson retired since is marked `stale` and skipped), a dismissed one
+changes nothing; each is one audit row (`memory.offer_accepted`, `memory.offer_dismissed`).
+`SessionResult.promotions` tallies `reviewed`, `promoted`, `rejected`, `pending`, `offered`
+(null when either port lacks the optional methods: fakes run as before). Events:
+`memory.promotion` (lesson, review, verdict, status, offers; a `warning` when the review did
+not complete), `memory.promotion_failed`.
+
 **Commands (`CommandLoop`, spec Q).** The registry (`defaultRegistry`), the executor and the
 intent parser behind one object. `contextFor(turn)` builds the `CommandContext` for every
 caller: the human as actor, the principal, the active project (`activeProjectOf`), the
@@ -1097,7 +1133,12 @@ view per principal, the critic and shared, with counts), `GET /memory?scope=&age
 `GET /memory/consolidation` (`ConsolidationProposalView[]`) and
 `POST /memory/consolidation/run` (report only; files the approval request; the inbox answer
 applies it through `syncApprovals`, which also applies the `rework`/`accept`/`cancel` answers
-of tasks blocked by findings). Commands (spec Q): `GET /commands` (the registry),
+of tasks blocked by findings). Cross-project sharing (spec G.6): `POST
+/memory/lessons/:id/propose` (`LessonView` of the proposal; 404 for another human's private
+row), `GET /memory/promotions` (`LessonView[]`, this human's undecided proposals), `GET
+/memory/offers` (`LessonOfferView[]`, newest first) and `POST /memory/offers/:id/answer
+{ answer: accept|dismiss }` (applied at once, `LessonOfferView`; 404 for another human's
+offer, 409 for any other answer or an offer already answered). Commands (spec Q): `GET /commands` (the registry),
 `POST /commands/parse` (nothing runs), `POST /commands/execute` (one or several commands as one
 change card and one change log row; `source` is `text`, `voice`, `phone` or `ui`
 (`CommandSourceBody`), the settings screen sends `ui` and the row is logged with it;
@@ -1166,6 +1207,22 @@ the human; it is never acted on.
 - New driver or provider: implement `ModelProvider` (see `adding-a-provider.md`).
 
 ## Tests
+
+`loop-memory-promotion.test.ts` (spec G.6, ADR 0059; fake provider, `loopWorld` with a second
+project of the same human and another human's project): a `general` critic lesson recorded
+through the port becomes one shared proposal that follows the lesson through a re-record
+merge; the next session's critic accepts it as a `lesson` subject (one tool, the text and tags
+as data; the review row with no task), the proposal is promoted and offered to the other
+project of the same human only (not the origin project, not the other human's project with the
+same tags, and not listed by the other human's loop); accepting makes a pinned project copy
+authored by the human with one audit row, a second sync and a second answer do nothing, a
+second session finds nothing pending and files no second offer, and the copy is recalled for
+that project; a `revise` retires the proposal naming the review while the origin stays; a
+review that cannot run leaves the proposal pending; the human proposes a private lesson from
+the view (tagged `general`, owner as proposer, human approval), another human's lesson reads as
+`not_found` here and their proposal is theirs to review. `loop-routes.test.ts` covers the
+routes (propose, pending, offers in the inbox, accept applied with the copy, bad or repeated
+answers refused, the audit row once).
 
 `small-project.test.ts` (spec B.6, ADR 0051): `defaultRiskTier` by flag; `shapeProjectPlan`
 with the flag on (one milestone named after the project, the phases' criteria once each, the

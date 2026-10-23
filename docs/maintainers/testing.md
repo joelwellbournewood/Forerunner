@@ -1133,7 +1133,8 @@ doctor and the eval checks as argv arrays).
     `CriticService.review`, `applyVerdict` and the loop's ladder branch in
     `packages/runtime/src/loop/critic.ts`); `syncSignoffAnswers`
     (`packages/runtime/src/session/findings.ts`, next to `syncBlockedByFindings`) applies the
-    answer once, from `syncApprovals` (`compose.ts`; `gate5-daemon.ts` mirrors it), and only
+    answer once, from `syncApprovals` (`compose.ts`; `gate5-daemon.ts` mirrors it, including
+    the `memoryOffers` half that applies answered cross-project offers, spec G.6), and only
     when the card's `review_id` is the task's latest review (a sign-off left open while the
     task was reviewed again is skipped as `stale` and touches nothing, ADR 0049): accept
     resolves the card's findings and the task's other open findings up to the card's review

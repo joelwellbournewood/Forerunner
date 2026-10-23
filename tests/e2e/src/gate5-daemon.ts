@@ -251,6 +251,9 @@ export function daemonFor(
     memory: install.memory
       ? await install.memory.syncApprovals()
       : { applied: 0, skipped: 0, stale: 0 },
+    memoryOffers: install.memory
+      ? await install.memory.syncOffers()
+      : { accepted: 0, dismissed: 0, stale: 0 },
     findings: await syncBlockedByFindings({ store, clock, humanId, agentId }),
     signoffs: await syncSignoffAnswers({ store, clock, humanId, agentId }),
   });
