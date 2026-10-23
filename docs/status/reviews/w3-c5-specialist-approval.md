@@ -109,6 +109,7 @@ runner's `candidate` input; this build keeps it and builds on it). Base branch
 | `pnpm exec vitest run --project integration packages/runtime/test` | 1 file, 4 tests skipped (`sandbox.integration.test.ts`: no container engine on the box) |
 | `pnpm exec vitest run --project unit scripts/sync-registry.test.ts` | 1 file, 9 tests passed |
 | `pnpm exec vitest run --project e2e tests/e2e/scenarios/phase5-gate.integration.test.ts` (it uses the edited `gate5-daemon.ts`) | 1 file, 4 tests passed |
+| `pnpm exec vitest run --project e2e tests/e2e/scenarios` (the whole test directory of `@forerunner/e2e`, the package that owns the edited `tests/e2e/src/gate5-daemon.ts`; it is the package's own `test` script and has no other test files) | exit 0: 13 files passed; 24 tests passed, 1 skipped, 1 todo (26) |
 | `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` | `docs-check: ok (19 files)` (bare `node scripts/docs-check.mjs` exits 0, but there is no `origin/main` in this clone, so it checks nothing) |
 | `pnpm check` | exit 0: lint, lint:paths, typecheck, unit tests (271 files; 2694 tests passed, 4 skipped, 1 todo), docs:check, link-check ok (106 files), secret-scan clean (1412 files) |
 
@@ -139,11 +140,41 @@ $ echo $?
 0
 ```
 
-`node scripts/docs-check.mjs --base 16bb864`:
+The docs check, against every base available in this clone. The script defaults to
+`--base origin/main`, but the remote has no `main` branch (`git fetch origin main` fails with
+`couldn't find remote ref main`). A bare run therefore prints "nothing to check" and proves
+nothing, so the evidence is the two runs with an explicit base:
 
 ```
+$ node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk   # the item's base branch
+docs-check: ok (20 files).
+$ node scripts/docs-check.mjs --base 16bb864                      # the starting commit
 docs-check: ok (18 files).
 ```
+
+`pnpm exec vitest run --project e2e tests/e2e/scenarios`, per file:
+
+```
+ ✓  e2e  tests/e2e/scenarios/phase5-gate.integration.test.ts (4 tests)
+ ✓  e2e  tests/e2e/scenarios/phase4-gate.integration.test.ts (2 tests)
+ ✓  e2e  tests/e2e/scenarios/06-injection.scenario.test.ts (2 tests)
+ ✓  e2e  tests/e2e/scenarios/phase3-gate.integration.test.ts (4 tests | 1 skipped)
+ ✓  e2e  tests/e2e/scenarios/phase7-gate.integration.test.ts (4 tests)
+ ✓  e2e  tests/e2e/scenarios/09-phone.scenario.test.ts (2 tests | 1 todo)
+ ✓  e2e  tests/e2e/scenarios/01-good-day.scenario.test.ts (1 test)
+ ✓  e2e  tests/e2e/scenarios/05-budget.scenario.test.ts (1 test)
+ ✓  e2e  tests/e2e/scenarios/08-handover.scenario.test.ts (1 test)
+ ✓  e2e  tests/e2e/scenarios/04-collision.scenario.test.ts (1 test)
+ ✓  e2e  tests/e2e/scenarios/07-bad-update.scenario.test.ts (2 tests)
+ ✓  e2e  tests/e2e/scenarios/02-email-task.scenario.test.ts (1 test)
+ ✓  e2e  tests/e2e/scenarios/03-voice.scenario.test.ts (1 test)
+ Test Files  13 passed (13)
+      Tests  24 passed | 1 skipped | 1 todo (26)
+```
+
+Touched packages and their full test runs: `@forerunner/runtime` (`packages/runtime/test`,
+unit: 116 files, 1005 passed, 1 skipped; integration: 1 file, 4 skipped, no Docker) and
+`@forerunner/e2e` (`tests/e2e/scenarios`: 13 files, 24 passed, 1 skipped, 1 todo).
 
 ### Patch export and verification
 
@@ -162,7 +193,7 @@ $ echo $?
 
 The check ran on the patch before this section was added and again on the final export,
 which includes this commit. Both exited 0. `git log --oneline 16bb864..HEAD` lists exactly
-this item's seven commits. Each one ends with the trailer
+this item's commits (eight, including this report update). Each one ends with the trailer
 `Claude-Build: managed-agent w3-c5-specialist-approval build`.
 
 ### Left open, and why
