@@ -27,7 +27,9 @@ import type {
   SourceCandidateView,
   SourceView,
   TaskView,
+  VoiceSessionView,
   VoiceStatusView,
+  VoiceTurnView,
 } from "@forerunner/runtime/daemon/api-types";
 import {
   AnswerRequestBody,
@@ -39,7 +41,10 @@ import {
   KillBody,
   RunnerUnlockWrapBody,
   StartSessionBody,
+  StartVoiceSessionBody,
   TransitionTaskBody,
+  VoiceAudioBody,
+  VoicePressBody,
 } from "@forerunner/runtime/daemon/api-types";
 import {
   auditExportContentType,
@@ -170,6 +175,11 @@ export interface FakeDaemonOptions {
    * temperature from every row of `GET /settings/models` and refuses setting one. Default true.
    */
   acceptsTemperature?: boolean;
+  /**
+   * The voice loop (spec O): available with the fixture's providers (`VOICE_STATUS`) by default;
+   * `{ available: false, reason }` makes /voice/status say why and POST /voice/sessions answer 503.
+   */
+  voice?: { available: boolean; reason?: string };
 }
 
 type Listener = (event: string, data: unknown) => void;
@@ -234,6 +244,10 @@ export interface FakeDaemonState {
   /** `GET /settings/models` with every temperature; `model.settings.set` changes it. */
   modelSettings: ModelSettingsView;
   acceptsTemperature: boolean;
+  /** Voice sessions with the audio chunks received for the turn being spoken. */
+  voiceSessions: Map<string, { view: VoiceSessionView; pressed: boolean; chunks: number }>;
+  /** When set, the next released turn transcribes to this line (tests script the human). */
+  nextVoiceLine: string | null;
 }
 
 const DESKTOP_OFF: DesktopControlView = {
@@ -258,6 +272,22 @@ const clone = <T>(value: T): T => structuredClone(value);
 
 function errorBody(c: Context, status: 400 | 401 | 404 | 409, code: string, message: string) {
   return c.json({ code, message }, status);
+}
+
+/**
+ * The fixture's `/voice/status` answer, or an unavailable one with the reason when the test
+ * passes `voice: { available: false, reason }` (the panel then says why and starts no turn).
+ */
+function initialVoiceStatus(options: FakeDaemonOptions): VoiceStatusView {
+  const status = clone(VOICE_STATUS);
+  if (!options.voice || options.voice.available) return status;
+  return {
+    ...status,
+    available: false,
+    reason: options.voice.reason ?? "voice is unavailable (test)",
+    stt: null,
+    tts: null,
+  };
 }
 
 export function createFakeDaemon(options: FakeDaemonOptions = {}) {
@@ -286,7 +316,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     listeners: new Set(),
     timers: new Set(),
     extensions: clone(EXTENSIONS),
-    voiceStatus: clone(VOICE_STATUS),
+    voiceStatus: initialVoiceStatus(options),
     version: HEALTH.version,
     modelWatchReports: clone(MODEL_WATCH_REPORTS),
     reviews: clone(REVIEWS),
@@ -312,6 +342,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     speedQuality: {},
     modelSettings: clone(MODEL_SETTINGS),
     acceptsTemperature: options.acceptsTemperature ?? true,
+    voiceSessions: new Map(),
+    nextVoiceLine: null,
   };
 
   const emit = (event: string, data: unknown) => {
@@ -390,7 +422,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.pendingConfirmation = null;
     state.nextChatReply = null;
     state.extensions = clone(EXTENSIONS);
-    state.voiceStatus = clone(VOICE_STATUS);
+    state.voiceStatus = initialVoiceStatus(options);
     state.version = HEALTH.version;
     state.modelWatchReports = clone(MODEL_WATCH_REPORTS);
     state.reviews = clone(REVIEWS);
@@ -1087,6 +1119,137 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     });
   });
 
+  // Voice (spec O): the daemon's /voice routes with fake providers. A press, audio chunks and
+  // a release make one turn whose transcript is `nextVoiceLine` (or a fixed line) and whose
+  // reply is the chat reply for it.
+  const voiceProvider = {
+    name: "fake",
+    kind: "fake" as const,
+    policy: "fake" as const,
+    reason: "test",
+  };
+  const stage = (ms: number, targetMs: number) => ({ ms, targetMs, withinTarget: ms <= targetMs });
+  const voiceTurn = (
+    turn: number,
+    said: string,
+    projectId: string | undefined,
+    chunks: number,
+  ): VoiceTurnView => {
+    const reply = chatReply(said, projectId);
+    return {
+      turn,
+      source: "audio",
+      said,
+      heard: reply.reply,
+      reply,
+      approval: null,
+      outcome: null,
+      pending: null,
+      latency: {
+        turn,
+        endOfTurnMs: 200,
+        finalTranscriptMs: 150,
+        modelFirstTokenMs: 400,
+        firstAudioMs: 200,
+        totalToFirstAudioMs: 950,
+        stages: {
+          endOfTurn: stage(200, 300),
+          finalTranscript: stage(150, 300),
+          modelFirstToken: stage(400, 600),
+          firstAudio: stage(200, 300),
+          total: stage(950, 1500),
+        },
+        withinTarget: true,
+        firstSentenceMs: 450,
+        ttsFirstByteMs: 120,
+        interrupted: false,
+        noResponse: false,
+        targets: {
+          endOfTurnMs: 300,
+          finalTranscriptMs: 300,
+          modelFirstTokenMs: 600,
+          firstAudioMs: 300,
+          totalToFirstAudioMs: 1500,
+        },
+      },
+      audioChunks: chunks,
+      audioStored: false,
+      interrupted: false,
+      unspokenText: null,
+      error: null,
+    };
+  };
+  const mustVoice = (c: Context) => state.voiceSessions.get(c.req.param("id") ?? "") ?? null;
+  app.post("/voice/sessions", async (c) => {
+    const parsed = StartVoiceSessionBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    if (!state.voiceStatus.available)
+      return c.json({ code: "voice.unavailable", message: state.voiceStatus.reason }, 503);
+    const view: VoiceSessionView = {
+      id: nextId("voice"),
+      state: "idle",
+      turn: 0,
+      mode: parsed.data.mode ?? "push_to_talk",
+      language: parsed.data.language ?? null,
+      projectId: parsed.data.projectId ?? null,
+      conversationSessionId: nextId("sess"),
+      providers: { stt: voiceProvider, tts: voiceProvider },
+      pending: null,
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      turns: 0,
+      lastTurn: null,
+      lastSeq: 0,
+    };
+    state.voiceSessions.set(view.id, { view, pressed: false, chunks: 0 });
+    return c.json(view, 201);
+  });
+  app.get("/voice/sessions/:id", (c) => {
+    const v = mustVoice(c);
+    return v ? c.json(v.view) : errorBody(c, 404, "not_found", "no such voice session");
+  });
+  app.post("/voice/sessions/:id/press", async (c) => {
+    const v = mustVoice(c);
+    if (!v) return errorBody(c, 404, "not_found", "no such voice session");
+    const parsed = VoicePressBody.safeParse(await c.req.json());
+    if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    if (parsed.data.pressed) {
+      v.pressed = true;
+      v.chunks = 0;
+      v.view = { ...v.view, state: "listening" };
+    } else if (v.pressed) {
+      v.pressed = false;
+      const turn = v.view.turns + 1;
+      const said = state.nextVoiceLine ?? "what is next";
+      state.nextVoiceLine = null;
+      const last = voiceTurn(turn, said, v.view.projectId ?? undefined, v.chunks);
+      v.view = {
+        ...v.view,
+        state: "idle",
+        turn,
+        turns: turn,
+        lastTurn: last,
+        lastSeq: v.view.lastSeq + 1,
+      };
+    }
+    return c.json(v.view);
+  });
+  app.post("/voice/sessions/:id/audio", async (c) => {
+    const v = mustVoice(c);
+    if (!v) return errorBody(c, 404, "not_found", "no such voice session");
+    const parsed = VoiceAudioBody.safeParse(await c.req.json());
+    if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    if (v.pressed) v.chunks += 1;
+    return c.json(v.view);
+  });
+  app.post("/voice/sessions/:id/stop", (c) => {
+    const v = mustVoice(c);
+    if (!v) return errorBody(c, 404, "not_found", "no such voice session");
+    v.pressed = false;
+    v.view = { ...v.view, state: "idle", endedAt: v.view.endedAt ?? new Date().toISOString() };
+    return c.json(v.view);
+  });
+
   // Audit log export (spec S.9): the daemon streams a file; the fake serves the fixture rows
   // through the daemon's own serialisers, honouring the filters and the format.
   app.get("/audit/export", (c) => {
@@ -1187,8 +1350,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return c.json(state.extensions.filter((e) => !kind || e.kind === kind));
   });
   app.get("/extensions/catalog", (c) => c.json(CATALOG));
-  // Voice providers (spec O.4): what the panel's voice rows put in force; tests mutate it.
-  app.get("/voice/status", (c) => c.json(state.voiceStatus));
+  // Voice providers (spec O.4): what the panel's voice rows put in force; tests mutate it. The
+  // session count is the live one of the /voice/sessions routes above (spec O).
+  app.get("/voice/status", (c) =>
+    c.json({
+      ...state.voiceStatus,
+      sessions: [...state.voiceSessions.values()].filter((v) => !v.view.endedAt).length,
+    }),
+  );
   app.get("/extensions/:id", (c) => {
     const e = findExtension(c);
     return e ? c.json(e) : errorBody(c, 404, "not_found", "no such extension");
