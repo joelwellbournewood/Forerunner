@@ -100,6 +100,9 @@ or the budget by hand (BLOCKERS.md row D.20). Open points:
   force. `SettingSpec.effect(value, ctx)` gets the table through
   `CommandPorts.pricingTable`. A corrected fast row is therefore the surcharge the human
   confirms.
+- The estimate-versus-actual learning (spec I.3) skips a task with a fast-mode run. Its
+  actual includes the research-preview surcharge, so learning from it would inflate the
+  planner's estimates for standard work of the same specialist and kind.
 - Loop runs on haiku or opus are now priced at their own rung on the daemon, which changes the
   figures of those runs (towards the right ones).
 - `claude-opus-5-5-fast` is an estimate until the model watch confirms it; the research
