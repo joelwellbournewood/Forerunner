@@ -1175,9 +1175,14 @@ grade, tier, summary and every finding with severity, status and the required ac
 open approval request on the review's task (from the inbox) is shown as "waiting on you".
 Comment is `POST /reviews/:id/comment` (a message to the agent responsible); Approve and
 Reject are `POST /reviews/:id/approve|reject { body?, requestVersion? }`, which answer that
-request at the version the phone saw. When that request is high risk the biometric prompt
-runs first and the flag is signed into the request (ADR 0045, the rule of high-risk answers);
-a cancelled prompt sends nothing. Verdicts are never queued. On Chat, "Hold to talk"
+request at the version the phone saw. `MobileController.reviewVerdict` reads the inbox afresh
+before it decides, so an approval filed after the last load is seen. When that request is high
+risk the biometric prompt runs first and the flag is signed into the request (ADR 0045, the
+rule of high-risk answers); a cancelled prompt sends nothing. Should the service still answer
+`biometric_required` (a request the phone could not see, the inbox unreachable), the prompt
+runs then and the verdict is sent once more with the flag. The service answers the request
+before it messages the agent, so a refused verdict tells the agent nothing
+(`state-service.md`). Verdicts are never queued. On Chat, "Hold to talk"
 (pointer or Space / Enter held) records through `env.recorder`; the release (or the 5 s limit,
 released for the human) sends ONE `POST /remote/commands` whose params are the voice envelope
 `{ v: 1, kind: "voice", projectId, clientId, audio: { pcm, sampleRate: 16000, channels: 1,
@@ -1280,7 +1285,10 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   answer); `mobile-reviews.test.tsx` (nav link, reviews of the project with PR link and
   findings, the waiting approval shown, a signed comment, approve with a comment answering the
   task's request at its version, a high-risk reject that asks the prompt first: cancel sends
-  nothing, confirm signs `biometric=1`; the fake refuses a high-risk verdict without the flag);
+  nothing, confirm signs `biometric=1`; a high-risk approval filed after the screen loaded
+  still asks the prompt (the inbox is read afresh); a `biometric_required` answer for a request
+  the phone could not see prompts and resends once, the refused post messaging nobody; the
+  fake refuses a high-risk verdict without the flag);
   `mobile-voice.test.tsx` (hold to record and release to relay 16 kHz PCM signed as a
   `kind: "voice"` command, the PC's transcript and reply shown and the reply spoken, a press
   released at the 5 s limit, the typed line relayed where there is no recorder, a refused

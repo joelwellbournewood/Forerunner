@@ -1193,30 +1193,42 @@ export class MobileController {
   /**
    * Approve or reject a review. The verdict answers the task's open approval request; when
    * that request is high risk the biometric prompt runs first and its flag travels inside
-   * the signature (ADR 0045, ADR 0009). Never queued: the verdict needs the request's current
-   * version and, when high risk, a live signature.
+   * the signature (ADR 0045, ADR 0009). The inbox is read afresh first, so a high-risk
+   * approval filed after the last load is seen; and should the service still answer
+   * `biometric_required` (a request the phone could not see), the prompt runs and the
+   * verdict is sent once more, signed with the flag. Never queued: the verdict needs the
+   * request's current version and, when high risk, a live signature.
    */
   async reviewVerdict(
     review: ReviewView,
     verdict: "approve" | "reject",
     comment: string,
   ): Promise<ReviewVerdictResult> {
+    await this.loadInbox();
     const request = this.reviewRequest(review);
     const high = request ? MobileController.isHighRisk(request) : false;
-    const biometric = high
-      ? await this.assertHighRisk(
-          `${verdict === "approve" ? "Approve" : "Reject"}: ${(review.taskTitle ?? review.id).slice(0, 80)}`,
-        )
-      : null;
-    const result = await this.client.reviewVerdict(
-      review.id,
-      verdict,
-      {
-        ...(comment.trim() ? { body: comment.trim() } : {}),
-        ...(request ? { requestVersion: request.version } : {}),
-      },
-      { biometric },
-    );
+    const reason = `${verdict === "approve" ? "Approve" : "Reject"}: ${(review.taskTitle ?? review.id).slice(0, 80)}`;
+    const biometric = high ? await this.assertHighRisk(reason) : null;
+    const body = {
+      ...(comment.trim() ? { body: comment.trim() } : {}),
+      ...(request ? { requestVersion: request.version } : {}),
+    };
+    let result: ReviewVerdictResult;
+    try {
+      result = await this.client.reviewVerdict(review.id, verdict, body, { biometric });
+    } catch (error) {
+      if (
+        biometric !== null ||
+        !(error instanceof StateApiError) ||
+        error.code !== "biometric_required"
+      ) {
+        throw error;
+      }
+      const assertion = await this.assertHighRisk(reason);
+      result = await this.client.reviewVerdict(review.id, verdict, body, {
+        biometric: assertion,
+      });
+    }
     await this.loadInbox();
     return result;
   }

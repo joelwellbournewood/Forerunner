@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { HumanRequestView } from "../src/api/state-client.ts";
+import { MobileController } from "../src/mobile/store.tsx";
 import { createMobileHarness, postedCalls, renderMobile } from "./mobile-helpers.tsx";
 
 /**
@@ -163,6 +164,67 @@ describe("Reviews screen", () => {
       status: "answered",
       answer: { decision: "reject", reviewId: "rev_deploy" },
     });
+  });
+
+  it("reads the inbox afresh: a high-risk approval filed after the screen loaded still asks the prompt", async () => {
+    const h = await createMobileHarness();
+    const user = userEvent.setup();
+    renderMobile("/reviews", h);
+    await waitFor(() => expect(reviewCard("rev_deploy")).toBeDefined());
+    const card = reviewCard("rev_deploy") as HTMLElement;
+    expect(within(card).queryByTestId("m-review-high")).toBeNull();
+    // The critic's approval lands after the phone's last inbox load.
+    h.service.state.requests.unshift(structuredClone(HIGH_DEPLOY));
+    await user.click(within(card).getByTestId("m-review-approve"));
+    await screen.findByTestId("m-biometric-dialog");
+    expect(postedCalls(h, "/reviews/rev_deploy/approve")).toHaveLength(0);
+    await user.click(screen.getByTestId("m-biometric-confirm"));
+    await waitFor(() =>
+      expect(within(card).getByTestId("m-review-outcome")).toHaveTextContent("Approved"),
+    );
+    expect(postedCalls(h, "/reviews/rev_deploy/approve")).toEqual([
+      expect.objectContaining({ signed: true, biometric: true, body: { requestVersion: 3 } }),
+    ]);
+    expect(h.service.state.requests.find((r) => r.id === "req_deploy")?.status).toBe("answered");
+  });
+
+  it("a biometric_required answer for a request the phone could not see prompts and resends once", async () => {
+    const h = await createMobileHarness();
+    const realFetch = h.env.fetch as NonNullable<typeof h.env.fetch>;
+    let inboxDown = false;
+    h.env.fetch = async (input, init) => {
+      if (inboxDown && /\/inbox/.test(String(input))) throw new Error("inbox unreachable");
+      return realFetch(input, init);
+    };
+    h.controller = new MobileController(h.env);
+    const user = userEvent.setup();
+    renderMobile("/reviews", h);
+    await waitFor(() => expect(reviewCard("rev_deploy")).toBeDefined());
+    inboxDown = true;
+    h.service.state.requests.unshift(structuredClone(HIGH_DEPLOY));
+    const card = reviewCard("rev_deploy") as HTMLElement;
+    await user.click(within(card).getByTestId("m-review-reject"));
+    // The first post went without the flag and was refused; the prompt runs, then one resend.
+    await screen.findByTestId("m-biometric-dialog");
+    expect(postedCalls(h, "/reviews/rev_deploy/reject")).toEqual([
+      expect.objectContaining({ biometric: false }),
+    ]);
+    await user.click(screen.getByTestId("m-biometric-confirm"));
+    await waitFor(() =>
+      expect(within(card).getByTestId("m-review-outcome")).toHaveTextContent("Rejected"),
+    );
+    expect(postedCalls(h, "/reviews/rev_deploy/reject").map((c) => c.biometric)).toEqual([
+      false,
+      true,
+    ]);
+    expect(h.service.state.requests.find((r) => r.id === "req_deploy")).toMatchObject({
+      status: "answered",
+      answer: { decision: "reject" },
+    });
+    // The refused first post told the agent nothing; the resend did, once.
+    expect(h.service.state.reviewMessages.filter((m) => m.reviewId === "rev_deploy")).toEqual([
+      { reviewId: "rev_deploy", kind: "reject", body: "" },
+    ]);
   });
 
   it("the service refuses a high-risk verdict without the biometric flag", async () => {
