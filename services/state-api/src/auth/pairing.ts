@@ -112,7 +112,8 @@ export class PairingService {
       platform: input.platform.slice(0, 40),
       public_key: input.publicKey,
       kind: p.kind,
-      push_token: input.pushToken ?? null,
+      // A blank token is no token: stored, it would be sent to and fail on every notice.
+      push_token: input.pushToken?.trim() || null,
       author_human: p.humanId,
     });
     const session = await this.tokens.issue({

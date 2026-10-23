@@ -18,7 +18,8 @@ const CompletePairingBody = z.object({
   proof: z.string().min(80).max(128),
   name: z.string().max(120).optional(),
   platform: z.string().min(1).max(40),
-  pushToken: z.string().max(512).optional(),
+  /** FCM registration token; trimmed, and a blank one is stored as none (spec R.6). */
+  pushToken: z.string().trim().max(512).optional(),
 });
 
 const RevokeBody = z.object({ version: z.number().int().optional() });

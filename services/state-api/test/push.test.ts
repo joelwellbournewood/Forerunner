@@ -273,6 +273,18 @@ describe("push fan-out from the state service (spec R.6)", () => {
     expect(text).not.toContain(PHONE_TOKEN);
     const bare = await h.pairPhone(h.seed.ada.id);
     expect((await h.store.device.get(bare.deviceId))?.push_token).toBeNull();
+    // A blank token is no token; surrounding whitespace is trimmed.
+    const blank = await h.pairPhone(h.seed.ada.id, "   ");
+    expect((await h.store.device.get(blank.deviceId))?.push_token).toBeNull();
+    const blankView = await json<{ pushRegistered: boolean }>(
+      await blank.get(`/devices/${blank.deviceId}`),
+    );
+    expect(blankView.pushRegistered).toBe(false);
+    const padded = await h.pairPhone(h.seed.ada.id, ` ${PHONE_TOKEN}-2 `);
+    expect((await h.store.device.get(padded.deviceId))?.push_token).toBe(`${PHONE_TOKEN}-2`);
+    await h.store.humanRequest.insert({ human_id: h.seed.ada.id, kind: "decision", why: "x" });
+    await h.tick();
+    expect(h.google.attempts.map((a) => a.token).sort()).toEqual([PHONE_TOKEN, `${PHONE_TOKEN}-2`].sort());
   });
 
   it("PUT /devices/:id/push-token refreshes the token, signed, for the device itself only", async () => {
@@ -309,6 +321,15 @@ describe("push fan-out from the state service (spec R.6)", () => {
     expect(
       (await h.admin.request("PUT", "/devices/nope/push-token", { pushToken: "x" })).status,
     ).toBe(404);
+
+    // A revoked device's token cannot be set, not even by the desktop.
+    const revoke = await h.admin.post(`/devices/${other.deviceId}/revoke`, {});
+    expect(revoke.status).toBe(200);
+    const onRevoked = await h.admin.request("PUT", `/devices/${other.deviceId}/push-token`, {
+      pushToken: "new-token-3",
+    });
+    expect(onRevoked.status).toBe(409);
+    expect((await h.store.device.get(other.deviceId))?.push_token).toBeNull();
 
     const audit = await h.store.auditLog.list({ tool: "push.token_set" });
     expect(audit).toHaveLength(3);
