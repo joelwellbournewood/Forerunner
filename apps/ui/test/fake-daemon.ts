@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import type {
   ChangeLogView,
   ChatReplyView,
@@ -184,6 +185,12 @@ export interface FakeDaemonState {
   emailCommands: EmailCommandRowView[];
   missingRoutes: string[];
   failing: Record<string, { status: number; code: string; message: string }>;
+  /**
+   * Opus fast mode per project id (spec D.20). A project listed here gets a
+   * `project.fast_mode` row on `/settings`, as the daemon lists one for every project; the
+   * default is none, so the fixtures' other settings tests keep their rows.
+   */
+  fastMode: Record<string, boolean>;
 }
 
 interface PendingCommand {
@@ -244,6 +251,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     emailCommands: clone(EMAIL_COMMANDS),
     missingRoutes: [...(options.missingRoutes ?? [])],
     failing: { ...(options.failing ?? {}) },
+    fastMode: {},
   };
 
   const emit = (event: string, data: unknown) => {
@@ -913,6 +921,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       }
       return s;
     });
+    // Like the daemon: one fast-mode row per project, the effect and surcharge both ways.
+    for (const [projectId, on] of Object.entries(state.fastMode)) {
+      rows.push({
+        key: "project.fast_mode",
+        scope: "project",
+        scopeId: projectId,
+        value: on,
+        description: fastModeDescription(),
+        risk: "medium",
+      });
+    }
     return c.json(
       rows.filter((s) => (!scope || s.scope === scope) && (!scopeId || s.scopeId === scopeId)),
     );
@@ -1584,6 +1603,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   const SETTING_RISK: Record<string, Risk> = {
     speed_quality_offset: "low",
     small_project_mode: "low",
+    fast_mode: "medium",
     critic_ceiling: "medium",
     session_reserve_share: "medium",
     quiet_hours: "low",
@@ -1715,6 +1735,37 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const risk = SETTING_RISK[key];
       if (!risk) return refuse(`unknown setting ${key}`);
       const project = projectByRef(projectRef);
+      if (key === "fast_mode" && project && typeof params.value === "boolean") {
+        // The daemon's card for this key (SettingSpec.effect, ADR 0051 item 4): the effect
+        // and the surcharge for the direction asked, in the change card and the sentence.
+        const value = params.value;
+        const before = state.fastMode[project.id] ?? false;
+        const effect = fastModeEffect(value);
+        const sentence = `Set Opus fast mode for ${project.name} from ${before} to ${value}: ${effect}. Undo.`;
+        return {
+          name,
+          params,
+          risk,
+          card: card(
+            {
+              command: name,
+              what: `Opus fast mode for ${project.name}`,
+              oldValue: String(before),
+              newValue: `${value} (${effect})`,
+              scope: "project",
+              sentence,
+              projectId: project.id,
+              projectName: project.name,
+              usesActiveProject: projectRef === undefined,
+            },
+            risk,
+          ),
+          apply: () => {
+            state.fastMode[project.id] = value;
+            return { before: { fast_mode: before }, after: { fast_mode: value } };
+          },
+        };
+      }
       return {
         name,
         params,

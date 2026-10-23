@@ -57,6 +57,7 @@ export const SETTING_KEYS = [
   "critic_ceiling",
   "session_reserve_share",
   "small_project_mode",
+  "fast_mode",
   "shared_with",
   "quiet_hours",
   "notify_channel",
@@ -320,6 +321,85 @@ function SettingChangeDialog({
   );
 }
 
+/** The per-project Opus fast mode rows (spec D.20, ADR 0057) the daemon lists as `project.fast_mode`. */
+export const FAST_MODE_KEY = "project.fast_mode";
+
+export function fastModeRows(settings: SettingView[]): SettingView[] {
+  return settings.filter((s) => s.key === FAST_MODE_KEY && s.scope === "project" && s.scopeId);
+}
+
+/**
+ * The command that flips a project's fast mode: `settings.set` with the other value prefilled,
+ * so the dialog's change card (the daemon's, with the effect and the surcharge for that
+ * direction) is one click away. The UI computes no price: the daemon's texts carry it.
+ */
+export function fastModeToggle(s: SettingView): SettingCommand | null {
+  const command = commandForSetting(s);
+  if (!command) return null;
+  return { ...command, initial: (current) => (current === true ? "false" : "true") };
+}
+
+/**
+ * Opus fast mode (spec D.20): what the flag does and costs, both ways, in the daemon's words
+ * (the row's description, priced from the table in force), and per project its state with a
+ * button that runs the same `settings.set` command chat and voice use.
+ */
+function FastModeCard({
+  rows,
+  onToggle,
+}: {
+  rows: SettingView[];
+  onToggle: (setting: SettingView, command: SettingCommand) => void;
+}) {
+  const projects = useUiState((s) => s.projects);
+  if (rows.length === 0) return null;
+  const description = rows[0]?.description ?? "";
+  return (
+    <div
+      className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+      data-testid="fast-mode-card"
+    >
+      <h2 className="font-semibold">Opus fast mode</h2>
+      <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+        For urgent work. Off by default. Only API-key runs go fast; a subscription ignores the
+        flag (API only) and every ignored run is noted in the audit log.
+      </p>
+      <p className="mt-1 text-sm" data-testid="fast-mode-effect">
+        {description}
+      </p>
+      <ul className="mt-2 space-y-1 text-sm">
+        {rows.map((s) => {
+          const on = s.value === true;
+          const name = projects.find((p) => p.id === s.scopeId)?.name ?? s.scopeId;
+          const command = fastModeToggle(s);
+          return (
+            <li
+              key={s.scopeId}
+              className="flex flex-wrap items-center gap-2"
+              data-testid="fast-mode-row"
+              data-project={s.scopeId ?? ""}
+            >
+              <span className="font-medium">{name}</span>
+              <Badge tone={on ? "warn" : "neutral"} testId="fast-mode-state">
+                {on ? "on: Opus runs at the fast-mode rate" : "off: standard speed and rate"}
+              </Badge>
+              {command ? (
+                <Button
+                  variant="ghost"
+                  onClick={() => onToggle(s, command)}
+                  data-testid="fast-mode-toggle"
+                >
+                  {on ? "Turn off" : "Turn on"}
+                </Button>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 /** Settings (spec K.7, Q.1): every setting with its scope; changes run through the command registry. */
 export function SettingsPage() {
   const client = useClient();
@@ -445,6 +525,11 @@ export function SettingsPage() {
       </div>
 
       <SourcesSection />
+
+      <FastModeCard
+        rows={fastModeRows(settings.data ?? [])}
+        onToggle={(setting, command) => setEditing({ setting, command })}
+      />
 
       <div
         className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
