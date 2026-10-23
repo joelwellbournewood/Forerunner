@@ -243,7 +243,10 @@ and each clause goes through the patterns, in English and German:
 | make this a task, mach daraus eine Aufgabe | `task.create` from `ctx.lastMessage` |
 
 A lesson ("remember that", "lesson:") is matched before a note, so "remember that X" records X
-in memory while "remember to X" and "note that X" stay next-session notes (ADR 0061).
+in memory while "remember to X" and "note that X" stay next-session notes (ADR 0061). The nouns
+(`lesson`, `lesson learned`, `Lektion`, `Lehre`) need a `:` or `-` after them, and a stated
+lesson that ends in `?` is a question, not a lesson: "lessons from the last sprint?", "Lesson
+plans are due Friday" and "Lehre mich, wie ..." never write memory (`intent.test.ts`).
 "it" is the project switched to earlier in the same sentence, else the active project.
 Project names resolve against `ctx.projects` (exact, containing, word overlap); several matches
 or none give one question with the candidate names as options. Times are read in
@@ -325,7 +328,7 @@ PharmaWatch sentence exactly, every command's risk, writes and undo, prototype k
 settings; `memory.record` acting at once at low risk with the read-back sentence, the source
 naming the human and the conversation session, another project or no project, undo through the
 port, refused without an agent or without the port), `intent.test.ts` (the two spec sentences,
-thirty-six English and German phrases including the lesson phrases and "remember to" staying a note,
+thirty-six English and German phrases including the lesson phrases and "remember to" staying a note, seven questions and ordinary sentences that are not lessons,
 ambiguity questions, budget tails that are not a time, invalid values as a question, the
 envelope refusal, the model port, time parsing with `rest`), and `scenario.test.ts` (the
 Android scenario end to end and the phase 5 gate: ui, chat and voice produce the same change
@@ -334,7 +337,7 @@ log sentences with the effect and the surcharge both ways, the yes a medium-risk
 the flag written on one project only; a corrected fast row from `ports.pricingTable` quoted in
 the card and the sentence).
 
-Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 139 tests).
+Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 146 tests).
 
 ## Known issues
 

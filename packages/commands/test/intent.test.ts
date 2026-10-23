@@ -231,6 +231,21 @@ describe("IntentParser: English and German phrases", () => {
     expect(q.commands).toEqual([]);
     expect(q.question?.text).toMatch(/task/i);
   });
+
+  // Review w2-chat-memory finding 1: the lesson nouns need an explicit separator and a
+  // question is never a stated lesson; none of these may write the principal's memory.
+  it.each([
+    "lessons from the last sprint?",
+    "Lesson plans for the tutorial are due Friday",
+    "lessons learned in the retro were good",
+    "Lehre mich, wie man deployt",
+    "Lektion drei ist zu lang",
+    "remember that time the deploy broke?",
+    "merk dir, dass wir was vergessen haben?",
+  ])("'%s' is not recorded as a lesson", async (text) => {
+    const r = await parser.parse(text, ctx());
+    expect(r.commands.map((c) => c.name)).not.toContain("memory.record");
+  });
 });
 
 describe("IntentParser: ambiguity, questions and refusals", () => {

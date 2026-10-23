@@ -58,8 +58,9 @@ next-session note and recorded.
    risk (no limit, no spend, nothing outside the human's own memory): it acts at once and the
    sentence reads the stored text back with Undo. By pattern "remember that ...", "lesson: ...",
    "lesson learned: ...", "merk dir, dass ...", "Lektion: ..." (matched before notes; "remember
-   to ..." and "note that ..." stay `note.add` next-session notes); in other words the model's
-   `memory_record` tool. The runtime's port writes into the private memory of the human's own
+   to ..." and "note that ..." stay `note.add` next-session notes; the nouns need a `:` or `-`
+   after them and text ending in `?` is a question, never a lesson, because the pattern path acts
+   with no model and no yes); in other words the model's `memory_record` tool. The runtime's port writes into the private memory of the human's own
    principal, for the named or active project (none: every project), with the human as author,
    `source: human:<id>;<chat|voice>:<conversation session>`, confidence 0.8 (the human said it,
    above a session's default 0.5, below 1 so a later contradiction is still weighed), after the

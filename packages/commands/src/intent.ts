@@ -416,14 +416,18 @@ export class IntentParser {
    * A lesson the human states (spec O.2, ADR 0061): "remember that ...", "lesson: ...",
    * "lesson learned: ...", "merk dir, dass ...", "Lektion: ...". It goes to the principal's
    * memory (`memory.record`); "remember to ..." and "note that ..." stay next-session notes.
+   * The nouns ("lesson", "Lektion", "Lehre") need a `:` or `-` after them, so "lessons from
+   * the sprint" or "Lehre mich ..." is not a lesson; text ending in "?" is a question, never
+   * a stated lesson (it acts at once, with no model and no yes).
    */
   private matchLesson(c: string): Match | null {
     const m =
-      /^(?:remember\s+that|lessons?(?:\s+learned)?|lektion|lehre|merke?\s+dir,?\s+dass)\s*[:,-]?\s+(.+)$/is.exec(
+      /^(?:(?:remember\s+that|merke?\s+dir,?\s+dass)\s*[:,-]?|(?:lessons?(?:\s+learned)?|lektion|lehre)\s*[:-])\s+(.+)$/is.exec(
         c,
       );
-    if (!m?.[1]) return null;
-    return { command: { name: "memory.record", params: { text: m[1].trim() } } };
+    const text = m?.[1]?.trim();
+    if (!text || /\?$/.test(text)) return null;
+    return { command: { name: "memory.record", params: { text } } };
   }
 
   private matchNote(c: string): Match | null {
