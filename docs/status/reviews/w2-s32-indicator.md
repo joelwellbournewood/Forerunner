@@ -12,13 +12,20 @@ The branch `wave/w2-s32-indicator` on origin was at `82a6295` with no commits of
 `git merge-base --is-ancestor origin/ccr-4d8a843c-1k9syk HEAD` failed, so I ran
 `git merge --no-edit origin/ccr-4d8a843c-1k9syk`. It fast-forwarded to `b1804e3`, the base
 the task names, with no conflicts. My work starts at `b1804e3`: `/tmp/start-sha` holds it, and
-the patch is `b1804e3..HEAD`. The build commits are:
+the patch is `b1804e3..HEAD`. The build commits (`git log --oneline b1804e3..HEAD`) are:
 
-- `262a6bb` desktop: the status view names what the indicator shows, and the banner follows the app
-- `6cfc32c` ui: a desktop-control banner at the top of every page while an agent controls the desktop
-- `cff3a77` desktop: the tray shows desktop control while active and stops it
-- `281ef28` docs: ADR 0067, the indicator in the apps, desktop-control and runtime docs; S.32 done
-- (this report)
+- `3379518` desktop: the status view names what the indicator shows, and the banner follows the app
+- `962f2e5` ui: a desktop-control banner at the top of every page while an agent controls the desktop
+- `468d7c6` desktop: the tray shows desktop control while active and stops it
+- `a19edfa` docs: ADR 0067, the indicator in the apps, desktop-control and runtime docs; S.32 done
+- `0c67fec` status: build report for w2-s32-indicator
+- the revision commit that adds the export check and the command output below
+
+Every commit ends with the trailer `Claude-Build: managed-agent w2-s32-indicator build`. The
+first attempt's commits had the trailer as `... BUILD`. The grader asked for the lower-case
+form, so I rewrote those five unpushed commit messages in place with `git commit-tree` over
+the same trees: `git diff` between the old and new heads is empty. Nothing else was touched;
+no other branch was changed.
 
 ### What was built
 
@@ -152,6 +159,58 @@ the patch is `b1804e3..HEAD`. The build commits are:
 The cargo commands needed the WebKitGTK and AppIndicator development packages. I installed
 them with `apt-get` (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`,
 `librsvg2-dev`). The target directory did not exist yet, so the first build created it.
+
+### Typecheck and lint output (revision run, 2026-10-23)
+
+`pnpm typecheck` (exit 0), the end of its output:
+
+```
+> forerunner@0.1.0 typecheck /workspace/repo
+> tsc -p tsconfig.node.json --noEmit && pnpm -r --filter "./apps/*" --if-present typecheck
+
+Scope: 4 of 21 workspace projects
+apps/approvals-web typecheck$ tsc -p tsconfig.json --noEmit
+apps/ui typecheck$ tsc -p tsconfig.json --noEmit
+apps/mobile typecheck: Done
+apps/desktop typecheck: Done
+apps/approvals-web typecheck: Done
+apps/ui typecheck: Done
+```
+
+`pnpm lint` (`biome check .`, exit 0), the end of its output:
+
+```
+Checked 1163 files in 2s. No fixes applied.
+Found 59 warnings.
+```
+
+There are 0 errors. The base commit `b1804e3` has the same 59 warnings, and
+`pnpm exec biome check` on every file this item changed prints no diagnostic.
+
+`node scripts/docs-check.mjs --base b1804e3`: `docs-check: ok (28 files).`
+
+### Export and patch verification
+
+```
+mkdir -p /mnt/session/outputs
+git format-patch --stdout $(cat /tmp/start-sha)..HEAD > /mnt/session/outputs/w2-s32-indicator.patch
+git worktree add --detach /tmp/verify b1804e3   # a clean checkout of the starting commit
+cd /tmp/verify && git status --short | wc -l    # 0: clean
+git apply --check -v /mnt/session/outputs/w2-s32-indicator.patch
+```
+
+Result: `git apply --check` exited 0, and every file printed "Checking patch …" with no
+error. The last lines were:
+
+```
+Checking patch docs/status/BLOCKERS.md...
+Checking patch docs/status/PROGRESS.md...
+Checking patch docs/status/reviews/w2-s32-indicator.md...
+```
+
+I ran this against the patch of the five commits above before committing this revision,
+then again on the final patch, which includes the revision commit. Both exited 0.
+`/tmp/start-sha` holds `b1804e3b061a3b58b0fc86d26e01bc6d77fb0b68`.
 
 ### Left open, and why
 
