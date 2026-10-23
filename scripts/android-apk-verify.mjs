@@ -92,19 +92,33 @@ export function findReleaseApks(root) {
 /** The signers and signature schemes out of `apksigner verify --verbose --print-certs` output. */
 export function parseVerifyOutput(text) {
   const schemes = {};
-  const signers = [];
+  const signers = new Map();
   for (const line of String(text).split(/\r?\n/)) {
     const scheme = /^Verified using (v\d) scheme[^:]*:\s*(true|false)/.exec(line);
     if (scheme) schemes[scheme[1]] = scheme[2] === "true";
-    const dn = /^Signer #(\d+) certificate DN:\s*(.+)$/.exec(line);
-    if (dn) signers[Number(dn[1]) - 1] = { dn: dn[2].trim(), sha256: "" };
-    const sha = /^Signer #(\d+) certificate SHA-256 digest:\s*([0-9a-f]+)/i.exec(line);
-    if (sha?.[2] && signers[Number(sha[1]) - 1]) signers[Number(sha[1]) - 1].sha256 = sha[2];
+    // A JAR (v1) signer prints as "Signer #1 certificate ..."; an APK without a v1 signature
+    // prints its v2, v3 and v3.1 signers as "V2 Signer: certificate ..." instead.
+    const dn = /^(?:Signer #(\d+)|(V\d(?:\.\d)?) Signer:) certificate DN:\s*(.+)$/.exec(line);
+    if (dn) signers.set(dn[1] ? `#${dn[1]}` : dn[2], { dn: dn[3].trim(), sha256: "" });
+    const sha =
+      /^(?:Signer #(\d+)|(V\d(?:\.\d)?) Signer:) certificate SHA-256 digest:\s*([0-9a-f]+)/i.exec(
+        line,
+      );
+    const signer = sha && signers.get(sha[1] ? `#${sha[1]}` : sha[2]);
+    if (signer && sha[3]) signer.sha256 = sha[3];
   }
+  // One certificate used by several schemes is one signer.
+  const seen = new Set();
+  const unique = [...signers.values()].filter((s) => {
+    const key = s.sha256 || s.dn;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   return {
     verifies: /^Verifies\s*$/m.test(String(text)),
     schemes,
-    signers: signers.filter(Boolean),
+    signers: unique,
   };
 }
 
