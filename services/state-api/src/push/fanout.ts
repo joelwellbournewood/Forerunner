@@ -17,7 +17,7 @@ import type { PushMessage, PushSender } from "./fcm.ts";
  *
  * Quiet hours are the human's own (`human.notify_prefs`, the rule of ADR 0017 via
  * `isQuietAt`): urgent kinds go through; the others are held in memory and sent when the window
- * ends (`flushHeld`, run on every poller tick). A token FCM reports dead (404 / UNREGISTERED)
+ * ends (`flushHeld`, run on every poller tick). A token FCM reports dead (404 with errorCode UNREGISTERED)
  * is cleared from the device with an audit row. Without a sender (no service account) nothing
  * is sent and `status()` says why: the app's change feed raises the same notices in-app.
  *

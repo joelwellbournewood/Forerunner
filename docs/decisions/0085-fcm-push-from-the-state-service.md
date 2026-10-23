@@ -54,7 +54,8 @@ configured.
    meanwhile (re-read at the flush). There is no push digest.
 5. **Retries and dead tokens.** 5xx, 429 and network errors are retried up to four attempts
    with doubling backoff from 0.5 s (capped at 30 s, `Retry-After` honoured); other 4xx fail
-   at once. A 404 or the `UNREGISTERED` error code clears the device's `push_token` (unless
+   at once. FCM's 404 with the `UNREGISTERED` error code clears the device's `push_token`
+   (a 404 without the code is a wrong URL or a proxy and only fails; unless
    the device registered a new one in between) and writes a `push.token_cleared` audit row.
    Failures are counted and the last one is shown in `/health`.
 6. **Token registration.** `POST /pairing/complete` keeps its optional `pushToken`;

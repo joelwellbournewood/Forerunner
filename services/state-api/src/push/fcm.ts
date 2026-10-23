@@ -115,7 +115,7 @@ export interface PushMessage {
 
 export type SendOutcome =
   | { status: "sent"; attempts: number }
-  /** The token is dead (404 / UNREGISTERED): the caller clears it from the device. */
+  /** The token is dead (FCM's 404 with errorCode UNREGISTERED): the caller clears it. */
   | { status: "unregistered"; attempts: number; reason: string }
   | { status: "failed"; attempts: number; reason: string; httpStatus: number | null };
 
@@ -230,7 +230,9 @@ export class FcmSender implements PushSender {
         const body = await res.json().catch(() => null);
         const { status, errorCode } = fcmErrorCode(body);
         const reason = clip(`fcm http ${res.status} ${errorCode ?? status ?? ""}`.trim());
-        if (res.status === 404 || errorCode === "UNREGISTERED") {
+        // FCM reports a dead token as 404 with the FcmError code UNREGISTERED. A 404 without
+        // it is a wrong API URL, path or proxy: a failure, never a reason to drop tokens.
+        if (errorCode === "UNREGISTERED") {
           return { status: "unregistered", attempts, reason };
         }
         if (res.status === 401 && !reauthorized) {

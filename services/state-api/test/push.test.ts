@@ -158,6 +158,29 @@ describe("FCM sender (HTTP v1, OAuth2 from the service account)", () => {
     expect(google.attempts.filter((a) => a.token === "dead")).toHaveLength(1);
   });
 
+  it("a 404 without FCM's UNREGISTERED code (wrong API URL, a proxy page) is a failure, not a dead token", async () => {
+    const s = sender();
+    google.script("tok-html", [{ status: 404, body: "<html>not found</html>" }]);
+    expect(await s.send("tok-html", message)).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      httpStatus: 404,
+    });
+    google.script("tok-bare", [{ status: 404, body: { error: { code: 404, status: "NOT_FOUND" } } }]);
+    expect(await s.send("tok-bare", message)).toMatchObject({ status: "failed", httpStatus: 404 });
+    // A sender pointed at the wrong path gets the fake's generic 404 for every token.
+    const misrouted = new FcmSender({
+      account: parseServiceAccount(google.serviceAccountJson),
+      clock: new SimulatedClock(START),
+      apiUrl: `${google.url}/wrong-prefix`,
+      sleep: async () => undefined,
+    });
+    expect(await misrouted.send("tok-any", message)).toMatchObject({
+      status: "failed",
+      httpStatus: 404,
+    });
+  });
+
   it("retries a 5xx from the token endpoint and re-mints once after a 401", async () => {
     const s = sender();
     google.failTokenRequests(1, 503);
@@ -483,6 +506,19 @@ describe("push fan-out from the state service (spec R.6)", () => {
     );
     expect(health.push.holding).toBe(0);
     expect(health.push.counters.expired).toBe(2);
+  });
+
+  it("a misrouted 404 keeps the device's token and is shown as a failure", async () => {
+    const phone = await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
+    h.google.script(PHONE_TOKEN, [{ status: 404, body: "<html>not found</html>" }]);
+    await h.store.humanRequest.insert({ human_id: h.seed.ada.id, kind: "decision", why: "x" });
+    await h.tick();
+    expect((await h.store.device.get(phone.deviceId))?.push_token).toBe(PHONE_TOKEN);
+    expect(await h.store.auditLog.list({ tool: AUDIT_TOOL_TOKEN_CLEARED })).toHaveLength(0);
+    expect(h.api.push.status()).toMatchObject({
+      counters: { invalidated: 0, failed: 1 },
+      lastError: "fcm http 404",
+    });
   });
 
   it("an UNREGISTERED token is cleared from the device with an audit row; a refreshed token is kept", async () => {
