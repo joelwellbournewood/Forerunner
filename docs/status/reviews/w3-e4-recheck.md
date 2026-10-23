@@ -178,3 +178,78 @@ The integration step can squash or reword the two older commits when it merges t
   carry-over above does not rely on it (it picks the latest session with `ended_at`). Worth a
   separate item with a failing test.
 - The Postgres integration file of the runtime package was not run (no Postgres here).
+
+## Review
+
+Stage REVIEW AND FIX, reviewer: independent (managed agent), 2026-10-23. Starting commit
+4742e03 on `wave/w3-e4-recheck`; base `origin/ccr-4d8a843c-1k9syk` at f1948dd.
+
+**Verdict: revise. Score: 72/100.** The core of the brief is built and proven: the end
+re-check runs before every step-4 write, a `requires_ack` stop sent during the last task is
+read (and acted on) before the summary cache, the peers' handoff and the human note are written,
+and the handoff names it. Three behaviours around it are wrong on realistic paths (findings 1–3),
+and the status rows still say the item is unreviewed (finding 4).
+
+### Requirements checked
+
+- [x] Spec E.4 "inbox re-checked ... before any write to shared state": `recheckInbox(..., { atEnd: true })`
+  is the first statement of step 4 in `runner.ts`, before the status doc, memory, promotions,
+  the summary cache, the handoffs, the human note and the session record.
+- [x] Brief: a `requires_ack` stop sent during the last task is read before the handoff and the
+  summary cache are written, `read_at` set — `closeout-sessions.test.ts` test 1 records `read_at`
+  at the moment of each write (spies on `project.patch` and `message.send`); with the re-check
+  removed the test fails (`read_at` null).
+- [x] A stop read there ends the session `stopped` / `stopped_by_message` with a handoff naming
+  it and saying what was and was not written — partly: the written/not-written lists omit
+  writes (finding 3).
+- [x] A pause defers nothing and is acknowledged — but the row is left `paused` when the
+  session ends `failed` (finding 1).
+- [x] An ordinary message is delivered and read (`read_at`) and summarised in the handoff —
+  test 2; the carry-over into the next brief is lost on one path (finding 2).
+- [x] Task states consistent (both `done`, unclaimed) — test 1.
+- [x] The step-4 writes stay where they were (no reordering beyond the re-check).
+- [x] Privacy: `end_inbox` carries ids, types, senders and kinds, never message bodies
+  (test 1 asserts the words are absent); no secret or body reaches peers.
+- [x] Docs: runtime.md section matches the code except as noted in findings 1–3; requirements
+  E.4 `done`.
+- [x] Base branch: a trial merge of `origin/ccr-4d8a843c-1k9syk` (f1948dd) into the branch in a
+  throwaway worktree has one textual conflict in `runner.ts` (the base's `summarizeMerges` and
+  this item's `summarizeEndInbox` / `endWritesAccount` added at the same spot; keeping both
+  resolves it) and no semantic conflict: the runtime unit suite on the merged tree passes
+  (117 files, 1043 passed, 1 skipped). The base's J.9 merge step runs inside the task loop,
+  before the end re-check, so it is not an after-stop write.
+
+### Findings
+
+1. **medium** — `packages/runtime/src/session/runner.ts:1330` (final `setStatus`). A pause that
+   lands while the session is running marks the row `paused` (pause port); when that session
+   then ends `failed` (e.g. the planner throws), the end re-check reads the pause, but
+   `setStatus(paused -> failed)` is not a legal move (`workflow.ts`: `paused: [running,
+   stopped, killed]`), the error is swallowed, and the row stays `paused` with `ended_at` set.
+   `session.active` counts `paused`, so the agent's next session is refused with
+   `claim_conflict` forever. runtime.md and session-ports.ts say the row "leaves `paused`".
+   Verified with a throwaway test (pause port called from the planner, planner throws): the
+   row read `paused`, the handoff named the pause, and the next `start` threw `claim_conflict`.
+   Needed: the final status is reached from `paused` (through `running` when the move is not
+   direct), with a test.
+2. **medium** — `packages/runtime/src/session/checklist.ts:43` (`carriedFromLastEnd`). An
+   ordinary message read by the end re-check is marked read and carried into the next brief
+   only from the handoff of the *last ended* session. When the next session ends before its
+   startup receipts (the peer feed or another startup step throws, the kill switch during
+   startup, a checklist error), that session's handoff has no `end_inbox`, so the session
+   after it carries nothing: the message stays read, never acted on and never in any brief —
+   lost. Before this branch an unread message survived such a session. Verified with a
+   throwaway test (session N reads an `info` at its end, session N+1 fails in `peersOf`,
+   session N+2's brief does not contain the message, `acted_at` null). Needed: a session that
+   did not take its inbox in passes the carry on, with a test.
+3. **low** — `packages/runtime/src/session/runner.ts:1169` and `endWritesAccount` (≈1820).
+   `after_stop` claims to say what was and was not written after the stop was read, but the
+   memory record (lessons into the agent's memory, the rejected-lessons warning to the human)
+   and the cross-project promotion reviews (shared store, offers to other projects) run after
+   the re-check and appear in neither list. Verified by reading step 4 (memory at ≈1186,
+   promotions at ≈1262, both after the re-check at 1055 and after `after_stop` is computed at
+   1169). Needed: both entries in the account, computed after those writes, with a test that
+   records a lesson after an end-of-session stop.
+4. **low** — `docs/status/BLOCKERS.md` E.4 row and `docs/status/PROGRESS.md` (2026-10-23 entry)
+   say "builder-verified, no independent review yet"; after this review they must name it and
+   its outcome.
