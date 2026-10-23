@@ -361,8 +361,8 @@ function FastModeCard({
     >
       <h2 className="font-semibold">Opus fast mode</h2>
       <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-        For urgent work. Off by default. Only API-key runs go fast; a subscription ignores the
-        flag (API only) and every ignored run is noted in the audit log.
+        For urgent work. Off by default. Only API-key runs go fast; a subscription ignores the flag
+        (API only) and every ignored run is noted in the audit log.
       </p>
       <p className="mt-1 text-sm" data-testid="fast-mode-effect">
         {description}

@@ -1,6 +1,6 @@
 import {
-  BUILTIN_PRICING,
   type BillingSource,
+  BUILTIN_PRICING,
   costOf,
   estimateUsdMicro,
   mergePricing,
@@ -33,7 +33,14 @@ import type {
 import type { TaskBillingPick } from "../src/session/billing.ts";
 import { LoopTaskExecutor, type SpecialistSpec } from "../src/session/executor.ts";
 import { pricingFor } from "../src/wiring/billing-ports.ts";
-import { flatPricing, type Harness, harness, issue, registry, ScriptedProvider } from "./helpers.ts";
+import {
+  flatPricing,
+  type Harness,
+  harness,
+  issue,
+  registry,
+  ScriptedProvider,
+} from "./helpers.ts";
 
 /**
  * Opus fast mode per project (spec D.20, ADR 0057). With the project's `fast_mode` setting on,
@@ -102,7 +109,12 @@ interface Outcome {
   store: StateStore;
   provider: FastCapableProvider;
   events: RunEvent[];
-  run: { model: string; provider: string; cost_usd_micro: number; billing_source_id: string | null };
+  run: {
+    model: string;
+    provider: string;
+    cost_usd_micro: number;
+    billing_source_id: string | null;
+  };
   audit: { tool: string; input_summary: string; result_summary: string; allowed: boolean }[];
   sdkCalls: number;
 }
@@ -263,7 +275,10 @@ describe("Opus fast mode per project (D.20)", () => {
     const start = o.events.find((e) => e.type === "model_call_start");
     const est = start && start.type === "model_call_start" ? start.estimateUsdMicro : 0;
     // The estimate is the input count at 24 USD/MTok plus the 4096-token output ceiling at 120.
-    const ceiling = estimateUsdMicro({ inputTokens: 0, maxOutputTokens: 4096 }, "claude-opus-5-5-fast");
+    const ceiling = estimateUsdMicro(
+      { inputTokens: 0, maxOutputTokens: 4096 },
+      "claude-opus-5-5-fast",
+    );
     expect(ceiling).toBe(4096 * 120);
     expect(est).toBeGreaterThan(ceiling);
     expect((est - ceiling) % 24).toBe(0);
@@ -274,7 +289,9 @@ describe("Opus fast mode per project (D.20)", () => {
     // One audit row says what happened, with the variant and the source.
     expect(o.audit).toHaveLength(1);
     expect(o.audit[0]?.allowed).toBe(true);
-    expect(o.audit[0]?.result_summary).toMatch(/^applied: claude-opus-5-5 requested with speed fast/);
+    expect(o.audit[0]?.result_summary).toMatch(
+      /^applied: claude-opus-5-5 requested with speed fast/,
+    );
     expect(JSON.parse(o.audit[0]?.input_summary ?? "{}")).toMatchObject({
       model: "claude-opus-5-5",
       variant: "claude-opus-5-5-fast",

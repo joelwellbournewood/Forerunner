@@ -90,6 +90,22 @@ half-up once; an unknown model throws `ForerunnerError("validation")`, never a s
 `estimateUsdMicro` is the conservative pre-run estimate (full input plus `max_tokens` at output
 price). `cacheSavingsUsdMicro` values cache reads at the full input price.
 
+**Fast mode rows (spec D.20, ADR 0057):** Opus fast mode is the same model requested with
+the provider's speed parameter, priced apart under its own row named for the variant:
+`<canonical base id>-fast` (`FAST_MODE_SUFFIX`). `claude-opus-4-6-fast` is the published
+research-preview list price (30 / 150, six times 5 / 25, cache multipliers on top);
+`claude-opus-5-5-fast` applies that 6x to every price of the `claude-opus-5-5` row (24 / 120,
+cache reads 1.2, writes 30) and is `source: "assumed"` until the model watch confirms it. Every
+fast row's notes carry `FAST_MODE_RATE_NOTE` ("research-preview rate"). The helpers name the
+variant: `fastModeVariantId(id)` (a variant stays itself), `fastModeBaseId(id)` (null for a
+standard id), `isFastModeVariant(id)`; `canonicalModelId` keeps the suffix, so the variant is a
+row of its own and never a spelling of the base. `fastModeBillable(kind)` is the API-only rule:
+true for `api_key` and `fake` (which bills like the API), false for `subscription` and
+`plan_credits`. Because the runtime records the variant as the run's model, the ledger rows,
+`allocation().byModel`, the cost views and `estimateUsdMicro` show and price it apart with no
+special case here; an override in `pricing.json` corrects the variant without touching the
+standard row.
+
 **Overrides without a release:** `loadPricing()` merges `<appDirs().config>/pricing.json`
 (`FORERUNNER_HOME` honoured) over the built-in table. A known model may be partially
 overridden (the row is then marked `source: "override"`); a new model needs all four prices and
@@ -210,6 +226,10 @@ max(estimate, 1)` clamped to [-1, 10]. `errorStats(specialist, taskType?)` gives
 - **New source kind:** extend `BillingSourceKind`, `ledgerKindFor`, the schema in
   `src/sources.ts` and every `preference` list; the state package's `BILLING_KINDS` and
   `COST_KINDS` must agree.
+- **A fast-mode variant for another model:** add a `<base>-fast` row next to the base row
+  (the runtime applies fast mode only to an Opus id whose variant has a row, so a missing row
+  leaves runs standard with an audit row rather than unpriced) and extend
+  `test/fast-mode-pricing.test.ts`.
 - **Thresholds:** `FINISH_CURRENT_AT`, `STOP_AT`, `DEFAULT_RESERVE_SHARE`, the reserve range
   and `DEFAULT_PLAN_SHARE_CAP` are constants; `CapChecker` accepts per-instance thresholds.
 - **Another currency:** `money.ts` is currency-agnostic; `rates.ts` would need a second pair
@@ -217,7 +237,11 @@ max(estimate, 1)` clamped to [-1, 10]. `errorStats(specialist, taskType?)` gives
 
 ## Tests
 
-`pnpm vitest run --project unit packages/billing` (8 files, 77 tests, no network): money
+`pnpm exec vitest run --project unit packages/billing/test` (10 files, 92 tests, no network):
+`fast-mode-pricing.test.ts` pins the fast rows (the 6x research-preview rate, the 4.6 list
+anchor, the variant naming, costs and estimates at the variant's rate, an override of the
+variant alone, the API-only rule, the ledger and `allocation().byModel` listing the variant
+apart); money
 rounding and formatting; rate fetch, cache, fallback and default flag with an injected fetch;
 pricing math including cache tokens, unknown model, id normalisation and overrides; source
 validation and the credential-shaped `credentialRef` rejection; every routing rule and the
@@ -236,6 +260,10 @@ defaults. All time comes from `SimulatedClock`. The runtime's `views.test.ts` an
   `LedgerEntry` are kept for the in-memory sink and are not written by the state adapter.
 - Haiku 5.5's second price tier above 100K prompt tokens is not modelled; costs there are
   under-estimated by up to 5x until a tiered price row exists.
+- `claude-opus-5-5-fast` is derived from the multiplier published for Opus 4.6 fast mode, not
+  read off a 5.5 price list (`source: "assumed"`); the fast-mode rate is a research preview and
+  may change or end. A price list that names `claude-opus-5-5-fast` reprices the row through
+  the model watch (`diffPrices`).
 - 5.5-generation prices were taken from the provider reference cached on 2026-10-06. The model
   watch must confirm them weekly; `as_of` says when a row was last confirmed.
 - The live `BillingSourceProbe` (plan usage from the subscription, spend from the Console) is

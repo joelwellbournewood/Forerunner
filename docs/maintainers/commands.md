@@ -70,7 +70,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `session.stop` | session / global | low | no | ports.kill or a `remote_command` row |
 | `session.pause` | session | low | yes (resume) | ports or `session.status` |
 | `capability.grant` | global | high | yes | `extension.permissions`, `enabled` |
-| `settings.set` | by key | by key (`SETTING_SPECS`) | yes | project settings/columns or human prefs/columns; a key with an `effect` (`small_project_mode`, spec B.6) says what changes in the card's new value and the sentence, both ways |
+| `settings.set` | by key | by key (`SETTING_SPECS`) | yes | project settings/columns or human prefs/columns; a key with an `effect` (`small_project_mode`, spec B.6; `fast_mode`, spec D.20) says what changes in the card's new value and the sentence, both ways |
 | `note.add` | project | low | yes (dismiss) | `queue_item` |
 | `request.answer` | project | the request's own risk | no | `human_request.answer` |
 | `email.mode.set` | global | high | yes | `extension` kind `capability`, name `email:<agentId>`, `config.settings.mode` |
@@ -251,7 +251,13 @@ for it goes into `IntentParser.matchClause`.
 label, scope, risk, zod schema, optional column, and an optional `effect(value)` when the key's
 name alone does not say what changes: it is appended to the card's new value and to the
 sentence as "Set X from a to b: <effect>. Undo.", as `small_project_mode` does with
-`SMALL_PROJECT_MODE_EFFECT`; `test/small-project.test.ts`). `settings.set` refuses unknown keys
+`SMALL_PROJECT_MODE_EFFECT`; `test/small-project.test.ts`). `fast_mode` (spec D.20, ADR 0057:
+Opus fast mode per project; project scope, boolean, medium risk because it raises what every
+Opus call of the project costs) takes its effect from the runtime's `fastModeEffect` (imported
+from `@forerunner/runtime/models/fast-mode`, not the package index, which imports this package
+back): on, the fast-mode rate against the standard one and "a subscription ignores it (API
+only)"; off, back to the standard rate and the surcharge stopping (`test/fast-mode.test.ts`).
+The runtime reads the flag per run (`runtime.md`, "Opus fast mode per project"). `settings.set` refuses unknown keys
 (`settingSpec` looks at own keys only, so `constructor` or `__proto__` are unknown settings,
 not prototype lookups), so the UI and the parser can only reach what is listed.
 
@@ -288,12 +294,17 @@ settings), `intent.test.ts` (the two spec sentences, thirty English and German p
 ambiguity questions, budget tails that are not a time, invalid values as a question, the
 envelope refusal, the model port, time parsing with `rest`), and `scenario.test.ts` (the
 Android scenario end to end and the phase 5 gate: ui, chat and voice produce the same change
-log entry).
+log entry), and `fast-mode.test.ts` (spec D.20: the `fast_mode` spec, its card and the change
+log sentences with the effect and the surcharge both ways, the yes a medium-risk change needs,
+the flag written on one project only).
 
-Run: `pnpm vitest run --project unit packages/commands/test` (122 tests).
+Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 132 tests).
 
 ## Known issues
 
+- The `fast_mode` effect sentence is priced from the built-in price table: `SettingSpec.effect`
+  takes only the value, so an override of an Opus or fast-mode row in `<config>/pricing.json`
+  is not reflected in the card (the daemon's Settings row description is). ADR 0057.
 - The closure of a pending confirmation lives in memory: a restart drops open confirmations
   (their `human_request` rows stay open until they expire, and the human asks again). Reverts
   and undo survive a restart through the change log.

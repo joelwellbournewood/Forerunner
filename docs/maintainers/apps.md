@@ -158,6 +158,17 @@ spec Q.4 card (what, old → new, scope, duration, impact, undo hint, the parts 
 the daemon's `card` through `parseChangeCard` (lenient: unknown fields kept, missing ones
 defaulted).
 
+The Opus fast mode card (spec D.20, ADR 0057) sits above "All settings" when the daemon lists
+`project.fast_mode` rows (`fastModeRows`): the row's description is shown as written (what the
+flag is, then "On: ..." and "Off: ..." with the two rates and the surcharge factor, priced by
+the daemon from the table in force; the UI computes no price), then one line per project with
+its name from the store's project cards, an on/off badge and a Turn on / Turn off button.
+The button opens the same setting dialog with the other value prefilled (`fastModeToggle`, the
+`settings.set` command of `commandForSetting` with a flipped `initial`), so the change card
+the daemon returns carries the effect and the surcharge of the direction asked; medium risk,
+so it needs a tap. Without the rows (an older daemon) there is no card. `fast_mode` is in
+`SETTING_KEYS`, so the row in "All settings" opens the same command.
+
 ### Realtime and streaming
 
 `subscribeDaemonEvents(client, humanId, handlers)` and `subscribeSessionEvents(client,
@@ -245,7 +256,12 @@ into `pending_approval`, and emit `extension.changed`; `POST /updates/apply` emi
 `restart.requested` and bumps the version `/health` reports; the command routes mirror the
 daemon (one card and one change log row per request, low risk acts, medium needs a yes or a
 tap, high needs `{ answer: "device" }`, `confirm: "tap"` runs a medium change at once, the
-`SOURCE_OF` mapping `text → chat`, `voice → voice`, `phone → chat`, `ui → ui`, undo rows). Run directly
+`SOURCE_OF` mapping `text → chat`, `voice → voice`, `phone → chat`, `ui → ui`, undo rows).
+`state.fastMode` (project id → flag, empty by default so the fixtures' row counts stay) adds
+one `project.fast_mode` row per listed project to `/settings` with the runtime's
+`fastModeDescription()`, and `settings.set` with `fast_mode` answers the daemon's card (what
+"Opus fast mode for <project>", the new value with `fastModeEffect(value)`, the sentence) and
+flips the flag on apply. Run directly
 (`pnpm exec tsx test/fake-daemon.ts`) it reads `FAKE_DAEMON_PORT`, `FAKE_DAEMON_TOKEN` and
 `FAKE_DAEMON_EVENT_DELAY_MS`.
 
@@ -322,6 +338,10 @@ list with the one milestone from the route or, without it, the card, milestones 
 the mode named, a small project without a milestone yet, the grouped tab unchanged with the
 flag off; the dialog's "project default (tier N)" option from the card, no `riskTier` in the
 posted body unless picked and the picked one sent, a card without the field naming no number),
+`fast-mode` (D.20: the Settings card with the effect and the surcharge both ways and each
+project's state, no card without the rows, Turn on through the change card with the on effect,
+a yes and the sentence, Turn off with the off effect, the row mapped to `settings.set` with a
+boolean),
 `reviews` (tones, trend, newest first,
 findings, verdict filter, missing route), `tasks`, `session`, `inbox` (sorting, options,
 free text, reload on a streamed count, mark read; an intake proposal rendered as the plan card
@@ -383,6 +403,8 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
 
 ## Known issues
 
+- The fast-mode card names projects from the store's project cards; a project the daemon
+  lists in `/settings` but not in `/projects` (archived) shows its id.
 - The UI has so far only been run against the fake daemon. The first run against the real
   one should confirm the shapes end to end and goes into `docs/status/gates.md`.
 - The real daemon registers no `notFound` handler (`packages/runtime/src/daemon/server.ts`),

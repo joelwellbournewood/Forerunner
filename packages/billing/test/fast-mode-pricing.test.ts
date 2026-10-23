@@ -116,7 +116,12 @@ describe("fast-mode price rows (D.20)", () => {
   it("the ledger records the variant under its own model and the allocation lists it apart", async () => {
     const clock = new SimulatedClock("2026-10-23T10:00:00.000Z");
     const mem = new InMemoryLedger(clock);
-    const ledger = new CostLedger({ sink: mem, query: mem, rates: new FixedRateSource(0.8), clock });
+    const ledger = new CostLedger({
+      sink: mem,
+      query: mem,
+      rates: new FixedRateSource(0.8),
+      clock,
+    });
     const source = makeBillingSource({ id: "alice-api", kind: "api_key", humanId: "alice" });
     const scope = { humanId: "alice", projectId: "p1", sessionId: "s1" };
     const std = await ledger.record({

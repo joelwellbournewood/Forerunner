@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import type {
   ChangeLogView,
   ChatReplyView,
@@ -45,6 +44,7 @@ import {
   csvLine,
   jsonlLine,
 } from "@forerunner/runtime/daemon/audit-export";
+import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import { serve } from "@hono/node-server";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";

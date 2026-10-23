@@ -235,6 +235,37 @@ with), `RuntimeApp.billing` exposes `sources()`, `pick`, the SDK driver and `hos
 `test/subscription-path.test.ts` (the path, the seeding, the fake row withheld, the setup
 questions and the allowance), `test/executor.test.ts` (the redacted error artifact).
 
+**Opus fast mode per project (`src/models/fast-mode.ts`; spec D.20, [ADR 0057](../decisions/0057-opus-fast-mode.md)).**
+A project's `settings.fast_mode` (off by default; `settings.set` key `fast_mode`, medium risk)
+routes every Opus rung of the project's specialist runs to the fast-mode variant. After the
+billing pick and the rung's model id, the executor calls `decideFastMode` with the flag
+(`fastModeOf`: a literal `true` only), the tier, the model, the driver, the picked source's
+kind (null without a billing port: the composition's one API-style source), the provider and
+the price table in force (`LoopTaskExecutorDeps.pricingTable`, default the built-ins). The
+result is `off` (flag off or a rung below or above Opus: nothing changes, nothing is written),
+`applied`, or `ignored` with a reason, in this order: a `subscription` or `plan_credits` source
+(`fastModeBillable`, "API only"), the Agent SDK path (no speed parameter), a provider whose
+`fastMode` is not `true` (the fake provider), and an Opus id whose `<id>-fast` price row is
+missing (a run is never priced from a guess). Applied: the loop driver gets `speed: "fast"`
+(`RunRequest.speed`), every call carries `ModelRequest.speed` on the unchanged model id
+(`claude-opus-5-5`), and the run's records name the variant `claude-opus-5-5-fast`: the Run
+row's `model`, the hooks' `RunContext.model` (so every ledger row), the `run_start` event; the
+run is priced from the variant's row (`pricingFor(variant)`, so the per-call estimate before
+each call and the actual both read the variant's rate). Applied or ignored, the executor writes
+one audit row `model.fast_mode` (`FAST_MODE_AUDIT_TOOL`; task, project, run, tier, model, the
+variant when applied, source, kind and driver in `input_summary`; `result_summary` "applied:
+... requested with speed fast, recorded and priced as ..." or "ignored (API only): a
+subscription source runs Opus at the standard speed" / "ignored: <reason>"), and an ignored
+decision is also a `warning` event on the session log. `tierOfModel` reads a variant as its
+base model's rung, so the critic's retry ladder (`tierOfRun`) escalates from Opus, not from
+the default rung. The daemon passes `pricingFor` (every loop run priced at the model its
+records name, from the table in force: its own rung, or the variant; before this every loop run
+was priced at the sonnet rung) and `pricingTable`, and lists `project.fast_mode` per project in
+`GET /settings` with `fastModeDescription(table in force)`: what the flag is and its effect
+both ways with the two rates (`fastModeEffect(on)`, the same text the change card and the
+change log sentence carry). Critic reviews, the conversation agent, intake planning and model
+watch evals do not read the flag (ADR 0057). Tests: `test/fast-mode.test.ts`.
+
 ### Context layer (`src/context/`, ADR 0003)
 
 Requirements covered: N.1 (compression proxy, toggle per project, savings measured), N.2
@@ -1606,7 +1637,10 @@ every new specialist goes through review. The composition root turns registry en
 
 Ladder haiku → sonnet → opus → fable, ceiling opus by default; mode defaults and response
 targets from spec table D; effort offset from the project slider; retry ladder
-(improve brief → split/change specialist → escalate under ceiling → human).
+(improve brief → split/change specialist → escalate under ceiling → human). `tierOfModel`
+also places a fast-mode variant id (`claude-opus-5-5-fast`) on its base model's rung; the
+per-project fast mode itself is in `src/models/fast-mode.ts` (see "Opus fast mode per project"
+under Drivers, ADR 0057).
 
 ### Briefs (`src/brief.ts`)
 
@@ -1630,6 +1664,23 @@ the human; it is never acted on.
 - New driver or provider: implement `ModelProvider` (see `adding-a-provider.md`).
 
 ## Tests
+
+`fast-mode.test.ts` (spec D.20, ADR 0057; `sqlite::memory:`, a stub provider named
+`anthropic` with `fastMode`, a stub billing port, a fake Agent SDK `query`): flag on, the Opus
+call carries `speed: "fast"` on `claude-opus-5-5`, the Run row and the one ledger row name
+`claude-opus-5-5-fast` at six times the standard cost, the estimate before the call is at the
+variant's rate, `run_start` names the variant and one `model.fast_mode` row says applied; flag
+off (unset or `false`): no speed, the standard model and price, no audit row; a sonnet-rung run
+with the flag on: unchanged; a subscription: the SDK path at the standard model with a
+"subscription" ledger row, the audit row "ignored (API only)" and a warning event; plan credits:
+ignored as API only on the loop path; no billing port: applied; a table without the variant
+row: ignored with the reason. The pure decision (applied, off, ignored for a provider without
+fast mode and for the SDK path), `fastModeOf`, the effect sentence both ways from the table in
+force (a corrected variant row changes the rates and the factor), `tierOfModel` on a variant,
+the model watch's `diffPrices` repricing the variant's own row, and the Anthropic adapter's wire
+form (an injected fetch: `speed: "fast"` and `anthropic-beta: fast-mode-2026-02-01` with the
+field, neither without). `daemon.test.ts` checks the `project.fast_mode` row of `GET /settings`
+(off by default, medium risk, both effects with the rates, `true` after the setting changes).
 
 `closeout-autonomy.test.ts`, `plan-approval.test.ts` and `plan-approval-daemon.test.ts` (spec
 J.6, J.7; ADR 0053): the runner files the plan of a level 0 or 1 session as a blocking request
@@ -2058,6 +2109,14 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 ## Known issues
 
+- Fast mode (ADR 0057): the adapter does not read the response's `usage.speed`, so a fast
+  request the API served at the standard speed would still be recorded and priced as the
+  variant (an over-statement, never an under-statement). The change card's effect sentence is
+  priced from the built-in table (`SettingSpec.effect` has no access to the overrides), while the
+  Settings row's description uses the table in force; the two differ only after an override of
+  an Opus or fast row. Critic reviews on Opus (tier 2 and 3) stay at the standard speed: the
+  critic runs on the composition's single billing source with no per-task pick, and its job is
+  independent quality, not urgency.
 - B.5 history: a milestone or session row holds the reason and author of its *last* change
   (as a task row does); the full before -> after trail is the audit log's `milestone.change`
   rows (daemon route) and `project.plan` rows (the plan writer's join), and for a session plan

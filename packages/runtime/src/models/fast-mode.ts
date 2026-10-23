@@ -15,8 +15,8 @@
  * offer it, and an Opus id with no fast-mode price row (a run is never priced from a guess).
  */
 import {
-  BUILTIN_PRICING,
   type BillingSourceKind,
+  BUILTIN_PRICING,
   fastModeBillable,
   fastModeVariantId,
   type PricingTable,

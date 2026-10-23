@@ -159,9 +159,9 @@ describe("local daemon", () => {
       settings: { ...(await rt.store.project.mustGet(projectId)).settings, fast_mode: true },
     });
     const after = await jsonList(await req("/settings"));
-    expect(
-      after.find((s) => s.key === "project.fast_mode" && s.scopeId === projectId)?.value,
-    ).toBe(true);
+    expect(after.find((s) => s.key === "project.fast_mode" && s.scopeId === projectId)?.value).toBe(
+      true,
+    );
     await rt.store.project.update(projectId, (await rt.store.project.mustGet(projectId)).version, {
       settings: { ...(await rt.store.project.mustGet(projectId)).settings, fast_mode: false },
     });

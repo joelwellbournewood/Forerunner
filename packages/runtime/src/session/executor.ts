@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { BUILTIN_PRICING, type BillingSource, type PricingTable } from "@forerunner/billing";
+import { type BillingSource, BUILTIN_PRICING, type PricingTable } from "@forerunner/billing";
 import {
   type Clock,
   errorMessage,
