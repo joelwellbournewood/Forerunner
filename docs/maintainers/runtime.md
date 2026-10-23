@@ -379,6 +379,46 @@ carries `smallProjectMode` and `defaultRiskTier` so the UI computes neither. Not
 helper: the email command's task insert in `packages/capabilities` names tier 1 literally
 (`BLOCKERS.md`). Tests: `small-project.test.ts`. Requirement: B.6.
 
+**PM intake (spec A.2, ADR 0055).** `src/session/intake.ts` turns the brief into one proposal
+and writes nothing until the human approves it. `IntakeService.propose(projectId, { brief? })`
+makes one model call on the planning rung (the `planning` mode's tier and effort from the
+tables in force; the registry's `project-manager` prompt plus an intake section; no tools,
+`maxTurns` 1; `DEFAULT_INTAKE_BUDGET_USD_MICRO` or `project.settings.intake_budget_usd_micro`;
+`INTAKE_TIMEOUT_MS`) through the loop driver and the hooks on a session row of its own
+(`summary: "intake: <project>"`, `planned -> running -> completed | failed`), so the call is
+budgeted, billed to the project and audited like any other. The reply must be one JSON object
+(`parseIntakeReply`, `IntakeProposalBody`): `plan` in `ProjectPlanBody`'s shape, `docs` as a
+map of allowlisted paths (`INTAKE_DOC_PATHS`, the standard doc set, plus
+`docs/decisions/0001-<slug>.md`) to markdown, `firstSession` as plan task keys with
+estimates; unknown keys, a doc outside the set, a dependency that is not a plan key, a
+first-session item naming no task or a plan that does not shape (`shapeProjectPlan`) are
+refused with `validation` and nothing is filed. The brief goes to the model whole up to
+`MAX_BRIEF_CHARS`, between markers and named as data. The proposal is filed as one blocking
+approval request (kind `approval`, options `approve` / `reject`, `change_card.key`
+`intake:<project id>`, the whole proposal on the card with the model, the cost and where the
+docs will go) with one `project.intake` audit row; an open intake request for the project is
+reused without a call. `syncAnswers`, run from `RuntimeApp.syncApprovals`, applies the answer
+once: approve writes the milestones and tasks through `applyProjectPlan` (its `keyed` map
+turns the first-session keys into task ids), the items' estimates onto the task rows, the
+first-session plan onto `summary_cache.first_session` and `next_steps` and into the queue as
+one `task` item at priority 9, and marks the card applied, all in one transaction with one
+audit row; then the docs: with a repository (`repoRefOf(repos[0])`, `owner/name` or a URL) the
+executor's branch-and-PR flow (`GitOps` clone or fetch into `<worktrees>/intake/<project>`,
+branch `fr/intake-<id>-docs`, push, `createPullRequest` or a comment on the open one), else
+the project's workspace `<data>/projects/<id>/workspace` (`workspaceDir`); a drafted doc is
+written only where no file exists (`kept` otherwise) and `scaffoldDocs` fills the standard
+docs the model left out; a pull request that fails falls back to the workspace with
+`repo_error` on the card, and a docs failure after the rows is recorded on the card
+(`docs.error`) and logged. Reject writes a queue note only. An answer by anyone but the
+request's human is refused (`wrong_human`), as are an unreadable answer, a missing project
+and a card that no longer parses, each recorded on the card with an audit row. Triggers:
+`POST /projects/:id/intake` (202 `IntakeProposalView`), `GET /projects/:id/intake`
+(`IntakeStatusView`: the latest request, its outcome, where the docs went, or why a
+background run failed), and `POST /projects` with `intake: true` (`enqueue`: the proposal is
+drafted in the background, the card answers at once, a failure lands on
+`summary_cache.intake`); the flag is off by default so nothing creates a model call unasked.
+Tests: `intake.test.ts`. Requirement: A.2.
+
 **The next-session queue (spec J.2).** The checklist reads the project's `queued` items
 (`store.queue.pending`, priority first) into `brief.queue.items` with each row's `id` and
 `version`; the renderer prints kind, priority and text only. Right after the `session.brief`
@@ -676,7 +716,7 @@ already:
 | Updates (`src/update`, spec M) | `composeUpdateManager({ store, dirs, clock, humanId, runningVersion, restarter })` over the daemon's own store (the `store` option was added for this; the CLI leaves it out and opens one). A malformed `update.json` is logged and ignored. | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback` with `RegistryConnectorCatalog` (connector versions from the extension catalog) and `ModelWatchUpdates` (the latest report as new models, deprecations, price changes and recommendations). `fr daemon` runs `updates.healthCheck()` once the server listens. |
 
 `syncApprovals()` (extension grants, model watch decisions, memory consolidations, the
-blocked-findings answers and the critic sign-off answers) runs at compose and after every
+blocked-findings answers, the critic sign-off answers and the intake answers) runs at compose and after every
 `POST /requests/:id/answer`, so an answer in the inbox takes effect at once, and on the
 approvals poll (`ComposeOptions.approvalsPollMs`, `FORERUNNER_APPROVALS_POLL_MS`,
 `DEFAULT_APPROVALS_POLL_MS` = 5 s): an answer given on the phone or in the web approvals
@@ -1167,6 +1207,24 @@ the human; it is never acted on.
 
 ## Tests
 
+`intake.test.ts` (spec A.2, ADR 0055, through `composeRuntime` and the daemon routes on the
+fake provider, an in-memory git host over a bare repository): the proposal filed as one
+blocking request with the whole proposal on the card, one planning-rung call at high effort
+with the brief as data, nothing written before the answer (no rows, no docs, the brief note
+alone in the queue, the call billed through a completed intake session and audited); a second
+trigger reusing the open request without a call; the approving answer through
+`POST /requests/:id/answer` writing the milestones and tasks (dependencies as ids, tiers,
+author, reason, estimates), the drafted docs and the scaffolded gaps in the workspace, the
+first-session plan on the summary cache and in the queue, the card applied once and a second
+sync writing nothing; reject writing nothing but a queue note; a prose reply, a doc outside the
+set, a task without an outcome, a first-session item naming no task and a dependency on an
+unknown key refused as 409 with no request and the failed calls' sessions closed `failed`;
+`parseIntakeReply` on bare and fenced JSON; another human's answer skipped as `wrong_human`
+with nothing written; with a repository the docs pushed as a pull request on
+`fr/intake-<id>-docs` with the existing README kept; `POST /projects` with `intake: true`
+running the intake in the background and without the flag running nothing; a failed background
+intake recorded on the status route; no provider refused as `unavailable`.
+
 `small-project.test.ts` (spec B.6, ADR 0051): `defaultRiskTier` by flag; `shapeProjectPlan`
 with the flag on (one milestone named after the project, the phases' criteria once each, the
 latest date, every task under it in plan order, tier 0 unless named; a single planned milestone
@@ -1388,6 +1446,14 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 ## Known issues
 
+- Intake (ADR 0055): the intake session row is `running` while the planning call is in flight
+  and a daemon that dies mid-call leaves it so until a human closes it (the runner's own
+  residual). The first session plans with `StaticPlanner` (ready tasks by priority): the
+  approved first-session plan reaches it as the queue item in the brief and as the tasks'
+  estimates, not as an order it enforces. The pull-request path needs `git` on the PATH and a
+  host token (`secret:github_token`); without them the docs fall back to the workspace with
+  `repo_error` on the card. The intake re-run for a project whose proposal was rejected makes
+  a new call with the same brief (pass `brief` to `POST /projects/:id/intake` to change it).
 - A level 0 or 1 session that files its plan ends `paused`, which `session.active()` counts as
   active, so the agent cannot start again until a human closes it; the `plan:<session>` approval
   starts nothing on the desktop daemon (BLOCKERS.md, the J.6 / J.7 row).

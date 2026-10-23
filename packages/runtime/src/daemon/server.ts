@@ -52,6 +52,9 @@ import {
   type DecisionView,
   type EventView,
   type HealthView,
+  type IntakeProposalView,
+  IntakeRequestBody,
+  type IntakeStatusView,
   KillBody,
   type MemoryScopeView,
   type MemoryView,
@@ -492,7 +495,48 @@ export function createDaemonApp(
     }
     rt.events.emit("project", { id: p.id });
     rt.conversation?.setActiveProject(rt.human.id, p.id);
+    // PM intake (spec A.2): asked for, the proposal is drafted in the background and lands in
+    // the inbox; the card answers now. A failure is recorded on the project (the status route).
+    if (body.intake === true) void rt.intake.enqueue(p.id).catch(() => undefined);
     return c.json(await projectCard(rt.store, p.id, chf(), rt.human.id), 201);
+  });
+
+  // PM intake (spec A.2, ADR 0055): one model call on the planning rung, one blocking approval
+  // request with the whole proposal; nothing is written until the inbox answers it (the answer
+  // route's `syncApprovals` applies it). The project is looked up first so an unknown project
+  // is 404 whatever the body.
+  app.post("/projects/:id/intake", async (c) => {
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    const body = await parse(c, IntakeRequestBody);
+    const r = await rt.intake.propose(
+      project.id,
+      body.brief !== undefined ? { brief: body.brief } : {},
+    );
+    rt.events.emit("project", { id: project.id });
+    const view: IntakeProposalView = {
+      pending: true,
+      projectId: r.projectId,
+      requestId: r.requestId,
+      reused: r.reused,
+      summary: r.summary,
+      estimateUsdMicro: r.estimateUsdMicro,
+      costUsdMicro: r.costUsdMicro,
+      docsTarget: r.docsTarget,
+    };
+    return c.json(view, 202);
+  });
+  app.get("/projects/:id/intake", async (c) => {
+    const s = await rt.intake.status(c.req.param("id"));
+    const view: IntakeStatusView = {
+      projectId: s.projectId,
+      state: s.state,
+      requestId: s.requestId,
+      outcome: s.outcome,
+      appliedAt: s.appliedAt,
+      docs: s.docs,
+      error: s.error,
+    };
+    return c.json(view);
   });
 
   app.get("/projects/:id", async (c) =>

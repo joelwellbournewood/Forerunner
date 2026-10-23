@@ -245,6 +245,8 @@ export function daemonFor(
   const agentId = install.agent.id;
   // The halves of `composeRuntime`'s `syncApprovals` the week can reach: the memory
   // consolidation answers, the blocked-findings answers and the critic sign-off answers.
+  // The week files no intake proposal (the projects come with their tasks), so that half
+  // applies nothing.
   const syncApprovals: RuntimeApp["syncApprovals"] = async () => ({
     extensions: { approved: [], denied: [] },
     modelWatch: 0,
@@ -253,6 +255,7 @@ export function daemonFor(
       : { applied: 0, skipped: 0, stale: 0 },
     findings: await syncBlockedByFindings({ store, clock, humanId, agentId }),
     signoffs: await syncSignoffAnswers({ store, clock, humanId, agentId }),
+    intake: { applied: 0, rejected: 0, skipped: 0 },
   });
   // The daemon's approvals poll (compose.ts): an answer given on the phone lands in the
   // shared store and reaches no route of this daemon, so it is applied within the poll.

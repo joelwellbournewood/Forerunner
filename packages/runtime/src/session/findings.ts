@@ -215,6 +215,18 @@ async function unappliedAnswers(
   humanId: string,
   key: string,
 ): Promise<HumanRequestRow[]> {
+  return unappliedBlockingAnswers(store, humanId, (k) => k === key);
+}
+
+/**
+ * The same scan for every card key the predicate accepts (the intake's `intake:<project>`
+ * keys, `session/intake.ts`), so every answer path pages the inbox the one way.
+ */
+export async function unappliedBlockingAnswers(
+  store: StateStore,
+  humanId: string,
+  matches: (key: string) => boolean,
+): Promise<HumanRequestRow[]> {
   const found: HumanRequestRow[] = [];
   for (let offset = 0; ; offset += ANSWERS_PAGE) {
     const page = await store.humanRequest.list(
@@ -229,7 +241,8 @@ async function unappliedAnswers(
       },
     );
     for (const row of page) {
-      if (keyOf(row) !== key) continue;
+      const key = keyOf(row);
+      if (key === undefined || !matches(key)) continue;
       if ((row.change_card as JsonObject).applied_at) continue;
       found.push(row);
     }

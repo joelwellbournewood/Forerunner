@@ -149,6 +149,7 @@ import {
   syncBlockedByFindings,
   syncSignoffAnswers,
 } from "../session/findings.ts";
+import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
 import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
 import { Scheduler, type StartRequest } from "../session/triggers.ts";
 import {
@@ -461,6 +462,11 @@ export interface RuntimeApp {
   tools: ToolRegistry;
   executor: TaskExecutor;
   runner: SessionRunner;
+  /**
+   * PM intake (spec A.2, ADR 0055): the brief as one proposal in the inbox (plan, doc set,
+   * first-session plan), applied on the approving answer by `syncApprovals`.
+   */
+  intake: IntakeService;
   scheduler: Scheduler;
   conversation: ConversationAgent | null;
   gitHost: GitHost;
@@ -598,10 +604,10 @@ export interface RuntimeApp {
   toolsForRun(): ToolRegistry;
   /**
    * Apply answered human requests: extension grants, model watch decisions, memory
-   * consolidations, the rework/accept/cancel answers for tasks blocked by open findings and
-   * the accept/revise/cancel answers to critic sign-offs. Runs after every answer given
-   * through this daemon's route and, where answers can arrive from another device, on the
-   * approvals poll (`approvalsPollMs`).
+   * consolidations, the rework/accept/cancel answers for tasks blocked by open findings, the
+   * accept/revise/cancel answers to critic sign-offs and the approve/reject answers to intake
+   * proposals. Runs after every answer given through this daemon's route and, where answers
+   * can arrive from another device, on the approvals poll (`approvalsPollMs`).
    */
   syncApprovals(): Promise<{
     extensions: { approved: string[]; denied: string[] };
@@ -609,6 +615,7 @@ export interface RuntimeApp {
     memory: { applied: number; skipped: number };
     findings: BlockedSyncResult;
     signoffs: SignoffSyncResult;
+    intake: IntakeSyncResult;
   }>;
   /** Add or drop mirror schedules after a project's settings changed. */
   refreshMirrorSchedules(): Promise<string[]>;
@@ -1484,6 +1491,34 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     },
   });
 
+  // PM intake (spec A.2, ADR 0055): one planning-rung call through the loop driver and the
+  // hooks, the proposal as one blocking request; the approving answer writes the plan through
+  // `applyProjectPlan`, the docs through the executor's branch-and-PR flow on `gitHost` (or
+  // into the project's workspace under the projects root) and the first-session plan onto the
+  // summary cache and the queue. Without a provider `propose` is `unavailable`.
+  const intake = new IntakeService({
+    store,
+    clock,
+    tokens,
+    driver,
+    provider,
+    pricing: provider
+      ? livePricing(provider, () =>
+          rungModelFor(provider, modelConfig.get().modeDefaults.planning.tier),
+        )
+      : null,
+    billingSourceId,
+    modelConfig: () => modelConfig.get(),
+    prompt: registry.principals.get("project-manager")?.prompt,
+    human: { id: human.id },
+    agent: { id: agent.id, name: agent.name },
+    gitHost,
+    ...(ghToken ? { gitToken: ghToken } : {}),
+    identity: { name: `${agent.name} (Forerunner)`, email: human.email || "forerunner@localhost" },
+    projectsRoot: dataAssets.projectsRoot,
+    worktreeRoot: dirs.worktrees,
+  });
+
   // GitHub Projects mirror: the host comes from the vault by the secret reference in the
   // project's settings (default secret:github_token) unless a host was injected. The approval
   // port tells the daemon which request a project waits on and wakes on an inbox answer.
@@ -1905,6 +1940,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       memory: await memory.syncApprovals(),
       findings: await syncBlockedByFindings({ store, clock, humanId: human.id, agentId: agent.id }),
       signoffs: await syncSignoffAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
+      intake: await intake.syncAnswers(),
     };
     // A mirror run waiting on its approval re-reads the request now, not at the next poll.
     mirrorApprovals.wake();
@@ -2148,6 +2184,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     syncApprovals,
     refreshMirrorSchedules,
     mirrorSync,
+    intake,
     async close() {
       await voice.close();
       stopApprovalsPoll();
