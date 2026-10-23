@@ -1589,7 +1589,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // moves the tier-1 and tier-2/3 reviews with the executor and the chat.
     modelConfig: () => modelConfig.get(),
   });
-  const makeLoop = (worktree?: string) =>
+  // `withMemory: false` is the handover test's executor (spec P.15 "only the repo and docs",
+  // ADR 0060): its specialists get no lesson, the shared scope included.
+  const makeLoop = (worktree?: string, withMemory = true) =>
     new LoopTaskExecutor({
       store,
       clock,
@@ -1617,7 +1619,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         hostCommands: sdkHostCommands,
       },
       specialists,
-      memory,
+      ...(withMemory ? { memory } : {}),
       modelConfig: () => modelConfig.get(),
       // The project's escalation ceiling (`critic_ceiling`, spec D.3): a retry climbs the
       // ladder under it, never under the default ceiling.
@@ -1644,23 +1646,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     name: `${agent.name} (Forerunner)`,
     email: human.email || "forerunner@localhost",
   };
-  const executor = new PrTaskExecutor({
-    store,
-    clock,
-    host: gitHost,
-    inner: { execute: (ctx) => makeLoop().execute(ctx), withWorktree: (dir) => makeLoop(dir) },
-    repoFor: async (task) => {
-      const project = await store.project.get(task.project_id);
-      const full = project?.repos[0];
-      // A local folder linked by a source scan (spec A.4) is not a host repository: the
-      // inner executor runs without the branch-and-PR flow, as for a project without one.
-      if (!full?.includes("/") || isAbsolute(full)) return null;
-      return repoOfProject(project);
-    },
-    worktreeRoot: dirs.worktrees,
-    token: ghToken ?? undefined,
-    identity: gitIdentity,
-  });
+  const prExecutor = (withMemory: boolean) =>
+    new PrTaskExecutor({
+      store,
+      clock,
+      host: gitHost,
+      inner: {
+        execute: (ctx) => makeLoop(undefined, withMemory).execute(ctx),
+        withWorktree: (dir) => makeLoop(dir, withMemory),
+      },
+      repoFor: async (task) => {
+        const project = await store.project.get(task.project_id);
+        const full = project?.repos[0];
+        // A local folder linked by a source scan (spec A.4) is not a host repository: the
+        // inner executor runs without the branch-and-PR flow, as for a project without one.
+        if (!full?.includes("/") || isAbsolute(full)) return null;
+        return repoOfProject(project);
+      },
+      worktreeRoot: dirs.worktrees,
+      token: ghToken ?? undefined,
+      identity: gitIdentity,
+    });
+  const executor = prExecutor(true);
   // Project docs (spec G.5, ADR 0058): the standard doc set on a branch and PR of the
   // project's repository, or under the project's data dir without one.
   const docs = new ProjectDocs({
@@ -2071,6 +2078,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     agentId: agent.id,
     criticAgentId: criticAgent.id,
     settings: async () => calibrationSettingsOf((await store.human.mustGet(human.id)).notify_prefs),
+    // The once-a-month check is the human's local month, as the schedule's (ADR 0060).
+    timezone: async () => (await store.human.mustGet(human.id)).timezone,
   });
   const handoverJob = new HandoverJob({
     store,
@@ -2079,14 +2088,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     agentId: agent.id,
     reportDir: join(dirs.data, "handover"),
     notifier,
+    timezone: async () => (await store.human.mustGet(human.id)).timezone,
     runSession: async ({ agentId, projectId, taskId, budgetCapUsdMicro }) => {
       await schemaSync.assertCanSync("session.start");
       if (!provider)
         throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
       const project = await store.project.mustGet(projectId);
       await refreshCapabilities();
+      // No memory anywhere in the session (spec P.15 "only the repo and docs", ADR 0060):
+      // neither the runner's lessons block nor the executor's per-task recall.
       const handoverRunner = new SessionRunner({
         ...runnerDeps,
+        executor: prExecutor(false),
         memory: undefined,
         planner: new SeedOnlyPlanner(taskId, new StaticPlanner(500_000, estimates)),
       });
