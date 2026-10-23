@@ -18,17 +18,20 @@ import type {
 } from "@forerunner/state";
 import { ENTITIES, type EntityDef, Repository } from "@forerunner/state";
 import {
+  capEffort,
   DEFAULT_LADDER,
   effortForTask,
-  effortWithOffset,
   INTAKE_RUN_SPECIALIST,
   type LadderRung,
   MODE_DEFAULTS,
   type Mode,
   type ModeDefault,
+  modeEffort,
+  speedQualityOffsetOf,
   tierOfModel,
 } from "../models/ladder.ts";
 import type { EffortLevel } from "../provider/types.ts";
+import type { Registry } from "../registry/types.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import type {
@@ -657,12 +660,45 @@ export const MODE_LABELS: Record<Mode, string> = {
 };
 
 /**
- * The modes whose runs read the project's speed-versus-quality offset today: the critic
- * (`criticSettingsOf` in `@forerunner/critic`). The executor's offset is a static dependency
- * compose never feeds from the project, and chat, voice and planning ignore it (BLOCKERS.md,
- * D.16); the view says so per mode rather than showing an effort no run uses.
+ * The modes whose runs read the project's speed-versus-quality slider (spec D.16): the
+ * executor per run (coder, researcher), the conversation agent per turn (text and voice chat),
+ * the intake per planning session and the critic per review (`criticSettingsOf` in
+ * `@forerunner/critic`). Routing is left out: nothing runs a routing call yet, so no code
+ * applies the offset there, and the view says so rather than showing an effort no run uses.
  */
-export const OFFSET_MODES: readonly Mode[] = ["critic_t1", "critic_t23"];
+export const OFFSET_MODES: readonly Mode[] = [
+  "voice_chat",
+  "text_chat",
+  "planning",
+  "coder",
+  "researcher",
+  "critic_t1",
+  "critic_t23",
+];
+
+/**
+ * The registry `max_effort` each mode's consumer holds the shifted effort at (`capEffort`):
+ * the executor at the specialist's (the coder row shows the shipped `coder`'s, the research
+ * row the `researcher`'s), the conversation agent at `conversation-agent`'s (text and voice),
+ * the intake at `project-manager`'s, the critic at its own. A mode without an entry is uncapped.
+ */
+export type EffortCaps = Partial<Record<Mode, EffortLevel>>;
+
+/** The caps of `EffortCaps` from the registry in force, the way the composition wires them. */
+export function effortCapsOf(
+  registry: Pick<Registry, "specialists" | "principals" | "critic">,
+): EffortCaps {
+  const caps: EffortCaps = {};
+  const set = (modes: Mode[], cap: EffortLevel | undefined) => {
+    if (cap) for (const m of modes) caps[m] = cap;
+  };
+  set(["coder"], registry.specialists.get("coder")?.max_effort);
+  set(["researcher"], registry.specialists.get("researcher")?.max_effort);
+  set(["text_chat", "voice_chat"], registry.principals.get("conversation-agent")?.max_effort);
+  set(["planning"], registry.principals.get("project-manager")?.max_effort);
+  set(["critic_t1", "critic_t23"], registry.critic.max_effort);
+  return caps;
+}
 
 /** Newest measurements the view lists under the table. */
 export const PERFORMANCE_RECENT_LIMIT = 20;
@@ -775,17 +811,22 @@ const RISK_RAISE_FROM: Partial<Record<Mode, 2 | 3>> = { coder: 2, critic_t23: 3 
 
 /**
  * The effort a risky task runs the mode at (spec D.7: the effort rule as the code applies it),
- * from the same `effortForTask` the executor uses; null when it equals the mode's effort.
+ * from the same `effortForTask` the executor uses, held at the mode's registry cap as the
+ * executor and the critic hold it; null when it equals the mode's effort.
  */
 export function riskEffortOf(
   mode: Mode,
   offset: -1 | 0 | 1,
   defaults: Record<Mode, ModeDefault>,
   effort: string,
+  cap?: EffortLevel,
 ): { effort: EffortLevel; from: 2 | 3 } | null {
   const from = RISK_RAISE_FROM[mode];
   if (from === undefined) return null;
-  const raised = effortForTask(mode, from, offset, { ...MODE_DEFAULTS, ...defaults });
+  const raised = capEffort(
+    effortForTask(mode, from, offset, { ...MODE_DEFAULTS, ...defaults }),
+    cap,
+  );
   return raised === effort ? null : { effort: raised, from };
 }
 
@@ -797,6 +838,8 @@ export interface PerformanceViewOptions {
   nowIso: string;
   /** The ladder and effort table in force (`rt.modelConfig()`); the built-ins by default. */
   modelConfig?: { ladder: LadderRung[]; modeDefaults: Record<Mode, ModeDefault> };
+  /** The registry caps per mode (`effortCapsOf(rt.registry)`); none by default. */
+  effortCaps?: EffortCaps;
   recentLimit?: number;
 }
 
@@ -829,8 +872,7 @@ export async function performanceView(
   if (projectId) {
     const project = await store.project.get(projectId);
     if (!project) throw new ForerunnerError("not_found", `project ${projectId} not found`);
-    const o = obj(project.settings).speed_quality_offset;
-    if (o === -1 || o === 0 || o === 1) offset = o;
+    offset = speedQualityOffsetOf(project.settings);
   }
 
   const runs = (
@@ -853,12 +895,24 @@ export async function performanceView(
     (await store.agent.list({ owner_human_id: opts.humanId })).map((a) => a.id),
   );
   const sessionIds = [...new Set([...runs, ...events].map((r) => r.session_id))];
-  const sessions = await inChunks(sessionIds, (ids) => store.session.list({ id: ids }));
-  const inScope = new Set(
-    sessions
-      .filter((s) => agents.has(s.agent_id) && (!projectId || s.project_id === projectId))
-      .map((s) => s.id),
+  const sessions = (await inChunks(sessionIds, (ids) => store.session.list({ id: ids }))).filter(
+    (s) => agents.has(s.agent_id),
   );
+  const owned = new Set(sessions.map((s) => s.id));
+  const inScope = new Set(
+    sessions.filter((s) => !projectId || s.project_id === projectId).map((s) => s.id),
+  );
+  // A chat turn sits on the agent's one conversation session, whose `project_id` is the project
+  // of the session's first turn (or none, when the daemon opened it for voice or speech): the
+  // reply row's own `projectId`, the turn's active project, says which project the turn was in.
+  const eventInScope = (e: EventRow): boolean => {
+    if (!owned.has(e.session_id)) return false;
+    if (!projectId) return true;
+    const p = obj(e.payload);
+    return e.type === "chat.reply" && "projectId" in p
+      ? p.projectId === projectId
+      : inScope.has(e.session_id);
+  };
 
   // The critic's tier: the Review row whose evidence names the run (`run:<id>`).
   const criticRuns = runs.filter((r) => r.specialist === "critic" && inScope.has(r.session_id));
@@ -887,7 +941,7 @@ export async function performanceView(
     });
   }
   for (const e of events) {
-    if (!inScope.has(e.session_id)) continue;
+    if (!eventInScope(e)) continue;
     const s = eventSample(e);
     if (s) samples.push(s);
   }
@@ -903,8 +957,14 @@ export async function performanceView(
     const hasTarget = d.targetKind !== "by_task" && d.targetMs > 0 && figures.length > 0;
     const p90 = nearestRank(figures, 90);
     const offsetApplied = OFFSET_MODES.includes(mode);
-    const effort = offsetApplied ? effortWithOffset(d.effort, offset) : d.effort;
-    const risk = riskEffortOf(mode, offsetApplied ? offset : 0, config.modeDefaults, effort);
+    const cap = opts.effortCaps?.[mode];
+    const modeOffset = offsetApplied ? offset : 0;
+    // As the consumers compute it: the table's effort shifted by the slider, held at the cap.
+    const effort = capEffort(
+      modeEffort(mode, modeOffset, { ...MODE_DEFAULTS, ...config.modeDefaults }),
+      cap,
+    );
+    const risk = riskEffortOf(mode, modeOffset, config.modeDefaults, effort, cap);
     return {
       mode,
       label: MODE_LABELS[mode],
@@ -914,6 +974,7 @@ export async function performanceView(
       baseEffort: d.effort,
       effort,
       offsetApplied,
+      maxEffort: cap ?? null,
       riskEffort: risk?.effort ?? null,
       riskTierFrom: risk?.from ?? null,
       samples: mine.length,

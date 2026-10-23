@@ -79,16 +79,31 @@ describe("GET /performance on the daemon", () => {
     expect(empty.modes).toHaveLength(8);
     expect(empty.modes.every((m) => m.samples === 0)).toBe(true);
     expect(empty).toMatchObject({ projectId, days: 7, effortOffset: -1 });
-    // The offset reaches the critic's effort: medium one step down.
-    expect(modeOf(empty, "critic_t1")).toMatchObject({ baseEffort: "medium", effort: "low" });
-    // A tier 3 review runs at max, one step down with the offset; the coder at risk tier 2+
-    // runs at high (the offset does not reach the executor yet).
+    // The slider (-1) reaches every mode a run reads it in (spec D.16): the critic's medium
+    // one step down, planning's high to medium, the researcher's high to medium; chat and
+    // voice start at low and stay there. Each is held at the registry's max_effort.
+    expect(modeOf(empty, "critic_t1")).toMatchObject({
+      baseEffort: "medium",
+      effort: "low",
+      maxEffort: "max",
+    });
+    expect(modeOf(empty, "planning")).toMatchObject({ effort: "medium", maxEffort: "max" });
+    expect(modeOf(empty, "researcher")).toMatchObject({ effort: "medium", maxEffort: "high" });
+    expect(modeOf(empty, "text_chat")).toMatchObject({ effort: "low", maxEffort: "medium" });
+    expect(modeOf(empty, "routing")).toMatchObject({ offsetApplied: false, maxEffort: null });
+    // A tier 3 review runs at max, one step down with the slider; the coder runs at low, and at
+    // risk tier 2+ at high one step down.
     expect(modeOf(empty, "critic_t23")).toMatchObject({
       effort: "medium",
       riskEffort: "xhigh",
       riskTierFrom: 3,
     });
-    expect(modeOf(empty, "coder")).toMatchObject({ riskEffort: "high", riskTierFrom: 2 });
+    expect(modeOf(empty, "coder")).toMatchObject({
+      effort: "low",
+      maxEffort: "high",
+      riskEffort: "medium",
+      riskTierFrom: 2,
+    });
 
     // A chat turn through the conversation agent records its first token and total time.
     const chat = await req("/chat", {

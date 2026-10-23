@@ -811,14 +811,22 @@ export const PerformanceModeView = z.object({
   tier: z.string(),
   /** The table's effort for the mode (built-ins plus the adopted models.json), before the offset. */
   baseEffort: z.enum(EFFORT_LEVELS),
-  /** The effort in force: the base, shifted by the project's offset where the code applies it. */
+  /**
+   * The effort in force: the base, shifted by the project's offset where the code applies it,
+   * held at `maxEffort`.
+   */
   effort: z.enum(EFFORT_LEVELS),
   /** True when the project's speed-versus-quality offset reaches this mode's runs today. */
   offsetApplied: z.boolean(),
   /**
+   * The registry `max_effort` the mode's runs are held at (the specialist's, the conversation
+   * agent's, the project manager's, the critic's); null when nothing caps the mode.
+   */
+  maxEffort: z.enum(EFFORT_LEVELS).nullable(),
+  /**
    * The effort a risky task raises the mode to (`effortForTask`: the coder at risk tier 2 and
-   * above runs at high, a tier 3 critic review at max), with the offset applied as for
-   * `effort`; null when no risk tier changes the mode's effort.
+   * above runs at high, a tier 3 critic review at max), with the offset and the cap applied as
+   * for `effort`; null when no risk tier changes the mode's effort.
    */
   riskEffort: z.enum(EFFORT_LEVELS).nullable(),
   /** The lowest risk tier `riskEffort` applies from; null with it. */

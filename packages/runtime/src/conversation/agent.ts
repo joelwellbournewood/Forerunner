@@ -468,8 +468,11 @@ export class ConversationAgent {
         ttftMs: ttft,
         durationMs: wholeMs(result.durationMs),
         model,
-        effort: textChat.effort,
+        effort,
         source: req.source ?? "text",
+        // The turn's active project: the conversation session is one per agent and keeps the
+        // project of its first turn, so the Performance view scopes a turn by this field.
+        projectId,
         costUsdMicro: result.costUsdMicro,
         outcome: result.outcome,
         actions: actions.map((a) => a.kind),

@@ -232,6 +232,16 @@ describe("chat, voice and planning read the project's slider per turn and per se
         expect(r.status).toBe(200);
       });
       for (const e of efforts) expect(e).toBe(EXPECTED.text_chat[offset]);
+      // The Performance view (D.7, D.19) shows the same effort in force for the mode, and the
+      // turn's sample carries the effort it ran at (the reply row's `effort`).
+      const perf = (await json(await api.req(`/performance?projectId=${projectId}`))) as {
+        modes: { mode: string; effort: string }[];
+        recent: { source: string; effort: string }[];
+      };
+      expect(perf.modes.find((m) => m.mode === "text_chat")?.effort).toBe(
+        EXPECTED.text_chat[offset],
+      );
+      expect(perf.recent.find((x) => x.source === "chat")?.effort).toBe(EXPECTED.text_chat[offset]);
     }
   });
 

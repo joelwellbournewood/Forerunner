@@ -555,6 +555,54 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     expect(runs[0]?.prompt_version).not.toBe("");
   });
 
+  it("the intake Run row stores the effort the call ran at: the slider's shift, held at the cap", async () => {
+    // Spec D.16 and D.19: the Performance view's planning samples carry the effort in force.
+    const service = (maxEffort?: "high") =>
+      new IntakeService({
+        store: rt.store,
+        clock,
+        tokens: rt.tokens,
+        driver: rt.driver,
+        provider,
+        pricing: { estimate: () => 1, cost: () => 1 },
+        billingSourceId: rt.billingSourceId,
+        modelConfig: rt.modelConfig,
+        maxEffort,
+        human: rt.human,
+        agent: rt.agent,
+        gitHost: host,
+        projectsRoot: rt.data.assets.projectsRoot,
+        worktreeRoot: join(home, "wt-effort"),
+      });
+    const projectId = await createProject({ name: "Mu", goal: "g", brief: "b" });
+    const project = await rt.store.project.mustGet(projectId);
+    await rt.store.project.update(projectId, project.version, {
+      settings: { ...project.settings, speed_quality_offset: 1 },
+    });
+    const runIdsOf = async () =>
+      new Set(
+        (await rt.store.run.list({ specialist: INTAKE_RUN_SPECIALIST } as never)).map((r) => r.id),
+      );
+    const newRow = async (before: Set<string>) => {
+      const rows = (await rt.store.run.list({ specialist: INTAKE_RUN_SPECIALIST } as never)).filter(
+        (r) => !before.has(r.id),
+      );
+      expect(rows).toHaveLength(1);
+      return rows[0];
+    };
+    let before = await runIdsOf();
+    replies.push({ text: "no json here" });
+    await expect(service().propose(projectId)).rejects.toMatchObject({ code: "validation" });
+    // Planning's high, one step up.
+    expect(provider.calls.at(-1)?.effort).toBe("xhigh");
+    expect((await newRow(before))?.effort).toBe("xhigh");
+    before = await runIdsOf();
+    replies.push({ text: "no json here" });
+    await expect(service("high").propose(projectId)).rejects.toMatchObject({ code: "validation" });
+    expect(provider.calls.at(-1)?.effort).toBe("high");
+    expect((await newRow(before))?.effort).toBe("high");
+  });
+
   it("without a model provider the intake is unavailable", async () => {
     const service = new IntakeService({
       store: rt.store,

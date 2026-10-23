@@ -1,8 +1,9 @@
-import { isForerunnerError, SimulatedClock } from "@forerunner/platform";
+import { isForerunnerError, join, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PerformanceView } from "../src/daemon/api-types.ts";
 import {
+  effortCapsOf,
   eventSample,
   nearestRank,
   OFFSET_MODES,
@@ -10,7 +11,10 @@ import {
   runMode,
 } from "../src/daemon/views.ts";
 import { DEFAULT_LADDER, INTAKE_RUN_SPECIALIST, MODE_DEFAULTS } from "../src/models/ladder.ts";
+import { loadRegistry } from "../src/registry/index.ts";
 import { seedWorld } from "./context-helpers.ts";
+
+const REGISTRY = join(process.cwd(), "evals", "registry");
 
 /**
  * The Performance view (spec D.7, D.19) from the store: Run rows across the modes, chat and
@@ -375,24 +379,97 @@ describe("performanceView over seeded Run rows and turns", () => {
     expect(modeOf(v, "researcher").samples).toBe(0);
   });
 
-  it("shows the effort in force: the table's effort, shifted by the project's offset where it applies", async () => {
+  it("scopes a chat turn by the project it was in, not by the conversation session's project", async () => {
+    const textOf = async (projectId: string) =>
+      modeOf(
+        await performanceView(store, { humanId: w.human, projectId, nowIso: clock.nowIso() }),
+        "text_chat",
+      );
+    const before = await textOf(w.project);
+    // The agent's one conversation session, opened without a project (the daemon does so for
+    // voice and speech); the reply rows name the turn's active project.
+    const shared = (
+      await store.session.insert({
+        agent_id: w.agent,
+        project_id: null,
+        trigger: "manual",
+        plan: {},
+        budget_cap_usd_micro: 1,
+        step_cap: 1,
+        status: "planned",
+        summary: "conversation",
+      })
+    ).id;
+    await clock.advance(1000);
+    await store.event.append(shared, "chat.reply", {
+      ttftMs: 700,
+      durationMs: 1500,
+      effort: "low",
+      source: "text",
+      projectId: w.project,
+    });
+    // A turn in another project on the project's own conversation session does not count here.
+    await store.event.append(conversation, "chat.reply", {
+      ttftMs: 5,
+      durationMs: 9,
+      source: "text",
+      projectId: "proj_elsewhere",
+    });
+    // A turn without an active project counts only in the all-projects view.
+    await store.event.append(shared, "chat.reply", {
+      ttftMs: 6,
+      durationMs: 9,
+      source: "text",
+      projectId: null,
+    });
+    const after = await textOf(w.project);
+    expect(after.samples).toBe(before.samples + 1);
+    expect(after.lastAt).toBe(clock.nowIso());
+    const chats = (
+      await performanceView(store, {
+        humanId: w.human,
+        projectId: w.project,
+        nowIso: clock.nowIso(),
+      })
+    ).recent.filter((x) => x.source === "chat");
+    expect(chats.map((x) => x.ttftMs)).toContain(700);
+    expect(chats.map((x) => x.ttftMs)).not.toContain(5);
+    expect(chats.map((x) => x.ttftMs)).not.toContain(6);
+    const all = modeOf(
+      await performanceView(store, { humanId: w.human, nowIso: clock.nowIso() }),
+      "text_chat",
+    );
+    expect(all.ttftP50Ms).not.toBeNull();
+    const allBefore = before.samples; // the project's turns are among all of the human's
+    expect(all.samples).toBeGreaterThanOrEqual(allBefore + 3);
+  });
+
+  it("shows the effort in force: the table's effort, shifted by the project's slider in every mode a run reads it in", async () => {
     const v = await performanceView(store, {
       humanId: w.human,
       projectId: w.project,
       nowIso: clock.nowIso(),
     });
+    // Spec D.16: the executor, the conversation agent, the intake and the critic all read the
+    // project's slider (+1 here), so every mode with a run moves one step up.
     expect(modeOf(v, "critic_t1")).toMatchObject({
       baseEffort: "medium",
       effort: "high",
       offsetApplied: true,
+      maxEffort: null,
     });
     expect(modeOf(v, "critic_t23")).toMatchObject({ baseEffort: "high", effort: "xhigh" });
-    // The effort a risky task raises the mode to, as effortForTask applies it: the coder at
-    // risk tier 2 and above runs at high (the offset does not reach it), a tier 3 review at
+    expect(modeOf(v, "text_chat")).toMatchObject({ baseEffort: "low", effort: "medium" });
+    expect(modeOf(v, "voice_chat")).toMatchObject({ baseEffort: "low", effort: "medium" });
+    expect(modeOf(v, "planning")).toMatchObject({ baseEffort: "high", effort: "xhigh" });
+    expect(modeOf(v, "researcher")).toMatchObject({ baseEffort: "high", effort: "xhigh" });
+    // The effort a risky task raises the mode to, as effortForTask applies it with the slider:
+    // the coder at risk tier 2 and above runs at high, one step up xhigh; a tier 3 review at
     // max (one step up from max is max).
     expect(modeOf(v, "coder")).toMatchObject({
-      effort: "medium",
-      riskEffort: "high",
+      baseEffort: "medium",
+      effort: "high",
+      riskEffort: "xhigh",
       riskTierFrom: 2,
     });
     expect(modeOf(v, "critic_t23")).toMatchObject({ riskEffort: "max", riskTierFrom: 3 });
@@ -405,13 +482,64 @@ describe("performanceView over seeded Run rows and turns", () => {
       "critic_t1",
     ])
       expect(modeOf(v, mode)).toMatchObject({ riskEffort: null, riskTierFrom: null });
-    // The offset does not reach the executor, chat, voice or planning yet (D.16).
-    for (const mode of ["coder", "text_chat", "voice_chat", "planning", "routing"]) {
-      const m = modeOf(v, mode);
-      expect(m.offsetApplied).toBe(false);
-      expect(m.effort).toBe(m.baseEffort);
-    }
-    expect(OFFSET_MODES).toEqual(["critic_t1", "critic_t23"]);
+    // Nothing runs a routing call, so no code applies the slider there.
+    expect(modeOf(v, "routing")).toMatchObject({
+      offsetApplied: false,
+      effort: "low",
+      baseEffort: "low",
+    });
+    expect(OFFSET_MODES).toEqual([
+      "voice_chat",
+      "text_chat",
+      "planning",
+      "coder",
+      "researcher",
+      "critic_t1",
+      "critic_t23",
+    ]);
+    for (const mode of OFFSET_MODES) expect(modeOf(v, mode).offsetApplied).toBe(true);
+    // The registry caps, as the consumers hold the shifted effort (capEffort): the shipped
+    // coder and researcher at high (so a risky coder task adds nothing at +1), the
+    // conversation agent at medium, the project manager and the critic at max.
+    const caps = effortCapsOf(loadRegistry(REGISTRY));
+    expect(caps).toEqual({
+      coder: "high",
+      researcher: "high",
+      text_chat: "medium",
+      voice_chat: "medium",
+      planning: "max",
+      critic_t1: "max",
+      critic_t23: "max",
+    });
+    const capped = await performanceView(store, {
+      humanId: w.human,
+      projectId: w.project,
+      nowIso: clock.nowIso(),
+      effortCaps: caps,
+    });
+    expect(modeOf(capped, "researcher")).toMatchObject({ effort: "high", maxEffort: "high" });
+    expect(modeOf(capped, "coder")).toMatchObject({
+      effort: "high",
+      maxEffort: "high",
+      riskEffort: null,
+      riskTierFrom: null,
+    });
+    expect(modeOf(capped, "text_chat")).toMatchObject({ effort: "medium", maxEffort: "medium" });
+    expect(modeOf(capped, "planning")).toMatchObject({ effort: "xhigh", maxEffort: "max" });
+    expect(modeOf(capped, "routing").maxEffort).toBeNull();
+    // A lower cap holds the effort the slider raised.
+    const low = await performanceView(store, {
+      humanId: w.human,
+      projectId: w.project,
+      nowIso: clock.nowIso(),
+      effortCaps: { critic_t1: "medium", critic_t23: "high" },
+    });
+    expect(modeOf(low, "critic_t1")).toMatchObject({ baseEffort: "medium", effort: "medium" });
+    expect(modeOf(low, "critic_t23")).toMatchObject({
+      effort: "high",
+      riskEffort: null,
+      riskTierFrom: null,
+    });
     // The table in force: an effort adopted by the model watch is what the view shows.
     const adopted = await performanceView(store, {
       humanId: w.human,
@@ -428,9 +556,9 @@ describe("performanceView over seeded Run rows and turns", () => {
       },
     });
     expect(modeOf(adopted, "critic_t1")).toMatchObject({ baseEffort: "low", effort: "medium" });
-    expect(modeOf(adopted, "text_chat")).toMatchObject({ baseEffort: "medium", effort: "medium" });
-    // A table whose coder already runs at high: no risk tier changes it.
-    expect(modeOf(adopted, "coder")).toMatchObject({ effort: "high", riskEffort: null });
+    expect(modeOf(adopted, "text_chat")).toMatchObject({ baseEffort: "medium", effort: "high" });
+    // A table whose coder already runs at high: no risk tier changes it (high, +1 xhigh).
+    expect(modeOf(adopted, "coder")).toMatchObject({ effort: "xhigh", riskEffort: null });
     // All projects: no single offset, so none is applied.
     const all = await performanceView(store, { humanId: w.human, nowIso: clock.nowIso() });
     expect(all.effortOffset).toBe(0);

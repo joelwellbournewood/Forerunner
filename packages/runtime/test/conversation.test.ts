@@ -209,6 +209,8 @@ describe("conversation agent over the command registry", () => {
     expect(typeof (reply?.payload as { durationMs?: unknown } | undefined)?.durationMs).toBe(
       "number",
     );
+    // The turn's active project, which the Performance view scopes the turn by.
+    expect(reply?.payload).toHaveProperty("projectId");
     await w.store.close();
   });
 

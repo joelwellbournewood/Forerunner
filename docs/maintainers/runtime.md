@@ -1963,7 +1963,10 @@ its own:
   Nothing writes a `routing` run today, so that row shows its target and no samples.
 - *Scope.* Only rows on sessions of the install's human's agents count (a shared store holds
   other humans'), and with `projectId` only that project's sessions; an unknown project is
-  404. The window is the last `days` days up to now on `created_at`: 7 by default
+  404. A chat turn is the exception: it sits on the agent's one conversation session, whose
+  `project_id` is the project of its first turn (or none when the daemon opened it for voice
+  or speech, `conversation-session.ts`), so a `chat.reply` row that carries `projectId` (the
+  turn's active project) is scoped by that field instead. The window is the last `days` days up to now on `created_at`: 7 by default
   (`PERFORMANCE_DEFAULT_DAYS`), capped at 90 (`PERFORMANCE_MAX_DAYS`); a `days` that is not a
   positive integer in decimal digits (`0x10`, `1e1`, `7.0`, `+7` included) is 400 (`validation`, `reason: "bad_query"`).
 - *Figures.* Per mode, in the effort table's order: `samples`, the median and the 90th
@@ -1975,26 +1978,37 @@ its own:
   researcher, critic tiers 2 and 3); `lastAt`. `recent` lists the 20 newest measurements with
   their source (`run`, `chat`, `voice`).
 - *Effort in force (the D.7 half).* `tier` and `baseEffort` from the table in force (an effort
-  the model watch adopted shows here), and `effort` shifted by the project's
-  `speed_quality_offset` for the modes whose code applies it (`OFFSET_MODES`: the critic
-  tiers, `offsetApplied: true`); the executor, chat, voice and planning do not read the
-  offset yet (D.16), so their `effort` stays the table's. Without a project the offset is 0.
-  `riskEffort` and `riskTierFrom` (`riskEffortOf`, from the same `effortForTask` the executor
-  uses) name the effort a risky task raises the mode to: the coder at risk tier 2 and above
-  runs at high, a tier 3 critic review at max, with the offset applied as for `effort`; null
-  where no risk tier changes the mode's effort (or the table already has it).
+  the model watch adopted shows here), and `effort` computed as the consumers compute it
+  (D.16, "The speed-versus-quality slider" below): `modeEffort` shifts the base by the
+  project's `speed_quality_offset` (`speedQualityOffsetOf`) for every mode a run reads the
+  slider in (`OFFSET_MODES`: chat, voice, planning, coder, researcher and both critic tiers,
+  `offsetApplied: true`; routing is left out because nothing runs a routing call yet), and
+  `capEffort` holds it at the registry's `max_effort` for the mode (`maxEffort`, from
+  `effortCapsOf(rt.registry)`: the shipped `coder`'s and `researcher`'s, `conversation-agent`'s
+  for chat and voice, `project-manager`'s for planning, the critic's; null when nothing caps
+  it). Without a project the offset is 0. `riskEffort` and `riskTierFrom` (`riskEffortOf`,
+  from the same `effortForTask` the executor uses) name the effort a risky task raises the
+  mode to: the coder at risk tier 2 and above runs at high, a tier 3 critic review at max,
+  with the offset and the cap applied as for `effort`; null where no risk tier changes the
+  mode's effort (the table already has it, or the cap holds both at the same level: the
+  shipped coder at quality runs at high either way).
 
 What feeds it: the executor and the critic write their Run rows as before; the intake call
 now writes one (`specialist: "intake"`, its tokens, cost, first token and duration, and the
 prompt version of spec D.5: the registry PM prompt's `promptVersion`, passed in by compose,
 or `INTAKE_BUILTIN_PROMPT_VERSION` on the built-in line; written in
 the `finally` so a failed call is measured too; a refused row is logged and the intake goes
-on); the conversation agent's `chat.reply` row now carries `durationMs` (the loop's measured
-run time), `model`, `effort` and `source` next to `ttftMs`. Tests:
+on; its `effort` is the one the call ran at, the slider's shift held at the project
+manager's cap); the conversation agent's `chat.reply` row now carries `durationMs` (the loop's
+measured run time), `model`, `effort` (the turn's, after the slider and the cap), `source` and
+`projectId` (the turn's active project) next to `ttftMs`. Tests:
 `performance-view.test.ts` (nearest rank, mode derivation, seeded rows across modes, targets,
-the window, ownership, the effort in force), `performance-route.test.ts` (the route on the
-composed daemon with a chat turn through `POST /chat`, 400 and 404), `intake.test.ts` (the
-intake Run row), `conversation.test.ts` (the reply row's timing).
+the window, ownership, chat turns scoped by their own project, the effort in force with the
+slider and the registry caps), `performance-route.test.ts` (the route on the composed daemon
+with a chat turn through `POST /chat`, the slider and the shipped caps per mode, 400 and
+404), `intake.test.ts` (the intake Run row, its effort under the slider and a cap),
+`conversation.test.ts` (the reply row's timing and project), `effort-offset.test.ts` (a typed
+chat turn's effort per slider position is what the view shows, for the mode and the sample).
 
 **Core loop routes (ADR 0036, all in `DAEMON_ROUTES`).** Reviews tab (spec K.2):
 `GET /projects/:id/reviews` and `GET /tasks/:id/reviews` answer `ReviewsView` (every review

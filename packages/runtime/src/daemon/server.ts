@@ -112,6 +112,7 @@ import {
   changeLogView,
   commandDefView,
   costView,
+  effortCapsOf,
   eventView,
   lessonView,
   messageView,
@@ -1425,6 +1426,7 @@ export function createDaemonApp(
         days,
         nowIso: rt.clock.nowIso(),
         modelConfig: rt.modelConfig(),
+        effortCaps: effortCapsOf(rt.registry),
       }),
     );
   });
