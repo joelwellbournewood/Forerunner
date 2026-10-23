@@ -29,6 +29,7 @@ import {
   type BiometricPort,
   BiometricRefusedError,
   type DeviceSigner,
+  failureText,
   type SignOptions,
   simulatedBiometric,
   TicketBook,
@@ -799,12 +800,15 @@ export class MobileController {
    * when there is one): null, a rejection of any shape, a malformed outcome, or a prompt that
    * does not settle within `biometricTimeoutMs` (an emulator without enrolment, a shell call
    * that never answers). A late success is dropped; its unused ticket expires in the shell.
+   * Both ends of the step go to the console (never a ticket), which the emulator smoke
+   * forwards as `webview:` lines, so a run shows whether the prompt was asked and how it ended.
    */
   private async assertHighRisk(reason: string): Promise<BiometricAssertion> {
     const limitMs = this.env.biometricTimeoutMs ?? BIOMETRIC_TIMEOUT_MS;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let outcome: BiometricAssertion | null = null;
     let why: string | null = null;
+    console.info(`forerunner: high-risk answer: asking the biometric prompt (${limitMs} ms limit)`);
     try {
       outcome = await Promise.race([
         Promise.resolve().then(() => this.biometric.assert(reason)),
@@ -813,7 +817,9 @@ export class MobileController {
             () =>
               reject(
                 new BiometricRefusedError(
-                  `the prompt did not answer within ${Math.round(limitMs / 1000)} s`,
+                  `the prompt did not answer within ${
+                    limitMs < 1000 ? `${limitMs} ms` : `${Math.round(limitMs / 1000)} s`
+                  }`,
                 ),
               ),
             limitMs,
@@ -821,13 +827,17 @@ export class MobileController {
         }),
       ]);
     } catch (error) {
-      why = error instanceof Error ? error.message : String(error);
+      why = failureText(error);
     } finally {
       if (timer) clearTimeout(timer);
     }
     if (outcome?.asserted === true && typeof outcome.ticket === "string" && outcome.ticket) {
+      console.info("forerunner: high-risk answer: the biometric prompt passed");
       return outcome;
     }
+    console.warn(
+      `forerunner: high-risk answer refused on the phone: ${(why ?? "the prompt returned no ticketed assertion").slice(0, 200)}`,
+    );
     throw new StateApiError(
       "biometric_required",
       "this needs a biometric confirmation on the phone",

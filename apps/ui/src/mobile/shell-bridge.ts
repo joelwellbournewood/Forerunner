@@ -6,6 +6,7 @@ import {
   BiometricRefusedError,
   BiometricTicketError,
   type DeviceSigner,
+  failureText,
   fromBase64,
   needsBiometricTicket,
   type SignOptions,
@@ -125,7 +126,7 @@ export const shellBiometric: BiometricPort = {
     try {
       r = await invoke<BiometricResult>("assert_biometric", { reason });
     } catch (error) {
-      throw new BiometricRefusedError(`the shell's prompt failed: ${ipcErrorText(error)}`);
+      throw new BiometricRefusedError(`the shell's prompt failed: ${failureText(error)}`);
     }
     if (!r || typeof r !== "object") return null;
     if (r.asserted === true && typeof r.ticket === "string" && r.ticket) {
@@ -137,16 +138,6 @@ export const shellBiometric: BiometricPort = {
     return null;
   },
 };
-
-/** Tauri rejects with a string (a command's `Err`), an Error or a plugin's `{ message }`. */
-function ipcErrorText(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  if (error && typeof error === "object" && "message" in error) {
-    return String((error as { message: unknown }).message);
-  }
-  return String(error);
-}
 
 export const shellPush: PushPort = {
   async status(): Promise<PushStatus> {

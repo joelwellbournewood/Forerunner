@@ -313,6 +313,20 @@ export class BiometricRefusedError extends Error {
   }
 }
 
+/**
+ * The words of a failure as a platform hands it over: Tauri rejects with a string (a
+ * command's `Err`), an Error, or a plugin's `{ message, code }` object; anything else is
+ * stringified. Used for refusal reasons, which are never sensitive.
+ */
+export function failureText(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
+
 export const noBiometric: BiometricPort = {
   available: async () => false,
   assert: async () => null,
