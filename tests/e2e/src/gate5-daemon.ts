@@ -248,7 +248,7 @@ export function daemonFor(
   // consolidation answers, the blocked-findings answers and the critic sign-off answers. The
   // week's projects run at autonomy 2, so no plan request is filed and none is synced here,
   // and it files no intake proposal (the projects come with their tasks), so that half
-  // applies nothing.
+  // applies nothing; nor does any agent propose a specialist (ADR 0071), so that half is empty.
   const syncApprovals: RuntimeApp["syncApprovals"] = async () => ({
     extensions: { approved: [], denied: [] },
     modelWatch: 0,
@@ -262,6 +262,7 @@ export function daemonFor(
     signoffs: await syncSignoffAnswers({ store, clock, humanId, agentId }),
     plans: { started: 0, rejected: 0, skipped: 0 },
     intake: { applied: 0, rejected: 0, skipped: 0 },
+    specialists: { promoted: 0, failed: 0, rejected: 0, skipped: 0, running: 0 },
   });
   // The daemon's approvals poll (compose.ts): an answer given on the phone lands in the
   // shared store and reaches no route of this daemon, so it is applied within the poll.

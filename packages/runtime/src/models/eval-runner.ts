@@ -203,12 +203,23 @@ export class LoopEvalRunner implements EvalRunnerPort {
 
   async run(input: EvalRunInput): Promise<EvalRunOutcome> {
     const { clock } = this.deps;
-    const spec = this.deps.registry.specialists.get(input.specialist);
-    if (!spec?.runnable) {
+    const spec = input.candidate ?? this.deps.registry.specialists.get(input.specialist);
+    if (input.candidate) {
+      // The approval gate evaluates a proposal before it may run anywhere else: only a
+      // proposed definition, under the name asked for.
+      if (input.candidate.name !== input.specialist || input.candidate.location !== "proposed") {
+        throw new ForerunnerError(
+          "validation",
+          `eval candidate must be the pending proposal "${input.specialist}"`,
+          { details: { specialist: input.specialist, candidate: input.candidate.name } },
+        );
+      }
+    } else if (!spec?.runnable) {
       throw new ForerunnerError("not_found", `specialist ${input.specialist} is not runnable`, {
         details: { specialist: input.specialist },
       });
     }
+    if (!spec) throw new ForerunnerError("internal", "unreachable");
     const provider = this.deps.providers.get(input.provider);
     const timeoutMs = spec.timeout_minutes * 60_000;
     // Unknown prices throw here, before any call: the watch never costs a run by guessing.

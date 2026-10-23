@@ -181,15 +181,76 @@ So a failed proposal leaves nothing behind and the name stays free; a successful
 exactly what the loader validated. It returns a `ProposalReceipt` with `promptVersion` and
 `requiredToActivate`:
 
-1. `human_approval`: a human approves (recorded in `proposal.json` by the approval command,
-   phase 3).
+1. `human_approval`: a human approves (recorded in `proposal.json` by the approval gate,
+   below).
 2. `eval_set`: at least `MIN_EVAL_TASKS_FOR_ACTIVATION` (10) tasks exist at `evals/<name>/`.
 3. `eval_pass`: the set passes at `ACTIVATION_PASS_RATE` (90%) with that `promptVersion`.
 
 Until all three are done the loader keeps the entry with `runnable: false`; the runtime never
 issues a capability token for a non-runnable specialist, so a prompt cannot activate itself.
-The approval command moves the directory to `specialists/` and sets `status: active`; it is
-built with the phase 3 approval flow (not here).
+
+### The approval flow (`src/registry/approval.ts`, ADR 0071)
+
+`RuntimeApp.specialistApprovals.propose(...)` writes a proposal (proposeSpecialist) and files
+its request in one call. No agent-facing tool calls it yet: the PM has no `propose_specialist`
+tool, so today a proposal comes from code, by hand or from a registry pull. A proposal that
+reaches `proposed/` without a request (written directly, pulled, hand-written) is filed by the
+daemon's next approvals sync (`fileMissing()`, run from `syncApprovals` on the answer route
+and the approvals poll, and at start); one whose request is open, or answered and waiting to
+be applied, is not filed again.
+
+1. **The request.** One blocking `approval` request for the proposal's human, options
+   approve / reject, `change_card.key` `specialist:<name>`, the card carrying the summary
+   (description plus rationale), the `prompt_version` the human is shown, `eval_task_count`,
+   `threshold` (`pass_rate` 0.9, `min_tasks` 10), the tools, domains, budget, tier and
+   `risk_tier_floor`. Filing again returns the open request. `proposal.json` gets
+   `approval: { status: "pending", requestId }`.
+2. **Approve** (in the inbox, or `fr specialists approve <name>` headless). Only the install
+   whose `proposal.json` names the request applies it (`approval.requestId`): the cloud
+   runner or a second install of the same human on a shared store has no such proposal and
+   leaves the answer alone. Only the daemon applies inbox answers; a one-shot (`fr ...`,
+   `startServices: false`) applies none, and `fr specialists approve <name>` applies an answer
+   already given first, or files and answers a request. The answer is claimed once
+   (versioned write of `applied_at`), and from the claim on `proposal.json` says
+   `approval: { status: "evaluating", requestId, pid, process }`, then:
+   - refused, recorded and filed again: an answer by anyone but the proposal's human, an
+     answer that is neither approve nor reject, a proposal whose prompt version is no longer
+     the card's (edited after filing);
+   - kept proposed without a model call: fewer than 10 tasks in `evals/<name>/`, a worst case
+     (the sum of the tasks' `budgetUsdMicro`) above the approval eval budget (USD 5 per run,
+     and never more than what is left this UTC month of the testing share, 20% of the human's
+     monthly cap, after earlier approval runs, whose cost the `registry.specialist_approval`
+     audit rows carry), no model configured, a specialist of that name already active;
+   - otherwise the eval set runs through the eval runner (the model watch's `LoopEvalRunner`
+     with the proposal as `candidate`; the composed provider at the rung of `default_tier`,
+     `default_effort`; every call under the enforcement hooks and the human's caps).
+3. **The result** goes into `proposal.json` as `evalResult` (and appended to `evalHistory`):
+   `passed`, `passRate`, `total`, `passedTasks`, `failedTasks`, `needsModel`, `decided`,
+   `threshold`, `provider`, `model`, `effort`, `promptVersion` (the evaluated one),
+   `costUsdMicro`, `durationMs`, `ranAt`, `approvedBy`, and `reason` when it failed.
+4. **Pass** = at least 10 tasks decided mechanically (rubric-only tasks waiting on the critic
+   do not count) and `passRate >= 0.9`. The file is written to `specialists/<name>/` with its
+   one `status: proposed` line changed to `status: active` (exclusive create; every other
+   field is compared with the evaluated definition), `proposal.json` moves with it (`status:
+   active`, `activePromptVersion`, `activatedAt`), `proposed/<name>/` is removed, and the
+   running daemon puts the definition into its registry, so the next task can use it. The
+   active prompt version differs from the evaluated one only by the status line's bytes.
+5. **Fail** (or any refusal in step 2) keeps it proposed: `approval.status: "eval_failed"`,
+   the outcome and reason (and `eval_result`) on the card, a `warning` message in the inbox.
+   It is not asked again by itself; fix the prompt or the set and run
+   `fr specialists approve <name>` (a new request is filed and applied), or reject.
+6. **Reject** withdraws: `proposed/<name>/` is removed, the record stays on the card and in the
+   audit log (`registry.specialist_approval`), and the name is free.
+7. **A live evaluation locks the name.** While `approval.status` is `evaluating` and its run is
+   live (running in this process, or its `pid` alive and the claim younger than the set's
+   worst case: tasks x `timeout_minutes` plus 15 minutes), `file`, `approve` and `reject` of
+   the name are refused with `claim_conflict`. One whose process is gone or that overran is
+   recovered by the next sync or CLI call: the card's outcome becomes `interrupted`,
+   `approval.status` too, a note goes to the inbox and a new request is filed. Nothing is
+   re-run without a new approve.
+
+`fr specialists list` shows the pending proposals, their eval-set size, last result and open
+request, and the proposals the loader refused.
 
 ### Eval sets and the runner (`evals/`)
 
@@ -281,6 +342,13 @@ agree across platforms.
 
 ## Tests
 
+- `packages/runtime/test/specialist-approval.test.ts` (24) and `specialists-cli.test.ts` (5):
+  the approval flow end to end (see runtime.md, Tests): request filed once, approve -> evals on
+  the fake provider -> pass -> active; 8 of 10 -> stays proposed with the result; reject ->
+  withdrawn; another human refused; applied once; another install over the same store leaves
+  the answer alone; a dead or overrun evaluation recovered, a live one locking the name; the
+  month's testing share; the sync script carries the promotion; the daemon route, a proposal
+  filed by the next sync, a one-shot applying no inbox answer, and `fr specialists`.
 - `packages/runtime/test/registry.test.ts` (30 tests): frontmatter scalars, lists, nested
   maps, block scalars, every rejected construct with its line, CRLF and BOM handling,
   `Object.prototype` key names and `__proto__`, serializer round-trip including lone `\r`,
@@ -332,13 +400,17 @@ Run: `pnpm vitest run --project unit packages/runtime/test/registry.test.ts eval
 - Only coder and researcher have eval sets. tester, reviewer, science-evaluator, designer,
   writer-marketing, data-analyst, migration-specialist and ops-deploy are active by spec
   decision with `evalTaskCount: 0`; each needs a set before its prompt is changed.
-- The approval command (human approval, moving `proposed/<name>` to `specialists/`, recording
-  the eval result in `proposal.json`) lands with phase 3; `proposeSpecialist` only writes the
-  proposal and returns the required steps. Until it exists, a pending proposal (valid or
-  listed in `invalidProposals`) is withdrawn by deleting `proposed/<name>/`; a name stays
-  claimed while that directory holds a `specialist.md` or `proposal.json`.
-- `docs/decisions/` does not yet hold an ADR for the decisions listed below; the orchestrator
-  records it (the builder's paths exclude `docs/decisions/` and `docs/requirements.md`).
+- (Closed by ADR 0071.) The approval command now exists: `src/registry/approval.ts`, the
+  inbox request and `fr specialists approve|reject`. A proposal listed in `invalidProposals`
+  cannot be filed (it does not load); it is still withdrawn by deleting `proposed/<name>/`.
+- Rubric-only eval sets (like researcher's) cannot pass the approval gate yet: their tasks
+  are `needs_model` and the gate counts only mechanically decided tasks. Until the critic
+  grades eval rubrics inside the runner, a proposal needs at least 10 tasks with mechanical
+  checks.
+- A promotion changes the running daemon's `registry.specialists` but not its `files` and
+  `hash`; the session record's registry hash catches up at the next start.
+- `docs/decisions/` does not yet hold an ADR for the decisions listed below (other than the
+  approval gate, ADR 0071); the orchestrator records it.
 - The `forerunner-registry` repository does not exist yet (a blocker in
   `docs/status/BLOCKERS.md`); until it does, `scripts/sync-registry.ts` only has a local
   directory to sync with.
@@ -349,6 +421,18 @@ Run: `pnpm vitest run --project unit packages/runtime/test/registry.test.ts eval
   22.18); enums, namespaces and constructor parameter properties are not allowed in fixtures.
 
 ## Decisions recorded here (ADR candidates)
+
+- The approval gate (ADR 0071): pass = at least 10 mechanically decided tasks at 90% or
+  better on the composed provider at the proposal's default tier; the result lives in
+  `proposal.json` (and moves to `specialists/<name>/` with the promotion); the run is capped
+  before the first call by USD 5 and by what is left of the month's testing share (20% of the
+  human's monthly cap) after earlier approval runs.
+- No agent tool proposes a specialist yet (the PM cannot call `propose` from a session); a
+  proposal comes from code, by hand or from a registry pull and is filed by the daemon's next
+  approvals sync. Recorded in BLOCKERS.md, row C.5.
+- An answered request whose proposal was deleted by hand is never applied (only the install
+  whose `proposal.json` names it may apply it, and that file is gone); it stays answered in
+  the inbox history.
 
 - Prompt files are markdown with a strict YAML-subset frontmatter instead of JSON or full
   YAML: diffable prompts, no dependency, errors with line numbers.
@@ -370,8 +454,8 @@ Run: `pnpm vitest run --project unit packages/runtime/test/registry.test.ts eval
 
 ## Requirement IDs covered
 
-C.1, C.2 (brief shape reused by eval tasks), C.3, C.4, C.5 (proposal half; approval flow in
-phase 3), C.6 (depth and parent budget stated in the PM prompt; enforced by the runtime token),
+C.1, C.2 (brief shape reused by eval tasks), C.3, C.4, C.5 (proposal and the approval gate,
+ADR 0071), C.6 (depth and parent budget stated in the PM prompt; enforced by the runtime token),
 D.4 (per-specialist defaults), D.5 and U.7 (prompt_version), D.11, D.12, D.13, D.14, D.15
 (defaults in the registry files), D.6 and D.21 (eval sets the model watch will use), H.1 to
 H.4 and H.6 (critic prompt), H.7 (seeded-defect variants and the expected-output driver),

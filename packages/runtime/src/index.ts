@@ -42,6 +42,7 @@ export * from "./notifications/index.ts";
 export * from "./provider/anthropic.ts";
 export * from "./provider/registry.ts";
 export * from "./provider/types.ts";
+export * from "./registry/approval.ts";
 export * from "./registry/index.ts";
 /** Remote commands for the PC and the desktop presence heartbeat (spec R.4, R.8; ADR 0041). */
 export * from "./remote/index.ts";

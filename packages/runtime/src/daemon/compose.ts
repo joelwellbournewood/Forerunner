@@ -158,6 +158,7 @@ import { isQuietAt, resolvePrefs } from "../notifications/prefs.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
 import { ProviderRegistry } from "../provider/registry.ts";
 import type { ModelProvider, ModelTier } from "../provider/types.ts";
+import { SpecialistApprovals, type SpecialistSyncResult } from "../registry/approval.ts";
 import {
   type DroppedTool,
   loadRegistry,
@@ -593,6 +594,12 @@ export interface RuntimeApp {
    * first-session plan), applied on the approving answer by `syncApprovals`.
    */
   intake: IntakeService;
+  /**
+   * Proposed specialists (spec C.5, ADR 0071): `propose` writes `proposed/<name>/` and files
+   * the approval request; the approving answer (inbox through `syncApprovals`, or
+   * `fr specialists approve`) runs the eval set and promotes the file only on a pass.
+   */
+  specialistApprovals: SpecialistApprovals;
   scheduler: Scheduler;
   conversation: ConversationAgent | null;
   gitHost: GitHost;
@@ -816,6 +823,8 @@ export interface RuntimeApp {
     signoffs: SignoffSyncResult;
     plans: PlanApprovalSyncResult;
     intake: IntakeSyncResult;
+    /** Answered specialist proposals (ADR 0071): the daemon runs them in the background; a one-shot applies none. */
+    specialists: SpecialistSyncResult;
   }>;
   /** Add or drop mirror schedules after a project's settings changed. */
   refreshMirrorSchedules(): Promise<string[]>;
@@ -1943,6 +1952,34 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // Evals run commands where task runs do: inside a lease over the work directory.
       sandbox: sandboxPort,
     });
+  // Proposed specialists (spec C.5, ADR 0071): the approving answer runs the proposal's eval
+  // set through the same eval runner as the model watch (every call under the hooks, charged
+  // to this human, the run capped by the approval eval budget before the first call) on the
+  // rung of the proposal's default tier; a pass moves it to specialists/ and the live
+  // registry picks it up at once, so the executor's next lookup finds it runnable.
+  const specialistApprovals = new SpecialistApprovals({
+    store,
+    clock,
+    registryDir,
+    humanId: human.id,
+    agentId: agent.id,
+    evals: evalRunner,
+    loadOptions: {
+      toolNames: [...tools.names(), ...browserToolNames, ...emailPorts.tools.map((t) => t.name)],
+    },
+    target: (def) =>
+      provider
+        ? {
+            provider: provider.name,
+            model: rungModelFor(provider, def.default_tier),
+            effort: def.default_effort,
+            pricing: pricingTable,
+          }
+        : null,
+    onPromoted: (def) => {
+      registry.specialists.set(def.name, def);
+    },
+  });
   const modelWatch = new ModelWatch({
     clock,
     store,
@@ -2424,6 +2461,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     }
     return [...mirrorSchedules];
   };
+  const syncSpecialistApprovals = async (): Promise<SpecialistSyncResult> => {
+    const out = await specialistApprovals.syncAnswers({ background: true });
+    await specialistApprovals.fileMissing().catch((e: unknown) => {
+      logger.warn("specialist proposals not filed", { error: errorMessage(e) });
+    });
+    return out;
+  };
   // One sync at a time: the answer route, the command registry's request.answer, the poll and
   // the compose-time call each read the answered requests and then act, so two that overlap
   // would both find the same answer unapplied (the plan mark is conditional as well).
@@ -2456,6 +2500,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             })
           : { started: 0, rejected: 0, skipped: 0 },
       intake: await intake.syncAnswers(),
+      // Proposed specialists (ADR 0071): the daemon claims an approved proposal's answer here
+      // and runs its eval set (minutes, real spend) in the background, recovers evaluations
+      // that ended without a result, and files requests for proposals that reached disk
+      // without one. A one-shot (`startServices: false`: every `fr` command, the cloud runner)
+      // leaves inbox answers to the daemon, as it does plan approvals; `fr specialists
+      // approve` applies its own request.
+      specialists:
+        opts.startServices !== false
+          ? await syncSpecialistApprovals()
+          : { promoted: 0, failed: 0, rejected: 0, skipped: 0, running: 0 },
     };
     // A mirror run waiting on its approval re-reads the request now, not at the next poll.
     mirrorApprovals.wake();
@@ -2915,10 +2969,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     },
     mirrorSync,
     intake,
+    specialistApprovals,
     async close() {
       await voice.close();
       await speechSessions.close();
       stopApprovalsPoll();
+      await specialistApprovals.settled();
       remoteWatcher?.stop();
       githostWatcher?.stop();
       await browserManager.closeAll().catch((e: unknown) => {
