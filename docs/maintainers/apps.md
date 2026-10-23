@@ -311,10 +311,16 @@ palette, the panel's Talk button) toggles a push-to-talk turn through the daemon
 routes: `GET /voice/status`, then `POST /voice/sessions { mode: "push_to_talk", projectId? }`
 once per panel (reused for later turns), `POST …/press { pressed: true }`, the microphone
 (`shell/voice-capture.ts`: getUserMedia + ScriptProcessorNode, 16-bit LE mono PCM, base64)
-posted chunk by chunk to `…/audio`; the next request (or Send) stops the capture, posts
+posted chunk by chunk to `…/audio`, one post after the other (the daemon appends chunks in
+arrival order); the next request (or Send) stops the capture, waits until every chunk of the
+turn was posted (the daemon's loop drops audio that arrives after the release), posts
 `{ pressed: false }` and polls `GET /voice/sessions/:id` (500 ms, at most 60 s) until the turn
 count grows, then shows the transcript (`said`) and the spoken reply (`heard`). Closing the
-panel stops the capture and posts `…/stop`. When voice is unavailable (the status's reason, a
+panel (or unmounting the shell) stops the capture and posts `…/stop`; a turn that is still
+starting when the panel closes (status, session start, press, the microphone prompt) notices
+it after every step and undoes what it began, so the microphone never stays on behind a
+closed panel. The Android app's own Settings screen carries a "Global hotkey: unavailable"
+row with the same reason (`hotkeyUnavailableReason`) and points to Chat. When voice is unavailable (the status's reason, a
 503 from the start, a denied microphone, or a window that cannot capture audio) the panel
 shows why and focuses the text input, which talks to the same agent over `/chat/stream`.
 The chord's release is ignored. `shell/hotkey.ts` holds the chord grammar (the shell's, case
@@ -381,14 +387,17 @@ project to `/settings`: the value is off unless `true`, and the description is t
 - the new value with `fastModeEffect(value)`;
 - the sentence.
 
-It flips the flag on apply. The `/voice` routes run on the fixture's providers
-(`state.voiceStatus`, the `VOICE_STATUS` answer the O.4 tests mutate; the `voice: { available:
-false, reason }` option makes the status say why and the start answer 503, and the status's
-`sessions` is the live count): a press, audio chunks and a release make one turn whose
-transcript is `state.nextVoiceLine` (else "what is next") and whose reply is the chat reply
-for it; sessions and their chunk counts are in `state.voiceSessions`. Run directly
+It flips the flag on apply. Run directly
 (`pnpm exec tsx test/fake-daemon.ts`) it reads `FAKE_DAEMON_PORT`, `FAKE_DAEMON_TOKEN` and
 `FAKE_DAEMON_EVENT_DELAY_MS`.
+
+The fake's `/voice` routes answer with the fixture's providers: `GET /voice/status` is
+`state.voiceStatus` (the `VOICE_STATUS` answer the O.4 Extensions tests mutate) with
+`sessions` counted live from the sessions below, and the `voice: { available: false, reason }`
+option makes the status say why and the start answer 503. A press, audio chunks and a release make one turn
+whose transcript is `state.nextVoiceLine` (else "what is next") and whose reply is the chat
+reply for it; like the daemon's loop, audio counts for the turn only between the press and the
+release (`lastTurn.audioChunks`); sessions and their chunk counts are in `state.voiceSessions`.
 
 ### What the Tauri shells inject
 
@@ -410,7 +419,10 @@ registered, error }`, `hotkey_set` rejects with the shell's message when the gra
 refuses the chord) and two events emitted to the main window: `forerunner://hotkey`
 `{ chord, state: "pressed" }` after the window was shown and focused, and
 `forerunner://hotkey-changed` with the status after a change or a failed registration. The
-Android shell has no such commands; the UI's bridge is unavailable there.
+Android shell has no such commands; the UI's bridge is unavailable there. The desktop shell
+also answers the main window's permission requests (`media.rs`): the microphone is allowed for
+the shell's own pages only, so the conversation panel's `getUserMedia({ audio })` works
+without a webview prompt (WebKitGTK would otherwise deny it).
 
 ## How to change it
 
@@ -570,11 +582,15 @@ switch, persistence), `hotkey` (O.1: every case of `hotkey-chords.json` accepted
 shell's canonical form or refused for its reason, the platform labels, the bridge only inside
 the desktop shell, the palette's Talk entry; Settings says unavailable in a browser, shows the
 chord and its registration, refuses an invalid chord before sending, sends the canonical one,
-resets, shows the shell's refusal and a failure arriving as an event; a press opens the
+resets, shows the shell's refusal and a failure arriving as an event; the Android app's
+Settings screen says unavailable; a press opens the
 conversation and starts a push-to-talk turn — session in `push_to_talk`, press, audio chunks
 — a release does nothing, the next press sends and shows transcript and reply, a third reuses
 the session; voice unavailable or no microphone focuses the text input and the text reaches
-the agent; closing stops the capture and the session; the PCM encoding),
+the agent; closing or unmounting stops the capture and the session; closing while the
+microphone or the session is still starting turns the microphone off and ends the session;
+the release waits for every chunk, posted in order, and the turn counts them all; the PCM
+encoding),
 `desktop-indicator` (spec S.32, ADR 0067; an EventSource stand-in wired
 to the fake daemon's listeners, `setDesktopControl` emitting the frame as `BusIndicator`
 does: no banner while off; an `on` frame showing the banner above the header, high contrast,
@@ -720,6 +736,8 @@ apps/desktop/src-tauri/
                       startup_chord(), the event and status payloads (pure, unit-tested)
     hotkey_shell.rs   tauri-plugin-global-shortcut with one handler, install() at start, the
                       hotkey_status / hotkey_set commands, the press handler
+    media.rs          the main window's permission answers: the microphone for the app's own
+                      pages only (the conversation panel), the camera denied (pure, unit-tested)
 ```
 
 **Directories.** `dirs::app_dirs(env, opts)` returns `config, data, cache, logs, worktrees,
@@ -843,12 +861,23 @@ main window. `hotkey_set { chord }` validates with the same grammar (`parse_chor
 `CommandOrControl|CmdOrCtrl|Mod`, `Control|Ctrl`, `Alt|Option`, `Shift`, `Super|Command|Cmd|
 Meta|Win`; keys A–Z, 0–9, F1–F24, Numpad0–9 and `NAMED_KEYS`; one key, last; a modifier other
 than Shift unless the key is a function key; CommandOrControl not with Control or Super),
-plans the change (`HotkeyState::plan_change`: the same registered chord is a no-op; otherwise
-register the new chord first and release the old one only after that succeeded, so a refused
-chord keeps the working one), saves the canonical chord and answers the status. The plugin's
+plans the change (`HotkeyState::plan_change`: the same registered chord is a no-op; another
+spelling of the hotkey the OS already holds for us, e.g. `Control+Shift+Space` for the default
+on Windows and Linux (one plugin id), is adopted and saved without registering it twice;
+otherwise register the new chord first and release the old one only after that succeeded, so
+a refused chord keeps the working one), saves the canonical chord and answers the status. The plugin's
 own JS commands are not granted to any window; `hotkey_status` and `hotkey_set` are granted to
 the main window only (`capabilities/hotkey.json`, enforced because `build.rs` declares them in
 the app manifest).
+
+**Microphone (`media.rs`; ADR 0064).** The main window is built with a permission handler:
+WebKitGTK denies a `getUserMedia` request nobody answers (verified against WebKitGTK 2.52 with
+a virtual PulseAudio source: `NotAllowedError` unhandled, the stream once allowed) and WebView2
+would prompt on every first press. `permission_decision` allows the microphone when the page
+the window loaded last (`CurrentPage`, recorded from `on_page_load`, so the handler never calls
+back into the webview) is on an app origin (`inject::app_origins`: the bundled UI, the dev
+server in a dev build), denies it anywhere else or before the first load, denies the camera
+(the UI never asks for it) and leaves every other kind to the webview. Every answer is logged.
 
 **Logs and secrets.** The shell logs through `tauri-plugin-log` to `<logs>/desktop-shell.log`
 (stdout as well in debug builds). The token is a `Secret` (`Debug`/`Display` print
@@ -924,10 +953,14 @@ shared one; every accepted and refused case of `apps/ui/test/hotkey-chords.json`
 same canonical form or reason as the UI; messages name the token; every canonical chord over
 all keys and four modifier sets parses with the plugin's own parser; the state machine:
 startup failure, retry of the same chord, no-op, register-then-release for another chord, a
-refused change keeps the working chord, the press id check; the startup fallback for a bad
+refused change keeps the working chord, the press id check, another spelling of the held
+hotkey adopted without a second registration; the startup fallback for a bad
 saved chord; no X display reported; the preference file round trip and garbage; the event and
-status JSON). The Tauri glue (window building, tray wiring, dialogs, the plugin calls in
-`hotkey_shell.rs`) is exercised by `tauri dev` and the CI build, not by unit tests. Last run
+status JSON); `media` (the microphone allowed for the app origins only, the dev server only in
+a dev build, unreadable or foreign pages denied, the decision follows the last loaded page,
+the camera denied, other kinds left to the webview). The Tauri glue (window building, tray
+wiring, dialogs, the plugin calls in `hotkey_shell.rs`, the permission handler's wiring in
+`windows.rs`) is exercised by `tauri dev` and the CI build, not by unit tests. Last run
 2026-10-23 on Linux (item w2-o1-hotkey, rebase onto the release head): `cargo fmt --check`
 clean, `cargo clippy --all-targets -- -D warnings` clean, `cargo test` RUSTCOUNT passed, 0 failed.
 
@@ -943,7 +976,9 @@ clean, `cargo clippy --all-targets -- -D warnings` clean, `cargo test` RUSTCOUNT
   it on `windows-latest`.
 - Global hotkey: on Linux it works through X11 (XWayland on a Wayland desktop); a pure Wayland
   session without XWayland gets "not registered" with the reason, and under XWayland some
-  compositors deliver the chord only while an X window has focus. A desktop-portal
+  compositors deliver the chord only while an X window has focus. A `DISPLAY` that names no
+  reachable X server reads as "active": global-hotkey's X11 thread exits and its `register`
+  then answers Ok (global-hotkey 0.8 `x11/mod.rs`), so the shell cannot tell. A desktop-portal
   (`org.freedesktop.portal.GlobalShortcuts`) registration would close that and is not built.
 - Global hotkey: a press while the main window does not exist yet (not attached, or being
   rebuilt after a daemon restart) starts the attach but is not queued; the human presses again

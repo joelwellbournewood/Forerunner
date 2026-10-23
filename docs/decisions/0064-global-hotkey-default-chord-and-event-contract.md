@@ -51,7 +51,17 @@ tells the UI about a press and about a chord the OS refuses.
    window only (`capabilities/hotkey.json`); the plugin's own JS commands are granted to no
    window. A failed registration (chord taken; on Linux no X display) is logged, kept for
    Settings and emitted, never a crash. A change registers the new chord before releasing the
-   old one, so a refused chord leaves the working one in place.
+   old one, so a refused chord leaves the working one in place; another spelling of the hotkey
+   the OS already holds for us (same plugin id, e.g. `Control+Shift+Space` for the default on
+   Windows and Linux) is adopted and saved without a second registration.
+6. **The shell answers the main window's microphone request.** The conversation panel records
+   with `getUserMedia({ audio })`. WebKitGTK denies a permission request nobody handles, so
+   without a handler the hotkey could never start a voice turn on Linux, and WebView2 would
+   prompt on top of the press. The main window allows the microphone for its own pages only
+   (the page it loaded last is on an app origin), denies it elsewhere, denies the camera and
+   leaves every other kind to the webview (`media.rs`). The UI opens the microphone only on a
+   press or a Talk click and closes it at the end of the turn or when the panel closes,
+   including a turn that was still starting.
 
 ## Consequences
 
@@ -60,6 +70,8 @@ tells the UI about a press and about a chord the OS refuses.
   the window focus are exercised only by a real desktop run.
 - The UI now has a voice control (the conversation panel) using the daemon's `/voice` routes;
   it shows a turn's reply as text and does not play the TTS audio frames yet.
+- The microphone needs no webview prompt in the desktop app; the OS's own microphone privacy
+  settings (Windows) still apply.
 - Two installs on one machine (different `FORERUNNER_HOME`) each try to register their chord;
   the second gets "not registered" and can pick another chord.
 - A pure Wayland session without XWayland has no hotkey (reported as such); a desktop-portal
@@ -75,5 +87,9 @@ tells the UI about a press and about a chord the OS refuses.
   narrower than an eval channel.
 - **Hold-to-talk (press starts, release sends)**: see 4; the panel's Send and a second press
   give the same control without depending on release events.
+- **Leave the microphone to the webview's default**: denied outright on Linux (WebKitGTK), a
+  prompt per window on Windows; the hotkey's voice turn would not work on Linux.
+- **Allow every permission kind for the main window**: wider than the UI needs; only the
+  microphone is used.
 - **Alt+Space or Ctrl+Space as the default**: taken by the window menu and by input-source
   switching on common desktops.

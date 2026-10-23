@@ -514,7 +514,8 @@ export interface DaemonClient {
   removeExtension(id: string): Promise<void>;
   /**
    * Voice providers (spec O.4): the pair the next voice session uses and what the panel's
-   * `voice-*` rows chose, with the reason for every row that is not in force.
+   * `voice-*` rows chose, with the reason for every row that is not in force; the conversation
+   * panel (spec O) reads from it whether a voice session can start and why not.
    */
   voiceStatus(signal?: AbortSignal): Promise<VoiceStatusView>;
 
