@@ -7,6 +7,7 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { INTAKE_RUN_SPECIALIST } from "../src/models/ladder.ts";
 import {
   INTAKE_AUDIT_TOOL,
   IntakeService,
@@ -236,6 +237,21 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       const session = await rt.store.session.mustGet(String(c.session_id));
       expect(session).toMatchObject({ project_id: projectId, status: "completed" });
       expect(session.summary).toContain("intake");
+      // Spec D.19: the call has a Run row with its timing, which the Performance view reads
+      // as the planning mode (performance-view.test.ts).
+      const runRow = await rt.store.run.mustGet(String(c.run_id));
+      expect(runRow).toMatchObject({
+        session_id: session.id,
+        task_id: null,
+        specialist: INTAKE_RUN_SPECIALIST,
+        model: "fake-sonnet",
+        effort: "high",
+        outcome: "completed",
+        author_agent: rt.agent.id,
+      });
+      expect(runRow.ttft_ms).not.toBeNull();
+      expect(runRow.duration_ms).not.toBeNull();
+      expect(runRow.cost_usd_micro).toBe(spend.usd_micro);
       const audit = await rt.store.auditLog.list({ tool: INTAKE_AUDIT_TOOL });
       expect(audit.some((a) => a.input_summary.includes(requestId))).toBe(true);
       // The status route reports the open proposal.

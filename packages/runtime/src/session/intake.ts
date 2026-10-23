@@ -21,7 +21,7 @@ import type {
   StateStore,
 } from "@forerunner/state";
 import { z } from "zod";
-import type { LoopAgentDriver, RunPricing } from "../agent/loop.ts";
+import { type LoopAgentDriver, type RunPricing, type RunResult, wholeMs } from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
@@ -29,6 +29,7 @@ import {
   capEffort,
   DEFAULT_CEILING,
   effortWithOffset,
+  INTAKE_RUN_SPECIALIST,
   MODE_DEFAULTS,
   modelIdFor,
   speedQualityOffsetOf,
@@ -723,6 +724,8 @@ export class IntakeService {
     let ttft: number | null = null;
     let outcome: "completed" | "failed" = "failed";
     let note = "";
+    let called: RunResult | null = null;
+    const startedMono = clock.monotonic();
     try {
       const result = await driver.run({
         token,
@@ -745,6 +748,7 @@ export class IntakeService {
           if (ev.type === "model_call_end" && ttft === null) ttft = ev.ttftMs;
         },
       });
+      called = result;
       if (result.outcome !== "completed") {
         const code =
           result.outcome === "budget_exceeded" ||
@@ -779,6 +783,34 @@ export class IntakeService {
       note = errorMessage(e);
       throw e;
     } finally {
+      // The call's Run row (spec D.19): time to first token and total time, so the Performance
+      // view's planning row has a measurement. A refused row is logged; the intake goes on.
+      try {
+        await store.run.insert({
+          id: runId,
+          task_id: null,
+          session_id: session.id,
+          specialist: INTAKE_RUN_SPECIALIST,
+          model,
+          provider: provider.name,
+          effort,
+          prompt_version: "",
+          billing_source_id: this.deps.billingSourceId,
+          tokens_in: called?.usage.input_tokens ?? 0,
+          tokens_out: called?.usage.output_tokens ?? 0,
+          cache_read_tokens: called?.usage.cache_read_input_tokens ?? 0,
+          cache_write_tokens: called?.usage.cache_creation_input_tokens ?? 0,
+          cost_usd_micro: called?.costUsdMicro ?? 0,
+          ttft_ms: wholeMs(ttft),
+          duration_ms: wholeMs(called?.durationMs ?? clock.monotonic() - startedMono),
+          outcome: called?.outcome ?? "failed",
+          depth: 0,
+          timed_out: called?.outcome === "timeout",
+          author_agent: this.deps.agent.id,
+        });
+      } catch (e) {
+        this.logger.warn("intake run row not persisted", { runId, error: errorMessage(e) });
+      }
       try {
         const current = await store.session.mustGet(session.id);
         await store.session.setStatus(current.id, current.version, outcome, {
