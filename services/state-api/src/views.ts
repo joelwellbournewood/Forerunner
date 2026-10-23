@@ -194,6 +194,8 @@ export interface DeviceView {
   revoked: boolean;
   revokedAt: string | null;
   pairedAt: string;
+  /** True when the device holds an FCM registration token (the token itself is never served). */
+  pushRegistered: boolean;
   version: number;
 }
 
@@ -209,6 +211,7 @@ export function deviceView(d: DeviceRow): DeviceView {
     revoked: d.revoked,
     revokedAt: d.revoked_at,
     pairedAt: d.paired_at,
+    pushRegistered: typeof d.push_token === "string" && d.push_token !== "",
     version: d.version,
   };
 }

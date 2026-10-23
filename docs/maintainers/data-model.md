@@ -370,7 +370,7 @@ Carries the common columns (see Invariants).
 | `revoked` | bool | no | `false` |  | True once revoked. |
 | `revoked_at` | timestamp | yes |  |  | When revoked. |
 | `paired_at` | timestamp | no |  |  | When paired. |
-| `push_token` | text | yes |  |  | Push notification token. |
+| `push_token` | text | yes |  |  | FCM registration token (spec R.6): sent at pairing as `pushToken` or through `PUT /devices/:id/push-token`; cleared when FCM reports it UNREGISTERED. Never served or logged. |
 | `wrap_public_key` | text | yes |  |  | X25519 public key (raw, base64) of the install holding this device's vault; shared secrets are wrapped to it. |
 
 Indexes:

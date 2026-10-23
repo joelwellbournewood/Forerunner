@@ -1074,7 +1074,19 @@ screen count the queued actions, and `pair` flushes them under the new device. O
 **Push.** FCM is not configured (no Firebase project; `docs/status/BLOCKERS.md`). `push.rs`
 and `push.ts` keep one port; the shipped mode is `polling`: the change feed raises in-app
 notices for approvals, finished sessions, budget warnings and messages, suppressed inside
-quiet hours. The FCM wiring is listed in ADR 0032 item 6.
+quiet hours. The FCM wiring is listed in ADR 0032 item 6. The service half is built
+(ADR 0085, `state-service.md`, "Push to Android"): the state service accepts `pushToken` at
+`POST /pairing/complete`, takes refreshed tokens at the signed
+`PUT /devices/:id/push-token { pushToken }`, and sends approvals, finished sessions, budget
+warnings and messages through FCM HTTP v1 to every device of the human with a token,
+honouring the human's quiet hours, once a service account is configured by reference
+(`FORERUNNER_FCM_SERVICE_ACCOUNT_REF`). The message carries `data { kind, id, link,
+projectId? }` (kinds `approval`, `session`, `budget`, `message`, the same names as the app's
+`PushCategory`) and a generic title and body; `link` is a route the app opens. What stays
+the stand-in until a Firebase project exists: no `google-services.json` and no
+`firebase-messaging` in the Gradle build (the build would fail without the project), no
+`FirebaseMessagingService`, and `KeystorePlugin.info` hands over no `fcmToken`, so the app
+sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
 
 ### How to change it
 
@@ -1095,8 +1107,12 @@ quiet hours. The FCM wiring is listed in ADR 0032 item 6.
   book the signer redeems (`Shell::issue_biometric_ticket` in the shell,
   `signer.tickets.issue()` on the web) and put it in the `BiometricAssertion`; nothing else
   gets a `biometric=1` signature.
-- **Turn on FCM**: follow ADR 0032 item 6; `configured(token)` in `push.rs` already picks
-  `FcmPush` when the Kotlin `info` command returns `fcmToken`.
+- **Turn on FCM**: follow ADR 0032 item 6 for the app half; `configured(token)` in `push.rs`
+  already picks `FcmPush` when the Kotlin `info` command returns `fcmToken`. Send that token as
+  `pushToken` at pairing and through `PUT /devices/:id/push-token` (signed) whenever
+  `FirebaseMessagingService.onNewToken` fires; the service side is ready (ADR 0085). Set
+  `FORERUNNER_FCM_SERVICE_ACCOUNT_REF` on the state service and check `/health` says
+  `push.mode: "fcm"`.
 - **Change where the key lives**: implement `Wrapper` in `keystore.rs` (or another Kotlin
   plugin) and pick it in `platform_bits`; `SecureFiles` and the tests stay.
 - **Directory rules**: `dirs.rs` mirrors `packages/platform/src/paths.ts`; change both and

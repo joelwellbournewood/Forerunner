@@ -28,6 +28,20 @@ export class DeviceRepo extends Repository<DeviceRow> {
     return this.patch(id, { last_seen: now });
   }
 
+  /**
+   * Set or clear the device's push registration token (spec R.6). Last write wins: the token
+   * belongs to the device itself and a refresh must not fail on a concurrent `last_seen` bump.
+   */
+  setPushToken(id: string, token: string | null): Promise<DeviceRow> {
+    return this.patch(id, { push_token: token });
+  }
+
+  /** Devices of a human that are not revoked and hold a push token. */
+  async pushTargets(ownerHumanId: string): Promise<DeviceRow[]> {
+    const rows = await this.active(ownerHumanId);
+    return rows.filter((d) => typeof d.push_token === "string" && d.push_token !== "");
+  }
+
   async byPublicKey(publicKey: string): Promise<DeviceRow | undefined> {
     const [row] = await this.list({ public_key: publicKey }, { limit: 1 });
     return row;

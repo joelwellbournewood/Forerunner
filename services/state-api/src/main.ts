@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { GitHubHost } from "@forerunner/capabilities/githost/github";
 import type { RepoRef } from "@forerunner/capabilities/githost/types";
-import { ForerunnerError, log, osFacts, systemClock } from "@forerunner/platform";
+import { type Clock, ForerunnerError, log, osFacts, systemClock } from "@forerunner/platform";
 import { appliedVersions, MIGRATIONS, migrate, openStore } from "@forerunner/state";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
@@ -15,6 +15,8 @@ import {
 } from "./mirror/github.ts";
 import { type MirrorRunReport, MirrorScheduler } from "./mirror/scheduler.ts";
 import { IdempotencyStore, migrateIdempotency } from "./outbox.ts";
+import { PUSH_NOT_CONFIGURED } from "./push/fanout.ts";
+import { FcmSender, type PushSender, parseServiceAccount } from "./push/fcm.ts";
 import { PostgresNotifier } from "./realtime.ts";
 import { FileJsonState } from "./state-file.ts";
 
@@ -23,8 +25,9 @@ import { FileJsonState } from "./state-file.ts";
  * schema, build the GitHub mirror when configured, start the LISTEN bridge and the HTTP
  * server, stop cleanly on SIGINT / SIGTERM.
  *
- * Secrets by reference: FORERUNNER_STATE_API_ADMIN_TOKEN_REF and FORERUNNER_MIRROR_TOKEN_REF
- * name vault secrets. The service has no vault of its own (the keychain belongs to the
+ * Secrets by reference: FORERUNNER_STATE_API_ADMIN_TOKEN_REF, FORERUNNER_MIRROR_TOKEN_REF and
+ * FORERUNNER_FCM_SERVICE_ACCOUNT_REF (the Firebase service-account JSON for push) name vault
+ * secrets. The service has no vault of its own (the keychain belongs to the
  * desktop); the runner that starts it injects vault values into the environment as
  * FORERUNNER_SECRET_<NAME>, which is what `envSecretResolver` reads. A `SecretResolver` can
  * be passed in by whoever embeds the service in a process that holds a vault.
@@ -35,6 +38,8 @@ export type SecretResolver = (name: string) => Promise<string | undefined>;
 export interface StartHooks {
   /** Build the mirror's git host; default `GitHubHost` with the resolved token. */
   mirrorHost?: (opts: { token: string; repo: RepoRef; apiUrl: string | undefined }) => MirrorHost;
+  /** HTTP client of the FCM sender (OAuth token endpoint and FCM API); default global fetch. */
+  fcmFetch?: typeof fetch;
 }
 
 const logger = log("state-api");
@@ -85,6 +90,50 @@ export async function resolveMirrorToken(
   );
 }
 
+/**
+ * The push sender from the service-account reference (spec R.6, ADR 0085). Push is optional:
+ * no reference means a visible no-op ("polling"), and a reference that resolves to nothing or
+ * to a file that is not a service account leaves push off with that reason in /health and a
+ * warning in the log rather than refusing to start. Neither the reason nor the log names
+ * anything but the reference and the missing field: the JSON holds the private key.
+ */
+export async function resolvePushSender(
+  cfg: StateApiConfig,
+  resolve: SecretResolver,
+  clock: Clock,
+  fetchImpl?: typeof fetch,
+): Promise<{ sender?: PushSender; disabledReason?: string }> {
+  if (!cfg.fcmServiceAccountRef) return { disabledReason: PUSH_NOT_CONFIGURED };
+  const ref = cfg.fcmServiceAccountRef;
+  const off = (why: string) => {
+    const disabledReason = `FCM off: ${why}; the app's change feed raises notices in-app`;
+    logger.warn("push disabled", { ref, reason: why });
+    return { disabledReason };
+  };
+  let json: string | undefined;
+  try {
+    json = await resolve(ref);
+  } catch {
+    return off(`service account reference ${ref} could not be resolved`);
+  }
+  if (!json) return off(`service account reference ${ref} resolved to nothing`);
+  try {
+    const account = parseServiceAccount(json);
+    const sender = new FcmSender({
+      account,
+      clock,
+      ...(cfg.fcmProjectId ? { projectId: cfg.fcmProjectId } : {}),
+      ...(cfg.fcmApiUrl ? { apiUrl: cfg.fcmApiUrl } : {}),
+      ...(fetchImpl ? { fetch: fetchImpl } : {}),
+    });
+    logger.info("push enabled", { mode: "fcm", projectId: sender.projectId, ref });
+    return { sender };
+  } catch (e) {
+    const why = e instanceof ForerunnerError ? e.message : "service account is unreadable";
+    return off(`${why} (reference ${ref})`);
+  }
+}
+
 export interface StartedService {
   config: StateApiConfig;
   url: string;
@@ -112,6 +161,7 @@ export async function startService(
   const adminToken = await resolveAdminToken(cfg, resolve);
   const mirrorRepo = cfg.mirrorRepo ? parseMirrorRepo(cfg.mirrorRepo) : undefined;
   const mirrorToken = await resolveMirrorToken(cfg, resolve);
+  const push = await resolvePushSender(cfg, resolve, systemClock, hooks.fcmFetch);
   const store = await openStore({
     url: cfg.stateUrl,
     migrate: false,
@@ -204,6 +254,7 @@ export async function startService(
     tokens,
     idempotency,
     mirror,
+    push,
     chfPerUsd: env.FORERUNNER_CHF_PER_USD ? Number(env.FORERUNNER_CHF_PER_USD) : undefined,
   });
 

@@ -1274,6 +1274,33 @@ export function defineStateSuite(target: SuiteTarget): void {
           }),
         ).rejects.toThrow();
       });
+
+      it("push targets are the human's active devices holding a token; a cleared token drops out", async () => {
+        const key = ["ed25519:", "P".repeat(43), "="].join(""); // not-a-secret
+        const phone = await store.device.register({
+          owner_human_id: s.human.id,
+          name: "Pixel",
+          platform: "android",
+          public_key: key,
+          kind: "phone",
+          push_token: "fcm-registration-1",
+        });
+        const bare = await store.device.register({
+          owner_human_id: s.human.id,
+          name: "Tablet",
+          platform: "android",
+          public_key: `${key}2`,
+          kind: "phone",
+        });
+        expect((await store.device.pushTargets(s.human.id)).map((d) => d.id)).toEqual([phone.id]);
+        const refreshed = await store.device.setPushToken(bare.id, "fcm-registration-2");
+        expect(refreshed.push_token).toBe("fcm-registration-2");
+        expect(refreshed.version).toBe(bare.version + 1);
+        await store.device.setPushToken(phone.id, null);
+        expect((await store.device.pushTargets(s.human.id)).map((d) => d.id)).toEqual([bare.id]);
+        await store.device.revoke(bare.id, refreshed.version);
+        expect(await store.device.pushTargets(s.human.id)).toEqual([]);
+      });
     });
 
     describe("queue and remote commands", () => {
