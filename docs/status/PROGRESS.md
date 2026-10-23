@@ -18,6 +18,20 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-24 (item w3-t1-mode-off rebased onto 4ff4fb1)
+- `wave/w3-t1-mode-off` rebased again onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1, after the
+  merges of w2-l6-speak, w3-c5-specialist-approval, w3-d16-slider, w3-e4-recheck and
+  w5-android-high-risk). Conflicts in this log (twice: the base's entries and the phase 8 row
+  next to the branch's), commands.md (the test list: the base's `summary.speak` and
+  `voice_alerts` cases and forty-four intent phrases next to the ADR 0081 `email.mode.set`
+  cases), the command ports (`speak` next to `emailMode`), the daemon's command ports in
+  `compose.ts` (the `speak` port next to `emailMode`) and apps.md (the `/settings` row with the
+  base's D.16 slider, the email page row with the branch's ADR 0081 clause); both sides kept
+  (`docs/status/reviews/w3-t1-mode-off.md` `## Rebase onto 4ff4fb1`). Requirements on the
+  rebased branch: 189 done, 34 in progress, 5 todo of 228. Current counts: capabilities 36
+  files / 393 tests, commands 11 / 168, cloud-runner 9 / 64, runtime 133 / 1207 (1 skipped),
+  UI 48 / 323 unit tests passed. Not merged yet.
+
 ### 2026-10-24 (item w3-t1-mode-off rebased onto cac6fee)
 - `wave/w3-t1-mode-off` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in
   BLOCKERS (K.8, L.3, T.1 and V.1), this log, commands.md (the test list), the command ports

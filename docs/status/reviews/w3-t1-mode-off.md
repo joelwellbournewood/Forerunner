@@ -390,3 +390,51 @@ passed; runtime 128 files, 1134 passed, 1 skipped; `pnpm --filter @forerunner/ui
 files, 299 passed; integration (no Postgres): capabilities 3 files, 21 passed, 1 skipped,
 cloud-runner and runtime 1 file each skipped (they need Postgres or Docker), commands has no
 integration files; `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok.
+
+## Rebase onto 4ff4fb1 (2026-10-24, `origin/ccr-4d8a843c-1k9syk`)
+
+The release head moved from cac6fee to 4ff4fb1 (merges of w2-l6-speak, w3-c5-specialist-approval,
+w3-d16-slider, w3-e4-recheck and w5-android-high-risk). The branch (starting commit 1d25fd5) was
+rebased commit by commit; the hashes named in the sections above are pre-rebase hashes, the
+subjects are unchanged. Conflicts and how they were resolved:
+
+- `docs/status/PROGRESS.md` (commit "status: T.1 done on ADR 0081 ..."): the base's new log
+  entries (w3-d16-slider rebase, review and build; w3-e4-recheck rebase, review and build;
+  w5-android-high-risk rebase and build) and the branch's T.1 entry all kept, newest first
+  (the T.1 entry on top). The auto-merged item list keeps the branch's "w3-t1-mode-off (T.1;
+  built on its branch, ADR 0081, awaiting review)" next to the base's clauses.
+- `docs/maintainers/commands.md` (commit "commands: email.mode.set keeps ADR 0081 ..."): the
+  test-list sentence keeps the base's `summary.speak` cases, the `voice_alerts` setting and its
+  `intent.test.ts` text (forty-four phrases with the lesson and summary phrases) and adds the
+  branch's ADR 0081 `email.mode.set` cases to the `commands.test.ts` part; the branch's stale
+  "thirty-six phrases" dropped.
+- `packages/commands/src/types.ts`: the base's `speak` port (with `SpeakPortRequest` /
+  `SpeakPortResult`) and the branch's `emailMode` port both kept in `CommandPorts`; the
+  branch's `EmailModePortRequest` / `EmailModePortResult` sit after the interface, before the
+  base's speak types.
+- `packages/runtime/src/daemon/compose.ts`: the command loop's ports keep the base's `speak`
+  (the speaker over the registry's TTS, refusing without a speech player) next to the branch's
+  `emailMode` (through `emailPorts.settings`, still built by `agentEmailPorts` on the base).
+- `docs/maintainers/apps.md` (commit "ui: the email page follows the commands toggle ..."): the
+  `/settings` row took the base's text (the D.16 three-stop slider in the Change dialog; the
+  branch had not touched that row); the `/settings/capabilities/email` row took the branch's
+  text (the ADR 0081 clause: `COMMANDS_TURNED_OFF_NOTE`, the toggle following the stored value,
+  the daemon's 400 sentence), which the base had not changed.
+- `docs/status/PROGRESS.md` (commit "status: w3-t1-mode-off rebased onto cac6fee ..."): the
+  phase 8 row keeps the base's clauses (D.16 on `wave/w3-d16-slider`) and names T.1 next to S.32.
+
+Counts updated to the real count after this rebase: `docs/requirements.md` has 189 done, 34 in
+progress, 5 todo of 228 (the base itself has 188 / 35 / 5; its PROGRESS phase 8 row and V.1 row
+said 186 / 37 / 5 and 184 / 39 / 5); the V.1 row in BLOCKERS and the phase 8 row in PROGRESS
+now say 189 / 34 / 5. The email.md count "8 files, 128 tests" for `email-*.test.ts` re-checked:
+still 8 files, 128 tests (17 + 32 + 34 + 11 + 11 + 10 + 5 + 8).
+
+After the rebase: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, the same count as
+`biome lint` on the base checkout); unit tests from the root (`pnpm exec vitest run --project
+unit <pkg>/test`): capabilities 36 files, 393 passed; commands 11 files, 168 passed
+(`commands.test.ts` 30); cloud-runner 9 files, 64 passed (`email-watch.test.ts` 9); runtime 133
+files, 1207 passed, 1 skipped (`email-routes-wiring.test.ts` 8, `notifications-channels.test.ts`
+23); `pnpm --filter @forerunner/ui test` 48 files, 323 passed (`email-settings.test.tsx` 9);
+integration without Postgres (capabilities, commands, cloud-runner): 3 files passed, 1 skipped,
+21 tests passed, 3 skipped (the runner integration needs Postgres or Docker); `node
+scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok.
