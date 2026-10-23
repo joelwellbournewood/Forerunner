@@ -261,7 +261,12 @@ describe("the PC's watcher runs the phone's voice envelope", () => {
       audio: { pcm: "A".repeat(VOICE_RELAY_MAX_PCM_BASE64 + 4), sampleRate: 16_000, channels: 1 },
     });
     // A replay of a turn already handled (same clientId).
-    const turn = { v: 1, kind: "voice", clientId: "voice-turn-dup1", audio: { pcm, sampleRate: 16_000, channels: 1, durationMs: 200 } };
+    const turn = {
+      v: 1,
+      kind: "voice",
+      clientId: "voice-turn-dup1",
+      audio: { pcm, sampleRate: 16_000, channels: 1, durationMs: 200 },
+    };
     const first = await enqueue(turn);
     const again = await enqueue(turn);
     expect(await watcher(fakeVoice).drain()).toBe(3);

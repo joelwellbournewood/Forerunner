@@ -181,9 +181,7 @@ describe("Upload screen", () => {
     await waitFor(() =>
       expect(screen.getByTestId("m-upload-progress")).toHaveAttribute("data-phase", "queued"),
     );
-    expect(screen.getByTestId("m-upload-memory-only")).toHaveTextContent(
-      "lost if the app closes",
-    );
+    expect(screen.getByTestId("m-upload-memory-only")).toHaveTextContent("lost if the app closes");
     expect(h.controller.state.notice).toMatch(/queued in memory only/);
     expect(h.controller.uploads.pending()[0]?.persisted).toBe(false);
     // Still sent once the phone is back, while the app stayed open.

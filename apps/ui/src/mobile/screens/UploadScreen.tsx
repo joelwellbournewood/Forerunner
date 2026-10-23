@@ -239,8 +239,8 @@ export function UploadScreen() {
               className="text-xs text-amber-800 dark:text-amber-300"
               data-testid="m-upload-memory-only"
             >
-              Too large to keep on the phone: it is held in memory and lost if the app closes
-              before it is uploaded. Keep the app open until the phone reconnects.
+              Too large to keep on the phone: it is held in memory and lost if the app closes before
+              it is uploaded. Keep the app open until the phone reconnects.
             </p>
           ) : null}
         </div>

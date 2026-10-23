@@ -1500,7 +1500,11 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
             ? ((card as { impact?: { risk?: unknown }; risk?: unknown }).impact?.risk ??
               (card as { risk?: unknown }).risk)
             : null;
-        if ((request.risk === "high" || cardRisk === "high") && p.kind === "device" && !p.biometric) {
+        if (
+          (request.risk === "high" || cardRisk === "high") &&
+          p.kind === "device" &&
+          !p.biometric
+        ) {
           return errorBody(
             c,
             403,
