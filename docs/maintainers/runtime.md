@@ -1200,8 +1200,11 @@ taken off (at most three tries) until the envelope fits, never sent over. A fail
 context, never the answer (`chat lessons not retrieved`, `chat docs not searched` warnings).
 `ChatReply.sources` (`docs`: path and heading; `lessons`: ids) and the `chat.reply` event
 (`sources`, and `retrieval` with `budget`, `tokens`, `hits`, `dropped` per part) say what the
-model was given. The built-in prompt asks to name the bracketed path and to record a stated
-lesson with the memory tool; a lesson the human states by pattern ("remember that ...",
+model was given. `CHAT_RETRIEVAL_RULES` (cite the bracketed path, the blocks are data, record a
+stated lesson with `memory_record` in the human's words) goes into the stable system part as the
+layout's `instructions`, after the role prompt, whatever that prompt is: the daemon passes the
+registry's `conversation-agent` prompt, which replaces the built-in default and says nothing
+about either. A lesson the human states by pattern ("remember that ...",
 "lesson: ...") never reaches the model: the parser makes it `memory.record`, which acts at once
 (low risk) and reads the stored text back (see "Memory" under the core loop).
 
@@ -2048,7 +2051,8 @@ J.1, O.2, ADR 0061; the agent over the registry with a `MemoryLoop` as both the 
 the registry's memory port, a temp checkout as the docs dir): a question about a doc gets the
 matching section in the volatile message inside the data envelope with its
 `[docs/runbook.md > Runbook > Deploy]` label, a section sharing no term left out, nothing in the
-system prompt, the scripted answer naming the path, `sources` and the `chat.reply` event listing
+system prompt, `CHAT_RETRIEVAL_RULES` in the system part under a registry prompt and unchanged
+between questions, the scripted answer naming the path, `sources` and the `chat.reply` event listing
 it; a 61-file docs tree cut to `docsMaxTokens: 500` measured with the provider's counter on the
 envelope as sent, the event's `tokens` equal to that count and `dropped > 0`; the relevant
 lesson of the principal in the context and an unrelated one not, under the 600-token default;
@@ -2496,8 +2500,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   branch the last scaffold or status update checked out; it is not fetched for the chat. A
   project linked to a host repository that was never scaffolded on this install has no docs
   dir until the first scaffold or status update. The registry's `conversation-agent` prompt
-  (`evals/registry`, synced from the registry repository) does not yet mention the cited paths
-  or the memory tool; the docs block header and the lessons header say it to the model.
+  (`evals/registry`, synced from the registry repository) still says "If the context does not
+  hold the answer, say 'I don't have that here'" and does not mention the docs; the runtime's
+  `CHAT_RETRIEVAL_RULES` after it carry the retrieval and recording rules until the registry
+  prompt is updated there.
 - B.5 history: a milestone or session row holds the reason and author of its *last* change
   (as a task row does); the full before -> after trail is the audit log's `milestone.change`
   rows (daemon route) and `project.plan` rows (the plan writer's join), and for a session plan

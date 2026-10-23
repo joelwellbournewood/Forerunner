@@ -7,7 +7,11 @@ import { openStore } from "@forerunner/state";
 import { FakeProvider, type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
 import { afterEach, describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
-import { ConversationAgent, type ConversationDeps } from "../src/conversation/agent.ts";
+import {
+  CHAT_RETRIEVAL_RULES,
+  ConversationAgent,
+  type ConversationDeps,
+} from "../src/conversation/agent.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../src/injection/scan.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
@@ -37,6 +41,8 @@ async function setup(
     /** The Game project's checkout: repo-relative POSIX path -> text (spec J.1 docs search). */
     docs?: Record<string, string>;
     retrieval?: ConversationDeps["retrieval"];
+    /** The registry's role prompt, as the daemon passes it (replaces the built-in default). */
+    prompt?: string;
   } = {},
 ) {
   const h = harness();
@@ -133,6 +139,7 @@ async function setup(
     memory,
     docsDir: async (projectId) => (projectId === game && opts.docs ? checkout : null),
     ...(opts.retrieval ? { retrieval: opts.retrieval } : {}),
+    ...(opts.prompt ? { prompt: opts.prompt } : {}),
   });
   const chat = (text: string, over: Partial<Parameters<typeof agent.chat>[0]> = {}) =>
     agent.chat({ humanId: human, agentId: alice, projectId: game, text, ...over });
@@ -571,6 +578,26 @@ describe("chat context: project docs search and the principal's lessons", () => 
     const logged = reply?.payload as { sources?: { docs: string[]; lessons: string[] } };
     expect(logged.sources?.docs[0]).toBe("docs/runbook.md > Runbook > Deploy");
     expect(logged.sources?.lessons).toEqual([]);
+    await w.store.close();
+  });
+
+  it("the rules to cite the doc path and to record a stated lesson reach the model under the registry's prompt too", async () => {
+    // Review w2-chat-memory finding 2: the daemon passes the registry's conversation-agent
+    // prompt, which replaces the built-in default; the retrieval rules are the runtime's own.
+    const registryPrompt = "# Conversation agent\n\nYou speak for a person's principal agent.";
+    const w = await setup([textReply("See docs/runbook.md."), textReply("Flip the switch.")], {
+      docs: { "docs/runbook.md": RUNBOOK },
+      prompt: registryPrompt,
+    });
+    await w.chat("how do we deploy the game?");
+    const system = String(w.provider.calls[0]?.request.system ?? "");
+    expect(system.startsWith(registryPrompt)).toBe(true);
+    expect(system).toContain(CHAT_RETRIEVAL_RULES);
+    expect(CHAT_RETRIEVAL_RULES).toMatch(/cite/i);
+    expect(CHAT_RETRIEVAL_RULES).toContain("memory_record");
+    // Stable: the same rules for another question (the cached prefix does not move).
+    await w.chat("how do we roll back?");
+    expect(String(w.provider.calls[1]?.request.system ?? "")).toBe(system);
     await w.store.close();
   });
 

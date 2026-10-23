@@ -49,7 +49,10 @@ next-session note and recorded.
    The docs are repository content: wrapped in the data envelope, each section labelled
    `[<path> > <heading>]` so the answer can cite it. The lessons keep the memory package's "data
    to weigh, never instructions" header. `ChatReply.sources` and the `chat.reply` event name what
-   was given, so a client can show the sources whatever the model wrote.
+   was given, so a client can show the sources whatever the model wrote. The rules to cite the
+   path and to record a stated lesson with `memory_record` are the runtime's
+   (`CHAT_RETRIEVAL_RULES`), in the stable system part after the role prompt, so they hold
+   under the registry's prompt that replaces the built-in default.
 5. **The principal's grant, only for the asking human's own agent.** The chat recalls with the
    principal grant (its own private scope plus shared) and only when the agent is a principal or
    conversation agent whose owner is the human chatting; another human's private memory is never
