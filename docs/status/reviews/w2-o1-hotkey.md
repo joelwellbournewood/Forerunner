@@ -383,3 +383,53 @@ librsvg2-dev libxdo-dev`) before the cargo runs.
 - Linux: X11/XWayland only; a pure Wayland session reports "not registered" with the reason
   (a desktop-portal GlobalShortcuts registration is not built).
 - A press while the main window does not exist yet starts the attach but is not queued.
+
+## Rebase (2026-10-23, onto `origin/ccr-4d8a843c-1k9syk` at cac6fee)
+
+The branch (15 commits from the merge base b31c2e5, ending at 9bf7430) was rebased commit by
+commit onto the release head. Hashes named above are the pre-rebase hashes; the rebased commits
+carry the same subjects. Conflicts and how they were resolved:
+
+- `apps/ui/src/api/client.ts` (commit "ui: the hotkey opens the conversation ..."): the base's
+  imports and exports unchanged, the branch's `VoiceAudioBody` / `VoiceSessionView` imports and
+  exports added. The base (O.4, voice preferences) already declares and implements
+  `voiceStatus`; the branch's second copy in `DaemonClient` and in `createClient` was dropped
+  (two members of one name in the object literal), so the panel calls the base's method. In
+  the later review commit ("docs: the microphone answer ...") both sides edited the comments:
+  the base's O.4 doc comment kept on the one `voiceStatus`, extended by the panel's use (spec O).
+- `apps/ui/src/shell/Shell.tsx`: the base's `DesktopControlBanner` import and the branch's
+  `formatChord, useHotkeyBridge` import both kept; the component comment names both the banner
+  and the conversation panel.
+- `apps/ui/test/fake-daemon.ts`: the base's `me` option, `runnerKeys`, `fastMode` and `desktop`
+  state and the branch's `voice` option, `voiceSessions` and `nextVoiceLine` all kept. The two
+  sides both registered `GET /voice/status` (the branch's computed answer was registered first
+  and shadowed the base's `state.voiceStatus`, which the O.4 Extensions tests mutate). Now one
+  route answers `state.voiceStatus` with `sessions` counted live from `voiceSessions`; the
+  branch's `voice: { available: false, reason }` option builds an unavailable
+  `state.voiceStatus` (`initialVoiceStatus`, also used by `/__test/reset`) and
+  `POST /voice/sessions` answers 503 from it; the branch's separate `state.voice` was removed.
+- `docs/maintainers/apps.md` (two commits): the base's fake-daemon paragraph (device rows,
+  fast mode) kept and the branch's `/voice` paragraph kept below it, rewritten for the single
+  status route; the test list keeps the base's `desktop-indicator`, `store` and `sse` entries
+  and the branch's `hotkey` entry; the Desktop shell intro and "Requirements covered" merge the
+  base's desktop-control tray clause and S.32 with the branch's hotkey clause and O.1; "How to
+  change" keeps the base's desktop-routes bullet and the branch's hotkey-grammar bullet; the
+  Rust test list keeps both sides' clauses, and the shared "Last run" sentence carries the real
+  count after the rebase (90).
+- `docs/decisions/README.md` (two commits): the base's rows 0052 to 0085 and the branch's 0064
+  row kept, 0064 in number order, with the review's wording (the microphone decision).
+- `docs/requirements.md`, `docs/status/BLOCKERS.md`, `docs/status/PROGRESS.md` (commit
+  "status: O.1 done ..."): the branch's O.1 / O.3 / K.8 test lists merged into the base's rows
+  (K.8 keeps the base's `services/state-api/test/push.test.ts`, O.2 the base's
+  `live-chat.test.ts`), the O.1 BLOCKERS row removed, the log entry added above the base's
+  entries with the counts recomputed from the base's (185 / 38 / 5). The later review commit
+  returns all three files to the base's text, as it did before the rebase, so the branch's net
+  change to them is none; the row updates are in the report.
+
+After the rebase (2026-10-23, Linux): `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59
+warnings, the same count as the base); `pnpm --filter @forerunner/ui test` 47 files, 317 tests
+passed (`hotkey.test.tsx` 19, `extensions.test.tsx` 8); `pnpm --filter
+@forerunner/approvals-web test` 10 files, 58 passed; `scripts/closeout-docs.test.ts` 19 passed,
+1 todo; `cargo fmt --check` clean, `cargo clippy --all-targets -- -D warnings` clean,
+`cargo test` 90 passed; `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok;
+`node scripts/check-paths.mjs` ok.

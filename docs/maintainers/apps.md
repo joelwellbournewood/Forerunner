@@ -962,7 +962,8 @@ the camera denied, other kinds left to the webview). The Tauri glue (window buil
 wiring, dialogs, the plugin calls in `hotkey_shell.rs`, the permission handler's wiring in
 `windows.rs`) is exercised by `tauri dev` and the CI build, not by unit tests. Last run
 2026-10-23 on Linux (item w2-o1-hotkey, rebase onto the release head): `cargo fmt --check`
-clean, `cargo clippy --all-targets -- -D warnings` clean, `cargo test` RUSTCOUNT passed, 0 failed.
+clean, `cargo clippy --all-targets -- -D warnings` clean, `cargo test` 90 passed, 0 failed
+(74 of the base plus the 16 `hotkey` and `media` tests).
 
 ### Known issues
 
