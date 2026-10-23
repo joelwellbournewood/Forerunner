@@ -42,21 +42,25 @@ const URL_USERINFO = /([a-z][\w+.-]*:\/\/[^\s:@/]*:)([^\s@/]+)@/gi;
  * session keys; `PRIVATE_KEY` and the other env-style names of a dumped `process.env`
  * included), and the camel-case `*Key` / `*KEY` after a lower-case letter or digit
  * (`signingKey`, `signingKEY`); a public key is an identifier and stays. The camel-case form
- * needs that case switch before the suffix so that `monkey`, `hockey` or `MONKEY` is not a
- * credential, which also means an all-capitals name with no separator (`PRIVATEKEY`) is not
- * matched by name: no rule tells it from `TURKEY`. Its value is still caught when it has one
- * of the known shapes above.
+ * needs that case switch before the suffix so that `monkey` or `hockey` is not a credential.
+ * An all-capitals name with no separator (`PRIVATEKEY`, `DEPLOYKEY`, `SSH_HOSTKEY`) is masked
+ * too: nothing tells it from a plain word in capitals, so that rule fails closed and only the
+ * few plain words in `PLAIN_CAPS_KEY_WORD` (`MONKEY`, `TURKEY`, `HOTKEY`, ...) stay; any
+ * other capitals word ending in KEY is masked, which costs a log value, never a credential.
  */
 const SECRET_KEY_NAME =
   /(secret|token|password|passwd|passphrase|credential|api[_-]?key|authorization|cookie)/i;
 const KEY_SUFFIX = /(^|[_-])key$/i;
 const CAMEL_KEY_SUFFIX = /[a-z0-9](Key|KEY)$/;
+const CAPS_KEY_SUFFIX = /^[A-Z0-9_-]*[A-Z0-9]KEY$/;
+const PLAIN_CAPS_KEY_WORD = /^(MON|TUR|HOC|DON|JOC|WHIS|HOT|LAC)KEY$/;
 const PUBLIC_KEY_NAME = /^public[_-]?key$/i;
 
 export function isSecretKeyName(key: string): boolean {
   if (SECRET_KEY_NAME.test(key)) return true;
   if (PUBLIC_KEY_NAME.test(key)) return false;
-  return KEY_SUFFIX.test(key) || CAMEL_KEY_SUFFIX.test(key);
+  if (KEY_SUFFIX.test(key) || CAMEL_KEY_SUFFIX.test(key)) return true;
+  return CAPS_KEY_SUFFIX.test(key) && !PLAIN_CAPS_KEY_WORD.test(key);
 }
 
 /** Replace anything that looks like a credential with a stable marker. */

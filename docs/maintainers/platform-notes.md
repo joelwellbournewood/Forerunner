@@ -43,14 +43,17 @@ replaces the value under a secret-named key whatever its shape: `isSecretKeyName
 `authorization`, `cookie`, any `*_key` / `*-key` / bare `key` in any case (`private_key`,
 `PRIVATE_KEY`, `Private_Key`, `SIGNING_KEY`, the env-style names of a dumped `process.env`),
 and the camel-case `*Key` / `*KEY` after a lower-case letter or digit (`vaultKey`,
-`signingKEY`), except a public key (`public_key`, `PublicKey`), which is an identifier; a word
-that merely ends in "key" (`monkey`, `MONKEY`) is not a credential, which is why the
-camel-case form needs that case switch before the suffix, and why an all-capitals name with
-no separator (`PRIVATEKEY`, `DEPLOYKEY`) is not matched by name (see Known issues). The two
-rules are pinned by
+`signingKEY`), and an all-capitals `*KEY` with no separator (`PRIVATEKEY`, `DEPLOYKEY`,
+`SSH_HOSTKEY`), except a public key (`public_key`, `PublicKey`, `PUBLICKEY`), which is an
+identifier; a word that merely ends in "key" (`monkey`) is not a credential, which is why the
+camel-case form needs that case switch before the suffix. Nothing tells an all-capitals name
+from a plain word in capitals, so that rule fails closed: only a short list of plain words
+(`MONKEY`, `TURKEY`, `HOCKEY`, `DONKEY`, `JOCKEY`, `WHISKEY`, `HOTKEY`, `LACKEY`) stays and any
+other capitals word ending in KEY is masked (review of 2026-10-23; it was left unmasked
+before). The rules are pinned by
 `test/security-log-critic.test.ts` (verified 2026-10-23: `PRIVATE_KEY`, `Private_Key`,
-`signingKEY`, `redis://:password@host/0` and `amqp://:pw@h` are masked; `public_key` and
-`monkey` stay). There is no depth at which data passes in clear: a cycle is cut with
+`signingKEY`, `PRIVATEKEY`, `DEPLOYKEY`, `redis://:password@host/0` and `amqp://:pw@h` are
+masked; `public_key`, `PUBLICKEY`, `monkey` and `MONKEY` stay). There is no depth at which data passes in clear: a cycle is cut with
 `[Circular]` and a subtree deeper than 64 levels becomes `[TRUNCATED]`. Sinks are isolated:
 one that throws never stops the others or the caller. `pnpm secrets:scan` checks the
 repository and the logs afterwards.
@@ -83,12 +86,10 @@ upper-case `*_KEY` names, the key-name rule in every case (`PRIVATE_KEY`, `Priva
 
 ## Known issues
 
-- `isSecretKeyName` has no rule for an all-capitals key name with no separator (`PRIVATEKEY`,
-  `SIGNINGKEY`, `DEPLOYKEY`): nothing tells such a name from `TURKEY` or `HOTKEY`, so only the
-  value-shape patterns (a PEM block, a known token prefix, a long base64 run next to the word
-  "key") catch its value; `APIKEY` is matched by `SECRET_KEY_NAME`. Write env names with the
-  underscore (`PRIVATE_KEY`). A rule for the bare form would mask every plain word in
-  capitals, which `security-log-critic.test.ts` pins as staying.
+- `isSecretKeyName` masks an all-capitals key name with no separator (`PRIVATEKEY`,
+  `SIGNINGKEY`) by failing closed, so a plain capitals word ending in KEY that is not on the
+  `PLAIN_CAPS_KEY_WORD` list (`MONKEY`, `TURKEY`, `HOTKEY`, ...) has its value masked in logs
+  too. That costs a log value, never a credential; add the word to the list when it matters.
 - `shell.killTree` on Linux only kills the process group when the child was started detached;
   otherwise it falls back to the direct pid. The runtime starts sandboxes detached.
 - Wayland: desktop control is limited to what the xdg-desktop-portal allows.
