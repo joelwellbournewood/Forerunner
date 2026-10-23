@@ -52,6 +52,7 @@ describe("standard doc set at project creation (G.5)", () => {
   let gammaId = "";
   const host = new MemoryGitHost("alice");
   const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+  const provider = new ScriptedProvider([{ text: "Noted." }], clock);
   const req = (path: string, init: RequestInit = {}) =>
     app.request(path, {
       ...init,
@@ -86,7 +87,7 @@ describe("standard doc set at project creation (G.5)", () => {
       clock,
       stateUrl: "sqlite::memory:",
       vault: new MemoryVault(),
-      provider: new ScriptedProvider([{ text: "Noted." }], clock),
+      provider,
       registryDir: REGISTRY,
       identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
       appVersion: "0.1.0-test",
@@ -211,6 +212,45 @@ describe("standard doc set at project creation (G.5)", () => {
     expect((row.summary_cache.docs as { created: string[] }).created).toHaveLength(
       STANDARD_DOCS.length,
     );
+  });
+
+  it("the composed chat searches the project's doc set and records a stated lesson in the principal's memory (J.1, O.2)", async () => {
+    const res = await req("/projects", {
+      method: "POST",
+      body: JSON.stringify({ name: "Theta", goal: "Ship the telescope controller" }),
+    });
+    expect(res.status).toBe(201);
+    const id = String((await json(res)).id);
+    writeFileSync(
+      join(projectsRoot, id, WORKSPACE_DIR, "docs", "runbook.md"),
+      "# Runbook\n\n## Calibrate\n\nCalibrate the telescope mount with the star-hop routine.\n",
+    );
+    const chat = async (text: string) =>
+      json(
+        await req("/chat", {
+          method: "POST",
+          body: JSON.stringify({ humanId: rt.human.id, agentId: rt.agent.id, projectId: id, text }),
+        }),
+      );
+    expect(String((await chat("switch to theta")).reply)).toContain("Theta");
+    const before = provider.calls.length;
+    await chat("how do we calibrate the telescope mount?");
+    const sent = provider.calls
+      .slice(before)
+      .map((c) => String(c.messages[0]?.content))
+      .join("\n");
+    expect(sent).toContain("[docs/runbook.md > Runbook > Calibrate]");
+    expect(sent).toContain("star-hop routine");
+    const r = await chat("remember that the mount drifts while the dome heater is on");
+    expect(r.reply).toBe(
+      'Recorded a lesson in Alice\'s memory for Theta: "the mount drifts while the dome heater is on". Undo.',
+    );
+    const lessons = await rt.memory.list({
+      scope: "agent_private",
+      ownerAgentId: rt.agent.id,
+      projectId: id,
+    });
+    expect(lessons.map((l) => l.text)).toEqual(["the mount drifts while the dome heater is on"]);
   });
 
   it("a session through the composed runner writes its status update on a pull request of the project's repository", async () => {

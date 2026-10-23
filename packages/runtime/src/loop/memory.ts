@@ -1,3 +1,8 @@
+import type {
+  LessonRecordPortRequest,
+  LessonRecordPortResult,
+  MemoryCommandPort,
+} from "@forerunner/commands";
 import {
   type ConsolidationReport,
   consolidate,
@@ -263,6 +268,7 @@ export class MemoryLoop implements MemoryPort {
         brief: req.query,
         tags: req.tags ?? [],
         maxTokens: req.maxTokens,
+        ...(req.countTokens ? { countTokens: req.countTokens } : {}),
       });
     } catch (e) {
       // The agent's standing notes alone do not fit: nothing is loaded, the warning is shown.
@@ -358,6 +364,108 @@ export class MemoryLoop implements MemoryPort {
       rejected: [...rejected, ...out.rejected],
       proposed,
     };
+  }
+
+  // -------------------------------------------------------------------------------------
+  // A lesson the human states in chat or voice (spec O.2, ADR 0061): the registry's
+  // `memory.record` through `memoryCommandPort`
+
+  /**
+   * Record a lesson the human stated into the private memory of that human's own principal:
+   * the agent must be a principal (or the conversation agent) owned by the human, the text
+   * passes the same injection screen as any lesson candidate (a stated "lesson" that reads as
+   * an order to skip a guard is refused and quoted back), and it is stored with the human as
+   * author, the chat as source and `STATED_LESSON_CONFIDENCE`. A near-duplicate of an existing
+   * lesson supersedes it (the package's merge); the result names the superseded row so the
+   * undo can put it back.
+   */
+  async recordStated(req: LessonRecordPortRequest): Promise<LessonRecordPortResult> {
+    const agent = await this.deps.store.agent.get(req.agentId);
+    if (
+      !agent ||
+      agent.owner_human_id !== req.humanId ||
+      (agent.kind !== "principal" && agent.kind !== "conversation")
+    )
+      throw new ForerunnerError(
+        "autonomy_insufficient",
+        "a stated lesson goes only into the private memory of the human's own principal",
+        { details: { agentId: req.agentId } },
+      );
+    const screened = screenLessons([{ text: req.text }], "unknown");
+    const refused = screened.rejected[0];
+    if (refused)
+      throw new ForerunnerError("injection_suspected", `not recorded: ${refused.error}`, {
+        details: { rules: refused.rules },
+      });
+    const out = await this.service.rememberFromSession({
+      agentId: agent.id,
+      sessionId: "chat",
+      projectId: req.projectId,
+      scope: "agent_private",
+      lessons: [
+        {
+          text: req.text,
+          tags: lessonTags(req.tags),
+          source: req.source,
+          confidence: STATED_LESSON_CONFIDENCE,
+        },
+      ],
+      authorHuman: req.humanId,
+    });
+    const rec = out.recorded[0];
+    if (!rec)
+      throw new ForerunnerError(
+        "validation",
+        `not recorded: ${out.rejected[0]?.error ?? "the lesson was rejected"}`,
+      );
+    this.logger.info("stated lesson recorded", {
+      id: rec.lesson.id,
+      agentId: agent.id,
+      projectId: req.projectId,
+      action: rec.action,
+    });
+    return {
+      lessonId: rec.lesson.id,
+      text: rec.lesson.text,
+      action: rec.action,
+      supersededId: rec.supersededId ?? null,
+    };
+  }
+
+  /**
+   * The undo of `recordStated`: the lesson is retired and its file removed; a lesson it
+   * superseded by a merge is active again. Only the human who owns the agent can undo.
+   */
+  async forgetStated(req: {
+    lessonId: string;
+    restoreId?: string | null;
+    humanId: string;
+  }): Promise<void> {
+    const row = await this.ctx.repo.get(req.lessonId);
+    if (!row) return;
+    const owner = row.owner_agent_id ? await this.deps.store.agent.get(row.owner_agent_id) : null;
+    if (row.scope !== "agent_private" || !owner || owner.owner_human_id !== req.humanId)
+      throw new ForerunnerError(
+        "not_found",
+        `lesson ${req.lessonId} is not in this human's memory`,
+        {
+          details: { id: req.lessonId },
+        },
+      );
+    if (row.status !== "retired") await this.ctx.repo.retire(row.id, row.version);
+    try {
+      await this.ctx.files.remove(this.ctx.files.pathFor(row.scope, row.owner_agent_id, row.id));
+    } catch (e) {
+      this.logger.warn("lesson file not removed", { id: row.id, error: errorMessage(e) });
+    }
+    if (req.restoreId) {
+      const old = await this.ctx.repo.get(req.restoreId);
+      if (old && old.superseded_by === row.id)
+        await this.exportQuietly(
+          await this.ctx.repo.patch(old.id, { superseded_by: null, status: "active" }),
+        );
+    }
+    await this.catalogQuietly(row.scope, row.owner_agent_id);
   }
 
   // -------------------------------------------------------------------------------------
@@ -959,6 +1067,33 @@ export class MemoryLoop implements MemoryPort {
       this.logger.warn("catalog not updated", { scope, error: errorMessage(e) });
     }
   }
+}
+
+/**
+ * Confidence of a lesson the human stated (ADR 0061): above a session's default 0.5 because
+ * the human said it, below 1 so a later contradiction is still weighed.
+ */
+export const STATED_LESSON_CONFIDENCE = 0.8;
+
+/** Tags as the lesson lint wants them: lowercase kebab-case, at most 16, the rest dropped. */
+function lessonTags(tags: readonly string[]): string[] {
+  const out = tags
+    .map((t) =>
+      t
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, ""),
+    )
+    .filter(Boolean);
+  return [...new Set(out)].slice(0, 16);
+}
+
+/** The registry's memory port (`CommandPorts.memory`) over the daemon's memory loop. */
+export function memoryCommandPort(memory: MemoryLoop): MemoryCommandPort {
+  return {
+    recordLesson: (req) => memory.recordStated(req),
+    forgetLesson: (req) => memory.forgetStated(req),
+  };
 }
 
 /** The same lessons would be merged (same survivor), flagged and retired: ids, not wording. */

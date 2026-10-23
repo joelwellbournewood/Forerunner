@@ -227,4 +227,26 @@ describe("project docs at session end (spec G.5)", () => {
     expect(failed?.payload.warning).toContain("git host down");
     await w.close();
   });
+
+  it("docsDirFor finds the doc set where G.5 keeps it: a linked folder, the docs clone, or the workspace", async () => {
+    const w = await loopWorld();
+    const { root, bare } = await bareRepo();
+    const { docs } = await docsFor(w, root, bare);
+    const project = await w.store.project.mustGet(w.project);
+    // Nothing written yet: no dir, and nothing is cloned to find out.
+    expect(docs.docsDirFor(project)).toBeNull();
+    expect(existsSync(join(root, "worktrees"))).toBe(false);
+    // A project without a repository: its data-dir workspace once scaffolded.
+    await docs.scaffoldProject(project);
+    expect(docs.docsDirFor(project)).toBe(join(root, "projects", w.project, WORKSPACE_DIR));
+    // With a repository: the docs clone the scaffold made.
+    const withRepo = await w.store.project.patch(w.project, { repos: ["o/sample"] });
+    await docs.scaffoldProject(withRepo);
+    expect(docs.docsDirFor(withRepo)).toBe(join(root, "worktrees", w.project));
+    // A linked local folder (spec A.4) wins: the human's own checkout.
+    const folder = join(root, "seed");
+    const linked = await w.store.project.patch(w.project, { repos: [folder] });
+    expect(docs.docsDirFor(linked)).toBe(folder);
+    await w.close();
+  });
 });

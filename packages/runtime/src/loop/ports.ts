@@ -188,6 +188,11 @@ export interface MemoryRecallRequest {
   tags?: string[];
   /** Hard cap on the rendered block; the port never returns more. */
   maxTokens: number;
+  /**
+   * The counter the cap is measured with (the chat passes its provider's `countTokens`);
+   * default the memory package's estimate.
+   */
+  countTokens?: (text: string) => number;
 }
 
 export interface MemoryRecallResult {

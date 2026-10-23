@@ -1,16 +1,18 @@
+import { searchDocs } from "@forerunner/memory";
 import { type Clock, errorMessage, log, newId } from "@forerunner/platform";
-import type { StateStore } from "@forerunner/state";
+import type { AgentRow, StateStore } from "@forerunner/state";
 import type { LoopAgentDriver, RunEvent, RunPricing } from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
 import { layoutSystem, volatilePreamble } from "../context/cache-layout.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
-import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../injection/scan.ts";
+import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN, wrapUntrusted } from "../injection/scan.ts";
 import type {
   CommandResultView,
   CommandTurn,
   ConversationCommands,
+  MemoryPort,
   ParsedIntent,
 } from "../loop/ports.ts";
 import { MODE_DEFAULTS, modelIdFor } from "../models/ladder.ts";
@@ -55,6 +57,43 @@ export interface ConversationDeps {
   modelConfig?: () => EffectiveModelConfig;
   /** The command registry port (spec Q). Absent: read-only chat. */
   commands?: ConversationCommands;
+  /**
+   * The principal's memory (spec O.2, ADR 0061): the lessons relevant to the question are
+   * recalled into every model turn under `retrieval.lessonsMaxTokens`. Absent: no lessons.
+   * Recording goes through the registry's `memory.record`, not through this port.
+   */
+  memory?: Pick<MemoryPort, "recall">;
+  /**
+   * Where a project's docs live (spec J.1, G.5): its checkout, a linked local folder or the
+   * data-dir workspace (`ProjectDocs.docsDirFor`); null when it has none. Absent: no docs.
+   */
+  docsDir?: (projectId: string) => Promise<string | null>;
+  /**
+   * Token budgets of the retrieved context per model turn, each measured with the provider's
+   * `countTokens` on the exact text sent (ADR 0061). Defaults `DEFAULT_CHAT_DOCS_TOKENS` and
+   * `DEFAULT_CHAT_LESSONS_TOKENS`; 0 turns a part off.
+   */
+  retrieval?: { docsMaxTokens?: number; lessonsMaxTokens?: number };
+}
+
+/** Docs search results in one chat turn's context at most (tokens, envelope included). */
+export const DEFAULT_CHAT_DOCS_TOKENS = 1200;
+/** Lessons in one chat turn's context at most (tokens). */
+export const DEFAULT_CHAT_LESSONS_TOKENS = 600;
+
+/** What the model was given to answer from, so a client can show the sources. */
+export interface ChatSources {
+  /** Doc sections in the context, by path and heading trail. */
+  docs: { path: string; heading: string }[];
+  /** Lesson ids in the context. */
+  lessons: string[];
+}
+
+interface RetrievalStats {
+  budget: number;
+  tokens: number;
+  hits: number;
+  dropped: number;
 }
 
 export interface ChatRequest {
@@ -98,6 +137,8 @@ export interface ChatReply {
    * when no session runs.
    */
   forwarded?: { sessionId: string; messageId: string } | null;
+  /** The doc sections and lessons retrieved into the model turn (spec J.1, O.2); model path only. */
+  sources?: ChatSources;
 }
 
 export interface PendingConfirmation {
@@ -259,7 +300,7 @@ export class ConversationAgent {
     );
 
     // The model path: a fast model with the registry's command tools and nothing else.
-    const context = await this.context(req.humanId, agent.id, projectId);
+    const context = await this.context(req.humanId, agent, projectId, req.text);
     const results: CommandResultView[] = [];
     const tools = new ToolRegistry();
     for (const t of this.deps.commands?.tools(turn, (r) => results.push(r)) ?? [])
@@ -361,6 +402,11 @@ export class ConversationAgent {
         costUsdMicro: result.costUsdMicro,
         outcome: result.outcome,
         actions: actions.map((a) => a.kind),
+        sources: {
+          docs: context.sources.docs.map((d) => (d.heading ? `${d.path} > ${d.heading}` : d.path)),
+          lessons: context.sources.lessons,
+        },
+        retrieval: context.retrieval,
       } as never,
       result.costUsdMicro,
     );
@@ -374,6 +420,7 @@ export class ConversationAgent {
       transcriptId,
       activeProjectId: await this.currentProject(req.humanId, projectId),
       forwarded,
+      sources: context.sources,
     };
   }
 
@@ -518,12 +565,23 @@ export class ConversationAgent {
     return id;
   }
 
-  /** Small cached context: project summaries (stable) and inbox/requests/sessions (volatile). */
+  /**
+   * Small cached context: project summaries (stable) and inbox/requests/sessions plus what
+   * was retrieved for this question (volatile: the lessons and the docs sections change with
+   * every question, so they never break the cached prefix).
+   */
   private async context(
     humanId: string,
-    agentId: string,
+    agent: AgentRow,
     projectId: string | null,
-  ): Promise<{ stable: string; volatile: string }> {
+    query: string,
+  ): Promise<{
+    stable: string;
+    volatile: string;
+    sources: ChatSources;
+    retrieval: { docs: RetrievalStats; lessons: RetrievalStats };
+  }> {
+    const agentId = agent.id;
     const { store } = this.deps;
     const projects = await store.project.active({ limit: 20 });
     const stable = projects
@@ -549,7 +607,99 @@ export class ConversationAgent {
         : 0,
       running_sessions: sessions.filter((s) => s.summary !== "conversation").length,
     });
-    return { stable: `# Projects\n${stable || "(none)"}`, volatile };
+    const retrieved = await this.retrieve(humanId, agent, projectId, query);
+    return {
+      stable: `# Projects\n${stable || "(none)"}`,
+      volatile: [volatile, ...retrieved.blocks].join("\n\n"),
+      sources: retrieved.sources,
+      retrieval: retrieved.stats,
+    };
+  }
+
+  /**
+   * Spec J.1 and O.2 (ADR 0061): the principal's lessons and the project's doc sections for
+   * this question, each under its own budget measured with the provider's counter on the exact
+   * text sent; a block over its budget is never sent. Lessons are read only for an agent the
+   * asking human owns, with the principal's grant (its own private scope plus shared): nothing
+   * of another human's memory. Doc sections are repository content, so they travel inside the
+   * data envelope with their paths. A failure here costs the context, never the answer.
+   */
+  private async retrieve(
+    humanId: string,
+    agent: AgentRow,
+    projectId: string | null,
+    query: string,
+  ): Promise<{
+    blocks: string[];
+    sources: ChatSources;
+    stats: { docs: RetrievalStats; lessons: RetrievalStats };
+  }> {
+    const count = (t: string) => this.deps.provider.countTokens(t);
+    const lessonsBudget = this.deps.retrieval?.lessonsMaxTokens ?? DEFAULT_CHAT_LESSONS_TOKENS;
+    const docsBudget = this.deps.retrieval?.docsMaxTokens ?? DEFAULT_CHAT_DOCS_TOKENS;
+    const blocks: string[] = [];
+    const sources: ChatSources = { docs: [], lessons: [] };
+    const stats = {
+      lessons: { budget: lessonsBudget, tokens: 0, hits: 0, dropped: 0 },
+      docs: { budget: docsBudget, tokens: 0, hits: 0, dropped: 0 },
+    };
+    const speaksFor =
+      agent.owner_human_id === humanId &&
+      (agent.kind === "principal" || agent.kind === "conversation");
+    if (this.deps.memory && speaksFor && lessonsBudget > 0 && query.trim()) {
+      try {
+        const r = await this.deps.memory.recall({
+          agentId: agent.id,
+          kind: "principal",
+          projectId,
+          query,
+          maxTokens: lessonsBudget,
+          countTokens: count,
+        });
+        const tokens = r.block ? count(r.block) : 0;
+        if (r.block && tokens <= lessonsBudget) {
+          blocks.push(r.block);
+          sources.lessons = [...r.lessonIds];
+          stats.lessons = { ...stats.lessons, tokens, hits: r.lessonIds.length };
+        }
+      } catch (e) {
+        this.logger.warn("chat lessons not retrieved", { error: errorMessage(e) });
+      }
+    }
+    if (this.deps.docsDir && projectId && docsBudget > 0 && query.trim()) {
+      try {
+        const dir = await this.deps.docsDir(projectId);
+        // The envelope costs tokens too: search under the budget, measure the wrapped block,
+        // and search again with the overshoot taken off until it fits (at most three tries).
+        let inner = docsBudget;
+        for (let attempt = 0; dir && attempt < 3 && inner > 0; attempt++) {
+          const found = await searchDocs(dir, query, { maxTokens: inner, countTokens: count });
+          if (!found.hits.length) break;
+          const wrapped = wrapUntrusted(found.block, "repo_file", "project docs");
+          const tokens = count(wrapped.content);
+          if (tokens <= docsBudget) {
+            if (wrapped.report.suspicious)
+              this.logger.warn("instruction-like text in the project docs sent as data", {
+                projectId,
+                rules: wrapped.report.matches.map((m) => m.rule),
+              });
+            blocks.push(wrapped.content);
+            sources.docs = found.hits.map((h) => ({ path: h.path, heading: h.heading }));
+            stats.docs = {
+              ...stats.docs,
+              tokens,
+              hits: found.hits.length,
+              dropped: found.dropped,
+            };
+            break;
+          }
+          inner -= tokens - docsBudget;
+        }
+      } catch (e) {
+        this.logger.warn("chat docs not searched", { projectId, error: errorMessage(e) });
+      }
+    }
+    return { blocks, sources, stats };
   }
 
   describeError(e: unknown): string {

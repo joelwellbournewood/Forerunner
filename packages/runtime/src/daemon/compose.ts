@@ -115,6 +115,7 @@ import { ProjectDocs, parseRepoRef } from "../loop/docs.ts";
 import {
   isMemoryConsolidationRequest,
   MemoryLoop,
+  memoryCommandPort,
   openPrivateIndex,
   privateIndexUrl,
   scheduleMemoryConsolidation,
@@ -2299,6 +2300,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           logger.warn("answer not applied yet", { requestId, error: errorMessage(e) });
         }
       },
+      // memory.record (spec O.2, ADR 0061): a lesson stated in chat or voice goes into the
+      // principal's private memory through the same loop the sessions use.
+      memory: memoryCommandPort(memory),
     },
   });
   const mirrorSchedules = new Set<string>();
@@ -2371,6 +2375,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         prompt: registry.principals.get("conversation-agent")?.prompt,
         modelConfig: () => modelConfig.get(),
         commands,
+        // Spec J.1, O.2 (ADR 0061): the principal's lessons and the project's doc sections
+        // for the question, each under its token budget, in the volatile context.
+        memory,
+        docsDir: async (projectId) => {
+          const project = await store.project.get(projectId);
+          return project ? docs.docsDirFor(project) : null;
+        },
       })
     : null;
   // Voice (spec O; ADR 0012, ADR 0048): the loop over the conversation agent, behind the
