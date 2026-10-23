@@ -108,8 +108,10 @@ kept, corrected and finished. The patch is `1219933..HEAD`, nine commits.
 | `pnpm exec vitest run --project unit testenv/test` | 10 files, 142 tests passed |
 | `pnpm --filter @forerunner/ui test` | 43 files, 259 tests passed |
 | `pnpm exec vitest run --project unit scripts/closeout-docs.test.ts` | 19 passed, 1 todo (ADR template and index) |
-| `node scripts/docs-check.mjs --base 1219933` (the starting commit) | `docs-check: ok (38 files)` |
+| `node scripts/docs-check.mjs --base 1219933` (the starting commit) | `docs-check: ok (44 files)` (38 before the report and the status rows were committed) |
 | `node scripts/docs-check.mjs` (no base) | cannot diff against `origin/main` (no such ref in this clone), "nothing to check"; hence the run with `--base` above |
+| `node scripts/link-check.mjs` | `link-check: ok (107 files)` |
+| `git apply --check` of the exported patch on a clean worktree of `1219933` | applies cleanly |
 | `pnpm check` | exit 0: lint, lint:paths (993 files ok), typecheck, unit tests (273 files, 2713 passed, 4 skipped, 1 todo), docs:check (same `origin/main` note), docs:links (106 files ok), secrets:scan (clean, 1417 files) |
 
 No test needed a re-run for a timeout under load. The runtime's only integration file
