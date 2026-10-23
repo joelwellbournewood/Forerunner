@@ -303,3 +303,39 @@ Checks after the rebase: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warning
 1143 passed, 1 skipped (`devices-routes.test.ts` 11); `pnpm exec vitest run --project unit
 services/state-api/test` 12 files / 160 passed (`desktop-devices.test.ts` 4). The integration
 files of both packages need Postgres and were skipped (2 files, 7 tests).
+
+### Rebase onto 4ff4fb1
+
+Stage REBASE, 2026-10-23 (second rebase). `wave/w3-r2-devices` (045cb9b, 15 commits on
+cac6fee) rebased onto `origin/ccr-4d8a843c-1k9syk` at 4ff4fb1 (73 base commits since cac6fee:
+the merges of w2-l6-speak, w3-c5-specialist-approval, w3-d16-slider, w3-e4-recheck and
+w5-android-high-risk) with `git rebase origin/ccr-4d8a843c-1k9syk`; no merge of the base.
+Every conflict kept both sides:
+
+| Commit | File | Resolution |
+| --- | --- | --- |
+| Devices section | `apps/ui/src/api/client.ts` | the base's L.6 `SpeakBody`, `SpeakView` and `SpeakViewSchema` imports kept next to the branch's `StartPairingBody` (already in Biome's order) |
+| docs (R.2 done) | `docs/maintainers/apps.md` | the `/settings` page row: the branch's row (the Devices section) with the base's D.16 clause (the three-stop slider for a project's speed-versus-quality row) inside the Change dialog clause, one row; the test list: the branch's `settings` clause (the Devices section in the whole app) and `settings-devices` row, then the base's `settings-slider` row |
+| docs (R.2 done) | `docs/status/PROGRESS.md` | the branch's build entry above the base's newer log entries (w3-d16-slider, w3-e4-recheck, w5-android-high-risk rebases and reviews); in the "Next" list the base's lines (with its duplicated C.5 / D.4 / D.16 lines) kept and the branch's R.2 clause on the w3-r2-devices line |
+| Devices review fixes | `docs/maintainers/apps.md` | the same `/settings` row again, now in the review-fix wording (the live list while pairing, the loopback warning, the store-fallback note) with the base's D.16 clause; the `settings-devices` row in its review-fix wording, the base's `settings-slider` row after it |
+
+Merged without a conflict and checked by reading the result against the base's code:
+`packages/runtime/src/daemon/compose.ts` (the base's speaker, specialist approval gate and
+slider wiring untouched; `DeviceManager` built after the git host watcher and returned as
+`devices`), `server.ts` (`createDeviceRoutes` mounted after the runner unlock routes),
+`api-types.ts` (`...DEVICES_ROUTES` in `DAEMON_ROUTES`), `SettingsPage.tsx`
+(`<DevicesSection />` before `<SourcesSection />` and the fast-mode card; the base's slider
+dialog untouched), `apps/ui/test/fake-daemon.ts`, `fixtures.ts`, `settings.test.tsx`,
+runtime.md, state-service.md, requirements.md, BLOCKERS.md and CHANGELOG. Requirement totals
+on the rebased branch: 189 done, 34 in progress, 5 todo (the base has 188 / 35 / 5; R.2 is the
+difference).
+
+Checks after the rebase: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, none in a
+file the branch touches: `biome check` over the branch's 19 changed code files reports none);
+`node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok (28 files);
+`pnpm --filter @forerunner/ui test` 49 files / 334 tests passed (`settings-devices.test.tsx`
+11, `settings.test.tsx` 10, `settings-slider.test.tsx` 3); `pnpm exec vitest run --project
+unit packages/runtime/test` 134 files, 1216 passed, 1 skipped (`devices-routes.test.ts` 11);
+`pnpm exec vitest run --project unit services/state-api/test` 12 files / 160 passed
+(`desktop-devices.test.ts` 4). The branch adds no integration file; the packages' existing
+integration files need Postgres and were not run.

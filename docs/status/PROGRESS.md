@@ -18,6 +18,18 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-r2-devices rebased onto 4ff4fb1)
+- `wave/w3-r2-devices` rebased again, onto `origin/ccr-4d8a843c-1k9syk` at 4ff4fb1 (after the
+  merges of w2-l6-speak, w3-c5-specialist-approval, w3-d16-slider, w3-e4-recheck and
+  w5-android-high-risk). Conflicts in the UI's `client.ts` (the base's speak imports next to
+  the pairing body), apps.md (the `/settings` row holds the Devices section and the D.16
+  slider; the `settings-devices` and `settings-slider` test rows both kept) and this log; both
+  sides kept (`docs/status/reviews/w3-r2-devices.md` `### Rebase onto 4ff4fb1`). Current
+  counts: UI suite 49 files / 334 tests (`settings-devices.test.tsx` 11, `settings.test.tsx`
+  10), runtime 134 files / 1216 unit tests passed and 1 skipped (`devices-routes.test.ts` 11),
+  state-api 12 files / 160 (`desktop-devices.test.ts` 4); requirements 189 done, 34 in
+  progress, 5 todo on the branch (the base 188 / 35 / 5). Not merged yet.
+
 ### 2026-10-23 (item w3-r2-devices rebased onto cac6fee)
 - `wave/w3-r2-devices` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
   daemon's `compose.ts` and `server.ts` (the base's git host watcher and runner unlock routes
@@ -689,7 +701,7 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    fixed on its branch 2026-10-23, rebased onto 38ae8cc, awaiting the merge), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2;
-   built on its branch 2026-10-23, review and merge pending),
+   built and reviewed on its branch 2026-10-23, rebased onto 4ff4fb1, merge pending),
    w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1; built on its branch, ADR 0081, reviewed and fixed 2026-10-24, awaiting merge), w3-misc-replay-ceiling (scenario 9's replay
    `it.todo`, the executor's ceiling rung). Then an independent review of each of the ten
    w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
