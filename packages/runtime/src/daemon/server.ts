@@ -15,6 +15,7 @@ import { estimateAccuracyView } from "../estimates/view.ts";
 import { createExtensionsRoutes } from "../extensions/routes.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
+import { speedQualityOffsetOf } from "../models/ladder.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
 import { createNotificationRoutes } from "../notifications/routes.ts";
@@ -1484,6 +1485,15 @@ export function createDaemonApp(
           value: fastModeOf(p.settings),
           description: fastModeDescription(rt.pricingTable()),
           risk: "medium",
+        },
+        {
+          // The slider (spec D.16): -1 speed, 0 balanced, +1 quality, as every mode reads it.
+          key: "project.speed_quality_offset",
+          scope: "project",
+          scopeId: p.id,
+          value: speedQualityOffsetOf(p.settings),
+          description: `Speed versus quality for ${p.name}: every mode's effort one step down or up`,
+          risk: "low",
         },
       ]),
     ];

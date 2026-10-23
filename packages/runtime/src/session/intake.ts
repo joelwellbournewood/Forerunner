@@ -25,9 +25,15 @@ import type { LoopAgentDriver, RunPricing } from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
-import { MODE_DEFAULTS, modelIdFor } from "../models/ladder.ts";
+import {
+  capEffort,
+  MODE_DEFAULTS,
+  modeEffort,
+  modelIdFor,
+  speedQualityOffsetOf,
+} from "../models/ladder.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
-import type { ModelProvider } from "../provider/types.ts";
+import type { EffortLevel, ModelProvider } from "../provider/types.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
 import {
   applyProjectPlan,
@@ -230,6 +236,11 @@ export interface IntakeDeps {
   modelConfig: () => EffectiveModelConfig;
   /** The PM role prompt from the registry; a built-in line without it. */
   prompt?: string;
+  /**
+   * The project manager's `max_effort` from the registry: the planning effort (the mode default
+   * shifted by the project's speed-versus-quality slider) is held at it. Unset means no cap.
+   */
+  maxEffort?: EffortLevel;
   human: { id: string };
   agent: { id: string; name: string };
   gitHost: GitHost;
@@ -622,6 +633,13 @@ export class IntakeService {
     const config = this.deps.modelConfig();
     const planning = config.modeDefaults.planning ?? MODE_DEFAULTS.planning;
     const model = modelIdFor(planning.tier, provider.name, config.ladder);
+    // The planning effort, shifted by the project's speed-versus-quality slider (spec D.16)
+    // as the row this session read says, so a slider change applies to the next session.
+    // Held at the registry's `max_effort` for the project manager.
+    const effort = capEffort(
+      modeEffort("planning", speedQualityOffsetOf(project.settings), config.modeDefaults),
+      this.deps.maxEffort,
+    );
     const settingBudget = (project.settings as { intake_budget_usd_micro?: unknown })
       .intake_budget_usd_micro;
     const budgetUsdMicro =
@@ -686,7 +704,7 @@ export class IntakeService {
         pricing,
         timeoutMs: INTAKE_TIMEOUT_MS,
         maxTokensPerCall: INTAKE_MAX_TOKENS,
-        effort: planning.effort,
+        effort,
         maxTurns: 1,
         label: `intake ${project.id}`,
         compression: "off",

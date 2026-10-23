@@ -9,7 +9,10 @@ describe("Settings", () => {
   it("groups settings by scope", () => {
     const groups = groupByScope(SETTINGS);
     expect(groups.global.map((s) => s.key)).toEqual(["runtime.provider"]);
-    expect(groups.project.map((s) => s.key)).toEqual(["project.autonomy"]);
+    expect(groups.project.map((s) => s.key)).toEqual([
+      "project.autonomy",
+      "project.speed_quality_offset",
+    ]);
   });
 
   it("maps settings to the registry's commands and leaves the rest read-only", () => {
@@ -103,7 +106,7 @@ describe("Settings", () => {
   it("shows the scope on every row, the daemon status and the same-command hint", async () => {
     renderApp("/settings");
     const rows = await screen.findAllByTestId("setting-row");
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(5);
     for (const row of rows) {
       const scope = within(row).getByTestId("setting-scope");
       expect(scope.textContent).toMatch(

@@ -542,6 +542,15 @@ export const SETTINGS: SettingView[] = [
     description: "Autonomy for Atlas",
     risk: "medium",
   },
+  {
+    // The daemon's row for the speed-versus-quality slider (spec D.16): -1, 0 or +1.
+    key: "project.speed_quality_offset",
+    scope: "project",
+    scopeId: "proj_atlas",
+    value: 0,
+    description: "Speed versus quality for Atlas: every mode's effort one step down or up",
+    risk: "low",
+  },
 ];
 
 export const HEALTH: HealthView = {

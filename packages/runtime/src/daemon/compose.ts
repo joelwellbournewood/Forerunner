@@ -919,6 +919,7 @@ export function specialistSpecFrom(
       promptVersion: d.promptVersion,
       defaultTier: d.default_tier,
       defaultEffort: d.default_effort,
+      maxEffort: d.max_effort,
       allowedTools,
       allowedDomains: extra.length
         ? [...new Set([...d.allowed_domains, ...extra])]
@@ -1735,6 +1736,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // The project's escalation ceiling (`critic_ceiling`, spec D.3): a retry climbs the
       // ladder under it, never under the default ceiling.
       projectCeiling: (settings) => criticSettingsOf(settings).ceiling,
+      // The speed-versus-quality slider (spec D.16) is not a dependency: the executor reads
+      // `speed_quality_offset` from the project row it loads per run, as the conversation agent
+      // (chat and voice) does per turn, the intake per planning session and the critic per
+      // review, so a slider change applies to the next one without a restart.
       ...(worktree ? { worktreeFor: async () => worktree } : {}),
       onEvent: (taskId, ev) => {
         events.emit("run", { taskId, ev });
@@ -1861,6 +1866,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     billingSourceId,
     modelConfig: () => modelConfig.get(),
     prompt: registry.principals.get("project-manager")?.prompt,
+    maxEffort: registry.principals.get("project-manager")?.max_effort,
     human: { id: human.id },
     agent: { id: agent.id, name: agent.name },
     gitHost,
@@ -2530,6 +2536,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         hooksDriver: driver,
         startSession: (req) => scheduler.request(req),
         prompt: registry.principals.get("conversation-agent")?.prompt,
+        maxEffort: registry.principals.get("conversation-agent")?.max_effort,
         modelConfig: () => modelConfig.get(),
         commands,
         // Spec J.1, O.2 (ADR 0061): the principal's lessons and the project's doc sections

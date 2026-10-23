@@ -70,11 +70,38 @@ export function nextRung(
   return TIERS[i + 1] ?? null;
 }
 
+/** The speed-versus-quality slider's three positions (spec D.16): speed, balanced, quality. */
+export type EffortOffset = -1 | 0 | 1;
+
 /** Shift effort by the project's speed-versus-quality offset (-1, 0, +1). */
-export function effortWithOffset(effort: EffortLevel, offset: -1 | 0 | 1): EffortLevel {
+export function effortWithOffset(effort: EffortLevel, offset: EffortOffset): EffortLevel {
   const i = EFFORTS.indexOf(effort);
   const j = Math.min(EFFORTS.length - 1, Math.max(0, i + offset));
   return EFFORTS[j] ?? effort;
+}
+
+/**
+ * The project's slider from its settings (`speed_quality_offset`, spec D.16). Anything but -1,
+ * 0 or +1 (unset, a string, an out-of-range number) is the balanced position, as the critic
+ * reads it (`criticSettingsOf`).
+ */
+export function speedQualityOffsetOf(settings: unknown): EffortOffset {
+  if (typeof settings !== "object" || settings === null) return 0;
+  const v = (settings as { speed_quality_offset?: unknown }).speed_quality_offset;
+  return v === -1 || v === 1 ? v : 0;
+}
+
+/**
+ * A mode's effort for a project (spec D.16): the default from the table in force, shifted one
+ * step by the project's slider. Callers read the project row per run, turn or planning session,
+ * so a slider change applies to the next one without a restart.
+ */
+export function modeEffort(
+  mode: Mode,
+  offset: EffortOffset = 0,
+  defaults: Record<Mode, ModeDefault> = MODE_DEFAULTS,
+): EffortLevel {
+  return effortWithOffset((defaults[mode] ?? MODE_DEFAULTS[mode]).effort, offset);
 }
 
 /**
@@ -85,13 +112,22 @@ export function effortWithOffset(effort: EffortLevel, offset: -1 | 0 | 1): Effor
 export function effortForTask(
   mode: Mode,
   riskTier: 0 | 1 | 2 | 3,
-  offset: -1 | 0 | 1 = 0,
+  offset: EffortOffset = 0,
   defaults: Record<Mode, ModeDefault> = MODE_DEFAULTS,
 ): EffortLevel {
   let base = defaults[mode].effort;
   if (mode === "coder" && riskTier >= 2) base = "high";
   if (mode === "critic_t23" && riskTier === 3) base = "max";
   return effortWithOffset(base, offset);
+}
+
+/**
+ * An effort held at a cap (the registry entry's `max_effort`): the tier rule and the project's
+ * slider raise effort, never above what the specialist declares. No cap leaves it unchanged.
+ */
+export function capEffort(effort: EffortLevel, max: EffortLevel | undefined): EffortLevel {
+  if (!max) return effort;
+  return EFFORTS.indexOf(effort) > EFFORTS.indexOf(max) ? max : effort;
 }
 
 /** Starting rung for a task: the specialist's default; tier 3 starts one rung higher when allowed. */

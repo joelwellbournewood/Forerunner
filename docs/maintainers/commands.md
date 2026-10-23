@@ -72,6 +72,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `session.pause` | session | low | yes (resume) | ports or `session.status` |
 | `capability.grant` | global | high | yes | `extension.permissions`, `enabled` |
 | `settings.set` | by key | by key (`SETTING_SPECS`) | yes | project settings/columns or human prefs/columns; a key with an `effect` (`small_project_mode`, spec B.6; `fast_mode`, spec D.20; the monthly jobs' `calibration`, global in `human.notify_prefs`, and `handover`, per project, ADR 0060) says what changes in the card's new value and the sentence, both ways; `voice_alerts` (global, low, boolean) is the voice notification channel's switch in `human.notify_prefs` (ADR 0063) |
+| `settings.set` | by key | by key (`SETTING_SPECS`) | yes | project settings/columns or human prefs/columns; a key with an `effect` (`small_project_mode`, spec B.6; `fast_mode`, spec D.20; the monthly jobs' `calibration`, global in `human.notify_prefs`, and `handover`, per project, ADR 0060; `speed_quality_offset`, spec D.16) says what changes in the card's new value and the sentence, both ways |
 | `note.add` | project | low | yes (dismiss) | `queue_item` |
 | `summary.speak` | project | low | no (stop the playback in the app) | nothing; `ports.speak` reads the one-screen summary aloud (spec A.6, L.6; ADR 0063). By chat or from the UI the sentence is "Reading the summary of X aloud. <text>"; in a voice session the sentence is the text itself (the loop speaks it, no second voice); without a port, a usable provider or an app window that plays speech (the daemon's port answers "no app window open to play speech", so nothing claims "aloud" into silence) "Voice is unavailable (reason). Summary of X: <text>". `after` says whether it was spoken and by which path. Another human's project (the named one or the active one) is refused as `not_found` "the project "X" is not yours" before anything is read, by `ownsProject` (`src/ownership.ts`: members, `shared_with`, author, or no owner facts at all), the one rule the daemon's speak route uses too. `spokenProjectSummary(project, spendUsdMicro, chfPerUsd)` is the one builder of the text, used by the daemon's `GET /projects/:id/summary` too |
 | `request.answer` | project | the request's own risk | no | `human_request.answer` |
@@ -288,7 +289,8 @@ for it goes into `IntentParser.matchClause`.
 label, scope, risk, zod schema, optional column, and an optional `effect(value)` when the key's
 name alone does not say what changes: it is appended to the card's new value and to the
 sentence as "Set X from a to b: <effect>. Undo.", as `small_project_mode` does with
-`SMALL_PROJECT_MODE_EFFECT`; `test/small-project.test.ts`). `fast_mode` (spec D.20, ADR 0057:
+`SMALL_PROJECT_MODE_EFFECT`; `test/small-project.test.ts`, and `speed_quality_offset` with
+`SPEED_QUALITY_EFFECT` / `speedQualityEffect`; `test/speed-quality.test.ts`). `fast_mode` (spec D.20, ADR 0057:
 Opus fast mode per project; project scope, boolean, medium risk because it raises what every
 Opus call of the project costs) takes its effect from the runtime's `fastModeEffect` (imported
 from `@forerunner/runtime/models/fast-mode`, not the package index, which imports this package
@@ -302,6 +304,20 @@ table. Without the port, the effect uses the built-in table.
 The runtime reads the flag per run (`runtime.md`, "Opus fast mode per project"). `settings.set` refuses unknown keys
 (`settingSpec` looks at own keys only, so `constructor` or `__proto__` are unknown settings,
 not prototype lookups), so the UI and the parser can only reach what is listed.
+
+**The speed-versus-quality slider (spec D.16).** `speed_quality_offset` is a low-risk project
+setting with three positions, -1 speed, 0 balanced, +1 quality (the schema refuses anything
+else, -2 and +2 included: the runtime only ever shifts one step). Its `effect` names the
+position and what it does, so a move reads "Set the speed-versus-quality slider for Game from
+1 to -1: speed, every mode's default effort one step lower (faster and cheaper) from the next
+run, turn or planning session. Undo." on the card, in the change log and in chat or voice; the
+other directions say "balanced, every mode at its default effort ..." and "quality, every mode's
+default effort one step higher (slower, more thorough) ...". The runtime reads the value from
+the project row per run, turn and planning session (`runtime.md`, "The speed-versus-quality
+slider"); the Settings screen renders the key as a slider (`apps.md`). `test/speed-quality.test.ts`
+covers the three positions, the card and the sentence in both directions, the change log rows,
+undo, and a refused +2 and -2 with the validation reason each way (the UI's fake daemon repeats
+those words).
 
 **Change the risk table.** `ConfirmationPolicy.decide` and the risk functions of the commands;
 `confirmation.test.ts` holds the matrix.

@@ -102,7 +102,7 @@ apps/ui/
 | `/changes` | the change log newest first: source, scope, project, undo state, who asked and when, the sentence, the words used, revert time, commands / before / after behind details, Undo while undoable; project filter and "undoable only" | `GET /changes?projectId=&undoable=`, `POST /changes/:id/undo` |
 | `/performance` | per mode: target (first token / first audio / total / by task), samples, first-token p50/p95, total p50/p95, within-target share, a bar of the p95 against the target (met/missed in words); recent runs; estimate accuracy (overall and per specialist and kind); project filter; "Audit log" with a format select (JSON lines / CSV) and **Export audit log** (spec S.9): fetches the daemon's file through `client.auditExport`, saves it under the daemon's name with `saveTextFile` (`src/lib/download.ts`: a Blob behind an object URL on a hidden anchor, clicked once) and reports `Exported N rows to <file>`; says so when the browser cannot save files or the daemon lacks the route, pointing at `fr audit export` | `GET /performance?projectId=` (proposed), `GET /costs/estimates`, `GET /audit/export?format=` |
 | `/updates` | app: running and installed version, channel, state, the available release with changelog, size and "Update and restart", previous version with "Roll back and restart", last rollback, rejected releases, last error; connector updates (installed vs available); model updates; model watch: latest report with recommendations to adopt/ignore/remind, "Run now", recent reports. Asks the feed first and falls back to the local state with a banner | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback`, `GET /model-watch/reports`, `/latest`, `POST /model-watch/run`, `POST /model-watch/reports/:id/answer` |
-| `/settings` | theme override, daemon connection status (with links to Updates and Extensions), the **Sources** section (spec A.4: connected GitHub orgs, accounts, repositories and local folders with their last scan's counts; connect one by kind, locator, display name and, for a GitHub kind, the token's vault reference, never a value; Scan or Rescan, Candidates, Remove with a confirmation that says projects stay; each candidate with its status, the existing-install mark, a link to the project it is or duplicates, and Create project on a proposal, which refreshes the project list; a daemon without the route shows a note), a **Capabilities** section linking to Email (the browser and desktop control are switched in Extensions), every setting grouped by scope with the scope badge; rows that map to a command have Change: a dialog with the current value, the change card from the daemon, Yes/No (a tap; a high-risk card asks this paired device), the sentence with Undo, a link to Changes; other rows say read-only | `GET /settings`, `POST /commands/execute`, `POST /commands/:id/confirm`, `POST /changes/:id/undo` |
+| `/settings` | theme override, daemon connection status (with links to Updates and Extensions), the **Sources** section (spec A.4: connected GitHub orgs, accounts, repositories and local folders with their last scan's counts; connect one by kind, locator, display name and, for a GitHub kind, the token's vault reference, never a value; Scan or Rescan, Candidates, Remove with a confirmation that says projects stay; each candidate with its status, the existing-install mark, a link to the project it is or duplicates, and Create project on a proposal, which refreshes the project list; a daemon without the route shows a note), a **Capabilities** section linking to Email (the browser and desktop control are switched in Extensions), every setting grouped by scope with the scope badge; rows that map to a command have Change: a dialog with the current value (a three-stop slider, speed / balanced / quality, for a project's speed-versus-quality row, spec D.16), the change card from the daemon, Yes/No (a tap; a high-risk card asks this paired device), the sentence with Undo, a link to Changes; other rows say read-only | `GET /settings`, `POST /commands/execute`, `POST /commands/:id/confirm`, `POST /changes/:id/undo` |
 | `/settings/capabilities/email` | Settings -> Capabilities -> Email (spec S.15, S.28, S.29, T.14; ADR 0066): one card per agent of the signed-in human (`/agents` filtered by `/me`, principal first) with the mode badge and the mailbox address; pause / resume with the state (the tray's routes); the **mode picker** over the five modes with their one-line meanings, the plain full-discretion sentence ("the agent can email strangers on your behalf …") under the option before any change and again in a confirmation dialog that must be answered before the `PUT` (cancel sends nothing; every other mode applies at once); the limits that stay on (daily and per-recipient caps, signature on/off and text, daily digest) and, in allowlist mode only, the allowlist editor (one entry per line); the mailbox form (address, IMAP, SMTP, passwords as `secret:<name>` references; the daemon's 400 for a value shown as such); the command settings (toggle, the registered address, the private marker with Rotate, the task cap, the autonomy level); the **command audit** newest first (when, from, subject, interpretation, result with a session link, the reason a mail was ignored); the sent copies newest first (to you / to others, the copy as sent). A daemon without the routes shows the route-missing state per card; another human's agent is not listed | `GET|PUT /agents/:agentId/email/settings`, `POST /agents/:agentId/email/pause`, `.../resume`, `.../rotate-marker`, `GET /agents/:agentId/email/commands?limit=`, `GET /agents/:agentId/email/sent?limit=` |
 
 ### API client
@@ -182,6 +182,18 @@ The button opens the same setting dialog with the other value prefilled (`fastMo
 the daemon returns carries the effect and the surcharge of the direction asked; medium risk,
 so it needs a tap. Without the rows (an older daemon) there is no card. `fast_mode` is in
 `SETTING_KEYS`, so the row in "All settings" opens the same command.
+
+The project's speed-versus-quality slider (spec D.16; `project.speed_quality_offset` in
+`GET /settings`) is the one row that is not a typed value: `commandForSetting` gives it
+`inputType: "slider"` over `SPEED_QUALITY_POSITIONS` (-1 speed, 0 balanced, +1 quality) and
+the dialog renders `SliderInput`, a range input from -1 to +1 in steps of 1 with the stop names
+under it (each one a button that picks its stop, `aria-pressed` on the chosen one), the chosen
+stop's effect, and "Current: balanced (0)" as the hint. The table cell reads the row by
+position (`speedQualityLabel`: "quality (+1)"; unset or junk reads balanced, as the runtime
+reads it). A move is still one `settings.set` through `executeCommands` with `source: "ui"`,
+and the words used name the position ("Settings: project.speed_quality_offset to speed (-1)");
+the sentence with the effect comes from the daemon (`commands.md`). The Performance view is
+untouched: it shows response times per mode, not the slider.
 
 ### Realtime and streaming
 
@@ -366,6 +378,8 @@ The desktop CSP (`apps/desktop/src-tauri/tauri.conf.json`) already allows
   `SETTING_KEYS` when `SETTING_SPECS` in `@forerunner/commands` gains a key) and the fake's
   `SETTING_RISK`. The monthly jobs' `calibration` and `handover` keys (ADR 0060) are in
   `SETTING_KEYS` and the fake's risks (medium); their values are objects, edited as JSON.
+  A setting with a few named positions can reuse `inputType: "slider"` with its own
+  `positions` and `display`, as the speed-versus-quality slider does.
 - **Links that look like buttons**: use `buttonClassName(variant)` from `components/ui.tsx` on
   the `<Link>`; never put a `<Button>` inside a link (invalid HTML, double tab stop).
 - **Change money display**: `lib/money.ts` and its test; keep USD out of any visible string.
@@ -453,6 +467,12 @@ device: the `/me` row's id is posted and performs, an id the fake does not know 
 the daemon's refusal with the card kept, no id while `/me` failed and the change performs,
 `/me` naming no row: the status line says this PC cannot confirm and the daemon's 409 is shown
 with nothing changed, cancel and refusal; `client`: the literal `desktop` is this PC),
+`settings-slider` (spec D.16: the speed-versus-quality row mapped to a three-stop slider
+behind `settings.set`, out-of-range and fractional values refused, the row read by position,
+a move by the range input up to quality and by the stop name down to speed, the posted body
+with `source: "ui"` and the position in the words used, the effect sentence both ways in the
+result and the fake's change log, undo back to the previous position; the fake refusing -2,
++2, 0.5 and "1" in the daemon's words with nothing written),
 `sources` (spec A.4: counts and kind labels; the fixture source with its reference and counts,
 its candidates with statuses, the install mark and the duplicate's project link, Create
 project on a proposal posting to the accept route with the project landing in the store and

@@ -690,7 +690,7 @@ second row at a taken `order_index`, and the next plan joins that one. Tests:
 **PM intake (spec A.2, ADR 0055).** `src/session/intake.ts` turns the brief into one proposal
 and writes nothing until the human approves it. `IntakeService.propose(projectId, { brief? })`
 makes one model call on the planning rung (the `planning` mode's tier and effort from the
-tables in force; the registry's `project-manager` prompt plus an intake section; no tools,
+tables in force, the effort shifted by the project's speed-versus-quality slider, spec D.16; the registry's `project-manager` prompt plus an intake section; no tools,
 `maxTurns` 1; `DEFAULT_INTAKE_BUDGET_USD_MICRO` or `project.settings.intake_budget_usd_micro`;
 `INTAKE_TIMEOUT_MS`) through the loop driver and the hooks on a session row of its own
 (`summary: "intake: <project>"`, `planned -> running -> completed | failed`), so the call is
@@ -1518,7 +1518,8 @@ and API base are per project.
 `builtinModelConfig()` (`applyModelSettings`). Every consumer reads `holder.get()` at the
 start of a run or a turn, never once: `LoopTaskExecutor` (`modelConfig` dep) passes
 `ladder` to `modelIdFor` and `modeDefaults` to `effortForTask`, `ConversationAgent`
-(`modelConfig` dep) takes the `text_chat` tier, effort and response target from it,
+(`modelConfig` dep) takes the `text_chat` tier, effort and response target from it (the
+`voice_chat` effort for a voice turn; either shifted by the project's slider, spec D.16),
 `CriticLoop` (`modelConfig` dep) hands the critic package `ladder` and `modeDefaults` as
 accessors over the holder, read at every review's pick (`pickCriticModel`) and when the rung
 a failed run sat on is looked up for the retry ladder, and the pricing closures of the
@@ -2081,6 +2082,37 @@ targets from spec table D; effort offset from the project slider; retry ladder
 also places a fast-mode variant id (`claude-opus-5-5-fast`) on its base model's rung; the
 per-project fast mode itself is in `src/models/fast-mode.ts` (see "Opus fast mode per project"
 under Drivers, ADR 0057).
+
+**The speed-versus-quality slider (spec D.16).** Each project's `settings.speed_quality_offset`
+(-1 speed, 0 balanced, +1 quality; `settings.set` in `@forerunner/commands`, the Settings
+slider in the UI) shifts every mode's default effort one step on the scale low → medium → high
+→ xhigh → max, clamped at both ends (chat and voice start at low, so speed leaves them at low).
+`speedQualityOffsetOf(settings)` reads the key (anything but -1, 0 or +1, unset included, is
+balanced, as the critic's `criticSettingsOf` reads it), `modeEffort(mode, offset, defaults)`
+shifts a mode's effort from the table in force, `effortForTask` does the same after the coder's
+tier-2+ rule. Nothing caches the value and the composition passes no static offset: every
+consumer reads the project row when the work starts, so a move applies to the next one without
+a restart. `LoopTaskExecutor` reads the row it loads per run (`coder`, `researcher`),
+`ConversationAgent` the active project's row per turn (a `source: "voice"` turn, which is every
+turn the voice bridge sends, takes `voice_chat`'s effort, a typed one `text_chat`'s; both on the
+chat rung the composition prices), `IntakeService.propose` per planning session (`planning`),
+and the critic per review (`critic_t1`, `critic_t23`, `critic.md`). The rung never moves with
+the slider; only the effort does. Every consumer holds the shifted effort at the registry
+entry's `max_effort` (`capEffort`), as `adding-a-specialist.md` promises: the executor at the
+specialist's (`SpecialistSpec.maxEffort`, which the composition fills from `max_effort`; the
+shipped researcher and coder cap at high, so the researcher at quality stays at high and a
+tier-2 coder never reaches xhigh), the conversation agent at `conversation-agent`'s
+(`ConversationDeps.maxEffort`, medium), the intake at `project-manager`'s
+(`IntakeDeps.maxEffort`, max) and the critic at its own (`critic.md`). `GET /settings` lists `project.speed_quality_offset` per
+project with the value the modes read. `effort-offset.test.ts` proves it on the composed daemon:
+each mode at -1, 0 and +1 moved through `POST /commands/execute` as the Settings screen does,
+chat by `/chat`, voice by a voice session's text turn, planning by `/projects/:id/intake`, the
+coder and the tier-1 critic by a work session's Run rows, each move taking effect on the next
+turn, session or run. Its chat and voice daemon runs on an adopted `models.json` where
+`voice_chat` (medium) differs from `text_chat` (low), so a voice turn on the chat default
+fails; an executor block runs a researcher and a tier-2 coder at each position on one
+executor (the row moved between runs) and checks the `max_effort` cap, and an intake with a
+lower cap checks the planning one.
 
 ### Briefs (`src/brief.ts`)
 

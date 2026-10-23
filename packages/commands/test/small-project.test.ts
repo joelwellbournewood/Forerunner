@@ -40,17 +40,16 @@ describe("small-project mode (B.6)", () => {
       }),
     );
     expect(off.sentence).toBe(`Set small project mode for Game from true to false: ${OFF}. Undo.`);
-    // Other settings keep their plain sentence: the effect text is per key.
+    // A key without an effect keeps its plain sentence: the effect text is per key (the
+    // speed-versus-quality slider has its own, `speed-quality.test.ts`).
     const plain = done(
       await w.executor.execute({
         name: "settings.set",
-        params: { key: "speed_quality_offset", value: 1, project: "game" },
+        params: { key: "notify_channel", value: "email" },
         ctx: w.ctx(),
       }),
     );
-    expect(plain.sentence).toBe(
-      "Set the speed-versus-quality slider for Game from unset to 1. Undo.",
-    );
+    expect(plain.sentence).toBe("Set the notification channel from unset to email. Undo.");
     await w.store.close();
   });
 
