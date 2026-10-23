@@ -2163,6 +2163,63 @@ fails; an executor block runs a researcher and a tier-2 coder at each position o
 executor (the row moved between runs) and checks the `max_effort` cap, and an intake with a
 lower cap checks the planning one.
 
+The effort table (`MODE_DEFAULTS`, spec D.8 to D.15) also carries, per mode, the D.4 defaults
+(ADR 0072): `maxTokens` (voice and chat 400, routing 1024, planning 16000, coding and research
+4096, critic 8192), `speedMode` (`standard` everywhere) and `timeoutMs` (chat and voice 30 s,
+planning 5 min, coding and research 30 min, critic tier 1 its 30 s target, tiers 2 and 3
+10 min). These are the numbers the code used before D.4 (the loop's 4096, the intake's
+16000 and 5 min, the chat's 400 and 30 s), so naming them changed no run.
+
+### Settings per agent and specialist (`src/models/run-settings.ts`, spec D.4, ADR 0072)
+
+`resolveRunSettings({ mode, modeDefaults, specialist?, override?, capabilities })` gives a run
+its rung, effort, max tokens, speed mode, timeout and temperature with the source of each
+(`table`, `specialist`, `agent`) and the default without the agent's override. Sources, lowest
+first: the effort table in force, the specialist's registry file, the principal agent's
+`model_config`, read by `parseAgentModelConfig` (`modes.planning`, `modes.text_chat`,
+`specialists.<name>`; every key optional: `tier`, `effort`, `max_tokens`, `speed_mode`,
+`timeout_minutes`, `temperature`; a document that does not validate is ignored whole with a
+warning, never applied half-way). A temperature is resolved only when the provider's
+`acceptsTemperature` flag is true.
+
+Who reads it: `LoopTaskExecutor` (a specialist run: rung into `startingTier`, the agent's
+effort as the table's base before the risk rules, `maxTokensPerCall`, the timeout for the
+brief, the run token, the sandbox lease and the driver, `temperature`), `ProjectIntake` (the
+principal's planning call) and `ConversationAgent` (each chat turn; the turn's budget deadline
+and token expiry are the run's timeout plus 30 s, at least 60 s). The effort in force (the
+table's, or the agent's override) is the base the speed-versus-quality slider (spec D.16, above)
+shifts, and the result is held at the registry entry's `max_effort` (`capEffort`): the
+executor's `effortForTask(mode, risk, slider, table with the override's effort)`, the intake's
+`effortWithOffset(planning.effort, slider)`, the chat's the same on `text_chat` (a spoken turn
+keeps D.16's `voice_chat` row as its base; the principal's chat override applies to typed
+turns). The loop sends `temperature`
+only to a provider whose flag accepts it and `speed` only to one with `fastMode`
+(`providerCapabilities`).
+
+Speed mode composes with spec D.20's per-project Opus fast mode (ADR 0057; ADR 0072 amendment
+after the rebase onto D.20): `decideFastMode` (`src/models/fast-mode.ts`) stays the one place a
+run is made fast. The executor passes it the run's speed mode only when the specialist's file
+or the agent's `model_config` set one (`explicitSpeedMode`; the table's `standard` is no
+preference): a project whose `settings.fast_mode` is literally `true` runs its Opus rungs fast
+unless that speed mode is `standard` (then the decision is "ignored" with that reason, an
+audit row and a warning, as D.20 records every decision that meets an Opus rung); a `fast`
+preference takes effect only where the project allows it and the rung is Opus, otherwise the
+run is standard with a session-log warning from `speedPreferenceNote`. Every other condition is
+D.20's: the loop driver, no source or an API-style one (`subscription` and `plan_credits` are
+API only), a provider with `fastMode`, and a `<id>-fast` price row in the table in force, which
+then prices the run (`pricingFor(variant)`). The Run row of a fast run names the variant and
+carries `{ speed: "fast" }` in `artifacts`. The planning and chat calls never go fast (D.20
+does not read the flag there).
+
+Changes go through the command registry: `model.settings.set` (`packages/commands`, see
+`commands.md`) writes one field of the principal's `model_config` with a change card, a change
+log row and an undo. The daemon serves the screen's view at `GET /settings/models`
+(`buildModelSettingsView`, `src/daemon/model-settings-view.ts`): the provider's flags, the
+effort table, the principal's planning and chat modes (editable), the critic's two review modes
+(read-only: spec H sets its model), and every runnable specialist with the principal's
+overrides; `temperature` is present only when the provider accepts one. The command's ports
+(`CommandPorts.modelSettings`) are the runnable specialists' names and the provider's flags.
+
 ### Briefs (`src/brief.ts`)
 
 `validateBrief` rejects any delegation missing goal, context links, constraints, acceptance
@@ -2675,6 +2732,30 @@ recall shows it would), and the composed scheduler fires the calibration once on
 06:00 local on the simulated clock and raises the `critic_calibration` notification.
 `jobs-cli.test.ts`: `fr jobs calibrate|handover|reports`.
 
+`registry.test.ts` (D.4 frontmatter, see adding-a-specialist.md); `run-settings.test.ts` (12,
+spec D.4, ADR 0072): the table row for an agent mode, the order table → file → agent with the
+sources and the defaults kept for the screen, an adopted effort reaching the default, a
+temperature only for a provider that accepts one, `model_config` read with other keys kept and
+a malformed one refused whole, the explicit speed mode and the note for a `fast` preference the
+project or the rung does not grant, the `fast_mode` key literal `true` only, the default flags, and the
+settings view (sources, defaults, the critic read-only, temperature only with the flag, a
+malformed config named); `run-settings-runs.test.ts` (12): the loop sends the run's max tokens
+(4096 without one), a temperature only to a `FakeProvider` declaring `acceptsTemperature`, a
+speed only to one declaring `fastMode`; the executor with the table's 4096 and no speed or
+temperature by default, the file's max tokens and temperature (sent only where accepted), the
+agent's override of rung, effort and max tokens on the request and the Run row, the overridden
+timeout in the brief, a malformed config warned and ignored, fast sent and priced at the fast
+row (six times the standard cost for the same tokens) with every condition, and standard with
+the reason without the project's leave, off Opus, without a price or on a provider without
+fast mode, an agent's `speed_mode` turning fast on and off for one specialist;
+`conversation.test.ts` (a chat turn at the table's 400 tokens and low effort, then at the
+principal's `modes.text_chat` override, its temperature kept off a provider that takes none);
+`model-settings-routes.test.ts` (5): `GET /settings/models` in the route table, the agents and
+the ten specialists with the table and registry defaults and no temperature, a
+`model.settings.set` from the UI channel written, shown with source `agent`, in the change log
+and undone, a rung change waiting for a yes, out-of-range values, an unknown specialist and a
+bad speed refused, a temperature refused without the flag and shown and stored with it.
+
 ## Requirements covered by the daemon wiring
 
 G.5 (the standard doc set scaffolded at project creation as a pull request on the linked
@@ -2803,6 +2884,12 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   rows (daemon route) and `project.plan` rows (the plan writer's join), and for a session plan
   the `session.planned` event. A future caller of `MilestoneRepo.change` outside those two
   paths records the reason on the row but writes no history row unless it appends one.
+- D.4 (ADR 0072): a specialist's or an agent's `speed_mode` narrows the project's Opus fast mode
+  (spec D.20) for specialist runs only; the intake and the chat never go fast. The critic's
+  model, effort and per-call output follow its review tiers and the effort table (the critic
+  package's 8192 equals the table's row) and are not overridable per agent, and its fast mode
+  follows the project's flag alone. The Agent SDK path has no per-call output cap or speed
+  parameter; it takes the rung, effort and timeout.
 - An approved plan the scheduler answers `queued` (the agent is busy) holds the scheduler's
   single pending slot per agent, which a later trigger replaces (`triggers.ts`: the newest
   request wins the slot); the approval is recorded as handed over (`outcome: "queued"`) and

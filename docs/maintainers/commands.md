@@ -79,6 +79,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `email.mode.set` | global | high | yes | `extension` kind `capability`, name `email:<agentId>`, `config.settings.mode` |
 | `device.revoke` | global | high | no | `device.revoked` |
 | `memory.record` | project | low | yes (retire the lesson; a merged one restores the lesson it superseded) | `ports.memory.recordLesson`: a lesson in the private memory of the human's own principal, for the named or active project (none: every project), source `human:<id>;<chat|voice|...>:<conversation session>` |
+| `model.settings.set` | global | medium for a non-null `tier` or `effort` and for `speed_mode: fast`, else low | yes | one field of the principal agent's `model_config` (`modes.<planning\|text_chat>.<field>` or `specialists.<name>.<field>`; spec D.4, ADR 0072) |
 
 `memory.record` (spec O.2, ADR 0061) is how a lesson the human states in chat or voice reaches
 the principal's memory: "remember that ...", "lesson: ..." by pattern, or the model's
@@ -95,6 +96,21 @@ words of that turn: at least `LESSON_GROUNDING_MIN` (half) of its content words 
 `ctx.wordsUsed`, else it is refused as `injection_suspected`, so a doc section cannot write
 itself into the principal's memory through the model; a human actor's command is the human's
 words and is not checked.
+
+`model.settings.set { agent?, mode? | specialist?, field, value }` (`src/commands/model-settings.ts`)
+changes one D.4 setting: `field` is `tier`, `effort`, `max_tokens`, `speed_mode`,
+`timeout_minutes` or `temperature`, validated by the runtime's `RunSettingsOverrideSchema`
+(1 to 128000 tokens, 1 to 1440 minutes, temperature 0 to 1); `value: null` removes the override
+so the registry file or the effort table applies again (an emptied group is removed too, and the
+whole document is checked against `AgentModelConfigSchema` before the write). Exactly one of
+`mode` and `specialist`; `agent` defaults to `ctx.agentId` and must be the human's own principal
+(another human's agent is `not_found`, the critic is refused: spec H sets its model). The ports
+`ctx.ports.modelSettings` give the runnable specialists (an unknown name is `not_found`) and the
+provider's capability flags: a temperature is refused unless `acceptsTemperature` is true (with
+no port, always). The sentence reads "Set the max tokens per call of the coder specialist for
+Alice from the default to 8000. Undo." The schemas are imported by deep path
+(`@forerunner/runtime/models/run-settings`), because the runtime package imports this one and
+the index would be half-initialised at that point.
 
 `budget.set` stores money in USD micro-units with the CHF figure beside it (ADR 0008; the rate
 comes from `ports.chfPerUsd`): a temporary session budget is `project.settings.
@@ -358,10 +374,14 @@ forty-four English and German phrases including the lesson phrases, "remember to
 ambiguity questions, budget tails that are not a time, invalid values as a question, the
 envelope refusal, the model port, time parsing with `rest`), and `scenario.test.ts` (the
 Android scenario end to end and the phase 5 gate: ui, chat and voice produce the same change
-log entry), and `fast-mode.test.ts` (spec D.20: the `fast_mode` spec, its card and the change
+log entry), `fast-mode.test.ts` (spec D.20: the `fast_mode` spec, its card and the change
 log sentences with the effect and the surcharge both ways, the yes a medium-risk change needs,
 the flag written on one project only; a corrected fast row from `ports.pricingTable` quoted in
-the card and the sentence).
+the card and the sentence), and `model-settings.test.ts` (4, spec D.4: a specialist field set,
+a second one undone, `null` back to the default with the group removed; planning and chat
+modes with a medium card for a rung and for fast; bad values, an unknown specialist, both or
+neither targets, another human's agent and the critic refused; a temperature refused without
+the port or the flag and stored with it).
 
 Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 163 tests).
 
@@ -383,6 +403,7 @@ Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 163
 
 ## Requirements covered
 
+D.4 (`model.settings.set`, the write path of the settings per agent and specialist; ADR 0072).
 Q.1 to Q.12 (`registry.ts`, `executor.ts`, `change-card.ts`, `confirmation.ts`, `intent.ts`,
 tests above); J.5 to J.10 partially (`autonomy.set` enforces the per-project level and its
 confirmation; the runtime hooks enforce the levels at tool time); I.1 partially (`budget.set`
