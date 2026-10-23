@@ -1997,6 +1997,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         typeof params.specialist === "string"
           ? `the ${params.specialist} specialist for Alice`
           : `Alice's ${params.mode === "text_chat" ? "chat" : params.mode}`;
+      // The daemon's words for each field (`MODEL_SETTING_LABELS` in packages/commands).
+      const words: Record<string, string> = {
+        tier: "the model",
+        effort: "the effort",
+        max_tokens: "the max tokens per call",
+        speed_mode: "the speed mode",
+        timeout_minutes: "the timeout in minutes",
+        temperature: "the temperature",
+      };
+      const what = `${words[field] ?? field} of ${subject}`;
       const from = current.source === "agent" ? String(current.value) : "the default";
       const to = value === null ? "the default" : String(value);
       return {
@@ -2006,11 +2016,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         card: card(
           {
             command: name,
-            what: `the ${field} of ${subject}`,
+            what,
             oldValue: from,
             newValue: to,
             scope: "global",
-            sentence: `Set the ${field} of ${subject} from ${from} to ${to}. Undo.`,
+            sentence: `Set ${what} from ${from} to ${to}. Undo.`,
           },
           risk,
         ),
