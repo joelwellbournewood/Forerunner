@@ -123,6 +123,17 @@ webview:       at ... (every line of a stack keeps the prefix)
 so a failing step shows what the app said; a page that refuses `Runtime.enable` costs one
 `webview: [runner] console forwarding unavailable: ...` line, never the smoke. The shell's
 side of a high-risk answer is in logcat (`assert_biometric: asserted=... method=... reason=...`).
+The attach also prints `webview engine: <user agent>`; after a `FAIL:` line the runner prints
+what the page showed as `page:` lines (URL and title, then the screen's text), so a wait that
+times out says which screen the app was on.
+
+Clicks are guarded (ADR 0087): the driver measures the element, then a capture-phase guard in
+the page lets through only the pointer, mouse and click events that land on it. When the
+element moved in between (on the emulator's old WebView the app's stylesheet does not apply
+and the bottom nav sits in the flow, so it moves when Home's list arrives: run 40000764444),
+the misplaced events are stopped before the page sees them and the click is measured and
+sent again; `cdp.click_missed` (names what was at the point) and `cdp.click_lost` (no event
+reached the page) are the failures.
 
 Biometrics on the emulator (high-risk answers need the platform prompt, spec R.7): enrol a
 fingerprint once under Settings → Security → Fingerprint (set a PIN first), then when the
@@ -146,8 +157,8 @@ adb emu kill
 
 | Step | Check |
 | --- | --- |
-| Pairing | `Pair this phone` → code from `/__test/pair` → `Projects`; one device row named from the form |
-| Inbox | the blocking request is first; Approve posts a signed answer without the biometric flag |
+| Pairing | `Pair this phone` → code from `/__test/pair` → `Projects` and Home's project list; one device row named from the form |
+| Inbox | the nav opens the `Inbox` screen; the blocking request is first; Approve posts a signed answer without the biometric flag |
 | High risk | Confirm on the high-risk request shows the biometric error and sends nothing (no enrolment on a fresh emulator: the shell answers `asserted: false, reason: "Biometrics not enrolled."` at once; a prompt that never answers is refused after 45 s by the shell and 60 s by the UI, inside the 180 s wait) |
 | Scenario 9 | the sentence makes one card with three parts; nothing is sent before Confirm; one signed `POST /remote/commands` with `plan = [project.switch, budget.set, session.start]`; the simulated PC reports `done` and a running session on `proj_game` |
 | Change log | one entry; Undo sends `[session.stop, budget.set, project.switch]` with `undoOf`; the original is `undone`; the session ends `killed` |

@@ -1045,7 +1045,9 @@ apps/mobile/
                      webview-console.d.mts, so the driver below is untouched; tested in cdp.test.ts
   e2e/cdp.mjs        raw CDP client and DOM driver for the smoke (ADR 0054): /json/list, page socket,
                      Runtime.evaluate queries, Input.* clicks and fills; no eval in the page (CSP);
-                     cdp.test.ts against a fake endpoint
+                     the click guard (ADR 0087): events that land outside the measured element
+                     are stopped in the page and the click is sent again; describePage for the
+                     runner's page: lines; cdp.test.ts against a fake endpoint
   e2e/cdp.d.mts      types of cdp.mjs for the test (keep in step); e2e/jsdom.d.ts: the jsdom slice it uses
   src-tauri/
     Cargo.toml, tauri.conf.json (no static window; deep-link scheme "fr"; CSP allows 127.0.0.1 and 10.0.2.2)
@@ -1264,7 +1266,13 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   resolving only after it is unhidden, and timing out with the locator named; `click` as
   `mouseMoved` / `mousePressed` / `mouseReleased` at the box centre after `scrollIntoView`,
   landing on the second position when the box moves once after the scroll, strict-mode
-  refusal, an intercepting overlay reported; `evaluate` with the function source spliced into
+  refusal, an intercepting overlay reported; the click guard (ADR 0087, android.yml run
+  40000764444): a nav that moves down between the measurement and the press (the base's
+  driver clicked Home there) gets the click on its retry and Home sees no event, a page that
+  never settles ends in `cdp.click_missed` naming what was at the point with no click
+  received, a click with no event in the page is `cdp.click_lost`; `describePage` (URL,
+  title, capped screen text) and `run.mjs`'s step order (Home's list before the nav click,
+  each screen's heading after it, the page read before the cleanups); `evaluate` with the function source spliced into
   the expression (no `eval` call sent, the CSP stand-in in force), `cdp.bad_function` for a
   non-function; `fill` through `Input.insertText` after focus and select-all, the
   native-setter fallback with `input` and `change`, `not_editable`; `connectPage` waiting for
@@ -1302,6 +1310,18 @@ node apps/mobile/e2e/run.mjs
   rows and `undoOf`.
 - Push is the polling stand-in (`docs/status/BLOCKERS.md`, Firebase row); notices appear only
   while the app is open.
+- The emulator's WebView is too old for the app's stylesheet (ADR 0087): the API 30
+  `aosp_atd` image ships a Chromium 83-class WebView with no Play Store to update it, and
+  Tailwind v4 puts every rule in cascade layers (`@layer`, Chrome 99+), which Chromium 83
+  drops. There the app renders unstyled: the bottom nav (`m-nav`) is `position: static`, in
+  the flow under the screen's content, and moves when a list arrives. `android.yml` run
+  40000764444 (4ff4fb1) lost the "Inbox" click to that move (the click landed on Home, 0
+  `m-request` matches, nothing logged); the driver's click guard and the runner's wait for
+  Home's list fix the smoke, the runner prints `webview engine: <user agent>` to confirm the
+  version on the next run, and a failure now prints `page:` lines with the route and the
+  screen's text. Still open: the layout itself on a pre-99 WebView (real phones update theirs
+  through the Play Store). Either an emulator image with a current WebView in `android.yml`
+  (`google_apis`, API 34) or a build step that flattens the layers for old WebViews.
 - The raw CDP driver (`e2e/cdp.mjs`) met the real WebView in `android.yml` run 39952987240
   (82a6295): the attach, pairing by code (fills) and the approval (a click near the top of
   the inbox) passed; scenario 3 then saw no refusal on the high-risk card. ADR 0086 fixes
@@ -1311,6 +1331,9 @@ node apps/mobile/e2e/run.mjs
   never settled (fixed) and a click that did not reach the scrolled-to Confirm button (the
   driver's assumption that `Input.dispatchMouseEvent` coordinates are the layout viewport's
   CSS pixels, untested below the fold: no "asking the biometric prompt" line would show it).
+  Since ADR 0087 a click that lands on something else is stopped and retried, and one that
+  keeps missing fails as `cdp.click_missed` naming what was at the point, so that second
+  cause can no longer pass silently.
   The shell's `prompt()` / `platform_prompt()` compile only for Android and iOS; their first
   compile is that run.
 - When the shell's `PROMPT_LIMIT` (45 s) runs out while the platform prompt is on screen, the
