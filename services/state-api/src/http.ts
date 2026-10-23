@@ -9,6 +9,7 @@ import type { StateApiConfig } from "./config.ts";
 import { ApiError } from "./errors.ts";
 import type { GitHubMirror } from "./mirror/github.ts";
 import type { IdempotencyStore } from "./outbox.ts";
+import type { PushFanout } from "./push/fanout.ts";
 import type {
   ChangeBus,
   ChangeInput,
@@ -40,6 +41,8 @@ export interface RouteContext {
   notifier: PostgresNotifier | undefined;
   idempotency: IdempotencyStore;
   mirror: GitHubMirror | undefined;
+  /** Android push fan-out (spec R.6); `enabled` is false without a service account. */
+  push: PushFanout;
   /** Highest schema version the code knows (MIGRATIONS.length). */
   codeSchemaVersion: number;
   startedAt: number;

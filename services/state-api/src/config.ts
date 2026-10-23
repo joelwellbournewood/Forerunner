@@ -50,6 +50,16 @@ export interface StateApiConfig {
   mirrorApiUrl: string | undefined;
   /** How often the mirror pulls comments and status edits back. */
   mirrorIntervalMs: number;
+  /**
+   * Vault reference name of the Firebase service-account JSON for FCM HTTP v1 push (spec R.6,
+   * ADR 0085). Only the name lives in config; main.ts resolves the value. Unset: push is off
+   * and /health says why (the app's change feed raises notices in-app).
+   */
+  fcmServiceAccountRef: string | undefined;
+  /** Firebase project id overriding the service account's `project_id`. */
+  fcmProjectId: string | undefined;
+  /** FCM API base URL (a stand-in in tests); undefined = https://fcm.googleapis.com. */
+  fcmApiUrl: string | undefined;
   /** Service version, from package.json. */
   version: string;
 }
@@ -135,6 +145,9 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): StateApiConfig
     mirrorTokenRef: env.FORERUNNER_MIRROR_TOKEN_REF || undefined,
     mirrorApiUrl: env.FORERUNNER_MIRROR_API_URL || undefined,
     mirrorIntervalMs: intEnv(env, "FORERUNNER_MIRROR_INTERVAL_MS", DEFAULT_MIRROR_INTERVAL_MS),
+    fcmServiceAccountRef: env.FORERUNNER_FCM_SERVICE_ACCOUNT_REF || undefined,
+    fcmProjectId: env.FORERUNNER_FCM_PROJECT_ID || undefined,
+    fcmApiUrl: env.FORERUNNER_FCM_API_URL || undefined,
     version: packageVersion(),
   };
 }

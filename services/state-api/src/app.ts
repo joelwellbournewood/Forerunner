@@ -14,6 +14,8 @@ import { ApiError, toApiError } from "./errors.ts";
 import type { App, Ctx, Env, RouteContext } from "./http.ts";
 import type { GitHubMirror } from "./mirror/github.ts";
 import { IdempotencyStore } from "./outbox.ts";
+import type { PushSender } from "./push/fcm.ts";
+import { PushFanout } from "./push/fanout.ts";
 import { TokenBucketLimiter } from "./ratelimit.ts";
 import { ChangeBus, ChangePoller, type PostgresNotifier } from "./realtime.ts";
 import { registerAuditRoutes } from "./routes/audit.ts";
@@ -48,6 +50,11 @@ export interface AppDeps {
   chfPerUsd?: number;
   /** Start the change poller (default true; tests may call poller.pollOnce()). */
   startPoller?: boolean;
+  /**
+   * Android push (spec R.6, ADR 0085): the FCM sender main.ts built from the service account
+   * reference, or none with the reason /health shows. Absent: push is off, "not configured".
+   */
+  push?: { sender?: PushSender; disabledReason?: string };
 }
 
 export interface StateApiApp {
@@ -62,6 +69,8 @@ export interface StateApiApp {
   limiters: { device: TokenBucketLimiter; admin: TokenBucketLimiter; public: TokenBucketLimiter };
   /** Signed mutations seen inside the signature window. */
   replay: ReplayGuard;
+  /** Push fan-out to the humans' Android devices (a visible no-op without a sender). */
+  push: PushFanout;
   /** Stop timers and the LISTEN connection (the store is the caller's). */
   close(): Promise<void>;
 }
@@ -111,6 +120,13 @@ export function createApp(deps: AppDeps): StateApiApp {
     { maxKeys: PUBLIC_MAX_KEYS },
   );
   const replay = new ReplayGuard(clock, config.signatureWindowMs);
+  const push = new PushFanout({
+    store: deps.store,
+    bus,
+    clock,
+    ...(deps.push?.sender ? { sender: deps.push.sender } : {}),
+    ...(deps.push?.disabledReason ? { disabledReason: deps.push.disabledReason } : {}),
+  });
   const poller = new ChangePoller({
     store: deps.store,
     bus,
@@ -121,6 +137,12 @@ export function createApp(deps: AppDeps): StateApiApp {
       adminLimiter.sweep();
       publicLimiter.sweep();
       replay.sweep();
+      // Notices held for quiet hours go out once the human's window has ended.
+      if (push.enabled) {
+        push
+          .flushHeld()
+          .catch((e) => logger.warn("held push flush failed", { error: String(e) }));
+      }
     },
   });
 
@@ -135,6 +157,7 @@ export function createApp(deps: AppDeps): StateApiApp {
     notifier: deps.notifier,
     idempotency: deps.idempotency ?? new IdempotencyStore(undefined, clock),
     mirror: deps.mirror,
+    push,
     codeSchemaVersion: MIGRATIONS.length,
     startedAt: clock.now(),
     chfPerUsd: deps.chfPerUsd,
@@ -188,7 +211,7 @@ export function createApp(deps: AppDeps): StateApiApp {
       "*",
       cors({
         origin: config.corsOrigin,
-        allowMethods: ["GET", "POST", "OPTIONS"],
+        allowMethods: ["GET", "POST", "PUT", "OPTIONS"],
         allowHeaders: [
           "Authorization",
           "Content-Type",
@@ -302,6 +325,7 @@ export function createApp(deps: AppDeps): StateApiApp {
   registerSecretRoutes(app, ctx);
   registerSyncRoutes(app, ctx);
 
+  push.start();
   if (deps.startPoller !== false) poller.start();
 
   return {
@@ -314,8 +338,10 @@ export function createApp(deps: AppDeps): StateApiApp {
     pairing,
     limiters: { device: limiter, admin: adminLimiter, public: publicLimiter },
     replay,
+    push,
     async close() {
       await poller.stop();
+      await push.stop();
       await deps.notifier?.stop();
     },
   };

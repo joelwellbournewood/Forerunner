@@ -1,4 +1,4 @@
-import { createSign } from "node:crypto";
+import { createPrivateKey, createSign } from "node:crypto";
 import { type Clock, ForerunnerError, log } from "@forerunner/platform";
 
 /**
@@ -56,6 +56,14 @@ export function parseServiceAccount(json: string): ServiceAccount {
         details: { field: name },
       });
     }
+  }
+  try {
+    // Fail at start (visible in /health), not at the first push.
+    createPrivateKey(privateKey as string);
+  } catch {
+    throw new ForerunnerError("validation", "FCM service account private_key is not a PEM private key", {
+      details: { field: "private_key" },
+    });
   }
   return {
     projectId: projectId as string,

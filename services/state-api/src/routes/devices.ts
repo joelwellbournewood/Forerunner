@@ -23,6 +23,11 @@ const CompletePairingBody = z.object({
 
 const RevokeBody = z.object({ version: z.number().int().optional() });
 
+/** A refreshed FCM registration token, or null to stop push to this device (spec R.6). */
+const PushTokenBody = z.object({ pushToken: z.string().trim().min(1).max(512).nullable() });
+
+export const AUDIT_TOOL_TOKEN_SET = "push.token_set";
+
 /** Pairing, /me, device listing and revocation (spec R.2, R.7; ADR 0009). */
 export function registerDeviceRoutes(app: App, ctx: RouteContext, publicApp: App): void {
   // The phone has no credentials yet when it completes a pairing: public route, rate limited by IP.
@@ -113,6 +118,43 @@ export function registerDeviceRoutes(app: App, ctx: RouteContext, publicApp: App
     if (!d) throw new ApiError(404, "not_found", "device not found");
     if (p.kind === "device" && d.owner_human_id !== p.humanId) throw forbidden("not your device");
     return c.json(deviceView(d));
+  });
+
+  // FCM rotates registration tokens: the app sends the new one here (signed, like every
+  // device mutation). Only the device itself or the desktop (admin) may set it; the token is
+  // stored on the row and never returned or logged.
+  app.put("/devices/:id/push-token", async (c) => {
+    const p = principal(c);
+    requireSigned(p);
+    const id = c.req.param("id");
+    if (p.kind === "device" && p.deviceId !== id) {
+      throw forbidden("a device sets only its own push token");
+    }
+    const body = await parseBody(c, PushTokenBody);
+    const current = await ctx.store.device.get(id);
+    if (!current) throw new ApiError(404, "not_found", "device not found");
+    if (current.revoked) throw new ApiError(409, "version_conflict", "device is revoked", { revoked: true });
+    const row =
+      current.push_token === body.pushToken
+        ? current
+        : await ctx.store.device.setPushToken(id, body.pushToken);
+    if (row !== current) {
+      await ctx.store.auditLog.append({
+        tool: AUDIT_TOOL_TOKEN_SET,
+        allowed: true,
+        human_id: row.owner_human_id,
+        input_summary: JSON.stringify({ deviceId: id, by: p.kind }),
+        result_summary: JSON.stringify({ registered: body.pushToken !== null }),
+        cost_usd_micro: 0,
+        occurred_at: ctx.clock.nowIso(),
+        author_human: row.owner_human_id,
+      });
+      announce(ctx, "device.changed", "device", row, {
+        humanId: row.owner_human_id,
+        payload: { revoked: row.revoked },
+      });
+    }
+    return c.json({ device: deviceView(row) });
   });
 
   // Lost phone: the desktop revokes; tokens die with the row and the next request is refused.

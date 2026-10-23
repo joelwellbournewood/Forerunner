@@ -1,5 +1,6 @@
 import { appliedVersions } from "@forerunner/state";
 import type { App, RouteContext } from "../http.ts";
+import type { PushStatusView } from "../push/fanout.ts";
 
 export type MigrationState = "current" | "pending" | "ahead";
 
@@ -21,6 +22,11 @@ export interface HealthView {
   uptimeMs: number;
   realtime: { listening: boolean; pollIntervalMs: number; subscribers: number };
   mirror: { enabled: boolean; repo: string | null };
+  /**
+   * Android push (spec R.6, ADR 0085): "fcm" with counters when a service account is
+   * configured, "polling" with the reason otherwise. Never a token or a key.
+   */
+  push: PushStatusView;
 }
 
 export async function healthView(ctx: RouteContext): Promise<HealthView> {
@@ -47,6 +53,7 @@ export async function healthView(ctx: RouteContext): Promise<HealthView> {
       subscribers: ctx.bus.subscriberCount(),
     },
     mirror: { enabled: ctx.mirror !== undefined, repo: ctx.mirror?.repoName ?? null },
+    push: ctx.push.status(),
   };
 }
 
