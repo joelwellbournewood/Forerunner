@@ -74,7 +74,6 @@ Status: accepted | superseded by NNNN
 | 0057 | Opus fast mode per project: the speed parameter on the same model id, variant price rows named `<id>-fast`, API-only sources |
 | 0058 | Project docs: in the repository by pull request, the status doc rewritten per session |
 | 0059 | Cross-project promotion in the loop: who reviews a proposal and when, the offer rule, what an accepted offer does |
-| 0061 | Quick chat retrieval: docs and lessons under measured budgets; recording a stated lesson |
 | 0065 | Shared secrets: wrapped to the named agents' install keys, both humans approve, served by reference |
 | 0066 | Settings -> Capabilities -> Email: the capability's routes on the daemon, a page per agent, the full-discretion confirmation as the page's own step, the command audit read from the shared state |
 | 0068 | Runner unlock card: the device auto-answers only inside the window it set, the biometric prompt still runs, a key bridge returns only the wrapped answer (the daemon on the desktop, the Keystore store on Android) |

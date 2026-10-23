@@ -78,10 +78,8 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   `wave/w3-b5-reasons` (2 commits, unfinished), `wave/w4-desktop-confirm` (1 commit,
   unfinished, the triage P1). WIP snapshots (uncommitted work saved as a `wip:` commit,
   unreviewed, unverified): `wave/w2-monthly-jobs`, `wave/w2-o1-hotkey`, `wave/w3-a3-import`,
-  `wave/w3-o4-voice-prefs`, `wave/w4-metered-aborted`. Built on 2026-10-23, awaiting review:
-  `wave/w2-chat-memory` (J.1 and O.2 done: docs search and lessons in the quick chat under
-  measured token budgets, `memory.record` for a stated lesson; ADR 0061; report in
-  `docs/status/reviews/w2-chat-memory.md`). Not started: w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
+  `wave/w3-o4-voice-prefs`, `wave/w4-metered-aborted`. Not started: w2-chat-memory (J.1,
+  O.2), w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
   (S.12), w4-stale-docs, w4-fcm-sender (R.6 service side) and the wave-3 items
   w3-c5-specialist-approval, w3-d4-specialist-settings, w3-d7-performance, w3-d16-slider,
   w3-e1-triggers, w3-e4-recheck, w3-docs-p7-p11, w3-r2-devices, w3-r5-phone, w3-t1-mode-off,
@@ -183,8 +181,8 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    `wave/w2-o1-hotkey` (O.1), `wave/w3-a3-import` (A.3), `wave/w3-o4-voice-prefs` (O.4); a
    `wip:` commit is unreviewed and unverified, so start from its diff, not its claims.
 3. Build the unbuilt items one at a time, each with an independent review before the merge
-   (the BLOCKERS.md row of each names the gap and the fix): w2-chat-memory (J.1, O.2; built,
-   review pending), w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
+   (the BLOCKERS.md row of each names the gap and the fix): w2-chat-memory (J.1, O.2),
+   w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
    (S.12), w4-fcm-sender (R.6, the service side), w3-c5-specialist-approval (C.5),
    w3-d4-specialist-settings (D.4), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
