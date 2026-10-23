@@ -32,6 +32,7 @@ import {
   CreateTaskBody,
   EMAIL_MODES,
   KillBody,
+  RunnerUnlockWrapBody,
   StartSessionBody,
   TransitionTaskBody,
 } from "@forerunner/runtime/daemon/api-types";
@@ -42,6 +43,11 @@ import {
   csvLine,
   jsonlLine,
 } from "@forerunner/runtime/daemon/audit-export";
+import {
+  decodeStoredKey,
+  parseUnlockChallenge,
+  wrapVaultKey,
+} from "@forerunner/vault/runner-unlock";
 import { serve } from "@hono/node-server";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
@@ -136,6 +142,11 @@ export interface FakeDaemonOptions {
    * unreachable (`{"/updates": {status: 503, code: "unavailable", message: "feed down"}}`).
    */
   failing?: Record<string, { status: number; code: string; message: string }>;
+  /**
+   * Cloud runner vault keys the fake's "OS keyring" holds, runner id -> base64 of 32 bytes
+   * (spec S.12, ADR 0068). `/runner-unlock/wrap` wraps them as the daemon does.
+   */
+  runnerKeys?: Record<string, string>;
 }
 
 type Listener = (event: string, data: unknown) => void;
@@ -177,6 +188,8 @@ export interface FakeDaemonState {
   emailCommands: EmailCommandRowView[];
   missingRoutes: string[];
   failing: Record<string, { status: number; code: string; message: string }>;
+  /** The fake keyring's runner vault keys (runner id -> base64). */
+  runnerKeys: Record<string, string>;
 }
 
 interface PendingCommand {
@@ -235,6 +248,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     emailCommands: clone(EMAIL_COMMANDS),
     missingRoutes: [...(options.missingRoutes ?? [])],
     failing: { ...(options.failing ?? {}) },
+    runnerKeys: { ...(options.runnerKeys ?? {}) },
   };
 
   const emit = (event: string, data: unknown) => {
@@ -331,6 +345,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.emailCommands = clone(EMAIL_COMMANDS);
     state.missingRoutes = [...(options.missingRoutes ?? [])];
     state.failing = { ...(options.failing ?? {}) };
+    state.runnerKeys = { ...(options.runnerKeys ?? {}) };
     return c.json({ ok: true });
   });
   app.post("/__test/fail", async (c) => {
@@ -755,6 +770,39 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.get("/inbox", (c) =>
     c.json({ requests: state.requests, messages: state.messages, blockingCount: blockingCount() }),
   );
+  // Cloud runner unlock (spec S.12, ADR 0068): the daemon's keyring answers whether it holds
+  // the runner's key and wraps it to the challenge; the key never leaves this handler.
+  app.get("/runner-unlock/:runnerId/key", (c) => {
+    const runnerId = c.req.param("runnerId");
+    const available = Boolean(state.runnerKeys[runnerId]);
+    return c.json({
+      runnerId,
+      available,
+      backend: "keyring",
+      reason: available ? null : `This computer's vault has no key for runner "${runnerId}".`,
+    });
+  });
+  app.post("/runner-unlock/wrap", async (c) => {
+    const parsed = RunnerUnlockWrapBody.safeParse(await c.req.json());
+    if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
+    const card = parseUnlockChallenge(parsed.data.card);
+    if (!card) return errorBody(c, 400, "validation", "not a runner unlock challenge");
+    const key = decodeStoredKey(state.runnerKeys[card.runnerId] ?? null);
+    if (!key) return errorBody(c, 404, "not_found", "no key for this runner");
+    try {
+      const answer = await wrapVaultKey(card, key, {
+        now: Date.now(),
+        ...(parsed.data.autoUnlockUntil !== undefined
+          ? { autoUnlockUntil: parsed.data.autoUnlockUntil }
+          : {}),
+      });
+      return c.json(answer);
+    } catch (e) {
+      return errorBody(c, 400, "validation", e instanceof Error ? e.message : String(e));
+    } finally {
+      key.fill(0);
+    }
+  });
   app.post("/requests/:id/answer", async (c) => {
     const r = state.requests.find((x) => x.id === c.req.param("id"));
     if (!r) return errorBody(c, 404, "not_found", "no such request");

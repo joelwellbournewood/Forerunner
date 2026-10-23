@@ -93,6 +93,9 @@ importers:
       '@forerunner/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
+      '@forerunner/vault':
+        specifier: workspace:*
+        version: link:../../packages/vault
       '@tauri-apps/api':
         specifier: ^2.12.4
         version: 2.12.4

@@ -21,7 +21,8 @@
     "react-dom": "^19.3.1",
     "react-router": "^7.9.0",
     "zod": "^4.6.7",
-    "@forerunner/runtime": "workspace:*"
+    "@forerunner/runtime": "workspace:*",
+    "@forerunner/vault": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
