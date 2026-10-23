@@ -149,6 +149,7 @@ import {
   syncBlockedByFindings,
   syncSignoffAnswers,
 } from "../session/findings.ts";
+import { type PlanApprovalSyncResult, syncPlanApprovals } from "../session/plan-approval.ts";
 import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
 import { Scheduler, type StartRequest } from "../session/triggers.ts";
 import {
@@ -598,8 +599,10 @@ export interface RuntimeApp {
   toolsForRun(): ToolRegistry;
   /**
    * Apply answered human requests: extension grants, model watch decisions, memory
-   * consolidations, the rework/accept/cancel answers for tasks blocked by open findings and
-   * the accept/revise/cancel answers to critic sign-offs. Runs after every answer given
+   * consolidations, the rework/accept/cancel answers for tasks blocked by open findings, the
+   * accept/revise/cancel answers to critic sign-offs and the approve/reject answers to session
+   * plans (an approved plan is handed to the scheduler as a start bound to it, ADR 0053; only
+   * while the services run, a CLI one-shot starts no session). Runs after every answer given
    * through this daemon's route and, where answers can arrive from another device, on the
    * approvals poll (`approvalsPollMs`).
    */
@@ -609,6 +612,7 @@ export interface RuntimeApp {
     memory: { applied: number; skipped: number };
     findings: BlockedSyncResult;
     signoffs: SignoffSyncResult;
+    plans: PlanApprovalSyncResult;
   }>;
   /** Add or drop mirror schedules after a project's settings changed. */
   refreshMirrorSchedules(): Promise<string[]>;
@@ -1824,6 +1828,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       projectId: req.projectId,
       trigger: req.trigger,
       budgetCapUsdMicro: budgetUsdMicro,
+      // The approved plan's id from the inbox answer (`syncPlanApprovals`); never a bare true.
+      ...(req.planApproved ? { planApproved: req.planApproved } : {}),
       appVersion,
       grant: sessionGrant(project),
       onEvent: (type, payload) =>
@@ -1905,6 +1911,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       memory: await memory.syncApprovals(),
       findings: await syncBlockedByFindings({ store, clock, humanId: human.id, agentId: agent.id }),
       signoffs: await syncSignoffAnswers({ store, clock, humanId: human.id, agentId: agent.id }),
+      // An approved session plan (spec J.6, J.7; ADR 0053) becomes a "message" start bound to
+      // that plan; the scheduler keeps one session per agent. A CLI one-shot
+      // (`startServices: false`) is no place to start a session from: the daemon does it.
+      plans:
+        opts.startServices !== false
+          ? await syncPlanApprovals({
+              store,
+              clock,
+              humanId: human.id,
+              agentId: agent.id,
+              start: (req) => scheduler.requestStart(req),
+            })
+          : { started: 0, rejected: 0, skipped: 0 },
     };
     // A mirror run waiting on its approval re-reads the request now, not at the next poll.
     mirrorApprovals.wake();

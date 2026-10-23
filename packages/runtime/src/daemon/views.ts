@@ -245,7 +245,8 @@ export function eventView(e: EventRow, chfPerUsd: number): EventView {
     ? "error"
     : /escalat/.test(e.type) || payload.escalation
       ? "escalation"
-      : /warning|skipped|paused|killed|budget/.test(e.type) || typeof payload.warning === "string"
+      : /warning|skipped|paused|killed|budget|plan_filed/.test(e.type) ||
+          typeof payload.warning === "string"
         ? "warning"
         : "info";
   return {
@@ -273,6 +274,10 @@ export function describeEvent(type: string, p: Record<string, unknown>): string 
       return `Plan: ${n("items")} item(s), estimate ${(n("estimateUsdMicro") / 1e6).toFixed(2)} USD. ${s("summary")}`;
     case "session.paused":
       return `Paused: ${s("reason")}.`;
+    case "session.plan_filed":
+      return `Plan filed for your approval (${n("items")} item(s), request ${s("requestId")})${p.changed ? "; it changed since the plan you approved, nothing ran" : ""}.`;
+    case "session.plan_approved":
+      return `Running the plan you approved (${n("items")} item(s), proposed by session ${s("approvedSessionId")}).`;
     case "task.started":
       return `Started "${s("title")}" with ${s("specialist")} (estimate ${(n("estimateUsdMicro") / 1e6).toFixed(2)} USD).`;
     case "task.finished":

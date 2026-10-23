@@ -96,8 +96,6 @@ export type ProjectSchedule = z.infer<typeof ProjectScheduleSchema>;
 export interface CloudStartRequest extends StartRequest {
   budgetUsdMicro?: number;
   autonomy?: AutonomyLevel;
-  /** The human approved the plan this session continues (an answered plan request). */
-  planApproved?: boolean;
   /** Run regardless of a PC being online (remote and email triggers). */
   force?: boolean;
 }
@@ -545,7 +543,9 @@ export async function startCloudRunner(deps: CloudRunnerDeps): Promise<CloudRunn
         trigger: req.trigger,
         budgetCapUsdMicro: cap,
         ...(req.autonomy !== undefined ? { autonomy: req.autonomy } : {}),
-        ...(req.planApproved ? { planApproved: true } : {}),
+        // The approved plan's id (`StartRequest.planApproved`, from the inbox trigger): the
+        // runner runs the plan only while it is still that plan (ADR 0053).
+        ...(req.planApproved ? { planApproved: req.planApproved } : {}),
         appVersion: config.version,
         runner: "cloud",
         deviceId: device.id,

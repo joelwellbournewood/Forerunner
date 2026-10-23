@@ -42,7 +42,8 @@ or reserve share is refused at construction.
 
 Action classes map to decisions per level 0–4. `destructive`, `financial`, `credential`,
 `permission_change` and `capability_grant` need a human at every level. Level 0 proposes only,
-level 1 runs routine work after plan approval, level 2 frees routine reversible work, level 3
+level 1 runs routine work after plan approval (the approval is of one plan, bound by its
+`plan_id`: "Plan approval" under Sessions), level 2 frees routine reversible work, level 3
 also merges reviewed PRs and deploys to staging, level 4 everything else. The one exception
 to the hooks asking is a tool gated by the command registry (`ToolSpec.gate: "registry"`, set
 by `CommandLoop.tools` on the conversation agent's model path): its always-human rule is the
@@ -340,7 +341,8 @@ claimed tasks, peer claims, next-session queue) and renders a `StateBrief` under
 (`brief.ts`, lists shrink until it fits). The `Planner` port produces a `SessionPlan`
 (`StaticPlanner` = ready tasks by priority; a model planner uses the principal prompt); plans
 over the work budget (cap minus the review reserve) are cut before starting. Autonomy 0 and
-unapproved level 1 turn the plan into a HumanRequest and pause. Execution claims each task
+level 1 without an approval of this plan file it as a HumanRequest and end `stopped` (below,
+"Plan approval"). Execution claims each task
 (atomic, renewed every ttl/6), transitions it to in progress, runs the `TaskExecutor`
 (`LoopTaskExecutor`: validated brief, the billing source picked for the task and the driver
 that follows it, derived narrower token, specialist prompt and model from the registry, Run
@@ -356,6 +358,34 @@ the store to the enforcement ports: ledger rows with CHF at the day's rate, audi
 approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call (matched by
 `change_card.key`, the hooks' SHA-256 key; a row written under the former 32-bit string hash
 no longer matches, so such an approval is asked once more).
+
+**Plan approval (spec J.6, J.7; ADR 0053; `src/session/plan-approval.ts`).** A level 0 or 1
+session runs nothing the human has not approved. Once the plan is computed and cut,
+`planApprovalOf(opts.planApproved, plan.items)` decides: `approved` when the start carries
+`true` (callers that are themselves the approver: the scenario harness, tests) or the bound id
+of this very plan; otherwise the runner files one blocking `approval` request (options
+`approve` / `reject`, `PLAN_APPROVAL_OPTIONS`) whose card carries `key: plan:<session>`,
+`plan_id: plan:<session>#<sha256 hex over the planned task ids in order>` (`planIdOf`,
+`planHash`: membership and order count, specialists, estimates and titles do not) and the plan,
+and ends the session `stopped` with `stop_reason: plan_awaiting_approval` (`ended_at` set, the
+summary "The plan awaits your approval in the inbox; nothing ran.", no critic session review,
+event `session.plan_filed` with `requestId`, `planId`, `items`, `changed`, `approvedPlanId`).
+Never `paused`: that status is the remote pause's (`session-ports.ts`, a session that goes on)
+and `session.active()` counts it, which is what blocked every later start before. A start bound
+to an approved plan (`SessionStartOptions.planApproved` as the id; `StartRequest.planApproved`
+is a string only, a bare "approved" never travels on the scheduler) runs it only while the plan
+computed now is that plan: the token is re-issued with `planApproved: true` (until the check it
+is false, so a model planner's tools see no approval) and `session.plan_approved` names the
+plan and the session that proposed it; a plan that changed since the human looked (a task
+added, removed or reordered, a different cut, a forged or stale id) is filed as a new request
+(`superseded_plan_id` names the approval it replaces, the `why` says the tasks changed) and
+nothing runs, not even the approved subset. Level 0 keeps proposing only: the approval runs the
+follow-up (the request text's "approve to run it as a new session") and the hooks' level 0
+policy still asks for every action that changes state (`decideAutonomy` unchanged; the request
+text says so). The daemon's `syncPlanApprovals` (below, "Local daemon") and the cloud runner's
+inbox trigger (`cloud-runner.md`) are the two producers of such a start. Tests:
+`closeout-autonomy.test.ts`, `plan-approval.test.ts`, `plan-approval-daemon.test.ts`.
+Requirements: J.6, J.7, E.1 (the human answer trigger).
 
 **Small-project mode and the plan writer (spec B.6, ADR 0051).** `src/session/project-plan.ts`
 is where `project.small_project_mode` is read. `defaultRiskTier(project)` (0 with the flag,
@@ -676,9 +706,9 @@ already:
 | Updates (`src/update`, spec M) | `composeUpdateManager({ store, dirs, clock, humanId, runningVersion, restarter })` over the daemon's own store (the `store` option was added for this; the CLI leaves it out and opens one). A malformed `update.json` is logged and ignored. | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback` with `RegistryConnectorCatalog` (connector versions from the extension catalog) and `ModelWatchUpdates` (the latest report as new models, deprecations, price changes and recommendations). `fr daemon` runs `updates.healthCheck()` once the server listens. |
 
 `syncApprovals()` (extension grants, model watch decisions, memory consolidations, the
-blocked-findings answers and the critic sign-off answers) runs at compose and after every
-`POST /requests/:id/answer`, so an answer in the inbox takes effect at once, and on the
-approvals poll (`ComposeOptions.approvalsPollMs`, `FORERUNNER_APPROVALS_POLL_MS`,
+blocked-findings answers, the critic sign-off answers and the session plan answers) runs at
+compose and after every `POST /requests/:id/answer`, so an answer in the inbox takes effect at
+once, and on the approvals poll (`ComposeOptions.approvalsPollMs`, `FORERUNNER_APPROVALS_POLL_MS`,
 `DEFAULT_APPROVALS_POLL_MS` = 5 s): an answer given on the phone or in the web approvals
 lands in the shared state through the state service and reaches no route of this daemon, so
 the poll applies it within seconds, the way the remote watcher picks up the phone's commands.
@@ -686,6 +716,29 @@ The poll runs only where answers can come from another device, the remote comman
 condition (`remoteCommandsEnabled`: shared state, services running); a daemon on a local
 `sqlite:` store has no poll, its own answer route being the only answer path. The poll skips
 while the schema sync gate is paused and stops with `close()`.
+
+**Plan answers (`syncPlanApprovals`, `src/session/plan-approval.ts`, ADR 0053).** The step
+scans the human's answered blocking approvals whose card key starts with `plan:` and that
+carry no `applied_at` (`unappliedAnswers` in `findings.ts`, now exported with a key
+predicate), skips another agent's requests (a shared store), and acts once per request:
+`approve` with a `plan_id` marks the card (`applied_at`, `outcome: "starting"`) before it asks
+the scheduler (`scheduler.requestStart({ trigger: "message", planApproved: plan_id })`, the
+entry's id being the start's identity, ADR 0049) and then records the scheduler's answer
+(`started`, `queued`, `deferred`) and the `start_id`; `startSession` passes
+`req.planApproved` to the runner, which verifies it against the plan it computes. `reject`
+records `rejected` and starts nothing (the tasks stay `ready`; the next session proposes them
+again); an answer outside the options is `unrecognized_answer`; a card without `plan_id` (an
+earlier build's request) is `unbound_plan`, never run as approved; a start the port throws
+on is `start_failed` with the error, the human gets a warning message, and the request is not
+retried. Each outcome is one audit row `session.plan_approval` (`PLAN_APPROVAL_AUDIT_TOOL`:
+the request, plan and start ids and the outcome, never the plan text). Marking before asking
+is what makes "at most one session per answered request" hold across the route, the poll and
+a restart. A filing session an earlier build left `paused` with `plan_awaiting_approval` is
+closed (`paused -> stopped`) first so the start is not refused. The step runs only while the
+services run (`startServices`): a CLI one-shot composes the runtime but starts no session.
+`syncApprovals()` returns it as `plans: { started, rejected, skipped }`. Tests:
+`plan-approval.test.ts` (the sync on a fake port and through the real scheduler and runner),
+`plan-approval-daemon.test.ts` (the answer route and the poll).
 
 **Eval runner (`src/models/eval-runner.ts`).** `@forerunner/evals` depends on this package, so
 the daemon cannot import it. `LoopEvalRunner` reads the specialist's eval set (the same task
@@ -1167,6 +1220,23 @@ the human; it is never acted on.
 
 ## Tests
 
+`closeout-autonomy.test.ts`, `plan-approval.test.ts` and `plan-approval-daemon.test.ts` (spec
+J.6, J.7; ADR 0053): the runner files the plan of a level 0 or 1 session as a blocking request
+keyed `plan:<session>` with the plan's `plan_id` and ends `stopped` (`plan_awaiting_approval`,
+`session.active()` empty), the hooks hold a routine tool behind approval until the plan is
+approved; a start bound to the approved id runs the plan once (`session.plan_approved`), a task
+added or removed since, a forged id or another session's id files the changed plan again and
+runs nothing, a level 0 proposal approved runs as the follow-up; the plan identity (order and
+membership count, specialist and estimate do not) and the answer shapes; `syncPlanApprovals` on
+a fake port (one start bound to the id, the card and the audit row, a second sync starting
+nothing; queued and deferred answers; a rejected plan leaving the tasks ready; an answer outside
+the options; a card without the id; a start the port refuses warned once and not retried;
+another agent's request left alone; an old `paused` filing row closed first) and through the
+real scheduler and runner (two syncs, one completed session); on the composed daemon the inbox
+answer route starts the plan it was filed for once with the task done and the session view
+naming the approved plan, a rejected plan starts nothing, and an approve written to the shared
+state from another device starts it within the approvals poll, once.
+
 `small-project.test.ts` (spec B.6, ADR 0051): `defaultRiskTier` by flag; `shapeProjectPlan`
 with the flag on (one milestone named after the project, the phases' criteria once each, the
 latest date, every task under it in plan order, tier 0 unless named; a single planned milestone
@@ -1388,9 +1458,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 ## Known issues
 
-- A level 0 or 1 session that files its plan ends `paused`, which `session.active()` counts as
-  active, so the agent cannot start again until a human closes it; the `plan:<session>` approval
-  starts nothing on the desktop daemon (BLOCKERS.md, the J.6 / J.7 row).
+- An approved plan the scheduler answers `queued` (the agent is busy) holds the scheduler's
+  single pending slot per agent, which a later trigger replaces (`triggers.ts`: the newest
+  request wins the slot); the approval is recorded as handed over (`outcome: "queued"`) and
+  the replaced plan is proposed again by the next session rather than run (ADR 0053).
 - The task workflow has no `needs_human -> done` edge, so an accepted critic sign-off closes
   the task along the graph's own edges (`ready -> claimed -> in_progress -> in_review -> done`)
   in one store transaction (`syncSignoffAnswers`); a direct edge for a human's acceptance is a

@@ -5,6 +5,7 @@ import type { RunContext } from "../src/enforcement/hooks.ts";
 import { KillSwitch } from "../src/enforcement/killswitch.ts";
 import { AutoApprove } from "../src/enforcement/ports.ts";
 import { TokenIssuer } from "../src/enforcement/token.ts";
+import { approvedPlanIdOf, planIdOf } from "../src/session/plan-approval.ts";
 import {
   SessionRunner,
   StaticPlanner,
@@ -20,11 +21,13 @@ import { budget, harness, issue, writeTool } from "./helpers.ts";
  * routine reversible tool call behind approval while the plan is not approved.
  *
  * This is the "does not act before approval" half. The "acts after approval of each plan"
- * half is open (BLOCKERS.md, row "J.6 / J.7 plan approval starts nothing"): the last describe
- * block reproduces the gap and is marked `it.fails`, the repository's convention for a finding
- * on the current code (see `security-*.test.ts`). When the runtime starts the approved plan
- * from the inbox answer those tests turn red ("expected test to fail"), which is the signal to
- * drop the marker and close J.7.
+ * half (ADR 0053): the plan request's card carries the plan's identity (`plan_id`,
+ * `plan:<session>#<sha256 of the task ids in order>`), the filing session ends `stopped`
+ * with `plan_awaiting_approval` so it never blocks the follow-up, and a start carrying that
+ * identity as `planApproved` runs the plan only while it is the plan the human saw; a plan
+ * that changed since is asked again and never run. The last describe block covers that half;
+ * the daemon and cloud paths that produce such a start are `plan-approval.test.ts`,
+ * `plan-approval-daemon.test.ts` and the cloud runner's `inbox-trigger.test.ts`.
  */
 interface World {
   store: StateStore;
@@ -146,7 +149,9 @@ describe("J.7 Assisted (autonomy 1): the session runner acts only after the plan
       autonomy: 1,
       grant,
     });
-    expect(res.status).toBe("paused");
+    // The filing session is closed, not left `paused` (which `session.active` counts as
+    // active and would refuse every later start of the agent with claim_conflict).
+    expect(res.status).toBe("stopped");
     expect(exec.executed).toEqual([]);
     const reqs = await w.store.humanRequest.open({ humanId: w.human });
     expect(reqs).toHaveLength(1);
@@ -155,15 +160,22 @@ describe("J.7 Assisted (autonomy 1): the session runner acts only after the plan
       blocking: true,
       options: ["approve", "reject"],
       project_id: w.project,
+      session_id: res.sessionId,
     });
     expect(reqs[0]?.why).toMatch(/^Assisted mode: approve this session plan before work starts/);
     expect(reqs[0]?.steps[0]).toContain("T1 (coder");
-    expect((reqs[0]?.change_card as { key?: string } | null)?.key).toMatch(/^plan:/);
+    expect((reqs[0]?.change_card as { key?: string } | null)?.key).toBe(`plan:${res.sessionId}`);
+    // The card names the plan the human is approving: the session and the task ids in order.
+    expect(approvedPlanIdOf(reqs[0] as never)).toBe(planIdOf(res.sessionId, res.plan?.items ?? []));
     expect(res.stopReason).toBe("plan_awaiting_approval");
     const session = await w.store.session.mustGet(res.sessionId);
+    expect(session.status).toBe("stopped");
+    expect(session.ended_at).not.toBeNull();
     expect((session.handoff as { stop_reason?: string }).stop_reason).toBe(
       "plan_awaiting_approval",
     );
+    expect(session.summary).toContain("awaits your approval");
+    expect(await w.store.session.active(w.alice)).toEqual([]);
   });
 
   it("with the plan approved: the same session runs its tasks and files no request", async () => {
@@ -193,7 +205,8 @@ describe("J.7 Assisted (autonomy 1): the session runner acts only after the plan
       budgetCapUsdMicro: 1_000_000,
       grant,
     });
-    expect(res.status).toBe("paused");
+    expect(res.status).toBe("stopped");
+    expect(res.stopReason).toBe("plan_awaiting_approval");
     expect(exec.executed).toEqual([]);
   });
 });
@@ -259,63 +272,68 @@ describe("J.7 Assisted (autonomy 1): the enforcement hooks hold tools until the 
   });
 });
 
-describe("J.7 Assisted (autonomy 1): acting after the approval, the open half (`it.fails` = finding)", () => {
+describe("J.7 Assisted (autonomy 1): acting after the approval of each plan (ADR 0053)", () => {
   let w: World;
   beforeEach(async () => {
     w = await world();
   });
   afterEach(() => w.store.close());
 
-  /** Files the plan request of an autonomy-1 session and answers it "approve" in the inbox. */
-  async function fileAndApprovePlan(exec: ReturnType<typeof fakeExecutor>) {
+  /** Files the plan request of a session at the level and answers it "approve" in the inbox. */
+  async function fileAndApprovePlan(exec: ReturnType<typeof fakeExecutor>, autonomy: 0 | 1 = 1) {
     const first = await runner(w, exec).start({
       agentId: w.alice,
       projectId: w.project,
       trigger: "manual",
       budgetCapUsdMicro: 1_000_000,
-      autonomy: 1,
+      autonomy,
       grant,
     });
-    expect(first.status).toBe("paused");
+    expect(first.status).toBe("stopped");
+    expect(first.stopReason).toBe("plan_awaiting_approval");
     expect(exec.executed).toEqual([]);
     const [req] = await w.store.humanRequest.open({ humanId: w.human });
     if (!req) throw new Error("the plan request was not filed");
     expect((req.change_card as { key?: string } | null)?.key).toBe(`plan:${first.sessionId}`);
+    const planId = approvedPlanIdOf(req);
+    if (!planId) throw new Error("the plan request carries no plan id");
     const answered = await w.store.humanRequest.answer(req.id, req.version, "approve", w.human);
     expect(answered.status).toBe("answered");
-    return { first, req };
+    return { first, req, planId };
   }
 
-  it.fails("finding: once the plan is approved in the inbox, a start carrying planApproved runs it (today the paused session blocks every later start with claim_conflict)", async () => {
+  it("once the plan is approved in the inbox, a start carrying the approved plan's id runs it", async () => {
     const t1 = await addTask(w, "T1");
     const exec = fakeExecutor();
-    const { first } = await fileAndApprovePlan(exec);
-    // What the cloud runner's inbox trigger does with the "approve" answer
-    // (services/cloud-runner/src/inbox-trigger.ts); the desktop daemon has no such path at all.
+    const { first, planId } = await fileAndApprovePlan(exec);
+    // What the daemon's `syncPlanApprovals` and the cloud runner's inbox trigger do with the
+    // "approve" answer: a "message" start bound to the plan the human saw.
     const second = await runner(w, exec).start({
       agentId: w.alice,
       projectId: w.project,
       trigger: "message",
       budgetCapUsdMicro: 1_000_000,
       autonomy: 1,
-      planApproved: true,
+      planApproved: planId,
       grant,
     });
     expect(second.status).toBe("completed");
+    expect(second.stopReason).toBe("completed");
     expect(exec.executed).toEqual([t1.id]);
-    // The session that filed the plan is closed, not left `paused` (which `session.active`
-    // counts as active) for a human to kill.
+    expect(await w.store.humanRequest.open({ humanId: w.human })).toEqual([]);
+    // The session that filed the plan was closed when it filed, never left `paused`.
     const filed = await w.store.session.mustGet(first.sessionId);
-    expect(["stopped", "completed"]).toContain(filed.status);
+    expect(filed.status).toBe("stopped");
+    const events = await w.store.event.list(second.sessionId);
+    expect(events.map((e) => e.type)).toContain("session.plan_approved");
+    const approved = events.find((e) => e.type === "session.plan_approved");
+    expect(approved?.payload).toMatchObject({ planId, approvedSessionId: first.sessionId });
   });
 
-  it.fails("finding: planApproved is bound to the approved plan; a task added after the approval is asked again, not run on it (today it runs)", async () => {
+  it("planApproved is bound to the approved plan: a task added after the approval is asked again, not run on it", async () => {
     const t1 = await addTask(w, "T1");
     const exec = fakeExecutor();
-    const { first } = await fileAndApprovePlan(exec);
-    // The only way out today: the human closes the paused session by hand.
-    const filed = await w.store.session.mustGet(first.sessionId);
-    await w.store.session.setStatus(filed.id, filed.version, "stopped");
+    const { first, planId } = await fileAndApprovePlan(exec);
     const t2 = await addTask(w, "T2");
     const second = await runner(w, exec).start({
       agentId: w.alice,
@@ -323,14 +341,97 @@ describe("J.7 Assisted (autonomy 1): acting after the approval, the open half (`
       trigger: "message",
       budgetCapUsdMicro: 1_000_000,
       autonomy: 1,
-      planApproved: true,
+      planApproved: planId,
       grant,
     });
-    expect(second.status).not.toBe("failed");
-    expect(exec.executed).toContain(t1.id);
-    // Either the unapproved task did not run, or the changed plan went back to the inbox.
+    // The plan the session computes now (T1, T2) is not the one the human approved (T1):
+    // nothing runs, not even the approved task, and the changed plan goes back to the inbox.
+    expect(second.status).toBe("stopped");
+    expect(second.stopReason).toBe("plan_awaiting_approval");
+    expect(exec.executed).toEqual([]);
     const reasked = await w.store.humanRequest.open({ humanId: w.human });
-    const ranUnapproved = exec.executed.includes(t2.id) && reasked.length === 0;
-    expect(ranUnapproved).toBe(false);
+    expect(reasked).toHaveLength(1);
+    expect(reasked[0]?.session_id).toBe(second.sessionId);
+    expect(reasked[0]?.why).toContain("changed since the plan you approved");
+    expect(reasked[0]?.steps.join("\n")).toContain("T1 (coder");
+    expect(reasked[0]?.steps.join("\n")).toContain("T2 (coder");
+    const newPlanId = approvedPlanIdOf(reasked[0] as never);
+    expect(newPlanId).toBe(planIdOf(second.sessionId, second.plan?.items ?? []));
+    expect(newPlanId).not.toBe(planId);
+    expect(newPlanId).not.toContain(first.sessionId);
+    const events = await w.store.event.list(second.sessionId);
+    expect(events.find((e) => e.type === "session.plan_filed")?.payload).toMatchObject({
+      changed: true,
+      approvedPlanId: planId,
+    });
+    // Approving the new plan runs both.
+    const [req] = reasked;
+    if (!req) throw new Error("no request");
+    await w.store.humanRequest.answer(req.id, req.version, "approve", w.human);
+    const third = await runner(w, exec).start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "message",
+      budgetCapUsdMicro: 1_000_000,
+      autonomy: 1,
+      planApproved: newPlanId ?? undefined,
+      grant,
+    });
+    expect(third.status).toBe("completed");
+    expect(exec.executed).toEqual([t1.id, t2.id]);
+  });
+
+  it("a removed task changes the plan too, and a plan id of another session never approves this one", async () => {
+    const t1 = await addTask(w, "T1");
+    const t2 = await addTask(w, "T2");
+    const exec = fakeExecutor();
+    const { planId } = await fileAndApprovePlan(exec);
+    // The human cancelled T2 after approving [T1, T2]: the plan now is [T1], not the approved one.
+    await w.store.task.transition(t2.id, t2.version, "cancelled", "not needed", {
+      humanId: w.human,
+    });
+    const second = await runner(w, exec).start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "message",
+      budgetCapUsdMicro: 1_000_000,
+      autonomy: 1,
+      planApproved: planId,
+      grant,
+    });
+    expect(second.stopReason).toBe("plan_awaiting_approval");
+    expect(exec.executed).toEqual([]);
+    // A forged or stale id (another session's, a wrong hash) approves nothing either.
+    const forged = await runner(w, exec).start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "message",
+      budgetCapUsdMicro: 1_000_000,
+      autonomy: 1,
+      planApproved: `plan:other#${"0".repeat(64)}`,
+      grant,
+    });
+    expect(forged.stopReason).toBe("plan_awaiting_approval");
+    expect(exec.executed).toEqual([]);
+    void t1;
+  });
+
+  it("J.6 Advisor (autonomy 0): the plan is a proposal, and an approved proposal runs as the follow-up session", async () => {
+    const t1 = await addTask(w, "T1");
+    const exec = fakeExecutor();
+    const { req, planId } = await fileAndApprovePlan(exec, 0);
+    expect(req.why).toMatch(/^Advisor mode: the plan is a proposal; approve to run it/);
+    const second = await runner(w, exec).start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "message",
+      budgetCapUsdMicro: 1_000_000,
+      autonomy: 0,
+      planApproved: planId,
+      grant,
+    });
+    expect(second.status).toBe("completed");
+    expect(exec.executed).toEqual([t1.id]);
+    expect(await w.store.humanRequest.open({ humanId: w.human })).toEqual([]);
   });
 });

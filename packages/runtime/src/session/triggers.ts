@@ -24,6 +24,12 @@ export interface StartRequest {
   projectId?: string;
   trigger: SessionTriggerKind;
   reason: string;
+  /**
+   * The approved plan this start runs (spec J.6, J.7; ADR 0053): the `plan_id` of the answered
+   * plan request (`plan:<session>#<hash>`, `plan-approval.ts`). The runner runs the plan only
+   * while it is still that plan; a bare "approved" is never carried here.
+   */
+  planApproved?: string;
 }
 
 export interface SchedulerDeps {

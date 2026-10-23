@@ -37,6 +37,13 @@ import {
   renderPeerFeed,
   TASK_FILES_EVENT,
 } from "./peers.ts";
+import {
+  PLAN_APPROVAL_OPTIONS,
+  parsePlanId,
+  planApprovalOf,
+  planIdOf,
+  planKeyOf,
+} from "./plan-approval.ts";
 
 /**
  * One working period of a principal agent (spec E). Code owns the skeleton: checklist, plan
@@ -148,7 +155,14 @@ export interface SessionStartOptions {
   reserveShare?: number;
   /** Autonomy level for this session; defaults to the project's. */
   autonomy?: AutonomyLevel;
-  planApproved?: boolean;
+  /**
+   * The plan the human approved (spec J.6, J.7; ADR 0053): the `plan_id` of the answered plan
+   * request (`plan:<session>#<hash>`), which runs the plan only while the plan computed now is
+   * that plan (same task ids in the same order), else the changed plan is filed again and
+   * nothing runs. `true` approves whatever is planned and is for callers that are the approver
+   * themselves (the scenario harness); the daemon and the cloud runner pass the bound id.
+   */
+  planApproved?: boolean | string;
   appVersion?: string;
   runner?: "pc" | "cloud";
   deviceId?: string;
@@ -361,23 +375,29 @@ export class SessionRunner {
       controller,
       label: `session ${session.id}`,
     });
-    const token = this.deps.tokens.issue({
-      runId: newId(clock.now()),
-      sessionId: session.id,
-      agentId: agent.id,
-      ownerHumanId: agent.owner_human_id,
-      projectId: project?.id,
-      allowedTools: opts.grant.allowedTools,
-      allowedPaths: opts.grant.allowedPaths,
-      allowedDomains: opts.grant.allowedDomains,
-      grantedSecrets: opts.grant.grantedSecrets,
-      budgetUsdMicro: opts.budgetCapUsdMicro,
-      depth: 0,
-      maxDepth: opts.grant.maxDepth ?? 2,
-      autonomy,
-      planApproved: opts.planApproved ?? false,
-      expiresAt: new Date(clock.now() + wallClockMs).toISOString(),
-    });
+    // The token's `planApproved` claim is what the hooks read (level 1 frees routine actions
+    // on it). A bound id is verified against the plan computed below; until then the claim is
+    // false, and the token is re-issued once the plan is known to be the approved one.
+    const runId = newId(clock.now());
+    const issueToken = (planApproved: boolean) =>
+      this.deps.tokens.issue({
+        runId,
+        sessionId: session.id,
+        agentId: agent.id,
+        ownerHumanId: agent.owner_human_id,
+        projectId: project?.id,
+        allowedTools: opts.grant.allowedTools,
+        allowedPaths: opts.grant.allowedPaths,
+        allowedDomains: opts.grant.allowedDomains,
+        grantedSecrets: opts.grant.grantedSecrets,
+        budgetUsdMicro: opts.budgetCapUsdMicro,
+        depth: 0,
+        maxDepth: opts.grant.maxDepth ?? 2,
+        autonomy,
+        planApproved,
+        expiresAt: new Date(clock.now() + wallClockMs).toISOString(),
+      });
+    let token = issueToken(opts.planApproved === true);
 
     const completed: string[] = [];
     const inReview: string[] = [];
@@ -548,29 +568,63 @@ export class SessionRunner {
         summary: plan.summary,
       });
 
-      if (autonomy === 0 || (autonomy === 1 && !opts.planApproved)) {
-        await store.humanRequest.insert({
+      // Levels 0 and 1 run nothing the human has not approved (spec J.6, J.7; ADR 0053): the
+      // plan is filed as one blocking request whose card names it (`plan_id`), and the
+      // session ends `stopped` so the approval can start the follow-up. A start bound to an
+      // approved plan runs it only while the plan is still that plan; a plan that changed
+      // since the human looked (a task added, removed or reordered) is asked again.
+      const approval = planApprovalOf(opts.planApproved, plan.items);
+      if ((autonomy === 0 || autonomy === 1) && approval !== "approved") {
+        const changed = approval === "changed";
+        const approvedPlanId = typeof opts.planApproved === "string" ? opts.planApproved : null;
+        const planId = planIdOf(session.id, plan.items);
+        const request = await store.humanRequest.insert({
           human_id: agent.owner_human_id,
           project_id: project?.id ?? null,
           session_id: session.id,
           kind: "approval",
-          why:
+          why: [
             autonomy === 0
-              ? "Advisor mode: the plan is a proposal; approve to run it as a new session."
+              ? "Advisor mode: the plan is a proposal; approve to run it as a new session (every action that changes state is still asked at this level)."
               : "Assisted mode: approve this session plan before work starts.",
+            ...(changed
+              ? [
+                  "The ready tasks changed since the plan you approved; this is the plan now, and nothing ran.",
+                ]
+              : []),
+          ].join(" "),
           steps: plan.items.map(
             (i) => `${i.title} (${i.specialist}, ~$${(i.estimateUsdMicro / 1e6).toFixed(2)})`,
           ),
-          options: ["approve", "reject"],
+          options: [...PLAN_APPROVAL_OPTIONS],
           blocking: true,
           risk: "medium",
-          change_card: { key: `plan:${session.id}`, plan: plan as never },
+          change_card: {
+            key: planKeyOf(session.id),
+            plan_id: planId,
+            plan: plan as never,
+            ...(approvedPlanId ? { superseded_plan_id: approvedPlanId } : {}),
+          },
           author_agent: agent.id,
         });
         stopReason = "plan_awaiting_approval";
-        status = "paused";
-        await emit("session.paused", { reason: stopReason });
+        status = "stopped";
+        await emit("session.plan_filed", {
+          requestId: request.id,
+          planId,
+          items: plan.items.length,
+          changed,
+          approvedPlanId,
+        });
       } else {
+        if (approval === "approved" && typeof opts.planApproved === "string") {
+          token = issueToken(true);
+          await emit("session.plan_approved", {
+            planId: opts.planApproved,
+            approvedSessionId: parsePlanId(opts.planApproved)?.sessionId ?? null,
+            items: plan.items.length,
+          });
+        }
         // 3. Execute, claim-before-work, inbox re-check between tasks.
         for (const item of plan.items) {
           if (controller.signal.aborted) throw new ForerunnerError("killed", "session stopped");
@@ -1092,20 +1146,17 @@ export class SessionRunner {
       headroom_saved_tokens: contextEnd?.headroomSavedTokens ?? 0,
     });
     try {
-      await store.session.setStatus(
-        patched.id,
-        patched.version,
-        finalStatus === "paused" ? "paused" : finalStatus,
-      );
+      await store.session.setStatus(patched.id, patched.version, finalStatus);
     } catch {
       // already terminal (e.g. killed by the kill switch callback)
     }
     void current;
     // Session review (H.6): the critic checks the plan, the spend and the honesty of the
     // summary the human just received; a false count ends with the human. Runs after the
-    // summary and the task states are written, since that is what it checks.
+    // summary and the task states are written, since that is what it checks. A session that
+    // only filed its plan did no work to review.
     let sessionReview: SessionReviewOutcome | null = null;
-    if (this.deps.critic && finalStatus !== "paused") {
+    if (this.deps.critic && stopReason !== "plan_awaiting_approval") {
       try {
         sessionReview = await this.deps.critic.reviewSession({
           sessionId: session.id,
@@ -1434,6 +1485,9 @@ function summarize(x: {
 }): string {
   const parts = [
     `Session ${x.stopReason === "completed" ? "completed" : `ended (${x.stopReason})`}.`,
+    ...(x.stopReason === "plan_awaiting_approval"
+      ? ["The plan awaits your approval in the inbox; nothing ran."]
+      : []),
     `Done: ${x.completed.length}. In review: ${x.inReview.length}. Needs you: ${x.needsHuman.length}. Failed: ${x.failed.length}. Not started: ${x.skipped.length} of ${x.plan?.items.length ?? 0} planned.`,
     ...(x.retried.length ? [`Sent back by the critic: ${x.retried.length}.`] : []),
     ...(x.blockedByFindings.length
