@@ -15,6 +15,7 @@ import { renderDataModelDoc, schemaSummary } from "../src/docs.ts";
 import { monotonicId } from "../src/ids.ts";
 import { MIGRATION_0001 } from "../src/migrations/0001-initial.ts";
 import { MIGRATION_0002 } from "../src/migrations/0002-headroom-savings.ts";
+import { MIGRATION_0003 } from "../src/migrations/0003-sources.ts";
 import {
   createTableSql,
   generateInitialMigration,
@@ -63,6 +64,7 @@ describe("schema", () => {
       "change_log",
       "device",
       "source",
+      "source_candidate",
       "cost_ledger",
       "secret_ref",
       "extension",
@@ -198,24 +200,29 @@ describe("migrations", () => {
     ).toBe(V1_FROZEN_SHA256);
     expect(MIGRATIONS[0]).toBe(MIGRATION_0001);
     expect(MIGRATIONS[1]).toBe(MIGRATION_0002);
+    expect(MIGRATIONS[2]).toBe(MIGRATION_0003);
     expect(MIGRATIONS.map((m) => m.version)).toEqual(MIGRATIONS.map((_, i) => i + 1));
-    // v1 is the generator's output for the v1 subset: the v2 columns are the only difference.
+    // v1 is the generator's output for the v1 subset: the v2 columns, the v3 table
+    // (source_candidate with its indexes) and the v3 enum value are the only differences.
     const generated = generateInitialMigration();
     const strip = (stmts: string[]) =>
-      stmts.map((s) =>
-        s
-          .split("\n")
-          .filter(
-            (line) => !/"context_transforms"|"headroom_used"|"headroom_saved_tokens"/.test(line),
-          )
-          .join("\n")
-          .replace(/,\n {2}PRIMARY KEY/g, ",\n  PRIMARY KEY"),
-      );
+      stmts
+        .filter((s) => !/"source_candidate"/.test(s))
+        .map((s) =>
+          s
+            .split("\n")
+            .filter(
+              (line) => !/"context_transforms"|"headroom_used"|"headroom_saved_tokens"/.test(line),
+            )
+            .join("\n")
+            .replace(/,\n {2}PRIMARY KEY/g, ",\n  PRIMARY KEY")
+            .replace("'github_user', 'github_repo', 'gitlab'", "'github_user', 'gitlab'"),
+        );
     expect(strip(generated.sqlite)).toEqual(MIGRATION_0001.up.sqlite);
     expect(strip(generated.postgres)).toEqual(MIGRATION_0001.up.postgres);
   });
 
-  it("v1 + v2 applied in order equals the generator's schema for the current declaration (SQLite)", async () => {
+  it("v1 + v2 + v3 applied in order equals the generator's schema for the current declaration (SQLite)", async () => {
     const migrated = await openSqlite(":memory:");
     const generated = await openSqlite(":memory:");
     try {
@@ -260,8 +267,8 @@ describe("migrations", () => {
       );
       expect(v1Columns).not.toContain("context_transforms");
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [2], version: 2 });
-      expect(await appliedVersions(db)).toEqual([1, 2]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [2, 3], version: 3 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3]);
 
       const repos = createRepos(db, clock);
       const run = await repos.run.mustGet("r1");
@@ -285,6 +292,78 @@ describe("migrations", () => {
       const fresh = await repos.run.insert({ session_id: "s1", specialist: "x", model: "m" });
       expect(fresh.context_transforms).toEqual([]);
       expect(fresh.headroom_used).toBe(false);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("migrates a v2 database forward: source rows survive the rebuild, github_repo is accepted and candidates round-trip", async () => {
+    const db = await openSqlite(":memory:");
+    try {
+      const clock = new SimulatedClock("2026-10-23T10:00:00.000Z");
+      const at = clock.nowIso();
+      expect(await migrate(db, { clock, migrations: [MIGRATION_0001, MIGRATION_0002] })).toEqual({
+        applied: [1, 2],
+        version: 2,
+      });
+      await db.query(
+        `INSERT INTO "source" ("id", "created_at", "updated_at", "kind", "display_name", "locator", "credential_ref", "scan_result") VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ["src1", at, at, "github_org", "Acme", "acme", "secret:github_token", '{"repos":[]}'],
+      );
+      // The v2 CHECK refuses the new kind.
+      await expect(
+        db.query(
+          `INSERT INTO "source" ("id", "created_at", "updated_at", "kind", "display_name", "locator") VALUES (?, ?, ?, ?, ?, ?)`,
+          ["src2", at, at, "github_repo", "acme/alpha", "acme/alpha"],
+        ),
+      ).rejects.toThrow();
+      expect(await migrate(db, { clock })).toEqual({ applied: [3], version: 3 });
+
+      const repos = createRepos(db, clock);
+      const kept = await repos.source.mustGet("src1");
+      expect(kept).toMatchObject({
+        kind: "github_org",
+        display_name: "Acme",
+        locator: "acme",
+        credential_ref: "secret:github_token",
+        scan_result: { repos: [] },
+        status: "connected",
+        version: 1,
+      });
+      expect((await repos.source.byLocator("github_org", "acme"))?.id).toBe("src1");
+      // The unique (kind, locator) index came back with the rebuilt table.
+      await expect(
+        repos.source.insert({ kind: "github_org", display_name: "Acme again", locator: "acme" }),
+      ).rejects.toThrow();
+      const chosen = await repos.source.insert({
+        kind: "github_repo",
+        display_name: "acme/alpha",
+        locator: "acme/alpha",
+      });
+      expect(chosen.kind).toBe("github_repo");
+      const cand = await repos.sourceCandidate.insert({
+        source_id: "src1",
+        kind: "repo",
+        name: "alpha",
+        locator: "acme/alpha",
+        key: "github:acme/alpha",
+        proposed_name: "alpha",
+        last_seen_at: at,
+      });
+      expect(cand.status).toBe("proposed");
+      expect((await repos.sourceCandidate.forSource("src1")).map((c) => c.id)).toEqual([cand.id]);
+      // A candidate references its source: an unknown source is refused.
+      await expect(
+        repos.sourceCandidate.insert({
+          source_id: "nope",
+          kind: "repo",
+          name: "x",
+          locator: "x/y",
+          key: "github:x/y",
+          proposed_name: "y",
+          last_seen_at: at,
+        }),
+      ).rejects.toThrow();
     } finally {
       await db.close();
     }

@@ -30,6 +30,8 @@ import {
   SECRET_SCOPES,
   SESSION_STATUSES,
   SESSION_TRIGGERS,
+  SOURCE_CANDIDATE_KINDS,
+  SOURCE_CANDIDATE_STATUSES,
   SOURCE_KINDS,
   TASK_STATUSES,
   UNDO_STATES,
@@ -520,6 +522,53 @@ export const ENTITIES: Record<string, EntityDef> = {
       json("scan_result", "Last scan result (repos found).", { default: {} }),
     ],
     indexes: [{ columns: ["kind", "locator"], unique: true }],
+  },
+  source_candidate: {
+    table: "source_candidate",
+    description:
+      "What a scan of a source found: one proposed project per repository or folder, with duplicate and existing-install detection (spec A.4).",
+    envelope: true,
+    columns: [
+      text("source_id", "The source the scan belongs to.", ref("source")),
+      text("kind", "Repository on a git host, or a folder.", { enum: SOURCE_CANDIDATE_KINDS }),
+      text("name", "Repository or folder name."),
+      text(
+        "locator",
+        "What a project's repos entry carries: owner/name, or the absolute folder path.",
+      ),
+      text(
+        "key",
+        "Normalised duplicate key (github:owner/name lower-cased, folder:<path>); unique per source.",
+      ),
+      text("proposed_name", "Project name a scan proposes."),
+      text("status", "proposed, accepted, duplicate or gone.", {
+        default: "proposed",
+        enum: SOURCE_CANDIDATE_STATUSES,
+      }),
+      bool("existing_install", "A Forerunner install was detected in it.", { default: false }),
+      text(
+        "install_marker",
+        "What marked the install: the .forerunner/project.json file or the install record.",
+        {
+          nullable: true,
+        },
+      ),
+      text(
+        "project_id",
+        "The project this candidate became, or the one it duplicates.",
+        nullableRef("project"),
+      ),
+      bool("is_git", "A git repository (always for a host repo; a folder with .git).", {
+        default: true,
+      }),
+      json("details", "Host facts: url, default branch, private, duplicate_of.", { default: {} }),
+      ts("last_seen_at", "Last scan that found it."),
+    ],
+    indexes: [
+      { columns: ["source_id", "key"], unique: true },
+      { columns: ["key"] },
+      { columns: ["status"] },
+    ],
   },
   cost_ledger: {
     table: "cost_ledger",
