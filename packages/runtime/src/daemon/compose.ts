@@ -227,6 +227,7 @@ import {
   resolveVoicePreferences,
   SpeakSessions,
   type VoicePreferences,
+  VoiceRelay,
   VoiceSessions,
   vaultHasSecret,
   voiceExtensionRows,
@@ -2627,6 +2628,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     },
   });
   speech = speechSessions;
+  // The phone's push-to-talk turns (ADR 0080) arrive as remote commands and run through the
+  // same sessions, one held per phone between turns.
+  const voiceRelay = new VoiceRelay(voice, { clock });
   // Background services: the daemon starts them; a CLI one-shot (startServices: false) only
   // uses the composed objects and never connects a connector or ticks the scheduler.
   const services = opts.startServices !== false;
@@ -2690,6 +2694,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       start: (req) => scheduler.requestStart(req),
       commands,
       chat: conversation ? (req) => conversation.chat(req) : null,
+      voice: (req) => voiceRelay.turn(req),
       conversationSessionId: () =>
         conversation
           ? conversation.conversationSessionId(agent.id, null)
@@ -2978,6 +2983,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     intake,
     specialistApprovals,
     async close() {
+      await voiceRelay.close();
       await voice.close();
       await speechSessions.close();
       stopApprovalsPoll();
