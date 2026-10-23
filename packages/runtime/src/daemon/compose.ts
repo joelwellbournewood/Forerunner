@@ -56,7 +56,13 @@ import {
   type ReviewVerdict,
   type StateStore,
 } from "@forerunner/state";
-import { openVault, parseSecretRef, SecretResolver, type Vault } from "@forerunner/vault";
+import {
+  ensureInstallWrapKey,
+  openVault,
+  parseSecretRef,
+  SecretResolver,
+  type Vault,
+} from "@forerunner/vault";
 import { claudeCodeToolNames } from "../agent/cc-tools.ts";
 import { LoopAgentDriver, type RunEvent, type RunPricing } from "../agent/loop.ts";
 import { type QueryLike, SdkAgentDriver } from "../agent/sdk.ts";
@@ -141,6 +147,15 @@ import {
 import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
 import { detectSandboxEngine, type EngineDetection } from "../sandbox/detect.ts";
 import type { RunFn, WhichFn } from "../sandbox/types.ts";
+import {
+  type ProposedSharedSecret,
+  proposeSharedSecret,
+  SHARED_SECRET_AUDIT,
+  type SharedGrantView,
+  SharedSecretVault,
+  StoreSharedSecretService,
+  sharedSecretNamesFor,
+} from "../secrets/index.ts";
 import type { TaskBillingPort } from "../session/billing.ts";
 import { LoopTaskExecutor, type RunSandboxPort, type SpecialistSpec } from "../session/executor.ts";
 import {
@@ -572,6 +587,24 @@ export interface RuntimeApp {
     device: DeviceRow | null;
     watcher: RemoteCommandWatcher | null;
     presence: DesktopPresence | null;
+  };
+  /**
+   * Shared secrets (spec S.13, ADR 0065): the vault the hooks resolve through (this install's
+   * own vault, then the wrapped copies for this agent), the service over the shared store, the
+   * owner-side calls the `/secrets/shared` routes expose, and the names active for this agent.
+   */
+  sharedSecrets: {
+    vault: SharedSecretVault;
+    service: StoreSharedSecretService;
+    propose(input: {
+      name: string;
+      agentIds: string[];
+      why?: string;
+      kind?: string;
+    }): Promise<ProposedSharedSecret>;
+    revoke(grantId: string): Promise<SharedGrantView>;
+    list(): Promise<SharedGrantView[]>;
+    names(): Promise<string[]>;
   };
   /**
    * The sandboxed browser and agent email inside the daemon (spec L.2, L.3; ADR 0047): the
@@ -1018,7 +1051,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // A managed proxy dies with the global stop, like every other child process (ADR 0003).
   managedHeadroom?.bindKillSwitch(kill);
   const ports = statePorts(store, { chfPerUsd });
-  const secrets = new SecretResolver(vault);
+  // Shared secrets (spec S.13, ADR 0065): the resolver reads this install's own vault first
+  // and then the wrapped copy the shared state holds for this agent on this install, bound
+  // once the daemon's device row exists (below, with the remote presence). Nothing is cached
+  // in clear; every unwrap for a tool call is an audit row naming the secret, never the value.
+  const sharedSecretService = new StoreSharedSecretService(store, { clock, installId: null });
+  const sharedSecrets = new SharedSecretVault({
+    local: vault,
+    source: sharedSecretService,
+    agentId: agent.id,
+    onResolved: async (info) => {
+      await store.auditLog.append({
+        tool: SHARED_SECRET_AUDIT.resolved,
+        human_id: human.id,
+        agent_id: agent.id,
+        input_summary: `name=${info.name} grant=${info.grantId} owner=${info.ownerHumanId}`,
+        result_summary: "unwrapped for a tool call on this install",
+        allowed: true,
+        occurred_at: clock.nowIso(),
+      });
+    },
+  });
+  const secrets = new SecretResolver(sharedSecrets);
 
   // The ladder and effort table in force (spec D, ADR 0039): the built-ins with the adopted
   // <config>/models.json applied; a malformed file is ignored with an audit row. The holder is
@@ -1781,7 +1835,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // under the worktrees root, which the grant's paths cover.
   // The capability tools present at this start join the grant; the project's own site
   // allowlist (`settings.browser.allowedDomains`) joins the domains (ADR 0047).
-  const sessionGrant = (project: { settings: JsonObject } | null) => ({
+  // The shared secrets active for this agent join the grant by name (spec S.13): the hooks'
+  // granted-names rule is unchanged, the resolver finds the value by reference.
+  const sessionGrant = (project: { settings: JsonObject } | null, sharedNames: string[]) => ({
     allowedTools: [
       ...tools.names(),
       ...capabilityTools().map((t) => t.name),
@@ -1796,7 +1852,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ...browserSettingsOf(project?.settings).allowedDomains,
       ]),
     ],
-    grantedSecrets: ghToken ? [SECRET_NAMES.github] : [],
+    grantedSecrets: [...(ghToken ? [SECRET_NAMES.github] : []), ...sharedNames],
     maxDepth: 2,
   });
   const startSession = async (req: StartRequest) => {
@@ -1825,7 +1881,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       trigger: req.trigger,
       budgetCapUsdMicro: budgetUsdMicro,
       appVersion,
-      grant: sessionGrant(project),
+      grant: sessionGrant(project, await sharedSecretNamesFor(store, req.agentId)),
       onEvent: (type, payload) =>
         events.emit("session", { type, payload, agentId: req.agentId, projectId: req.projectId }),
     });
@@ -1972,14 +2028,33 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   let remoteDevice: DeviceRow | null = null;
   let remoteWatcher: RemoteCommandWatcher | null = null;
   let presence: DesktopPresence | null = null;
-  if (remoteEnabled) {
+  // The device row is also where the install's wrapping key lives (spec S.13, ADR 0065), so
+  // it is registered whenever there is a shared state to register on, or remote control was
+  // asked for explicitly; the watcher and the heartbeat still need the services running.
+  const registerDevice =
+    remoteEnabled ||
+    opts.remote?.enabled === true ||
+    !stateUrl.trim().toLowerCase().startsWith("sqlite");
+  if (registerDevice) {
+    // The install's wrapping key: created in the vault on first use and registered on the
+    // device row, so a peer can wrap a shared secret to this install.
+    const wrapKey = await ensureInstallWrapKey(vault);
     remoteDevice = await registerDesktopDevice({
       store,
       dirs,
       humanId: human.id,
       name: opts.remote?.deviceName ?? env.FORERUNNER_DEVICE_NAME?.trim() ?? osFacts(env).hostname,
       platform: currentPlatform(),
+      wrapPublicKey: wrapKey.publicKey,
     });
+    sharedSecretService.installId = remoteDevice.id;
+    sharedSecrets.bind({
+      deviceId: remoteDevice.id,
+      // Read from the vault at every unwrap: the vault is the only holder of the private key.
+      privateKey: async () => (await ensureInstallWrapKey(vault)).privateKey,
+    });
+  }
+  if (remoteEnabled && remoteDevice) {
     presence = new DesktopPresence({
       store,
       clock,
@@ -2137,6 +2212,23 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       device: remoteDevice,
       watcher: remoteWatcher,
       presence,
+    },
+    sharedSecrets: {
+      vault: sharedSecrets,
+      service: sharedSecretService,
+      propose: (input) =>
+        proposeSharedSecret({
+          vault,
+          service: sharedSecretService,
+          ownerHumanId: human.id,
+          name: input.name,
+          agentIds: input.agentIds,
+          ...(input.why !== undefined ? { why: input.why } : {}),
+          ...(input.kind !== undefined ? { kind: input.kind } : {}),
+        }),
+      revoke: (grantId) => sharedSecretService.revoke(grantId, human.id),
+      list: () => sharedSecretService.list(human.id),
+      names: () => sharedSecretNamesFor(store, agent.id),
     },
     capabilities: {
       browser: { mode: browserMode, manager: browserManager, presence: browserOn },

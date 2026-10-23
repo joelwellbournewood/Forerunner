@@ -36,6 +36,8 @@ export * from "./models/watch-cli.ts";
 export * from "./models/watch-routes.ts";
 export * from "./notifications/index.ts";
 export * from "./provider/anthropic.ts";
+/** Shared secrets (spec S.13, ADR 0065): grants, the resolving vault adapter, the owner-side proposal. */
+export * from "./secrets/index.ts";
 export * from "./provider/registry.ts";
 export * from "./provider/types.ts";
 export * from "./registry/index.ts";

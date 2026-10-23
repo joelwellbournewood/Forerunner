@@ -64,6 +64,57 @@ unparseable JSON), and a scope that is neither `"all"` nor an object naming an a
 session is read as `"all"`, because the switch would stop every registration for such a scope
 yet freeze nothing, so new work would start at once (fail closed).
 
+### Shared secrets (`src/secrets/`; spec S.13, ADR 0065)
+
+A secret in one human's vault, readable by named agents of the other human, with both
+humans approving. The vault primitives are in `packages/vault/src/wrap.ts` (security.md);
+this module holds the rules and the two sides.
+
+- **`shared-grants.ts`, the store side**, used by the daemon directly and by the state
+  service's `/secrets` routes (ADR 0024: both talk to the same tables). `proposeSharedGrant`
+  validates the owner, the agents and every blob's install (a non-revoked device of that
+  agent's owner with a `wrap_public_key`; the blob a `WrappedSecret`), writes the
+  `secret_grant` row (pending; active at once when only the owner's agents are named) and
+  one `human_request` per other human whose agent is named: kind `approval`, risk `high`,
+  options `approve` / `deny`, a `shared_secret_grant` change card naming the grant, the
+  secret, the owner and that human's agents. `applySharedGrantAnswer(tx, request, by)` runs
+  inside the transaction that answered the card (the service's `answerRequestAs` and the
+  daemon's `POST /requests/:id/answer` both do): a yes records the approval and the
+  last required one activates the grant and mirrors it into `secret_ref` (`scope: "shared"`,
+  the agents in `granted_to`); a no cancels it, drops the blobs and withdraws the other open
+  cards. `revokeSharedGrant` is the owner's end at any time. `serveSharedBlob` is the only
+  read that hands a blob out: an active grant of that name naming that agent, the copy
+  wrapped for that device; anything else is `secret_not_granted` after a `secret.blob_refused`
+  row. Audit rows: `secret.grant_proposed`, `secret.grant_approved`, `secret.grant_activated`,
+  `secret.grant_refused`, `secret.grant_revoked`, `secret.blob_served`, `secret.blob_refused`
+  and, on the resolving install, `secret.shared_resolved`; each names the grant, the secret,
+  the agents and the install, never a value.
+- **`resolver.ts`, the resolving side.** `SharedSecretVault` is the `Vault` the hooks'
+  `SecretResolver` reads: this install's own vault first, then (bound once the daemon's
+  device row exists) the wrapped copy the shared state serves for this agent on this install,
+  unwrapped with the install's private key read from the vault at that moment. Nothing is
+  written to the local vault or to disk; the string handed to the tool call is the only copy,
+  as for a local secret, and `afterToolCall` redacts it from outputs the same way. The
+  `grantedSecrets` rule of the hooks is unchanged: the names of the agent's active grants
+  (`sharedSecretNamesFor`) join the session grant at every start, and a name the token does
+  not grant is refused before this vault is asked. Two sources: `StoreSharedSecretService`
+  (the daemon and the runner, over the store) and `HttpSharedSecretService` (an install that
+  reaches the state through the service: `GET /secrets/shared/blob`, 403 and 404 are "nothing
+  for you", anything else `unavailable`).
+- **`propose.ts`, the owner's side.** `proposeSharedSecret({ vault, service, ownerHumanId,
+  name, agentIds, why })` reads the value from this install's vault, lists the wrap targets
+  (every install of every named agent's owner with a key; an agent without one is
+  `validation`), wraps one blob per target and files the grant. The value leaves the function
+  only inside the blobs.
+- **In the daemon.** `composeRuntime` creates the install wrapping key in the vault
+  (`ensureInstallWrapKey`) and registers it on the desktop device row (`registerDesktopDevice`
+  takes `wrapPublicKey`; the row is registered whenever there is a shared state, or remote
+  control was asked for explicitly), wires `SharedSecretVault` under the hooks' resolver with
+  the `secret.shared_resolved` audit row, and exposes `rt.sharedSecrets` (`propose`, `revoke`,
+  `list`, `names`). `routes.ts` mounts `POST /secrets/shared { name, agentIds, why?, kind? }`
+  (201 `{ grant, requestIds, targets }`), `GET /secrets/shared` and
+  `POST /secrets/shared/:id/revoke` on the daemon API for the app; no body carries a value.
+
 ### Drivers
 
 `LoopAgentDriver` (`src/agent/loop.ts`) runs the tool loop over any `ModelProvider`
@@ -1167,6 +1218,27 @@ the human; it is never acted on.
 
 ## Tests
 
+`shared-secret-resolver.test.ts` (spec S.13, ADR 0065; two installs on one store, each with
+its own `MemoryVault` and wrapping key): the proposal wraps per named agent install, files the
+pending grant and Bob's high-risk card with the `shared_secret_grant` change card, serves
+nothing while pending and refuses an unknown agent, an agent without a keyed install, a
+missing name and no agents; after Bob's yes Bobby's install resolves `secret:<name>` through
+`beforeToolCall` (the tool gets the value, the model-facing input keeps the reference,
+`afterToolCall` redacts the output, the hooks' audit rows carry the reference only, the local
+vault holds only the install key, `secret.blob_served` names the agent and the install); local
+first (the service is never asked); another agent, another install, a blob bound to another
+device (`integrity`) and a token without the name are refused before any value moves; a
+refusal cancels and drops the blobs, a revoke ends an active grant and the resolver fails
+from then on, a pending grant's cards are withdrawn; every store table scanned for the value
+in every encoding. `shared-secret-wiring.test.ts`: `composeRuntime` creates the install key
+and registers it on the desktop row (reused on re-registration), the daemon's
+`/secrets/shared` routes propose, list and revoke (400 on a bad body, 404 on an unknown
+grant), the peer's approval through `applySharedGrantAnswer` lets the peer install resolve,
+the active names join the session grant per agent, and the other way round: a grant Bob
+proposes to Alice is answered through the daemon's own `POST /requests/:id/answer` (the grant
+moves in the same write) and resolving through this install's vault writes
+`secret.shared_resolved` without the value.
+
 `small-project.test.ts` (spec B.6, ADR 0051): `defaultRiskTier` by flag; `shapeProjectPlan`
 with the flag on (one milestone named after the project, the phases' criteria once each, the
 latest date, every task under it in plan order, tier 0 unless named; a single planned milestone
@@ -1521,3 +1593,8 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   pick up two copies of one envelope in the same instant could both act (a unique index on
   the issuing device and the envelope's `clientId` in `packages/state` would close it), and
   an audit row the store failed to write leaves only this process's memory of the pair.
+- Shared secrets (spec S.13): the cloud runner registers no wrapping key on its `runner`
+  device row yet (its vault is locked until the unlock protocol ran), so a shared secret
+  reaches an agent on its owner's PC install; the app has no screen for `rt.sharedSecrets`
+  (the daemon routes exist), and the owner's `propose` is not yet a registry command with a
+  change card.

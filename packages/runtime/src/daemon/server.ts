@@ -17,6 +17,8 @@ import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
 import { createNotificationRoutes } from "../notifications/routes.ts";
+import { createSharedSecretRoutes } from "../secrets/routes.ts";
+import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
 import { buildPeerFeed } from "../session/peers.ts";
 import { applyProjectPlan, defaultRiskTier, ProjectPlanBody } from "../session/project-plan.ts";
 import { defaultPeers } from "../session/runner.ts";
@@ -424,6 +426,9 @@ export function createDaemonApp(
     "/",
     createAuditRoutes({ store: rt.store, clock: rt.clock, humanId: () => rt.human.id }),
   );
+  // Shared secrets (spec S.13, ADR 0065): the owner proposes, lists and revokes grants of a
+  // secret in this install's vault; the value is wrapped here and never in a body.
+  app.route("/", createSharedSecretRoutes({ sharedSecrets: rt.sharedSecrets }));
 
   app.get("/me", async (c) => {
     const h = await rt.store.human.mustGet(rt.human.id);
@@ -768,13 +773,22 @@ export function createDaemonApp(
     const asked = await rt.store.humanRequest.mustGet(c.req.param("id"));
     if (asked.human_id !== null && asked.human_id !== rt.human.id)
       return c.json({ ...NOT_YOURS, message: "not your request" }, 403);
-    const r = await rt.store.humanRequest.answer(
-      c.req.param("id"),
-      body.version,
-      body.answer as never,
-      rt.human.id,
-    );
-    await new DecisionLog(rt.store).recordAnswer(r, rt.human.id);
+    // The answer, its decision-log entry and, for a shared-secret card (spec S.13, ADR 0065),
+    // the grant it moves are one write, as in the state service's answer route.
+    const r = await rt.store.transaction(async (tx) => {
+      const answered = await tx.humanRequest.answer(
+        c.req.param("id"),
+        body.version,
+        body.answer as never,
+        rt.human.id,
+      );
+      await new DecisionLog(tx).recordAnswer(answered, rt.human.id);
+      await applySharedGrantAnswer(tx, answered, rt.human.id, {
+        clock: rt.clock,
+        installId: rt.remote.device?.id ?? null,
+      });
+      return answered;
+    });
     // An answered extension grant or model watch decision is applied at once.
     await rt.syncApprovals();
     rt.events.emit("inbox", {});
