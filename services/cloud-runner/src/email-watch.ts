@@ -43,6 +43,10 @@ import { SecretResolver, type Vault } from "@forerunner/vault";
  * poll interval itself (`pollOnly`). The mailbox credentials are secret references resolved from
  * the runner's vault at call time; values never sit on the watcher.
  */
+/** Why the watcher does not start at sending mode off (log line and health view). */
+export const EMAIL_WATCH_MODE_OFF_REASON =
+  "the sending mode is off: email commands need a sending mode other than off, because at off the agent could not answer them";
+
 export type EmailWatchState =
   | { state: "disabled"; reason: string }
   | { state: "watching"; address: string; pushActive: boolean; startedAt: string };
@@ -93,7 +97,7 @@ export class EmailWatch {
 
   constructor(private readonly deps: EmailWatchDeps) {
     const { store, clock } = deps;
-    this.settings = new EmailSettingsStore(store.extension, clock);
+    this.settings = new EmailSettingsStore(store.extension, clock, { audit: store.auditLog });
     this.identity = new StoreIdentityLookup(store.agent, store.human);
     this.sentLog = new AuditSentLog(store.auditLog, clock);
     this.approvals = new HumanRequestApprovalPort(store.humanRequest);
@@ -191,14 +195,20 @@ export class EmailWatch {
   }
 
   /**
-   * Start watching when commands are enabled and a mailbox is configured; otherwise report why
-   * and watch nothing. Never throws for a configuration gap: the runner still runs schedules.
+   * Start watching when commands are enabled, the sending mode is not off (ADR 0081) and a
+   * mailbox is configured; otherwise report why (log line, `status`, the health view) and
+   * watch nothing. Never throws for a configuration gap: the runner still runs schedules.
    */
   async start(): Promise<EmailWatchState> {
     if (this.watch) return this.current;
     const config = await this.settings.get(this.deps.agentId);
     if (!config.commands.enabled) {
       this.current = { state: "disabled", reason: "email commands are off for this agent" };
+    } else if (config.settings.mode === "off") {
+      // ADR 0081: at mode off the mailbox sends nothing, so a command could not even be
+      // acknowledged; a row with commands on at mode off (written before the rule) watches
+      // nothing until the owner picks a sending mode.
+      this.current = { state: "disabled", reason: EMAIL_WATCH_MODE_OFF_REASON };
     } else if (!config.commands.registeredHumanAddress) {
       this.current = { state: "disabled", reason: "no registered human address" };
     } else if (!config.settings.mailbox) {

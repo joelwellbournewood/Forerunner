@@ -56,16 +56,17 @@ import {
   type SentLog,
   type SentLogRow,
 } from "./sent-log.ts";
-import type {
-  CostEstimatePort,
-  EmailApprovalPort,
-  EmailApprovalTicket,
-  EmailCommandSettings,
-  EmailSettingsStore,
-  EventSink,
-  IdentityPort,
-  RatePort,
-  StartCloudSessionPort,
+import {
+  type CostEstimatePort,
+  type EmailApprovalPort,
+  type EmailApprovalTicket,
+  type EmailCommandSettings,
+  type EmailSettingsStore,
+  type EventSink,
+  emailCommandsActive,
+  type IdentityPort,
+  type RatePort,
+  type StartCloudSessionPort,
 } from "./types.ts";
 
 const logger = log("capabilities:email:commands");
@@ -129,7 +130,8 @@ export class EmailCommandGate {
     const auth = await this.deps.verifier.verify(message);
     const commandText = stripQuotedText(message.text);
     const no = (reason: GateReason): GateVerdict => ({ obey: false, reason, commandText, auth });
-    if (!commands.enabled) return no("disabled");
+    // Off, or on at sending mode off (a row from before ADR 0081): nothing is obeyed.
+    if (!emailCommandsActive(config)) return no("disabled");
     if (!commands.registeredHumanAddress) return no("no_registered_address");
     if (message.fromAll.length !== 1 || message.from !== commands.registeredHumanAddress) {
       return no("wrong_sender");

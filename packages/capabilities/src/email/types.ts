@@ -9,9 +9,12 @@
  * ADR 0013 and docs/maintainers/email.md. Mailbox credentials are secret references
  * (`secret:<name>`), never values: the schema refuses anything else.
  */
-import { type Clock, ForerunnerError, shortToken } from "@forerunner/platform";
-import type { ExtensionRepo, ExtensionRow, JsonObject } from "@forerunner/state";
+import { type Clock, ForerunnerError, errorMessage, log, shortToken } from "@forerunner/platform";
+import type { AuditLogRepo, ExtensionRepo, ExtensionRow, JsonObject } from "@forerunner/state";
 import { z } from "zod";
+import { EMAIL_SETTINGS_TOOL } from "./sent-log.ts";
+
+const logger = log("capabilities:email:settings");
 
 // ---------------------------------------------------------------------------------------------
 // Modes and defaults
@@ -171,6 +174,34 @@ export interface AgentEmailConfigPatch {
   commands?: Partial<EmailCommandSettingsInput>;
 }
 
+/**
+ * Email commands are in force only while the toggle is on and the sending mode is not `off`
+ * (ADR 0081): at mode off the mailbox sends nothing, not even the acknowledgement a command
+ * needs, so a command would start a task the owner never hears about. The settings store
+ * keeps the pair consistent; the gate and the runner's watcher read this as well, so a row
+ * written before the rule (commands on at mode off) obeys nothing either.
+ */
+export function emailCommandsActive(config: AgentEmailConfig): boolean {
+  return config.commands.enabled && config.settings.mode !== "off";
+}
+
+/** The plain refusal when commands are turned on at mode off (the settings page shows it). */
+export const COMMANDS_NEED_SENDING_MODE =
+  "Email commands need a sending mode other than off: at off the agent sends nothing, so it could not answer your commands. Choose a sending mode first (read only is enough to reply to you), then turn commands on.";
+
+/** What the owner is told when switching the mode to off turned email commands off. */
+export interface EmailCommandsSwitchedOff {
+  agentId: string;
+  /** The human who changed the mode, when known. */
+  byHuman: string | null;
+  modeBefore: EmailMode;
+  at: string;
+  /** One sentence for the owner. */
+  message: string;
+}
+
+export type EmailCommandsSwitchedOffListener = (event: EmailCommandsSwitchedOff) => unknown;
+
 /** A fresh private marker such as "[FR-7k2q]". */
 export function newMarker(): string {
   return `[${shortToken(4, "FR-")}]`;
@@ -225,15 +256,37 @@ export interface EmailSettingsStoreOptions {
   authorHuman?: string | null;
 }
 
+export interface EmailSettingsStoreDeps {
+  /** Where the automatic switch-off of email commands is recorded (`email.settings` row). */
+  audit?: Pick<AuditLogRepo, "append">;
+}
+
 /**
  * Reads and writes the per-agent email configuration in the `extension` table. The row is
  * created on first read so the command marker is stable from the start.
+ *
+ * Commands and mode stay consistent here, in the store every writer goes through (ADR 0081):
+ * turning commands on while the mode is (or becomes) `off` is refused with
+ * `COMMANDS_NEED_SENDING_MODE`; switching the mode to `off` while commands are on turns them
+ * off in the same write, records an `email.settings` audit row and tells the listeners
+ * (`onCommandsSwitchedOff`), which the daemon binds to the owner's notifications.
  */
 export class EmailSettingsStore {
+  private readonly switchedOffListeners = new Set<EmailCommandsSwitchedOffListener>();
+
   constructor(
     private readonly extensions: ExtensionRepo,
     private readonly clock: Clock,
+    private readonly deps: EmailSettingsStoreDeps = {},
   ) {}
+
+  /** Called after a mode change to `off` turned email commands off; returns the unsubscribe. */
+  onCommandsSwitchedOff(listener: EmailCommandsSwitchedOffListener): () => void {
+    this.switchedOffListeners.add(listener);
+    return () => {
+      this.switchedOffListeners.delete(listener);
+    };
+  }
 
   private decode(row: ExtensionRow): AgentEmailConfig {
     const parsed = AgentEmailConfigSchema.safeParse(row.config);
@@ -276,7 +329,20 @@ export class EmailSettingsStore {
     opts: EmailSettingsStoreOptions = {},
   ): Promise<AgentEmailConfig> {
     const current = await this.get(agentId);
-    const next = mergeEmailConfig(current, patch);
+    let next = mergeEmailConfig(current, patch);
+    let switchedOff = false;
+    if (next.settings.mode === "off" && next.commands.enabled) {
+      // Turning commands on (they were not in force) at mode off is refused so the owner
+      // hears why; a mode change to off with commands on, or any other write over a row
+      // stored before the rule, turns them off instead.
+      if (patch.commands?.enabled === true && !emailCommandsActive(current)) {
+        throw new ForerunnerError("validation", COMMANDS_NEED_SENDING_MODE, {
+          details: { reason: "commands_need_sending_mode", issues: ["commands.enabled"] },
+        });
+      }
+      next = { ...next, commands: { ...next.commands, enabled: false } };
+      switchedOff = true;
+    }
     const row = await this.row(agentId);
     if (!row) throw new ForerunnerError("internal", "email settings row vanished");
     await this.extensions.update(row.id, row.version, {
@@ -286,7 +352,57 @@ export class EmailSettingsStore {
       author_human: opts.authorHuman ?? null,
       author_agent: opts.authorHuman ? null : agentId,
     });
+    if (switchedOff) await this.commandsSwitchedOff(agentId, current.settings.mode, opts);
     return next;
+  }
+
+  /**
+   * The audit row and the listeners after commands were turned off with the mode. The write
+   * already happened: a failing audit store or listener is logged and never undoes it.
+   */
+  private async commandsSwitchedOff(
+    agentId: string,
+    modeBefore: EmailMode,
+    opts: EmailSettingsStoreOptions,
+  ): Promise<void> {
+    const at = this.clock.nowIso();
+    const byHuman = opts.authorHuman ?? null;
+    const event: EmailCommandsSwitchedOff = {
+      agentId,
+      byHuman,
+      modeBefore,
+      at,
+      message:
+        "Email commands were turned off because the sending mode is now off: at off the agent sends nothing, so it could not answer your commands. Choose a sending mode and turn commands on again to use them.",
+    };
+    try {
+      await this.deps.audit?.append({
+        tool: EMAIL_SETTINGS_TOOL,
+        allowed: true,
+        agent_id: agentId,
+        human_id: byHuman,
+        input_summary: JSON.stringify({
+          action: "commands_switched_off",
+          reason: "mode_off",
+          modeBefore,
+          modeAfter: "off",
+        }),
+        result_summary: JSON.stringify({ status: "commands_off", reason: "mode_off" }),
+        cost_usd_micro: 0,
+        occurred_at: at,
+        author_human: byHuman,
+      });
+    } catch (e) {
+      logger.warn("commands switch-off not audited", { agentId, error: errorMessage(e) });
+    }
+    logger.info("email commands turned off with the sending mode", { agentId, modeBefore });
+    for (const listener of this.switchedOffListeners) {
+      try {
+        await listener(event);
+      } catch (e) {
+        logger.warn("commands switch-off listener failed", { agentId, error: errorMessage(e) });
+      }
+    }
   }
 
   setPaused(agentId: string, paused: boolean, opts?: EmailSettingsStoreOptions) {

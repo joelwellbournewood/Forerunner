@@ -2138,6 +2138,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     }
     return row;
   };
+  // ADR 0081: a mode change to off turns email commands off in the settings store; the
+  // owner hears it here whoever changed the mode (the audit row is the store's).
+  emailPorts.settings.onCommandsSwitchedOff((e) =>
+    notifyLater(notifications.emailCommandsOff(human.id, e), "email commands off"),
+  );
   kill.onStop((report, reason) =>
     notifyLater(notifications.killSwitch(human.id, report, reason), "kill switch"),
   );
