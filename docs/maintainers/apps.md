@@ -992,18 +992,22 @@ apps/mobile/
                      adb / gradle commands by hand
   e2e/cdp.mjs        raw CDP client and DOM driver for the smoke (ADR 0054): /json/list, page socket,
                      Runtime.evaluate queries, Input.* clicks and fills; no eval in the page (CSP);
-                     cdp.test.ts against a fake endpoint
+                     forwardPageConsole (the page's console and uncaught exceptions as `webview:`
+                     lines, ADR 0085); cdp.test.ts against a fake endpoint
   e2e/cdp.d.mts      types of cdp.mjs for the test (keep in step); e2e/jsdom.d.ts: the jsdom slice it uses
   src-tauri/
     Cargo.toml, tauri.conf.json (no static window; deep-link scheme "fr"; CSP allows 127.0.0.1 and 10.0.2.2)
-    capabilities/default.json (core, deep-link, log), mobile.json (biometric, barcode-scanner; Android/iOS only)
+    capabilities/default.json (core, deep-link, log), mobile.json (biometric:allow-status,
+                       biometric:allow-authenticate, barcode-scanner; Android/iOS only)
     src/lib.rs         run(): plugins, KeystorePlugin registration (Android), Shell state, injection
                        script, deep links, the window
     src/commands.rs    the invoke commands, Shell (secure files, config, info, push), build_shell,
                        the Android KeystoreWrapper over the Kotlin plugin
     src/keystore.rs    DeviceKey (ed25519-dalek; Debug redacts), Wrapper trait, SecureFiles (0600,
                        atomic writes), SESSION_TOKEN_KEY
-    src/biometric.rs   BiometricOutcome; asserted() only after the platform prompt succeeded
+    src/biometric.rs   BiometricOutcome; asserted() only after the platform prompt succeeded;
+                       refusal_from_status / outcome_from_auth (the plugin's reason, never empty);
+                       wait_bounded + PROMPT_LIMIT (45 s); TicketBook
     src/config.rs      <config>/mobile.json (state_url, device_name, install_id), recover(), the
                        fr://pair link parser
     src/dirs.rs        app_dirs(): mirror of packages/platform/src/paths.ts appDirs()
@@ -1045,6 +1049,25 @@ already used`); the client reports `biometric_required` and sends nothing. Outsi
 the simulated dialog says it is simulated and draws its ticket from `WebCryptoSigner.tickets`,
 which applies the same rule. A cancelled prompt sends nothing. High-risk answers are never
 queued.
+
+**A phone that cannot confirm** (ADR 0085; `android.yml` run 39952987240, an emulator without
+an enrolled fingerprint). Everything the biometric step can do other than resolve a ticketed
+assertion in time is a refusal: `null`, a rejection of any shape (string, `Error`, a plugin's
+`{ message, code }`), a synchronous throw, a malformed outcome, a prompt that does not answer.
+`MobileController.assertHighRisk` races the port against `biometricTimeoutMs` (default
+`BIOMETRIC_TIMEOUT_MS`, 60 s) and throws `biometric_required` with `details.reason`; the card
+shows "This answer needs a biometric confirmation (<reason>)." under `m-request-error` and
+its buttons work again; a success that arrives late is dropped. In the shell,
+`assert_biometric` runs the plugin's blocking `status` / `authenticate` on their own thread
+behind `biometric::wait_bounded` (`PROMPT_LIMIT`, 45 s, inside the UI's bound), so it always
+answers: the plugin's text for a not-available status ("Biometrics not enrolled.", else its
+`errorCode`), "not confirmed: <the plugin's words>" for a failed prompt, "did not answer
+within 45 s" or "failed without an answer" (a panic) otherwise. `shellBiometric` rejects with
+`BiometricRefusedError(<reason>)` for a reasoned `asserted: false` and with "the shell's
+prompt failed: <IPC error>" for a rejected invoke (`failureText`). Both ends of the step are
+logged to the page console (`forerunner: high-risk answer: asking the biometric prompt` /
+`... refused on the phone: <reason>`), which the emulator runner forwards; the shell logs
+`assert_biometric: asserted=... method=... reason=...` to logcat, never the ticket.
 
 **Remote control and the change card.** The Remote screen (and Chat, when a message is a
 change sentence) parses the words with `intent.ts`, builds one `MobileChangeCard` for the
@@ -1131,7 +1154,19 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
 - `apps/ui/test/mobile-shell-signer.test.ts`: the `ShellSigner` path with the Tauri bridge
   mocked: a literal assertion object is refused before the IPC, the ticket is forwarded to
   `device_key_sign`, the shell's refusal maps to `biometric_required`, an outcome without a
-  ticket is no assertion.
+  ticket is no assertion; `shellBiometric` turns the not-enrolled outcome into a
+  `BiometricRefusedError` with the shell's reason, a malformed or reasonless outcome into
+  `null`, and an IPC rejection of every shape (permission string, plugin object, `Error`,
+  other) into a refusal naming it.
+- `apps/ui/test/mobile-inbox.test.tsx` ("a high-risk answer on a phone that cannot
+  confirm is refused"): `InboxScreen` with a biometric port per candidate of run 39952987240
+  (null; the real `shellBiometric` over a mocked bridge answering "Biometrics not enrolled."
+  and rejecting with a permission error; the plugin's error object, a string, an `Error`, a
+  synchronous throw; a prompt that never settles, ended by the bounded wait; a late success
+  that sends nothing; reloads under the refusal), each asserting the refusal names the
+  biometric step, sits under `m-request-error` in the card that holds `m-request-high`, and
+  no answer leaves the phone; plus the enrolled happy path (answer signed with the
+  assertion's flag).
 - `apps/ui/test/state-sse.test.ts`: frame parsing, live stream with heartbeats, per-human
   filtering, polling and offline fallback, session log polling.
 - `apps/ui/test/mobile-*.test.ts(x)`: every screen (pairing, home, inbox, chat, remote with
@@ -1153,7 +1188,10 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
 - `apps/mobile/src-tauri`: `cargo test` (dirs rules, config parsing and the pairing link,
   keystore round trip with a visible wrapper and the RFC vector, injection script without
   secrets, biometric outcomes, the ticket book, `Shell::sign` refusing a `biometric=1`
-  string without the prompt's ticket and consuming it on use, push stand-in);
+  string without the prompt's ticket and consuming it on use, the status and prompt
+  mappings, `wait_bounded` ending a call that hangs or panics, the capability naming
+  `biometric:allow-status` / `biometric:allow-authenticate` for the `main` window with the
+  plugin and the command registered in `lib.rs`, push stand-in);
   `cargo clippy -D warnings`, `cargo fmt --check`.
 - `apps/mobile/e2e/run.mjs`: the emulator smoke (CI's Android job; skips visibly here, and
   every skip, the release-APK one included, fails under `FR_ANDROID_REQUIRE=1`). It attaches
@@ -1177,7 +1215,12 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   non-function; `fill` through `Input.insertText` after focus and select-all, the
   native-setter fallback with `input` and `change`, `not_editable`; `connectPage` waiting for
   the target and giving up with `cdp.no_page_target`; `describeFailure` (the runner's `FAIL:`
-  line) keeping a `CdpError`'s code and details.
+  line) keeping a `CdpError`'s code and details; `forwardPageConsole` (the fake's
+  `Runtime.enable` hooks the jsdom page's console the way Chrome reports it): nothing before
+  enable, `webview: [level]` lines with the call site for warnings and errors, every line of
+  a stack prefixed, RemoteObject shapes, uncaught exceptions and unhandled rejections with
+  location and stack, `stop()`, a refused `Runtime.enable` as one line that never fails the
+  smoke, and `run.mjs` turning it on between the attach and the smoke.
 - `scripts/android-keystore.test.ts` and `scripts/android-apk-verify.test.ts` (`release.md`
   "Tests"): the Gradle signing config reads what the keystore script writes, the workflows
   verify the release APK with `apksigner` before uploading it.
@@ -1203,13 +1246,17 @@ node apps/mobile/e2e/run.mjs
   rows and `undoOf`.
 - Push is the polling stand-in (`docs/status/BLOCKERS.md`, Firebase row); notices appear only
   while the app is open.
-- The raw CDP driver (`e2e/cdp.mjs`) has run against the fake endpoint and jsdom only; its
-  first run against the WebView is the next `android.yml` dispatch (BLOCKERS.md, emulator
-  row). Two assumptions it makes about the WebView are untested here: `Input.insertText`
-  commits like an IME (otherwise `fill` falls back to the native value setter and says so
-  through the value check), and `Input.dispatchMouseEvent` coordinates are the layout
-  viewport's CSS pixels (what `getBoundingClientRect` returns; the bundle's viewport meta is
-  `width=device-width, initial-scale=1`, so no page scale applies). The driver covers the
+- The raw CDP driver (`e2e/cdp.mjs`) met the real WebView in `android.yml` run 39952987240
+  (82a6295): the attach, pairing by code (fills) and the approval (a click near the top of
+  the inbox) passed; scenario 3 then saw no refusal on the high-risk card. ADR 0085 fixes
+  the paths in the app that could leave the card without a refusal and makes the runner
+  print the page's console; the cause of that run is not confirmed on a device (no emulator
+  on the build box), so the next run's `webview:` lines decide between a biometric step that
+  never settled (fixed) and a click that did not reach the scrolled-to Confirm button (the
+  driver's assumption that `Input.dispatchMouseEvent` coordinates are the layout viewport's
+  CSS pixels, untested below the fold: no "asking the biometric prompt" line would show it).
+  The shell's `prompt()` / `platform_prompt()` compile only for Android and iOS; their first
+  compile is that run. The driver covers the
   calls `smoke()` makes and nothing more: no keyboard shortcuts, no touch events, no frames,
   no screenshots.
 - The CI Android job builds twice: the release APK (signed from `keystore.properties`,

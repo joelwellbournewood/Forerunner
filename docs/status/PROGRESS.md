@@ -18,6 +18,17 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w5-android-high-risk: the high-risk refusal on a phone without biometrics; the runner shows the WebView console)
+- `android.yml` run 39952987240 (82a6295) attached to the real WebView, paired and approved,
+  then saw no refusal after Confirm on the high-risk card. Built on
+  `wave/w5-android-high-risk` (ADR 0085, not merged): every failure of the biometric step is a
+  refusal with the platform's reason in bounded time (shell 45 s, UI 60 s); the capability
+  names `biometric:allow-status` and `biometric:allow-authenticate`; `run.mjs` forwards the
+  page's console and uncaught exceptions as `webview:` lines. Tests: `apps/ui` 42 files /
+  272 tests, `apps/mobile/e2e/cdp.test.ts` 22, `cargo test` 30. R.5, R.7 and V.3 keep their
+  status until the emulator run passes; the BLOCKERS.md emulator row names the next step
+  (merge, dispatch `android.yml`). Report: `docs/status/reviews/w5-android-high-risk.md`.
+
 ### 2026-10-23 (item w2-s32-indicator rebased onto 22982fa)
 - `wave/w2-s32-indicator` rebased onto `origin/ccr-4d8a843c-1k9syk` (22982fa). Conflicts in
   the UI's fake daemon (the base's runner keys and fast mode next to the branch's desktop
