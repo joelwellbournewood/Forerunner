@@ -1321,6 +1321,14 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   every skip, the release-APK one included, fails under `FR_ANDROID_REQUIRE=1`). It attaches
   to the WebView over raw CDP on the page target (`e2e/cdp.mjs`, ADR 0054), not Playwright:
   the Android WebView refuses the browser-level commands `connectOverCDP` starts with.
+  Steps: pairing by code, approve a request, high risk refused without the prompt, the R.5
+  Reviews screen (the parser review's two findings, a signed comment and approve), the R.5
+  Upload screen (the cap shown, Upload disabled without a file; picking a file needs
+  `DOM.setFileInputFiles`, which the raw driver does not send, so the pick is covered by the
+  jsdom tests only), scenario 9 with the change log's Undo, and the R.5 voice turn (the shell
+  has no recorder, so Chat's "Say it" relays the typed line as a signed `kind: "voice"`
+  command and the simulated PC's reply is shown). The R.5 steps have not run on an emulator
+  yet (no Android SDK on the build box).
 - `apps/mobile/e2e/cdp.test.ts` (unit project): the driver against a fake DevTools endpoint
   (`node:http` serving `/json/list` and `/json`, a `ws` server answering the page socket, a
   jsdom document with `data-box` layout boxes and `elementFromPoint` over them, real
