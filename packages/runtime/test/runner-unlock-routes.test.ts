@@ -128,6 +128,16 @@ describe("daemon runner unlock routes", () => {
     for (const enc of encodings(key)) expect(text).not.toContain(enc);
   });
 
+  it("refuses a caller without the daemon's token", async () => {
+    const noToken = await app.request("/runner-unlock/wrap", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ card: challenge().card }),
+    });
+    expect(noToken.status).toBe(401);
+    expect((await app.request(`/runner-unlock/${RUNNER}/key`)).status).toBe(401);
+  });
+
   it("wraps the stored key to the challenge; the runner unwraps exactly that key; one audit row", async () => {
     const c = challenge();
     const until = new Date(clock.now() + 8 * 3_600_000).toISOString();
