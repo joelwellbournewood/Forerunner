@@ -725,6 +725,48 @@ describe("state service routes", () => {
     expect(listed.uploads.map((u) => u.id)).toEqual([asset.id]);
   });
 
+  it("an upload with a clientId is applied once and the list reports the cap", async () => {
+    const boundary = "----forerunner-test-boundary";
+    const clientId = "0f6c2a4e-upload-retry-1";
+    const form = (id: string) =>
+      new TextEncoder().encode(
+        [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="clientId"',
+          "",
+          id,
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="photo.jpg"',
+          "Content-Type: image/jpeg",
+          "",
+          "jpeg-bytes",
+          `--${boundary}--`,
+          "",
+        ].join("\r\n"),
+      );
+    const headers = { "content-type": `multipart/form-data; boundary=${boundary}` };
+    const path = `/projects/${h.seed.project.id}/uploads`;
+    const before = await json<{ uploads: unknown[] }>(await phone.get(path));
+    const first = await phone.send("POST", path, form(clientId), headers);
+    expect(first.status).toBe(201);
+    const asset = await json<{ id: string }>(first);
+    // The resend after a lost answer (signed afresh): same asset, 200, no second file.
+    await h.clock.advance(1_000);
+    const again = await phone.send("POST", path, form(clientId), headers);
+    expect(again.status).toBe(200);
+    expect((await json<{ id: string }>(again)).id).toBe(asset.id);
+    const listed = await json<{ uploads: { id: string }[]; maxBytes: number }>(
+      await phone.get(path),
+    );
+    expect(listed.uploads).toHaveLength(before.uploads.length + 1);
+    expect(listed.maxBytes).toBe(h.api.config.uploadMaxBytes);
+    const files = await readdir(join(h.api.config.uploadsDir, h.seed.project.id));
+    expect(files.filter((f) => f.startsWith(asset.id))).toHaveLength(1);
+    await h.clock.advance(1_000);
+    const bad = await phone.send("POST", path, form("no spaces allowed"), headers);
+    expect(bad.status).toBe(400);
+  });
+
   it("refuses uploads over the cap and without a file field", async () => {
     const boundary = "----forerunner-test-boundary";
     const big = "x".repeat(70 * 1024);
