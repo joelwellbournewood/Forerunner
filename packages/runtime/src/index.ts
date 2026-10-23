@@ -10,6 +10,8 @@ export * from "./daemon/adapters.ts";
 export * from "./daemon/api-types.ts";
 export * from "./daemon/compose.ts";
 export * from "./daemon/identity.ts";
+/** The settings screen's model section (spec D.4, ADR 0072). */
+export * from "./daemon/model-settings-view.ts";
 export * from "./daemon/restart.ts";
 export * from "./daemon/sandbox-port.ts";
 export * from "./daemon/server.ts";
@@ -33,6 +35,8 @@ export * from "./models/eval-runner.ts";
 export * from "./models/fast-mode.ts";
 export * from "./models/ladder.ts";
 export * from "./models/price-list.ts";
+/** Settings per agent and specialist (spec D.4, ADR 0072): overrides, resolution, speed decision. */
+export * from "./models/run-settings.ts";
 /** Model settings files (ladder and effort overrides); namespaced: its tier and effort lists mirror ladder.ts. */
 export * as modelSettings from "./models/settings.ts";
 export * from "./models/watch.ts";

@@ -19,6 +19,7 @@ import { speedQualityOffsetOf } from "../models/ladder.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
 import { createNotificationRoutes } from "../notifications/routes.ts";
+import { providerCapabilities } from "../provider/types.ts";
 import { createSharedSecretRoutes } from "../secrets/routes.ts";
 import { createRunnerUnlockRoutes } from "../secrets/runner-unlock-routes.ts";
 import { applySharedGrantAnswer } from "../secrets/shared-grants.ts";
@@ -101,6 +102,7 @@ import type { RuntimeApp } from "./compose.ts";
 import { conversationSessionId } from "./conversation-session.ts";
 import { createProjectRecord } from "./create-project.ts";
 import { ownsProject, ownsSession } from "./ownership.ts";
+import { buildModelSettingsView } from "./model-settings-view.ts";
 import type { RestartRequestFile } from "./restart.ts";
 import { sandboxHealth } from "./sandbox-port.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
@@ -1498,6 +1500,25 @@ export function createDaemonApp(
       ]),
     ];
     return c.json(rows);
+  });
+
+  // Model settings per agent and specialist (spec D.4, ADR 0072): what the settings screen
+  // shows; every change goes through `model.settings.set` on POST /commands/execute.
+  app.get("/settings/models", async (c) => {
+    const principal = await rt.store.agent.mustGet(rt.agent.id);
+    const config = rt.modelConfig();
+    return c.json(
+      buildModelSettingsView({
+        provider: rt.provider
+          ? { name: rt.provider.name, capabilities: providerCapabilities(rt.provider) }
+          : null,
+        ladder: config.ladder,
+        modeDefaults: config.modeDefaults,
+        principal,
+        others: [{ id: rt.criticAgent.id, name: rt.criticAgent.name, kind: "critic" }],
+        specialists: rt.registry.runnableSpecialists(),
+      }),
+    );
   });
 
   // -------------------------------------------------------------------------------------

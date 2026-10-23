@@ -157,7 +157,12 @@ import {
 import { isQuietAt, resolvePrefs } from "../notifications/prefs.ts";
 import { AnthropicMessagesProvider } from "../provider/anthropic.ts";
 import { ProviderRegistry } from "../provider/registry.ts";
-import type { ModelProvider, ModelTier } from "../provider/types.ts";
+import {
+  DEFAULT_PROVIDER_CAPABILITIES,
+  type ModelProvider,
+  type ModelTier,
+  providerCapabilities,
+} from "../provider/types.ts";
 import { SpecialistApprovals, type SpecialistSyncResult } from "../registry/approval.ts";
 import {
   type DroppedTool,
@@ -927,6 +932,10 @@ export function specialistSpecFrom(
       maxBudgetUsdMicro: Math.round(d.max_budget_usd * 1_000_000),
       maxTurns: d.max_turns,
       timeoutMs: d.timeout_minutes * 60_000,
+      // The D.4 settings the file names (ADR 0072); absent ones come from the effort table.
+      ...(d.max_tokens !== undefined ? { maxTokens: d.max_tokens } : {}),
+      ...(d.speed_mode !== undefined ? { speedMode: d.speed_mode } : {}),
+      ...(d.temperature !== undefined ? { temperature: d.temperature } : {}),
     };
   };
 }
@@ -2448,6 +2457,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         } catch (e) {
           return { spoken: false, reason: errorMessage(e) };
         }
+      },
+      // model.settings.set (spec D.4, ADR 0072): the runnable specialists and what the
+      // provider in use accepts, read per command (a temperature is refused where it would
+      // never be sent).
+      modelSettings: {
+        specialists: () => registry.runnableSpecialists().map((d) => d.name),
+        capabilities: () =>
+          provider ? providerCapabilities(provider) : { ...DEFAULT_PROVIDER_CAPABILITIES },
       },
     },
   });

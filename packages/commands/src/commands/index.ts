@@ -5,6 +5,7 @@ import { capabilityGrant } from "./capability.ts";
 import { deviceRevoke } from "./device.ts";
 import { emailModeSet } from "./email.ts";
 import { memoryRecord } from "./memory.ts";
+import { modelSettingsSet } from "./model-settings.ts";
 import { noteAdd } from "./note.ts";
 import { projectCreate, projectSwitch } from "./project.ts";
 import { requestAnswer } from "./request.ts";
@@ -19,6 +20,7 @@ export * from "./capability.ts";
 export * from "./device.ts";
 export * from "./email.ts";
 export * from "./memory.ts";
+export * from "./model-settings.ts";
 export * from "./note.ts";
 export * from "./project.ts";
 export * from "./request.ts";
@@ -47,5 +49,6 @@ export function defaultRegistry(): CommandRegistry {
     .register(requestAnswer)
     .register(emailModeSet)
     .register(deviceRevoke)
-    .register(memoryRecord);
+    .register(memoryRecord)
+    .register(modelSettingsSet);
 }

@@ -611,6 +611,79 @@ export const SettingView = z.object({
   risk: z.enum(["low", "medium", "high"]),
 });
 
+/**
+ * One D.4 setting as the settings screen shows it (spec D.4, ADR 0072): the value in force,
+ * the value without the agent's override, and where each comes from.
+ */
+export const ModelSettingValueView = z.object({
+  value: z.union([z.string(), z.number()]).nullable(),
+  default: z.union([z.string(), z.number()]).nullable(),
+  source: z.enum(["table", "specialist", "agent"]),
+  defaultSource: z.enum(["table", "specialist"]),
+});
+export type ModelSettingValueView = z.infer<typeof ModelSettingValueView>;
+
+/**
+ * The settings of one agent mode or one specialist: model (rung and the provider's model id),
+ * effort, max tokens, speed mode, timeout in minutes, and `temperature` only when the
+ * provider's capability flag `acceptsTemperature` is true (absent otherwise, never null).
+ */
+export const RunSettingsView = z.object({
+  mode: z.string(),
+  model: z.string().nullable(),
+  tier: ModelSettingValueView,
+  effort: ModelSettingValueView,
+  maxTokens: ModelSettingValueView,
+  speedMode: ModelSettingValueView,
+  timeoutMinutes: ModelSettingValueView,
+  temperature: ModelSettingValueView.optional(),
+});
+export type RunSettingsView = z.infer<typeof RunSettingsView>;
+
+export const ModelSettingsView = z.object({
+  provider: z.object({
+    name: z.string().nullable(),
+    acceptsTemperature: z.boolean(),
+    fastMode: z.boolean(),
+  }),
+  /** The effort table in force (D.8 to D.15) with the D.4 columns: where the defaults come from. */
+  table: z.array(
+    z.object({
+      mode: z.string(),
+      tier: z.string(),
+      effort: z.string(),
+      maxTokens: z.number().int(),
+      speedMode: z.string(),
+      timeoutMinutes: z.number(),
+      targetMs: z.number().int(),
+    }),
+  ),
+  /** The human's agents; `editable` false for the critic (its tiers set its model, spec H). */
+  agents: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      kind: z.string(),
+      editable: z.boolean(),
+      note: z.string().nullable(),
+      modes: z.array(RunSettingsView),
+    }),
+  ),
+  /** Runnable specialists with the principal agent's overrides (`overridesAgentId`). */
+  specialists: z.array(
+    z.object({
+      name: z.string(),
+      description: z.string(),
+      maxEffort: z.string(),
+      overridesAgentId: z.string(),
+      settings: RunSettingsView,
+    }),
+  ),
+  /** Why the principal's `model_config` was ignored, when it does not validate. */
+  configError: z.string().nullable(),
+});
+export type ModelSettingsView = z.infer<typeof ModelSettingsView>;
+
 export const DecisionView = z.object({
   id: z.string(),
   projectId: z.string(),
@@ -1489,6 +1562,8 @@ export const DAEMON_ROUTES = {
   auditExport:
     "GET /audit/export?agentId=&sessionId=&from=&to=&format=jsonl|csv (spec S.9: the audit log as a file download, streamed in pages; the install's human's rows and their agents' with the summaries as stored; Content-Disposition names the file; 404 for another human's agent, 400 for a bad format, timestamp or window)",
   settings: "GET /settings?scope=&scopeId=",
+  modelSettings:
+    "GET /settings/models (ModelSettingsView, spec D.4: per agent mode and per specialist the model, effort, max tokens, speed mode and timeout in force with the effort-table or registry default and the source; temperature only when the provider's acceptsTemperature flag is true; changed through POST /commands/execute with model.settings.set)",
   updateProjectSettings:
     "PUT /projects/:id/settings { version, settings } (merged; mirror schedule follows)",
   mirrorSync:
