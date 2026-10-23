@@ -132,3 +132,116 @@ this item's commits. Every commit ends with the trailer
 - **Chat and voice have no typed phrase for the slider.** By chat or voice the slider is reached through `settings.set` only; `IntentParser` has no pattern for it. The brief did not ask for one.
 - **Projects with an old value of ±2.** A project whose settings still hold -2 or +2 from the old schema is read as balanced by the runtime, as the critic already read it. The next move through `settings.set` writes a valid position.
 - **`routing` mode has no consumer.** No code path makes a `routing`-mode model call today, so nothing applies the slider there. `modeEffort("routing", …)` is ready for when one exists.
+
+## Review
+
+Reviewer: independent adversarial review (stage REVIEW AND FIX), 2026-10-23. Branch
+`wave/w3-d16-slider` reviewed at 9c0cb72 against `origin/ccr-4d8a843c-1k9syk` (f1948dd; the
+branch's merge base is 82a6295, f1948dd is 59 commits ahead of it).
+
+Verdict: **revise**. Score: 74/100 (as built at 9c0cb72; every finding below carries its
+resolution).
+
+The core wiring is right and proven on the composed daemon: the executor, the conversation agent
+and the intake read `speed_quality_offset` from the project row when the work starts, the
+static `effortOffset` dependency is gone, and a move through `POST /commands/execute` changes
+the next chat turn, planning session and work session without a restart
+(`effort-offset.test.ts`, 7 tests green; restoring `agent.ts`, `executor.ts` and `intake.ts`
+makes the chat, voice, planning and run cases fail). The settings spec, the effect sentence in
+both directions and the Settings slider are in place and tested. What is wrong is at the
+edges: the slider now pushes specialists past the `max_effort` their registry entry declares,
+and two of the runtime claims (voice takes `voice_chat`, the researcher takes `researcher`) are
+not proven by any test.
+
+Requirements checked:
+
+- D.16 "every default effort shifts up or down one step", per mode:
+  - chat (`text_chat`): met, read per turn (`agent.ts:276`), proven on the daemon.
+  - voice (`voice_chat`): built (`agent.ts:277`, every voice-bridge turn has
+    `source: "voice"`, `bridge.ts:779`; the text fallback route takes the same
+    `converseTurn`), but not proven (finding 1).
+  - planning: met, per intake session (`intake.ts:627`). The intake is the only
+    planning-mode model call in the runtime: every `modelIdFor` / `driver.run` caller was
+    checked (agent, intake, executor, critic, eval runner).
+  - coder: met, per run (`executor.ts:396`), proven by Run rows.
+  - researcher: built, not proven (finding 2).
+  - critic t1 / t23: met, unchanged (`criticSettingsOf`, capped at the registry's
+    `max_effort`); t1 proven on the daemon, t23 in `packages/critic/test/model.test.ts`.
+  - routing: no consumer exists; `modeEffort("routing", …)` is ready. Not a defect.
+- "the executor reads the project row per run, not a static value": met (`executor.ts:281`
+  loads the row per `execute`; `LoopTaskExecutorDeps.effortOffset` removed; `compose.ts` only
+  has a comment).
+- "chat and voice read it per turn; planning per session": met (above).
+- The slider respects the registry's effort caps (`adding-a-specialist.md:57`: "never above
+  `max_effort`"): **not met** for specialists (finding 3).
+- "the settings card is a slider with the effect sentence both ways in the change log": met
+  (`settings.ts` `SPEED_QUALITY_EFFECT`, `speed-quality.test.ts`; `SettingsPage.tsx`
+  `SliderInput`, `settings-slider.test.tsx`). Follows ADR 0051 item 4.
+- The fake daemon mirrors the daemon for the slider: the refusal text differs (finding 4).
+- "the Performance view is unaffected": met (no change under `apps/ui/src/pages/Performance*`
+  or the `/performance` contracts).
+- Docs: runtime.md, commands.md and apps.md describe the build. runtime.md needs the
+  `max_effort` cap once finding 3 is fixed. requirements.md D.16 `done` with the tests listed;
+  counts 184 / 39 / 5 match the table (`grep -c`). BLOCKERS.md and PROGRESS.md say "review
+  pending" and need the review's outcome.
+- Security and privacy: nothing new reaches model context or logs. The agent reads only the
+  turn's active project row. The `GET /settings` row exposes a value the human already owns.
+- Semantic conflict with the base: none. A throwaway merge of 9c0cb72 with f1948dd (discarded
+  worktree) conflicted only textually in `docs/maintainers/apps.md` (the test list). On the
+  merged tree, `pnpm typecheck` passed, `effort-offset.test.ts` with `packages/commands/test`
+  passed (11 files, 140 tests), and `settings-slider` with `settings` in apps/ui passed (2 files,
+  11 tests).
+- The build report's header names the base as `e2bfb1e`; the task names f1948dd. The export
+  base is the starting commit, so this is a stale note only.
+
+Findings:
+
+1. **medium**, `packages/runtime/test/effort-offset.test.ts:207-221` (with `:41-42`).
+   - "a voice turn runs at voice_chat's effort" cannot fail if voice turns use the chat
+     mode: the built-in `voice_chat` and `text_chat` defaults are both `low`, so the expected
+     efforts are identical.
+   - Verified by mutation: with `agent.ts:277` changed to always `"text_chat"`, the file still
+     passes, 7 of 7.
+   - Fix: run the voice and chat cases on a table in force where the two modes differ (a
+     `models.json` effort override for `voice_chat`). Then a voice turn that took the chat
+     default fails the test.
+
+2. **low**, `packages/runtime/src/session/executor.ts:396-401`, `effort-offset.test.ts`.
+   - The executor's `researcher` branch and the coder's tier-2+ rule under a live slider are
+     not tested from a project row. Only the pure `effortForTask` call is.
+   - Verified by mutation: with the mode expression replaced by `"coder"`, `effort-offset`,
+     `executor` and `ladder` still pass (3 files, 17 tests).
+   - Fix: an executor-level test that runs a researcher task and a tier-2 coder task at -1, 0
+     and +1, moving the project row between runs of the same executor.
+
+3. **medium**, `packages/runtime/src/session/executor.ts:396-401`,
+   `packages/runtime/src/daemon/compose.ts:785-797`.
+   - The slider pushes specialists above their registry `max_effort`.
+   - `adding-a-specialist.md:57` says the runtime raises effort "by tier … and the project
+     slider, never above `max_effort`". The critic honours its cap (`pickCriticModel`
+     `maxEffort`), but `SpecialistSpec` does not carry `max_effort` and the executor never caps.
+   - Before this item the offset was always 0, so the highest a specialist reached was `high`
+     (the tier-2 coder), which is every specialist's `max_effort` except science-evaluator's.
+   - Now, at quality:
+     - the researcher (default `high`, max `high`) runs at `xhigh`;
+     - a tier-2 coder (max `high`) runs at `xhigh`;
+     - writer-marketing, designer, tester and reviewer at tier 2 (mapped to the coder mode,
+       max `high`) run at `xhigh`.
+   - The result is more cost than the registry allows, and the critic and the specialists
+     follow different rules.
+   - Verified by reading `evals/registry/specialists/*/specialist.md` (`max_effort: high` for
+     9 of 10) and `effortForTask("researcher", 1, 1)` = `xhigh`.
+   - Fix: `SpecialistSpec.maxEffort` from the registry's `max_effort`, applied by the executor
+     after the slider. A test proves the researcher at quality stays at `high`, and a spec with
+     a higher cap still moves up.
+   - The principals are not affected under the built-in table: chat and voice at +1 reach
+     `medium`, the conversation agent's cap, and planning at +1 reaches `xhigh`, below the
+     project manager's `max`.
+
+4. **low**, `apps/ui/test/fake-daemon.ts:1724`.
+   - The fake refuses every invalid slider value with "Too big: expected number to be <=1",
+     including -2.
+   - The daemon refuses -2 with "speed_quality_offset: Too small: expected number to be >=-1"
+     (verified with a throwaway `settings.set` test in `packages/commands/test`, deleted).
+   - A UI test against the fake would therefore show a message the real daemon never sends.
+   - Fix: the fake gives each refusal the daemon's text, and a UI test covers the -2 refusal.
