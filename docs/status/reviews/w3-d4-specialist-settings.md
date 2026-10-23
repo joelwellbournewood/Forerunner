@@ -142,10 +142,11 @@ Reviewer: independent adversarial review (managed agent), 2026-10-23, of `121993
 on `wave/w3-d4-specialist-settings` against the brief, the spec (D.3, D.4, D.8 to D.15, the
 "Model ladder" open decision), ADR 0072 and the base `ccr-4d8a843c-1k9syk` at `f1948dd`.
 
-Verdict: **revise**. Score: **76/100**. The resolution order, the capability flags, the speed
-composition with D.20 and the write path are sound and well tested; two realistic paths let a
-setting step over a limit the rest of the runtime keeps (a specialist's `max_effort`, the ladder
-ceiling), and the branch does not merge cleanly with the base.
+Verdict: **revise**. Score: **68/100**. The resolution order, the capability flags, the speed
+composition with D.20 and the write path are sound and well tested; but a model override is
+priced at the table's rung (the budget hooks under-estimate an Opus chat turn 40-fold), two
+realistic paths let a setting step over a limit the rest of the runtime keeps (a specialist's
+`max_effort`, the ladder ceiling), and the branch does not merge cleanly with the base.
 
 ### Requirements checked
 
@@ -165,6 +166,7 @@ ceiling), and the branch does not merge cleanly with the base.
 - [~] Model per agent: the principal's mode override ignores the ladder ceiling (finding 2).
 - [x] Docs: adding-a-specialist.md, adding-a-provider.md, runtime.md, apps.md, commands.md,
   testing.md, ADR 0072 indexed; requirements D.4 `done`; BLOCKERS and PROGRESS rows.
+- [ ] A changed model is priced as that model (finding 6).
 - [~] Merge with the base: textual conflicts in five files (finding 5).
 - Ran: `pnpm typecheck` (exit 0); the eight D.4 test files (7 runtime/commands files, 90 tests
   passed); a trial merge of the base into a throwaway worktree, conflicts resolved as a union,
@@ -214,3 +216,16 @@ ceiling), and the branch does not merge cleanly with the base.
    merging into `ccr-4d8a843c-1k9syk` stops on five conflicts. No semantic conflict: the union
    typechecks and the tests pass (trial merge above). Needed: move the additions to anchors the
    base did not touch and prove a trial merge is conflict-free.
+6. **high**: `packages/runtime/src/daemon/compose.ts:1698` (intake pricing), `:2175` (chat
+   pricing), `:1578` (executor pricing), with `session/intake.ts:636`, `conversation/agent.ts:281`,
+   `session/executor.ts` (the loop run's `pricing`). The run's model now follows the agent's
+   `tier` override, but its `RunPricing` does not: the intake is priced at the table's planning
+   rung, the chat at the table's text_chat rung, a specialist's loop run at the sonnet rung. A
+   human who sets chat to Opus from Settings gets every chat turn's pre-call estimate (the budget
+   hook's `beforeModelCall`) and its recorded cost at the Haiku price; the turn budget and the
+   ledger are 40 times too low. Verified: `pricingFor(...).estimate(10000, 16000)` is 9000 for
+   `claude-haiku-5-5`, 180000 for `claude-sonnet-5-5`, 360000 for `claude-opus-5-5` (throwaway
+   test), and the three compose closures read `modelConfig.get().modeDefaults.<mode>.tier` or the
+   literal `"sonnet"`, never the run's model. Needed: every loop run priced by the model it
+   calls (a `pricingFor(modelId)` port on the intake, the chat and the executor, wired in
+   compose), with tests that fail when a changed rung is priced at the default one.
