@@ -14,7 +14,8 @@
  * the two the week can reach) and `refreshMirrorSchedules` (no mirror settings: nothing to
  * schedule). What the week never opens (the Extensions panel, updates, the model watch, the
  * Cloudflare panel, desktop control, the Data tab, costs, the mirror, the sandbox, the schema
- * sync gate, the vault) is an `absent` stand-in: a route that reaches it fails with a clear
+ * sync gate, the vault, source discovery, the project docs port, shared secrets and the email
+ * settings page's capability ports) is an `absent` stand-in: a route that reaches it fails with a clear
  * `unavailable` error naming the field, so a gap in the harness is a failure, never a silent
  * stub. `/health` reads several of them and is not part of the week.
  */
@@ -339,6 +340,16 @@ export function daemonFor(
     "mirror",
     "sandbox",
     "mirrorSync",
+    // Mounted by the daemon at construction, never opened by the week: source discovery
+    // (ADR 0056), the project docs port (ADR 0058), shared secrets (ADR 0065) and the email
+    // settings routes over the capability's ports (ADR 0066). The email mount reads
+    // `rt.capabilities.email.ports.*` while building its table, which a missing field would
+    // turn into a TypeError before any route exists; a stand-in answers the read and fails only
+    // when a route calls it.
+    "sources",
+    "docs",
+    "sharedSecrets",
+    "capabilities",
     ...(install.memory ? [] : ["memory"]),
   ] as const;
   const view: Record<string, unknown> = { ...real };
