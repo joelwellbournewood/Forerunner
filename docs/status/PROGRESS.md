@@ -47,10 +47,10 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 - Review state: only the five wave-1 items were independently reviewed (w1-approvals accept
   86, w1-email-identity-log accept 88, and-cdp accept 80, w1-b6-review revise 72,
   w1-plan-approval revise 68); the session's credits ran out before the fix stage that
-  follows a review, so every finding is open on the merged code: three high (the project card
-  names a cancelled milestone as next; a plan approved by chat or voice starts nothing on a
-  local store; the daemon and the cloud trigger can start one approved plan twice) and the
-  medium ones, listed with files and fixes in BLOCKERS.md "Open review findings of
+  follows a review. The findings (three high: the project card names a cancelled milestone
+  as next; a plan approved by chat or voice starts nothing on a local store; the daemon and
+  the cloud trigger can start one approved plan twice; and the medium ones) are fixed on
+  `wave/w5-review-findings`, one line per finding in BLOCKERS.md "Open review findings of
   2026-10-23". The other ten items are builder-verified only (their tests, typecheck, docs).
 - Credit stops: waves 2b, 3 and 4 were cut mid-wave. Built but not merged (pushed to origin):
   `wave/w2-l6-speak` (3 commits, the builder interrupted before its report, state unknown),
@@ -142,15 +142,12 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    `applied [2]`, now `[2, 3, 4]` and version 4) and the conformance case "keeps private
    lessons private" in `packages/state/test/suite.ts` (seeds an `agent_private` row on
    Postgres, refused since ADR 0083: seed it on SQLite only or assert the refusal as the
-   sibling case does); push and record the green run on both OS. Findings, high first:
-   `projectCard.nextMilestone` in `packages/runtime/src/daemon/views.ts` must pick `planned`
-   or `active` as the plan writer does; `request.answer` from chat, voice and the palette must
-   reach `rt.syncApprovals()` in `packages/runtime/src/daemon/compose.ts` (or the approvals
-   poll runs on local stores); the daemon's `syncPlanApprovals` and the cloud `InboxTrigger`
-   must share the `applied_at` mark so one answered plan starts one session; then the medium
-   ones (the empty-plan request, superseded approvals, the unserialised sync, `start_failed`
-   on a rejected start, the follow-up's budget cap; the ADR 0052 wording; the and-cdp
-   `waitFor` test and the `eval` under the CSP). Re-review w1-b6-review and w1-plan-approval.
+   sibling case does); push and record the green run on both OS. The review findings are
+   fixed on `wave/w5-review-findings` (BLOCKERS.md section "Open review findings of
+   2026-10-23"); merge it after its own review, then re-review w1-b6-review and
+   w1-plan-approval on the merged code. Two points found while fixing stay open there: a
+   hooks approval answered after its session ended is never reused (J.7 / S.6 follow-up), and
+   the Cloudflare port's own approval row may carry a resolved secret in its card input.
 2. Finish the partly built branches, each with its tests, maintainer doc and review:
    `wave/w4-desktop-confirm` (the triage P1, 1 commit), `wave/w3-b5-reasons` (B.5, 2 commits),
    `wave/w2-l6-speak` (L.6, 3 commits, state unknown: read the diff before building on it);
