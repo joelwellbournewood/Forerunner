@@ -3,13 +3,8 @@ import type { Database } from "../db/types.ts";
 import { ENTITIES, type EntityDef } from "../schema.ts";
 import type { TaskRow, TaskStatus } from "../types.ts";
 import { assertTransition, TASK_TRANSITIONS } from "../workflow.ts";
-import { type ListOptions, Repository } from "./base.ts";
+import { type Actor, type ListOptions, Repository } from "./base.ts";
 import type { FindingRepo } from "./review.ts";
-
-export interface Actor {
-  agentId?: string | null;
-  humanId?: string | null;
-}
 
 export type ClaimResult =
   | { ok: true; task: TaskRow }

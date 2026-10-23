@@ -350,6 +350,13 @@ describe("session runner", () => {
     expect(res.plan?.summary).toContain("cut to fit");
     expect(exec.executed).toHaveLength(4);
     expect(res.status).toBe("completed");
+    // B.5: the plan on the session row is versioned with the agent as author and the
+    // planner's summary (including the cut) as the reason.
+    const session = await w.store.session.mustGet(res.sessionId);
+    expect((session.plan as { items: unknown[] }).items).toHaveLength(4);
+    expect(session.reason).toContain("cut to fit");
+    expect(session.author_agent).toBe(w.alice);
+    expect(session.author_human).toBeNull();
   });
 
   it("stops cleanly with a handoff when the budget runs out mid-session", async () => {

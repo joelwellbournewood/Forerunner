@@ -26,6 +26,14 @@ schema and the snapshot disagree.
   `pg_advisory_xact_lock(hashtext('forerunner_schema_migrations'))` so two processes starting at
   once serialise. A second call is a no-op (`{ applied: [], version }`).
 - `openStore({ url })` runs `migrate` on open unless `migrate: false` is passed.
+- Shipped migrations, all frozen: v1 `initial` (the generated baseline), v2 `headroom-savings`
+  (`run.context_transforms`, `run.headroom_used`, `session.headroom_saved_tokens`, ADR 0003),
+  v3 `change-reasons` (`milestone.reason` and `session.reason`, spec B.5: every change to a
+  plan, task or milestone is versioned with author and reason; tasks had `reason` from v1).
+  Each adds its columns with `ALTER TABLE ... ADD COLUMN` (`IF NOT EXISTS` on Postgres) and a
+  constant default, so rows written before it read back with the default and the repository
+  rules apply from the next write (`MilestoneRepo.change` and `SessionRepo.setPlan` require
+  the reason and the actor; see data-model.md, Invariants).
 - Dialect differences live in `src/db/dialect.ts` (`sqlType`, `sqlLiteral`, `toPositional`,
   `jsonArrayContains`). Statements that are identical in both dialects (most DML, `RETURNING`,
   `ON CONFLICT`, `CHECK`, `CREATE INDEX IF NOT EXISTS`) are written once. Postgres >= 14 is
@@ -43,8 +51,8 @@ schema and the snapshot disagree.
    column's one-line description; the doc is generated from it.
 2. Run `pnpm vitest run --project unit --dir packages/state`. The snapshot test now fails: that is
    the signal that a migration is needed. Do **not** regenerate `0001-initial.ts`.
-3. Create `packages/state/src/migrations/0002-<name>.ts` exporting `MIGRATION_0002` with the
-   `up` statements for **both** dialects. Use the generator for whole tables
+3. Create `packages/state/src/migrations/<next>-<name>.ts` (`0004-...` after v3) exporting
+   `MIGRATION_<next>` with the `up` statements for **both** dialects. Use the generator for whole tables
    (`createTableSql(ENTITIES.new_table, "sqlite")`, `createIndexSql`, `appendOnlySql`) and write
    `ALTER TABLE` by hand for columns. Mind the dialect differences:
    - SQLite `ALTER TABLE ... ADD COLUMN` cannot add a column with a non-constant default or a
@@ -57,12 +65,15 @@ schema and the snapshot disagree.
    - Booleans are `INTEGER 0/1` in SQLite and `BOOLEAN` in Postgres; JSON is `TEXT` vs `JSONB`;
      integers and money are `INTEGER` vs `BIGINT`. `sqlLiteral()` renders defaults correctly.
 4. Append the migration to `MIGRATIONS` in `src/migrations/index.ts`.
-5. Update the snapshot test's expectation only if you added a *second* generator-driven
-   baseline; otherwise leave it: v1 stays frozen and the test compares v1 with the generator's
-   output for the **v1 subset**. In practice: when `generateInitialMigration()` no longer equals
-   v1 because the schema grew, change the test to compare `generateSchemaSql()` against
-   `v1 + your migration` applied to an empty database (see "Tests" below), and keep the
-   assertion that `0001-initial.ts` is byte-stable.
+5. Leave the v1 snapshot alone: `schema.test.ts` keeps `0001-initial.ts` byte-stable (a
+   SHA-256 of its statements) and compares it with the generator's output for the **v1
+   subset**, stripping the columns later migrations added per table (`addedSinceV1`, keyed by
+   table so a column name v1 already had elsewhere, such as `task.reason`, is not stripped).
+   Add your columns to that map, register the migration in the contiguity assertion, and add
+   a forward test that applies the earlier migrations to an empty database, writes rows by
+   hand, then applies yours and reads the rows back through the repositories (see "Tests").
+   The shape test ("every migration applied in order equals the generator's schema") needs no
+   change: it runs `migrate` with every migration.
 6. Run `pnpm docs:schema` to regenerate `docs/maintainers/data-model.md`, and run the unit and
    integration tests (`FORERUNNER_TEST_PG=...`). The conformance suite applies every migration
    against an empty SQLite and an empty Postgres schema.
@@ -89,10 +100,17 @@ of kind `skill` named `memory-format`), tested on fixture directories for both p
 
 - `packages/state/test/schema.test.ts`: snapshot equality for both dialects, generator output
   shape (types, checks, FKs, indexes, triggers), `migrate` applies once and records with the
-  clock, contiguity check, a failing statement rolls back the whole run, doc currency.
+  clock, contiguity check, a failing statement rolls back the whole run, doc currency; the
+  forward tests: a v1 database to v2 (old `run` and `session` rows read back with the v2
+  defaults) and a v2 database to v3 (old `milestone` and `session` rows read back with an
+  empty reason and take one through `MilestoneRepo.change` and `SessionRepo.setPlan`; fresh
+  inserts fill the default).
 - `packages/state/test/suite.ts` (run by `sqlite.test.ts` and `postgres.integration.test.ts`):
   migrations idempotent, every table created, full round trips for every entity, and the
-  repository behaviour on top of the migrated schema.
+  repository behaviour on top of the migrated schema, including the B.5 rules ("reasons on
+  milestone and plan changes": the reason and actor on the row, the version check, a blank
+  reason or a missing actor refused on `change`, `setPlan`, `update` and `patch` alike, and
+  spend, status and summary writes left ungated).
 - CI runs `pnpm docs:schema` and fails on a diff of `docs/maintainers/data-model.md`.
 
 ## Known issues

@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { cloudflare, desktop } from "@forerunner/capabilities";
 import { errorMessage, ForerunnerError, join, log, osFacts } from "@forerunner/platform";
-import type { LessonStatus } from "@forerunner/state";
+import type { LessonStatus, MilestoneRow } from "@forerunner/state";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -37,6 +37,7 @@ import { DecisionLog, StateAudit } from "../wiring/state-ports.ts";
 import { ModelWatchUpdates, RegistryConnectorCatalog } from "./adapters.ts";
 import {
   AnswerRequestBody,
+  ChangeMilestoneBody,
   type ChatReplyView,
   ChatRequestBody,
   CommandConfirmBody,
@@ -552,6 +553,28 @@ export function createDaemonApp(
       tasks: applied.tasks.map((t) => taskView(t, chf())),
     };
     return c.json(view, 201);
+  });
+
+  // Milestones (spec B.5): the rows with the reason and author of their last change, and a
+  // change from the app that records the human's reason with the version check.
+  app.get("/projects/:id/milestones", async (c) => {
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    const rows = await rt.store.milestone.forProject(project.id);
+    return c.json(rows.map(milestoneView));
+  });
+
+  app.post("/milestones/:id", async (c) => {
+    const body = await parse(c, ChangeMilestoneBody);
+    const patch: Partial<MilestoneRow> = {};
+    if (body.name !== undefined) patch.name = body.name;
+    if (body.successCriteria !== undefined) patch.success_criteria = body.successCriteria;
+    if (body.targetDate !== undefined) patch.target_date = body.targetDate;
+    if (body.status !== undefined) patch.status = body.status;
+    const m = await rt.store.milestone.change(c.req.param("id"), body.version, patch, body.reason, {
+      humanId: rt.human.id,
+    });
+    rt.events.emit("project", { id: m.project_id });
+    return c.json(milestoneView(m));
   });
 
   app.post("/tasks/:id/transition", async (c) => {

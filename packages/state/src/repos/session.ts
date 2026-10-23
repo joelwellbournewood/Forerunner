@@ -3,13 +3,54 @@ import type { Database } from "../db/types.ts";
 import { ENTITIES, type EntityDef } from "../schema.ts";
 import type { JsonValue, RunRow, SessionRow, SessionStatus } from "../types.ts";
 import { assertTransition, SESSION_TRANSITIONS } from "../workflow.ts";
-import { type ListOptions, Repository } from "./base.ts";
+import {
+  type Actor,
+  authorColumns,
+  type ListOptions,
+  Repository,
+  requireChangeReason,
+} from "./base.ts";
 
 const TERMINAL: readonly SessionStatus[] = ["stopped", "completed", "failed", "killed"];
 
+/**
+ * Sessions. A change to the plan is versioned with its author and reason (spec B.5):
+ * `setPlan` is the write path, and `updateWhere` refuses a patch that carries `plan` without
+ * a reason and an author, so `update` and `patch` cannot bypass it. Spend, status, summary
+ * and handoff writes are not plan changes and carry none.
+ */
 export class SessionRepo extends Repository<SessionRow> {
   constructor(db: Database, clock: Clock) {
     super(db, ENTITIES.session as EntityDef, clock);
+  }
+
+  /**
+   * Replace the plan with optimistic concurrency, recording why and by whom. A blank reason
+   * or an actor naming neither agent nor human is ForerunnerError("validation"); a stale
+   * `expectedVersion` is "version_conflict".
+   */
+  async setPlan(
+    id: string,
+    expectedVersion: number,
+    plan: JsonValue,
+    reason: string,
+    actor: Actor,
+  ): Promise<SessionRow> {
+    return this.update(id, expectedVersion, {
+      plan,
+      reason: reason.trim(),
+      ...authorColumns(actor),
+    });
+  }
+
+  override async updateWhere(
+    patch: Partial<SessionRow>,
+    whereSql: string,
+    whereParams: unknown[],
+    extra: { set: string[]; params: unknown[] } = { set: [], params: [] },
+  ): Promise<SessionRow[]> {
+    if (patch.plan !== undefined) requireChangeReason(this.table, patch);
+    return super.updateWhere(patch, whereSql, whereParams, extra);
   }
 
   /** planned -> running with started_at. */

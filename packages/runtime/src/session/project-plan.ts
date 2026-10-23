@@ -318,9 +318,10 @@ export interface AppliedPlan {
  * existing ones (`order_index`). In small-project mode the tasks join the project's open
  * milestone (`planned` or `active`, first by order) when it has one, so a small project keeps
  * exactly one; otherwise the one milestone is created. The joined milestone keeps its name and
- * takes what the plan adds (`milestoneMerge`: new success criteria, a later target date) with
- * the plan's author on the row; milestone rows carry no reason yet (B.5), so the change and
- * the plan's reason go to the audit log as one `project.plan` row. `dependsOn` entries are
+ * takes what the plan adds (`milestoneMerge`: new success criteria, a later target date) as a
+ * versioned change with the plan's author and reason on the row (spec B.5, like every task
+ * row the plan writes); what was added and the plan's reason also go to the audit log as one
+ * `project.plan` row. `dependsOn` entries are
  * plan keys or ids of the project's own tasks; anything else, a cycle, a duplicate key, an
  * empty plan or one over the caps is refused with `validation` and nothing is written.
  */
@@ -369,6 +370,7 @@ export async function applyProjectPlan(
       success_criteria: m.successCriteria,
       target_date: m.targetDate,
       order_index: orderIndex,
+      reason: plan.reason,
       ...authorColumns,
     });
 
@@ -385,11 +387,16 @@ export async function applyProjectPlan(
         merged = milestoneMerge(open, only);
         reused = open;
         if (merged) {
-          reused = await tx.milestone.update(open.id, open.version, {
-            success_criteria: [...open.success_criteria, ...merged.successCriteria],
-            ...(merged.targetDate === null ? {} : { target_date: merged.targetDate }),
-            ...authorColumns,
-          });
+          reused = await tx.milestone.change(
+            open.id,
+            open.version,
+            {
+              success_criteria: [...open.success_criteria, ...merged.successCriteria],
+              ...(merged.targetDate === null ? {} : { target_date: merged.targetDate }),
+            },
+            plan.reason,
+            author,
+          );
           await tx.auditLog.append({
             tool: PLAN_AUDIT_TOOL,
             allowed: true,

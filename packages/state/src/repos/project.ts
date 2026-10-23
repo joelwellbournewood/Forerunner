@@ -2,7 +2,13 @@ import type { Clock } from "@forerunner/platform";
 import type { Database } from "../db/types.ts";
 import { ENTITIES, type EntityDef } from "../schema.ts";
 import type { MilestoneRow, ProjectRow } from "../types.ts";
-import { type ListOptions, Repository } from "./base.ts";
+import {
+  type Actor,
+  authorColumns,
+  type ListOptions,
+  Repository,
+  requireChangeReason,
+} from "./base.ts";
 
 export class ProjectRepo extends Repository<ProjectRow> {
   constructor(db: Database, clock: Clock) {
@@ -19,9 +25,43 @@ export class ProjectRepo extends Repository<ProjectRow> {
   }
 }
 
+/**
+ * Milestones. Every change is versioned with its author and reason (spec B.5): `change` is
+ * the write path, and `updateWhere` refuses any update whose patch lacks a reason or an
+ * author, so `update` and `patch` cannot bypass it.
+ */
 export class MilestoneRepo extends Repository<MilestoneRow> {
   constructor(db: Database, clock: Clock) {
     super(db, ENTITIES.milestone as EntityDef, clock);
+  }
+
+  /**
+   * Change a milestone with optimistic concurrency, recording why and by whom. A blank
+   * reason or an actor naming neither agent nor human is ForerunnerError("validation");
+   * a stale `expectedVersion` is "version_conflict".
+   */
+  async change(
+    id: string,
+    expectedVersion: number,
+    patch: Partial<Omit<MilestoneRow, "reason" | "author_agent" | "author_human">>,
+    reason: string,
+    actor: Actor,
+  ): Promise<MilestoneRow> {
+    return this.update(id, expectedVersion, {
+      ...patch,
+      reason: reason.trim(),
+      ...authorColumns(actor),
+    });
+  }
+
+  override async updateWhere(
+    patch: Partial<MilestoneRow>,
+    whereSql: string,
+    whereParams: unknown[],
+    extra: { set: string[]; params: unknown[] } = { set: [], params: [] },
+  ): Promise<MilestoneRow[]> {
+    requireChangeReason(this.table, patch);
+    return super.updateWhere(patch, whereSql, whereParams, extra);
   }
 
   forProject(projectId: string, opts: ListOptions = {}): Promise<MilestoneRow[]> {

@@ -541,7 +541,17 @@ export class SessionRunner {
         budget,
       });
       plan = cutPlanToBudget(plan, Math.floor(opts.budgetCapUsdMicro * (1 - reserveShare)));
-      session = await store.session.patch(session.id, { plan: plan as never });
+      // B.5: the plan is a versioned change to the session with the agent as author and the
+      // planner's summary as the reason. The row may have moved since start (spend counters),
+      // so the version check runs against a fresh read.
+      const beforePlan = await store.session.mustGet(session.id);
+      session = await store.session.setPlan(
+        beforePlan.id,
+        beforePlan.version,
+        plan as never,
+        planReason(plan),
+        { agentId: agent.id },
+      );
       await emit("session.planned", {
         items: plan.items.length,
         estimateUsdMicro: plan.estimateUsdMicro,
@@ -1402,6 +1412,18 @@ export class SessionRunner {
       }
     }
   }
+}
+
+/** Longest reason recorded on a session plan change; the planner's summary is cut to it. */
+export const MAX_PLAN_REASON_CHARS = 500;
+
+/** The reason a session plan change carries (spec B.5): the planner's summary, or a plain default. */
+export function planReason(plan: Pick<SessionPlan, "summary">): string {
+  const summary = plan.summary.trim();
+  const reason = summary === "" ? "planned from the brief" : summary;
+  return reason.length > MAX_PLAN_REASON_CHARS
+    ? `${reason.slice(0, MAX_PLAN_REASON_CHARS - 1)}…`
+    : reason;
 }
 
 export function cutPlanToBudget(plan: SessionPlan, workBudgetUsdMicro: number): SessionPlan {
