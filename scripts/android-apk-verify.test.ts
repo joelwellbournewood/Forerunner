@@ -129,6 +129,32 @@ describe("android-apk-verify helpers", () => {
     expect(bad.verifies).toBe(false);
     expect(bad.signers).toEqual([]);
   });
+  it("parses the signers of an APK without a v1 signature, which apksigner prints as V2 and V3 Signer lines", () => {
+    const parsed = parseVerifyOutput(
+      [
+        "Verifies",
+        "Verified using v1 scheme (JAR signing): false",
+        "Verified using v2 scheme (APK Signature Scheme v2): true",
+        "Verified using v3 scheme (APK Signature Scheme v3): true",
+        "Verified using v3.1 scheme (APK Signature Scheme v3.1): false",
+        "Verified using v4 scheme (APK Signature Scheme v4): false",
+        "Number of signers: 1",
+        "V2 Signer: certificate DN: CN=Forerunner development key, O=Forerunner, C=CH",
+        "V2 Signer: certificate SHA-256 digest: 6d12a9ec83f4cfc601996b51123efb80f45c7fbea18a8e547679c7639ad4006b",
+        "V2 Signer: certificate SHA-1 digest: 6bf20802dee238aa454acb357fb46db86237c668",
+        "V3 Signer: certificate DN: CN=Forerunner development key, O=Forerunner, C=CH",
+        "V3 Signer: certificate SHA-256 digest: 6d12a9ec83f4cfc601996b51123efb80f45c7fbea18a8e547679c7639ad4006b",
+      ].join("\n"),
+    );
+    expect(parsed.verifies).toBe(true);
+    expect(parsed.schemes).toEqual({ v1: false, v2: true, v3: true, v4: false });
+    expect(parsed.signers).toEqual([
+      {
+        dn: "CN=Forerunner development key, O=Forerunner, C=CH",
+        sha256: "6d12a9ec83f4cfc601996b51123efb80f45c7fbea18a8e547679c7639ad4006b",
+      },
+    ]);
+  });
 });
 
 describe("verifyReleaseApks", () => {
