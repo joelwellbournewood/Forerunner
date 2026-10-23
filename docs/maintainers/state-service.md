@@ -268,7 +268,12 @@ and commands without a clientId are enqueued every time, as before. The record l
 (`IDEMPOTENCY_TTL_MS`, `idempotency.json`), so a copy older than that, or one that reaches a
 second service instance with its own file (Known issues), still becomes a second row: the
 daemon's `RemoteCommandWatcher` refuses that row as a duplicate from its audit rows
-(`runtime.md`, "one tap acts once"), which is why the limit is enforced on both sides.
+(`runtime.md`, "one tap acts once"), which is why the limit is enforced on both sides. Tests:
+`test/remote.test.ts` (the route: repeat, outbox replay, reverse order, a different body, another
+device) and, end to end, the second case of scenario 9
+(`tests/e2e/scenarios/09-phone.scenario.test.ts`: the same envelope posted twice answers 200
+with the first row and creates none, and a copy written into the store past the service is the
+watcher's `duplicate`; one change log row, one session start).
 
 ### GitHub mirror
 
