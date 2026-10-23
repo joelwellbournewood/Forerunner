@@ -131,6 +131,11 @@ export interface FakeDaemonOptions {
   /** Delay between streamed chat tokens; 5 ms by default. */
   tokenDelayMs?: number;
   /**
+   * Cloud runner vault keys the fake's "OS keyring" holds, runner id -> base64 of 32 bytes
+   * (spec S.12, ADR 0068). `/runner-unlock/wrap` wraps them as the daemon does.
+   */
+  runnerKeys?: Record<string, string>;
+  /**
    * Paths the fake answers with 404 "no route" (ADR 0032), each matching itself and its
    * children ("/memory" covers "/memory/scopes" but "/updates" leaves "/updates/status"): a
    * daemon without the reviews, memory, command or other routes, so the pages' degraded
@@ -142,11 +147,6 @@ export interface FakeDaemonOptions {
    * unreachable (`{"/updates": {status: 503, code: "unavailable", message: "feed down"}}`).
    */
   failing?: Record<string, { status: number; code: string; message: string }>;
-  /**
-   * Cloud runner vault keys the fake's "OS keyring" holds, runner id -> base64 of 32 bytes
-   * (spec S.12, ADR 0068). `/runner-unlock/wrap` wraps them as the daemon does.
-   */
-  runnerKeys?: Record<string, string>;
 }
 
 type Listener = (event: string, data: unknown) => void;
