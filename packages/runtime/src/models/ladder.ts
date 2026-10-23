@@ -19,6 +19,20 @@ export const DEFAULT_LADDER: LadderRung[] = [
 
 export const DEFAULT_CEILING: ModelTier = "opus";
 
+/**
+ * The escalation ceiling a project's settings name (`critic_ceiling`, spec D.3), or undefined
+ * when the setting is absent or not a rung. The task executor reads it from the project row at
+ * every run by default, so no composition (daemon, cloud runner, test world) can forget it.
+ */
+export function projectCeilingOf(
+  settings: Readonly<Record<string, unknown>> | null | undefined,
+): ModelTier | undefined {
+  const value = settings?.critic_ceiling;
+  return typeof value === "string" && (TIERS as readonly string[]).includes(value)
+    ? (value as ModelTier)
+    : undefined;
+}
+
 export type Mode =
   | "voice_chat"
   | "text_chat"

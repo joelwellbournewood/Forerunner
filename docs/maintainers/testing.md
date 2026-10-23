@@ -1285,12 +1285,15 @@ doctor and the eval checks as argv arrays).
 - The scripted critic reads markers, not meaning: a live model is the only way to measure the
   catch and pass rates themselves. The fake-provider run measures the plumbing and the rules.
 - Closed (item w3-misc-replay-ceiling, 2026-10-23): the executor's own rung for the third
-  attempt reads the project's `critic_ceiling` at every run (`projectCeiling`, passed by
-  `composeRuntime`; runtime.md "Remote control of the PC"), so a run above the ceiling cannot happen even
-  if the critic's follow-up did not stop the task first. Tests:
-  `packages/runtime/test/executor-ceiling.test.ts` (a haiku ceiling keeps the third retry at
-  haiku; the ceiling changed between two runs of one executor takes effect) and
-  `packages/runtime/test/remote-wiring.test.ts` (the same through the composed daemon).
+  attempt reads the project's `critic_ceiling` at every run, through `projectCeiling` where
+  the composition passes it (`composeRuntime`; runtime.md "Remote control of the PC") and
+  through its own `projectCeilingOf` where it does not (the cloud runner, the e2e worlds), so a
+  run above the ceiling cannot happen in any composition even if the critic's follow-up did
+  not stop the task first. Tests: `packages/runtime/test/executor-ceiling.test.ts` (a haiku
+  ceiling keeps the third retry at haiku; the ceiling changed between two runs of one executor
+  takes effect; without a reader the setting still holds),
+  `packages/runtime/test/remote-wiring.test.ts` (the same through the composed daemon) and
+  `services/cloud-runner/test/runner.test.ts` (a third retry on the runner stays at sonnet).
 - Weekly consolidation finds nothing to propose in the four weeks: the near-duplicate merge at
   write time keeps each kind's lesson single and nothing is unused for 60 days. The rounds run
   and are recorded as 0 proposals.

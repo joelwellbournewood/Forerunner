@@ -3,14 +3,16 @@ import { type JsonObject, openStore } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
+import { projectCeilingOf } from "../src/models/ladder.ts";
 import { LoopTaskExecutor, type SpecialistSpec } from "../src/session/executor.ts";
 import { flatPricing, harness, issue, registry, ScriptedProvider } from "./helpers.ts";
 
 /**
  * The retry ladder's escalation rung (spec D.2, D.3) under the project's ceiling: a task on
  * its third retry climbs one rung, but never above `project.settings.critic_ceiling`. The
- * executor reads the ceiling per run through `projectCeiling` (what the daemon passes); with
- * nothing passed the ladder's default ceiling (opus) applies, which is the bug this pins.
+ * executor reads the ceiling per run through `projectCeiling` (what the daemon passes) or,
+ * with nothing passed (the cloud runner, the e2e worlds), through `projectCeilingOf` itself;
+ * only a project without the setting climbs to the ladder's default ceiling (opus).
  */
 const coder: SpecialistSpec = {
   name: "coder",
@@ -143,7 +145,22 @@ describe("the retry ladder under the project's ceiling", () => {
     expect(await runAtAttempt3({}, true)).toBe("fake-opus");
   });
 
-  it("without the projectCeiling port the setting is ignored (what the daemon must not do)", async () => {
-    expect(await runAtAttempt3({ critic_ceiling: "sonnet" }, false)).toBe("fake-opus");
+  it("without the projectCeiling port the executor reads critic_ceiling itself (the cloud runner's composition)", async () => {
+    // The cloud runner and the e2e worlds build the executor without a reader; the project's
+    // cap still holds on the third retry.
+    expect(await runAtAttempt3({ critic_ceiling: "sonnet" }, false)).toBe("fake-sonnet");
+    expect(await runAtAttempt3({ critic_ceiling: "haiku" }, false)).toBe("fake-haiku");
+    // No setting, or one that is not a rung: the ladder's default ceiling.
+    expect(await runAtAttempt3({}, false)).toBe("fake-opus");
+    expect(await runAtAttempt3({ critic_ceiling: "gpt" }, false)).toBe("fake-opus");
+  });
+
+  it("projectCeilingOf names a rung only", () => {
+    expect(projectCeilingOf({ critic_ceiling: "sonnet" })).toBe("sonnet");
+    expect(projectCeilingOf({ critic_ceiling: "unknown" })).toBeUndefined();
+    expect(projectCeilingOf({ critic_ceiling: 2 })).toBeUndefined();
+    expect(projectCeilingOf({})).toBeUndefined();
+    expect(projectCeilingOf(null)).toBeUndefined();
+    expect(projectCeilingOf(undefined)).toBeUndefined();
   });
 });

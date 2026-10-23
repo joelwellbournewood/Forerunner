@@ -2026,8 +2026,11 @@ The project's escalation ceiling is wired here too: `makeLoop` passes
 `tierForAttempt` escalates the third retry under the project's `critic_ceiling` (a project capped
 at sonnet never runs opus, a project capped at haiku keeps the third retry at haiku) instead of
 the ladder's default ceiling. The executor reads the project row at every `execute`, so a
-ceiling the human changes applies from the next run; the static `ceiling` dependency is only
-the fallback for a project without the setting.
+ceiling the human changes applies from the next run; without a `projectCeiling` reader (the
+cloud runner's composition, the e2e worlds) it reads `critic_ceiling` itself through
+`projectCeilingOf` (`src/models/ladder.ts`: the setting when it names a rung, else
+undefined), so no composition can forget the cap. The static `ceiling` dependency is only the
+fallback for a project without the setting.
 
 ### Source discovery (`src/sources/`, spec A.4, [ADR 0056](../decisions/0056-source-discovery.md))
 
@@ -2746,8 +2749,9 @@ two-task session at the task boundary (the task in flight finishes, the second n
 `stopped_by_message` with the second task in `handoff.next`), both stopping with `close()`;
 `executor-ceiling.test.ts`: `projectCeiling` on the executor (a sonnet ceiling keeps the third
 retry at sonnet, a haiku ceiling, the first rung, keeps it at haiku, no ceiling climbs to opus,
-and the project row is read at every run, so a ceiling changed between two runs of one executor
-takes effect); `live-chat.test.ts` (spec O.9,
+the project row is read at every run, so a ceiling changed between two runs of one executor
+takes effect, and without the reader the executor still honours the setting through
+`projectCeilingOf`, which names a rung only); `live-chat.test.ts` (spec O.9,
 ADR 0078): the said-line body round trip and its stop-word immunity, the quoted block with the
 envelope neutralised and an instruction-shaped line flagged, a free-form voice line during a
 `SessionRunner` held mid-task by a gated executor landing in the principal's inbox unread with
