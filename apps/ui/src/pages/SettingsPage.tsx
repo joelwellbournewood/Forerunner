@@ -61,6 +61,8 @@ export const SETTING_KEYS = [
   "notify_channel",
   "default_autonomy",
   "language",
+  "calibration",
+  "handover",
 ] as const;
 
 export interface SettingCommand {

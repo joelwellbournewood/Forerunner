@@ -25,6 +25,8 @@ export * from "./enforcement/token.ts";
 export * from "./estimates/index.ts";
 export * from "./extensions/index.ts";
 export * from "./injection/scan.ts";
+/** Monthly jobs: the critic calibration (H.7) and the handover test (P.15), ADR 0060. */
+export * from "./jobs/index.ts";
 export * from "./loop/index.ts";
 export * from "./models/eval-runner.ts";
 export * from "./models/ladder.ts";

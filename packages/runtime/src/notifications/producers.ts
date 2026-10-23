@@ -249,6 +249,110 @@ export function killSwitch(humanId: string, report: KillReport, reason: string):
   };
 }
 
+export interface CalibrationDriftFacts {
+  since: string | null;
+  catchRatePoints: number | null;
+  passRatePoints: number | null;
+}
+
+export interface CalibrationFacts {
+  date: string;
+  sessionId: string | null;
+  /** Set when the run did not finish: the title says so and the body carries the reason. */
+  error?: string;
+  catchRate?: number;
+  passRate?: number;
+  counts?: {
+    cleanReviewed: number;
+    cleanAccepted: number;
+    seededReviewed: number;
+    defectsCaught: number;
+  };
+  gateOk?: boolean;
+  thresholds?: { catchRate: number; passRate: number };
+  drift?: CalibrationDriftFacts;
+  model?: string;
+  tier?: number;
+  reviews?: number;
+  costUsdMicro?: number;
+  file?: string | null;
+}
+
+const pct = (x: number) => `${Math.round(x * 100)}%`;
+
+/** The drift line (spec H.7 "so drift is visible"): points against the previous report. */
+export function calibrationDriftLine(d: CalibrationDriftFacts): string {
+  if (d.since === null) return "Drift: no earlier report, this run is the baseline.";
+  const part = (name: string, p: number | null) =>
+    p === null || p === 0 ? `${name} unchanged` : `${name} ${p > 0 ? "+" : ""}${p} points`;
+  return `Drift: ${part("catch rate", d.catchRatePoints)}, ${part("pass rate", d.passRatePoints)} since ${d.since}.`;
+}
+
+/**
+ * The monthly critic calibration ran (spec H.7, ADR 0060): the catch rate, the pass rate, the
+ * gate and the drift against the previous report in the title and the body; a failed run
+ * names its reason. Normal urgency: it waits for the morning inside quiet hours.
+ */
+export function criticCalibration(humanId: string, f: CalibrationFacts): Notification {
+  const link = f.sessionId ? `/sessions/${f.sessionId}` : "/inbox";
+  if (f.error !== undefined) {
+    return {
+      kind: "critic_calibration",
+      humanId,
+      title: `Critic calibration ${f.date} failed`,
+      body: cut(`The monthly calibration did not finish: ${f.error}`, 500),
+      link,
+      sessionId: f.sessionId ?? undefined,
+      dedupeKey: `calibration:${f.date}:failed`,
+    };
+  }
+  const catchRate = f.catchRate ?? 0;
+  const passRate = f.passRate ?? 0;
+  const c = f.counts;
+  const lines = [
+    `Defects caught ${c ? `${c.defectsCaught}/${c.seededReviewed}` : pct(catchRate)} (${pct(catchRate)}${f.thresholds ? `, gate ${pct(f.thresholds.catchRate)}` : ""}); clean work accepted ${c ? `${c.cleanAccepted}/${c.cleanReviewed}` : pct(passRate)} (${pct(passRate)}${f.thresholds ? `, gate ${pct(f.thresholds.passRate)}` : ""}).`,
+    f.drift ? calibrationDriftLine(f.drift) : "",
+    `Tier ${f.tier ?? "?"} on ${f.model ?? "?"}, ${f.reviews ?? "?"} reviews, USD ${((f.costUsdMicro ?? 0) / 1_000_000).toFixed(4)}.${f.file ? ` Report: ${f.file}` : ""}`,
+  ].filter((l) => l !== "");
+  return {
+    kind: "critic_calibration",
+    humanId,
+    title: `Critic calibration ${f.date}: caught ${pct(catchRate)}, accepted ${pct(passRate)}${f.gateOk === false ? " (gate not met)" : ""}`,
+    body: cut(lines.join("\n"), 1000),
+    link,
+    sessionId: f.sessionId ?? undefined,
+    dedupeKey: `calibration:${f.date}`,
+  };
+}
+
+export interface HandoverFacts {
+  date: string;
+  projectId: string;
+  projectName: string;
+  sessionId: string;
+  stuck: number;
+  docsTaskId: string | null;
+  status: string;
+  summary: string;
+}
+
+/**
+ * The monthly handover test ran on a project (spec P.15, ADR 0060): how many places the fresh
+ * agent got stuck at and whether a docs task was filed; the body is the report the inbox got.
+ */
+export function handoverReport(humanId: string, f: HandoverFacts): Notification {
+  return {
+    kind: "handover_report",
+    humanId,
+    title: `Handover test ${f.date} on ${f.projectName}: ${f.stuck} stuck place${f.stuck === 1 ? "" : "s"}${f.docsTaskId ? ", docs task filed" : ""} (session ${f.status})`,
+    body: cut(f.summary, 1000),
+    link: `/sessions/${f.sessionId}`,
+    projectId: f.projectId,
+    sessionId: f.sessionId,
+    dedupeKey: `handover:${f.projectId}:${f.date}`,
+  };
+}
+
 /** What `bindProducers` needs: `Notifier` satisfies it, so does a fake in tests. */
 export interface NotifierLike {
   notify(n: Notification): Promise<NotificationRecord>;
@@ -286,6 +390,10 @@ export function bindProducers(notifier: NotifierLike) {
       notifier.notify(peerMessage(humanId, m, fromName)),
     killSwitch: (humanId: string, report: KillReport, reason: string) =>
       notifier.notify(killSwitch(humanId, report, reason)),
+    criticCalibration: (humanId: string, f: CalibrationFacts) =>
+      notifier.notify(criticCalibration(humanId, f)),
+    handoverReport: (humanId: string, f: HandoverFacts) =>
+      notifier.notify(handoverReport(humanId, f)),
   };
 }
 

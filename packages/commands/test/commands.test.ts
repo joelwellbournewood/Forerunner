@@ -376,6 +376,52 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
       ).impact.risk,
     ).toBe("high");
     expect(Object.keys(SETTING_SPECS)).toContain("speed_quality_offset");
+    // The monthly jobs' keys (ADR 0060): the handover per project, the calibration globally.
+    expect(
+      refused(
+        await w.executor.execute({
+          name: "settings.set",
+          params: { key: "handover", value: { enabled: true, day: 32 }, project: "game" },
+          ctx: w.ctx(),
+        }),
+      ).code,
+    ).toBe("validation");
+    const handover = done(
+      await w.executor.execute({
+        name: "settings.set",
+        params: {
+          key: "handover",
+          value: { enabled: true, day: 2, time: "08:00" },
+          project: "game",
+        },
+        ctx: w.ctx(),
+        confirmation: tap(w.human.id),
+      }),
+    );
+    expect(handover.sentence).toBe(
+      'Set the monthly handover test for Game from unset to {"enabled":true,"day":2,"time":"08:00"}: a fresh agent runs the seeded change on day 2 at 08:00 each month and its stuck places become a docs task. Undo.',
+    );
+    expect((await w.store.project.mustGet(w.game.id)).settings.handover).toEqual({
+      enabled: true,
+      day: 2,
+      time: "08:00",
+    });
+    done(await w.executor.undo(handover.changeLogId, w.ctx()));
+    expect((await w.store.project.mustGet(w.game.id)).settings.handover).toBeUndefined();
+    const calibration = done(
+      await w.executor.execute({
+        name: "settings.set",
+        params: { key: "calibration", value: { enabled: false } },
+        ctx: w.ctx(),
+        confirmation: tap(w.human.id),
+      }),
+    );
+    expect(calibration.sentence).toBe(
+      'Set the monthly critic calibration from unset to {"enabled":false}: the critic is no longer graded against the eval sets each month. Undo.',
+    );
+    expect((await w.store.human.mustGet(w.human.id)).notify_prefs.calibration).toEqual({
+      enabled: false,
+    });
     await w.store.close();
   });
 

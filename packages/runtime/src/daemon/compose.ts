@@ -89,6 +89,16 @@ import {
   type McpConnectorFactory,
 } from "../extensions/mcp.ts";
 import { ExtensionRegistry } from "../extensions/registry.ts";
+import {
+  CalibrationJob,
+  calibrationSettingsOf,
+  HandoverJob,
+  isCalibrationRequest,
+  isHandoverRequest,
+  SeedOnlyPlanner,
+  scheduleCalibration,
+  syncHandoverSchedules,
+} from "../jobs/index.ts";
 import { CommandLoop, sessionCapFromSettings, sessionCommandPorts } from "../loop/commands.ts";
 import { CriticLoop } from "../loop/critic.ts";
 import {
@@ -149,8 +159,13 @@ import {
   syncBlockedByFindings,
   syncSignoffAnswers,
 } from "../session/findings.ts";
-import { SessionRunner, StaticPlanner, type TaskExecutor } from "../session/runner.ts";
-import { Scheduler, type StartRequest } from "../session/triggers.ts";
+import {
+  SessionRunner,
+  type SessionRunnerDeps,
+  StaticPlanner,
+  type TaskExecutor,
+} from "../session/runner.ts";
+import { fileFiredKeys, Scheduler, type StartRequest } from "../session/triggers.ts";
 import {
   describePlanAllowance,
   PLAN_USD_MONTHLY_ENV,
@@ -613,6 +628,17 @@ export interface RuntimeApp {
   /** Add or drop mirror schedules after a project's settings changed. */
   refreshMirrorSchedules(): Promise<string[]>;
   /**
+   * The monthly jobs (ADR 0060): the critic calibration (spec H.7, on by default, day and
+   * time from `human.notify_prefs.calibration`) and the handover test (spec P.15, per project
+   * whose `settings.handover.enabled` is true, off until one is). Their schedules are re-read
+   * from the settings before every scheduler tick and by `refreshSchedules()`.
+   */
+  jobs: {
+    calibration: CalibrationJob;
+    handover: HandoverJob;
+    refreshSchedules(): Promise<JobSchedules>;
+  };
+  /**
    * Run the mirror for a project now. Resolves with the run, or with the open approval request
    * as soon as the mirror asks the human (the run goes on in the background and finishes when
    * the request is answered in the inbox); a second call while a run is in flight joins it.
@@ -622,6 +648,12 @@ export interface RuntimeApp {
 }
 
 const DEFAULT_SESSION_CAP_USD_MICRO = 6_250_000; // CHF 5 at 0.8 CHF/USD
+
+/** What `jobs.refreshSchedules()` answers: the calibration's switch and the handover projects. */
+export interface JobSchedules {
+  calibration: boolean;
+  handover: string[];
+}
 
 /**
  * How `specialistSpecFrom` turns a registry entry's `allowed_tools` into the names a run token
@@ -1452,12 +1484,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     token: ghToken ?? undefined,
     identity: { name: `${agent.name} (Forerunner)`, email: human.email || "forerunner@localhost" },
   });
-  const runner = new SessionRunner({
+  // The runner's ports; the handover job builds a second runner over the same ones (below).
+  const runnerDeps: Omit<SessionRunnerDeps, "planner"> = {
     store,
     clock,
     tokens,
     kill,
-    planner: new StaticPlanner(500_000, estimates),
     executor,
     context,
     critic,
@@ -1482,6 +1514,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         taskId: task.id,
       });
     },
+  };
+  const runner = new SessionRunner({
+    ...runnerDeps,
+    planner: new StaticPlanner(500_000, estimates),
   });
 
   // GitHub Projects mirror: the host comes from the vault by the secret reference in the
@@ -1799,11 +1835,81 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     grantedSecrets: ghToken ? [SECRET_NAMES.github] : [],
     maxDepth: 2,
   });
+  // Monthly jobs (ADR 0060). The calibration runs the critic over the registry's eval sets
+  // under a budget from the human's settings; the handover runs ONE session of a fresh agent
+  // on the flagged project, planned over the seeded task alone and without a memory port
+  // (`runSession` below is that session: the same ports, grant and gate as any other).
+  const calibrationJob = new CalibrationJob({
+    store,
+    clock,
+    tokens,
+    critic: critic.service,
+    registry,
+    outDir: join(dirs.data, "critic"),
+    notifier,
+    humanId: human.id,
+    agentId: agent.id,
+    criticAgentId: criticAgent.id,
+    settings: async () => calibrationSettingsOf((await store.human.mustGet(human.id)).notify_prefs),
+  });
+  const handoverJob = new HandoverJob({
+    store,
+    clock,
+    humanId: human.id,
+    agentId: agent.id,
+    reportDir: join(dirs.data, "handover"),
+    notifier,
+    runSession: async ({ agentId, projectId, taskId, budgetCapUsdMicro }) => {
+      await schemaSync.assertCanSync("session.start");
+      if (!provider)
+        throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
+      const project = await store.project.mustGet(projectId);
+      await refreshCapabilities();
+      const handoverRunner = new SessionRunner({
+        ...runnerDeps,
+        memory: undefined,
+        planner: new SeedOnlyPlanner(taskId, new StaticPlanner(500_000, estimates)),
+      });
+      return handoverRunner.start({
+        agentId,
+        projectId,
+        trigger: "schedule",
+        budgetCapUsdMicro,
+        appVersion,
+        grant: sessionGrant(project),
+        onEvent: (type, payload) => events.emit("session", { type, payload, agentId, projectId }),
+      });
+    },
+  });
+  /**
+   * The jobs' schedules from the settings as they stand: the calibration's day, time and
+   * switch from the human's prefs, one handover entry per flagged project. Run at compose,
+   * before every scheduler tick (so a settings change by any route, command or device takes
+   * effect at the next tick) and by the project settings route.
+   */
+  const refreshJobSchedules = async (target: Scheduler): Promise<JobSchedules> => {
+    const h = await store.human.mustGet(human.id);
+    const cal = calibrationSettingsOf(h.notify_prefs);
+    scheduleCalibration(target, {
+      timezone: h.timezone,
+      day: cal.day,
+      time: cal.time,
+      enabled: cal.enabled,
+    });
+    const projects = await store.project.list({}, { limit: 1000 });
+    return {
+      calibration: cal.enabled,
+      handover: syncHandoverSchedules(target, projects, h.timezone),
+    };
+  };
   const startSession = async (req: StartRequest) => {
-    // The model watch and the memory consolidation are local jobs (this install's providers
-    // and this human's memory); only a session syncs with peers, so only it waits on the gate.
+    // The model watch, the memory consolidation and the monthly jobs are local jobs (this
+    // install's providers and this human's memory); only a session syncs with peers, so only
+    // it waits on the gate (the handover's own session does, inside the job).
     if (isModelWatchRequest(req)) return modelWatch.run();
     if (isMemoryConsolidationRequest(req)) return memory.propose();
+    if (isCalibrationRequest(req)) return calibrationJob.run();
+    if (isHandoverRequest(req)) return handoverJob.run(req.projectId as string);
     await schemaSync.assertCanSync("session.start");
     if (!provider)
       throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
@@ -1859,6 +1965,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const scheduler = new Scheduler({
     clock,
     start: mirrorStartHandler(gatedMirror, startSession, { agentId: agent.id }),
+    // The fired day or month of every schedule survives a restart (a monthly job on a live
+    // model must not run twice because the daemon came back after its time, ADR 0060).
+    fired: fileFiredKeys(join(dirs.data, "scheduler-fired.json")),
+    refresh: async (target) => {
+      await refreshJobSchedules(target);
+    },
   });
   scheduleModelWatch(scheduler, { timezone: human.timezone });
   // Weekly memory consolidation (spec G.4): report only; the human applies it from the inbox.
@@ -2020,6 +2132,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   if (schemaSync.paused) logger.warn("sync paused at compose", { ...schemaSync.status() });
   else await syncApprovals();
   await refreshMirrorSchedules();
+  const jobSchedules = await refreshJobSchedules(scheduler);
   if (services) scheduler.start();
   // The PC's heartbeat and the phone's commands (only built when the services run).
   presence?.start();
@@ -2069,6 +2182,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     sdkHostCommands,
     bridgedTools: extensions.bridgedTools().length,
     mirrors: mirrorSchedules.size,
+    calibration: jobSchedules.calibration ? "monthly" : "off",
+    handoverProjects: jobSchedules.handover.length,
     services,
     remote: remoteEnabled ? (remoteDevice?.name ?? "on") : "off",
   });
@@ -2147,6 +2262,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     toolsForRun,
     syncApprovals,
     refreshMirrorSchedules,
+    jobs: {
+      calibration: calibrationJob,
+      handover: handoverJob,
+      refreshSchedules: () => refreshJobSchedules(scheduler),
+    },
     mirrorSync,
     async close() {
       await voice.close();

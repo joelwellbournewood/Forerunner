@@ -36,15 +36,24 @@ import type {
  */
 export const CALIBRATION_THRESHOLDS = { catchRate: 0.8, passRate: 0.9 } as const;
 
-/** The eval functions calibration needs; the default is a dynamic import of @forerunner/evals. */
+/**
+ * The eval functions calibration needs; the default is a dynamic import of @forerunner/evals.
+ * `loadEvalSet` is what the runtime's monthly job reads the registry's sets with (ADR 0060);
+ * a caller that brings its own tasks may leave it out.
+ */
 export interface EvalsPort {
   runEvalSet: typeof import("@forerunner/evals").runEvalSet;
   expectedOutputDriver: typeof import("@forerunner/evals").expectedOutputDriver;
+  loadEvalSet?: typeof import("@forerunner/evals").loadEvalSet;
 }
 
-export async function loadEvalsPort(): Promise<EvalsPort> {
+export async function loadEvalsPort(): Promise<Required<EvalsPort>> {
   const m = await import("@forerunner/evals");
-  return { runEvalSet: m.runEvalSet, expectedOutputDriver: m.expectedOutputDriver };
+  return {
+    runEvalSet: m.runEvalSet,
+    expectedOutputDriver: m.expectedOutputDriver,
+    loadEvalSet: m.loadEvalSet,
+  };
 }
 
 export interface CalibrateOptions {
