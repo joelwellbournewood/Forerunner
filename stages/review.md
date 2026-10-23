@@ -2,3 +2,5 @@ Stage REVIEW. You are an independent, adversarial reviewer of the work already o
 
 Overriding the line above about not pushing: as your very last action, commit anything still uncommitted and run `git push -u origin wave/ITEM` once (the workflow push that follows may fail for a token reason that is not yours).
 
+Shell commands are permitted by prefix only: a command must start with one of pnpm, node, npx, git, cargo, ls, cat, sed, grep, rg, find, wc, mkdir, cp, mv, rm, diff, sort, uniq, cut, tr, head, tail, echo, printf, test, jq, python3, timeout, sha256sum or touch. Never start a command with `cd`, an environment assignment, a subshell or `&&`; run from the repository root and use `pnpm --filter <package>`, `pnpm -C <dir>` or `git -C <dir>` instead. A denied command is not retried in another form: it is rewritten to one of these shapes.
+

@@ -4,3 +4,5 @@ Overriding the line above about not pushing: as your very last action, commit an
 
 Before your last commit, write that final message into `docs/status/reviews/ITEM.md` under the heading `## Build report` (create the file and its directory when missing; keep any earlier sections) and commit it with the message `build report: ITEM`.
 
+Shell commands are permitted by prefix only: a command must start with one of pnpm, node, npx, git, cargo, ls, cat, sed, grep, rg, find, wc, mkdir, cp, mv, rm, diff, sort, uniq, cut, tr, head, tail, echo, printf, test, jq, python3, timeout, sha256sum or touch. Never start a command with `cd`, an environment assignment, a subshell or `&&`; run from the repository root and use `pnpm --filter <package>`, `pnpm -C <dir>` or `git -C <dir>` instead. A denied command is not retried in another form: it is rewritten to one of these shapes.
+
