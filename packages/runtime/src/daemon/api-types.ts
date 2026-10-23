@@ -789,6 +789,72 @@ export const ReviewsView = z.object({
 export type ReviewsView = z.infer<typeof ReviewsView>;
 
 // ---------------------------------------------------------------------------------------
+// Performance view (spec D.7, D.19): time to first token and total time per mode against target
+
+/** What a mode's target measures: first token, first audio, the whole run, or set by the task. */
+export const PERFORMANCE_TARGET_KINDS = ["first_token", "first_audio", "total", "by_task"] as const;
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+/** Where a measurement came from: a Run row, a `chat.reply` row, a `voice.turn` row, an intake call. */
+export const PERFORMANCE_SOURCES = ["run", "chat", "voice", "intake"] as const;
+
+export const PerformanceModeView = z.object({
+  /** One of the ladder's modes (ladder.ts `Mode`). */
+  mode: z.string(),
+  label: z.string(),
+  /** 0 when the target is set by the task budget and timeout. */
+  targetMs: z.number().int().nonnegative(),
+  targetKind: z.enum(PERFORMANCE_TARGET_KINDS),
+  /** The rung the mode starts on in the effort table in force. */
+  tier: z.string(),
+  /** The table's effort for the mode before the project's speed-versus-quality offset. */
+  baseEffort: z.enum(EFFORT_LEVELS),
+  /** The effort in force: the base shifted by the offset (spec D.7, the lowest that passes). */
+  effort: z.enum(EFFORT_LEVELS),
+  /** Measurements in the window. */
+  samples: z.number().int().nonnegative(),
+  /** Percentiles by nearest rank over the samples that carry the figure; null without one. */
+  ttftP50Ms: z.number().nullable(),
+  ttftP90Ms: z.number().nullable(),
+  totalP50Ms: z.number().nullable(),
+  totalP90Ms: z.number().nullable(),
+  /** Share of samples whose measured figure met the target; null without samples or target. */
+  withinTargetShare: z.number().min(0).max(1).nullable(),
+  /** p90 of the measured figure at or under the target; null without samples or target. */
+  met: z.boolean().nullable(),
+  /** When the newest measurement in the window was taken. */
+  lastAt: z.string().nullable(),
+});
+export type PerformanceModeView = z.infer<typeof PerformanceModeView>;
+
+export const PerformanceSampleView = z.object({
+  /** The Run row id, or the event id of a chat, voice or intake measurement. */
+  runId: z.string(),
+  source: z.enum(PERFORMANCE_SOURCES),
+  mode: z.string(),
+  specialist: z.string(),
+  model: z.string(),
+  effort: z.string(),
+  ttftMs: z.number().nullable(),
+  durationMs: z.number().nullable(),
+  at: z.string(),
+});
+export type PerformanceSampleView = z.infer<typeof PerformanceSampleView>;
+
+export const PerformanceView = z.object({
+  generatedAt: z.string(),
+  projectId: z.string().nullable(),
+  /** The window: the last `days` days, from `from` to `generatedAt`. */
+  days: z.number().int().positive(),
+  from: z.string(),
+  /** The project's speed-versus-quality offset applied to the efforts (0 for all projects). */
+  effortOffset: z.number().int(),
+  modes: z.array(PerformanceModeView),
+  /** The newest measurements across modes, newest first. */
+  recent: z.array(PerformanceSampleView),
+});
+export type PerformanceView = z.infer<typeof PerformanceView>;
+
+// ---------------------------------------------------------------------------------------
 // Memory views (spec G, K.5): one view per scope, search, edit, delete, pin, consolidation
 
 export const LessonView = z.object({
@@ -1559,6 +1625,8 @@ export const DAEMON_ROUTES = {
   chat: "POST /chat (JSON) | POST /chat/stream (SSE tokens then a final reply event)",
   costs: "GET /costs?projectId=&from=&to=",
   costEstimates: "GET /costs/estimates (estimate-versus-actual accuracy, EstimateAccuracyView)",
+  performance:
+    "GET /performance?projectId=&days= (PerformanceView, spec D.7, D.19: per mode the samples, p50 and p90 by nearest rank of time to first token and total time, the target, met or not, the effort in force; from the Run rows, the chat and voice turns and the intake calls of the last days, 7 by default, at most 90; the install's human's agents only; 400 for a bad days)",
   auditExport:
     "GET /audit/export?agentId=&sessionId=&from=&to=&format=jsonl|csv (spec S.9: the audit log as a file download, streamed in pages; the install's human's rows and their agents' with the summaries as stored; Content-Disposition names the file; 404 for another human's agent, 400 for a bad format, timestamp or window)",
   settings: "GET /settings?scope=&scopeId=",
