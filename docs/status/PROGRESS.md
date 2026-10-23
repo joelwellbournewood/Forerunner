@@ -18,6 +18,15 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-e4-recheck: independent review and fixes)
+- Review of the E.4 build (`docs/status/reviews/w3-e4-recheck.md`, "## Review"): verdict
+  revise, 72/100, four findings, all fixed on the branch: a pause read at the end of a session
+  that ends `failed` no longer leaves the row `paused` (which refused every later session of
+  the agent); a message read at the end is carried past a session that ends before its startup
+  receipts (`handoff.carried_forward`); `after_stop` also accounts for the memory, lesson-warning
+  and promotion writes; these status rows name the review. Three new cases in
+  `closeout-sessions.test.ts` (eight in the E.4 block). E.4 stays `done`.
+
 ### 2026-10-23 (item w3-e4-recheck: the inbox is re-checked before the session-end writes)
 - E.4 `done` on `wave/w3-e4-recheck` (builder-verified; an independent review is due before the
   merge): step 4 of `packages/runtime/src/session/runner.ts` re-checks the inbox before the
