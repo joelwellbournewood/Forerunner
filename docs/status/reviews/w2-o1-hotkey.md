@@ -66,6 +66,13 @@ Findings:
    the request allowed it gets the stream. The fix the finding calls for: a microphone-only
    permission decision for the main window's own origins, in a pure function with a Rust unit
    test, wired into `build_main`.
+
+   Resolution: fixed in f4367d8: `media.rs` `permission_decision` allows the microphone only
+   when the page the main window loaded last (`CurrentPage`, from `on_page_load`) is on an app
+   origin, denies it elsewhere and before the first load, denies the camera and leaves other
+   kinds to the webview; `windows.rs` wires it with `on_permission_request`; four Rust tests
+   (`media::tests`). The wiring itself runs only in a real window (no display with the app
+   here); the WebKitGTK harness above shows that an allowed request yields the stream.
 2. **high**, `apps/ui/src/shell/ConversationPanel.tsx:86-121` (`startTurn`) and `:178`
    (`close`). `startTurn` awaits the status, the session start, the press and `capture.start`
    (the microphone prompt) and then stores the capture and sets "listening" without checking
@@ -74,6 +81,13 @@ Findings:
    never stopped. The unmount cleanup stops the capture but not the session. Verified with a
    throwaway test (capture whose `start` resolves after Close): capture log `["start"]`, no
    `stop`.
+
+   Resolution: fixed in 00b5419: every await in `startTurn` checks an epoch that closing and
+   unmounting bump and undoes what it began (stops a session it started, turns a microphone
+   that opened late off, drops chunks); unmounting now also stops the session. Tests:
+   "closing while the microphone is still starting turns it off and ends the session",
+   "closing before the session exists ends the session that starts afterwards", "unmounting
+   the shell stops the capture and the voice session" (all three fail on c3a8958's panel).
 3. **medium**, `apps/ui/src/shell/ConversationPanel.tsx:113` and `:137`. Audio chunks are posted
    fire-and-forget (`void client.voiceAudio(...)`), and the release (`press { pressed: false }`)
    is sent without waiting for them. The daemon's loop ends the turn on release and drops audio
@@ -81,6 +95,11 @@ Findings:
    `listening`), so the last words of a turn can be lost, and parallel posts may arrive out of
    order. Verified with a throwaway test that delays each audio post by 50 ms: order of calls
    `["press:true","press:false","audio"]`.
+
+   Resolution: fixed in 00b5419: the chunks are posted through one promise chain and the
+   release awaits it. Test: "the release waits until every captured chunk reached the daemon,
+   in order" (delays that would reorder parallel posts; asserts the call order and the turn's
+   `audioChunks` = 3; fails on c3a8958's panel).
 4. **low**, `apps/desktop/src-tauri/src/hotkey.rs:400` (`plan_change`). The plan compares
    canonical strings, but on Windows and Linux `CommandOrControl+Shift+Space` and
    `Control+Shift+Space` are the same OS hotkey (the plugin gives both id 34078782). Typing
@@ -89,6 +108,11 @@ Findings:
    `x11/mod.rs` and `windows/mod.rs`), and Settings shows "Control+Shift+Space could not be
    registered: HotKey already registered" for the chord the shell already holds. Verified with a
    throwaway Rust test printing both ids.
+
+   Resolution: fixed in 0b1f2a8: `plan_change` takes the new chord's plugin id and answers
+   `Respell` when the registered id matches; `hotkey_set` then keeps the registration and saves
+   the spelling. Test: `another_spelling_of_the_held_hotkey_is_adopted_without_registering`
+   (fails with the `Respell` arm removed).
 5. **medium**, semantic conflict with the base (`apps/ui/src/api/client.ts`,
    `apps/ui/test/fake-daemon.ts`). A throwaway merge of c3a8958 with f1948dd (detached
    worktree, discarded) conflicts in 7 files; beyond the textual conflicts, the auto-merged
@@ -100,6 +124,21 @@ Findings:
    the fix is to align the branch's `voiceStatus` member with the base's text and place, to
    keep doc additions away from the base's edited lines, and to record the remaining
    resolution, verified on a throwaway merged tree.
+
+   Resolution: fixed in 4c02d72 as far as the branch can without merging the base: `voiceStatus`
+   now sits where the base declares it (after `removeExtension` and `denyExtension`), so the
+   merge keeps one copy, and the docs no longer touch the base's edited lines. A throwaway merge
+   of 4c02d72 with f1948dd (`/tmp/trial2`, detached, discarded) now conflicts in 3 files instead
+   of 7, all small: `client.ts` (keep both import lists; keep either doc comment of
+   `voiceStatus`), `docs/decisions/README.md` (keep the base's rows and 0064's), and
+   `apps/ui/test/fake-daemon.ts` (keep the branch's voice imports, keep both the `me` and the
+   `voice` options). The semantic part of the fake-daemon resolution: drop the branch's
+   `voiceStatus()` helper, its `GET /voice/status` route and its `state.voice` field; initialise
+   the base's `state.voiceStatus` from `VOICE_STATUS` with `options.voice`'s `available` and
+   `reason` applied when given; `POST /voice/sessions` answers 503 on
+   `!state.voiceStatus.available` with `state.voiceStatus.reason`. With that resolution the merged
+   tree passes `pnpm typecheck`, `pnpm --filter @forerunner/ui test` (43 files, 278 tests,
+   `hotkey.test.tsx` included) and `scripts/closeout-docs.test.ts` (19 passed, 1 todo).
 6. **medium**, `docs/requirements.md:184,222,224`, `docs/status/BLOCKERS.md:50`,
    `docs/status/PROGRESS.md:17-30`, `docs/decisions/README.md:69`. The build edited the
    orchestrator's files that its brief says not to edit ("return the row updates in your
@@ -107,11 +146,26 @@ Findings:
    above), and the PROGRESS counts "173 done, 47 in progress, 8 todo" are computed against the
    old base, so they are wrong once merged. The ADR index row is needed on the branch
    (`scripts/closeout-docs.test.ts` requires every ADR to be indexed) but conflicts as placed.
+
+   Resolution: fixed in 4c02d72: `docs/requirements.md`, `docs/status/BLOCKERS.md` and
+   `docs/status/PROGRESS.md` are back to the base's text (the merge no longer conflicts there);
+   the row updates (O.1 done, O.3 and K.8 test lists, the BLOCKERS O.1 row removed, the
+   PROGRESS entry) are in `/mnt/session/outputs/w2-o1-hotkey-report.md` for the orchestrator.
+   The ADR 0064 index row stays (the close-out docs test fails without it); its conflict is
+   the two-sided "keep both" listed under finding 5. The "Row updates (applied on this branch)"
+   paragraph of the build report below is superseded by this.
 7. **low**, `apps/ui/test/hotkey.test.tsx:202` and `apps/ui/src/mobile/screens/SettingsScreen.tsx`.
    The test "says unavailable outside the desktop shell (browser, approvals page, Android)"
    renders the desktop UI in jsdom only (the browser case); the Android app renders its own
    Settings screen, which says nothing about a hotkey, so the brief's "shows 'unavailable' …
    Android" is not met and not tested there.
+
+   Resolution: fixed in c83c5e6: the phone's Settings screen has a "Global hotkey: unavailable"
+   row with the shared reason (`hotkeyUnavailableReason`, which `hotkeyBridgeFor` now uses too)
+   pointing to Chat; the browser test is renamed "says unavailable in a browser" and "says
+   unavailable on the Android app's Settings screen, with the chat as the way to talk" renders
+   the phone app (fails before c83c5e6: no `m-hotkey`). The approvals page has no Settings
+   screen, so there is nothing to show there.
 
 ## Build report
 
