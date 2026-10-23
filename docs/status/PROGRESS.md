@@ -77,6 +77,15 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   screens are in the nav. R.5 stays `in progress` until the emulator run (BLOCKERS.md, R.5).
   Build report: `docs/status/reviews/w3-r5-phone.md`.
 
+### 2026-10-23 (item w3-d7-performance reviewed and fixed on its branch)
+- Independent review of the Performance view build: verdict revise, six findings, all fixed
+  on `wave/w3-d7-performance` (`docs/status/reviews/w3-d7-performance.md`, `## Review`):
+  runs and chat turns that never reached a model no longer count as response-time samples
+  (a timeout still does); the intake call's Run row stores its prompt version (D.5); the view
+  and the page name the effort a risky task raises a mode to (`riskEffort`); `?days=` takes
+  decimal digits only; the client's missing-route test uses a route still proposed; apps.md
+  lists the data asset routes as served. D.7 and D.19 stay `done`.
+
 ### 2026-10-23 (item w3-d7-performance built on its branch: the daemon serves the Performance view)
 - `GET /performance?projectId=&days=` is served by the daemon from the store (D.7, D.19):
   per mode the samples, p50 and p90 by nearest rank of first token and total time against the
