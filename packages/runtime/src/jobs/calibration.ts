@@ -29,7 +29,12 @@ import type { TokenIssuer } from "../enforcement/token.ts";
 import type { NotifierLike } from "../notifications/producers.ts";
 import { calibrationDriftLine, criticCalibration } from "../notifications/producers.ts";
 import type { Registry } from "../registry/types.ts";
-import type { Schedule, Scheduler, StartRequest } from "../session/triggers.ts";
+import {
+  localParts,
+  type Schedule,
+  type Scheduler,
+  type StartRequest,
+} from "../session/triggers.ts";
 
 /** The scheduler entry's sentinel agent id, like the model watch's. */
 export const CALIBRATION_AGENT_ID = "critic-calibration";
@@ -161,6 +166,12 @@ export interface CalibrationJobDeps {
   evals?: CalibrationEvalsPort;
   /** Budget, tier and specialists at run time; default: the built-in defaults. */
   settings?: () => Promise<CalibrationSettings>;
+  /**
+   * The human's time zone, read at every run: the once-a-month check is the local month of
+   * the run against the local month the previous report started in, the same key the
+   * scheduler's monthly kind fires on. Default UTC.
+   */
+  timezone?: () => Promise<string> | string;
 }
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -171,14 +182,16 @@ export class CalibrationJob {
 
   constructor(private readonly deps: CalibrationJobDeps) {}
 
-  /** The reports on disk, newest first (by file name: the date, then the time suffix). */
+  /**
+   * The reports on disk, newest first by when the run started (`startedAt`; a same-day
+   * second run's file name sorts BEFORE the first's, so the name is only the tie-break).
+   */
   reports(): CalibrationReportSummary[] {
     if (!existsSync(this.deps.outDir)) return [];
     const out: CalibrationReportSummary[] = [];
-    for (const f of readdirSync(this.deps.outDir)
-      .filter((f) => f.startsWith("calibration-") && f.endsWith(".json"))
-      .sort()
-      .reverse()) {
+    for (const f of readdirSync(this.deps.outDir).filter(
+      (f) => f.startsWith("calibration-") && f.endsWith(".json"),
+    )) {
       const file = join(this.deps.outDir, f);
       try {
         const r = JSON.parse(readFileSync(file, "utf8")) as CalibrationReport;
@@ -197,7 +210,11 @@ export class CalibrationJob {
         this.logger.warn("unreadable calibration report", { file: f, error: errorMessage(e) });
       }
     }
-    return out;
+    return out.sort((a, b) =>
+      a.startedAt === b.startedAt
+        ? b.file.localeCompare(a.file)
+        : b.startedAt.localeCompare(a.startedAt),
+    );
   }
 
   private latest(): CalibrationReportSummary | null {
@@ -207,9 +224,14 @@ export class CalibrationJob {
   async run(opts: { force?: boolean; signal?: AbortSignal } = {}): Promise<CalibrationRunResult> {
     const { store, clock, tokens } = this.deps;
     const now = clock.nowIso();
-    const monthKey = now.slice(0, 7);
+    const timezone = (await this.deps.timezone?.()) ?? "UTC";
+    const monthKey = localParts(clock.now(), timezone).monthKey;
     const previous = this.latest();
-    if (!opts.force && previous && previous.date.startsWith(monthKey)) {
+    if (
+      !opts.force &&
+      previous &&
+      localParts(Date.parse(previous.startedAt), timezone).monthKey === monthKey
+    ) {
       this.logger.info("calibration skipped: already ran this month", { previous: previous.file });
       return {
         status: "skipped",

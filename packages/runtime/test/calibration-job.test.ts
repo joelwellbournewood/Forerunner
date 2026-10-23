@@ -253,6 +253,69 @@ describe("monthly critic calibration job (H.7)", () => {
     }
   });
 
+  it("once per LOCAL month, and the drift is measured against the newest run even on the same day", async () => {
+    const w = await loopWorld({
+      replies: [
+        submitReply(
+          { grade: 91 },
+          { when: { lastUserIncludes: "# Review request" }, times: Number.POSITIVE_INFINITY },
+        ),
+        closingReply(),
+      ],
+    });
+    const outDir = tempDir();
+    let evalSet: EvalTask[] = SECOND_SET;
+    try {
+      const job = new CalibrationJob({
+        store: w.store,
+        clock: w.clock,
+        tokens: w.tokens,
+        critic: w.critic.service,
+        registry: REGISTRY,
+        evals: {
+          runEvalSet,
+          expectedOutputDriver,
+          loadEvalSet: (dir) => (dir.endsWith("coder") ? evalSet : []),
+        },
+        outDir,
+        humanId: w.human,
+        agentId: w.alice,
+        criticAgentId: w.criticAgent,
+        timezone: async () => "America/Los_Angeles",
+        settings: async () => ({
+          ...DEFAULT_CALIBRATION_SETTINGS,
+          budgetUsdMicro: 2_000_000,
+          specialists: ["coder"],
+        }),
+      });
+      // Day 30 at 20:00 in Los Angeles: February's run (clamped to the 28th) is 1 March UTC.
+      await w.clock.set("2027-03-01T04:00:00Z");
+      expect(await job.run()).toMatchObject({ status: "ran", monthKey: "2027-02" });
+      // March's run, 30 March 20:00 PDT = 31 March 03:00 UTC, is not "already ran".
+      await w.clock.set("2027-03-31T03:00:00Z");
+      expect(await job.run()).toMatchObject({ status: "ran", monthKey: "2027-03" });
+      await w.clock.set("2027-03-31T05:00:00Z");
+      expect(await job.run()).toMatchObject({ status: "skipped", monthKey: "2027-03" });
+      // A forced second run the same UTC day is the newest report: the next drift is against it.
+      evalSet = FIRST_SET;
+      await w.clock.set("2027-03-31T18:00:00Z");
+      const forced = await job.run({ force: true });
+      expect(forced.report?.catchRate).toBe(0.75);
+      expect(job.reports().map((r) => r.startedAt)).toEqual([
+        "2027-03-31T18:00:00.000Z",
+        "2027-03-31T03:00:00.000Z",
+        "2027-03-01T04:00:00.000Z",
+      ]);
+      evalSet = SECOND_SET;
+      await w.clock.set("2027-04-30T03:00:00Z");
+      const april = await job.run();
+      expect(april.previous?.startedAt).toBe("2027-03-31T18:00:00.000Z");
+      expect(april.drift).toMatchObject({ catchRatePoints: 25 });
+    } finally {
+      await w.close();
+    }
+  });
+
   it("a run the budget refuses is reported as failed, with the reason and no report", async () => {
     const w = await loopWorld({
       replies: [
