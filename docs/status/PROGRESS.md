@@ -18,6 +18,15 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-e4-recheck rebased onto cac6fee)
+- `wave/w3-e4-recheck` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in
+  `runner.ts` (the base's `summarizeMerges` next to the branch's `summarizeEndInbox`; the
+  summary and the handoff carry both the J.9 merges and the end inbox), BLOCKERS (E.1, S.12,
+  S.32 as the base has them; the E.4 row the branch's with the base's O.9 clause) and this log;
+  both sides kept (`docs/status/reviews/w3-e4-recheck.md` `## Rebase`). Current counts:
+  runtime 128 files / 1140 unit tests passed (1 skipped), the E.4 block of
+  `closeout-sessions.test.ts` 8. Not merged yet.
+
 ### 2026-10-23 (item w3-e4-recheck: independent review and fixes)
 - Review of the E.4 build (`docs/status/reviews/w3-e4-recheck.md`, "## Review"): verdict
   revise, 72/100, four findings, all fixed on the branch: a pause read at the end of a session

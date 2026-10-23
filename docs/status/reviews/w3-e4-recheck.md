@@ -276,3 +276,42 @@ Checks on the branch after 0580bca and eb72017 (2026-10-23): `pnpm typecheck` ex
 packages/runtime/test` 114 files, 992 passed, 1 skipped; `node scripts/docs-check.mjs --base
 4742e03` ok. With `runner.ts` and `checklist.ts` reverted to 4742e03, `closeout-sessions.test.ts`
 has 4 failed / 11 passed (the three new tests and test 1's account).
+
+## Rebase
+
+2026-10-23: `wave/w3-e4-recheck` (was 5d1931c on merge base 82a6295) rebased onto
+`origin/ccr-4d8a843c-1k9syk` at cac6fee (181 commits ahead of the old merge base: J.9 merge
+step, B.5 plan reasons, E.1 triggers, S.12, S.32 and others). The twelve commits replay one to
+one (old → new: fdc5f8e → 8bc9b84, 1490c6d → 7b6567e, 23b57e1 → 484eb06, f22cd12 → f09e214,
+6deba4b → 31491e9, 83adad0 → 8594b1a, 67d6931 → 75a79e7, 4742e03 → 135b66f, cf1b804 →
+14b9f0f, 46ab224 → ebf2936, 8fbef05 → cfa923c, 5d1931c → 0ab2a39); the short hashes in the
+sections above are the pre-rebase ones.
+
+Conflicts and how they were resolved:
+
+1. `packages/runtime/src/session/runner.ts` (on fdc5f8e): the base added `summarizeMerges`
+   (J.9, the merge step's outcomes in the summary) where the branch added `summarizeEndInbox`
+   after `summarize`. Both functions kept, in that order; `summarize` calls both
+   (`...summarizeMerges(x.merges ?? [])` then the end-inbox line) and the handoff carries both
+   the base's `merges` and the branch's `end_inbox` (git merged those hunks itself). The
+   base's `setPlan` (B.5) and `mergeReviewed` (J.9) run during planning and tasks, before the
+   end re-check, so `after_stop` needs no new entry for them.
+2. `docs/status/PROGRESS.md` (on f22cd12): the base's new log entries (w2-s32-indicator,
+   w2-s12-unlock-card, w3-e1-triggers, w4-fcm-sender) and the branch's E.4 entry all kept, the
+   branch's on top (newest first).
+3. `docs/status/BLOCKERS.md` (on f22cd12, 83adad0, 8fbef05): the base's E.1, S.12 and S.32
+   rows kept as the base has them; the E.4 row is the branch's (resolved, reviewed, eight
+   tests) with the base's added clause merged into it: the same `recheckInbox` also collects
+   what the human says during the session (O.9, ADR 0078, `live-chat.test.ts`), the
+   end-of-session re-check included.
+
+`docs/requirements.md` and `docs/maintainers/runtime.md` merged without conflict (the E.4 row
+`done`; the runtime.md paragraph "The inbox before the session-end writes" sits before the
+base's O.9 paragraph).
+
+Checks after the rebase (on the rebased head, 2026-10-23): `pnpm typecheck` exit 0; `pnpm lint`
+exit 0 (59 warnings, no errors); `pnpm exec vitest run --project unit packages/runtime/test`
+128 files, 1140 passed, 1 skipped; `--project integration packages/runtime/test` 1 file, 4
+skipped (`sandbox.integration.test.ts`, no Docker daemon); the E.4 block of
+`closeout-sessions.test.ts` 8 passed (the file 15, `session.test.ts` 13, `loop-critic.test.ts`
+15); `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok (11 files).
