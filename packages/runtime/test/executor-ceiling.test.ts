@@ -1,5 +1,5 @@
 import { criticSettingsOf } from "@forerunner/critic";
-import { openStore } from "@forerunner/state";
+import { type JsonObject, openStore } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
@@ -29,7 +29,7 @@ const coder: SpecialistSpec = {
  * One executor over one project; `run` executes a fresh task on its third retry and returns
  * the model its run used. The project row stays editable between runs (`setSettings`).
  */
-async function ladderWorld(settings: Record<string, unknown>, projectCeiling: boolean) {
+async function ladderWorld(settings: JsonObject, projectCeiling: boolean) {
   const h = harness();
   const clock = h.clock;
   const store = await openStore({ url: "sqlite::memory:", clock });
@@ -99,17 +99,14 @@ async function ladderWorld(settings: Record<string, unknown>, projectCeiling: bo
   };
   return {
     run,
-    setSettings: async (next: Record<string, unknown>) => {
+    setSettings: async (next: JsonObject) => {
       await store.project.patch(project, { settings: next });
     },
     close: () => store.close(),
   };
 }
 
-async function runAtAttempt3(
-  settings: Record<string, unknown>,
-  projectCeiling: boolean,
-): Promise<string> {
+async function runAtAttempt3(settings: JsonObject, projectCeiling: boolean): Promise<string> {
   const world = await ladderWorld(settings, projectCeiling);
   try {
     return await world.run("Third retry");
