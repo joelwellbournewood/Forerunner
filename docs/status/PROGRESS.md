@@ -18,6 +18,18 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-e4-recheck: the inbox is re-checked before the session-end writes)
+- E.4 `done` on `wave/w3-e4-recheck` (builder-verified; an independent review is due before the
+  merge): step 4 of `packages/runtime/src/session/runner.ts` re-checks the inbox before the
+  status doc, the summary cache, the peers' handoffs, the note to the human and the session
+  record are written. A stop or pause read there ends the session `stopped`
+  (`stopped_by_message`) and `handoff.end_inbox` names it with what was and was not written
+  (`after_stop`); an ordinary message is read and summarised in the handoff; a pause leaves the
+  row `paused -> stopped`. Tests: `packages/runtime/test/closeout-sessions.test.ts` (five new
+  cases); doc: runtime.md "The inbox before the session-end writes"; BLOCKERS.md E.4 row
+  resolved. The requirement totals in the milestone table and gates.md criterion 1 move by one
+  (E.4 in progress → done) at integration. Report: `docs/status/reviews/w3-e4-recheck.md`.
+
 ### 2026-10-23 (item w2-s32-indicator rebased onto 22982fa)
 - `wave/w2-s32-indicator` rebased onto `origin/ccr-4d8a843c-1k9syk` (22982fa). Conflicts in
   the UI's fake daemon (the base's runner keys and fast mode next to the branch's desktop
