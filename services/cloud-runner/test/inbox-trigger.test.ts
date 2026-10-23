@@ -1,5 +1,5 @@
 import { SimulatedClock } from "@forerunner/platform";
-import { planIdOf } from "@forerunner/runtime";
+import { markPlanAnswer, planIdOf, syncPlanApprovals } from "@forerunner/runtime";
 import { type AgentRow, openStore, type StateStore } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type InboxStartRequest, InboxTrigger } from "../src/inbox-trigger.ts";
@@ -266,6 +266,111 @@ describe("inbox triggers", () => {
     });
     expect(await t.check()).toBeNull();
     expect(requests).toHaveLength(1);
+  });
+
+  it("an approved plan the PC's daemon already acted on is not triggered on", async () => {
+    const t = trigger();
+    await clock.advance(1_000);
+    const plan = await sessionRequest({
+      kind: "approval",
+      options: ["approve", "reject"],
+      change_card: { key: "plan:s1", plan_id: planIdOf("s1", [{ taskId: "a" }]), plan: {} },
+    });
+    await answer(plan.id, "approve");
+    // The daemon's syncPlanApprovals marked it (the PC was online, then went offline).
+    const answered = await store.humanRequest.mustGet(plan.id);
+    expect(await markPlanAnswer(store, clock, answered, "started")).not.toBeNull();
+    expect(await t.check()).toBeNull();
+    expect(requests).toEqual([]);
+  });
+
+  it("a triggered plan is claimed and marked: a fresh trigger (a runner restart) and the daemon start nothing again", async () => {
+    const since = clock.now();
+    await clock.advance(1_000);
+    const older = await sessionRequest({
+      kind: "approval",
+      options: ["approve", "reject"],
+      change_card: { key: "plan:s0", plan_id: planIdOf("s0", [{ taskId: "a" }]), plan: {} },
+    });
+    await answer(older.id, "approve");
+    await clock.advance(1_000);
+    const plan = await sessionRequest({
+      kind: "approval",
+      options: ["approve", "reject"],
+      change_card: { key: "plan:s1", plan_id: planIdOf("s1", [{ taskId: "a" }]), plan: {} },
+    });
+    const filing = await store.session.mustGet(plan.session_id ?? "");
+    await store.session.patch(filing.id, { budget_cap_usd_micro: 3_000_000 });
+    await answer(plan.id, "approve");
+    expect(await trigger({ since }).check()).toMatchObject({
+      planApproved: planIdOf("s1", [{ taskId: "a" }]),
+      // The cap of the session that filed the plan: the plan is cut as the human saw it.
+      budgetUsdMicro: 3_000_000,
+    });
+    expect((await store.humanRequest.mustGet(plan.id)).change_card).toMatchObject({
+      outcome: "started",
+      applied_at: clock.nowIso(),
+    });
+    expect((await store.humanRequest.mustGet(older.id)).change_card).toMatchObject({
+      outcome: "superseded",
+      superseded_by: plan.id,
+    });
+    expect(await trigger({ since }).check()).toBeNull();
+    expect(requests).toHaveLength(1);
+    // The daemon's sync, at its next boot, finds both acted on.
+    const started: unknown[] = [];
+    expect(
+      await syncPlanApprovals({
+        store,
+        clock,
+        humanId: seed.human.id,
+        agentId: seed.agent.id,
+        start: async (req) => {
+          started.push(req);
+          return { id: "x", result: "started" };
+        },
+      }),
+    ).toEqual({ started: 0, rejected: 0, skipped: 0 });
+    expect(started).toEqual([]);
+  });
+
+  it("a plan the daemon claims between the check's read and its claim starts nothing here", async () => {
+    const t = trigger();
+    await clock.advance(1_000);
+    const plan = await sessionRequest({
+      kind: "approval",
+      options: ["approve", "reject"],
+      change_card: { key: "plan:s1", plan_id: planIdOf("s1", [{ taskId: "a" }]), plan: {} },
+    });
+    await answer(plan.id, "approve");
+    const list = store.humanRequest.list.bind(store.humanRequest);
+    store.humanRequest.list = (async (...args: Parameters<typeof list>) => {
+      const rows = await list(...args);
+      // The PC's daemon claims the answer right after this read.
+      const row = await store.humanRequest.mustGet(plan.id);
+      await markPlanAnswer(store, clock, row, "starting");
+      return rows;
+    }) as typeof list;
+    expect(await t.check()).toBeNull();
+    expect(requests).toEqual([]);
+    expect((await store.humanRequest.mustGet(plan.id)).change_card).toMatchObject({
+      outcome: "starting",
+    });
+  });
+
+  it("a plan claimed for a start the scheduler skipped (a PC came online) is released for the PC", async () => {
+    await clock.advance(1_000);
+    const plan = await sessionRequest({
+      kind: "approval",
+      options: ["approve", "reject"],
+      change_card: { key: "plan:s1", plan_id: planIdOf("s1", [{ taskId: "a" }]), plan: {} },
+    });
+    await answer(plan.id, "approve");
+    const t = trigger({ request: async () => "skipped" });
+    expect(await t.check()).toBeNull();
+    expect((await store.humanRequest.mustGet(plan.id)).change_card).not.toHaveProperty(
+      "applied_at",
+    );
   });
 
   it("leaves the items to a PC that is online, backs off, and takes over once the PC is gone", async () => {
