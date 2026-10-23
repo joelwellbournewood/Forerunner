@@ -46,7 +46,14 @@ export interface ConversationDeps {
   /** Not used by the agent itself: session control goes through the command registry. */
   kill?: KillSwitch;
   provider: ModelProvider;
+  /** Pricing of a turn when `pricingFor` is absent. */
   pricing: RunPricing;
+  /**
+   * The price of the model a turn calls (spec D.4, ADR 0072): the principal's
+   * `modes.text_chat.tier` may name another rung than the table's, and the turn is priced as
+   * the model it uses. Absent: `pricing`.
+   */
+  pricingFor?: (modelId: string) => RunPricing;
   billingSourceId: string;
   hooksDriver: LoopAgentDriver;
   /** Kept for callers that wired it before the registry; the `session.start` command is the way now. */
@@ -404,7 +411,7 @@ export class ConversationAgent {
       }),
       messages: [{ role: "user", content: `${context.volatile}\n\n${req.text}` }],
       tools,
-      pricing: this.deps.pricing,
+      pricing: this.deps.pricingFor?.(model) ?? this.deps.pricing,
       timeoutMs: textChat.timeoutMs,
       maxTokensPerCall: textChat.maxTokens,
       effort,

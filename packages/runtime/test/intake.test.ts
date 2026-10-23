@@ -527,4 +527,45 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     const projectId = await createProject({ name: "Kappa", goal: "g", brief: "b" });
     await expect(service.propose(projectId)).rejects.toMatchObject({ code: "unavailable" });
   });
+
+  it("runs at the principal's planning rung and prices the call as that model (spec D.4)", async () => {
+    const before = await rt.store.agent.mustGet(rt.agent.id);
+    await rt.store.agent.update(rt.agent.id, before.version, {
+      model_config: { modes: { planning: { tier: "opus", max_tokens: 12_000 } } },
+    });
+    const priced: string[] = [];
+    const service = new IntakeService({
+      store: rt.store,
+      clock,
+      tokens: rt.tokens,
+      driver: rt.driver,
+      provider,
+      // The table's planning rung (sonnet) would price this call at 1 per token.
+      pricing: { estimate: (i, o) => i + o, cost: (u) => u.input_tokens + u.output_tokens },
+      pricingFor: (model) => {
+        priced.push(model);
+        return { estimate: (i, o) => 7 * (i + o), cost: () => 123_456 };
+      },
+      billingSourceId: rt.billingSourceId,
+      modelConfig: rt.modelConfig,
+      human: rt.human,
+      agent: rt.agent,
+      gitHost: host,
+      projectsRoot: rt.data.assets.projectsRoot,
+      worktreeRoot: join(home, "wt"),
+    });
+    try {
+      const projectId = await createProject({ name: "Lambda", goal: "g", brief: "b" });
+      replies.push({ text: `\`\`\`json\n${JSON.stringify(proposal())}\n\`\`\`` });
+      await service.propose(projectId);
+      const call = provider.calls.at(-1);
+      expect(call?.model).toBe("fake-opus");
+      expect(call?.max_tokens).toBe(12_000);
+      expect(priced).toEqual(["fake-opus"]);
+      expect((await rt.store.costLedger.sum({ projectId })).usd_micro).toBe(123_456);
+    } finally {
+      const row = await rt.store.agent.mustGet(rt.agent.id);
+      await rt.store.agent.update(rt.agent.id, row.version, { model_config: {} });
+    }
+  });
 });

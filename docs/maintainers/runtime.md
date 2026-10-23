@@ -2196,6 +2196,14 @@ turns). The loop sends `temperature`
 only to a provider whose flag accepts it and `speed` only to one with `fastMode`
 (`providerCapabilities`).
 
+Each of the three is priced as the model it calls, not as the table's rung: they take a
+`pricingFor(modelId)` port (executor, intake, chat; the daemon wires the intake's and the
+chat's to the price table in force through `livePricing`, and the executor's, which D.20 added
+for the same reason, through `pricingForProvider` over the table in force, the fast-mode
+variant included), so an agent's `tier` override, and on the executor the ladder's escalation,
+reaches the budget hooks' pre-call estimate and the recorded cost (an Opus chat turn costs 40
+times a Haiku one). Without the port the fixed `pricing` applies (tests).
+
 Speed mode composes with spec D.20's per-project Opus fast mode (ADR 0057; ADR 0072 amendment
 after the rebase onto D.20): `decideFastMode` (`src/models/fast-mode.ts`) stays the one place a
 run is made fast. The executor passes it the run's speed mode only when the specialist's file

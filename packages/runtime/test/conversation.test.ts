@@ -43,6 +43,8 @@ async function setup(
     retrieval?: ConversationDeps["retrieval"];
     /** The registry's role prompt, as the daemon passes it (replaces the built-in default). */
     prompt?: string;
+    /** Overrides of the agent's dependencies (e.g. `modelId: undefined`, `pricingFor`). */
+    agentDeps?: Partial<ConstructorParameters<typeof ConversationAgent>[0]>;
   } = {},
 ) {
   const h = harness();
@@ -140,6 +142,7 @@ async function setup(
     docsDirs: async (projectId) => (projectId === game && opts.docs ? [checkout] : []),
     ...(opts.retrieval ? { retrieval: opts.retrieval } : {}),
     ...(opts.prompt ? { prompt: opts.prompt } : {}),
+    ...opts.agentDeps,
   });
   const chat = (text: string, over: Partial<Parameters<typeof agent.chat>[0]> = {}) =>
     agent.chat({ humanId: human, agentId: alice, projectId: game, text, ...over });
@@ -212,6 +215,28 @@ describe("conversation agent over the command registry", () => {
     // The fake declares no temperature: the override is kept but never sent.
     expect(w.provider.calls[1]?.request).toMatchObject({ max_tokens: 900, effort: "medium" });
     expect(w.provider.calls[1]?.request).not.toHaveProperty("temperature");
+    await w.store.close();
+  });
+
+  it("a chat turn on the principal's own chat rung is priced as that model (spec D.4)", async () => {
+    const priced: string[] = [];
+    const w = await setup([textReply("first", { ttftMs: 0 })], {
+      agentDeps: {
+        modelId: undefined,
+        pricingFor: (model) => {
+          priced.push(model);
+          return { estimate: (i, o) => i + o, cost: () => 4321 };
+        },
+      },
+    });
+    const row = await w.store.agent.mustGet(w.alice);
+    await w.store.agent.update(w.alice, row.version, {
+      model_config: { modes: { text_chat: { tier: "sonnet" } } },
+    });
+    const res = await w.chat("what's next on the game?");
+    expect(w.provider.calls[0]?.request.model).toBe("fake-sonnet");
+    expect(priced).toEqual(["fake-sonnet"]);
+    expect(res.costUsdMicro).toBe(4321);
     await w.store.close();
   });
 

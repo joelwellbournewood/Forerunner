@@ -1872,6 +1872,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           rungModelFor(provider, modelConfig.get().modeDefaults.planning.tier),
         )
       : null,
+    // Priced as the model the call uses: the principal's planning rung may differ (spec D.4).
+    ...(provider ? { pricingFor: (model: string) => livePricing(provider, () => model) } : {}),
     billingSourceId,
     modelConfig: () => modelConfig.get(),
     prompt: registry.principals.get("project-manager")?.prompt,
@@ -2549,6 +2551,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         pricing: livePricing(provider, () =>
           rungModelFor(provider, modelConfig.get().modeDefaults.text_chat.tier),
         ),
+        // A turn is priced as the model it calls: the principal's chat rung may differ (D.4).
+        pricingFor: (model: string) => livePricing(provider, () => model),
         billingSourceId,
         hooksDriver: driver,
         startSession: (req) => scheduler.request(req),

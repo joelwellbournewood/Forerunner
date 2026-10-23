@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
-import { FakeProvider } from "@forerunner/testenv";
+import { FakeProvider, textReply } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -11,6 +11,7 @@ import {
 } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { pricingFor } from "../src/wiring/billing-ports.ts";
 
 /**
  * The daemon side of spec D.4 (ADR 0072): `GET /settings/models` shows the settings in force per
@@ -25,7 +26,7 @@ afterEach(async () => {
   for (const rt of apps.splice(0)) await rt.close();
 });
 
-async function daemon(acceptsTemperature: boolean) {
+async function daemon(acceptsTemperature: boolean, opts: { providerName?: string } = {}) {
   const home = mkdtempSync(join(tmpdir(), "fr-model-settings-"));
   const clock = new SimulatedClock("2026-10-23T08:00:00Z");
   const provider = new FakeProvider({
@@ -33,6 +34,12 @@ async function daemon(acceptsTemperature: boolean) {
     latency: "none",
     capabilities: { acceptsTemperature },
   });
+  // Under another name (e.g. "anthropic", so the daemon prices calls from the price table and
+  // the ladder names Claude ids); the fake still answers and records every call.
+  // Every use goes through the wrapper (the fake's script state then lives on it).
+  const named: FakeProvider = opts.providerName
+    ? Object.create(provider, { name: { value: opts.providerName } })
+    : provider;
   const rt = await composeRuntime({
     env: { FORERUNNER_HOME: home },
     dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
@@ -40,7 +47,7 @@ async function daemon(acceptsTemperature: boolean) {
     clock,
     stateUrl: "sqlite::memory:",
     vault: new MemoryVault(),
-    provider,
+    provider: named,
     registryDir: REGISTRY,
     identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
     appVersion: "0.1.0-test",
@@ -71,7 +78,7 @@ async function daemon(acceptsTemperature: boolean) {
         })
       ).json(),
     );
-  return { rt, req, view, execute, provider };
+  return { rt, req, view, execute, provider: named };
 }
 
 describe("GET /settings/models and model.settings.set (spec D.4)", () => {
@@ -143,6 +150,32 @@ describe("GET /settings/models and model.settings.set (spec D.4)", () => {
     expect(unknown).toMatchObject({ status: "refused", code: "not_found" });
     const badSpeed = await d.execute({ specialist: "coder", field: "speed_mode", value: "warp" });
     expect(badSpeed).toMatchObject({ status: "refused", code: "validation" });
+  });
+
+  it("prices a chat turn as the rung the human chose, not the table's (composed daemon)", async () => {
+    const d = await daemon(false, { providerName: "anthropic" });
+    const usage = {
+      input_tokens: 2000,
+      output_tokens: 300,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    };
+    const chat = async () => {
+      d.provider.pushReplies(textReply("ok", { usage, ttftMs: 0 }));
+      const conversation = d.rt.conversation;
+      if (!conversation) throw new Error("no conversation agent");
+      return conversation.chat({ humanId: d.rt.human.id, agentId: d.rt.agent.id, text: "hello" });
+    };
+    const table = await chat();
+    expect(d.provider.calls.at(-1)?.request.model).toBe("claude-haiku-5-5");
+
+    expect(table.costUsdMicro).toBe(pricingFor("claude-haiku-5-5").cost(usage));
+    const set = await d.execute({ mode: "text_chat", field: "tier", value: "opus" }, "tap");
+    expect(set.status).toBe("done");
+    const opus = await chat();
+    expect(d.provider.calls.at(-1)?.request.model).toBe("claude-opus-5-5");
+    expect(opus.costUsdMicro).toBe(pricingFor("claude-opus-5-5").cost(usage));
+    expect(opus.costUsdMicro).toBeGreaterThan(10 * table.costUsdMicro);
   });
 
   it("refuses a temperature where the provider accepts none, and shows and stores one where it does", async () => {

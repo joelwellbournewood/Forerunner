@@ -201,8 +201,10 @@ export interface LoopTaskExecutorDeps {
   pricing: RunPricing;
   /**
    * Pricing of a loop run by the model id its records name (the rung's id, or the fast-mode
-   * variant, ADR 0057): the daemon prices every run at its own rung from the table in force.
-   * Absent: `pricing` for a standard run, the `pricingTable` row for a fast-mode run.
+   * variant, ADR 0057): the rung follows the ladder, the escalation and the agent's `tier`
+   * override (spec D.4, ADR 0072), so the daemon prices every run at its own model from the
+   * table in force and the budget hooks' estimate and the recorded cost follow it. Absent:
+   * `pricing` for a standard run, the `pricingTable` row for a fast-mode run.
    */
   pricingFor?: (modelId: string) => RunPricing;
   /**

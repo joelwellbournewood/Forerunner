@@ -233,6 +233,12 @@ export interface IntakeDeps {
   provider: ModelProvider | null;
   /** Pricing of the planning rung in force; null with no provider. */
   pricing: RunPricing | null;
+  /**
+   * The price of the model the intake calls (spec D.4, ADR 0072): the principal's
+   * `modes.planning.tier` may name another rung than the table's, and the call is priced as the
+   * model it uses. Absent: `pricing`.
+   */
+  pricingFor?: (modelId: string) => RunPricing;
   billingSourceId: string;
   modelConfig: () => EffectiveModelConfig;
   /** The PM role prompt from the registry; a built-in line without it. */
@@ -630,7 +636,6 @@ export class IntakeService {
   }> {
     const { store, clock, driver, tokens } = this.deps;
     const provider = this.deps.provider as ModelProvider;
-    const pricing = this.deps.pricing as RunPricing;
     const config = this.deps.modelConfig();
     // The planning mode's settings (spec D.4, ADR 0072): the effort table row, then the
     // principal agent's `model_config.modes.planning` override. Speed mode stays standard here:
@@ -645,6 +650,7 @@ export class IntakeService {
       capabilities: providerCapabilities(provider),
     });
     const model = modelIdFor(planning.tier, provider.name, config.ladder);
+    const pricing = this.deps.pricingFor?.(model) ?? (this.deps.pricing as RunPricing);
     // The planning effort: the table's (or the principal's override, spec D.4) shifted by the
     // project's speed-versus-quality slider (spec D.16) as the row this session read says, so a
     // slider change applies to the next session. Held at the registry's `max_effort` for the

@@ -160,6 +160,7 @@ interface ExecOptions {
   projectSettings?: object;
   capabilities?: Partial<ProviderCapabilities>;
   fastModePricing?: (model: string) => RunPricing | null;
+  pricingFor?: (model: string) => RunPricing;
 }
 
 async function runTask(o: ExecOptions = {}) {
@@ -181,6 +182,7 @@ async function runTask(o: ExecOptions = {}) {
     specialists: (n) => (n === spec.name ? spec : undefined),
     onEvent: (_t, ev) => events.push(ev),
     ...(o.fastModePricing ? { fastModePricing: o.fastModePricing } : {}),
+    ...(o.pricingFor ? { pricingFor: o.pricingFor } : {}),
   });
   const token = issue(h, {
     agentId: w.agent,
@@ -251,6 +253,27 @@ describe("the executor honours the D.4 settings of a specialist run", () => {
     expect(provider.calls[0]?.request.model).toBe("fake-opus");
     expect(run).toMatchObject({ model: "fake-opus", effort: "high" });
     expect(warnings(events)).toEqual([]);
+  });
+
+  it("prices the run as the model it calls when the agent changes the rung", async () => {
+    const priced: string[] = [];
+    const perModel = (model: string): RunPricing => {
+      priced.push(model);
+      const k = model === "fake-opus" ? 5 : 1;
+      return {
+        estimate: (i, o) => k * (i + o),
+        cost: (u) => k * (u.input_tokens + u.output_tokens),
+      };
+    };
+    const table = await runTask({ pricingFor: perModel });
+    const opus = await runTask({
+      pricingFor: perModel,
+      modelConfig: { specialists: { coder: { tier: "opus" } } },
+    });
+    expect(priced).toEqual(["fake-sonnet", "fake-opus"]);
+    expect(opus.provider.calls[0]?.request.model).toBe("fake-opus");
+    // Same tokens, five times the price: the override is not priced at the sonnet rung.
+    expect(opus.res.costUsdMicro).toBe(5 * table.res.costUsdMicro);
   });
 
   it("gives the run the overridden timeout: the brief names it instead of the file's", async () => {
