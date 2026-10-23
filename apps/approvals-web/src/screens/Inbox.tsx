@@ -303,9 +303,8 @@ export function RequestCard({
       )}
       {credential && unlockRunner !== null && (
         <p className="mt-2 text-sm text-neutral-500" data-testid="unlock-readonly">
-          Cloud runner "{unlockRunner}" asks for its vault key. This page has no OS keyring to
-          hold the key, so it can only show the request: unlock from the desktop app or the
-          Android app.
+          Cloud runner "{unlockRunner}" asks for its vault key. This page has no OS keyring to hold
+          the key, so it can only show the request: unlock from the desktop app or the Android app.
         </p>
       )}
       {canAnswer && !credential && answer.kind !== "conflict" && (
