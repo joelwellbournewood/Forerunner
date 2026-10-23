@@ -15,6 +15,7 @@ import { renderDataModelDoc, schemaSummary } from "../src/docs.ts";
 import { monotonicId } from "../src/ids.ts";
 import { MIGRATION_0001 } from "../src/migrations/0001-initial.ts";
 import { MIGRATION_0002 } from "../src/migrations/0002-headroom-savings.ts";
+import { MIGRATION_0003 } from "../src/migrations/0003-shared-secrets.ts";
 import {
   createTableSql,
   generateInitialMigration,
@@ -65,6 +66,7 @@ describe("schema", () => {
       "source",
       "cost_ledger",
       "secret_ref",
+      "secret_grant",
       "extension",
       "data_asset",
       "release",
@@ -198,24 +200,31 @@ describe("migrations", () => {
     ).toBe(V1_FROZEN_SHA256);
     expect(MIGRATIONS[0]).toBe(MIGRATION_0001);
     expect(MIGRATIONS[1]).toBe(MIGRATION_0002);
+    expect(MIGRATIONS[2]).toBe(MIGRATION_0003);
     expect(MIGRATIONS.map((m) => m.version)).toEqual(MIGRATIONS.map((_, i) => i + 1));
-    // v1 is the generator's output for the v1 subset: the v2 columns are the only difference.
+    // v1 is the generator's output for the v1 subset: the v2 columns, the v3 column and the
+    // v3 table (with its indexes) are the only differences.
     const generated = generateInitialMigration();
     const strip = (stmts: string[]) =>
-      stmts.map((s) =>
-        s
-          .split("\n")
-          .filter(
-            (line) => !/"context_transforms"|"headroom_used"|"headroom_saved_tokens"/.test(line),
-          )
-          .join("\n")
-          .replace(/,\n {2}PRIMARY KEY/g, ",\n  PRIMARY KEY"),
-      );
+      stmts
+        .filter((s) => !/"secret_grant"/.test(s))
+        .map((s) =>
+          s
+            .split("\n")
+            .filter(
+              (line) =>
+                !/"context_transforms"|"headroom_used"|"headroom_saved_tokens"|"wrap_public_key"/.test(
+                  line,
+                ),
+            )
+            .join("\n")
+            .replace(/,\n {2}PRIMARY KEY/g, ",\n  PRIMARY KEY"),
+        );
     expect(strip(generated.sqlite)).toEqual(MIGRATION_0001.up.sqlite);
     expect(strip(generated.postgres)).toEqual(MIGRATION_0001.up.postgres);
   });
 
-  it("v1 + v2 applied in order equals the generator's schema for the current declaration (SQLite)", async () => {
+  it("v1 + v2 + v3 applied in order equals the generator's schema for the current declaration (SQLite)", async () => {
     const migrated = await openSqlite(":memory:");
     const generated = await openSqlite(":memory:");
     try {
@@ -260,7 +269,10 @@ describe("migrations", () => {
       );
       expect(v1Columns).not.toContain("context_transforms");
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [2], version: 2 });
+      expect(await migrate(db, { clock, migrations: [MIGRATION_0001, MIGRATION_0002] })).toEqual({
+        applied: [2],
+        version: 2,
+      });
       expect(await appliedVersions(db)).toEqual([1, 2]);
 
       const repos = createRepos(db, clock);
@@ -285,6 +297,59 @@ describe("migrations", () => {
       const fresh = await repos.run.insert({ session_id: "s1", specialist: "x", model: "m" });
       expect(fresh.context_transforms).toEqual([]);
       expect(fresh.headroom_used).toBe(false);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("migrates a v2 database forward to v3: devices read back without a wrapping key and secret grants can be filed", async () => {
+    const db = await openSqlite(":memory:");
+    try {
+      const clock = new SimulatedClock("2026-10-23T10:00:00.000Z");
+      const at = clock.nowIso();
+      expect(await migrate(db, { clock, migrations: [MIGRATION_0001, MIGRATION_0002] })).toEqual({
+        applied: [1, 2],
+        version: 2,
+      });
+      await db.query(
+        `INSERT INTO "human" ("id", "created_at", "updated_at", "name", "email") VALUES (?, ?, ?, ?, ?)`,
+        ["h1", at, at, "Ada", "ada@example.test"],
+      );
+      await db.query(
+        `INSERT INTO "device" ("id", "created_at", "updated_at", "owner_human_id", "name", "platform", "public_key", "kind", "paired_at") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ["d1", at, at, "h1", "Ada's PC", "linux", "pk-1", "desktop", at],
+      );
+      const v2Columns = (await db.query<SqliteColumn>(`PRAGMA table_info("device")`)).map(
+        (c) => c.name,
+      );
+      expect(v2Columns).not.toContain("wrap_public_key");
+      expect(
+        (await db.query(`SELECT name FROM sqlite_master WHERE name = 'secret_grant'`)).length,
+      ).toBe(0);
+
+      expect(await migrate(db, { clock })).toEqual({ applied: [3], version: 3 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3]);
+
+      const repos = createRepos(db, clock);
+      const device = await repos.device.mustGet("d1");
+      expect(device.wrap_public_key).toBeNull();
+      const keyed = await repos.device.patch("d1", { wrap_public_key: "wrap-pk" });
+      expect(keyed.wrap_public_key).toBe("wrap-pk");
+      const grant = await repos.secretGrant.propose({
+        name: "org_deploy_token",
+        owner_human_id: "h1",
+        required_human_ids: ["h2"],
+      });
+      expect(grant).toMatchObject({ status: "pending", blobs: [], approvals: {}, kind: "token" });
+      // A fresh device insert through the repository fills the v3 default.
+      const fresh = await repos.device.register({
+        owner_human_id: "h1",
+        name: "phone",
+        platform: "android",
+        public_key: "pk-2",
+        kind: "phone",
+      });
+      expect(fresh.wrap_public_key).toBeNull();
     } finally {
       await db.close();
     }

@@ -44,3 +44,17 @@ export {
   type Vault,
   type VaultBackend,
 } from "./types.ts";
+export {
+  ensureInstallWrapKey,
+  generateWrapKeyPair,
+  INSTALL_WRAP_KEY_NAME,
+  isWrappedSecret,
+  parseWrappedSecret,
+  unwrapSecret,
+  valueEncodings,
+  WRAP_PROTOCOL_VERSION,
+  type WrapBinding,
+  type WrapKeyPair,
+  type WrappedSecret,
+  wrapSecret,
+} from "./wrap.ts";

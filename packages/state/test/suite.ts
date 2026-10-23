@@ -1623,6 +1623,121 @@ export function defineStateSuite(target: SuiteTarget): void {
         expect((await store.secretRef.markUsed(ref.id)).last_used).toBe(clock.nowIso());
       });
 
+      it("secret grants (spec S.13): pending until every named human approved, blobs only for the named agent's install, ended grants drop their blobs", async () => {
+        const cols = allColumns(ENTITIES.secret_grant as EntityDef).map((c) => c.name);
+        expect(cols.some((c) => /value|secret$|password|token$/.test(c))).toBe(false);
+        const blob = {
+          v: 1,
+          ciphertext: "Y3Q=",
+          tag: "dGFn",
+          iv: "aXY=",
+          salt: "cw==",
+          ephemeralPublicKey: "ZQ==",
+        };
+        const grant = await store.secretGrant.propose({
+          name: "org_deploy_token",
+          owner_human_id: s.human.id,
+          agent_ids: [s.bob.id],
+          required_human_ids: [s.human2.id],
+          blobs: [{ agent_id: s.bob.id, device_id: "bob-pc", blob }],
+          author_human: s.human.id,
+        });
+        expect(grant.status).toBe("pending");
+        expect(grant.activated_at).toBeNull();
+        // Pending: nothing is served, to anyone.
+        expect(
+          await store.secretGrant.blobFor("org_deploy_token", s.bob.id, "bob-pc"),
+        ).toBeUndefined();
+        expect(await store.secretGrant.activeFor(s.bob.id)).toEqual([]);
+        expect((await store.secretGrant.forHuman(s.human2.id)).map((g) => g.id)).toEqual([
+          grant.id,
+        ]);
+        expect((await store.secretGrant.forHuman(s.human.id)).map((g) => g.id)).toEqual([grant.id]);
+        expect(await store.secretGrant.forHuman("nobody")).toEqual([]);
+        // Only a required human's approval counts; the owner is not in the list.
+        await expectCode(
+          store.secretGrant.approve(grant.id, grant.version, s.human.id, null),
+          "validation",
+        );
+        const active = await store.secretGrant.approve(
+          grant.id,
+          grant.version,
+          s.human2.id,
+          "req-1",
+        );
+        expect(active.status).toBe("active");
+        expect(active.activated_at).toBe(clock.nowIso());
+        expect(active.approvals).toEqual({
+          [s.human2.id]: { at: clock.nowIso(), request_id: "req-1" },
+        });
+        await expectCode(
+          store.secretGrant.approve(grant.id, active.version, s.human2.id, "req-1"),
+          "validation",
+        );
+        // Served only for the named agent on the install the blob was wrapped for.
+        const served = await store.secretGrant.blobFor("org_deploy_token", s.bob.id, "bob-pc");
+        expect(served?.blob.blob).toEqual(blob);
+        expect(
+          await store.secretGrant.blobFor("org_deploy_token", s.bob.id, "bob-phone"),
+        ).toBeUndefined();
+        expect(
+          await store.secretGrant.blobFor("org_deploy_token", s.alice.id, "bob-pc"),
+        ).toBeUndefined();
+        expect(await store.secretGrant.blobFor("other", s.bob.id, "bob-pc")).toBeUndefined();
+        expect(await store.secretGrant.activeNamesFor(s.bob.id)).toEqual(["org_deploy_token"]);
+        expect(await store.secretGrant.activeNamesFor(s.alice.id)).toEqual([]);
+        expect((await store.secretGrant.markServed(grant.id)).last_served).toBe(clock.nowIso());
+        // Revoked: the blobs are gone with the status, and the grant is terminal.
+        const revoked = await store.secretGrant.end(
+          grant.id,
+          active.version + 1,
+          "revoked",
+          "owner revoked",
+          s.human.id,
+        );
+        expect(revoked).toMatchObject({
+          status: "revoked",
+          blobs: [],
+          ended_reason: "owner revoked",
+        });
+        expect(
+          await store.secretGrant.blobFor("org_deploy_token", s.bob.id, "bob-pc"),
+        ).toBeUndefined();
+        await expectCode(
+          store.secretGrant.end(grant.id, revoked.version, "cancelled", "x"),
+          "validation",
+        );
+        expect((await store.secretGrant.forOwner(s.human.id, "revoked")).map((g) => g.id)).toEqual([
+          grant.id,
+        ]);
+        // A refusal cancels a pending grant; an active one can only be revoked.
+        const second = await store.secretGrant.propose({
+          name: "org_deploy_token",
+          owner_human_id: s.human.id,
+          agent_ids: [s.bob.id],
+          required_human_ids: [s.human2.id],
+          blobs: [{ agent_id: s.bob.id, device_id: "bob-pc", blob }],
+        });
+        const cancelled = await store.secretGrant.end(
+          second.id,
+          second.version,
+          "cancelled",
+          "refused",
+        );
+        expect(cancelled).toMatchObject({ status: "cancelled", blobs: [] });
+        // Nobody to ask (only the owner's own agents): active at once.
+        const own = await store.secretGrant.propose({
+          name: "own_token",
+          owner_human_id: s.human.id,
+          agent_ids: [s.alice.id],
+          blobs: [{ agent_id: s.alice.id, device_id: "ada-pc", blob }],
+        });
+        expect(own.status).toBe("active");
+        expect((await store.secretGrant.blobFor("own_token", s.alice.id, "ada-pc"))?.grant.id).toBe(
+          own.id,
+        );
+      });
+
       it("budget windows move ok -> warn80 -> stopped and a zero cap never stops", async () => {
         const w = await store.budgetWindow.open({
           scope: "project",
