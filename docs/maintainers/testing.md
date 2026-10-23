@@ -1995,7 +1995,9 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
   the app's parser and card builder, not through the Android emulator or the screens. The
   emulator run of the same phone steps is `apps/mobile/e2e/run.mjs` (CI's `android.yml`),
   which drives the real screens over raw CDP on the WebView's page target (`cdp.mjs`,
-  ADR 0054; apps.md, Android app).
+  ADR 0054; apps.md, Android app) and prints the page's console messages and uncaught
+  exceptions among its PASS lines as `webview: [level] ...` (`forwardPageConsole`, ADR 0086),
+  so a failing step on the emulator shows what the app said.
 - The shell has no voice wiring to the conversation agent yet (the daemon has no voice route;
   the `VoiceLoop` is used only by its own tests), so the bridge between the loop and the agent
   lives in `scenario-voice.ts`: the `converse` port over `ConversationAgent.chat` with

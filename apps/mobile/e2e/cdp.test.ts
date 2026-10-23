@@ -25,6 +25,7 @@ import {
   pickPageTarget,
   socketUrlFor,
 } from "./cdp.mjs";
+import { formatConsoleEvent, formatException, forwardPageConsole } from "./webview-console.mjs";
 
 type Target = {
   id: string;
@@ -697,5 +698,213 @@ describe("describeFailure (the runner's FAIL line)", () => {
     expect(describeFailure(new CdpError("cdp.timeout", "slow"))).toBe("FAIL: slow [cdp.timeout]");
     expect(describeFailure(new Error("plain"))).toBe("FAIL: plain");
     expect(describeFailure("text")).toBe("FAIL: text");
+  });
+});
+
+/**
+ * What Chrome does after `Runtime.enable`, on the fake: the page's `console.*` calls arrive as
+ * `Runtime.consoleAPICalled` with RemoteObject arguments and a call site. Simpler than Chrome
+ * in one way: V8 also replays, on enable, the console messages it kept from before; the fake
+ * hooks the console only from the enable on, so the tests can tell when forwarding started.
+ */
+function enableRuntimeOnFake(fake: FakeDevTools): void {
+  fake.handlers.set("Runtime.enable", (_params, f) => {
+    const win = f.dom.window as unknown as {
+      console: Record<string, (...args: unknown[]) => void>;
+    };
+    const remote = (v: unknown) => {
+      if (typeof v === "string") return { type: "string", value: v };
+      if (typeof v === "number" || typeof v === "boolean") return { type: typeof v, value: v };
+      if (v === undefined) return { type: "undefined" };
+      if (v === null) return { type: "object", subtype: "null", value: null };
+      if (v instanceof (f.dom.window as unknown as { Error: ErrorConstructor }).Error) {
+        const e = v as Error;
+        return {
+          type: "object",
+          subtype: "error",
+          className: e.name,
+          description: `${e.name}: ${e.message}\n    at send (http://tauri.localhost/assets/index.js:1:200)`,
+        };
+      }
+      return { type: "object", className: "Object", description: "Object" };
+    };
+    const levels: Record<string, string> = {
+      log: "log",
+      info: "info",
+      warn: "warning",
+      error: "error",
+      debug: "debug",
+    };
+    for (const [name, type] of Object.entries(levels)) {
+      win.console[name] = (...args: unknown[]) =>
+        f.emit("Runtime.consoleAPICalled", {
+          type,
+          args: args.map(remote),
+          executionContextId: 1,
+          timestamp: 1_760_000_000_000,
+          stackTrace: {
+            callFrames: [
+              {
+                functionName: "assertHighRisk",
+                url: "http://tauri.localhost/assets/index.js",
+                lineNumber: 0,
+                columnNumber: 4120,
+              },
+            ],
+          },
+        });
+    }
+    f.emit("Runtime.executionContextCreated", { context: { id: 1, origin: APP_URL } });
+    return {};
+  });
+}
+
+describe("forwardPageConsole: the WebView's console on the runner's stdout", () => {
+  it("enables Runtime on the page session and writes console calls as webview: lines", async () => {
+    const fake = await startFakeDevTools();
+    enableRuntimeOnFake(fake);
+    const page = await openPage(fake);
+    // Before forwarding is on, the fake reports nothing (Chrome would replay this on enable).
+    await page.evaluate("console.warn('before'), true");
+    const lines: string[] = [];
+    const forwarding = await forwardPageConsole(page.client, {
+      write: (l: string) => lines.push(l),
+    });
+    expect(forwarding.enabled).toBe(true);
+    expect(fake.calls.filter((c) => c.method === "Runtime.enable")).toHaveLength(1);
+    await page.evaluate(
+      "console.info('forerunner: high-risk answer: asking the biometric prompt (60000 ms limit)'), true",
+    );
+    await page.evaluate(
+      "console.warn('forerunner: high-risk answer refused on the phone:', 'Biometrics not enrolled.'), true",
+    );
+    await page.evaluate("console.error(new Error('boom'), 42, null, undefined, {a: 1}), true");
+    await page.evaluate("console.log('two', 'words'), true");
+    await expect.poll(() => lines.length).toBe(4);
+    expect(lines[0]).toBe(
+      "webview: [info] forerunner: high-risk answer: asking the biometric prompt (60000 ms limit)",
+    );
+    expect(lines[1]).toBe(
+      "webview: [warn] forerunner: high-risk answer refused on the phone: Biometrics not enrolled. (http://tauri.localhost/assets/index.js:1:4121)",
+    );
+    // A multi-line error description keeps the prefix on every line, and the call site sits
+    // on the head line (a grep for `webview: [error]` shows where), not after the stack.
+    expect(lines[2]?.split("\n")).toEqual([
+      "webview: [error] Error: boom (http://tauri.localhost/assets/index.js:1:4121)",
+      "webview:       at send (http://tauri.localhost/assets/index.js:1:200) 42 null undefined Object",
+    ]);
+    expect(lines[3]).toBe("webview: [log] two words");
+    expect(lines.join("\n")).not.toContain("before");
+    // Other events (execution contexts) are not console output; stop() ends the forwarding.
+    forwarding.stop();
+    await page.evaluate("console.error('after stop'), true");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(lines).toHaveLength(4);
+    page.client.close();
+  });
+
+  it("writes uncaught exceptions and unhandled rejections with their location and stack", async () => {
+    const fake = await startFakeDevTools();
+    enableRuntimeOnFake(fake);
+    const page = await openPage(fake);
+    const lines: string[] = [];
+    await forwardPageConsole(page.client, { write: (l: string) => lines.push(l) });
+    fake.emit("Runtime.exceptionThrown", {
+      timestamp: 1_760_000_000_000,
+      exceptionDetails: {
+        exceptionId: 1,
+        text: "Uncaught",
+        lineNumber: 11,
+        columnNumber: 4,
+        url: "http://tauri.localhost/assets/index.js",
+        exception: {
+          type: "object",
+          subtype: "error",
+          className: "TypeError",
+          description:
+            "TypeError: Cannot read properties of undefined (reading 'ticket')\n    at assertHighRisk (http://tauri.localhost/assets/index.js:12:5)",
+        },
+      },
+    });
+    fake.emit("Runtime.exceptionThrown", {
+      timestamp: 1_760_000_000_001,
+      exceptionDetails: {
+        exceptionId: 2,
+        text: "Uncaught (in promise)",
+        lineNumber: 0,
+        columnNumber: 0,
+        exception: { type: "string", value: "biometric.status not allowed" },
+        stackTrace: {
+          callFrames: [
+            {
+              functionName: "",
+              url: "http://tauri.localhost/assets/core.js",
+              lineNumber: 2,
+              columnNumber: 9,
+            },
+          ],
+        },
+      },
+    });
+    await expect.poll(() => lines.length).toBe(2);
+    expect(lines[0]?.split("\n")).toEqual([
+      "webview: [exception] Uncaught TypeError: Cannot read properties of undefined (reading 'ticket') (http://tauri.localhost/assets/index.js:12:5)",
+      "webview:       at assertHighRisk (http://tauri.localhost/assets/index.js:12:5)",
+    ]);
+    expect(lines[1]).toBe(
+      "webview: [exception] Uncaught (in promise) biometric.status not allowed (http://tauri.localhost/assets/core.js:3:10)",
+    );
+    page.client.close();
+  });
+
+  it("never fails the smoke: a page that refuses Runtime.enable is reported as one line", async () => {
+    const fake = await startFakeDevTools(); // no Runtime.enable handler: a protocol error
+    const page = await openPage(fake);
+    const lines: string[] = [];
+    const forwarding = await forwardPageConsole(page.client, {
+      write: (l: string) => lines.push(l),
+    });
+    expect(forwarding.enabled).toBe(false);
+    expect(lines).toEqual([
+      "webview: [runner] console forwarding unavailable: Runtime.enable: 'Runtime.enable' wasn't found",
+    ]);
+    // The session still drives the page.
+    expect(await page.title()).toBe("Forerunner");
+    page.client.close();
+  });
+
+  it("formats the RemoteObject shapes DevTools sends and caps a runaway line", () => {
+    expect(
+      formatConsoleEvent({
+        type: "log",
+        args: [
+          { type: "number", unserializableValue: "NaN" },
+          { type: "bigint", unserializableValue: "10n" },
+          { type: "boolean", value: false },
+          { type: "object", subtype: "array", className: "Array", description: "Array(2)" },
+          { type: "object", value: { ok: true } },
+          { type: "function", className: "Function", description: "() => {}" },
+        ],
+      }),
+    ).toBe('webview: [log] NaN 10n false Array(2) {"ok":true} () => {}');
+    expect(formatConsoleEvent({ type: "debug", args: [] }, "phone:")).toBe("phone: [debug] ");
+    const long = formatConsoleEvent({
+      type: "log",
+      args: [{ type: "string", value: "x".repeat(5_000) }],
+    });
+    expect(long.length).toBeLessThan(2_100);
+    expect(long.endsWith("…")).toBe(true);
+    expect(formatException({})).toBe("webview: [exception] Uncaught");
+  });
+
+  it("run.mjs turns the forwarding on right after the attach, on the same page session", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("./run.mjs", import.meta.url), "utf8");
+    const attach = source.indexOf("await connectPage(");
+    const forward = source.indexOf("await forwardPageConsole(client)");
+    const smoke = source.indexOf("await smoke(page");
+    expect(attach).toBeGreaterThan(0);
+    expect(forward).toBeGreaterThan(attach);
+    expect(smoke).toBeGreaterThan(forward);
   });
 });

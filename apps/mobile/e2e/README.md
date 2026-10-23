@@ -108,6 +108,22 @@ names and their meaning (strict single-element actions, visible waits). `cdp.tes
 it runs the driver against a fake DevTools endpoint (`node:http` + `ws` + jsdom with a layout
 stand-in): `pnpm exec vitest run --project unit apps/mobile/e2e`.
 
+Right after the attach, `run.mjs` calls `forwardPageConsole(client)` (`webview-console.mjs`)
+on the same page session: `Runtime.enable`, then every `Runtime.consoleAPICalled` and
+`Runtime.exceptionThrown` of the page is printed among the PASS lines (V8 first replays what
+the page logged before the attach) as
+
+```
+webview: [info] forerunner: high-risk answer: asking the biometric prompt (60000 ms limit)
+webview: [warn] forerunner: high-risk answer refused on the phone: Biometrics not enrolled. (http://tauri.localhost/assets/index-....js:1:4121)
+webview: [exception] Uncaught TypeError: ... (url:line:col)
+webview:       at ... (every line of a stack keeps the prefix)
+```
+
+so a failing step shows what the app said; a page that refuses `Runtime.enable` costs one
+`webview: [runner] console forwarding unavailable: ...` line, never the smoke. The shell's
+side of a high-risk answer is in logcat (`assert_biometric: asserted=... method=... reason=...`).
+
 Biometrics on the emulator (high-risk answers need the platform prompt, spec R.7): enrol a
 fingerprint once under Settings → Security → Fingerprint (set a PIN first), then when the
 prompt is on screen:
@@ -132,7 +148,7 @@ adb emu kill
 | --- | --- |
 | Pairing | `Pair this phone` → code from `/__test/pair` → `Projects`; one device row named from the form |
 | Inbox | the blocking request is first; Approve posts a signed answer without the biometric flag |
-| High risk | Confirm on the high-risk request shows the biometric error and sends nothing (no enrolment on a fresh emulator) |
+| High risk | Confirm on the high-risk request shows the biometric error and sends nothing (no enrolment on a fresh emulator: the shell answers `asserted: false, reason: "Biometrics not enrolled."` at once; a prompt that never answers is refused after 45 s by the shell and 60 s by the UI, inside the 180 s wait) |
 | Scenario 9 | the sentence makes one card with three parts; nothing is sent before Confirm; one signed `POST /remote/commands` with `plan = [project.switch, budget.set, session.start]`; the simulated PC reports `done` and a running session on `proj_game` |
 | Change log | one entry; Undo sends `[session.stop, budget.set, project.switch]` with `undoOf`; the original is `undone`; the session ends `killed` |
 

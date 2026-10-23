@@ -575,8 +575,13 @@ export function describeStateError(error: unknown): string {
         return "This device is no longer paired (token expired or revoked).";
       case "bad_signature":
         return "The service rejected this device's signature; check the phone's clock.";
-      case "biometric_required":
-        return "This answer needs a biometric confirmation.";
+      case "biometric_required": {
+        // The phone's own refusal says why (not enrolled, cancelled, no answer from the prompt).
+        const reason = error.details.reason;
+        return typeof reason === "string" && reason.trim()
+          ? `This answer needs a biometric confirmation (${reason.trim()}).`
+          : "This answer needs a biometric confirmation.";
+      }
       case "rate_limited":
         return `Too many requests; try again${
           error.retryAfterSec ? ` in ${error.retryAfterSec} s` : " shortly"

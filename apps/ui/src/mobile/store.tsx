@@ -27,7 +27,9 @@ import {
 import {
   type BiometricAssertion,
   type BiometricPort,
+  BiometricRefusedError,
   type DeviceSigner,
+  failureText,
   type SignOptions,
   simulatedBiometric,
   TicketBook,
@@ -247,6 +249,8 @@ export interface MobileEnv {
   storage: MobileStorage;
   /** A platform port, or "prompt" for the visible simulated dialog the provider renders. */
   biometric: BiometricPort | "prompt";
+  /** How long a high-risk answer waits for the prompt before it counts as refused (60 s). */
+  biometricTimeoutMs?: number;
   push: PushPort;
   /**
    * Where the cloud runner's vault key is (spec S.12, ADR 0068): the shell's Keystore-wrapped
@@ -275,6 +279,11 @@ const QUIET_KEY = "quietHours";
 const CHANGES_KEY = "changes";
 const OUTBOX_KEY = "outbox";
 const UNLOCK_WINDOW_KEY = "runnerUnlockWindow";
+/**
+ * A biometric prompt that has not answered by then is a refusal: long enough to touch the
+ * sensor and confirm, and well inside the emulator smoke's 180 s wait for the refusal.
+ */
+export const BIOMETRIC_TIMEOUT_MS = 60_000;
 
 let webSigner: Promise<WebCryptoSigner> | null = null;
 /** One ticket book for the page: the simulated prompt issues, the lazily made signer redeems. */
@@ -785,16 +794,60 @@ export class MobileController {
   // ---------------------------------------------------------------------------------
   // Writes
 
+  /**
+   * The biometric step of a high-risk answer. Whatever the port does other than resolve a
+   * ticketed assertion in time is a refusal (`biometric_required`, with the platform's reason
+   * when there is one): null, a rejection of any shape, a malformed outcome, or a prompt that
+   * does not settle within `biometricTimeoutMs` (an emulator without enrolment, a shell call
+   * that never answers). A late success is dropped; its unused ticket expires in the shell.
+   * Both ends of the step go to the console (never a ticket), which the emulator smoke
+   * forwards as `webview:` lines, so a run shows whether the prompt was asked and how it ended.
+   */
   private async assertHighRisk(reason: string): Promise<BiometricAssertion> {
-    const assertion = await this.biometric.assert(reason);
-    if (!assertion) {
-      throw new StateApiError(
-        "biometric_required",
-        "this needs a biometric confirmation on the phone",
-        403,
-      );
+    const limitMs = this.env.biometricTimeoutMs ?? BIOMETRIC_TIMEOUT_MS;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let outcome: BiometricAssertion | null = null;
+    let why: string | null = null;
+    console.info(`forerunner: high-risk answer: asking the biometric prompt (${limitMs} ms limit)`);
+    try {
+      outcome = await Promise.race([
+        Promise.resolve().then(() => this.biometric.assert(reason)),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new BiometricRefusedError(
+                  `the prompt did not answer within ${
+                    limitMs < 1000 ? `${limitMs} ms` : `${Math.round(limitMs / 1000)} s`
+                  }`,
+                ),
+              ),
+            limitMs,
+          );
+        }),
+      ]);
+    } catch (error) {
+      why = failureText(error);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    return assertion;
+    if (outcome?.asserted === true && typeof outcome.ticket === "string" && outcome.ticket) {
+      console.info("forerunner: high-risk answer: the biometric prompt passed");
+      return outcome;
+    }
+    // A simulated prompt still open (the bound ran out while it waited for the human) closes
+    // with the refusal: a dialog asking to confirm next to "refused" would be a lie, and a tap
+    // on it would only mint a ticket nothing redeems.
+    this.state.biometricPrompt?.resolve(false);
+    console.warn(
+      `forerunner: high-risk answer refused on the phone: ${(why ?? "the prompt returned no ticketed assertion").slice(0, 200)}`,
+    );
+    throw new StateApiError(
+      "biometric_required",
+      "this needs a biometric confirmation on the phone",
+      403,
+      why ? { reason: why.slice(0, 200) } : {},
+    );
   }
 
   static isHighRisk(request: HumanRequestView): boolean {

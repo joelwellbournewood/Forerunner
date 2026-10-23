@@ -13,6 +13,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) })
 import { createStateClient } from "../src/api/state-client.ts";
 import {
   type BiometricAssertion,
+  BiometricRefusedError,
   BiometricTicketError,
   canonicalRequest,
   fromBase64,
@@ -128,7 +129,12 @@ describe("ShellSigner: the biometric flag is bound to the shell's ticket", () =>
 
   it("a shell outcome without a ticket is not an assertion, and the client never sends a forged flag", async () => {
     fakeShell(null);
-    expect(await shellBiometric.assert("Confirm")).toBeNull();
+    // The shell said why ("cancelled"): a refusal that keeps the reason, never an assertion.
+    await expect(shellBiometric.assert("Confirm")).rejects.toMatchObject({
+      name: "BiometricRefusedError",
+      code: "biometric_refused",
+      message: "cancelled",
+    });
     bridge.invoke.mockImplementationOnce(async () => ({
       asserted: true,
       at: "t",
@@ -152,5 +158,75 @@ describe("ShellSigner: the biometric flag is bound to the shell's ticket", () =>
       client.answerRequest("req_cap", { version: 1, answer: "Confirm" }, { biometric: forged }),
     ).rejects.toMatchObject({ code: "biometric_required", status: 403 });
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What `assert_biometric` can do on a phone without an enrolled fingerprint (android.yml run
+ * 39952987240): the shell resolves `asserted: false` with the plugin's reason, or the IPC
+ * rejects (a permission or plugin error, as a string, an Error or a `{ message }` object).
+ * Every shape is a refusal; none is an assertion, and none hangs or throws something else.
+ */
+describe("shellBiometric: every way the shell's prompt fails is a refusal with its reason", () => {
+  const outcome = (o: unknown) => {
+    bridge.invoke.mockReset();
+    bridge.invoke.mockImplementation(async () => o);
+  };
+  const rejecting = (e: unknown) => {
+    bridge.invoke.mockReset();
+    bridge.invoke.mockImplementation(async () => {
+      throw e;
+    });
+  };
+
+  it("candidate 1: the plugin's status says not enrolled, and the shell passes the reason on", async () => {
+    outcome({
+      asserted: false,
+      at: "2026-10-20T10:00:00.000Z",
+      method: "unavailable",
+      reason: "Biometrics not enrolled.",
+    });
+    await expect(shellBiometric.assert("Confirm")).rejects.toMatchObject({
+      name: "BiometricRefusedError",
+      message: "Biometrics not enrolled.",
+    });
+    expect(bridge.invoke).toHaveBeenCalledWith("assert_biometric", { reason: "Confirm" });
+    // No reason, an empty reason, or a malformed answer: still no assertion.
+    for (const o of [
+      { asserted: false, at: "t", method: "unavailable" },
+      { asserted: false, at: "t", method: "unavailable", reason: "   " },
+      null,
+      undefined,
+      "asserted",
+      { asserted: "true", ticket: "t" },
+    ]) {
+      outcome(o);
+      expect(await shellBiometric.assert("Confirm"), JSON.stringify(o)).toBeNull();
+    }
+  });
+
+  it("candidates 2 and 5: an IPC rejection of any shape (permission, plugin, Error) is a refusal naming it", async () => {
+    const cases: Array<[unknown, RegExp]> = [
+      [
+        "biometric.authenticate not allowed. Permissions associated with this command: biometric:allow-authenticate",
+        /not allowed.*biometric:allow-authenticate/,
+      ],
+      [
+        { message: "Biometrics not enrolled.", code: "biometryNotEnrolled" },
+        /Biometrics not enrolled\./,
+      ],
+      [new Error("plugin biometric not found"), /plugin biometric not found/],
+      [42, /42/],
+    ];
+    for (const [error, text] of cases) {
+      rejecting(error);
+      const refused = await shellBiometric.assert("Confirm").then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(refused, String(text)).toBeInstanceOf(BiometricRefusedError);
+      expect((refused as Error).message).toMatch(/^the shell's prompt failed: /);
+      expect((refused as Error).message).toMatch(text);
+    }
   });
 });

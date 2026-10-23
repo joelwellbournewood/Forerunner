@@ -89,3 +89,4 @@ Status: accepted | superseded by NNNN
 | 0083 | Private memory next to a shared state: a local SQLite index routed by scope, and the Postgres adapter's refusal |
 | 0084 | Email routes: a mount that identifies humans without an identity port fails closed per request, and an owner-check refusal is an audited 403 that stands without its row |
 | 0085 | Android push from the state service: FCM HTTP v1 with the service account by reference, the four kinds to every device with a token, the human's quiet hours, dead tokens cleared with an audit row, a visible no-op unconfigured; the app's Firebase wiring waits for a project |
+| 0086 | A high-risk answer on a phone that cannot confirm: every failure of the biometric step is a refusal with the platform's reason, bounded at 45 s in the shell and 60 s in the UI; the capability names `biometric:allow-status` and `biometric:allow-authenticate`; the emulator runner forwards the WebView console as `webview:` lines |

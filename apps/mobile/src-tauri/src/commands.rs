@@ -226,7 +226,9 @@ pub fn push_status(shell: State<'_, Shell>) -> PushStatus {
 }
 
 /// The platform prompt. Only a success returns `asserted: true`, and only a success carries
-/// the ticket `device_key_sign` needs for the one `biometric=1` signature that follows.
+/// the ticket `device_key_sign` needs for the one `biometric=1` signature that follows. Every
+/// failure resolves (never rejects, never hangs) with `asserted: false` and a reason the UI
+/// shows: the plugin's status text, the prompt's error, or `PROMPT_LIMIT` running out.
 #[tauri::command]
 pub async fn assert_biometric<R: Runtime>(
   app: AppHandle<R>,
@@ -240,23 +242,50 @@ pub async fn assert_biometric<R: Runtime>(
   } else {
     outcome.ticket = None;
   }
+  // The outcome without the ticket, for logcat when the emulator smoke needs a cause.
+  log::info!(
+    "assert_biometric: asserted={} method={} reason={}",
+    outcome.asserted,
+    outcome.method,
+    outcome.reason.as_deref().unwrap_or("-")
+  );
   Ok(outcome)
 }
 
+/// `status` then `authenticate` through tauri-plugin-biometric. Both are blocking calls into
+/// the Kotlin plugin (`run_mobile_plugin` waits on a channel until it answers), so they run
+/// on a blocking thread and `biometric::wait_bounded` gives up after `PROMPT_LIMIT`: an answer
+/// that never comes ends as a refusal instead of an invoke that never settles.
 #[cfg(any(target_os = "android", target_os = "ios"))]
 async fn prompt<R: Runtime>(app: &AppHandle<R>, reason: &str) -> BiometricOutcome {
+  let app = app.clone();
+  let reason = reason.to_string();
+  let waited = tauri::async_runtime::spawn_blocking(move || {
+    biometric::wait_bounded(
+      move || platform_prompt(&app, &reason),
+      biometric::PROMPT_LIMIT,
+    )
+  })
+  .await;
+  match waited {
+    Ok(outcome) => outcome,
+    Err(e) => biometric::unavailable(&format!("the biometric prompt failed: {e}")),
+  }
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn platform_prompt<R: Runtime>(app: &AppHandle<R>, reason: &str) -> BiometricOutcome {
   use tauri_plugin_biometric::{AuthOptions, BiometricExt};
   let status = match app.biometric().status() {
     Ok(status) => status,
     Err(e) => return biometric::unavailable(&format!("biometric status failed: {e}")),
   };
-  if !status.is_available {
-    return biometric::unavailable(
-      status
-        .error
-        .as_deref()
-        .unwrap_or("no biometrics enrolled on this phone"),
-    );
+  if let Some(refused) = biometric::refusal_from_status(
+    status.is_available,
+    status.error.as_deref(),
+    status.error_code.as_deref(),
+  ) {
+    return refused;
   }
   let options = AuthOptions {
     allow_device_credential: false,
@@ -266,10 +295,12 @@ async fn prompt<R: Runtime>(app: &AppHandle<R>, reason: &str) -> BiometricOutcom
     subtitle: Some("Confirm a high-risk change".to_string()),
     confirmation_required: Some(true),
   };
-  match app.biometric().authenticate(reason.to_string(), options) {
-    Ok(()) => biometric::asserted(),
-    Err(e) => biometric::unavailable(&format!("not confirmed: {e}")),
-  }
+  biometric::outcome_from_auth(
+    app
+      .biometric()
+      .authenticate(reason.to_string(), options)
+      .map_err(|e| e.to_string()),
+  )
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

@@ -296,8 +296,35 @@ export interface BiometricAssertion {
 
 export interface BiometricPort {
   available(): Promise<boolean>;
-  /** Null when the prompt was cancelled or failed; never throws for a refusal. */
+  /**
+   * Null when the prompt was cancelled or failed; a port that knows why (the shell's
+   * "Biometrics not enrolled.") rejects with `BiometricRefusedError` instead. The controller
+   * treats null, any rejection and a prompt that never settles alike: as a refusal.
+   */
   assert(reason: string): Promise<BiometricAssertion | null>;
+}
+
+/** The platform refused or could not show the prompt; `message` says why (never sensitive). */
+export class BiometricRefusedError extends Error {
+  readonly code = "biometric_refused";
+  constructor(message: string) {
+    super(message);
+    this.name = "BiometricRefusedError";
+  }
+}
+
+/**
+ * The words of a failure as a platform hands it over: Tauri rejects with a string (a
+ * command's `Err`), an Error, or a plugin's `{ message, code }` object; anything else is
+ * stringified. Used for refusal reasons, which are never sensitive.
+ */
+export function failureText(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
 }
 
 export const noBiometric: BiometricPort = {
