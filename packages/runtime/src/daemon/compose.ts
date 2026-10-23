@@ -803,7 +803,7 @@ export interface RuntimeApp {
     signoffs: SignoffSyncResult;
     plans: PlanApprovalSyncResult;
     intake: IntakeSyncResult;
-    /** Answered specialist proposals (ADR 0071); the eval runs go on in the background in the daemon. */
+    /** Answered specialist proposals (ADR 0071): the daemon runs them in the background; a one-shot applies none. */
     specialists: SpecialistSyncResult;
   }>;
   /** Add or drop mirror schedules after a project's settings changed. */
@@ -2404,6 +2404,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     }
     return [...mirrorSchedules];
   };
+  const syncSpecialistApprovals = async (): Promise<SpecialistSyncResult> => {
+    const out = await specialistApprovals.syncAnswers({ background: true });
+    await specialistApprovals.fileMissing().catch((e: unknown) => {
+      logger.warn("specialist proposals not filed", { error: errorMessage(e) });
+    });
+    return out;
+  };
   // One sync at a time: the answer route, the command registry's request.answer, the poll and
   // the compose-time call each read the answered requests and then act, so two that overlap
   // would both find the same answer unapplied (the plan mark is conditional as well).
@@ -2436,11 +2443,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             })
           : { started: 0, rejected: 0, skipped: 0 },
       intake: await intake.syncAnswers(),
-      // An approved proposal's eval run can take minutes: the daemon claims the answer here
-      // and runs it in the background; a CLI one-shot waits for it.
-      specialists: await specialistApprovals.syncAnswers({
-        background: opts.startServices !== false,
-      }),
+      // Proposed specialists (ADR 0071): the daemon claims an approved proposal's answer here
+      // and runs its eval set (minutes, real spend) in the background, recovers evaluations
+      // that ended without a result, and files requests for proposals that reached disk
+      // without one. A one-shot (`startServices: false`: every `fr` command, the cloud runner)
+      // leaves inbox answers to the daemon, as it does plan approvals; `fr specialists
+      // approve` applies its own request.
+      specialists:
+        opts.startServices !== false
+          ? await syncSpecialistApprovals()
+          : { promoted: 0, failed: 0, rejected: 0, skipped: 0, running: 0 },
     };
     // A mirror run waiting on its approval re-reads the request now, not at the next poll.
     mirrorApprovals.wake();
@@ -2651,12 +2663,6 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // approvals it would apply from the shared state wait for the resume.
   if (schemaSync.paused) logger.warn("sync paused at compose", { ...schemaSync.status() });
   else await syncApprovals();
-  // Proposals already on disk without a request (an earlier build, a hand-written one).
-  if (services && !schemaSync.paused) {
-    await specialistApprovals.fileMissing().catch((e: unknown) => {
-      logger.warn("specialist proposals not filed", { error: errorMessage(e) });
-    });
-  }
   await refreshMirrorSchedules();
   const jobSchedules = await refreshJobSchedules(scheduler);
   if (services) scheduler.start();

@@ -10,7 +10,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import type { EvalRunInput, EvalRunnerPort } from "../src/models/watch.ts";
 import { specialistKeyOf } from "../src/registry/approval.ts";
 import { loadRegistry } from "../src/registry/loader.ts";
-import type { SpecialistProposal } from "../src/registry/proposals.ts";
+import { proposeSpecialist, type SpecialistProposal } from "../src/registry/proposals.ts";
 
 /**
  * C.5 on the desktop daemon and the command line (ADR 0071): `composeRuntime` wires the
@@ -174,6 +174,17 @@ describe("specialist approval on the daemon and the CLI", () => {
     expect(existsSync(join(registryDir, "proposed", "flaky", "specialist.md"))).toBe(true);
   });
 
+  it("a proposal written while the daemon runs is filed by the next approvals sync", async () => {
+    proposeSpecialist(proposal("latecomer", rt.human.id), { registryDir, clock });
+    const key = specialistKeyOf("latecomer");
+    const before = await rt.store.humanRequest.open({ humanId: rt.human.id });
+    expect(before.some((r) => (r.change_card as Json | null)?.key === key)).toBe(false);
+    await rt.syncApprovals();
+    await rt.syncApprovals();
+    const after = await rt.store.humanRequest.open({ humanId: rt.human.id });
+    expect(after.filter((r) => (r.change_card as Json | null)?.key === key)).toHaveLength(1);
+  });
+
   it("fr specialists list, approve and reject", async () => {
     const lines: string[] = [];
     const composeCalls: Record<string, unknown>[] = [];
@@ -225,5 +236,73 @@ describe("specialist approval on the daemon and the CLI", () => {
     await expect(fr("specialists", "approve", "nosuch")).rejects.toMatchObject({
       code: "not_found",
     });
+  });
+});
+
+describe("specialist approval in a one-shot (startServices: false)", () => {
+  const clock = new SimulatedClock("2026-10-23T09:00:00Z");
+  const runs: EvalRunInput[] = [];
+  let rt: RuntimeApp;
+  let registryDir: string;
+  let home: string;
+
+  beforeAll(async () => {
+    home = mkdtempSync(join(tmpdir(), "fr-specialists-oneshot-"));
+    registryDir = join(home, "registry");
+    cpSync(REGISTRY, registryDir, { recursive: true });
+    evalSet(registryDir, "oneshot");
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new FakeProvider({ replies: [], onNoMatch: "echo", clock, latency: "none" }),
+      registryDir,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      evalRunner: fixedEvals(new Set(), runs),
+      startServices: false,
+    });
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("an fr one-shot runs no eval set for an inbox answer; fr specialists approve applies that answer", async () => {
+    const { request } = await rt.specialistApprovals.propose(proposal("oneshot", rt.human.id));
+    await rt.store.humanRequest.answer(request.id, request.version, "approve", rt.human.id);
+    // Any `fr` command composes and syncs approvals: no eval run, the answer left as given.
+    expect((await rt.syncApprovals()).specialists).toEqual({
+      promoted: 0,
+      failed: 0,
+      rejected: 0,
+      skipped: 0,
+      running: 0,
+    });
+    expect(runs).toHaveLength(0);
+    expect((await rt.store.humanRequest.mustGet(request.id)).change_card).not.toHaveProperty(
+      "applied_at",
+    );
+
+    const lines: string[] = [];
+    const program = buildProgram({
+      env: { FORERUNNER_HOME: home },
+      compose: async () => ({ ...rt, close: async () => undefined }),
+      out: (l) => lines.push(l),
+    });
+    program.exitOverride();
+    process.exitCode = 0;
+    await program.parseAsync(["node", "fr", "specialists", "approve", "oneshot", "--json"]);
+    expect(JSON.parse(lines.join("\n"))).toMatchObject({
+      name: "oneshot",
+      outcome: "promoted",
+      requestId: request.id,
+    });
+    expect(runs).toHaveLength(1);
+    expect(await rt.store.humanRequest.open({ humanId: rt.human.id })).toHaveLength(0);
   });
 });
