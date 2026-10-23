@@ -107,6 +107,16 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   with the refusal; docs on V8's console replay, the platform prompt that outlives the
   shell's bound, and the BLOCKERS row corrected. Counts in the review file.
 
+### 2026-10-23 (item w3-d4-specialist-settings, REVIEW AND FIX)
+- Independent review of the D.4 build: verdict revise (68/100), six findings, all fixed on the
+  branch (`docs/status/reviews/w3-d4-specialist-settings.md`, ADR 0072 amendment): every loop
+  run is now priced as the model it calls (the intake and the chat were priced at the table's
+  rung after a `tier` override, an Opus chat turn at the Haiku price); a specialist never runs
+  above its `max_effort` (executor cap, command refusal, screen options); the principal's
+  planning and chat rungs stay under the ladder ceiling; the field table says `default_effort`
+  is not a run's base; the UI fake speaks the daemon's sentence; the additions moved off the
+  anchors the base extends, so a trial merge into the base is conflict-free. Merge pending.
+
 ### 2026-10-23 (item w3-d4-specialist-settings, BUILD: D.4 settings per agent and specialist)
 - Built on `wave/w3-d4-specialist-settings` (ADR 0072), over the earlier attempt's `wip:`
   snapshot (the capability flags, the effort-table columns and the adapter's `speed`, kept and
@@ -381,11 +391,11 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    merge pending), w3-c5-specialist-approval (C.5; built on its branch with ADR 0071, reviewed
    with six findings fixed, awaiting merge, see its review in
    `docs/status/reviews/w3-c5-specialist-approval.md`),
-   w3-d4-specialist-settings (D.4; built on its branch 2026-10-23, ADR 0072: review, then
-   merge, then wire D.20's price into it), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
+   w3-d4-specialist-settings (D.4; built and reviewed on its branch 2026-10-23, its six review
+   findings fixed, ADR 0072: merge, then wire D.20's price into it), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
    merge pending), w3-c5-specialist-approval (C.5),
-   w3-d4-specialist-settings (D.4; built on its branch 2026-10-23, ADR 0072: review, then
-   merge, then wire D.20's price into it), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16:
+   w3-d4-specialist-settings (D.4; built and reviewed on its branch 2026-10-23, its six review
+   findings fixed, ADR 0072: merge, then wire D.20's price into it), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
    w3-r5-phone (R.5), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay

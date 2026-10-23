@@ -99,3 +99,22 @@ fast-mode switch combine without either branch breaking the other.
 - The commands package imports the schemas by deep path (`@forerunner/runtime/models/
   run-settings`), because the runtime imports commands and its index is half-initialised at
   that point.
+
+## Amendment (independent review, 2026-10-23)
+
+The review of this item (`docs/status/reviews/w3-d4-specialist-settings.md`) added three rules
+the settings must keep, so no override steps over a limit the rest of the runtime keeps:
+
+- **A run is priced as the model it calls.** The executor, the intake and the chat take a
+  `pricingFor(modelId)` port (the daemon: the price table in force), so an agent's `tier`
+  override reaches the budget hooks' estimate and the recorded cost; before, the intake and the
+  chat were priced at the table's rung and a specialist's loop run at the sonnet rung.
+- **A specialist never runs above its `max_effort`.** The executor caps the effort after the
+  table's risk rules, the project slider and the agent's override (warning when the cap bites);
+  `model.settings.set` refuses a higher override (`CommandPorts.modelSettings.maxEffort`); the
+  view and the screen show and offer only what can run. The file's `default_effort` stays
+  validated but is not a run's base: spec D.4 names the effort table as the default (point 4).
+- **The rung stays under the ladder ceiling.** `resolveRunSettings` takes a `ceiling`; the intake
+  passes the project's (`critic_ceiling`, default Opus), the chat the default ceiling, as the
+  executor already did through `startingTier`. The top rung needs the explicit project setting
+  (spec "Model ladder", D.3), never only an agent's preference.
