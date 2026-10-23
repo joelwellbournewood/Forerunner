@@ -149,3 +149,69 @@ appended to the copy of this report in `/mnt/session/outputs/w3-misc-replay-ceil
 - V.3 and V.4 stay open for reasons outside this item (three runs per OS and the Android run;
   the P1 and the stale doc entries).
 - Independent review of this item is pending.
+
+## Review
+
+Independent adversarial review, stage REVIEW AND FIX, 2026-10-23. Reviewed: the branch
+`wave/w3-misc-replay-ceiling` at c6336f8 (`git diff origin/ccr-4d8a843c-1k9syk...HEAD`: tests
+and docs only; the dedupe and the ceiling read already existed in the code the branch is based
+on, merge base 82a6295), traced from the real callers (`composeRuntime`, the cloud runner's
+`startCloudRunner`, the e2e worlds, `POST /remote/commands`, `RemoteCommandWatcher.run`).
+
+Verdict: **revise**. Score: **62/100**.
+
+Requirements checked:
+
+- R.4 / V.3, scenario 9's `it.todo`: replaced by a passing case (route answers 200 with the
+  first row, no second row; a copy past the service is the watcher's `duplicate`; one change
+  log row, one start). Met, but the case is not self-contained (finding 3).
+- Route dedupe (`services/state-api/src/routes/remote.ts` `enqueueRemoteCommandOnce`): the
+  second POST returns the first row's id and status, no second row; concurrent copies are
+  serialised by `IdempotencyStore.run`'s in-flight map; covered by
+  `services/state-api/test/remote.test.ts`. Met.
+- Watcher dedupe (`packages/runtime/src/remote/watcher.ts` `replayOf`): memory then audit rows
+  (oldest first, so the first handler's id is found). Met.
+- H.4 / D.3, "the executor reads the project's critic_ceiling per run": met for the daemon
+  (`compose.ts` passes `projectCeiling`), NOT met for the cloud runner, whose executor is
+  built without the reader (finding 1).
+- V.4, Known issues rows closed in testing.md: closed, but the ceiling entry's claim is false
+  for the cloud runner (finding 2).
+- Maintainer docs, status rows: runtime.md, state-service.md, testing.md, requirements.md,
+  BLOCKERS.md, PROGRESS.md updated; the BLOCKERS edit conflicts with the base (finding 4); the
+  build report names commits that are not on the branch (finding 5).
+- Security / privacy: nothing new; the scenario still asserts no key or token in any row.
+
+### Findings
+
+1. **medium**, `services/cloud-runner/src/runner.ts:466` (`makeLoop`), root in
+   `packages/runtime/src/session/executor.ts:348`. The cloud runner builds its
+   `LoopTaskExecutor` without `projectCeiling` (and without `ceiling`), so a task on its third
+   attempt that a cloud session picks up climbs to opus even when the project's
+   `critic_ceiling` is sonnet: exactly the case `executor-ceiling.test.ts` itself labels "what
+   the daemon must not do". The executor only honours the project's ceiling when every
+   composition remembers to pass the reader; the e2e worlds
+   (`tests/e2e/src/scenario-world.ts`, `world.ts`, `scenario-handover.ts`,
+   `scenario-capabilities.ts`) do not either. Verified with a throwaway test in
+   `services/cloud-runner/test/runner.test.ts` (project settings `{ critic_ceiling: "sonnet" }`,
+   a ready task at `attempt: 3`, `startSession({ force: true })`): the coder's run row read
+   `fake-opus`. Test deleted afterwards.
+2. **low**, `docs/maintainers/testing.md:1274` (the "Closed" ceiling entry) and
+   `docs/maintainers/runtime.md:1472`. The entry says "a run above the ceiling cannot happen",
+   and runtime.md calls the static `ceiling` "only the fallback"; with finding 1 both are false
+   for the cloud runner's sessions. Verified by the same throwaway test.
+3. **low**, `tests/e2e/scenarios/09-phone.scenario.test.ts:455` (the replay case). The case
+   asserts, rather than establishes, its precondition (the sample project active, which only
+   the first case's undo produces), so it cannot run alone: `pnpm exec vitest run --project
+   e2e tests/e2e/scenarios/09-phone.scenario.test.ts -t replays` fails with `expected null to
+   be '<sample project id>'`. A test whose result depends on another case's side effects
+   proves less than its name claims.
+4. **low**, `docs/status/BLOCKERS.md:60` (V.4 row). The base branch rewrote the same V.4 row
+   after this branch forked (item w4-stale-docs), so integrating the branch conflicts:
+   `git merge-tree --write-tree origin/ccr-4d8a843c-1k9syk HEAD` reports
+   `CONFLICT (content): Merge conflict in docs/status/BLOCKERS.md`. The V.3 row (unchanged on
+   the base) can carry the same note.
+5. **low**, `docs/status/reviews/w3-misc-replay-ceiling.md` (Build report). The report names
+   commits that are not on the branch (5d2270e, b57f8cb, 604918f, 478d320, 528d230, 8a61e40)
+   and a base at e2bfb1e; `git merge-base --is-ancestor <sha> HEAD` fails for each, the real
+   series is ae53f03..c6336f8 on merge base 82a6295. The evidence trail does not match the
+   repository.
