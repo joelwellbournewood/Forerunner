@@ -1944,10 +1944,14 @@ the row. Replays of the same `clientId` are refused like plan and chat envelopes
 Performance page reads. It is built from the store at request time, no cache and no table of
 its own:
 
-- *Sources.* Every Run row created in the window that carries `ttft_ms` or `duration_ms` (a
-  row still `running` with neither is no measurement), every `chat.reply` event carrying
-  `ttftMs` or `durationMs` (the conversation agent's model turns; a yes, no or undo answered
-  by the registry has neither, and a reply with `source: "voice"` is left to its voice turn),
+- *Sources.* Every Run row created in the window that is a measurement (`isMeasurement`: it
+  has a `ttft_ms`, or it timed out with a `duration_ms`; a row still `running`, or one closed
+  before any model answered, such as a refused lease or secret, a budget refusal or an intake
+  call that threw, carries a few ms and no first token and is left out, so it cannot pull a
+  median down or pass a total-time target), every `chat.reply` event carrying `ttftMs`, or
+  `durationMs` with `outcome: "timeout"` (the conversation agent's model turns; a yes, no or
+  undo answered by the registry has neither, a turn whose call failed at once has no first
+  token, and a reply with `source: "voice"` is left to its voice turn),
   and every `voice.turn` event carrying `latency.totalToFirstAudioMs` (end of turn to first
   audio, the figure the 1.2 s target is about; reported in the `ttft` columns).
 - *Mode derivation.* The run table has no mode column, so `runMode` derives it from who wrote

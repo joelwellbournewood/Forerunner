@@ -717,7 +717,9 @@ export function eventSample(e: EventRow): PerfSample | null {
     if (p.source === "voice") return null;
     const ttft = num(p.ttftMs);
     const total = num(p.durationMs);
-    if (ttft === null && total === null) return null;
+    // A turn whose model call never produced a first token is a measurement only when it ran
+    // into its timeout; one that failed at once would count a few ms as a fast reply.
+    if (ttft === null && (p.outcome !== "timeout" || total === null)) return null;
     return {
       runId: e.id,
       source: "chat",
@@ -746,6 +748,17 @@ export function eventSample(e: EventRow): PerfSample | null {
     };
   }
   return null;
+}
+
+/**
+ * Whether a Run row is a response-time measurement: it reached a model and got a first token,
+ * or it ran into its wall-clock timeout (a real, over-target response time). A row closed
+ * before any model answered (a refused lease or secret, `endRunWithError`; a budget refusal;
+ * an intake call that threw before the driver) carries a duration of a few ms and no first
+ * token: counting it would pull the medians down and pass the total-time targets.
+ */
+export function isMeasurement(r: Pick<RunRow, "ttft_ms" | "duration_ms" | "timed_out">): boolean {
+  return r.ttft_ms !== null || (r.timed_out && r.duration_ms !== null);
 }
 
 /** The figure a mode's target applies to: first token (or audio), or the whole run. */
@@ -804,7 +817,7 @@ export async function performanceView(
       `SELECT * FROM ${store.run.qt} WHERE "created_at" >= ? AND "created_at" <= ? ORDER BY "created_at", "id"`,
       [from, to],
     )
-  ).filter((r) => r.ttft_ms !== null || r.duration_ms !== null);
+  ).filter(isMeasurement);
   const events = await new Repository<EventRow>(
     store.event.db,
     ENTITIES.event as EntityDef,

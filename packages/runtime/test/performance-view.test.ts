@@ -489,3 +489,77 @@ describe("performanceView over seeded Run rows and turns", () => {
     expect(isForerunnerError(err) && err.code).toBe("not_found");
   });
 });
+
+describe("what counts as a measurement", () => {
+  it("leaves out runs and chat turns that never reached a model, and keeps timeouts", async () => {
+    const clock = new SimulatedClock(NOW);
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    const w = await seedWorld(store);
+    const critic = (over: Record<string, unknown>) =>
+      store.run.insert({
+        session_id: w.session,
+        specialist: "critic",
+        model: "fake-sonnet",
+        effort: "medium",
+        outcome: "completed",
+        created_at: ago(1),
+        ...over,
+      });
+    // A real tier 1 review over its target.
+    await critic({ ttft_ms: 900, duration_ms: 45_000 });
+    // Closed by `endRunWithError` (a refused lease, a missing secret): a few ms, no first token.
+    await critic({ outcome: "error", ttft_ms: null, duration_ms: 3 });
+    // Refused by the budget before the call.
+    await critic({ outcome: "budget_exceeded", ttft_ms: null, duration_ms: 1 });
+    // A call that hung until its wall clock: no first token, but a real response time.
+    await critic({ outcome: "timeout", timed_out: true, ttft_ms: null, duration_ms: 60_000 });
+    // The planning call that threw before the driver ran: not a planning sample.
+    await store.run.insert({
+      session_id: w.session,
+      specialist: INTAKE_RUN_SPECIALIST,
+      model: "fake-sonnet",
+      effort: "high",
+      outcome: "failed",
+      ttft_ms: null,
+      duration_ms: 2,
+      created_at: ago(1),
+    });
+    // Chat: a model turn, a turn whose model call failed at once, a turn that timed out.
+    const conv = w.session;
+    await store.event.append(conv, "chat.reply", { ttftMs: 500, durationMs: 1500 });
+    await store.event.append(conv, "chat.reply", {
+      ttftMs: null,
+      durationMs: 4,
+      outcome: "error",
+    });
+    await store.event.append(conv, "chat.reply", {
+      ttftMs: null,
+      durationMs: 30_000,
+      outcome: "timeout",
+    });
+
+    const v = await performanceView(store, { humanId: w.human, nowIso: clock.nowIso() });
+    const t1 = v.modes.find((m) => m.mode === "critic_t1");
+    expect(t1).toMatchObject({
+      samples: 2,
+      ttftP50Ms: 900,
+      totalP50Ms: 45_000,
+      totalP90Ms: 60_000,
+      withinTargetShare: 0,
+      met: false,
+    });
+    expect(v.modes.find((m) => m.mode === "planning")).toMatchObject({
+      samples: 0,
+      withinTargetShare: null,
+      met: null,
+    });
+    expect(v.modes.find((m) => m.mode === "text_chat")).toMatchObject({
+      samples: 2,
+      ttftP50Ms: 500,
+      totalP50Ms: 1500,
+      totalP90Ms: 30_000,
+    });
+    expect(v.recent.some((r) => r.durationMs === 3 || r.durationMs === 4)).toBe(false);
+    await store.close();
+  });
+});
