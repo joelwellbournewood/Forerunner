@@ -1,7 +1,8 @@
 # 0067 — The desktop-control indicator in the shells: a banner on every page, a tray state, and the status view re-read on reconnect
 
 Date: 2026-10-23
-Status: accepted
+Status: accepted (points 4 to 6 amended by the item's review, 2026-10-23: frames and reads
+ordered; the "stopped" line follows stops, not panel revokes)
 
 ## Context
 
@@ -58,17 +59,28 @@ Open points:
    off and further desktop actions are refused until resumed; the sessions keep running. The
    header's "Stop all" stays the kill switch. After a stop the store keeps `revoked` and a
    quieter amber line says desktop control is stopped, with **Resume desktop control**
-   (`POST /desktop/resume`). A failed stop keeps the banner and says to use "Stop all" or the
-   tray's kill switch.
+   (`POST /desktop/resume`). That line follows a stop from any shell (the banner, the tray, the
+   route): when a frame turns control off the UI re-reads the status. A revoke by the
+   Extensions panel (the capability disabled or removed, reason "… in the Extensions panel")
+   shows no line: the panel is where it is undone, and resume alone would not make desktop
+   control work while the row is disabled. A failed stop keeps the banner and says to use
+   "Stop all" or the tray's kill switch.
 5. **The UI re-reads the state on every (re)connect.** The store's `desktopControl` follows
    each `desktop.indicator` frame, and is re-read from `GET /desktop/status` at bootstrap,
    every time the `/events` stream reaches `sse` (first open and every reopen), on
    `extension.changed` (a panel toggle revokes or resumes) and on every poll in polling mode
    (the poller turns the status into the frame it stands for, `indicatorFromStatus`). A
-   daemon without the desktop routes, or a failed read, leaves the store unchanged.
+   daemon without the desktop routes, or a failed read, leaves the store unchanged. **Frames
+   and reads are ordered** (`desktopOrder` in the store): the read and the stream are two
+   connections, so an answer the daemon gave just before an `on` frame can arrive after it,
+   and the controller sends no further frame for the same burst. A read takes a token when it
+   starts and its answer applies only if no frame and no later read landed since; frames
+   (and the daemon's answer to a stop or resume) always apply.
 6. **The desktop shell's tray.** `ShellState.desktop` (`state.rs`, `DesktopControl`) is set
    from the shell's own `/events` subscription (ADR 0031) by `DesktopControl::apply`, and
-   re-read with `actions::probe_desktop` (`GET /desktop/status`) every time that stream opens.
+   re-read with `actions::probe_desktop` (`GET /desktop/status`) every time that stream opens,
+   ordered against the frames the same way as in the UI (`ShellState::begin_desktop_read`,
+   `apply_desktop_read`, `apply_desktop_frame`).
    `tray_view` derives: the tooltip's first line `DESKTOP CONTROL ACTIVE: <app> (session
    <id>)`, the icon title `Desktop control active (<app>)` (shown next to the icon by Linux
    app indicators; no-op elsewhere), an item `Desktop control: active (<app>)` (enabled; opens

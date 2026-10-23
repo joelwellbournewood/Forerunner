@@ -196,7 +196,12 @@ control, which a panel toggle revokes or resumes); `desktop.indicator` sets `des
 (`desktopControlFromIndicator`), and because a frame sent while the stream was down is lost,
 `refreshDesktopControl` re-reads `GET /desktop/status` at bootstrap and every time `onMode`
 reports `sse` (first open and every reopen), and the polling fallback turns the status into
-the frame it stands for (`indicatorFromStatus`, spec S.32, ADR 0067); `restart.requested` sets `restart` (the shell shows a
+the frame it stands for (`indicatorFromStatus`, spec S.32, ADR 0067). The read and the stream
+are two connections, so an answer given before a frame can arrive after it: the store orders
+them (`desktopOrder`; a `desktopRead` action takes a token, and the read's answer applies only
+if no frame or later read landed since), and a stale "off" never hides a running burst's
+banner. When a frame turns control off, `refreshDesktopControl` re-reads the status so a stop
+from any shell (the tray included) shows the "stopped" line; `restart.requested` sets `restart` (the shell shows a
 banner on every page) until a heartbeat arrives from a daemon on the target version. When
 `EventSource` is missing (jsdom) or closes, the helper polls every 5 s and retries SSE every
 30 s; `onMode` reports `connecting | sse | polling | closed`. Chat uses `streamChat()` over
@@ -208,7 +213,10 @@ it, `error` frames become `ApiError`; a plain JSON `ChatReplyView` is accepted a
 `createStore(config, storage)` holds `UiState` (`connection`, `me`, `agents`, `projects`,
 `activeProjectId`, `blockingCount`, `killActive`, `theme`, `restart`, `extensionsVersion`,
 `desktopControl`: `{ active, app, sessionId, agentId, since, revoked }` or null before the
-daemon said anything);
+daemon said anything, set from a frame by `desktopControlFromIndicator` and from a status by
+`desktopControlFromStatus`, where `revoked` is a stop the banner can resume and never a
+revoke by the Extensions panel (reason "… disabled|removed in the Extensions panel"); and
+`desktopOrder`, the frame/read order above);
 React reads it with `useUiState(selector)` over `useSyncExternalStore` (selectors must return
 stable values). `activeProject` and `theme` persist in `localStorage` under
 `forerunner.ui.<installId>.<name>` (`lib/storage.ts`, wrapped in try/catch; `memoryStorage()`
@@ -246,8 +254,10 @@ page and through navigation), `shell/DesktopControlBanner.tsx` shows desktop con
 unknown), the application ("the desktop" until the controller names one) and the session as
 a link to `/sessions/:id`, with "Stop desktop control" (`POST /desktop/revoke`: interrupts and
 refuses desktop actions until resumed; the sessions keep running, unlike "Stop all"). After a
-stop an amber line says desktop control is stopped, with "Resume desktop control"
-(`POST /desktop/resume`); a failed stop keeps the banner with the error.
+stop (from the banner, the tray or the route) an amber line says desktop control is stopped,
+with "Resume desktop control" (`POST /desktop/resume`); a revoke by the Extensions panel shows
+no such line (the panel is where it is undone, and resume alone would not undo it). A failed
+stop keeps the banner with the error.
 `Ctrl/Cmd+K` opens the palette (`shell/commands.ts` builds navigation, "Switch project: …", New
 project, Stop all/Resume, theme and shortcuts commands; `filterCommands` matches every word).
 Shortcuts (`shell/shortcuts.ts`): `g h` Home, `g i` Inbox, `g s` Settings, `g p` active
@@ -447,10 +457,14 @@ does: no banner while off; an `on` frame showing the banner above the header, hi
 naming the agent, the app and the session with its link, `off` hiding it without a "stopped"
 line; an app becoming known updating it and "the desktop" without one; the banner on every
 page through navigation; a missed `on` and a missed `off` corrected by the re-read when the
-stream reopens; the banner at start-up from the bootstrap read; "Stop desktop control"
+stream reopens; a re-read answered before a newer `on` frame and landing after it dropped
+(the banner stays); the banner at start-up from the bootstrap read; "Stop desktop control"
 posting `/desktop/revoke` with its reason and not `/kill`, the banner gone and resume posting
-`/desktop/resume`; a failed stop keeping the banner; polling reading the indicator from the
-status view). `sse` also parses `desktop.indicator` (on with names, off, a malformed one
+`/desktop/resume`; a stop from the tray offering resume at once and a revoke by the
+Extensions panel showing no stopped line; a failed stop keeping the banner; polling reading
+the indicator from the status view). `store` also orders desktop frames and reads (a read
+started before a frame or a later read is dropped) and maps a panel revoke to `revoked:
+false`. `sse` also parses `desktop.indicator` (on with names, off, a malformed one
 dropped).
 
 Playwright (`e2e/*.spec.ts`, one worker, 6-minute global budget): home shows two projects and
@@ -607,7 +621,10 @@ paused]", preceded while desktop control is on by a first line `DESKTOP CONTROL 
 is `Desktop control active (<app>)` while on and unset when off. While the daemon is
 unreachable the last report stays, marked "last reported", with stop disabled. The state is
 `ShellState.desktop` (`state::DesktopControl`, `apply` replaces every name on `on` and
-clears them on `off`); `<app>` is "the desktop" until the controller names one. Left-click opens the window. Closing the window
+clears them on `off`), set through `ShellState::apply_desktop_frame` (a frame, the stop's
+answer) and `apply_desktop_read` (the re-read, applied only if no frame or later read landed
+since `begin_desktop_read`, so an answer that crossed an `on` frame never clears the tray);
+`<app>` is "the desktop" until the controller names one. Left-click opens the window. Closing the window
 hides it; the shell keeps running in the tray (`RunEvent::ExitRequested` without a code is
 prevented).
 
@@ -720,12 +737,13 @@ safe routes, navigate script, navigation policy); `window_state` (monitor check,
 file round trip); `state` (tray view for unreachable, kill/resume, email availability and
 toggle, busy, desktop control on (title, tooltip first line, item, stop enabled) and cleared
 on off, "the desktop" without an app and a new `on` replacing the names, the last report kept
-but not stoppable while unreachable, when a restart announcement starts the external watch, `Debug` hides the
+but not stoppable while unreachable, a status read never overwriting a newer frame (and the
+later of two reads winning), when a restart announcement starts the external watch, `Debug` hides the
 token); `supervisor` (log path, spawn failure logged); `events` (reconnect backoff);
 `secret`; `env`; `lib` (install id persisted, 0600). The Tauri glue (window building, tray
 wiring, dialogs) is exercised by `tauri dev` and the CI build, not by unit tests. Last run
-2026-10-23 on Linux (item w2-s32-indicator): `cargo fmt --check` clean,
-`cargo clippy --all-targets -- -D warnings` clean, `cargo test` 73 passed, 0 failed.
+2026-10-23 on Linux (item w2-s32-indicator, review): `cargo fmt --check` clean,
+`cargo clippy --all-targets -- -D warnings` clean, `cargo test` 74 passed, 0 failed.
 
 ### Known issues
 

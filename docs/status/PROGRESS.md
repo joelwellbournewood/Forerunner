@@ -18,6 +18,19 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w2-s32-indicator reviewed and fixed)
+- Independent review of `wave/w2-s32-indicator` (`docs/status/reviews/w2-s32-indicator.md`
+  `## Review`): verdict revise, 72. Three findings, all fixed on the branch:
+  1. In the UI, a status re-read answered before a newer `desktop.indicator` frame overwrote
+     it and hid the banner for the whole burst. The store now orders frames and reads
+     (`desktopOrder`).
+  2. The tray had the same race (`ShellState::begin_desktop_read` / `apply_desktop_read`).
+  3. The "stopped" line followed any revoke, the Extensions panel's included, and missed a
+     tray stop. It now follows stops only, and the end of control re-reads the status.
+
+  ADR 0067 points 4 to 6 are amended. Tests: `desktop-indicator.test.tsx` 11 (from 9), two
+  more `store.test.ts` cases, `cargo test` 74 (from 73). Not merged yet.
+
 ### 2026-10-23 (item w2-s32-indicator: the desktop-control indicator in the shells, S.32)
 - Built on `wave/w2-s32-indicator` from b1804e3 (ADR 0067); builder-verified, not yet
   independently reviewed or merged. `apps/ui`: `DesktopControlBanner` above the header on
@@ -200,8 +213,8 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    `wip:` commit is unreviewed and unverified, so start from its diff, not its claims.
 3. Build the unbuilt items one at a time, each with an independent review before the merge
    (the BLOCKERS.md row of each names the gap and the fix): w2-chat-memory (J.1, O.2),
-   w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32; built on its branch
-   2026-10-23, awaiting the review and the merge), w2-s12-unlock-card (S.12), w4-fcm-sender (R.6, the service side), w3-c5-specialist-approval (C.5),
+   w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32; built and reviewed on
+   its branch 2026-10-23, the findings fixed, awaiting the merge), w2-s12-unlock-card (S.12), w4-fcm-sender (R.6, the service side), w3-c5-specialist-approval (C.5),
    w3-d4-specialist-settings (D.4), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
    w3-r5-phone (R.5), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay

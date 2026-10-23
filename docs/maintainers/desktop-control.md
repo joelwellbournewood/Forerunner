@@ -197,8 +197,8 @@ What renders it (ADR 0067; `apps.md` has the details):
 
 | Shell | What it shows while on | Where it learns it | Stop |
 | --- | --- | --- | --- |
-| `apps/ui` (the desktop window) | `DesktopControlBanner` above the header on every page: white on red, `role="alert"`, the agent's name, the app ("the desktop" until named) and the session as a link | each `desktop.indicator` frame; `GET /desktop/status` at bootstrap, on every (re)opened stream, on `extension.changed` and on every poll | "Stop desktop control" = `POST /desktop/revoke`; then "Resume desktop control" = `POST /desktop/resume` |
-| `apps/desktop` tray | tooltip first line `DESKTOP CONTROL ACTIVE: <app> (session <id>)`, icon title `Desktop control active (<app>)`, item `Desktop control: active (<app>)` | the shell's own `/events` (`sse.rs` `DesktopIndicator`, `state.rs` `DesktopControl::apply`); `GET /desktop/status` on every (re)opened stream (`actions::probe_desktop`) | tray item "Stop desktop control" = `POST /desktop/revoke` |
+| `apps/ui` (the desktop window) | `DesktopControlBanner` above the header on every page: white on red, `role="alert"`, the agent's name, the app ("the desktop" until named) and the session as a link | each `desktop.indicator` frame; `GET /desktop/status` at bootstrap, on every (re)opened stream, on `extension.changed`, when control ends and on every poll; a read answered before a newer frame is dropped | "Stop desktop control" = `POST /desktop/revoke`; after any stop (not a panel revoke) "Resume desktop control" = `POST /desktop/resume` |
+| `apps/desktop` tray | tooltip first line `DESKTOP CONTROL ACTIVE: <app> (session <id>)`, icon title `Desktop control active (<app>)`, item `Desktop control: active (<app>)` | the shell's own `/events` (`sse.rs` `DesktopIndicator`, `state.rs` `DesktopControl::apply`); `GET /desktop/status` on every (re)opened stream (`actions::probe_desktop`), dropped if a frame landed meanwhile | tray item "Stop desktop control" = `POST /desktop/revoke` |
 | Android, approvals web | nothing: they read the state service, not the PC daemon's `/events`; control runs on the PC | — | — |
 
 Off clears every trace: the banner goes, the tray title is unset, the item reads
@@ -288,7 +288,8 @@ store and detection.
   process on Linux, a fake proc dir elsewhere); Windows argv (`-File <temp script>`, base64
   arguments, scripts on disk unchanged by input, never `-Command`), chunked SendKeys with a
   scaled timeout, SendKeys escaping and key mapping, JSON parsing, script directory lifecycle.
-- `desktop-controller.test.ts`: indicator on/off order and idle timeout, off on `endRun`, off
+- `desktop-controller.test.ts` (the panel revoke's reason, "desktop-control disabled in the
+  Extensions panel", is pinned: the UI reads it to leave that revoke to the panel): indicator on/off order and idle timeout, off on `endRun`, off
   and refusal on revoke, live revoke interrupting an in-flight action and dropping a queued
   one, typing cut short (timeout or revoke) audited with `typed N of M characters` and the
   gate reason kept, kill switch stop and frozen state, registry disable/enable, the gate matrix
