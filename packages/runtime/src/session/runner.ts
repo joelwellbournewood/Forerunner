@@ -615,11 +615,7 @@ export class SessionRunner {
       // plan (no task ready, or the approved tasks were done meanwhile) asks nothing: there is
       // nothing to approve, and the session ends `completed` having run nothing.
       const approval = planApprovalOf(opts.planApproved, plan.items);
-      if (
-        (autonomy === 0 || autonomy === 1) &&
-        approval !== "approved" &&
-        plan.items.length > 0
-      ) {
+      if ((autonomy === 0 || autonomy === 1) && approval !== "approved" && plan.items.length > 0) {
         const changed = approval === "changed";
         const approvedPlanId = typeof opts.planApproved === "string" ? opts.planApproved : null;
         const planId = planIdOf(session.id, plan.items);
