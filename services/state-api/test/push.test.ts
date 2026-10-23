@@ -565,6 +565,21 @@ describe("push fan-out from the state service (spec R.6)", () => {
     expect(health.push.counters.expired).toBe(2);
   });
 
+  it("one token on two device rows (a re-pair) is sent once and cleared from both when dead", async () => {
+    const first = await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
+    const second = await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
+    await h.store.humanRequest.insert({ human_id: h.seed.ada.id, kind: "decision", why: "x" });
+    await h.tick();
+    expect(h.google.sent.map((s) => s.message.token)).toEqual([PHONE_TOKEN]);
+    h.google.script(PHONE_TOKEN, [UNREGISTERED]);
+    await h.store.humanRequest.insert({ human_id: h.seed.ada.id, kind: "decision", why: "y" });
+    await h.tick();
+    expect((await h.store.device.get(first.deviceId))?.push_token).toBeNull();
+    expect((await h.store.device.get(second.deviceId))?.push_token).toBeNull();
+    expect(await h.store.auditLog.list({ tool: AUDIT_TOOL_TOKEN_CLEARED })).toHaveLength(2);
+    expect(h.google.attempts.filter((a) => a.token === PHONE_TOKEN)).toHaveLength(2);
+  });
+
   it("a misrouted 404 keeps the device's token and is shown as a failure", async () => {
     const phone = await h.pairPhone(h.seed.ada.id, PHONE_TOKEN);
     h.google.script(PHONE_TOKEN, [{ status: 404, body: "<html>not found</html>" }]);

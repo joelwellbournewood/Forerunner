@@ -243,25 +243,32 @@ export class PushFanout {
     const sender = this.opts.sender;
     if (!sender) return;
     const devices = await this.opts.store.device.pushTargets(notice.humanId);
-    const message = messageOf(notice);
+    // One send per token, not per row: an app install that paired twice (the old row not
+    // revoked) carries the same token on both rows and must not buzz twice.
+    const byToken = new Map<string, DeviceRow[]>();
     for (const device of devices) {
       const token = device.push_token as string;
+      byToken.set(token, [...(byToken.get(token) ?? []), device]);
+    }
+    const message = messageOf(notice);
+    for (const [token, rows] of byToken) {
+      const first = rows[0] as DeviceRow;
       const outcome = await sender.send(token, message);
       if (outcome.status === "sent") {
         this.counters.sent += 1;
         logger.info("push sent", {
           kind: notice.kind,
-          deviceId: device.id,
+          deviceId: first.id,
           attempts: outcome.attempts,
         });
       } else if (outcome.status === "unregistered") {
-        await this.invalidate(device, token, outcome.reason);
+        for (const device of rows) await this.invalidate(device, token, outcome.reason);
       } else {
         this.counters.failed += 1;
         this.lastError = outcome.reason;
         logger.warn("push failed", {
           kind: notice.kind,
-          deviceId: device.id,
+          deviceId: first.id,
           attempts: outcome.attempts,
           reason: outcome.reason,
         });
