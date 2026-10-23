@@ -302,7 +302,13 @@ describe("DesktopController", () => {
     expect(w.controller.status().revoked).toBe(false);
     for (const l of listeners) l({ type: "extension.disabled", name: "desktop-control" });
     await tick();
-    expect(w.controller.status()).toMatchObject({ revoked: true, indicatorOn: false });
+    // The UI reads this reason to leave a panel revoke to the panel (apps/ui store.ts
+    // `desktopControlFromStatus`, ADR 0067): its wording is part of the status contract.
+    expect(w.controller.status()).toMatchObject({
+      revoked: true,
+      indicatorOn: false,
+      revokedReason: "desktop-control disabled in the Extensions panel",
+    });
     expect(isDesktopDenial(await caught(w.controller.typeText(ctx(), "y")), "revoked")).toBe(true);
     for (const l of listeners) l({ type: "extension.enabled", name: "desktop-control" });
     await w.controller.typeText(ctx(), "y");

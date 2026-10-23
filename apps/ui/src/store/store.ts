@@ -43,6 +43,13 @@ export interface UiState {
    * `active`; null until the daemon said anything.
    */
   desktopControl: DesktopControlState | null;
+  /**
+   * The order of what set `desktopControl` (ADR 0067): every frame or fresh answer and every
+   * status read started takes the next number; a read lands only when nothing that came
+   * after it started (a frame, or a later read) has been applied, so a status read that was
+   * answered before a newer frame never overwrites it.
+   */
+  desktopOrder: { next: number; applied: number };
 }
 
 /** What the desktop-control banner shows. */
@@ -52,8 +59,42 @@ export interface DesktopControlState {
   sessionId: string | null;
   agentId: string | null;
   since: string | null;
-  /** Desktop control was stopped from the UI (or the panel) and refuses until resumed. */
+  /**
+   * Desktop control was stopped (the banner, the tray or the revoke route) and refuses until
+   * resumed: the banner offers "Resume". A revoke by the Extensions panel (the capability
+   * disabled or removed) is not counted: the panel is where that is undone.
+   */
   revoked: boolean;
+}
+
+/**
+ * The controller's reason when the Extensions panel revoked it
+ * (`DesktopController.attachExtensionRegistry`: "<name> disabled in the Extensions panel",
+ * "<name> removed in the Extensions panel").
+ */
+const PANEL_REVOKE = /(disabled|removed) in the Extensions panel$/;
+
+/** The store's state for a `GET /desktop/status` answer (bootstrap, a re-read, a stop). */
+export function desktopControlFromStatus(status: {
+  revoked: boolean;
+  revokedReason: string | null;
+  desktopControl: {
+    active: boolean;
+    app: string | null;
+    sessionId: string | null;
+    agentId: string | null;
+    since: string | null;
+  };
+}): DesktopControlState {
+  const c = status.desktopControl;
+  return {
+    active: c.active,
+    app: c.active ? c.app : null,
+    sessionId: c.active ? c.sessionId : null,
+    agentId: c.active ? c.agentId : null,
+    since: c.active ? c.since : null,
+    revoked: status.revoked && !PANEL_REVOKE.test(status.revokedReason ?? ""),
+  };
 }
 
 /** The store's state for one `desktop.indicator` frame; `revoked` is kept from before. */
@@ -83,7 +124,13 @@ export type UiAction =
   | { type: "theme"; theme: ThemePreference }
   | { type: "restart"; restart: RestartRequested | null }
   | { type: "extension.changed" }
-  | { type: "desktopControl"; desktopControl: DesktopControlState | null };
+  /**
+   * A frame or a fresh answer (no `readToken`: always applied), or the answer of a status
+   * read started with `desktopRead` (`readToken`: applied only if nothing newer landed).
+   */
+  | { type: "desktopControl"; desktopControl: DesktopControlState | null; readToken?: number }
+  /** A status read starts: its token is `desktopOrder.next` after this action. */
+  | { type: "desktopRead" };
 
 export const STORAGE_NAMES = { activeProject: "activeProject", theme: "theme" } as const;
 
@@ -113,6 +160,7 @@ export function initialState(config: DaemonConfig, storage: KeyValueStore): UiSt
     restart: null,
     extensionsVersion: 0,
     desktopControl: null,
+    desktopOrder: { next: 0, applied: 0 },
   };
 }
 
@@ -154,8 +202,27 @@ export function reduce(state: UiState, action: UiAction): UiState {
       return { ...state, restart: action.restart };
     case "extension.changed":
       return { ...state, extensionsVersion: state.extensionsVersion + 1 };
-    case "desktopControl":
-      return { ...state, desktopControl: action.desktopControl };
+    case "desktopControl": {
+      const { next, applied } = state.desktopOrder;
+      if (action.readToken !== undefined) {
+        if (action.readToken <= applied) return state;
+        return {
+          ...state,
+          desktopControl: action.desktopControl,
+          desktopOrder: { next, applied: action.readToken },
+        };
+      }
+      return {
+        ...state,
+        desktopControl: action.desktopControl,
+        desktopOrder: { next: next + 1, applied: next + 1 },
+      };
+    }
+    case "desktopRead":
+      return {
+        ...state,
+        desktopOrder: { ...state.desktopOrder, next: state.desktopOrder.next + 1 },
+      };
     default:
       return state;
   }

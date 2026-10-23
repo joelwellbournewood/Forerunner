@@ -175,6 +175,39 @@ describe("desktop control banner (S.32)", () => {
     await waitFor(() => expect(screen.queryByTestId("desktop-control-banner")).toBeNull());
   });
 
+  it("a status read that was answered before a newer frame does not overwrite it (reconnect race)", async () => {
+    const h = mount("/inbox");
+    await ready(h);
+    const source = h.sources[0];
+    if (!source) throw new Error("no stream");
+    // The daemon answers the re-read while control is still off, but the answer reaches the
+    // UI only after the `on` frame sent right afterwards (two connections, no ordering).
+    const real = h.client.desktopStatus.bind(h.client);
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let reads = 0;
+    h.client.desktopStatus = async (signal) => {
+      reads++;
+      const answer = await real(signal);
+      await held;
+      return answer;
+    };
+    source.drop();
+    await waitFor(() => expect(h.store.getState().connection.streamMode).toBe("connecting"));
+    source.reopen();
+    await waitFor(() => expect(reads).toBe(1));
+    // let the read reach the fake daemon before control starts
+    await new Promise((r) => setTimeout(r, 10));
+    h.daemon.setDesktopControl({ app: "code", sessionId: "sess_2", agentId: "agent_alice" });
+    await screen.findByTestId("desktop-control-banner");
+    release();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.getByTestId("desktop-control-banner")).toHaveTextContent("code");
+    expect(h.store.getState().desktopControl?.active).toBe(true);
+  });
+
   it("shows the banner at start-up when desktop control is already active (bootstrap read)", async () => {
     const harness = createHarness();
     harness.daemon.setDesktopControl(
@@ -212,6 +245,32 @@ describe("desktop control banner (S.32)", () => {
     await user.click(screen.getByTestId("desktop-control-resume"));
     await waitFor(() => expect(postedCalls(h, "/desktop/resume")).toHaveLength(1));
     await waitFor(() => expect(screen.queryByTestId("desktop-control-stopped")).toBeNull());
+  });
+
+  it("a stop from the tray offers resume at once; a revoke by the Extensions panel shows no stopped line", async () => {
+    const h = mount("/");
+    await ready(h);
+    const source = h.sources[0];
+    if (!source) throw new Error("no stream");
+    h.daemon.setDesktopControl({ app: "code", sessionId: "sess_2", agentId: "agent_alice" });
+    await screen.findByTestId("desktop-control-banner");
+    // The tray's "Stop desktop control" revokes on the daemon: the window only sees the off frame.
+    h.daemon.state.desktop.revoked = true;
+    h.daemon.state.desktop.revokedReason = "stopped from the tray";
+    h.daemon.setDesktopControl(null);
+    expect(await screen.findByTestId("desktop-control-stopped")).toBeInTheDocument();
+    expect(screen.queryByTestId("desktop-control-banner")).toBeNull();
+    // The capability disabled in the Extensions panel revokes it too: the panel is where that
+    // is undone, so no line nags on every page and no "Resume" pretends to undo it.
+    h.daemon.state.desktop.revokedReason = "desktop-control disabled in the Extensions panel";
+    source.drop();
+    await waitFor(() => expect(h.store.getState().connection.streamMode).toBe("connecting"));
+    source.reopen();
+    await waitFor(() =>
+      expect(h.store.getState().desktopControl).toMatchObject({ active: false, revoked: false }),
+    );
+    expect(screen.queryByTestId("desktop-control-stopped")).toBeNull();
+    expect(screen.queryByTestId("desktop-control-resume")).toBeNull();
   });
 
   it("a failed stop keeps the banner and says so", async () => {

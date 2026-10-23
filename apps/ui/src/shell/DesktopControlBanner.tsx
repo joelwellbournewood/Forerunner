@@ -1,8 +1,8 @@
 import { useCallback, useState } from "react";
 import { Link } from "react-router";
-import { describeError } from "../api/client.ts";
+import { type DesktopStatusView, describeError } from "../api/client.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
-import type { DesktopControlState } from "../store/store.ts";
+import { desktopControlFromStatus } from "../store/store.ts";
 
 /**
  * Desktop control's on-screen indicator in the app (spec S.32; ADR 0067): a full-width,
@@ -21,12 +21,10 @@ export function DesktopControlBanner() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The daemon's answer to the stop or resume is fresh: applied like a frame.
   const apply = useCallback(
-    (next: { revoked: boolean; desktopControl: Omit<DesktopControlState, "revoked"> }) =>
-      store.dispatch({
-        type: "desktopControl",
-        desktopControl: { ...next.desktopControl, revoked: next.revoked },
-      }),
+    (status: DesktopStatusView) =>
+      store.dispatch({ type: "desktopControl", desktopControl: desktopControlFromStatus(status) }),
     [store],
   );
 

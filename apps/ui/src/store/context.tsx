@@ -7,13 +7,14 @@ import {
   useSyncExternalStore,
 } from "react";
 import { type DaemonClient, describeError } from "../api/client.ts";
+import { type StreamOptions, type StreamSubscription, subscribeDaemonEvents } from "../api/sse.ts";
 import {
-  indicatorFromStatus,
-  type StreamOptions,
-  type StreamSubscription,
-  subscribeDaemonEvents,
-} from "../api/sse.ts";
-import { defaultAgent, desktopControlFromIndicator, type UiState, type UiStore } from "./store.ts";
+  defaultAgent,
+  desktopControlFromIndicator,
+  desktopControlFromStatus,
+  type UiState,
+  type UiStore,
+} from "./store.ts";
 import { applyTheme, watchSystemTheme } from "./theme.ts";
 
 interface AppContextValue {
@@ -67,13 +68,14 @@ export function AppProvider({
             } else if (event.event === "restart.requested") {
               store.dispatch({ type: "restart", restart: event.data });
             } else if (event.event === "desktop.indicator") {
+              const previous = store.getState().desktopControl;
               store.dispatch({
                 type: "desktopControl",
-                desktopControl: desktopControlFromIndicator(
-                  event.data,
-                  store.getState().desktopControl,
-                ),
+                desktopControl: desktopControlFromIndicator(event.data, previous),
               });
+              // Control just ended: re-read whether it was a stop (from this window, the tray
+              // or the route), so the banner can offer "Resume" whoever stopped it.
+              if (previous?.active && !event.data.on) void refreshDesktopControl(client, store);
             } else if (event.event === "heartbeat") {
               store.dispatch({
                 type: "connection",
@@ -216,17 +218,17 @@ export async function refreshDesktopControl(
   store: UiStore,
   signal?: AbortSignal,
 ): Promise<void> {
+  // The read and the `/events` stream are two connections: a frame sent after the daemon
+  // answered can arrive first. The token drops this answer if a frame (or a later read)
+  // landed meanwhile, so a stale "off" never hides the banner of a burst already running.
+  store.dispatch({ type: "desktopRead" });
+  const readToken = store.getState().desktopOrder.next;
   try {
     const status = await client.desktopStatus(signal);
     store.dispatch({
       type: "desktopControl",
-      desktopControl: {
-        ...desktopControlFromIndicator(
-          indicatorFromStatus(status.desktopControl),
-          store.getState().desktopControl,
-        ),
-        revoked: status.revoked,
-      },
+      desktopControl: desktopControlFromStatus(status),
+      readToken,
     });
   } catch {
     // no desktop routes on this daemon, or unreachable for the moment
