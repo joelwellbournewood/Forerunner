@@ -55,6 +55,7 @@ export const fakeEstimate: CostEstimatePort = (est) =>
 
 export interface WorldOptions {
   mode?: EmailMode;
+  /** Email commands on (default: on unless `mode` is off, where ADR 0081 refuses them). */
   commands?: boolean;
   approvals?: EmailApprovalPort;
   replies?: ScriptedReply[];
@@ -137,7 +138,8 @@ export async function emailWorld(opts: WorldOptions = {}): Promise<World> {
       ...(opts.signature !== undefined ? { signature: { enabled: opts.signature } } : {}),
     },
     commands: {
-      enabled: opts.commands ?? true,
+      // ADR 0081: commands cannot be on at sending mode off, so they default on elsewhere only.
+      enabled: opts.commands ?? (opts.mode ?? "full_discretion") !== "off",
       registeredHumanAddress: OWNER,
       marker: MARKER,
       ...(opts.dailyTaskCap !== undefined ? { dailyTaskCap: opts.dailyTaskCap } : {}),

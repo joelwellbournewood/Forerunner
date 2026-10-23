@@ -27,22 +27,6 @@ import type { ModelProvider, RunPricing } from "@forerunner/runtime";
 import type { StateStore } from "@forerunner/state";
 import { SecretResolver, type Vault } from "@forerunner/vault";
 
-/**
- * The agent mailbox watcher (spec "Email commands: tasks by email, run in the cloud"; T.2,
- * T.10, T.13). Composes the email module the way the orchestrator does (email.md, "Ports to
- * wire") around the agent's own mailbox and feeds every inbound message to
- * `EmailCommandHandler`, which applies the verification chain in code (owner's address, DKIM,
- * SPF, marker or thread) and acts on obeyed mail. A task command starts a cloud session through
- * the runner's `StartCloudSessionPort` with the per-email cost cap and the email autonomy level;
- * the handler acknowledges within a minute and the runner sends the completion summary when
- * the session ends.
- *
- * Checking: IMAP IDLE push when the host offers it, the configured poll interval otherwise
- * (`FORERUNNER_RUNNER_MAIL_CHECK_MS`, default five minutes). `FORERUNNER_RUNNER_MAIL_PUSH=false`
- * (`push: false`) never opens the push connection: the watcher lists the unseen messages at the
- * poll interval itself (`pollOnly`). The mailbox credentials are secret references resolved from
- * the runner's vault at call time; values never sit on the watcher.
- */
 /** Why the watcher does not start at sending mode off (log line and health view). */
 export const EMAIL_WATCH_MODE_OFF_REASON =
   "the sending mode is off: email commands need a sending mode other than off, because at off the agent could not answer them";
@@ -78,6 +62,22 @@ export interface EmailWatchDeps {
   onOutcome?: (outcome: CommandOutcome, message: InboundEmail) => void;
 }
 
+/**
+ * The agent mailbox watcher (spec "Email commands: tasks by email, run in the cloud"; T.2,
+ * T.10, T.13). Composes the email module the way the orchestrator does (email.md, "Ports to
+ * wire") around the agent's own mailbox and feeds every inbound message to
+ * `EmailCommandHandler`, which applies the verification chain in code (owner's address, DKIM,
+ * SPF, marker or thread) and acts on obeyed mail. A task command starts a cloud session through
+ * the runner's `StartCloudSessionPort` with the per-email cost cap and the email autonomy level;
+ * the handler acknowledges within a minute and the runner sends the completion summary when
+ * the session ends.
+ *
+ * Checking: IMAP IDLE push when the host offers it, the configured poll interval otherwise
+ * (`FORERUNNER_RUNNER_MAIL_CHECK_MS`, default five minutes). `FORERUNNER_RUNNER_MAIL_PUSH=false`
+ * (`push: false`) never opens the push connection: the watcher lists the unseen messages at the
+ * poll interval itself (`pollOnly`). The mailbox credentials are secret references resolved from
+ * the runner's vault at call time; values never sit on the watcher.
+ */
 export class EmailWatch {
   private readonly logger = log("cloud-runner:email");
   readonly settings: EmailSettingsStore;

@@ -9,7 +9,7 @@
  * ADR 0013 and docs/maintainers/email.md. Mailbox credentials are secret references
  * (`secret:<name>`), never values: the schema refuses anything else.
  */
-import { type Clock, ForerunnerError, errorMessage, log, shortToken } from "@forerunner/platform";
+import { type Clock, errorMessage, ForerunnerError, log, shortToken } from "@forerunner/platform";
 import type { AuditLogRepo, ExtensionRepo, ExtensionRow, JsonObject } from "@forerunner/state";
 import { z } from "zod";
 import { EMAIL_SETTINGS_TOOL } from "./sent-log.ts";
