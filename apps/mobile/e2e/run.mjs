@@ -40,7 +40,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { connectPage, describeFailure } from "./cdp.mjs";
+import { connectPage, describeFailure, describePage } from "./cdp.mjs";
 import { forwardPageConsole } from "./webview-console.mjs";
 
 // The runner's one clock (Node-only tooling, ADR 0054): every wait here and the CDP driver's
@@ -62,6 +62,8 @@ const args = parseArgs(process.argv.slice(2));
 const require_ = (fromDir) => createRequire(join(fromDir, "package.json"));
 const required = process.env.FR_ANDROID_REQUIRE === "1";
 const cleanups = [];
+/** The attached page, for the `page:` lines a failure prints. */
+let attachedPage = null;
 
 function parseArgs(argv) {
   const out = {
@@ -331,6 +333,11 @@ async function smoke(page, stateUrl, adminToken, timeoutMs) {
   await page.getByTestId("m-pair-name").fill("Emulator phone");
   await page.getByTestId("m-pair-submit").click();
   await page.getByRole("heading", { name: "Projects" }).waitFor({ timeout: timeoutMs });
+  // The heading shows as soon as the phone is paired; Home's project list arrives after it.
+  // Wait for the list, so the next step does not navigate while the page still grows (the
+  // emulator's WebView keeps the bottom nav in the flow under that list: android.yml run
+  // 40000764444 clicked "Inbox" while it moved and the click landed on Home).
+  await page.getByTestId("m-project-card").first().waitFor({ timeout: timeoutMs });
   const paired = await state();
   assert(paired.devices.length === 1, "one device paired");
   assert(paired.devices[0].name === "Emulator phone", "device name from the form");
@@ -338,6 +345,7 @@ async function smoke(page, stateUrl, adminToken, timeoutMs) {
 
   // 2. Approve a request; the answer is signed by the shell's key.
   await page.getByTestId("m-nav").getByText("Inbox").click();
+  await page.getByRole("heading", { name: "Inbox", exact: true }).waitFor({ timeout: timeoutMs });
   const first = page.getByTestId("m-request").first();
   await first.waitFor({ timeout: timeoutMs });
   assert((await first.getAttribute("data-request-id")) === "req_merge", "blocking request first");
@@ -366,6 +374,7 @@ async function smoke(page, stateUrl, adminToken, timeoutMs) {
 
   // 4. Scenario 9: one sentence, ONE card, confirm, the PC starts, the log shows it with Undo.
   await page.getByTestId("m-nav").getByText("Remote").click();
+  await page.getByRole("heading", { name: "Remote control" }).waitFor({ timeout: timeoutMs });
   await page.getByTestId("m-say").fill(SENTENCE);
   await page.getByTestId("m-say-submit").click();
   const card = page.getByTestId("m-card");
@@ -391,6 +400,7 @@ async function smoke(page, stateUrl, adminToken, timeoutMs) {
   console.log("PASS: scenario 9 (one card, confirm, PC started)");
 
   await page.getByRole("link", { name: "Change log" }).click();
+  await page.getByRole("heading", { name: "Change log" }).waitFor({ timeout: timeoutMs });
   const entry = page.getByTestId("m-change-entry");
   await entry.first().waitFor({ timeout: timeoutMs });
   assert((await entry.count()) === 1, "one change log entry");
@@ -499,6 +509,12 @@ async function main() {
   });
   cleanups.push(() => client.close());
   console.log(`PASS: attached to the WebView page ${target.url} (${target.title})`);
+  attachedPage = page;
+  // The WebView's engine version: the API 30 image's WebView predates the CSS the app's
+  // Tailwind v4 stylesheet needs (cascade layers, Chrome 99), see apps.md Known issues.
+  console.log(
+    `webview engine: ${await page.evaluate("navigator.userAgent").catch(() => "unknown")}`,
+  );
   // The page's console and uncaught exceptions on this run's stdout (`webview:` lines), over
   // the same page session: a failing step then shows what the app said (android.yml run
   // 39952987240 failed scenario 3 with no page output at all).
@@ -515,6 +531,11 @@ main()
     process.exit(0);
   })
   .catch(async (error) => {
+    // Read the page before the cleanups close its socket.
+    const shown =
+      attachedPage && !(error instanceof Skip)
+        ? await describePage(attachedPage).catch((e) => `unavailable (${e.message})`)
+        : null;
     await cleanup();
     if (error instanceof Skip) {
       if (required) {
@@ -525,7 +546,11 @@ main()
       process.exit(0);
     }
     // A CdpError's stable code and details (the element in the way, the protocol method) go
-    // into the log with the message.
+    // into the log with the message, then what the page showed (route, screen text), so a
+    // wait that times out says which screen the app was on.
     console.error(describeFailure(error));
+    if (shown !== null) {
+      for (const line of String(shown).split("\n")) console.error(`page: ${line}`);
+    }
     process.exit(1);
   });
