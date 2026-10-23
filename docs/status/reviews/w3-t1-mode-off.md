@@ -253,3 +253,83 @@ exported patch, and its output is saved as
 - The B.6 residual was not applied: per the brief it belongs to wave/w1-b6-review.
 - L.3 stays `in progress`, because the real mailbox is still missing (its own BLOCKERS row).
 - CI on Windows has not run this branch; I cannot push from here.
+
+## Review
+
+Stage REVIEW AND FIX, reviewer: independent (managed agent), 2026-10-24. Reviewed the series
+`ccr-4d8a843c-1k9syk..wave/w3-t1-mode-off` (starting commit `b124321`, merge base with the base
+branch `82a6295`; the base has since moved to `f1948dd`). `git merge-tree --write-tree HEAD
+origin/ccr-4d8a843c-1k9syk` is clean, and the base's own changes to the touched files
+(`compose.ts`: the J.9 merge step; `email-commands.test.ts`: a fixture guard; the ADR index row
+0062) do not touch the mode-off rule.
+
+**Verdict: revise.** Score: 62/100. The rule is right in the settings store, the gate and the
+watcher, and the tests that exist prove what they claim; but the command registry, the way
+chat, voice, the phone and the agent's own `email_mode_set` tool change the mode, still writes
+the row past the store, so switching to off there leaves commands on with no audit row and no
+notification, and the ADR's "every writer goes through it" is false.
+
+### Requirements checked
+
+- [x] ADR 0081 picks one reading (commands need a sending mode other than off) and records the
+  alternatives; index row present, number free on the base.
+- [x] Turning commands on at mode off is refused by the store with a plain message
+  (`email-settings.test.ts`, `email-routes-wiring.test.ts` 400). Verified by running both.
+- [ ] Switching the mode to off with commands on turns them off **with an audit row and a
+  notification to the owner, on every path**: true through `PUT /agents/:id/email/settings`,
+  false through `email.mode.set` (finding 1).
+- [x] `EmailWatch.start` refuses at mode off with the reason in the log and in `status`
+  (= runner `/health` `email`). Verified the test fails with the branch reverted (build report)
+  and that `runner.ts` exposes `emailWatch.status` in the health view (lines 878, 920).
+- [~] The health view tells the truth after the mode changes under a running watcher
+  (finding 2).
+- [x] Replies to the owner allowed in every other mode: `closeout-email-commands.test.ts`
+  green; `checkSend` unchanged (`email-policy.test.ts` still refuses everything at off).
+- [x] Gate reads `emailCommandsActive`, so a legacy row (commands on at off) obeys nothing
+  (`email-commands.test.ts`).
+- [~] The settings page reads the same validation: the 400 message is shown, but the page
+  keeps showing commands ticked after a mode change to off turned them off (finding 3).
+- [x] B.6 residual not applied (belongs to wave/w1-b6-review).
+- [x] Status rows: T.1 `done` in requirements.md, BLOCKERS T.1 resolved, L.3 updated,
+  PROGRESS entry. Correct once finding 1 is fixed.
+- [x] No security or privacy regression found: the audit row and the notification carry the
+  mode and a fixed sentence, no addresses beyond the human id; secrets untouched.
+
+### Findings
+
+1. **high** — `packages/commands/src/commands/email.ts:60` (`applyMode`, used by `run` at 122
+   and `undo` at 136). `email.mode.set`, the command every chat, voice, phone and agent-tool
+   mode change runs through (spec Q; `email_mode_set` in `tests/e2e/src/gate5-week.ts`),
+   writes the `capability`/`email:<agent>` row directly and never goes through
+   `EmailSettingsStore.update`. Switching the mode to off there keeps `commands.enabled: true`
+   (and the `email-commands` permission and `enabled: true` on the row), writes no
+   `commands_switched_off` audit row and sends no `email_commands_off` notification, so the
+   state ADR 0081 says cannot be stored is stored by the most common writer; the owner is not
+   told; the UI then shows commands on at mode off. ADR 0081 ("which every writer goes
+   through"), `email.md` and the `types.ts` doc comment claim the opposite. Verified with a
+   throwaway test in `packages/commands/test` (deleted): a row at `read_only` with commands on,
+   `email.mode.set {mode: "off"}` done, the row afterwards was
+   `{"settings":{"mode":"off"},"commands":{"enabled":true}}`, permissions
+   `["email:off","email-commands"]`, `enabled: true`, and 0 `email.settings` audit rows. Needed:
+   the command goes through the rule (the daemon's settings store, so the audit row and the
+   notification follow), a fallback that keeps the rule when no store is wired, the change
+   card saying commands go off with it, undo restoring commands with the mode, and a commands
+   test plus a daemon test proving the audit row and the notification.
+2. **low** — `services/cloud-runner/src/email-watch.ts:297` (`handleOne`). The watcher reads
+   the settings once at `start`; after the owner switches the mode to off (or turns commands
+   off) under a running runner, `status` and `/health` keep saying `watching` for commands
+   that are no longer in force until the runner restarts. The gate obeys nothing, so no task
+   starts, but the health view the brief names as the place for the reason is wrong.
+   Verified by reading `start`/`handleOne` (no other read of the settings) and
+   `docs/maintainers/cloud-runner.md`, which states the gap. Needed: the watcher stands down
+   with the reason when a message arrives for commands no longer in force, with a test.
+3. **low** — `apps/ui/src/pages/EmailSettingsPage.tsx:638` (`CommandsForm`) and `:179`
+   (`ModePicker`). The commands checkbox is local state seeded once from
+   `config.commands.enabled` and the form is not keyed on it; after "Apply mode" to off the
+   daemon answers `commands.enabled: false` but the box stays ticked and the note says only
+   "Mode set to Off.", so the owner is not told on the page and a later "Save commands" sends
+   `enabled: true` and gets the 400. Verified by reading the component (the `LimitsForm` next
+   to it is keyed on the mode; `CommandsForm` is not) and the fake daemon's `PUT`
+   (`apps/ui/test/fake-daemon.ts:411`), which does not mirror the rule, so no UI test can see
+   it. Needed: the form follows the stored toggle, the mode note says commands went off, the
+   fake daemon mirrors ADR 0081, and a UI test.
