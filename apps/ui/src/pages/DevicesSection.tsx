@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   type DaemonDeviceView,
   describeError,
@@ -35,6 +35,26 @@ export function splitDevices(devices: DaemonDeviceView[]): {
     active: devices.filter((d) => !d.revoked),
     revoked: devices.filter((d) => d.revoked),
   };
+}
+
+/**
+ * True when the service URL is a loopback address (`localhost`, `127.0.0.0/8`, `::1`): the
+ * daemon reaches the service there, but a phone that scans the QR cannot.
+ */
+export function isLoopbackUrl(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  host = host.replace(/^\[|\]$/g, "");
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "::1" ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+  );
 }
 
 type PairingState =
@@ -115,8 +135,19 @@ function PairingPanel({
                 </span>
               </dd>
             </dl>
+            {isLoopbackUrl(view.serviceUrl) ? (
+              <p
+                className="text-sm text-amber-800 dark:text-amber-200"
+                data-testid="pairing-loopback"
+              >
+                The daemon reaches the state service at a loopback address, which a phone cannot
+                open. Set <code>FORERUNNER_STATE_API_URL</code> to an address the phone can reach
+                (this PC's network name or the service's public URL) and start a new pairing.
+              </p>
+            ) : null}
             <p className="text-xs text-neutral-600 dark:text-neutral-400">
-              The phone makes its own key; it shows up below once the pairing completes.
+              The phone makes its own key; this screen closes and lists it once the pairing
+              completes.
             </p>
             <Button onClick={onDone} data-testid="pairing-done">
               Done
@@ -267,10 +298,13 @@ function DeviceTable({ children }: { children: React.ReactNode }) {
 export function DevicesSection({
   clock = systemClock,
   tickMs = 1000,
+  pollMs = 3000,
 }: {
   /** Injected in tests; the countdown and "last seen" read the time through it. */
   clock?: UiClock;
   tickMs?: number;
+  /** How often the list is re-read while a pairing is shown, to see the new phone arrive. */
+  pollMs?: number;
 }) {
   const client = useClient();
   const list = useAsync((signal) => client.devices(signal), [client]);
@@ -278,10 +312,39 @@ export function DevicesSection({
   const [revoking, setRevoking] = useState<DaemonDeviceView | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const now = useNow(clock, tickMs, pairing.status === "shown");
+  // The device ids known when the pairing started: a new one in the list is the phone that
+  // just paired. Null until a list is known (a pairing started before the first load).
+  const knownIds = useRef<Set<string> | null>(null);
+  const pairingLive =
+    pairing.status === "shown" && Date.parse(pairing.view.expiresAt) > now;
+  const reload = list.reload;
+
+  // While a code is live, re-read the list so the phone shows up without Done or Refresh.
+  useEffect(() => {
+    if (!pairingLive) return;
+    const id = setInterval(reload, pollMs);
+    return () => clearInterval(id);
+  }, [pairingLive, pollMs, reload]);
+
+  const devicesNow = list.data?.devices;
+  useEffect(() => {
+    if (pairing.status !== "shown" || !devicesNow) return;
+    if (knownIds.current === null) {
+      knownIds.current = new Set(devicesNow.map((d) => d.id));
+      return;
+    }
+    const known = knownIds.current;
+    const fresh = devicesNow.find((d) => !d.revoked && !known.has(d.id));
+    if (!fresh) return;
+    knownIds.current = null;
+    setPairing({ status: "idle" });
+    setNote(`${fresh.name} is paired and listed below.`);
+  }, [devicesNow, pairing.status]);
 
   const start = async () => {
     setPairing({ status: "starting" });
     setNote(null);
+    knownIds.current = list.data ? new Set(list.data.devices.map((d) => d.id)) : null;
     try {
       setPairing({ status: "shown", view: await client.startPairing({ kind: "phone" }) });
     } catch (err) {
@@ -294,6 +357,7 @@ export function DevicesSection({
   };
 
   const closePairing = () => {
+    knownIds.current = null;
     setPairing({ status: "idle" });
     list.reload();
   };
@@ -411,7 +475,10 @@ export function DevicesSection({
               result.tokensRevoked === null
                 ? ""
                 : `; ${result.tokensRevoked} session${result.tokensRevoked === 1 ? "" : "s"} ended`;
-            setNote(`${result.device.name} is revoked${tokens}.`);
+            const fallback = result.serviceError
+              ? ` in the shared store (the state service failed: ${result.serviceError}); its next request is refused`
+              : "";
+            setNote(`${result.device.name} is revoked${fallback}${tokens}.`);
             // Show it among the revoked at once, then ask the daemon for the fresh list.
             list.setData((prev) =>
               prev

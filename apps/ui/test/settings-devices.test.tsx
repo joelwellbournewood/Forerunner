@@ -5,7 +5,12 @@ import { describe, expect, it } from "vitest";
 import { qrModules, qrPath } from "../src/components/QrCode.tsx";
 import { formatCountdown } from "../src/lib/clock.ts";
 import { parsePairingPayload } from "../src/mobile/pairing.ts";
-import { DevicesSection, formatPairingCode, splitDevices } from "../src/pages/DevicesSection.tsx";
+import {
+  DevicesSection,
+  formatPairingCode,
+  isLoopbackUrl,
+  splitDevices,
+} from "../src/pages/DevicesSection.tsx";
 import { DEVICES, PAIRING } from "./fixtures.ts";
 import { createHarness, postedCalls, renderWith } from "./helpers.tsx";
 
@@ -30,7 +35,7 @@ function renderDevices(
   clock: Stepped = steppedClock(),
 ) {
   const harness = createHarness({ now: clock.now, ...options });
-  const utils = renderWith(<DevicesSection clock={clock} tickMs={10} />, harness);
+  const utils = renderWith(<DevicesSection clock={clock} tickMs={10} pollMs={20} />, harness);
   return { ...utils, clock };
 }
 
@@ -217,5 +222,64 @@ describe("Settings -> Devices (spec R.2)", () => {
     const error = await screen.findByTestId("pairing-error");
     expect(error).toHaveTextContent("admin token is not in the vault");
     expect(within(error).getByRole("button", { name: /retry/i })).toBeInTheDocument();
+  });
+  it("lists the phone and closes the pairing on its own once the phone completes it", async () => {
+    const user = userEvent.setup();
+    const r = renderDevices();
+    await screen.findAllByTestId("device-row");
+    await user.click(screen.getByTestId("pairing-start"));
+    expect(await screen.findByTestId("qr-code")).toBeInTheDocument();
+    // The phone completes the pairing at the service; the daemon's list now has it.
+    r.daemon.state.devices.unshift({
+      id: "dev_tablet",
+      name: "Alice's tablet",
+      platform: "android",
+      kind: "phone",
+      pairedAt: "2026-10-23T09:02:00.000Z",
+      lastSeen: "2026-10-23T09:02:00.000Z",
+      revoked: false,
+      revokedAt: null,
+      current: false,
+      version: 1,
+    });
+    await waitFor(() => expect(screen.queryByTestId("pairing-panel")).not.toBeInTheDocument());
+    expect(screen.getByTestId("devices-note")).toHaveTextContent(
+      "Alice's tablet is paired and listed below.",
+    );
+    expect(activeRows().map((row) => row.dataset.device)).toContain("dev_tablet");
+    // Nothing was clicked after the start: the list was re-read while the code was live.
+    expect(postedCalls(r, "/devices/pairing")).toHaveLength(1);
+  });
+
+  it("warns that a phone cannot reach a loopback service URL in the QR", async () => {
+    expect(isLoopbackUrl("http://localhost:8787")).toBe(true);
+    expect(isLoopbackUrl("http://127.0.0.1:8787/")).toBe(true);
+    expect(isLoopbackUrl("http://[::1]:8787")).toBe(true);
+    expect(isLoopbackUrl("https://state.example.test")).toBe(false);
+    expect(isLoopbackUrl("http://192.168.1.20:8787")).toBe(false);
+    expect(isLoopbackUrl("not a url")).toBe(false);
+
+    const user = userEvent.setup();
+    renderDevices({ pairing: { serviceUrl: "http://localhost:8787" } });
+    await screen.findAllByTestId("device-row");
+    await user.click(screen.getByTestId("pairing-start"));
+    expect(await screen.findByTestId("pairing-loopback")).toHaveTextContent(
+      "FORERUNNER_STATE_API_URL",
+    );
+  });
+
+  it("says so when the daemon revoked in the shared store because the service failed", async () => {
+    const user = userEvent.setup();
+    renderDevices({ revokeServiceError: "state service unreachable: fetch failed" });
+    await screen.findAllByTestId("device-row");
+    const phone = activeRows().find((row) => row.dataset.device === "dev_phone") as HTMLElement;
+    await user.click(within(phone).getByTestId("device-revoke"));
+    await user.click(
+      within(await screen.findByTestId("revoke-dialog")).getByTestId("revoke-confirm"),
+    );
+    expect(await screen.findByTestId("devices-note")).toHaveTextContent(
+      "Alice's Pixel is revoked in the shared store (the state service failed: state service unreachable: fetch failed); its next request is refused.",
+    );
+    await waitFor(() => expect(activeRows().map((row) => row.dataset.device)).toEqual(["dev_desktop"]));
   });
 });

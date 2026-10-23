@@ -20,6 +20,7 @@ import type {
   MessageView,
   ModelSettingsView,
   ModelSettingValueView,
+  PairingStartView,
   PendingChangeView,
   ProjectCard,
   ReviewsView,
@@ -167,6 +168,13 @@ export interface FakeDaemonOptions {
    * The Devices tests share one stepped clock between the fake and the section.
    */
   now?: () => number;
+  /** Fields that replace the `PAIRING` fixture's in `POST /devices/pairing` (e.g. a loopback URL). */
+  pairing?: Partial<PairingStartView>;
+  /**
+   * Answer revocations like a daemon whose state service failed: the row is revoked in the
+   * shared store (`via: "store"`) and this is the service's failure.
+   */
+  revokeServiceError?: string;
   /**
    * Exact paths the fake answers with an error body and status, e.g. the release feed being
    * unreachable (`{"/updates": {status: 503, code: "unavailable", message: "feed down"}}`).
@@ -2695,6 +2703,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return c.json(
       {
         ...PAIRING,
+        ...options.pairing,
         kind: body.kind ?? "phone",
         expiresAt: new Date(issuedAt + 10 * 60_000).toISOString(),
       },
@@ -2717,7 +2726,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       d.revokedAt = "2026-10-23T09:01:00.000Z";
       d.version++;
     }
-    return c.json({ device: d, tokensRevoked: 1, via: "service", serviceError: null });
+    return c.json(
+      options.revokeServiceError
+        ? { device: d, tokensRevoked: null, via: "store", serviceError: options.revokeServiceError }
+        : { device: d, tokensRevoked: 1, via: "service", serviceError: null },
+    );
   });
 
   // Source discovery (spec A.4): the daemon's /sources routes. A scan of a fresh source
