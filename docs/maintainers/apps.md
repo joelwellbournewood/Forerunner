@@ -412,8 +412,10 @@ cd apps/ui && pnpm test:ui        # Playwright, headless Chromium, fake daemon +
 Unit tests (`test/*.test.ts[x]`): `client` (config resolution, route paths, token header,
 contract validation rejects malformed bodies, `/health` with its sandbox and extensions
 sections, decisions and peers, phase-1 mutations, a missing route vs a typed not_found incl.
-the real daemon's plain-text and empty-body 404, round trips for reviews / memory / commands /
-the change log, the proposed routes, extensions / updates / model watch), `contracts`
+the real daemon's plain-text and empty-body 404 (on `docs`, a route still proposed: the test
+checks it is in `PROPOSED_ROUTES` and not in `DAEMON_ROUTES`), round trips for reviews / memory / commands /
+the change log, the proposed routes, `performance` with its window and the daemon's 400 for a
+`days` that is not decimal digits, extensions / updates / model watch), `contracts`
 (two-sided parse of the extension, updates and estimate fixtures with key-set comparison,
 proposed routes vs `DAEMON_ROUTES`, `parseChangeCard`), `money`, `sse` (parser, every event
 name incl. `extension.changed`, `restart.requested` and `speak.started` (an unknown `player`
