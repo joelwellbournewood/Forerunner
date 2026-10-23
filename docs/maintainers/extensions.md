@@ -30,7 +30,7 @@ ToolSpecs, how classes are inferred and who may be started for discovery.
 | `catalog.ts`, `catalog.json` | the built-in catalog, `CatalogEntry`/`CatalogFile` schemas, `ConnectorTransport` (stdio argv or http), bounded `fetchJson`, remote catalog fetch and `ExtensionCatalog` (`isBuiltin`) |
 | `mcp.ts` | `McpConnector` (connect, list tools and resources, `review()`, `bridgeTools()`, `callTool()`, `close()`, `child`), `StdioMcpTransport` over the platform shell, class and field inference, `assignBridgedNames`, `withoutSecretRefs`, `toolPrefixOf`/`ownsToolName`, `DefaultMcpConnectorFactory` |
 | `approvals.ts` | `HumanRequestExtensionApprovals` (production port over `HumanRequestRepo`) and `MemoryExtensionApprovals` (tests) |
-| `registry.ts` | `ExtensionRegistry`: list, get, add from catalog or URL, approve/deny (two stages), toggle, remove, updatePermissions, recordCost, start/close, bridged tools, tool ownership index; `grantedToolNames()`, `extensionCostKey()`, `ledgerCostByExtension()`, `KillPort`, `EXTENSIONS_KILL_AGENT` |
+| `registry.ts` | `ExtensionRegistry`: list, get, add from catalog or URL, approve/deny (two stages), toggle, remove, updatePermissions, recordCost, start/close, bridged tools, tool ownership index, `enabledCatalogEntries(kind?)` (the enabled catalog rows with their entry, for the voice preferences); `grantedToolNames()`, `extensionCostKey()`, `ledgerCostByExtension()`, `KillPort`, `EXTENSIONS_KILL_AGENT` |
 | `gate.ts` | `ExtensionGate.check()`, `GatedEnforcementHooks` (hooks with the gate in front of `beforeToolCall`), `gateTool()` |
 | `routes.ts` | `createExtensionsRoutes(deps)`: the Hono sub-app for the panel |
 
@@ -39,6 +39,13 @@ ToolSpecs, how classes are inferred and who may be started for discovery.
 Kinds (`EXTENSION_PANEL_KINDS`): `connector` (an MCP server; the state alias `mcp_server` is
 shown as a connector), `skill`, `specialist`, `capability` (browser, email, desktop control,
 cloudflare, voice providers), `model_provider`. `(kind, name)` is unique.
+
+**Voice rows (spec O.4).** Enabling a `voice-*` capability is how the human chooses a voice
+provider: `enabledCatalogEntries("capability")` hands the enabled installed rows with their
+catalog entry (a fresh read each call) to `src/voice/providers.ts`, which takes the entry's
+`voice` provider names and the row's granted `secrets` and resolves the preferred STT and TTS
+at every voice status read and session start (`voice.md`, "Which provider is preferred").
+A pending, disabled or errored row, or one whose entry left the catalog, is not listed.
 
 Panel status is derived from the row: `pending_approval` while `extension.status` is
 `pending_approval` (the view's `pendingStage` says whether the human is asked to allow the
@@ -177,7 +184,9 @@ until a capability module charges through the ledger.
 (`[a-z][a-z0-9-]*`, unique), `kind`, `name`, `description`, `version`, optional `homepage`,
 `transport` (connectors only: `{ type: "stdio", command, args, env, cwd? }` or
 `{ type: "http", url, headers }`), `module` (what implements a capability or provider),
-`permissions` (declared, same shape as the row), optional `requiresAutonomy`, `tags`. The
+`permissions` (declared, same shape as the row), optional `requiresAutonomy`, optional
+`voice` (capabilities only: `{ stt?: [names], tts?: [names] }`, the voice registry's provider
+names the entry stands for, in order of preference; at least one side), `tags`. The
 built-in file ships browser, email, desktop-control, cloudflare, voice-local,
 voice-deepgram, voice-cartesia, voice-elevenlabs, anthropic, mcp-filesystem, mcp-fetch and
 mcp-github. A remote catalog (`FORERUNNER_EXTENSION_CATALOG_URL`, or
@@ -259,7 +268,8 @@ and reserved tool names wired into the registry, a `MemoryVault` whose only valu
 concatenation):
 
 - `extensions-catalog.test.ts`: built-in catalog validates and lists the shipped
-  capabilities; bad entries rejected; remote catalog over `node:http` merges without
+  capabilities and the `voice` provider names of the `voice-*` entries (and none elsewhere);
+  a `voice` field on a non-capability, or naming no provider, is rejected; bad entries rejected; remote catalog over `node:http` merges without
   overriding built-ins and is not built-in; env URL; `fetchJson` refuses by content-length and
   cuts a chunked stream at the cap.
 - `extensions-mcp.test.ts`: inference table (name first, annotations only tighten, conflicts

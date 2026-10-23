@@ -8,9 +8,9 @@ import type {
   LessonOfferView,
   LessonView,
   ReviewView,
-  VoiceStatusView,
   SourceCandidateView,
   SourceView,
+  VoiceStatusView,
 } from "@forerunner/runtime/daemon/api-types";
 import type { AuditExportRecord } from "@forerunner/runtime/daemon/audit-export";
 import type {
