@@ -21,7 +21,11 @@ a place the handover agent "got stuck".
 
 1. **A `monthly` schedule kind.** `dayOfMonth` (1 to 31) and `time` (hh:mm) in the human's time
    zone. A day past the month's end fires on its last day. A month whose day passed while the
-   daemon was down fires once later in that month. The dedupe key is the local `YYYY-MM`. The
+   daemon was down fires once later in that month. A schedule seen for the first time after
+   its day, such as a new install on the 20th or a job just switched on, waits for the next
+   month. Otherwise the calibration, which is on by default, would spend its budget minutes
+   after the first start. `fr jobs` runs a job by hand. The dedupe key is the local
+   `YYYY-MM`. The
    scheduler's fired keys (day keys and month keys, every kind) go through a `FiredKeys` port.
    The daemon passes `fileFiredKeys(<data dir>/scheduler-fired.json)`, so a restart does not
    fire a day's or a month's job twice. Each job also checks its own report file for the

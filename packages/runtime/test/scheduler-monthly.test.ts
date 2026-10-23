@@ -109,17 +109,36 @@ describe("scheduler: monthly kind", () => {
     expect(started).toHaveLength(3);
   });
 
-  it("a schedule added after its day fires once that month, then waits for the next", async () => {
+  it("a schedule first seen after its day waits for the next month (no surprise run at install); one seen before its day catches up after a downtime", async () => {
     const clock = new SimulatedClock("2026-11-15T12:00:00Z");
     const started: string[] = [];
     const s = new Scheduler({ clock, start: async (req) => void started.push(req.reason) });
     s.add(monthly());
     await s.tick();
     await s.tick();
-    expect(started).toHaveLength(1);
+    expect(started).toHaveLength(0);
     await clock.set(new Date("2026-11-30T12:00:00Z").getTime());
     await s.tick();
+    expect(started).toHaveLength(0);
+    await clock.set(new Date("2026-12-01T05:01:00Z").getTime()); // Dec 1, 06:01 CET
+    await s.tick();
+    await s.tick();
     expect(started).toHaveLength(1);
+
+    // Seen on the 10th, the daemon down on the 12th, back on the 14th: the month's run happens.
+    const later = new SimulatedClock("2026-11-10T12:00:00Z");
+    const caught: string[] = [];
+    const t = new Scheduler({
+      clock: later,
+      start: async (req) => void caught.push(req.reason),
+    });
+    t.add(monthly({ dayOfMonth: 12 }));
+    await t.tick();
+    expect(caught).toHaveLength(0);
+    await later.set(new Date("2026-11-14T09:00:00Z").getTime());
+    await t.tick();
+    await t.tick();
+    expect(caught).toEqual([`monthly on day 12 at 06:00 ${TZ}`]);
   });
 
   it("the fired keys survive a restart: a new scheduler on the same store does not fire again this month", async () => {

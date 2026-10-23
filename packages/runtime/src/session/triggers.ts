@@ -256,7 +256,22 @@ export class Scheduler {
         // (or restart, with a persistent `fired` store).
         const day = Math.min(Math.max(1, Math.trunc(s.dayOfMonth ?? 1)), lp.daysInMonth);
         const due = lp.day > day || (lp.day === day && timePassed);
-        if (due && this.fired.get(s.id) !== lp.monthKey) {
+        const last = this.fired.get(s.id);
+        if (last === undefined) {
+          // First sight of the schedule (a new install, a job just switched on). After its day
+          // this month: wait for the next month rather than run (and spend) at once; `fr jobs`
+          // runs it by hand. Before its day, or on it: remember the sighting ("" is "seen,
+          // never fired"), so a daemon that is then down on the day catches up afterwards.
+          if (lp.day > day) {
+            this.fired.set(s.id, lp.monthKey);
+            continue;
+          }
+          if (!due) {
+            this.fired.set(s.id, "");
+            continue;
+          }
+        }
+        if (due && last !== lp.monthKey) {
           this.fired.set(s.id, lp.monthKey);
           await this.request({
             agentId: s.agentId,

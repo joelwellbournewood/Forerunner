@@ -445,7 +445,10 @@ minutes and monthly in the human's time zone; message, CI, PR comment, email, re
 requests; one active session per agent; quiet hours defer non-manual triggers). A `monthly`
 schedule (ADR 0060) fires on `dayOfMonth` (1 to 31, clamped to the month's last day, so 31
 fires on 30 April and 28 February) at `time`, once per local month (`localParts().monthKey`),
-and catches up later in the month when the daemon was down on the day. The last fired day or
+and catches up later in the month when the daemon was down on the day. A schedule seen for the
+first time after its day (a new install on the 20th, a job just switched on) waits for the next
+month instead of running at once; seen before or on its day, it is recorded as seen (`""`) so
+the catch-up applies. The last fired day or
 month of every schedule lives in a `FiredKeys` store: in memory by default, `fileFiredKeys`
 (`<data dir>/scheduler-fired.json`) in the daemon, so a restart after the due time does not run
 a day's or a month's job twice. `SchedulerDeps.refresh` runs before every tick (an error is
@@ -1970,7 +1973,8 @@ the brief's limits with the flagged line's rules in a warning and its words out 
 
 `scheduler-monthly.test.ts` (ADR 0060): on the simulated clock a monthly schedule fires once
 per local month across month boundaries, a day past a short month's end fires on its
-last day, a schedule added after its day fires once that month, the file-backed fired keys
+last day, a schedule first seen after its day waits for the next month while one seen
+before it catches up after a downtime, the file-backed fired keys
 keep a new scheduler from firing again after a restart, quiet hours defer the run and the
 drain runs it once, `refresh` adds and drops schedules before each tick.
 `calibration-job.test.ts` (H.7): the fake provider grades the registry's eval sets through
