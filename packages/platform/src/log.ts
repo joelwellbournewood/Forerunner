@@ -38,15 +38,16 @@ const URL_USERINFO = /([a-z][\w+.-]*:\/\/[^\s:@/]*:)([^\s@/]+)@/gi;
 
 /**
  * Keys whose value is masked whatever its shape: the usual names, `credential(s)`, `passwd`,
- * `passphrase`, and any `*_key` / `*-key` / `*Key` / bare `key` in any case (private, signing,
- * vault, session keys; `PRIVATE_KEY` and the other env-style names of a dumped `process.env`
- * included); a public key is an identifier and stays. The camel-case form keeps its capital
- * `K` so that `monkey` or `hockey` is not a credential.
+ * `passphrase`, and any `*_key` / `*-key` / `*Key` / `*KEY` / bare `key` in any case (private,
+ * signing, vault, session keys; `PRIVATE_KEY` and the other env-style names of a dumped
+ * `process.env` included); a public key is an identifier and stays. The camel-case form needs
+ * a case switch before the suffix (a lower-case letter or digit, then `Key` or `KEY`), so that
+ * `monkey`, `hockey` or `MONKEY` is not a credential while `signingKey` and `signingKEY` are.
  */
 const SECRET_KEY_NAME =
   /(secret|token|password|passwd|passphrase|credential|api[_-]?key|authorization|cookie)/i;
 const KEY_SUFFIX = /(^|[_-])key$/i;
-const CAMEL_KEY_SUFFIX = /[a-z0-9]Key$/;
+const CAMEL_KEY_SUFFIX = /[a-z0-9](Key|KEY)$/;
 const PUBLIC_KEY_NAME = /^public[_-]?key$/i;
 
 export function isSecretKeyName(key: string): boolean {

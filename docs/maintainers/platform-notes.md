@@ -35,13 +35,18 @@ keeps scheme, user and host; the user may be empty, as in `redis://:password@hos
 `amqp://:password@host`). `redactDeep(data)` applies it to every string at any depth and
 replaces the value under a secret-named key whatever its shape: `isSecretKeyName` matches
 `secret`, `token`, `password`, `passwd`, `passphrase`, `credential(s)`, `api_key`,
-`authorization`, `cookie`, and any `*_key` / `*-key` / `*Key` / bare `key` in any case
-(`private_key`, `SIGNING_KEY`, `vaultKey`, the env-style names of a dumped `process.env`),
-except a public key, which is an identifier; a word that merely ends in "key" (`monkey`) is
-not a credential, which is why the camel-case form keeps its capital `K`. There is no depth at which data
-passes in clear: a cycle is cut with `[Circular]` and a subtree deeper than 64 levels becomes
-`[TRUNCATED]`. Sinks are isolated: one that throws never stops the others or the caller.
-`pnpm secrets:scan` checks the repository and the logs afterwards.
+`authorization`, `cookie`, and any `*_key` / `*-key` / `*Key` / `*KEY` / bare `key` in any
+case (`private_key`, `PRIVATE_KEY`, `Private_Key`, `SIGNING_KEY`, `vaultKey`, `signingKEY`, the
+env-style names of a dumped `process.env`), except a public key (`public_key`, `PublicKey`),
+which is an identifier; a word that merely ends in "key" (`monkey`, `MONKEY`) is not a
+credential, which is why the camel-case form needs a case switch before the suffix (a
+lower-case letter or digit, then `Key` or `KEY`). The two rules are pinned by
+`test/security-log-critic.test.ts` (verified 2026-10-23: `PRIVATE_KEY`, `Private_Key`,
+`signingKEY`, `redis://:password@host/0` and `amqp://:pw@h` are masked; `public_key` and
+`monkey` stay). There is no depth at which data passes in clear: a cycle is cut with
+`[Circular]` and a subtree deeper than 64 levels becomes `[TRUNCATED]`. Sinks are isolated:
+one that throws never stops the others or the caller. `pnpm secrets:scan` checks the
+repository and the logs afterwards.
 
 ## How to change it
 
@@ -56,8 +61,10 @@ known shapes and the key-name rule; `security-log.test.ts` is the security revie
 in the message, nested data, an array and an error string, a connection string's password,
 other credential-like key names, a token nested deeper than eight levels, a throwing sink.
 `security-log-critic.test.ts` holds the security critic's follow-ups on that fix: the password
-of a connection string with an empty user, upper-case `*_KEY` names, the key-name rule in
-every case with the public-key exception.
+of a connection string with an empty user (`redis://:password@host/0`, `amqp://:pw@h`),
+upper-case `*_KEY` names, the key-name rule in every case (`PRIVATE_KEY`, `Private_Key`,
+`signingKey`, `signingKEY`) with the public-key exception and the plain words (`monkey`,
+`MONKEY`) that stay.
 
 ## Known issues
 

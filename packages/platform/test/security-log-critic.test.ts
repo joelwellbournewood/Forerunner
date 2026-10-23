@@ -42,15 +42,33 @@ describe("logger: redaction gaps found by the critic", () => {
     expect(out).not.toContain(RAW);
   });
 
+  // `CAMEL_KEY_SUFFIX` wanted exactly `Key`, so a camel-case name with the suffix in capitals
+  // (`signingKEY`, `vaultKEY`: a hand-written env or config name) was not masked while
+  // `signingKey` and `SIGNING_KEY` were. A `Key` or `KEY` after a lower-case letter or digit
+  // is the credential suffix; `MONKEY` and `monkey` have no such case switch and stay.
   it("the key-name rule is case-insensitive, and a public key stays an identifier in every case", () => {
-    for (const name of ["PRIVATE_KEY", "Private_Key", "private_key", "SigningKey", "KEY", "key"]) {
-      expect(isSecretKeyName(name)).toBe(true);
+    for (const name of [
+      "PRIVATE_KEY",
+      "Private_Key",
+      "private_key",
+      "SigningKey",
+      "signingKey",
+      "signingKEY",
+      "vaultKEY",
+      "KEY",
+      "key",
+    ]) {
+      expect(isSecretKeyName(name), name).toBe(true);
     }
+    const camel = JSON.stringify(redactDeep({ signingKEY: RAW, nested: { vaultKEY: RAW } }));
+    expect(camel).not.toContain(RAW);
     for (const name of ["PUBLIC_KEY", "public_key", "publicKey", "PublicKey", "PUBLICKEY"]) {
       expect(isSecretKeyName(name)).toBe(false);
     }
     // Words that merely end in "key" are not credentials.
-    for (const name of ["monkey", "turkey", "hockey"]) expect(isSecretKeyName(name)).toBe(false);
+    for (const name of ["monkey", "turkey", "hockey", "MONKEY", "TURKEY", "HOCKEY"]) {
+      expect(isSecretKeyName(name), name).toBe(false);
+    }
     const out = redactDeep({ PUBLIC_KEY: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPublicFixture" });
     expect(out.PUBLIC_KEY).toContain("ssh-ed25519");
   });
