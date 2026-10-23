@@ -18,6 +18,23 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-r2-devices built: Settings → Devices on the desktop, R.2)
+- Branch `wave/w3-r2-devices`, continuing the earlier attempt's uqr pin and its unverified
+  `wip:` snapshot of the daemon side. The daemon gained `GET /devices`, `POST /devices/pairing`
+  and `POST /devices/:id/revoke` (`packages/runtime/src/devices/`, shapes in
+  `devices/types.ts` through `daemon/api-types`): it asks the state service for a pairing code
+  and revokes through it with the admin token from its vault, which never reaches the app
+  (ADR 0009; no new ADR, the brief named none). The desktop `SettingsPage` has a Devices
+  section: Pair a phone shows the QR of the `fr://` link, the typed code and the expiry
+  counting down on an injectable `UiClock`; the list shows name, kind, paired at, last seen
+  and this device; Revoke asks, then removes the device at once; a daemon without the routes
+  shows the route-missing state (ADR 0037). Tests: `apps/ui/test/settings-devices.test.tsx`
+  (8), a Devices case in `apps/ui/test/settings.test.tsx`, `packages/runtime/test/devices-routes.test.ts`
+  (7), `services/state-api/test/desktop-devices.test.ts` (4, the real service routes end to
+  end). R.2 moves to `done` (184 done, 39 in progress, 5 todo on this branch); the BLOCKERS.md
+  row says what is left (a web-link button, a live list refresh) and the report is
+  `docs/status/reviews/w3-r2-devices.md`. Not reviewed, not merged.
+
 ### 2026-10-23 (item w3-d7-performance rebased onto 38ae8cc)
 - `wave/w3-d7-performance` rebased onto `origin/ccr-4d8a843c-1k9syk` (38ae8cc, after the merges
   of w3-d4-specialist-settings (D.4, ADR 0072) and w3-r5-phone (R.5, ADR 0080)). Conflicts in
@@ -646,7 +663,8 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19; built, reviewed and
    fixed on its branch 2026-10-23, rebased onto 38ae8cc, awaiting the merge), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
-   w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
+   w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2;
+   built on its branch 2026-10-23, review and merge pending),
    w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1; built on its branch, ADR 0081, reviewed and fixed 2026-10-24, awaiting merge), w3-misc-replay-ceiling (scenario 9's replay
    `it.todo`, the executor's ceiling rung). Then an independent review of each of the ten
    w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
