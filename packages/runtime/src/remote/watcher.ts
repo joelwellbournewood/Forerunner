@@ -13,6 +13,13 @@ import type { KillReport, KillScope, KillSwitch } from "../enforcement/killswitc
 import type { CommandLoop, PendingView } from "../loop/commands.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import type { StartEntry, StartRequest } from "../session/triggers.ts";
+import {
+  VOICE_RELAY_MAX_AGE_MS,
+  VOICE_RELAY_MAX_MS,
+  VOICE_RELAY_MAX_PCM_BASE64,
+  type VoiceRelayRequest,
+  type VoiceRelayResult,
+} from "../voice/relay.ts";
 
 /**
  * Remote commands for the PC (spec R.4, R.8, Q.12; ADR 0032 item 4, ADR 0041). A paired phone
@@ -28,6 +35,10 @@ import type { StartEntry, StartRequest } from "../session/triggers.ts";
  *   a `human_request` the phone answers with its biometric (`confirm:high`); the daemon then
  *   applies that answer to the pending card (`syncAnswered`).
  * - `params.kind: "chat"` is one turn of the conversation agent for the principal.
+ * - `params.kind: "voice"` is one push-to-talk turn from the phone (ADR 0080): the recorded
+ *   audio (or the typed line when the phone has no recorder) runs through the daemon's voice
+ *   sessions, the loop behind the `/voice` routes (`VoiceRelay`); the result carries what
+ *   the PC said back. The audio is dropped from the row's params once the turn ran.
  * - a plain `kill` / `stop` / `pause` / `start` (the approvals web, the state service API, the
  *   registry's own remote rows `session.*`) goes through the kill switch, the registry's
  *   `session.pause` (whose port in the daemon, `wiring/session-ports.ts`, ends a session
@@ -119,6 +130,45 @@ export const ChatEnvelope = z.object({
 });
 export type ChatEnvelope = z.infer<typeof ChatEnvelope>;
 
+/**
+ * The phone's push-to-talk turn (ADR 0080): the recording as 16-bit PCM in base64 (at most
+ * `VOICE_RELAY_MAX_MS`), or the typed line when the phone has no recorder; never both.
+ */
+export const VoiceEnvelope = z
+  .object({
+    v: z.literal(1),
+    kind: z.literal("voice"),
+    projectId: z.string().max(200).nullable().optional(),
+    clientId: z.string().max(200).optional(),
+    language: z.string().min(2).max(20).optional(),
+    transcript: z.string().min(1).max(4_000).optional(),
+    audio: z
+      .object({
+        pcm: z.string().min(1).max(VOICE_RELAY_MAX_PCM_BASE64),
+        sampleRate: z.number().int().min(8_000).max(48_000),
+        channels: z.number().int().min(1).max(2),
+        durationMs: z.number().nonnegative().optional(),
+      })
+      .optional(),
+  })
+  .refine((e) => !!e.audio !== !!e.transcript, {
+    message: "a voice envelope carries audio or a transcript, exactly one",
+  })
+  .refine((e) => !e.audio || pcmDurationMs(e.audio) <= VOICE_RELAY_MAX_MS + VOICE_FRAME_SLACK_MS, {
+    message: `a relayed recording is at most ${VOICE_RELAY_MAX_MS / 1000} s`,
+  });
+export type VoiceEnvelope = z.infer<typeof VoiceEnvelope>;
+
+/** One 20 ms frame of slack on the duration bound (a recorder's last partial frame). */
+const VOICE_FRAME_SLACK_MS = 20;
+
+/** The recording's length from its bytes, rate and channels (what the PC would play). */
+function pcmDurationMs(audio: { pcm: string; sampleRate: number; channels: number }): number {
+  const padding = audio.pcm.endsWith("==") ? 2 : audio.pcm.endsWith("=") ? 1 : 0;
+  const bytes = Math.floor((audio.pcm.length * 3) / 4) - padding;
+  return (bytes / (2 * audio.channels * audio.sampleRate)) * 1000;
+}
+
 const ScopeObject = z.object({ agentId: z.string().optional(), sessionId: z.string().optional() });
 
 /** `kill` and `stop` parameters: the runner's shape and the registry's `session.stop` shape. */
@@ -184,6 +234,11 @@ export interface RemoteCommandDeps {
   commands: Pick<CommandLoop, "compose" | "confirm" | "cancel" | "pending" | "activeProject">;
   /** One conversation turn for `kind: "chat"`; null when no model credential is configured. */
   chat: ((req: ChatRequest) => Promise<ChatReply>) | null;
+  /**
+   * One relayed push-to-talk turn for `kind: "voice"` (the daemon's `VoiceRelay` over its
+   * voice sessions); null or absent when this daemon has no voice (the row fails with why).
+   */
+  voice?: ((req: VoiceRelayRequest) => Promise<VoiceRelayResult>) | null;
   /** The principal's conversation session: the activity log a plan's sentence goes to. */
   conversationSessionId: () => Promise<string>;
   /** This daemon's own `desktop` device row (commands can be addressed to it). */
@@ -298,6 +353,9 @@ export class RemoteCommandWatcher {
     } catch (e) {
       outcome = { ok: false, result: { error: errorMessage(e), code: codeOf(e) } };
     }
+    // A relayed recording leaves the shared row on every outcome: run, failed, refused as
+    // malformed, stale or a replay, or from a device that is not allowed (ADR 0080 item 7).
+    await this.dropAudio(row);
     const result: JsonObject = {
       ...outcome.result,
       durationMs: Math.round(this.deps.clock.monotonic() - t0),
@@ -351,11 +409,18 @@ export class RemoteCommandWatcher {
     if (chat.success) {
       return (await this.replayOf(row, chat.data.clientId)) ?? this.runChat(row, chat.data);
     }
+    const voice = VoiceEnvelope.safeParse(params);
+    if (voice.success) {
+      return (
+        (await this.replayOf(row, voice.data.clientId)) ??
+        this.staleVoice(row, voice.data) ??
+        this.runVoice(row, voice.data)
+      );
+    }
     const kind = (params as { kind?: unknown }).kind;
-    if (kind === "plan" || kind === "chat") {
-      const issues = (kind === "plan" ? plan : chat).success
-        ? ""
-        : (kind === "plan" ? plan : chat).error?.issues.map((i) => i.message).join("; ");
+    if (kind === "plan" || kind === "chat" || kind === "voice") {
+      const parsed = kind === "plan" ? plan : kind === "chat" ? chat : voice;
+      const issues = parsed.success ? "" : parsed.error?.issues.map((i) => i.message).join("; ");
       throw new ForerunnerError("validation", `malformed ${kind} envelope: ${issues}`);
     }
     switch (verbOf(row.command)) {
@@ -525,6 +590,104 @@ export class RemoteCommandWatcher {
         issuedBy: row.device_id,
       },
     };
+  }
+
+  /**
+   * A push-to-talk turn older than `VOICE_RELAY_MAX_AGE_MS` (the PC was offline or busy) is
+   * refused, never run: the phone stopped waiting for its reply long ago, and a "yes" or a
+   * "stop it" must not act hours after it was said (ADR 0080 item 7).
+   */
+  private staleVoice(row: RemoteCommandRow, env: VoiceEnvelope): Outcome | null {
+    const ageMs = this.deps.clock.now() - Date.parse(row.created_at);
+    if (!(ageMs > VOICE_RELAY_MAX_AGE_MS)) return null;
+    return {
+      ok: false,
+      result: {
+        kind: "voice",
+        status: "expired",
+        error: `the voice turn is ${Math.round(ageMs / 1000)} s old (at most ${VOICE_RELAY_MAX_AGE_MS / 1000} s); say it again`,
+        code: "timeout",
+        clientId: env.clientId ?? null,
+        issuedBy: row.device_id,
+      },
+    };
+  }
+
+  /**
+   * One relayed push-to-talk turn (ADR 0080). The recording is dropped from the row by
+   * `handle` whatever the outcome (`dropAudio`).
+   */
+  private async runVoice(row: RemoteCommandRow, env: VoiceEnvelope): Promise<Outcome> {
+    if (!this.deps.voice) {
+      throw new ForerunnerError("unavailable", "voice is not available on this PC");
+    }
+    const r = await this.deps.voice({
+      deviceId: row.device_id,
+      projectId: env.projectId ?? null,
+      ...(env.language ? { language: env.language } : {}),
+      ...(env.audio
+        ? {
+            audio: {
+              pcm: env.audio.pcm,
+              sampleRate: env.audio.sampleRate,
+              channels: env.audio.channels,
+            },
+          }
+        : { transcript: env.transcript ?? "" }),
+    });
+    const result: JsonObject = {
+      kind: "voice",
+      source: r.source,
+      said: r.said,
+      reply: r.heard,
+      heard: r.heard,
+      pending: r.pending,
+      approved: r.approved,
+      voiceSessionId: r.sessionId,
+      turn: r.turn,
+      audioChunks: r.audioChunks,
+      totalToFirstAudioMs: r.totalToFirstAudioMs,
+      clientId: env.clientId ?? null,
+      issuedBy: row.device_id,
+    };
+    if (r.error) {
+      return { ok: false, result: { ...result, error: r.error.message, code: r.error.code } };
+    }
+    return { ok: true, result };
+  }
+
+  /**
+   * Replace a `kind: "voice"` row's recording with its format and length, so no audio stays
+   * in the shared store; the length and the format stay for the record. Anything that is
+   * not a voice row with a recording is left as it is.
+   */
+  private async dropAudio(row: RemoteCommandRow): Promise<void> {
+    const params = (row.params ?? {}) as JsonObject;
+    if (params.kind !== "voice") return;
+    const audio = params.audio;
+    if (!audio || typeof audio !== "object" || Array.isArray(audio)) return;
+    const a = audio as JsonObject;
+    if (a.dropped === true) return;
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    try {
+      await this.deps.store.remoteCommand.patch(row.id, {
+        params: {
+          ...params,
+          audio: {
+            dropped: true,
+            sampleRate: num(a.sampleRate),
+            channels: num(a.channels),
+            bytes: typeof a.pcm === "string" ? Buffer.byteLength(a.pcm, "base64") : 0,
+            durationMs: num(a.durationMs),
+          },
+        },
+      });
+    } catch (e) {
+      this.logger.warn("could not drop the relayed audio from the remote command", {
+        id: row.id,
+        error: errorMessage(e),
+      });
+    }
   }
 
   // -------------------------------------------------------------------------------------

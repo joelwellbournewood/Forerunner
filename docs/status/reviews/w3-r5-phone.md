@@ -1,0 +1,369 @@
+# w3-r5-phone — R.5 on the phone: uploads, PR and critic review, voice relayed to the PC
+
+## Build report
+
+Item `w3-r5-phone`, stage BUILD, branch `wave/w3-r5-phone`. Starting commit `34bfcdb` (the
+`wip:` snapshot of an earlier attempt, on top of base `82a6295`; the named base
+`ccr-4d8a843c-1k9syk` is at `e2bfb1e` and was not merged in). ADR 0080
+(`docs/decisions/0080-phone-uploads-reviews-and-voice-relay.md`). Requirements: R.5 (with R.3
+for the offline upload queue, R.4's remote command path for voice, O for the voice loop).
+
+### What the earlier attempt left
+
+The `wip:` commit 34bfcdb changed `services/state-api/src/routes/projects.ts` (an upload's
+`clientId` form field makes it idempotent per human; `GET /projects/:id/uploads` returns
+`maxBytes`) with a test in `routes.test.ts`. I read it, ran it (20 of 20 in
+`routes.test.ts`), kept it unchanged and built on it; its documentation is in this series
+(`state-service.md`, ADR 0080).
+
+### What was built
+
+- **Upload screen** (`apps/ui/src/mobile/screens/UploadScreen.tsx`, nav "Upload"): pick a
+  file (web file input) or take a photo (`accept="image/*" capture="environment"`), rename
+  it, choose the project and the kind (photo / document / file, guessed from the type). The
+  service's cap is shown before a file is picked and checked before a byte leaves. The file
+  goes to `POST /projects/:id/uploads` as signed multipart with a fresh `clientId`
+  (`StateClient.upload`, `multipartBody`: the bytes signed are the bytes sent). Progress is
+  shown by phase (reading, sending, uploaded or queued). Offline, the file goes to
+  `UploadQueue` (`apps/ui/src/mobile/uploads.ts`); the header counts it with the queued
+  actions, and `flushOutbox` resends it under the same `clientId` on reconnect, so a lost
+  answer never makes a second copy. The project's uploads are listed below the form.
+- **Reviews screen** (`apps/ui/src/mobile/screens/ReviewsScreen.tsx`, nav "Reviews"): the
+  project's critic reviews (`GET /reviews?projectId=`) with task, PR link, verdict, grade,
+  tier, summary and every finding (severity, status, required action). The open approval on
+  the review's task is shown as "waiting on you". Comment (`/reviews/:id/comment`), Approve
+  and Reject (`/reviews/:id/approve|reject { body, requestVersion }`) answer that request at
+  the version the phone saw. When the request is high risk, the biometric prompt runs first
+  and the flag is signed in (ADR 0045 / ADR 0032 rule); a cancelled prompt sends nothing.
+- **Push-to-talk on Chat** (`ChatScreen.tsx`, `apps/ui/src/mobile/voice.ts`): hold to talk
+  (pointer or Space / Enter held), release to send. The recording is 16 kHz mono 16-bit PCM,
+  at most 5 s; the screen releases a longer press itself. It is sent as one signed
+  `POST /remote/commands` with `{ v: 1, kind: "voice", projectId, clientId, audio }`. The
+  PC's transcript replaces the "Voice turn (n s)" bubble, and its reply is shown and spoken
+  (`Speaker`, speech synthesis). When the page cannot record (the Android shell, which has no
+  microphone command; or a refused microphone), the button is "Say it" and the typed line is
+  relayed as `transcript`. A PC without voice is reported. `envFromGlobals` gives the browser
+  a `webRecorder` (getUserMedia + AudioContext → 16 kHz PCM) and `webSpeaker`.
+- **The PC side** (`packages/runtime/src/voice/relay.ts`, `src/remote/watcher.ts`,
+  `src/daemon/compose.ts`): `VoiceEnvelope` (audio or transcript, exactly one; at most 5 s)
+  in the `RemoteCommandWatcher`, which hands it to `VoiceRelay.turn`. That runs it through the
+  daemon's `VoiceSessions` (the loop behind `/voice`): press, 20 ms frames, release; or the
+  text fallback. One session is held per phone between turns, so a spoken "yes" answers the
+  last read-back; it is stopped after 5 idle minutes and on close. A turn that does not end
+  within 60 s fails with `timeout`. The result carries `said`, `reply`, `pending` and
+  `approved`. Once the turn ran (or failed), the audio is dropped from the shared row
+  (`{ dropped: true, ... }`). Replays are refused like plan and chat.
+- **Fake state service** (`apps/ui/test/fake-state-service.ts`): the upload routes (cap,
+  `clientId` idempotency, `maxBytes`), the review routes (comment, approve / reject that
+  answer the task's approval, `biometric_required` for a high-risk one without the flag) and
+  a simulated PC that answers voice turns (or fails them with `voiceUnavailable`).
+- **Docs**: ADR 0080 plus its index row; `apps.md` (Android app: purpose, layout, the new
+  "Uploads, reviews and voice" section, how to change, tests, known issues, with the stale
+  "PC does not consume plan/chat" bullet corrected); `runtime.md` (the phone's push-to-talk,
+  tests); `state-service.md` (the upload route's `clientId` and `maxBytes`, the voice envelope
+  under the body cap, tests); `docs/requirements.md` R.5 (tests added; status stays
+  `in progress`); `docs/status/BLOCKERS.md` R.5 row (built, emulator run open);
+  `docs/status/PROGRESS.md` (log entry, handover item); `CHANGELOG.md` (Unreleased → Added).
+
+### Tests that prove it
+
+| File | What it proves | Count |
+| --- | --- | --- |
+| `apps/ui/test/mobile-upload.test.tsx` | Upload is in the nav. The cap is shown. A renamed PDF is signed as multipart to the chosen project, with its bytes, name, kind and `clientId` stored and listed. A camera photo is sent as kind photo. A file over the cap is refused before anything is posted (screen and controller). Offline, the file is queued ("1 queued"); after a lost answer and a resend it is stored exactly once. | 4 |
+| `apps/ui/test/mobile-reviews.test.tsx` | Reviews is in the nav. It lists the project's reviews with the PR link and the findings, shows the waiting approval and switches project. A comment is posted signed. Approve with a comment answers the task's request at version 1. A high-risk Reject opens the prompt: cancel posts nothing, confirm posts with `biometric: true` and answers the request. The service refuses a high-risk verdict without the flag. | 5 |
+| `apps/ui/test/mobile-voice.test.tsx` | Hold records and release relays signed 16 kHz PCM (bytes checked) as `kind: "voice"`. The transcript and the reply are shown, the reply is spoken once, and the audio is dropped from the row. A press is released at 5 s with exactly 160,000 bytes sent. Without a recorder, the typed line goes as `transcript`. A refused microphone switches to the typed line. A PC without voice is reported and nothing is spoken. Float to 16 kHz conversion and the envelope cap. | 6 |
+| `packages/runtime/test/voice-relay.test.ts` | Watcher: audio reaches the voice port, the reply lands in the result, and the audio leaves the row (12,800 bytes recorded). A typed line becomes the transcript. Both, neither or an oversized envelope fail as malformed. A PC without voice fails `unavailable`. 20 ms framing. `VoiceRelay` on the composed runtime with fake STT / TTS: an audio turn is transcribed and answered. A typed line reuses the phone's session. A read-back is confirmed by a spoken "yes" in the next turn (`approved: true`). A second phone gets its own session. Invalid input is refused, and `close()` stops the sessions. | 7 |
+| `services/state-api/test/remote.test.ts` (new case) | A 5 s voice envelope is accepted under the 256 KiB JSON body cap; twice that is 413. | 1 new (8 in file) |
+| `services/state-api/test/routes.test.ts` (from the snapshot) | Upload with `clientId` applied once (200 on the resend, one file on disk), `maxBytes` in the list, a malformed `clientId` 400. | 1 (20 in file) |
+
+Each new test fails without its behaviour: the screens, routes, envelope kind and relay do
+not exist on the starting commit.
+
+### Commands run and results (2026-10-23, Linux box)
+
+| Command | Result |
+| --- | --- |
+| `pnpm install --frozen-lockfile` | done |
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0 (59 warnings in the repository, none in the files of this series: `biome check` on the 18 changed TS/TSX files is clean) |
+| `pnpm --filter @forerunner/ui test` | 45 test files, 267 tests passed |
+| `pnpm exec vitest run --project unit packages/runtime/test` | 115 files passed; 991 tests passed, 1 skipped |
+| `pnpm exec vitest run --project unit services/state-api/test` | 10 files, 133 tests passed |
+| `pnpm exec vitest run --project integration packages/runtime/test services/state-api/test` | 2 files, 7 tests skipped (no Postgres, no container engine; skipped with their reasons) |
+| `pnpm exec vitest run --project e2e tests/e2e/scenarios/09-phone.scenario.test.ts tests/e2e/scenarios/03-voice.scenario.test.ts` | 2 files; 2 passed, 1 todo |
+| `pnpm exec vitest run --project e2e tests/e2e/scenarios/phase5-gate.integration.test.ts` | 1 file, 4 tests passed |
+| `pnpm exec vitest run --project unit scripts/closeout-docs.test.ts` | 19 passed, 1 todo |
+| `node scripts/docs-check.mjs --base 34bfcdb` | `docs-check: ok (28 files)` |
+| `node scripts/link-check.mjs` | `link-check: ok (106 files)` |
+| `pnpm check` | exit 0: lint, lint:paths (993 files), typecheck, unit tests (270 files; 2682 passed, 4 skipped, 1 todo), docs:check, docs:links, secret scan (clean, 1417 files). Its `docs:check` step diffs against `origin/main`, which this checkout lacks, so it skipped itself; the run against the starting commit is the line above. |
+
+### Command output (excerpts, 2026-10-23)
+
+`pnpm typecheck` (exit 0):
+
+```
+> forerunner@0.1.0 typecheck /workspace/repo
+> tsc -p tsconfig.node.json --noEmit && pnpm -r --filter "./apps/*" --if-present typecheck
+Scope: 4 of 21 workspace projects
+apps/mobile typecheck: Done
+apps/desktop typecheck: Done
+apps/approvals-web typecheck: Done
+apps/ui typecheck: Done
+```
+
+`pnpm lint` (`biome check .`, exit 0; the 59 warnings are in files this series does not touch):
+
+```
+Checked 1167 files in 2s. No fixes applied.
+Found 59 warnings.
+```
+
+`pnpm exec biome check <the 18 TS/TSX files changed since 34bfcdb>`:
+
+```
+Checked 18 files in 101ms. No fixes applied.
+```
+
+`node scripts/docs-check.mjs --base 34bfcdb`:
+
+```
+docs-check: ok (28 files).
+```
+
+### Export and apply check
+
+The patch is the series from the starting commit, verified on a clean worktree of that
+commit:
+
+```
+$ git format-patch --stdout 34bfcdb..HEAD > /mnt/session/outputs/w3-r5-phone.patch
+$ git worktree add /tmp/clean 34bfcdb
+$ cd /tmp/clean && git apply --check /mnt/session/outputs/w3-r5-phone.patch && echo APPLY_OK
+APPLY_OK
+$ git worktree remove --force /tmp/clean
+```
+
+`git log --oneline 34bfcdb..HEAD` lists exactly the four commits of this series (runtime,
+ui, docs, status), each ending with the trailer
+`Claude-Build: managed-agent w3-r5-phone build`. The check was run on the final export,
+after this report was committed.
+
+### What is left open and why
+
+- **The Android emulator run** of Upload, Reviews and push-to-talk. The build box has no
+  Android SDK or emulator. The brief's order is "then the emulator run; then R.5 `done`",
+  so R.5 stays `in progress`, and the BLOCKERS.md row says what the run must cover.
+- **Audio from the Android shell.** The shell has no microphone command, and the WebView's
+  `RECORD_AUDIO` permission request is not wired, so in the shell push-to-talk relays the
+  typed line (ADR 0080 item 6). In a browser, `/m` records. The follow-up is in `apps.md`
+  ("How to change it").
+- **Native picker / share target.** The shell has neither; the web file and camera inputs
+  are the stand-in.
+- **Byte-level upload progress.** `fetch` has no upload progress events, so progress is
+  shown by phase.
+- **Queued uploads over 2 MiB in total** are held in memory and lost if the app closes
+  before reconnecting. The screen and the docs say so.
+- **The PC's spoken audio** does not travel back; the phone speaks the reply text with its
+  own speech synthesis.
+- **Turns longer than 5 s** are released at 5 s (the JSON body cap; ADR 0080 item 5).
+
+## Review
+
+Item `w3-r5-phone`, stage REVIEW AND FIX, reviewed 2026-10-23 at the starting commit
+`5eee27a` (the build's four commits plus the `wip:` snapshot `34bfcdb`, on top of
+`82a6295`; the named base `ccr-4d8a843c-1k9syk` is at `f1948dd` and was not merged in).
+
+**Verdict: revise.** **Score: 62 / 100.** The three screens exist, are in the nav and are
+tested against the fake service, and the PC side of the voice relay is real and tested on
+the composed runtime. But a review verdict that the service refuses still tells the agent
+"Approved", the phone decides the biometric rule from a cached inbox, the "no audio stays
+in the shared store" promise of ADR 0080 does not hold on the refusal paths, and two claims
+in the docs about the Upload screen and the 5 s cap do not match the code.
+
+### Requirements checked
+
+- R.5 "Upload photos, files and documents to a project": Upload screen in the nav, file and
+  camera inputs, name, project, cap shown and enforced, signed multipart, phase progress,
+  offline queue with `clientId` idempotency (`UploadScreen.tsx`, `uploads.ts`,
+  `projects.ts`). Met, except finding 6.
+- R.5 "Review PRs and critic findings, comment, approve or reject": Reviews screen, PR link,
+  findings, comment, approve / reject answering the task's approval, biometric for high
+  risk (ADR 0045). Partly met: findings 1, 2, 3.
+- R.5 "chat and voice with your agent (module O)": push-to-talk relayed as `kind: "voice"`
+  through the remote command path, the typed line without a recorder, the reply shown and
+  spoken (`ChatScreen.tsx`, `voice.ts`, `relay.ts`, `watcher.ts`). Met, with findings 4, 5.
+- Each screen with a `mobile-*.test.tsx`: `mobile-upload`, `mobile-reviews`,
+  `mobile-voice` exist and pass (45 files, 267 tests in `@forerunner/ui`).
+- "then the emulator run": not possible on this box (no Android SDK); the emulator smoke
+  does not touch the new screens at all (finding 7).
+- R.3 offline (uploads queued through a queue flushed on reconnect): met; R.4 remote command
+  path reused for voice: met.
+- ADR 0080 present and indexed; `apps.md`, `runtime.md`, `state-service.md`, requirements
+  R.5 row, BLOCKERS R.5 row and PROGRESS updated. R.5 kept `in progress` correctly.
+- Privacy: audio in the shared store (finding 4); audit rows carry no audio or transcript
+  (checked `appendAudit`: input names command, device, kind, clientId only).
+- Semantic conflicts with the base `f1948dd` (finding 8).
+
+### Findings
+
+1. **high** — `services/state-api/src/routes/reviews.ts:121-150` (base code the new
+   Reviews screen now drives). `POST /reviews/:id/approve|reject` sends the
+   `decision` message "Approved review … " to the responsible agent *before* it answers the
+   task's approval request. When the answer is refused (high risk without the biometric
+   flag: 403 `biometric_required`; a stale `requestVersion`: 409; another human's request:
+   403), the call fails but the agent has already been told the review was approved or
+   rejected. Verified with a throwaway test on the real service harness (a `risk: "high"`
+   approval on the reviewed task, the phone approving without the flag): status 403
+   `biometric_required`, and the message table went from 0 to 1 row with the body
+   `Approved review … of "Write the parser"`. The fake service checks the flag first, so
+   `mobile-reviews.test.tsx` "the service refuses a high-risk verdict without the biometric
+   flag" passes against behaviour the real service does not have.
+   Resolution: fixed in 6274ca6: the route answers the caller's approval first and sends the decision message only after it landed; `routes.test.ts` "a refused review verdict leaves no decision message; another human's approval is not answered" (403 and 409 leave zero decision messages, the biometric resend leaves one; fails on the old order with `expected 1 to be +0`), and the fake service mirrors the card-risk rule.
+2. **medium** — `apps/ui/src/mobile/store.tsx:1088-1130` (`reviewRequest`,
+   `reviewVerdict`). Whether a verdict needs the biometric prompt is decided from the
+   phone's cached inbox only. A high-risk approval filed after the last inbox load (the
+   critic and the approval land together, the human opens Reviews from a notice) is not in
+   the cache: the verdict goes without the prompt, the service answers 403
+   `biometric_required`, and the screen offers no way to give the biometric (every retry
+   takes the same path); with finding 1 the agent was told "Approved" each time. Verified by
+   reading the path: `reviewRequest` reads `this.state.inbox?.requests`, nothing reloads it
+   before the verdict, and the 403 is shown as an error with no prompt.
+   Resolution: fixed in c1ab79d: `reviewVerdict` reloads the inbox before deciding and, on `biometric_required` without an assertion, runs the prompt and resends once; `mobile-reviews.test.tsx` "reads the inbox afresh …" and "a biometric_required answer for a request the phone could not see prompts and resends once" (both fail without the change).
+3. **medium** — `services/state-api/src/routes/reviews.ts:132-134`. The verdict picks the
+   first open approval on the task among *all* humans' requests of the project
+   (`open({ projectId })`) and then `answerRequestAs` refuses it with 403 "not your request"
+   when it belongs to the other human of a shared project. Ada can then never approve or
+   reject the review from the phone (or anywhere), although her verdict is only a message.
+   Verified by reading `answerRequestAs` (`assertRequestOwner`) and the route.
+   Resolution: fixed in 6274ca6: the verdict answers only a request of the caller (`human_id === p.humanId` for a device); another human's approval stays open and the verdict is the message, 200 with `answeredRequestId: null` (same `routes.test.ts` case).
+4. **medium** (privacy) — `packages/runtime/src/remote/watcher.ts:332-365, 578-620`. The
+   recording is dropped from the shared `remote_command` row only inside `runVoice`. A voice
+   row that never reaches it keeps its audio forever: a malformed envelope (an over-long
+   recording), a device of another human or a revoked one (`authorize` throws), a
+   duplicate. And while the PC is offline the row (with its audio) waits indefinitely and
+   is then run whenever the PC comes back, long after the phone stopped watching (about
+   2 min, `ChatScreen.watch`), so a stale "stop it" or "yes" acts hours later. ADR 0080
+   item 7 ("Once the turn ran (or failed)") and its Consequences ("the seconds between the
+   phone's post and the PC's pick-up") say otherwise. Verified with a throwaway test: a
+   voice row with 300,000 base64 characters failed `malformed voice envelope` and its
+   params were still 300,073 characters long afterwards.
+   Resolution: fixed in 16e6e5a: `handle()` drops the recording of every `kind: "voice"` row on every outcome before recording the result, and a turn older than `VOICE_RELAY_MAX_AGE_MS` (2 min) is refused as `expired` (`timeout`) and never run; `voice-relay.test.ts` "no recording stays in the shared row on any outcome: malformed, stale, a replay, a revoked device"; ADR 0080 item 7 and its Consequences, `runtime.md` amended.
+5. **low** — `packages/runtime/src/voice/relay.ts:20-25`, `watcher.ts:139-152`.
+   `VOICE_RELAY_MAX_PCM_BYTES` is documented as "the longest turn at the highest rate the
+   relay accepts", but the envelope accepts 8 to 48 kHz and 1 or 2 channels and the cap is
+   on bytes only: 8 kHz mono carries 10 s, 48 kHz stereo is refused after 0.83 s. "At most
+   5 s" (ADR 0080 item 5, `runtime.md`) is not what the code enforces. Verified by
+   arithmetic on the constants and the schema.
+   Resolution: fixed in 16e6e5a: the envelope and `toFrames` check the duration from bytes, rate and channels (5 s plus one 20 ms frame) besides the byte bound, and the constants' comments say what they bound; `voice-relay.test.ts` "bounds a recording by its duration, not only its bytes" (6 s at 8 kHz refused, 4 s at 8 kHz and 5 s at 16 kHz accepted).
+6. **medium** — `apps/ui/src/mobile/screens/UploadScreen.tsx:33-39`, `uploads.ts:140-160`.
+   A queued file that does not fit the 2 MiB persistence budget is held in memory only and
+   lost if the app closes, but the screen shows the same "Offline: queued, sent when the
+   phone reconnects." as for a persisted one; `QueuedUpload.persisted` is read nowhere.
+   The build report ("The screen and the docs say so") and ADR 0080 item 1 claim the screen
+   tells the human. Verified with `grep persisted apps/ui/src` (only `uploads.ts`).
+   Resolution: fixed in 264ddcf: `uploadFile` returns `persisted`, and the screen (`m-upload-memory-only`) and the notice say a queued file over the 2 MiB budget is held in memory only and lost if the app closes; `mobile-upload.test.tsx` "says so when a queued file is too large to keep on the phone …" (fails without it) and the offline test asserts no warning for a small file.
+7. **medium** — `apps/mobile/e2e/run.mjs:311-395`. The brief's next step is "then the
+   emulator run", but the emulator smoke covers pairing, the inbox, the Remote card and the
+   change log only; Upload, Reviews and the Chat voice turn are never opened, so a green
+   `android.yml` run would not show the new screens work in the WebView. The BLOCKERS R.5
+   row names "the raw-CDP smoke extended to Upload, Reviews and Chat" as what must run.
+   Verified by reading `smoke()`.
+   Resolution: fixed in bf2d69e: `smoke()` in `apps/mobile/e2e/run.mjs` now opens Reviews (two findings, a signed comment and approve), Upload (the cap, Upload disabled without a file) and Chat (the typed line relayed as a signed `kind: "voice"` command, the PC's reply shown). It cannot run here (no Android SDK; `node --check` passes, `apps/mobile/e2e` unit tests 17 of 17), so the sequence was checked with a throwaway jsdom test against the same fake service (paths `/reviews/rev_parser/comment,/reviews/rev_parser/approve`, outcome "Approved.", Upload's `disabled` attribute present), deleted afterwards. A file pick through the raw driver needs `DOM.setFileInputFiles` and stays open (BLOCKERS R.5 row).
+8. **low** — `docs/maintainers/apps.md` (Android app, "Known issues", first bullet).
+   Against the base `f1948dd` the branch has one textual conflict: the base deleted the
+   stale "PC does not consume plan/chat" bullet that this branch rewrote. Verified with
+   `git merge-tree --write-tree HEAD f1948dd` (the only conflict; `compose.ts`,
+   `runtime.md`, the status files and the ADR index merge cleanly, and ADR 0080 is a free
+   number on the base).
+   Resolution: not a defect: the conflict is textual (the base deleted the bullet this branch rewrote), the rules forbid merging the base into this branch, and the resolution at integration is to keep this branch's bullet; `git merge-tree --write-tree HEAD f1948dd` reports `docs/maintainers/apps.md` as the only conflicted file.
+
+### Checks after the fixes (2026-10-23)
+
+| Command | Result |
+| --- | --- |
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0 (59 warnings, none in the files of the fixes) |
+| `pnpm --filter @forerunner/ui test` | 45 files, 270 tests passed |
+| `pnpm exec vitest run --project unit packages/runtime/test` | 115 files; 993 passed, 1 skipped |
+| `pnpm exec vitest run --project unit services/state-api/test` | 10 files, 134 tests passed |
+| `pnpm exec vitest run --project unit apps/mobile/e2e` | 1 file, 17 tests passed |
+| `pnpm exec vitest run --project integration packages/runtime/test services/state-api/test` | 2 files, 7 tests skipped (no Postgres, no container engine) |
+| `node scripts/docs-check.mjs --base 5eee27a` | `docs-check: ok (19 files)` |
+| `pnpm check` | exit 0 (270 files; 2685 passed, 4 skipped, 1 todo; link-check ok; secret scan clean; its docs-check skips without `origin/main`) |
+
+## Rebase (2026-10-23, onto `origin/ccr-4d8a843c-1k9syk` cac6fee)
+
+`wave/w3-r5-phone` (c0b0b8c, on 82a6295) rebased onto the release head cac6fee (181 commits
+ahead). The commit hashes named in the sections above predate the rebase; the commits keep
+their subjects. Two commits conflicted; every other change applied cleanly.
+
+| Commit | File | Conflict | Resolution |
+| --- | --- | --- | --- |
+| ui: phone screens for uploads, PR and critic review, … | `apps/ui/src/mobile/store.tsx` | the base's `UNLOCK_WINDOW_KEY` (runner unlock window, ADR 0068) and the branch's `UPLOADS_KEY` on the same line | both constants kept; the controller holds both `uploads` (`UploadQueue`) and the base's `runnerKeys` (auto-merged) |
+| docs: ADR 0080 and the maintainer, requirement and status rows … | `docs/maintainers/apps.md` (layout, `screens/`) | the base's unlock-card sentence and the branch's new screen list | one entry: the branch's list (Chat with push-to-talk, Reviews, Upload) followed by the base's unlock-card text |
+| same | `docs/maintainers/apps.md` (Known issues) | the base deleted the stale plan/chat bullet the branch rewrote | the branch's rewritten bullet kept (finding 8 above) |
+| same | `docs/requirements.md` | R.5 (branch: the new test files) and R.6 (base: `push.test.ts`, `packages/state/test/suite.ts`) in one hunk | R.5 from the branch (a superset of the base's evidence), R.6 from the base; R.5 stays `in progress` |
+| same | `docs/status/PROGRESS.md` | the base's new log entries (w2-s32-indicator, w2-s12-unlock-card, w3-e1-triggers, w4-fcm-sender) and the branch's entry at the top of the log | all kept, the branch's entry first (newest); the plan's item list auto-merged (`w3-r5-phone (R.5; built on its branch …)`) |
+
+Auto-merged and read against the base: `packages/runtime/src/daemon/compose.ts` (`VoiceRelay`
+over the base's `voice` sessions, `voice:` in the watcher's deps, `voiceRelay.close()` before
+`voice.close()`), `apps/ui/src/mobile/MobileApp.tsx` (Reviews and Upload routes and nav next to
+the base's unlock auto-answer), `apps/mobile/e2e/run.mjs`, `docs/maintainers/runtime.md`,
+`docs/maintainers/state-service.md`, `docs/decisions/README.md` (0080 between the base's 0078
+and 0082), `docs/status/BLOCKERS.md`, `CHANGELOG.md`. ADR 0080 is still free on the base.
+
+### Checks after the rebase
+
+| Command | Result |
+| --- | --- |
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0 (59 warnings, as on the base) |
+| `pnpm --filter @forerunner/ui test` | 49 files, 316 tests passed (`mobile-upload` 5, `mobile-reviews` 7, `mobile-voice` 6) |
+| `pnpm exec vitest run --project unit packages/runtime/test` | 129 files; 1141 passed, 1 skipped (`voice-relay` 9) |
+| `pnpm exec vitest run --project unit services/state-api/test` | 11 files, 159 tests passed |
+| `pnpm exec vitest run --project unit apps/mobile/e2e` | 1 file, 20 tests passed |
+| `pnpm exec vitest run --project integration packages/runtime/test services/state-api/test` | 2 files, 7 tests skipped (no Postgres, no container engine) |
+| `pnpm exec vitest run --project e2e tests/e2e/scenarios/09-phone.scenario.test.ts tests/e2e/scenarios/03-voice.scenario.test.ts tests/e2e/scenarios/phase5-gate.integration.test.ts` | 3 files; 6 passed, 1 todo |
+| `pnpm exec vitest run --project unit scripts/closeout-docs.test.ts` | 19 passed, 1 todo |
+| `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` | `docs-check: ok (32 files)` |
+| `node scripts/link-check.mjs` | `link-check: ok (129 files)` |
+| `pnpm check` | exit 0 (290 files; 2927 passed, 4 skipped, 1 todo; secret scan clean, 1488 files; its docs-check skips without `origin/main`) |
+
+## Rebase (2026-10-23, onto `origin/ccr-4d8a843c-1k9syk` 4ff4fb1)
+
+`wave/w3-r5-phone` (6966efb, on cac6fee) rebased onto the release head 4ff4fb1 (73 commits
+ahead: the merges of w2-l6-speak, w3-c5-specialist-approval, w3-d16-slider, w3-e4-recheck and
+w5-android-high-risk). The commit hashes named above predate this rebase; the commits keep
+their subjects. Three commits conflicted; every other change applied cleanly.
+
+| Commit | File | Conflict | Resolution |
+| --- | --- | --- | --- |
+| runtime: relay the phone's push-to-talk turns to the PC's voice sessions | `packages/runtime/src/daemon/compose.ts` | after the voice sessions are built: the base's `voiceBusy` and the read-aloud `SpeakSessions` (ADR 0063) and the branch's `VoiceRelay` over the same `voice` | both kept, the base's speaker first, then `const voiceRelay = new VoiceRelay(voice, { clock })`; the imports (`SpeakSessions`, `VoiceRelay`) and `close()` (`voiceRelay.close()` before `voice.close()`, then the base's `speechSessions.close()` and `specialistApprovals.settled()`) auto-merged |
+| ui: phone screens for uploads, PR and critic review, … | `apps/ui/src/mobile/store.tsx` | the base's `BIOMETRIC_TIMEOUT_MS` (ADR 0086) and the branch's `UPLOADS_KEY` on the same lines | both kept. The branch's `reviewVerdict` already calls `assertHighRisk`, which on the base is the bounded refusal, so a high-risk review verdict gets the same refusal in bounded time as a request answer |
+| docs: ADR 0080 and the maintainer, requirement and status rows … | `docs/maintainers/runtime.md` | the base's "Read aloud" paragraph and the branch's "The phone's push-to-talk" paragraph at the same place | both paragraphs kept, the base's first |
+| same | `docs/status/PROGRESS.md` | the base's log entries (w3-d16-slider, w3-e4-recheck, w5-android-high-risk) and the branch's entry at the top of the log | all kept, the branch's entries first (newest) |
+
+Auto-merged and read against the base: `packages/runtime/src/voice/index.ts` (`relay.ts` next
+to the base's `speak.ts`), `apps/mobile/e2e/run.mjs` (the branch's Reviews, Upload and voice
+steps after the base's bounded high-risk refusal step; `node --check` clean),
+`apps/ui/src/api/state-client.ts`, `docs/maintainers/apps.md`, `docs/requirements.md` (R.5 the
+branch's row; the base did not touch it), `docs/status/BLOCKERS.md` (R.5 the branch's row),
+`docs/decisions/README.md` (0080 between 0078 and 0082). ADR 0080 is still free on the base
+(the base's newest ADRs are 0085 and 0086). R.5 stays `in progress` (the emulator run).
+
+### Checks after the rebase onto 4ff4fb1
+
+| Command | Result |
+| --- | --- |
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0 (59 warnings, as on the base) |
+| `pnpm --filter @forerunner/ui test` | 51 files, 340 tests passed (`mobile-upload`, `mobile-reviews`, `mobile-voice`: 3 files, 18 tests) |
+| `pnpm exec vitest run --project unit packages/runtime/test` | 134 files; 1214 passed, 1 skipped (`voice-relay` 9) |
+| `pnpm exec vitest run --project unit services/state-api/test` | 11 files, 159 tests passed |
+| `pnpm exec vitest run --project unit apps/mobile/e2e` | 1 file, 25 tests passed |
+| `pnpm exec vitest run --project integration packages/runtime/test services/state-api/test` | 2 files, 7 tests skipped (no Postgres, no container engine) |
+| `pnpm exec vitest run --project e2e tests/e2e/scenarios/09-phone.scenario.test.ts tests/e2e/scenarios/03-voice.scenario.test.ts tests/e2e/scenarios/phase5-gate.integration.test.ts` | 3 files; 6 passed, 1 todo |
+| `pnpm exec vitest run --project unit scripts/closeout-docs.test.ts` | 19 passed, 1 todo |
+| `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` | `docs-check: ok` |
+| `node scripts/link-check.mjs` | `link-check: ok (137 files)` |
+| `pnpm check` | exit 0 (296 files; 3021 passed, 4 skipped, 1 todo; secret scan clean, 1516 files; its docs-check skips without `origin/main`) |

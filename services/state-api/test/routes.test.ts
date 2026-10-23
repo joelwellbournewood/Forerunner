@@ -660,6 +660,66 @@ describe("state service routes", () => {
     expect((await phone.post("/reviews/missing/reject", {})).status).toBe(404);
   });
 
+  it("a refused review verdict leaves no decision message; another human's approval is not answered", async () => {
+    await h.store.task.patch(h.seed.task1.id, { owner_agent_id: h.seed.alice.id });
+    const review = await h.store.review.insert({
+      task_id: h.seed.task1.id,
+      session_id: h.seed.session.id,
+      critic_model: "fake-opus",
+      tier: 3,
+      grade: 70,
+      confidence: 0.7,
+      verdict: "human",
+      summary: "Deploys to production",
+    });
+    const high = await h.store.humanRequest.insert({
+      human_id: h.seed.ada.id,
+      project_id: h.seed.project.id,
+      task_id: h.seed.task1.id,
+      kind: "approval",
+      why: "Merge the deploy PR?",
+      risk: "high",
+    });
+    const decisions = async () =>
+      (await h.store.message.list()).filter((m) => m.type === "decision").length;
+    const path = `/reviews/${review.id}/approve`;
+    // High risk without the biometric flag: 403, the request open, no message to the agent.
+    const refused = await phone.post(path, { body: "ship it" });
+    expect(refused.status).toBe(403);
+    expect((await json(refused)).code).toBe("biometric_required");
+    expect((await h.store.humanRequest.mustGet(high.id)).status).toBe("open");
+    expect(await decisions()).toBe(0);
+    // A stale version: 409, still nothing sent.
+    await h.clock.advance(1_000);
+    const stale = await phone.post(path, { requestVersion: high.version + 5 }, { biometric: true });
+    expect(stale.status).toBe(409);
+    expect(await decisions()).toBe(0);
+    // With the flag: answered, then exactly one decision message.
+    await h.clock.advance(1_000);
+    const ok = await json<{ answeredRequestId: string | null }>(
+      await phone.post(path, { requestVersion: high.version }, { biometric: true }),
+    );
+    expect(ok.answeredRequestId).toBe(high.id);
+    expect(await decisions()).toBe(1);
+
+    // Bob's approval on the same task (a shared project) is Bob's to answer: Ada's verdict
+    // is the message only, never a 403 on someone else's request.
+    const bobs = await h.store.humanRequest.insert({
+      human_id: h.seed.bob.id,
+      project_id: h.seed.project.id,
+      task_id: h.seed.task1.id,
+      kind: "approval",
+      why: "Bob: merge?",
+      risk: "high",
+    });
+    await h.clock.advance(1_000);
+    const res = await phone.post(`/reviews/${review.id}/reject`, { body: "not yet" });
+    expect(res.status).toBe(200);
+    expect((await json<{ answeredRequestId: string | null }>(res)).answeredRequestId).toBeNull();
+    expect((await h.store.humanRequest.mustGet(bobs.id)).status).toBe("open");
+    expect(await decisions()).toBe(2);
+  });
+
   it("sessions: list, get and the JSON event page", async () => {
     await h.store.event.append(h.seed.session.id, "task.started", { text: "Write the parser" });
     await h.store.event.append(h.seed.session.id, "budget.warning", { message: "80% used" }, 1200);
@@ -723,6 +783,48 @@ describe("state service routes", () => {
       await phone.get(`/projects/${h.seed.project.id}/uploads`),
     );
     expect(listed.uploads.map((u) => u.id)).toEqual([asset.id]);
+  });
+
+  it("an upload with a clientId is applied once and the list reports the cap", async () => {
+    const boundary = "----forerunner-test-boundary";
+    const clientId = "0f6c2a4e-upload-retry-1";
+    const form = (id: string) =>
+      new TextEncoder().encode(
+        [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="clientId"',
+          "",
+          id,
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="photo.jpg"',
+          "Content-Type: image/jpeg",
+          "",
+          "jpeg-bytes",
+          `--${boundary}--`,
+          "",
+        ].join("\r\n"),
+      );
+    const headers = { "content-type": `multipart/form-data; boundary=${boundary}` };
+    const path = `/projects/${h.seed.project.id}/uploads`;
+    const before = await json<{ uploads: unknown[] }>(await phone.get(path));
+    const first = await phone.send("POST", path, form(clientId), headers);
+    expect(first.status).toBe(201);
+    const asset = await json<{ id: string }>(first);
+    // The resend after a lost answer (signed afresh): same asset, 200, no second file.
+    await h.clock.advance(1_000);
+    const again = await phone.send("POST", path, form(clientId), headers);
+    expect(again.status).toBe(200);
+    expect((await json<{ id: string }>(again)).id).toBe(asset.id);
+    const listed = await json<{ uploads: { id: string }[]; maxBytes: number }>(
+      await phone.get(path),
+    );
+    expect(listed.uploads).toHaveLength(before.uploads.length + 1);
+    expect(listed.maxBytes).toBe(h.api.config.uploadMaxBytes);
+    const files = await readdir(join(h.api.config.uploadsDir, h.seed.project.id));
+    expect(files.filter((f) => f.startsWith(asset.id))).toHaveLength(1);
+    await h.clock.advance(1_000);
+    const bad = await phone.send("POST", path, form("no spaces allowed"), headers);
+    expect(bad.status).toBe(400);
   });
 
   it("refuses uploads over the cap and without a file field", async () => {

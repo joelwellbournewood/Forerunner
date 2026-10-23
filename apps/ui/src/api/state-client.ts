@@ -130,6 +130,73 @@ export const OutboxResultView = z.object({
 });
 export type OutboxResultView = z.infer<typeof OutboxResultView>;
 
+/** An upload's metadata (`dataAssetView` in the service); the storage path never leaves it. */
+export const UploadView = z.looseObject({
+  id: z.string(),
+  projectIds: z.array(z.string()),
+  name: z.string(),
+  sizeBytes: z.number().int(),
+  kind: z.string(),
+  registeredBy: z.string(),
+  createdAt: z.string(),
+});
+export type UploadView = z.infer<typeof UploadView>;
+
+const UploadList = z.object({
+  uploads: z.array(UploadView),
+  /** The service's size cap; older services do not send it. */
+  maxBytes: z.number().int().positive().optional(),
+});
+
+/** One critic finding on a review (`findingView` in the service). */
+export const FindingView = z.looseObject({
+  id: z.string(),
+  reviewId: z.string(),
+  taskId: z.string().nullable(),
+  severity: z.string(),
+  description: z.string(),
+  requiredAction: z.string(),
+  status: z.string(),
+  resolvedByRun: z.string().nullable(),
+  version: z.number().int(),
+});
+export type FindingView = z.infer<typeof FindingView>;
+
+/** A critic review of a task's work, with its PR and findings (`reviewView` in the service). */
+export const ReviewView = z.looseObject({
+  id: z.string(),
+  taskId: z.string().nullable(),
+  taskTitle: z.string().nullable(),
+  prUrl: z.string().nullable(),
+  sessionId: z.string().nullable(),
+  criticModel: z.string(),
+  tier: z.number().int(),
+  grade: z.number(),
+  confidence: z.number(),
+  verdict: z.string(),
+  evidence: z.array(z.unknown()),
+  summary: z.string(),
+  findings: z.array(FindingView),
+  createdAt: z.string(),
+  version: z.number().int(),
+});
+export type ReviewView = z.infer<typeof ReviewView>;
+
+const ReviewList = z.object({ reviews: z.array(ReviewView) });
+const CommentResult = z.object({ messageId: z.string() });
+const VerdictResult = z.object({
+  messageId: z.string(),
+  answeredRequestId: z.string().nullable(),
+});
+export type ReviewVerdictResult = z.infer<typeof VerdictResult>;
+
+/** A file the phone sends: bytes in memory (the picker's File read once). */
+export interface UploadFile {
+  name: string;
+  type: string;
+  bytes: Uint8Array;
+}
+
 const ProjectList = z.object({ projects: z.array(ProjectCardSchema) });
 const RequestsView = z.object({
   requests: z.array(HumanRequestViewSchema),
@@ -181,7 +248,22 @@ export interface RemoteChatEnvelope {
   clientId: string;
 }
 
-export type RemoteEnvelope = RemotePlanEnvelope | RemoteChatEnvelope;
+/**
+ * One push-to-talk turn for the PC's voice loop (ADR 0080): the recording as 16-bit
+ * little-endian PCM in base64 (at most `VOICE_RELAY_MAX_MS`), or the typed line when the
+ * phone has no recorder; never both.
+ */
+export interface RemoteVoiceEnvelope {
+  v: 1;
+  kind: "voice";
+  projectId: string | null;
+  clientId: string;
+  language?: string;
+  transcript?: string;
+  audio?: { pcm: string; sampleRate: number; channels: number; durationMs: number };
+}
+
+export type RemoteEnvelope = RemotePlanEnvelope | RemoteChatEnvelope | RemoteVoiceEnvelope;
 
 /** `kill` for the kill switch, `stop` / `pause` for pure session control, else `start` (run the plan). */
 export function verbForPlan(plan: readonly PlanCommand[]): RemoteVerb {
@@ -232,6 +314,8 @@ export interface RawRequestOptions {
   path: string;
   query?: Query;
   body?: unknown;
+  /** A non-JSON body (multipart); signed byte for byte as sent. */
+  rawBody?: { bytes: Uint8Array; contentType: string };
   accept?: string;
   signal?: AbortSignal;
   headers?: Record<string, string>;
@@ -315,6 +399,65 @@ export interface StateClient {
   devices(signal?: AbortSignal): Promise<DeviceView[]>;
   device(id: string, signal?: AbortSignal): Promise<DeviceView>;
   syncOutbox(actions: OutboxActionInput[]): Promise<OutboxResultView[]>;
+  /** A project's uploads and the service's size cap (null when the service does not say). */
+  uploads(
+    projectId: string,
+    signal?: AbortSignal,
+  ): Promise<{ uploads: UploadView[]; maxBytes: number | null }>;
+  /**
+   * Upload one file as signed multipart (ADR 0080). `clientId` makes a resend after a lost
+   * answer return the asset already made instead of a second copy.
+   */
+  upload(
+    projectId: string,
+    file: UploadFile,
+    opts: { clientId: string; kind?: string },
+  ): Promise<UploadView>;
+  reviews(projectId: string, signal?: AbortSignal): Promise<ReviewView[]>;
+  review(id: string, signal?: AbortSignal): Promise<ReviewView>;
+  commentReview(id: string, body: string): Promise<{ messageId: string }>;
+  /** Approve or reject; a high-risk approval request on the task needs `biometric`. */
+  reviewVerdict(
+    id: string,
+    verdict: "approve" | "reject",
+    body: { body?: string; requestVersion?: number },
+    opts?: { biometric?: BiometricAssertion | null },
+  ): Promise<ReviewVerdictResult>;
+}
+
+/** The multipart body of an upload, built here so the bytes signed are the bytes sent. */
+export function multipartBody(
+  fields: Record<string, string>,
+  file: UploadFile,
+  boundary: string,
+): Uint8Array {
+  const enc = new TextEncoder();
+  const quote = (v: string) => v.replace(/["\\\r\n]/g, "_");
+  const parts: Uint8Array[] = [];
+  for (const [name, value] of Object.entries(fields)) {
+    parts.push(
+      enc.encode(
+        `--${boundary}\r\nContent-Disposition: form-data; name="${quote(name)}"\r\n\r\n${value}\r\n`,
+      ),
+    );
+  }
+  parts.push(
+    enc.encode(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${quote(
+        file.name || "upload",
+      )}"\r\nContent-Type: ${file.type || "application/octet-stream"}\r\n\r\n`,
+    ),
+  );
+  parts.push(file.bytes);
+  parts.push(enc.encode(`\r\n--${boundary}--\r\n`));
+  const total = parts.reduce((n, p) => n + p.byteLength, 0);
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.byteLength;
+  }
+  return out;
 }
 
 export interface StateClientOptions {
@@ -374,8 +517,12 @@ export function createStateClient(
     if (!opts.anonymous && cfg.token) headers.Authorization = `Bearer ${cfg.token}`;
     const init: RequestInit = { method: opts.method, headers };
     if (opts.signal) init.signal = opts.signal;
-    let bodyText = "";
-    if (opts.body !== undefined) {
+    let bodyText: string | Uint8Array = "";
+    if (opts.rawBody) {
+      bodyText = opts.rawBody.bytes;
+      headers["Content-Type"] = opts.rawBody.contentType;
+      init.body = opts.rawBody.bytes as BodyInit;
+    } else if (opts.body !== undefined) {
       bodyText = JSON.stringify(opts.body);
       headers["Content-Type"] = "application/json";
       init.body = bodyText;
@@ -561,6 +708,41 @@ export function createStateClient(
       get(`/devices/${encodeURIComponent(id)}`, DeviceView, undefined, signal),
     syncOutbox: async (actions) =>
       (await post("/sync/outbox", OutboxBatchView, { actions })).results,
+    uploads: async (projectId, signal) => {
+      const r = await get(
+        `/projects/${encodeURIComponent(projectId)}/uploads`,
+        UploadList,
+        undefined,
+        signal,
+      );
+      return { uploads: r.uploads, maxBytes: r.maxBytes ?? null };
+    },
+    upload: (projectId, file, opts) => {
+      const boundary = `----forerunner-${newClientId().replace(/[^A-Za-z0-9]/g, "")}`;
+      const fields: Record<string, string> = { clientId: opts.clientId };
+      if (opts.kind) fields.kind = opts.kind;
+      return request(
+        {
+          method: "POST",
+          path: `/projects/${encodeURIComponent(projectId)}/uploads`,
+          rawBody: {
+            bytes: multipartBody(fields, file, boundary),
+            contentType: `multipart/form-data; boundary=${boundary}`,
+          },
+        },
+        UploadView,
+      );
+    },
+    reviews: async (projectId, signal) =>
+      (await get("/reviews", ReviewList, { projectId }, signal)).reviews,
+    review: (id, signal) =>
+      get(`/reviews/${encodeURIComponent(id)}`, ReviewView, undefined, signal),
+    commentReview: (id, body) =>
+      post(`/reviews/${encodeURIComponent(id)}/comment`, CommentResult, { body }),
+    reviewVerdict: (id, verdict, body, opts) =>
+      post(`/reviews/${encodeURIComponent(id)}/${verdict}`, VerdictResult, body, {
+        biometric: opts?.biometric ?? null,
+      }),
   };
   return client;
 }

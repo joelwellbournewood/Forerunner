@@ -36,6 +36,13 @@ const QueueBody = z.object({
 });
 
 const SAFE_NAME = /[^A-Za-z0-9._-]+/g;
+const CLIENT_ID = /^[A-Za-z0-9-]{8,100}$/;
+
+function sampleClientId(sample: JsonValue | null | undefined): string | null {
+  if (!sample || typeof sample !== "object" || Array.isArray(sample)) return null;
+  const id = (sample as { clientId?: unknown }).clientId;
+  return typeof id === "string" ? id : null;
+}
 
 /** Projects, tasks, decisions, the next-session queue and uploads. */
 export function registerProjectRoutes(app: App, ctx: RouteContext): void {
@@ -201,11 +208,14 @@ export function registerProjectRoutes(app: App, ctx: RouteContext): void {
   app.get("/projects/:id/uploads", async (c) => {
     requireScope(principal(c), "read");
     const rows = await ctx.store.dataAsset.forProject(c.req.param("id"));
-    return c.json({ uploads: rows.map(dataAssetView) });
+    // The cap rides along so a phone shows it before the human picks a file (ADR 0080).
+    return c.json({ uploads: rows.map(dataAssetView), maxBytes: ctx.config.uploadMaxBytes });
   });
 
   // Photos, files and documents from the phone. The file lands under
-  // <data>/uploads/<project>/<asset id>-<safe name>; only metadata is ever exposed.
+  // <data>/uploads/<project>/<asset id>-<safe name>; only metadata is ever exposed. A
+  // `clientId` field makes the upload idempotent (ADR 0080): a phone that resends a queued
+  // file after a lost answer gets the asset it already made (200), never a second copy.
   app.post("/projects/:id/uploads", async (c) => {
     const p = principal(c);
     requireSigned(p);
@@ -233,6 +243,17 @@ export function registerProjectRoutes(app: App, ctx: RouteContext): void {
     if (p.kind === "device" && p.device.kind !== "phone" && p.device.kind !== "web") {
       throw forbidden("only paired clients upload");
     }
+    const clientId =
+      typeof form.clientId === "string" && CLIENT_ID.test(form.clientId) ? form.clientId : null;
+    if (typeof form.clientId === "string" && !clientId) {
+      throw new ApiError(400, "validation", "clientId must be 8 to 100 letters, digits or dashes");
+    }
+    if (clientId) {
+      const existing = (await ctx.store.dataAsset.forProject(projectId)).find(
+        (a) => sampleClientId(a.sample) === clientId && a.registered_by === registeredBy,
+      );
+      if (existing) return c.json(dataAssetView(existing), 200);
+    }
     const dir = join(ctx.config.uploadsDir, projectId);
     await mkdir(dir, { recursive: true });
     const kind = typeof form.kind === "string" && form.kind ? form.kind.slice(0, 40) : "upload";
@@ -243,7 +264,11 @@ export function registerProjectRoutes(app: App, ctx: RouteContext): void {
         size_bytes: file.size,
         owner_device_id: deviceId,
         kind,
-        sample: { contentType: file.type || null, originalName: file.name || null },
+        sample: {
+          contentType: file.type || null,
+          originalName: file.name || null,
+          ...(clientId ? { clientId } : {}),
+        },
         registered_by: registeredBy,
         author_human: p.humanId,
       });

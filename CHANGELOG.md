@@ -39,6 +39,10 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   the command audit (S.15, S.28, S.29, T.14, L.3; ADR 0066).
 - What you say during a live session reaches the principal agent at its next task boundary
   (O.9, O.2, E.4; ADR 0078).
+- The phone contributes: an Upload screen (photos, files, documents; the cap shown, queued
+  offline, idempotent by `clientId`), a Reviews screen (PRs and critic findings; comment,
+  approve, reject, high risk behind the biometric prompt) and push-to-talk relayed to the PC's
+  voice loop as a `kind: "voice"` remote command (R.5, R.3, O; ADR 0080).
 
 ### Changed
 

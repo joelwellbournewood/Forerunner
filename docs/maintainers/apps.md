@@ -1000,8 +1000,10 @@ replaced by the code per ADR 0034), Q.8 partial (high risk never from a plain "y
 The phone client of spec module R (ADR 0009, ADR 0024, ADR 0026, ADR 0032): the same React
 bundle as the desktop, mounted under `/m`, wrapped by a thin Tauri 2 Android shell. The phone
 never talks to a PC's daemon. It pairs with the shared state service, reads its projects and
-inbox, answers requests (high risk with the platform biometric prompt), relays quick chat and
-natural-language control to the PC as remote commands, and shows the change log with Undo.
+inbox, answers requests (high risk with the platform biometric prompt), relays quick chat,
+push-to-talk voice turns and natural-language control to the PC as remote commands, uploads
+photos, files and documents to a project, reviews PRs and critic findings (comment, approve,
+reject), and shows the change log with Undo.
 Heavy work stays on the PC or the cloud runner (R.8).
 
 Requirements covered: R.1 (Tauri 2 Android target sharing the UI; the release APK signed by
@@ -1011,8 +1013,9 @@ channel pending), R.2 (pairing by QR /
 `fr://` deep link / typed code; own key; forget here, revoke on the desktop), R.3 (state
 service client, live SSE with polling fallback, offline outbox flushed on reconnect), R.4
 (start / pause / stop / kill as remote commands with `target: "pc"`; the live session log
-screen), R.5 partial (quick chat as a remote command, natural-language control, notes to the
-next-session queue, answering requests; uploads, PR and critic review come later), R.6 partial
+screen), R.5 (quick chat as a remote command, natural-language control, notes to the
+next-session queue, answering requests, uploads, PR and critic review, push-to-talk relayed to
+the PC's voice loop, ADR 0080; the emulator run is open), R.6 partial
 (in-app notices for approvals, sessions, budget warnings and messages with quiet hours; FCM is
 a documented stand-in), R.7 (biometric assertion inside the signed string for high-risk
 answers, scoped 30-day tokens, no secret on the phone but its own wrapped key and token, lost
@@ -1028,8 +1031,10 @@ apps/ui/src/api/
   state-signing.ts   canonical request string (= services/state-api/src/auth/crypto.ts), SHA-256 and
                      Ed25519 via WebCrypto, DeviceSigner and BiometricPort ports, the simulated prompt
   state-client.ts    typed client: pairing, /me, projects, inbox, requests, receipts, messages, queue,
-                     remote commands (RemotePlanEnvelope / RemoteChatEnvelope, verbForPlan), sessions,
-                     devices, /sync/outbox; every mutation signed, biometric flag only from an assertion
+                     remote commands (RemotePlanEnvelope / RemoteChatEnvelope / RemoteVoiceEnvelope,
+                     verbForPlan), sessions, devices, /sync/outbox, uploads (signed multipart built by
+                     multipartBody, so the bytes signed are the bytes sent), reviews (list, comment,
+                     approve / reject); every mutation signed, biometric flag only from an assertion
   state-sse.ts       /events and /sessions/:id/events over fetch; live -> polling -> offline, resume
 apps/ui/src/mobile/
   MobileApp.tsx      the /m route tree, header (active project, sync badge), bottom nav, the simulated
@@ -1041,6 +1046,10 @@ apps/ui/src/mobile/
   change-card.ts     ONE card per plan (risk, scope, duration, cost), inversePlan, renderCard
   change-log.ts      per-install log (200 entries), remote status mapping, canUndo
   outbox.ts          offline queue, batches to /sync/outbox, duplicates never applied twice
+  uploads.ts         offline upload queue: files picked while unreachable, resent under their clientId
+                     on reconnect (persisted up to 2 MiB in total, the rest held in memory)
+  voice.ts           push-to-talk ports: VoiceRecorder (webRecorder: getUserMedia + AudioContext, 16 kHz
+                     mono PCM), Speaker (webSpeaker: speechSynthesis), encodeTurn (5 s cap), toRelayPcm
   pairing.ts         fr://pair?u=&c=&h=, web link, qr JSON, bare code; buildPairingLink
   push.ts            PushPort, PollingPush (the stand-in), quiet hours, noticeFor(feed event)
   storage.ts         per-install localStorage keys, SecureStore (shell | browser | memory); the
@@ -1048,7 +1057,8 @@ apps/ui/src/mobile/
                      runner-vault-key-<runner> (ADR 0068)
   shell-bridge.ts    invoke wrappers: shell_info, device_key_*, secure_store_*, assert_biometric,
                      push_status, barcode scan, deep links
-  screens/           Pairing, Home, Inbox, Chat, Remote, Changes, Settings, Session (live log);
+  screens/           Pairing, Home, Inbox, Chat (with push-to-talk), Reviews, Upload, Remote, Changes,
+                     Settings, Session (live log);
                      Inbox renders a cloud runner unlock as the shared UnlockCard with
                      `controller.runnerKeys` (secureStoreRunnerKeys in the shell, read-only
                      without one) and `controller.answerUnlock` (biometric first, the window
@@ -1166,6 +1176,45 @@ session record and key go, the outbox and the change log stay, the notice and th
 screen count the queued actions, and `pair` flushes them under the new device. Only
 `forgetDevice` ("Forget this device") clears them.
 
+**Uploads, reviews and voice (spec R.5, [ADR 0080](../decisions/0080-phone-uploads-reviews-and-voice-relay.md)).**
+The Upload screen (nav "Upload") picks a file through the web file input, or a photo through
+the camera input (`accept="image/*" capture="environment"`; the Android shell has no picker
+or share-target command yet), lets the human rename it, pick the project and the kind
+(photo / document / file, guessed from the type), and shows the service's cap
+(`GET /projects/:id/uploads` returns `maxBytes`) before and after the pick; a file over it is
+refused on the phone (`MobileController.uploadFile`, `payload_too_large`) before a byte
+leaves. The upload is `POST /projects/:id/uploads` as signed multipart with a fresh
+`clientId`; the progress shows the phases (reading, sending, uploaded or queued; `fetch` has
+no upload progress events). Unreachable, the file goes to `UploadQueue` and the header's
+"n queued" counts it; a file over the queue's storage budget (`PERSIST_MAX_BYTES`, 2 MiB in
+total) is held in memory only, and the screen (`m-upload-memory-only`) and the notice say it
+is lost if the app closes before it is sent; `flushOutbox` sends it first on reconnect, a 4xx drops it with a notice,
+and a resend after a lost answer is answered with the asset already made (the service's
+`clientId` idempotency), so the project never gets a second copy. The Reviews screen (nav
+"Reviews") lists `GET /reviews?projectId=` for the chosen project: task, PR link, verdict,
+grade, tier, summary and every finding with severity, status and the required action; the
+open approval request on the review's task (from the inbox) is shown as "waiting on you".
+Comment is `POST /reviews/:id/comment` (a message to the agent responsible); Approve and
+Reject are `POST /reviews/:id/approve|reject { body?, requestVersion? }`, which answer that
+request at the version the phone saw. `MobileController.reviewVerdict` reads the inbox afresh
+before it decides, so an approval filed after the last load is seen. When that request is high
+risk the biometric prompt runs first and the flag is signed into the request (ADR 0045, the
+rule of high-risk answers); a cancelled prompt sends nothing. Should the service still answer
+`biometric_required` (a request the phone could not see, the inbox unreachable), the prompt
+runs then and the verdict is sent once more with the flag. The service answers the request
+before it messages the agent, so a refused verdict tells the agent nothing
+(`state-service.md`). Verdicts are never queued. On Chat, "Hold to talk"
+(pointer or Space / Enter held) records through `env.recorder`; the release (or the 5 s limit,
+released for the human) sends ONE `POST /remote/commands` whose params are the voice envelope
+`{ v: 1, kind: "voice", projectId, clientId, audio: { pcm, sampleRate: 16000, channels: 1,
+durationMs } }`; the PC's watcher runs it through its voice loop (`runtime.md`, "The phone's
+push-to-talk"), the result's `said` replaces the bubble's "Voice turn (n s)" and its `reply` is
+shown and spoken through `env.speaker`. Where the page cannot record (the Android shell today:
+`envFromGlobals` gives it no recorder; or a refused microphone, after which the screen switches
+over) the button is "Say it" and relays the typed line as `transcript` instead. A PC without
+voice answers `failed` and the screen says so; so does a PC that picks the turn up more than
+two minutes late (`expired`, never run; `runtime.md`).
+
 **Push.** FCM is not configured (no Firebase project; `docs/status/BLOCKERS.md`). `push.rs`
 and `push.ts` keep one port; the shipped mode is `polling`: the change feed raises in-app
 notices for approvals, finished sessions, budget warnings and messages, suppressed inside
@@ -1189,6 +1238,12 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   entry in `NAV` when it belongs in the bottom bar, a `test/mobile-x.test.tsx` that mounts
   it through `renderMobile` in `test/mobile-helpers.tsx` against the in-process fake, and a
   Playwright spec when it is a flow.
+- **The phone's microphone in the shell**: add a capture command to the shell (or grant the
+  WebView's `RECORD_AUDIO` permission request), return a `VoiceRecorder` of kind `shell` from
+  `envFromGlobals` when the shell reports it; the Chat screen and the envelope stay.
+- **A share target or a native picker for uploads**: a shell command (or an intent filter
+  feeding a deep link) that hands bytes to `MobileController.uploadFile`; the queue and the
+  route stay.
 - **A new phrase or command on the phone**: a matcher in `intent.ts` (keep the EN and DE
   forms), its card in `cardFor` and its inverse in `inversePlan` (`change-card.ts`), the fake
   PC's `executeOnPc` in `test/fake-state-service.ts`, and tests in `mobile-intent.test.ts`
@@ -1246,6 +1301,21 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   the Pause control, changes, session with polling and live modes, settings) and the logic
   modules (intent, including project names that contain "and"; change card, including the
   unknown ceiling and the service rate; change log, outbox, push, store);
+  `mobile-upload.test.tsx` (nav link, cap shown, a renamed file signed as multipart to the
+  chosen project with its bytes stored, a camera photo as kind photo, a file over the cap
+  refused before a byte leaves, offline queued and sent once on reconnect even after a lost
+  answer, a queued file over the storage budget shown as held in memory only and still sent
+  on reconnect); `mobile-reviews.test.tsx` (nav link, reviews of the project with PR link and
+  findings, the waiting approval shown, a signed comment, approve with a comment answering the
+  task's request at its version, a high-risk reject that asks the prompt first: cancel sends
+  nothing, confirm signs `biometric=1`; a high-risk approval filed after the screen loaded
+  still asks the prompt (the inbox is read afresh); a `biometric_required` answer for a request
+  the phone could not see prompts and resends once, the refused post messaging nobody; the
+  fake refuses a high-risk verdict without the flag);
+  `mobile-voice.test.tsx` (hold to record and release to relay 16 kHz PCM signed as a
+  `kind: "voice"` command, the PC's transcript and reply shown and the reply spoken, a press
+  released at the 5 s limit, the typed line relayed where there is no recorder, a refused
+  microphone switching to the typed line, a PC without voice reported, float to 16 kHz PCM);
   `mobile-store.test.ts` asserts the token and the key never reach state, storage or logs,
   that an auth loss keeps the queue until the next pairing, and that the monthly cap and
   the CHF rate come from `/me` and the project cards.
@@ -1270,6 +1340,14 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   every skip, the release-APK one included, fails under `FR_ANDROID_REQUIRE=1`). It attaches
   to the WebView over raw CDP on the page target (`e2e/cdp.mjs`, ADR 0054), not Playwright:
   the Android WebView refuses the browser-level commands `connectOverCDP` starts with.
+  Steps: pairing by code, approve a request, high risk refused without the prompt, the R.5
+  Reviews screen (the parser review's two findings, a signed comment and approve), the R.5
+  Upload screen (the cap shown, Upload disabled without a file; picking a file needs
+  `DOM.setFileInputFiles`, which the raw driver does not send, so the pick is covered by the
+  jsdom tests only), scenario 9 with the change log's Undo, and the R.5 voice turn (the shell
+  has no recorder, so Chat's "Say it" relays the typed line as a signed `kind: "voice"`
+  command and the simulated PC's reply is shown). The R.5 steps have not run on an emulator
+  yet (no Android SDK on the build box).
 - `apps/mobile/e2e/cdp.test.ts` (unit project): the driver against a fake DevTools endpoint
   (`node:http` serving `/json/list` and `/json`, a `ws` server answering the page socket, a
   jsdom document with `data-box` layout boxes and `elementFromPoint` over them, real
@@ -1310,6 +1388,11 @@ node apps/mobile/e2e/run.mjs
 
 ### Known issues
 
+- The phone's screens run against the fake service's simulated PC in these tests; the PC's
+  side of `kind: "plan"`, `"chat"` and `"voice"` is the daemon's `RemoteCommandWatcher`
+  (`runtime.md`), tested on its own (`packages/runtime/test/remote-watcher.test.ts`,
+  `voice-relay.test.ts`). The emulator run of the new screens (R.5) has not happened: no
+  Android SDK or emulator on the build box (BLOCKERS.md, emulator row).
 - The service's `/me` does not send the human's `monthlyCap` yet (`humans.monthly_cap_usd_micro`
   exists in the schema); the phone's card says "the current cap" and treats a monthly change
   as high risk until the route carries it (`MeView.monthlyCap` is already accepted).
@@ -1350,5 +1433,11 @@ node apps/mobile/e2e/run.mjs
 - `test/fake-state-service.ts` imports the service's `auth/crypto.ts` by relative path; a
   workspace dependency on the service package would be cleaner once `apps/ui/package.json`
   may change.
-- Voice on the phone (spec R.5, module O) is the phase 5 voice work; the Chat screen is text
-  only and says so.
+- Push-to-talk in the Android shell relays the typed line: the shell has no microphone
+  command and the WebView's permission request is not wired (ADR 0080); a browser on the
+  phone (`/m`) records. The PC's reply is spoken by the phone's speech synthesis, not the
+  PC's TTS audio (only text comes back in the command's result).
+- Uploads use the web file input; the shell has no share target ("share to Forerunner")
+  or native picker. A queued upload is persisted in browser storage up to 2 MiB in total; a
+  larger queued file is held in memory and lost if the app closes before it is sent.
+  Upload progress is by phase, not by byte.

@@ -33,6 +33,49 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   settings count). ADR 0072 has a second rebase amendment. Requirements 189 done, 34 in
   progress, 5 todo of 228. Counts: runtime 136 files / 1256 passed, 1 skipped; commands 12 /
   171; critic 14 / 116; billing 10 / 92; testenv 10 / 142; UI 49 / 330. Not merged yet.
+### 2026-10-23 (item w3-r5-phone, review and fix: verdict revise, eight findings, seven fixed)
+- Review in `docs/status/reviews/w3-r5-phone.md` (`## Review`). Fixed: a review verdict now
+  answers the caller's approval before it messages the agent (a refused high-risk or stale
+  verdict told the agent "Approved"), and leaves another human's approval alone; the phone
+  reads the inbox afresh before a verdict and resends with the biometric after
+  `biometric_required`; the PC drops a relayed recording from the shared row on every
+  outcome and refuses a voice turn older than 2 min; the 5 s cap is a duration bound; the
+  Upload screen warns when a queued file is held in memory only; the emulator smoke opens
+  Reviews, Upload and the Chat voice turn. R.5 stays `in progress` until the emulator run.
+
+### 2026-10-23 (item w3-r5-phone rebased onto 4ff4fb1)
+- `wave/w3-r5-phone` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1). Conflicts in
+  `compose.ts` (the base's read-aloud `SpeakSessions` next to the branch's `VoiceRelay`), the
+  phone store (the base's `BIOMETRIC_TIMEOUT_MS` next to the branch's upload queue key; a
+  high-risk review verdict now gets the base's bounded refusal), runtime.md (the Read aloud
+  and push-to-talk paragraphs) and this log; both sides kept
+  (`docs/status/reviews/w3-r5-phone.md`, `## Rebase` onto 4ff4fb1). Current counts: UI suite
+  51 files / 340 tests (`mobile-upload`, `mobile-reviews`, `mobile-voice` 18), runtime 134
+  files / 1214 unit tests passed, 1 skipped (`voice-relay` 9), state-api 11 files / 159,
+  `cdp.test.ts` 25. R.5 stays `in progress` (the emulator run). Not merged yet.
+
+### 2026-10-23 (item w3-r5-phone rebased onto cac6fee)
+- `wave/w3-r5-phone` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
+  phone store (the base's runner unlock window key next to the branch's upload queue key),
+  apps.md (the screen list and Known issues), requirements.md (R.5 and R.6 in one hunk) and
+  this log; both sides kept (`docs/status/reviews/w3-r5-phone.md` `## Rebase`). Current
+  counts: UI suite 49 files / 316 tests (`mobile-upload` 5, `mobile-reviews` 7,
+  `mobile-voice` 6), runtime 129 files / 1141 unit tests (`voice-relay` 9), state-api 11
+  files / 159. R.5 stays `in progress` (the emulator run). Not merged yet.
+
+### 2026-10-23 (item w3-r5-phone: the phone uploads, reviews and talks; R.5 built, emulator run open)
+- Branch `wave/w3-r5-phone` on the `wip:` snapshot 34bfcdb (the upload route's `clientId`
+  idempotency and `maxBytes` in the list, kept). ADR 0080. The phone gains an Upload screen
+  (file or camera photo, name, project, the cap shown and checked, signed multipart, phase
+  progress, an offline upload queue resent under the same `clientId`), a Reviews screen (the
+  project's critic reviews with PR and findings; comment; approve / reject answering the
+  task's approval at its version, high risk only after the biometric prompt) and push-to-talk
+  on Chat (5 s of 16 kHz PCM, or the typed line in the shell, as a `kind: "voice"` remote
+  command; the reply shown and spoken). The PC's `RemoteCommandWatcher` runs the voice
+  envelope through `VoiceRelay` over the daemon's voice sessions (one held per phone, so a
+  spoken yes answers the last read-back) and drops the audio from the shared row. Both
+  screens are in the nav. R.5 stays `in progress` until the emulator run (BLOCKERS.md, R.5).
+  Build report: `docs/status/reviews/w3-r5-phone.md`.
 
 ### 2026-10-23 (item w3-d16-slider rebased onto cac6fee)
 - `wave/w3-d16-slider` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
@@ -427,7 +470,7 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
-   w3-r5-phone (R.5), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
+   w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
    `it.todo`, the executor's ceiling rung). Then an independent review of each of the ten
    items merged on 2026-10-23 without one (w4-install-identity, w4-private-memory,
    w4-android-signing, w2-a2-intake, w2-g5-docs, w2-g6-promotion, w2-a4-sources,

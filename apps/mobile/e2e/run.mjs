@@ -364,6 +364,48 @@ async function smoke(page, stateUrl, adminToken, timeoutMs) {
     `PASS: high-risk answer needs the platform prompt (not enrolled: refused: ${errorText.trim()})`,
   );
 
+  // 3b. R.5 Reviews: the project's critic reviews with the PR and findings; a signed comment
+  // and an approve (its approval was answered in step 2, so the verdict is the message only).
+  await page.getByTestId("m-nav").getByText("Reviews").click();
+  await page.getByRole("heading", { name: "Reviews" }).waitFor({ timeout: timeoutMs });
+  const parser = page.locator('[data-testid="m-review"][data-review-id="rev_parser"]');
+  await parser.waitFor({ timeout: timeoutMs });
+  assert(
+    (await parser.getByTestId("m-finding").count()) === 2,
+    "the parser review shows its two findings",
+  );
+  await parser.getByTestId("m-review-comment").fill("Checked on the emulator.");
+  await parser.getByTestId("m-review-send-comment").click();
+  await parser.getByTestId("m-review-outcome").getByText("Comment sent").waitFor({
+    timeout: timeoutMs,
+  });
+  await parser.getByTestId("m-review-approve").click();
+  await parser.getByTestId("m-review-outcome").getByText("Approved").waitFor({
+    timeout: timeoutMs,
+  });
+  const reviewCalls = (await calls()).filter((c) => c.path.startsWith("/reviews/rev_parser/"));
+  assert(
+    reviewCalls.map((c) => c.path).join(",") ===
+      "/reviews/rev_parser/comment,/reviews/rev_parser/approve",
+    `review calls: ${reviewCalls.map((c) => c.path).join(",")}`,
+  );
+  assert(
+    reviewCalls.every((c) => c.signed === true),
+    "review comment and verdict signed",
+  );
+  console.log("PASS: R.5 reviews (findings shown, comment and approve signed)");
+
+  // 3c. R.5 Upload: the screen opens with the service's cap; picking a file needs
+  // DOM.setFileInputFiles, which the raw driver does not send (the jsdom tests cover it).
+  await page.getByTestId("m-nav").getByText("Upload").click();
+  await page.getByRole("heading", { name: "Upload" }).waitFor({ timeout: timeoutMs });
+  await page.getByTestId("m-upload-cap").getByText("up to").waitFor({ timeout: timeoutMs });
+  assert(
+    (await page.getByTestId("m-upload-send").getAttribute("disabled")) !== null,
+    "Upload disabled until a file is picked",
+  );
+  console.log("PASS: R.5 upload screen (cap shown, nothing sent without a file)");
+
   // 4. Scenario 9: one sentence, ONE card, confirm, the PC starts, the log shows it with Undo.
   await page.getByTestId("m-nav").getByText("Remote").click();
   await page.getByTestId("m-say").fill(SENTENCE);
@@ -411,6 +453,28 @@ async function smoke(page, stateUrl, adminToken, timeoutMs) {
     await sleep(500);
   }
   console.log("PASS: change log entry with Undo; the inverse plan stopped the session");
+
+  // 5. R.5 voice: the shell has no microphone command, so Chat relays the typed line as a
+  // `kind: "voice"` remote command; the simulated PC's reply comes back on the turn.
+  await page.getByTestId("m-nav").getByText("Chat").click();
+  await page.getByTestId("m-ptt-typed").waitFor({ timeout: timeoutMs });
+  await page.getByTestId("m-chat-input").fill("What is the status?");
+  await page.getByTestId("m-ptt-typed").click();
+  await page
+    .locator('[data-testid="m-chat-reply"][data-status="done"]')
+    .waitFor({ timeout: timeoutMs });
+  const voice = (await calls()).filter(
+    (c) => c.path === "/remote/commands" && c.body?.params?.kind === "voice",
+  );
+  assert(voice.length === 1, "one voice turn relayed");
+  assert(voice[0].signed === true, "voice turn signed");
+  assert(
+    voice[0].body.params.transcript === "What is the status?" && !voice[0].body.params.audio,
+    "the typed line is the voice turn in the shell",
+  );
+  const reply = await page.getByTestId("m-chat-reply").innerText();
+  assert(/PC voice/.test(reply), `the PC's reply is shown: ${reply}`);
+  console.log("PASS: R.5 voice turn relayed to the PC (typed line in the shell)");
 }
 
 async function main() {

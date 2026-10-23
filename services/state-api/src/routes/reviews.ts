@@ -56,8 +56,10 @@ async function loadReview(ctx: RouteContext, id: string) {
 
 /**
  * Critic reviews and findings for PR review on the phone (spec R.5). A comment becomes a
- * message to the responsible agent; approve / reject also answers the task's open approval
- * request (kind "approval") so the waiting session continues.
+ * message to the responsible agent; approve / reject first answers the caller's open approval
+ * request on the task (kind "approval") so the waiting session continues, and only then
+ * tells the agent: a refused answer (high risk without the biometric flag, a stale version)
+ * sends nothing.
  */
 export function registerReviewRoutes(app: App, ctx: RouteContext): void {
   app.get("/reviews", async (c) => {
@@ -118,20 +120,20 @@ export function registerReviewRoutes(app: App, ctx: RouteContext): void {
       const to = await recipient(ctx, review, task);
       const fromAgentId = await senderAgent(ctx, p, body.fromAgentId);
       const comment = body.body ? `\n\n${body.body}` : "";
-      const message = await sendMessageAs(ctx, p, {
-        fromAgentId,
-        ...(to ?? { toHumanId: p.humanId ?? undefined }),
-        projectId: task?.project_id,
-        taskId: task?.id,
-        type: "decision",
-        body: `${verdict === "approve" ? "Approved" : "Rejected"} review ${review.id}${task ? ` of "${task.title}"` : ""} (grade ${review.grade}, verdict ${review.verdict}).${comment}`,
-        requiresAck: true,
-      });
-      // Answer the open approval request on the task, when there is one.
+      // Answer the caller's open approval request on the task first, when there is one: a
+      // refusal (a high-risk request without the biometric flag, a stale version) must leave
+      // nothing behind, so the agent is never told "Approved" for an answer that did not
+      // land (review of w3-r5-phone, finding 1). Another human's request on a shared
+      // project is theirs to answer; this verdict is then only the message (finding 3).
       let answeredRequestId: string | null = null;
       if (task) {
         const open = await ctx.store.humanRequest.open({ projectId: task.project_id });
-        const request = open.find((r) => r.task_id === task.id && r.kind === "approval");
+        const request = open.find(
+          (r) =>
+            r.task_id === task.id &&
+            r.kind === "approval" &&
+            (p.kind !== "device" || r.human_id === p.humanId),
+        );
         if (request) {
           const answered = await answerRequestAs(
             ctx,
@@ -147,6 +149,15 @@ export function registerReviewRoutes(app: App, ctx: RouteContext): void {
           answeredRequestId = answered.id;
         }
       }
+      const message = await sendMessageAs(ctx, p, {
+        fromAgentId,
+        ...(to ?? { toHumanId: p.humanId ?? undefined }),
+        projectId: task?.project_id,
+        taskId: task?.id,
+        type: "decision",
+        body: `${verdict === "approve" ? "Approved" : "Rejected"} review ${review.id}${task ? ` of "${task.title}"` : ""} (grade ${review.grade}, verdict ${review.verdict}).${comment}`,
+        requiresAck: true,
+      });
       announce(ctx, "review.changed", "review", review, {
         projectId: task?.project_id ?? null,
         payload: { verdictFromHuman: verdict },
