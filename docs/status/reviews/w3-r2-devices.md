@@ -379,3 +379,43 @@ unit packages/runtime/test` 138 files, 1276 passed, 1 skipped (`devices-routes.t
 `pnpm exec vitest run --project unit services/state-api/test` 12 files / 163 passed
 (`desktop-devices.test.ts` 4); `--project integration` over both packages: 2 files / 7 tests
 skipped (they need Postgres; the branch adds no integration file).
+
+### Rebase onto 95097ae
+
+Stage REBASE, 2026-10-24 (fourth rebase). `wave/w3-r2-devices` (e13f539, 17 commits on
+38ae8cc) rebased onto `origin/ccr-4d8a843c-1k9syk` at 95097ae (the merges of w3-d7-performance,
+D.7 / D.19; w3-t1-mode-off, T.1 / ADR 0081; and w3-misc-replay-ceiling) with
+`git rebase origin/ccr-4d8a843c-1k9syk`; no merge of the base. Every conflict kept both sides:
+
+| Commit | File | Resolution |
+| --- | --- | --- |
+| Devices section | `apps/ui/test/fixtures.ts` | the base's `PerformanceView` type import kept next to the branch's `PairingStartView` (Biome's order) |
+| docs (R.2 done) | `CHANGELOG.md` | the base's Performance view line (D.7, D.19) and the branch's R.2 line both under Added |
+| docs (R.2 done) | `docs/maintainers/apps.md` | the `/settings` row: the branch's row (the base did not change it); the `/settings/capabilities/email` row: the base's, with its ADR 0081 clause (the branch did not change it); the fake daemon paragraph: the branch's devices clause, then the base's "decisions, the peer feed and docs are served read-only" and its `GET /performance` sentence (the branch's "and performance" dropped, since the base serves performance with a window and a project now) |
+| docs (R.2 done) | `docs/status/PROGRESS.md` | the branch's build entry above the base's newer log entries (w3-d7-performance, w3-t1-mode-off and w3-misc-replay-ceiling); "Next" list: the branch's R.2 clause and the base's T.1 clause ("built on its branch, ADR 0081, reviewed and fixed 2026-10-24, awaiting merge") on one line |
+| Devices review fixes | `docs/maintainers/apps.md` | the same two places again in the review-fix wording: the branch's `/settings` row and the base's email row; the branch's devices clause (`pairing` overrides, `via: "store"`) with the base's performance sentence |
+| rebase onto 4ff4fb1 | `docs/status/PROGRESS.md` | "Next" list: the branch's "rebased onto 4ff4fb1" R.2 clause and the base's T.1 clause |
+| rebase onto 38ae8cc | `docs/status/BLOCKERS.md` | the base's T.1 row (resolved by ADR 0081); the V.1 row: the base's row with both sides' clauses (T.1 merged in abe3bb0, D.7 and D.19 merged in 92cfcd7, R.2 by this item) and the counts recounted from `docs/requirements.md` |
+| rebase onto 38ae8cc | `docs/status/PROGRESS.md` | "Next" list: the branch's "rebased onto 38ae8cc" R.2 clause and the base's T.1 clause |
+
+Merged without a conflict and checked by reading the result against the base's code:
+`packages/runtime/src/daemon/compose.ts` (the base's ADR 0081 `emailMode` command port, its
+`onCommandsSwitchedOff` listener and the intake's `promptVersion` untouched; `DeviceManager` built and returned as `devices`), `server.ts` (the
+base's `GET /performance` route kept, `createDeviceRoutes` mounted), `api-types.ts` (the base's
+Performance view shapes and `...DEVICES_ROUTES` both in `DAEMON_ROUTES`), `apps/ui/src/api/client.ts`,
+`SettingsPage.tsx`, `apps/ui/test/fake-daemon.ts` (the base's `/performance` route and the
+branch's `/devices` routes), runtime.md, state-service.md and requirements.md. The base's V.1
+row said 190 / 33 / 5, which did not count D.7 and D.19; recounted from `docs/requirements.md`:
+the base has 192 done, 31 in progress, 5 todo and the rebased branch 193 / 30 / 5 (R.2 is the
+difference); V.1 carries the branch's numbers.
+
+Checks after the rebase: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, none in a
+file the branch touches: `biome check` over the branch's 19 changed code files reports none);
+`node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok (28 files);
+`pnpm --filter @forerunner/ui test` 53 files / 366 tests passed (`settings-devices.test.tsx`
+11, `settings.test.tsx` 10, `performance.test.tsx` 9, `settings-models.test.tsx` 8); `pnpm exec
+vitest run --project unit packages/runtime/test` 140 files, 1297 passed, 1 skipped
+(`devices-routes.test.ts` 11, `performance-route.test.ts` 4); `pnpm exec vitest run --project
+unit services/state-api/test` 12 files / 163 passed (`desktop-devices.test.ts` 4);
+`--project integration` over both packages: 2 files / 7 tests skipped (they need Postgres; the
+branch adds no integration file).

@@ -18,6 +18,23 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-24 (item w3-r2-devices rebased onto 95097ae)
+- `wave/w3-r2-devices` rebased a fourth time, onto `origin/ccr-4d8a843c-1k9syk` at 95097ae
+  (after the merges of w3-d7-performance, D.7 and D.19; w3-t1-mode-off, T.1 and ADR 0081; and
+  w3-misc-replay-ceiling). Conflicts in the UI's `fixtures.ts` (the base's `PerformanceView`
+  import next to the branch's `PairingStartView`), CHANGELOG (the base's Performance view line
+  and the branch's R.2 line both under Added), apps.md (the `/settings` row with the Devices
+  section, the email page row with the base's ADR 0081 clause; the fake daemon paragraph with
+  the branch's devices clause and the base's `GET /performance` sentence), BLOCKERS.md (the
+  base's resolved T.1 row; the V.1 row with both sides' clauses and the counts recounted) and
+  this log (the branch's entries above the base's newer ones; the "Next" list's R.2 and T.1
+  clauses on one line); both sides kept (`docs/status/reviews/w3-r2-devices.md` `### Rebase
+  onto 95097ae`). Current counts: UI suite 53 files / 366 tests (`settings-devices.test.tsx`
+  11, `settings.test.tsx` 10, `performance.test.tsx` 9), runtime 140 files / 1297 unit tests
+  passed and 1 skipped (`devices-routes.test.ts` 11), state-api 12 files / 163
+  (`desktop-devices.test.ts` 4); requirements 193 done, 30 in progress, 5 todo on the branch
+  (the base 192 / 31 / 5). Not merged yet.
+
 ### 2026-10-23 (item w3-r2-devices rebased onto 38ae8cc)
 - `wave/w3-r2-devices` rebased a third time, onto `origin/ccr-4d8a843c-1k9syk` at 38ae8cc
   (after the merges of w3-d4-specialist-settings, D.4, and w3-r5-phone, R.5). Conflicts in the
@@ -716,7 +733,7 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    fixed on its branch 2026-10-23, rebased onto 38ae8cc, awaiting the merge), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2;
-   built and reviewed on its branch 2026-10-23, rebased onto 38ae8cc, merge pending),
+   built and reviewed on its branch 2026-10-23, rebased onto 95097ae, merge pending),
    w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1; built on its branch, ADR 0081, reviewed and fixed 2026-10-24, awaiting merge), w3-misc-replay-ceiling (scenario 9's replay
    `it.todo`, the executor's ceiling rung). Then an independent review of each of the ten
    w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
