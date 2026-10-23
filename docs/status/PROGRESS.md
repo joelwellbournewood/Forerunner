@@ -18,6 +18,23 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-d7-performance rebased onto 38ae8cc)
+- `wave/w3-d7-performance` rebased onto `origin/ccr-4d8a843c-1k9syk` (38ae8cc, after the merges
+  of w3-d4-specialist-settings (D.4, ADR 0072) and w3-r5-phone (R.5, ADR 0080)). Conflicts in
+  `models/ladder.ts` (the base's `specialistMode` next to `INTAKE_RUN_SPECIALIST`),
+  `session/intake.ts` imports (the base's `DEFAULT_CEILING`, `effortWithOffset` next to
+  `INTAKE_RUN_SPECIALIST`), the UI fixtures' imports (`ModelSettingsView` next to
+  `PerformanceView`), runtime.md (the phone's push-to-talk paragraph next to the Performance
+  view section), BLOCKERS (the base's D.4 row, the branch's D.7/D.19 row) and this file; both
+  sides kept (`docs/status/reviews/w3-d7-performance.md`, `## Rebase (onto 38ae8cc)`). Two
+  follow-ups against the base's code: the branch's intake Run row tests reused the project
+  names of the base's D.4 intake tests (duplicate name, 500), renamed; and the view's effort in
+  force now starts from the principal's D.4 effort setting where one is set (`effortSource`),
+  as the intake, the chat and the executor take it. Current counts: runtime unit 139 files /
+  1281 passed, 1 skipped (`performance-view.test.ts` 10, `performance-route.test.ts` 4,
+  `intake.test.ts` 16); UI 52 files / 353 tests (`performance.test.tsx` 9); requirements 191
+  done, 32 in progress, 5 todo. Not merged yet.
+
 ### 2026-10-23 (item w3-d4-specialist-settings rebased onto 4ff4fb1)
 - `wave/w3-d4-specialist-settings` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1), which
   had since merged w2-l6-speak (L.6), w3-c5-specialist-approval (C.5), w3-d16-slider (D.16),
@@ -513,11 +530,11 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    `docs/status/reviews/w3-c5-specialist-approval.md`),
    w3-d4-specialist-settings (D.4; built and reviewed on its branch 2026-10-23, its six review
    findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19; built, reviewed and
-   fixed on its branch 2026-10-23, rebased onto 4ff4fb1, awaiting the merge), w3-d16-slider (D.16),
+   fixed on its branch 2026-10-23, rebased onto 38ae8cc, awaiting the merge), w3-d16-slider (D.16),
    merge pending), w3-c5-specialist-approval (C.5),
    w3-d4-specialist-settings (D.4; built and reviewed on its branch 2026-10-23, its six review
    findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19; built, reviewed and
-   fixed on its branch 2026-10-23, rebased onto 4ff4fb1, awaiting the merge), w3-d16-slider (D.16:
+   fixed on its branch 2026-10-23, rebased onto 38ae8cc, awaiting the merge), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
    w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay

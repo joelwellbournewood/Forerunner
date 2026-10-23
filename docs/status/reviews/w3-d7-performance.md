@@ -562,3 +562,70 @@ integration packages/runtime/test` 1 file / 4 tests skipped (Docker sandbox, no 
 `pnpm --filter @forerunner/ui test` 48 files / 326 tests; `node scripts/docs-check.mjs --base
 origin/ccr-4d8a843c-1k9syk` ok. Requirements after the rebase: 190 done, 33 in progress,
 5 todo.
+
+## Rebase (onto 38ae8cc)
+
+`wave/w3-d7-performance` (febc6ae) rebased onto `origin/ccr-4d8a843c-1k9syk` at 38ae8cc, which
+had since merged w3-d4-specialist-settings (D.4, ADR 0072: per-agent and per-specialist model
+settings, the effort table's `maxTokens`/`speedMode`/`timeoutMs` columns, the principal's
+planning and chat settings in the intake and the conversation agent) and w3-r5-phone (R.5,
+ADR 0080: the phone's push-to-talk relayed to the PC's voice sessions). `git rebase
+origin/ccr-4d8a843c-1k9syk`, no merge of the base. Conflicts, by the rebased commit:
+
+1. 1c583f8 `packages/runtime/src/models/ladder.ts`: the base added `specialistMode` (the
+   effort-table row of a specialist) where the branch added `INTAKE_RUN_SPECIALIST`. Kept
+   both, the base's first.
+   `packages/runtime/src/session/intake.ts` imports: the base replaced `modeEffort` by
+   `DEFAULT_CEILING` and `effortWithOffset` (the planning effort now comes from
+   `resolveRunSettings`); the branch added `INTAKE_RUN_SPECIALIST`. Kept the base's three and
+   the branch's one. The intake Run row merged on its own and stores the `model` and `effort`
+   the base's code now computes (the principal's planning rung and effort, the slider, the cap).
+2. 8934ffb `apps/ui/test/fixtures.ts` type imports: the base's `ModelSettingsView` next to the
+   branch's `PerformanceView`. Kept both.
+3. b512b1e `docs/maintainers/runtime.md`: the base's "The phone's push-to-talk" paragraph
+   where the branch added the "Performance view" section. Kept both, the base's first.
+4. 59bd662 `docs/status/BLOCKERS.md`: the base rewrote the D.4 row (built), the branch the
+   D.7, D.19 row. Kept the base's D.4 row and the branch's D.7 row.
+   `docs/status/PROGRESS.md` Log: the base's entries (w3-d4-specialist-settings rebase,
+   w3-r5-phone review, rebases and build) above the branch's build entry; kept all.
+   "Next" item list: the base's lines verbatim (the duplicated lines an earlier base merge
+   left), with the base's D.4 and R.5 annotations and the branch's D.7 annotation in both
+   mentions.
+5. ffeadab (status after the review): BLOCKERS and the PROGRESS Log, resolved as in 4 (the
+   branch's reviewed D.7 row; its review entry below the base's entries).
+6. 75b9f6c (status after the rebase onto cac6fee): the PROGRESS Log and item list, as in 4.
+7. dd85b51 (status after the rebase onto 4ff4fb1): BLOCKERS, the PROGRESS Log and item list,
+   as in 4.
+
+Every other commit applied without a conflict. Against the base's code two more things no
+longer held, fixed in follow-up commits on top:
+
+- **f75fbe6, test names.** The base's D.4 intake tests create projects named "Mu" and
+  "Lambda" in the same composed daemon as the branch's two intake Run row tests, which used the
+  same names; `POST /projects` refused the duplicate with 500 and the base's two tests failed.
+  The branch's tests now name theirs "Sigma" and "Tau"; no assertion changed, the base's tests
+  untouched.
+- **a17b5f5, the effort in force under D.4.** The base lets the principal's `model_config` set
+  the effort of planning (`modes.planning`), typed chat (`modes.text_chat`) and each specialist
+  (`specialists.<name>`); the intake, the conversation agent and the executor take it as the
+  base the D.16 slider shifts before the registry cap. The view shifted the table's effort, so
+  after a `model.settings.set` change it showed an effort no run used. `performanceView` takes
+  `agentModelConfig` (the route reads the agent row per request through
+  `parseAgentModelConfig`; a malformed document applies none, as the runs read it);
+  `agentEffortOverride` maps the four settings onto their rows (a spoken turn keeps the voice
+  table effort; the critic and routing have none); `baseEffort` is the override where set and
+  the new `effortSource` (`table` or `agent`) says which. The page labels it "your setting";
+  the fake daemon applies the overrides in its `state.modelSettings`; the fixture carries
+  `effortSource`. Tests: `performance-view.test.ts` (the four overrides with the slider, the
+  caps and the risk rule; 10 tests), `performance-route.test.ts` (the route reads the agent
+  row, a malformed document ignored; fails without the server change; 4 tests),
+  `apps/ui/test/performance.test.tsx` (the fake daemon and the label; 9 tests). Docs:
+  runtime.md (Performance view, effort in force), apps.md (slider section, fake daemon),
+  BLOCKERS D.7 row, CHANGELOG.
+
+Checks on the rebased tree: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, none an
+error, none in the branch's files); `pnpm exec vitest run --project unit packages/runtime/test`
+139 files / 1281 passed, 1 skipped; `pnpm exec vitest run --project integration
+packages/runtime/test` 1 file / 4 tests skipped (Docker sandbox, no daemon); `pnpm --filter
+@forerunner/ui test` 52 files / 353 tests; `node scripts/docs-check.mjs --base
+origin/ccr-4d8a843c-1k9syk` ok. Requirements after the rebase: 191 done, 32 in progress, 5 todo.
