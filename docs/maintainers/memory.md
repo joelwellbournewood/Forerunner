@@ -39,6 +39,8 @@ joined with `join()`; nothing is hardcoded to a user path.
   shared/
     lessons/<id>.md         export of the shared rows (same rule)
     catalog.md
+  private.sqlite            team mode only: the local index of the private rows (ADR 0083); the
+                            shared store never holds one
 ```
 
 `LessonFiles` owns one memory root and refuses any path outside it (`inside()` throws
@@ -50,7 +52,7 @@ rename), LF on write, CRLF accepted on read.
 
 | Scope | Who may read | Owner | Where the truth lives | Source of lessons |
 | --- | --- | --- | --- | --- |
-| `agent_private` | the owning agent only (`ownerAgentId` must equal the asking agent) | `owner_agent_id` required | file, row is derived | the agent's sessions, the conversation agent |
+| `agent_private` | the owning agent only (`ownerAgentId` must equal the asking agent) | `owner_agent_id` required | file, row is derived; team mode: the row is in the local private index, never in the shared store | the agent's sessions, the conversation agent |
 | `critic` | every principal, the critic | none | row (state service in team mode), file is the export | the critic's reviews and calibration |
 | `shared` | every principal, the critic | none | row, file is the export | promotion, project-level lessons recorded by the critic or a principal |
 
@@ -74,6 +76,33 @@ a direct caller that leaves `agentId` out is trusted to pass its own id, so runt
 go through the service. A critic or shared lesson may not cite a private lesson id either:
 `remember` resolves every lesson id in the text and refuses one that belongs to a private row
 (ADR 0002 "shared may never reference private"); promotion checks again against its destination.
+
+### Where the private rows live (`src/scoped-store.ts`, ADR 0083)
+
+Spec: "whose private memory and keys each holds ... never leave that PC". In solo mode the one
+local SQLite holds every scope. With a shared state (Postgres through the state service in
+paired and hybrid mode) the runtime opens a second SQLite, `<data>/memory/private.sqlite` (the
+state schema at the same migration version, one `lesson` table in use, foreign keys off because
+the agents and projects its rows name live in the shared store), and `createMemory({ store,
+privateStore })` wraps the two in a `ScopedLessonStore`: writes route by the row's scope
+(`agent_private` to the index, `critic` and `shared` to the shared store), reads by id look in
+the index first and then in the shared store, `search` reads the scope's store, `list` and
+`count` without a single scope union both (private first). A row never changes store: `update`,
+`patch` and `supersede` with a scope that belongs to the other store are refused with
+`MEMORY_SCOPE_VIOLATION`; promotion is the explicit copy (`proposePromotion` writes the shared
+proposal through the facade, the private origin stays home and is never superseded). Every
+memory function (`remember`, `recall`, `consolidate`, `reconcile`, promotion, the runtime's
+views) sees one `LessonStore` (the `Pick` of `LessonRepo` in `src/types.ts`) and needs no
+knowledge of the split; `mirrorRow` restores a file's envelope through
+`LessonRepo.overwriteEnvelope` instead of raw SQL for the same reason.
+
+The second, independent guard is in `packages/state`: `LessonRepo` on the Postgres dialect
+refuses an `agent_private` insert, update, patch or supersede with `MEMORY_SCOPE_VIOLATION`
+before any statement runs (`packages/state/test/lesson-scope.test.ts`; the suite case runs on
+the real adapter in the integration project), so a caller that bypasses the facade cannot put a
+private row into the shared store either. A hand-edited file whose `scope` no longer matches its
+directory is reported invalid by `LessonFiles.list` and never mirrored, so `reconcile` cannot
+move a row across the boundary.
 
 ### Lesson file (`src/files.ts`, format 1)
 
@@ -111,7 +140,8 @@ and `formatSource` convert. `flags` exist only in the file; the row has no colum
 
 The `lesson` row (`@forerunner/state`, `LessonRepo`) mirrors the file field for field plus
 `embedding` (JSON array of the vector) and `file_path`. `mirrorRow()` upserts a row so it equals
-the file exactly, including `version`, `created_at` and `updated_at`. `reconcile(files, repo,
+the file exactly, including `version`, `created_at` and `updated_at` (set through
+`LessonRepo.overwriteEnvelope`; with a private index the row goes to the store of its scope). `reconcile(files, repo,
 embedder, scope, ownerAgentId?, { deleteOrphans, writeCatalog })` walks one scope root, upserts
 rows for new or changed files (re-embedding), reports rows whose file is gone as `orphans`
 (deleted only with `deleteOrphans`), reports unparsable files in `invalid` without trusting them,
@@ -264,8 +294,10 @@ this package never rewrites an existing doc.
 
 ### Service facade (`src/service.ts`)
 
-`createMemory({ store, root?, files?, embedder?, clock? })` builds the `MemoryContext` (`repo`,
-`files`, `embedder`, `clock`, optional `reviews`). `MemoryService`:
+`createMemory({ store, privateStore?, root?, files?, embedder?, clock? })` builds the
+`MemoryContext` (`repo`: the store's `LessonRepo`, or a `ScopedLessonStore` over the private
+index and the store when `privateStore` is given; `files`, `embedder`, `clock`, optional
+`reviews`). `MemoryService`:
 
 - `recallForSession({ grant, projectId?, brief, tags?, maxTokens = 1500, countTokens? })`: loads
   the agent's `instructions.md` first when the grant covers its private scope (charged to the
@@ -282,7 +314,9 @@ this package never rewrites an existing doc.
 `ForerunnerError` codes used: `validation` (bad input, bad file, lint), `path_not_allowed`
 (outside the root), `not_found`, `approval_required` (promotion without an accepting review or
 human approval), `autonomy_insufficient` (proposing someone else's private lesson),
-`budget_exceeded` (instructions larger than the budget), `unavailable` (file write failed).
+`budget_exceeded` (instructions larger than the budget), `unavailable` (file write failed),
+`MEMORY_SCOPE_VIOLATION` (a private row headed for the shared store, or a lesson moved across
+the private/shared boundary; spelled as ADR 0002 names it).
 
 ## How to change it
 
@@ -330,6 +364,7 @@ opposite polarity 0.93, unrelated under 0.2).
 | `consolidation.test.ts` | polarity pairs, `consolidationDue`, duplicate merge keeping the most used with report-only then apply, the kept lesson made global when a merged member was global (and kept project-scoped when none was), contradictions flagged in both files and never resolved, contradiction above the duplicate threshold, no pairing without a shared tag or across projects, retirement by the simulated clock (never used after 60 days, stale after 90, pinned kept, young kept), custom thresholds, owner required for a private plan |
 | `promotion.test.ts` | `general` tag required, idempotent proposal with source pointing at the origin, proposals not retrievable, private origin needs owner plus human approval, foreign (critic) ids refused by promotion, promotion needs an accepting review (empty, revise, missing review rejected), promoted copy active and global, shared project origin superseded, critic origin untouched, reject, offers to projects (explicit and derived) |
 | `docs.test.ts` | the eight docs, scaffold with frontmatter, existing untouched and idempotent, frontmatter parse, every drift rule including separators, missing docs reported |
+| `scoped-store.test.ts` | the by-scope store over a private index and a shared store that refuses private writes like the Postgres adapter: `createMemory` builds it; a session's private lessons land only in the index (files in the usual roots) and critic and shared ones only in the shared store; recall unions both for the owner, the critic sees no private row, touches go to the holding store; edit, pin, retire, touch and delete locate the row; a scope change across the boundary (update, patch, supersede) is refused with `MEMORY_SCOPE_VIOLATION` while the near-duplicate merge inside the index still supersedes; promotion copies a private `general` lesson into the shared store and leaves the origin home; consolidation runs per scope on its store; `reconcile` of a private root fills the index and never the shared store; scoped and unscoped list, count and search |
 | `service.test.ts` | `rememberFromSession` records, rejects and writes the catalog; `recallForSession` loads standing notes then lessons under the budget; instructions larger than the budget refused; empty grant; the "4 simulated weeks" sketch: repeated findings recorded as shared lessons are recalled by later sessions (repeats 3, 0, 0, 0), memory per session stays under budget, hits and `last_used` advance, re-recording merges instead of duplicating |
 
 `test/postgres.integration.test.ts` (`pnpm vitest run --project integration packages/memory/test`)
@@ -341,9 +376,13 @@ in `tests/e2e` once the critic wiring lands; the sketch here is its unit-level s
 
 ## Known issues
 
-- Team mode is not wired: critic and shared rows are served from the local store, and the
-  Postgres adapter does not yet throw `MEMORY_SCOPE_VIOLATION` on a private write (ADR 0002).
-  That guard lives in `packages/state` and is tracked there.
+- The private index is a second full state schema (every table created, one used): a schema
+  migration applies to it at the next start like the state store, and a `lesson` migration that
+  backfills from other tables (`agent`, `project`) finds them empty there. A cross-store
+  `supersede` has no transaction across the two SQLite files, which is why the facade refuses it
+  instead of attempting it.
+- The private index is unencrypted on disk like the solo-mode state store; the spec's "own
+  encrypted backup" of private memory (spec "Source of truth rules") is not built.
 - No `lesson_use` table yet: usage is `hit_count` and `last_used` only; `cited` (the agent or a
   finding referenced the id) waits for the critic wiring.
 - Contradiction detection is a word heuristic (ADR 0027): contradictions without a polarity

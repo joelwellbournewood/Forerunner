@@ -1071,6 +1071,52 @@ export function defineStateSuite(target: SuiteTarget): void {
         );
       });
 
+      it("keeps private rows out of the shared store: Postgres refuses an agent_private write, SQLite accepts it", async () => {
+        // Spec "private memory ... never leave[s] that PC"; ADR 0002: private rows exist only in
+        // the local SQLite, the Postgres adapter throws MEMORY_SCOPE_VIOLATION on a private write.
+        const shared = await store.lesson.add({ scope: "shared", text: "Shared habit" });
+        const privateWrite = () =>
+          store.lesson.add({
+            scope: "agent_private",
+            owner_agent_id: s.alice.id,
+            text: "Alice secret habit",
+          });
+        if (store.dialect === "postgres") {
+          const err = await expectCode(privateWrite(), "MEMORY_SCOPE_VIOLATION");
+          expect(err.details).toMatchObject({ scope: "agent_private", dialect: "postgres" });
+          await expectCode(
+            store.lesson.update(shared.id, shared.version, {
+              scope: "agent_private",
+              owner_agent_id: s.alice.id,
+            }),
+            "MEMORY_SCOPE_VIOLATION",
+          );
+          await expectCode(
+            store.lesson.patch(shared.id, { scope: "agent_private", owner_agent_id: s.alice.id }),
+            "MEMORY_SCOPE_VIOLATION",
+          );
+          await expectCode(
+            store.lesson.supersede(shared.id, {
+              text: "Shared habit, now private",
+              scope: "agent_private",
+              owner_agent_id: s.alice.id,
+            }),
+            "MEMORY_SCOPE_VIOLATION",
+          );
+          expect(await store.lesson.count({ scope: "agent_private" })).toBe(0);
+          const untouched = await store.lesson.mustGet(shared.id);
+          expect(untouched.scope).toBe("shared");
+          expect(untouched.version).toBe(shared.version);
+          expect(untouched.superseded_by).toBeNull();
+        } else {
+          const row = await privateWrite();
+          expect(row.scope).toBe("agent_private");
+          const next = await store.lesson.supersede(row.id, { text: "Alice newer habit" });
+          expect(next.scope).toBe("agent_private");
+          expect(await store.lesson.count({ scope: "agent_private" })).toBe(2);
+        }
+      });
+
       it("searches by tags, text and status; touch, retire and supersede behave", async () => {
         const a = await store.lesson.add({
           scope: "shared",

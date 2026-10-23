@@ -24,15 +24,58 @@ export class LessonRepo extends Repository<LessonRow> {
     super(db, ENTITIES.lesson as EntityDef, clock);
   }
 
+  /**
+   * Private memory never leaves its owner's PC (spec "Source of truth rules", ADR 0002): the
+   * Postgres adapter is the shared state in paired and hybrid mode, so it refuses every write
+   * that would put an `agent_private` row there, before any statement runs. The runtime keeps
+   * private rows in a local SQLite index and routes by scope (`@forerunner/memory`,
+   * `ScopedLessonStore`); in solo mode the one local SQLite holds every scope.
+   */
+  private assertScopeAllowed(scope: unknown, operation: string): void {
+    if (scope === "agent_private" && this.db.dialect === "postgres") {
+      throw new ForerunnerError(
+        "MEMORY_SCOPE_VIOLATION",
+        `lesson ${operation}: agent_private rows never enter the shared store`,
+        { details: { scope, dialect: this.db.dialect, operation } },
+      );
+    }
+  }
+
   override async insert(input: Record<string, unknown>): Promise<LessonRow> {
+    this.assertScopeAllowed(input.scope, "insert");
     if (input.scope === "agent_private" && !input.owner_agent_id) {
       throw new ForerunnerError("validation", "agent_private lessons need owner_agent_id");
     }
     return super.insert(input);
   }
 
+  /** Every update and patch passes here; a row can never be turned private in a shared store. */
+  override async updateWhere(
+    patch: Partial<LessonRow>,
+    whereSql: string,
+    whereParams: unknown[],
+    extra: { set: string[]; params: unknown[] } = { set: [], params: [] },
+  ): Promise<LessonRow[]> {
+    this.assertScopeAllowed(patch.scope, "update");
+    return super.updateWhere(patch, whereSql, whereParams, extra);
+  }
+
   add(input: NewLesson): Promise<LessonRow> {
     return this.insert(input);
+  }
+
+  /**
+   * Set the envelope columns the generic writes manage themselves. The file is canonical for a
+   * lesson (ADR 0002): mirroring one into the index must reproduce its version and timestamps.
+   */
+  async overwriteEnvelope(
+    id: string,
+    envelope: { version: number; updated_at: string; created_at: string },
+  ): Promise<void> {
+    await this.db.query(
+      `UPDATE ${this.qt} SET "version" = ?, "updated_at" = ?, "created_at" = ? WHERE "id" = ?`,
+      [envelope.version, envelope.updated_at, envelope.created_at, id],
+    );
   }
 
   /**
