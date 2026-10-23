@@ -15,6 +15,7 @@ import {
 import type { RunningDaemon } from "../daemon/server.ts";
 import { writeKillRequest } from "../enforcement/killfile.ts";
 import { registerModelWatchCli } from "../models/watch-cli.ts";
+import { registerRunnerKeyCli } from "../secrets/runner-key-cli.ts";
 import { describePlanAllowance } from "../setup/plan-allowance.ts";
 import {
   ensureDirs,
@@ -370,6 +371,16 @@ export function buildProgram(deps: CliDeps = {}): Command {
   // Audit log export (spec S.9): a one-shot over the store through the daemon's export module.
   registerAuditCli(program, {
     open: () => openRuntime({ startServices: false }),
+    out,
+    cwd: deps.cwd ?? (() => process.cwd()),
+  });
+  // The vault the daemon opens (compose.ts: the config's profile, this environment).
+  registerRunnerKeyCli(program, {
+    open: ({ profile }) =>
+      openVault({
+        profile: profile ?? readConfig(appDirs({ env }))?.profile ?? "default",
+        env,
+      }),
     out,
     cwd: deps.cwd ?? (() => process.cwd()),
   });

@@ -85,6 +85,38 @@ describe("inbox", () => {
     expect($$("option", cred)).toHaveLength(0);
   });
 
+  it("shows a cloud runner unlock read-only with the reason (no keyring on this page)", async () => {
+    const template = h.fake.state.requests.find((r) => r.id === "req-cred");
+    if (!template) throw new Error("fixture");
+    h.fake.state.requests.push({
+      ...template,
+      id: "req-unlock",
+      projectId: null,
+      projectName: null,
+      why: 'Cloud runner "runner-eu" needs the vault key to start.',
+      options: ["unlock", "deny"],
+      blocking: true,
+      risk: "high",
+      changeCard: {
+        kind: "runner_vault_unlock",
+        version: 1,
+        runnerId: "runner-eu",
+        challengeId: "challenge-0001",
+        runnerPublicKey: "AAAA",
+        nonce: "AAAA",
+        expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      },
+    });
+    await openInbox(h);
+    const card = $$("request").find((c) => c.dataset.requestId === "req-unlock") as HTMLElement;
+    expect(must("unlock-readonly", card).textContent).toMatch(
+      /Cloud runner "runner-eu" asks for its vault key\. This page has no OS keyring/,
+    );
+    expect($("credential-notice", card)).toBeNull();
+    expect($$("option", card)).toHaveLength(0);
+    expect(card.querySelector("input")).toBeNull();
+  });
+
   it("shows a 409 as changed, with a reload that fetches the latest", async () => {
     // The feed polls the inbox when the stream is not live; a poll landing between the version
     // bump below and the click would hand the card the new version and the answer would succeed.

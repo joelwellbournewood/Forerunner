@@ -39,6 +39,13 @@ import {
   subscribeStateEvents,
 } from "../api/state-sse.ts";
 import {
+  NO_KEYRING_REASON,
+  noKeyringBridge,
+  type PreparedAnswer,
+  type RunnerKeyBridge,
+  secureStoreRunnerKeys,
+} from "../lib/runner-unlock.ts";
+import {
   buildPlanCard,
   type CardContext,
   chfPerUsdFrom,
@@ -128,6 +135,8 @@ export interface MobileState {
   secureStoreKind: SecureStore["kind"];
   inShell: boolean;
   shellVersion: string | null;
+  /** The cloud runner auto-unlock window this phone set with an answer (ADR 0068), or null. */
+  unlockWindowUntil: string | null;
 }
 
 export type MobileAction =
@@ -167,6 +176,7 @@ export function initialMobileState(partial: Partial<MobileState> = {}): MobileSt
     secureStoreKind: "memory",
     inShell: false,
     shellVersion: null,
+    unlockWindowUntil: null,
     ...partial,
   };
 }
@@ -238,6 +248,12 @@ export interface MobileEnv {
   /** A platform port, or "prompt" for the visible simulated dialog the provider renders. */
   biometric: BiometricPort | "prompt";
   push: PushPort;
+  /**
+   * Where the cloud runner's vault key is (spec S.12, ADR 0068): the shell's Keystore-wrapped
+   * secure store on Android; without a keyring the unlock card is read-only. Defaults from
+   * `inShell` and `secure` when omitted.
+   */
+  runnerKeys?: RunnerKeyBridge;
   fetch?: FetchLike;
   now: () => number;
   timezone: string;
@@ -258,6 +274,7 @@ const ACTIVE_KEY = "activeProject";
 const QUIET_KEY = "quietHours";
 const CHANGES_KEY = "changes";
 const OUTBOX_KEY = "outbox";
+const UNLOCK_WINDOW_KEY = "runnerUnlockWindow";
 
 let webSigner: Promise<WebCryptoSigner> | null = null;
 /** One ticket book for the page: the simulated prompt issues, the lazily made signer redeems. */
@@ -291,6 +308,9 @@ export function envFromGlobals(injection: ShellInjection | undefined): MobileEnv
     storage: mobileStorage(),
     biometric: shell ? shellBiometric : "prompt",
     push: shell ? shellPush : new PollingPush(),
+    runnerKeys: shell
+      ? secureStoreRunnerKeys(shellSecureStore)
+      : noKeyringBridge(NO_KEYRING_REASON),
     now: () => Date.now(),
     timezone: deviceTimezone(),
     scan: shell ? scanQr : null,
@@ -322,6 +342,7 @@ export class MobileController {
   readonly changeLog: ChangeLog;
   readonly outbox: LocalOutbox;
   readonly biometric: BiometricPort;
+  readonly runnerKeys: RunnerKeyBridge;
   private client: StateClient;
   private stream: StateStreamSubscription | null = null;
   private inboxReload: ReturnType<typeof setTimeout> | null = null;
@@ -341,8 +362,12 @@ export class MobileController {
         secureStoreKind: env.secure.kind,
         inShell: env.inShell,
         shellVersion: env.shellVersion,
+        unlockWindowUntil: env.storage.get(mobileKey(installId, UNLOCK_WINDOW_KEY)),
       }),
     );
+    this.runnerKeys =
+      env.runnerKeys ??
+      (env.inShell ? secureStoreRunnerKeys(env.secure) : noKeyringBridge(NO_KEYRING_REASON));
     this.changeLog = new ChangeLog(env.storage, mobileKey(installId, CHANGES_KEY));
     this.outbox = new LocalOutbox(env.storage, mobileKey(installId, OUTBOX_KEY));
     if (env.biometric === "prompt") {
@@ -811,6 +836,20 @@ export class MobileController {
       }
       throw error;
     }
+  }
+
+  /**
+   * Answer a cloud runner unlock (spec S.12, ADR 0068): the request is high risk, so the
+   * biometric prompt runs first and the answer never waits in the outbox; the window the answer
+   * carries is recorded on this phone only once the service accepted it.
+   */
+  async answerUnlock(request: HumanRequestView, prepared: PreparedAnswer): Promise<void> {
+    const r = await this.answerRequest(request, prepared.value);
+    if (r.queued || prepared.window === undefined) return;
+    const key = mobileKey(this.env.installId, UNLOCK_WINDOW_KEY);
+    if (prepared.window) this.env.storage.set(key, prepared.window);
+    else this.env.storage.remove(key);
+    this.patch({ unlockWindowUntil: prepared.window });
   }
 
   async markRead(message: MessageView): Promise<void> {

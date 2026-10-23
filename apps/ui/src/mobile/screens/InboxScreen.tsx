@@ -4,6 +4,7 @@ import {
   type HumanRequestView,
   type MessageView,
 } from "../../api/state-client.ts";
+import { UnlockCard } from "../../components/UnlockCard.tsx";
 import {
   Badge,
   Button,
@@ -12,6 +13,7 @@ import {
   INPUT_CLASS,
   Loading,
 } from "../../components/ui.tsx";
+import { unlockChallengeOf } from "../../lib/runner-unlock.ts";
 import { relativeTime } from "../../lib/time.ts";
 import { renderCard } from "../change-card.ts";
 import { sortMessages, sortRequests } from "../inbox-sort.ts";
@@ -21,6 +23,9 @@ import { MobileController, useMobileController, useMobileState } from "../store.
  * Inbox on the phone (spec K.4, J.3, R.5): approvals first (blocking, then newest), multiple
  * choice answers, free text; a high-risk request shows that it needs biometrics and the
  * answer is sent only after the prompt succeeded (the flag travels inside the signature).
+ * A cloud runner unlock (spec S.12, ADR 0068) renders as the unlock card; inside the window
+ * this phone set, the next challenge is answered without a choice (the fingerprint still) by
+ * `MobileShell`, on every screen.
  */
 export function InboxScreen() {
   const controller = useMobileController();
@@ -73,6 +78,8 @@ function RequestCard({ request }: { request: HumanRequestView }) {
   const [queued, setQueued] = useState(false);
   const high = MobileController.isHighRisk(request);
   const card = request.changeCard;
+  const challenge = unlockChallengeOf(request);
+  const windowUntil = useMobileState((s) => s.unlockWindowUntil);
 
   const send = async (value: unknown) => {
     if (busy) return;
@@ -119,7 +126,18 @@ function RequestCard({ request }: { request: HumanRequestView }) {
           ))}
         </ol>
       ) : null}
-      {card && typeof card === "object" && !Array.isArray(card) ? (
+      {challenge ? (
+        <UnlockCard
+          request={request}
+          card={challenge}
+          bridge={controller.runnerKeys}
+          windowUntil={windowUntil}
+          now={controller.env.now}
+          onSend={(prepared) => controller.answerUnlock(request, prepared)}
+          testIdPrefix="m-"
+        />
+      ) : null}
+      {!challenge && card && typeof card === "object" && !Array.isArray(card) ? (
         <pre
           className="mt-2 overflow-auto whitespace-pre-wrap rounded bg-neutral-100 p-2 text-xs dark:bg-neutral-900"
           data-testid="m-request-card"
@@ -132,7 +150,7 @@ function RequestCard({ request }: { request: HumanRequestView }) {
           High risk: answering asks for your fingerprint or face first.
         </p>
       ) : null}
-      {request.options.length > 0 ? (
+      {!challenge && request.options.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-2" data-testid="m-options">
           {request.options.map((o) => (
             <Button
@@ -147,25 +165,27 @@ function RequestCard({ request }: { request: HumanRequestView }) {
           ))}
         </div>
       ) : null}
-      <form
-        className="mt-2 flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (text.trim()) void send(text.trim());
-        }}
-      >
-        <input
-          className={INPUT_CLASS}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Or answer in your own words…"
-          aria-label="Free-text answer"
-          data-testid="m-free-text"
-        />
-        <Button type="submit" disabled={busy || !text.trim()} data-testid="m-send-free-text">
-          Send
-        </Button>
-      </form>
+      {challenge ? null : (
+        <form
+          className="mt-2 flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (text.trim()) void send(text.trim());
+          }}
+        >
+          <input
+            className={INPUT_CLASS}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Or answer in your own words…"
+            aria-label="Free-text answer"
+            data-testid="m-free-text"
+          />
+          <Button type="submit" disabled={busy || !text.trim()} data-testid="m-send-free-text">
+            Send
+          </Button>
+        </form>
+      )}
       {queued ? (
         <p className="mt-2 text-xs text-neutral-500" data-testid="m-answer-queued">
           Queued; sent when the phone reconnects.

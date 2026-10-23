@@ -80,6 +80,11 @@ import {
   type ReviewsView,
   ReviewsView as ReviewsViewSchema,
   type ReviewView,
+  type RunnerKeyStatusView,
+  RunnerKeyStatusView as RunnerKeyStatusViewSchema,
+  type RunnerUnlockAnswerView,
+  RunnerUnlockAnswerView as RunnerUnlockAnswerViewSchema,
+  type RunnerUnlockWrapBody,
   type RunView,
   RunView as RunViewSchema,
   type ScanResultView,
@@ -533,6 +538,11 @@ export interface DaemonClient {
     filter?: { limit?: number },
     signal?: AbortSignal,
   ): Promise<EmailCommandsView>;
+
+  // Cloud runner vault unlock (spec S.12, ADR 0068): the daemon holds the OS keyring and
+  // wraps the runner's vault key to the challenge; the key never crosses this API.
+  runnerKeyStatus(runnerId: string, signal?: AbortSignal): Promise<RunnerKeyStatusView>;
+  wrapRunnerKey(body: RunnerUnlockWrapBody): Promise<RunnerUnlockAnswerView>;
   // Proposed routes (ADR 0032); pages degrade when `isRouteMissing(error)`.
   queue(
     projectId: string,
@@ -872,6 +882,9 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         { limit: filter?.limit },
         signal,
       ),
+    runnerKeyStatus: (runnerId, signal) =>
+      get(routePath("runnerKeyStatus", { runnerId }), RunnerKeyStatusViewSchema, undefined, signal),
+    wrapRunnerKey: (body) => post(routePath("wrapRunnerKey"), RunnerUnlockAnswerViewSchema, body),
     queue: (projectId, filter, signal) =>
       get(proposedPath("queue", { id: projectId }), QueueList, { status: filter?.status }, signal),
     enqueue: (projectId, body) =>

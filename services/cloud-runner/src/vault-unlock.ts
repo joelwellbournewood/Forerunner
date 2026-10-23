@@ -11,8 +11,18 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
-import type { HumanRequestRow, JsonObject, JsonValue, StateStore } from "@forerunner/state";
-import { DEVICE_KEY_BYTES } from "@forerunner/vault";
+import type { HumanRequestRow, JsonObject, StateStore } from "@forerunner/state";
+import {
+  AUTO_UNLOCK_SETTING,
+  autoUnlockUntilOf,
+  DEVICE_KEY_BYTES,
+  MAX_AUTO_UNLOCK_WINDOW_MS,
+  shouldAutoAnswer,
+  UNLOCK_CARD_KIND,
+  UNLOCK_HKDF_INFO_PREFIX,
+  UNLOCK_OPTIONS,
+  UNLOCK_PROTOCOL_VERSION,
+} from "@forerunner/vault";
 import { z } from "zod";
 
 /**
@@ -36,14 +46,21 @@ import { z } from "zod";
  * is in the future the runner keeps a copy of the key and re-unlocks from it (after an idle
  * lock) without asking; when the window ends the copy is zeroed, the vault is locked and the
  * next unlock asks again. With `policy: "ask"` the window is ignored and every unlock asks.
+ *
+ * The constants, the window rule and a WebCrypto device side shared with the desktop daemon and
+ * the inbox cards live in `@forerunner/vault` (`runner-unlock.ts`, ADR 0068); they are
+ * re-exported here so the protocol keeps one import path.
  */
 
-export const UNLOCK_CARD_KIND = "runner_vault_unlock";
-export const UNLOCK_PROTOCOL_VERSION = 1;
-export const UNLOCK_OPTIONS = ["unlock", "deny"] as const;
-export const AUTO_UNLOCK_SETTING = "cloud_runner" as const;
-/** Longest window a device may set through an answer (a week); longer values are refused. */
-export const MAX_AUTO_UNLOCK_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+export {
+  AUTO_UNLOCK_SETTING,
+  autoUnlockUntilOf,
+  MAX_AUTO_UNLOCK_WINDOW_MS,
+  shouldAutoAnswer,
+  UNLOCK_CARD_KIND,
+  UNLOCK_OPTIONS,
+  UNLOCK_PROTOCOL_VERSION,
+};
 
 export const UNLOCK_AUDIT_TOOLS = {
   requested: "runner.unlock_requested",
@@ -53,7 +70,7 @@ export const UNLOCK_AUDIT_TOOLS = {
 } as const;
 
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
-const HKDF_INFO_PREFIX = "forerunner-runner-unlock:v1:";
+const HKDF_INFO_PREFIX = UNLOCK_HKDF_INFO_PREFIX;
 
 const base64 = z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/, "must be base64");
 
@@ -249,23 +266,6 @@ export function answerUnlockChallenge(
   } finally {
     wrap.fill(0);
   }
-}
-
-/** The human's auto-unlock window from their settings JSON, as epoch ms, or null. */
-export function autoUnlockUntilOf(notifyPrefs: JsonValue | null | undefined): number | null {
-  if (!notifyPrefs || typeof notifyPrefs !== "object" || Array.isArray(notifyPrefs)) return null;
-  const setting = (notifyPrefs as JsonObject)[AUTO_UNLOCK_SETTING];
-  if (!setting || typeof setting !== "object" || Array.isArray(setting)) return null;
-  const until = (setting as JsonObject).auto_unlock_until;
-  if (typeof until !== "string") return null;
-  const ms = Date.parse(until);
-  return Number.isFinite(ms) ? ms : null;
-}
-
-/** Device-side rule: answer without prompting while the human's window is open. */
-export function shouldAutoAnswer(notifyPrefs: JsonValue | null | undefined, now: number): boolean {
-  const until = autoUnlockUntilOf(notifyPrefs);
-  return until !== null && until > now;
 }
 
 // ---------------------------------------------------------------------------------------------

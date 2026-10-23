@@ -141,6 +141,13 @@ const KIND_LABEL: Record<string, string> = {
   info: "Information",
 };
 
+/** The runner id of a cloud runner unlock challenge card (`runner_vault_unlock`), else null. */
+export function runnerUnlockOf(card: unknown): string | null {
+  if (typeof card !== "object" || card === null || Array.isArray(card)) return null;
+  const c = card as { kind?: unknown; runnerId?: unknown };
+  return c.kind === "runner_vault_unlock" && typeof c.runnerId === "string" ? c.runnerId : null;
+}
+
 export function RequestCard({
   request,
   onAnswered,
@@ -157,6 +164,8 @@ export function RequestCard({
   const canAnswer = app.client.hasScope("write:approvals");
   const highRisk = isHighRisk(request);
   const credential = request.kind === "credential";
+  // A cloud runner's vault unlock (spec S.12, ADR 0068): read-only here, without a keyring.
+  const unlockRunner = credential ? runnerUnlockOf(request.changeCard) : null;
 
   async function post(value: unknown, confirmation?: { challengeId: string; code: string }) {
     setAnswer({ kind: "sending" });
@@ -287,9 +296,15 @@ export function RequestCard({
           This link was issued without approvals, so it can only show requests.
         </p>
       )}
-      {canAnswer && credential && (
+      {canAnswer && credential && unlockRunner === null && (
         <p className="mt-2 text-sm text-neutral-500" data-testid="credential-notice">
           Credentials go into the vault from the desktop app, never through this page.
+        </p>
+      )}
+      {credential && unlockRunner !== null && (
+        <p className="mt-2 text-sm text-neutral-500" data-testid="unlock-readonly">
+          Cloud runner "{unlockRunner}" asks for its vault key. This page has no OS keyring to hold
+          the key, so it can only show the request: unlock from the desktop app or the Android app.
         </p>
       )}
       {canAnswer && !credential && answer.kind !== "conflict" && (

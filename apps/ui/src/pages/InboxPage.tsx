@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import {
   describeError,
@@ -6,6 +6,7 @@ import {
   type InboxView,
   type MessageView,
 } from "../api/client.ts";
+import { UnlockCard, useUnlockWindow } from "../components/UnlockCard.tsx";
 import {
   Badge,
   Button,
@@ -15,6 +16,14 @@ import {
   Loading,
   statusTone,
 } from "../components/ui.tsx";
+import {
+  daemonRunnerKeys,
+  desktopUnlockWindowStore,
+  type PreparedAnswer,
+  type RunnerKeyBridge,
+  unlockChallengeOf,
+} from "../lib/runner-unlock.ts";
+import { browserStorage, type KeyValueStore } from "../lib/storage.ts";
 import { relativeTime } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
@@ -196,8 +205,16 @@ function IntakeCard({ card }: { card: IntakeCardView }) {
   );
 }
 
+export interface InboxPageProps {
+  /** Where the runner's vault key is (ADR 0068); the daemon, which holds the OS keyring, by default. */
+  runnerKeys?: RunnerKeyBridge;
+  /** Where this device keeps the auto-unlock window it set; browser storage by default. */
+  unlockWindows?: KeyValueStore;
+  now?: () => number;
+}
+
 /** Inbox (spec K.4, J.3): human requests and agent messages, blocking first. */
-export function InboxPage() {
+export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPageProps = {}) {
   const client = useClient();
   const store = useUiStore();
   const me = useUiState((s) => s.me);
@@ -206,6 +223,16 @@ export function InboxPage() {
     (signal) => (humanId ? client.inbox(humanId, signal) : Promise.resolve(null)),
     [client, humanId],
   );
+
+  // Cloud runner unlock (spec S.12, ADR 0068): the key bridge and this device's window record.
+  // The auto-answer inside that window runs app-wide (`RunnerAutoUnlock` in the Shell), which
+  // reads the same record, so a window set here takes effect on every page at once.
+  const bridge = useMemo(() => runnerKeys ?? daemonRunnerKeys(client), [runnerKeys, client]);
+  const windows = useMemo(
+    () => (humanId ? desktopUnlockWindowStore(unlockWindows ?? browserStorage(), humanId) : null),
+    [unlockWindows, humanId],
+  );
+  const windowUntil = useUnlockWindow(windows);
 
   // The page keeps the header badge in step with what it loaded, and reloads when the
   // install stream (`inbox.changed` on /events, or the poll) reports a count it has not seen,
@@ -228,6 +255,16 @@ export function InboxPage() {
     await client.answerRequest(request.id, { version: request.version, answer: value });
     inbox.reload();
   };
+
+  const sendUnlock = useCallback(
+    async (request: HumanRequestView, prepared: PreparedAnswer) => {
+      await client.answerRequest(request.id, { version: request.version, answer: prepared.value });
+      // The window is recorded only once the answer that carries it was accepted.
+      if (prepared.window !== undefined) windows?.set(prepared.window);
+      reload();
+    },
+    [client, windows, reload],
+  );
 
   const markRead = async (message: MessageView) => {
     const updated = await client.markRead(message.id);
@@ -270,7 +307,17 @@ export function InboxPage() {
       ) : null}
       <ol className="space-y-3" data-testid="request-list">
         {requests.map((r) => (
-          <RequestCard key={r.id} request={r} onAnswer={(value) => answer(r, value)} />
+          <RequestCard
+            key={r.id}
+            request={r}
+            onAnswer={(value) => answer(r, value)}
+            unlock={{
+              bridge,
+              windowUntil,
+              now,
+              send: (prepared) => sendUnlock(r, prepared),
+            }}
+          />
         ))}
       </ol>
 
@@ -336,14 +383,22 @@ export function InboxPage() {
 function RequestCard({
   request,
   onAnswer,
+  unlock,
 }: {
   request: HumanRequestView;
   onAnswer: (value: unknown) => Promise<void>;
+  unlock: {
+    bridge: RunnerKeyBridge;
+    windowUntil: string | null;
+    now: () => number;
+    send: (prepared: PreparedAnswer) => Promise<void>;
+  };
 }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const intake = intakeCardOf(request.changeCard);
+  const challenge = unlockChallengeOf(request);
 
   const send = async (value: unknown) => {
     if (busy) return;
@@ -396,7 +451,17 @@ function RequestCard({
         </ol>
       ) : null}
       {intake ? <IntakeCard card={intake} /> : null}
-      {request.changeCard !== null && request.changeCard !== undefined ? (
+      {challenge ? (
+        <UnlockCard
+          request={request}
+          card={challenge}
+          bridge={unlock.bridge}
+          windowUntil={unlock.windowUntil}
+          now={unlock.now}
+          onSend={unlock.send}
+        />
+      ) : null}
+      {challenge ? null : request.changeCard !== null && request.changeCard !== undefined ? (
         <details className="mt-1 text-xs">
           <summary className="cursor-pointer text-neutral-500">Change card</summary>
           <pre className="overflow-auto rounded bg-neutral-100 p-2 dark:bg-neutral-900">
@@ -404,7 +469,7 @@ function RequestCard({
           </pre>
         </details>
       ) : null}
-      {request.options.length > 0 ? (
+      {!challenge && request.options.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-2" data-testid="options">
           {request.options.map((o) => (
             <Button
@@ -419,25 +484,27 @@ function RequestCard({
           ))}
         </div>
       ) : null}
-      <form
-        className="mt-2 flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (text.trim()) void send(text.trim());
-        }}
-      >
-        <input
-          className={INPUT_CLASS}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Or answer in your own words…"
-          aria-label="Free-text answer"
-          data-testid="free-text"
-        />
-        <Button type="submit" disabled={busy || !text.trim()} data-testid="send-free-text">
-          Send
-        </Button>
-      </form>
+      {challenge ? null : (
+        <form
+          className="mt-2 flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (text.trim()) void send(text.trim());
+          }}
+        >
+          <input
+            className={INPUT_CLASS}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Or answer in your own words…"
+            aria-label="Free-text answer"
+            data-testid="free-text"
+          />
+          <Button type="submit" disabled={busy || !text.trim()} data-testid="send-free-text">
+            Send
+          </Button>
+        </form>
+      )}
       {error ? (
         <div className="mt-2">
           <ErrorBanner message={error} />

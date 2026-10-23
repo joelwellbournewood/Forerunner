@@ -1297,6 +1297,45 @@ export type EmailPausedView = z.infer<typeof EmailPausedView>;
 export const EmailMarkerView = z.object({ marker: z.string() });
 export type EmailMarkerView = z.infer<typeof EmailMarkerView>;
 
+// ---------------------------------------------------------------------------------------
+// Cloud runner vault unlock, device side (spec S.12, ADR 0033, ADR 0068): the desktop inbox's
+// unlock card asks the daemon, which holds the OS keyring, to wrap the runner's vault key to
+// the challenge; the key never crosses this API, only the wrapped answer does.
+
+/** Whether this computer can answer a runner's unlock: never the key, only its presence. */
+export const RunnerKeyStatusView = z.object({
+  runnerId: z.string(),
+  available: z.boolean(),
+  /** The vault backend the key would come from: keyring, file or memory. */
+  backend: z.string(),
+  /** Why the card is read-only here, when `available` is false. */
+  reason: z.string().nullable(),
+});
+export type RunnerKeyStatusView = z.infer<typeof RunnerKeyStatusView>;
+
+export const RunnerUnlockWrapBody = z.object({
+  /**
+   * The open unlock request the runner filed. The daemon reads the challenge from its own
+   * store, never from the body, so a caller cannot have the key wrapped to a key pair of its
+   * choosing.
+   */
+  requestId: z.string().min(1).max(200),
+  /** Set (ISO-8601) or clear (null) the human's auto-unlock window with this answer. */
+  autoUnlockUntil: z.string().nullable().optional(),
+});
+export type RunnerUnlockWrapBody = z.infer<typeof RunnerUnlockWrapBody>;
+
+/** The answer the inbox sends to the request: ciphertext and public keys only. */
+export const RunnerUnlockAnswerView = z.object({
+  challengeId: z.string(),
+  devicePublicKey: z.string(),
+  iv: z.string(),
+  ciphertext: z.string(),
+  tag: z.string(),
+  autoUnlockUntil: z.string().nullable().optional(),
+});
+export type RunnerUnlockAnswerView = z.infer<typeof RunnerUnlockAnswerView>;
+
 export const DAEMON_ROUTES = {
   health: "GET /health",
   me: "GET /me",
@@ -1447,6 +1486,10 @@ export const DAEMON_ROUTES = {
     "POST /agents/:agentId/email/rotate-marker (EmailMarkerView; the old command marker stops working at once)",
   emailCommands:
     "GET /agents/:agentId/email/commands?limit= (EmailCommandsView: every email command with its interpretation and result, newest first, T.14)",
+  runnerKeyStatus:
+    "GET /runner-unlock/:runnerId/key (RunnerKeyStatusView: whether this computer's vault holds the runner's vault key under cloud_runner_vault_key:<runner>, the backend, the reason when it does not; never the key; spec S.12, ADR 0068)",
+  wrapRunnerKey:
+    "POST /runner-unlock/wrap { requestId, autoUnlockUntil? } (RunnerUnlockAnswerView: the runner's vault key wrapped inside the daemon to the one-time runner key of the challenge on that stored, open unlock request of this human, the answer the inbox then sends to the request; 404 not_found for an unknown request or without the key, 403 for another human's request, 409 conflict when it is no longer open, 400 validation for a request that is not an unlock challenge, an expired challenge or a window over a week; one runner.unlock_answer_wrapped audit row without the key)",
   voiceStatus:
     "GET /voice/status (VoiceStatusView: available with the providers picked, or the reason voice is unavailable)",
   startVoiceSession:
