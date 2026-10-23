@@ -26,7 +26,7 @@ expired (compared as NaN it counted as "never expires" before; `test/security-to
 | --- | --- |
 | `beforeModelCall(ctx, estimate)` | token valid and not revoked, kill state, session wall clock, run deadline, step cap, run cap, session cap with 80% finish-current and review reserve, outer caps (task, project, month, plan share) via `CapsPort` |
 | `afterModelCall(ctx, usage, usd)` | records spend in `SessionBudget` and the ledger |
-| `beforeToolCall(ctx, tool, input)` | token/kill, step, tool allowlist, zod schema, path containment for `pathFields` (`pathInsideRoot`: inside a root as written and once the symlinks of the path's existing part are resolved, so a committed `link -> ~/.ssh/id_ed25519` or a linked directory in the worktree is refused for reads and writes alike, and a link that cannot be resolved counts as outside), domain allowlist for `domainFields`, autonomy decision (may ask `ApprovalPort`; the key an approval is remembered under is `tool:<SHA-256 of the canonical input>`, `approvalKeyFor`, the same function `StateApprovals` writes into `change_card.key`; an approval of an always-human class (`ALWAYS_HUMAN`) admits one call and is taken out of `ctx.approvals` as it is used, so the resume path re-makes the paused call once and every further identical delete, purchase or send asks again, while any other approval holds for the run; pending pauses the run; skipped for a tool with `gate: "registry"`, a command of the command registry whose executor confirms by risk itself, so the change card is the one approval and the hooks file no second request), secret-ref resolution for granted names only; denials are audited, a call on a revoked, expired or forged token or after a stop too (the row carries the token's own id and run, unverified, spec S.9) |
+| `beforeToolCall(ctx, tool, input)` | token/kill, step, tool allowlist, zod schema, path containment for `pathFields` (`pathInsideRoot`: inside a root as written and once the symlinks of the path's existing part are resolved, so a committed `link -> ~/.ssh/id_ed25519` or a linked directory in the worktree is refused for reads and writes alike, and a link that cannot be resolved counts as outside), domain allowlist for `domainFields`, autonomy decision (may ask `ApprovalPort`; the key an approval is remembered under is `tool:<SHA-256 of the canonical raw input>`, `approvalKeyFor`, computed before the input is cut for the card and handed to the port as `ApprovalRequest.key`, which `StateApprovals` writes into `change_card.key` beside the display copy (`input`), so two inputs that display alike never share a key; an approval of an always-human class (`ALWAYS_HUMAN`) admits one call and is taken out of `ctx.approvals` as it is used, and the durable port spends its row the same way (ADR 0052), so the resume path re-makes the paused call once, in the same run or a later run of the session, and every further identical delete, purchase or send asks again behind a new request, while any other approval holds for the run and, durably, for the session; pending pauses the run; skipped for a tool with `gate: "registry"`, a command of the command registry whose executor confirms by risk itself, so the change card is the one approval and the hooks file no second request), secret-ref resolution for granted names only; denials are audited, a call on a revoked, expired or forged token or after a stop too (the row carries the token's own id and run, unverified, spec S.9) |
 | `afterToolCall(ctx, tool, input, result)` | redacts resolved secrets, wraps untrusted output in the data envelope and scans it for injection, audits. Every audit summary the hooks write (input and result, on the allow, deny and pending paths) is scrubbed first: the run's resolved secret values in every encoding (`SecretsPort.redact`), then the platform's credential shapes as a last line for a value the model obtained elsewhere and pasted into a later input, with `secret:<name>` references kept, since the name is what the audit is meant to carry |
 
 The per-session accounting is `SessionBudget` (`src/enforcement/budget.ts`): run and session
@@ -354,8 +354,20 @@ minutes in the human's time zone; message, CI, PR comment, email, remote and man
 one active session per agent; quiet hours defer non-manual triggers). `state-ports.ts` adapts
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
 approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call (matched by
-`change_card.key`, the hooks' SHA-256 key; a row written under the former 32-bit string hash
-no longer matches, so such an approval is asked once more).
+`change_card.key` within the session: the hooks' SHA-256 key of the canonical raw input,
+`ApprovalRequest.key`, while `change_card.input` is the card's copy with long strings cut; a
+row written under the former 32-bit string hash or the former display-copy key no longer
+matches, so such an approval is asked once more). `StateApprovals.request` reads the session's
+rows for the key: an open one keeps the call pending; a "no" denies it for the session; a
+"yes" to an always-human class (`ALWAYS_HUMAN`, delete, purchase, credential, permission,
+capability grant) is handed out once and the row marked spent in the same update
+(`change_card.consumedAt`, `consumedByRun`, the envelope's version moving with it; a
+`version_conflict` means another consumer took it and the caller asks afresh), so the resume
+path (the daemon or the cloud runner re-making the paused call in a later run of the session)
+runs it once and the next identical call files a new request and waits; a "yes" to any other
+class holds for the session; a withdrawn or expired row holds nothing (ADR 0052). The answer
+is spent when handed out, before the call runs, so a call that then fails for another reason
+needs a fresh answer: conservative for the classes that always need a human.
 
 **Small-project mode and the plan writer (spec B.6, ADR 0051).** `src/session/project-plan.ts`
 is where `project.small_project_mode` is read. `defaultRiskTier(project)` (0 with the flag,
@@ -1245,6 +1257,21 @@ not the value, MCP output fed back redacted, a final report quoting the environm
 token forging claim by claim, expiry (an unparseable one refused), revocation by the kill
 switch and `derive` never widening.
 
+`approvals-durable.test.ts` (security review follow-up 2026-10-21, spec S.6, J.8, J.10;
+the hooks over `StateApprovals` and the real store): an identical `delete_repo` in the same
+run asking again after the first execution; the resume path re-making the paused call once in
+a later run of the session, the spent row marked (`consumedAt`, `consumedByRun`, version
+moved) and never admitting a second call, the second answer admitting one more, one audit row
+per executed call naming the run that took the answer; the same through the loop driver (a
+run ending `needs_human`, the next run executing the delete once and pausing on a third
+identical delete, the fake provider replies standing for the model's re-made call); two
+inputs that are cut alike for the card getting different keys and rows, the row carrying the
+cut copy and never the raw input, `approvalKey` honouring the hooks' key; a `merge_pr`
+approval at level 2 holding for the run and for the session and a different pull request
+asking; a "no" denying for the session without a new request; a withdrawn or expired request
+holding nothing. `packages/capabilities/test/cloudflare-tools.test.ts` covers the Cloudflare
+port finding the hooks' row for a long script input through the raw-input key.
+
 `packages/runtime/test/*.test.ts` (unit, fake provider, no network): tokens, autonomy, kill
 switch timing, budget rules, context transforms (golden cases, idempotence, FATAL-at-line-67,
 bare truncate marker without a store and named marker with one, stable-prefix lint, bypass,
@@ -1464,10 +1491,11 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   first on every call, but it should adopt `realPathOf` so the tools fail closed on their own
   too. A link created between the check and the read (a race inside the worktree) is not
   covered; the sandbox adapter mounts only the worktree so such an escape cannot reach the host.
-- An approval of an always-human action is consumed per run (`ctx.approvals`), but
-  `StateApprovals` answers from the durable row: an identical call in a later run of the same
-  session finds the answered request and is approved without a new question. Consuming the row
-  needs a `HumanRequestRepo` write (`packages/state`), not a runtime change.
+- `StateApprovals` matches approval rows within one session (`session_id`). A tool call that
+  paused a task (`needs_human`) and was answered after the session ended is asked once more
+  when a later session re-plans the task, because the new session's lookup does not see the
+  old row; one extra question, never one fewer. Matching across the sessions of one task is
+  open with the J.7 item (a paused session resumed by its approval).
 - On the SDK path a built-in file tool's output (`Read`, `Grep`) is scanned and flagged but
   cannot be rewritten from the `PostToolUse` hook (the SDK applies `updatedMCPToolOutput` to
   MCP tools), so the subprocess sees the file as is. `scrubEnv` withholds `SSH_AUTH_SOCK` from
