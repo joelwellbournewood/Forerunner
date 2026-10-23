@@ -218,6 +218,7 @@ in the docs about the Upload screen and the 5 s cap do not match the code.
    `Approved review … of "Write the parser"`. The fake service checks the flag first, so
    `mobile-reviews.test.tsx` "the service refuses a high-risk verdict without the biometric
    flag" passes against behaviour the real service does not have.
+   Resolution: fixed in 6274ca6: the route answers the caller's approval first and sends the decision message only after it landed; `routes.test.ts` "a refused review verdict leaves no decision message; another human's approval is not answered" (403 and 409 leave zero decision messages, the biometric resend leaves one; fails on the old order with `expected 1 to be +0`), and the fake service mirrors the card-risk rule.
 2. **medium** — `apps/ui/src/mobile/store.tsx:1088-1130` (`reviewRequest`,
    `reviewVerdict`). Whether a verdict needs the biometric prompt is decided from the
    phone's cached inbox only. A high-risk approval filed after the last inbox load (the
@@ -227,12 +228,14 @@ in the docs about the Upload screen and the 5 s cap do not match the code.
    takes the same path); with finding 1 the agent was told "Approved" each time. Verified by
    reading the path: `reviewRequest` reads `this.state.inbox?.requests`, nothing reloads it
    before the verdict, and the 403 is shown as an error with no prompt.
+   Resolution: fixed in c1ab79d: `reviewVerdict` reloads the inbox before deciding and, on `biometric_required` without an assertion, runs the prompt and resends once; `mobile-reviews.test.tsx` "reads the inbox afresh …" and "a biometric_required answer for a request the phone could not see prompts and resends once" (both fail without the change).
 3. **medium** — `services/state-api/src/routes/reviews.ts:132-134`. The verdict picks the
    first open approval on the task among *all* humans' requests of the project
    (`open({ projectId })`) and then `answerRequestAs` refuses it with 403 "not your request"
    when it belongs to the other human of a shared project. Ada can then never approve or
    reject the review from the phone (or anywhere), although her verdict is only a message.
    Verified by reading `answerRequestAs` (`assertRequestOwner`) and the route.
+   Resolution: fixed in 6274ca6: the verdict answers only a request of the caller (`human_id === p.humanId` for a device); another human's approval stays open and the verdict is the message, 200 with `answeredRequestId: null` (same `routes.test.ts` case).
 4. **medium** (privacy) — `packages/runtime/src/remote/watcher.ts:332-365, 578-620`. The
    recording is dropped from the shared `remote_command` row only inside `runVoice`. A voice
    row that never reaches it keeps its audio forever: a malformed envelope (an over-long
@@ -244,27 +247,46 @@ in the docs about the Upload screen and the 5 s cap do not match the code.
    phone's post and the PC's pick-up") say otherwise. Verified with a throwaway test: a
    voice row with 300,000 base64 characters failed `malformed voice envelope` and its
    params were still 300,073 characters long afterwards.
+   Resolution: fixed in 16e6e5a: `handle()` drops the recording of every `kind: "voice"` row on every outcome before recording the result, and a turn older than `VOICE_RELAY_MAX_AGE_MS` (2 min) is refused as `expired` (`timeout`) and never run; `voice-relay.test.ts` "no recording stays in the shared row on any outcome: malformed, stale, a replay, a revoked device"; ADR 0080 item 7 and its Consequences, `runtime.md` amended.
 5. **low** — `packages/runtime/src/voice/relay.ts:20-25`, `watcher.ts:139-152`.
    `VOICE_RELAY_MAX_PCM_BYTES` is documented as "the longest turn at the highest rate the
    relay accepts", but the envelope accepts 8 to 48 kHz and 1 or 2 channels and the cap is
    on bytes only: 8 kHz mono carries 10 s, 48 kHz stereo is refused after 0.83 s. "At most
    5 s" (ADR 0080 item 5, `runtime.md`) is not what the code enforces. Verified by
    arithmetic on the constants and the schema.
-6. **medium** — `apps/ui/src/mobile/screens/UploadScreen.tsx:33-39`, `uploads.ts:1513`.
+   Resolution: fixed in 16e6e5a: the envelope and `toFrames` check the duration from bytes, rate and channels (5 s plus one 20 ms frame) besides the byte bound, and the constants' comments say what they bound; `voice-relay.test.ts` "bounds a recording by its duration, not only its bytes" (6 s at 8 kHz refused, 4 s at 8 kHz and 5 s at 16 kHz accepted).
+6. **medium** — `apps/ui/src/mobile/screens/UploadScreen.tsx:33-39`, `uploads.ts:140-160`.
    A queued file that does not fit the 2 MiB persistence budget is held in memory only and
    lost if the app closes, but the screen shows the same "Offline: queued, sent when the
    phone reconnects." as for a persisted one; `QueuedUpload.persisted` is read nowhere.
    The build report ("The screen and the docs say so") and ADR 0080 item 1 claim the screen
    tells the human. Verified with `grep persisted apps/ui/src` (only `uploads.ts`).
+   Resolution: fixed in 264ddcf: `uploadFile` returns `persisted`, and the screen (`m-upload-memory-only`) and the notice say a queued file over the 2 MiB budget is held in memory only and lost if the app closes; `mobile-upload.test.tsx` "says so when a queued file is too large to keep on the phone …" (fails without it) and the offline test asserts no warning for a small file.
 7. **medium** — `apps/mobile/e2e/run.mjs:311-395`. The brief's next step is "then the
    emulator run", but the emulator smoke covers pairing, the inbox, the Remote card and the
    change log only; Upload, Reviews and the Chat voice turn are never opened, so a green
    `android.yml` run would not show the new screens work in the WebView. The BLOCKERS R.5
    row names "the raw-CDP smoke extended to Upload, Reviews and Chat" as what must run.
    Verified by reading `smoke()`.
+   Resolution: fixed in bf2d69e: `smoke()` in `apps/mobile/e2e/run.mjs` now opens Reviews (two findings, a signed comment and approve), Upload (the cap, Upload disabled without a file) and Chat (the typed line relayed as a signed `kind: "voice"` command, the PC's reply shown). It cannot run here (no Android SDK; `node --check` passes, `apps/mobile/e2e` unit tests 17 of 17), so the sequence was checked with a throwaway jsdom test against the same fake service (paths `/reviews/rev_parser/comment,/reviews/rev_parser/approve`, outcome "Approved.", Upload's `disabled` attribute present), deleted afterwards. A file pick through the raw driver needs `DOM.setFileInputFiles` and stays open (BLOCKERS R.5 row).
 8. **low** — `docs/maintainers/apps.md` (Android app, "Known issues", first bullet).
    Against the base `f1948dd` the branch has one textual conflict: the base deleted the
    stale "PC does not consume plan/chat" bullet that this branch rewrote. Verified with
    `git merge-tree --write-tree HEAD f1948dd` (the only conflict; `compose.ts`,
    `runtime.md`, the status files and the ADR index merge cleanly, and ADR 0080 is a free
    number on the base).
+   Resolution: not a defect: the conflict is textual (the base deleted the bullet this branch rewrote), the rules forbid merging the base into this branch, and the resolution at integration is to keep this branch's bullet; `git merge-tree --write-tree HEAD f1948dd` reports `docs/maintainers/apps.md` as the only conflicted file.
+
+### Checks after the fixes (2026-10-23)
+
+| Command | Result |
+| --- | --- |
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0 (59 warnings, none in the files of the fixes) |
+| `pnpm --filter @forerunner/ui test` | 45 files, 270 tests passed |
+| `pnpm exec vitest run --project unit packages/runtime/test` | 115 files; 993 passed, 1 skipped |
+| `pnpm exec vitest run --project unit services/state-api/test` | 10 files, 134 tests passed |
+| `pnpm exec vitest run --project unit apps/mobile/e2e` | 1 file, 17 tests passed |
+| `pnpm exec vitest run --project integration packages/runtime/test services/state-api/test` | 2 files, 7 tests skipped (no Postgres, no container engine) |
+| `node scripts/docs-check.mjs --base 5eee27a` | `docs-check: ok (18 files)` |
+| `pnpm check` | exit 0 (270 files; 2685 passed, 4 skipped, 1 todo; link-check ok; secret scan clean; its docs-check skips without `origin/main`) |

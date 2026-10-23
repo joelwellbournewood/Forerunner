@@ -18,6 +18,16 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-r5-phone, review and fix: verdict revise, eight findings, seven fixed)
+- Review in `docs/status/reviews/w3-r5-phone.md` (`## Review`). Fixed: a review verdict now
+  answers the caller's approval before it messages the agent (a refused high-risk or stale
+  verdict told the agent "Approved"), and leaves another human's approval alone; the phone
+  reads the inbox afresh before a verdict and resends with the biometric after
+  `biometric_required`; the PC drops a relayed recording from the shared row on every
+  outcome and refuses a voice turn older than 2 min; the 5 s cap is a duration bound; the
+  Upload screen warns when a queued file is held in memory only; the emulator smoke opens
+  Reviews, Upload and the Chat voice turn. R.5 stays `in progress` until the emulator run.
+
 ### 2026-10-23 (item w3-r5-phone: the phone uploads, reviews and talks; R.5 built, emulator run open)
 - Branch `wave/w3-r5-phone` on the `wip:` snapshot 34bfcdb (the upload route's `clientId`
   idempotency and `maxBytes` in the list, kept). ADR 0080. The phone gains an Upload screen
