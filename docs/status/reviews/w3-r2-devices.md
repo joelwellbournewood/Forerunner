@@ -272,3 +272,34 @@ the same thing.
    by reading the file: the line before the new row is blank, and the table ends at
    `audit-export.test.ts`. Fix: put the row inside the table.
    Resolution: fixed in 58c0dc5. The `desktop-devices.test.ts` row was moved into the table, and the stray blank line before the base's `shared-secrets.test.ts` row was removed, so both rows now render in the table.
+
+## Rebase
+
+Stage REBASE, 2026-10-23. `wave/w3-r2-devices` (344f0d4, 13 commits on 82a6295) rebased onto
+`origin/ccr-4d8a843c-1k9syk` at cac6fee (181 base commits since 82a6295) with
+`git rebase origin/ccr-4d8a843c-1k9syk`; no merge of the base. Every conflict kept both sides:
+
+| Commit | File | Resolution |
+| --- | --- | --- |
+| wip (daemon side) | `packages/runtime/src/daemon/compose.ts` | the base's `githostWatcher` field, its `GitHostWatcher` construction and its return entry kept, the branch's `devices: DeviceManager` field (own doc comment), the `DeviceManager` construction and the `devices` return entry added after each |
+| wip (daemon side) | `packages/runtime/src/daemon/server.ts` | the base's `createRunnerUnlockRoutes` mount kept, the branch's `createDeviceRoutes` mount after it |
+| Devices section | `apps/ui/src/api/client.ts` | the base's desktop control and runner unlock view imports and type re-exports kept next to the branch's `DeviceListView` / `RevokeDeviceView` (sorted for Biome in a follow-up commit) |
+| Devices section | `apps/ui/src/pages/SettingsPage.tsx` | the base's fast-mode card (`FAST_MODE_KEY`, `fastModeRows`, `fastModeToggle`, `FastModeCard`) kept; the page's doc comment is the branch's (K.7, Q.1, R.2); `<DevicesSection />` and `<FastModeCard />` both render |
+| Devices section | `apps/ui/test/fake-daemon.ts` | `DesktopControlView` and `DaemonDeviceView` imports both kept; the base's `POST /milestones/:id` route kept before the branch's `/devices` routes |
+| Devices section | `apps/ui/test/fixtures.ts` | the base's `VOICE_STATUS` fixture closed and kept, the branch's `DEVICES` and `PAIRING` after it |
+| docs | `CHANGELOG.md` | the base's E.1 line and the branch's R.2 line both under Added |
+| docs | `docs/maintainers/apps.md` | layout: `lib/` lists clock and runner-unlock, `components/` lists UnlockCard, RunnerAutoUnlock and QrCode; client paragraph: the desktop control routes and the device methods; fake daemon: the base's milestones route and the branch's devices sentence (in its review-fix wording) in one paragraph; `settings` test row merged into one row with both sides' clauses, `settings-devices` row kept; Known issues: both bullets |
+| docs | `docs/maintainers/runtime.md` | Known issues: the base's fast-mode, chat-retrieval and B.5 bullets and the branch's Devices bullet |
+| docs | `docs/status/PROGRESS.md` | the branch's entries above the base's newer log entries (w2-s32, w2-s12, w3-e1, w4-fcm) |
+
+`docs/status/BLOCKERS.md`, `docs/requirements.md`, `docs/maintainers/state-service.md` and the
+other code files merged without conflict. Requirement totals on the rebased branch: 186 done,
+37 in progress, 5 todo (the base has 185 / 38 / 5; R.2 is the difference).
+
+Checks after the rebase: `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, the base's);
+`node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok; `pnpm --filter
+@forerunner/ui test` 47 files / 310 tests passed (`settings-devices.test.tsx` 11,
+`settings.test.tsx` 10); `pnpm exec vitest run --project unit packages/runtime/test` 129 files,
+1143 passed, 1 skipped (`devices-routes.test.ts` 11); `pnpm exec vitest run --project unit
+services/state-api/test` 12 files / 160 passed (`desktop-devices.test.ts` 4). The integration
+files of both packages need Postgres and were skipped (2 files, 7 tests).

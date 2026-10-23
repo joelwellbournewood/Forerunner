@@ -18,6 +18,18 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-r2-devices rebased onto cac6fee)
+- `wave/w3-r2-devices` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
+  daemon's `compose.ts` and `server.ts` (the base's git host watcher and runner unlock routes
+  next to the branch's `DeviceManager` and `/devices` routes), the UI's `client.ts`,
+  `SettingsPage.tsx` (the base's fast-mode card next to the Devices section), `fake-daemon.ts`
+  and `fixtures.ts`, apps.md, runtime.md, CHANGELOG and this log; both sides kept
+  (`docs/status/reviews/w3-r2-devices.md` `## Rebase`). Current counts: UI suite 47 files /
+  310 tests (`settings-devices.test.tsx` 11, `settings.test.tsx` 10), runtime 129 files /
+  1143 unit tests passed and 1 skipped (`devices-routes.test.ts` 11), state-api 12 files /
+  160 (`desktop-devices.test.ts` 4); requirements 186 done, 37 in progress, 5 todo on the
+  branch. Not merged yet.
+
 ### 2026-10-23 (item w3-r2-devices reviewed and fixed, R.2)
 - Independent review of `wave/w3-r2-devices` (`docs/status/reviews/w3-r2-devices.md`,
   verdict revise, 72/100, seven findings). Fixed on the branch: the daemon's calls to the
@@ -41,9 +53,10 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   counting down on an injectable `UiClock`; the list shows name, kind, paired at, last seen
   and this device; Revoke asks, then removes the device at once; a daemon without the routes
   shows the route-missing state (ADR 0037). Tests: `apps/ui/test/settings-devices.test.tsx`
-  (8), a Devices case in `apps/ui/test/settings.test.tsx`, `packages/runtime/test/devices-routes.test.ts`
-  (7), `services/state-api/test/desktop-devices.test.ts` (4, the real service routes end to
-  end). R.2 moves to `done` (184 done, 39 in progress, 5 todo on this branch); the BLOCKERS.md
+  (8; 11 after the review), a Devices case in `apps/ui/test/settings.test.tsx`, `packages/runtime/test/devices-routes.test.ts`
+  (7; 11 after the review), `services/state-api/test/desktop-devices.test.ts` (4, the real service routes end to
+  end). R.2 moves to `done` (184 done, 39 in progress, 5 todo on this branch at the build; 186 / 37 / 5
+  after the rebase onto cac6fee); the BLOCKERS.md
   row says what is left (a web-link button, a live list refresh) and the report is
   `docs/status/reviews/w3-r2-devices.md`. Not reviewed, not merged.
 
