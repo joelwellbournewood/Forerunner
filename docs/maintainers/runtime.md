@@ -2038,12 +2038,6 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 ## Known issues
 
-- Revoking this PC's own desktop row (`device.revoke`, confirmed on that row) leaves
-  `rt.remote.device` holding the revoked row until the daemon restarts: `/me` keeps naming it
-  and every high-risk confirmation from the desktop is refused "this device was revoked"
-  (ADR 0030's revocation rule); the next start skips the revoked row and registers a fresh
-  one (`registerDesktopDevice`), as it already did on a shared store.
-
 - An approved plan the scheduler answers `queued` (the agent is busy) holds the scheduler's
   single pending slot per agent, which a later trigger replaces (`triggers.ts`: the newest
   request wins the slot); the approval is recorded as handed over (`outcome: "queued"`) and
@@ -2053,6 +2047,11 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   matches nobody and the daemon never adopts a row the selector does not name; `fr doctor`
   says so beforehand and `fr setup --human-id <id>` binds to the existing row. Once a daemon
   has started from its `config.json` the recorded `humanId` wins and the email is not consulted.
+- Revoking this PC's own desktop row (`device.revoke`, confirmed on that row) leaves
+  `rt.remote.device` holding the revoked row until the daemon restarts: `/me` keeps naming it
+  and every high-risk confirmation from the desktop is refused "this device was revoked"
+  (ADR 0030's revocation rule); the next start skips the revoked row and registers a fresh
+  one (`registerDesktopDevice`), as it already did on a shared store.
 - Intake (ADR 0055): the intake session row is `running` while the planning call is in flight
   and a daemon that dies mid-call leaves it so until a human closes it (the runner's own
   residual). The first session plans with `StaticPlanner` (ready tasks by priority): the
