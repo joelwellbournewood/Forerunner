@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   type BiometricAssertion,
   type BiometricPort,
+  BiometricRefusedError,
   BiometricTicketError,
   type DeviceSigner,
   fromBase64,
@@ -106,7 +107,9 @@ interface BiometricResult {
 /**
  * The platform prompt; `asserted` is true only when Android's BiometricPrompt succeeded,
  * and the assertion carries the shell's ticket (without one the shell would refuse to sign
- * anyway, so the outcome counts as not asserted).
+ * anyway, so the outcome counts as not asserted). A refusal keeps the shell's reason
+ * ("Biometrics not enrolled.", "not confirmed: ...") and so does a failed IPC (a permission
+ * or plugin error, as a string or an object): both reject with `BiometricRefusedError`.
  */
 export const shellBiometric: BiometricPort = {
   async available() {
@@ -118,15 +121,32 @@ export const shellBiometric: BiometricPort = {
     }
   },
   async assert(reason): Promise<BiometricAssertion | null> {
+    let r: BiometricResult | null;
     try {
-      const r = await invoke<BiometricResult>("assert_biometric", { reason });
-      if (!r.asserted || !r.ticket) return null;
-      return { asserted: true, at: r.at, method: r.method, ticket: r.ticket };
-    } catch {
-      return null;
+      r = await invoke<BiometricResult>("assert_biometric", { reason });
+    } catch (error) {
+      throw new BiometricRefusedError(`the shell's prompt failed: ${ipcErrorText(error)}`);
     }
+    if (!r || typeof r !== "object") return null;
+    if (r.asserted === true && typeof r.ticket === "string" && r.ticket) {
+      return { asserted: true, at: r.at, method: r.method, ticket: r.ticket };
+    }
+    if (r.asserted !== true && typeof r.reason === "string" && r.reason.trim()) {
+      throw new BiometricRefusedError(r.reason.trim().slice(0, 200));
+    }
+    return null;
   },
 };
+
+/** Tauri rejects with a string (a command's `Err`), an Error or a plugin's `{ message }`. */
+function ipcErrorText(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
 
 export const shellPush: PushPort = {
   async status(): Promise<PushStatus> {

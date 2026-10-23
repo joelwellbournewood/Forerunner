@@ -296,8 +296,21 @@ export interface BiometricAssertion {
 
 export interface BiometricPort {
   available(): Promise<boolean>;
-  /** Null when the prompt was cancelled or failed; never throws for a refusal. */
+  /**
+   * Null when the prompt was cancelled or failed; a port that knows why (the shell's
+   * "Biometrics not enrolled.") rejects with `BiometricRefusedError` instead. The controller
+   * treats null, any rejection and a prompt that never settles alike: as a refusal.
+   */
   assert(reason: string): Promise<BiometricAssertion | null>;
+}
+
+/** The platform refused or could not show the prompt; `message` says why (never sensitive). */
+export class BiometricRefusedError extends Error {
+  readonly code = "biometric_refused";
+  constructor(message: string) {
+    super(message);
+    this.name = "BiometricRefusedError";
+  }
 }
 
 export const noBiometric: BiometricPort = {
