@@ -47,6 +47,45 @@ export interface CommentInfo {
   htmlUrl: string;
 }
 
+/** A review (line) comment on a pull request's diff (`GET /pulls/:n/comments`). */
+export interface ReviewCommentInfo extends CommentInfo {
+  /** The review it belongs to (every line comment is part of one), or null. */
+  reviewId: number | null;
+  path: string;
+  line: number | null;
+  /** The comment it answers in a thread, or null for the first of a thread. */
+  inReplyTo: number | null;
+}
+
+/**
+ * The hidden mark every comment and review Forerunner writes through the port carries (an
+ * HTML comment: GitHub does not render it). The git host poller (ADR 0075) tells the agent's
+ * own text from the human's by it, since the host token is often the human's own PAT and the
+ * login alone cannot.
+ */
+export const AGENT_TEXT_MARKER = "<!-- forerunner:agent -->";
+
+/** The text with the agent's mark appended (once). */
+export function markAgentText(body: string): string {
+  if (body.includes(AGENT_TEXT_MARKER)) return body;
+  return body ? `${body}\n\n${AGENT_TEXT_MARKER}` : AGENT_TEXT_MARKER;
+}
+
+/** Whether a comment or review body carries the agent's mark. */
+export function isAgentText(body: string): boolean {
+  return body.includes(AGENT_TEXT_MARKER);
+}
+
+/** A submitted review of a pull request (its summary text, not the line comments). */
+export interface ReviewInfo {
+  id: number;
+  body: string;
+  author: string;
+  state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
+  submittedAt: string | null;
+  htmlUrl: string;
+}
+
 export interface CheckRunInfo {
   id: number;
   name: string;
@@ -208,7 +247,26 @@ export interface GitHost {
     opts?: { method?: "merge" | "squash" | "rebase"; title?: string; sha?: string },
   ): Promise<{ merged: boolean; sha: string | null; message: string }>;
   commentOnPullRequest(repo: RepoRef, number: number, body: string): Promise<CommentInfo>;
-  listPullRequestComments(repo: RepoRef, number: number): Promise<CommentInfo[]>;
+  /**
+   * Every conversation comment of the pull request, oldest first (the adapter follows the
+   * host's pagination). `since` (ISO-8601) keeps the comments updated at or after it.
+   */
+  listPullRequestComments(
+    repo: RepoRef,
+    number: number,
+    opts?: { since?: string },
+  ): Promise<CommentInfo[]>;
+  /** Every review of the pull request, oldest first (the adapter follows the pagination). */
+  listPullRequestReviews(repo: RepoRef, number: number): Promise<ReviewInfo[]>;
+  /**
+   * Every review (line) comment of the pull request, oldest first (the adapter follows the
+   * pagination). `since` (ISO-8601) keeps the comments updated at or after it.
+   */
+  listPullRequestReviewComments(
+    repo: RepoRef,
+    number: number,
+    opts?: { since?: string },
+  ): Promise<ReviewCommentInfo[]>;
   reviewPullRequest(
     repo: RepoRef,
     number: number,

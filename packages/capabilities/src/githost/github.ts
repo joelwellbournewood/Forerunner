@@ -24,6 +24,7 @@ import {
   FORERUNNER_TASK_ID_FIELD,
   type GitHost,
   type IssueInfo,
+  markAgentText,
   type ProjectFieldInfo,
   type ProjectFieldSpec,
   type ProjectInfo,
@@ -34,6 +35,8 @@ import {
   type ReleaseInfo,
   type RepoInfo,
   type RepoRef,
+  type ReviewCommentInfo,
+  type ReviewInfo,
   type UpsertItemResult,
 } from "./types.ts";
 
@@ -352,20 +355,50 @@ export class GitHubHost implements GitHost {
   }
 
   async commentOnPullRequest(repo: RepoRef, number: number, body: string): Promise<CommentInfo> {
+    // Marked as the agent's (ADR 0075): the poller must not take its own comment for feedback.
     return toComment(
       await this.request<Json>("POST", `${this.repoPath(repo)}/issues/${number}/comments`, {
-        body,
+        body: markAgentText(body),
       }),
     );
   }
 
-  async listPullRequestComments(repo: RepoRef, number: number): Promise<CommentInfo[]> {
+  async listPullRequestComments(
+    repo: RepoRef,
+    number: number,
+    opts: { since?: string } = {},
+  ): Promise<CommentInfo[]> {
+    // Every page: GitHub lists the oldest first, so the first page alone never shows a new
+    // comment once a PR has more than a page of them.
+    const params = new URLSearchParams({ per_page: String(this.pageSize) });
+    if (opts.since) params.set("since", opts.since);
     return (
-      await this.request<Json[]>(
-        "GET",
-        `${this.repoPath(repo)}/issues/${number}/comments?per_page=100`,
-      )
+      await this.paged<Json>(`${this.repoPath(repo)}/issues/${number}/comments?${params}`)
     ).map(toComment);
+  }
+
+  async listPullRequestReviews(repo: RepoRef, number: number): Promise<ReviewInfo[]> {
+    return (
+      await this.paged<Json>(
+        `${this.repoPath(repo)}/pulls/${number}/reviews?per_page=${this.pageSize}`,
+      )
+    ).map(toReview);
+  }
+
+  async listPullRequestReviewComments(
+    repo: RepoRef,
+    number: number,
+    opts: { since?: string } = {},
+  ): Promise<ReviewCommentInfo[]> {
+    const params = new URLSearchParams({
+      per_page: String(this.pageSize),
+      sort: "created",
+      direction: "asc",
+    });
+    if (opts.since) params.set("since", opts.since);
+    return (
+      await this.paged<Json>(`${this.repoPath(repo)}/pulls/${number}/comments?${params}`)
+    ).map(toReviewComment);
   }
 
   async reviewPullRequest(
@@ -375,7 +408,7 @@ export class GitHubHost implements GitHost {
   ): Promise<{ id: number }> {
     const r = await this.request<Json>("POST", `${this.repoPath(repo)}/pulls/${number}/reviews`, {
       event: opts.event,
-      body: opts.body,
+      body: markAgentText(opts.body),
     });
     return { id: Number(r.id) };
   }
@@ -954,6 +987,37 @@ function toComment(r: Json): CommentInfo {
     body: String(r.body ?? ""),
     author: String((r.user as Json)?.login ?? ""),
     createdAt: String(r.created_at ?? ""),
+    htmlUrl: String(r.html_url ?? ""),
+  };
+}
+
+function toReviewComment(r: Json): ReviewCommentInfo {
+  const line = r.line ?? r.original_line;
+  return {
+    ...toComment(r),
+    reviewId: r.pull_request_review_id == null ? null : Number(r.pull_request_review_id),
+    path: String(r.path ?? ""),
+    line: typeof line === "number" ? line : null,
+    inReplyTo: r.in_reply_to_id == null ? null : Number(r.in_reply_to_id),
+  };
+}
+
+const REVIEW_STATES: ReadonlySet<string> = new Set([
+  "APPROVED",
+  "CHANGES_REQUESTED",
+  "COMMENTED",
+  "DISMISSED",
+  "PENDING",
+]);
+
+function toReview(r: Json): ReviewInfo {
+  const state = String(r.state ?? "COMMENTED");
+  return {
+    id: Number(r.id),
+    body: String(r.body ?? ""),
+    author: String((r.user as Json)?.login ?? ""),
+    state: (REVIEW_STATES.has(state) ? state : "COMMENTED") as ReviewInfo["state"],
+    submittedAt: r.submitted_at ? String(r.submitted_at) : null,
     htmlUrl: String(r.html_url ?? ""),
   };
 }

@@ -77,6 +77,30 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   key, approvals web included. Tests: cloud-runner `vault-unlock` (WebCrypto answers against
   the real runner), runtime `runner-unlock-routes`, ui `unlock-card` and `mobile-unlock`,
   approvals-web `inbox`. Open: one unlock on the real host; a key import screen (BLOCKERS S.12).
+### 2026-10-23 (item w3-e1-triggers: CI results and PR comments start sessions)
+- E.1 `done` on `wave/w3-e1-triggers` (review pending): `GitHostWatcher`
+  (`packages/runtime/src/session/githost-watcher.ts`) polls the git host on the daemon's clock
+  (`FORERUNNER_GITHOST_POLL_MS`, a minute) for the open PRs of the install's agent and fires
+  `ci` (a failed, timed-out, cancelled or action-required check once per check run id, with the
+  check name and conclusion in the reason; a green head once per sha) and `pr_comment` (a
+  comment or review by anyone but the agent's own login) through `Scheduler.requestStart`. The
+  comment is quoted as data in the agent's inbox (the brief shows it), scanned for injection,
+  flagged and reported (`injection.flagged`, notification); the request and the
+  `githost.trigger` audit row carry author and place only. Dedupe keys live in a cursor file
+  saved before the start (at most once, across restarts, a baseline first poll); quiet hours
+  defer; a refused start is audited, not thrown. The git host port reads every page of PR
+  comments with `since` and lists reviews; the fake host honours `since`. ADR 0075 (polling,
+  not webhooks; the dedupe rule). Tests: `githost-watcher.test.ts` (13),
+  `githost-wiring.test.ts` (5), `githost-feedback.test.ts` (3). Report:
+  `docs/status/reviews/w3-e1-triggers.md`.
+- Review of w3-e1-triggers (verdict revise, six findings, all fixed on the branch): the agent's
+  own text is its token's login plus a hidden mark the port appends (`AGENT_TEXT_MARKER`), so
+  the human's comments under their own PAT fire `pr_comment`; the baseline is per PR, so a
+  transient error in the first poll never fires a PR's history; the excerpt in the inbox is a
+  JSON string with the envelope's markers neutralised; review line comments are read
+  (`listPullRequestReviewComments`, fake host `GET|POST /pulls/:n/comments`) and fire
+  `pr_comment`; a draft review fires once submitted; the runtime.md Known issues bullet moved
+  clear of the base's. Tests: `githost-watcher.test.ts` (18), `githost-feedback.test.ts` (4).
 
 ### 2026-10-23 (fifteen bounded items merged; wave 1 reviewed, its fix stage and waves 2 to 4 stopped at the credit limit; triage; live probe on the new key)
 - Base b31c2e5 (the handover of 2026-10-21). Fifteen items were built on `wave/<id>` branches

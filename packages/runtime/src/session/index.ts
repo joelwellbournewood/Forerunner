@@ -4,6 +4,8 @@ export * from "./brief.ts";
 export * from "./checklist.ts";
 export * from "./executor.ts";
 export * from "./findings.ts";
+/** CI results and PR comments start sessions (spec E.1, ADR 0075): the git host poller. */
+export * from "./githost-watcher.ts";
 /** PM intake (spec A.2, ADR 0055): the brief as a proposal in the inbox, applied on approval. */
 export * from "./intake.ts";
 export * from "./lessons.ts";

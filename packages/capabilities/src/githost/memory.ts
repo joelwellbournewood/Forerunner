@@ -7,6 +7,7 @@ import {
   FORERUNNER_TASK_ID_FIELD,
   type GitHost,
   type IssueInfo,
+  markAgentText,
   type ProjectFieldInfo,
   type ProjectFieldSpec,
   type ProjectInfo,
@@ -17,6 +18,8 @@ import {
   type ReleaseInfo,
   type RepoInfo,
   type RepoRef,
+  type ReviewCommentInfo,
+  type ReviewInfo,
   type UpsertItemResult,
 } from "./types.ts";
 
@@ -30,6 +33,8 @@ interface Repo extends RepoInfo {
   prs: PullRequestInfo[];
   issues: IssueInfo[];
   comments: Map<number, CommentInfo[]>;
+  reviews: Map<number, ReviewInfo[]>;
+  reviewComments: Map<number, ReviewCommentInfo[]>;
   checks: Map<string, CheckRunInfo[]>;
   statuses: Map<string, CommitStatusInfo[]>;
   releases: ReleaseInfo[];
@@ -125,6 +130,8 @@ export class MemoryGitHost implements GitHost {
       prs: [],
       issues: [],
       comments: new Map(),
+      reviews: new Map(),
+      reviewComments: new Map(),
       checks: new Map(),
       statuses: new Map(),
       releases: [],
@@ -220,7 +227,7 @@ export class MemoryGitHost implements GitHost {
     const r = this.repo(repo);
     const c: CommentInfo = {
       id: this.nextId++,
-      body,
+      body: markAgentText(body),
       author: this.login,
       createdAt: new Date(0).toISOString(),
       htmlUrl: `memory://${r.fullName}/c/${this.nextId - 1}`,
@@ -229,12 +236,58 @@ export class MemoryGitHost implements GitHost {
     return c;
   }
 
-  async listPullRequestComments(repo: RepoRef, number: number): Promise<CommentInfo[]> {
-    return this.repo(repo).comments.get(number) ?? [];
+  async listPullRequestComments(
+    repo: RepoRef,
+    number: number,
+    opts: { since?: string } = {},
+  ): Promise<CommentInfo[]> {
+    const all = this.repo(repo).comments.get(number) ?? [];
+    const since = opts.since;
+    return since ? all.filter((c) => c.createdAt >= since) : all;
   }
 
-  async reviewPullRequest(_repo: RepoRef, _number: number): Promise<{ id: number }> {
-    return { id: this.nextId++ };
+  async listPullRequestReviews(repo: RepoRef, number: number): Promise<ReviewInfo[]> {
+    return this.repo(repo).reviews.get(number) ?? [];
+  }
+
+  async listPullRequestReviewComments(
+    repo: RepoRef,
+    number: number,
+    opts: { since?: string } = {},
+  ): Promise<ReviewCommentInfo[]> {
+    const all = this.repo(repo).reviewComments.get(number) ?? [];
+    const since = opts.since;
+    return since ? all.filter((c) => c.createdAt >= since) : all;
+  }
+
+  /** Test seam: a review line comment written by someone (the memory host has no other way). */
+  addReviewComment(repo: RepoRef, number: number, c: Omit<ReviewCommentInfo, "id">): number {
+    const r = this.repo(repo);
+    const id = this.nextId++;
+    r.reviewComments.set(number, [...(r.reviewComments.get(number) ?? []), { id, ...c }]);
+    return id;
+  }
+
+  async reviewPullRequest(
+    repo: RepoRef,
+    number: number,
+    opts: { event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string },
+  ): Promise<{ id: number }> {
+    const r = this.repo(repo);
+    const id = this.nextId++;
+    const state = (
+      { APPROVE: "APPROVED", REQUEST_CHANGES: "CHANGES_REQUESTED", COMMENT: "COMMENTED" } as const
+    )[opts.event];
+    const review: ReviewInfo = {
+      id,
+      body: markAgentText(opts.body),
+      author: this.login,
+      state,
+      submittedAt: new Date(0).toISOString(),
+      htmlUrl: `memory://${r.fullName}/r/${id}`,
+    };
+    r.reviews.set(number, [...(r.reviews.get(number) ?? []), review]);
+    return { id };
   }
 
   async createIssue(

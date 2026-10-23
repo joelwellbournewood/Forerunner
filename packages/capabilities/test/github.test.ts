@@ -165,7 +165,8 @@ describe("GitHubHost", () => {
     await gh.mergePullRequest({ owner: "o", name: "r" }, 7, { sha: "abc123" });
     expect(JSON.parse(s.seen.at(-1)?.body ?? "{}")).toMatchObject({ sha: "abc123" });
     const c = await gh.commentOnPullRequest({ owner: "o", name: "r" }, 7, "looks good");
-    expect(c.body).toBe("looks good");
+    // What the port writes carries the agent's hidden mark (ADR 0075).
+    expect(c.body).toBe("looks good\n\n<!-- forerunner:agent -->");
     const f = await gh.getFile({ owner: "o", name: "r" }, "docs/a.md");
     expect(f?.content).toBe("hello");
     expect(

@@ -28,6 +28,12 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   and Share on the memory page (G.6; ADR 0059).
 - Shared secrets wrapped to the named agents' install keys, approved by both humans, served
   by reference; migration 0004 (S.13, S.10; ADR 0065).
+- CI results and PR comments start sessions: the daemon polls the git host for the agent's
+  open PRs and fires the `ci` and `pr_comment` triggers once per check run, green head,
+  comment, review line comment or review, the comment quoted as data and flagged when
+  instruction-like; the human's comments fire even when the token is their own PAT (what the
+  port writes carries a hidden agent mark); the git host port reads every page of PR comments
+  with `since` and lists reviews and review line comments (E.1; ADR 0075).
 - Settings → Capabilities → Email: the capability's routes on the daemon, a page per agent
   with the mode picker and the full-discretion confirmation, pause and resume from the tray,
   the command audit (S.15, S.28, S.29, T.14, L.3; ADR 0066).

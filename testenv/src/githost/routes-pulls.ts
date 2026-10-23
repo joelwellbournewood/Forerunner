@@ -18,7 +18,14 @@ import {
 } from "./http.ts";
 import type { RouteContext } from "./routes-repos.ts";
 import { fileJsonForDiff } from "./routes-repos.ts";
-import type { IssueRecord, PullData, RepoRecord, ReviewRecord } from "./store.ts";
+import type {
+  IssueRecord,
+  Json,
+  PullData,
+  RepoRecord,
+  ReviewCommentRecord,
+  ReviewRecord,
+} from "./store.ts";
 
 export function registerPullRoutes(app: HostApp, ctx: RouteContext): void {
   const { store, ops } = ctx;
@@ -215,7 +222,15 @@ export function registerPullRoutes(app: HostApp, ctx: RouteContext): void {
     if (!state)
       throw validationFailed([{ resource: "PullRequestReview", field: "event", code: "invalid" }]);
     const text = str(body, "body") ?? "";
-    if ((state === "CHANGES_REQUESTED" || state === "COMMENTED") && !text) {
+    // Line comments of the review (GitHub: `comments: [{ path, line, body }]`); a review made
+    // only of line comments may have no body.
+    const lines = Array.isArray(body.comments) ? (body.comments as Json[]) : [];
+    for (const l of lines) {
+      if (!l || typeof l !== "object") continue;
+      requireStr(l, "path", "PullRequestReviewComment");
+      requireStr(l, "body", "PullRequestReviewComment");
+    }
+    if ((state === "CHANGES_REQUESTED" || state === "COMMENTED") && !text && !lines.length) {
       throw validationFailed([
         { resource: "PullRequestReview", field: "body", code: "missing_field" },
       ]);
@@ -229,6 +244,18 @@ export function registerPullRoutes(app: HostApp, ctx: RouteContext): void {
       submittedAt: store.clock.nowIso(),
     };
     issue.pull.reviews.push(review);
+    for (const l of lines) {
+      if (!l || typeof l !== "object") continue;
+      addReviewComment(repo, issue, login, {
+        reviewId: review.id,
+        body: str(l, "body") ?? "",
+        path: str(l, "path") ?? "",
+        line: typeof l.line === "number" ? l.line : null,
+        commitId: review.commitId,
+        inReplyTo: null,
+        emit: state !== "PENDING",
+      });
+    }
     issue.updatedAt = review.submittedAt;
     if (state !== "PENDING") {
       store.emit(
@@ -243,6 +270,101 @@ export function registerPullRoutes(app: HostApp, ctx: RouteContext): void {
       );
     }
     return c.json(store.reviewJson(repo, issue, review));
+  });
+
+  // ---- review (line) comments ----------------------------------------------------------------
+  const addReviewComment = (
+    repo: RepoRecord,
+    issue: IssueRecord & { pull: PullData },
+    login: string,
+    input: Omit<ReviewCommentRecord, "id" | "user" | "createdAt" | "updatedAt"> & {
+      emit: boolean;
+    },
+  ): ReviewCommentRecord => {
+    const now = store.clock.nowIso();
+    const { emit, ...fields } = input;
+    const rc: ReviewCommentRecord = {
+      id: store.nextId(),
+      user: login,
+      createdAt: now,
+      updatedAt: now,
+      ...fields,
+    };
+    issue.pull.reviewComments.push(rc);
+    issue.updatedAt = now;
+    if (emit) {
+      store.emit(
+        repo,
+        "pull_request_review_comment",
+        "created",
+        {
+          comment: store.reviewCommentJson(repo, issue, rc),
+          pull_request: store.pullJson(repo, issue),
+        },
+        login,
+      );
+    }
+    return rc;
+  };
+
+  // `since` as GitHub reads it: comments updated at or after the ISO-8601 instant; oldest first.
+  // A line comment of a review still pending is its author's draft and is not listed.
+  app.get("/repos/:owner/:repo/pulls/:number/comments", (c) => {
+    const repo = requireRepo(c, store, "pull_requests", "read");
+    const issue = pullOf(c, repo);
+    const sinceRaw = c.req.query("since");
+    const since = sinceRaw ? Date.parse(sinceRaw) : Number.NaN;
+    if (sinceRaw && Number.isNaN(since))
+      throw validationFailed([
+        { resource: "PullRequestReviewComment", field: "since", code: "invalid" },
+      ]);
+    const pending = new Set(
+      issue.pull.reviews.filter((r) => r.state === "PENDING").map((r) => r.id),
+    );
+    const comments = issue.pull.reviewComments
+      .filter((rc) => rc.reviewId === null || !pending.has(rc.reviewId))
+      .filter((rc) => !sinceRaw || Date.parse(rc.updatedAt) >= since)
+      .sort((a, b) => a.id - b.id);
+    return c.json(
+      paginate(
+        c,
+        comments.map((rc) => store.reviewCommentJson(repo, issue, rc)),
+      ),
+    );
+  });
+
+  // One line comment, or a reply to one (`in_reply_to`); like GitHub it is its own
+  // COMMENTED review with no body.
+  app.post("/repos/:owner/:repo/pulls/:number/comments", async (c) => {
+    const repo = requireRepo(c, store, "pull_requests", "write");
+    const login = requireLogin(c);
+    const issue = pullOf(c, repo);
+    const body = await readJson(c);
+    const text = requireStr(body, "body", "PullRequestReviewComment");
+    const replyTo = typeof body.in_reply_to === "number" ? body.in_reply_to : null;
+    const parent =
+      replyTo === null ? null : issue.pull.reviewComments.find((rc) => rc.id === replyTo);
+    if (replyTo !== null && !parent) throw new HttpError(404, "Not Found");
+    const path = parent?.path ?? requireStr(body, "path", "PullRequestReviewComment");
+    const review: ReviewRecord = {
+      id: store.nextId(),
+      user: login,
+      body: "",
+      state: "COMMENTED",
+      commitId: str(body, "commit_id") ?? issue.pull.headSha,
+      submittedAt: store.clock.nowIso(),
+    };
+    issue.pull.reviews.push(review);
+    const rc = addReviewComment(repo, issue, login, {
+      reviewId: review.id,
+      body: text,
+      path,
+      line: parent ? parent.line : typeof body.line === "number" ? body.line : null,
+      commitId: review.commitId,
+      inReplyTo: parent?.id ?? null,
+      emit: true,
+    });
+    return c.json(store.reviewCommentJson(repo, issue, rc), 201);
   });
 
   app.get("/repos/:owner/:repo/pulls/:number/reviews/:review_id", (c) => {

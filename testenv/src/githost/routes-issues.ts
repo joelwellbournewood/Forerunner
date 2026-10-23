@@ -145,8 +145,14 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
   // ---- comments ------------------------------------------------------------------------------
   app.get("/repos/:owner/:repo/issues/:number/comments", (c) => {
     const { repo, issue } = issueRepo(c, "read");
+    // `since` as GitHub reads it: comments updated at or after the ISO-8601 instant.
+    const sinceRaw = c.req.query("since");
+    const since = sinceRaw ? Date.parse(sinceRaw) : Number.NaN;
+    if (sinceRaw && Number.isNaN(since))
+      throw validationFailed([{ resource: "IssueComment", field: "since", code: "invalid" }]);
     const comments = [...repo.comments.values()]
       .filter((cm) => cm.issueNumber === issue.number)
+      .filter((cm) => !sinceRaw || Date.parse(cm.updatedAt) >= since)
       .sort((a, b) => a.id - b.id);
     return c.json(
       paginate(

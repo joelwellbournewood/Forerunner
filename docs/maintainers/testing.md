@@ -314,9 +314,14 @@ exceeded …"` and `Retry-After`; the window reopens when the clock passes `Rese
 `GET /contents/<path>?ref=` (file as base64, directory as a list, `Accept:
 application/vnd.github.raw` for bytes), `PUT` (create 201 / update 200, `sha` required to
 update, 409 on mismatch), `DELETE`. Pulls: `GET|POST /pulls`, `GET|PATCH /pulls/:n`,
-`PUT /pulls/:n/merge`, `GET /pulls/:n/merge`, `/files`, `/commits`, `GET|POST /reviews`,
-`PUT /update-branch`. Issues: `GET|POST /issues` (PRs included with a `pull_request` field),
-`GET|PATCH /issues/:n`, `GET|POST /issues/:n/comments` (PR numbers too),
+`PUT /pulls/:n/merge`, `GET /pulls/:n/merge`, `/files`, `/commits`, `GET|POST /reviews`
+(`comments: [{ path, line, body }]` adds line comments; a review without `event` stays
+`PENDING` and its line comments are not listed), `GET|POST /pulls/:n/comments` (review line
+comments; `in_reply_to` answers in a thread, each `POST` is its own bodiless `COMMENTED`
+review as on GitHub, `?since=` as for issue comments; the `pull_request_review_comment` event;
+ADR 0075), `PUT /update-branch`. Issues: `GET|POST /issues` (PRs included with a `pull_request` field),
+`GET|PATCH /issues/:n`, `GET|POST /issues/:n/comments` (PR numbers too; `?since=` keeps the
+comments updated at or after the instant, as GitHub does; ADR 0075),
 `GET|PATCH|DELETE /issues/comments/:id`, labels (`/labels`, `/labels/:name`,
 `/issues/:n/labels[/:name]`). Releases: `GET|POST /releases`, `/releases/latest` (newest
 non-draft non-prerelease), `/releases/tags/:tag`, `GET|PATCH|DELETE /releases/:id`,
