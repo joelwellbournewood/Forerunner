@@ -90,6 +90,23 @@ const QUEUE_SKIP_CODES: ReadonlySet<string> = new Set([
 /** Message types that are acted on by reading them into the plan; the rest need a reply. */
 const ACK_BY_READING: ReadonlySet<string> = new Set(["handoff", "info", "warning", "decision"]);
 
+/** A message whose body starts with a stop word stops the session (never a handoff). */
+const STOP_WORD_RE = /^\s*(stop|halt|pause)\b/i;
+
+/** One message an inbox re-check read: a stop, a pause or anything else. */
+interface InboxRead {
+  id: string;
+  type: string;
+  from: string | null;
+  kind: "stop" | "pause" | "message";
+}
+
+/** What an inbox re-check read, and the first stop or pause among it (null: none). */
+interface InboxRecheck {
+  read: InboxRead[];
+  interrupt: InboxRead | null;
+}
+
 export interface PlanItem {
   taskId: string;
   title: string;
@@ -696,8 +713,8 @@ export class SessionRunner {
             skipped.push(item.taskId);
             continue;
           }
-          const interrupt = await this.recheckInbox(agent.id, session.id, emit, heard);
-          if (interrupt === "stop") {
+          const recheck = await this.recheckInbox(agent.id, session.id, emit, heard);
+          if (recheck.interrupt) {
             stopReason = "stopped_by_message";
             skipped.push(...plan.items.slice(plan.items.indexOf(item)).map((i) => i.taskId));
             break;
@@ -1071,6 +1088,35 @@ export class SessionRunner {
     }
 
     // 4. Session end: summary, project summary cache, handoff to peers, notify human.
+    // The inbox is re-checked first (spec E.4: before any write to shared state), so a message
+    // that landed during the last task is read before these writes and they account for it: a
+    // stop or a pause ends the session `stopped` (a pause defers nothing, no task is left, but
+    // the row leaves `paused`), and every message read here is named in the handoff. The task
+    // states were written as each task ended; the writes below stay as they are.
+    let endInbox: InboxRecheck = { read: [], interrupt: null };
+    try {
+      endInbox = await this.recheckInbox(agent.id, session.id, emit, heard, { atEnd: true });
+    } catch (e) {
+      this.logger.warn("inbox re-check before the session-end writes failed", {
+        sessionId: session.id,
+        error: errorMessage(e),
+      });
+      await emit("inbox.recheck_failed", { warning: errorMessage(e) });
+    }
+    const endStop = endInbox.interrupt;
+    // Only a session that would otherwise end as completed takes the message as its reason; a
+    // session already stopped (killed, out of budget, plan filed) keeps the reason it has.
+    const stoppedAtEnd =
+      endStop !== null &&
+      status === "completed" &&
+      (stopReason === "completed" || stopReason === "budget_finish_current");
+    if (stoppedAtEnd) stopReason = "stopped_by_message";
+    if (endInbox.read.length)
+      await emit("session.end_inbox", {
+        read: endInbox.read.map((m) => m.id),
+        interrupt: endStop ? { id: endStop.id, kind: endStop.kind } : null,
+        stopped: stoppedAtEnd,
+      });
     await this.ackAnswered(agent.id, emit);
     const spent = (await store.costLedger.sum({ sessionId: session.id })).usd_micro;
     const summary = summarize({
@@ -1086,6 +1132,8 @@ export class SessionRunner {
       stopReason,
       plan,
       heard: heard.length,
+      endInbox,
+      stoppedAtEnd,
     });
     // Project docs (spec G.5): the PM's status update into docs/status.md, carried by the
     // session's pull request or a small one of its own; a session that touched no task
@@ -1158,6 +1206,17 @@ export class SessionRunner {
       })),
       next: skipped,
       stop_reason: stopReason,
+      // What the re-check before these writes read (spec E.4): ids and kinds, never the words
+      // (another agent's message is data); `stopped_by` is the stop or pause this session
+      // ended on, null when it ended for another reason.
+      ...(endInbox.read.length
+        ? {
+            end_inbox: {
+              read: endInbox.read,
+              stopped_by: stoppedAtEnd ? endStop : null,
+            },
+          }
+        : {}),
       spent_usd_micro: spent,
       ...(docsOutcome ? { docs: docsOutcome } : {}),
     };
@@ -1685,23 +1744,29 @@ export class SessionRunner {
    * Inbox re-check between tasks: a human "stop" message stops the session; questions become
    * requests. A line the human said during this session (spec O.9, `heardLineOf`) is collected
    * into `heard` as delivered and stays unread until a task's brief carries it: one that no
-   * task follows reaches the next session's brief like any unread message.
+   * task follows reaches the next session's brief like any unread message. A stop or pause
+   * the session obeys is acted on by stopping (`acted_at`), whatever its type.
+   *
+   * `atEnd` is the re-check before the session-end writes (spec E.4): no task follows, so a
+   * said line is left untouched for the next session's brief.
    */
   private async recheckInbox(
     agentId: string,
     sessionId: string,
     emit: (t: string, p: Record<string, unknown>) => Promise<void>,
     heard: HeardDelivery[],
-  ): Promise<"continue" | "stop"> {
+    opts: { atEnd?: boolean } = {},
+  ): Promise<InboxRecheck> {
     const unread = await this.deps.store.message.inbox(
       { agentId },
       { unreadOnly: true, limit: 50 },
     );
-    let stop = false;
+    const read: InboxRead[] = [];
+    let interrupt: InboxRead | null = null;
     for (const m of unread) {
       const said = heardLineOf(m.body);
       if (said && said.sessionId === sessionId && m.from_agent_id === agentId) {
-        if (heard.some((h) => h.id === m.id)) continue;
+        if (opts.atEnd || heard.some((h) => h.id === m.id)) continue;
         await this.deps.store.message.markDelivered(m.id);
         heard.push({
           id: m.id,
@@ -1715,14 +1780,28 @@ export class SessionRunner {
       }
       await this.deps.store.message.markDelivered(m.id);
       await this.deps.store.message.markRead(m.id);
-      if (/^\s*(stop|halt|pause)\b/i.test(m.body) && m.type !== "handoff") stop = true;
+      const word = m.type === "handoff" ? null : STOP_WORD_RE.exec(m.body)?.[1]?.toLowerCase();
+      const entry: InboxRead = {
+        id: m.id,
+        type: m.type,
+        from: m.from_agent_id,
+        kind: word === "pause" ? "pause" : word ? "stop" : "message",
+      };
+      read.push(entry);
+      if (entry.kind !== "message") interrupt ??= entry;
       await emit("inbox.message", { id: m.id, type: m.type, from: m.from_agent_id, sessionId });
-      if (m.requires_ack && ACK_BY_READING.has(m.type)) {
+      if (m.requires_ack && (entry.kind !== "message" || ACK_BY_READING.has(m.type))) {
         await this.deps.store.message.markActed(m.id);
-        await emit("inbox.acted", { id: m.id, type: m.type });
+        await emit("inbox.acted", {
+          id: m.id,
+          type: m.type,
+          ...(entry.kind !== "message"
+            ? { [entry.kind === "pause" ? "paused" : "stopped"]: true }
+            : {}),
+        });
       }
     }
-    return stop ? "stop" : "continue";
+    return { read, interrupt };
   }
 
   /** Questions and requests are acted on once this agent replied to them. */
@@ -1784,6 +1863,10 @@ function summarize(x: {
   plan: SessionPlan | null;
   /** Lines the human said during the session (spec O.9); the count only, peers read this. */
   heard?: number;
+  /** What the re-check before the session-end writes read (spec E.4). */
+  endInbox?: InboxRecheck;
+  /** The session ended on a stop or pause that re-check read. */
+  stoppedAtEnd?: boolean;
 }): string {
   const parts = [
     `Session ${x.stopReason === "completed" ? "completed" : `ended (${x.stopReason})`}.`,
@@ -1800,6 +1883,7 @@ function summarize(x: {
       : []),
     ...summarizeMerges(x.merges ?? []),
     ...(x.heard ? [summarizeHeard(x.heard)] : []),
+    ...(x.endInbox?.read.length ? [summarizeEndInbox(x.endInbox, x.stoppedAtEnd ?? false)] : []),
     `Spent $${(x.spent / 1e6).toFixed(2)}.`,
   ];
   return parts.join(" ");
@@ -1818,6 +1902,17 @@ function summarizeMerges(merges: readonly MergeOutcome[]): string[] {
         ]
       : []),
   ];
+}
+
+/** The summary line for the messages read right before the session-end writes. */
+function summarizeEndInbox(end: InboxRecheck, stopped: boolean): string {
+  const n = end.read.length;
+  const head = `Read before the session-end writes: ${n} message${n === 1 ? "" : "s"}.`;
+  const by = stopped ? end.interrupt : null;
+  if (!by) return head;
+  return by.kind === "pause"
+    ? `${head} A pause (message ${by.id}) ended the session; no task was left to defer.`
+    : `${head} A stop (message ${by.id}) ended the session: the task states above were written as each task ended, and nothing further was started.`;
 }
 
 /**
