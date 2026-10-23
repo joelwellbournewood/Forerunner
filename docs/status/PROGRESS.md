@@ -18,14 +18,24 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w5-android-high-risk rebased onto cac6fee)
+- `wave/w5-android-high-risk` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts
+  in the mobile store (the base's runner unlock window next to the branch's biometric
+  timeout), `run.mjs` and `cdp.test.ts` (the base's `describeFailure` and moved
+  `connectPage` tests next to the branch's `webview-console.mjs` forwarding), apps.md, the
+  ADR index and this log; both sides kept. The base had taken ADR 0085 (FCM push), so the
+  branch's ADR is now 0086 (`docs/status/reviews/w5-android-high-risk.md` `## Rebase`).
+  Current counts: UI suite 46 files / 310 tests, `cdp.test.ts` 25. Not merged yet.
+
 ### 2026-10-23 (item w5-android-high-risk: the high-risk refusal on a phone without biometrics; the runner shows the WebView console)
 - `android.yml` run 39952987240 (82a6295) attached to the real WebView, paired and approved,
   then saw no refusal after Confirm on the high-risk card. Built on
   `wave/w5-android-high-risk` (ADR 0086, not merged): every failure of the biometric step is a
   refusal with the platform's reason in bounded time (shell 45 s, UI 60 s); the capability
   names `biometric:allow-status` and `biometric:allow-authenticate`; `run.mjs` forwards the
-  page's console and uncaught exceptions as `webview:` lines. Tests: `apps/ui` 42 files /
-  263 tests, `apps/mobile/e2e/cdp.test.ts` 22, `cargo test` 30. R.5, R.7 and V.3 keep their
+  page's console and uncaught exceptions as `webview:` lines. Tests (after the rebase onto
+  cac6fee): `apps/ui` 46 files / 310 tests, `apps/mobile/e2e/cdp.test.ts` 25, `cargo test` 30
+  (review stage; the base changed no Rust). R.5, R.7 and V.3 keep their
   status until the emulator run passes; the BLOCKERS.md emulator row names the next step
   (merge, dispatch `android.yml`). Report: `docs/status/reviews/w5-android-high-risk.md`.
 - Review and fix (same branch): verdict revise (76), six findings, all fixed. The forwarding

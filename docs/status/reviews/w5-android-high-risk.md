@@ -347,3 +347,48 @@ Run on the final tree (counts as printed):
 - `pnpm check`: exit 0. That covers lint, lint:paths, typecheck, `pnpm test` (269 files,
   2678 passed, 4 skipped, 1 todo), docs:check, docs:links and secrets:scan.
 - Scratch merge with `origin/ccr-4d8a843c-1k9syk` (f1948dd), not committed: see finding 1.
+
+## Rebase (2026-10-23, onto `origin/ccr-4d8a843c-1k9syk` at cac6fee)
+
+Starting commit c86ef31 (fork point 82a6295); `git rebase origin/ccr-4d8a843c-1k9syk`.
+Conflicts and how they were resolved, both sides kept throughout:
+
+- `apps/ui/src/mobile/store.tsx` (the `wip:` commit): the base's `UNLOCK_WINDOW_KEY`
+  (runner unlock card, ADR 0068) and the branch's `BIOMETRIC_TIMEOUT_MS` constant both kept;
+  `MobileEnv` carries the base's `runnerKeys` and the branch's `biometricTimeoutMs`.
+- `apps/mobile/e2e/run.mjs` (forwarding commit, then the move to `webview-console.mjs`): the
+  import block keeps the base's `describeFailure` from `cdp.mjs` and takes
+  `forwardPageConsole` from `webview-console.mjs`; the base's `now` clock and `FAIL:` line
+  stay, the forwarding still runs between the attach and the smoke.
+- `apps/mobile/e2e/cdp.test.ts`: the base's `CdpTarget` import, `connectPage` and
+  `describeFailure` blocks kept; the forwarding tests import from `webview-console.mjs`
+  (so the base's `cdp.d.mts` stays as it is). The branch's fork-point copy of the
+  `connectPage` block, which the base had moved up the file, survived at the end as a
+  duplicate that no longer type-checked (TS2322 on `prefer: (t: Target)`); dropped in a
+  follow-up commit. `cdp.mjs` is identical to the base's.
+- `docs/decisions/README.md`: the base had taken 0085 (FCM push from the state service,
+  w4-fcm-sender) after the branch numbered its ADR 0085. Both rows kept; the branch's ADR is
+  now `0086-high-risk-refusal-on-a-phone-that-cannot-confirm.md`, and every reference the
+  branch wrote (index row, apps.md, testing.md, BLOCKERS and PROGRESS rows, the
+  `webview-console` headers, this file's earlier sections) says 0086. The base's 0085
+  references (FCM) are unchanged. Commit hashes quoted in the sections above are the
+  pre-rebase ones.
+- `docs/maintainers/apps.md`: the file list keeps the base's "no eval in the page (CSP)" and
+  `e2e/cdp.d.mts` line next to the branch's `e2e/webview-console.mjs` line; the
+  `cdp.test.ts` paragraph merges the base's clauses (hidden-element `waitFor`, box that moves
+  once, `evaluate` without `eval`, `cdp.bad_function`, `describeFailure`) with the branch's
+  `forwardPageConsole` clauses into one paragraph.
+- `docs/status/PROGRESS.md`: the branch's entry sits on top of the base's newer entries; all
+  kept. Test counts updated to the rebased tree.
+
+Verification on the rebased tree:
+
+- `pnpm typecheck`: exit 0. `pnpm lint`: exit 0 (59 warnings, none from the branch's files).
+- `pnpm --filter @forerunner/ui test`: 46 test files, 310 tests passed
+  (`mobile-inbox.test.tsx` 14, `mobile-shell-signer.test.ts` 5).
+- `pnpm exec vitest run --project unit apps/mobile/e2e`: 1 test file, 25 tests passed (the
+  base's 20 plus the branch's 5 forwarding tests).
+- `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk`: ok.
+- `cargo test` in `apps/mobile/src-tauri` could not build on this runner (no `gdk-3.0`
+  system library); the base changed no Rust file, so the Rust code is the reviewed code
+  (30 tests passed in the review stage).
