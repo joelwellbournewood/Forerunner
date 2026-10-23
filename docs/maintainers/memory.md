@@ -217,7 +217,7 @@ string[] }`:
 
 | Rule | Condition | Proposal | Applied change |
 | --- | --- | --- | --- |
-| Duplicate | cosine >= 0.9 within the same project or global, no polarity conflict; union-find groups; keep pinned, then most used, then most confident, then oldest | `merge: keep <id> ... [, becomes global]; retire <ids>` | losers get `superseded_by = kept`, `status = retired`; the kept lesson gets `project_id = null` when any member of the group was global (`MergeProposal.projectId`), so a merge never narrows what other projects see |
+| Duplicate | cosine >= 0.9 within the same project or global, no polarity conflict; union-find groups; keep pinned, then most used, then most confident, then oldest. A project copy accepted from a promotion offer (its `source` names the global origin, `promotion:<id>`) is never paired with that origin, and is left out of a group a third lesson links it into (ADR 0059) | `merge: keep <id> ... [, becomes global]; retire <ids>` | losers get `superseded_by = kept`, `status = retired`; the kept lesson gets `project_id = null` when any member of the group was global (`MergeProposal.projectId`), so a merge never narrows what other projects see |
 | Contradiction | shared tag, cosine >= 0.6 (no upper bound), opposite sides of a polarity pair (`always/never`, `use/avoid`, `do/don't`, `should/should not`, `prefer/avoid`) | `contradiction (flag only, not resolved): ...` | both files get `flags: [contradiction:<other>]`; rows stay active |
 | Unused | `hit_count = 0` and created more than 60 days ago, or `last_used` more than 90 days ago; never pinned | `retire: <id> ... never used / last used <date>` | `status = retired` |
 
@@ -246,6 +246,16 @@ job. `polarityConflict(a, b)` is exported for the critic and the UI.
 - `offerToProjects(ctx, lessonId, projects?)` lists projects whose tags overlap the lesson's
   (ignoring `general`), excluding the origin project, most overlap first. Without an explicit
   list, a project's tags are derived from the critic and shared lessons recorded about it.
+
+The runtime drives all of this (`packages/runtime/src/loop/memory.ts`, `MemoryLoop`;
+[ADR 0059](../decisions/0059-cross-project-promotion-in-the-loop.md), runtime.md "Memory"):
+a recorded critic or project-level shared lesson tagged `general` is proposed at once, a
+private one when its human proposes it from the memory view (with `humanApproval`), the
+critic reviews the pending proposals at the end of the next session as a `lesson` subject
+(critic.md) and `promote` or `rejectPromotion` follows, `offerToProjects` runs with the
+human's project list from the state store, and an accepted offer writes a pinned project-level
+copy through `remember(..., { noDedup: true })` with `source: promotion:<promoted>;human:<id>`,
+the source the consolidation rule above recognises.
 
 ### Project docs (`src/docs.ts`)
 
@@ -327,7 +337,7 @@ opposite polarity 0.93, unrelated under 0.2).
 | `retrieval.test.ts` | the formula numerically, ranking by tags and similarity, budget never exceeded by the estimator or by the rendered block across budgets, caller tokenizer, pinned first and charged, touch in row and file, exclusions (retired, superseded, proposed, other project) and global inclusion, near-duplicate skip with hints, lesson cap, render order, input validation, a lint-failing row is still served and reported in `touchFailures` while the rest is touched, a row with a credential shape is never rendered (`excluded`) |
 | `scopes.test.ts` | agent B with agent A's id gets nothing (denied, no touch), private scope without owner throws, own private only, critic and shared readable by every principal, critic grant never returns a private lesson, grants by kind, private files under the owner's root, state-layer guard |
 | `record.test.ts` | validation of text, tags, confidence, source and ownership; file plus mirrored row; near-duplicate merge with supersede, tag union, carried hits; below-threshold insert; no merge across scopes, owners or projects (global merges); a merged lesson stays global when either side was global and is still recalled from another project; a critic or shared lesson citing a private id refused at write time (shared ids and private memory unaffected); a private write for another agent refused when `agentId` is given, the service forcing owner = acting agent; opposite polarity not merged; `noDedup`; source grammar |
-| `consolidation.test.ts` | polarity pairs, `consolidationDue`, duplicate merge keeping the most used with report-only then apply, the kept lesson made global when a merged member was global (and kept project-scoped when none was), contradictions flagged in both files and never resolved, contradiction above the duplicate threshold, no pairing without a shared tag or across projects, retirement by the simulated clock (never used after 60 days, stale after 90, pinned kept, young kept), custom thresholds, owner required for a private plan |
+| `consolidation.test.ts` | polarity pairs, `consolidationDue`, duplicate merge keeping the most used with report-only then apply, the kept lesson made global when a merged member was global (and kept project-scoped when none was), a project copy accepted from an offer never merged with its global origin (directly or through a third lesson, which merges into the origin while the copy stays), contradictions flagged in both files and never resolved, contradiction above the duplicate threshold, no pairing without a shared tag or across projects, retirement by the simulated clock (never used after 60 days, stale after 90, pinned kept, young kept), custom thresholds, owner required for a private plan |
 | `promotion.test.ts` | `general` tag required, idempotent proposal with source pointing at the origin, proposals not retrievable, private origin needs owner plus human approval, foreign (critic) ids refused by promotion, promotion needs an accepting review (empty, revise, missing review rejected), promoted copy active and global, shared project origin superseded, critic origin untouched, reject, offers to projects (explicit and derived) |
 | `docs.test.ts` | the eight docs, scaffold with frontmatter, existing untouched and idempotent, frontmatter parse, every drift rule including separators, missing docs reported |
 | `service.test.ts` | `rememberFromSession` records, rejects and writes the catalog; `recallForSession` loads standing notes then lessons under the budget; instructions larger than the budget refused; empty grant; the "4 simulated weeks" sketch: repeated findings recorded as shared lessons are recalled by later sessions (repeats 3, 0, 0, 0), memory per session stays under budget, hits and `last_used` advance, re-recording merges instead of duplicating |
@@ -351,8 +361,9 @@ in `tests/e2e` once the critic wiring lands; the sketch here is its unit-level s
 - `consolidate` is O(n²) over active lessons of one scope; fine for thousands, not millions
   (ADR 0001). Split by project before it matters.
 - `offerToProjects` without an explicit project list derives tags only from critic and shared
-  lessons; projects with no lessons yet are never offered anything. Pass the project list from the
-  state store when the runtime calls it.
+  lessons; projects with no lessons yet are never offered anything. The runtime passes the
+  human's project list with `settings.tags` and the tags of every scope it may read
+  (`MemoryLoop.projectTags`); a direct caller without a list keeps the narrower derivation.
 - The memory-format migrator (migrations.md, "Memory-format migrations") is still a placeholder:
   format 1 is the only format and a newer `format` is refused rather than migrated. `index.json`
   already records the format a root was indexed with, so the migrator has its trigger.
