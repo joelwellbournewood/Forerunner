@@ -19,6 +19,7 @@ import type {
 import { ENTITIES, type EntityDef, Repository } from "@forerunner/state";
 import {
   DEFAULT_LADDER,
+  effortForTask,
   effortWithOffset,
   INTAKE_RUN_SPECIALIST,
   type LadderRung,
@@ -27,6 +28,7 @@ import {
   type ModeDefault,
   tierOfModel,
 } from "../models/ladder.ts";
+import type { EffortLevel } from "../provider/types.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import type {
@@ -768,6 +770,25 @@ function measured(kind: ModeDefault["targetKind"], s: PerfSample): number | null
   return null;
 }
 
+/** The risk tier from which `effortForTask` raises a mode's effort (coder 2, critic tier 2/3 3). */
+const RISK_RAISE_FROM: Partial<Record<Mode, 2 | 3>> = { coder: 2, critic_t23: 3 };
+
+/**
+ * The effort a risky task runs the mode at (spec D.7: the effort rule as the code applies it),
+ * from the same `effortForTask` the executor uses; null when it equals the mode's effort.
+ */
+export function riskEffortOf(
+  mode: Mode,
+  offset: -1 | 0 | 1,
+  defaults: Record<Mode, ModeDefault>,
+  effort: string,
+): { effort: EffortLevel; from: 2 | 3 } | null {
+  const from = RISK_RAISE_FROM[mode];
+  if (from === undefined) return null;
+  const raised = effortForTask(mode, from, offset, { ...MODE_DEFAULTS, ...defaults });
+  return raised === effort ? null : { effort: raised, from };
+}
+
 export interface PerformanceViewOptions {
   /** The install's human: only the rows of their agents' sessions count. */
   humanId: string;
@@ -882,6 +903,8 @@ export async function performanceView(
     const hasTarget = d.targetKind !== "by_task" && d.targetMs > 0 && figures.length > 0;
     const p90 = nearestRank(figures, 90);
     const offsetApplied = OFFSET_MODES.includes(mode);
+    const effort = offsetApplied ? effortWithOffset(d.effort, offset) : d.effort;
+    const risk = riskEffortOf(mode, offsetApplied ? offset : 0, config.modeDefaults, effort);
     return {
       mode,
       label: MODE_LABELS[mode],
@@ -889,8 +912,10 @@ export async function performanceView(
       targetKind: d.targetKind,
       tier: d.tier,
       baseEffort: d.effort,
-      effort: offsetApplied ? effortWithOffset(d.effort, offset) : d.effort,
+      effort,
       offsetApplied,
+      riskEffort: risk?.effort ?? null,
+      riskTierFrom: risk?.from ?? null,
       samples: mine.length,
       ttftP50Ms: nearestRank(ttfts, 50),
       ttftP90Ms: nearestRank(ttfts, 90),

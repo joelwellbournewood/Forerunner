@@ -81,6 +81,14 @@ describe("GET /performance on the daemon", () => {
     expect(empty).toMatchObject({ projectId, days: 7, effortOffset: -1 });
     // The offset reaches the critic's effort: medium one step down.
     expect(modeOf(empty, "critic_t1")).toMatchObject({ baseEffort: "medium", effort: "low" });
+    // A tier 3 review runs at max, one step down with the offset; the coder at risk tier 2+
+    // runs at high (the offset does not reach the executor yet).
+    expect(modeOf(empty, "critic_t23")).toMatchObject({
+      effort: "medium",
+      riskEffort: "xhigh",
+      riskTierFrom: 3,
+    });
+    expect(modeOf(empty, "coder")).toMatchObject({ riskEffort: "high", riskTierFrom: 2 });
 
     // A chat turn through the conversation agent records its first token and total time.
     const chat = await req("/chat", {

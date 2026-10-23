@@ -1979,6 +1979,10 @@ its own:
   `speed_quality_offset` for the modes whose code applies it (`OFFSET_MODES`: the critic
   tiers, `offsetApplied: true`); the executor, chat, voice and planning do not read the
   offset yet (D.16), so their `effort` stays the table's. Without a project the offset is 0.
+  `riskEffort` and `riskTierFrom` (`riskEffortOf`, from the same `effortForTask` the executor
+  uses) name the effort a risky task raises the mode to: the coder at risk tier 2 and above
+  runs at high, a tier 3 critic review at max, with the offset applied as for `effort`; null
+  where no risk tier changes the mode's effort (or the table already has it).
 
 What feeds it: the executor and the critic write their Run rows as before; the intake call
 now writes one (`specialist: "intake"`, its tokens, cost, first token and duration, and the

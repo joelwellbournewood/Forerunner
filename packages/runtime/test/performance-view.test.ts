@@ -387,6 +387,17 @@ describe("performanceView over seeded Run rows and turns", () => {
       offsetApplied: true,
     });
     expect(modeOf(v, "critic_t23")).toMatchObject({ baseEffort: "high", effort: "xhigh" });
+    // The effort a risky task raises the mode to, as effortForTask applies it: the coder at
+    // risk tier 2 and above runs at high (the offset does not reach it), a tier 3 review at
+    // max (one step up from max is max).
+    expect(modeOf(v, "coder")).toMatchObject({
+      effort: "medium",
+      riskEffort: "high",
+      riskTierFrom: 2,
+    });
+    expect(modeOf(v, "critic_t23")).toMatchObject({ riskEffort: "max", riskTierFrom: 3 });
+    for (const mode of ["voice_chat", "text_chat", "routing", "planning", "researcher", "critic_t1"])
+      expect(modeOf(v, mode)).toMatchObject({ riskEffort: null, riskTierFrom: null });
     // The offset does not reach the executor, chat, voice or planning yet (D.16).
     for (const mode of ["coder", "text_chat", "voice_chat", "planning", "routing"]) {
       const m = modeOf(v, mode);
@@ -405,11 +416,14 @@ describe("performanceView over seeded Run rows and turns", () => {
           ...MODE_DEFAULTS,
           critic_t1: { ...MODE_DEFAULTS.critic_t1, effort: "low" },
           text_chat: { ...MODE_DEFAULTS.text_chat, effort: "medium" },
+          coder: { ...MODE_DEFAULTS.coder, effort: "high" },
         },
       },
     });
     expect(modeOf(adopted, "critic_t1")).toMatchObject({ baseEffort: "low", effort: "medium" });
     expect(modeOf(adopted, "text_chat")).toMatchObject({ baseEffort: "medium", effort: "medium" });
+    // A table whose coder already runs at high: no risk tier changes it.
+    expect(modeOf(adopted, "coder")).toMatchObject({ effort: "high", riskEffort: null });
     // All projects: no single offset, so none is applied.
     const all = await performanceView(store, { humanId: w.human, nowIso: clock.nowIso() });
     expect(all.effortOffset).toBe(0);

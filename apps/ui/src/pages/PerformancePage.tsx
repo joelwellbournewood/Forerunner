@@ -44,9 +44,12 @@ export function targetLabel(mode: PerformanceModeView): string {
  * the effort table's, and the project's speed-versus-quality offset where the code applies it.
  */
 export function effortLabel(mode: PerformanceModeView): string {
-  return mode.effort === mode.baseEffort
-    ? mode.effort
-    : `${mode.effort} (table ${mode.baseEffort})`;
+  const effort =
+    mode.effort === mode.baseEffort ? mode.effort : `${mode.effort} (table ${mode.baseEffort})`;
+  // A risky task runs the mode higher (the coder at risk tier 2+, a tier 3 critic review).
+  return mode.riskEffort && mode.riskTierFrom !== null
+    ? `${effort}; ${mode.riskEffort} from risk tier ${mode.riskTierFrom}`
+    : effort;
 }
 
 /** The windows the page offers; the daemon accepts 1 to 90 days. */

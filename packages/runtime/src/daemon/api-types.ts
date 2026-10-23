@@ -815,6 +815,14 @@ export const PerformanceModeView = z.object({
   effort: z.enum(EFFORT_LEVELS),
   /** True when the project's speed-versus-quality offset reaches this mode's runs today. */
   offsetApplied: z.boolean(),
+  /**
+   * The effort a risky task raises the mode to (`effortForTask`: the coder at risk tier 2 and
+   * above runs at high, a tier 3 critic review at max), with the offset applied as for
+   * `effort`; null when no risk tier changes the mode's effort.
+   */
+  riskEffort: z.enum(EFFORT_LEVELS).nullable(),
+  /** The lowest risk tier `riskEffort` applies from; null with it. */
+  riskTierFrom: z.number().int().min(0).max(3).nullable(),
   /** Measurements in the window. */
   samples: z.number().int().nonnegative(),
   /** Median and 90th percentile by nearest rank over the samples that carry the figure. */

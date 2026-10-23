@@ -46,6 +46,10 @@ describe("Performance view", () => {
     if (!critic) throw new Error("fixture");
     expect(effortLabel(critic)).toBe("medium");
     expect(effortLabel({ ...critic, effort: "high" })).toBe("high (table medium)");
+    // The effort a risky task raises the mode to (the coder at risk tier 2 and above).
+    const coder = PERFORMANCE.modes.find((m) => m.mode === "coder");
+    if (!coder) throw new Error("fixture");
+    expect(effortLabel(coder)).toBe("medium; high from risk tier 2");
   });
 
   it("shows every mode against its target with the effort, the share and the last measurement, and the estimate accuracy", async () => {
@@ -76,7 +80,9 @@ describe("Performance view", () => {
     const coder = rows.find((r) => r.dataset.mode === "coder");
     if (!coder) throw new Error("no coder row");
     expect(within(coder).getByTestId("target-bar")).toHaveTextContent("by task");
-    expect(within(coder).getByTestId("effort")).toHaveTextContent("medium");
+    expect(within(coder).getByTestId("effort")).toHaveTextContent(
+      "medium; high from risk tier 2",
+    );
     expect(screen.getByTestId("performance-window")).toHaveTextContent("last 7 days");
     expect(screen.getByTestId("performance-recent")).toHaveTextContent("chat");
     expect(screen.getByTestId("estimates-overall")).toHaveTextContent("21.5%");
