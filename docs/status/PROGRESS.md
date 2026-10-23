@@ -18,6 +18,18 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-d16-slider built on `wave/w3-d16-slider`, review pending)
+- D.16 speed-versus-quality slider: every mode's effort is the default shifted one step by the
+  project's `speed_quality_offset`, read from the project row per run (executor), per turn
+  (chat, voice), per planning session (intake) and per review (critic); `compose.ts` passes no
+  static offset. `settings.set` takes -1 / 0 / +1 with the effect in the card and the change
+  log sentence both ways; Settings shows a three-stop slider (speed / balanced / quality).
+  Tests: `packages/runtime/test/effort-offset.test.ts` (composed daemon, each mode at each
+  position, a move applies to the next turn, session or run), `packages/commands/test/
+  speed-quality.test.ts`, `apps/ui/test/settings-slider.test.tsx`. D.16 `done` on this branch
+  (requirements 184 done, 39 in progress, 5 todo); BLOCKERS.md row D.16 says built, review
+  pending. Report: `docs/status/reviews/w3-d16-slider.md`.
+
 ### 2026-10-23 (item w2-s32-indicator rebased onto 22982fa)
 - `wave/w2-s32-indicator` rebased onto `origin/ccr-4d8a843c-1k9syk` (22982fa). Conflicts in
   the UI's fake daemon (the base's runner keys and fast mode next to the branch's desktop
@@ -166,7 +178,7 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   `wave/w3-o4-voice-prefs`, `wave/w4-metered-aborted`. Not started: w2-chat-memory (J.1,
   O.2), w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
   (S.12), w4-stale-docs, w4-fcm-sender (R.6 service side) and the wave-3 items
-  w3-c5-specialist-approval, w3-d4-specialist-settings, w3-d7-performance, w3-d16-slider,
+  w3-c5-specialist-approval, w3-d4-specialist-settings, w3-d7-performance,
   w3-e1-triggers, w3-e4-recheck, w3-docs-p7-p11, w3-r2-devices, w3-r5-phone, w3-t1-mode-off,
   w3-misc-replay-ceiling; each is named on its requirement row in BLOCKERS.md. Build cost in
   COST.md (wave 1 and 2a and the triage agent measured, the stopped waves not).
@@ -272,7 +284,8 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
    (S.12), w4-fcm-sender (R.6, the service side; built on its branch 2026-10-23, review and
    merge pending), w3-c5-specialist-approval (C.5),
-   w3-d4-specialist-settings (D.4), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16),
+   w3-d4-specialist-settings (D.4), w3-d7-performance (D.7, D.19), w3-d16-slider (D.16:
+   built on its branch, see below; its review is still to run),
    w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
    w3-r5-phone (R.5), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
    `it.todo`, the executor's ceiling rung). Then an independent review of each of the ten
