@@ -1,3 +1,4 @@
+import { DAEMON_ROUTES } from "@forerunner/runtime/daemon/api-types";
 import { describe, expect, it } from "vitest";
 import {
   ApiError,
@@ -7,6 +8,7 @@ import {
   routePath,
 } from "../src/api/client.ts";
 import { DEFAULT_DAEMON_URL, resolveDaemonConfig } from "../src/api/config.ts";
+import { PROPOSED_ROUTES } from "../src/api/contracts.ts";
 import { createFakeDaemon } from "./fake-daemon.ts";
 import { ME } from "./fixtures.ts";
 import { fetchFromApp, testConfig } from "./helpers.tsx";
@@ -249,12 +251,16 @@ describe("daemon client", () => {
   });
 
   it("tells a missing route apart from a typed not_found", async () => {
+    // The example is a route the daemon does not serve yet (milestones and performance are
+    // served now): `docs` is still proposed.
+    expect("docs" in PROPOSED_ROUTES).toBe(true);
+    expect("docs" in DAEMON_ROUTES).toBe(false);
     const daemon = createFakeDaemon({
       token: "tok",
-      missingRoutes: ["/projects/proj_atlas/milestones"],
+      missingRoutes: ["/projects/proj_atlas/docs"],
     });
     const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
-    const missing = await client.milestones("proj_atlas").catch((e: unknown) => e);
+    const missing = await client.docs("proj_atlas").catch((e: unknown) => e);
     expect(isRouteMissing(missing)).toBe(true);
     const typed = await client.project("proj_missing").catch((e: unknown) => e);
     expect(typed).toMatchObject({ status: 404, code: "not_found" });
@@ -270,7 +276,7 @@ describe("daemon client", () => {
       async () =>
         new Response("404 Not Found", { status: 404, headers: { "content-type": "text/plain" } }),
     );
-    const untyped = await honoDefault.milestones("proj_atlas").catch((e: unknown) => e);
+    const untyped = await honoDefault.docs("proj_atlas").catch((e: unknown) => e);
     expect(untyped).toMatchObject({
       code: "ui.http_error",
       status: 404,
@@ -282,9 +288,7 @@ describe("daemon client", () => {
       testConfig(),
       async () => new Response(null, { status: 404, statusText: "Not Found" }),
     );
-    expect(isRouteMissing(await empty.milestones("proj_atlas").catch((e: unknown) => e))).toBe(
-      true,
-    );
+    expect(isRouteMissing(await empty.docs("proj_atlas").catch((e: unknown) => e))).toBe(true);
   });
 
   it("round-trips reviews, memory, commands and the change log against the fake daemon", async () => {
