@@ -143,6 +143,25 @@ Findings:
    "the approval runs share the month's testing share" (last month's run ignored, this
    month's leaves USD 1.50 < the USD 2 worst case, next month passes; fails before).
 
+Verification after the fixes (2026-10-23, Linux sandbox, from the repository root):
+
+| Command | Result |
+| --- | --- |
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0, 1162 files, 59 warnings (the same 59 as at 961911b), no errors |
+| `pnpm exec vitest run --project unit packages/runtime/test` | 116 files passed; 1013 tests passed, 1 skipped |
+| `pnpm exec vitest run --project integration packages/runtime/test` | 1 file, 4 tests skipped (`sandbox.integration.test.ts`: no container engine) |
+| `pnpm exec vitest run --project unit scripts/sync-registry.test.ts services/cloud-runner/test` | 10 files, 62 tests passed (the cloud runner composes as a one-shot) |
+| `pnpm exec vitest run --project e2e tests/e2e/scenarios` | 13 files passed; 24 tests passed, 1 skipped, 1 todo |
+| `node scripts/docs-check.mjs --base 961911b` / `--base origin/ccr-4d8a843c-1k9syk` | ok (10 files) / ok (20 files) |
+| `pnpm secrets:scan` | clean (1413 files) |
+
+The new tests were run against the pre-fix `approval.ts` / `compose.ts` (the files restored
+from 961911b, the tests kept): all six "claim life cycle" tests and both new
+`specialists-cli.test.ts` tests failed, and pass with the fixes.
+
+## Build report
+
 Item: w3-c5-specialist-approval, stage BUILD, branch `wave/w3-c5-specialist-approval`.
 Starting commit: `16bb864` (the earlier attempt's `wip:` snapshot, which holds the eval
 runner's `candidate` input; this build keeps it and builds on it). Base branch
