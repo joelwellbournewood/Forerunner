@@ -6,6 +6,7 @@ import {
   type CommandOutcome,
   EMAIL_COMMAND_TOOL,
   EMAIL_INBOUND_FLAGGED_TOOL,
+  emailCommandAudit,
   parseYesNo,
   pickProject,
 } from "../src/email/index.ts";
@@ -441,6 +442,45 @@ describe("EmailCommandHandler: what it does with the owner's mail", () => {
     ]);
   });
 
+  it("creates the task at the project's default tier: 0 in small-project mode, else 1 (B.6)", async () => {
+    world = await emailWorld({ projects: ["Sample", "Tiny"] });
+    const tiny = world.projects[1];
+    if (!tiny) throw new Error("no Tiny project");
+    await world.store.project.update(tiny.id, tiny.version, { small_project_mode: true });
+    world.provider.pushReplies(
+      interpretation(
+        { kind: "task", project: "Tiny", title: "Fix the typo", summary: "Fix the typo" },
+        "typo",
+      ),
+      interpretation(
+        { kind: "task", project: "Sample", title: "Rotate the key", summary: "Rotate the key" },
+        "deploy key",
+      ),
+    );
+    const small = await world.handler.handle(
+      world.agentId,
+      await inboundOf(
+        await ownerSends(world, { subject: "Typo", text: "Fix the typo on the Tiny home page." }),
+      ),
+    );
+    if (small.kind !== "task") throw new Error(`unexpected ${small.kind}`);
+    expect(await world.store.task.mustGet(small.taskId)).toMatchObject({
+      project_id: tiny.id,
+      risk_tier: 0,
+    });
+    const normal = await world.handler.handle(
+      world.agentId,
+      await inboundOf(
+        await ownerSends(world, { subject: "Key", text: "Rotate the deploy key of Sample." }),
+      ),
+    );
+    if (normal.kind !== "task") throw new Error(`unexpected ${normal.kind}`);
+    expect(await world.store.task.mustGet(normal.taskId)).toMatchObject({
+      project_id: world.projects[0]?.id,
+      risk_tier: 1,
+    });
+  });
+
   it("gate scenario: watched mailbox, push delivery, acknowledgement under one minute", async () => {
     world = await emailWorld();
     world.provider.pushReplies(
@@ -710,6 +750,12 @@ describe("EmailCommandHandler: what it does with the owner's mail", () => {
       result: { outcome: "question" },
     });
     expect(await world.handler.commandAudit(world.agentId, { limit: 1 })).toHaveLength(1);
+    // The daemon serves the same rows without a handler (the watcher runs on the cloud
+    // runner): the reader over the audit log alone is the handler's own.
+    const reader = emailCommandAudit({ auditLog: world.store.auditLog, clock: world.clock });
+    expect(await reader(world.agentId)).toEqual(audit);
+    expect(await reader(world.agentId, { limit: 1 })).toEqual(audit.slice(0, 1));
+    expect(await reader("someone-else")).toEqual([]);
   });
 });
 

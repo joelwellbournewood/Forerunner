@@ -15,7 +15,9 @@ import { renderDataModelDoc, schemaSummary } from "../src/docs.ts";
 import { monotonicId } from "../src/ids.ts";
 import { MIGRATION_0001 } from "../src/migrations/0001-initial.ts";
 import { MIGRATION_0002 } from "../src/migrations/0002-headroom-savings.ts";
-import { MIGRATION_0003 } from "../src/migrations/0003-change-reasons.ts";
+import { MIGRATION_0003 } from "../src/migrations/0003-sources.ts";
+import { MIGRATION_0004 } from "../src/migrations/0004-shared-secrets.ts";
+import { MIGRATION_0005 } from "../src/migrations/0005-change-reasons.ts";
 import {
   createTableSql,
   generateInitialMigration,
@@ -64,8 +66,10 @@ describe("schema", () => {
       "change_log",
       "device",
       "source",
+      "source_candidate",
       "cost_ledger",
       "secret_ref",
+      "secret_grant",
       "extension",
       "data_asset",
       "release",
@@ -200,26 +204,34 @@ describe("migrations", () => {
     expect(MIGRATIONS[0]).toBe(MIGRATION_0001);
     expect(MIGRATIONS[1]).toBe(MIGRATION_0002);
     expect(MIGRATIONS[2]).toBe(MIGRATION_0003);
+    expect(MIGRATIONS[3]).toBe(MIGRATION_0004);
+    expect(MIGRATIONS[4]).toBe(MIGRATION_0005);
     expect(MIGRATIONS.map((m) => m.version)).toEqual(MIGRATIONS.map((_, i) => i + 1));
-    // v1 is the generator's output for the v1 subset: the columns later migrations added
-    // (per table, so task.reason, which v1 had, stays) are the only difference.
-    const addedSinceV1: Record<string, RegExp> = {
-      run: /"context_transforms"|"headroom_used"/,
-      session: /"headroom_saved_tokens"|"reason"/,
-      milestone: /"reason"/,
-    };
+    // v1 is the generator's output for the v1 subset: the v2 columns, the v3 table
+    // (source_candidate with its indexes) and the v3 enum value, the v4 column
+    // (device.wrap_public_key), the v4 table (secret_grant with its indexes) and the v5
+    // columns (milestone.reason, session.reason; task.reason, which v1 had, stays) are the
+    // only differences.
+    const addedInV5: Record<string, RegExp> = { milestone: /"reason"/, session: /"reason"/ };
     const generated = generateInitialMigration();
     const strip = (stmts: string[]) =>
-      stmts.map((s) => {
-        const table = /^CREATE TABLE IF NOT EXISTS "([a-z_]+)"/.exec(s)?.[1];
-        const added = table === undefined ? undefined : addedSinceV1[table];
-        if (!added) return s;
-        return s
-          .split("\n")
-          .filter((line) => !added.test(line))
-          .join("\n")
-          .replace(/,\n {2}PRIMARY KEY/g, ",\n  PRIMARY KEY");
-      });
+      stmts
+        .filter((s) => !/"source_candidate"|"secret_grant"/.test(s))
+        .map((s) => {
+          const table = /^CREATE TABLE IF NOT EXISTS "([a-z_]+)"/.exec(s)?.[1];
+          const v5 = table === undefined ? undefined : addedInV5[table];
+          return s
+            .split("\n")
+            .filter(
+              (line) =>
+                !/"context_transforms"|"headroom_used"|"headroom_saved_tokens"|"wrap_public_key"/.test(
+                  line,
+                ) && !v5?.test(line),
+            )
+            .join("\n")
+            .replace(/,\n {2}PRIMARY KEY/g, ",\n  PRIMARY KEY")
+            .replace("'github_user', 'github_repo', 'gitlab'", "'github_user', 'gitlab'");
+        });
     expect(strip(generated.sqlite)).toEqual(MIGRATION_0001.up.sqlite);
     expect(strip(generated.postgres)).toEqual(MIGRATION_0001.up.postgres);
   });
@@ -269,11 +281,8 @@ describe("migrations", () => {
       );
       expect(v1Columns).not.toContain("context_transforms");
 
-      expect(await migrate(db, { clock, migrations: [MIGRATION_0001, MIGRATION_0002] })).toEqual({
-        applied: [2],
-        version: 2,
-      });
-      expect(await appliedVersions(db)).toEqual([1, 2]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [2, 3, 4, 5], version: 5 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5]);
 
       const repos = createRepos(db, clock);
       const run = await repos.run.mustGet("r1");
@@ -297,6 +306,131 @@ describe("migrations", () => {
       const fresh = await repos.run.insert({ session_id: "s1", specialist: "x", model: "m" });
       expect(fresh.context_transforms).toEqual([]);
       expect(fresh.headroom_used).toBe(false);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("migrates a v2 database forward: source rows survive the rebuild, github_repo is accepted and candidates round-trip", async () => {
+    const db = await openSqlite(":memory:");
+    try {
+      const clock = new SimulatedClock("2026-10-23T10:00:00.000Z");
+      const at = clock.nowIso();
+      expect(await migrate(db, { clock, migrations: [MIGRATION_0001, MIGRATION_0002] })).toEqual({
+        applied: [1, 2],
+        version: 2,
+      });
+      await db.query(
+        `INSERT INTO "source" ("id", "created_at", "updated_at", "kind", "display_name", "locator", "credential_ref", "scan_result") VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ["src1", at, at, "github_org", "Acme", "acme", "secret:github_token", '{"repos":[]}'],
+      );
+      // The v2 CHECK refuses the new kind.
+      await expect(
+        db.query(
+          `INSERT INTO "source" ("id", "created_at", "updated_at", "kind", "display_name", "locator") VALUES (?, ?, ?, ?, ?, ?)`,
+          ["src2", at, at, "github_repo", "acme/alpha", "acme/alpha"],
+        ),
+      ).rejects.toThrow();
+      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5], version: 5 });
+
+      const repos = createRepos(db, clock);
+      const kept = await repos.source.mustGet("src1");
+      expect(kept).toMatchObject({
+        kind: "github_org",
+        display_name: "Acme",
+        locator: "acme",
+        credential_ref: "secret:github_token",
+        scan_result: { repos: [] },
+        status: "connected",
+        version: 1,
+      });
+      expect((await repos.source.byLocator("github_org", "acme"))?.id).toBe("src1");
+      // The unique (kind, locator) index came back with the rebuilt table.
+      await expect(
+        repos.source.insert({ kind: "github_org", display_name: "Acme again", locator: "acme" }),
+      ).rejects.toThrow();
+      const chosen = await repos.source.insert({
+        kind: "github_repo",
+        display_name: "acme/alpha",
+        locator: "acme/alpha",
+      });
+      expect(chosen.kind).toBe("github_repo");
+      const cand = await repos.sourceCandidate.insert({
+        source_id: "src1",
+        kind: "repo",
+        name: "alpha",
+        locator: "acme/alpha",
+        key: "github:acme/alpha",
+        proposed_name: "alpha",
+        last_seen_at: at,
+      });
+      expect(cand.status).toBe("proposed");
+      expect((await repos.sourceCandidate.forSource("src1")).map((c) => c.id)).toEqual([cand.id]);
+      // A candidate references its source: an unknown source is refused.
+      await expect(
+        repos.sourceCandidate.insert({
+          source_id: "nope",
+          kind: "repo",
+          name: "x",
+          locator: "x/y",
+          key: "github:x/y",
+          proposed_name: "y",
+          last_seen_at: at,
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("migrates a v2 database forward to v4: devices read back without a wrapping key and secret grants can be filed", async () => {
+    const db = await openSqlite(":memory:");
+    try {
+      const clock = new SimulatedClock("2026-10-23T10:00:00.000Z");
+      const at = clock.nowIso();
+      expect(await migrate(db, { clock, migrations: [MIGRATION_0001, MIGRATION_0002] })).toEqual({
+        applied: [1, 2],
+        version: 2,
+      });
+      await db.query(
+        `INSERT INTO "human" ("id", "created_at", "updated_at", "name", "email") VALUES (?, ?, ?, ?, ?)`,
+        ["h1", at, at, "Ada", "ada@example.test"],
+      );
+      await db.query(
+        `INSERT INTO "device" ("id", "created_at", "updated_at", "owner_human_id", "name", "platform", "public_key", "kind", "paired_at") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ["d1", at, at, "h1", "Ada's PC", "linux", "pk-1", "desktop", at],
+      );
+      const v2Columns = (await db.query<SqliteColumn>(`PRAGMA table_info("device")`)).map(
+        (c) => c.name,
+      );
+      expect(v2Columns).not.toContain("wrap_public_key");
+      expect(
+        (await db.query(`SELECT name FROM sqlite_master WHERE name = 'secret_grant'`)).length,
+      ).toBe(0);
+
+      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5], version: 5 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5]);
+
+      const repos = createRepos(db, clock);
+      const device = await repos.device.mustGet("d1");
+      expect(device.wrap_public_key).toBeNull();
+      const keyed = await repos.device.patch("d1", { wrap_public_key: "wrap-pk" });
+      expect(keyed.wrap_public_key).toBe("wrap-pk");
+      const grant = await repos.secretGrant.propose({
+        name: "org_deploy_token",
+        owner_human_id: "h1",
+        required_human_ids: ["h2"],
+      });
+      expect(grant).toMatchObject({ status: "pending", blobs: [], approvals: {}, kind: "token" });
+      // A fresh device insert through the repository fills the v4 default.
+      const fresh = await repos.device.register({
+        owner_human_id: "h1",
+        name: "phone",
+        platform: "android",
+        public_key: "pk-2",
+        kind: "phone",
+      });
+      expect(fresh.wrap_public_key).toBeNull();
     } finally {
       await db.close();
     }
@@ -338,8 +472,8 @@ describe("migrations", () => {
         expect(v2Columns).not.toContain("reason");
       }
 
-      expect(await migrate(db, { clock })).toEqual({ applied: [3], version: 3 });
-      expect(await appliedVersions(db)).toEqual([1, 2, 3]);
+      expect(await migrate(db, { clock })).toEqual({ applied: [3, 4, 5], version: 5 });
+      expect(await appliedVersions(db)).toEqual([1, 2, 3, 4, 5]);
 
       const repos = createRepos(db, clock);
       const milestone = await repos.milestone.mustGet("m1");
@@ -367,7 +501,7 @@ describe("migrations", () => {
         author_agent: "a1",
         version: 2,
       });
-      // Fresh inserts through the repositories fill the v3 default.
+      // Fresh inserts through the repositories fill the v5 default.
       const fresh = await repos.milestone.insert({ project_id: "p1", name: "Release 0.2" });
       expect(fresh.reason).toBe("");
       expect((await repos.session.insert({ agent_id: "a1" })).reason).toBe("");

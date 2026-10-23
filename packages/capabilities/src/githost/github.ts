@@ -52,6 +52,21 @@ export interface GitHubOptions {
   maxRateLimitWaitSec?: number;
   /** GraphQL endpoint (projects). Default: derived from baseUrl (`/graphql`, or `/api/graphql` on GHES). */
   graphqlUrl?: string;
+  /** Items per page on list endpoints, 1 to 100 (GitHub's cap). Default 100. */
+  pageSize?: number;
+}
+
+/** Bound on pages followed through `Link: rel="next"` (100 per page: 10,000 items). */
+export const MAX_LIST_PAGES = 100;
+
+/** The `next` URL of a GitHub `Link` header, or null when this was the last page. */
+export function nextPageUrl(link: string | null | undefined): string | null {
+  if (!link) return null;
+  for (const part of link.split(",")) {
+    const m = /<([^>]+)>\s*;\s*rel="next"/.exec(part.trim());
+    if (m?.[1]) return m[1];
+  }
+  return null;
 }
 
 type Json = Record<string, unknown>;
@@ -81,6 +96,7 @@ export class GitHubHost implements GitHost {
   private readonly clock: Clock;
   private readonly headers: Record<string, string>;
   private readonly maxWait: number;
+  private readonly pageSize: number;
   /** projectId -> field name (lower case) -> field. */
   private readonly fieldCache = new Map<string, Map<string, ProjectFieldInfo>>();
   /** projectId -> Forerunner task id -> item. Filled by one listing, kept up to date by writes. */
@@ -95,6 +111,13 @@ export class GitHubHost implements GitHost {
     this.f = opts.fetchImpl ?? fetch;
     this.clock = opts.clock ?? systemClock;
     this.maxWait = opts.maxRateLimitWaitSec ?? 120;
+    const pageSize = opts.pageSize ?? 100;
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+      throw new ForerunnerError("validation", "GitHub adapter: pageSize must be 1 to 100", {
+        details: { pageSize },
+      });
+    }
+    this.pageSize = pageSize;
     this.headers = {
       Authorization: `Bearer ${opts.token}`,
       Accept: "application/vnd.github+json",
@@ -107,7 +130,13 @@ export class GitHubHost implements GitHost {
     method: string,
     path: string,
     body?: unknown,
-    opts: { raw?: Uint8Array; contentType?: string; allow404?: boolean } = {},
+    opts: {
+      raw?: Uint8Array;
+      contentType?: string;
+      allow404?: boolean;
+      /** Sees the successful response before its body is read (pagination reads `Link`). */
+      onResponse?: (res: Response) => void;
+    } = {},
   ): Promise<T> {
     const url = path.startsWith("http") ? path : `${this.baseUrl}${path}`;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -164,6 +193,7 @@ export class GitHubHost implements GitHost {
                   : "provider_error";
         throw new ForerunnerError(code, message, { details: { status: res.status, path } });
       }
+      opts.onResponse?.(res);
       if (res.status === 204) return undefined as T;
       return (await res.json()) as T;
     }
@@ -187,11 +217,33 @@ export class GitHubHost implements GitHost {
     return toRepo(await this.request<Json>("GET", this.repoPath(repo)));
   }
 
-  async listRepos(opts: { org?: string } = {}): Promise<RepoInfo[]> {
+  /**
+   * Every page of a list endpoint: GitHub answers `per_page` items and names the next page in
+   * the `Link` header; the walk stops at the last page or at `MAX_LIST_PAGES`.
+   */
+  private async paged<T>(firstPath: string): Promise<T[]> {
+    const out: T[] = [];
+    let next: string | null = firstPath;
+    for (let page = 0; next && page < MAX_LIST_PAGES; page++) {
+      let link: string | null = null;
+      const items = await this.request<T[]>("GET", next, undefined, {
+        onResponse: (res) => {
+          link = res.headers.get("link");
+        },
+      });
+      out.push(...items);
+      next = nextPageUrl(link);
+    }
+    return out;
+  }
+
+  async listRepos(opts: { org?: string; user?: string } = {}): Promise<RepoInfo[]> {
     const path = opts.org
-      ? `/orgs/${encodeURIComponent(opts.org)}/repos?per_page=100`
-      : "/user/repos?per_page=100&affiliation=owner,collaborator,organization_member";
-    return (await this.request<Json[]>("GET", path)).map(toRepo);
+      ? `/orgs/${encodeURIComponent(opts.org)}/repos?per_page=${this.pageSize}`
+      : opts.user
+        ? `/users/${encodeURIComponent(opts.user)}/repos?per_page=${this.pageSize}`
+        : `/user/repos?per_page=${this.pageSize}&affiliation=owner,collaborator,organization_member`;
+    return (await this.paged<Json>(path)).map(toRepo);
   }
 
   async createRepo(opts: {

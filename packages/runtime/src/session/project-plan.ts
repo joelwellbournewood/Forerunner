@@ -310,14 +310,17 @@ export interface AppliedPlan {
   merged: MilestoneMerge | null;
   /** Task rows this call wrote, dependencies before dependants. */
   tasks: TaskRow[];
+  /** The id of every written task that named a `key`, by key (the intake's first-session plan reads it). */
+  keyed: Record<string, string>;
 }
 
 /**
  * Writes a plan as milestone and task rows in one transaction, shaped by the project's mode
- * (`shapeProjectPlan`). Outside small-project mode new milestones follow the project's
- * existing ones (`order_index`). In small-project mode the tasks join the project's open
- * milestone (`planned` or `active`, first by order) when it has one, so a small project keeps
- * exactly one; otherwise the one milestone is created. The joined milestone keeps its name and
+ * (`shapeProjectPlan`). New milestones follow the project's existing ones (`order_index`),
+ * whatever the mode. In small-project mode the tasks join the project's open milestone
+ * (`planned` or `active`, first by order) when it has one, so a small project keeps exactly
+ * one; otherwise the one milestone is created, after any milestone on file from before the
+ * mode (a done or cancelled one keeps its order). The joined milestone keeps its name and
  * takes what the plan adds (`milestoneMerge`: new success criteria, a later target date) as a
  * versioned change with the plan's author and reason on the row (spec B.5, like every task
  * row the plan writes); what was added and the plan's reason also go to the audit log as one
@@ -380,6 +383,9 @@ export async function applyProjectPlan(
     let reused: MilestoneRow | null = null;
     let merged: MilestoneMerge | null = null;
     const idOf = new Map<ShapedMilestone, string>();
+    // A new milestone goes after every milestone on file, in the mode too: a small project
+    // with closed milestones from before the mode never gets a second row at their index.
+    let order = existing.reduce((n, m) => Math.max(n, m.order_index + 1), 0);
     if (shaped.smallProject) {
       const only = shaped.milestones[0] as ShapedMilestone;
       const open = existing.find((m) => m.status === "planned" || m.status === "active");
@@ -408,12 +414,11 @@ export async function applyProjectPlan(
         }
         idOf.set(only, open.id);
       } else {
-        const row = await insertMilestone(tx, only, 0);
+        const row = await insertMilestone(tx, only, order);
         created.push(row);
         idOf.set(only, row.id);
       }
     } else {
-      let order = existing.reduce((n, m) => Math.max(n, m.order_index + 1), 0);
       for (const m of shaped.milestones) {
         const row = await insertMilestone(tx, m, order++);
         created.push(row);
@@ -444,6 +449,12 @@ export async function applyProjectPlan(
       if (task.key !== null) ids.set(task.key, row.id);
       tasks.push(row);
     }
-    return { milestones: created, reusedMilestone: reused, merged, tasks };
+    return {
+      milestones: created,
+      reusedMilestone: reused,
+      merged,
+      tasks,
+      keyed: Object.fromEntries(ids),
+    };
   });
 }

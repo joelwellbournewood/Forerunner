@@ -17,6 +17,7 @@ export default defineConfig({
             "testenv/test/**/*.test.ts",
             "evals/test/**/*.test.ts",
             "scripts/**/*.test.ts",
+            "apps/mobile/e2e/**/*.test.ts",
           ],
           exclude: ["**/*.integration.test.ts", "**/node_modules/**", "**/dist/**"],
           environment: "node",

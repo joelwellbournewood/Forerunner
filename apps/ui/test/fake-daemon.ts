@@ -5,8 +5,13 @@ import type {
   CommandResultJson,
   ConsolidationProposalView,
   ConsolidationReportView,
+  EmailCommandRowView,
+  EmailSentRowView,
+  EmailSettingsPatchBody,
+  EmailSettingsView,
   EventView,
   HumanRequestView,
+  LessonOfferView,
   LessonView,
   MemoryScopeView,
   MemoryView,
@@ -16,6 +21,8 @@ import type {
   ReviewsView,
   ReviewView,
   SessionView,
+  SourceCandidateView,
+  SourceView,
   TaskView,
 } from "@forerunner/runtime/daemon/api-types";
 import {
@@ -24,6 +31,7 @@ import {
   ChatRequestBody,
   CreateProjectBody,
   CreateTaskBody,
+  EMAIL_MODES,
   KillBody,
   StartSessionBody,
   TransitionTaskBody,
@@ -60,6 +68,9 @@ import {
   DECISIONS,
   DOC_CONTENTS,
   DOCS,
+  EMAIL_COMMANDS,
+  EMAIL_SENT,
+  EMAIL_SETTINGS,
   ESTIMATES,
   EVENTS,
   EXTENSIONS,
@@ -70,9 +81,11 @@ import {
   MILESTONES,
   MODEL_WATCH_REPORTS,
   money,
+  OFFERS,
   PEERS,
   PERFORMANCE,
   PROJECTS,
+  PROMOTIONS,
   QUEUE,
   REQUESTS,
   REVIEW_PROJECTS,
@@ -80,6 +93,8 @@ import {
   RUNS,
   SESSIONS,
   SETTINGS,
+  SOURCE_CANDIDATES,
+  SOURCES,
   SUMMARIES,
   TASKS,
   UPDATES_FEED,
@@ -149,10 +164,20 @@ export interface FakeDaemonState {
   lessons: LessonView[];
   changes: ChangeLogView[];
   consolidation: ConsolidationProposalView[];
+  offers: LessonOfferView[];
+  promotions: LessonView[];
   queue: QueueItemView[];
   milestones: MilestoneView[];
   dataAssets: DataAssetView[];
+  /** Source discovery (spec A.4): connected sources and what their scans found. */
+  sources: SourceView[];
+  sourceCandidates: SourceCandidateView[];
   pendingCommands: Map<string, PendingCommand>;
+  /** Email settings per agent id (Settings -> Capabilities -> Email), as the daemon stores them. */
+  email: Record<string, EmailSettingsView>;
+  /** Sent copies and the command audit of every agent, oldest first (answered newest first). */
+  emailSent: EmailSentRowView[];
+  emailCommands: EmailCommandRowView[];
   missingRoutes: string[];
   failing: Record<string, { status: number; code: string; message: string }>;
 }
@@ -201,10 +226,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     lessons: clone(LESSONS),
     changes: clone(CHANGES),
     consolidation: clone(CONSOLIDATION),
+    offers: clone(OFFERS),
+    promotions: clone(PROMOTIONS),
     queue: clone(QUEUE),
     milestones: clone(MILESTONES),
     dataAssets: clone(DATA_ASSETS),
+    sources: clone(SOURCES),
+    sourceCandidates: clone(SOURCE_CANDIDATES),
     pendingCommands: new Map(),
+    email: clone(EMAIL_SETTINGS),
+    emailSent: clone(EMAIL_SENT),
+    emailCommands: clone(EMAIL_COMMANDS),
     missingRoutes: [...(options.missingRoutes ?? [])],
     failing: { ...(options.failing ?? {}) },
   };
@@ -291,10 +323,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.lessons = clone(LESSONS);
     state.changes = clone(CHANGES);
     state.consolidation = clone(CONSOLIDATION);
+    state.offers = clone(OFFERS);
+    state.promotions = clone(PROMOTIONS);
     state.queue = clone(QUEUE);
     state.milestones = clone(MILESTONES);
     state.dataAssets = clone(DATA_ASSETS);
+    state.sources = clone(SOURCES);
+    state.sourceCandidates = clone(SOURCE_CANDIDATES);
     state.pendingCommands.clear();
+    state.email = clone(EMAIL_SETTINGS);
+    state.emailSent = clone(EMAIL_SENT);
+    state.emailCommands = clone(EMAIL_COMMANDS);
     state.missingRoutes = [...(options.missingRoutes ?? [])];
     state.failing = { ...(options.failing ?? {}) };
     return c.json({ ok: true });
@@ -331,6 +370,155 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   );
   app.get("/me", (c) => c.json(ME));
   app.get("/agents", (c) => c.json(AGENTS));
+
+  // ---------------------------------------------------------------------------------------
+  // Agent email (spec S.15, S.28, S.29, T.14; ADR 0066): the capability's seven routes as
+  // `emailRouteTable` serves them on the daemon. Errors come wrapped under `error`, the
+  // capability routes' shape (`{ error: { code, message, details } }`), not the daemon's flat
+  // body. The signed-in human (ME) must own the agent; another human's agent or an unknown
+  // one is 403 `tool_not_allowed` before any read or write. PUT merges a partial patch the
+  // way `mergeEmailConfig` does (allowlist and signature merged one level deep) and refuses
+  // an unknown mode or a mailbox credential that is not a secret reference with 400.
+  // ---------------------------------------------------------------------------------------
+
+  const emailError = (c: Context, status: 400 | 403, code: string, message: string) =>
+    c.json({ error: { code, message, details: {}, retryable: false } }, status);
+  const emailAgentOf = (c: Context): string | Response => {
+    const agentId = c.req.param("agentId") ?? "";
+    const agent = AGENTS.find((a) => a.id === agentId);
+    if (!agent || agent.ownerHumanId !== ME.id) {
+      return emailError(
+        c,
+        403,
+        "tool_not_allowed",
+        "the signed-in human does not own this agent; its email settings are not theirs to read or change",
+      );
+    }
+    return agentId;
+  };
+  const defaultEmail = (agentId: string): EmailSettingsView => ({
+    ...clone(EMAIL_SETTINGS.agent_critic as EmailSettingsView),
+    commands: {
+      ...clone((EMAIL_SETTINGS.agent_critic as EmailSettingsView).commands),
+      marker: `[FR-${agentId.slice(-4)}]`,
+    },
+  });
+  const emailOf = (agentId: string): EmailSettingsView => {
+    state.email[agentId] ??= defaultEmail(agentId);
+    return state.email[agentId] as EmailSettingsView;
+  };
+  const SECRET_REF = /^secret:[a-z][a-z0-9_.:-]{0,127}$/;
+  app.get("/agents/:agentId/email/settings", (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    return c.json(emailOf(agentId));
+  });
+  app.put("/agents/:agentId/email/settings", async (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    const body = (await c.req.json().catch(() => null)) as EmailSettingsPatchBody | null;
+    if (!body || typeof body !== "object") {
+      return emailError(c, 400, "validation", "body must be an object");
+    }
+    const current = emailOf(agentId);
+    const patch = body.settings ?? {};
+    if (patch.mode !== undefined && !(EMAIL_MODES as readonly string[]).includes(patch.mode)) {
+      return emailError(
+        c,
+        400,
+        "validation",
+        `invalid email settings: settings.mode: ${patch.mode}`,
+      );
+    }
+    for (const ref of [patch.mailbox?.imap?.passwordRef, patch.mailbox?.smtp?.passwordRef]) {
+      if (ref !== undefined && !SECRET_REF.test(ref)) {
+        return emailError(
+          c,
+          400,
+          "validation",
+          "invalid email settings: passwordRef: must be a secret reference (secret:<name>), never a value",
+        );
+      }
+    }
+    const mailbox =
+      patch.mailbox === undefined
+        ? current.settings.mailbox
+        : patch.mailbox === null
+          ? null
+          : {
+              address: patch.mailbox.address,
+              imap: patch.mailbox.imap
+                ? {
+                    host: "",
+                    port: 993,
+                    secure: true,
+                    user: "",
+                    passwordRef: "",
+                    folder: "INBOX",
+                    draftsFolder: "Drafts",
+                    ...patch.mailbox.imap,
+                  }
+                : null,
+              smtp: patch.mailbox.smtp
+                ? {
+                    host: "",
+                    port: 587,
+                    secure: false,
+                    user: "",
+                    passwordRef: "",
+                    ...patch.mailbox.smtp,
+                  }
+                : null,
+            };
+    const next: EmailSettingsView = {
+      settings: {
+        ...current.settings,
+        ...patch,
+        allowlist: { ...current.settings.allowlist, ...(patch.allowlist ?? {}) },
+        signature: { ...current.settings.signature, ...(patch.signature ?? {}) },
+        mailbox,
+      },
+      commands: { ...current.commands, ...(body.commands ?? {}) },
+    };
+    state.email[agentId] = next;
+    return c.json(next);
+  });
+  app.get("/agents/:agentId/email/sent", (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    const limit = Number(c.req.query("limit") ?? 50);
+    const rows = state.emailSent.filter((r) => r.agentId === agentId).reverse();
+    return c.json({ rows: rows.slice(0, limit), since: "2026-10-13T08:00:00.000Z" });
+  });
+  app.post("/agents/:agentId/email/pause", (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    const cfg = emailOf(agentId);
+    cfg.settings.paused = true;
+    return c.json({ paused: true });
+  });
+  app.post("/agents/:agentId/email/resume", (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    const cfg = emailOf(agentId);
+    cfg.settings.paused = false;
+    return c.json({ paused: false });
+  });
+  app.post("/agents/:agentId/email/rotate-marker", (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    const cfg = emailOf(agentId);
+    cfg.commands.marker = `[FR-${nextId("m").slice(-4)}]`;
+    return c.json({ marker: cfg.commands.marker });
+  });
+  app.get("/agents/:agentId/email/commands", (c) => {
+    const agentId = emailAgentOf(c);
+    if (typeof agentId !== "string") return agentId;
+    const limit = Number(c.req.query("limit") ?? 50);
+    // The fixtures belong to Alice's agent; another agent of hers has none yet.
+    const rows = agentId === "agent_alice" ? [...state.emailCommands].reverse() : [];
+    return c.json({ rows: rows.slice(0, limit) });
+  });
 
   app.get("/projects", (c) => c.json(state.projects));
   app.post("/projects", async (c) => {
@@ -1239,6 +1427,77 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const retired: LessonView = { ...l, status: "retired", version: l.version + 1 };
     return c.json(retired);
   });
+  // Cross-project sharing (spec G.6): propose, pending proposals, offers answered at once.
+  app.post("/memory/lessons/:id/propose", (c) => {
+    const l = state.lessons.find((x) => x.id === c.req.param("id"));
+    if (!l) return errorBody(c, 404, "not_found", "no such lesson");
+    if (l.scope === "shared" && l.projectId === null) {
+      return errorBody(c, 400, "validation", "lesson is already shared across projects");
+    }
+    if (!l.tags.includes("general")) l.tags = [...l.tags, "general"];
+    const existing = state.promotions.find((p) => p.source === `promotion:${l.id}`);
+    if (existing) return c.json(existing);
+    const now = new Date().toISOString();
+    const proposal: LessonView = {
+      ...l,
+      id: nextId("les"),
+      scope: "shared",
+      ownerAgentId: null,
+      projectId: null,
+      source: `promotion:${l.id}`,
+      status: "proposed",
+      pinned: false,
+      hitCount: 0,
+      lastUsed: null,
+      filePath: null,
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+    };
+    state.promotions.push(proposal);
+    return c.json(proposal);
+  });
+  app.get("/memory/promotions", (c) => c.json(state.promotions));
+  app.get("/memory/offers", (c) => c.json(state.offers));
+  app.post("/memory/offers/:id/answer", async (c) => {
+    const o = state.offers.find((x) => x.requestId === c.req.param("id"));
+    if (!o) return errorBody(c, 404, "not_found", "no such offer");
+    const body = (await c.req.json()) as { answer?: unknown };
+    if (body.answer !== "accept" && body.answer !== "dismiss") {
+      return errorBody(c, 400, "validation", "answer: accept or dismiss");
+    }
+    if (o.status !== "open") return errorBody(c, 409, "conflict", "offer already answered");
+    const now = new Date().toISOString();
+    o.status = "answered";
+    o.answer = body.answer;
+    o.appliedAt = now;
+    o.version += 1;
+    if (body.answer === "accept") {
+      const copy: LessonView = {
+        id: nextId("les"),
+        scope: "shared",
+        ownerAgentId: null,
+        projectId: o.projectId,
+        text: o.text,
+        source: `promotion:${o.lessonId};human:${ME.id}`,
+        tags: [...o.tags],
+        confidence: o.confidence,
+        lastUsed: null,
+        hitCount: 0,
+        supersededBy: null,
+        pinned: true,
+        status: "active",
+        filePath: null,
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+      };
+      state.lessons.push(copy);
+      o.copyId = copy.id;
+    }
+    emit("inbox.changed", { blockingCount: blockingCount() });
+    return c.json(o);
+  });
   app.get("/memory/consolidation", (c) => c.json(state.consolidation));
   app.post("/memory/consolidation/run", (c) => {
     const now = new Date().toISOString();
@@ -1930,6 +2189,157 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     m.version += 1;
     m.updatedAt = new Date().toISOString();
     return c.json(m);
+  });
+
+  // Source discovery (spec A.4): the daemon's /sources routes. A scan of a fresh source
+  // finds two repositories or folders named after the locator, one an existing install; a
+  // scan of the fixture source is idempotent; accepting a proposal creates a project card.
+  const summarise = (sourceId: string) => {
+    const rows = state.sourceCandidates.filter((c) => c.sourceId === sourceId);
+    const s = { total: rows.length, proposed: 0, accepted: 0, duplicate: 0, gone: 0, installs: 0 };
+    for (const c of rows) {
+      s[c.status]++;
+      if (c.existingInstall) s.installs++;
+    }
+    return s;
+  };
+  const sourceWithCounts = (src: SourceView): SourceView => ({
+    ...src,
+    candidates: summarise(src.id),
+  });
+  app.get("/sources", (c) => c.json(state.sources.map(sourceWithCounts)));
+  app.post("/sources", async (c) => {
+    const body = (await c.req.json()) as {
+      kind?: string;
+      locator?: string;
+      displayName?: string;
+      credentialRef?: string;
+    };
+    if (!body.kind || !body.locator?.trim()) {
+      return errorBody(c, 400, "validation", "kind and locator are required");
+    }
+    if (body.kind === "gitlab" || body.kind === "git_remote") {
+      return errorBody(c, 400, "not_supported", `${body.kind} sources come later`);
+    }
+    const github = body.kind !== "local_folder";
+    const ref = github ? body.credentialRef?.trim() || "secret:github_token" : null;
+    if (ref !== null && !ref.startsWith("secret:")) {
+      return errorBody(
+        c,
+        400,
+        "validation",
+        "a GitHub source needs a secret reference of the form secret:<name>; a token value is never stored",
+      );
+    }
+    if (state.sources.some((s) => s.kind === body.kind && s.locator === body.locator?.trim())) {
+      return errorBody(c, 409, "conflict", `${body.kind} ${body.locator} is already connected`);
+    }
+    const now = new Date().toISOString();
+    const empty = { total: 0, proposed: 0, accepted: 0, duplicate: 0, gone: 0, installs: 0 };
+    const view: SourceView = {
+      id: nextId("src"),
+      kind: body.kind as SourceView["kind"],
+      displayName: body.displayName?.trim() || body.locator.trim(),
+      locator: body.locator.trim(),
+      credentialRef: ref,
+      status: "connected",
+      lastScanAt: null,
+      scanSummary: null,
+      error: null,
+      candidates: empty,
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+    };
+    state.sources.push(view);
+    return c.json(view, 201);
+  });
+  app.post("/sources/candidates/:id/accept", async (c) => {
+    const cand = state.sourceCandidates.find((x) => x.id === c.req.param("id"));
+    if (!cand) return errorBody(c, 404, "not_found", "no such candidate");
+    if (cand.status !== "proposed") {
+      return errorBody(c, 409, "conflict", `${cand.locator} is ${cand.status}`);
+    }
+    const body = (await c.req.json().catch(() => ({}))) as { name?: string; goal?: string };
+    const name = body.name?.trim() || cand.proposedName;
+    const project: ProjectCard = {
+      ...clone(PROJECTS[0] as ProjectCard),
+      id: nextId("proj"),
+      name,
+      goal: body.goal?.trim() || `Project from the repository ${cand.locator}`,
+      stage: "planning",
+      health: "idle",
+      waitingOnYou: 0,
+      lastSessionAt: null,
+    };
+    state.projects.push(project);
+    cand.status = "accepted";
+    cand.projectId = project.id;
+    cand.version += 1;
+    emit("project.changed", { id: project.id });
+    return c.json({ candidate: cand, project: { id: project.id, name } }, 201);
+  });
+  app.get("/sources/:id", (c) => {
+    const src = state.sources.find((s) => s.id === c.req.param("id"));
+    return src ? c.json(sourceWithCounts(src)) : errorBody(c, 404, "not_found", "no such source");
+  });
+  app.post("/sources/:id/scan", (c) => {
+    const src = state.sources.find((s) => s.id === c.req.param("id"));
+    if (!src) return errorBody(c, 404, "not_found", "no such source");
+    const now = new Date().toISOString();
+    if (!state.sourceCandidates.some((x) => x.sourceId === src.id)) {
+      const folder = src.kind === "local_folder";
+      for (const [name, install] of [
+        ["one", false],
+        ["two", true],
+      ] as const) {
+        state.sourceCandidates.push({
+          id: nextId("cand"),
+          sourceId: src.id,
+          kind: folder ? "folder" : "repo",
+          name,
+          locator: `${src.locator}/${name}`,
+          key: folder
+            ? `folder:${src.locator}/${name}`
+            : `github:${src.locator.toLowerCase()}/${name}`,
+          proposedName: name,
+          status: "proposed",
+          existingInstall: install,
+          installMarker: install ? ".forerunner/project.json" : null,
+          projectId: null,
+          isGit: true,
+          details: {},
+          lastSeenAt: now,
+          createdAt: now,
+          updatedAt: now,
+          version: 1,
+        });
+      }
+    }
+    src.lastScanAt = now;
+    src.scanSummary = summarise(src.id);
+    src.updatedAt = now;
+    src.version += 1;
+    const candidates = state.sourceCandidates.filter((x) => x.sourceId === src.id);
+    return c.json({ source: sourceWithCounts(src), candidates, summary: src.scanSummary });
+  });
+  app.get("/sources/:id/candidates", (c) => {
+    const src = state.sources.find((s) => s.id === c.req.param("id"));
+    if (!src) return errorBody(c, 404, "not_found", "no such source");
+    const status = c.req.query("status");
+    return c.json(
+      state.sourceCandidates.filter(
+        (x) => x.sourceId === src.id && (!status || x.status === status),
+      ),
+    );
+  });
+  app.delete("/sources/:id", (c) => {
+    const src = state.sources.find((s) => s.id === c.req.param("id"));
+    if (!src) return errorBody(c, 404, "not_found", "no such source");
+    const n = state.sourceCandidates.filter((x) => x.sourceId === src.id).length;
+    state.sourceCandidates = state.sourceCandidates.filter((x) => x.sourceId !== src.id);
+    state.sources = state.sources.filter((s) => s.id !== src.id);
+    return c.json({ ok: true, id: src.id, candidatesRemoved: n });
   });
 
   app.get("/projects/:id/data", (c) => {

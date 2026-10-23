@@ -26,7 +26,7 @@ expired (compared as NaN it counted as "never expires" before; `test/security-to
 | --- | --- |
 | `beforeModelCall(ctx, estimate)` | token valid and not revoked, kill state, session wall clock, run deadline, step cap, run cap, session cap with 80% finish-current and review reserve, outer caps (task, project, month, plan share) via `CapsPort` |
 | `afterModelCall(ctx, usage, usd)` | records spend in `SessionBudget` and the ledger |
-| `beforeToolCall(ctx, tool, input)` | token/kill, step, tool allowlist, zod schema, path containment for `pathFields` (`pathInsideRoot`: inside a root as written and once the symlinks of the path's existing part are resolved, so a committed `link -> ~/.ssh/id_ed25519` or a linked directory in the worktree is refused for reads and writes alike, and a link that cannot be resolved counts as outside), domain allowlist for `domainFields`, autonomy decision (may ask `ApprovalPort`; the key an approval is remembered under is `tool:<SHA-256 of the canonical input>`, `approvalKeyFor`, the same function `StateApprovals` writes into `change_card.key`; an approval of an always-human class (`ALWAYS_HUMAN`) admits one call and is taken out of `ctx.approvals` as it is used, so the resume path re-makes the paused call once and every further identical delete, purchase or send asks again, while any other approval holds for the run; pending pauses the run; skipped for a tool with `gate: "registry"`, a command of the command registry whose executor confirms by risk itself, so the change card is the one approval and the hooks file no second request), secret-ref resolution for granted names only; denials are audited, a call on a revoked, expired or forged token or after a stop too (the row carries the token's own id and run, unverified, spec S.9) |
+| `beforeToolCall(ctx, tool, input)` | token/kill, step, tool allowlist, zod schema, path containment for `pathFields` (`pathInsideRoot`: inside a root as written and once the symlinks of the path's existing part are resolved, so a committed `link -> ~/.ssh/id_ed25519` or a linked directory in the worktree is refused for reads and writes alike, and a link that cannot be resolved counts as outside), domain allowlist for `domainFields`, autonomy decision (may ask `ApprovalPort`; the key an approval is remembered under is `tool:<SHA-256 of the canonical raw input>`, `approvalKeyFor`, computed before the input is cut for the card and handed to the port as `ApprovalRequest.key`, which `StateApprovals` writes into `change_card.key` beside the display copy (`input`), so two inputs that display alike never share a key; an approval of an always-human class (`ALWAYS_HUMAN`) admits one call and is taken out of `ctx.approvals` as it is used, and the durable port spends its row the same way (ADR 0052), so the resume path re-makes the paused call once, in the same run or a later run of the session, and every further identical delete, purchase or send asks again behind a new request, while any other approval holds for the run and, durably, for the session; pending pauses the run; skipped for a tool with `gate: "registry"`, a command of the command registry whose executor confirms by risk itself, so the change card is the one approval and the hooks file no second request), secret-ref resolution for granted names only; denials are audited, a call on a revoked, expired or forged token or after a stop too (the row carries the token's own id and run, unverified, spec S.9) |
 | `afterToolCall(ctx, tool, input, result)` | redacts resolved secrets, wraps untrusted output in the data envelope and scans it for injection, audits. Every audit summary the hooks write (input and result, on the allow, deny and pending paths) is scrubbed first: the run's resolved secret values in every encoding (`SecretsPort.redact`), then the platform's credential shapes as a last line for a value the model obtained elsewhere and pasted into a later input, with `secret:<name>` references kept, since the name is what the audit is meant to carry |
 
 The per-session accounting is `SessionBudget` (`src/enforcement/budget.ts`): run and session
@@ -42,7 +42,8 @@ or reserve share is refused at construction.
 
 Action classes map to decisions per level 0–4. `destructive`, `financial`, `credential`,
 `permission_change` and `capability_grant` need a human at every level. Level 0 proposes only,
-level 1 runs routine work after plan approval, level 2 frees routine reversible work, level 3
+level 1 runs routine work after plan approval (the approval is of one plan, bound by its
+`plan_id`: "Plan approval" under Sessions), level 2 frees routine reversible work, level 3
 also merges reviewed PRs and deploys to staging, level 4 everything else. The one exception
 to the hooks asking is a tool gated by the command registry (`ToolSpec.gate: "registry"`, set
 by `CommandLoop.tools` on the conversation agent's model path): its always-human rule is the
@@ -63,6 +64,57 @@ acts on it: something that is not an object with a `requestedAt` is no request (
 unparseable JSON), and a scope that is neither `"all"` nor an object naming an agent or a
 session is read as `"all"`, because the switch would stop every registration for such a scope
 yet freeze nothing, so new work would start at once (fail closed).
+
+### Shared secrets (`src/secrets/`; spec S.13, ADR 0065)
+
+A secret in one human's vault, readable by named agents of the other human, with both
+humans approving. The vault primitives are in `packages/vault/src/wrap.ts` (security.md);
+this module holds the rules and the two sides.
+
+- **`shared-grants.ts`, the store side**, used by the daemon directly and by the state
+  service's `/secrets` routes (ADR 0024: both talk to the same tables). `proposeSharedGrant`
+  validates the owner, the agents and every blob's install (a non-revoked device of that
+  agent's owner with a `wrap_public_key`; the blob a `WrappedSecret`), writes the
+  `secret_grant` row (pending; active at once when only the owner's agents are named) and
+  one `human_request` per other human whose agent is named: kind `approval`, risk `high`,
+  options `approve` / `deny`, a `shared_secret_grant` change card naming the grant, the
+  secret, the owner and that human's agents. `applySharedGrantAnswer(tx, request, by)` runs
+  inside the transaction that answered the card (the service's `answerRequestAs` and the
+  daemon's `POST /requests/:id/answer` both do): a yes records the approval and the
+  last required one activates the grant and mirrors it into `secret_ref` (`scope: "shared"`,
+  the agents in `granted_to`); a no cancels it, drops the blobs and withdraws the other open
+  cards. `revokeSharedGrant` is the owner's end at any time. `serveSharedBlob` is the only
+  read that hands a blob out: an active grant of that name naming that agent, the copy
+  wrapped for that device; anything else is `secret_not_granted` after a `secret.blob_refused`
+  row. Audit rows: `secret.grant_proposed`, `secret.grant_approved`, `secret.grant_activated`,
+  `secret.grant_refused`, `secret.grant_revoked`, `secret.blob_served`, `secret.blob_refused`
+  and, on the resolving install, `secret.shared_resolved`; each names the grant, the secret,
+  the agents and the install, never a value.
+- **`resolver.ts`, the resolving side.** `SharedSecretVault` is the `Vault` the hooks'
+  `SecretResolver` reads: this install's own vault first, then (bound once the daemon's
+  device row exists) the wrapped copy the shared state serves for this agent on this install,
+  unwrapped with the install's private key read from the vault at that moment. Nothing is
+  written to the local vault or to disk; the string handed to the tool call is the only copy,
+  as for a local secret, and `afterToolCall` redacts it from outputs the same way. The
+  `grantedSecrets` rule of the hooks is unchanged: the names of the agent's active grants
+  (`sharedSecretNamesFor`) join the session grant at every start, and a name the token does
+  not grant is refused before this vault is asked. Two sources: `StoreSharedSecretService`
+  (the daemon and the runner, over the store) and `HttpSharedSecretService` (an install that
+  reaches the state through the service: `GET /secrets/shared/blob`, 403 and 404 are "nothing
+  for you", anything else `unavailable`).
+- **`propose.ts`, the owner's side.** `proposeSharedSecret({ vault, service, ownerHumanId,
+  name, agentIds, why })` reads the value from this install's vault, lists the wrap targets
+  (every install of every named agent's owner with a key; an agent without one is
+  `validation`), wraps one blob per target and files the grant. The value leaves the function
+  only inside the blobs.
+- **In the daemon.** `composeRuntime` creates the install wrapping key in the vault
+  (`ensureInstallWrapKey`) and registers it on the desktop device row (`registerDesktopDevice`
+  takes `wrapPublicKey`; the row is registered whenever remote control is on, or was asked
+  for explicitly, so `FORERUNNER_REMOTE_COMMANDS=0` also leaves this install without a key), wires `SharedSecretVault` under the hooks' resolver with
+  the `secret.shared_resolved` audit row, and exposes `rt.sharedSecrets` (`propose`, `revoke`,
+  `list`, `names`). `routes.ts` mounts `POST /secrets/shared { name, agentIds, why?, kind? }`
+  (201 `{ grant, requestIds, targets }`), `GET /secrets/shared` and
+  `POST /secrets/shared/:id/revoke` on the daemon API for the app; no body carries a value.
 
 ### Drivers
 
@@ -297,9 +349,15 @@ subscription source exists, the plan allowance (`--plan-usd-monthly`,
 written to `config.json` as `subscription.planUsdMonthly` when given; a bad flag or
 environment value is a `validation` error before any credential is stored); the summary's
 "Billing sources:" line names the sources the next start registers and the allowance with its
-origin; `config.json` never holds a secret), `status` (directories, config, secret names only), `doctor`
-(prerequisites), `kill` (writes a kill request file), `dirs`, `daemon`, `audit export` (the
-audit log to a file, in the table below). The kill request file
+origin; `--email <address>` and `--human-id <id>` name the human this install binds to on a
+shared store, written to `config.json` as `humanEmail` (lower case, format-checked) and
+`humanId` and kept by later runs; the summary's "Identity:" line says what the next start
+binds to, ADR 0082; `config.json` never holds a secret), `status` (directories, config, secret names only), `doctor`
+(prerequisites, and on a set-up install the human the next daemon start binds to, from the
+configured store without creating anything: `identity` ok with the human and its selector,
+"created at the daemon's first start", or failing with the store's humans and the remedies
+when the start would be `identity_ambiguous` or `not_found`), `kill` (writes a kill request file), `dirs`, `daemon`, `audit export` (the
+audit log to a file, in the table below), `sources` (source discovery, in the table below). The kill request file
 in the runtime directory is polled by `KillFileWatcher` in every running runtime, so the CLI,
 the tray and the app can stop sessions across processes on both platforms.
 
@@ -322,6 +380,7 @@ rename). `cli.test.ts` covers the written record and the parser.
 | `fr models watch\|report` | `registerModelWatchCli` over the composed runtime's `modelWatch` | Runs the weekly model watch now, lists reports. |
 | `fr mirror sync\|enable\|disable` | `registerMirrorCli` over the composed runtime's `store` and `mirror` | One-way GitHub Projects mirror. |
 | `fr audit export [--agent <id>] [--session <id>] [--from <iso>] [--to <iso>] [--format jsonl\|csv] [--out <path>] [--force]` | `registerAuditCli` (`src/cli/audit.ts`) over the composed runtime's `store`, `clock` and `human`, `startServices: false` | Spec S.9, ADR 0050: the install's human's audit rows and their agents' (plus the install-level rows that name nobody) through the daemon's export module (`src/daemon/audit-export.ts`), paged, as JSON lines or CSV, the summaries as stored. Flags are checked before the runtime is composed; `--out` defaults to `forerunner-audit-<UTC stamp>.<format>` in the current directory (parent directories are created); an existing file is refused unless `--force`; another human's agent is `not_found`; prints `N rows written to <path> (<format>)`. |
+| `fr sources list [--json]\|add <kind> <locator> [--name <n>] [--credential secret:<name>]\|scan <id> [--json]\|candidates <id> [--status <s>] [--json]\|accept <candidateId> [--name <n>] [--goal <g>]\|remove <id>` | `registerSourcesCli` (`src/sources/cli.ts`) over the composed runtime's `sources` and `human`, `startServices: false` | Spec A.4, ADR 0056: the same `SourceDiscovery` as the daemon's `/sources` routes. `add` refuses a token value (a `secret:<name>` reference only), `scan` prints the counts and one line per candidate (status, locator, proposed name, existing install, project), `accept` creates the project through the same path as `POST /projects`, `remove` keeps every project. |
 
 Commands that need the whole product compose it once through `composeRuntime` (the same
 wiring as the daemon) with `startServices: false`, a one-shot: the composed objects exist but no
@@ -340,7 +399,8 @@ claimed tasks, peer claims, next-session queue) and renders a `StateBrief` under
 (`brief.ts`, lists shrink until it fits). The `Planner` port produces a `SessionPlan`
 (`StaticPlanner` = ready tasks by priority; a model planner uses the principal prompt); plans
 over the work budget (cap minus the review reserve) are cut before starting. Autonomy 0 and
-unapproved level 1 turn the plan into a HumanRequest and pause. Execution claims each task
+level 1 without an approval of this plan file it as a HumanRequest and end `stopped` (below,
+"Plan approval"). Execution claims each task
 (atomic, renewed every ttl/6), transitions it to in progress, runs the `TaskExecutor`
 (`LoopTaskExecutor`: validated brief, the billing source picked for the task and the driver
 that follows it, derived narrower token, specialist prompt and model from the registry, Run
@@ -349,13 +409,84 @@ needs human or failed; the inbox is re-checked between tasks and a human "stop" 
 session; at 80% of the budget or a mid-task cap no new task starts. Session end writes the
 project summary cache, sends a handoff (requires ack) to the project's peers
 (`settings.members` or agents that touched the project), notifies the human and records the
-session summary, handoff and spend. `triggers.ts` is the scheduler (daily, weekdays, every N
+session summary, handoff and spend; with a docs port it also writes the session's status
+update into the project's `docs/status.md` (below, "Project docs").
+
+**What you say during a live session (spec O.9, ADR 0078; `src/session/live-chat.ts`).** A
+free-form line the human types or speaks to the conversation agent while a session of the
+principal runs is posted to the principal's own inbox as an `info` message from and to the
+agent, authored by the human, whose body names the source and the session
+(`said (<text|voice|phone>): <words> (session <id>)`, `heardMessageBody` / `heardLineOf`;
+whitespace flattened, 4,000 characters; the type enum is a schema constraint, so an existing
+type with a tagged body, as the pause message). Between tasks `recheckInbox` collects a said
+line naming this session from this agent as delivered (`inbox.heard` event with the id and the
+source) and leaves it unread; right before the next task starts the runner marks the collected
+lines read (`task.heard` event with the task and the ids) and hands them to the executor as
+`heard` on the `TaskExecutor` context, each line to one task. `LoopTaskExecutor` appends them
+to the first user message after the delegation brief and the lessons as the section "Said by
+the human during this session" (`renderHeardLines`): each line quoted with its time and source
+under the rule that the lines change neither the goal, the constraints nor the limits; the
+`DelegationBrief` has no such field, so a said line is never a constraint or an acceptance
+criterion. Every line goes through the injection scanner (`voice_transcript` for voice,
+`unknown` for text): a suspicious line keeps its quote, carries a NOTE in the block and raises a
+`warning` run event naming the message id and the rules, never the words; the hooks enforce
+the limits whatever the line says. A said line never starts with a stop word, so the stop-word
+test never reads it as a stop or a pause. A line collected at a boundary no task follows (the
+session stops there, the remaining tasks are skipped) stays unread, and one said during the
+last task is never collected: both reach the next session's brief like any unread message. The
+session summary (the row, the project cache, the handoff to peers) carries the count only
+(`summarizeHeard`: "Heard from you during the session: N line(s)."), `handoff.heard` the ids,
+sources and the task each reached, and the human's own session message lists the lines in
+full with the task each was given to (`describeHeard`); `SessionResult.heard` carries the
+deliveries. Tests: `live-chat.test.ts`. Requirement: O.9.
+
+`triggers.ts` is the scheduler (daily, weekdays, every N
 minutes in the human's time zone; message, CI, PR comment, email, remote and manual requests;
 one active session per agent; quiet hours defer non-manual triggers). `state-ports.ts` adapts
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
 approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call (matched by
-`change_card.key`, the hooks' SHA-256 key; a row written under the former 32-bit string hash
-no longer matches, so such an approval is asked once more).
+`change_card.key` within the session: the hooks' SHA-256 key of the canonical raw input,
+`ApprovalRequest.key`, while `change_card.input` is the card's copy with long strings cut; a
+row written under the former 32-bit string hash or the former display-copy key no longer
+matches, so such an approval is asked once more). `StateApprovals.request` reads the session's
+rows for the key: an open one keeps the call pending; a "no" denies it for the session; a
+"yes" to an always-human class (`ALWAYS_HUMAN`, delete, purchase, credential, permission,
+capability grant) is handed out once and the row marked spent in the same update
+(`change_card.consumedAt`, `consumedByRun`, the envelope's version moving with it; a
+`version_conflict` means another consumer took it and the caller asks afresh), so the resume
+path (the daemon or the cloud runner re-making the paused call in a later run of the session)
+runs it once and the next identical call files a new request and waits; a "yes" to any other
+class holds for the session; a withdrawn or expired row holds nothing (ADR 0052). The answer
+is spent when handed out, before the call runs, so a call that then fails for another reason
+needs a fresh answer: conservative for the classes that always need a human.
+
+**Plan approval (spec J.6, J.7; ADR 0053; `src/session/plan-approval.ts`).** A level 0 or 1
+session runs nothing the human has not approved. Once the plan is computed and cut,
+`planApprovalOf(opts.planApproved, plan.items)` decides: `approved` when the start carries
+`true` (callers that are themselves the approver: the scenario harness, tests) or the bound id
+of this very plan; otherwise the runner files one blocking `approval` request (options
+`approve` / `reject`, `PLAN_APPROVAL_OPTIONS`) whose card carries `key: plan:<session>`,
+`plan_id: plan:<session>#<sha256 hex over the planned task ids in order>` (`planIdOf`,
+`planHash`: membership and order count, specialists, estimates and titles do not) and the plan,
+and ends the session `stopped` with `stop_reason: plan_awaiting_approval` (`ended_at` set, the
+summary "The plan awaits your approval in the inbox; nothing ran.", no critic session review,
+event `session.plan_filed` with `requestId`, `planId`, `items`, `changed`, `approvedPlanId`).
+Never `paused`: that status is the remote pause's (`session-ports.ts`, a session that goes on)
+and `session.active()` counts it, which is what blocked every later start before. A start bound
+to an approved plan (`SessionStartOptions.planApproved` as the id; `StartRequest.planApproved`
+is a string only, a bare "approved" never travels on the scheduler) runs it only while the plan
+computed now is that plan: the token is re-issued with `planApproved: true` (until the check it
+is false, so a model planner's tools see no approval) and `session.plan_approved` names the
+plan and the session that proposed it; a plan that changed since the human looked (a task
+added, removed or reordered, a different cut, a forged or stale id) is filed as a new request
+(`superseded_plan_id` names the approval it replaces, the `why` says the tasks changed) and
+nothing runs, not even the approved subset. Level 0 keeps proposing only: the approval runs the
+follow-up (the request text's "approve to run it as a new session") and the hooks' level 0
+policy still asks for every action that changes state (`decideAutonomy` unchanged; the request
+text says so). The daemon's `syncPlanApprovals` (below, "Local daemon") and the cloud runner's
+inbox trigger (`cloud-runner.md`) are the two producers of such a start. Tests:
+`closeout-autonomy.test.ts`, `plan-approval.test.ts`, `plan-approval-daemon.test.ts`.
+Requirements: J.6, J.7, E.1 (the human answer trigger).
 
 **Small-project mode and the plan writer (spec B.6, ADR 0051).** `src/session/project-plan.ts`
 is where `project.small_project_mode` is read. `defaultRiskTier(project)` (0 with the flag,
@@ -375,9 +506,54 @@ project's own tasks and the rows are written dependencies first; an unknown refe
 a duplicate key, an empty plan or one over the caps (`MAX_PLAN_MILESTONES` 20,
 `MAX_PLAN_TASKS` 200) is refused as `validation` (409 `conflict` on the route, ADR 0025) with
 nothing written. Milestone target dates are calendar dates (`YYYY-MM-DD`). The project card
-carries `smallProjectMode` and `defaultRiskTier` so the UI computes neither. Not yet on the
-helper: the email command's task insert in `packages/capabilities` names tier 1 literally
-(`BLOCKERS.md`). Tests: `small-project.test.ts`. Requirement: B.6.
+carries `smallProjectMode` and `defaultRiskTier` so the UI computes neither. The email
+command's task insert (`packages/capabilities/src/email/commands.ts`) calls the helper too
+(review of 2026-10-23), so no creation path names a tier of its own. A new milestone follows
+the project's existing ones in the mode as well: a small project whose milestones from before
+the mode are all closed (`done`, `cancelled`) gets its one milestone after them, never a
+second row at a taken `order_index`, and the next plan joins that one. Tests:
+`small-project.test.ts`; the email path in
+`packages/capabilities/test/email-commands.test.ts`. Requirement: B.6.
+
+**PM intake (spec A.2, ADR 0055).** `src/session/intake.ts` turns the brief into one proposal
+and writes nothing until the human approves it. `IntakeService.propose(projectId, { brief? })`
+makes one model call on the planning rung (the `planning` mode's tier and effort from the
+tables in force; the registry's `project-manager` prompt plus an intake section; no tools,
+`maxTurns` 1; `DEFAULT_INTAKE_BUDGET_USD_MICRO` or `project.settings.intake_budget_usd_micro`;
+`INTAKE_TIMEOUT_MS`) through the loop driver and the hooks on a session row of its own
+(`summary: "intake: <project>"`, `planned -> running -> completed | failed`), so the call is
+budgeted, billed to the project and audited like any other. The reply must be one JSON object
+(`parseIntakeReply`, `IntakeProposalBody`): `plan` in `ProjectPlanBody`'s shape, `docs` as a
+map of allowlisted paths (`INTAKE_DOC_PATHS`, the standard doc set, plus
+`docs/decisions/0001-<slug>.md`) to markdown, `firstSession` as plan task keys with
+estimates; unknown keys, a doc outside the set, a dependency that is not a plan key, a
+first-session item naming no task or a plan that does not shape (`shapeProjectPlan`) are
+refused with `validation` and nothing is filed. The brief goes to the model whole up to
+`MAX_BRIEF_CHARS`, between markers and named as data. The proposal is filed as one blocking
+approval request (kind `approval`, options `approve` / `reject`, `change_card.key`
+`intake:<project id>`, the whole proposal on the card with the model, the cost and where the
+docs will go) with one `project.intake` audit row; an open intake request for the project is
+reused without a call. `syncAnswers`, run from `RuntimeApp.syncApprovals`, applies the answer
+once: approve writes the milestones and tasks through `applyProjectPlan` (its `keyed` map
+turns the first-session keys into task ids), the items' estimates onto the task rows, the
+first-session plan onto `summary_cache.first_session` and `next_steps` and into the queue as
+one `task` item at priority 9, and marks the card applied, all in one transaction with one
+audit row; then the docs: with a repository (`repoRefOf(repos[0])`, `owner/name` or a URL) the
+executor's branch-and-PR flow (`GitOps` clone or fetch into `<worktrees>/intake/<project>`,
+branch `fr/intake-<id>-docs`, push, `createPullRequest` or a comment on the open one), else
+the project's workspace `<data>/projects/<id>/workspace` (`workspaceDir`); a drafted doc is
+written only where no file exists (`kept` otherwise) and `scaffoldDocs` fills the standard
+docs the model left out; a pull request that fails falls back to the workspace with
+`repo_error` on the card, and a docs failure after the rows is recorded on the card
+(`docs.error`) and logged. Reject writes a queue note only. An answer by anyone but the
+request's human is refused (`wrong_human`), as are an unreadable answer, a missing project
+and a card that no longer parses, each recorded on the card with an audit row. Triggers:
+`POST /projects/:id/intake` (202 `IntakeProposalView`), `GET /projects/:id/intake`
+(`IntakeStatusView`: the latest request, its outcome, where the docs went, or why a
+background run failed), and `POST /projects` with `intake: true` (`enqueue`: the proposal is
+drafted in the background, the card answers at once, a failure lands on
+`summary_cache.intake`); the flag is off by default so nothing creates a model call unasked.
+Tests: `intake.test.ts`. Requirement: A.2.
 
 **Reasons on plan and milestone changes (spec B.5).** Every change to a plan, task or
 milestone is versioned with author and reason, and the store enforces it: `TaskRepo.transition`
@@ -467,7 +643,9 @@ shows as delivered and read at session start and between tasks. An ack-required 
 warning, decision or info message is acted on by being read into the plan; an ack-required
 question or request is acted on only when this agent has replied to it (`reply_to`), checked
 at session end. Messages this agent sent that nobody acted on resurface at its next session
-as an `inbox.unacknowledged` event and as a count in the brief.
+as an `inbox.unacknowledged` event and as a count in the brief. A line the human said during
+the running session (spec O.9) is the one exception between tasks: delivered when collected,
+read only when a task's brief carries it (ADR 0078).
 
 ### Peer awareness (`src/session/peers.ts`)
 
@@ -498,9 +676,10 @@ tier, the verdict moves it through the state workflow and the retry ladder, less
 at session start and out at session end, and every change by chat, voice, the UI or the phone
 runs the same command. The runner, the executor and the conversation agent reach the three
 packages only through the ports in `src/loop/ports.ts` (`CriticPort`, `MemoryPort`,
-`ConversationCommands`); `src/loop/critic.ts`, `memory.ts` and `commands.ts` implement them
-over `@forerunner/critic`, `@forerunner/memory` and `@forerunner/commands`, and `compose.ts`
-wires them (`RuntimeApp.critic`, `memory`, `commands`, `criticAgent`). Tests run the runner
+`ConversationCommands`, `ProjectDocsPort`); `src/loop/critic.ts`, `memory.ts`, `commands.ts`
+and `docs.ts` implement them over `@forerunner/critic`, `@forerunner/memory`,
+`@forerunner/commands` and `@forerunner/capabilities` (git), and `compose.ts` wires them
+(`RuntimeApp.critic`, `memory`, `commands`, `docs`, `criticAgent`). Tests run the runner
 with fakes of the ports (`test/loop-memory.test.ts`) and with the real implementations on the
 fake provider (`test/loop-critic.test.ts`, `test/conversation.test.ts`, `test/loop-routes.test.ts`,
 `test/loop-commands.test.ts`, `test/signoff-answer.test.ts`, `test/approvals-poll.test.ts`).
@@ -567,7 +746,19 @@ as an escalation. Lesson proposals (repeat findings) are recorded in critic memo
 memory port. Events: `critic.review_started`, `critic.verdict`, `critic.review_failed`
 (the task stays in review), `critic.session_review`, `task.blocked_by_findings`.
 
-**Memory (`MemoryLoop`, spec G, E.5, N.4).** At session start the runner asks `recall` with
+**Memory (`MemoryLoop`, spec G, E.5, N.4).** Private memory stays on this PC (spec "never
+leave that PC", ADR 0002, ADR 0083): with a shared state (a `FORERUNNER_STATE_URL` that is not
+`sqlite:`, i.e. paired and hybrid mode) `composeRuntime` opens the private index
+`<data>/memory/private.sqlite` (`privateIndexUrl`, `openPrivateIndex` in `src/loop/memory.ts`:
+the state schema at the same migration version, foreign keys off because the agents and
+projects its rows name live in the shared store) and hands it to `MemoryLoop` as
+`privateStore`; the memory package's `ScopedLessonStore` then keeps every `agent_private` row
+there and the shared store never receives one (the Postgres adapter refuses one on its own with
+`MEMORY_SCOPE_VIOLATION`). Recall, record, the views, the routes and the consolidation all go
+through that one store. `RuntimeApp.privateMemory` is the index (null in solo mode, where the
+local store holds every scope); `ComposeOptions.privateIndexUrl` overrides the decision (tests
+force an index next to an in-memory state) and the index closes with the store. At session start
+the runner asks `recall` with
 the state brief as the query under `settings.memory_token_budget` (default
 `DEFAULT_MEMORY_TOKEN_BUDGET`, 1,500 tokens); the block joins the planner's brief as data
 after the peer feed. The grant is issued from the agent kind (`grantFor`): a principal reads
@@ -595,6 +786,42 @@ scope is marked `stale` on the card and proposed again. The memory views (`list`
 scope or row of another human's agent answers `not_found`; `remove` retires the row and
 deletes its file. Events: `memory.loaded`, `memory.over_budget`, `memory.load_failed`,
 `memory.recorded`, `memory.lessons_rejected`, `memory.record_failed`.
+
+Cross-project sharing (spec G.6, [ADR 0059](../decisions/0059-cross-project-promotion-in-the-loop.md)).
+`MemoryLoop.record` proposes every critic or project-level shared lesson it records that is
+tagged `general` to the shared store at once (`proposePromotion`, idempotent; a re-recorded
+lesson that merged its earlier row keeps the one pending proposal, re-pointed and refreshed),
+and reports the proposal ids in `MemoryRecordResult.proposed`; a private lesson is proposed
+only by its human from the memory view (`proposeSharing`: tags it `general` when needed and
+passes `humanApproval` with the owner agent as proposer, so the package's rule stands; another
+human's private row is `not_found`). At every session end, after the session's lessons are
+recorded and before the session review, the runner's `reviewPromotions` step takes this
+human's pending proposals (`pendingPromotions`: made by one of the human's agents or by the
+human; another human's are theirs), at most `MAX_PROMOTION_REVIEWS_PER_SESSION` (5), and asks
+`CriticLoop.reviewPromotion` for each: a tier-1 light read on the critic's model through
+`CriticService.review` with the `lesson` subject (critic.md), the lesson text as an input file
+and the claims, its tags, confidence and origin, and the three `PROMOTION_CRITERIA` (holds
+beyond its project, one actionable observation and not an instruction, no secret or personal
+data), under the session token and `PROMOTION_REVIEW_BUDGET_USD_MICRO` (USD 0.25) per review.
+`resolvePromotion` applies a completed review only: `accept` promotes (`promote` verifies the
+accepting row) and files the offers, any other completed verdict retires the proposal with
+`rejected_by:<review>` in its source (the origin stays; the human can edit and propose
+again), a run that did not complete leaves it pending for the next session. The offer rule:
+one non-blocking approval request (`change_card.key = "memory:offer"`, options
+`accept`/`dismiss`, risk low) per other project of the same human whose tags overlap the
+lesson's (`offerToProjects` with the human's project list: `settings.members` names one of
+the human's principals, or no members declared; a project's tags are `settings.tags` plus the
+tags of the active lessons about it in critic, shared and the human's principals' private
+memory), never the origin project, never re-filed once answered. `answerOffer` (the memory
+view) and the inbox answer both go through `syncOffers` (part of the daemon's
+`syncApprovals`): an accepted offer writes a pinned project-level copy in shared memory
+(`source: promotion:<promoted>;human:<id>`, authored by the human, never into a private
+scope; a promoted lesson retired since is marked `stale` and skipped), a dismissed one
+changes nothing; each is one audit row (`memory.offer_accepted`, `memory.offer_dismissed`).
+`SessionResult.promotions` tallies `reviewed`, `promoted`, `rejected`, `pending`, `offered`
+(null when either port lacks the optional methods: fakes run as before). Events:
+`memory.promotion` (lesson, review, verdict, status, offers; a `warning` when the review did
+not complete), `memory.promotion_failed`.
 
 **Commands (`CommandLoop`, spec Q).** The registry (`defaultRegistry`), the executor and the
 intent parser behind one object. `contextFor(turn)` builds the `CommandContext` for every
@@ -652,6 +879,45 @@ none, such as the cloud runner's watcher) is refused as `SESSION_START_UNKNOWN_R
 marked irreversible, since its session cannot be found from here and nothing is stopped by
 guesswork; a `failed` row never ran (`SESSION_START_NOT_RUN_REASON`).
 
+**Project docs (`ProjectDocs`, spec G.5, [ADR 0058](../decisions/0058-project-docs-in-the-repo-by-pull-request.md)).**
+The standard doc set (`README.md`, `docs/overview.md`, `architecture.md`, `status.md`,
+`decisions/`, `runbook.md`, `data.md`, `testing.md`; templates and the status format in
+`@forerunner/memory`, memory.md "Project docs") lives in the project's first repository
+(`project.repos[0]`, as `owner/name` or a clone URL, parsed by `parseRepoRef`; the PR
+executor resolves the same way) and is written like any other code change: on a branch and
+through a pull request, never by a push to the default branch, and never over an existing
+file. `scaffoldProject(project)` runs inside `POST /projects` right after the row is inserted
+(the creation waits for it, so the card the dashboard gets back already names the PR): with
+a repository it clones or fetches `<worktrees>/docs/<project id>`, checks out
+`fr/docs-scaffold` (`DOCS_SCAFFOLD_BRANCH`; from `origin/fr/docs-scaffold` when the branch
+exists, so files the intake drafted there are kept, else from the default branch), runs
+`scaffoldDocs` for the missing files, commits, pushes and opens the PR
+("docs: scaffold the standard project doc set", the created files in the body) or comments
+on the open one; nothing to create means nothing pushed. Without a repository the set goes
+under `<projectsRoot>/<project id>/workspace` (`WORKSPACE_DIR`, beside the project's `data/`).
+The outcome is recorded on the row as `summary_cache.docs` (`location`, `branch`, `pr_url`,
+`dir`, `created`, `existing`, `scaffolded_at`; a failure as `error` and `failed_at`); a git
+host that cannot serve the repository is a warning in the daemon log and the creation still
+answers 201, the critic's drift check reporting the missing docs at the first review.
+`writeSessionStatus({ project, session, update, prBranch })` runs in the runner's step 4
+once the task states are final, for a session that executed a plan and changed at least one
+task (`docs.status_skipped` otherwise; a paused session writes nothing): the update is the
+session's completed, in-review plus sent-back, blocked (needs human, failed, blocked by
+findings) and skipped task titles with the session id, the end instant from the Clock and
+a note (`stop reason <x>; spent $<n>`), and the four top sections come from the project's
+state in the store (the latest 15 done tasks, every task claimed, in progress or in review,
+every needs-human or failed one, the ready and draft ones highest priority first). With a
+repository it is committed as `docs: status after session <id>` on the branch of the last
+pull request the session opened or updated (`prBranch`, from the executor's `branch` and
+`prUrl`), so the session's PR carries it, or on `fr/status-<session id>`
+(`statusBranchFor`) with a small PR of its own ("docs: status after session <id8>") when the
+session opened none; a repository without `docs/status.md` gets it scaffolded in the same
+commit. Without a repository the file under the workspace is updated. The result is the
+`docs.status_written` event (`location`, `branch`, `prUrl`, `path`, `created`) and
+`handoff.docs` on the session row; a failure is `docs.status_failed` with the message and
+the session ends as it would have. Not scaffolded from here: a project created by the
+`project.create` command (chat, voice) in `@forerunner/commands` (Known issues).
+
 ### Conversation agent (`src/conversation/agent.ts`)
 
 The fast channel for text and voice (spec O, J, Q): Haiku at low effort, a stable cached
@@ -672,22 +938,61 @@ as `email_mode_set` forms its `needs_device` card on the first call, one request
 answer, `test/conversation.test.ts`); the run is registered as protected so scoped and
 global stops never cut the human's channel.
 Transcripts are events on a per-agent conversation session (`chat.human`, `chat.reply`,
-`chat.confirmed`, `chat.cancelled`, and the executor's `change` events). Without a command
-port the chat is read-only.
+`chat.confirmed`, `chat.cancelled`, `chat.forwarded`, and the executor's `change` events).
+Without a command port the chat is read-only.
+
+**During a live session (spec O.9, ADR 0078).** Once the deterministic paths have had their
+turn (a yes or no to a pending card, "undo", a parsed command, a parser question, text carrying
+the data envelope: none of these is forwarded), a line that goes to the model is first posted
+to the principal's own inbox when a session of that agent is `running` (not the conversation
+session; a `paused` one is ending at its next boundary): `forwardToRunningSession` sends the
+`said (<source>): <words> (session <id>)` message (`heardMessageBody`), appends a
+`chat.forwarded` event (the session, the message id, the source) to the transcript, and the
+reply ends with `FORWARDED_SENTENCE` ("Your agent sees this at its next step boundary.");
+`ChatReply.forwarded` names the session and the message (internal; the daemon's chat view is
+unchanged, the sentence reaches every client, the voice bridge speaks it). The runner reads the
+message between tasks and the next task's brief carries it as quoted data (see "What you say
+during a live session" under Sessions). No session running: nothing is posted, the line is the
+model's alone and a note is the `note.add` command. The same `chat` path serves typed chat,
+voice and the phone's relayed chat, so all three reach the session. Tests:
+`live-chat.test.ts`, `closeout-conversation.test.ts` (the O.2 turn during a running session).
 
 ### Local daemon (`src/daemon/`, ADR 0011)
 
-`compose.ts` is the composition root: `composeRuntime()` opens the store and vault under
+`compose.ts` is the composition root: `composeRuntime()` opens the store (and, next to a
+shared one, the private memory index `<data>/memory/private.sqlite`, ADR 0083) and vault under
 `appDirs()`, builds the token issuer, kill switch, hooks, loop driver, provider registry
 (Anthropic when a credential is in the vault, the fake provider under `--provider fake`,
 otherwise a provider that fails every call with `provider_auth`), the specialist registry,
 the session runner, scheduler and conversation agent, and returns a `RuntimeApp` with a
-`close()`. It also bootstraps identity on first run (one human, one principal agent) and seeds
+`close()`. It binds the install to its human (below) and seeds
 the billing sources from the vault (both when both credentials exist, ADR 0044). `DynamicCaps`
 turns a human's monthly cap and a project's budget into per-call caps so the cap checker never
 runs with stale limits, and adds the plan level for a subscription run from the billing facts
 the hooks pass. There is exactly one wiring: the daemon, the CLI and the tests all go through
 it (ADR 0029).
+
+**Identity (`src/daemon/identity.ts`, ADR 0082).** On a shared store (every PC's daemon is a
+direct client of the shared Postgres, ADR 0024) the `human` table holds every member, so the
+install names its own: `lookupInstallHuman` resolves the selectors in order, the first present
+deciding: `ComposeOptions.identity.humanId` (the cloud runner passes the human it resolved),
+`FORERUNNER_HUMAN`, then `config.json`'s `humanId` (written by `fr setup --human-id` or
+recorded by the daemon at its first bind); each is an id or an email (the id tried first, the
+email case-insensitively), and one that names nobody is `not_found`. Without these, an email
+(`identity.email`, else `config.json`'s `humanEmail` from `fr setup --email`) finds the human
+or names the one created at this start (the joining PC). Without any selector the store must
+hold at most one human: none is the first run (created from `humanName` and `timezone`), one
+is a solo install (`source: "only"`), more is `identity_ambiguous` and nothing is created or
+started, whatever the store's dialect (two profiles can share a `sqlite:` file). A daemon
+started from its `config.json` that bound by email, as the only human or by creating one
+records the id there (`rememberBoundHuman`), so a later email change never rebinds it; a
+binding from `FORERUNNER_HUMAN` or the caller is for that start only. `RuntimeApp.identity`
+carries `{ humanId, source, selector }`. The agent is picked among the human's own principals
+(`pickPrincipal`: `agentName` / `FORERUNNER_AGENT_NAME` by name when it matches, else the
+first; created with that name only when the human has none), never another human's; the
+critic agent is per owner as before. `fr doctor` runs the lookup on the configured store
+without creating anything and prints who the next start binds to, or the humans and the
+remedies when it would be refused.
 
 **Modules composed (phases 6 and 7).** In order, each with its ports filled from what exists
 already:
@@ -702,9 +1007,9 @@ already:
 | Updates (`src/update`, spec M) | `composeUpdateManager({ store, dirs, clock, humanId, runningVersion, restarter })` over the daemon's own store (the `store` option was added for this; the CLI leaves it out and opens one). A malformed `update.json` is logged and ignored. | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback` with `RegistryConnectorCatalog` (connector versions from the extension catalog) and `ModelWatchUpdates` (the latest report as new models, deprecations, price changes and recommendations). `fr daemon` runs `updates.healthCheck()` once the server listens. |
 
 `syncApprovals()` (extension grants, model watch decisions, memory consolidations, the
-blocked-findings answers and the critic sign-off answers) runs at compose and after every
-`POST /requests/:id/answer`, so an answer in the inbox takes effect at once, and on the
-approvals poll (`ComposeOptions.approvalsPollMs`, `FORERUNNER_APPROVALS_POLL_MS`,
+blocked-findings answers, the critic sign-off answers, the session plan answers and the intake
+answers) runs at compose and after every `POST /requests/:id/answer`, so an answer in the inbox
+takes effect at once, and on the approvals poll (`ComposeOptions.approvalsPollMs`, `FORERUNNER_APPROVALS_POLL_MS`,
 `DEFAULT_APPROVALS_POLL_MS` = 5 s): an answer given on the phone or in the web approvals
 lands in the shared state through the state service and reaches no route of this daemon, so
 the poll applies it within seconds, the way the remote watcher picks up the phone's commands.
@@ -712,6 +1017,29 @@ The poll runs only where answers can come from another device, the remote comman
 condition (`remoteCommandsEnabled`: shared state, services running); a daemon on a local
 `sqlite:` store has no poll, its own answer route being the only answer path. The poll skips
 while the schema sync gate is paused and stops with `close()`.
+
+**Plan answers (`syncPlanApprovals`, `src/session/plan-approval.ts`, ADR 0053).** The step
+scans the human's answered blocking approvals whose card key starts with `plan:` and that
+carry no `applied_at` (`unappliedAnswers` in `findings.ts`, now exported with a key
+predicate), skips another agent's requests (a shared store), and acts once per request:
+`approve` with a `plan_id` marks the card (`applied_at`, `outcome: "starting"`) before it asks
+the scheduler (`scheduler.requestStart({ trigger: "message", planApproved: plan_id })`, the
+entry's id being the start's identity, ADR 0049) and then records the scheduler's answer
+(`started`, `queued`, `deferred`) and the `start_id`; `startSession` passes
+`req.planApproved` to the runner, which verifies it against the plan it computes. `reject`
+records `rejected` and starts nothing (the tasks stay `ready`; the next session proposes them
+again); an answer outside the options is `unrecognized_answer`; a card without `plan_id` (an
+earlier build's request) is `unbound_plan`, never run as approved; a start the port throws
+on is `start_failed` with the error, the human gets a warning message, and the request is not
+retried. Each outcome is one audit row `session.plan_approval` (`PLAN_APPROVAL_AUDIT_TOOL`:
+the request, plan and start ids and the outcome, never the plan text). Marking before asking
+is what makes "at most one session per answered request" hold across the route, the poll and
+a restart. A filing session an earlier build left `paused` with `plan_awaiting_approval` is
+closed (`paused -> stopped`) first so the start is not refused. The step runs only while the
+services run (`startServices`): a CLI one-shot composes the runtime but starts no session.
+`syncApprovals()` returns it as `plans: { started, rejected, skipped }`. Tests:
+`plan-approval.test.ts` (the sync on a fake port and through the real scheduler and runner),
+`plan-approval-daemon.test.ts` (the answer route and the poll).
 
 **Eval runner (`src/models/eval-runner.ts`).** `@forerunner/evals` depends on this package, so
 the daemon cannot import it. `LoopEvalRunner` reads the specialist's eval set (the same task
@@ -1023,7 +1351,21 @@ are mounted as described above. The notification routes (`GET|PUT /notifications
 `POST /notifications/test`, `GET /notifications/recent`, `GET /notifications/pending`) and the
 Cloudflare panel routes (`GET /cloudflare/projects/:projectId/settings|token`) are mounted the
 same way (see "Notifications" and "Cloudflare deploys" above), as is the audit log export
-(`GET /audit/export`, next paragraph). Each sub-app keeps its module's error mapping.
+(`GET /audit/export`, next paragraph). The agent email routes (ADR 0066; spec S.15, S.28,
+S.29, T.14) are the capability's `emailRouteTable()` adapted to Hono's context like the
+desktop routes: `GET|PUT /agents/:agentId/email/settings`, `GET /agents/:agentId/email/sent`,
+`POST /agents/:agentId/email/pause|resume|rotate-marker` and
+`GET /agents/:agentId/email/commands`, over `rt.capabilities.email.ports` (settings, sent log,
+identity), `rt.store.auditLog` (one `email.settings` row per change) and
+`emailCommandAudit({ auditLog, clock })` (the command audit read from the shared state, no
+handler in the daemon), with `humanFor: () => rt.human.id` so another human's agent and an
+unknown id answer 403 `tool_not_allowed` before any read or write; the views are
+`EmailSettingsView`, `EmailSettingsPatchBody`, `EmailSentView`, `EmailCommandsView`,
+`EmailPausedView` and `EmailMarkerView` in `api-types.ts`, the daemon's browser-safe copy of
+the capability's schemas (key sets compared in `test/email-routes-wiring.test.ts`). The tray's
+"Pause email" calls the pause route; the policy reads the row per send, so the next send is
+held. Each sub-app keeps its module's error mapping (the capability routes answer
+`{ error: { code, message, details } }`, which the UI client reads as a typed error).
 
 **Audit log export (`src/daemon/audit-export.ts`, spec S.9, [ADR 0050](../decisions/0050-audit-log-export.md)).**
 `createAuditRoutes({ store, clock, humanId })` serves
@@ -1123,7 +1465,12 @@ view per principal, the critic and shared, with counts), `GET /memory?scope=&age
 `GET /memory/consolidation` (`ConsolidationProposalView[]`) and
 `POST /memory/consolidation/run` (report only; files the approval request; the inbox answer
 applies it through `syncApprovals`, which also applies the `rework`/`accept`/`cancel` answers
-of tasks blocked by findings). Commands (spec Q): `GET /commands` (the registry),
+of tasks blocked by findings). Cross-project sharing (spec G.6): `POST
+/memory/lessons/:id/propose` (`LessonView` of the proposal; 404 for another human's private
+row), `GET /memory/promotions` (`LessonView[]`, this human's undecided proposals), `GET
+/memory/offers` (`LessonOfferView[]`, newest first) and `POST /memory/offers/:id/answer
+{ answer: accept|dismiss }` (applied at once, `LessonOfferView`; 404 for another human's
+offer, 409 for any other answer or an offer already answered). Commands (spec Q): `GET /commands` (the registry),
 `POST /commands/parse` (nothing runs), `POST /commands/execute` (one or several commands as one
 change card and one change log row; `source` is `text`, `voice`, `phone` or `ui`
 (`CommandSourceBody`), the settings screen sends `ui` and the row is logged with it;
@@ -1152,6 +1499,83 @@ Both stop with `close()`. The project's escalation ceiling is wired here too: `m
 `projectCeiling: (settings) => criticSettingsOf(settings).ceiling` to `LoopTaskExecutor`, so
 `tierForAttempt` escalates the third retry under the project's `critic_ceiling` (a project capped
 at sonnet never runs opus) instead of the ladder's default ceiling.
+
+### Source discovery (`src/sources/`, spec A.4, [ADR 0056](../decisions/0056-source-discovery.md))
+
+The human connects *sources* and a scan proposes projects from them; nothing is typed in
+one by one. `SourceDiscovery` (`discovery.ts`) is the one object behind the daemon's
+`/sources` routes (`routes.ts`, mounted in `createDaemonApp` behind the bearer check) and
+`fr sources` (`cli.ts`); `types.ts` holds the zod wire shapes (re-exported from
+`daemon/api-types.ts` so the UI reads the daemon's own schemas) and `locators.ts` the
+normalisation. Rows are `source` and `source_candidate` (`packages/state`, migration 0003).
+
+- **Kinds.** `github_org`, `github_user`, `github_repo` (a chosen repository) and
+  `local_folder`; `gitlab` and `git_remote` exist in the enum for later and `add` refuses
+  them with `not_supported` ("come later"). A GitHub source carries `credential_ref`
+  (`secret:<name>`, default `secret:github_token`, the name `fr setup` stores); `add` refuses
+  anything that is not a `secret:` reference without echoing it, so a pasted token never
+  reaches a row, a log or the audit log. A folder source takes no credential; its path must
+  be absolute, exist and not be a symlink; it is stored normalised (no trailing separator).
+  The same source twice (login or key compared lower-cased, folders by `folderKey`) is a
+  409 `conflict`.
+- **Scan.** An org lists its repositories through the git host port (`listRepos({ org })`,
+  paged through `Link`, capabilities.md); an account lists the token's own repositories
+  filtered to that owner when the login is the token's (private ones included), else the
+  user's public ones (`listRepos({ user })`); a chosen repository is `getRepo`; a folder
+  that is itself a repository (`.git`), carries the marker or is this install's own checkout
+  is one candidate, otherwise its immediate subfolders are (symlinks and dot-folders
+  skipped; `isGit` says whether a subfolder has a `.git`). The host for a GitHub source is
+  built at scan time from the vault by the source's reference (`githubHostForSecretRef`,
+  one `secret.resolve` audit row naming the secret) unless `ComposeOptions.gitHost` was
+  injected, which then stands in for every source. A scan that throws records
+  `status: "error"` and the redacted reason in `scan_result.error` on the source, writes a
+  denied `source.scan` audit row and rethrows (503 on the route for a host or credential
+  problem); the next scan clears it.
+- **Existing install.** A candidate is marked `existing_install` with `install_marker`
+  `.forerunner/project.json` when that file exists at the root (through `getFile` on the
+  default branch for a repository, the file system for a folder), or `install_record` when
+  the folder is the checkout named by this install's `install.json`
+  (`readInstallRecord(dirs)`). The marker file is the convention this item introduces;
+  nothing writes it yet (the first session on a managed repository is the place, ADR 0056).
+- **Duplicates, never twice.** Every candidate has a `key` (`locators.ts`):
+  `github:<owner>/<name>` lower-cased for a repository, whatever the spelling
+  (`owner/name`, `.git`, `github.com/…`, `https://…/tree/…`, `git@…:…`, `ssh://…`), and
+  `folder:<normalised path>` (lower-cased on Windows) for a folder; `keysOfProject` reads
+  a project's `repos` entries the same way. A scan loads every project's keys once (capped
+  at 10,000 projects) and marks a candidate `duplicate` with `project_id` when a project
+  covers it, or when another source already has it `proposed` or `accepted`
+  (`details.duplicate_of` names that candidate), so one repository is never proposed twice
+  across sources. `accept` re-checks the projects at that moment (a project created
+  meanwhile turns the candidate `duplicate` and refuses) and refuses a taken project name
+  before anything is created.
+- **Rescan is idempotent.** Candidates are upserted by `(source_id, key)`: a new one is
+  `proposed` (or `duplicate`), an existing one keeps its id and gets `last_seen_at`, its
+  facts and a recomputed status, one not found becomes `gone` and comes back `proposed`
+  when found again; an `accepted` candidate stays accepted whatever a later scan finds.
+  The proposed name is the repository or folder name, qualified with the owner or the
+  parent folder when a project of that name exists already (unless it is the duplicate).
+- **Accept.** `accept(candidateId, { name?, goal?, autonomyLevel?, budgetUsdMicro? })`
+  creates the project through `createProjectRecord` (`daemon/create-project.ts`, the same
+  function `POST /projects` calls: stage `planning`, the agent as member, the `project`
+  event, the conversation's active project) with `repos: [locator]` (`owner/name`, or the
+  folder path) and **no brief**: the intake into docs, milestones and tasks is spec A.2.
+  The candidate becomes `accepted` with `project_id`; the same key in any other source
+  turns `duplicate` of that project. `PrTaskExecutor.repoFor` in `compose.ts` treats an
+  absolute path in `repos[0]` as "no host repository" (the inner executor runs without the
+  branch-and-PR flow) instead of splitting it as `owner/name`.
+- **Remove.** Deletes the candidates and the source in one transaction; projects are never
+  touched. **Owner rule.** Every row carries `author_human`; `list` shows the actor's own
+  sources and every other operation on another human's source throws `tool_not_allowed`
+  with `details.forbidden`, which the routes answer as 403 `forbidden` (the inbox's
+  `NOT_YOURS`, ADR 0041 item 4). Audit rows: `source.add`, `source.scan` (counts, or the
+  denial), `source.accept`, `source.remove`; summaries carry references, never values.
+
+Routes (`SOURCES_ROUTES`, documented in `DAEMON_ROUTES`): `GET /sources`, `POST /sources`,
+`GET /sources/:id`, `POST /sources/:id/scan`, `GET /sources/:id/candidates?status=`,
+`POST /sources/candidates/:id/accept`, `DELETE /sources/:id`. Errors: 400 `validation` /
+`not_supported`, 404 `not_found`, 403 `forbidden`, 409 `conflict` (`details.cause:
+validation`, the daemon's convention for a refused write), 503 for `provider_*` and
+`unavailable`.
 
 ### Specialist registry (`src/registry/`)
 
@@ -1193,16 +1617,158 @@ the human; it is never acted on.
 
 ## Tests
 
+`closeout-autonomy.test.ts`, `plan-approval.test.ts` and `plan-approval-daemon.test.ts` (spec
+J.6, J.7; ADR 0053): the runner files the plan of a level 0 or 1 session as a blocking request
+keyed `plan:<session>` with the plan's `plan_id` and ends `stopped` (`plan_awaiting_approval`,
+`session.active()` empty), the hooks hold a routine tool behind approval until the plan is
+approved; a start bound to the approved id runs the plan once (`session.plan_approved`), a task
+added or removed since, a forged id or another session's id files the changed plan again and
+runs nothing, a level 0 proposal approved runs as the follow-up; the plan identity (order and
+membership count, specialist and estimate do not) and the answer shapes; `syncPlanApprovals` on
+a fake port (one start bound to the id, the card and the audit row, a second sync starting
+nothing; queued and deferred answers; a rejected plan leaving the tasks ready; an answer outside
+the options; a card without the id; a start the port refuses warned once and not retried;
+another agent's request left alone; an old `paused` filing row closed first) and through the
+real scheduler and runner (two syncs, one completed session); on the composed daemon the inbox
+answer route starts the plan it was filed for once with the task done and the session view
+naming the approved plan, a rejected plan starts nothing, and an approve written to the shared
+state from another device starts it within the approvals poll, once.
+
+`compose-memory.test.ts` (spec G.1, S.10, ADR 0083): `privateIndexUrl` is null for a `sqlite:`
+state and `<data>/memory/private.sqlite` for a `postgres://` one; a daemon composed with an
+in-memory state and a forced index opens the index under the data directory at the state's
+migration version, records a session's private lessons in the index only (the file in the agent's
+root as before) and critic lessons in the shared store, gives the principal its private lesson on
+recall and the critic none of it, and serves and edits the private scope through `/memory/scopes`,
+`/memory`, pin, edit and delete against the index; a plain `sqlite:` state has no index and keeps
+every scope in the one store.
+
+`intake.test.ts` (spec A.2, ADR 0055, through `composeRuntime` and the daemon routes on the
+fake provider, an in-memory git host over a bare repository): the proposal filed as one
+blocking request with the whole proposal on the card, one planning-rung call at high effort
+with the brief as data, nothing written before the answer (no rows, no docs, the brief note
+alone in the queue, the call billed through a completed intake session and audited); a second
+trigger reusing the open request without a call; the approving answer through
+`POST /requests/:id/answer` writing the milestones and tasks (dependencies as ids, tiers,
+author, reason, estimates), the drafted docs and the scaffolded gaps in the workspace, the
+first-session plan on the summary cache and in the queue, the card applied once and a second
+sync writing nothing; reject writing nothing but a queue note; a prose reply, a doc outside the
+set, a task without an outcome, a first-session item naming no task and a dependency on an
+unknown key refused as 409 with no request and the failed calls' sessions closed `failed`;
+`parseIntakeReply` on bare and fenced JSON; another human's answer skipped as `wrong_human`
+with nothing written; with a repository the docs pushed as a pull request on
+`fr/intake-<id>-docs` with the existing README kept; `POST /projects` with `intake: true`
+running the intake in the background and without the flag running nothing; a failed background
+intake recorded on the status route; no provider refused as `unavailable`.
+
+`loop-docs.test.ts` (spec G.5, ADR 0058; the runner with `ProjectDocs` on a `MemoryGitHost`
+whose repository clones from a local bare repo): a session whose executor pushed a branch and
+opened its PR gets `docs/status.md` scaffolded and committed on that branch (the session id,
+the date, the task under Done and in the entry, the note, `src/x.ts` still there), the only
+open PR is the task's, `main` has no status doc and its README is unchanged, the event and
+`handoff.docs` name the branch and PR; a session that opened no PR (a task that needs the
+human) files `fr/status-<session id>` with its own PR, the entry listing the blocked task and
+the top sections the project's state (a draft task under Next), a second session adding its
+own branch and PR; a project without a repository writes under
+`<projectsRoot>/<id>/workspace`; a session that touched no task writes nothing
+(`docs.status_skipped`) and a port that throws ends the session `completed` with
+`docs.status_failed`. `docs-scaffold.test.ts` (through `composeRuntime` and `POST /projects`
+with a `MemoryGitHost` and bare repos): `parseRepoRef` on `owner/name`, HTTPS and SSH URLs and
+non-references; a creation with a linked repository opens one PR from `fr/docs-scaffold` to
+`main` with the seven missing docs, the existing README byte-identical on the branch, `main`
+holding only the seed, the overview carrying the goal and the repository, the outcome on
+`summary_cache.docs`, nothing under the data dir; files the intake drafted on the branch kept,
+no second PR, and a second creation on the same repository finding nothing to add; a project
+without a repository scaffolded under its workspace with name and goal; a session started
+through the composed `rt.runner` (the PR executor and loop executor on the scripted
+provider, whose text-only reply leaves no change and so no task PR) writing its status
+update on `fr/status-<session id>` with a PR of its own, the entry naming the session and
+the task, `main` untouched, `handoff.docs` on the session row; a repository the host cannot
+serve answering 201 with the error recorded.
+
+`loop-memory-promotion.test.ts` (spec G.6, ADR 0059; fake provider, `loopWorld` with a second
+project of the same human and another human's project): a `general` critic lesson recorded
+through the port becomes one shared proposal that follows the lesson through a re-record
+merge; the next session's critic accepts it as a `lesson` subject (one tool, the text and tags
+as data; the review row with no task), the proposal is promoted and offered to the other
+project of the same human only (not the origin project, not the other human's project with the
+same tags, and not listed by the other human's loop); accepting makes a pinned project copy
+authored by the human with one audit row, a second sync and a second answer do nothing, a
+second session finds nothing pending and files no second offer, and the copy is recalled for
+that project; a `revise` retires the proposal naming the review while the origin stays; a
+review that cannot run leaves the proposal pending; the human proposes a private lesson from
+the view (tagged `general`, owner as proposer, human approval), another human's lesson reads as
+`not_found` here and their proposal is theirs to review. `loop-routes.test.ts` covers the
+routes (propose, pending, offers in the inbox, accept applied with the copy, bad or repeated
+answers refused, the audit row once).
+
+`sources.test.ts` (spec A.4, ADR 0056) against the fake git host and a temp folder:
+locator normalisation (every spelling of a repository to one key, folders, a project's
+`repos`); `add` validation (a token value refused and nothing stored, bad logins, a relative
+or missing folder, a file, a credential on a folder, other hosts "later", the same source
+twice; the audit row names the reference, never the token); an org scanned through
+`GitHubHost` with `pageSize: 2` (two pages seen by the host): one proposal per repo, the
+repo a project links by URL a `duplicate` with its `project_id`, the repo with
+`.forerunner/project.json` an `existing_install`; accept (project with the repo and no
+brief, the candidate accepted; a second accept, a duplicate, a taken name refused with
+`details.conflict`); an idempotent rescan after a new repo (ids stable, accepted and
+duplicate kept); a user source (the token's own login) and a chosen repository (URL form
+stored as `owner/name`, duplicate of the project; a repository another source proposes is
+`duplicate_of` it); a local folder (subfolders, `isGit`, the marker file, this install's
+checkout as `install_record`, `gone` and back on rescan, accept with the path, a gone
+candidate refused); a failing host recorded on the source and rethrown; remove (candidates
+gone, projects kept) and the owner rule (hidden from the list, every operation refused).
+`sources-routes.test.ts`: the routes over an in-memory host (shapes, 201/400/404/409/403
+`forbidden`, the owner rule, 503 or 500 for a failing host) and in the composed daemon (401
+without the bearer, a typed project linking a repo by URL seen as the duplicate, an accepted
+proposal as a project card with `repos: ["owner/name"]`, an empty summary cache and the
+agent as member, a folder source, remove keeps the projects). `sources-cli.test.ts`: the
+subcommands and flags, the whole flow through `buildProgram()` with a composed stand-in
+(`startServices: false`), a token value, an unknown kind and a missing folder refused before
+anything is stored.
+
+`email-routes-wiring.test.ts` (spec S.15, S.28, S.29, T.14; ADR 0066): the seven email routes
+on the composed daemon behind the bearer check and in `DAEMON_ROUTES`, the daemon's view and
+the capability's schema agreeing on the key sets, `PUT` picking the mode and the mailbox
+(credential value refused) with the policy sending to a stranger at once and one
+`email.settings` row by the daemon's human, the tray's `pause` holding the next send as
+`queued` and `resume` releasing it, the sent log and the command audit newest first with the
+limit, `rotate-marker`, another human's agent and an unknown id refused with 403 on every
+route and no settings row created.
+
+`shared-secret-resolver.test.ts` (spec S.13, ADR 0065; two installs on one store, each with
+its own `MemoryVault` and wrapping key): the proposal wraps per named agent install, files the
+pending grant and Bob's high-risk card with the `shared_secret_grant` change card, serves
+nothing while pending and refuses an unknown agent, an agent without a keyed install, a
+missing name and no agents; after Bob's yes Bobby's install resolves `secret:<name>` through
+`beforeToolCall` (the tool gets the value, the model-facing input keeps the reference,
+`afterToolCall` redacts the output, the hooks' audit rows carry the reference only, the local
+vault holds only the install key, `secret.blob_served` names the agent and the install); local
+first (the service is never asked); another agent, another install, a blob bound to another
+device (`integrity`) and a token without the name are refused before any value moves; a
+refusal cancels and drops the blobs, a revoke ends an active grant and the resolver fails
+from then on, a pending grant's cards are withdrawn; every store table scanned for the value
+in every encoding. `shared-secret-wiring.test.ts`: `composeRuntime` creates the install key
+and registers it on the desktop row (reused on re-registration), the daemon's
+`/secrets/shared` routes propose, list and revoke (400 on a bad body, 404 on an unknown
+grant), the peer's approval through `applySharedGrantAnswer` lets the peer install resolve,
+the active names join the session grant per agent, and the other way round: a grant Bob
+proposes to Alice is answered through the daemon's own `POST /requests/:id/answer` (the grant
+moves in the same write) and resolving through this install's vault writes
+`secret.shared_resolved` without the value.
+
 `small-project.test.ts` (spec B.6, ADR 0051): `defaultRiskTier` by flag; `shapeProjectPlan`
 with the flag on (one milestone named after the project, the phases' criteria once each, the
 latest date, every task under it in plan order, tier 0 unless named; a single planned milestone
 kept as it is; a plan of loose tasks only) and off (a milestone per phase, loose tasks
 unassigned, tier 1 unless named); `applyProjectPlan` on an in-memory store (one milestone row
 and a flat list with dependencies resolved to ids and the reason and author on every row; a
-second plan joining the open milestone; phases after existing milestones with the loose task
-under none; dependants after dependencies whatever the plan order and a dependency on an
-existing task; an unknown dependency, a cycle, another project's task, an empty plan and a
-duplicate key refused with nothing written; the task cap); through `composeRuntime` and the
+second plan joining the open milestone; with only closed milestones on file the one milestone
+created after them at a free `order_index` and joined by the next plan; phases after existing
+milestones with the loose task under none; dependants after dependencies whatever the plan
+order and a dependency on an existing task; an unknown dependency, a cycle, another project's
+task, an empty plan and a duplicate key refused with nothing written; the task and milestone
+caps); through `composeRuntime` and the
 daemon: the card's `smallProjectMode` and `defaultRiskTier`, `POST /projects/:id/tasks`
 without a tier (0 under the flag, 1 without, a named tier kept, an out-of-range tier refused),
 `POST /projects/:id/plan` for a small and a phased project, the second plan reusing the
@@ -1218,6 +1784,24 @@ criteria, date and status change under one reason. The plan's reason on the sess
 `session.test.ts` (the cut plan's summary as the reason, the agent as author) and
 `closeout-sessions.test.ts`; the plan writer's reason on milestone rows and the join as a
 reasoned change: `small-project.test.ts`.
+
+`compose-identity.test.ts` (triage 2026-10-23 P0 #2, ADR 0082, two installs on one
+`sqlite:<file>` store as two PCs on the shared Postgres): two humans in one store and two
+`composeRuntime` calls, one by `identity.humanId`, one by `FORERUNNER_HUMAN` as an email, each
+bound to its own human, principal and critic agent, a restart finding the same rows; no
+selector on a store with two humans refused `identity_ambiguous` with nothing written; a
+selector naming nobody `not_found`; `config.json` `humanId` then `humanEmail` (case does not
+matter), an unknown email creating the joining PC's human once and finding it at the next
+start; the environment ahead of `config.json`; the agent among the human's own principals by
+name, another human's name never crossing over; `lookupInstallHuman` and
+`describeIdentityCheck` for `fr doctor` (ambiguous with the humans listed, bound, an email
+not yet in the store, a missing id) creating nothing; on a single-human store the first run
+creating the human (`source: "created"`) and the next start binding without a selector
+(`"only"`); the bound id recorded in `config.json` when the daemon started from it, never
+from an environment override, and read back ahead of the email; `runSetup` persisting
+`humanEmail` and `humanId`, keeping them across runs and refusing a malformed email.
+`cli.test.ts` spawns `fr setup --email` / `--human-id` and `fr doctor --json` (the `identity`
+check naming an unknown configured id and the remedy).
 
 `security-daemon.test.ts` and `security-command-actor.test.ts` (security review 2026-10-20,
 ADR 0011, 0025, 0030, 0041): every route but `/health` needs the exact bearer (a prefix, a
@@ -1282,6 +1866,21 @@ not the value, MCP output fed back redacted, a final report quoting the environm
 token forging claim by claim, expiry (an unparseable one refused), revocation by the kill
 switch and `derive` never widening.
 
+`approvals-durable.test.ts` (security review follow-up 2026-10-21, spec S.6, J.8, J.10;
+the hooks over `StateApprovals` and the real store): an identical `delete_repo` in the same
+run asking again after the first execution; the resume path re-making the paused call once in
+a later run of the session, the spent row marked (`consumedAt`, `consumedByRun`, version
+moved) and never admitting a second call, the second answer admitting one more, one audit row
+per executed call naming the run that took the answer; the same through the loop driver (a
+run ending `needs_human`, the next run executing the delete once and pausing on a third
+identical delete, the fake provider replies standing for the model's re-made call); two
+inputs that are cut alike for the card getting different keys and rows, the row carrying the
+cut copy and never the raw input, `approvalKey` honouring the hooks' key; a `merge_pr`
+approval at level 2 holding for the run and for the session and a different pull request
+asking; a "no" denying for the session without a new request; a withdrawn or expired request
+holding nothing. `packages/capabilities/test/cloudflare-tools.test.ts` covers the Cloudflare
+port finding the hooks' row for a long script input through the raw-input key.
+
 `packages/runtime/test/*.test.ts` (unit, fake provider, no network): tokens, autonomy, kill
 switch timing, budget rules, context transforms (golden cases, idempotence, FATAL-at-line-67,
 bare truncate marker without a store and named marker with one, stable-prefix lint, bypass,
@@ -1334,10 +1933,28 @@ of sonnet never escalating the third retry to opus while the default ceiling doe
 the phone stopping a running session within 2 s, a pause from the phone ending a running
 two-task session at the task boundary (the task in flight finishes, the second never starts,
 `stopped_by_message` with the second task in `handoff.next`), both stopping with `close()`;
-`executor-ceiling.test.ts`: `projectCeiling` on the executor).
+`executor-ceiling.test.ts`: `projectCeiling` on the executor; `live-chat.test.ts` (spec O.9,
+ADR 0078): the said-line body round trip and its stop-word immunity, the quoted block with the
+envelope neutralised and an instruction-shaped line flagged, a free-form voice line during a
+`SessionRunner` held mid-task by a gated executor landing in the principal's inbox unread with
+the `chat.forwarded` event and the reply sentence, collected at the boundary (`delivered_at`,
+`inbox.heard`), read before the second task (`read_at`, `task.heard`) and given to it alone,
+counted in the summary and `handoff.heard` without the words, quoted in the human's message
+with the task's title and kept out of the project cache; a line during the last task left
+unread and listed by the next session's brief; a note, a card, its yes, a parser question and
+refused data never forwarded; no session and a paused session posting nothing; another human's
+running session untouched with both running; the `LoopTaskExecutor` placing the section after
+the brief's limits with the flagged line's rules in a warning and its words out of it).
 
 ## Requirements covered by the daemon wiring
 
+G.5 (the standard doc set scaffolded at project creation as a pull request on the linked
+repository or under the project's data dir, `docs/status.md` updated at session end on the
+session's PR or one of its own; the critic's drift check unchanged). Tests:
+`test/docs-scaffold.test.ts`, `test/loop-docs.test.ts`, `packages/memory/test/docs.test.ts`.
+S.15, S.28, S.29 and T.14 (the email settings routes mounted with the owner check, the
+tray's pause holding the next send, full discretion picked through the route, the command
+audit served; ADR 0066, `test/email-routes-wiring.test.ts`; the page is the UI's, apps.md).
 K.6 and L.5 (extensions reachable from the daemon, revoked live), S.7 (task commands in a
 sandbox with only the worktree and the token's domains), I.3 (estimate error tracked and fed
 back to the planner), D.6 and D.21 (weekly model watch scheduled, decided in the inbox), M.3,
@@ -1425,9 +2042,43 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 ## Known issues
 
-- A level 0 or 1 session that files its plan ends `paused`, which `session.active()` counts as
-  active, so the agent cannot start again until a human closes it; the `plan:<session>` approval
-  starts nothing on the desktop daemon (BLOCKERS.md, the J.6 / J.7 row).
+- An approved plan the scheduler answers `queued` (the agent is busy) holds the scheduler's
+  single pending slot per agent, which a later trigger replaces (`triggers.ts`: the newest
+  request wins the slot); the approval is recorded as handed over (`outcome: "queued"`) and
+  the replaced plan is proposed again by the next session rather than run (ADR 0053).
+- `fr setup --email` on a solo install whose human was created with an empty email (every
+  install before ADR 0082) makes the next start create a second human, since the email
+  matches nobody and the daemon never adopts a row the selector does not name; `fr doctor`
+  says so beforehand and `fr setup --human-id <id>` binds to the existing row. Once a daemon
+  has started from its `config.json` the recorded `humanId` wins and the email is not consulted.
+- Intake (ADR 0055): the intake session row is `running` while the planning call is in flight
+  and a daemon that dies mid-call leaves it so until a human closes it (the runner's own
+  residual). The first session plans with `StaticPlanner` (ready tasks by priority): the
+  approved first-session plan reaches it as the queue item in the brief and as the tasks'
+  estimates, not as an order it enforces. The pull-request path needs `git` on the PATH and a
+  host token (`secret:github_token`); without them the docs fall back to the workspace with
+  `repo_error` on the card. The intake re-run for a project whose proposal was rejected makes
+  a new call with the same brief (pass `brief` to `POST /projects/:id/intake` to change it).
+  A creation with `intake: true` defers the G.5 scaffold to the intake's approval; a project
+  scaffolded at creation and put through the intake later gets its untouched placeholders
+  replaced by the drafts (an edited file is kept) and, with a repository, a second pull request.
+- Project docs (G.5): the critic's `docs-drift` check runs at review time, before the
+  runner's session-end status write, so at tier 2+ it still lists `docs/status.md` for a
+  specialist's diff that did not touch it even though the PM's commit lands on the same PR
+  minutes later; a check that knows about the docs port would stop the repeat finding.
+  `project.create` from chat or voice (`@forerunner/commands`) inserts the row without the
+  scaffold; only `POST /projects` scaffolds. The docs follow `repos[0]` only. Sessions that
+  open no PR each file their own small status PR, which merge in order; a session whose last
+  PR was force-pushed by its next attempt keeps the status commit, since the attempt branches
+  from `origin/<branch>`.
+- Source discovery (A.4): the `.forerunner/project.json` marker is read, never written; a
+  project Forerunner manages carries no marker until a later item writes one at the first
+  session, so today only a repository or folder marked by hand (or this install's own
+  checkout) shows as an existing install. The install check costs one `contents` call per
+  repository on a host scan (a large organisation scans slowly within the rate limit). A
+  project created from a local folder links the path in `repos`; the PR executor then runs
+  the inner executor without a host repository (no branch-and-PR flow) rather than
+  working in that folder. GitLab and plain git remotes are refused at `add`.
 - The task workflow has no `needs_human -> done` edge, so an accepted critic sign-off closes
   the task along the graph's own edges (`ready -> claimed -> in_progress -> in_review -> done`)
   in one store transaction (`syncSignoffAnswers`); a direct edge for a human's acceptance is a
@@ -1501,10 +2152,11 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   first on every call, but it should adopt `realPathOf` so the tools fail closed on their own
   too. A link created between the check and the read (a race inside the worktree) is not
   covered; the sandbox adapter mounts only the worktree so such an escape cannot reach the host.
-- An approval of an always-human action is consumed per run (`ctx.approvals`), but
-  `StateApprovals` answers from the durable row: an identical call in a later run of the same
-  session finds the answered request and is approved without a new question. Consuming the row
-  needs a `HumanRequestRepo` write (`packages/state`), not a runtime change.
+- `StateApprovals` matches approval rows within one session (`session_id`). A tool call that
+  paused a task (`needs_human`) and was answered after the session ended is asked once more
+  when a later session re-plans the task, because the new session's lookup does not see the
+  old row; one extra question, never one fewer. Matching across the sessions of one task is
+  open with the J.7 item (a paused session resumed by its approval).
 - On the SDK path a built-in file tool's output (`Read`, `Grep`) is scanned and flagged but
   cannot be rewritten from the `PostToolUse` hook (the SDK applies `updatedMCPToolOutput` to
   MCP tools), so the subprocess sees the file as is. `scrubEnv` withholds `SSH_AUTH_SOCK` from
@@ -1519,9 +2171,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   while the process is exiting, so a slow channel may not finish before the restart.
 - Browser and email (ADR 0047): the browser mode is decided at compose, so a Chromium that
   exists but fails to launch is not demoted to the static reader at run time (the navigation
-  fails with the launch error, audited); the daemon mounts no email settings routes, so the
-  mode and the mailbox are changed through the capability's routes elsewhere, the CLI or the
-  store; the critic and the conversation agent run the driver outside the executor and raise
+  fails with the launch error, audited); the email settings routes are mounted (ADR 0066) but
+  a mode or mailbox changed through them reaches a running session only at the policy (the
+  tools join or leave at the next session start); the critic and the conversation agent run
+  the driver outside the executor and raise
   no `run` bus event, so a flagged read there is logged by the hooks but not notified; the
   per-agent browser block list is not read (the project's is); scenario 6 still wires its own
   research install instead of `composeRuntime` (`testing.md`).
@@ -1548,7 +2201,12 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   the pause message between tasks; a session on the cloud runner gets the row's status until
   that runner honours it), a pause message the runner never read because the task in flight was
   the last one is consumed at the next session's start like any unread message, and an undo
-  after the runner already read the message does not keep the session going; a pending
+  after the runner already read the message does not keep the session going; a line the human
+  says during a live session (O.9) reaches the task after the one in flight, so a long task
+  delays it, a line said during the last task reaches the next session's brief instead, a
+  question to the conversation agent is also quoted to the next task (no classifier), and a
+  session on the cloud runner reads said lines only once that runner's `recheckInbox` runs
+  (the same runner code; nothing here is PC-only); a pending
   high-risk card is dropped by a daemon restart (ADR 0030 item 3) and the human asks again; `/health` does not report the watcher or
   the presence row (`RuntimeApp.remote` does); the cloud runner's watcher does not pass the
   owner filter to `pickUp` yet (one option in `services/cloud-runner/src/remote.ts`); no
@@ -1558,3 +2216,8 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   pick up two copies of one envelope in the same instant could both act (a unique index on
   the issuing device and the envelope's `clientId` in `packages/state` would close it), and
   an audit row the store failed to write leaves only this process's memory of the pair.
+- Shared secrets (spec S.13): the cloud runner registers no wrapping key on its `runner`
+  device row yet (its vault is locked until the unlock protocol ran), so a shared secret
+  reaches an agent on its owner's PC install; the app has no screen for `rt.sharedSecrets`
+  (the daemon routes exist), and the owner's `propose` is not yet a registry command with a
+  change card.

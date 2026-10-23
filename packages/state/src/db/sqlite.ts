@@ -187,11 +187,17 @@ export class SqliteDatabase implements Database {
 export interface SqliteOptions {
   /** Busy timeout in ms when another process holds the file lock. Default 5000. */
   busyTimeoutMs?: number;
+  /**
+   * Enforce foreign keys. Default true. The runtime's private memory index (one `lesson` table
+   * in use next to a shared Postgres state, ADR 0083) opens with `false`: the agents and
+   * projects its rows reference live in the shared store, not in the index.
+   */
+  foreignKeys?: boolean;
 }
 
 /**
  * Open a SQLite database. `location` is ":memory:" or a file path (its directory is
- * created). WAL journaling and foreign keys are enabled.
+ * created). WAL journaling is enabled; foreign keys are enforced unless `foreignKeys: false`.
  */
 export async function openSqlite(
   location: string,
@@ -203,7 +209,7 @@ export async function openSqlite(
   const conn = new DatabaseSync(location);
   conn.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(opts.busyTimeoutMs ?? 5000))}`);
   if (!isMemory) conn.exec("PRAGMA journal_mode = WAL");
-  conn.exec("PRAGMA foreign_keys = ON");
+  conn.exec(`PRAGMA foreign_keys = ${opts.foreignKeys === false ? "OFF" : "ON"}`);
   conn.exec("PRAGMA synchronous = NORMAL");
   return new SqliteDatabase(conn, location);
 }

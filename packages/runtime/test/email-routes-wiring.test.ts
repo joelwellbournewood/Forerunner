@@ -1,0 +1,321 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { email as agentEmail } from "@forerunner/capabilities";
+import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { FakeProvider } from "@forerunner/testenv";
+import { MemoryVault } from "@forerunner/vault";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { DAEMON_ROUTES, EmailSettingsView } from "../src/daemon/api-types.ts";
+import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
+import { createDaemonApp } from "../src/daemon/server.ts";
+
+/**
+ * The Settings -> Capabilities -> Email routes on the daemon (spec S.15, S.28, S.29, T.14):
+ * `createEmailRoutes` mounted behind the bearer check with the daemon's human as the
+ * signed-in human and the capability's identity port as the owner check. The tray's two
+ * routes (`POST /agents/:id/email/pause|resume`) flip `settings.paused` and the policy holds
+ * the next send while paused; a settings change through `PUT` reaches the policy at once and
+ * is one `email.settings` audit row; the command audit and the sent log read newest first;
+ * another human's agent is refused. Fake provider, a fake mailbox, `sqlite::memory:`, memory
+ * vault, SimulatedClock; no network.
+ */
+const REGISTRY = join(process.cwd(), "evals", "registry");
+type Json = Record<string, unknown>;
+const json = async (r: Response): Promise<Json> => (await r.json()) as Json;
+const AGENT_ADDRESS = "alice@agent.test";
+const STRANGER = "ops@vendor-cloud.test";
+
+/** An in-memory agent mailbox that records sends; nothing inbound. */
+class FakeMailbox implements agentEmail.Mailbox {
+  readonly sent: agentEmail.OutboundMessage[] = [];
+  readonly drafts: agentEmail.OutboundMessage[] = [];
+  constructor(readonly address: string) {}
+  async listUnseen(): Promise<agentEmail.InboundEmail[]> {
+    return [];
+  }
+  async fetch(): Promise<agentEmail.InboundEmail | undefined> {
+    return undefined;
+  }
+  async watch(): Promise<agentEmail.MailboxWatch> {
+    return { stop: async () => undefined, pushActive: false };
+  }
+  async send(message: agentEmail.OutboundMessage): Promise<agentEmail.SendReceipt> {
+    this.sent.push(message);
+    return { messageId: `sent-${this.sent.length}@agent.test`, raw: message.text };
+  }
+  async saveDraft(message: agentEmail.OutboundMessage): Promise<agentEmail.DraftReceipt> {
+    this.drafts.push(message);
+    return { draftId: `draft-${this.drafts.length}`, raw: message.text };
+  }
+  async markSeen(): Promise<void> {
+    return undefined;
+  }
+}
+
+describe("the email settings routes on the daemon", () => {
+  let rt: RuntimeApp;
+  let app: ReturnType<typeof createDaemonApp>["app"];
+  let token: string;
+  let home: string;
+  let mailbox: FakeMailbox;
+  let otherAgentId = "";
+  const clock = new SimulatedClock("2026-10-23T08:00:00Z");
+  const req = (path: string, init: RequestInit = {}, auth = true) =>
+    app.request(path, {
+      ...init,
+      headers: {
+        ...(auth ? { authorization: `Bearer ${token}` } : {}),
+        "content-type": "application/json",
+        ...(init.headers ?? {}),
+      },
+    });
+  const post = (path: string, body: unknown = {}) =>
+    req(path, { method: "POST", body: JSON.stringify(body) });
+  const put = (path: string, body: unknown) =>
+    req(path, { method: "PUT", body: JSON.stringify(body) });
+  const settingsPath = () => `/agents/${rt.agent.id}/email/settings`;
+  const sendToStranger = () =>
+    rt.capabilities.email.ports.policy.send(
+      { to: [STRANGER], subject: "hello", text: "a line" },
+      { agentId: rt.agent.id, humanId: rt.human.id },
+    );
+  const settingsAudit = async () =>
+    (
+      await rt.store.auditLog.list({
+        agentId: rt.agent.id,
+        tool: agentEmail.EMAIL_SETTINGS_TOOL,
+      })
+    ).map((r) => ({
+      action: (JSON.parse(r.input_summary) as { action: string }).action,
+      human: r.human_id,
+      author: r.author_human,
+    }));
+
+  beforeAll(async () => {
+    home = mkdtempSync(join(tmpdir(), "fr-email-routes-"));
+    const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+    mailbox = new FakeMailbox(AGENT_ADDRESS);
+    rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs,
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new FakeProvider({ clock, latency: "none", onNoMatch: "throw" }),
+      registryDir: REGISTRY,
+      identity: {
+        humanName: "J",
+        email: "j@example.test",
+        timezone: "Europe/Zurich",
+        agentName: "Alice",
+      },
+      appVersion: "0.1.0-test",
+      sandboxDetection: { engine: "none", reason: "test: no engine", checkedAt: clock.nowIso() },
+      browser: { mode: "static" },
+      notifications: { platform: "linux", mailboxFactory: async () => mailbox },
+    });
+    // A second human with an agent of their own on the same state (ADR 0041 item 4).
+    const bob = await rt.store.human.insert({ name: "Bob", email: "bob@example.test" });
+    otherAgentId = (
+      await rt.store.agent.insert({ name: "Bobby", owner_human_id: bob.id, kind: "principal" })
+    ).id;
+    ({ app, token } = createDaemonApp(rt));
+  }, 120_000);
+  afterAll(async () => {
+    await rt?.close();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it("lists the seven routes in DAEMON_ROUTES and serves them behind the bearer check", async () => {
+    for (const key of [
+      "emailSettings",
+      "updateEmailSettings",
+      "emailSent",
+      "pauseEmail",
+      "resumeEmail",
+      "rotateEmailMarker",
+      "emailCommands",
+    ] as const) {
+      expect(DAEMON_ROUTES).toHaveProperty(key);
+      expect(DAEMON_ROUTES[key]).toContain("/email/");
+    }
+    expect((await req(settingsPath(), {}, false)).status).toBe(401);
+    expect((await req(`/agents/${rt.agent.id}/email/commands`, {}, false)).status).toBe(401);
+    const fresh = await req(settingsPath());
+    expect(fresh.status).toBe(200);
+    const body = await json(fresh);
+    // The daemon's contract (api-types) and the capability's schema agree on the shape.
+    expect(EmailSettingsView.safeParse(body).success).toBe(true);
+    expect(agentEmail.AgentEmailConfigSchema.safeParse(body).success).toBe(true);
+    expect(Object.keys(EmailSettingsView.shape.settings.shape).sort()).toEqual(
+      Object.keys(agentEmail.EmailSettingsSchema.shape).sort(),
+    );
+    expect(Object.keys(EmailSettingsView.shape.commands.shape).sort()).toEqual(
+      Object.keys(agentEmail.EmailCommandSettingsSchema.shape).sort(),
+    );
+    expect(body).toMatchObject({
+      settings: { mode: "off", paused: false, dailySendCap: 20, perRecipientDailyCap: 5 },
+      commands: { enabled: false },
+    });
+  });
+
+  it("PUT settings picks the mode and the mailbox; the policy sees it at once and the change is one email.settings audit row by the daemon's human", async () => {
+    // Mode off: the policy refuses before anything reaches the mailbox.
+    await expect(sendToStranger()).rejects.toMatchObject({ code: "tool_not_allowed" });
+    const updated = await put(settingsPath(), {
+      settings: {
+        mode: "full_discretion",
+        mailbox: {
+          address: AGENT_ADDRESS,
+          imap: { host: "imap.agent.test", user: "alice", passwordRef: "secret:alice_imap" },
+          smtp: null,
+        },
+      },
+    });
+    expect(updated.status).toBe(200);
+    expect(await json(updated)).toMatchObject({
+      settings: {
+        mode: "full_discretion",
+        mailbox: { address: AGENT_ADDRESS, imap: { passwordRef: "secret:alice_imap" } },
+      },
+    });
+    const bad = await put(settingsPath(), { settings: { mode: "yolo" } });
+    expect(bad.status).toBe(400);
+    expect(((await json(bad)).error as { code: string }).code).toBe("validation");
+    const value = await put(settingsPath(), {
+      settings: {
+        mailbox: {
+          address: AGENT_ADDRESS,
+          imap: { host: "imap.agent.test", user: "alice", passwordRef: "hunter22xyz" },
+          smtp: null,
+        },
+      },
+    });
+    expect(value.status).toBe(400);
+    expect(await settingsAudit()).toEqual([
+      { action: "update", human: rt.human.id, author: rt.human.id },
+    ]);
+    await rt.capabilities.refresh();
+    expect(rt.capabilities.email.presence.enabled()).toBe(true);
+    expect((await sendToStranger()).status).toBe("sent");
+    expect(mailbox.sent).toHaveLength(1);
+  });
+
+  it("the tray's pause route holds the next send and resume releases it (S.28)", async () => {
+    const paused = await post(`/agents/${rt.agent.id}/email/pause`);
+    expect(paused.status).toBe(200);
+    expect(await json(paused)).toEqual({ paused: true });
+    expect((await json(await req(settingsPath()))).settings).toMatchObject({ paused: true });
+    const held = await sendToStranger();
+    expect(held.status).toBe("queued");
+    expect(mailbox.sent).toHaveLength(1);
+    const resumed = await post(`/agents/${rt.agent.id}/email/resume`);
+    expect(resumed.status).toBe(200);
+    expect(await json(resumed)).toEqual({ paused: false });
+    expect((await sendToStranger()).status).toBe("sent");
+    expect(mailbox.sent).toHaveLength(2);
+    expect((await settingsAudit()).map((r) => r.action)).toEqual(["update", "pause", "resume"]);
+  });
+
+  it("GET sent lists the agent's copies newest first; GET commands serves the audit rows newest first", async () => {
+    await clock.advance(1000);
+    await rt.capabilities.email.ports.policy.send(
+      { to: [STRANGER], subject: "later", text: "second line" },
+      { agentId: rt.agent.id, humanId: rt.human.id },
+    );
+    const sent = await req(`/agents/${rt.agent.id}/email/sent?limit=2`);
+    expect(sent.status).toBe(200);
+    const rows = (await json(sent)).rows as Array<{ subject: string; to: string[] }>;
+    expect(rows.map((r) => r.subject)).toEqual(["later", "hello"]);
+    expect(rows[0]?.to).toEqual([STRANGER]);
+
+    const empty = await req(`/agents/${rt.agent.id}/email/commands`);
+    expect(empty.status).toBe(200);
+    expect(await json(empty)).toEqual({ rows: [] });
+    // Rows the runner's handler writes into the shared state: one per command.
+    for (const [i, row] of [
+      {
+        allowed: false,
+        denied_reason: "ignored: no_marker",
+        input: { messageId: "<m1@example.test>", from: "j@example.test", subject: "no tag" },
+        result: { outcome: "ignored", reason: "no_marker" },
+      },
+      {
+        allowed: true,
+        denied_reason: null,
+        input: { messageId: "<m2@example.test>", from: "j@example.test", subject: "[FR-x] q" },
+        result: {
+          outcome: "question",
+          interpretation: { kind: "question", summary: "What is due?", title: "" },
+        },
+      },
+    ].entries()) {
+      await clock.advance(1000);
+      await rt.store.auditLog.append({
+        tool: agentEmail.EMAIL_COMMAND_TOOL,
+        allowed: row.allowed,
+        denied_reason: row.denied_reason,
+        agent_id: rt.agent.id,
+        human_id: rt.human.id,
+        session_id: i === 1 ? "sess_1" : null,
+        input_summary: JSON.stringify(row.input),
+        result_summary: JSON.stringify(row.result),
+        cost_usd_micro: 0,
+        occurred_at: clock.nowIso(),
+        author_agent: rt.agent.id,
+      });
+    }
+    const commands = await req(`/agents/${rt.agent.id}/email/commands?limit=10`);
+    const audit = (await json(commands)).rows as Array<Record<string, unknown>>;
+    expect(audit).toHaveLength(2);
+    expect(audit[0]).toMatchObject({
+      obeyed: true,
+      deniedReason: null,
+      sessionId: "sess_1",
+      email: { from: "j@example.test", subject: "[FR-x] q" },
+      result: { outcome: "question", interpretation: { kind: "question" } },
+    });
+    expect(audit[1]).toMatchObject({ obeyed: false, deniedReason: "ignored: no_marker" });
+    expect((await json(await req(`/agents/${rt.agent.id}/email/commands?limit=1`))).rows).toEqual([
+      audit[0],
+    ]);
+  });
+
+  it("rotate-marker answers a fresh marker that the settings then carry", async () => {
+    const before = (await json(await req(settingsPath()))).commands as { marker: string };
+    const rotated = await post(`/agents/${rt.agent.id}/email/rotate-marker`);
+    expect(rotated.status).toBe(200);
+    const marker = (await json(rotated)).marker as string;
+    expect(marker).toMatch(/^\[FR-[a-z2-9]{4}\]$/);
+    expect(marker).not.toBe(before.marker);
+    expect((await json(await req(settingsPath()))).commands).toMatchObject({ marker });
+  });
+
+  it("refuses another human's agent and an unknown agent on every route (403, nothing changed)", async () => {
+    for (const [method, path] of [
+      ["GET", `/agents/${otherAgentId}/email/settings`],
+      ["PUT", `/agents/${otherAgentId}/email/settings`],
+      ["GET", `/agents/${otherAgentId}/email/sent`],
+      ["POST", `/agents/${otherAgentId}/email/pause`],
+      ["POST", `/agents/${otherAgentId}/email/resume`],
+      ["POST", `/agents/${otherAgentId}/email/rotate-marker`],
+      ["GET", `/agents/${otherAgentId}/email/commands`],
+      ["POST", "/agents/nobody/email/pause"],
+    ] as const) {
+      const res = await req(path, {
+        method,
+        ...(method === "GET" ? {} : { body: JSON.stringify({ settings: { paused: true } }) }),
+      });
+      expect(res.status, `${method} ${path}`).toBe(403);
+      expect(((await json(res)).error as { code: string }).code).toBe("tool_not_allowed");
+    }
+    // Bob's agent has no settings row of its own written by this daemon's human.
+    expect(
+      await rt.store.extension.byName(
+        agentEmail.EMAIL_EXTENSION_KIND,
+        agentEmail.emailExtensionName(otherAgentId),
+      ),
+    ).toBeFalsy();
+  });
+});

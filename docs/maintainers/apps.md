@@ -70,6 +70,7 @@ apps/ui/
     pages/               HomePage, NewProjectDialog, ProjectPage (+ project/*Tab, *Section,
                          NewTaskDialog, StartSessionDialog), SessionPage, InboxPage, MemoryPage,
                          ExtensionsPage, ChangesPage, PerformancePage, UpdatesPage, SettingsPage,
+                         EmailSettingsPage (Settings -> Capabilities -> Email),
                          PlaceholderPages (NotFound only)
     mobile/              the phone screens (module R; its own doc section, not covered here)
   test/                  Vitest + Testing Library (jsdom); fixtures.ts, fake-daemon.ts, helpers.tsx
@@ -80,7 +81,7 @@ apps/ui/
 
 | Route | Page | Data |
 | --- | --- | --- |
-| `/` | Home: project cards (stage, next milestone, health, spend vs budget, waiting-on-you, latest critic grade), New project dialog | store (`GET /projects`), `POST /projects` |
+| `/` | Home: project cards (stage, next milestone, health, spend vs budget, waiting-on-you, latest critic grade), New project dialog (a pasted brief sends `intake: true`, so the PM intake drafts the plan, the doc set and the first-session plan in the background and the proposal lands in the inbox; spec A.2, ADR 0055) | store (`GET /projects`), `POST /projects` |
 | `/projects/:id/:tab?` | Project page; tabs `summary`, `plan`, `tasks`, `docs`, `reviews`, `costs`, `data`, `chat` (default `summary`); opening a project makes it active | `GET /projects/:id` and the tab routes below |
 | `summary` tab | the cached one-screen summary with Read aloud; **Next session** (queue items by priority with type badges, add note/task/correction/idea with a priority, dismiss; consumed items collapsed); **Peers** (per agent: online, active claims with expiry, open PRs, last handoff done/in flight/blocked/next, files in flight); **Decisions** (question, chosen option, the others, rationale, who, supersedes) | `GET /projects/:id/summary`, `GET /projects/:id/queue`, `POST /projects/:id/queue`, `POST /queue/:id/dismiss` (proposed), `GET /projects/:id/peers`, `GET /projects/:id/decisions` |
 | `plan` tab | milestone **timeline** (SVG: dated milestones on a time axis with today's tick, undated ones after), milestones with status, success criteria and their tasks, the task **dependency graph** (layered SVG, a task after everything it depends on); without a milestones route the timeline and the list are derived from the tasks and the card (the card's dated next milestone on the axis, the ids the tasks reference after it) behind a route-missing notice; today's tick comes from a `now` prop (wall clock by default, injected in tests); in **small-project mode** (spec B.6, the card's `smallProjectMode`) the tab shows instead the one milestone (the open one from the route, or the card's next milestone without it; milestones on file from before the mode are named, not hidden), the tasks as a **flat list** in the daemon's order with no grouping and no timeline, and the graph; every milestone the route served (never a derived one) has **Edit**: a dialog with name, target date, status and success criteria (one per line) under a **required reason**, posted with the row's `version` (spec B.5; the daemon's refusal, a stale version or a bad date, stays in the dialog), and the reason of the last change is shown under the milestone | `GET /projects/:id/tasks`, `GET /projects/:id/milestones`, `POST /milestones/:id` |
@@ -91,13 +92,14 @@ apps/ui/
 | `data` tab | registered datasets (name, kind, size, locator, sample, who), register by path or URI, remove (two clicks), import from zip/folder/repo with the result | `GET /projects/:id/data`, `POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/import` (proposed) |
 | `chat` tab | quick chat with streaming, read-back confirmation, make-this-a-task | `POST /chat/stream` |
 | `/sessions/:id` | Live session view: header (status, agent, current task + specialist, steps/stepCap, spent/cap bar, Stop), event stream with level chips, raw JSON toggle, follow/auto-scroll | `GET /sessions/:id`, `GET /sessions/:id/events` (JSON backlog, then SSE), `POST /sessions/:id/stop` |
-| `/inbox` | Requests (blocking first, newest first) with option buttons and a free-text answer, messages with read marking; reloads when the install stream reports a blocking count the page has not seen | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /messages/:id/read` |
-| `/memory` | one view per principal agent (the human's own first, then the peers' as listed-but-not-readable), the critic, shared lessons, each with active and pinned counts; search (debounced); per lesson: pin, tags, confidence, uses, last used, source, project, file; edit text and tags, delete (two clicks); consolidation proposals with merged/contradictions/retired and "Run now" (its own route-missing notice, under the Consolidation heading, when the daemon lacks the consolidation routes) | `GET /memory/scopes`, `GET /memory?scope=&agentId=&q=`, `PUT /memory/lessons/:id`, `POST /memory/lessons/:id/pin`, `DELETE /memory/lessons/:id`, `GET /memory/consolidation`, `POST /memory/consolidation/run` |
+| `/inbox` | Requests (blocking first, newest first) with option buttons and a free-text answer, messages with read marking; reloads when the install stream reports a blocking count the page has not seen. An intake proposal (spec A.2, ADR 0055: a card whose `key` is `intake:<project>`) renders as a plan card (`IntakeCard`, `intakeCardOf`): phases with their tasks (tier, priority, specialist, dependencies), the docs and where they go, the first session with estimates, the planning call's cost; the raw card stays behind "Change card" and the options are the ordinary approve / reject buttons | `GET /inbox?humanId=`, `POST /requests/:id/answer`, `POST /messages/:id/read` |
+| `/memory` | one view per principal agent (the human's own first, then the peers' as listed-but-not-readable), the critic, shared lessons, each with active and pinned counts; search (debounced); per lesson: pin, tags, confidence, uses, last used, source, project, file; edit text and tags, delete (two clicks); Share (spec G.6: proposes the lesson for every project; shown for an active lesson that is not already global shared, `canShare`; the row then says the critic reviews it at the next session end and gains the `general` tag); "Shared across projects": the proposals waiting for the critic and the offers of promoted lessons to the human's other projects (open first: Accept for that project / Dismiss, applied at once; decided ones with their outcome; its own route-missing notice when the daemon lacks the offers route); consolidation proposals with merged/contradictions/retired and "Run now" (its own route-missing notice, under the Consolidation heading, when the daemon lacks the consolidation routes) | `GET /memory/scopes`, `GET /memory?scope=&agentId=&q=`, `PUT /memory/lessons/:id`, `POST /memory/lessons/:id/pin`, `DELETE /memory/lessons/:id`, `POST /memory/lessons/:id/propose`, `GET /memory/promotions`, `GET /memory/offers`, `POST /memory/offers/:id/answer`, `GET /memory/consolidation`, `POST /memory/consolidation/run` |
 | `/extensions` | grouped by kind (connectors and MCP servers, skills, specialists, capabilities, model providers): name, version, status, connected, cost, description, permissions summary with the full list behind details; On/Off switch; Remove (two clicks); pending rows show the review (stage, risk, summary, tools, requested permissions) with Approve/Deny; Add dialog: catalog with search and kind filter, or an MCP server URL; reloads on every `extension.changed` frame | `GET /extensions`, `GET /extensions/catalog`, `POST /extensions` (201 or 202), `POST /extensions/:id/toggle`, `/approve`, `/deny`, `DELETE /extensions/:id` |
 | `/changes` | the change log newest first: source, scope, project, undo state, who asked and when, the sentence, the words used, revert time, commands / before / after behind details, Undo while undoable; project filter and "undoable only" | `GET /changes?projectId=&undoable=`, `POST /changes/:id/undo` |
 | `/performance` | per mode: target (first token / first audio / total / by task), samples, first-token p50/p95, total p50/p95, within-target share, a bar of the p95 against the target (met/missed in words); recent runs; estimate accuracy (overall and per specialist and kind); project filter; "Audit log" with a format select (JSON lines / CSV) and **Export audit log** (spec S.9): fetches the daemon's file through `client.auditExport`, saves it under the daemon's name with `saveTextFile` (`src/lib/download.ts`: a Blob behind an object URL on a hidden anchor, clicked once) and reports `Exported N rows to <file>`; says so when the browser cannot save files or the daemon lacks the route, pointing at `fr audit export` | `GET /performance?projectId=` (proposed), `GET /costs/estimates`, `GET /audit/export?format=` |
 | `/updates` | app: running and installed version, channel, state, the available release with changelog, size and "Update and restart", previous version with "Roll back and restart", last rollback, rejected releases, last error; connector updates (installed vs available); model updates; model watch: latest report with recommendations to adopt/ignore/remind, "Run now", recent reports. Asks the feed first and falls back to the local state with a banner | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback`, `GET /model-watch/reports`, `/latest`, `POST /model-watch/run`, `POST /model-watch/reports/:id/answer` |
-| `/settings` | theme override, daemon connection status (with links to Updates and Extensions), every setting grouped by scope with the scope badge; rows that map to a command have Change: a dialog with the current value, the change card from the daemon, Yes/No (a tap; a high-risk card asks this paired device), the sentence with Undo, a link to Changes; other rows say read-only | `GET /settings`, `POST /commands/execute`, `POST /commands/:id/confirm`, `POST /changes/:id/undo` |
+| `/settings` | theme override, daemon connection status (with links to Updates and Extensions), the **Sources** section (spec A.4: connected GitHub orgs, accounts, repositories and local folders with their last scan's counts; connect one by kind, locator, display name and, for a GitHub kind, the token's vault reference, never a value; Scan or Rescan, Candidates, Remove with a confirmation that says projects stay; each candidate with its status, the existing-install mark, a link to the project it is or duplicates, and Create project on a proposal, which refreshes the project list; a daemon without the route shows a note), a **Capabilities** section linking to Email (the browser and desktop control are switched in Extensions), every setting grouped by scope with the scope badge; rows that map to a command have Change: a dialog with the current value, the change card from the daemon, Yes/No (a tap; a high-risk card asks this paired device), the sentence with Undo, a link to Changes; other rows say read-only | `GET /settings`, `POST /commands/execute`, `POST /commands/:id/confirm`, `POST /changes/:id/undo` |
+| `/settings/capabilities/email` | Settings -> Capabilities -> Email (spec S.15, S.28, S.29, T.14; ADR 0066): one card per agent of the signed-in human (`/agents` filtered by `/me`, principal first) with the mode badge and the mailbox address; pause / resume with the state (the tray's routes); the **mode picker** over the five modes with their one-line meanings, the plain full-discretion sentence ("the agent can email strangers on your behalf …") under the option before any change and again in a confirmation dialog that must be answered before the `PUT` (cancel sends nothing; every other mode applies at once); the limits that stay on (daily and per-recipient caps, signature on/off and text, daily digest) and, in allowlist mode only, the allowlist editor (one entry per line); the mailbox form (address, IMAP, SMTP, passwords as `secret:<name>` references; the daemon's 400 for a value shown as such); the command settings (toggle, the registered address, the private marker with Rotate, the task cap, the autonomy level); the **command audit** newest first (when, from, subject, interpretation, result with a session link, the reason a mail was ignored); the sent copies newest first (to you / to others, the copy as sent). A daemon without the routes shows the route-missing state per card; another human's agent is not listed | `GET|PUT /agents/:agentId/email/settings`, `POST /agents/:agentId/email/pause`, `.../resume`, `.../rotate-marker`, `GET /agents/:agentId/email/commands?limit=`, `GET /agents/:agentId/email/sent?limit=` |
 
 ### API client
 
@@ -106,7 +108,12 @@ apps/ui/
 extensions, updates, model watch, reviews, memory and consolidation, commands and the change
 log, `milestones` and `changeMilestone`) plus the proposed routes (`queue`, `enqueue`,
 `dismissQueueItem`, `dataAssets`, `registerDataAsset`, `removeDataAsset`, `importProject`,
-`docs`, `doc`, `performance`), `auditExport(filter?)` (spec S.9: `GET /audit/export` with `agentId`, `sessionId`,
+`docs`, `doc`, `performance`), the source discovery methods (spec A.4: `sources`, `addSource`, `scanSource`,
+`sourceCandidates`, `acceptCandidate`, `removeSource` over `DAEMON_ROUTES`, their schemas
+read straight from `daemon/api-types`, no mirror), the agent email routes (`emailSettings`,
+`updateEmailSettings`, `emailSent`, `pauseEmail`, `resumeEmail`, `rotateEmailMarker`,
+`emailCommands`; views from `api-types.ts`, no mirror), `auditExport(filter?)` (spec S.9:
+`GET /audit/export` with `agentId`, `sessionId`,
 `from`, `to` and `format`; the body as text with the row count and the base name from
 `Content-Disposition`, `filenameFromDisposition` / `countExportRows`) and `url()` / `raw()`
 for the stream helpers. Paths come from `routePath(name,
@@ -114,7 +121,8 @@ params)` over `DAEMON_ROUTES` or `proposedPath(name, params)` over `PROPOSED_ROU
 follows the daemon's entry as soon as one exists), URL-encoded; the client sends
 `Authorization: Bearer <token>` and validates every JSON body with the contract's zod schema.
 Failures are `ApiError { code, status, details }`: the daemon's `ErrorBody.code` when it sent
-one, else `ui.network`, `ui.http_error`, `ui.invalid_response`, `ui.aborted`.
+one (flat, or wrapped under `error` as the capability routes for email and desktop answer
+it), else `ui.network`, `ui.http_error`, `ui.invalid_response`, `ui.aborted`.
 `isRouteMissing(error)` is true for a 404/405/501 that is not a typed `not_found` about an
 entity; `useAsync` exposes it as `routeMissing` and the pages render `<RouteMissing>` (ADR
 0032). `describeError()` turns an error into a banner line without leaking the token (a typed
@@ -130,6 +138,13 @@ from the UI. `contracts.ts` mirrors the schemas of `extensions/types.ts`, `updat
 fixtures with both sides and compares key sets so drift fails before a screen does.
 
 ### Commands from the UI
+
+The email page is the exception (ADR 0066): a mode change, the caps, the allowlist, the
+mailbox and the command settings go through the capability's own `PUT
+/agents/:agentId/email/settings`, which audits every change as an `email.settings` row and
+which the policy reads on the next send; the registry has no email setting, so there is no
+change card and no undo for them, and the full-discretion confirmation is the page's own
+dialog repeating the spec's sentence.
 
 The settings screen is a client of the command registry (spec Q.1, ADR 0037):
 `commandForSetting(row)` maps `project.autonomy` to `autonomy.set`, `project.budget` and
@@ -207,8 +222,12 @@ with mutable state: projects, tasks, sessions, events, requests, messages, kill 
 chat confirmation, extensions, the daemon version, model watch reports, reviews, lessons,
 consolidation proposals, the change log, pending commands, the queue, data assets, milestones
 (`POST /milestones/:id` mirrors the daemon: the version check and a required reason, 409
-`conflict` otherwise, the human as author); decisions, the peer feed, docs and performance are
-served read-only) and
+`conflict` otherwise, the human as author), sources and their candidates (the `/sources`
+routes: a scan of a fresh source finds two candidates named after the locator, one an
+existing install, a scan of the fixture source changes nothing, accepting a proposal adds a
+project card and emits `project.changed`, a token value instead of a reference is refused
+with the daemon's message); decisions, the peer feed, docs and performance are served
+read-only) and
 `startFakeDaemon({ port })` (`@hono/node-server` on 127.0.0.1). Its `/health` answer is the
 `HEALTH` fixture with the extension counts derived from the extension state (3 enabled, 1
 pending with the fixtures). It requires the bearer token on every route (and accepts `?token=`
@@ -304,10 +323,16 @@ the mode named, a small project without a milestone yet, the grouped tab unchang
 flag off; the dialog's "project default (tier N)" option from the card, no `riskTier` in the
 posted body unless picked and the picked one sent, a card without the field naming no number),
 `reviews` (tones, trend, newest first,
-findings, verdict filter, missing route), `tasks`, `session`, `inbox`, `chat`, `memory` (view
+findings, verdict filter, missing route), `tasks`, `session`, `inbox` (sorting, options,
+free text, reload on a streamed count, mark read; an intake proposal rendered as the plan card
+with phases, tasks with tier / priority / specialist / dependencies, docs and their target, the
+first session with estimates and the call's cost, the ordinary options kept, and `intakeCardOf`
+reading only intake cards that carry a proposal; spec A.2, ADR 0055), `chat`, `memory` (view
 order, pinned first, search, critic and shared views, a peer's agent not readable, edit / pin
-/ delete, consolidation, missing memory routes with both notices, missing consolidation route
-alone), `extensions` (permission summary, every kind with status and
+/ delete, consolidation, the offers and pending proposals with accept and dismiss posted and
+the outcome shown, Share on a lesson row posting the proposal and joining the pending list
+with no Share on a global shared lesson, missing memory routes with all three notices, missing
+offers route alone, missing consolidation route alone), `extensions` (permission summary, every kind with status and
 review, toggle and remove, add from the catalog then approve, add from a URL then deny, reload
 on `extension.changed`), `updates` (states, available release with changelog, apply with the
 restart banner, rollback, model watch adopt and run, feed failure fallback), `performance`
@@ -321,6 +346,23 @@ URLs),
 `changes` (rows with words / commands / before / after, undo and the undo row, filters,
 missing route), `settings` (scope on every row, command mapping, autonomy by one step: card →
 yes → sentence → undo → the change log row, high risk needs this device, cancel and refusal),
+`sources` (spec A.4: counts and kind labels; the fixture source with its reference and counts,
+its candidates with statuses, the install mark and the duplicate's project link, Create
+project on a proposal posting to the accept route with the project landing in the store and
+the counts updated; a folder source connected (the posted body), scanned to two proposals,
+removed after the confirmation; a pasted token refused by the daemon and shown; the missing
+route), `contracts` also parses the source fixtures with the daemon's schemas and checks the
+route table,
+`email-settings` (the audit row formatting; reached from Settings, the human's agents with the
+picker, the five meanings and the full-discretion sentence before any change; full discretion
+confirmed in the dialog that repeats the sentence, cancel sending nothing, yes sending the
+`PUT`; another mode applied at once with the allowlist editor appearing and saving with the
+caps; pause and resume through the tray's routes with the state; the mailbox saved with
+references and a value refused by the fake's 400 shown as such, the marker rotated; the
+command audit newest first with when, from, interpretation, result, session link and the
+ignored reason, the sent copies newest first, the empty states; the route-missing state per
+card against a daemon without the routes), `client` (the capability routes' nested error body
+read as a typed 403 with its own sentence),
 `shell` (matcher, palette filter, g-sequences incl. `g c` / `g t` / `g u`, switcher, kill
 switch, persistence).
 
@@ -767,8 +809,10 @@ inbox, answers requests (high risk with the platform biometric prompt), relays q
 natural-language control to the PC as remote commands, and shows the change log with Undo.
 Heavy work stays on the PC or the cloud runner (R.8).
 
-Requirements covered: R.1 (Tauri 2 Android target sharing the UI; APK signed by
-`scripts/android-keystore.mjs`; Play track and update channel pending), R.2 (pairing by QR /
+Requirements covered: R.1 (Tauri 2 Android target sharing the UI; the release APK signed by
+Gradle with the keystore `scripts/android-keystore.mjs` prepares and verified by
+`scripts/android-apk-verify.mjs` in CI, see `release.md` "Signing"; Play track and update
+channel pending), R.2 (pairing by QR /
 `fr://` deep link / typed code; own key; forget here, revoke on the desktop), R.3 (state
 service client, live SSE with polling fallback, offline outbox flushed on reconnect), R.4
 (start / pause / stop / kill as remote commands with `target: "pc"`; the live session log
@@ -812,6 +856,8 @@ apps/mobile/
   package.json       tauri CLI scripts; test:emulator -> e2e/run.mjs
   e2e/run.mjs        emulator run (build, boot, install, fake service, CDP smoke); README.md has the
                      adb / gradle commands by hand
+  e2e/cdp.mjs        raw CDP client and DOM driver for the smoke (ADR 0054): /json/list, page socket,
+                     Runtime.evaluate queries, Input.* clicks and fills; cdp.test.ts against a fake endpoint
   src-tauri/
     Cargo.toml, tauri.conf.json (no static window; deep-link scheme "fr"; CSP allows 127.0.0.1 and 10.0.2.2)
     capabilities/default.json (core, deep-link, log), mobile.json (biometric, barcode-scanner; Android/iOS only)
@@ -826,6 +872,9 @@ apps/mobile/
                        fr://pair link parser
     src/dirs.rs        app_dirs(): mirror of packages/platform/src/paths.ts appDirs()
     src/push.rs        PushPort: PollingPush (shipped) and FcmPush (seam), configured(token)
+    gen/android/app/build.gradle.kts
+                       the Tauri-generated Gradle module (kept after `android init`), plus the release
+                       signing config read from gen/android/keystore.properties when the file exists
     gen/android/app/src/main/java/app/forerunner/mobile/KeystorePlugin.kt
                        AES-256-GCM key in the Android Keystore (StrongBox when present) that wraps the
                        seed and the token; info (model, strongBox, biometric, fcmToken when FCM exists)
@@ -949,12 +998,32 @@ quiet hours. The FCM wiring is listed in ADR 0032 item 6.
   string without the prompt's ticket and consuming it on use, push stand-in);
   `cargo clippy -D warnings`, `cargo fmt --check`.
 - `apps/mobile/e2e/run.mjs`: the emulator smoke (CI's Android job; skips visibly here, and
-  every skip, the release-APK one included, fails under `FR_ANDROID_REQUIRE=1`).
+  every skip, the release-APK one included, fails under `FR_ANDROID_REQUIRE=1`). It attaches
+  to the WebView over raw CDP on the page target (`e2e/cdp.mjs`, ADR 0054), not Playwright:
+  the Android WebView refuses the browser-level commands `connectOverCDP` starts with.
+- `apps/mobile/e2e/cdp.test.ts` (unit project): the driver against a fake DevTools endpoint
+  (`node:http` serving `/json/list` and `/json`, a `ws` server answering the page socket, a
+  jsdom document with `data-box` layout boxes and `elementFromPoint` over them): page-target
+  selection (workers never, the preferred page over the first), socket URL on the forwarded
+  port, id-correlated responses with events ignored, protocol errors, request timeout, close
+  rejecting the pending requests, connect failure; `getByRole` (heading, button, link; name as
+  substring, case-insensitive, `exact`, hidden excluded), chained scopes, innermost text
+  match (the scope root included), `filter({ has })`, `first` / `nth`, `count`,
+  `getAttribute`, `innerText`; `waitFor` resolving when the element becomes visible and
+  timing out with the locator named; `click` as `mouseMoved` / `mousePressed` /
+  `mouseReleased` at the box centre after `scrollIntoView`, strict-mode refusal, an
+  intercepting overlay reported; `fill` through `Input.insertText` after focus and select-all,
+  the native-setter fallback with `input` and `change`, `not_editable`; `connectPage` waiting
+  for the target and giving up with `cdp.no_page_target`.
+- `scripts/android-keystore.test.ts` and `scripts/android-apk-verify.test.ts` (`release.md`
+  "Tests"): the Gradle signing config reads what the keystore script writes, the workflows
+  verify the release APK with `apksigner` before uploading it.
 
 ```
 pnpm --filter @forerunner/ui test -- test/mobile- test/state-
 pnpm --filter @forerunner/ui exec playwright test e2e/mobile-
 cd apps/mobile/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+pnpm exec vitest run --project unit apps/mobile/e2e
 node apps/mobile/e2e/run.mjs
 ```
 
@@ -977,12 +1046,22 @@ node apps/mobile/e2e/run.mjs
   rows and `undoOf`.
 - Push is the polling stand-in (`docs/status/BLOCKERS.md`, Firebase row); notices appear only
   while the app is open.
-- The CI Android job's release build is the uploaded artefact; `test:emulator` then builds a
-  debug APK of its own for the smoke (x86_64, a few minutes on top), because a release
-  WebView has debugging off. Passing `--debug` in the workflow's build step would save that
-  time (the workflow is the orchestrator's file). The debug Gradle build has not run on the
-  build box (no emulator, no KVM); the Kotlin plugin compiles against the `tauri-android`
-  project the Tauri CLI generates.
+- The raw CDP driver (`e2e/cdp.mjs`) has run against the fake endpoint and jsdom only; its
+  first run against the WebView is the next `android.yml` dispatch (BLOCKERS.md, emulator
+  row). Two assumptions it makes about the WebView are untested here: `Input.insertText`
+  commits like an IME (otherwise `fill` falls back to the native value setter and says so
+  through the value check), and `Input.dispatchMouseEvent` coordinates are the layout
+  viewport's CSS pixels (what `getBoundingClientRect` returns; the bundle's viewport meta is
+  `width=device-width, initial-scale=1`, so no page scale applies). The driver covers the
+  calls `smoke()` makes and nothing more: no keyboard shortcuts, no touch events, no frames,
+  no screenshots.
+- The CI Android job builds twice: the release APK (signed from `keystore.properties`,
+  verified by `scripts/android-apk-verify.mjs`, uploaded as the artefact) and then, inside
+  `test:emulator`, a debug APK for the smoke (x86_64, a few minutes on top), because a release
+  WebView has debugging off. Both are needed: the release build is the signature check,
+  the debug one the smoke. Neither Gradle build has run on the build box (no Android SDK, no
+  emulator, no KVM); the Kotlin plugin and the signing config compile against the
+  `tauri-android` project the Tauri CLI generates, in the Android workflow.
 - `test/fake-state-service.ts` imports the service's `auth/crypto.ts` by relative path; a
   workspace dependency on the service package would be cleaner once `apps/ui/package.json`
   may change.

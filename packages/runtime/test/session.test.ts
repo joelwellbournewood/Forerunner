@@ -427,11 +427,15 @@ describe("session runner", () => {
       autonomy: 0,
       grant,
     });
-    expect(res.status).toBe("paused");
+    // The proposal is filed and the session ends (`stopped`, `plan_awaiting_approval`): it is
+    // closed rather than left `paused`, so the approval can start the follow-up (ADR 0053).
+    expect(res.status).toBe("stopped");
+    expect(res.stopReason).toBe("plan_awaiting_approval");
     expect(exec.executed).toHaveLength(0);
     const reqs = await w.store.humanRequest.open({ humanId: w.human });
     expect(reqs).toHaveLength(1);
     expect(reqs[0]?.steps[0]).toContain("T (coder");
+    expect(await w.store.session.active(w.alice)).toEqual([]);
   });
 
   it("refuses a second concurrent session for the same agent and a 'stop' message ends work", async () => {

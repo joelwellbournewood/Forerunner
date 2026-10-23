@@ -6,7 +6,7 @@ import {
   log,
   newId,
 } from "@forerunner/platform";
-import type { AgentRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
+import type { AgentRow, JsonObject, SessionRow, StateStore, TaskRow } from "@forerunner/state";
 import type { ContextManager, ContextSessionEnd } from "../context/manager.ts";
 import type { AutonomyLevel } from "../enforcement/autonomy.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
@@ -17,10 +17,13 @@ import {
   type CriticPort,
   DEFAULT_MEMORY_TOKEN_BUDGET,
   type LessonCandidate,
+  MAX_PROMOTION_REVIEWS_PER_SESSION,
   type MemoryPort,
   type MemoryRecallResult,
   memoryBudgetOf,
+  type ProjectDocsPort,
   type SessionReviewOutcome,
+  type SessionStatusOutcome,
   type TaskReviewOutcome,
 } from "../loop/ports.ts";
 import type { SchemaSyncPort } from "../update/sync.ts";
@@ -28,6 +31,13 @@ import { renderStateBrief, type StateBrief } from "./brief.ts";
 import { type ChecklistInput, runStartupChecklist } from "./checklist.ts";
 import { fileBlockedByFindingsRequest } from "./findings.ts";
 import { describeRejectedLessons, type RejectedLesson, screenLessons } from "./lessons.ts";
+import {
+  describeHeard,
+  type HeardDelivery,
+  type HeardLine,
+  heardLineOf,
+  summarizeHeard,
+} from "./live-chat.ts";
 import {
   buildPeerFeed,
   detectOverlap,
@@ -37,6 +47,13 @@ import {
   renderPeerFeed,
   TASK_FILES_EVENT,
 } from "./peers.ts";
+import {
+  PLAN_APPROVAL_OPTIONS,
+  parsePlanId,
+  planApprovalOf,
+  planIdOf,
+  planKeyOf,
+} from "./plan-approval.ts";
 
 /**
  * One working period of a principal agent (spec E). Code owns the skeleton: checklist, plan
@@ -135,6 +152,12 @@ export interface TaskExecutor {
     budget: SessionBudget;
     item: PlanItem;
     signal: AbortSignal;
+    /**
+     * What the human said during the session since the last task started (spec O.9): lines
+     * the runner collected at this boundary, for the task's brief as quoted data. Each line
+     * reaches one task.
+     */
+    heard?: readonly HeardLine[];
   }): Promise<TaskExecutionResult>;
 }
 
@@ -148,7 +171,14 @@ export interface SessionStartOptions {
   reserveShare?: number;
   /** Autonomy level for this session; defaults to the project's. */
   autonomy?: AutonomyLevel;
-  planApproved?: boolean;
+  /**
+   * The plan the human approved (spec J.6, J.7; ADR 0053): the `plan_id` of the answered plan
+   * request (`plan:<session>#<hash>`), which runs the plan only while the plan computed now is
+   * that plan (same task ids in the same order), else the changed plan is filed again and
+   * nothing runs. `true` approves whatever is planned and is for callers that are the approver
+   * themselves (the scenario harness); the daemon and the cloud runner pass the bound id.
+   */
+  planApproved?: boolean | string;
   appVersion?: string;
   runner?: "pc" | "cloud";
   deviceId?: string;
@@ -201,12 +231,25 @@ export interface SessionResult {
   /** The lessons block loaded at start, or null without a memory port. */
   memory: { tokens: number; budget: number; lessons: number } | null;
   lessonsRecorded: number;
+  /** Shared-store proposals the critic decided at the end (spec G.6); null when not wired. */
+  promotions: PromotionTally | null;
   sessionReview: SessionReviewOutcome | null;
   spentUsdMicro: number;
   steps: number;
   summary: string;
   handoff: Record<string, unknown>;
   stopReason: string;
+  /** What the human said during the session and the task each line reached (spec O.9). */
+  heard: HeardDelivery[];
+}
+
+export interface PromotionTally {
+  reviewed: number;
+  promoted: number;
+  rejected: number;
+  pending: number;
+  /** Offers filed for other projects of the same human. */
+  offered: number;
 }
 
 /** What the runner reports when a task's execution ends (estimate-versus-actual learning, spec I). */
@@ -249,6 +292,12 @@ export interface SessionRunnerDeps {
   memory?: MemoryPort;
   /** Default retrieval budget when neither the project nor the start options set one. */
   memoryTokenBudget?: number;
+  /**
+   * Project docs (spec G.5): the session's status update written into `docs/status.md` at
+   * its end, on the session's pull request or one of its own. Without it the critic's drift
+   * check is the only reminder.
+   */
+  docs?: ProjectDocsPort;
   /**
    * The schema sync gate (spec M): a session is refused before its row exists while sync is
    * paused, and the peer feed (start and before every task) re-evaluates and is refused too.
@@ -361,23 +410,29 @@ export class SessionRunner {
       controller,
       label: `session ${session.id}`,
     });
-    const token = this.deps.tokens.issue({
-      runId: newId(clock.now()),
-      sessionId: session.id,
-      agentId: agent.id,
-      ownerHumanId: agent.owner_human_id,
-      projectId: project?.id,
-      allowedTools: opts.grant.allowedTools,
-      allowedPaths: opts.grant.allowedPaths,
-      allowedDomains: opts.grant.allowedDomains,
-      grantedSecrets: opts.grant.grantedSecrets,
-      budgetUsdMicro: opts.budgetCapUsdMicro,
-      depth: 0,
-      maxDepth: opts.grant.maxDepth ?? 2,
-      autonomy,
-      planApproved: opts.planApproved ?? false,
-      expiresAt: new Date(clock.now() + wallClockMs).toISOString(),
-    });
+    // The token's `planApproved` claim is what the hooks read (level 1 frees routine actions
+    // on it). A bound id is verified against the plan computed below; until then the claim is
+    // false, and the token is re-issued once the plan is known to be the approved one.
+    const runId = newId(clock.now());
+    const issueToken = (planApproved: boolean) =>
+      this.deps.tokens.issue({
+        runId,
+        sessionId: session.id,
+        agentId: agent.id,
+        ownerHumanId: agent.owner_human_id,
+        projectId: project?.id,
+        allowedTools: opts.grant.allowedTools,
+        allowedPaths: opts.grant.allowedPaths,
+        allowedDomains: opts.grant.allowedDomains,
+        grantedSecrets: opts.grant.grantedSecrets,
+        budgetUsdMicro: opts.budgetCapUsdMicro,
+        depth: 0,
+        maxDepth: opts.grant.maxDepth ?? 2,
+        autonomy,
+        planApproved,
+        expiresAt: new Date(clock.now() + wallClockMs).toISOString(),
+      });
+    let token = issueToken(opts.planApproved === true);
 
     const completed: string[] = [];
     const inReview: string[] = [];
@@ -386,6 +441,8 @@ export class SessionRunner {
     const retried: string[] = [];
     const blockedByFindings: string[] = [];
     const reviews: SessionReviewRecord[] = [];
+    /** What the human said during the session (spec O.9), collected between tasks. */
+    const heard: HeardDelivery[] = [];
     const lessonCandidates: LessonCandidate[] = [];
     /** Lesson proposals the critic port refused as instruction-shaped (quoted to the human). */
     const quarantinedByCritic: RejectedLesson[] = [];
@@ -397,6 +454,8 @@ export class SessionRunner {
       opts.memoryTokenBudget ?? this.deps.memoryTokenBudget ?? DEFAULT_MEMORY_TOKEN_BUDGET,
     );
     const filesByTask = new Map<string, string[]>();
+    /** Branches of the pull requests this session opened or updated, in order. */
+    const prBranches: string[] = [];
     const overlapNotified = new Set<string>();
     let peerIds: string[] = [];
     const needsHuman: string[] = [];
@@ -558,29 +617,63 @@ export class SessionRunner {
         summary: plan.summary,
       });
 
-      if (autonomy === 0 || (autonomy === 1 && !opts.planApproved)) {
-        await store.humanRequest.insert({
+      // Levels 0 and 1 run nothing the human has not approved (spec J.6, J.7; ADR 0053): the
+      // plan is filed as one blocking request whose card names it (`plan_id`), and the
+      // session ends `stopped` so the approval can start the follow-up. A start bound to an
+      // approved plan runs it only while the plan is still that plan; a plan that changed
+      // since the human looked (a task added, removed or reordered) is asked again.
+      const approval = planApprovalOf(opts.planApproved, plan.items);
+      if ((autonomy === 0 || autonomy === 1) && approval !== "approved") {
+        const changed = approval === "changed";
+        const approvedPlanId = typeof opts.planApproved === "string" ? opts.planApproved : null;
+        const planId = planIdOf(session.id, plan.items);
+        const request = await store.humanRequest.insert({
           human_id: agent.owner_human_id,
           project_id: project?.id ?? null,
           session_id: session.id,
           kind: "approval",
-          why:
+          why: [
             autonomy === 0
-              ? "Advisor mode: the plan is a proposal; approve to run it as a new session."
+              ? "Advisor mode: the plan is a proposal; approve to run it as a new session (every action that changes state is still asked at this level)."
               : "Assisted mode: approve this session plan before work starts.",
+            ...(changed
+              ? [
+                  "The ready tasks changed since the plan you approved; this is the plan now, and nothing ran.",
+                ]
+              : []),
+          ].join(" "),
           steps: plan.items.map(
             (i) => `${i.title} (${i.specialist}, ~$${(i.estimateUsdMicro / 1e6).toFixed(2)})`,
           ),
-          options: ["approve", "reject"],
+          options: [...PLAN_APPROVAL_OPTIONS],
           blocking: true,
           risk: "medium",
-          change_card: { key: `plan:${session.id}`, plan: plan as never },
+          change_card: {
+            key: planKeyOf(session.id),
+            plan_id: planId,
+            plan: plan as never,
+            ...(approvedPlanId ? { superseded_plan_id: approvedPlanId } : {}),
+          },
           author_agent: agent.id,
         });
         stopReason = "plan_awaiting_approval";
-        status = "paused";
-        await emit("session.paused", { reason: stopReason });
+        status = "stopped";
+        await emit("session.plan_filed", {
+          requestId: request.id,
+          planId,
+          items: plan.items.length,
+          changed,
+          approvedPlanId,
+        });
       } else {
+        if (approval === "approved" && typeof opts.planApproved === "string") {
+          token = issueToken(true);
+          await emit("session.plan_approved", {
+            planId: opts.planApproved,
+            approvedSessionId: parsePlanId(opts.planApproved)?.sessionId ?? null,
+            items: plan.items.length,
+          });
+        }
         // 3. Execute, claim-before-work, inbox re-check between tasks.
         for (const item of plan.items) {
           if (controller.signal.aborted) throw new ForerunnerError("killed", "session stopped");
@@ -589,7 +682,7 @@ export class SessionRunner {
             skipped.push(item.taskId);
             continue;
           }
-          const interrupt = await this.recheckInbox(agent.id, session.id, emit);
+          const interrupt = await this.recheckInbox(agent.id, session.id, emit, heard);
           if (interrupt === "stop") {
             stopReason = "stopped_by_message";
             skipped.push(...plan.items.slice(plan.items.indexOf(item)).map((i) => i.taskId));
@@ -684,6 +777,15 @@ export class SessionRunner {
           };
           scheduleRenew();
           const renew = () => cancelRenew();
+          // What the human said since the last task started reaches this task's brief (spec
+          // O.9): read now, between the tasks, and given to this task alone.
+          const said = heard.filter((h) => h.deliveredTo === null);
+          for (const h of said) {
+            h.deliveredTo = task.id;
+            await store.message.markRead(h.id);
+          }
+          if (said.length)
+            await emit("task.heard", { taskId: task.id, ids: said.map((h) => h.id) });
           let result: TaskExecutionResult;
           const execStarted = clock.monotonic();
           try {
@@ -694,6 +796,7 @@ export class SessionRunner {
               budget,
               item,
               signal: controller.signal,
+              heard: said.map(({ deliveredTo: _to, ...line }) => line),
             });
           } catch (e) {
             const code = e instanceof ForerunnerError ? e.code : "internal";
@@ -720,6 +823,7 @@ export class SessionRunner {
             ...(task.owner_agent_id ? {} : { owner_agent_id: agent.id }),
           });
           task = await store.task.mustGet(task.id);
+          if (result.prUrl && result.branch) prBranches.push(result.branch);
           if (result.changedFiles?.length) {
             filesByTask.set(task.id, result.changedFiles);
             await emit(TASK_FILES_EVENT, { taskId: task.id, files: result.changedFiles });
@@ -947,8 +1051,55 @@ export class SessionRunner {
       spent,
       stopReason,
       plan,
+      heard: heard.length,
     });
+    // Project docs (spec G.5): the PM's status update into docs/status.md, carried by the
+    // session's pull request or a small one of its own; a session that touched no task
+    // writes nothing, and a failure is an event, never fatal.
+    let docsOutcome: SessionStatusOutcome | null = null;
+    if (project && this.deps.docs && plan && stopReason !== "plan_awaiting_approval") {
+      const touched = [completed, inReview, failed, needsHuman, retried, blockedByFindings].some(
+        (l) => l.length > 0,
+      );
+      if (!touched) {
+        await emit("docs.status_skipped", { reason: "no task changed state" });
+      } else {
+        const titleOf = (id: string) => plan.items.find((i) => i.taskId === id)?.title ?? id;
+        try {
+          docsOutcome = await this.deps.docs.writeSessionStatus({
+            project,
+            session,
+            update: {
+              sessionId: session.id,
+              endedAt: clock.nowIso(),
+              done: completed.map(titleOf),
+              inFlight: [...inReview, ...retried].map(titleOf),
+              blocked: [...needsHuman, ...failed, ...blockedByFindings].map(titleOf),
+              next: skipped.map(titleOf),
+              note: `stop reason ${stopReason}; spent $${(spent / 1e6).toFixed(2)}`,
+            },
+            prBranch: prBranches.at(-1) ?? null,
+          });
+          await emit("docs.status_written", { ...docsOutcome });
+        } catch (e) {
+          this.logger.warn("status update not written", {
+            sessionId: session.id,
+            projectId: project.id,
+            error: errorMessage(e),
+          });
+          await emit("docs.status_failed", { warning: errorMessage(e) });
+        }
+      }
+    }
     const handoff = {
+      // The lines the human said and the task each reached; the words stay in the message
+      // rows and the human's own summary message (peers and the project cache read this).
+      heard: heard.map((h) => ({
+        id: h.id,
+        source: h.source,
+        said_at: h.saidAt,
+        delivered_to: h.deliveredTo,
+      })),
       done: completed,
       in_flight: inReview,
       in_flight_files: Object.fromEntries(
@@ -967,6 +1118,7 @@ export class SessionRunner {
       next: skipped,
       stop_reason: stopReason,
       spent_usd_micro: spent,
+      ...(docsOutcome ? { docs: docsOutcome } : {}),
     };
     // Memory (spec G, E.5): what this session learned goes into the agent's private memory:
     // lessons the specialists spelled out, critic findings resolved by rework, and decisions
@@ -1044,6 +1196,17 @@ export class SessionRunner {
         await emit("memory.record_failed", { warning: errorMessage(e) });
       }
     }
+    // Cross-project sharing (spec G.6, ADR 0059): the critic decides this human's pending
+    // shared-store proposals now, under the session token and budget, a few per session; an
+    // accepting review promotes and files the offers, any other completed one rejects, a run
+    // that did not complete leaves the proposal for the next session. Never fatal.
+    const promotions = await this.reviewPromotions({
+      token,
+      budget,
+      projectSettings: project?.settings ?? null,
+      signal: controller.signal,
+      emit,
+    });
     if (project) {
       await store.project.patch(project.id, {
         summary_cache: {
@@ -1073,12 +1236,16 @@ export class SessionRunner {
         author_agent: agent.id,
       });
     }
+    const heardForHuman = describeHeard(
+      heard,
+      (taskId) => plan?.items.find((i) => i.taskId === taskId)?.title,
+    );
     await store.message.send({
       from_agent_id: agent.id,
       to_human_id: agent.owner_human_id,
       project_id: project?.id ?? null,
       type: "info",
-      body: summary,
+      body: heardForHuman ? `${summary}\n${heardForHuman}` : summary,
       requires_ack: false,
       author_agent: agent.id,
     });
@@ -1102,20 +1269,17 @@ export class SessionRunner {
       headroom_saved_tokens: contextEnd?.headroomSavedTokens ?? 0,
     });
     try {
-      await store.session.setStatus(
-        patched.id,
-        patched.version,
-        finalStatus === "paused" ? "paused" : finalStatus,
-      );
+      await store.session.setStatus(patched.id, patched.version, finalStatus);
     } catch {
       // already terminal (e.g. killed by the kill switch callback)
     }
     void current;
     // Session review (H.6): the critic checks the plan, the spend and the honesty of the
     // summary the human just received; a false count ends with the human. Runs after the
-    // summary and the task states are written, since that is what it checks.
+    // summary and the task states are written, since that is what it checks. A session that
+    // only filed its plan did no work to review.
     let sessionReview: SessionReviewOutcome | null = null;
-    if (this.deps.critic && finalStatus !== "paused") {
+    if (this.deps.critic && stopReason !== "plan_awaiting_approval") {
       try {
         sessionReview = await this.deps.critic.reviewSession({
           sessionId: session.id,
@@ -1181,12 +1345,14 @@ export class SessionRunner {
           }
         : null,
       lessonsRecorded,
+      promotions,
       sessionReview,
       spentUsdMicro: spent,
       steps: budget.snapshot().steps,
       summary,
       handoff,
       stopReason,
+      heard,
     };
   }
 
@@ -1364,6 +1530,67 @@ export class SessionRunner {
     });
   }
 
+  /** The promotion step of the session end (spec G.6); null when either port lacks it. */
+  private async reviewPromotions(args: {
+    token: SignedToken;
+    budget: SessionBudget;
+    projectSettings: JsonObject | null;
+    signal: AbortSignal;
+    emit: (type: string, payload: Record<string, unknown>, cost?: number) => Promise<void>;
+  }): Promise<PromotionTally | null> {
+    const memory = this.deps.memory;
+    const critic = this.deps.critic;
+    if (!memory?.pendingPromotions || !memory.resolvePromotion || !critic?.reviewPromotion)
+      return null;
+    const tally: PromotionTally = { reviewed: 0, promoted: 0, rejected: 0, pending: 0, offered: 0 };
+    let pending: Awaited<ReturnType<NonNullable<MemoryPort["pendingPromotions"]>>>;
+    try {
+      pending = (await memory.pendingPromotions()).slice(0, MAX_PROMOTION_REVIEWS_PER_SESSION);
+    } catch (e) {
+      await args.emit("memory.promotion_failed", { warning: errorMessage(e) });
+      return tally;
+    }
+    for (const candidate of pending) {
+      if (args.signal.aborted) break;
+      try {
+        const review = await critic.reviewPromotion({
+          lesson: candidate,
+          token: args.token,
+          budget: args.budget,
+          projectSettings: args.projectSettings,
+          signal: args.signal,
+        });
+        tally.reviewed++;
+        const resolved = await memory.resolvePromotion(candidate.id, review);
+        tally[resolved.status]++;
+        tally.offered += resolved.offers.length;
+        await args.emit(
+          "memory.promotion",
+          {
+            lessonId: candidate.id,
+            reviewId: review.reviewId,
+            verdict: review.verdict,
+            grade: review.grade,
+            confidence: review.confidence,
+            status: resolved.status,
+            offers: resolved.offers.length,
+            summary: review.summary,
+            ...(resolved.status === "pending"
+              ? { warning: "the promotion review did not complete; the proposal waits" }
+              : {}),
+          },
+          review.costUsdMicro,
+        );
+      } catch (e) {
+        await args.emit("memory.promotion_failed", {
+          lessonId: candidate.id,
+          warning: errorMessage(e),
+        });
+      }
+    }
+    return tally;
+  }
+
   /** Decisions the human answered on the project since the last session ended (for memory). */
   private async decisionsSince(
     projectId: string,
@@ -1373,11 +1600,17 @@ export class SessionRunner {
     return rows.filter((d) => !sinceIso || d.created_at > sinceIso);
   }
 
-  /** Inbox re-check between tasks: a human "stop" message stops the session; questions become requests. */
+  /**
+   * Inbox re-check between tasks: a human "stop" message stops the session; questions become
+   * requests. A line the human said during this session (spec O.9, `heardLineOf`) is collected
+   * into `heard` as delivered and stays unread until a task's brief carries it: one that no
+   * task follows reaches the next session's brief like any unread message.
+   */
   private async recheckInbox(
     agentId: string,
     sessionId: string,
     emit: (t: string, p: Record<string, unknown>) => Promise<void>,
+    heard: HeardDelivery[],
   ): Promise<"continue" | "stop"> {
     const unread = await this.deps.store.message.inbox(
       { agentId },
@@ -1385,6 +1618,20 @@ export class SessionRunner {
     );
     let stop = false;
     for (const m of unread) {
+      const said = heardLineOf(m.body);
+      if (said && said.sessionId === sessionId && m.from_agent_id === agentId) {
+        if (heard.some((h) => h.id === m.id)) continue;
+        await this.deps.store.message.markDelivered(m.id);
+        heard.push({
+          id: m.id,
+          source: said.source,
+          text: said.text,
+          saidAt: m.created_at,
+          deliveredTo: null,
+        });
+        await emit("inbox.heard", { id: m.id, source: said.source, sessionId });
+        continue;
+      }
       await this.deps.store.message.markDelivered(m.id);
       await this.deps.store.message.markRead(m.id);
       if (/^\s*(stop|halt|pause)\b/i.test(m.body) && m.type !== "handoff") stop = true;
@@ -1453,9 +1700,14 @@ function summarize(x: {
   spent: number;
   stopReason: string;
   plan: SessionPlan | null;
+  /** Lines the human said during the session (spec O.9); the count only, peers read this. */
+  heard?: number;
 }): string {
   const parts = [
     `Session ${x.stopReason === "completed" ? "completed" : `ended (${x.stopReason})`}.`,
+    ...(x.stopReason === "plan_awaiting_approval"
+      ? ["The plan awaits your approval in the inbox; nothing ran."]
+      : []),
     `Done: ${x.completed.length}. In review: ${x.inReview.length}. Needs you: ${x.needsHuman.length}. Failed: ${x.failed.length}. Not started: ${x.skipped.length} of ${x.plan?.items.length ?? 0} planned.`,
     ...(x.retried.length ? [`Sent back by the critic: ${x.retried.length}.`] : []),
     ...(x.blockedByFindings.length
@@ -1463,6 +1715,7 @@ function summarize(x: {
           `Blocked by open findings: ${x.blockedByFindings.length} (asked you: rework, accept or cancel).`,
         ]
       : []),
+    ...(x.heard ? [summarizeHeard(x.heard)] : []),
     `Spent $${(x.spent / 1e6).toFixed(2)}.`,
   ];
   return parts.join(" ");

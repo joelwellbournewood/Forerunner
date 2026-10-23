@@ -896,8 +896,14 @@ and its read receipt, the settings screen (`POST /commands/execute`, then
 `POST /changes/:id/undo`) and chat (`POST /chat`); the header's Resume (`POST /kill/resume`)
 is wired in `UiClient` but the week no longer needs it (nothing freezes the agent since
 RT-P5-2 closed). What the week never opens (extensions, updates, the model watch, Cloudflare, desktop control,
-data, costs, the mirror, the sandbox, the sync gate, the vault) is an `absent` stand-in that
-throws `unavailable` naming the field when a route reaches it. `UiClient` records every call
+data, costs, the mirror, the sandbox, the sync gate, the vault, source discovery, the project
+docs port, shared secrets and the email settings routes' capability ports) is an `absent`
+stand-in that throws `unavailable` naming the field when a route reaches it; the email mount
+reads `rt.capabilities.email.ports.*` while the daemon app is built, so that field must be a
+stand-in rather than missing, or `createDaemonApp` throws before the week starts. Its `syncApprovals` mirrors
+the daemon's memory, blocked-findings and sign-off halves and reports the plan half (ADR
+0053, `plans`) as zeros: the week's projects run at autonomy 2, so no plan request is filed
+and none is synced; the real step is covered by `packages/runtime/test/plan-approval-daemon.test.ts`. `UiClient` records every call
 for the evidence. The screens are not rendered.
 
 *The phone.* `PhoneApprovals` lists the inbox and answers a request as the app does after a
@@ -1060,6 +1066,9 @@ e2e tests/e2e/scenarios`, the step named "Phase 3 and 4 gate harnesses and the n
 `tests/e2e/scenarios` runs in CI from the commit that adds it (no Postgres, no Docker, no
 network there either); the step's name predates the phase 5 and 7 harnesses. The gate rows
 cite the local runs and the step, with the CI link of the first run that carried the file.
+The workflow runs on every pull request, on a push to `main`, `claude/**` or `ccr-**`, and by
+hand (`workflow_dispatch` from the Actions tab or the API on any branch), so a build branch
+outside those patterns can still get its CI evidence for `gates.md`.
 
 ### How to change it
 
@@ -1133,7 +1142,11 @@ doctor and the eval checks as argv arrays).
     `CriticService.review`, `applyVerdict` and the loop's ladder branch in
     `packages/runtime/src/loop/critic.ts`); `syncSignoffAnswers`
     (`packages/runtime/src/session/findings.ts`, next to `syncBlockedByFindings`) applies the
-    answer once, from `syncApprovals` (`compose.ts`; `gate5-daemon.ts` mirrors it), and only
+    answer once, from `syncApprovals` (`compose.ts`; `gate5-daemon.ts` mirrors it: the
+    extension, model watch, memory, blocked-findings and sign-off halves, the `memoryOffers`
+    half that applies answered cross-project offers (spec G.6), and the intake half of ADR 0055
+    as a zero result, since the week's projects come with their tasks and no intake proposal is
+    filed), and only
     when the card's `review_id` is the task's latest review (a sign-off left open while the
     task was reviewed again is skipped as `stale` and touches nothing, ADR 0049): accept
     resolves the card's findings and the task's other open findings up to the card's review
@@ -1771,8 +1784,11 @@ of the file. What it assembles, and why this way:
   install's worktrees), a `MemoryLoop` on its own root, a `PrTaskExecutor` with a
   `LoopTaskExecutor` inside (the registry's coder prompt and caps, the built-in file tools), a
   `SessionRunner` and a `Scheduler`. It is the composition `composeRuntime` makes for a daemon,
-  assembled by hand because `composeRuntime` binds an install to the store's first human; a
-  two-human world on one store needs two identities (see Known issues).
+  assembled by hand: it predates the identity selector (`composeRuntime` bound an install to
+  the store's first human until ADR 0082; `identity.humanId` now binds each install to its own
+  human, covered by `packages/runtime/test/compose-identity.test.ts` on a shared `sqlite:`
+  file) and still builds the gated provider, the scenario planner and the PR executor over
+  the fake git host itself (see Known issues).
 - **The git host** is `FakeGitHost` from testenv: both humans are users, the project's org has
   both as members, one classic `repo` token per human; each install talks REST through the
   real `GitHubHost` adapter and pushes over git HTTP with the token as a header (the bare
@@ -1925,10 +1941,15 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
 
 ### Known issues
 
-- `composeRuntime` attaches an install to the first human in the store, so the world assembles
-  the daemon's composition by hand; a change to `composeRuntime` that adds a seam (for
-  example the identity the install binds to) does not reach the world until it is mirrored
-  here. The `RuntimeApp` shape is the reference; keep the world's install in step with it.
+- The world still assembles the daemon's composition by hand. The reason it was written that
+  way is gone (`composeRuntime` binds an install by selector since ADR 0082, never to the
+  store's first human, and two installs on one store are covered by
+  `packages/runtime/test/compose-identity.test.ts`), but the world's installs also inject a
+  gated provider, a scripted planner and a PR executor over the fake git host, which
+  `composeRuntime` has no seams for yet; pointing the world at `composeRuntime` is a refactor
+  of its own. Until then a change to `composeRuntime` does not reach the world until it is
+  mirrored here (the gate-5 daemon view carries `identity` like the real `RuntimeApp`). The
+  `RuntimeApp` shape is the reference; keep the world's install in step with it.
 - The startup checklist reads the next-session queue per project
   (`store.queue.pending(project.id)` in `packages/runtime/src/session/checklist.ts`), and the
   runner consumes every item a brief carried, so on a shared project the first session of
@@ -1949,7 +1970,10 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
 - The e2e vitest project runs in CI on both OS (`ci.yml`, the step named after the phase 3
   and 4 harnesses); the gate rows cite local runs and that step. The Windows and
   Android runs of the scenarios wait for the final build; scenario 9 drives the phone through
-  the app's parser and card builder, not through the Android emulator or the screens.
+  the app's parser and card builder, not through the Android emulator or the screens. The
+  emulator run of the same phone steps is `apps/mobile/e2e/run.mjs` (CI's `android.yml`),
+  which drives the real screens over raw CDP on the WebView's page target (`cdp.mjs`,
+  ADR 0054; apps.md, Android app).
 - The shell has no voice wiring to the conversation agent yet (the daemon has no voice route;
   the `VoiceLoop` is used only by its own tests), so the bridge between the loop and the agent
   lives in `scenario-voice.ts`: the `converse` port over `ConversationAgent.chat` with

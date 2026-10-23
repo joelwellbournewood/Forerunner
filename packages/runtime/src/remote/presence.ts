@@ -26,6 +26,11 @@ export interface RegisterDesktopDeviceOptions {
   name: string;
   /** windows, linux, ... */
   platform: string;
+  /**
+   * This install's X25519 wrapping public key (spec S.13, ADR 0065): written to the row when
+   * missing or changed, so owners of shared secrets can wrap a value to this install.
+   */
+  wrapPublicKey?: string;
 }
 
 function readIdentity(file: string): string | null {
@@ -49,6 +54,14 @@ function writeIdentity(dirs: Pick<AppDirs, "config">, file: string, publicKey: s
 export async function registerDesktopDevice(
   opts: RegisterDesktopDeviceOptions,
 ): Promise<DeviceRow> {
+  const row = await findOrRegister(opts);
+  if (opts.wrapPublicKey && row.wrap_public_key !== opts.wrapPublicKey) {
+    return opts.store.device.patch(row.id, { wrap_public_key: opts.wrapPublicKey });
+  }
+  return row;
+}
+
+async function findOrRegister(opts: RegisterDesktopDeviceOptions): Promise<DeviceRow> {
   const { store, dirs, humanId } = opts;
   const file = join(dirs.config, DESKTOP_DEVICE_FILE_NAME);
   const known = readIdentity(file);
@@ -72,6 +85,7 @@ export async function registerDesktopDevice(
     platform: opts.platform,
     public_key: fresh,
     kind: "desktop",
+    ...(opts.wrapPublicKey ? { wrap_public_key: opts.wrapPublicKey } : {}),
   });
   writeIdentity(dirs, file, fresh);
   return row;
