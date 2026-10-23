@@ -25,28 +25,17 @@ const coder: SpecialistSpec = {
   timeoutMs: 60_000,
 };
 
-async function runAtAttempt3(
-  settings: Record<string, unknown>,
-  projectCeiling: boolean,
-): Promise<string> {
+/**
+ * One executor over one project; `run` executes a fresh task on its third retry and returns
+ * the model its run used. The project row stays editable between runs (`setSettings`).
+ */
+async function ladderWorld(settings: Record<string, unknown>, projectCeiling: boolean) {
   const h = harness();
   const clock = h.clock;
   const store = await openStore({ url: "sqlite::memory:", clock });
   const human = (await store.human.insert({ name: "J", email: "j@x.test" })).id;
   const agent = (await store.agent.insert({ name: "Alice", owner_human_id: human })).id;
   const project = (await store.project.insert({ name: "P", settings })).id;
-  const task = await store.task.insert({
-    project_id: project,
-    title: "Third retry",
-    outcome: "done",
-    acceptance_criteria: ["works"],
-    risk_tier: 1,
-    status: "in_progress",
-    budget_usd_micro: 500_000,
-    est_cost_usd_micro: 300_000,
-    attempt: 3,
-    reason: "seed",
-  });
   const session = await store.session.insert({
     agent_id: agent,
     project_id: project,
@@ -54,7 +43,10 @@ async function runAtAttempt3(
     status: "running",
     runner: "pc",
   });
-  const provider = new ScriptedProvider([{ text: "Done." }], clock);
+  const provider = new ScriptedProvider(
+    [{ text: "Done." }, { text: "Done." }, { text: "Done." }],
+    clock,
+  );
   const exec = new LoopTaskExecutor({
     store,
     clock,
@@ -75,29 +67,79 @@ async function runAtAttempt3(
     budgetUsdMicro: 5_000_000,
     sessionId: session.id,
   });
-  const res = await exec.execute({
-    task,
-    session,
-    token,
-    budget: new SessionBudget({
-      sessionId: session.id,
-      budgetUsdMicro: 5_000_000,
-      stepCap: 100,
-      deadlineMs: clock.now() + 3_600_000,
-      reserveShare: 0.2,
-    }),
-    item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 300_000 },
-    signal: new AbortController().signal,
-  });
-  expect(res.outcome).toBe("done");
-  const runs = await store.run.forTask(task.id);
-  await store.close();
-  return runs[0]?.model ?? "";
+  const run = async (title: string): Promise<string> => {
+    const task = await store.task.insert({
+      project_id: project,
+      title,
+      outcome: "done",
+      acceptance_criteria: ["works"],
+      risk_tier: 1,
+      status: "in_progress",
+      budget_usd_micro: 500_000,
+      est_cost_usd_micro: 300_000,
+      attempt: 3,
+      reason: "seed",
+    });
+    const res = await exec.execute({
+      task,
+      session,
+      token,
+      budget: new SessionBudget({
+        sessionId: session.id,
+        budgetUsdMicro: 5_000_000,
+        stepCap: 100,
+        deadlineMs: clock.now() + 3_600_000,
+        reserveShare: 0.2,
+      }),
+      item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 300_000 },
+      signal: new AbortController().signal,
+    });
+    expect(res.outcome).toBe("done");
+    return (await store.run.forTask(task.id))[0]?.model ?? "";
+  };
+  return {
+    run,
+    setSettings: async (next: Record<string, unknown>) => {
+      await store.project.patch(project, { settings: next });
+    },
+    close: () => store.close(),
+  };
+}
+
+async function runAtAttempt3(
+  settings: Record<string, unknown>,
+  projectCeiling: boolean,
+): Promise<string> {
+  const world = await ladderWorld(settings, projectCeiling);
+  try {
+    return await world.run("Third retry");
+  } finally {
+    await world.close();
+  }
 }
 
 describe("the retry ladder under the project's ceiling", () => {
   it("a project ceiling of sonnet never escalates the third retry to opus", async () => {
     expect(await runAtAttempt3({ critic_ceiling: "sonnet" }, true)).toBe("fake-sonnet");
+  });
+
+  it("a project ceiling of haiku (the first rung) keeps the third retry at haiku", async () => {
+    // The coder's default rung (sonnet) is capped down to the ceiling, and the retry's climb
+    // has no rung left under it.
+    expect(await runAtAttempt3({ critic_ceiling: "haiku" }, true)).toBe("fake-haiku");
+  });
+
+  it("the ceiling is read from the project row at every run, not when the executor is made", async () => {
+    const world = await ladderWorld({}, true);
+    try {
+      expect(await world.run("Before the cap")).toBe("fake-opus");
+      await world.setSettings({ critic_ceiling: "haiku" });
+      expect(await world.run("After the cap")).toBe("fake-haiku");
+      await world.setSettings({ critic_ceiling: "sonnet" });
+      expect(await world.run("Cap raised")).toBe("fake-sonnet");
+    } finally {
+      await world.close();
+    }
   });
 
   it("without a project ceiling the third retry climbs to opus (the default ceiling)", async () => {
