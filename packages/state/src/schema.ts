@@ -502,7 +502,11 @@ export const ENTITIES: Record<string, EntityDef> = {
       bool("revoked", "True once revoked.", { default: false }),
       ts("revoked_at", "When revoked.", { nullable: true }),
       ts("paired_at", "When paired."),
-      text("push_token", "Push notification token.", { nullable: true }),
+      text(
+        "push_token",
+        "FCM registration token (spec R.6): sent at pairing as `pushToken` or through `PUT /devices/:id/push-token`; cleared when FCM reports it UNREGISTERED. Never served or logged.",
+        { nullable: true },
+      ),
       text(
         "wrap_public_key",
         "X25519 public key (raw, base64) of the install holding this device's vault; shared secrets are wrapped to it.",
