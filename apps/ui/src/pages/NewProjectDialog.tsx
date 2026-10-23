@@ -32,11 +32,13 @@ export function NewProjectDialog({ open, onClose }: { open: boolean; onClose: ()
     setError(null);
     try {
       const repos = repo.trim() ? [repo.trim()] : undefined;
+      // A brief asks for the PM intake (spec A.2): the proposal lands in the inbox.
       const project = await client.createProject({
         name: name.trim(),
         goal: goal.trim(),
         brief: brief.trim() || undefined,
         repos,
+        ...(brief.trim() ? { intake: true } : {}),
       });
       store.dispatch({ type: "project.upsert", project });
       store.dispatch({ type: "activeProject", id: project.id });
