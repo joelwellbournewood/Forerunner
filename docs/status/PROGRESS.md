@@ -136,8 +136,9 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 In this order, each item a wave of its own with the snapshot procedure in `AGENTS.md`: a
 failing test first, the maintainer doc in the same change, an independent review before the
 merge, the requirement row and its BLOCKERS.md row updated at integration.
-1. Make CI green and fix the open review findings of wave 1 (BLOCKERS.md rows "CI on the
-   integrated branch" and "Open review findings of 2026-10-23"). CI: the two Postgres tests
+1. CI is green on 049ed52 on both OS (https://github.com/joelwellbournewood/Forerunner/actions/runs/39950018548);
+   fix the open review findings of wave 1 (BLOCKERS.md row "Open review findings of
+   2026-10-23"). CI, done in 049ed52: the two Postgres tests
    the merges left stale, `packages/state/test/migrations.integration.test.ts` (expects
    `applied [2]`, now `[2, 3, 4]` and version 4) and the conformance case "keeps private
    lessons private" in `packages/state/test/suite.ts` (seeds an `agent_private` row on

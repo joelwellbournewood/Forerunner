@@ -10,7 +10,7 @@ missing item, see BLOCKERS.md), **failed** (with the failing evidence and the fi
 
 | Check | Status | Command | Date | Result | CI |
 | --- | --- | --- | --- | --- | --- |
-| CI green on Windows and Linux | **passed** | `.github/workflows/ci.yml` (lint, typecheck, unit, integration with Postgres, secret scan incl. logs, docs check, link check, schema doc, gitleaks, dependency audit, runner image) | 2026-10-20 | check (ubuntu-latest) and check (windows-latest) both success on commit b5df700 | https://github.com/joelwellbournewood/Forerunner/actions/runs/39352102564 |
+| CI green on Windows and Linux | **passed** | `.github/workflows/ci.yml` (lint, typecheck, unit, integration with Postgres, secret scan incl. logs, docs check, link check, schema doc, gitleaks, dependency audit, runner image) | 2026-10-23 | check (ubuntu-latest) and check (windows-latest) both success on commit 049ed52, the integrated branch after the fifteen merges of 2026-10-23 | https://github.com/joelwellbournewood/Forerunner/actions/runs/39950018548 |
 | Scripted fresh install on clean Windows and Linux VMs under 15 minutes | **passed** | `scripts/fresh-install.sh --non-interactive` and `pwsh -File scripts/fresh-install.ps1 -NonInteractive` on fresh GitHub runners via `.github/workflows/fresh-install.yml` (prerequisites, pnpm via corepack, install, typecheck, unit tests, `fr setup`) | 2026-10-20 | ubuntu-latest 89 s, windows-latest 200 s (commit 9aed675); the workflow fails above 900 s and runs weekly | https://github.com/joelwellbournewood/Forerunner/actions/runs/39357536106 |
 | Keys never appear in logs (automated scan) | **passed** (continuous) | `pnpm secrets:scan && pnpm secrets:scan --logs` in CI on both runners; `Logger` redaction tests in `packages/platform/test/log.test.ts`; CLI tests assert no credential is echoed | 2026-10-20 | clean on both runners | https://github.com/joelwellbournewood/Forerunner/actions/runs/39352102564 |
 
@@ -178,9 +178,9 @@ tests (stand-ins)" and `check (windows-latest)` was still running; run 99 on c98
 state code) failed on both OS in that step on two Postgres tests that the merges of the day
 left stale (`migrations.integration.test.ts` expects `applied [2]`, now `[2, 3, 4]`; the state
 conformance "keeps private lessons private" case seeds an `agent_private` row on Postgres,
-refused since ADR 0083), BLOCKERS.md row "CI on the integrated branch". The last run green on
-both OS is run 97 on a5b8823 (https://github.com/joelwellbournewood/Forerunner/actions/runs/39939402507),
-before the fifteen merges. Fifteen items were merged that day; only the five wave-1 items were
+refused since ADR 0083), BLOCKERS.md row "CI on the integrated branch". 049ed52 then brought both tests in line with
+the shipped schema and ADR 0083 and its run is green on both OS (https://github.com/joelwellbournewood/Forerunner/actions/runs/39950018548); criterion 1
+above carries that link. Fifteen items were merged that day; only the five wave-1 items were
 independently reviewed (three accepted, two sent back with findings still open), the other ten
 stand on their builders' verification and this check (BLOCKERS.md "Open review findings").
 
