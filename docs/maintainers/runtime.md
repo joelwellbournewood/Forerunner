@@ -541,7 +541,19 @@ as an escalation. Lesson proposals (repeat findings) are recorded in critic memo
 memory port. Events: `critic.review_started`, `critic.verdict`, `critic.review_failed`
 (the task stays in review), `critic.session_review`, `task.blocked_by_findings`.
 
-**Memory (`MemoryLoop`, spec G, E.5, N.4).** At session start the runner asks `recall` with
+**Memory (`MemoryLoop`, spec G, E.5, N.4).** Private memory stays on this PC (spec "never
+leave that PC", ADR 0002, ADR 0083): with a shared state (a `FORERUNNER_STATE_URL` that is not
+`sqlite:`, i.e. paired and hybrid mode) `composeRuntime` opens the private index
+`<data>/memory/private.sqlite` (`privateIndexUrl`, `openPrivateIndex` in `src/loop/memory.ts`:
+the state schema at the same migration version, foreign keys off because the agents and
+projects its rows name live in the shared store) and hands it to `MemoryLoop` as
+`privateStore`; the memory package's `ScopedLessonStore` then keeps every `agent_private` row
+there and the shared store never receives one (the Postgres adapter refuses one on its own with
+`MEMORY_SCOPE_VIOLATION`). Recall, record, the views, the routes and the consolidation all go
+through that one store. `RuntimeApp.privateMemory` is the index (null in solo mode, where the
+local store holds every scope); `ComposeOptions.privateIndexUrl` overrides the decision (tests
+force an index next to an in-memory state) and the index closes with the store. At session start
+the runner asks `recall` with
 the state brief as the query under `settings.memory_token_budget` (default
 `DEFAULT_MEMORY_TOKEN_BUDGET`, 1,500 tokens); the block joins the planner's brief as data
 after the peer feed. The grant is issued from the agent kind (`grantFor`): a principal reads
@@ -651,7 +663,8 @@ port the chat is read-only.
 
 ### Local daemon (`src/daemon/`, ADR 0011)
 
-`compose.ts` is the composition root: `composeRuntime()` opens the store and vault under
+`compose.ts` is the composition root: `composeRuntime()` opens the store (and, next to a
+shared one, the private memory index `<data>/memory/private.sqlite`, ADR 0083) and vault under
 `appDirs()`, builds the token issuer, kill switch, hooks, loop driver, provider registry
 (Anthropic when a credential is in the vault, the fake provider under `--provider fake`,
 otherwise a provider that fails every call with `provider_auth`), the specialist registry,
@@ -1166,6 +1179,15 @@ the human; it is never acted on.
 - New driver or provider: implement `ModelProvider` (see `adding-a-provider.md`).
 
 ## Tests
+
+`compose-memory.test.ts` (spec G.1, S.10, ADR 0083): `privateIndexUrl` is null for a `sqlite:`
+state and `<data>/memory/private.sqlite` for a `postgres://` one; a daemon composed with an
+in-memory state and a forced index opens the index under the data directory at the state's
+migration version, records a session's private lessons in the index only (the file in the agent's
+root as before) and critic lessons in the shared store, gives the principal its private lesson on
+recall and the critic none of it, and serves and edits the private scope through `/memory/scopes`,
+`/memory`, pin, edit and delete against the index; a plain `sqlite:` state has no index and keeps
+every scope in the one store.
 
 `small-project.test.ts` (spec B.6, ADR 0051): `defaultRiskTier` by flag; `shapeProjectPlan`
 with the flag on (one milestone named after the project, the phases' criteria once each, the

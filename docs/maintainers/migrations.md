@@ -26,6 +26,11 @@ schema and the snapshot disagree.
   `pg_advisory_xact_lock(hashtext('forerunner_schema_migrations'))` so two processes starting at
   once serialise. A second call is a no-op (`{ applied: [], version }`).
 - `openStore({ url })` runs `migrate` on open unless `migrate: false` is passed.
+- The runtime's private memory index (`<data>/memory/private.sqlite`, ADR 0083) is a second
+  SQLite opened through the same `openStore` (`sqlite: { foreignKeys: false }`), so it carries
+  the full schema at the same version and a schema migration applies to it at the next start
+  too; only its `lesson` table holds rows (the `agent_private` ones, which the Postgres adapter
+  refuses with `MEMORY_SCOPE_VIOLATION`).
 - Dialect differences live in `src/db/dialect.ts` (`sqlType`, `sqlLiteral`, `toPositional`,
   `jsonArrayContains`). Statements that are identical in both dialects (most DML, `RETURNING`,
   `ON CONFLICT`, `CHECK`, `CREATE INDEX IF NOT EXISTS`) are written once. Postgres >= 14 is
@@ -92,11 +97,19 @@ of kind `skill` named `memory-format`), tested on fixture directories for both p
   clock, contiguity check, a failing statement rolls back the whole run, doc currency.
 - `packages/state/test/suite.ts` (run by `sqlite.test.ts` and `postgres.integration.test.ts`):
   migrations idempotent, every table created, full round trips for every entity, and the
-  repository behaviour on top of the migrated schema.
+  repository behaviour on top of the migrated schema; its "keeps private rows out of the shared
+  store" case asserts the `MEMORY_SCOPE_VIOLATION` refusal of an `agent_private` insert, update,
+  patch and supersede on the Postgres adapter and the acceptance on SQLite.
+- `packages/state/test/lesson-scope.test.ts`: the refusal on a Postgres-dialect handle that
+  fails the test if a statement reaches it (so it is proven without a database), the SQLite
+  acceptance, and a store opened with `sqlite: { foreignKeys: false }` holding a lesson whose
+  agent and project rows live in another store (the private index).
 - CI runs `pnpm docs:schema` and fails on a diff of `docs/maintainers/data-model.md`.
 
 ## Known issues
 
+- A `lesson` migration that backfills from other tables (`agent`, `project`) finds them empty in
+  the private memory index; write such a backfill so an empty join is a no-op.
 - No `down` migrations by design; test a risky migration on a copy of the database first
   (`sqlite:` files can be copied; Postgres with `pg_dump`).
 - SQLite cannot alter constraints in place; enum changes need the copy-table dance described

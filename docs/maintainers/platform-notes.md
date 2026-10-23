@@ -43,6 +43,14 @@ passes in clear: a cycle is cut with `[Circular]` and a subtree deeper than 64 l
 `[TRUNCATED]`. Sinks are isolated: one that throws never stops the others or the caller.
 `pnpm secrets:scan` checks the repository and the logs afterwards.
 
+### Errors (`src/errors.ts`)
+
+`ForerunnerError` carries a stable `code` from the `ErrorCode` union, `details` and `retryable`;
+`isForerunnerError(e, code?)` matches on it. Codes are lower-case snake names except
+`MEMORY_SCOPE_VIOLATION`, spelled as ADR 0002 names it: a private-memory row headed for a shared
+store, thrown by `packages/state`'s `LessonRepo` on the Postgres dialect and by the memory
+package's by-scope store (ADR 0083).
+
 ## How to change it
 
 Add the OS-specific branch inside `packages/platform`, export a neutral function, and add a test
