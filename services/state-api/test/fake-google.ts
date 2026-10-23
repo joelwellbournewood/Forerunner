@@ -21,6 +21,8 @@ export const TEST_CLIENT_EMAIL = `push-sender@${TEST_PROJECT}.iam.example.test`;
 
 export interface ScriptedResponse {
   status: number;
+  /** Never answer (a stalled connection); the request is recorded with status 0. */
+  hang?: boolean;
   body?: unknown;
   headers?: Record<string, string>;
 }
@@ -152,6 +154,10 @@ export async function startFakeGoogle(): Promise<FakeGoogle> {
           return;
         }
         const next = scripts.get(regToken)?.shift();
+        if (next?.hang) {
+          attempts.push({ token: regToken, status: 0 });
+          return;
+        }
         const status = next?.status ?? 200;
         attempts.push({ token: regToken, status });
         if (status === 200) {
@@ -220,6 +226,9 @@ export const UNREGISTERED: ScriptedResponse = {
     },
   },
 };
+
+/** A connection that accepts the request and never answers. */
+export const HANG: ScriptedResponse = { status: 0, hang: true };
 
 export const UNAVAILABLE: ScriptedResponse = {
   status: 503,

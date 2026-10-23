@@ -7,6 +7,7 @@ import { AUDIT_TOOL_TOKEN_CLEARED, PUSH_NOT_CONFIGURED } from "../src/push/fanou
 import { FcmSender, parseServiceAccount } from "../src/push/fcm.ts";
 import {
   type FakeGoogle,
+  HANG,
   startFakeGoogle,
   TEST_PROJECT,
   UNAVAILABLE,
@@ -180,6 +181,31 @@ describe("FCM sender (HTTP v1, OAuth2 from the service account)", () => {
       httpStatus: 404,
     });
   });
+
+  it("a stalled FCM connection is aborted after the timeout and retried, never left hanging", async () => {
+    const waits: number[] = [];
+    const s = new FcmSender({
+      account: parseServiceAccount(google.serviceAccountJson),
+      clock: new SimulatedClock(START),
+      apiUrl: google.url,
+      backoffMs: 10,
+      timeoutMs: 100,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    google.script("stall-once", [HANG]);
+    expect(await s.send("stall-once", message)).toEqual({ status: "sent", attempts: 2 });
+    google.script("stall", [HANG, HANG, HANG, HANG]);
+    expect(await s.send("stall", message)).toEqual({
+      status: "failed",
+      attempts: 4,
+      reason: "fcm request timed out",
+      httpStatus: null,
+    });
+    expect(google.attempts.filter((a) => a.token === "stall")).toHaveLength(4);
+    expect(waits).toEqual([10, 10, 20, 40]);
+  }, 10_000);
 
   it("retries a 5xx from the token endpoint and re-mints once after a 401", async () => {
     const s = sender();

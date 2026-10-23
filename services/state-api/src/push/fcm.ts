@@ -18,6 +18,7 @@ const JWT_LIFETIME_S = 3600;
 /** An access token is renewed this long before Google says it expires. */
 const TOKEN_EARLY_RENEW_MS = 60_000;
 const REASON_MAX = 200;
+const DEFAULT_TIMEOUT_MS = 10_000;
 
 export interface ServiceAccount {
   projectId: string;
@@ -141,6 +142,12 @@ export interface FcmSenderOptions {
   maxBackoffMs?: number;
   /** Waits between retries; default `clock.sleep`. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Upper bound of one HTTP request (token endpoint or FCM, body included); default 10 s. A
+   * stalled connection is aborted and retried like a network error instead of hanging the
+   * fan-out and the held-notice flush.
+   */
+  timeoutMs?: number;
 }
 
 const logger = log("state-api:push");
@@ -194,6 +201,7 @@ export class FcmSender implements PushSender {
   private readonly backoffMs: number;
   private readonly maxBackoffMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly timeoutMs: number;
   private cached: CachedToken | undefined;
   private minting: Promise<string> | undefined;
 
@@ -205,6 +213,7 @@ export class FcmSender implements PushSender {
     this.backoffMs = Math.max(0, opts.backoffMs ?? 500);
     this.maxBackoffMs = Math.max(this.backoffMs, opts.maxBackoffMs ?? 30_000);
     this.sleep = opts.sleep ?? ((ms) => opts.clock.sleep(ms));
+    this.timeoutMs = Math.max(1, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   }
 
   get endpoint(): string {
@@ -255,8 +264,10 @@ export class FcmSender implements PushSender {
         if (e instanceof ForerunnerError) {
           return { status: "failed", attempts, reason: clip(e.message), httpStatus: null };
         }
-        // Network error (connection refused, reset, DNS): retried like a 5xx.
-        last = new Retryable("fcm network error", null, null);
+        // Network error (connection refused, reset, DNS) or a request past `timeoutMs`:
+        // retried like a 5xx.
+        const timedOut = (e as { name?: unknown } | null)?.name === "TimeoutError";
+        last = new Retryable(timedOut ? "fcm request timed out" : "fcm network error", null, null);
       }
     }
     return {
@@ -271,6 +282,7 @@ export class FcmSender implements PushSender {
     const access = await this.accessToken();
     return this.fetchImpl(this.endpoint, {
       method: "POST",
+      signal: AbortSignal.timeout(this.timeoutMs),
       headers: { authorization: `Bearer ${access}`, "content-type": "application/json" },
       body: JSON.stringify({
         message: {
@@ -300,6 +312,7 @@ export class FcmSender implements PushSender {
     const assertion = signServiceAccountJwt(this.opts.account, now);
     const res = await this.fetchImpl(this.opts.account.tokenUri, {
       method: "POST",
+      signal: AbortSignal.timeout(this.timeoutMs),
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
