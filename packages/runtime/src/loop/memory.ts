@@ -14,14 +14,16 @@ import {
   SCOPE_ORDER,
   vectorToJson,
 } from "@forerunner/memory";
-import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
-import type {
-  HumanRequestRow,
-  JsonObject,
-  JsonValue,
-  LessonRow,
-  LessonStatus,
-  StateStore,
+import { type Clock, errorMessage, ForerunnerError, join, log } from "@forerunner/platform";
+import {
+  type HumanRequestRow,
+  type JsonObject,
+  type JsonValue,
+  type LessonRow,
+  type LessonStatus,
+  openStore,
+  parseStoreUrl,
+  type StateStore,
 } from "@forerunner/state";
 import { WEEK_MINUTES } from "../models/watch.ts";
 import { screenLessons } from "../session/lessons.ts";
@@ -52,6 +54,12 @@ import type {
  */
 export interface MemoryLoopDeps {
   store: StateStore;
+  /**
+   * The local private index next to a shared state (ADR 0002, ADR 0083): `agent_private` rows
+   * are written to and read from it only. `openPrivateIndex` opens it; a `sqlite:` state in
+   * solo mode holds every scope itself and passes none.
+   */
+  privateStore?: Pick<StateStore, "lesson">;
   clock: Clock;
   /** Memory root (`<data>/memory`); default from `appDirs()`. */
   root?: string;
@@ -131,6 +139,38 @@ export function isMemoryConsolidationRequest(req: StartRequest): boolean {
   return req.agentId === MEMORY_CONSOLIDATION_AGENT_ID && req.trigger === "schedule";
 }
 
+/** File name of the private index under the memory root. */
+export const PRIVATE_INDEX_FILE = "private.sqlite";
+
+/**
+ * Where this install's private memory index lives for a state URL: null for a `sqlite:` state
+ * (solo mode: the one local store holds every scope), `<data>/memory/private.sqlite` for a
+ * shared state (Postgres through the state service in paired and hybrid mode), which never
+ * holds a private row (ADR 0002; `LessonRepo` refuses one on the Postgres dialect).
+ */
+export function privateIndexUrl(stateUrl: string, dirs: { data: string }): string | null {
+  if (parseStoreUrl(stateUrl).dialect === "sqlite") return null;
+  return `sqlite:${join(dirs.data, "memory", PRIVATE_INDEX_FILE)}`;
+}
+
+/**
+ * Open the private index: the state schema at the same migration version (one `lesson` table
+ * in use), foreign keys off because the agents and projects its rows name live in the shared
+ * store. The caller closes it with the state store.
+ */
+export async function openPrivateIndex(url: string, clock: Clock): Promise<StateStore> {
+  if (parseStoreUrl(url).dialect !== "sqlite") {
+    throw new ForerunnerError(
+      "MEMORY_SCOPE_VIOLATION",
+      "the private index must be a sqlite: store",
+      {
+        details: { url: url.replace(/\/\/[^@]*@/, "//[REDACTED]@") },
+      },
+    );
+  }
+  return openStore({ url, clock, sqlite: { foreignKeys: false } });
+}
+
 export class MemoryLoop implements MemoryPort {
   private readonly logger = log("memory-loop");
   readonly ctx: MemoryContext;
@@ -139,6 +179,7 @@ export class MemoryLoop implements MemoryPort {
   constructor(private readonly deps: MemoryLoopDeps) {
     this.ctx = createMemory({
       store: { lesson: deps.store.lesson, review: deps.store.review, clock: deps.clock },
+      ...(deps.privateStore ? { privateStore: { lesson: deps.privateStore.lesson } } : {}),
       root: deps.root,
       files: deps.files,
       embedder: deps.embedder,

@@ -26,6 +26,8 @@ export type ErrorCode =
   | "not_supported"
   | "unavailable"
   | "injection_suspected"
+  /** A private-memory row was about to enter a shared store (ADR 0002; spelled as the ADR names it). */
+  | "MEMORY_SCOPE_VIOLATION"
   | "internal";
 
 export class ForerunnerError extends Error {

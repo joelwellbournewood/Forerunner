@@ -94,6 +94,8 @@ import { CriticLoop } from "../loop/critic.ts";
 import {
   isMemoryConsolidationRequest,
   MemoryLoop,
+  openPrivateIndex,
+  privateIndexUrl,
   scheduleMemoryConsolidation,
 } from "../loop/memory.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
@@ -231,6 +233,12 @@ export interface ComposeOptions {
   config?: SetupConfig | null;
   clock?: Clock;
   stateUrl?: string;
+  /**
+   * The private memory index (ADR 0083): a `sqlite:` URL, or null for none. Default
+   * `privateIndexUrl(stateUrl, dirs)`: none for a `sqlite:` state, `<data>/memory/private.sqlite`
+   * for a shared one. Tests force an index next to an in-memory state.
+   */
+  privateIndexUrl?: string | null;
   vault?: Vault;
   /** Injected model provider (tests); otherwise Anthropic from the vault credential. */
   provider?: ModelProvider;
@@ -502,6 +510,12 @@ export interface RuntimeApp {
   criticAgent: { id: string; name: string };
   /** Memory in the loop (spec G): recall under budget, lessons at session end, consolidation, views. */
   memory: MemoryLoop;
+  /**
+   * The local private memory index when the state is shared (`<data>/memory/private.sqlite`,
+   * ADR 0083): the only store that holds this install's `agent_private` rows. Null in solo mode,
+   * where `store` holds every scope.
+   */
+  privateMemory: StateStore | null;
   /** The command registry (spec Q): the only way chat, voice, the UI and the phone change state. */
   commands: CommandLoop;
   /**
@@ -828,6 +842,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     config?.stateUrl ??
     `sqlite:${join(dirs.data, "state.sqlite")}`;
   const store = await openStore({ url: stateUrl, clock });
+  // Private memory stays on this PC (spec "never leave that PC", ADR 0002): next to a shared
+  // state the agent_private scope lives in a local index; the shared store never sees it.
+  const indexUrl =
+    opts.privateIndexUrl === undefined ? privateIndexUrl(stateUrl, dirs) : opts.privateIndexUrl;
+  let privateStore: StateStore | null = null;
+  if (indexUrl) {
+    try {
+      privateStore = await openPrivateIndex(indexUrl, clock);
+    } catch (e) {
+      await store.close().catch(() => undefined);
+      throw e;
+    }
+  }
   const vault = opts.vault ?? (await openVault({ profile: config?.profile ?? "default", env }));
   const events = new EventEmitter();
   events.setMaxListeners(100);
@@ -1361,8 +1388,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const appVersion = opts.appVersion ?? env.FORERUNNER_VERSION ?? "0.1.0";
 
   // Memory (spec G): one root under the data directory; lessons per agent, critic and shared.
+  // With a shared state the private scope is routed to the local index opened above.
   const memory = new MemoryLoop({
     store,
+    ...(privateStore ? { privateStore } : {}),
     clock,
     root: join(dirs.data, "memory"),
     humanId: human.id,
@@ -2110,6 +2139,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     critic,
     criticAgent: { id: criticAgent.id, name: criticAgent.name },
     memory,
+    privateMemory: privateStore,
     commands,
     voice,
     events,
@@ -2168,6 +2198,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       await extensions.close();
       await updates.close();
       await store.close();
+      await privateStore?.close();
     },
   };
 }
