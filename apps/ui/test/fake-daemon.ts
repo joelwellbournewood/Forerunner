@@ -458,6 +458,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   // an unknown mode or a mailbox credential that is not a secret reference with 400.
   // ---------------------------------------------------------------------------------------
 
+  /** `COMMANDS_NEED_SENDING_MODE` of the capabilities package, word for word. */
+  const EMAIL_COMMANDS_NEED_SENDING_MODE =
+    "Email commands need a sending mode other than off: at off the agent sends nothing, so it could not answer your commands. Choose a sending mode first (read only is enough to reply to you), then turn commands on.";
   const emailError = (c: Context, status: 400 | 403, code: string, message: string) =>
     c.json({ error: { code, message, details: {}, retryable: false } }, status);
   const emailAgentOf = (c: Context): string | Response => {
@@ -557,6 +560,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       },
       commands: { ...current.commands, ...(body.commands ?? {}) },
     };
+    // ADR 0081, as the daemon's settings store: commands need a sending mode other than off.
+    // Turning them on at off is a 400 with the plain message; a change to off turns them off.
+    if (next.settings.mode === "off" && next.commands.enabled) {
+      const inForce = current.commands.enabled && current.settings.mode !== "off";
+      if (body.commands?.enabled === true && !inForce) {
+        return emailError(c, 400, "validation", EMAIL_COMMANDS_NEED_SENDING_MODE);
+      }
+      next.commands = { ...next.commands, enabled: false };
+    }
     state.email[agentId] = next;
     return c.json(next);
   });

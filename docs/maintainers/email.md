@@ -546,7 +546,9 @@ Requirements close-out (2026-10-20): S.16 to S.27 are `done` on the suites above
 mounts the routes (`email-routes-wiring.test.ts`) and `apps/ui` has the Settings ->
 Capabilities -> Email page with the mode picker per agent, the full-discretion sentence before
 the change and in the confirmation, pause and resume, the limits, the allowlist, the mailbox
-by reference, the marker and the lists (`apps/ui/test/email-settings.test.tsx`).
+by reference, the marker and the lists (`apps/ui/test/email-settings.test.tsx`; ADR 0081 there:
+the mode note says commands went off with a change to off, the commands toggle follows the
+stored value, and turning commands on at Off shows the 400's sentence).
 
 Email commands close-out (2026-10-20): T.3 to T.12 are `done` on `email-commands.test.ts`,
 `email-auth.test.ts`, `email-inbound.test.ts`, `email-settings.test.ts`, `email-routes.test.ts`

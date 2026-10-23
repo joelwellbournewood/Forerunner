@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import {
+  COMMANDS_TURNED_OFF_NOTE,
   FULL_DISCRETION_WARNING,
   ignoredReason,
   interpretationOf,
@@ -334,5 +335,34 @@ describe("Settings -> Capabilities -> Email", () => {
     // The other agent's routes are served and its card is complete.
     const critic = await card("agent_critic");
     expect(await within(critic).findByTestId("email-mode-picker")).toBeInTheDocument();
+  });
+  it("ADR 0081: a mode change to off turns commands off and the page says so; turning them on at off shows the daemon's plain refusal", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/settings/capabilities/email", harness);
+    const alice = await card();
+    await waitFor(() =>
+      expect(within(alice).getByTestId("email-mode-current")).toHaveTextContent("Draft only"),
+    );
+    expect(within(alice).getByTestId("commands-enabled")).toBeChecked();
+    await user.click(within(alice).getByRole("radio", { name: /^Off/ }));
+    await user.click(within(alice).getByTestId("email-mode-apply"));
+    await waitFor(() =>
+      expect(within(alice).getByTestId("email-mode-note")).toHaveTextContent(
+        `Mode set to Off. ${COMMANDS_TURNED_OFF_NOTE}`,
+      ),
+    );
+    expect(harness.daemon.state.email.agent_alice?.commands.enabled).toBe(false);
+    // The box follows the stored toggle instead of still showing commands on.
+    expect(within(alice).getByTestId("commands-enabled")).not.toBeChecked();
+    // Ticking it again at Off is refused by the daemon, and the page shows why.
+    await user.click(within(alice).getByTestId("commands-enabled"));
+    await user.click(within(alice).getByTestId("commands-save"));
+    await waitFor(() =>
+      expect(
+        within(alice).getByText(/Email commands need a sending mode other than off/),
+      ).toBeInTheDocument(),
+    );
+    expect(harness.daemon.state.email.agent_alice?.commands.enabled).toBe(false);
   });
 });
