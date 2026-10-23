@@ -75,6 +75,7 @@ Status: accepted | superseded by NNNN
 | 0058 | Project docs: in the repository by pull request, the status doc rewritten per session |
 | 0059 | Cross-project promotion in the loop: who reviews a proposal and when, the offer rule, what an accepted offer does |
 | 0060 | Monthly jobs: the scheduler's monthly kind, where the calibration and handover reports live, and the stuck-place rule |
+| 0061 | Quick chat retrieval: docs and lessons under measured budgets; recording a stated lesson |
 | 0062 | Merge after an accepting review: an unattended `merge_pr` call behind the hooks, the checks rule in the tool, and what is never merged automatically |
 | 0065 | Shared secrets: wrapped to the named agents' install keys, both humans approve, served by reference |
 | 0066 | Settings -> Capabilities -> Email: the capability's routes on the daemon, a page per agent, the full-discretion confirmation as the page's own step, the command audit read from the shared state |
