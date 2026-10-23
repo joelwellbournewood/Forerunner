@@ -37,8 +37,11 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { connectPage } from "./cdp.mjs";
+import { connectPage, describeFailure } from "./cdp.mjs";
 
+// The runner's one clock (Node-only tooling, ADR 0054): every wait here and the CDP driver's
+// polls read it.
+const now = () => Date.now();
 const here = dirname(fileURLToPath(import.meta.url));
 const mobileDir = resolve(here, "..");
 const repoRoot = resolve(mobileDir, "..", "..");
@@ -154,8 +157,8 @@ function listDevices(adb) {
 
 async function waitForBoot(adb, timeoutMs) {
   run(adb, ["wait-for-device"], { timeout: timeoutMs });
-  const t0 = Date.now();
-  while (Date.now() - t0 < timeoutMs) {
+  const t0 = now();
+  while (now() - t0 < timeoutMs) {
     const prop = run(adb, ["shell", "getprop", "sys.boot_completed"], { quiet: true }).trim();
     if (prop === "1") return;
     await sleep(2000);
@@ -250,8 +253,8 @@ async function startFakeService(port, adminToken) {
   });
   cleanups.push(() => child.kill("SIGTERM"));
   const url = `http://127.0.0.1:${port}`;
-  const t0 = Date.now();
-  while (Date.now() - t0 < 60_000) {
+  const t0 = now();
+  while (now() - t0 < 60_000) {
     try {
       const res = await fetch(`${url}/health`);
       if (res.ok) return url;
@@ -286,8 +289,8 @@ async function admin(url, token, method, path, body) {
 }
 
 async function findDevtoolsSocket(adb, timeoutMs) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < timeoutMs) {
+  const t0 = now();
+  while (now() - t0 < timeoutMs) {
     let pid = "";
     try {
       pid = run(adb, ["shell", "pidof", APP_ID], { quiet: true }).trim();
@@ -394,11 +397,11 @@ async function smoke(page, stateUrl, adminToken, timeoutMs) {
   assert(all.length === 2, "undo sent a second remote command");
   const undoNames = all[1].body.params.plan.map((c) => c.name).join(",");
   assert(undoNames === "session.stop,budget.set,project.switch", `inverse plan: ${undoNames}`);
-  const t0 = Date.now();
+  const t0 = now();
   for (;;) {
     const s = await state();
     if (s.sessions[0]?.status === "killed") break;
-    if (Date.now() - t0 > timeoutMs) throw new Error("undo did not stop the session");
+    if (now() - t0 > timeoutMs) throw new Error("undo did not stop the session");
     await sleep(500);
   }
   console.log("PASS: change log entry with Undo; the inverse plan stopped the session");
@@ -448,9 +451,9 @@ async function main() {
     });
   }
   run(adb, ["shell", "am", "start", "-n", ACTIVITY]);
-  const t0 = Date.now();
+  const t0 = now();
   let launched = false;
-  while (Date.now() - t0 < 60_000) {
+  while (now() - t0 < 60_000) {
     const windows = run(adb, ["shell", "dumpsys", "window", "windows"], { quiet: true });
     if (windows.includes(APP_ID)) {
       launched = true;
@@ -486,6 +489,7 @@ async function main() {
     prefer: (t) => /forerunner/i.test(String(t.title)) || /tauri\.localhost/i.test(String(t.url)),
     waitForTargetMs: 30_000,
     timeoutMs: ACTION_TIMEOUT_MS,
+    now,
   });
   cleanups.push(() => client.close());
   console.log(`PASS: attached to the WebView page ${target.url} (${target.title})`);
@@ -508,6 +512,8 @@ main()
       console.log(`SKIP: ${error.message}`);
       process.exit(0);
     }
-    console.error(`FAIL: ${error instanceof Error ? error.message : String(error)}`);
+    // A CdpError's stable code and details (the element in the way, the protocol method) go
+    // into the log with the message.
+    console.error(describeFailure(error));
     process.exit(1);
   });

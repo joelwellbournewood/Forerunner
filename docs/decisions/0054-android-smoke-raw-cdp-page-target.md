@@ -44,23 +44,34 @@ assertions on the fake service's recorded calls and state do not depend on the d
    matches and considers the scope root itself; chained locators search descendants;
    `filter({ has })` keeps elements with a matching descendant; actions are strict (several
    matches are refused at once); `waitFor` means visible (client rects and not
-   `visibility: hidden`); `click` scrolls the element into view, hit-tests its centre with
+   `visibility: hidden`); `click` scrolls the element into view, reads its box twice one
+   animation frame apart (a box still moving, a smooth scroll or a transition, is reported
+   unstable and polled again), hit-tests the settled centre with
    `elementFromPoint` (the hit must be the element or inside it, retried until the timeout,
    then `cdp.click_intercepted` naming the element in the way) and sends `mouseMoved`,
    `mousePressed`, `mouseReleased` through `Input.dispatchMouseEvent`; `fill` focuses the
    field, selects its content and sends `Input.insertText`, then reads the value back and,
    when it did not follow, sets it through the native value setter and dispatches `input`
    and `change` so a React-controlled field updates either way. Errors are `CdpError` with a
-   stable `cdp.*` code.
+   stable `cdp.*` code; the runner's `FAIL:` line carries the code and the details with the
+   message.
+   Nothing in the driver relies on `eval` or `new Function` inside the page: the bundle's CSP
+   (`default-src 'self'`, no `'unsafe-eval'`, `src-tauri/tauri.conf.json`) refuses both on
+   the WebView. `Locator.evaluate(fnSource)` splices the function's source into the
+   `Runtime.evaluate` expression as a function expression and the page calls it on the
+   element; every other input reaches the page as JSON data.
 3. **Playwright leaves the emulator runner.** `run.mjs` no longer imports `@playwright/test`
    (the package stays in `apps/ui` for the browser specs). The runner depends on Node alone.
 4. **Tested against a fake endpoint with a real DOM.** `cdp.test.ts` runs in the unit
    project: `node:http` serves `/json/list`, a `ws` server answers the page socket and
    `Runtime.evaluate` runs the driver's in-page code in a jsdom document that carries a
    layout stand-in (`data-box` boxes, `elementFromPoint` over them, clicks and inputs
-   recorded), so the query rules, strictness, waits, click and fill paths, timeouts, close
-   handling and target selection are exercised rather than string-matched. `ws`, `@types/ws`
-   and `jsdom` are devDependencies of `apps/mobile` for that test only.
+   recorded, `requestAnimationFrame` running) and a CSP stand-in (the page's `eval` and
+   `Function` refuse), so the query rules, strictness, waits, click and fill paths, timeouts,
+   close handling and target selection are exercised rather than string-matched. `ws`,
+   `@types/ws` and `jsdom` are devDependencies of `apps/mobile` for that test only;
+   `e2e/cdp.d.mts` types the driver for the test and `e2e/jsdom.d.ts` declares the slice of
+   jsdom it uses.
 
 ## Consequences
 
@@ -76,6 +87,10 @@ assertions on the fake service's recorded calls and state do not depend on the d
   `cdp.test.ts` when a step needs one.
 - The browser version of the flow (`apps/ui/e2e/mobile-*.spec.ts`) stays on Playwright; the
   two share the same test ids and texts, so a UI change breaks both the same way.
+- Accepted exception to AGENTS.md for this Node-only tooling (no workspace import in the
+  emulator runner): `cdp.mjs` defaults its clock to `Date.now` and throws its own `CdpError`
+  (stable `cdp.*` codes) instead of `ForerunnerError`; `run.mjs` owns the one `now` and
+  passes it to `connectPage`.
 
 ## Alternatives considered
 

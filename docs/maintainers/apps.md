@@ -851,7 +851,9 @@ apps/mobile/
   e2e/run.mjs        emulator run (build, boot, install, fake service, CDP smoke); README.md has the
                      adb / gradle commands by hand
   e2e/cdp.mjs        raw CDP client and DOM driver for the smoke (ADR 0054): /json/list, page socket,
-                     Runtime.evaluate queries, Input.* clicks and fills; cdp.test.ts against a fake endpoint
+                     Runtime.evaluate queries, Input.* clicks and fills; no eval in the page (CSP);
+                     cdp.test.ts against a fake endpoint
+  e2e/cdp.d.mts      types of cdp.mjs for the test (keep in step); e2e/jsdom.d.ts: the jsdom slice it uses
   src-tauri/
     Cargo.toml, tauri.conf.json (no static window; deep-link scheme "fr"; CSP allows 127.0.0.1 and 10.0.2.2)
     capabilities/default.json (core, deep-link, log), mobile.json (biometric, barcode-scanner; Android/iOS only)
@@ -997,18 +999,23 @@ quiet hours. The FCM wiring is listed in ADR 0032 item 6.
   the Android WebView refuses the browser-level commands `connectOverCDP` starts with.
 - `apps/mobile/e2e/cdp.test.ts` (unit project): the driver against a fake DevTools endpoint
   (`node:http` serving `/json/list` and `/json`, a `ws` server answering the page socket, a
-  jsdom document with `data-box` layout boxes and `elementFromPoint` over them): page-target
+  jsdom document with `data-box` layout boxes and `elementFromPoint` over them, real
+  `requestAnimationFrame`, and a CSP stand-in whose `eval` and `Function` refuse): page-target
   selection (workers never, the preferred page over the first), socket URL on the forwarded
   port, id-correlated responses with events ignored, protocol errors, request timeout, close
   rejecting the pending requests, connect failure; `getByRole` (heading, button, link; name as
   substring, case-insensitive, `exact`, hidden excluded), chained scopes, innermost text
   match (the scope root included), `filter({ has })`, `first` / `nth`, `count`,
-  `getAttribute`, `innerText`; `waitFor` resolving when the element becomes visible and
-  timing out with the locator named; `click` as `mouseMoved` / `mousePressed` /
-  `mouseReleased` at the box centre after `scrollIntoView`, strict-mode refusal, an
-  intercepting overlay reported; `fill` through `Input.insertText` after focus and select-all,
-  the native-setter fallback with `input` and `change`, `not_editable`; `connectPage` waiting
-  for the target and giving up with `cdp.no_page_target`.
+  `getAttribute`, `innerText`; `waitFor` timing out on an attached but hidden element,
+  resolving only after it is unhidden, and timing out with the locator named; `click` as
+  `mouseMoved` / `mousePressed` / `mouseReleased` at the box centre after `scrollIntoView`,
+  landing on the second position when the box moves once after the scroll, strict-mode
+  refusal, an intercepting overlay reported; `evaluate` with the function source spliced into
+  the expression (no `eval` call sent, the CSP stand-in in force), `cdp.bad_function` for a
+  non-function; `fill` through `Input.insertText` after focus and select-all, the
+  native-setter fallback with `input` and `change`, `not_editable`; `connectPage` waiting for
+  the target and giving up with `cdp.no_page_target`; `describeFailure` (the runner's `FAIL:`
+  line) keeping a `CdpError`'s code and details.
 - `scripts/android-keystore.test.ts` and `scripts/android-apk-verify.test.ts` (`release.md`
   "Tests"): the Gradle signing config reads what the keystore script writes, the workflows
   verify the release APK with `apksigner` before uploading it.
