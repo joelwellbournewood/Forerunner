@@ -2,3 +2,5 @@ Stage BUILD. Build the item described below completely: code, tests, the maintai
 
 Overriding the line above about not pushing: as your very last action, commit anything still uncommitted and run `git push -u origin wave/ITEM` once (the workflow push that follows may fail for a token reason that is not yours).
 
+Before your last commit, write that final message into `docs/status/reviews/ITEM.md` under the heading `## Build report` (create the file and its directory when missing; keep any earlier sections) and commit it with the message `build report: ITEM`.
+
