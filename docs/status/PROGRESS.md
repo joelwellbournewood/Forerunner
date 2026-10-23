@@ -145,9 +145,12 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    sibling case does); push and record the green run on both OS. The review findings are
    fixed on `wave/w5-review-findings` (BLOCKERS.md section "Open review findings of
    2026-10-23"); merge it after its own review, then re-review w1-b6-review and
-   w1-plan-approval on the merged code. Two points found while fixing stay open there: a
-   hooks approval answered after its session ended is never reused (J.7 / S.6 follow-up), and
-   the Cloudflare port's own approval row may carry a resolved secret in its card input.
+   w1-plan-approval on the merged code. The branch's own independent review
+   (`docs/status/reviews/w5-review-findings.md`, revise 80) found two more defects, fixed on
+   the branch (a cloud plan start failing in the background spent the approval silently; the
+   Cloudflare port's own approval card showed a resolved secret). One point found while fixing
+   stays open there: a hooks approval answered after its session ended is never reused (J.7 /
+   S.6 follow-up).
 2. Finish the partly built branches, each with its tests, maintainer doc and review:
    `wave/w4-desktop-confirm` (the triage P1, 1 commit), `wave/w3-b5-reasons` (B.5, 2 commits),
    `wave/w2-l6-speak` (L.6, 3 commits, state unknown: read the diff before building on it);

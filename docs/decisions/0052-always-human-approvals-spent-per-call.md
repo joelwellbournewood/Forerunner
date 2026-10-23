@@ -72,6 +72,18 @@ key is computed from, and what happens to the other classes.
   its `it.fails` now passing) and the long-input case in
   `packages/capabilities/test/cloudflare-tools.test.ts`.
 
+## Amendment (2026-10-23, review of w5-review-findings)
+
+- A tool that files its own approval card (the Cloudflare deployer's port) never shows the
+  input it executes with: that input has the call's `secret:` references resolved. The hooks
+  return, beside `approvalKey`, their display copy of the parsed input
+  (`ToolCallDecision.approvalInput`: references unresolved, long strings cut, the same copy
+  their own card shows); the agent loop hands both to the tool in its context
+  (`ToolExecutionContext.approvalKey`, `approvalInput`), and the Cloudflare port shows
+  `displayInput` on its card. Rejected alternative: scrubbing the resolved input with the
+  run's resolver (`SecretsPort.redact`) inside the port, which would need the resolver in the
+  capability and would show `[REDACTED]` where the human should see which secret is bound.
+
 ## Alternatives considered
 
 - **A `consume(key)` method on `ApprovalPort`, called from `afterToolCall`.** Rejected: it
