@@ -30,6 +30,11 @@ import {
   DAEMON_ROUTES,
   type DecisionView,
   DecisionView as DecisionViewSchema,
+  type DesktopControlView,
+  type DesktopRevokeView,
+  DesktopRevokeView as DesktopRevokeViewSchema,
+  type DesktopStatusView,
+  DesktopStatusView as DesktopStatusViewSchema,
   type EmailCommandRowView,
   type EmailCommandsView,
   EmailCommandsView as EmailCommandsViewSchema,
@@ -180,6 +185,9 @@ export type {
   CostView,
   DataAssetView,
   DecisionView,
+  DesktopControlView,
+  DesktopRevokeView,
+  DesktopStatusView,
   DocContentView,
   DocView,
   EmailCommandRowView,
@@ -423,6 +431,12 @@ export interface DaemonClient {
   stopSession(id: string, reason?: string): Promise<SessionView>;
   kill(body: KillBody): Promise<KillResult>;
   resume(): Promise<KillResult>;
+  /** `GET /desktop/status`: desktop control's state, with what the indicator shows (S.32). */
+  desktopStatus(signal?: AbortSignal): Promise<DesktopStatusView>;
+  /** `POST /desktop/revoke`: stop desktop control now; refused until resumed (S.8, S.32). */
+  desktopRevoke(reason?: string): Promise<DesktopRevokeView>;
+  /** `POST /desktop/resume`: allow desktop control again after a revoke. */
+  desktopResume(): Promise<DesktopStatusView>;
   inbox(humanId: string, signal?: AbortSignal): Promise<InboxView>;
   answerRequest(requestId: string, body: AnswerRequestInput): Promise<HumanRequestView>;
   markRead(messageId: string): Promise<MessageView>;
@@ -735,6 +749,11 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       post(routePath("stopSession", { id }), SessionViewSchema, reason ? { reason } : {}),
     kill: (body) => post(routePath("kill"), KillResult, body),
     resume: () => post(routePath("resume"), KillResult, {}),
+    desktopStatus: (signal) =>
+      get(routePath("desktopStatus"), DesktopStatusViewSchema, undefined, signal),
+    desktopRevoke: (reason) =>
+      post(routePath("desktopRevoke"), DesktopRevokeViewSchema, reason ? { reason } : {}),
+    desktopResume: () => post(routePath("desktopResume"), DesktopStatusViewSchema, {}),
     inbox: (humanId, signal) => get(routePath("inbox"), InboxViewSchema, { humanId }, signal),
     answerRequest: (requestId, body) =>
       post(routePath("answerRequest", { id: requestId }), HumanRequestViewSchema, body),

@@ -5,6 +5,7 @@ import type {
   CommandResultJson,
   ConsolidationProposalView,
   ConsolidationReportView,
+  DesktopControlView,
   EmailCommandRowView,
   EmailSentRowView,
   EmailSettingsPatchBody,
@@ -213,7 +214,20 @@ export interface FakeDaemonState {
    * daemon's `settings.set` card says.
    */
   fastMode: Record<string, boolean | null>;
+  /**
+   * Desktop control (spec S.32): what `GET /desktop/status` answers. `setDesktopControl`
+   * changes it and emits the `desktop.indicator` frame the real daemon would.
+   */
+  desktop: { revoked: boolean; revokedReason: string | null; control: DesktopControlView };
 }
+
+const DESKTOP_OFF: DesktopControlView = {
+  active: false,
+  app: null,
+  sessionId: null,
+  agentId: null,
+  since: null,
+};
 
 interface PendingCommand {
   card: ChangeCardView;
@@ -279,6 +293,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     failing: { ...(options.failing ?? {}) },
     runnerKeys: { ...(options.runnerKeys ?? {}) },
     fastMode: {},
+    desktop: { revoked: false, revokedReason: null, control: { ...DESKTOP_OFF } },
   };
 
   const emit = (event: string, data: unknown) => {
@@ -378,6 +393,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.missingRoutes = [...(options.missingRoutes ?? [])];
     state.failing = { ...(options.failing ?? {}) };
     state.runnerKeys = { ...(options.runnerKeys ?? {}) };
+    state.desktop = { revoked: false, revokedReason: null, control: { ...DESKTOP_OFF } };
     return c.json({ ok: true });
   });
   app.post("/__test/fail", async (c) => {
@@ -797,6 +813,35 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.post("/kill/resume", (c) => {
     state.killActive = false;
     return c.json({ killActive: false, stoppedSessions: 0 });
+  });
+
+  // Desktop control (spec S.32; ADR 0067): the status with what the indicator shows, revoke
+  // (the banner's "Stop desktop control") and resume, as `packages/capabilities` answers them.
+  const desktopStatus = () => ({
+    capability: "desktop-control",
+    adapter: "fake",
+    revoked: state.desktop.revoked,
+    revokedReason: state.desktop.revokedReason,
+    indicatorOn: state.desktop.control.active,
+    desktopControl: clone(state.desktop.control),
+    inFlight: state.desktop.control.active ? 1 : 0,
+    queued: 0,
+    actions: 0,
+  });
+  app.get("/desktop/status", (c) => c.json(desktopStatus()));
+  app.post("/desktop/revoke", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { reason?: string };
+    const reason = body.reason ?? "revoked from the panel";
+    const interrupted = state.desktop.control.active ? 1 : 0;
+    state.desktop.revoked = true;
+    state.desktop.revokedReason = reason;
+    setDesktopControl(null);
+    return c.json({ reason, interrupted, dropped: 0, status: desktopStatus() });
+  });
+  app.post("/desktop/resume", (c) => {
+    state.desktop.revoked = false;
+    state.desktop.revokedReason = null;
+    return c.json(desktopStatus());
   });
 
   app.get("/inbox", (c) =>
@@ -2684,13 +2729,50 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     });
   }
 
+  /**
+   * Desktop control turns on (with the names) or off (`null`): the status view changes and the
+   * `desktop.indicator` frame goes to every open `/events` stream, as the real daemon does.
+   * `silent` changes only the status (a frame the UI missed while disconnected).
+   */
+  function setDesktopControl(
+    on: { app?: string; sessionId: string; agentId: string; at?: string } | null,
+    silent = false,
+  ) {
+    if (on) {
+      const at = on.at ?? new Date().toISOString();
+      state.desktop.control = {
+        active: true,
+        app: on.app ?? null,
+        sessionId: on.sessionId,
+        agentId: on.agentId,
+        since: at,
+      };
+      if (!silent) {
+        emit("desktop.indicator", {
+          on: true,
+          ...(on.app ? { app: on.app } : {}),
+          sessionId: on.sessionId,
+          agentId: on.agentId,
+          runId: "run_desktop",
+          humanId: "human_alice",
+          message: `Forerunner agent ${on.agentId} is controlling ${on.app ?? "the desktop"}`,
+          at,
+        });
+      }
+    } else {
+      const wasOn = state.desktop.control.active;
+      state.desktop.control = { ...DESKTOP_OFF };
+      if (wasOn && !silent) emit("desktop.indicator", { on: false });
+    }
+  }
+
   function close() {
     for (const t of state.timers) clearTimeout(t);
     state.timers.clear();
     state.listeners.clear();
   }
 
-  return { app, state, token, close };
+  return { app, state, token, close, setDesktopControl };
 }
 
 export interface RunningFakeDaemon {

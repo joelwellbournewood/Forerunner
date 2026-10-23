@@ -1,4 +1,5 @@
 import {
+  DesktopIndicatorEventData,
   type EventView,
   EventView as EventViewSchema,
   type SessionView,
@@ -16,6 +17,8 @@ import { type DaemonClient, routePath } from "./client.ts";
  * the helper polls the JSON routes every `pollIntervalMs` (5 s) and retries SSE later, so the
  * UI never sits on a silent spinner.
  */
+
+export type { DesktopIndicatorEventData };
 
 export type StreamMode = "connecting" | "sse" | "polling" | "closed";
 
@@ -39,6 +42,8 @@ export type DaemonEvent =
   | { event: "project.changed"; data: { id: string } }
   | { event: "extension.changed"; data: ExtensionChanged }
   | { event: "restart.requested"; data: RestartRequested }
+  /** Desktop control's on-screen indicator (spec S.32): the banner shows while `on`. */
+  | { event: "desktop.indicator"; data: DesktopIndicatorEventData }
   | { event: "heartbeat"; data: { at: string } };
 
 const InboxChanged = z.object({ blockingCount: z.number().int() });
@@ -85,6 +90,10 @@ export function parseDaemonEvent(event: string, rawData: string): DaemonEvent | 
       const p = RestartRequestedSchema.safeParse(data);
       return p.success ? { event, data: p.data } : null;
     }
+    case "desktop.indicator": {
+      const p = DesktopIndicatorEventData.safeParse(data);
+      return p.success ? { event, data: p.data } : null;
+    }
     case "heartbeat": {
       const p = Heartbeat.safeParse(data);
       return p.success ? { event, data: p.data } : null;
@@ -101,6 +110,7 @@ export const DAEMON_EVENT_NAMES = [
   "project.changed",
   "extension.changed",
   "restart.requested",
+  "desktop.indicator",
   "heartbeat",
 ] as const;
 
@@ -269,8 +279,30 @@ function runStream(
 }
 
 /**
- * The install-wide stream. In polling mode it reads `/inbox` for the blocking count and
- * `/sessions?status=running` for session changes.
+ * The indicator frame a status read stands for: what a shell that missed the frames (polling,
+ * a reconnect) would have been told last. `on` carries the names the banner shows.
+ */
+export function indicatorFromStatus(control: {
+  active: boolean;
+  app: string | null;
+  sessionId: string | null;
+  agentId: string | null;
+  since: string | null;
+}): DesktopIndicatorEventData {
+  if (!control.active) return { on: false };
+  return {
+    on: true,
+    ...(control.app ? { app: control.app } : {}),
+    ...(control.sessionId ? { sessionId: control.sessionId } : {}),
+    ...(control.agentId ? { agentId: control.agentId } : {}),
+    ...(control.since ? { at: control.since } : {}),
+  };
+}
+
+/**
+ * The install-wide stream. In polling mode it reads `/inbox` for the blocking count,
+ * `/sessions?status=running` for session changes and `/desktop/status` for the desktop
+ * control indicator (a daemon without the desktop routes leaves the indicator as it is).
  */
 export function subscribeDaemonEvents(
   client: DaemonClient,
@@ -284,6 +316,15 @@ export function subscribeDaemonEvents(
       handlers.onEvent({ event: "inbox.changed", data: { blockingCount: inbox.blockingCount } });
       const running = await client.sessions({ status: "running" });
       for (const s of running) handlers.onEvent({ event: "session.changed", data: s });
+      try {
+        const desktop = await client.desktopStatus();
+        handlers.onEvent({
+          event: "desktop.indicator",
+          data: indicatorFromStatus(desktop.desktopControl),
+        });
+      } catch {
+        // no desktop routes on this daemon, or a transient failure: the next tick reads again
+      }
       handlers.onEvent({ event: "heartbeat", data: { at: new Date().toISOString() } });
     },
   };

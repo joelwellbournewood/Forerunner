@@ -1,6 +1,6 @@
 import type { AgentView, HealthView, HumanView, ProjectCard } from "../api/client.ts";
 import type { DaemonConfig } from "../api/config.ts";
-import type { RestartRequested, StreamMode } from "../api/sse.ts";
+import type { DesktopIndicatorEventData, RestartRequested, StreamMode } from "../api/sse.ts";
 import { type KeyValueStore, storageKey } from "../lib/storage.ts";
 
 /**
@@ -37,6 +37,38 @@ export interface UiState {
   restart: RestartRequested | null;
   /** Bumped on every `extension.changed` frame so the Extensions panel reloads. */
   extensionsVersion: number;
+  /**
+   * Desktop control's on-screen indicator (spec S.32): the latest `desktop.indicator` frame,
+   * or the status view re-read when the stream (re)opens. The shell's banner shows while
+   * `active`; null until the daemon said anything.
+   */
+  desktopControl: DesktopControlState | null;
+}
+
+/** What the desktop-control banner shows. */
+export interface DesktopControlState {
+  active: boolean;
+  app: string | null;
+  sessionId: string | null;
+  agentId: string | null;
+  since: string | null;
+  /** Desktop control was stopped from the UI (or the panel) and refuses until resumed. */
+  revoked: boolean;
+}
+
+/** The store's state for one `desktop.indicator` frame; `revoked` is kept from before. */
+export function desktopControlFromIndicator(
+  data: DesktopIndicatorEventData,
+  previous: DesktopControlState | null,
+): DesktopControlState {
+  return {
+    active: data.on,
+    app: data.on ? (data.app ?? null) : null,
+    sessionId: data.on ? (data.sessionId ?? null) : null,
+    agentId: data.on ? (data.agentId ?? null) : null,
+    since: data.on ? (data.at ?? null) : null,
+    revoked: data.on ? false : (previous?.revoked ?? false),
+  };
 }
 
 export type UiAction =
@@ -50,7 +82,8 @@ export type UiAction =
   | { type: "killActive"; active: boolean }
   | { type: "theme"; theme: ThemePreference }
   | { type: "restart"; restart: RestartRequested | null }
-  | { type: "extension.changed" };
+  | { type: "extension.changed" }
+  | { type: "desktopControl"; desktopControl: DesktopControlState | null };
 
 export const STORAGE_NAMES = { activeProject: "activeProject", theme: "theme" } as const;
 
@@ -79,6 +112,7 @@ export function initialState(config: DaemonConfig, storage: KeyValueStore): UiSt
     theme: isTheme(storedTheme) ? storedTheme : "system",
     restart: null,
     extensionsVersion: 0,
+    desktopControl: null,
   };
 }
 
@@ -120,6 +154,8 @@ export function reduce(state: UiState, action: UiAction): UiState {
       return { ...state, restart: action.restart };
     case "extension.changed":
       return { ...state, extensionsVersion: state.extensionsVersion + 1 };
+    case "desktopControl":
+      return { ...state, desktopControl: action.desktopControl };
     default:
       return state;
   }

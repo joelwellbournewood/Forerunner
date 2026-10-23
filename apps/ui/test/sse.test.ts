@@ -56,6 +56,26 @@ describe("parseDaemonEvent", () => {
       data: { reason: "update", targetVersion: "0.2.0", fromVersion: "0.1.0", exitCode: 86 },
     });
     expect(parseDaemonEvent("restart.requested", '{"reason":"update"}')).toBeNull();
+    expect(
+      parseDaemonEvent(
+        "desktop.indicator",
+        '{"on":true,"app":"code","sessionId":"sess_1","agentId":"agent_alice","at":"2026-10-23T08:00:00.000Z"}',
+      ),
+    ).toEqual({
+      event: "desktop.indicator",
+      data: {
+        on: true,
+        app: "code",
+        sessionId: "sess_1",
+        agentId: "agent_alice",
+        at: "2026-10-23T08:00:00.000Z",
+      },
+    });
+    expect(parseDaemonEvent("desktop.indicator", '{"on":false}')).toEqual({
+      event: "desktop.indicator",
+      data: { on: false },
+    });
+    expect(parseDaemonEvent("desktop.indicator", '{"on":"yes"}')).toBeNull();
     expect(parseDaemonEvent("session.event", "not json")).toBeNull();
     expect(parseDaemonEvent("something.else", "{}")).toBeNull();
   });
