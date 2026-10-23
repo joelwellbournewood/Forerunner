@@ -138,4 +138,6 @@ After the fixes (at 81b5e68): `pnpm typecheck` clean; `pnpm lint` clean (59 warn
 0 errors, as on the base); `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok
 (33 files); `node scripts/check-paths.mjs` ok; `packages/runtime/test` 119 files, 1009 passed,
 1 skipped; `packages/critic/test` 13 files, 110 tests; `packages/commands/test` 9 files,
-130 tests; `apps/ui` 42 files, 252 tests; scenario 8 (`--project e2e`) 1 file, 1 test.
+130 tests; `apps/ui` 42 files, 252 tests; scenario 8 (`--project e2e`) 1 file, 1 test;
+the whole `tests/e2e` package (`--project e2e tests/e2e`) 13 files, 24 passed, 1 skipped,
+1 todo (the `unit` and `integration` projects hold no file under `tests/e2e`).
