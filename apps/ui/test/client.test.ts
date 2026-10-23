@@ -173,8 +173,8 @@ describe("daemon client", () => {
       engine: "none",
       reason: "fake daemon",
     });
-    // Derived from the extension fixtures: four installed and enabled or disabled, one pending.
-    expect(health.extensions).toEqual({ enabled: 3, pending: 1 });
+    // Derived from the extension fixtures: five installed and enabled or disabled, one pending.
+    expect(health.extensions).toEqual({ enabled: 4, pending: 1 });
     const legacy = createClient(testConfig(), async () => {
       const { sandbox: _s, extensions: _e, ...rest } = health;
       return jsonResponse(rest);
@@ -439,7 +439,7 @@ describe("daemon client", () => {
     expect(widened.status).toBe("pending_approval");
     await client.denyExtension(pending.id);
     await client.removeExtension(added.id);
-    expect((await client.extensions()).length).toBe(5);
+    expect((await client.extensions()).length).toBe(6);
 
     const feed = await client.updates();
     expect(feed.app.available?.version).toBe("0.2.0");

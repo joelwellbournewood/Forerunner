@@ -100,7 +100,7 @@ describe("Settings", () => {
       "process stand-in fake daemon",
     );
     expect(within(status).getByTestId("extensions-health")).toHaveTextContent(
-      "3 enabled · 1 waiting for your approval",
+      "4 enabled · 1 waiting for your approval",
     );
   });
 

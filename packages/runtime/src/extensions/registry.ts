@@ -75,7 +75,6 @@ import {
  * registered with the kill switch so a global stop kills them too.
  */
 
-/** The TokenIssuer's revocation entry point (the kill switch holds the same issuer). */
 /** An enabled row that came from the catalog, with the entry it was installed from. */
 export interface EnabledCatalogExtension {
   extensionId: string;
@@ -86,6 +85,7 @@ export interface EnabledCatalogExtension {
   permissions: ExtensionPermissions;
 }
 
+/** The TokenIssuer's revocation entry point (the kill switch holds the same issuer). */
 export interface TokenRevoker {
   revokeWhere(pred: (c: CapabilityClaims) => boolean): string[];
 }
