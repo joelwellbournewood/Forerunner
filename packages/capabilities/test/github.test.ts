@@ -91,6 +91,13 @@ function stub(): Promise<{
               { id: 1, name: "ci", status: "completed", conclusion: "success", details_url: null },
             ],
           });
+        if (u === "/repos/o/r/commits/abc/status?per_page=100")
+          return json(200, {
+            state: "failure",
+            statuses: [
+              { id: 9, context: "ci/jenkins", state: "failure", target_url: "https://ci.test/9" },
+            ],
+          });
         if (u === "/repos/o/missing") return json(404, { message: "Not Found" });
         // Repository listings page through the Link header the way GitHub does.
         const repoJson = (owner: string, name: string) => ({
@@ -174,6 +181,10 @@ describe("GitHubHost", () => {
     expect((await gh.listCheckRuns({ owner: "o", name: "r" }, "abc"))[0]?.conclusion).toBe(
       "success",
     );
+    // Commit statuses (the status API external CIs report through) from the combined status.
+    expect(await gh.listCommitStatuses({ owner: "o", name: "r" }, "abc")).toEqual([
+      { id: 9, context: "ci/jenkins", state: "failure", targetUrl: "https://ci.test/9" },
+    ]);
   });
 
   it("lists an org's, a user's and the token's repositories, following Link pagination", async () => {

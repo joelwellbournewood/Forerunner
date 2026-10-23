@@ -19,6 +19,7 @@ import {
 import {
   type CheckRunInfo,
   type CommentInfo,
+  type CommitStatusInfo,
   type FileContent,
   FORERUNNER_TASK_ID_FIELD,
   type GitHost,
@@ -427,6 +428,20 @@ export class GitHubHost implements GitHost {
       status: c.status as CheckRunInfo["status"],
       conclusion: (c.conclusion as CheckRunInfo["conclusion"]) ?? null,
       detailsUrl: c.details_url ? String(c.details_url) : null,
+    }));
+  }
+
+  async listCommitStatuses(repo: RepoRef, ref: string): Promise<CommitStatusInfo[]> {
+    // The combined status holds the latest status per context (the list endpoint every one).
+    const r = await this.request<Json>(
+      "GET",
+      `${this.repoPath(repo)}/commits/${encodeURIComponent(ref)}/status?per_page=100`,
+    );
+    return ((r.statuses as Json[]) ?? []).map((s) => ({
+      id: Number(s.id),
+      context: String(s.context ?? "default"),
+      state: s.state as CommitStatusInfo["state"],
+      targetUrl: s.target_url ? String(s.target_url) : null,
     }));
   }
 
