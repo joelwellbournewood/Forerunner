@@ -18,6 +18,16 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (O.1 global hotkey)
+- O.1 done: the desktop shell registers a global hotkey (default CommandOrControl+Shift+Space,
+  per install in `<config>/hotkey.json`, tauri-plugin-global-shortcut =2.4.0); a press shows and
+  focuses the window and the UI opens a conversation panel that starts a push-to-talk turn
+  through the daemon's `/voice` routes, or focuses the text input when voice is unavailable.
+  Settings shows and changes the shortcut ("unavailable" outside the desktop app). ADR 0064.
+  Tests: `apps/desktop/src-tauri/src/hotkey.rs` (11), `apps/ui/test/hotkey.test.tsx` (14).
+  Open: a run in a real desktop session, TTS playback in the panel, a Wayland portal.
+- Requirements 189 done, 34 in progress, 5 todo (counted from the rows).
+
 ### 2026-10-23 (item w3-d7-performance rebased onto 38ae8cc)
 - `wave/w3-d7-performance` rebased onto `origin/ccr-4d8a843c-1k9syk` (38ae8cc, after the merges
   of w3-d4-specialist-settings (D.4, ADR 0072) and w3-r5-phone (R.5, ADR 0080)). Conflicts in
