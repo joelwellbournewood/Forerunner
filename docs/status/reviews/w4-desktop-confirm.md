@@ -43,7 +43,11 @@ Requirements checked:
 - Semantic conflict with the base: none found; the base moved from 049ed52 to b1804e3 (voice
   preferences, B.5 reasons, APK verifier), `git merge-tree --write-tree HEAD
   origin/ccr-4d8a843c-1k9syk` is clean and neither side touches the confirm route or the
-  device registration.
+  device registration. After the fixes, the Known issues entry added for finding 5 first
+  collided textually with the base's new B.5 entry in runtime.md; 7121d36 moved it, and a
+  throwaway merge of the branch with b1804e3 (detached, discarded) is clean, `pnpm typecheck`
+  passes and `packages/runtime/test` (116 files, 1003 passed, 1 skipped) and `apps/ui` (42
+  files, 259 tests) pass on the merged tree.
 
 Findings:
 
