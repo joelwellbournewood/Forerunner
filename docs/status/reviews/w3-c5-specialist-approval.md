@@ -68,6 +68,10 @@ Findings:
    a registry copy without the proposal; `runner.syncAnswers()` returned `skipped: 1`, the
    owner's then `0`, the card said `proposal_missing`. Needed: only the install whose
    `proposal.json` names the request applies it; a test with two instances.
+   Resolution: fixed in 135132b: `unapplied()` skips a request unless this install's
+   `proposal.json` names it (`approval.requestId`, written by every `file()`, which now also
+   gives a hand-written proposal a minimal record); test "another install of the same human
+   over a shared store leaves the answer to the install holding the proposal" (fails before).
 2. **medium**: `approval.ts:641-652` (the claim) with `:443-461` (`fileMissing`). An evaluation
    interrupted after the claim (the daemon's update-and-restart exit is bounded by
    `EXIT_DEADLINE_MS` and does not wait for `settled()`, a crash, a kill) leaves the card at
@@ -79,6 +83,13 @@ Findings:
    `evaluating`, no open request. Needed: a stale evaluation (its process gone, or older than
    the set's worst-case duration) is recovered: card marked `interrupted`, a note, the
    proposal filed again; a test.
+   Resolution: fixed in 135132b: from the claim on the record names the process (`pid` and a
+   per-process token); `recoverInterrupted()` (run by every `syncAnswers` and CLI call) marks
+   a run whose process is gone or that overran tasks x `timeout_minutes` + 15 min as
+   `interrupted` on the card and the record, writes an audit row and an inbox note and files
+   the proposal again; tests "an evaluation whose process died is recovered" and "an
+   evaluation by a live process is left alone until it overruns" (both fail before); ADR 0071
+   point 7 amended in 96ae04d.
 3. **medium**: `approval.ts:545-561` (`answerAndApply`) and `:366-436` (`file`). While an
    evaluation runs, `fr specialists approve|reject <name>` finds no open request, files a new
    one and applies it: approve starts a second paid run of the same set; reject removes
@@ -88,6 +99,10 @@ Findings:
    `withdrawn`, the background run logged `ENOENT ... proposal.json`, the first card stayed
    `evaluating`. Needed: filing and answering refused (`claim_conflict`) while an evaluation of
    the name is live; `keep()` tolerates a removed directory; a test.
+   Resolution: fixed in 135132b: `file()`, `approve()` and `reject()` throw `claim_conflict`
+   while the name's evaluation is live (in this process or a live pid inside the lease), and
+   `keep()` skips the record write when the directory is gone; test "while an evaluation runs
+   the name can be neither filed, approved nor rejected again" (exactly one run, promoted).
 4. **low**: `packages/runtime/src/daemon/compose.ts:2184-2186`. In a one-shot
    (`startServices: false`: every `fr` command that opens the runtime, e.g. `fr specialists
    list`, `fr models ...`, `fr audit ...`, and the cloud runner) `syncApprovals()` at compose
@@ -96,6 +111,11 @@ Findings:
    `syncApprovals()`, which passes `background: false` there, and `syncAnswers` awaits
    `apply`. Needed: one-shots leave inbox answers to the daemon (as they do plan approvals,
    `compose.ts:2170-2180`); `fr specialists approve` applies its own request; a test.
+   Resolution: fixed in ae0ef50: `syncApprovals` runs the specialist half only with services
+   on (background) and returns zeros in a one-shot; `fr specialists approve` applies an
+   answer already given (135132b) or its own; test "an fr one-shot runs no eval set for an
+   inbox answer; fr specialists approve applies that answer" in `specialists-cli.test.ts`
+   (fails before).
 5. **low**: `compose.ts:2318-2323` and `docs/maintainers/adding-a-specialist.md:194-195`. A
    proposal reaching `proposed/` while the daemon runs (a direct `proposeSpecialist` call, a
    registry pull, a hand-written one) gets no request until the next daemon start, because
@@ -106,12 +126,22 @@ Findings:
    Verified by reading and grep. Needed: the daemon's `syncApprovals` files missing requests;
    `fileMissing` skips a proposal whose request is answered and unapplied; the doc and
    BLOCKERS say plainly that no PM-facing tool exists yet.
+   Resolution: fixed in ae0ef50 and 135132b: the daemon's `syncApprovals` runs `fileMissing()`
+   (now a directory scan) on every sync, and `fileMissing` skips a proposal whose request is
+   open or answered and unapplied; tests "a proposal written while the daemon runs is filed by
+   the next approvals sync" and "fileMissing files ... never one whose answer waits" (both
+   fail before); adding-a-specialist.md, ADR 0071 and BLOCKERS C.5 say no agent tool proposes
+   a specialist yet (96ae04d). Building that tool is outside this item's brief and stays open.
 6. **low**: `approval.ts:945-952` (`evalBudget`). The approval eval budget is
    `min(USD 5, 20% of the monthly cap)` for every run, so repeated approvals each get the full
    figure and nothing is "charged to the human's testing share" as the brief and ADR 0071
    point 3 say. Verified by reading: nothing sums earlier approval spend. Needed: the share
    minus this month's approval eval spend (the `registry.specialist_approval` audit rows carry
    the cost) bounds the next run; a test.
+   Resolution: fixed in 135132b: `evalBudget()` is USD 5 per run and never more than the
+   testing share minus this UTC month's approval-run cost summed from the audit rows; test
+   "the approval runs share the month's testing share" (last month's run ignored, this
+   month's leaves USD 1.50 < the USD 2 worst case, next month passes; fails before).
 
 Item: w3-c5-specialist-approval, stage BUILD, branch `wave/w3-c5-specialist-approval`.
 Starting commit: `16bb864` (the earlier attempt's `wip:` snapshot, which holds the eval
