@@ -37,8 +37,11 @@ kept, how a token reaches git, and what the import records.
    executor (F.5), which is what later turns the migration into a reviewable change.
 3. **The token goes by reference and reaches git through the environment.** The request names
    `tokenRef: secret:<name>` (or nothing, in which case the daemon's own
-   `secret:github_token` from setup is used when the vault holds it; otherwise the clone is
-   anonymous). The value is resolved by `resolveSecretRefs` with that one name granted, at call
+   `secret:github_token` from setup is used when the vault holds it **and the clone URL is on
+   the git remote base's origin**, `https://github.com` unless composed otherwise; any other
+   origin, and an install without the secret, clone anonymously, so a request naming some
+   other server never receives the install's token). A reference the human names explicitly
+   is used for whatever host the URL names. The value is resolved by `resolveSecretRefs` with that one name granted, at call
    time, and handed to `GitOps`, which now passes `http.extraheader` through
    `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` (git 2.31+) instead of a
    `-c` argument: a process listing never shows it, and git never writes it into the clone's
@@ -70,8 +73,9 @@ kept, how a token reaches git, and what the import records.
   the project's reference copy on the migration branch, not the task worktree. Making the PR
   executor reuse the import checkout is a later change (noted in `data.md` Known issues).
 - `owner/name` resolves against `DataImporterDeps.gitRemoteBase` (default
-  `https://github.com`); another host is reached by a full URL. Nothing is hardcoded to an org
-  or account.
+  `https://github.com`; `ComposeOptions.data.gitRemoteBase` in the daemon); another host is
+  reached by a full URL with an explicit `tokenRef` when it is private. Nothing is hardcoded
+  to an org or account.
 
 ## Alternatives considered
 
@@ -89,5 +93,7 @@ kept, how a token reaches git, and what the import records.
   view with the folder sample and the extension histogram.
 - **Keep the token on `-c http.extraheader=`.** It was on the command line of every git
   process, visible in a process listing for the clone's whole duration.
+- **Send the install's default token to any URL the request names.** Simpler, but a request
+  naming another server would receive the human's GitHub token in its Authorization header.
 - **Accept a token inside the clone URL.** git stores the remote URL in `.git/config`, which
   would put the value on disk and into every later `git remote -v`.
