@@ -150,6 +150,8 @@ async function world(
     evals?: EvalRunnerPort;
     evalBudgetUsdMicro?: number;
     noModel?: boolean;
+    monthlyCap?: number;
+    processAlive?: (pid: number) => boolean;
   } = {},
 ): Promise<World> {
   const clock = new SimulatedClock("2026-10-23T09:00:00Z");
@@ -159,7 +161,7 @@ async function world(
       name: "J",
       email: "j@example.test",
       timezone: "Europe/Zurich",
-      monthly_cap_usd_micro: 150_000_000,
+      monthly_cap_usd_micro: opts.monthlyCap ?? 150_000_000,
     })
   ).id;
   const other = (await store.human.insert({ name: "K", email: "k@example.test" })).id;
@@ -222,6 +224,7 @@ async function world(
       ? { evalBudgetUsdMicro: opts.evalBudgetUsdMicro }
       : {}),
     onPromoted: (def) => promoted.push(def),
+    ...(opts.processAlive ? { processAlive: opts.processAlive } : {}),
   });
   return {
     store,
@@ -666,6 +669,225 @@ describe("the eval runner's candidate input", () => {
       runner.run({ ...base, specialist: "coder", candidate: coder }),
     ).rejects.toMatchObject({ code: "validation" });
     expect(w.provider.calls).toHaveLength(0);
+  });
+});
+
+/** An eval runner stand-in with a fixed outcome; `hold` delays it until released. */
+function fixedEvals(passRate: number, hold?: Promise<void>): EvalRunnerPort {
+  return {
+    run: async () => {
+      if (hold) await hold;
+      const passed = Math.round(passRate * 10);
+      return {
+        total: 10,
+        passed,
+        failed: 10 - passed,
+        needsModel: 0,
+        passRate,
+        costUsdMicro: 1_000,
+        durationMs: 1,
+      };
+    },
+  };
+}
+
+/** A second `SpecialistApprovals` of the same human over the same store, another registry. */
+function otherInstall(w: World, registryDir: string, evals: EvalRunnerPort): SpecialistApprovals {
+  return new SpecialistApprovals({
+    store: w.store,
+    clock: w.clock,
+    registryDir,
+    humanId: w.human,
+    agentId: w.agent,
+    evals,
+    target: (def) => ({
+      provider: "fake",
+      model: `fake-${def.default_tier}`,
+      effort: def.default_effort,
+      pricing: PRICING,
+    }),
+  });
+}
+
+describe("specialist approval: the claim life cycle", () => {
+  it("another install of the same human over a shared store leaves the answer to the install holding the proposal", async () => {
+    const w = await make({ evals: fixedEvals(1) });
+    const { request } = await w.approvals.propose(proposalFor(w.human));
+    await answer(w, request, "approve");
+    // The cloud runner or a second install: same human, same store, its own registry copy.
+    const runnerRuns: EvalRunInput[] = [];
+    const runner = otherInstall(w, tempRegistryCopy(), {
+      run: (input) => {
+        runnerRuns.push(input);
+        return fixedEvals(1).run(input);
+      },
+    });
+    expect(await runner.syncAnswers()).toMatchObject({ promoted: 0, failed: 0, skipped: 0 });
+    expect(runnerRuns).toHaveLength(0);
+    const untouched = card(await w.store.humanRequest.mustGet(request.id));
+    expect(untouched.applied_at).toBeUndefined();
+    expect(untouched.outcome).toBeUndefined();
+
+    expect(await w.approvals.syncAnswers()).toMatchObject({ promoted: 1 });
+    expect(card(await w.store.humanRequest.mustGet(request.id)).outcome).toBe("promoted");
+    expect(loadRegistry(w.registryDir).specialist(NAME).runnable).toBe(true);
+  });
+
+  it("an evaluation whose process died is recovered: card interrupted, a note, the proposal asked again", async () => {
+    const dead = 4_194_999;
+    const w = await make({ evals: fixedEvals(1), processAlive: (pid) => pid !== dead });
+    const { request } = await w.approvals.propose(proposalFor(w.human));
+    const answered = await answer(w, request, "approve");
+    // What a daemon killed mid-run leaves behind: the claim on the card, the record naming
+    // the (now gone) process that ran it.
+    await w.store.humanRequest.update(answered.id, answered.version, {
+      change_card: { ...card(answered), applied_at: w.clock.nowIso(), outcome: "evaluating" },
+    });
+    const rec = record(proposedDir(w));
+    writeFileSync(
+      join(proposedDir(w), "proposal.json"),
+      JSON.stringify({
+        ...rec,
+        approval: {
+          status: "evaluating",
+          requestId: request.id,
+          by: w.human,
+          at: w.clock.nowIso(),
+          pid: dead,
+          process: "an-earlier-daemon",
+        },
+      }),
+    );
+    // Before the fix nothing ever looked at it again: neither fileMissing nor the sync.
+    await w.approvals.syncAnswers();
+    expect(w.runs).toHaveLength(0);
+    const old = card(await w.store.humanRequest.mustGet(request.id));
+    expect(old).toMatchObject({ outcome: "interrupted" });
+    const after = record(proposedDir(w));
+    const open = await w.store.humanRequest.open({ humanId: w.human });
+    expect(open).toHaveLength(1);
+    expect(open[0]?.id).not.toBe(request.id);
+    expect(card(open[0] as HumanRequestRow).key).toBe(specialistKeyOf(NAME));
+    expect(after.approval).toMatchObject({ status: "pending", requestId: open[0]?.id });
+    const notes = await w.store.message.list({ to_human_id: w.human });
+    expect(notes.map((m) => m.body).join("\n")).toMatch(/interrupted/);
+    expect((await audits(w)).map((a) => a.result)).toContain("interrupted");
+
+    // The new request is approved and evaluated as usual.
+    expect((await w.approvals.approve(NAME, w.human)).outcome).toBe("promoted");
+  });
+
+  it("an evaluation by a live process is left alone until it overruns the set's worst-case duration", async () => {
+    const w = await make({ evals: fixedEvals(1), processAlive: () => true });
+    const { request } = await w.approvals.propose(proposalFor(w.human));
+    const answered = await answer(w, request, "approve");
+    await w.store.humanRequest.update(answered.id, answered.version, {
+      change_card: { ...card(answered), applied_at: w.clock.nowIso(), outcome: "evaluating" },
+    });
+    const rec = record(proposedDir(w));
+    writeFileSync(
+      join(proposedDir(w), "proposal.json"),
+      JSON.stringify({
+        ...rec,
+        approval: {
+          status: "evaluating",
+          requestId: request.id,
+          by: w.human,
+          at: w.clock.nowIso(),
+          pid: 4_194_998,
+          process: "the-cli-next-door",
+        },
+      }),
+    );
+    expect(await w.approvals.recoverInterrupted()).toEqual([]);
+    await expect(w.approvals.approve(NAME, w.human)).rejects.toMatchObject({
+      code: "claim_conflict",
+    });
+    // 10 tasks at 5 minutes plus the margin.
+    w.clock.advance(10 * 5 * 60_000 + 15 * 60_000 + 1);
+    expect(await w.approvals.recoverInterrupted()).toEqual([NAME]);
+    expect(card(await w.store.humanRequest.mustGet(request.id)).outcome).toBe("interrupted");
+  });
+
+  it("while an evaluation runs the name can be neither filed, approved nor rejected again", async () => {
+    let release: () => void = () => undefined;
+    const hold = new Promise<void>((r) => {
+      release = r;
+    });
+    const w = await make({ evals: fixedEvals(1, hold) });
+    const { request } = await w.approvals.propose(proposalFor(w.human));
+    await answer(w, request, "approve");
+    expect(await w.approvals.syncAnswers({ background: true })).toMatchObject({ running: 1 });
+    // Let the background apply reach the eval runner.
+    for (let i = 0; i < 20 && w.runs.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(w.runs).toHaveLength(1);
+    expect(record(proposedDir(w)).approval).toMatchObject({
+      status: "evaluating",
+      requestId: request.id,
+      pid: process.pid,
+    });
+    for (const attempt of [
+      () => w.approvals.reject(NAME, w.human),
+      () => w.approvals.approve(NAME, w.human),
+      () => w.approvals.file(NAME),
+    ]) {
+      await expect(attempt()).rejects.toMatchObject({ code: "claim_conflict" });
+    }
+    expect(await w.approvals.recoverInterrupted()).toEqual([]);
+    expect(existsSync(proposedDir(w))).toBe(true);
+    release();
+    await w.approvals.settled();
+    expect(w.runs).toHaveLength(1);
+    expect(card(await w.store.humanRequest.mustGet(request.id)).outcome).toBe("promoted");
+    expect(await w.store.humanRequest.open({ humanId: w.human })).toHaveLength(0);
+  });
+
+  it("fileMissing files a proposal written without a request, never one whose answer waits to be applied", async () => {
+    const w = await make({ evals: fixedEvals(1) });
+    const { request } = await w.approvals.propose(proposalFor(w.human));
+    await answer(w, request, "approve");
+    expect(await w.approvals.fileMissing()).toEqual([]);
+    expect(await w.store.humanRequest.list({ kind: "approval", human_id: w.human })).toHaveLength(
+      1,
+    );
+    // The CLI applies the answer already given rather than filing a second request.
+    const r = await w.approvals.approve(NAME, w.human);
+    expect(r).toMatchObject({ outcome: "promoted", requestId: request.id });
+  });
+
+  it("the approval runs share the month's testing share: earlier runs' cost leaves less for the next", async () => {
+    // A cap of USD 15: the testing share is USD 3; the set's worst case is 10 x USD 0.2 = USD 2.
+    const w = await make({ evals: fixedEvals(1), monthlyCap: 15_000_000 });
+    await w.approvals.propose(proposalFor(w.human));
+    const earlier = {
+      session_id: null,
+      run_id: null,
+      agent_id: w.agent,
+      human_id: w.human,
+      tool: SPECIALIST_APPROVAL_AUDIT_TOOL,
+      input_summary: "{}",
+      result_summary: "promoted",
+      allowed: true,
+    };
+    // Last month's run does not count; this month's USD 1.5 leaves USD 1.5 < USD 2.
+    await w.store.auditLog.append({
+      ...earlier,
+      cost_usd_micro: 2_900_000,
+      occurred_at: "2026-09-30T23:00:00.000Z",
+    });
+    await w.store.auditLog.append({
+      ...earlier,
+      cost_usd_micro: 1_500_000,
+      occurred_at: "2026-10-02T08:00:00.000Z",
+    });
+    const r = await w.approvals.approve(NAME, w.human);
+    expect(r.outcome).toBe("over_budget");
+    expect(r.detail).toMatch(/budget is \$1\.50 \(what is left of this month's testing share/);
+    expect(w.runs).toHaveLength(0);
+
+    // Next month the share is whole again.
+    w.clock.advance(10 * 24 * 3_600_000);
+    expect((await w.approvals.approve(NAME, w.human)).outcome).toBe("promoted");
   });
 });
 

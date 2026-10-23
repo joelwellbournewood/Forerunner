@@ -1,10 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { PricingTable } from "@forerunner/billing";
 import { type Clock, errorMessage, ForerunnerError, join, log } from "@forerunner/platform";
 import type { HumanRequestRow, JsonObject, JsonValue, StateStore } from "@forerunner/state";
 import { loadEvalTasksLite } from "../models/eval-runner.ts";
 import type { EvalRunnerPort, EvalRunOutcome } from "../models/watch.ts";
 import type { EffortLevel } from "../provider/types.ts";
+import { isPidAlive } from "../update/lock.ts";
 import {
   countEvalTasks,
   EVALS_DIR,
@@ -46,10 +48,16 @@ import type { LoadRegistryOptions, RegistryIssue, SpecialistDef } from "./types.
  *
  * Every answered request is acted on once: the card is claimed (`applied_at`, outcome
  * `evaluating`) with a versioned write before anything runs, so the poll, the answer route,
- * a restart and the CLI never evaluate the same answer twice. Only the human the proposal
- * belongs to may approve it: an answer by anyone else is refused, recorded, and the proposal
- * is filed again for its own human. A proposal edited after it was filed (another prompt
- * version than the card names) is never evaluated under the old approval: it is filed again.
+ * a restart and the CLI never evaluate the same answer twice. Only the install whose
+ * `proposal.json` names the request applies it (another composition of the same human over a
+ * shared store, the cloud runner or a second install, leaves it alone). While an evaluation
+ * is live (its process alive and inside the set's worst-case duration) the name can be
+ * neither filed nor answered again; one whose process is gone or that overran is recovered:
+ * the card says `interrupted`, a note goes to the inbox and the proposal is filed again.
+ * Only the human the proposal belongs to may approve it: an answer by anyone else is
+ * refused, recorded, and the proposal is filed again for its own human. A proposal edited
+ * after it was filed (another prompt version than the card names) is never evaluated under
+ * the old approval: it is filed again.
  */
 export const SPECIALIST_KEY_PREFIX = "specialist:";
 export const SPECIALIST_APPROVAL_OPTIONS = ["approve", "reject"] as const;
@@ -99,6 +107,7 @@ export interface ProposalEvalResult {
 export type ProposalApprovalStatus =
   | "pending"
   | "evaluating"
+  | "interrupted"
   | "active"
   | "eval_failed"
   | "withdrawn";
@@ -108,6 +117,10 @@ export interface ProposalApproval {
   requestId: string | null;
   by?: string | null;
   at?: string;
+  /** While `evaluating`: the process running it (a live one keeps the name locked). */
+  pid?: number;
+  /** While `evaluating`: a token of that process (a reused pid is not the same process). */
+  process?: string;
 }
 
 /** `proposal.json` as written by `proposeSpecialist` and kept up to date here. */
@@ -149,12 +162,15 @@ export interface SpecialistApprovalDeps {
   target: (def: SpecialistDef) => ApprovalEvalTarget | null;
   loadOptions?: LoadRegistryOptions;
   /**
-   * The cap of one approval's eval run, micro-USD. Default: the smaller of
-   * `DEFAULT_APPROVAL_EVAL_BUDGET_USD_MICRO` and the human's testing share of the monthly cap.
+   * The per-run cap of one approval's eval run, micro-USD (default
+   * `DEFAULT_APPROVAL_EVAL_BUDGET_USD_MICRO`). Whatever it is, a run never gets more than what
+   * is left this month of the human's testing share of the monthly cap.
    */
   evalBudgetUsdMicro?: number;
   /** Called with the runnable definition after a promotion (the daemon updates its registry). */
   onPromoted?: (def: SpecialistDef) => void;
+  /** Whether a process id is alive (default: `isPidAlive`, signal 0); injected by tests. */
+  processAlive?: (pid: number) => boolean;
 }
 
 export type SpecialistApplyOutcome =
@@ -170,7 +186,8 @@ export type SpecialistApplyOutcome =
   | "proposal_changed"
   | "wrong_human"
   | "unrecognized_answer"
-  | "claimed_elsewhere";
+  | "claimed_elsewhere"
+  | "interrupted";
 
 export interface SpecialistApplyResult {
   name: string;
@@ -201,6 +218,23 @@ export interface PendingProposal {
 }
 
 const logger = log("registry:approval");
+
+/** Added to an eval set's worst-case duration before a silent evaluation counts as stale. */
+export const EVALUATION_LEASE_MARGIN_MS = 15 * 60_000;
+/** The lease when the proposal no longer loads (its duration cannot be computed). */
+const FALLBACK_LEASE_MS = 24 * 3_600_000;
+
+/** This process, as `proposal.json` names the runner of an evaluation (pids are reused). */
+const PROCESS_TOKEN = randomUUID();
+/** Evaluations running in this process, by registry directory and name (all instances). */
+const LIVE = new Set<string>();
+const liveKey = (registryDir: string, name: string) => `${registryDir}\u0000${name}`;
+
+/** First instant of the current UTC month, ISO. */
+function monthStartIso(now: number): string {
+  const d = new Date(now);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString();
+}
 
 export function specialistKeyOf(name: string): string {
   return `${SPECIALIST_KEY_PREFIX}${name}`;
@@ -363,11 +397,11 @@ export class SpecialistApprovals {
    * File the approval request for a pending proposal, or return the open one that already
    * names it (idempotent). Refuses a proposal of another human and one the loader refuses.
    */
-  async file(name: string): Promise<HumanRequestRow> {
+  async file(name: string, opts: { fromApply?: boolean } = {}): Promise<HumanRequestRow> {
     const { store, clock } = this.deps;
     const def = this.readProposal(name);
     const dir = proposedDir(this.deps.registryDir, name);
-    const record = readProposalRecord(dir);
+    let record = readProposalRecord(dir);
     const owner = record?.proposedBy.humanId ?? this.deps.humanId;
     if (owner !== this.deps.humanId) {
       throw new ForerunnerError(
@@ -375,6 +409,13 @@ export class SpecialistApprovals {
         `proposal "${name}" belongs to another human; only that human can approve it`,
         { details: { name } },
       );
+    }
+    // A live evaluation keeps the name: no second request, no second run, no withdrawal
+    // under it. One whose process is gone is recovered first. (`apply` refiles its own.)
+    if (!opts.fromApply && record?.approval?.status === "evaluating") {
+      this.assertNotLive(name, record);
+      await this.markInterrupted(name, record);
+      record = readProposalRecord(dir);
     }
     const open = await this.openRequest(name);
     if (open) return open;
@@ -424,12 +465,23 @@ export class SpecialistApprovals {
       },
       author_agent: this.deps.agentId,
     });
-    if (record) {
-      writeProposalRecord(dir, {
-        ...record,
-        approval: { status: "pending", requestId: row.id, at: clock.nowIso() },
-      });
-    }
+    // The record names the request: only the install holding it applies the answer. A
+    // hand-written proposal without one gets a minimal record here.
+    const base: ProposalRecord = record ?? {
+      name,
+      status: "proposed",
+      proposedAt: clock.nowIso(),
+      proposedBy: { agentId: this.deps.agentId, humanId: this.deps.humanId },
+      rationale: "",
+      promptVersion: def.promptVersion,
+      evalSet: def.eval_set,
+      approval: null,
+      evalResult: null,
+    };
+    writeProposalRecord(dir, {
+      ...base,
+      approval: { status: "pending", requestId: row.id, at: clock.nowIso() },
+    });
     await this.audit(true, { action: "filed", name, requestId: row.id }, "filed");
     logger.info("specialist approval filed", { name, requestId: row.id });
     return row;
@@ -442,22 +494,51 @@ export class SpecialistApprovals {
    */
   async fileMissing(): Promise<string[]> {
     const filed: string[] = [];
-    for (const p of await this.pendingWithRequests()) {
-      if (p.openRequestId) continue;
-      const owner = p.record?.proposedBy.humanId;
-      if (owner !== this.deps.humanId) continue;
-      if (p.record?.approval && p.record.approval.status !== "pending") continue;
+    // A directory scan, not a registry load: the daemon runs this on every approvals sync.
+    for (const name of this.proposalNames()) {
+      const record = readProposalRecord(proposedDir(this.deps.registryDir, name));
+      if (record?.proposedBy?.humanId !== this.deps.humanId) continue;
+      const approval = record.approval;
+      if (approval && approval.status !== "pending") continue;
+      if (approval?.requestId) {
+        // Open, or answered and waiting to be applied: nothing to file.
+        const req = await this.deps.store.humanRequest.get(approval.requestId);
+        if (req?.status === "open") continue;
+        if (req?.status === "answered" && !(req.change_card as JsonObject | null)?.applied_at) {
+          continue;
+        }
+      }
       try {
-        const row = await this.file(p.name);
+        const row = await this.file(name);
         filed.push(row.id);
       } catch (e) {
         logger.warn("could not file a specialist approval", {
-          name: p.name,
+          name,
           error: errorMessage(e),
         });
       }
     }
     return filed;
+  }
+
+  /**
+   * Recover evaluations whose process is gone or that overran the set's worst-case duration
+   * (an exit, a crash, a kill after the claim): the card says `interrupted`, the record too,
+   * a note goes to the inbox and the proposal is filed again. Nothing is re-run without a new
+   * approve. Returns the names recovered.
+   */
+  async recoverInterrupted(): Promise<string[]> {
+    const out: string[] = [];
+    for (const name of this.proposalNames()) {
+      const record = readProposalRecord(proposedDir(this.deps.registryDir, name));
+      if (record?.approval?.status !== "evaluating") continue;
+      if (record.proposedBy?.humanId !== this.deps.humanId) continue;
+      if (this.isLive(name, record)) continue;
+      await this.markInterrupted(name, record);
+      await this.refile(name);
+      out.push(name);
+    }
+    return out;
   }
 
   /** Pending proposals on disk with their record and open request (for the CLI and the UI). */
@@ -503,6 +584,7 @@ export class SpecialistApprovals {
       skipped: 0,
       running: 0,
     };
+    await this.recoverInterrupted();
     for (const row of await this.unapplied()) {
       const work = this.apply(row);
       if (opts.background) {
@@ -555,6 +637,21 @@ export class SpecialistApprovals {
         { details: { name } },
       );
     }
+    await this.recoverInterrupted();
+    const record = readProposalRecord(proposedDir(this.deps.registryDir, name));
+    if (record?.approval?.status === "evaluating") this.assertNotLive(name, record);
+    // An answer already given (the inbox, the phone) and not applied yet is applied as given:
+    // filing a second request would run the set twice or leave that answer unapplied.
+    const previous =
+      record?.approval?.status === "pending" && record.approval.requestId
+        ? await this.deps.store.humanRequest.get(record.approval.requestId)
+        : undefined;
+    if (
+      previous?.status === "answered" &&
+      !(previous.change_card as JsonObject | null)?.applied_at
+    ) {
+      return this.apply(previous);
+    }
     const open = (await this.openRequest(name)) ?? (await this.file(name));
     const answered = await this.deps.store.humanRequest.answer(open.id, open.version, answer, by);
     return this.apply(answered);
@@ -580,6 +677,90 @@ export class SpecialistApprovals {
     return r.def;
   }
 
+  /** Names under `proposed/` that hold a specialist file. */
+  private proposalNames(): string[] {
+    const root = join(this.deps.registryDir, PROPOSED_DIR);
+    if (!existsSync(root)) return [];
+    return readdirSync(root, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && existsSync(join(root, d.name, SPECIALIST_FILE)))
+      .map((d) => d.name)
+      .sort();
+  }
+
+  /** Whether this install's record names the request (the one place it may be applied). */
+  private owns(name: string, requestId: string): boolean {
+    return (
+      readProposalRecord(proposedDir(this.deps.registryDir, name))?.approval?.requestId ===
+      requestId
+    );
+  }
+
+  /** The longest an evaluation of the set may take: every task at its timeout, plus a margin. */
+  private leaseMs(name: string): number {
+    try {
+      const def = this.readProposal(name);
+      return (
+        Math.max(1, countEvalTasks(def.evalSetDir)) * def.timeout_minutes * 60_000 +
+        EVALUATION_LEASE_MARGIN_MS
+      );
+    } catch {
+      return FALLBACK_LEASE_MS;
+    }
+  }
+
+  /** Whether an `evaluating` record's run is still going (here, or in a live process). */
+  private isLive(name: string, record: ProposalRecord): boolean {
+    if (LIVE.has(liveKey(this.deps.registryDir, name))) return true;
+    const a = record.approval;
+    if (a?.status !== "evaluating") return false;
+    // This process wrote it and runs nothing for it any more: it ended without a result.
+    if (a.process === PROCESS_TOKEN) return false;
+    if (typeof a.pid === "number" && !(this.deps.processAlive ?? isPidAlive)(a.pid)) return false;
+    const at = a.at ? Date.parse(a.at) : Number.NaN;
+    if (Number.isNaN(at)) return false;
+    return this.deps.clock.now() - at < this.leaseMs(name);
+  }
+
+  private assertNotLive(name: string, record: ProposalRecord): void {
+    if (!this.isLive(name, record)) return;
+    throw new ForerunnerError(
+      "claim_conflict",
+      `the eval set of "${name}" is running (approved by request ${record.approval?.requestId ?? "?"}); wait for its result`,
+      { details: { name, requestId: record.approval?.requestId ?? null } },
+    );
+  }
+
+  /** Close an evaluation that ended without a result: card, record, audit, a note. */
+  private async markInterrupted(name: string, record: ProposalRecord): Promise<void> {
+    const { store, clock } = this.deps;
+    const dir = proposedDir(this.deps.registryDir, name);
+    const requestId = record.approval?.requestId ?? null;
+    const reason =
+      "the evaluation stopped before it finished (the process running it ended or overran); nothing was promoted";
+    const row = requestId ? await store.humanRequest.get(requestId) : undefined;
+    const card = (row?.change_card ?? null) as JsonObject | null;
+    if (row && card && card.outcome === "evaluating") {
+      await store.humanRequest.patch(row.id, {
+        change_card: { ...card, outcome: "interrupted", reason, applied_at: clock.nowIso() },
+      });
+    }
+    writeProposalRecord(dir, {
+      ...record,
+      approval: {
+        status: "interrupted",
+        requestId,
+        by: record.approval?.by ?? null,
+        at: clock.nowIso(),
+      },
+    });
+    await this.audit(false, { name, requestId }, "interrupted");
+    await this.note(
+      `The evaluation of specialist "${name}" was interrupted: ${reason}. It stays proposed and is asked again.`,
+      row?.project_id ?? null,
+    );
+    logger.warn("specialist evaluation interrupted", { name, requestId });
+  }
+
   private async openRequest(name: string): Promise<HumanRequestRow | undefined> {
     const key = specialistKeyOf(name);
     const rows = await this.deps.store.humanRequest.list(
@@ -597,8 +778,13 @@ export class SpecialistApprovals {
         { orderBy: [{ column: "created_at" }, { column: "id" }], limit: 200, offset },
       );
       for (const row of page) {
-        if (specialistOfRequest(row) === null) continue;
+        const name = specialistOfRequest(row);
+        if (name === null) continue;
         if ((row.change_card as JsonObject).applied_at) continue;
+        // Only the install whose proposal.json names the request applies it: another
+        // composition of the same human (the cloud runner, a second install on a shared
+        // store) has no such proposal and must not consume the answer.
+        if (!this.owns(name, row.id)) continue;
         out.push(row);
       }
       if (page.length < 200) return out;
@@ -650,6 +836,39 @@ export class SpecialistApprovals {
       }
       throw e;
     }
+    // From the claim on, the record says who runs it, so a crash is recognised later and a
+    // second request or a withdrawal cannot start under it.
+    const key = liveKey(this.deps.registryDir, name);
+    LIVE.add(key);
+    try {
+      const dir = proposedDir(this.deps.registryDir, name);
+      const record = readProposalRecord(dir);
+      if (record && record.proposedBy.humanId === this.deps.humanId) {
+        writeProposalRecord(dir, {
+          ...record,
+          approval: {
+            status: "evaluating",
+            requestId: row.id,
+            by: row.answered_by,
+            at: clock.nowIso(),
+            pid: process.pid,
+            process: PROCESS_TOKEN,
+          },
+        });
+      }
+      return await this.applyClaimed(row, claimed);
+    } finally {
+      LIVE.delete(key);
+    }
+  }
+
+  private async applyClaimed(
+    row: HumanRequestRow,
+    claimed: HumanRequestRow,
+  ): Promise<SpecialistApplyResult> {
+    const { store, clock } = this.deps;
+    const name = specialistOfRequest(row) as string;
+    const card = (row.change_card ?? {}) as JsonObject;
     let current = (claimed.change_card ?? {}) as JsonObject;
     const finish = async (
       outcome: SpecialistApplyOutcome,
@@ -709,6 +928,17 @@ export class SpecialistApprovals {
     try {
       def = this.readProposal(name);
     } catch (e) {
+      if (record && existsSync(dir)) {
+        writeProposalRecord(dir, {
+          ...record,
+          approval: {
+            status: "eval_failed",
+            requestId: row.id,
+            by: row.answered_by,
+            at: clock.nowIso(),
+          },
+        });
+      }
       await finish("proposal_missing", { error: errorMessage(e) });
       await this.audit(false, { name, requestId: row.id }, "proposal does not load");
       return result("proposal_missing", { detail: errorMessage(e) });
@@ -724,7 +954,8 @@ export class SpecialistApprovals {
       reason: string,
       evalResult?: ProposalEvalResult,
     ): Promise<SpecialistApplyResult> => {
-      if (record) {
+      // The directory can be gone (removed by hand); the card still gets the outcome.
+      if (record && existsSync(dir)) {
         writeProposalRecord(dir, {
           ...record,
           status: "proposed",
@@ -782,11 +1013,15 @@ export class SpecialistApprovals {
     } catch (e) {
       return keep("eval_error", `its eval set does not load: ${errorMessage(e)}`);
     }
-    const budget = await this.evalBudget();
+    const { budget, shareLeft } = await this.evalBudget();
     if (ceiling > budget) {
+      const left =
+        shareLeft !== null && shareLeft <= budget
+          ? ` (what is left of this month's testing share after earlier approval runs)`
+          : "";
       return keep(
         "over_budget",
-        `its eval set may spend up to $${(ceiling / 1e6).toFixed(2)}; the approval eval budget is $${(budget / 1e6).toFixed(2)}`,
+        `its eval set may spend up to $${(ceiling / 1e6).toFixed(2)}; the approval eval budget is $${(budget / 1e6).toFixed(2)}${left}`,
       );
     }
     if (record) {
@@ -797,6 +1032,8 @@ export class SpecialistApprovals {
           requestId: row.id,
           by: row.answered_by,
           at: clock.nowIso(),
+          pid: process.pid,
+          process: PROCESS_TOKEN,
         },
       });
     }
@@ -935,20 +1172,32 @@ export class SpecialistApprovals {
 
   private async refile(name: string): Promise<string | null> {
     try {
-      return (await this.file(name)).id;
+      return (await this.file(name, { fromApply: true })).id;
     } catch (e) {
       logger.warn("specialist approval not filed again", { name, error: errorMessage(e) });
       return null;
     }
   }
 
-  private async evalBudget(): Promise<number> {
-    if (this.deps.evalBudgetUsdMicro !== undefined) return this.deps.evalBudgetUsdMicro;
+  /**
+   * What this approval's run may spend: the per-run cap (`evalBudgetUsdMicro`, default
+   * `DEFAULT_APPROVAL_EVAL_BUDGET_USD_MICRO`), and, when the human has a monthly cap, no more
+   * than what is left of the testing share this UTC month after the earlier approval runs
+   * (their cost is on the `registry.specialist_approval` audit rows).
+   */
+  private async evalBudget(): Promise<{ budget: number; shareLeft: number | null }> {
+    const perRun = this.deps.evalBudgetUsdMicro ?? DEFAULT_APPROVAL_EVAL_BUDGET_USD_MICRO;
     const human = await this.deps.store.human.get(this.deps.humanId);
     const share = Math.floor((human?.monthly_cap_usd_micro ?? 0) * APPROVAL_TESTING_SHARE);
-    return share > 0
-      ? Math.min(DEFAULT_APPROVAL_EVAL_BUDGET_USD_MICRO, share)
-      : DEFAULT_APPROVAL_EVAL_BUDGET_USD_MICRO;
+    if (share <= 0) return { budget: perRun, shareLeft: null };
+    const rows = await this.deps.store.auditLog.list({
+      tool: SPECIALIST_APPROVAL_AUDIT_TOOL,
+      humanId: this.deps.humanId,
+      from: monthStartIso(this.deps.clock.now()),
+    });
+    const spent = rows.reduce((sum, r) => sum + (r.cost_usd_micro ?? 0), 0);
+    const shareLeft = Math.max(0, share - spent);
+    return { budget: Math.min(perRun, shareLeft), shareLeft };
   }
 }
 
