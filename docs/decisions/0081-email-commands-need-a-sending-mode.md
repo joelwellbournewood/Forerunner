@@ -28,7 +28,9 @@ on: read only, draft only, allowlist and full discretion, with the send caps at 
 without an approval ticket (already proved by `closeout-email-commands.test.ts`). The rule
 lives in the store/policy layer, `EmailSettingsStore` (`packages/capabilities/src/email/types.ts`),
 which every writer goes through (the daemon's `PUT /agents/:id/email/settings`, the settings
-page that reads the same validation, the runner):
+page that reads the same validation, the runner, and the command registry's `email.mode.set`,
+which the daemon hands to this store through `CommandPorts.emailMode`; amended on review, see
+"Amendment" below):
 
 1. **Turning commands on at mode off is refused.** `update` throws `ForerunnerError("validation",
    COMMANDS_NEED_SENDING_MODE)` with `details: { reason: "commands_need_sending_mode", issues:
@@ -80,3 +82,14 @@ page that reads the same validation, the runner):
 - **Only the watcher refuses; the settings may hold both.** Leaves a stored state that looks on
   and does nothing, and the daemon-side gate would still need its own check. Rejected; the
   watcher check stays as defence in depth for rows from before the rule.
+
+## Amendment (review, 2026-10-24)
+
+The review found that `email.mode.set` (`packages/commands/src/commands/email.ts`), the
+command chat, voice, the phone and the agent's `email_mode_set` tool change the mode through,
+wrote the settings row directly, so a change to off there kept commands on with no audit row
+and no notification. It now keeps the rule: the daemon wires `CommandPorts.emailMode` to
+`EmailSettingsStore.update`, so the switch-off, its audit row and the owner's notification
+are the store's on that path too; without the port the command applies the same rule and audit
+row itself. The change card says commands go off with the mode, and the undo of such a change
+restores the mode and turns commands back on (they were on before, at a mode that allows them).

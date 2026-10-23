@@ -34,7 +34,11 @@ agent email strangers.
 
 At `off` the mailbox sends nothing, not even the acknowledgement of a command, so email
 commands cannot be on at `off`. The rule lives in `EmailSettingsStore.update` (`types.ts`),
-which every writer goes through (the daemon's `PUT`, the settings page, the runner):
+which every writer goes through: the daemon's `PUT` (and so the settings page), the runner,
+and the command registry's `email.mode.set` (chat, voice, the phone, the agent's
+`email_mode_set` tool), which the daemon wires to this store through `ports.emailMode`
+(commands.md; a hand-built executor without the port applies the same rule and audit row
+itself, without the notification):
 
 - Turning commands on at `off` (the merged result is mode `off` with commands on, the patch
   sets `commands.enabled: true` and commands were not in force) throws

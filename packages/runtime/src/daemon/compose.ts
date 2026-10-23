@@ -2477,6 +2477,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         capabilities: () =>
           provider ? providerCapabilities(provider) : { ...DEFAULT_PROVIDER_CAPABILITIES },
       },
+      // email.mode.set goes through the capability's settings store (ADR 0081): a change to
+      // off turns email commands off there, with its audit row and the owner's notification
+      // (the `onCommandsSwitchedOff` listener above); its undo turns them back on.
+      emailMode: async ({ agentId, mode, authorHuman, restoreCommands }) => {
+        const before = await emailPorts.settings.get(agentId);
+        const next = await emailPorts.settings.update(
+          agentId,
+          { settings: { mode }, ...(restoreCommands ? { commands: { enabled: true } } : {}) },
+          { authorHuman },
+        );
+        return { commandsSwitchedOff: before.commands.enabled && !next.commands.enabled };
+      },
     },
   });
   const mirrorSchedules = new Set<string>();
