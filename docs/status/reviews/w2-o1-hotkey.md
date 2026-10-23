@@ -482,3 +482,41 @@ tests passed (`hotkey.test.tsx` 19, `extensions.test.tsx` 8, `settings-slider.te
 `cargo clippy --all-targets -- -D warnings` clean, `cargo test` 90 passed (the count in
 apps.md is unchanged); `node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok;
 `node scripts/check-paths.mjs` ok.
+
+## Rebase (2026-10-24, onto `origin/ccr-4d8a843c-1k9syk` at 95097ae)
+
+The branch (17 commits from the merge base 4ff4fb1, ending at f56a6a8) was rebased commit by
+commit onto the release head 95097ae (which had merged w3-d4-specialist-settings, w3-r5-phone,
+w6-android-inbox, w3-d7-performance, w3-t1-mode-off and w3-misc-replay-ceiling). Hashes in the
+sections above are pre-rebase hashes; the rebased commits carry the same subjects. Conflicts
+and how they were resolved:
+
+- `apps/ui/test/fake-daemon.ts` (commit "ui: the hotkey opens the conversation ..."): the
+  base's D.4 model settings (`acceptsTemperature` option; `modelSettings` and
+  `acceptsTemperature` state) and the branch's voice loop (`voice` option; `voiceSessions` and
+  `nextVoiceLine` state) are all kept, in `FakeDaemonOptions`, in the `FakeDaemonState`
+  interface and in the initial state. The `/voice` routes, `initialVoiceStatus` and the single
+  `GET /voice/status` route merged without conflict.
+- `docs/status/PROGRESS.md` (commit "status: O.1 done ..."): the base's milestone 8 row and its
+  new log entries kept; the branch's O.1 log entry added at the top of the log in that
+  intermediate commit. `docs/requirements.md`, `docs/status/BLOCKERS.md` and
+  `docs/decisions/README.md` auto-merged there (the 0064 row in number order).
+- `docs/status/PROGRESS.md` (commit "docs: the microphone answer ...; status rows back to the
+  base"): that commit returns the status files to the base's text, so `docs/requirements.md`,
+  `docs/status/BLOCKERS.md` and `docs/status/PROGRESS.md` were taken from 95097ae; the branch's
+  net change to them is none, and the row updates are in the stage report for the orchestrator.
+
+Auto-merged without conflict and checked against the base's code: `apps/ui/src/api/client.ts`
+(the base's new members and `contracts.ts` changes next to the branch's voice methods; one
+`voiceStatus`), `apps/ui/src/pages/SettingsPage.tsx` (the base's Models section and the
+branch's `<HotkeySettings />`), `docs/maintainers/apps.md`. The base changed no file under
+`apps/desktop/src-tauri`.
+
+After the rebase (Linux): `pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, the same
+59 as on the base, none in files of this branch); `pnpm --filter @forerunner/ui test` 53 files,
+373 tests passed (`hotkey.test.tsx` 19); `pnpm --filter @forerunner/approvals-web test` 10
+files, 58 passed; `scripts/closeout-docs.test.ts` 19 passed, 1 todo; `cargo fmt --check`
+clean, `cargo clippy --all-targets -- -D warnings` clean, `cargo test` 90 passed, 0 failed (16
+of them `hotkey` and `media`; the count in apps.md is unchanged);
+`node scripts/docs-check.mjs --base origin/ccr-4d8a843c-1k9syk` ok;
+`node scripts/check-paths.mjs` ok.
