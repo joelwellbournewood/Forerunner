@@ -244,7 +244,11 @@ export async function proposeSharedGrant(
     const key = `${b.agentId}:${b.deviceId}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    blobs.push({ agent_id: b.agentId, device_id: b.deviceId, blob: b.blob as JsonObject });
+    blobs.push({
+      agent_id: b.agentId,
+      device_id: b.deviceId,
+      blob: b.blob as unknown as JsonObject,
+    });
   }
   for (const id of agentIds) {
     if (!blobs.some((b) => b.agent_id === id)) {
