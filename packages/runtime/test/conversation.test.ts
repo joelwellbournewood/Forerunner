@@ -218,6 +218,43 @@ describe("conversation agent over the command registry", () => {
     await w.store.close();
   });
 
+  it("the principal's chat effort is the base the project's slider shifts; a spoken turn keeps voice_chat's (D.4 with D.16)", async () => {
+    const w = await setup([
+      textReply("typed", { ttftMs: 0 }),
+      textReply("spoken", { ttftMs: 0 }),
+    ]);
+    const project = await w.store.project.mustGet(w.game);
+    await w.store.project.update(w.game, project.version, {
+      settings: { ...project.settings, speed_quality_offset: 1 },
+    });
+    const row = await w.store.agent.mustGet(w.alice);
+    await w.store.agent.update(w.alice, row.version, {
+      model_config: { modes: { text_chat: { effort: "medium" } } },
+    });
+    // Typed: the override (medium) one step up by the quality position.
+    await w.chat("what's next on the game?");
+    expect(w.provider.calls[0]?.request.effort).toBe("high");
+    // Spoken: the voice mode's table default (low) one step up; the chat override is for typed turns.
+    await w.chat("what's next on the game?", { source: "voice" });
+    expect(w.provider.calls[1]?.request.effort).toBe("medium");
+    await w.store.close();
+    // The conversation agent's max_effort still holds the result.
+    const capped = await setup([textReply("capped", { ttftMs: 0 })], {
+      agentDeps: { maxEffort: "medium" },
+    });
+    const p2 = await capped.store.project.mustGet(capped.game);
+    await capped.store.project.update(capped.game, p2.version, {
+      settings: { ...p2.settings, speed_quality_offset: 1 },
+    });
+    const r2 = await capped.store.agent.mustGet(capped.alice);
+    await capped.store.agent.update(capped.alice, r2.version, {
+      model_config: { modes: { text_chat: { effort: "medium" } } },
+    });
+    await capped.chat("what's next on the game?");
+    expect(capped.provider.calls[0]?.request.effort).toBe("medium");
+    await capped.store.close();
+  });
+
   it("a chat turn on the principal's own chat rung is priced as that model (spec D.4)", async () => {
     const priced: string[] = [];
     const w = await setup([textReply("first", { ttftMs: 0 })], {

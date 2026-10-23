@@ -2763,14 +2763,18 @@ speed only to one declaring `fastMode`; the executor with the table's 4096 and n
 temperature by default, the file's max tokens and temperature (sent only where accepted), the
 agent's override of rung, effort and max tokens on the request and the Run row, the overridden
 timeout in the brief, a malformed config warned and ignored, the specialist's `max_effort`
-cap, fast sent, the Run row naming the variant and priced at the fast row (six times the
+cap (against the agent's override and the project's speed-versus-quality slider at +1), fast sent, the Run row naming the variant and priced at the fast row (six times the
 standard cost for the same tokens) with every condition, a specialist without a speed mode
 left to the project's flag (D.20 unchanged), and standard with the reason without the
 project's leave, off Opus, without a fast-mode price row or on a provider without fast mode,
 an agent's `speed_mode` turning fast on (only with the project's leave) and off for one
 specialist (the `model.fast_mode` audit row "ignored: the run's speed mode is standard");
 `conversation.test.ts` (a chat turn at the table's 400 tokens and low effort, then at the
-principal's `modes.text_chat` override, its temperature kept off a provider that takes none);
+principal's `modes.text_chat` override, its temperature kept off a provider that takes none;
+the override's effort shifted by the project's slider on a typed turn, a spoken turn on
+`voice_chat`'s default, the conversation agent's `max_effort` holding both); `intake.test.ts`
+(the principal's planning rung under the project's ceiling, priced as that model, and its
+planning effort the base the project's slider shifts);
 `model-settings-routes.test.ts` (6): `GET /settings/models` in the route table, the agents and
 the ten specialists with the table and registry defaults and no temperature, a
 `model.settings.set` from the UI channel written, shown with source `agent`, in the change log

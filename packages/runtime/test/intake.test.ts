@@ -552,6 +552,30 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     }
   });
 
+  it("the principal's planning effort is the base the project's slider shifts (D.4 with D.16)", async () => {
+    const before = await rt.store.agent.mustGet(rt.agent.id);
+    await rt.store.agent.update(rt.agent.id, before.version, {
+      model_config: { modes: { planning: { effort: "low" } } },
+    });
+    try {
+      const propose = async (name: string, settings: JsonObject) => {
+        const id = await createProject({ name, goal: "g", brief: "b" });
+        const project = await rt.store.project.mustGet(id);
+        await rt.store.project.update(id, project.version, { settings });
+        replies.push({ text: `\`\`\`json\n${JSON.stringify(proposal())}\n\`\`\`` });
+        const res = await req(`/projects/${id}/intake`, { method: "POST", body: "{}" });
+        expect(res.status).toBe(202);
+        return provider.calls.at(-1)?.effort;
+      };
+      expect(await propose("Xi", {})).toBe("low");
+      expect(await propose("Omicron", { speed_quality_offset: 1 })).toBe("medium");
+      expect(await propose("Pi", { speed_quality_offset: -1 })).toBe("low");
+    } finally {
+      const row = await rt.store.agent.mustGet(rt.agent.id);
+      await rt.store.agent.update(rt.agent.id, row.version, { model_config: {} });
+    }
+  });
+
   it("runs at the principal's planning rung and prices the call as that model (spec D.4)", async () => {
     const before = await rt.store.agent.mustGet(rt.agent.id);
     await rt.store.agent.update(rt.agent.id, before.version, {

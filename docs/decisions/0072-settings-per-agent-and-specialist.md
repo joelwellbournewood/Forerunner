@@ -149,3 +149,31 @@ changed, because D.20's behaviour on the release branch (and its tests) must sta
   Anthropic adapter's `fastMode` is a getter, `true` on an API key and `false` on a
   subscription token, and it still sends `speed` only for an Opus id. The beta header constant
   is D.20's `FAST_MODE_BETA`; this item's `ANTHROPIC_FAST_MODE_BETA` is gone.
+
+## Amendment (rebase onto D.16 and C.5, 2026-10-23)
+
+The release branch at `4ff4fb1` merged spec D.16 (the speed-versus-quality slider,
+`wave/w3-d16-slider`) and spec C.5 (the specialist approval gate, ADR 0071) after this item's
+first rebase. Both touch what this ADR decides; the rebase composed them as follows.
+
+- **The agent's effort is the slider's base.** D.16 shifts every mode's default effort one step
+  by the project's `speed_quality_offset`, read from the project row per run, turn and planning
+  session, and holds the result at the registry entry's `max_effort` (`capEffort`). The effort
+  this ADR resolves (the table's row, or the agent's `model_config` override) takes the place of
+  "the default": the executor passes the override's effort as the table's base to
+  `effortForTask(mode, risk, slider, table)`; the intake runs
+  `capEffort(effortWithOffset(planning.effort, slider), project-manager's max_effort)`; the
+  chat the same on `text_chat`. The executor's static `effortOffset` dependency is gone on the
+  base, so nothing in this item reads it any more.
+- **A spoken turn keeps D.16's `voice_chat` row.** The agent modes this ADR lets a human set
+  are planning and text chat; D.16 runs a `source: "voice"` turn at the voice mode's default.
+  The principal's `modes.text_chat.effort` therefore applies to typed turns only; a spoken turn
+  takes `voice_chat`'s table effort, then the slider and the cap. The rung, max tokens, timeout
+  and temperature of both kinds of turn are still `text_chat`'s resolution.
+- **One `max_effort` field.** D.16 and this item's review fix both added
+  `SpecialistSpec.maxEffort`; it is one field, filled from the file's `max_effort` by
+  `specialistSpecFrom`, applied after the risk rules, the slider and the override with the
+  base's `capEffort`, and still warned about when it bites (finding 1).
+- **The approval gate compares the D.4 keys.** C.5 refuses a promotion that would change any
+  frontmatter field it lists between the evaluated and the promoted file; `max_tokens`,
+  `speed_mode` and `temperature` decide how the specialist runs, so they are on that list.
