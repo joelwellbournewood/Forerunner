@@ -28,6 +28,11 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   263 tests, `apps/mobile/e2e/cdp.test.ts` 22, `cargo test` 30. R.5, R.7 and V.3 keep their
   status until the emulator run passes; the BLOCKERS.md emulator row names the next step
   (merge, dispatch `android.yml`). Report: `docs/status/reviews/w5-android-high-risk.md`.
+- Review and fix (same branch): verdict revise (76), six findings, all fixed. The forwarding
+  moved to `apps/mobile/e2e/webview-console.mjs` (typed by its own `.d.mts`) so a merge with
+  the base's typed `cdp.mjs` type-checks; the bounded wait closes an open simulated prompt
+  with the refusal; docs on V8's console replay, the platform prompt that outlives the
+  shell's bound, and the BLOCKERS row corrected. Counts in the review file.
 
 ### 2026-10-23 (item w2-s32-indicator rebased onto 22982fa)
 - `wave/w2-s32-indicator` rebased onto `origin/ccr-4d8a843c-1k9syk` (22982fa). Conflicts in
