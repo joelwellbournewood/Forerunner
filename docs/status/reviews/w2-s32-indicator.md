@@ -229,3 +229,92 @@ then again on the final patch, which includes the revision commit. Both exited 0
   short of the requirements file's strict definition, which needs CI green on Windows and
   Linux; the item's merge into the integrated branch and its CI run complete it.
 - **No independent review yet.** The item still needs one before it is merged.
+
+## Review
+
+Reviewer: independent review of `wave/w2-s32-indicator` at `907a602` (stage REVIEW AND FIX),
+2026-10-23. Base: `origin/ccr-4d8a843c-1k9syk` (`c713755`; the branch forks at `b1804e3`).
+
+Verdict: **revise**. Score: **72/100**.
+
+The build covers every part of the brief: the status view carries `desktopControl`, the
+banner sits above the header on every page with the agent, app and session named and a stop
+button on `POST /desktop/revoke`, the store re-reads the view on every (re)opened stream, the
+tray shows the title, tooltip line and `Desktop control: active (<app>)` item, and the docs,
+ADR and status rows follow. The tests pass (`@forerunner/ui` 43 files / 265 tests,
+capabilities 35 / 380, `cargo test` 73). But the re-read added for reconnects can hide the
+indicator while control is active, in both the UI and the tray. That hits the one property
+S.32 asks for.
+
+### Requirements checked
+
+- S.32 "shows a visible on-screen indicator while active": banner while the latest frame is
+  on, hidden on off (`desktop-indicator.test.tsx`); tray state from the same frame, cleared on
+  off (`state.rs`). **Partly met:** a status read answered before a newer frame overwrites
+  that frame (findings 1, 2).
+- Brief (1): persistent banner, top of window, every page, high contrast, app and session
+  named, "Stop desktop control" on an existing stop route: met (`Shell.tsx`,
+  `DesktopControlBanner.tsx`; revoke instead of kill is ADR 0067 point 4).
+- Brief (1): survives navigation: met (test "stays visible on every page").
+- Brief (1): shows again after reconnect; `desktopControl: { active, app, sessionId }` on an
+  existing view: met on `GET /desktop/status` (`desktop-wiring.test.ts`). The reconnect read
+  is unordered against frames (finding 1).
+- Brief (2): tray title, tooltip and item `Desktop control: active (<app>)`, cleared on off,
+  in `state.rs` with a unit test: met. The re-read is unordered (finding 2).
+- Brief (3): Android and approvals web left as they are, because they do not read the PC
+  daemon's `/events`: checked. `apps/approvals-web` subscribes to the state service's feed,
+  not the daemon's (ADR 0067 point 7).
+- Docs: `apps.md`, `desktop-control.md` (Indicator section), `runtime.md`, ADR 0067 with
+  alternatives, `requirements.md` S.32, `BLOCKERS.md` S.32 and V.1, `PROGRESS.md`: present
+  and consistent with the code, apart from what findings 1 to 3 change.
+- Security and privacy: the names go out only on the bearer-protected `/desktop/status`;
+  `/health` is unchanged. React escapes the banner text; the tray strips control characters
+  and caps names at 80. No regression found.
+- Base branch: `git merge-tree` of HEAD with `origin/ccr-4d8a843c-1k9syk` is clean. The
+  base's changes (the desktop-confirm device row in `server.ts`, `api-types.ts` and
+  `fake-daemon.ts`; the stale-docs edits) touch none of the indicator's code paths.
+
+### Findings
+
+1. **high**: `apps/ui/src/store/context.tsx:102` and `:214-234`
+   (`refreshDesktopControl`). A status read started when the stream reopens, or on
+   `extension.changed`, is applied whenever it lands, even after a newer `desktop.indicator`
+   frame. The status read and the `/events` stream use two connections with no ordering
+   between them. Suppose the daemon answers the read while control is still off and the
+   agent's first action sends `on` right after. The `on` frame shows the banner, then the
+   late `off` answer hides it. The controller sends no further frame for the same burst, so
+   the banner stays hidden while the agent types. Verified with a test written for this
+   review (now kept as "a status read that was answered before a newer frame does not
+   overwrite it (reconnect race)" in `apps/ui/test/desktop-indicator.test.tsx`). It holds the
+   read's answer until after the frame, and on the branch it fails: 1 failed, 9 passed.
+   Fix: order frames and reads, so that a read started before the latest frame (or before a
+   later read that already landed) is dropped.
+2. **high**: `apps/desktop/src-tauri/src/actions.rs:413-439` (`probe_desktop`) and
+   `events.rs:78,171-181`. The tray has the same race. `run_events` spawns `probe_desktop` as
+   the stream opens and goes straight on to read frames. `probe_desktop` awaits
+   `GET /desktop/status` and then calls `s.desktop.apply` unconditionally, so an answer that
+   was current before an `on` frame clears the tray state the frame just set. The tray title
+   and tooltip are the only indicator while the window is hidden. Verified by code trace: no
+   ordering exists between the spawned task and `handle_event`, and both write
+   `ShellState.desktop` under the same lock. Fix: a token per read in `state.rs`; a frame
+   always wins; a read applies only if nothing newer landed since it started. Needs a unit
+   test in `state.rs`.
+3. **medium**: `apps/ui/src/shell/DesktopControlBanner.tsx:113-136` and
+   `apps/ui/src/store/context.tsx:214-234`. The amber "Desktop control is stopped … Resume
+   desktop control" line follows `status.revoked` whatever caused the revoke.
+   - Disabling `desktop-control` in the Extensions panel revokes the controller
+     (`controller.ts` `attachExtensionRegistry`, reason "desktop-control disabled in the
+     Extensions panel"). The `extension.changed` re-read then puts the amber line on every
+     page for as long as the capability stays disabled, a nag after a deliberate choice.
+   - Its "Resume" button calls `POST /desktop/resume`, which cannot make desktop control
+     work while the extension row is disabled. The line then claims something the button
+     does not deliver.
+   - The other way round, a stop from the tray (`{ on: false }` frame) leaves `revoked`
+     false, so no resume is offered until some later reconnect. The amber line then appears
+     out of nowhere.
+
+   Verified by tracing the reason strings in `controller.ts:332-347` and the store update in
+   `desktopControlFromIndicator` (an off frame keeps the previous `revoked`). Fix: leave
+   panel revokes to the Extensions panel (no amber line), and re-read the status when the
+   indicator goes from on to off so a stop from any shell offers resume. Tests in
+   `desktop-indicator.test.tsx`.
