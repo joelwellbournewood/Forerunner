@@ -36,8 +36,8 @@ Open points:
    `UploadQueue` (`apps/ui/src/mobile/uploads.ts`), not the action outbox: it is flushed
    first on reconnect, file by file to the same route, a 4xx drops it with a notice, a
    transport failure keeps it. The queue persists to browser storage up to 2 MiB in total
-   and holds larger files in memory (lost if the app closes, and the screen says it is
-   queued, not saved). The list route also returns `maxBytes`, so the phone shows the cap
+   and holds larger files in memory (lost if the app closes; the Upload screen and the
+   notice say the file is held in memory only). The list route also returns `maxBytes`, so the phone shows the cap
    before the human picks a file and refuses a larger one before a byte leaves.
 2. **The picker is the web file input.** One input for any file and one for a photo
    (`accept="image/*" capture="environment"`, which the Android WebView opens as the

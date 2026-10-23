@@ -61,6 +61,11 @@ export class UploadQueue {
     return this.items.length;
   }
 
+  /** Whether the queued file is in browser storage (false: held in memory, lost on close). */
+  isPersisted(clientId: string): boolean {
+    return this.items.find((i) => i.clientId === clientId)?.persisted ?? false;
+  }
+
   enqueue(input: {
     clientId: string;
     projectId: string;

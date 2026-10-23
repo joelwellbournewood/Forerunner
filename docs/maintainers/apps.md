@@ -1167,7 +1167,9 @@ refused on the phone (`MobileController.uploadFile`, `payload_too_large`) before
 leaves. The upload is `POST /projects/:id/uploads` as signed multipart with a fresh
 `clientId`; the progress shows the phases (reading, sending, uploaded or queued; `fetch` has
 no upload progress events). Unreachable, the file goes to `UploadQueue` and the header's
-"n queued" counts it; `flushOutbox` sends it first on reconnect, a 4xx drops it with a notice,
+"n queued" counts it; a file over the queue's storage budget (`PERSIST_MAX_BYTES`, 2 MiB in
+total) is held in memory only, and the screen (`m-upload-memory-only`) and the notice say it
+is lost if the app closes before it is sent; `flushOutbox` sends it first on reconnect, a 4xx drops it with a notice,
 and a resend after a lost answer is answered with the asset already made (the service's
 `clientId` idempotency), so the project never gets a second copy. The Reviews screen (nav
 "Reviews") lists `GET /reviews?projectId=` for the chosen project: task, PR link, verdict,
@@ -1191,7 +1193,8 @@ push-to-talk"), the result's `said` replaces the bubble's "Voice turn (n s)" and
 shown and spoken through `env.speaker`. Where the page cannot record (the Android shell today:
 `envFromGlobals` gives it no recorder; or a refused microphone, after which the screen switches
 over) the button is "Say it" and relays the typed line as `transcript` instead. A PC without
-voice answers `failed` and the screen says so.
+voice answers `failed` and the screen says so; so does a PC that picks the turn up more than
+two minutes late (`expired`, never run; `runtime.md`).
 
 **Push.** FCM is not configured (no Firebase project; `docs/status/BLOCKERS.md`). `push.rs`
 and `push.ts` keep one port; the shipped mode is `polling`: the change feed raises in-app
@@ -1282,7 +1285,8 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   `mobile-upload.test.tsx` (nav link, cap shown, a renamed file signed as multipart to the
   chosen project with its bytes stored, a camera photo as kind photo, a file over the cap
   refused before a byte leaves, offline queued and sent once on reconnect even after a lost
-  answer); `mobile-reviews.test.tsx` (nav link, reviews of the project with PR link and
+  answer, a queued file over the storage budget shown as held in memory only and still sent
+  on reconnect); `mobile-reviews.test.tsx` (nav link, reviews of the project with PR link and
   findings, the waiting approval shown, a signed comment, approve with a comment answering the
   task's request at its version, a high-risk reject that asks the prompt first: cancel sends
   nothing, confirm signs `biometric=1`; a high-risk approval filed after the screen loaded

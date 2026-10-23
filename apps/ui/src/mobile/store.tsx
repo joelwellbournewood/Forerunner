@@ -1115,7 +1115,7 @@ export class MobileController {
     projectId: string,
     file: UploadFile,
     kind = "upload",
-  ): Promise<{ queued: boolean; upload: UploadView | null }> {
+  ): Promise<{ queued: boolean; upload: UploadView | null; persisted: boolean }> {
     const cap = this.uploadMaxBytes;
     if (cap !== null && file.bytes.byteLength > cap) {
       throw new StateApiError(
@@ -1128,7 +1128,7 @@ export class MobileController {
     const clientId = newClientId();
     try {
       const upload = await this.client.upload(projectId, file, { clientId, kind });
-      return { queued: false, upload };
+      return { queued: false, upload, persisted: false };
     } catch (error) {
       if (error instanceof StateApiError && error.code === "ui.network") {
         this.uploads.enqueue({
@@ -1139,10 +1139,14 @@ export class MobileController {
           createdAt: new Date(this.env.now()).toISOString(),
         });
         this.patch({ outboxPending: this.pendingCount(), syncMode: "offline" });
+        // Over the storage budget the file is held in memory only: say so (ADR 0080 item 1).
+        const persisted = this.uploads.isPersisted(clientId);
         this.note(
-          `Offline: ${file.name} is queued and will be uploaded when the phone reconnects.`,
+          persisted
+            ? `Offline: ${file.name} is queued and will be uploaded when the phone reconnects.`
+            : `Offline: ${file.name} is queued in memory only (too large to keep on the phone); keep the app open until it is uploaded.`,
         );
-        return { queued: true, upload: null };
+        return { queued: true, upload: null, persisted };
       }
       if (error instanceof StateApiError && error.status === 413) {
         const max = error.details.maxBytes;

@@ -78,6 +78,8 @@ export function UploadScreen() {
   const [uploads, setUploads] = useState<UploadView[] | null>(null);
   const [maxBytes, setMaxBytes] = useState<number | null>(controller.uploadMaxBytes);
   const [inputKey, setInputKey] = useState(0);
+  /** The last queued file is held in memory only (over the storage budget). */
+  const [memoryOnly, setMemoryOnly] = useState(false);
 
   useEffect(() => {
     if (!projectId && activeProjectId) setProjectId(activeProjectId);
@@ -108,6 +110,7 @@ export function UploadScreen() {
   const pick = (picked: File | null) => {
     setError(null);
     setPhase("idle");
+    setMemoryOnly(false);
     setFile(picked);
     setName(picked?.name ?? "");
     setKind(picked ? kindOf(picked.type) : "file");
@@ -126,6 +129,7 @@ export function UploadScreen() {
         kind,
       );
       setPhase(r.queued ? "queued" : "stored");
+      setMemoryOnly(r.queued && !r.persisted);
       setFile(null);
       setName("");
       setInputKey((k) => k + 1);
@@ -230,6 +234,15 @@ export function UploadScreen() {
             aria-label="Upload progress"
           />
           <p className="text-xs text-neutral-600 dark:text-neutral-400">{PHASE_LABEL[phase]}</p>
+          {phase === "queued" && memoryOnly ? (
+            <p
+              className="text-xs text-amber-800 dark:text-amber-300"
+              data-testid="m-upload-memory-only"
+            >
+              Too large to keep on the phone: it is held in memory and lost if the app closes
+              before it is uploaded. Keep the app open until the phone reconnects.
+            </p>
+          ) : null}
         </div>
       ) : null}
       {error ? <ErrorBanner message={error} testId="m-upload-error" /> : null}

@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { MobileController } from "../src/mobile/store.tsx";
+import { PERSIST_MAX_BYTES } from "../src/mobile/uploads.ts";
 import { createMobileHarness, postedCalls, renderMobile, until } from "./mobile-helpers.tsx";
 
 /**
@@ -133,6 +134,8 @@ describe("Upload screen", () => {
       expect(screen.getByTestId("m-upload-progress")).toHaveAttribute("data-phase", "queued"),
     );
     expect(h.controller.uploads.size()).toBe(1);
+    // A small file is kept in browser storage: no memory-only warning.
+    expect(screen.queryByTestId("m-upload-memory-only")).toBeNull();
     expect(h.controller.state.outboxPending).toBe(1);
     expect(await screen.findByTestId("m-sync")).toHaveTextContent("1 queued");
     expect(h.service.state.uploads).toHaveLength(0);
@@ -152,5 +155,41 @@ describe("Upload screen", () => {
     const sent = postedCalls(h, "/projects/proj_pharma/uploads");
     expect(sent).toHaveLength(2);
     expect(h.controller.state.notice).toMatch(/Uploaded 1 queued file/);
+  });
+
+  it("says so when a queued file is too large to keep on the phone and lives in memory only", async () => {
+    const h = await createMobileHarness({ fake: { uploadMaxBytes: 4 * 1024 * 1024 } });
+    const realFetch = h.env.fetch as NonNullable<typeof h.env.fetch>;
+    let offline = false;
+    h.env.fetch = async (input, init) => {
+      if (offline) throw new Error("offline");
+      return realFetch(input, init);
+    };
+    h.controller = new MobileController(h.env);
+    const user = userEvent.setup();
+    renderMobile("/upload", h);
+    await waitFor(() =>
+      expect(screen.getByTestId("m-upload-cap")).toHaveTextContent("up to 4.0 MB each"),
+    );
+    offline = true;
+    const big = new Uint8Array(PERSIST_MAX_BYTES + 512 * 1024).fill(7);
+    await user.upload(
+      screen.getByTestId("m-upload-file"),
+      new File([big], "scan.pdf", { type: "application/pdf" }),
+    );
+    await user.click(screen.getByTestId("m-upload-send"));
+    await waitFor(() =>
+      expect(screen.getByTestId("m-upload-progress")).toHaveAttribute("data-phase", "queued"),
+    );
+    expect(screen.getByTestId("m-upload-memory-only")).toHaveTextContent(
+      "lost if the app closes",
+    );
+    expect(h.controller.state.notice).toMatch(/queued in memory only/);
+    expect(h.controller.uploads.pending()[0]?.persisted).toBe(false);
+    // Still sent once the phone is back, while the app stayed open.
+    offline = false;
+    await h.controller.flushOutbox();
+    expect(h.service.state.uploads).toHaveLength(1);
+    expect(h.service.state.uploads[0]?.sizeBytes).toBe(big.byteLength);
   });
 });
