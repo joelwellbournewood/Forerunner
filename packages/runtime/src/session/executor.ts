@@ -42,7 +42,12 @@ import {
   fastModeAuditLine,
   fastModeOf,
 } from "../models/fast-mode.ts";
-import { effortForTask, modelIdFor, startingTier } from "../models/ladder.ts";
+import {
+  effortForTask,
+  modelIdFor,
+  speedQualityOffsetOf,
+  startingTier,
+} from "../models/ladder.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
 import type { EffortLevel, ModelProvider, ModelTier, Usage } from "../provider/types.ts";
 import { RUN_COMMAND_TOOL, type SpecialistDriver, TOOL_UNMAPPED_AUDIT } from "../registry/tools.ts";
@@ -212,7 +217,6 @@ export interface LoopTaskExecutorDeps {
    * Undefined for a project without the setting falls back to `ceiling`.
    */
   projectCeiling?: (settings: JsonObject | null | undefined) => ModelTier | undefined;
-  effortOffset?: -1 | 0 | 1;
   /**
    * The ladder and effort table in force, read at every run start (spec D, ADR 0039): the
    * built-ins with `<config>/models.json` applied, replaced when the model watch adopts a
@@ -407,6 +411,8 @@ export class LoopTaskExecutor implements TaskExecutor {
     });
     // The rung and the effort come from the tables in force (built-ins plus the adopted
     // models.json), so an adoption by the model watch changes the next run, not the next start.
+    // The effort is shifted by the project's speed-versus-quality slider (spec D.16), read from
+    // the project row this run loaded, so a slider change applies to the next run.
     const modelConfig = this.deps.modelConfig?.();
     const model =
       choice.driver === "sdk"
@@ -427,7 +433,7 @@ export class LoopTaskExecutor implements TaskExecutor {
     const effort = effortForTask(
       spec.name === "coder" ? "coder" : spec.name === "researcher" ? "researcher" : "coder",
       brief.riskTier,
-      this.deps.effortOffset ?? 0,
+      speedQualityOffsetOf(project?.settings),
       modelConfig?.modeDefaults,
     );
     // Context layer: the session's pipeline, and the proxy only when the session selected it and

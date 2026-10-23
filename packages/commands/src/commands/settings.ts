@@ -82,14 +82,34 @@ export const SMALL_PROJECT_MODE_EFFECT = {
   off: "new tasks default to critic tier 1 and the next plan may have several milestones; existing tasks keep their tier",
 } as const;
 
+/**
+ * What each position of the speed-versus-quality slider (spec D.16) changes: every mode's
+ * default effort (chat, voice, planning, specialists, critic) one step down or up, read by the
+ * runtime at the next run, turn or planning session.
+ */
+export const SPEED_QUALITY_EFFECT = {
+  speed:
+    "speed: every mode's effort is one step lower (faster and cheaper) from the next run, chat turn or planning session",
+  balanced: "balanced: every mode runs at its default effort from the next run, chat turn or planning session",
+  quality:
+    "quality: every mode's effort is one step higher (slower, better results) from the next run, chat turn or planning session",
+} as const;
+
 export const SETTING_SPECS: Record<string, SettingSpec> = {
   speed_quality_offset: {
     key: "speed_quality_offset",
     label: "the speed-versus-quality slider",
     scope: "project",
     risk: "low",
-    schema: z.number().int().min(-2).max(2),
-    description: "Shifts model effort per project: -2 fastest, +2 best quality.",
+    schema: z.number().int().min(-1).max(1),
+    description:
+      "Shifts every mode's default effort one step per project: -1 speed, 0 balanced, +1 quality.",
+    effect: (value) =>
+      value === -1
+        ? SPEED_QUALITY_EFFECT.speed
+        : value === 1
+          ? SPEED_QUALITY_EFFECT.quality
+          : SPEED_QUALITY_EFFECT.balanced,
   },
   critic_ceiling: {
     key: "critic_ceiling",

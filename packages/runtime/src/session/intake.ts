@@ -25,7 +25,7 @@ import type { LoopAgentDriver, RunPricing } from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
-import { MODE_DEFAULTS, modelIdFor } from "../models/ladder.ts";
+import { MODE_DEFAULTS, modeEffort, modelIdFor, speedQualityOffsetOf } from "../models/ladder.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
 import type { ModelProvider } from "../provider/types.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
@@ -622,6 +622,9 @@ export class IntakeService {
     const config = this.deps.modelConfig();
     const planning = config.modeDefaults.planning ?? MODE_DEFAULTS.planning;
     const model = modelIdFor(planning.tier, provider.name, config.ladder);
+    // The planning effort, shifted by the project's speed-versus-quality slider (spec D.16)
+    // as the row this session read says, so a slider change applies to the next session.
+    const effort = modeEffort("planning", speedQualityOffsetOf(project.settings), config.modeDefaults);
     const settingBudget = (project.settings as { intake_budget_usd_micro?: unknown })
       .intake_budget_usd_micro;
     const budgetUsdMicro =
@@ -686,7 +689,7 @@ export class IntakeService {
         pricing,
         timeoutMs: INTAKE_TIMEOUT_MS,
         maxTokensPerCall: INTAKE_MAX_TOKENS,
-        effort: planning.effort,
+        effort,
         maxTurns: 1,
         label: `intake ${project.id}`,
         compression: "off",
