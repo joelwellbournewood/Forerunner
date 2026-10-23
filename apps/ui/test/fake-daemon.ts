@@ -2883,9 +2883,28 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return doc ? c.json(doc) : errorBody(c, 404, "not_found", "no such doc");
   });
 
-  app.get("/performance", (c) =>
-    c.json({ ...PERFORMANCE, projectId: c.req.query("projectId") ?? null }),
-  );
+  // The daemon's `GET /performance` (runtime daemon/views.ts `performanceView`): the fixture in
+  // the runtime shape, with the window and the project of the query; a bad `days` is 400 and an
+  // unknown project 404, as the daemon answers.
+  app.get("/performance", (c) => {
+    const raw = c.req.query("days");
+    const days = raw === undefined || raw === "" ? 7 : Number(raw);
+    if (!Number.isInteger(days) || days < 1) {
+      return errorBody(c, 400, "validation", "days must be a positive integer");
+    }
+    const projectId = c.req.query("projectId") || null;
+    if (projectId && !state.projects.some((p) => p.id === projectId)) {
+      return errorBody(c, 404, "not_found", `project ${projectId} not found`);
+    }
+    const window = Math.min(days, 90);
+    const generated = Date.parse(PERFORMANCE.generatedAt);
+    return c.json({
+      ...PERFORMANCE,
+      projectId,
+      days: window,
+      from: new Date(generated - window * 86_400_000).toISOString(),
+    });
+  });
 
   app.get("/events", (c) =>
     streamSSE(c, async (stream) => {

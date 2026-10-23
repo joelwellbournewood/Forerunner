@@ -13,11 +13,12 @@ import { z } from "zod";
  *    runtime's schema and the mirror so drift fails a test before it reaches a screen.
  *
  * 2. Proposed shapes for routes the daemon does not serve yet (the next-session queue,
- *    data assets and imports, project docs, performance). The paths live in
+ *    imports, project docs). The paths live in
  *    `PROPOSED_ROUTES`; `proposedPath()` prefers the daemon's `DAEMON_ROUTES` entry of the same
  *    name as soon as one exists, and the pages render a visible "route not available" state
  *    (`isRouteMissing`) until the daemon serves the route. Reviews, memory, commands and the
- *    change log were proposed here first and now come from `api-types.ts` directly.
+ *    change log, data assets and performance were proposed here first and now come from
+ *    `api-types.ts` directly.
  */
 
 // ---------------------------------------------------------------------------------------
@@ -496,46 +497,6 @@ export const DocContentView = z.object({
 export type DocContentView = z.infer<typeof DocContentView>;
 
 // ---------------------------------------------------------------------------------------
-// Proposed: performance (spec D.7, D.19)
-// ---------------------------------------------------------------------------------------
-
-export const TARGET_KINDS = ["first_token", "first_audio", "total", "by_task"] as const;
-
-export const PerformanceModeView = z.object({
-  mode: z.string(),
-  label: z.string(),
-  /** 0 when the target is set by the task budget and timeout. */
-  targetMs: z.number().int().nonnegative(),
-  targetKind: z.enum(TARGET_KINDS),
-  samples: z.number().int().nonnegative(),
-  ttftP50Ms: z.number().nullable(),
-  ttftP95Ms: z.number().nullable(),
-  totalP50Ms: z.number().nullable(),
-  totalP95Ms: z.number().nullable(),
-  /** Share of samples that met the target; null without samples or without a target. */
-  withinTargetShare: z.number().min(0).max(1).nullable(),
-});
-export type PerformanceModeView = z.infer<typeof PerformanceModeView>;
-
-export const PerformanceSampleView = z.object({
-  runId: z.string(),
-  mode: z.string(),
-  specialist: z.string(),
-  model: z.string(),
-  ttftMs: z.number().nullable(),
-  durationMs: z.number().nullable(),
-  at: z.string(),
-});
-
-export const PerformanceView = z.object({
-  generatedAt: z.string(),
-  projectId: z.string().nullable(),
-  modes: z.array(PerformanceModeView),
-  recent: z.array(PerformanceSampleView),
-});
-export type PerformanceView = z.infer<typeof PerformanceView>;
-
-// ---------------------------------------------------------------------------------------
 // Proposed routes
 // ---------------------------------------------------------------------------------------
 
@@ -551,7 +512,6 @@ export const PROPOSED_ROUTES = {
   importProject: "POST /projects/:id/import { source, locator } (202 ImportResultView)",
   docs: "GET /projects/:id/docs (DocView[])",
   doc: "GET /projects/:id/docs/:path",
-  performance: "GET /performance?projectId= (PerformanceView)",
 } as const;
 export type ProposedRouteName = keyof typeof PROPOSED_ROUTES;
 /** A route the pages may report as missing: proposed here or listed by the daemon. */

@@ -249,9 +249,12 @@ describe("daemon client", () => {
   });
 
   it("tells a missing route apart from a typed not_found", async () => {
-    const daemon = createFakeDaemon({ token: "tok", missingRoutes: ["/performance"] });
+    const daemon = createFakeDaemon({
+      token: "tok",
+      missingRoutes: ["/projects/proj_atlas/milestones"],
+    });
     const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
-    const missing = await client.performance().catch((e: unknown) => e);
+    const missing = await client.milestones("proj_atlas").catch((e: unknown) => e);
     expect(isRouteMissing(missing)).toBe(true);
     const typed = await client.project("proj_missing").catch((e: unknown) => e);
     expect(typed).toMatchObject({ status: 404, code: "not_found" });
@@ -267,7 +270,7 @@ describe("daemon client", () => {
       async () =>
         new Response("404 Not Found", { status: 404, headers: { "content-type": "text/plain" } }),
     );
-    const untyped = await honoDefault.performance().catch((e: unknown) => e);
+    const untyped = await honoDefault.milestones("proj_atlas").catch((e: unknown) => e);
     expect(untyped).toMatchObject({
       code: "ui.http_error",
       status: 404,
@@ -279,7 +282,9 @@ describe("daemon client", () => {
       testConfig(),
       async () => new Response(null, { status: 404, statusText: "Not Found" }),
     );
-    expect(isRouteMissing(await empty.performance().catch((e: unknown) => e))).toBe(true);
+    expect(isRouteMissing(await empty.milestones("proj_atlas").catch((e: unknown) => e))).toBe(
+      true,
+    );
   });
 
   it("round-trips reviews, memory, commands and the change log against the fake daemon", async () => {
@@ -410,7 +415,7 @@ describe("daemon client", () => {
     daemon.close();
   });
 
-  it("round-trips the proposed routes: queue, milestones, data, docs, performance", async () => {
+  it("round-trips the proposed routes and performance: queue, milestones, data, docs", async () => {
     const daemon = createFakeDaemon({ token: "tok" });
     const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
     const queued = await client.enqueue("proj_atlas", {
@@ -443,6 +448,15 @@ describe("daemon client", () => {
     expect((await client.docs("proj_atlas")).length).toBe(8);
     expect((await client.doc("proj_atlas", "README.md")).content).toContain("# Atlas");
     expect((await client.performance({ projectId: "proj_atlas" })).projectId).toBe("proj_atlas");
+    expect((await client.performance({ days: 30 })).days).toBe(30);
+    await expect(client.performance({ days: 0 })).rejects.toMatchObject({
+      status: 400,
+      code: "validation",
+    });
+    await expect(client.performance({ projectId: "proj_missing" })).rejects.toMatchObject({
+      status: 404,
+      code: "not_found",
+    });
     const badPerf = createClient(testConfig(), async () =>
       jsonResponse({ generatedAt: "x", modes: "no" }),
     );

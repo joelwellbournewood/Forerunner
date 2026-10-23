@@ -78,6 +78,9 @@ import {
   PeerFeedView as PeerFeedViewSchema,
   type PendingChangeView,
   PendingChangeView as PendingChangeViewSchema,
+  type PerformanceModeView,
+  type PerformanceView,
+  PerformanceView as PerformanceViewSchema,
   type ProjectCard,
   ProjectCard as ProjectCardSchema,
   type ProjectSummary,
@@ -154,8 +157,6 @@ import {
   ModelWatchRunView as ModelWatchRunViewSchema,
   ModelWatchSyncView,
   OkView,
-  type PerformanceView,
-  PerformanceView as PerformanceViewSchema,
   type ProjectSettingsView,
   ProjectSettingsView as ProjectSettingsViewSchema,
   proposedPath,
@@ -225,6 +226,7 @@ export type {
   ModelWatchRunView,
   PeerFeedView,
   PendingChangeView,
+  PerformanceModeView,
   PerformanceView,
   ProjectCard,
   ProjectSettingsView,
@@ -592,7 +594,11 @@ export interface DaemonClient {
   importProject(projectId: string, body: ImportInput): Promise<ImportResultView>;
   docs(projectId: string, signal?: AbortSignal): Promise<DocView[]>;
   doc(projectId: string, path: string, signal?: AbortSignal): Promise<DocContentView>;
-  performance(filter?: { projectId?: string }, signal?: AbortSignal): Promise<PerformanceView>;
+  /** The Performance view (spec D.7, D.19); `days` is the window, 7 by default, at most 90. */
+  performance(
+    filter?: { projectId?: string; days?: number },
+    signal?: AbortSignal,
+  ): Promise<PerformanceView>;
   /**
    * The audit log as a file (spec S.9): the daemon streams it in pages; the body comes back
    * whole with the name the daemon gave it, ready for `saveTextFile`.
@@ -954,9 +960,9 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(proposedPath("doc", { id: projectId, path }), DocContentViewSchema, undefined, signal),
     performance: (filter, signal) =>
       get(
-        proposedPath("performance"),
+        routePath("performance"),
         PerformanceViewSchema,
-        { projectId: filter?.projectId },
+        { projectId: filter?.projectId, days: filter?.days },
         signal,
       ),
     sources: (signal) => get(routePath("sources"), SourceList, undefined, signal),
