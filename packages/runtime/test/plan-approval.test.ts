@@ -473,6 +473,29 @@ describe("syncPlanApprovals", () => {
     ).toHaveLength(1);
   });
 
+  // w5-review-findings review: the cloud runner's inbox trigger writes `start_failed` itself
+  // when its scheduler answers "failed"; the background report that follows must still warn.
+  it("a card a producer already marked start_failed without a warning is still reported once", async () => {
+    await addTask(w, "T1");
+    const req = await filePlan(w);
+    const answered = await answer(w, req, "approve");
+    const claimed = await markPlanAnswer(w.store, w.clock, answered, "starting");
+    if (!claimed) throw new Error("not claimed");
+    expect(await markPlanAnswer(w.store, w.clock, claimed, "start_failed")).not.toBeNull();
+    const report = { store: w.store, clock: w.clock, humanId: w.human, agentId: w.alice };
+    const planId = approvedPlanIdOf(req) ?? "";
+    await reportPlanStartFailure(report, planId, new Error("presence check failed"));
+    await reportPlanStartFailure(report, planId, new Error("again"));
+    expect(card(await w.store.humanRequest.mustGet(req.id))).toMatchObject({
+      outcome: "start_failed",
+      error: "presence check failed",
+    });
+    const warnings = (await w.store.message.inbox({ humanId: w.human }, { limit: 50 })).filter(
+      (m) => m.type === "warning" && m.body.includes(req.id),
+    );
+    expect(warnings).toHaveLength(1);
+  });
+
   it("two approved plans of the same tasks in one sync: the newest starts, the older is superseded", async () => {
     await addTask(w, "T1");
     const older = await filePlan(w);

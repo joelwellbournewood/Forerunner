@@ -231,7 +231,10 @@ async function warnStartFailed(deps: PlanReportDeps, row: HumanRequestRow, error
  * active on a shared store, `provider_auth`, the schema-sync gate), which `requestStart`
  * never reports to its caller. The request's card says `start_failed` with the error, one
  * audit row is written and the human is warned once; the request is not retried (the next
- * session proposes the plan again). The daemon's session start calls it (compose.ts).
+ * session proposes the plan again). The daemon's and the cloud runner's session starts call
+ * it (compose.ts, cloud-runner runner.ts). "Once" is the card's `failure_reported_at`, not its
+ * outcome: the cloud runner's inbox trigger may have written `start_failed` itself (its
+ * scheduler answered "failed") before this report runs, and the human is still warned.
  */
 export async function reportPlanStartFailure(
   deps: PlanReportDeps,
@@ -242,7 +245,7 @@ export async function reportPlanStartFailure(
   if (!parsed) return;
   const rows = await deps.store.humanRequest.list({ session_id: parsed.sessionId }, { limit: 50 });
   const row = rows.find((r) => approvedPlanIdOf(r) === planApproved);
-  if (!row || (row.change_card as JsonObject).outcome === "start_failed") return;
+  if (!row || (row.change_card as JsonObject).failure_reported_at) return;
   const error = errorMessage(e);
   await deps.store.humanRequest.patch(row.id, {
     change_card: {
@@ -250,6 +253,7 @@ export async function reportPlanStartFailure(
       applied_at: deps.clock.nowIso(),
       outcome: "start_failed",
       error,
+      failure_reported_at: deps.clock.nowIso(),
     },
   });
   await auditPlanAnswer(deps, row, false, { outcome: "start_failed", error });
@@ -391,7 +395,10 @@ async function applyPlanAnswer(
     entry = await deps.start(req);
   } catch (e) {
     const error = errorMessage(e);
-    await markPlanAnswer(store, clock, claimed, "start_failed", { error });
+    await markPlanAnswer(store, clock, claimed, "start_failed", {
+      error,
+      failure_reported_at: clock.nowIso(),
+    });
     await auditPlanAnswer(deps, row, false, { outcome: "start_failed", error });
     logger.warn("approved plan could not be started", { requestId: row.id, error });
     await warnStartFailed(deps, row, error);

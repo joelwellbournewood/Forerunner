@@ -110,7 +110,9 @@ start, exactly once.
   starts; the older ones are marked `superseded`.
 - A start that fails after the scheduler took it (`runner.start` rejecting in the background)
   is reported on the request (`start_failed`) and the human is warned once
-  (`reportingPlanStartFailures`).
+  (`reportingPlanStartFailures`), on the PC daemon and on the cloud runner alike (review of
+  w5-review-findings: with the shared mark, a cloud start that failed in the background spent
+  the approval silently).
 - The follow-up carries the filing session's cap (`StartRequest.budgetUsdMicro`), which
   replaces the consequence above that a different cap asks again: the plan is cut as the human
   saw it. Learned estimates that drift between the two sessions can still change the cut.

@@ -197,7 +197,13 @@ session with trigger `message` when it finds
   plan a start binds to is claimed (a write conditional on the row's version; one the daemon
   claimed first is left to it) before the start is asked for and marked with the scheduler's
   answer after (`started`, `queued`, `deferred`, `start_failed`), and a claim whose start was
-  skipped for a PC that came online is released for that PC. The start carries the filing
+  skipped for a PC that came online is released for that PC. A start that fails after the
+  scheduler took it (the PC check throws, or the session rejects in the background:
+  `claim_conflict` while a session of the agent is still `running` in the shared store,
+  `provider_auth`, a vault that does not unlock) is reported on the request (`start_failed`
+  with the error, one audit row) and the human is warned once: the runner's scheduler start is
+  wrapped in `reportingPlanStartFailures`, as the PC daemon's is, since the shared mark would
+  otherwise spend the approval with nothing run. The start carries the filing
   session's cap (`budgetUsdMicro`), so the plan is cut as the human saw it. The newest approved
   plan in a check binds the start (an older one is marked `superseded`); a plan card without a
   `plan_id` (an earlier build's request) starts a plain session that proposes the plan again. A
@@ -386,7 +392,7 @@ file-backed SQLite, testenv mail server on 127.0.0.1, SimulatedClock):
 | `remote.test.ts` | kill within one poll (runs aborted, freeze, result and audit rows), stop lifts the freeze, start resumes and asks the scheduler, pause refused, pc-targeted and other-runner commands untouched; another human's phone (start of its agent, kill) and a start naming another agent refused with `forbidden: ...`, the runner's run untouched |
 | `email-watch.test.ts` | a valid command acknowledged within 60 s of simulated time (one simulated second per 50 ms of wall time) and a capped session started; a spoofed command ignored with no session, no reply and an audit row; completion threaded under the command; polling when the host has no push; `push: false` polling only although the host pushes (delivery at the interval, never twice); commands off |
 | `identity.test.ts` | ADR 0082 on a file-backed SQLite store holding two humans: a runner naming none refused `identity_ambiguous` and one naming an unknown email `not_found`, nothing created either way; `FORERUNNER_RUNNER_HUMAN` as an email (case does not matter) serving that human and their own principal, the composed runtime bound to the same rows (`rt.identity`), the status naming them |
-| `runner.test.ts` | the composed runner on a file-backed SQLite store: health route and readiness file, device row, billing source, schedules; a schedule left to a heartbeating PC and taken over once it is gone (session `runner: "cloud"`, task done, ledger rows under the runner's source); `startSession` answering `deferred` for a firing the PC rule skipped and `started` when forced; a peer's handoff starting a message-triggered cloud session that reads it and does the ready task, with no second session for the same handoff; an emailed task acknowledged within a minute, run as a capped cloud session (tier 1 tasks end `in_review`) with the completion mail |
+| `runner.test.ts` | the composed runner on a file-backed SQLite store: health route and readiness file, device row, billing source, schedules; a schedule left to a heartbeating PC and taken over once it is gone (session `runner: "cloud"`, task done, ledger rows under the runner's source); `startSession` answering `deferred` for a firing the PC rule skipped and `started` when forced; a peer's handoff starting a message-triggered cloud session that reads it and does the ready task, with no second session for the same handoff; an approved plan whose cloud session fails in the background (a stale `running` session of the agent: `claim_conflict`) marked `start_failed` with one warning to the human; an emailed task acknowledged within a minute, run as a capped cloud session (tier 1 tasks end `in_review`) with the completion mail |
 
 Integration (`FORERUNNER_TEST_PG`, `pnpm vitest run --project integration services/cloud-runner`,
 skipped visibly without it): `runner.integration.test.ts` unlocks the real blob through a
