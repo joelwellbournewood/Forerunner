@@ -13,6 +13,7 @@ import {
 
 /** A scripted channel: answers from `results` in order, then delivers. Records every send. */
 export class FakeChannel implements Channel {
+  readonly announce: boolean;
   readonly sent: Notification[] = [];
   /** The context of each send (its `recordId` is what the notifier passed). */
   readonly contexts: ChannelContext[] = [];
@@ -24,11 +25,19 @@ export class FakeChannel implements Channel {
     readonly name: ChannelName,
     private readonly opts: {
       configured?: (ctx: ChannelContext) => string | null;
+      /** An announcing channel (ADR 0063): after the chain, urgent only, never ends it. */
+      announce?: boolean;
+      accepts?: (n: Notification, ctx: ChannelContext) => string | null;
       results?: ChannelResult[];
       clock?: SimulatedClock;
     } = {},
   ) {
+    this.announce = opts.announce === true;
     this.results = [...(opts.results ?? [])];
+  }
+
+  accepts(n: Notification, ctx: ChannelContext): string | null {
+    return this.opts.accepts?.(n, ctx) ?? null;
   }
 
   configured(ctx: ChannelContext): string | null {
@@ -87,7 +96,7 @@ export interface WorldOptions {
   storeEvents?: boolean;
 }
 
-/** The default channels behave like the real ones' `configured()`: desktop always, the rest by prefs. */
+/** The default channels behave like the real ones' `configured()`: desktop always, the rest by prefs; voice announces. */
 export function defaultChannels(clock: SimulatedClock): Record<ChannelName, FakeChannel> {
   return {
     desktop: new FakeChannel("desktop", { clock }),
@@ -102,6 +111,12 @@ export function defaultChannels(clock: SimulatedClock): Record<ChannelName, Fake
     email: new FakeChannel("email", {
       clock,
       configured: (ctx) => (ctx.prefs.email ? null : "no email address"),
+    }),
+    // The real voice channel's rules without the TTS: off unless the human turned it on.
+    voice: new FakeChannel("voice", {
+      clock,
+      announce: true,
+      configured: (ctx) => (ctx.prefs.voice_alerts ? null : "voice alerts are off"),
     }),
   };
 }

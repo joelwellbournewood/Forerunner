@@ -1187,6 +1187,75 @@ export type VoiceSseEvent =
   | { event: "voice.event"; data: VoiceEventView }
   | { event: "heartbeat"; data: { at: string } };
 
+// ---------------------------------------------------------------------------------------
+// Read aloud (spec A.6 "readable aloud", L.6 "TTS for summaries and alerts"; ADR 0063): a text
+// synthesised sentence by sentence through the registry's TTS and streamed to the shell the
+// way a voice turn's reply is. No model call: it works without a model credential.
+
+export const SPEAK_STATES = ["speaking", "done", "cancelled", "failed"] as const;
+
+export const SpeakSubjectView = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("project"), id: z.string(), name: z.string() }),
+  z.object({ kind: z.literal("session"), id: z.string(), projectId: z.string().nullable() }),
+  z.object({ kind: z.literal("notification"), id: z.string(), notificationKind: z.string() }),
+]);
+export type SpeakSubjectView = z.infer<typeof SpeakSubjectView>;
+
+export const SpeakBody = z.object({
+  /** BCP-47 for the provider; default: the provider's own. */
+  language: z.string().optional(),
+});
+export type SpeakBody = z.infer<typeof SpeakBody>;
+
+export const SpeakView = z.object({
+  id: z.string(),
+  subject: SpeakSubjectView,
+  /** Who asked: `ui` (the button), `chat` / `voice` (the `summary.speak` command), `notification`. */
+  source: z.string(),
+  state: z.enum(SPEAK_STATES),
+  /** The whole text, echoed so the screen shows what is being read. */
+  text: z.string(),
+  sentences: z.array(z.string()),
+  /** The sentences whose playback started (what the person heard so far). */
+  heard: z.string(),
+  unspokenText: z.string().nullable(),
+  audioChunks: z.number().int(),
+  audioStored: z.literal(false),
+  firstAudioMs: z.number().nullable(),
+  provider: VoiceProviderView,
+  /** The session whose log carries the `voice.speak` row. */
+  conversationSessionId: z.string(),
+  startedAt: z.string(),
+  endedAt: z.string().nullable(),
+  error: z.object({ code: z.string(), message: z.string() }).nullable(),
+  /** The last event's seq, for `GET /speak/:id/events?afterSeq=`. */
+  lastSeq: z.number().int(),
+});
+export type SpeakView = z.infer<typeof SpeakView>;
+
+/**
+ * One frame of `GET /speak/:id/events`: `sentence` (every sentence up front, `{ index, text }`),
+ * `audio` (the voice loop's frame: `{ sentenceIndex, sampleRate, channels, timestampMs, pcm }`,
+ * live only), `speaking_start` (`{ firstAudioMs }`), `speaking_end`, `error`, `speak.done`
+ * (`{ record }`).
+ */
+export const SpeakEventView = z.object({
+  seq: z.number().int(),
+  at: z.string(),
+  type: z.string(),
+  data: z.unknown(),
+});
+export type SpeakEventView = z.infer<typeof SpeakEventView>;
+
+/** The `speak.started` frame on `GET /events`: a shell attaches to the utterance's stream to play it. */
+export const SpeakStartedView = z.object({
+  id: z.string(),
+  subject: SpeakSubjectView,
+  source: z.string(),
+  sentences: z.number().int(),
+});
+export type SpeakStartedView = z.infer<typeof SpeakStartedView>;
+
 export const ErrorBody = z.object({
   code: z.string(),
   message: z.string(),
@@ -1549,6 +1618,14 @@ export const DAEMON_ROUTES = {
     "POST /voice/sessions/:id/answer { answer: tap|no } (answers the read-back without speaking through the registry, which decides and whose status is on the decision; VoiceAnswerView; 404 without a card)",
   voiceEvents:
     "GET /voice/sessions/:id/events?afterSeq= (JSON VoiceEventView[]; 409 when afterSeq is not a number) | Accept: text/event-stream (SSE voice.event frames: state, transcript, model deltas, sentences, audio, first audio, read-back = approval needed, approval with the registry's status, answer = the registry's result of a spoken, tapped or cancelled answer, turn = done; heartbeat; ?token= accepted)",
+  speakProject:
+    "POST /projects/:id/speak { language? } (201 SpeakView: the one-screen summary read aloud sentence by sentence through the registry's TTS, the text echoed; a new utterance cancels the one in flight; 403 forbidden for another human's project; 503 unavailable with the reason when no TTS provider can run)",
+  speakSession:
+    "POST /sessions/:id/speak { language? } (201 SpeakView: the session's summary read aloud; 409 validation when the session has no summary yet; 403 forbidden for another human's session)",
+  speak: "GET /speak/:id (SpeakView; finished utterances are kept for a while, then 404)",
+  cancelSpeak: "POST /speak/:id/cancel (SpeakView; immediate, a no-op once ended)",
+  speakEvents:
+    "GET /speak/:id/events?afterSeq= (JSON SpeakEventView[]; 409 when afterSeq is not a number) | Accept: text/event-stream (SSE speak.event frames: sentence, audio with the voice loop's PCM frame, speaking_start, speaking_end, error, speak.done; heartbeat; ?token= accepted)",
   events:
-    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, notification, desktop.indicator, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts)",
+    "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, notification, desktop.indicator, speak.started, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts)",
 } as const;

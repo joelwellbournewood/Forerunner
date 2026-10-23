@@ -222,6 +222,27 @@ registry, and the shells talk to it over the daemon's `/voice` routes (`DAEMON_R
 | Read | `GET /voice/sessions/:id` | `VoiceSessionView` with `state`, `turn`, `pending`, `lastTurn`, `lastSeq` |
 | Close | `POST /voice/sessions/:id/stop` | immediate in every state (O.9); input is refused afterwards |
 
+### Read aloud: summaries and alerts (L.6, A.6; ADR 0063)
+
+Outside a voice turn the daemon reads a text through the same registry's TTS with
+`SpeakSessions` (`packages/runtime/src/voice/speak.ts`): `splitSentences` on the text, one
+sentence synthesised ahead of playback, the loop's `audio` frame streamed to the shell, the
+sink paced on the clock; no STT and no model call, so it works without a model credential.
+One voice at a time (a new utterance cancels the one in flight), a cancel is immediate. Routes
+(`DAEMON_ROUTES`): `POST /projects/:id/speak` (the cached one-screen summary, spec A.6),
+`POST /sessions/:id/speak` (a session's summary), `GET /speak/:id`, `POST /speak/:id/cancel`,
+`GET /speak/:id/events` (JSON after `afterSeq`, or SSE `speak.event` frames: every `sentence`
+up front, `audio`, `speaking_start`, `speaking_end`, `error`, `speak.done`; `?token=`
+accepted), plus a `speak.started` frame on `/events` so a shell can attach and play. Another
+human's project or session is refused (`forbidden`); a session without a summary is
+`validation`; no usable TTS is 503 `unavailable` with the reason. Recorded: one `voice.speak`
+row on the conversation session (the text as heard, never audio) and one `voice.speak` audit
+row (counts and the provider, never the text). The same speaker is behind the `summary.speak`
+command ("read me the summary", `commands.md`) and the `voice` notification channel, which
+reads urgent alerts aloud on top of the toast when voice alerts are on, a shell is attached
+and it is not quiet hours (`notifications.md`). `runtime.md` ("Read aloud") has the wiring;
+the UI's button is in `apps.md`.
+
 The desktop shell (`apps/desktop`), the Android app (`apps/mobile`) and the approvals web page
 (`apps/approvals-web`) are not hooked up yet: the desktop and Android shells capture with the
 OS audio APIs above and call `press` and `audio`, play the `audio` frames, show the
@@ -292,7 +313,9 @@ conversation session, `voice.session` and `voice.approval` audit rows, never aud
 
 ## Tests
 
-`pnpm vitest run --project unit packages/voice` (186 tests, a few seconds, no network):
+`pnpm vitest run --project unit packages/voice` (186 tests, a few seconds, no network); the
+speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
+`packages/runtime/test/notifications-voice.test.ts` (`FakeTts` on the simulated clock):
 
 | File | Covers |
 | --- | --- |
@@ -342,7 +365,9 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
   or ordering, but the provider's work (and a cloud provider's bill) continues meanwhile. The
   fake, local and cloud providers all honour the signal; the model stream is the only worker
   raced against the abort.
-- The shells do not call the `/voice` routes yet (above, "How the shell reaches it"); the
+- The shells do not call the `/voice` routes yet (above, "How the shell reaches it") and do
+  not play the `/speak/:id/events` frames either: the UI plays them itself through Web Audio
+  in the webview (`apps.md`); the desktop sidecar ignores the `speak.started` frame for now. The
   daemon's bridge is exercised by `packages/runtime/test/voice-route.test.ts` and scenario 3
   still carries its own copy (`tests/e2e/src/scenario-voice.ts`) until it is pointed at
   `VoiceBridge`. The conversation agent's own per-human copy of a pending card outlives a
@@ -365,6 +390,7 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
 | O.1, O.7, O.9, Q.4, Q.5 (voice) | talk by voice or typed line through the daemon; the card read back and the wait for the yes with the line logged; stop at once; the same registry as chat | `packages/runtime/src/voice/` (`VoiceBridge`, `TextTurnStt`, `VoiceSessions`), the `/voice` routes | `packages/runtime/test/voice-route.test.ts` |
 | O.10 | transcripts kept, audio not stored unless turned on | `loop.ts`, `store.ts` | `test/loop.test.ts` (audio storage) |
 | D.8 | voice chat first audio under 1.2 s (measurement; the model choice is the runtime's) | `latency.ts` | `test/loop.test.ts` |
-| L.6 | TTS for summaries and alerts, STT for voice notes, pluggable provider | `splitSentences()` + any `TtsProvider`; any `SttProvider`; `registry.ts` | `test/sentences.test.ts`, `test/registry.test.ts` |
+| L.6 | TTS for summaries and alerts, STT for voice notes, pluggable provider | `splitSentences()` + the registry's `TtsProvider` through `packages/runtime/src/voice/speak.ts` (the `/speak` routes, `summary.speak`, the `voice` notification channel; ADR 0063); any `SttProvider` (`note.add` keeps the transcript); `registry.ts` | `test/sentences.test.ts`, `test/registry.test.ts`, `packages/runtime/test/speak-route.test.ts`, `packages/runtime/test/notifications-voice.test.ts` |
+| A.6 (readable aloud) | the one-screen summary read aloud | `POST /projects/:id/speak`, `summary.speak` | `packages/runtime/test/speak-route.test.ts`, `packages/commands/test/commands.test.ts` |
 | P.7 | `adding-a-voice-provider.md` | this doc and `adding-a-voice-provider.md` | docs check |
 | checklist "Voice keys" | keys missing -> local only; synthesised speech clips fed to STT in tests | `registry.ts` policy; `wav.synth` fixtures | `test/registry.test.ts`, `test/local-helpers.test.ts` |

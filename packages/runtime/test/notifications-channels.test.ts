@@ -554,6 +554,7 @@ describe("notification routes", () => {
       "telegram:true:false",
       "signal:true:false",
       "email:true:true",
+      "voice:true:false",
     ]);
     const put = await app.fetch(
       json("PUT", "/notifications/prefs", {
@@ -628,6 +629,7 @@ describe("notification routes", () => {
       "telegram:delivered",
       "signal:skipped",
       "email:delivered",
+      "voice:skipped",
     ]);
     const pending = (await (await app.fetch(json("GET", "/notifications/pending"))).json()) as {
       held: unknown[];

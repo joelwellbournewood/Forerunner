@@ -27,8 +27,12 @@ export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 export const URGENCIES = ["info", "normal", "urgent"] as const;
 export type Urgency = (typeof URGENCIES)[number];
 
-/** Channels in the default fallback order (ADR 0017): immediate first, slowest last. */
-export const CHANNEL_NAMES = ["desktop", "telegram", "signal", "email"] as const;
+/**
+ * Channels in the default fallback order (ADR 0017): immediate first, slowest last. `voice`
+ * is not a step of the chain: it announces an urgent notification on top of the chain's
+ * delivery (ADR 0063) and is listed last so the chain's order is unchanged.
+ */
+export const CHANNEL_NAMES = ["desktop", "telegram", "signal", "email", "voice"] as const;
 export type ChannelName = (typeof CHANNEL_NAMES)[number];
 
 /**
@@ -108,6 +112,11 @@ export interface NotificationPrefs {
   email: string | null;
   /** The single preferred channel the NL settings command writes ("push" is the Android client). */
   notify_channel: ChannelName | "push" | null;
+  /**
+   * Urgent notifications are read aloud through the voice provider while a desktop shell is
+   * attached and outside quiet hours (ADR 0063; the `voice_alerts` setting). Off by default.
+   */
+  voice_alerts: boolean;
 }
 
 /** Preferences with the human's own facts filled in. */

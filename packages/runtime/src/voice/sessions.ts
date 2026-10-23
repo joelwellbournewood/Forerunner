@@ -266,26 +266,19 @@ export class VoiceSessions {
     preferredBy?: string;
     hasSecret?: (ref: string) => Promise<boolean>;
   } {
-    const p: VoicePreference | null = prefs[side];
-    return {
-      ...(this.deps.hasSecret ? { hasSecret: this.deps.hasSecret } : {}),
-      ...(p ? { preferred: p.name, preferredBy: preferredBy(p, side) } : {}),
-    };
+    return selectInputFor(side, prefs, this.deps.hasSecret);
   }
 
   private async pick(prefs: VoicePreferences): Promise<Picked> {
     const { registry } = this.deps;
     const stt = await registry.selectStt(this.selectInput("stt", prefs));
-    const tts = await registry.selectTts(this.selectInput("tts", prefs));
+    const tts = await pickTts(registry, prefs, this.deps.hasSecret);
     return {
       stt: {
         provider: stt.provider,
         pick: { name: stt.name, kind: stt.kind, policy: stt.policy, reason: stt.reason },
       },
-      tts: {
-        provider: tts.provider,
-        pick: { name: tts.name, kind: tts.kind, policy: tts.policy, reason: tts.reason },
-      },
+      tts: { provider: tts.provider, pick: tts.pick },
       statuses: { stt: stt.statuses, tts: tts.statuses },
     };
   }
@@ -299,4 +292,41 @@ export class VoiceSessions {
       tts: await registry.statusTts(this.selectInput("tts", prefs)),
     };
   }
+}
+
+/**
+ * The registry's selection input for one side: the preferred row's name and why it is
+ * preferred (the Extensions panel or the environment override), and the vault probe.
+ */
+function selectInputFor(
+  side: VoiceSide,
+  prefs: VoicePreferences,
+  hasSecret: ((ref: string) => Promise<boolean>) | undefined,
+): { preferred?: string; preferredBy?: string; hasSecret?: (ref: string) => Promise<boolean> } {
+  const p: VoicePreference | null = prefs[side];
+  return {
+    ...(hasSecret ? { hasSecret } : {}),
+    ...(p ? { preferred: p.name, preferredBy: preferredBy(p, side) } : {}),
+  };
+}
+
+/**
+ * The TTS provider the registry's policy picks right now (local if available, else cloud with
+ * a key, the preferred row first: the Extensions panel's choice or the environment override, as
+ * the voice sessions read it); shared by the voice sessions and the speaker. Throws
+ * `unavailable` with the reason when nothing can run.
+ */
+export async function pickTts(
+  registry: VoiceProviderRegistry,
+  preferred: VoicePreferences | undefined,
+  hasSecret: ((ref: string) => Promise<boolean>) | undefined,
+): Promise<{ provider: TtsProvider; pick: VoiceProviderPick; statuses: ProviderStatus[] }> {
+  const tts = await registry.selectTts(
+    selectInputFor("tts", preferred ?? { stt: null, tts: null, skipped: [] }, hasSecret),
+  );
+  return {
+    provider: tts.provider,
+    pick: { name: tts.name, kind: tts.kind, policy: tts.policy, reason: tts.reason },
+    statuses: tts.statuses,
+  };
 }

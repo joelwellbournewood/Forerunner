@@ -1,7 +1,7 @@
 # Notifications
 
 Desktop, email, Telegram and Signal notifications with quiet hours, a daily digest, dedupe,
-retry and channel fallback. Code: `packages/runtime/src/notifications/` (exported from
+retry and channel fallback, plus urgent alerts read aloud (the `voice` channel, ADR 0063). Code: `packages/runtime/src/notifications/` (exported from
 `src/notifications/index.ts` and the package root). ADR 0017 records the channel fallback order
 and what counts as urgent; ADR 0031 records the SSE event shape the desktop shell shows as a
 toast; ADR 0038 records how the daemon wires the module. The wiring itself lives in
@@ -86,7 +86,8 @@ malformed, `writePrefs` merges a validated patch and keeps every key it does not
   "telegram_chat_id": "123456789",
   "signal_number": "+41790000000",
   "email": null,
-  "notify_channel": "desktop"
+  "notify_channel": "desktop",
+  "voice_alerts": false
 }
 ```
 
@@ -99,15 +100,18 @@ malformed, `writePrefs` merges a validated patch and keeps every key it does not
 | `telegram_chat_id` | The chat the bot writes to. | `null` |
 | `signal_number` | The human's own Signal number (recipient), E.164. | `null` |
 | `email` | Address for the email channel; `null` uses `human.email`. | `null` |
-| `notify_channel` | The single preferred channel the natural-language settings command writes; `"push"` is the Android client and currently means desktop first. | `null` |
+| `notify_channel` | The single preferred channel the natural-language settings command writes; `"push"` is the Android client and currently means desktop first; `"voice"` is ignored by the chain (voice announces, below). | `null` |
+| `voice_alerts` | Urgent notifications are read aloud through the voice provider on top of the toast while a desktop shell is attached and outside quiet hours (ADR 0063). Also the `voice_alerts` key of `settings.set` ("turn voice alerts on" in chat, the settings screen). | `false` |
 
 `NotificationPrefsPatch` (zod, strict) is what `PUT /notifications/prefs` and
 `Notifier.setPrefs` accept: unknown keys, `8:00`, an unknown zone, a non-E.164 number or a bad
 address are refused with `validation`.
 
-`channelsFor(kind, prefs)` gives the ordered channels: the explicit per-kind list when set,
-otherwise the preferred channel (`notify_channel`; desktop when unset or `"push"`) followed by
-the rest in `CHANNEL_NAMES` order `desktop, telegram, signal, email` (ADR 0017).
+`channelsFor(kind, prefs)` gives the ordered channels of the fallback chain: the explicit
+per-kind list when set, otherwise the preferred channel (`notify_channel`; desktop when unset
+or `"push"`) followed by the rest in `CHANNEL_NAMES` order `desktop, telegram, signal, email`
+(ADR 0017). `voice` is the fifth name but never a step of the chain (`CHAIN_CHANNELS`): it
+announces (ADR 0063) and is dropped from lists and from `notify_channel`.
 
 ### Quiet hours and time zones
 
@@ -136,11 +140,17 @@ or deduped:
 3. **Route by urgency**: urgent → dispatched now; info with a `digest_time` → `heldFor:
    "digest"`; otherwise inside quiet hours → `heldFor: "quiet_hours"`; otherwise dispatched now.
 4. **Dispatch**: the channels from `channelsFor` in order. A channel whose `configured(ctx)`
-   returns a reason is recorded as `skipped` (attempts 0) and not tried. A tried channel gets
+   returns a reason, or whose `accepts(n, ctx)` declines this one notification, is recorded as
+   `skipped` (attempts 0) and not tried. A tried channel gets
    up to `retry.attempts` attempts (default 3) with exponential backoff on the clock
    (`baseMs` 500 doubling, capped at `maxMs` 5000); a `retryable: false` answer ends the
-   attempts at once (`status: "unavailable"`). The first `delivered` stops the loop. Outcome:
-   `delivered`, `failed` (every tried channel failed) or `no_channel` (nothing to try).
+   attempts at once (`status: "unavailable"`). The first `delivered` stops the loop.
+5. **Announce** (ADR 0063): for an `urgent` record, after the chain, every announcing channel
+   (`Channel.announce`, today `voice`) that is configured for the human runs on top of the
+   chain's delivery and never ends it: `accepts` declining is a `skipped` row with the
+   reason, else one attempt sequence and its audit row. Off for the human means no row.
+   Outcome: `delivered` (any row delivered, the announcer's included), `failed` (every tried
+   channel failed) or `no_channel` (nothing to try).
 
 `tick()` flushes what is due and `start(intervalMs = 60000)` runs it on the clock (returns the
 stop function). Per human and per tick: when the digest is due (local time at or past
@@ -168,16 +178,19 @@ The in-process `NotificationEmitter` emits `record` for every notifier decision 
 
 ### Channels (`channels/`)
 
-`Channel { name; configured(ctx): string | null; send(n, ctx): Promise<ChannelResult> }` with
-`ChannelResult = { ok: true, detail } | { ok: false, reason, retryable }`. Channels never decide
-routing, quiet hours or retries. `ctx` is `{ human: { id, name, email, timezone }, prefs:
-ResolvedPrefs }`.
+`Channel { name; announce?; configured(ctx): string | null; accepts?(n, ctx): string | null;
+send(n, ctx): Promise<ChannelResult> }` with `ChannelResult = { ok: true, detail } | { ok:
+false, reason, retryable }`. Channels never decide routing, the digest or retries; `accepts`
+is the one per-notification check a channel may make (the voice channel's quiet hours and
+shell presence), recorded as `skipped` with the reason. `ctx` is `{ human: { id, name, email,
+timezone }, prefs: ResolvedPrefs }`.
 
 | Channel | Sends through | Configured when | Setup (what the human enters where) |
 | --- | --- | --- | --- |
 | `DesktopChannel({ emitter, shellsConnected?, platform?, run?, which?, appId?, osFallback? })` | Emits `notification` on the emitter; the daemon forwards it as the SSE event `notification` `{ id, kind, title, body, level, route, humanId, projectId }` and an attached shell shows the toast (ADR 0031). `id` is the `NotificationRecord` id, so a shell can match a toast with `GET /notifications/recent` (the notifier passes it as `ctx.recordId`; a test send has no record and uses its dedupe key). With no shell connected it falls back to the OS: `notify-send --app-name=Forerunner --urgency=<low\|normal\|critical> -- <title> <body>` on Linux, a PowerShell toast on Windows (`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <constant script>`; title, body and AppUserModelID travel in `FORERUNNER_TOAST_TITLE`, `FORERUNNER_TOAST_BODY`, `FORERUNNER_TOAST_APP_ID`, never inside the script). Both through `run()` with argv arrays; tools are located with `which()` once per process. `osFallback: false` (what the daemon passes when `osNotifierEnabled` is off, ADR 0038) reports "no shell connected (OS notifier off)" instead, not retryable, so the notifier moves on. | always | Nothing. Install the desktop shell for toasts while the window is closed; otherwise `notify-send` (libnotify) on Linux. |
 | `EmailChannel(port \| null)` | `port.sendEmail(to, subject, body)`; the agent email capability provides the port in production (its outbound policy applies), a fake in tests. Subject `[Forerunner] <title>`, body text plus `Open: fr://<route>`. | a port exists and an address resolves | Settings → Notifications → email (or leave empty to use the account email). Needs the agent email capability enabled. |
 | `TelegramChannel({ fetch, secrets, tokenRef?, apiBase?, timeoutMs? })` | `POST <apiBase>/bot<token>/sendMessage` `{ chat_id, text, disable_web_page_preview: true }` over the injected `fetch`. The bot token is a secret reference (`secret:telegram_bot_token` by default) resolved through the secrets port at send time; the URL is never logged and every error text passes through the resolver's redaction (and `/bot…/` is stripped). 429 and 5xx are retryable, other 4xx not. Text cut at 4096. | `telegram_chat_id` is set | 1. Create a bot with @BotFather, store its token in the vault as `telegram_bot_token` (`fr secrets set telegram_bot_token`). 2. Open a chat with the bot, send `/start`. 3. Read the chat id (`https://api.telegram.org/bot<token>/getUpdates`, field `message.chat.id`) and enter it in Settings → Notifications → Telegram chat id. 4. "Send a test". |
+| `VoiceChannel({ clock, speak, shellsConnected, maxChars? })` (announcing, ADR 0063) | Reads `spokenAlert(n)` (the title as a sentence, then the body, cut at 600 characters) through the `speak` port, the daemon's `SpeakSessions` over the voice provider registry (`voice.md`, "Read aloud"), and resolves when the utterance ended: `detail` "spoken: N sentence(s), M chunk(s) via <provider>". `accepts` declines a non-urgent notification, quiet hours (`isQuietAt` on the clock) and an empty desktop (`shellsConnected() === 0`). The text is asserted against the platform's `redact`: a credential shape is refused (`unavailable`, "credential shape; not spoken") and never reaches the log or the rows. No TTS provider is `unavailable` with the registry's reason; a provider error is retried like any channel. | `voice_alerts` is on | Settings: `voice_alerts` on (or "turn voice alerts on" in chat); a voice provider (Kokoro, Piper, or a Cartesia / ElevenLabs key, `voice.md`); the desktop app open. |
 | `SignalChannel({ account, binary?, run?, which?, timeoutMs? })` | `signal-cli -a <account> send -m <text> -- <recipient>` through `run()` when `signal-cli` is on PATH; otherwise `unavailable`, not retried. `account` is the agent's registered sender number, from configuration. | an account is configured and `signal_number` is set | Install `signal-cli` (Java), register or link a sender number for the agent, configure it as the account, enter your own number in Settings → Notifications → Signal number, "Send a test". Not available until `signal-cli` is on PATH. |
 
 ### Routes (`routes.ts`)
@@ -218,7 +231,8 @@ All of it is in `packages/runtime/src/daemon/compose.ts` ("Notifications") and
 `server.ts`; `runtime.md` has the daemon-side view.
 
 1. Channels, in the fallback order of ADR 0017: `DesktopChannel({ emitter, shellsConnected:
-   () => rt.shells.count(), osFallback: osNotifierEnabled(env, config) })` only when the
+   () => rt.shells.count(), osFallback: osNotifierEnabled(env, config) })` and the announcing
+   `VoiceChannel({ clock, shellsConnected, speak })` over `rt.speech` (ADR 0063) only when the
    background services run (a CLI one-shot or the cloud runner has no desktop);
    `TelegramChannel({ fetch, secrets: SecretResolver(vault), tokenRef, apiBase })` wrapped in
    `SecretCheckedChannel` (`src/wiring/notification-ports.ts`), whose `configured()` also says
@@ -277,7 +291,8 @@ change feed (ADR 0032 item 6).
   `producers.ts` with a stable `dedupeKey`, add it to the table above and to the routing-matrix
   test. If it should break quiet hours, supersede ADR 0017.
 - **Add a channel**: implement `Channel` under `channels/`, add its name to `CHANNEL_NAMES`
-  (position = fallback order, ADR 0017), add the address field to `NotificationPrefs`,
+  (position = fallback order, ADR 0017; an announcing channel goes after the chain and into
+  `CHAIN_CHANNELS`'s exclusion), add the address field to `NotificationPrefs`,
   `NotificationPrefsPatch`, `DEFAULT_PREFS`, `readPrefs`/`writePrefs`/`toJson` and the views in
   `routes.ts`, make `configured()` return a human-readable reason, export it from
   `channels/index.ts`, add a fake to `test/notifications-helpers.ts` `defaultChannels` and tests
@@ -302,9 +317,22 @@ change feed (ADR 0032 item 6).
 
 `pnpm vitest run --project unit packages/runtime/test/notifications.test.ts
 packages/runtime/test/notifications-channels.test.ts
-packages/runtime/test/notifications-wiring.test.ts` (fake channels, `sqlite::memory:` store,
+packages/runtime/test/notifications-wiring.test.ts
+packages/runtime/test/notifications-voice.test.ts` (fake channels, `sqlite::memory:` store,
 `SimulatedClock`, no network; the Telegram tests use an injected `fetch`, the desktop and
-Signal tests injected `run` and `which`).
+Signal tests injected `run` and `which`, the voice tests the voice package's `FakeTts`).
+
+- `notifications-voice.test.ts` (the voice channel over the notifier and the daemon, ADR
+  0063): `spokenAlert`; an urgent notification spoken on top of the toast (the sentences
+  through TTS in order, both delivery rows, `notify.voice` and `voice.speak` audit rows, the
+  session event with both deliveries); quiet hours → the toast at once and voice `skipped`
+  "quiet hours"; voice alerts off → no voice row and the settings view's reason; no shell →
+  `skipped`; a normal notification never spoken, listed or not; an explicit list naming only
+  voice still spoken and that is the delivery; a credential shape refused, not spoken, kept
+  out of the rows and the log; no TTS provider → `unavailable`, not retried; a test send
+  spoken; and, composed into the daemon: the prefs route listing the channel, `voice_alerts`
+  through `PUT`, a blocking request spoken with a shell on `/events` and skipped once it is
+  gone, a non-blocking one toasted only.
 
 - `notifications-wiring.test.ts` (the module inside `composeRuntime` and the daemon, fake
   provider): the notifier and hooks on `RuntimeApp` and the routes in `DAEMON_ROUTES`;
@@ -367,6 +395,10 @@ Signal tests injected `run` and `which`).
   by the state service in addition, not as a fallback channel here (ADR 0085), and only once
   the app's Firebase wiring exists (`docs/status/BLOCKERS.md`); the Android client reads the
   same preferences.
+- The voice channel awaits the whole utterance (a few seconds) inside the notifier's dispatch,
+  so the record resolves after the alert was heard; producers that await `notify` wait that
+  long. The desktop shell does not play the `/speak` frames yet; the daemon's paced sink and
+  the UI's Web Audio playback do (`apps.md`), so an alert is heard with the app window open.
 - The email sender is resolved once at compose from the agent's email settings row: a mailbox
   configured while the daemon runs takes effect at the next daemon start (the settings screen
   shows "no email sender" until then). Re-reading the row on a settings change is a follow-up.

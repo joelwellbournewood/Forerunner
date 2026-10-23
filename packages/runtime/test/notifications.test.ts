@@ -432,8 +432,10 @@ describe("notifier", () => {
       "telegram:skipped",
       "signal:delivered",
       "email:delivered",
+      "voice:skipped",
     ]);
     expect(deliveries[1]?.reason).toBe("no Telegram chat id");
+    expect(deliveries[4]?.reason).toBe("voice alerts are off");
     expect(w.channels.signal.sent[0]?.title).toContain("Test notification");
     const rows = await w.store.auditLog.list({ humanId: w.humanId });
     expect(rows.map((a) => a.tool).sort()).toEqual([
