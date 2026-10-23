@@ -1,6 +1,7 @@
 import { join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver, type RunEvent, wholeMs } from "../src/agent/loop.ts";
+import type { ModelProvider, ModelRequest, StreamEvent } from "../src/provider/types.ts";
 import {
   budget,
   flatPricing,
@@ -140,6 +141,58 @@ describe("agent loop", () => {
     await h.clock.advance(1000);
     const res = await p;
     expect(res.outcome).toBe("killed");
+  });
+
+  it("a call the kill switch cuts off keeps the input tokens its message_start reported in the run's usage and cost", async () => {
+    // The Anthropic adapter's shape for a killed call: message_start with the input side of the
+    // bill, a first chunk, then `error: aborted` once the signal fires (no message_end).
+    const h = harness();
+    const startUsage = {
+      input_tokens: 5_000,
+      output_tokens: 0,
+      cache_read_input_tokens: 700,
+      cache_creation_input_tokens: 0,
+    };
+    let opened: () => void = () => undefined;
+    const open = new Promise<void>((resolve) => {
+      opened = resolve;
+    });
+    const provider: ModelProvider = {
+      name: "cut-off",
+      listModels: async () => [],
+      countTokens: (t: string) => Math.ceil(t.length / 4),
+      async *stream(req: ModelRequest): AsyncIterable<StreamEvent> {
+        yield { type: "message_start", model: req.model, usage: startUsage };
+        yield { type: "text_delta", text: "the first words" };
+        opened();
+        await new Promise<void>((resolve) => {
+          if (req.signal?.aborted) resolve();
+          else req.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        yield { type: "error", code: "aborted", message: "aborted", retryable: false };
+      },
+      complete: () => Promise.reject(new Error("unused")),
+    };
+    const p = driver(h).run({
+      token: issue(h),
+      budget: budget("sess-1", 5_000_000, h.clock),
+      provider,
+      model: "fake-haiku",
+      billingSourceId: "bs",
+      system: "s",
+      messages: [{ role: "user", content: "a long answer" }],
+      tools: registry(),
+      pricing: flatPricing,
+      timeoutMs: 60_000,
+    });
+    await open;
+    await h.kill.stop("all");
+    const res = await p;
+    expect(res.outcome).toBe("killed");
+    expect(res.modelCalls).toBe(1);
+    expect(res.usage).toEqual(startUsage);
+    // flatPricing: one micro-USD per input or output token
+    expect(res.costUsdMicro).toBe(5_000);
   });
 
   it("times out cleanly and keeps partial output", async () => {

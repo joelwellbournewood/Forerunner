@@ -269,7 +269,14 @@ export class LoopAgentDriver {
           () => clock.monotonic(),
         );
         if (response.stop_reason === "error") {
-          if (controller.signal.aborted) throw controller.signal.reason;
+          if (controller.signal.aborted) {
+            // A call cut off by the kill switch or the timeout was billed for what the provider
+            // reported before the stop (the input side on message_start): it stays in the run's
+            // usage and cost, as it did when the adapter ended a killed stream as complete.
+            addUsage(usage, response.usage);
+            cost += req.pricing.cost(response.usage);
+            throw controller.signal.reason;
+          }
           throw new ForerunnerError("provider_error", "model call failed", { retryable: true });
         }
         const callCost = req.pricing.cost(response.usage);

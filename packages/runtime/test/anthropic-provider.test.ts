@@ -165,6 +165,139 @@ describe("AnthropicMessagesProvider", () => {
     expect(events429).toContain("provider_rate_limit");
   });
 
+  it("reports the input-side usage on message_start, so a call cut off before message_end still shows its billed input tokens", async () => {
+    const p = new AnthropicMessagesProvider({
+      apiKey: "k",
+      fetch: async () => sse(happyEvents),
+      maxRetries: 0,
+    });
+    const events = [];
+    for await (const ev of p.stream({
+      model: "claude-haiku-5-5",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 10,
+    }))
+      events.push(ev);
+    expect(events[0]).toEqual({
+      type: "message_start",
+      model: "claude-haiku-5-5",
+      usage: {
+        input_tokens: 12,
+        output_tokens: 0,
+        cache_read_input_tokens: 4,
+        cache_creation_input_tokens: 0,
+      },
+    });
+    expect(events.at(-1)).toMatchObject({ type: "message_end", stop_reason: "tool_use" });
+  });
+
+  it("an abort while the stream is open ends it with `error: aborted` (the SDK exits its iterator without throwing), after the message_start that carried the input tokens", async () => {
+    // A body that sends message_start and then stays open until the request's signal aborts.
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      const first = happyEvents[0] as { type: string };
+      const chunk = `event: ${first.type}\ndata: ${JSON.stringify(first)}\n\n`;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+          init?.signal?.addEventListener(
+            "abort",
+            () => controller.error(new DOMException("The operation was aborted.", "AbortError")),
+            { once: true },
+          );
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    };
+    const p = new AnthropicMessagesProvider({ apiKey: "k", fetch: fetchImpl, maxRetries: 0 });
+    const ac = new AbortController();
+    const events = [];
+    for await (const ev of p.stream({
+      model: "claude-haiku-5-5",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 10,
+      signal: ac.signal,
+    })) {
+      events.push(ev);
+      if (ev.type === "message_start") ac.abort(new Error("kill switch"));
+    }
+    expect(events.map((e) => e.type)).toEqual(["message_start", "error"]);
+    expect(events[0]).toMatchObject({ usage: { input_tokens: 12, cache_read_input_tokens: 4 } });
+    expect(events[1]).toEqual({
+      type: "error",
+      code: "aborted",
+      message: "aborted",
+      retryable: false,
+    });
+  });
+
+  it("an abort after message_stop came still ends with the complete message_end and its usage", async () => {
+    // The whole message is in the body, which stays open until the signal aborts: the stop lands
+    // after the API's last word and before the SDK's iterator returns.
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      const chunk = happyEvents
+        .map((e) => `event: ${(e as { type: string }).type}\ndata: ${JSON.stringify(e)}\n\n`)
+        .join("");
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+          init?.signal?.addEventListener(
+            "abort",
+            () => controller.error(new DOMException("The operation was aborted.", "AbortError")),
+            { once: true },
+          );
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    };
+    const p = new AnthropicMessagesProvider({ apiKey: "k", fetch: fetchImpl, maxRetries: 0 });
+    const ac = new AbortController();
+    const events = [];
+    for await (const ev of p.stream({
+      model: "claude-haiku-5-5",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 10,
+      signal: ac.signal,
+    })) {
+      events.push(ev);
+      if (ev.type === "tool_use_end") setTimeout(() => ac.abort(new Error("kill switch")), 10);
+    }
+    expect(events.at(-1)).toEqual({
+      type: "message_end",
+      stop_reason: "tool_use",
+      usage: {
+        input_tokens: 12,
+        output_tokens: 9,
+        cache_read_input_tokens: 4,
+        cache_creation_input_tokens: 0,
+      },
+    });
+  });
+
+  it("an abort before the response arrives is `error: aborted`, not a provider error", async () => {
+    const fetchImpl: typeof fetch = (_input, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("The operation was aborted.", "AbortError")),
+          { once: true },
+        );
+      });
+    const p = new AnthropicMessagesProvider({ apiKey: "k", fetch: fetchImpl, maxRetries: 0 });
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(new Error("kill switch")), 20);
+    const events = [];
+    for await (const ev of p.stream({
+      model: "claude-haiku-5-5",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 10,
+      signal: ac.signal,
+    }))
+      events.push(ev);
+    expect(events).toEqual([
+      { type: "error", code: "aborted", message: "aborted", retryable: false },
+    ]);
+  });
+
   it("requires a credential and classifies model ids into tiers", () => {
     expect(() => new AnthropicMessagesProvider({})).toThrow(/API key or a subscription token/);
     expect(tierFromId("claude-sonnet-5-5")).toBe("sonnet");

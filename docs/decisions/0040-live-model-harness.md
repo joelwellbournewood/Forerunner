@@ -36,7 +36,12 @@ driver, and what to do with a call that fails or is aborted after it was billed.
    is appended after every call, also after an error or an abort (then with a `note`, and
    `0/0` tokens when the provider reported none: the Anthropic adapter yields usage only on
    `message_end`, so an aborted call's billed input tokens are not visible to the harness; the
-   per-run cap's margin covers that).
+   per-run cap's margin covers that). *Amended 2026-10-23 (item w4-metered-aborted):* the
+   adapter now reports the input side on `message_start` and the metered provider records it
+   for a call cut off before `message_end`; what stays outside the ledger is a call stopped
+   before the message opened and the unreported output tokens of a killed call (testing.md,
+   "Live runs" and Known issues). A call is `aborted` whenever the run's signal fired before it
+   settled.
 3. **A run is one vitest invocation.** The run id is minted once in `vitest.config.ts` and handed
    to every file through `FORERUNNER_LIVE_RUN`; files run sequentially in path order, so the
    per-run cap spans phase 1, the timing table and the calibration together and the ledger is
