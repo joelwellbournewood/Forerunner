@@ -1117,7 +1117,7 @@ export const DAEMON_ROUTES = {
   registerDataAsset:
     "POST /projects/:id/data { locator, kind?, mode?, name?, sizeBytes? } | multipart file (+ kind, name) (201 DataAssetView; 413 above the upload cap)",
   importData:
-    "POST /projects/:id/data/import { source: zip|folder, path|locator, copy? } (ImportResultView; 400 for a hostile archive, nothing written)",
+    "POST /projects/:id/data/import { source: zip|folder|github, path|locator, copy?, tokenRef? } (ImportResultView; 400 for a hostile archive, nothing written; github clones under the project's repos dir onto forerunner/migration-<date>, the default branch untouched, the token by secret reference only)",
   dataAsset: "GET /data/:id (DataAssetView)",
   dataSample: "GET /data/:id/sample?rows=&bytes= (DataSample, capped by the data limits)",
   removeDataAsset: "DELETE /data/:id ({ ok, id, deletedFromDisk }; needs the daemon's human)",

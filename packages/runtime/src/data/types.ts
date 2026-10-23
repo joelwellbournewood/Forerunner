@@ -189,18 +189,43 @@ export const GitignoreGuardResult = z.object({
 });
 export type GitignoreGuardResult = z.infer<typeof GitignoreGuardResult>;
 
+/** What a GitHub repository import produced (spec A.3; ADR 0069). */
+export const RepositoryImportView = z.object({
+  /** `owner/name`, the form the project's `repos` list carries. */
+  slug: z.string(),
+  /** The clone URL as stored: `scheme://host/path.git`, never credentials. */
+  url: z.string(),
+  /** The checkout under the project's repos dir (`<projectsRoot>/<id>/repos/<owner>/<name>`). */
+  worktree: z.string(),
+  /** The migration branch the checkout sits on (`forerunner/migration-<date>`). */
+  branch: z.string(),
+  /** The remote's default branch, which the import never writes. */
+  defaultBranch: z.string(),
+  headSha: z.string(),
+  /** The folder `data_asset` row standing for the checkout; null when `register: false`. */
+  assetId: z.string().nullable(),
+  /** True when the worktree, its migration branch and the row were already there. */
+  reused: z.boolean(),
+});
+export type RepositoryImportView = z.infer<typeof RepositoryImportView>;
+
+export const IMPORT_SOURCES = ["zip", "folder", "github"] as const;
+export type ImportSource = (typeof IMPORT_SOURCES)[number];
+
 export const ImportResultView = z.object({
-  source: z.enum(["zip", "folder"]),
+  source: z.enum(IMPORT_SOURCES),
   projectId: z.string(),
-  /** Where copies landed; null when a folder was linked in place. */
+  /** Where copies (or the repository checkout) landed; null when a folder was linked in place. */
   destination: z.string().nullable(),
   imported: z.array(ImportedFile),
   skipped: z.array(z.object({ rel: z.string(), reason: z.string() })),
   totalBytes: z.number().int(),
   entryCount: z.number().int(),
   gitignore: GitignoreGuardResult.nullable(),
-  /** Why a copy was not made (above the copy threshold). */
+  /** Why a copy was not made (above the copy threshold), or why a repository walk is partial. */
   note: z.string().nullable(),
+  /** The repository details of a `github` import; null for zip and folder. */
+  repository: RepositoryImportView.nullable(),
 });
 export type ImportResultView = z.infer<typeof ImportResultView>;
 

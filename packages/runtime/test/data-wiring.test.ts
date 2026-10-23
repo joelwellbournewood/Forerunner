@@ -1,6 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { appDirs, isInside, join, SimulatedClock } from "@forerunner/platform";
+import { FakeGitHost, locateHttpBackend } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ToolExecutionContext, ToolSpec } from "../src/agent/tools.ts";
@@ -24,6 +26,10 @@ import { csvText, makeZip, writeFixture } from "./data-helpers.ts";
  */
 const REGISTRY = join(process.cwd(), "evals", "registry");
 type Json = Record<string, unknown>;
+// Resolved at module load so skipIf() can see it when the suite is collected.
+const gitHttpBackend = await locateHttpBackend();
+const noGitHttp = () =>
+  gitHttpBackend ? false : "git http-backend not found next to git --exec-path";
 const json = async (r: Response): Promise<Json> => (await r.json()) as Json;
 const str = (v: unknown): string => String(v);
 
@@ -227,6 +233,65 @@ describe("data assets wired into the daemon", () => {
     });
     expect(denied).toHaveLength(1);
   });
+
+  it.skipIf(noGitHttp())(
+    "a github import through the daemon route clones under the install's data dir onto the migration branch with the daemon's own token reference",
+    { timeout: 120_000 },
+    async () => {
+      const hostRoot = mkdtempSync(join(tmpdir(), "fr-data-wiring-gh-"));
+      const host = await FakeGitHost.start({ rootDir: hostRoot, clock });
+      try {
+        host.createUser({ login: "alice" });
+        host.createOrg({ login: "acme", members: ["alice"] });
+        const issued = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] });
+        await host.createRepo({
+          owner: "acme",
+          name: "legacy",
+          private: true,
+          initialFiles: { "README.md": "# legacy\n", "lib/old.js": "module.exports = 1;\n" },
+        });
+        // The install's own token from setup; the request names no reference.
+        await rt.vault.set("github_token", issued.token);
+        const r = await post(`/projects/${projectId}/data/import`, {
+          source: "github",
+          locator: host.cloneUrl("acme/legacy"),
+        });
+        expect(r.status).toBe(200);
+        const result = ImportResultView.parse(await r.json());
+        expect(result.source).toBe("github");
+        const dest = result.destination as string;
+        expect(isInside(join(home, "data", "projects"), dest)).toBe(true);
+        expect(existsSync(join(dest, "lib", "old.js"))).toBe(true);
+        expect(result.repository).toMatchObject({
+          slug: "acme/legacy",
+          branch: "forerunner/migration-2026-10-20",
+          defaultBranch: "main",
+          reused: false,
+        });
+        expect(readFileSync(join(dest, ".git", "config"), "utf8")).not.toContain(issued.token);
+        const views = DataAssetList.parse(await json(await req(`/projects/${projectId}/data`)));
+        const repo = views.find((v) => v.name === "acme/legacy");
+        expect(repo).toMatchObject({ kind: "folder", storage: "linked", locator: dest });
+        expect((await rt.store.project.mustGet(projectId)).repos).toContain("acme/legacy");
+        const audits = await rt.store.auditLog.list({ tool: "data.import" } as never, {
+          limit: 10,
+        });
+        expect(JSON.stringify({ result, views, audits })).not.toContain(issued.token);
+        expect(audits.some((a) => /github acme\/legacy/.test(a.input_summary))).toBe(true);
+        // A reference the vault does not hold is a client error, and nothing is cloned.
+        const missing = await post(`/projects/${projectId}/data/import`, {
+          source: "github",
+          locator: host.cloneUrl("acme/legacy"),
+          tokenRef: "secret:nope",
+        });
+        expect(missing.status).toBe(404);
+      } finally {
+        await rt.vault.delete("github_token");
+        await host.stop();
+        await rm(hostRoot, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("a hostile archive is refused whole by the route and nothing is registered", async () => {
     const zip = makeZip(join(src, "hostile.zip"), [

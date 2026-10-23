@@ -8,6 +8,7 @@ import {
   DataAssetList,
   DataAssetView,
   DataSample,
+  IMPORT_SOURCES,
   ImportResultView,
 } from "./types.ts";
 
@@ -28,17 +29,29 @@ export const RegisterDataBody = z
   .strict();
 export type RegisterDataBody = z.infer<typeof RegisterDataBody>;
 
+/** A whole-string `secret:<name>` reference (the vault's name rule); never a value. */
+const SECRET_REF = /^secret:[a-z][a-z0-9_.:-]{0,127}$/;
+
 export const ImportDataBody = z
   .object({
-    source: z.enum(["zip", "folder"]),
+    source: z.enum(IMPORT_SOURCES),
+    /** zip: the archive; folder: the folder; github: `owner/name` or an http(s) clone URL. */
     path: z.string().min(1).max(4096).optional(),
     /** Alias of `path`, the UI's word. */
     locator: z.string().min(1).max(4096).optional(),
     copy: z.boolean().optional(),
+    /** github only: the token's vault reference; the daemon's own reference when omitted. */
+    tokenRef: z.string().regex(SECRET_REF, "tokenRef must be a secret:<name> reference").optional(),
   })
   .strict()
   .refine((b) => b.path !== undefined || b.locator !== undefined, {
     message: "path (or locator) is required",
+  })
+  .refine((b) => b.tokenRef === undefined || b.source === "github", {
+    message: "tokenRef applies to source github only",
+  })
+  .refine((b) => b.copy === undefined || b.source !== "github", {
+    message: "copy does not apply to source github",
   });
 export type ImportDataBody = z.infer<typeof ImportDataBody>;
 
@@ -178,8 +191,17 @@ export function createDataRoutes(deps: DataRoutesDeps): Hono {
     const projectId = c.req.param("id");
     const b = await jsonBody(c, ImportDataBody);
     const path = (b.path ?? b.locator) as string;
+    const actor = deps.actor(c);
+    if (b.source === "github") {
+      const result = await deps.importer.importGitHubRepo(
+        { repo: path, tokenRef: b.tokenRef },
+        projectId,
+        { actor },
+      );
+      return c.json(ImportResultView.parse(result));
+    }
     const worktreePath = await deps.worktreeFor?.(projectId);
-    const opts = { actor: deps.actor(c), worktreePath, copy: b.copy };
+    const opts = { actor, worktreePath, copy: b.copy };
     const result =
       b.source === "zip"
         ? await deps.importer.importZip(path, projectId, opts)

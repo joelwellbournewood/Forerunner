@@ -1138,7 +1138,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     projectsRoot: opts.data?.projectsRoot ?? join(dirs.data, "projects"),
     ...(opts.data?.limits ? { limits: opts.data.limits } : {}),
   });
-  const dataImporter = new DataImporter({ assets: dataAssets, store, clock });
+  // A GitHub repository import (A.3, ADR 0069) resolves its token from the vault by reference
+  // (the install's own `secret:github_token` when the request names none) and hands it to git
+  // through the process environment; the clone lands under `<data>/projects/<id>/repos`.
+  const dataImporter = new DataImporter({
+    assets: dataAssets,
+    store,
+    clock,
+    vault,
+    defaultTokenRef: `secret:${SECRET_NAMES.github}`,
+  });
   registerDataTools(tools, { assets: dataAssets, approvals: ports.approvals });
   // Desktop control (spec L.4, S.32; ADR 0021, ADR 0039): one controller per daemon behind the
   // six desktop_* tools. The gate inside every tool reads the binding per call: the
