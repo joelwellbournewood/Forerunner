@@ -7,6 +7,7 @@ import type {
   ConsolidationReportView,
   EventView,
   HumanRequestView,
+  LessonOfferView,
   LessonView,
   MemoryScopeView,
   MemoryView,
@@ -68,9 +69,11 @@ import {
   MILESTONES,
   MODEL_WATCH_REPORTS,
   money,
+  OFFERS,
   PEERS,
   PERFORMANCE,
   PROJECTS,
+  PROMOTIONS,
   QUEUE,
   REQUESTS,
   REVIEW_PROJECTS,
@@ -147,6 +150,8 @@ export interface FakeDaemonState {
   lessons: LessonView[];
   changes: ChangeLogView[];
   consolidation: ConsolidationProposalView[];
+  offers: LessonOfferView[];
+  promotions: LessonView[];
   queue: QueueItemView[];
   dataAssets: DataAssetView[];
   pendingCommands: Map<string, PendingCommand>;
@@ -198,6 +203,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     lessons: clone(LESSONS),
     changes: clone(CHANGES),
     consolidation: clone(CONSOLIDATION),
+    offers: clone(OFFERS),
+    promotions: clone(PROMOTIONS),
     queue: clone(QUEUE),
     dataAssets: clone(DATA_ASSETS),
     pendingCommands: new Map(),
@@ -287,6 +294,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.lessons = clone(LESSONS);
     state.changes = clone(CHANGES);
     state.consolidation = clone(CONSOLIDATION);
+    state.offers = clone(OFFERS);
+    state.promotions = clone(PROMOTIONS);
     state.queue = clone(QUEUE);
     state.dataAssets = clone(DATA_ASSETS);
     state.pendingCommands.clear();
@@ -1233,6 +1242,77 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.lessons = state.lessons.filter((x) => x.id !== l.id);
     const retired: LessonView = { ...l, status: "retired", version: l.version + 1 };
     return c.json(retired);
+  });
+  // Cross-project sharing (spec G.6): propose, pending proposals, offers answered at once.
+  app.post("/memory/lessons/:id/propose", (c) => {
+    const l = state.lessons.find((x) => x.id === c.req.param("id"));
+    if (!l) return errorBody(c, 404, "not_found", "no such lesson");
+    if (l.scope === "shared" && l.projectId === null) {
+      return errorBody(c, 400, "validation", "lesson is already shared across projects");
+    }
+    if (!l.tags.includes("general")) l.tags = [...l.tags, "general"];
+    const existing = state.promotions.find((p) => p.source === `promotion:${l.id}`);
+    if (existing) return c.json(existing);
+    const now = new Date().toISOString();
+    const proposal: LessonView = {
+      ...l,
+      id: nextId("les"),
+      scope: "shared",
+      ownerAgentId: null,
+      projectId: null,
+      source: `promotion:${l.id}`,
+      status: "proposed",
+      pinned: false,
+      hitCount: 0,
+      lastUsed: null,
+      filePath: null,
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+    };
+    state.promotions.push(proposal);
+    return c.json(proposal);
+  });
+  app.get("/memory/promotions", (c) => c.json(state.promotions));
+  app.get("/memory/offers", (c) => c.json(state.offers));
+  app.post("/memory/offers/:id/answer", async (c) => {
+    const o = state.offers.find((x) => x.requestId === c.req.param("id"));
+    if (!o) return errorBody(c, 404, "not_found", "no such offer");
+    const body = (await c.req.json()) as { answer?: unknown };
+    if (body.answer !== "accept" && body.answer !== "dismiss") {
+      return errorBody(c, 400, "validation", "answer: accept or dismiss");
+    }
+    if (o.status !== "open") return errorBody(c, 409, "conflict", "offer already answered");
+    const now = new Date().toISOString();
+    o.status = "answered";
+    o.answer = body.answer;
+    o.appliedAt = now;
+    o.version += 1;
+    if (body.answer === "accept") {
+      const copy: LessonView = {
+        id: nextId("les"),
+        scope: "shared",
+        ownerAgentId: null,
+        projectId: o.projectId,
+        text: o.text,
+        source: `promotion:${o.lessonId};human:${ME.id}`,
+        tags: [...o.tags],
+        confidence: o.confidence,
+        lastUsed: null,
+        hitCount: 0,
+        supersededBy: null,
+        pinned: true,
+        status: "active",
+        filePath: null,
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+      };
+      state.lessons.push(copy);
+      o.copyId = copy.id;
+    }
+    emit("inbox.changed", { blockingCount: blockingCount() });
+    return c.json(o);
   });
   app.get("/memory/consolidation", (c) => c.json(state.consolidation));
   app.post("/memory/consolidation/run", (c) => {

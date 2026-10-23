@@ -36,6 +36,8 @@ import {
   type InboxView,
   InboxView as InboxViewSchema,
   type KillBody as KillBodySchema,
+  type LessonOfferView,
+  LessonOfferView as LessonOfferViewSchema,
   type LessonView,
   LessonView as LessonViewSchema,
   type MemoryScopeView,
@@ -148,6 +150,7 @@ export type {
   HumanRequestView,
   ImportResultView,
   InboxView,
+  LessonOfferView,
   LessonView,
   MemoryScopeView,
   MemoryView,
@@ -201,6 +204,8 @@ export const ChangeLogList = z.array(ChangeLogViewSchema);
 export const CommandDefList = z.array(CommandDefViewSchema);
 export const PendingChangeList = z.array(PendingChangeViewSchema);
 export const ConsolidationList = z.array(ConsolidationProposalViewSchema);
+export const LessonList = z.array(LessonViewSchema);
+export const OfferList = z.array(LessonOfferViewSchema);
 
 /** Query of GET /memory; `agentId` is required for the private scope. */
 export interface MemoryFilter {
@@ -431,6 +436,13 @@ export interface DaemonClient {
   deleteLesson(id: string): Promise<LessonView>;
   consolidation(signal?: AbortSignal): Promise<ConsolidationProposalView[]>;
   runConsolidation(): Promise<ConsolidationRunView>;
+  // Cross-project sharing (spec G.6): propose, the pending proposals, the offers.
+  /** Tags the lesson `general` and proposes it for every project; the critic decides at the next session end. */
+  proposeLesson(id: string): Promise<LessonView>;
+  memoryPromotions(signal?: AbortSignal): Promise<LessonView[]>;
+  memoryOffers(signal?: AbortSignal): Promise<LessonOfferView[]>;
+  /** Applied at once: accept pins a copy in the project's memory, dismiss leaves it by relevance. */
+  answerOffer(id: string, answer: "accept" | "dismiss"): Promise<LessonOfferView>;
 
   // Commands and the change log (spec Q): the same registry chat and voice use.
   commandDefs(signal?: AbortSignal): Promise<CommandDefView[]>;
@@ -714,6 +726,11 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     consolidation: (signal) =>
       get(routePath("consolidation"), ConsolidationList, undefined, signal),
     runConsolidation: () => post(routePath("runConsolidation"), ConsolidationRunViewSchema, {}),
+    proposeLesson: (id) => post(routePath("proposeLesson", { id }), LessonViewSchema, {}),
+    memoryPromotions: (signal) => get(routePath("memoryPromotions"), LessonList, undefined, signal),
+    memoryOffers: (signal) => get(routePath("memoryOffers"), OfferList, undefined, signal),
+    answerOffer: (id, answer) =>
+      post(routePath("answerOffer", { id }), LessonOfferViewSchema, { answer }),
     commandDefs: (signal) => get(routePath("commands"), CommandDefList, undefined, signal),
     parseCommand: (body) => post(routePath("parseCommand"), CommandParseViewSchema, body),
     executeCommands: (body) => post(routePath("executeCommands"), CommandResultViewSchema, body),
