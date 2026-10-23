@@ -18,6 +18,17 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-23 (item w3-misc-replay-ceiling rebased onto 38ae8cc)
+- `wave/w3-misc-replay-ceiling` rebased onto `origin/ccr-4d8a843c-1k9syk` (38ae8cc), which had
+  since merged w3-d4-specialist-settings (D.4) and w3-r5-phone (R.5). Conflicts in
+  requirements.md (D.3 next to D.4, R.4 next to R.5: the base's D.4 and R.5 rows and the
+  branch's D.3 and R.4 test lists), this log (the base's D.4 and R.5 entries next to this
+  item's; the "Next" line with both clauses) and the executor's ladder import (D.4's
+  `specialistMode` and mode names next to `projectCeilingOf`); both sides kept
+  (`docs/status/reviews/w3-misc-replay-ceiling.md`, "Third rebase"). Current counts: runtime
+  137 files / 1268 passed, 1 skipped; cloud-runner 9 files / 62 passed; state-api 11 files /
+  159; scenario 9 2 passed, no todo; e2e 13 files / 25 passed, 1 skipped. Not merged yet.
+
 ### 2026-10-23 (item w3-misc-replay-ceiling rebased onto 4ff4fb1)
 - `wave/w3-misc-replay-ceiling` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1). Conflicts
   in this log (the base's w3-d16-slider, w3-e4-recheck and w5-android-high-risk entries next

@@ -317,3 +317,54 @@ Checks after the second rebase (on 68b720c plus this section): `pnpm install --f
 2 skipped; state-api unit 11 files / 156 passed; scenario 9 1 file / 2 passed; the e2e project
 13 files / 25 passed, 1 skipped, no todo; `pnpm check` 295 files / 3013 passed, 4 skipped, 1 todo (the P.7 todo in
 `scripts/closeout-docs.test.ts`, not this branch's), secret scan clean.
+
+### Third rebase (onto 38ae8cc)
+
+`wave/w3-misc-replay-ceiling` was rebased again on 2026-10-23 from 7d3ae9d (merge base 4ff4fb1)
+onto `origin/ccr-4d8a843c-1k9syk` at 38ae8cc, which had since merged w3-d4-specialist-settings
+(D.4, aa497bf) and w3-r5-phone (R.5, 38ae8cc). The same 17 commits, re-applied with these new
+ids (old -> new): f7248da -> ef52f93, 239a378 -> 56db825, 66df026 -> ff3d255,
+bec9f6c -> 6f8ab6a, 0e15500 -> bb93c1c, a1a6df4 -> 394a805, 03b2d6d -> 3904572,
+ffc37df -> 4140f79, dfc978e -> 2b95a62, 78af22b -> 40181ea, f7d7078 -> 6a0ade2,
+42cb750 -> 6587785, 7313715 -> 83f6171, 5e15489 -> 1c5f8c5, 94d0407 -> 0499e36,
+ac796f9 -> 22f610b, 7d3ae9d -> c56ec0b; then 4482355 (the import order, below) and this
+section.
+
+Conflicts and how they were resolved:
+
+1. `docs/requirements.md` (6f8ab6a, again at 6a0ade2): one hunk held D.3 and D.4, another
+   R.4 and R.5. The base moved D.4 to `done` with its new tests (w3-d4-specialist-settings)
+   and added R.5's upload, reviews and voice tests (w3-r5-phone); this branch adds
+   `executor-ceiling.test.ts`, `remote-wiring.test.ts` (and, at 6a0ade2,
+   `services/cloud-runner/test/runner.test.ts`) to D.3 and scenario 9 to R.4. Kept the base's
+   D.4 and R.5 rows as they are and the branch's D.3 and R.4 rows (the base had not changed
+   those two). Statuses unchanged by this branch.
+2. `docs/status/PROGRESS.md` (6f8ab6a): the base added log entries at the top
+   (w3-d4-specialist-settings rebased onto 4ff4fb1; w3-r5-phone's review, two rebases and
+   build). Kept every entry, this item's first. The "Next" list line naming w3-r5-phone and
+   this item: one line with both clauses (the base's "R.5; built on its branch 2026-10-23,
+   emulator run open" and this branch's "built on its branch 2026-10-23, review pending").
+3. `docs/status/PROGRESS.md` (0499e36): the same "Next" line, now with this branch's
+   "built and reviewed on its branch 2026-10-23, not merged" next to the base's R.5 clause.
+4. `packages/runtime/src/session/executor.ts` (6a0ade2): the base (D.4) added
+   `MODE_DEFAULTS`, `type Mode`, `type ModeDefault` and `specialistMode` to the ladder import
+   that this branch extends with `projectCeilingOf`. Kept all names; Biome's import order
+   then needed `projectCeilingOf` before `specialistMode` (commit 4482355). The ceiling read
+   (`this.deps.projectCeiling ?? projectCeilingOf`) applied cleanly next to the base's
+   resolved settings: the starting rung is now `startingTier(settings.tier, ...)` (D.4's
+   per-specialist tier) capped by the project's ceiling, so a specialist set to opus in
+   Settings still runs at a project ceiling of haiku at haiku. The base's `compose.ts` still
+   passes `projectCeiling: (settings) => criticSettingsOf(settings).ceiling` (two places).
+
+Everything else (runtime.md, testing.md, cloud-runner.md, state-service.md, BLOCKERS.md, the
+tests) merged without conflicts.
+
+Checks after the third rebase: `pnpm install --frozen-lockfile`; `pnpm typecheck` clean;
+`pnpm lint` clean (59 warnings, none an error); `node scripts/docs-check.mjs --base
+origin/ccr-4d8a843c-1k9syk` ok (14 files); runtime unit 137 files / 1268 passed, 1 skipped
+(`executor-ceiling.test.ts` + `remote-wiring.test.ts` 2 files / 12 passed); cloud-runner unit
+9 files / 62 passed, integration 1 file skipped (2 tests, no Postgres); state-api unit
+11 files / 159 passed; scenario 9 1 file / 2 passed (the replay case also alone: 1 passed,
+1 skipped); the e2e project 13 files / 25 passed, 1 skipped, no todo; `pnpm check` 300 files /
+3081 passed, 4 skipped, 1 todo (the P.7 todo in `scripts/closeout-docs.test.ts`, not this
+branch's), link check ok, secret scan clean.
