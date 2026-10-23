@@ -96,9 +96,10 @@ or the budget by hand (BLOCKERS.md row D.20). Open points:
   source, so urgent work is not held up by a standard-speed review of a fast change. Intake
   planning, the conversation agent and the model watch's evals stay at the standard speed:
   they do not run on Opus by default.
-- The change card's effect sentence is priced from the built-in table (`SettingSpec.effect`
-  sees only the value), the Settings row from the table in force; they differ only after an
-  override of an Opus or fast row.
+- The change card's effect sentence and the Settings row are both priced from the table in
+  force. `SettingSpec.effect(value, ctx)` gets the table through
+  `CommandPorts.pricingTable`. A corrected fast row is therefore the surcharge the human
+  confirms.
 - Loop runs on haiku or opus are now priced at their own rung on the daemon, which changes the
   figures of those runs (towards the right ones).
 - `claude-opus-5-5-fast` is an estimate until the model watch confirms it; the research

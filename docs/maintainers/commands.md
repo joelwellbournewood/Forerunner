@@ -257,6 +257,11 @@ Opus call of the project costs) takes its effect from the runtime's `fastModeEff
 from `@forerunner/runtime/models/fast-mode`, not the package index, which imports this package
 back): on, the fast-mode rate against the standard one and "a subscription ignores it (API
 only)"; off, back to the standard rate and the surcharge stopping (`test/fast-mode.test.ts`).
+`SettingSpec.effect(value, ctx)` receives `{ pricing }` from the optional
+`CommandPorts.pricingTable()`. The daemon passes the table in force: the built-ins plus
+`<config>/pricing.json` and adopted rows. So the card the human confirms, and the change-log
+sentence, quote the surcharge that runs are charged. The daemon's Settings row uses the same
+table. Without the port, the effect uses the built-in table.
 The runtime reads the flag per run (`runtime.md`, "Opus fast mode per project"). `settings.set` refuses unknown keys
 (`settingSpec` looks at own keys only, so `constructor` or `__proto__` are unknown settings,
 not prototype lookups), so the UI and the parser can only reach what is listed.
@@ -296,15 +301,13 @@ envelope refusal, the model port, time parsing with `rest`), and `scenario.test.
 Android scenario end to end and the phase 5 gate: ui, chat and voice produce the same change
 log entry), and `fast-mode.test.ts` (spec D.20: the `fast_mode` spec, its card and the change
 log sentences with the effect and the surcharge both ways, the yes a medium-risk change needs,
-the flag written on one project only).
+the flag written on one project only; a corrected fast row from `ports.pricingTable` quoted in
+the card and the sentence).
 
-Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 132 tests).
+Run: `pnpm exec vitest run --project unit packages/commands/test` (10 files, 133 tests).
 
 ## Known issues
 
-- The `fast_mode` effect sentence is priced from the built-in price table: `SettingSpec.effect`
-  takes only the value, so an override of an Opus or fast-mode row in `<config>/pricing.json`
-  is not reflected in the card (the daemon's Settings row description is). ADR 0057.
 - The closure of a pending confirmation lives in memory: a restart drops open confirmations
   (their `human_request` rows stay open until they expire, and the human asks again). Reverts
   and undo survive a restart through the change log.

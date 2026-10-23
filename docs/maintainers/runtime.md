@@ -265,8 +265,9 @@ the default rung. The daemon passes `pricingFor` (every loop run priced at the m
 records name, from the table in force: its own rung, or the variant; before this every loop run
 was priced at the sonnet rung) and `pricingTable`, and lists `project.fast_mode` per project in
 `GET /settings` with `fastModeDescription(table in force)`: what the flag is and its effect
-both ways with the two rates (`fastModeEffect(on)`, the same text the change card and the
-change log sentence carry). The conversation agent, intake planning and the model watch's
+both ways with the two rates (`fastModeEffect(on, table)`, the same text the change card and
+the change log sentence carry: the daemon's command loop gets the table in force through
+`CommandPorts.pricingTable`). The conversation agent, intake planning and the model watch's
 evals do not read the flag. None of them runs on Opus by default (ADR 0057). Tests:
 `test/fast-mode.test.ts`; for the critic, `packages/critic/test/fast-mode.test.ts`.
 
@@ -2115,10 +2116,7 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 - Fast mode (ADR 0057): the adapter does not read the response's `usage.speed`, so a fast
   request the API served at the standard speed would still be recorded and priced as the
-  variant (an over-statement, never an under-statement). The change card's effect sentence is
-  priced from the built-in table (`SettingSpec.effect` has no access to the overrides), while the
-  Settings row's description uses the table in force; the two differ only after an override of
-  an Opus or fast row.
+  variant (an over-statement, never an under-statement).
 - The conversation agent, intake planning and the model watch's evals do not read the
   `fast_mode` flag. A human who adopts an Opus rung for planning or chat gets standard-speed
   calls there (ADR 0057).

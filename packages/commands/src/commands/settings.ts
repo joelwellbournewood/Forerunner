@@ -1,3 +1,4 @@
+import type { PricingTable } from "@forerunner/billing";
 import { ForerunnerError } from "@forerunner/platform";
 // The module path, not the package index: the index imports this package back (a cycle).
 import { FAST_MODE_SETTING, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
@@ -31,7 +32,13 @@ export interface SettingSpec {
    * What the new value changes in practice, for the card's new value and the change log
    * sentence ("Set X from a to b: <effect>. Undo."), when the key's name alone does not say.
    */
-  effect?: (value: JsonValue) => string;
+  effect?: (value: JsonValue, ctx: SettingEffectContext) => string;
+}
+
+/** What an effect sentence may read besides the value: the prices in force (ADR 0057). */
+export interface SettingEffectContext {
+  /** The price table in force (`CommandPorts.pricingTable`); absent: the built-in table. */
+  pricing?: PricingTable;
 }
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -88,7 +95,8 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     description:
       "Opus fast mode for urgent work (research preview, API only, priced separately): Opus runs of the project on an API key ask for the fast variant.",
     // Spec D.20, ADR 0057: the effect and the surcharge both ways, from the price table.
-    effect: (value) => fastModeEffect(value === true),
+    // Priced from the table in force, so the card quotes the surcharge runs are charged.
+    effect: (value, ctx) => fastModeEffect(value === true, ctx.pricing),
   },
   shared_with: {
     key: "shared_with",
@@ -166,6 +174,8 @@ interface Target {
   human: HumanRow;
   current: JsonValue | null;
   what: string;
+  /** The key's effect sentence for this value, when the key defines one. */
+  effect: string | undefined;
 }
 
 async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target> {
@@ -181,6 +191,8 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
     );
   }
   const human = await ctx.store.human.mustGet(ctx.humanId);
+  const pricing = ctx.ports.pricingTable?.();
+  const effect = spec.effect?.(parsed.data, pricing ? { pricing } : {});
   if (spec.scope === "project") {
     const { project, usedActive } = await resolveProject(ctx, p.project);
     const current = spec.column
@@ -194,6 +206,7 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
       human,
       current,
       what: `${spec.label} for ${project.name}`,
+      effect,
     };
   }
   const current = spec.column
@@ -207,17 +220,18 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
     human,
     current,
     what: spec.label,
+    effect,
   };
 }
 
 function sentenceOf(t: Target): string {
-  const effect = t.spec.effect?.(t.value);
+  const { effect } = t;
   return `Set ${t.what} from ${show(t.current)} to ${show(t.value)}${effect ? `: ${effect}` : ""}. Undo.`;
 }
 
 /** The card's new value, with what it changes when the key defines an effect. */
 function newValueOf(t: Target): string {
-  const effect = t.spec.effect?.(t.value);
+  const { effect } = t;
   return effect ? `${show(t.value)} (${effect})` : show(t.value);
 }
 

@@ -1,3 +1,4 @@
+import { BUILTIN_PRICING, mergePricing } from "@forerunner/billing";
 import { describe, expect, it } from "vitest";
 import type { ExecuteResult } from "../src/index.ts";
 import { SETTING_SPECS, settingSpec } from "../src/index.ts";
@@ -72,6 +73,30 @@ describe("the fast_mode setting (D.20)", () => {
         `Set Opus fast mode for Game from true to false: ${OFF}. Undo.`,
       ]),
     );
+    await w.store.close();
+  });
+
+  it("the card and the sentence quote the price table in force, so a corrected fast row is the surcharge the human says yes to", async () => {
+    const w = await world();
+    // The model watch (or a human) corrected the assumed 5.5 fast row through pricing.json.
+    const table = mergePricing(BUILTIN_PRICING, {
+      "claude-opus-5-5-fast": { input_per_mtok_usd: 30, output_per_mtok_usd: 150 },
+    });
+    w.ports.pricingTable = () => table;
+    const human = { kind: "human" as const, id: w.human.id };
+    const corrected =
+      "Opus runs of this project on an API key are requested in fast mode (research preview) at USD 30 / 150 per million input / output tokens instead of USD 4 / 20, a 7.5x surcharge; a subscription ignores it (API only)";
+    const params = { key: "fast_mode", value: true, project: "game" };
+    const card = await w.executor.plan({ name: "settings.set", params }, w.ctx());
+    expect(card.newValue).toBe(`true (${corrected})`);
+    const p = pending(await w.executor.execute({ name: "settings.set", params, ctx: w.ctx() }));
+    const on = done(await w.executor.confirmByText(p.pendingId, "yes", human));
+    expect(on.sentence).toBe(`Set Opus fast mode for Game from unset to true: ${corrected}. Undo.`);
+    const off = await w.executor.plan(
+      { name: "settings.set", params: { key: "fast_mode", value: false, project: "game" } },
+      w.ctx(),
+    );
+    expect(off.newValue).toContain("the fast-mode surcharge (7.5x, USD 30 / 150) stops");
     await w.store.close();
   });
 });

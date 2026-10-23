@@ -2111,6 +2111,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     startUndoState,
     ports: {
       chfPerUsd: async () => chfPerUsd(),
+      // The prices in force for an effect that quotes one (fast_mode, ADR 0057).
+      pricingTable: () => pricingTable,
       ...sessionPorts,
       // session.pause is the graceful stop: the row reads `paused` at once and a session
       // running in this process ends at the next task boundary (the runner reads the pause
