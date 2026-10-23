@@ -4,6 +4,8 @@ export * from "./brief.ts";
 export * from "./checklist.ts";
 export * from "./executor.ts";
 export * from "./findings.ts";
+/** PM intake (spec A.2, ADR 0055): the brief as a proposal in the inbox, applied on approval. */
+export * from "./intake.ts";
 export * from "./lessons.ts";
 export * from "./peers.ts";
 /** Plan approval (spec J.6, J.7; ADR 0053): the plan's identity and the daemon's sync step. */

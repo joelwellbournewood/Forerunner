@@ -316,7 +316,56 @@ export const CreateProjectBody = z.object({
   repos: z.array(z.string()).optional(),
   autonomyLevel: z.number().int().min(0).max(4).optional(),
   budgetUsdMicro: z.number().int().nonnegative().optional(),
+  /**
+   * PM intake (spec A.2, ADR 0055): true runs the intake in the background once the project
+   * exists, so the proposal (plan, doc set, first-session plan) lands in the inbox; the card
+   * answers at once. Off by default: a client that wants the plan asks for it, or calls
+   * `POST /projects/:id/intake` later.
+   */
+  intake: z.boolean().optional(),
 });
+
+/** `POST /projects/:id/intake`: an optional brief in place of the one kept at creation. */
+export const IntakeRequestBody = z.object({
+  brief: z.string().optional(),
+});
+
+/** The intake filed (or reused) its proposal; the inbox holds the request (`202`). */
+export const IntakeProposalView = z.object({
+  pending: z.literal(true),
+  projectId: z.string(),
+  requestId: z.string(),
+  /** An open proposal for the project already existed; no model call was made. */
+  reused: z.boolean(),
+  summary: z.object({
+    milestones: z.number().int(),
+    tasks: z.number().int(),
+    docs: z.number().int(),
+    firstSessionTasks: z.number().int(),
+  }),
+  /** The first-session plan's estimate, USD micro-units. */
+  estimateUsdMicro: z.number().int(),
+  /** What the one planning call cost; 0 when reused. */
+  costUsdMicro: z.number().int(),
+  /** Where the doc set goes on approval. */
+  docsTarget: z.enum(["repository", "workspace"]),
+});
+export type IntakeProposalView = z.infer<typeof IntakeProposalView>;
+
+/** `GET /projects/:id/intake`: the project's latest intake and what became of it. */
+export const IntakeStatusView = z.object({
+  projectId: z.string(),
+  state: z.enum(["none", "pending", "approved", "rejected", "skipped", "failed"]),
+  requestId: z.string().nullable(),
+  /** The card's outcome once answered: `approved`, `rejected`, or why it was skipped. */
+  outcome: z.string().nullable(),
+  appliedAt: z.string().nullable(),
+  /** Where the docs went on approval (target, paths written, kept and scaffolded, PR url). */
+  docs: z.unknown().nullable(),
+  /** Why the last automatic intake failed (`state: "failed"`). */
+  error: z.string().nullable(),
+});
+export type IntakeStatusView = z.infer<typeof IntakeStatusView>;
 
 export const CreateTaskBody = z.object({
   title: z.string().min(3),
@@ -1048,6 +1097,10 @@ export const DAEMON_ROUTES = {
     "PUT /projects/:id/settings { version, settings } (merged; mirror schedule follows)",
   mirrorSync:
     "POST /projects/:id/mirror/sync { full? } (one-way GitHub Projects mirror run: 200 MirrorRunView, or 202 MirrorSyncPendingView while the human decides)",
+  intake:
+    "POST /projects/:id/intake (IntakeRequestBody -> 202 IntakeProposalView: PM intake, spec A.2, ADR 0055; one planning-rung model call turns the brief into the plan, the standard doc set and a first-session plan, filed as one blocking approval request whose card carries the whole proposal (change_card.key intake:<project>); an open proposal is reused without a call; nothing is written until the answer in the inbox: approve writes milestones and tasks (applyProjectPlan), the docs as a pull request on the project's repository or into its workspace directory, and the first-session plan onto the summary cache and the next-session queue; reject writes a queue note only; 409 conflict with cause validation when the model's reply is malformed; 503 without a model provider; 404 for an unknown project)",
+  intakeStatus:
+    "GET /projects/:id/intake (IntakeStatusView: the latest intake request and its outcome, where the docs went, or why the last automatic intake failed)",
   extensions: "GET /extensions?kind=",
   extensionCatalog: "GET /extensions/catalog",
   extension: "GET /extensions/:id",

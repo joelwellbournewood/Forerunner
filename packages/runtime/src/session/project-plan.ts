@@ -310,6 +310,8 @@ export interface AppliedPlan {
   merged: MilestoneMerge | null;
   /** Task rows this call wrote, dependencies before dependants. */
   tasks: TaskRow[];
+  /** The id of every written task that named a `key`, by key (the intake's first-session plan reads it). */
+  keyed: Record<string, string>;
 }
 
 /**
@@ -440,6 +442,12 @@ export async function applyProjectPlan(
       if (task.key !== null) ids.set(task.key, row.id);
       tasks.push(row);
     }
-    return { milestones: created, reusedMilestone: reused, merged, tasks };
+    return {
+      milestones: created,
+      reusedMilestone: reused,
+      merged,
+      tasks,
+      keyed: Object.fromEntries(ids),
+    };
   });
 }

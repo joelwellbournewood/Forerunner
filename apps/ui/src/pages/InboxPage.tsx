@@ -36,6 +36,166 @@ export function sortMessages(messages: MessageView[]): MessageView[] {
   });
 }
 
+/** A plan task as the intake card shows it. */
+export interface IntakeCardTask {
+  key: string | null;
+  title: string;
+  riskTier: number | null;
+  priority: number;
+  dependsOn: string[];
+  specialist: string | null;
+}
+
+/**
+ * The intake proposal (spec A.2, ADR 0055) read off a request's change card: the daemon's
+ * `change_card.key` is `intake:<project>` and `proposal` carries the plan, the docs and the
+ * first-session plan in the shape the runtime validated. Read defensively: a card that does
+ * not fit is shown as the raw JSON instead.
+ */
+export interface IntakeCardView {
+  milestones: { name: string; targetDate: string | null; tasks: IntakeCardTask[] }[];
+  looseTasks: IntakeCardTask[];
+  docs: string[];
+  firstSession: {
+    summary: string;
+    /** `key` is the plan task's key (unique in a proposal the runtime accepted). */
+    items: { key: string; title: string; estimateUsdMicro: number }[];
+  };
+  docsTarget: "repository" | "workspace" | null;
+  costUsdMicro: number | null;
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+
+function taskOf(v: unknown): IntakeCardTask | null {
+  if (!isRecord(v)) return null;
+  const title = str(v.title);
+  if (title === null) return null;
+  return {
+    key: str(v.key),
+    title,
+    riskTier: num(v.riskTier),
+    priority: num(v.priority) ?? 5,
+    dependsOn: strings(v.dependsOn),
+    specialist: str(v.specialist),
+  };
+}
+
+export function intakeCardOf(card: unknown): IntakeCardView | null {
+  if (!isRecord(card) || !str(card.key)?.startsWith("intake:")) return null;
+  const proposal = card.proposal;
+  if (!isRecord(proposal) || !isRecord(proposal.plan) || !isRecord(proposal.firstSession))
+    return null;
+  const plan = proposal.plan;
+  const milestones = (Array.isArray(plan.milestones) ? plan.milestones : [])
+    .filter(isRecord)
+    .map((m) => ({
+      name: str(m.name) ?? "(unnamed)",
+      targetDate: str(m.targetDate),
+      tasks: (Array.isArray(m.tasks) ? m.tasks : [])
+        .map(taskOf)
+        .filter((t): t is IntakeCardTask => t !== null),
+    }));
+  const looseTasks = (Array.isArray(plan.tasks) ? plan.tasks : [])
+    .map(taskOf)
+    .filter((t): t is IntakeCardTask => t !== null);
+  const titles = new Map<string, string>();
+  for (const t of [...milestones.flatMap((m) => m.tasks), ...looseTasks])
+    if (t.key !== null) titles.set(t.key, t.title);
+  const first = proposal.firstSession;
+  const items = (Array.isArray(first.items) ? first.items : []).filter(isRecord).map((i) => {
+    const key = str(i.key) ?? "";
+    return { key, title: titles.get(key) ?? key, estimateUsdMicro: num(i.estimateUsdMicro) ?? 0 };
+  });
+  const target = str(card.docs_target);
+  return {
+    milestones,
+    looseTasks,
+    docs: isRecord(proposal.docs) ? Object.keys(proposal.docs) : [],
+    firstSession: { summary: str(first.summary) ?? "", items },
+    docsTarget: target === "repository" || target === "workspace" ? target : null,
+    costUsdMicro: num(card.cost_usd_micro),
+  };
+}
+
+const usd = (micro: number): string => `USD ${(micro / 1e6).toFixed(2)}`;
+
+function IntakeTaskList({ tasks }: { tasks: IntakeCardTask[] }) {
+  return (
+    <ol className="list-decimal pl-5">
+      {tasks.map((t) => (
+        <li key={t.key ?? t.title}>
+          {t.title}
+          <span className="text-neutral-500">
+            {" "}
+            · tier {t.riskTier ?? "default"}, priority {t.priority}
+            {t.specialist ? `, ${t.specialist}` : ""}
+            {t.dependsOn.length ? `, after ${t.dependsOn.join(", ")}` : ""}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** The intake proposal, readable: phases and tasks, the docs, the first session, the cost. */
+function IntakeCard({ card }: { card: IntakeCardView }) {
+  const total = card.firstSession.items.reduce((s, i) => s + i.estimateUsdMicro, 0);
+  return (
+    <section
+      className="mt-2 space-y-2 rounded border border-neutral-200 p-2 text-sm dark:border-neutral-800"
+      data-testid="intake-card"
+      aria-label="Intake proposal"
+    >
+      <h3 className="font-medium">Proposed plan</h3>
+      <ul className="space-y-1" data-testid="intake-milestones">
+        {card.milestones.map((m) => (
+          <li key={m.name}>
+            <span className="font-medium">{m.name}</span>
+            {m.targetDate ? <span className="text-neutral-500"> · by {m.targetDate}</span> : null}
+            <IntakeTaskList tasks={m.tasks} />
+          </li>
+        ))}
+        {card.looseTasks.length > 0 ? (
+          <li>
+            <span className="font-medium">Under no milestone</span>
+            <IntakeTaskList tasks={card.looseTasks} />
+          </li>
+        ) : null}
+      </ul>
+      <p data-testid="intake-docs">
+        <span className="font-medium">Docs ({card.docs.length}):</span> {card.docs.join(", ")}
+        {card.docsTarget === "repository"
+          ? " — as a pull request on the project's repository"
+          : card.docsTarget === "workspace"
+            ? " — into the project's workspace"
+            : ""}
+      </p>
+      <div data-testid="intake-first-session">
+        <span className="font-medium">First session ({usd(total)}):</span>{" "}
+        {card.firstSession.summary}
+        <ol className="list-decimal pl-5">
+          {card.firstSession.items.map((i) => (
+            <li key={i.key || i.title}>
+              {i.title} <span className="text-neutral-500">(~{usd(i.estimateUsdMicro)})</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+      {card.costUsdMicro !== null ? (
+        <p className="text-xs text-neutral-500">
+          Planning call: {usd(card.costUsdMicro)}. Nothing is written until you approve.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 /** Inbox (spec K.4, J.3): human requests and agent messages, blocking first. */
 export function InboxPage() {
   const client = useClient();
@@ -183,6 +343,7 @@ function RequestCard({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const intake = intakeCardOf(request.changeCard);
 
   const send = async (value: unknown) => {
     if (busy) return;
@@ -234,6 +395,7 @@ function RequestCard({
           ))}
         </ol>
       ) : null}
+      {intake ? <IntakeCard card={intake} /> : null}
       {request.changeCard !== null && request.changeCard !== undefined ? (
         <details className="mt-1 text-xs">
           <summary className="cursor-pointer text-neutral-500">Change card</summary>
