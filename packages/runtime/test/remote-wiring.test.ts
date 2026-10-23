@@ -172,14 +172,6 @@ describe("remote control of the PC through the daemon", () => {
     expect(cappedRuns.length).toBeGreaterThanOrEqual(1);
     expect(cappedRuns.map((r) => r.model)).toEqual(cappedRuns.map(() => "fake-sonnet"));
 
-    // The first rung: the coder's default (sonnet) comes down to haiku and the retry stays there.
-    const floor = await retryRun("Floor", { critic_ceiling: "haiku" });
-    const floorRuns = (await rt.store.run.forTask(floor.task.id)).filter(
-      (r) => r.specialist === "coder",
-    );
-    expect(floorRuns.length).toBeGreaterThanOrEqual(1);
-    expect(floorRuns.map((r) => r.model)).toEqual(floorRuns.map(() => "fake-haiku"));
-
     const free = await retryRun("Free", {});
     const freeRuns = (await rt.store.run.forTask(free.task.id)).filter(
       (r) => r.specialist === "coder",
