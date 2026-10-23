@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import {
   type CheckRunInfo,
+  type CommitStatusInfo,
   type GitHost,
   type GitIdentity,
   GitOps,
@@ -35,9 +36,11 @@ import type { MergeOutcome, MergePort, MergeRequest, MergeStatus } from "./ports
  *     the review is never merged;
  *   - a base that moved is rebased onto in the worktree (as the executor does before the PR)
  *     and the branch pushed with a lease; a conflict is never merged;
- *   - the host's check runs on the head decide: any failed one refuses, a running one is
- *     waited for (bounded), none reported means the host has no CI and the merge goes on;
- *     after a rebase every check the reviewed head had must pass again on the new head;
+ *   - the host's check runs and commit statuses on the head decide: any failed one refuses,
+ *     a running or pending one is waited for (bounded by the wait and the session's wall
+ *     clock); none on the head while the base branch reports some is pending too (the host has
+ *     CI that has not reported yet); none on either means the host has no CI and the merge
+ *     goes on; after a rebase every check the reviewed head had must pass again on the new head;
  *   - the merge is pinned to the head that was checked (`sha`), so a push in between fails it.
  *
  * Every refusal other than the hooks' files one request for the human; the outcome is written
@@ -70,36 +73,59 @@ export interface ChecksVerdict {
 }
 
 /**
- * The host's check runs on one commit, the latest run per name. `required` are names that
- * must be present and pass (the checks the reviewed head had, after a rebase); a missing one
- * is pending, since the host may not have started it yet.
+ * The host's check runs on one commit (the latest run per name) and its commit statuses (the
+ * latest per context: `failure` and `error` refuse, `pending` waits). `required` are names
+ * that must be present and pass (the checks the reviewed head had, after a rebase); a missing
+ * one is pending, since the host may not have started it yet.
  */
 export function judgeChecks(
   runs: readonly CheckRunInfo[],
   required: readonly string[] = [],
+  statuses: readonly CommitStatusInfo[] = [],
 ): ChecksVerdict {
   const latest = new Map<string, CheckRunInfo>();
   for (const r of runs) {
     const seen = latest.get(r.name);
     if (!seen || r.id > seen.id) latest.set(r.name, r);
   }
-  const failed: string[] = [];
-  const pending: string[] = [];
-  for (const r of latest.values()) {
-    if (r.status !== "completed") pending.push(r.name);
-    else if (r.conclusion === null || FAILED_CONCLUSIONS.has(r.conclusion)) failed.push(r.name);
+  const latestStatus = new Map<string, CommitStatusInfo>();
+  for (const st of statuses) {
+    const seen = latestStatus.get(st.context);
+    if (!seen || st.id > seen.id) latestStatus.set(st.context, st);
   }
-  for (const name of required) if (!latest.has(name)) pending.push(name);
-  failed.sort();
-  pending.sort();
-  const state = failed.length
+  const failed = new Set<string>();
+  const pending = new Set<string>();
+  for (const r of latest.values()) {
+    if (r.status !== "completed") pending.add(r.name);
+    else if (r.conclusion === null || FAILED_CONCLUSIONS.has(r.conclusion)) failed.add(r.name);
+  }
+  for (const st of latestStatus.values()) {
+    if (st.state === "failure" || st.state === "error") failed.add(st.context);
+    else if (st.state === "pending") pending.add(st.context);
+  }
+  for (const name of required) if (!latest.has(name) && !latestStatus.has(name)) pending.add(name);
+  for (const name of failed) pending.delete(name);
+  const state = failed.size
     ? "failed"
-    : pending.length
+    : pending.size
       ? "pending"
-      : latest.size
+      : latest.size || latestStatus.size
         ? "green"
         : "none";
-  return { state, failed, pending };
+  return { state, failed: [...failed].sort(), pending: [...pending].sort() };
+}
+
+/** What the host reports on one commit: its check runs and its commit statuses. */
+async function ciOf(
+  host: GitHost,
+  repo: RepoRef,
+  sha: string,
+): Promise<{ runs: CheckRunInfo[]; statuses: CommitStatusInfo[] }> {
+  const [runs, statuses] = await Promise.all([
+    host.listCheckRuns(repo, sha),
+    host.listCommitStatuses(repo, sha),
+  ]);
+  return { runs, statuses };
 }
 
 const MergePrInput = z.object({
@@ -204,8 +230,8 @@ async function mergeChecked(
     if (!(await git.isAncestor(base, "HEAD"))) {
       // The base moved since the PR: rebase first (spec F, as the executor does before the
       // PR). The checks of the reviewed head must then pass again on the rebased one.
-      const beforeRuns = await host.listCheckRuns(ref.repo, head);
-      const before = judgeChecks(beforeRuns);
+      const beforeCi = await ciOf(host, ref.repo, head);
+      const before = judgeChecks(beforeCi.runs, [], beforeCi.statuses);
       if (before.state === "failed") return checksFailed(before, head, false);
       const rb = await git.rebaseOnto(base);
       if (!rb.ok)
@@ -219,7 +245,12 @@ async function mergeChecked(
       await git.push(pr.head.ref, { force: true, defaultBranch: pr.base.ref });
       head = await git.headSha();
       rebased = true;
-      required = [...new Set(beforeRuns.map((r) => r.name))];
+      required = [
+        ...new Set([
+          ...beforeCi.runs.map((r) => r.name),
+          ...beforeCi.statuses.map((st) => st.context),
+        ]),
+      ];
     }
   }
   const waitMs = deps.checksWaitMs ?? DEFAULT_CHECKS_WAIT_MS;
@@ -249,7 +280,19 @@ async function mergeChecked(
         headSha: head,
         rebased,
       };
-    const verdict = judgeChecks(await host.listCheckRuns(ref.repo, head), required);
+    const ci = await ciOf(host, ref.repo, head);
+    let verdict = judgeChecks(ci.runs, required, ci.statuses);
+    if (verdict.state === "none" && pr.base.sha) {
+      // Nothing on the head is only "no CI" when the base branch reports nothing either; a
+      // base with checks means the host has CI that has not reported on this head yet.
+      const baseCi = await ciOf(host, ref.repo, pr.base.sha);
+      if (baseCi.runs.length || baseCi.statuses.length)
+        verdict = {
+          state: "pending",
+          failed: [],
+          pending: [`a check on the head (${pr.base.ref} reports CI, the head none yet)`],
+        };
+    }
     if (verdict.state === "failed") return checksFailed(verdict, head, rebased);
     if (verdict.state !== "pending") break;
     if (clock.now() + pollMs > deadline)
@@ -350,11 +393,23 @@ export class ReviewedPrMerge implements MergePort {
       grantedSecrets: [],
       budgetUsdMicro: 0,
     });
+    // The checks wait ends inside the session's wall-clock cap (spec I), one poll before it,
+    // so the last look, the merge and its audit row still run on a live token: a session with
+    // two minutes left waits about a minute and a half, then the PR goes to the human.
+    const pollMs = Math.max(1, this.deps.checksPollMs ?? DEFAULT_CHECKS_POLL_MS);
+    const sessionLeftMs = Math.max(0, req.budget.limits.deadlineMs - clock.now() - pollMs);
+    const tool = mergePrTool({
+      ...this.deps,
+      checksWaitMs: Math.min(this.deps.checksWaitMs ?? DEFAULT_CHECKS_WAIT_MS, sessionLeftMs),
+    });
     const ctx: RunContext = {
       token,
       budget: req.budget,
       signal: req.signal,
-      runDeadlineMs: clock.now() + (this.tool.timeoutMs ?? DEFAULT_CHECKS_WAIT_MS),
+      runDeadlineMs: Math.min(
+        clock.now() + (tool.timeoutMs ?? DEFAULT_CHECKS_WAIT_MS),
+        req.budget.limits.deadlineMs,
+      ),
       phase: "work",
       model: "none",
       provider: "none",
@@ -365,9 +420,10 @@ export class ReviewedPrMerge implements MergePort {
     const input: MergePrInput = { pr_url: prUrl, head_sha: reviewed, worktree };
     let admitted: Awaited<ReturnType<EnforcementHooks["beforeToolCall"]>>;
     try {
-      admitted = await hooks.beforeToolCall(ctx, this.tool as ToolSpec, input);
+      admitted = await hooks.beforeToolCall(ctx, tool as ToolSpec, input);
     } catch (e) {
-      if (!(e instanceof ForerunnerError)) throw e;
+      // A stop is the session's, never the level's refusal: it ends the session as killed.
+      if (!(e instanceof ForerunnerError) || e.code === "killed") throw e;
       return this.record(req, {
         ...base,
         status: "not_allowed",
@@ -386,7 +442,7 @@ export class ReviewedPrMerge implements MergePort {
     }
     let result: ToolResult;
     try {
-      result = await this.tool.execute(admitted.input as MergePrInput, {
+      result = await tool.execute(admitted.input as MergePrInput, {
         runId,
         sessionId: claims.sessionId,
         agentId: claims.agentId,
@@ -399,13 +455,15 @@ export class ReviewedPrMerge implements MergePort {
       });
     } catch (e) {
       if (e instanceof ForerunnerError && e.code === "killed") throw e;
+      if (req.signal.aborted)
+        throw new ForerunnerError("killed", `session stopped during the merge: ${errorMessage(e)}`);
       result = {
         content: `not merged: ${errorMessage(e)}`,
         isError: true,
         artifacts: { status: "failed", message: errorMessage(e), rebased: false },
       };
     }
-    await hooks.afterToolCall(ctx, this.tool as ToolSpec, admitted.input, {
+    await hooks.afterToolCall(ctx, tool as ToolSpec, admitted.input, {
       content: result.content,
       ...(result.isError ? { isError: true } : {}),
     });

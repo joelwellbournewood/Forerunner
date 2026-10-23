@@ -736,12 +736,18 @@ stays open as at level 2 before), at level 3 the tool runs. The tool (`mergePrTo
 checks rule, so it holds for any caller: the PR head must be the reviewed commit and the
 worktree's HEAD (`head_moved` otherwise); a base that moved (`GitOps.isAncestor`) is rebased
 onto in the worktree and the branch pushed with a lease (`conflict` with the files when the
-rebase conflicts); the host's check runs on the head decide (`judgeChecks`, the latest run per
-name: a failed, cancelled, timed-out or action-required one refuses, `checks_failed`; a
-running one is polled every `checksPollMs`, default 30 s, for up to `checksWaitMs`, default 10
-min, then `checks_pending`; none reported means the host has no CI; after a rebase every check
-the reviewed head had must pass again on the new head, and a host still showing the old head
-right after the push is waited for); `mergeable: false` is a conflict; the
+rebase conflicts); the host's check runs and commit statuses on the head decide (`judgeChecks`,
+the latest run per name and the latest status per context, `GitHost.listCheckRuns` and
+`listCommitStatuses`: a failed, cancelled, timed-out or action-required run and a `failure` or
+`error` status refuse, `checks_failed`; a running run or a `pending` status is polled every
+`checksPollMs`, default 30 s, for up to `checksWaitMs`, default 10 min, and never past the
+session's wall-clock cap (the wait ends one poll before `SessionBudget.limits.deadlineMs`, so
+the last look, the merge and its audit row run on a live token), then `checks_pending`;
+nothing on the head while the base branch's head reports checks or statuses is pending too
+(the host has CI that has not reported on this head yet); nothing on either means the host
+has no CI; after a rebase every check and status the reviewed head had must pass again on the
+new head, and a host still showing the old head right after the push is waited for);
+`mergeable: false` is a conflict; the
 merge is pinned to the checked head (`mergePullRequest(…, { sha })`). Every refusal of the tool
 files one non-blocking `decision` request for the human (why, steps, "I merged it" / "Leave it
 open"); every outcome is written on the task row (`reason`, versioned with the agent), comes
@@ -750,9 +756,14 @@ back as `SessionResult.merges` and `handoff.merges`, is a `pr.merged` or `pr.lef
 reviewed pull request(s)." / "Reviewed pull requests left open for you: 1"). A merged
 branch is taken out of the session's PR branches, so the status update of `ProjectDocs` opens
 its own PR instead of committing to a merged branch. Tier 0 tasks close without a review and
-are never merged. The daemon composes it on its hooks, git host, worktrees and identity
-(`RuntimeApp.merge`) and names `merge_pr` in the session grant; no tool registry offers it to
-a model.
+are never merged; a tier 3 task's accepting verdict becomes the human sign-off (`needs_human`,
+spec H), so it never reaches the merge either and the human who signs off merges. The kill
+switch ends the step as it ends the session: a `killed` refusal of the hooks (the revoked
+token) or a stop during the checks wait is thrown on, never recorded as the level's refusal or
+filed as a request, and the session ends `killed`. The daemon composes it on its hooks, git
+host, worktrees and identity (`RuntimeApp.merge`) and names `merge_pr` in the session grant
+(`RuntimeApp.sessionGrant(projectId)` is that grant, as `startSession` computes it); no tool
+registry offers it to a model.
 
 **Memory (`MemoryLoop`, spec G, E.5, N.4).** Private memory stays on this PC (spec "never
 leave that PC", ADR 0002, ADR 0083): with a shared state (a `FORERUNNER_STATE_URL` that is not
@@ -1678,13 +1689,25 @@ summary record it; at level 2 the hooks refuse it (`autonomy_insufficient: auton
 audit row, no approval asked, no request) and the PR stays open; a failed check (beside a green
 one), a check still running at the end of the wait, a base that moved in the same file (the
 rebase conflicts) and a commit pushed to the PR branch after the review each leave the PR open
-with a request naming the check or the file; a base moved elsewhere is rebased onto, pushed
-and the rebased head merged; a rejecting review makes no `merge_pr` call. The tool on a
-`MemoryGitHost` with a simulated clock: a running check is waited for and merged once green,
-one still queued at the end of the wait is not, a conflicting PR is refused before the merge
-call; on a real worktree and bare repository, a host that still shows the reviewed head right
-after the rebase push is waited for and the rebased head merged (not taken for a moved head). The daemon's `RuntimeApp.merge` on its own hooks writes the level-2 refusal as an
-`audit_log` row. `hooks.test.ts` has the unattended rule itself (refused at 2 and for an
+with a request naming the check or the file; a failing commit status beside a green check
+run is never merged (request naming the status), a pending one is waited for and a green one
+merges; no check on the head while `main` reports one is `checks_pending` with a request, not
+a merge; a running check in a session of two minutes ends the wait inside the session's wall
+clock (`checks_pending`, not the ten-minute wait); the kill switch pressed as the merge asks
+the hooks, or during the checks wait, ends the session `killed` with no merge, no request and
+nothing written on the task; a tier 3 task's accepting review goes to the sign-off and makes no
+`merge_pr` call; a base moved elsewhere is rebased onto, pushed and the rebased head merged; a
+rejecting review makes no `merge_pr` call. The tool on a `MemoryGitHost` with a simulated
+clock: a running check is waited for and merged once green, one still queued at the end of
+the wait is not, a commit status in `error` refuses, a base with CI and a head with none is
+pending while no CI on either merges, a conflicting PR is refused before the merge call; on a
+real worktree and bare repository, a host that still shows the reviewed head right after the
+rebase push is waited for and the rebased head merged (not taken for a moved head). The
+daemon (`composeRuntime` on the fake git host as its configured API base, the token in the
+vault, a token issued from `RuntimeApp.sessionGrant`): at level 3 `RuntimeApp.merge` merges
+the PR on the host with an allowed `audit_log` row, at level 2 it writes the
+`autonomy_insufficient` refusal and the PR stays open, so a grant without `merge_pr` fails
+both. `hooks.test.ts` has the unattended rule itself (refused at 2 and for an
 always-human class at 4 without asking, allowed at 3, an attended call still asks).
 
 `loop-docs.test.ts` (spec G.5, ADR 0058; the runner with `ProjectDocs` on a `MemoryGitHost`
@@ -2057,11 +2080,6 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 ## Known issues
 
-- The merge after an accepting review (J.9, ADR 0062) waits for running checks for
-  `checksWaitMs` (10 minutes) inside the session; CI that takes longer leaves the PR open with
-  a request, and no later session retries the merge on its own (the human merges, or a later
-  rework and review merges again). Commit statuses (the older status API) are not read, only
-  check runs; a host that reports CI only as statuses is treated as having no CI.
 - An approved plan the scheduler answers `queued` (the agent is busy) holds the scheduler's
   single pending slot per agent, which a later trigger replaces (`triggers.ts`: the newest
   request wins the slot); the approval is recorded as handed over (`outcome: "queued"`) and
@@ -2241,3 +2259,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   reaches an agent on its owner's PC install; the app has no screen for `rt.sharedSecrets`
   (the daemon routes exist), and the owner's `propose` is not yet a registry command with a
   change card.
+- The merge after an accepting review (J.9, ADR 0062) waits for running checks for
+  `checksWaitMs` (10 minutes, less when the session's wall clock ends sooner) inside the
+  session; CI that takes longer leaves the PR open with a request, and no later session retries
+  the merge on its own (the human merges, or a later rework and review merges again). A
+  repository whose base branch runs CI only on push (no workflow on pull requests) reports
+  nothing on a PR head, so its PRs wait out the bound and go to the human instead of merging.
+  A tier 3 task is merged by the human who signs it off, never by the step.
