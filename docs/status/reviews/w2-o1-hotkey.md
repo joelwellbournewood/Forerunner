@@ -1,5 +1,118 @@
 # w2-o1-hotkey — global hotkey for the conversation (O.1)
 
+## Review
+
+Reviewer: independent review of `wave/w2-o1-hotkey` at c3a8958 (start of this stage) against
+`origin/ccr-4d8a843c-1k9syk` at f1948dd (the branch's merge base is b31c2e5; the base has moved
+since: email settings, voice preferences, desktop device confirmation, ADR index rows).
+
+Verdict: **revise**. Score: 62/100 (as built at c3a8958; every finding below has a resolution
+line).
+
+The shell half is careful: the grammar is shared through one case file, every canonical chord
+is fed to the plugin's own parser, a refused change keeps the working chord, a failed
+registration is reported instead of crashing, the commands are granted to the main window only
+and the checks are green (`cargo test` 79 passed, UI 41 files / 248 tests, typecheck, lint,
+docs-check). What is wrong is on the realistic path behind the press: on Linux the webview
+refuses the microphone, so the "voice turn" the hotkey starts can never record there; closing
+the panel while a turn is starting leaves the microphone recording behind a closed dialog; the
+release can overtake the last audio chunks; and the branch does not merge with its base
+without duplicate client members and a shadowed fake route.
+
+Requirements checked:
+
+- O.1 / brief (1) "the shell registers a global shortcut (default a sensible chord)": met
+  (`hotkey_shell.rs` `install`, `CommandOrControl+Shift+Space`, ADR 0064).
+- "read at start and re-registered on change": met (`<config>/hotkey.json`, `hotkey_set`,
+  register-then-release); re-spelling the active chord is refused (finding 4).
+- "parsing and validation in a plain Rust module with unit tests": met (`hotkey.rs`, 11 tests,
+  the shared `hotkey-chords.json`).
+- "registration failure reported to the UI as an event, never a crash": met
+  (`forerunner://hotkey-changed`, `HotkeyState::failed/refused`).
+- "on press: shows and focuses the main window, then emits an event": met (`on_press` →
+  `windows::show_main` → `forerunner://hotkey`).
+- Brief (2) "the UI opens the conversation and starts a push-to-talk voice turn (or focuses the
+  chat input when voice is unavailable)": built and tested against a fake microphone; **not met
+  on Linux** in a real window (finding 1); the turn can lose its tail (finding 3); the
+  microphone can stay on after close (finding 2).
+- "Settings shows the current shortcut, lets the human change it (validated client-side with
+  the same grammar, sent through the bridge)": met (`HotkeySettings.tsx`, tests).
+- "shows 'unavailable' when the shell is not the desktop one (web/approvals/Android)": met in a
+  browser; the Android app's Settings screen says nothing about the hotkey and the test that
+  claims Android only renders the browser case (finding 7). The approvals page has no Settings
+  screen; nothing to show there.
+- Brief (3) "the voice turn goes through the existing /voice path": met (`/voice/status`,
+  `/voice/sessions`, `press`, `audio`, `stop`; bodies validated by the runtime's schemas).
+- Tests named by the brief (Rust unit tests for the parser and the state machine,
+  `apps/ui/test/hotkey.test.tsx`, desktop `cargo test` green): present and green.
+- Docs: apps.md (desktop shell, What the shells inject, Tests) and ADR 0064 present; they do
+  not mention the microphone permission (finding 1) and the status edits conflict with the
+  base (finding 6).
+- Security / privacy: commands granted to `main` only, plugin JS commands granted to no
+  window, chord validated before it is saved; the microphone left recording after close is a
+  privacy regression (finding 2).
+- Semantic conflicts with the base: found (finding 5).
+
+Findings:
+
+1. **high**, `apps/desktop/src-tauri/src/windows.rs:82` (`build_main`). The main window is
+   built without a permission handler, so on Linux WebKitGTK answers the UI's
+   `getUserMedia({ audio })` with its default, a denial: every hotkey press on Linux ends in
+   "the microphone is unavailable (NotAllowedError …). Type instead." and O.1's "by voice …
+   from a global hotkey" never happens on that platform. On Windows WebView2 asks the human with
+   its own prompt on top of the press. Verified with a WebKitGTK 2.52.6 harness under Xvfb with
+   a PulseAudio virtual source (`/tmp/gum.c`, deleted): with the `permission-request` signal
+   unhandled the page gets `NotAllowedError The request is not allowed by the user agent`; with
+   the request allowed it gets the stream. The fix the finding calls for: a microphone-only
+   permission decision for the main window's own origins, in a pure function with a Rust unit
+   test, wired into `build_main`.
+2. **high**, `apps/ui/src/shell/ConversationPanel.tsx:86-121` (`startTurn`) and `:178`
+   (`close`). `startTurn` awaits the status, the session start, the press and `capture.start`
+   (the microphone prompt) and then stores the capture and sets "listening" without checking
+   that the panel is still open. Closing the dialog (Escape) in that window leaves the
+   microphone capturing and streaming audio to a voice session nobody sees; the session is
+   never stopped. The unmount cleanup stops the capture but not the session. Verified with a
+   throwaway test (capture whose `start` resolves after Close): capture log `["start"]`, no
+   `stop`.
+3. **medium**, `apps/ui/src/shell/ConversationPanel.tsx:113` and `:137`. Audio chunks are posted
+   fire-and-forget (`void client.voiceAudio(...)`), and the release (`press { pressed: false }`)
+   is sent without waiting for them. The daemon's loop ends the turn on release and drops audio
+   that arrives afterwards (`packages/voice/src/loop.ts:229-262`: `push` acts only while
+   `listening`), so the last words of a turn can be lost, and parallel posts may arrive out of
+   order. Verified with a throwaway test that delays each audio post by 50 ms: order of calls
+   `["press:true","press:false","audio"]`.
+4. **low**, `apps/desktop/src-tauri/src/hotkey.rs:400` (`plan_change`). The plan compares
+   canonical strings, but on Windows and Linux `CommandOrControl+Shift+Space` and
+   `Control+Shift+Space` are the same OS hotkey (the plugin gives both id 34078782). Typing
+   "Ctrl+Shift+Space" in Settings while the default is active plans a second registration of
+   the same hotkey; the plugin refuses it (`AlreadyRegistered`, global-hotkey 0.8.0
+   `x11/mod.rs` and `windows/mod.rs`), and Settings shows "Control+Shift+Space could not be
+   registered: HotKey already registered" for the chord the shell already holds. Verified with a
+   throwaway Rust test printing both ids.
+5. **medium**, semantic conflict with the base (`apps/ui/src/api/client.ts`,
+   `apps/ui/test/fake-daemon.ts`). A throwaway merge of c3a8958 with f1948dd (detached
+   worktree, discarded) conflicts in 7 files; beyond the textual conflicts, the auto-merged
+   `client.ts` carries `voiceStatus` twice in `DaemonClient` and in `createClient` (the base
+   added the same member for O.4 at another place), and the merged fake daemon registers two
+   `GET /voice/status` routes, the branch's first, so the base's extensions tests that mutate
+   `state.voiceStatus` would read the branch's computed status; the branch's fake status also
+   lacks the base's new `preferences` field. The branch cannot merge the base (stage rule), so
+   the fix is to align the branch's `voiceStatus` member with the base's text and place, to
+   keep doc additions away from the base's edited lines, and to record the remaining
+   resolution, verified on a throwaway merged tree.
+6. **medium**, `docs/requirements.md:184,222,224`, `docs/status/BLOCKERS.md:50`,
+   `docs/status/PROGRESS.md:17-30`, `docs/decisions/README.md:69`. The build edited the
+   orchestrator's files that its brief says not to edit ("return the row updates in your
+   structured output instead"). Each of them conflicts with the base (the throwaway merge
+   above), and the PROGRESS counts "173 done, 47 in progress, 8 todo" are computed against the
+   old base, so they are wrong once merged. The ADR index row is needed on the branch
+   (`scripts/closeout-docs.test.ts` requires every ADR to be indexed) but conflicts as placed.
+7. **low**, `apps/ui/test/hotkey.test.tsx:202` and `apps/ui/src/mobile/screens/SettingsScreen.tsx`.
+   The test "says unavailable outside the desktop shell (browser, approvals page, Android)"
+   renders the desktop UI in jsdom only (the browser case); the Android app renders its own
+   Settings screen, which says nothing about a hotkey, so the brief's "shows 'unavailable' …
+   Android" is not met and not tested there.
+
 ## Build report
 
 Branch `wave/w2-o1-hotkey`, built on top of the `wip:` snapshot f4848b5 (base
