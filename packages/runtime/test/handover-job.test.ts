@@ -20,7 +20,6 @@ import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import { AllowAllCaps, NoSecrets } from "../src/enforcement/ports.ts";
 import {
   docsTaskFor,
-  HANDOVER_AGENT_ID,
   HANDOVER_AUDIT_TOOL,
   HandoverJob,
   type HandoverSessionRequest,

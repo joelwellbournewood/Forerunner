@@ -6,14 +6,16 @@
  * "monthly", off until a project is flagged), the job:
  *
  * 1. creates a NEW principal agent row for the human (`Handover <date>`): no lesson row names
- *    it, so its private memory is empty, and the session runs without a memory port at all
- *    (nothing recalled from the shared scopes either: the docs alone must carry it);
+ *    it, so its private memory is empty, and in the daemon the session runs without a memory
+ *    port and with an executor that recalls no lessons (nothing from the shared scope either:
+ *    the docs alone must carry it);
  * 2. files the seeded change as a task (`settings.handover.seed`, else `defaultHandoverSeed`)
  *    and runs ONE session of the fresh agent on the project through `runSession`, whose
  *    planner is `SeedOnlyPlanner` so the session touches no other ready task;
  * 3. reads the fresh agent's audit rows of that session and turns every stuck place into
  *    a line (`stuckPlaces`): a file read more than once, a tool call that failed, a call the
- *    hooks refused, the task ending needs_human or failed, the session ending failed;
+ *    hooks refused, the task ending needs_human or failed or anywhere short of done or in
+ *    review, the session ending failed; instruction-shaped tool output stays out (data);
  * 4. files ONE docs task on the project with the file names in its description
  *    (`docsTaskFor`), when there was any stuck place;
  * 5. writes the report under `<data dir>/handover/<project>/handover-<date>.json`, sends it
@@ -21,8 +23,8 @@
  *    notification, writes a `handover.run` audit row, cancels the seeded task if the session
  *    left it active (it never becomes regular work) and retires the fresh agent.
  *
- * The month's report file is the dedupe across restarts (the scheduler's fired keys are the
- * first line); `force` runs again. A project below autonomy 2 is skipped with the reason
+ * A report started in the same local month (the human's zone, as the schedule) is the
+ * dedupe across restarts (the scheduler's fired keys are the first line); `force` runs again. A project below autonomy 2 is skipped with the reason
  * (a level 0 or 1 session only files its plan and runs nothing).
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";

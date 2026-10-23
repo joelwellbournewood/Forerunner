@@ -28,8 +28,12 @@ a place the handover agent "got stuck".
    `YYYY-MM`. The
    scheduler's fired keys (day keys and month keys, every kind) go through a `FiredKeys` port.
    The daemon passes `fileFiredKeys(<data dir>/scheduler-fired.json)`, so a restart does not
-   fire a day's or a month's job twice. Each job also checks its own report file for the
-   month (the second line), and `--force` on the CLI overrides that check.
+   fire a day's or a month's job twice. Each job also checks its own reports for the month (the
+   second line): the local month of the newest report's `startedAt` in the human's zone, never
+   the UTC date (a late run on the last day in a western zone is the next month in UTC and
+   would swallow that month's run). `--force` on the CLI overrides that check. Every handover
+   project has its own scheduler agent id (`handover-test:<project>`), because the scheduler
+   keeps one pending slot per agent.
 2. **Settings decide the schedules, re-read before every tick.** The calibration is on by
    default: day 1 at 06:00, USD 10, tier 1, from `human.notify_prefs.calibration`. The
    handover is per project and off until `settings.handover.enabled` is true: day 1 at 07:00,
@@ -42,7 +46,7 @@ a place the handover agent "got stuck".
    calibration writes `<data dir>/critic/calibration-<date>.json`, which is the file
    `calibrate()` always wrote. Each handover writes
    `<data dir>/handover/<project>/handover-<date>.json`. Drift is the catch rate and the pass
-   rate in percentage points against the newest earlier calibration report. With no earlier
+   rate in percentage points against the newest earlier calibration report (by `startedAt`). With no earlier
    report, the run is "the baseline". A calibration whose reviews did not all complete (budget,
    provider, timeout) writes no report and is notified as failed. Its conservative verdicts
    would otherwise show up as drift. The humans see the result as a notification
@@ -55,14 +59,19 @@ a place the handover agent "got stuck".
    - an allowed call whose result starts with `ERROR:` (the tool failed);
    - a call the hooks refused;
    - the seeded task ending `needs_human` or `failed`;
+   - the seeded task ending anywhere else short of `done` or `in_review` (`task_unfinished`:
+     the change was not made);
    - the session ending `failed` or `killed`.
 
    If there is any stuck place, the job files ONE ready docs task on the project. The task
    lists every place, and has one acceptance criterion per file named. The agent's own
-   report text never goes into the task, because it is data, not a brief.
+   report text never goes into the task, because it is data, not a brief; tool output, the
+   hooks' reasons and paths that the injection scan flags are withheld from it for the same
+   reason (the task is filed ready and becomes a later specialist's goal).
 5. **The fresh agent and the seed.** The fresh agent is a new principal row with no lessons. The
-   session runs through a second `SessionRunner` over the daemon's ports with no memory port
-   and a planner that sees only the seeded task. The seed comes from the project setting, or
+   session runs through a second `SessionRunner` over the daemon's ports with no memory port,
+   its own executor whose specialists recall no lessons either (the daemon's executor hands
+   principal agents the `shared` scope per task), and a planner that sees only the seeded task. The seed comes from the project setting, or
    by default is a dated line at the end of `docs/runbook.md` that is only reachable by
    reading README.md and the docs. After the session, the seed is cancelled if it is still
    active and the agent is retired. Scenario 8's sample repository and task moved into

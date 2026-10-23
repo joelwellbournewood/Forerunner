@@ -8,7 +8,8 @@
  * the report as `<data dir>/critic/calibration-<date>.json`, reads the previous report back
  * for the drift (catch rate and pass rate in points), raises a `critic_calibration`
  * notification naming the rates, the gate and the drift, and writes a `critic.calibration`
- * audit row. The month's report file is the dedupe across restarts; `force` runs again. A run
+ * audit row. A report started in the same local month (the human's zone, as the schedule)
+ * is the dedupe across restarts; `force` runs again. A run
  * the hooks refuse (budget, provider) is reported as failed with the reason, never hidden.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
