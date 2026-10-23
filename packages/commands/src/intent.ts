@@ -340,6 +340,7 @@ export class IntentParser {
       this.matchStop(clause) ??
       this.matchPause(clause) ??
       this.matchStart(clause, ctx, project) ??
+      this.matchSummary(clause, ctx, project) ??
       this.matchSwitch(clause, ctx)
     );
   }
@@ -443,6 +444,26 @@ export class IntentParser {
         ? "correction"
         : "note";
     return { command: { name: "note.add", params: { text: m[2].trim(), kind } } };
+  }
+
+  /** "read me the summary [of X] [aloud]", "summary", "lies mir die Zusammenfassung [von X] vor". */
+  private matchSummary(c: string, ctx: IntentContext, current: string | null): Match | null {
+    const en =
+      /^(?:(?:read|speak|say|tell)\s+(?:me\s+)?(?:the\s+)?(?:project\s+)?)?summary(?:\s+(?:aloud|out\s+loud|to\s+me))?(?:\s+(?:of|for|on)\s+(?:the\s+)?(.+?))?(?:\s+(?:aloud|out\s+loud|to\s+me))?$/i.exec(
+        c,
+      );
+    const de =
+      /^(?:(?:lies|lese|sprich|sag)\s+(?:mir\s+)?(?:die\s+)?(?:projekt)?)?zusammenfassung(?:\s+(?:von|für|zu)\s+(?:dem\s+|der\s+|des\s+)?(.+?))?(?:\s+vor(?:lesen)?)?$/i.exec(
+        c,
+      );
+    const m = en ?? de;
+    if (!m) return null;
+    const project = this.projectIdFor(m[1]?.trim() || undefined, ctx, current);
+    if (!project) return null;
+    if (typeof project !== "string") return { question: project };
+    // The active project is the default; naming it keeps the command's own resolution plain.
+    const params = m[1]?.trim() || !current ? { project } : {};
+    return { command: { name: "summary.speak", params } };
   }
 
   private matchTask(c: string, ctx: IntentContext): Match | null {

@@ -204,6 +204,19 @@ describe("IntentParser: English and German phrases", () => {
       "remember to rotate the logs",
       { name: "note.add", params: { text: "to rotate the logs", kind: "note" } },
     ],
+    ["read me the summary", { name: "summary.speak", params: {} }],
+    ["Read the summary aloud please", { name: "summary.speak", params: {} }],
+    ["read me the summary of the game", { name: "summary.speak", params: { project: game.id } }],
+    [
+      "speak the project summary for supplement",
+      { name: "summary.speak", params: { project: supplement.id } },
+    ],
+    ["summary", { name: "summary.speak", params: {} }],
+    ["Lies mir die Zusammenfassung vor", { name: "summary.speak", params: {} }],
+    [
+      "lies die Zusammenfassung von Game vor",
+      { name: "summary.speak", params: { project: game.id } },
+    ],
   ])("%s", async (text, expected) => {
     const r = await parser.parse(text, ctx());
     expect(r.question).toBeUndefined();
@@ -273,6 +286,18 @@ describe("IntentParser: ambiguity, questions and refusals", () => {
       text: "Which project?",
       options: ["PharmaWatch", "Supplement Site", "Game"],
     });
+  });
+
+  it("asks which project for a summary when nothing is active or the name matches nothing", async () => {
+    const none = await parser.parse("read me the summary", ctx({ activeProjectId: null }));
+    expect(none.commands).toEqual([]);
+    expect(none.question).toEqual({
+      text: "Which project?",
+      options: ["PharmaWatch", "Supplement Site", "Game"],
+    });
+    const unknown = await parser.parse("read the summary of nowhere", ctx());
+    expect(unknown.commands).toEqual([]);
+    expect(unknown.question?.text).toContain('No project named "nowhere"');
   });
 
   it("does not run anything when part of the sentence is not understood", async () => {

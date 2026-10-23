@@ -10,6 +10,7 @@ import { projectCreate, projectSwitch } from "./project.ts";
 import { requestAnswer } from "./request.ts";
 import { sessionPause, sessionStart, sessionStop } from "./session.ts";
 import { settingsSet } from "./settings.ts";
+import { summarySpeak } from "./summary.ts";
 import { taskCreate, taskTransition } from "./task.ts";
 
 export * from "./autonomy.ts";
@@ -24,6 +25,7 @@ export * from "./request.ts";
 export * from "./session.ts";
 export * from "./settings.ts";
 export * from "./shared.ts";
+export * from "./summary.ts";
 export * from "./task.ts";
 
 /** The registry with every built-in command. */
@@ -41,6 +43,7 @@ export function defaultRegistry(): CommandRegistry {
     .register(capabilityGrant)
     .register(settingsSet)
     .register(noteAdd)
+    .register(summarySpeak)
     .register(requestAnswer)
     .register(emailModeSet)
     .register(deviceRevoke)
