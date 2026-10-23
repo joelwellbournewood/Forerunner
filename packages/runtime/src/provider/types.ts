@@ -88,7 +88,12 @@ export type StopReason =
   | "error";
 
 export type StreamEvent =
-  | { type: "message_start"; model: string }
+  /**
+   * `usage`, when the provider reports it, is the input side of the bill as the message opens
+   * (Anthropic's `message_start`: input, cache read and cache write tokens, output 0), so a
+   * call cut off before `message_end` still shows what was billed for its input.
+   */
+  | { type: "message_start"; model: string; usage?: Usage }
   | { type: "text_delta"; text: string }
   | { type: "thinking_delta"; text: string }
   | { type: "tool_use_start"; id: string; name: string }

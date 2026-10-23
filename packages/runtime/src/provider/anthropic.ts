@@ -112,11 +112,17 @@ export class AnthropicMessagesProvider implements ModelProvider {
     if (req.effort) params.output_config = { effort: req.effort };
     if (req.metadata) params.metadata = { user_id: req.metadata.user_id };
 
+    const aborted = (): StreamEvent => ({
+      type: "error",
+      code: "aborted",
+      message: "aborted",
+      retryable: false,
+    });
     let stream: AsyncIterable<Anthropic.RawMessageStreamEvent>;
     try {
       stream = await this.client.messages.create(params, { signal: req.signal });
     } catch (e) {
-      yield mapError(e);
+      yield req.signal?.aborted ? aborted() : mapError(e);
       return;
     }
     const open = new Map<number, { id: string; name: string; json: string }>();
@@ -134,7 +140,9 @@ export class AnthropicMessagesProvider implements ModelProvider {
             usage.input_tokens = ev.message.usage.input_tokens;
             usage.cache_read_input_tokens = ev.message.usage.cache_read_input_tokens ?? 0;
             usage.cache_creation_input_tokens = ev.message.usage.cache_creation_input_tokens ?? 0;
-            yield { type: "message_start", model: ev.message.model };
+            // The input side of the bill is known here; a call aborted before message_end
+            // still has it on record (the live harness's spend ledger reads it).
+            yield { type: "message_start", model: ev.message.model, usage: { ...usage } };
             break;
           case "content_block_start":
             if (ev.content_block.type === "tool_use") {
@@ -190,11 +198,13 @@ export class AnthropicMessagesProvider implements ModelProvider {
         }
       }
     } catch (e) {
-      if (req.signal?.aborted) {
-        yield { type: "error", code: "aborted", message: "aborted", retryable: false };
-        return;
-      }
-      yield mapError(e);
+      yield req.signal?.aborted ? aborted() : mapError(e);
+      return;
+    }
+    // The SDK's iterator exits without throwing when the request's signal aborts, so a
+    // killed call would otherwise end as a complete message with stop_reason end_turn.
+    if (req.signal?.aborted) {
+      yield aborted();
       return;
     }
     yield { type: "message_end", stop_reason: stopReason, usage };

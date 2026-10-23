@@ -1407,9 +1407,24 @@ row `live.model_call` with `allowed: false`) and nothing is sent. Once per `Live
 warning line prints at 80% of either cap (each test file builds its own, so a run that crosses
 the line prints it up to three times). After the call, success or not, `settle` prices the usage
 the provider reported and appends the row; an error or an abort adds a `note`, and when the
-provider reported nothing the row is `0/0` tokens with `no usage reported` (the Anthropic
-adapter yields usage only on `message_end`, so the billed input tokens of an aborted call are
-not visible to the harness; the per-run margin covers that under-count).
+provider reported nothing the row is `0/0` tokens with `no usage reported`.
+
+**The status of a call** (`MeteredProvider`, `LiveCall.status`). `refused` when the budget
+said no (nothing sent); `aborted` when the request's signal (the run's abort controller, which
+the kill switch fires) had fired by the time the call settled, that is at its final stream
+event or at the end of a stream that had none, whatever that last event was: an `error:
+aborted`, a thrown `AbortError`, or a clean `message_end` (the Anthropic SDK exits its iterator
+without throwing after an abort, so the adapter used to end a killed stream as a complete
+message; the kill-switch probe of 2026-10-23 recorded that call as `ok`, `usd 0`). A call whose
+`message_end` arrived before the signal fired completed and stays `ok`; `error` otherwise. The
+usage in the row is the `message_end` figure when it came, else the input side the adapter
+reports on `message_start` (input, cache read and cache write tokens; the row's note then
+says `input usage from message_start, output tokens not reported`), else none (`no usage
+reported`). The `reason` (and the ledger note, `<status>: <reason>`) names the error event,
+the thrown error, or `abort signal fired before the call settled; the stream ended without a
+message_end event` / `without an error event`. The output tokens of a killed call that the
+provider generated before it noticed the disconnect are billed but never reported; the per-run
+margin covers that under-count.
 
 **A run** is one vitest invocation: `vitest.config.ts` mints `FORERUNNER_LIVE_RUN` once (ISO
 time, or the value already in the environment) and hands it to every file; files run one after
@@ -1473,7 +1488,8 @@ other, with the verdicts in the message; (3) text chat on Haiku through the comp
 with `kill.stop("all")` 0.5 s after its first model call: the session ends `killed` in under
 2 s of wall time, the claim is released, no call starts after the stop, and when a call was in
 flight at the stop (read from the budget's reservations at that moment) it is settled as
-aborted in the ledger. Everything measured goes to `phase1-live.json` in the report directory.
+`aborted` in the ledger by the status rule above, with the input tokens `message_start` had
+reported. Everything measured goes to `phase1-live.json` in the report directory.
 
 **Timing** (`live-2-timing.live.test.ts`): ten requests per tier (Haiku, Sonnet) with
 `max_tokens 16` through `provider.complete`, time to first token and total time from the
@@ -1649,7 +1665,7 @@ is `pnpm --filter @forerunner/live test`, which skips every live case).
 
 ### Tests
 
-`pnpm --filter @forerunner/live test`: 42 unit tests over 5 files (parser, quoted values with
+`pnpm --filter @forerunner/live test`: 46 unit tests over 5 files (parser, quoted values with
 trailing comments, credential sources and the subscription token from the file or the
 environment, its redaction and its absence from the description; ledger round trip and
 validation, `subscription` rows kept with their kind and note and adding nothing to the totals
@@ -1658,7 +1674,14 @@ calls in flight, 80% warning once, settling failed and aborted calls, dated and 
 ids; the metered provider on a scripted `FakeProvider`: rows per call, refusal before anything
 is sent, error and abort rows, credentials redacted from an error event and from a thrown
 error before the record, the note and the audit row, no credential-looking value in the
-ledger or the records; the API-key half's evidence file and the per-task comparison
+ledger or the records; the status rule on hand-written inner providers that wait for the
+signal (`metered.test.ts`): a stream that ends cleanly with `message_end` after the abort is
+`aborted` with the usage it reported, the probe's shape (no `message_start`, an empty
+`message_end`) is `aborted` at USD 0, a stream that throws `AbortError` after a
+`message_start` with usage is `aborted` with the input tokens in the row and the
+`message_start` note (and `no usage reported` without one), a call whose `message_end` came
+before the stop stays `ok`, nothing in flight afterwards in every case; the API-key half's
+evidence file and the per-task comparison
 (`report.test.ts`): read from the report directory or the named path, the comparison made only
 for the same run, a file from another run flagged stale and listed with the reason, not made
 without a file, a task the other half lacks compared as null; the dry run through
@@ -1683,9 +1706,15 @@ it locally before a change to this package.
   when someone runs them. The orchestrator owns both files; the step to add is
   `pnpm --filter @forerunner/live test` in the unit and integration jobs on both OS (every live
   case skips visibly there), or `tests/live/test/**/*.test.ts` in the root unit include.
-- The aborted-call blind spot: the adapter reports usage only at `message_end`, so a killed
-  call's billed input tokens are not in the ledger (row with `no usage reported`). The runtime
-  adapter would have to surface `message_start` usage to close it.
+- The aborted-call blind spot, narrowed on 2026-10-23: the adapter now reports the input side
+  of the bill on `message_start` and the metered provider keeps it for a call cut off before
+  `message_end`, so a killed call's billed input tokens are in the ledger when the message had
+  opened before the stop (row note `input usage from message_start, output tokens not
+  reported`). What remains outside the ledger: a call killed before the API opened the message
+  (the probe's 554 ms call, `0/0` tokens) and the output tokens the provider generated before it
+  noticed the disconnect; both are under the per-run margin. The classification itself (the
+  probe's `ok` for a killed call) is fixed by the status rule above; the next live run of the
+  phase 1 file is the evidence for the gate row.
 - The overshoot bound: the pre-call estimate counts the input with the adapter's local
   heuristic (about four characters per token), which can undercount what the provider bills
   (tool definitions and JSON tokenise denser than prose), so one call can end above the cap it

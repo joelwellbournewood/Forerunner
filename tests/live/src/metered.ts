@@ -19,6 +19,14 @@ import type { SpendRow } from "./ledger.ts";
  * aborted call still writes its row with whatever the provider reported. The adapter's
  * `signal` reaches the inner provider unchanged, so the kill switch aborts a live call the
  * same way it aborts a fake one.
+ *
+ * The status rule: a call is `aborted` when the request's signal had fired by the time the
+ * call settled (its final event, or the end of a stream that had none), whatever that last
+ * event was: an `error: aborted`, a thrown `AbortError`, or a clean `message_end` (the
+ * Anthropic SDK exits its iterator without throwing after an abort). A call whose
+ * `message_end` arrived before the signal fired completed, and stays `ok`. The usage is the
+ * `message_end` figure when it came, else the input side reported on `message_start`
+ * (noted in the row), else none (`no usage reported`).
  */
 export type LiveCallStatus = "ok" | "error" | "aborted" | "refused";
 
@@ -104,11 +112,16 @@ export class MeteredProvider implements ModelProvider {
       throw e;
     }
     let usage: Usage | null = null;
+    let startUsage: Usage | null = null;
     let model = req.model;
     let status: LiveCallStatus = "ok";
     let reason: string | undefined;
     let ttft: number | null = null;
     let stopReason: string | null = null;
+    // Whether the signal had fired when the stream's final event (message_end or error) came;
+    // null when the stream ended or threw without one, and the signal is read at settle time.
+    let abortedAtEnd: boolean | null = null;
+    const signalAborted = () => req.signal?.aborted === true;
     // The clock starts once the gate has passed, so the ledger read and the estimate are not
     // in the measured time to first token or the call's duration.
     const t0 = this.clock.monotonic();
@@ -120,30 +133,47 @@ export class MeteredProvider implements ModelProvider {
         ) {
           ttft = this.clock.monotonic() - t0;
         }
-        if (ev.type === "message_start" && ev.model) model = ev.model;
-        else if (ev.type === "message_end") {
+        if (ev.type === "message_start") {
+          if (ev.model) model = ev.model;
+          if (ev.usage) startUsage = ev.usage;
+        } else if (ev.type === "message_end") {
           usage = ev.usage;
           stopReason = ev.stop_reason;
+          abortedAtEnd = signalAborted();
         } else if (ev.type === "error") {
-          status = ev.code === "aborted" || req.signal?.aborted ? "aborted" : "error";
+          abortedAtEnd = signalAborted();
+          status = ev.code === "aborted" || abortedAtEnd ? "aborted" : "error";
           reason = this.redact(ev.code === ev.message ? ev.code : `${ev.code}: ${ev.message}`);
           stopReason = "error";
         }
         yield ev;
       }
     } catch (e) {
-      status = req.signal?.aborted ? "aborted" : "error";
+      status = signalAborted() ? "aborted" : "error";
       reason = this.redact(errorMessage(e));
       throw e;
     } finally {
       // A consumer that stops iterating early (a kill, a timeout) lands here too.
-      if (status === "ok" && usage === null) {
-        status = req.signal?.aborted ? "aborted" : "error";
+      if (abortedAtEnd ?? signalAborted()) {
+        // The run's signal decides, whatever the stream's last event: the SDK ends a killed
+        // stream cleanly, and the probe of 2026-10-23 recorded that call as ok.
+        status = "aborted";
+        reason ??= `abort signal fired before the call settled; the stream ended ${
+          usage === null ? "without a message_end event" : "without an error event"
+        }`;
+      } else if (status === "ok" && usage === null) {
+        status = "error";
         reason ??= "stream ended without a message_end event";
       }
-      const note =
-        status === "ok" ? undefined : reason && reason !== status ? `${status}: ${reason}` : status;
-      const row = this.budget.settle(reservation, usage, {
+      const reported = usage ?? startUsage;
+      const notes = [
+        status === "ok" ? null : reason && reason !== status ? `${status}: ${reason}` : status,
+        usage === null && startUsage !== null
+          ? "input usage from message_start, output tokens not reported"
+          : null,
+      ].filter((s): s is string => s !== null);
+      const note = notes.length ? notes.join("; ") : undefined;
+      const row = this.budget.settle(reservation, reported, {
         model: modelForLedger(model, req.model),
         requestedModel: req.model,
         ...(note ? { note } : {}),

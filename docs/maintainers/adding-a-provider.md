@@ -14,10 +14,16 @@ API so the Anthropic adapter (`provider/anthropic.ts`) is a thin mapping and the
 - `ProviderRegistry` (`provider/registry.ts`) holds providers by name. The model ladder
   (`models/ladder.ts`) maps each tier to a model id per provider; the billing router picks the
   source and credential.
-- Streams emit `message_start`, `text_delta`, `thinking_delta`, `tool_use_start/delta/end`,
-  `message_end` with `usage`, or `error` with a stable code (`provider_auth`,
-  `provider_rate_limit`, `provider_error`) and a `retryable` flag. `collectStream` turns a stream
-  into a `ModelResponse` with time to first token and duration.
+- Streams emit `message_start` (the answering model id and, when the vendor reports it as the
+  message opens, `usage` with the input side of the bill: input, cache read and cache write
+  tokens, output 0, so a call cut off before `message_end` still shows what its input cost),
+  `text_delta`, `thinking_delta`, `tool_use_start/delta/end`, `message_end` with the full
+  `usage`, or `error` with a stable code (`provider_auth`, `provider_rate_limit`,
+  `provider_error`, and `aborted` when the request's `signal` fired) and a `retryable` flag. An
+  adapter ends a stream whose `signal` fired with `error: aborted` whatever its client did (the
+  Anthropic SDK exits its iterator without throwing after an abort, which would otherwise read
+  as a complete `message_end`). `collectStream` turns a stream into a `ModelResponse` with time
+  to first token and duration.
 - Effort is a first-class request field; temperature is only honoured by providers that accept it
   (Anthropic adapters drop it).
 
