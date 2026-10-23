@@ -63,6 +63,13 @@ export function ConversationPanel({
   const captureRef = useRef<MicCapture | null>(null);
   const phaseRef = useRef<VoicePhase>("idle");
   const turnsRef = useRef(0);
+  // Bumped when the panel closes or unmounts: a turn that is still starting (status, session,
+  // press, the microphone prompt) sees it after every await and undoes what it began, so the
+  // microphone never stays on behind a closed panel.
+  const epochRef = useRef(0);
+  // The turn's audio posts, one after the other: the daemon appends chunks in arrival order and
+  // drops audio that arrives after the release, so the release waits for this chain.
+  const audioRef = useRef<Promise<void>>(Promise.resolve());
 
   const setPhaseBoth = useCallback((p: VoicePhase) => {
     phaseRef.current = p;
@@ -84,6 +91,8 @@ export function ConversationPanel({
   );
 
   const startTurn = useCallback(async () => {
+    const epoch = epochRef.current;
+    const closed = () => epochRef.current !== epoch;
     setPhaseBoth("starting");
     setReason(null);
     const capture = captureFactory();
@@ -93,6 +102,7 @@ export function ConversationPanel({
     }
     try {
       const status = await client.voiceStatus();
+      if (closed()) return;
       if (!status.available) {
         unavailable(`voice is unavailable: ${status.reason}. Type instead.`);
         return;
@@ -103,23 +113,44 @@ export function ConversationPanel({
           mode: "push_to_talk",
           ...(activeProjectId ? { projectId: activeProjectId } : {}),
         });
+        if (closed()) {
+          // The panel closed while the session started: nobody will use it.
+          void client.stopVoiceSession(session.id).catch(() => {});
+          return;
+        }
         sessionRef.current = session;
       }
       turnsRef.current = session.turns;
       const id = session.id;
       await client.voicePress(id, true);
+      // Closing stopped the session (it was in sessionRef by then); nothing else to undo.
+      if (closed()) return;
+      audioRef.current = Promise.resolve();
       try {
         await capture.start((chunk) => {
-          void client.voiceAudio(id, chunk).catch(() => {});
+          if (closed()) return;
+          audioRef.current = audioRef.current
+            .then(() => client.voiceAudio(id, chunk))
+            .then(
+              () => {},
+              () => {},
+            );
         });
       } catch (error) {
+        if (closed()) return;
         await client.voicePress(id, false).catch(() => {});
         unavailable(`the microphone is unavailable (${describeError(error)}). Type instead.`);
+        return;
+      }
+      if (closed()) {
+        // The microphone opened after the panel closed: turn it off at once.
+        capture.stop();
         return;
       }
       captureRef.current = capture;
       setPhaseBoth("listening");
     } catch (error) {
+      if (closed()) return;
       unavailable(`voice is unavailable: ${describeError(error)}. Type instead.`);
     }
   }, [activeProjectId, captureFactory, client, setPhaseBoth, unavailable]);
@@ -134,6 +165,8 @@ export function ConversationPanel({
     }
     setPhaseBoth("waiting");
     try {
+      // Every chunk of the turn first: the daemon drops audio that arrives after the release.
+      await audioRef.current;
       let view = await client.voicePress(session.id, false);
       for (let i = 0; i < TURN_POLLS; i++) {
         if (view.turns > turnsRef.current && view.state === "idle") break;
@@ -175,23 +208,26 @@ export function ConversationPanel({
   }, [open, voiceRequest, startTurn, finishTurn]);
 
   // Closing ends the turn and the voice session.
-  const close = useCallback(() => {
+  const endVoice = useCallback(() => {
+    epochRef.current += 1;
     captureRef.current?.stop();
     captureRef.current = null;
     const session = sessionRef.current;
     sessionRef.current = null;
     if (session && !session.endedAt) void client.stopVoiceSession(session.id).catch(() => {});
+  }, [client]);
+
+  const close = useCallback(() => {
+    endVoice();
     setPhaseBoth("idle");
     setReason(null);
     onClose();
-  }, [client, onClose, setPhaseBoth]);
+  }, [endVoice, onClose, setPhaseBoth]);
 
-  useEffect(
-    () => () => {
-      captureRef.current?.stop();
-    },
-    [],
-  );
+  // Unmounting (the shell goes away) ends the capture and the session like closing does.
+  const endVoiceRef = useRef(endVoice);
+  endVoiceRef.current = endVoice;
+  useEffect(() => () => endVoiceRef.current(), []);
 
   const send = async (text: string) => {
     if (!identity || busy || !text.trim()) return;

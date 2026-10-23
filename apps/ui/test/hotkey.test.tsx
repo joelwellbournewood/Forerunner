@@ -199,7 +199,7 @@ describe("the palette's talk entry", () => {
 });
 
 describe("Settings: global hotkey", () => {
-  it("says unavailable outside the desktop shell (browser, approvals page, Android)", async () => {
+  it("says unavailable in a browser", async () => {
     renderApp("/settings");
     const field = await screen.findByTestId("hotkey-unavailable");
     expect(field.textContent).toMatch(/^unavailable/);
@@ -378,6 +378,135 @@ describe("hotkey press: the conversation and a push-to-talk turn", () => {
     );
     expect(mic.log).toEqual(["start", "stop"]);
     expect(screen.queryByTestId("conversation")).toBeNull();
+  });
+
+  it("unmounting the shell stops the capture and the voice session", async () => {
+    const shell = fakeBridge();
+    const mic = fakeCapture();
+    const harness = createHarness();
+    const { unmount } = renderDesktop("/", shell.bridge, mic.factory, harness);
+    await waitFor(() => expect(shell.listeners()).toBe(1));
+    shell.press();
+    await waitFor(() =>
+      expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Listening/),
+    );
+    const session = [...harness.daemon.state.voiceSessions.keys()][0] ?? "";
+    unmount();
+    await waitFor(() =>
+      expect(postedCalls(harness, `/voice/sessions/${session}/stop`)).toHaveLength(1),
+    );
+    expect(mic.log).toEqual(["start", "stop"]);
+  });
+
+  it("closing while the microphone is still starting turns it off and ends the session", async () => {
+    const user = userEvent.setup();
+    const shell = fakeBridge();
+    const log: string[] = [];
+    let grant: () => void = () => {};
+    // The microphone prompt is still open when the human closes the panel.
+    const factory: CaptureFactory = () => ({
+      start: () => {
+        log.push("start");
+        return new Promise<void>((resolve) => {
+          grant = resolve;
+        });
+      },
+      stop: () => {
+        log.push("stop");
+      },
+    });
+    const harness = createHarness();
+    renderDesktop("/", shell.bridge, factory, harness);
+    await waitFor(() => expect(shell.listeners()).toBe(1));
+    shell.press();
+    await waitFor(() => expect(log).toEqual(["start"]));
+    const session = [...harness.daemon.state.voiceSessions.keys()][0] ?? "";
+    await user.click(
+      within(screen.getByTestId("conversation")).getByRole("button", { name: "Close" }),
+    );
+    await act(async () => {
+      grant();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(log).toEqual(["start", "stop"]);
+    expect(postedCalls(harness, `/voice/sessions/${session}/stop`)).toHaveLength(1);
+    expect(harness.daemon.state.voiceSessions.get(session)?.view.endedAt).not.toBeNull();
+    expect(screen.queryByTestId("conversation")).toBeNull();
+  });
+
+  it("closing before the session exists ends the session that starts afterwards", async () => {
+    const user = userEvent.setup();
+    const shell = fakeBridge();
+    const mic = fakeCapture();
+    const harness = createHarness();
+    let started: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const original = harness.client.startVoiceSession;
+    harness.client.startVoiceSession = async (body) => {
+      await gate;
+      return original(body);
+    };
+    renderDesktop("/", shell.bridge, mic.factory, harness);
+    await waitFor(() => expect(shell.listeners()).toBe(1));
+    shell.press();
+    await screen.findByTestId("conversation");
+    await user.click(
+      within(screen.getByTestId("conversation")).getByRole("button", { name: "Close" }),
+    );
+    await act(async () => {
+      started();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    const sessions = [...harness.daemon.state.voiceSessions.values()];
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.view.endedAt).not.toBeNull();
+    expect(mic.log).toEqual([]);
+    expect(postedCalls(harness, `/voice/sessions/${sessions[0]?.view.id}/press`)).toHaveLength(0);
+  });
+
+  it("the release waits until every captured chunk reached the daemon, in order", async () => {
+    const shell = fakeBridge();
+    let emit: (chunk: CapturedChunk) => void = () => {};
+    const factory: CaptureFactory = () => ({
+      start: async (onChunk) => {
+        emit = onChunk;
+      },
+      stop: () => {},
+    });
+    const harness = createHarness();
+    const calls: string[] = [];
+    const audio = harness.client.voiceAudio;
+    let delay = 60;
+    harness.client.voiceAudio = async (id, chunk) => {
+      // Earlier chunks take longer: parallel posts would arrive out of order.
+      const wait = delay;
+      delay -= 20;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      calls.push(`audio@${chunk.timestampMs}`);
+      return audio(id, chunk);
+    };
+    const press = harness.client.voicePress;
+    harness.client.voicePress = async (id, pressed) => {
+      calls.push(`press:${pressed}`);
+      return press(id, pressed);
+    };
+    renderDesktop("/", shell.bridge, factory, harness);
+    await waitFor(() => expect(shell.listeners()).toBe(1));
+    shell.press();
+    await waitFor(() =>
+      expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Listening/),
+    );
+    const pcm = floatToPcmBase64(new Float32Array([0.1, 0.2]));
+    for (const timestampMs of [0, 85, 170]) {
+      emit({ pcm, sampleRate: 48000, channels: 1, timestampMs });
+    }
+    shell.press();
+    await waitFor(() => expect(screen.getByTestId("conversation-human")).toBeInTheDocument());
+    expect(calls).toEqual(["press:true", "audio@0", "audio@85", "audio@170", "press:false"]);
+    const session = [...harness.daemon.state.voiceSessions.values()][0];
+    expect(session?.view.lastTurn?.audioChunks).toBe(3);
   });
 
   it("encodes captured samples as 16-bit little-endian PCM", () => {
