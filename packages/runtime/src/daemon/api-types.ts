@@ -1248,8 +1248,12 @@ export const RunnerKeyStatusView = z.object({
 export type RunnerKeyStatusView = z.infer<typeof RunnerKeyStatusView>;
 
 export const RunnerUnlockWrapBody = z.object({
-  /** The request's change card as the inbox served it (the runner's challenge). */
-  card: z.unknown(),
+  /**
+   * The open unlock request the runner filed. The daemon reads the challenge from its own
+   * store, never from the body, so a caller cannot have the key wrapped to a key pair of its
+   * choosing.
+   */
+  requestId: z.string().min(1).max(200),
   /** Set (ISO-8601) or clear (null) the human's auto-unlock window with this answer. */
   autoUnlockUntil: z.string().nullable().optional(),
 });
@@ -1415,7 +1419,7 @@ export const DAEMON_ROUTES = {
   runnerKeyStatus:
     "GET /runner-unlock/:runnerId/key (RunnerKeyStatusView: whether this computer's vault holds the runner's vault key under cloud_runner_vault_key:<runner>, the backend, the reason when it does not; never the key; spec S.12, ADR 0068)",
   wrapRunnerKey:
-    "POST /runner-unlock/wrap { card, autoUnlockUntil? } (RunnerUnlockAnswerView: the runner's vault key wrapped inside the daemon to the challenge's one-time runner key, the answer the inbox then sends to the request; 404 not_found without the key, 400 validation for a card that is not a challenge, an expired challenge or a window over a week; one runner.unlock_answer_wrapped audit row without the key)",
+    "POST /runner-unlock/wrap { requestId, autoUnlockUntil? } (RunnerUnlockAnswerView: the runner's vault key wrapped inside the daemon to the one-time runner key of the challenge on that stored, open unlock request of this human, the answer the inbox then sends to the request; 404 not_found for an unknown request or without the key, 403 for another human's request, 409 conflict when it is no longer open, 400 validation for a request that is not an unlock challenge, an expired challenge or a window over a week; one runner.unlock_answer_wrapped audit row without the key)",
   voiceStatus:
     "GET /voice/status (VoiceStatusView: available with the providers picked, or the reason voice is unavailable)",
   startVoiceSession:

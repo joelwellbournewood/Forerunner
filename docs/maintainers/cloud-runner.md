@@ -137,8 +137,8 @@ created the blob (or exported the key) and keeps the 32-byte key. `RunnerVaultUn
    AES-256-GCM (AAD = runner id + challenge id); the answer is public key, iv, ciphertext, tag.
    The desktop and Android inboxes render the request as the unlock card (ADR 0068, see
    apps.md): Unlock once, Unlock and allow for 1 / 8 / 24 h, Unlock and clear the window,
-   Deny. The desktop daemon wraps the key from its vault (`POST /runner-unlock/wrap`, the key
-   under `cloud_runner_vault_key:<runner>`), the phone from its Keystore-wrapped secure store
+   Deny. The desktop daemon wraps the key from its vault (`POST /runner-unlock/wrap { requestId }`,
+   the key under `cloud_runner_vault_key:<runner>`, the challenge read from the stored request), the phone from its Keystore-wrapped secure store
    (`runner-vault-key-<runner>`), both through `wrapVaultKey` in `@forerunner/vault`
    (`runner-unlock.ts`, WebCrypto, no dependencies), which also holds the constants and
    `shouldAutoAnswer`; this file re-exports them. `answerUnlockChallenge` (node:crypto) stays

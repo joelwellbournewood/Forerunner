@@ -120,18 +120,22 @@ this module holds the rules and the two sides.
 
 The desktop inbox's unlock card answers a cloud runner's vault-unlock challenge through the
 daemon, because the daemon holds the OS keyring (the install's vault) and the Tauri shell
-exposes no IPC to the web view. `createRunnerUnlockRoutes({ vault, clock, auditLog, humanId })`
+exposes no IPC to the web view. `createRunnerUnlockRoutes({ vault, clock, auditLog, requests, humanId })`
 mounts, behind the bearer check:
 
 - `GET /runner-unlock/:runnerId/key` -> `RunnerKeyStatusView { runnerId, available, backend,
   reason }`: whether `cloud_runner_vault_key:<runner>` (`runnerKeySecretName`) holds a
   32-byte base64 key. Never the key; a vault read error becomes the reason.
-- `POST /runner-unlock/wrap { card, autoUnlockUntil? }` -> `RunnerUnlockAnswerView`: parses the
-  challenge (`parseUnlockChallenge`), refuses a window that is not in the future within a week
+- `POST /runner-unlock/wrap { requestId, autoUnlockUntil? }` -> `RunnerUnlockAnswerView`: reads
+  the request from the daemon's store (`requests: rt.store.humanRequest`) and takes the
+  challenge from its `change_card`, never from the body, so a token holder cannot have the key
+  wrapped to a key pair of its own: 404 for an unknown request, 403 for another human's, 409
+  `conflict` once it is not open, 400 when it is not a `credential` request carrying a challenge
+  (`parseUnlockChallenge`); then refuses a window that is not in the future within a week
   (400), reads the key (404 `not_found` without one), wraps it with `wrapVaultKey` from
   `@forerunner/vault` and zeroes it in `finally`; an expired challenge is a 400 with
-  `details.reason: "expired"`. One `runner.unlock_answer_wrapped` audit row (runner and
-  challenge ids, backend, window) per wrap. The UI then sends the answer to
+  `details.reason: "expired"`. One `runner.unlock_answer_wrapped` audit row (request,
+  runner and challenge ids, backend, window) per wrap. The UI then sends the answer to
   `POST /requests/:id/answer` like any other answer, so the decision path is unchanged.
 
 Tests: `test/runner-unlock-routes.test.ts` against a composed runtime.

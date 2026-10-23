@@ -19,11 +19,14 @@ import {
 /**
  * The desktop side of the cloud runner's vault unlock (spec S.12, ADR 0033, ADR 0068):
  *   GET  /runner-unlock/:runnerId/key            -> RunnerKeyStatusView (never the key)
- *   POST /runner-unlock/wrap { card, autoUnlockUntil? } -> RunnerUnlockAnswerView
+ *   POST /runner-unlock/wrap { requestId, autoUnlockUntil? } -> RunnerUnlockAnswerView
  * On the desktop the daemon is the process that holds the OS keyring (the install's vault), so
  * the inbox's unlock card asks it to wrap the runner's vault key to the challenge; the key is
- * read, wrapped and zeroed inside this handler and no body carries it. The inbox then sends the
- * wrapped answer to the request like any other answer. Mounted behind the daemon's bearer check.
+ * read, wrapped and zeroed inside this handler and no body carries it. The challenge comes from
+ * the stored request the runner filed (open, kind `credential`, this human's), never from the
+ * body: otherwise any holder of the daemon token could name its own X25519 key and decrypt the
+ * vault key. The inbox then sends the wrapped answer to the request like any other answer.
+ * Mounted behind the daemon's bearer check.
  */
 export const RUNNER_UNLOCK_WRAP_AUDIT_TOOL = "runner.unlock_answer_wrapped";
 
@@ -31,6 +34,8 @@ export interface RunnerUnlockRoutesDeps {
   vault: Pick<Vault, "backend" | "get">;
   clock: Clock;
   auditLog: Pick<StateStore["auditLog"], "append">;
+  /** Where the runner's unlock request is read from (the daemon's store). */
+  requests: Pick<StateStore["humanRequest"], "get">;
   humanId: () => string;
 }
 
@@ -73,8 +78,25 @@ export function createRunnerUnlockRoutes(deps: RunnerUnlockRoutesDeps): Hono {
     if (!parsed.success) {
       return c.json(problem("validation", "invalid request body"), 400);
     }
-    const card = parseUnlockChallenge(parsed.data.card);
-    if (!card) return c.json(problem("validation", "not a runner unlock challenge"), 400);
+    const { requestId } = parsed.data;
+    const row = await deps.requests.get(requestId);
+    if (!row) return c.json(problem("not_found", "no such request", { requestId }), 404);
+    if (row.human_id !== null && row.human_id !== deps.humanId()) {
+      return c.json(problem("forbidden", "not your request", { requestId }), 403);
+    }
+    if (row.status !== "open") {
+      return c.json(
+        problem("conflict", `the unlock request is ${row.status}, no longer open`, {
+          requestId,
+          status: row.status,
+        }),
+        409,
+      );
+    }
+    const card = row.kind === "credential" ? parseUnlockChallenge(row.change_card) : null;
+    if (!card) {
+      return c.json(problem("validation", "not a runner unlock challenge", { requestId }), 400);
+    }
     const now = deps.clock.now();
     const until = parsed.data.autoUnlockUntil;
     if (typeof until === "string") {
@@ -110,7 +132,11 @@ export function createRunnerUnlockRoutes(deps: RunnerUnlockRoutesDeps): Hono {
         tool: RUNNER_UNLOCK_WRAP_AUDIT_TOOL,
         human_id: deps.humanId(),
         agent_id: null,
-        input_summary: JSON.stringify({ runnerId: card.runnerId, challengeId: card.challengeId }),
+        input_summary: JSON.stringify({
+          requestId,
+          runnerId: card.runnerId,
+          challengeId: card.challengeId,
+        }),
         result_summary: JSON.stringify({
           backend: deps.vault.backend,
           autoUnlockUntil: until === undefined ? "unchanged" : until,
@@ -124,6 +150,7 @@ export function createRunnerUnlockRoutes(deps: RunnerUnlockRoutesDeps): Hono {
       logger.warn("could not write the unlock audit row", { error: errorMessage(e) });
     }
     logger.info("runner unlock answer wrapped", {
+      requestId,
       runnerId: card.runnerId,
       challengeId: card.challengeId,
     });

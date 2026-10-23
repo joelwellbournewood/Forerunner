@@ -478,6 +478,7 @@ export function createDaemonApp(
       vault: rt.vault,
       clock: rt.clock,
       auditLog: rt.store.auditLog,
+      requests: rt.store.humanRequest,
       humanId: () => rt.human.id,
     }),
   );

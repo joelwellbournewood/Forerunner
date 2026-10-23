@@ -108,7 +108,7 @@ export function UnlockCard({
     setBusy(true);
     setError(null);
     try {
-      await onSend(await prepareAnswer(bridge, card, choice, now()));
+      await onSend(await prepareAnswer(bridge, request.id, card, choice, now()));
     } catch (e) {
       setError(describe(e));
     } finally {
@@ -228,7 +228,10 @@ export function useAutoUnlock<R extends UnlockRequestLike>(opts: {
         try {
           const status = await bridge.status(card.runnerId);
           if (!status.available) return;
-          await send(request, await prepareAnswer(bridge, card, { kind: "once" }, now()));
+          await send(
+            request,
+            await prepareAnswer(bridge, request.id, card, { kind: "once" }, now()),
+          );
           notify(
             `Unlocked cloud runner "${card.runnerId}" automatically: the auto-unlock window is open until ${formatDateTime(windowUntil)}.`,
           );

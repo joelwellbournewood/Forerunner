@@ -785,7 +785,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.post("/runner-unlock/wrap", async (c) => {
     const parsed = RunnerUnlockWrapBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    const card = parseUnlockChallenge(parsed.data.card);
+    // As the daemon: the challenge comes from the stored open request, never from the body.
+    const r = state.requests.find((x) => x.id === parsed.data.requestId);
+    if (!r) return errorBody(c, 404, "not_found", "no such request");
+    if (r.status !== "open") return errorBody(c, 409, "conflict", `the request is ${r.status}`);
+    const card = r.kind === "credential" ? parseUnlockChallenge(r.changeCard) : null;
     if (!card) return errorBody(c, 400, "validation", "not a runner unlock challenge");
     const key = decodeStoredKey(state.runnerKeys[card.runnerId] ?? null);
     if (!key) return errorBody(c, 404, "not_found", "no key for this runner");

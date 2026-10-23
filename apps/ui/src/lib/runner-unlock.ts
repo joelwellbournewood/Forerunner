@@ -37,6 +37,11 @@ export type RunnerKeyStatus =
   | { available: false; backend: string; reason: string };
 
 export interface WrapRequest {
+  /**
+   * The unlock request the challenge came on. The desktop daemon reads the challenge from its
+   * own store by this id and never wraps to a card the page sends.
+   */
+  requestId: string;
   /** The device's idea of now (ms): an expired challenge is refused before the key is read. */
   now: number;
   /** Set (ISO) or clear (null) the human's auto-unlock window; omitted leaves it as it is. */
@@ -129,9 +134,9 @@ export function daemonRunnerKeys(
             reason: s.reason ?? "This computer cannot answer the unlock.",
           };
     },
-    async wrap(card, request): Promise<RunnerUnlockAnswerView> {
+    async wrap(_card, request): Promise<RunnerUnlockAnswerView> {
       return client.wrapRunnerKey({
-        card,
+        requestId: request.requestId,
         ...(request.autoUnlockUntil !== undefined
           ? { autoUnlockUntil: request.autoUnlockUntil }
           : {}),
@@ -175,6 +180,7 @@ export interface PreparedAnswer {
 /** Turn a choice into the request's answer; only deny skips the bridge. */
 export async function prepareAnswer(
   bridge: RunnerKeyBridge,
+  requestId: string,
   card: UnlockChallengeCard,
   choice: UnlockChoice,
   now: number,
@@ -187,6 +193,7 @@ export async function prepareAnswer(
         ? null
         : undefined;
   const value = await bridge.wrap(card, {
+    requestId,
     now,
     ...(window !== undefined ? { autoUnlockUntil: window } : {}),
   });

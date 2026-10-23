@@ -85,6 +85,10 @@ describe("desktop unlock card", () => {
     expect(answer.challengeId).toBe(challenge.card.challengeId);
     expect("autoUnlockUntil" in answer).toBe(false);
     expect(challenge.unwrap(answer).equals(key)).toBe(true);
+    // The page names the request; the daemon reads the challenge from its own store.
+    expect(postedCalls(harness, "/runner-unlock/wrap").map((c) => c.body)).toEqual([
+      { requestId: request.id },
+    ]);
     expectNoKeyAnywhere(key, harness);
     await waitFor(() => expect(screen.queryByTestId("unlock-card")).not.toBeInTheDocument());
     expect(localStorage.getItem(WINDOW_KEY)).toBeNull();

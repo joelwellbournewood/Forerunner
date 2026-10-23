@@ -40,12 +40,15 @@ proves a WebCrypto answer unlocks the real runner and encrypted file vault.
 
 **The bridge contract.** The inbox talks to a `RunnerKeyBridge`
 (`apps/ui/src/lib/runner-unlock.ts`): `status(runnerId)` says whether this device can answer
-(and why not), `wrap(card, { now, autoUnlockUntil? })` returns the wrapped answer. A bridge never
+(and why not), `wrap(card, { requestId, now, autoUnlockUntil? })` returns the wrapped answer. A bridge never
 returns the key. Implementations:
 
 - Desktop: `daemonRunnerKeys(client)`. The daemon reads `cloud_runner_vault_key:<runner>` from the
-  install's vault (`GET /runner-unlock/:runnerId/key`, `POST /runner-unlock/wrap`), wraps it and
-  zeroes it inside the handler, and writes one `runner.unlock_answer_wrapped` audit row. The key
+  install's vault (`GET /runner-unlock/:runnerId/key`, `POST /runner-unlock/wrap { requestId }`),
+  wraps it and zeroes it inside the handler, and writes one `runner.unlock_answer_wrapped` audit
+  row. The page names the request; the daemon takes the challenge from that stored request (open,
+  `credential`, this human's) and never from the body, so a holder of the daemon token cannot
+  have the key wrapped to a key pair of its own choosing (review finding 1). The key
   never enters the web view. (The brief named a Rust secret command; the desktop shell has none
   and adding a keyring crate plus a webview-callable command would widen the shell's IPC surface
   for no gain over the daemon, which already holds the keyring.)
