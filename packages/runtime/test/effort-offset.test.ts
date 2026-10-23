@@ -1,11 +1,16 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { MemoryGitHost } from "@forerunner/capabilities";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { openStore } from "@forerunner/state";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { SessionBudget } from "../src/enforcement/budget.ts";
 import {
+  capEffort,
   type EffortOffset,
   effortForTask,
   MODE_DEFAULTS,
@@ -14,8 +19,10 @@ import {
   speedQualityOffsetOf,
 } from "../src/models/ladder.ts";
 import type { EffortLevel } from "../src/provider/types.ts";
+import { LoopTaskExecutor, type SpecialistSpec } from "../src/session/executor.ts";
+import { IntakeService } from "../src/session/intake.ts";
 import { FakeStt, FakeTts } from "../src/voice/pkg.ts";
-import { ScriptedProvider } from "./helpers.ts";
+import { flatPricing, harness, issue, registry, ScriptedProvider } from "./helpers.ts";
 
 /**
  * The speed-versus-quality slider in the running system (spec D.16): every mode's effort for a
@@ -129,21 +136,45 @@ describe("the slider's arithmetic (ladder.ts)", () => {
     // Coding at tier 2+ starts at high, then takes the slider.
     expect(effortForTask("coder", 2, 1)).toBe("xhigh");
     expect(effortForTask("coder", 2, -1)).toBe("medium");
+    // A registry cap holds the result; no cap leaves it alone.
+    expect(capEffort("xhigh", "high")).toBe("high");
+    expect(capEffort("medium", "high")).toBe("medium");
+    expect(capEffort("xhigh", undefined)).toBe("xhigh");
   });
 });
+
+/**
+ * The chat/voice/planning daemon runs on a table in force where `voice_chat` differs from
+ * `text_chat` (an adopted `models.json` effort, ADR 0039), so a voice turn that took the chat
+ * mode's default would fail. Voice at quality is held at the conversation agent's registry
+ * `max_effort` (medium).
+ */
+const ADOPTED_VOICE: Record<EffortOffset, EffortLevel> = { [-1]: "low", 0: "medium", 1: "medium" };
 
 describe("chat, voice and planning read the project's slider per turn and per session", () => {
   let rt: RuntimeApp;
   let api: ReturnType<typeof client>;
   let projectId = "";
+  let home = "";
   const clock = new SimulatedClock("2026-10-23T08:00:00Z");
   const provider = new ScriptedProvider([{ text: "Noted." }], clock);
   const stt = new FakeStt({ clock, scripts: () => ({ final: "" }), finalDelayMs: 300 });
   const tts = new FakeTts({ clock, firstChunkLatencyMs: 200, chunkMs: 100, chunks: 2 });
 
   beforeAll(async () => {
-    const home = mkdtempSync(join(tmpdir(), "fr-effort-offset-"));
+    home = mkdtempSync(join(tmpdir(), "fr-effort-offset-"));
     const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+    mkdirSync(dirs.config, { recursive: true });
+    writeFileSync(
+      join(dirs.config, "models.json"),
+      JSON.stringify({
+        version: 1,
+        updated_at: "2026-10-10T00:00:00.000Z",
+        ladder: {},
+        efforts: { voice_chat: "medium" },
+        history: [],
+      }),
+    );
     rt = await composeRuntime({
       env: { FORERUNNER_HOME: home },
       dirs,
@@ -200,11 +231,13 @@ describe("chat, voice and planning read the project's slider per turn and per se
         });
         expect(r.status).toBe(200);
       });
-      expect(efforts.every((e) => e === EXPECTED.text_chat[offset])).toBe(true);
+      for (const e of efforts) expect(e).toBe(EXPECTED.text_chat[offset]);
     }
   });
 
-  it("a voice turn runs at voice_chat's effort shifted by the slider, from the next turn", async () => {
+  it("a voice turn runs at voice_chat's effort (not text_chat's) shifted by the slider, held at the agent's max_effort, from the next turn", async () => {
+    expect(rt.modelConfig().modeDefaults.voice_chat.effort).toBe("medium");
+    expect(rt.modelConfig().modeDefaults.text_chat.effort).toBe("low");
     const started = await api.post("/voice/sessions", { projectId, language: "en" });
     expect(started.status).toBe(201);
     const sessionId = str((await json(started)).id);
@@ -217,7 +250,8 @@ describe("chat, voice and planning read the project's slider per turn and per se
         );
         expect(r.status).toBe(200);
       });
-      expect(efforts.every((e) => e === EXPECTED.voice_chat[offset])).toBe(true);
+      expect(efforts.length).toBeGreaterThanOrEqual(1);
+      for (const e of efforts) expect(e).toBe(ADOPTED_VOICE[offset]);
     }
     expect((await api.post(`/voice/sessions/${sessionId}/stop`, {})).status).toBeLessThan(300);
   });
@@ -232,6 +266,32 @@ describe("chat, voice and planning read the project's slider per turn and per se
         expect(r.status).not.toBe(202);
       });
       expect(efforts).toEqual([EXPECTED.planning[offset]]);
+    }
+  });
+
+  it("the planning effort is held at the project manager's max_effort", async () => {
+    // The registry's project manager allows max, so the daemon never binds; a lower cap does.
+    const service = new IntakeService({
+      store: rt.store,
+      clock,
+      tokens: rt.tokens,
+      driver: rt.driver,
+      provider,
+      pricing: flatPricing,
+      billingSourceId: rt.billingSourceId,
+      modelConfig: rt.modelConfig,
+      maxEffort: "high",
+      human: rt.human,
+      agent: rt.agent,
+      gitHost: new MemoryGitHost(),
+      projectsRoot: rt.data.assets.projectsRoot,
+      worktreeRoot: join(home, "wt"),
+    });
+    const capped: Record<EffortOffset, EffortLevel> = { [-1]: "medium", 0: "high", 1: "high" };
+    for (const offset of OFFSETS) {
+      await api.slide(projectId, offset);
+      const efforts = await effortsOf(() => service.propose(projectId).catch(() => undefined));
+      expect(efforts).toEqual([capped[offset]]);
     }
   });
 });
@@ -320,6 +380,12 @@ describe("work sessions read the project's slider per run", () => {
     }
   }, 120_000);
 
+  it("the composition hands each specialist its registry max_effort as the cap", () => {
+    expect(rt.specialists("researcher")?.maxEffort).toBe("high");
+    expect(rt.specialists("coder")?.maxEffort).toBe("high");
+    expect(rt.specialists("science-evaluator")?.maxEffort).toBe("max");
+  });
+
   it("the Settings rows carry the slider per project as the modes read it", async () => {
     const card = await json(await api.post("/projects", { name: "Rows", goal: "Show the slider" }));
     const projectId = str(card.id);
@@ -332,5 +398,135 @@ describe("work sessions read the project's slider per run", () => {
     expect(await row()).toMatchObject({ value: 1 });
     await api.slide(projectId, -1);
     expect(await row()).toMatchObject({ value: -1 });
+  });
+});
+
+/** A specialist the executor runs; the effort fields are what this block varies. */
+const specOf = (name: string, maxEffort: EffortLevel | undefined): SpecialistSpec => ({
+  name,
+  prompt: `You are the ${name}.`,
+  promptVersion: `${name}@1.0.0+abc12345`,
+  defaultTier: "sonnet",
+  defaultEffort: "medium",
+  ...(maxEffort ? { maxEffort } : {}),
+  allowedTools: ["echo"],
+  allowedDomains: [],
+  maxBudgetUsdMicro: 2_000_000,
+  maxTurns: 10,
+  timeoutMs: 60_000,
+});
+
+describe("the executor per run: researcher, tier-2 coder and the registry's max_effort", () => {
+  /**
+   * One executor and one project; the slider is moved on the project row between runs (no new
+   * executor), and each run's Run row records the effort it ran at.
+   */
+  async function world(specs: SpecialistSpec[]) {
+    const h = harness();
+    const clock = h.clock;
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    const human = (await store.human.insert({ name: "J", email: "j@x.test" })).id;
+    const agent = (await store.agent.insert({ name: "Alice", owner_human_id: human })).id;
+    const project = (await store.project.insert({ name: "P", settings: {} })).id;
+    const session = await store.session.insert({
+      agent_id: agent,
+      project_id: project,
+      trigger: "manual",
+      status: "running",
+      runner: "pc",
+    });
+    const exec = new LoopTaskExecutor({
+      store,
+      clock,
+      tokens: h.tokens,
+      driver: new LoopAgentDriver({ hooks: h.hooks, kill: h.kill, clock }),
+      provider: new ScriptedProvider([{ text: "Done." }], clock),
+      pricing: flatPricing,
+      tools: registry(),
+      billingSourceId: "bs",
+      specialists: (n) => specs.find((s) => s.name === n),
+    });
+    const slide = async (offset: EffortOffset) => {
+      const row = await store.project.mustGet(project);
+      await store.project.update(project, row.version, {
+        settings: { ...row.settings, speed_quality_offset: offset },
+      });
+    };
+    let n = 0;
+    const run = async (specialist: string, riskTier: 0 | 1 | 2 | 3): Promise<string> => {
+      n += 1;
+      const task = await store.task.insert({
+        project_id: project,
+        title: `Task ${n}`,
+        outcome: "done",
+        acceptance_criteria: ["works"],
+        risk_tier: riskTier,
+        status: "in_progress",
+        budget_usd_micro: 500_000,
+        est_cost_usd_micro: 300_000,
+        reason: "seed",
+      });
+      const token = issue(h, {
+        agentId: agent,
+        ownerHumanId: human,
+        projectId: project,
+        allowedTools: ["echo"],
+        budgetUsdMicro: 5_000_000,
+        sessionId: session.id,
+      });
+      const res = await exec.execute({
+        task,
+        session,
+        token,
+        budget: new SessionBudget({
+          sessionId: session.id,
+          budgetUsdMicro: 5_000_000,
+          stepCap: 100,
+          deadlineMs: clock.now() + 3_600_000,
+          reserveShare: 0.2,
+        }),
+        item: { taskId: task.id, title: task.title, specialist, estimateUsdMicro: 300_000 },
+        signal: new AbortController().signal,
+      });
+      expect(res.outcome).toBe("done");
+      const runs = await store.run.forTask(task.id);
+      expect(runs).toHaveLength(1);
+      return runs[0]?.effort ?? "";
+    };
+    return { store, slide, run };
+  }
+
+  it("a researcher runs at researcher's effort shifted by the slider, held at its max_effort", async () => {
+    // The registry's researcher: default high, max_effort high; and one allowed to go higher.
+    const w = await world([specOf("researcher", "high")]);
+    const capped: Record<EffortOffset, string> = { [-1]: "medium", 0: "high", 1: "high" };
+    for (const offset of OFFSETS) {
+      await w.slide(offset);
+      expect(await w.run("researcher", 1)).toBe(capped[offset]);
+    }
+    await w.store.close();
+    const free = await world([specOf("researcher", "max")]);
+    const shifted: Record<EffortOffset, string> = { [-1]: "medium", 0: "high", 1: "xhigh" };
+    for (const offset of OFFSETS) {
+      await free.slide(offset);
+      expect(await free.run("researcher", 1)).toBe(shifted[offset]);
+    }
+    await free.store.close();
+  });
+
+  it("a tier-2 coder starts at high, takes the slider and stops at its max_effort; a tier-1 coder moves freely", async () => {
+    const w = await world([specOf("coder", "high")]);
+    const tier2: Record<EffortOffset, string> = { [-1]: "medium", 0: "high", 1: "high" };
+    for (const offset of OFFSETS) {
+      await w.slide(offset);
+      expect(await w.run("coder", 2)).toBe(tier2[offset]);
+      expect(await w.run("coder", 1)).toBe(EXPECTED.coder[offset]);
+    }
+    await w.store.close();
+    // Without a cap (a spec built outside the registry) the tier-2 coder reaches xhigh.
+    const free = await world([specOf("coder", undefined)]);
+    await free.slide(1);
+    expect(await free.run("coder", 2)).toBe("xhigh");
+    await free.store.close();
   });
 });

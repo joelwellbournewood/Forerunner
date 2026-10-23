@@ -890,6 +890,7 @@ export function specialistSpecFrom(
       promptVersion: d.promptVersion,
       defaultTier: d.default_tier,
       defaultEffort: d.default_effort,
+      maxEffort: d.max_effort,
       allowedTools,
       allowedDomains: extra.length
         ? [...new Set([...d.allowed_domains, ...extra])]
@@ -1836,6 +1837,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     billingSourceId,
     modelConfig: () => modelConfig.get(),
     prompt: registry.principals.get("project-manager")?.prompt,
+    maxEffort: registry.principals.get("project-manager")?.max_effort,
     human: { id: human.id },
     agent: { id: agent.id, name: agent.name },
     gitHost,
@@ -2423,6 +2425,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         hooksDriver: driver,
         startSession: (req) => scheduler.request(req),
         prompt: registry.principals.get("conversation-agent")?.prompt,
+        maxEffort: registry.principals.get("conversation-agent")?.max_effort,
         modelConfig: () => modelConfig.get(),
         commands,
         // Spec J.1, O.2 (ADR 0061): the principal's lessons and the project's doc sections

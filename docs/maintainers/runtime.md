@@ -2018,12 +2018,22 @@ a restart. `LoopTaskExecutor` reads the row it loads per run (`coder`, `research
 turn the voice bridge sends, takes `voice_chat`'s effort, a typed one `text_chat`'s; both on the
 chat rung the composition prices), `IntakeService.propose` per planning session (`planning`),
 and the critic per review (`critic_t1`, `critic_t23`, `critic.md`). The rung never moves with
-the slider; only the effort does. `GET /settings` lists `project.speed_quality_offset` per
+the slider; only the effort does. Every consumer holds the shifted effort at the registry
+entry's `max_effort` (`capEffort`), as `adding-a-specialist.md` promises: the executor at the
+specialist's (`SpecialistSpec.maxEffort`, which the composition fills from `max_effort`; the
+shipped researcher and coder cap at high, so the researcher at quality stays at high and a
+tier-2 coder never reaches xhigh), the conversation agent at `conversation-agent`'s
+(`ConversationDeps.maxEffort`, medium), the intake at `project-manager`'s
+(`IntakeDeps.maxEffort`, max) and the critic at its own (`critic.md`). `GET /settings` lists `project.speed_quality_offset` per
 project with the value the modes read. `effort-offset.test.ts` proves it on the composed daemon:
 each mode at -1, 0 and +1 moved through `POST /commands/execute` as the Settings screen does,
 chat by `/chat`, voice by a voice session's text turn, planning by `/projects/:id/intake`, the
 coder and the tier-1 critic by a work session's Run rows, each move taking effect on the next
-turn, session or run.
+turn, session or run. Its chat and voice daemon runs on an adopted `models.json` where
+`voice_chat` (medium) differs from `text_chat` (low), so a voice turn on the chat default
+fails; an executor block runs a researcher and a tier-2 coder at each position on one
+executor (the row moved between runs) and checks the `max_effort` cap, and an intake with a
+lower cap checks the planning one.
 
 ### Briefs (`src/brief.ts`)
 

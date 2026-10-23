@@ -15,9 +15,15 @@ import type {
   MemoryPort,
   ParsedIntent,
 } from "../loop/ports.ts";
-import { MODE_DEFAULTS, modeEffort, modelIdFor, speedQualityOffsetOf } from "../models/ladder.ts";
+import {
+  capEffort,
+  MODE_DEFAULTS,
+  modeEffort,
+  modelIdFor,
+  speedQualityOffsetOf,
+} from "../models/ladder.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
-import type { ModelProvider } from "../provider/types.ts";
+import type { EffortLevel, ModelProvider } from "../provider/types.ts";
 import { FORWARDED_SENTENCE, type HeardSource, heardMessageBody } from "../session/live-chat.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { isYes } from "../wiring/state-ports.ts";
@@ -46,6 +52,11 @@ export interface ConversationDeps {
   startSession?: (req: StartRequest & { budgetUsdMicro?: number }) => Promise<unknown>;
   /** Role prompt for the conversation agent (registry); a built-in default otherwise. */
   prompt?: string;
+  /**
+   * The conversation agent's `max_effort` from the registry: a turn's effort (the mode default
+   * shifted by the project's speed-versus-quality slider) is held at it. Unset means no cap.
+   */
+  maxEffort?: EffortLevel;
   /** Per-conversation-turn budget. Default USD 0.05. */
   turnBudgetUsdMicro?: number;
   modelId?: string;
@@ -328,10 +339,16 @@ export class ConversationAgent {
     // chat mode's, shifted by the active project's speed-versus-quality slider as its row
     // reads now, so a slider change applies to the next turn. The rung stays the chat one the
     // composition prices the turn at.
-    const effort = modeEffort(
-      turn.source === "voice" ? "voice_chat" : "text_chat",
-      speedQualityOffsetOf(projectId ? (await store.project.get(projectId))?.settings : undefined),
-      modelConfig?.modeDefaults,
+    // Held at the registry's `max_effort` for the conversation agent.
+    const effort = capEffort(
+      modeEffort(
+        turn.source === "voice" ? "voice_chat" : "text_chat",
+        speedQualityOffsetOf(
+          projectId ? (await store.project.get(projectId))?.settings : undefined,
+        ),
+        modelConfig?.modeDefaults,
+      ),
+      this.deps.maxEffort,
     );
     const budget = new SessionBudget({
       sessionId,

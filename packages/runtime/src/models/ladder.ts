@@ -121,6 +121,15 @@ export function effortForTask(
   return effortWithOffset(base, offset);
 }
 
+/**
+ * An effort held at a cap (the registry entry's `max_effort`): the tier rule and the project's
+ * slider raise effort, never above what the specialist declares. No cap leaves it unchanged.
+ */
+export function capEffort(effort: EffortLevel, max: EffortLevel | undefined): EffortLevel {
+  if (!max) return effort;
+  return EFFORTS.indexOf(effort) > EFFORTS.indexOf(max) ? max : effort;
+}
+
 /** Starting rung for a task: the specialist's default; tier 3 starts one rung higher when allowed. */
 export function startingTier(
   specialistDefault: ModelTier,

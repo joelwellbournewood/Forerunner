@@ -42,7 +42,13 @@ import {
   fastModeAuditLine,
   fastModeOf,
 } from "../models/fast-mode.ts";
-import { effortForTask, modelIdFor, speedQualityOffsetOf, startingTier } from "../models/ladder.ts";
+import {
+  capEffort,
+  effortForTask,
+  modelIdFor,
+  speedQualityOffsetOf,
+  startingTier,
+} from "../models/ladder.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
 import type { EffortLevel, ModelProvider, ModelTier, Usage } from "../provider/types.ts";
 import { RUN_COMMAND_TOOL, type SpecialistDriver, TOOL_UNMAPPED_AUDIT } from "../registry/tools.ts";
@@ -79,6 +85,11 @@ export interface SpecialistSpec {
   promptVersion: string;
   defaultTier: ModelTier;
   defaultEffort: EffortLevel;
+  /**
+   * The registry entry's `max_effort`: the run's effort (the mode default, the tier-2+ coder
+   * rule, the project's speed-versus-quality slider) is held at it. Unset means no cap.
+   */
+  maxEffort?: EffortLevel;
   allowedTools: string[];
   allowedDomains: string[];
   maxBudgetUsdMicro: number;
@@ -407,7 +418,9 @@ export class LoopTaskExecutor implements TaskExecutor {
     // The rung and the effort come from the tables in force (built-ins plus the adopted
     // models.json), so an adoption by the model watch changes the next run, not the next start.
     // The effort is shifted by the project's speed-versus-quality slider (spec D.16), read from
-    // the project row this run loaded, so a slider change applies to the next run.
+    // the project row this run loaded, so a slider change applies to the next run, and held at
+    // the specialist's `max_effort` from the registry (neither the tier rule nor the slider
+    // raises it past that, as the critic's own cap does).
     const modelConfig = this.deps.modelConfig?.();
     const model =
       choice.driver === "sdk"
@@ -425,11 +438,14 @@ export class LoopTaskExecutor implements TaskExecutor {
       pricing: this.deps.pricingTable?.() ?? BUILTIN_PRICING,
     });
     const runModel = fast.kind === "applied" ? fast.variant : model;
-    const effort = effortForTask(
-      spec.name === "coder" ? "coder" : spec.name === "researcher" ? "researcher" : "coder",
-      brief.riskTier,
-      speedQualityOffsetOf(project?.settings),
-      modelConfig?.modeDefaults,
+    const effort = capEffort(
+      effortForTask(
+        spec.name === "coder" ? "coder" : spec.name === "researcher" ? "researcher" : "coder",
+        brief.riskTier,
+        speedQualityOffsetOf(project?.settings),
+        modelConfig?.modeDefaults,
+      ),
+      spec.maxEffort,
     );
     // Context layer: the session's pipeline, and the proxy only when the session selected it and
     // the provider can route through it (the fake provider cannot, so headroom_used stays false).
