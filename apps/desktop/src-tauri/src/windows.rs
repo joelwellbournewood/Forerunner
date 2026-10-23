@@ -79,6 +79,9 @@ fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
     let script = initialization_script(injection, &origins);
     let nav_app = app.clone();
     let nav_origins = origins.clone();
+    let media_origins = origins.clone();
+    let page = crate::media::CurrentPage::default();
+    let loaded = page.clone();
     let window = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::default())
         .title("Forerunner")
         .inner_size(f64::from(DEFAULT_WIDTH), f64::from(DEFAULT_HEIGHT))
@@ -86,6 +89,15 @@ fn build_main(app: &AppHandle, injection: &Injection) -> tauri::Result<()> {
         .resizable(true)
         .visible(false)
         .initialization_script(script.as_str())
+        // The conversation panel's microphone (ADR 0064): allowed for the shell's own pages,
+        // denied elsewhere; WebKitGTK would deny it and WebView2 would prompt on every press.
+        .on_page_load(move |_, payload| loaded.set(payload.url()))
+        .on_permission_request(move |_, kind| {
+            let answer =
+                crate::media::permission_decision(kind, page.get().as_ref(), &media_origins);
+            log::info!("webview permission {kind}: {answer}");
+            answer
+        })
         .on_navigation(move |url| {
             if navigation_allowed(url, &nav_origins) {
                 return true;

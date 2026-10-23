@@ -17,6 +17,7 @@ mod hotkey;
 mod hotkey_shell;
 mod inject;
 mod install;
+mod media;
 mod restart;
 mod secret;
 mod sse;
