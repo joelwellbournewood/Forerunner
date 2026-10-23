@@ -396,7 +396,14 @@ describe("performanceView over seeded Run rows and turns", () => {
       riskTierFrom: 2,
     });
     expect(modeOf(v, "critic_t23")).toMatchObject({ riskEffort: "max", riskTierFrom: 3 });
-    for (const mode of ["voice_chat", "text_chat", "routing", "planning", "researcher", "critic_t1"])
+    for (const mode of [
+      "voice_chat",
+      "text_chat",
+      "routing",
+      "planning",
+      "researcher",
+      "critic_t1",
+    ])
       expect(modeOf(v, mode)).toMatchObject({ riskEffort: null, riskTierFrom: null });
     // The offset does not reach the executor, chat, voice or planning yet (D.16).
     for (const mode of ["coder", "text_chat", "voice_chat", "planning", "routing"]) {

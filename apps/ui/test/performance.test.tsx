@@ -80,9 +80,7 @@ describe("Performance view", () => {
     const coder = rows.find((r) => r.dataset.mode === "coder");
     if (!coder) throw new Error("no coder row");
     expect(within(coder).getByTestId("target-bar")).toHaveTextContent("by task");
-    expect(within(coder).getByTestId("effort")).toHaveTextContent(
-      "medium; high from risk tier 2",
-    );
+    expect(within(coder).getByTestId("effort")).toHaveTextContent("medium; high from risk tier 2");
     expect(screen.getByTestId("performance-window")).toHaveTextContent("last 7 days");
     expect(screen.getByTestId("performance-recent")).toHaveTextContent("chat");
     expect(screen.getByTestId("estimates-overall")).toHaveTextContent("21.5%");
