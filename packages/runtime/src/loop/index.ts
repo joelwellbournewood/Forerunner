@@ -5,5 +5,7 @@
  */
 export * from "./commands.ts";
 export * from "./critic.ts";
+/** Project docs (spec G.5): the scaffold at creation and the status update at session end. */
+export * from "./docs.ts";
 export * from "./memory.ts";
 export * from "./ports.ts";

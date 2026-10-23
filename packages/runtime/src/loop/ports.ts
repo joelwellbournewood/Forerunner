@@ -1,4 +1,4 @@
-import type { JsonObject, SessionRow, TaskRow } from "@forerunner/state";
+import type { JsonObject, ProjectRow, SessionRow, TaskRow } from "@forerunner/state";
 import type { ToolSpec } from "../agent/tools.ts";
 import type { SessionBudget } from "../enforcement/budget.ts";
 import type { SignedToken } from "../enforcement/token.ts";
@@ -112,11 +112,64 @@ export interface SessionReviewOutcome {
   costUsdMicro: number;
 }
 
+/**
+ * A lesson proposed for the shared store, as the critic reviews it (spec G.6): the proposal
+ * row's text, tags and confidence plus where it came from. Never the origin's private file.
+ */
+export interface PromotionCandidate {
+  /** The proposal row (shared scope, status `proposed`). */
+  id: string;
+  text: string;
+  tags: string[];
+  confidence: number;
+  originId: string | null;
+  originScope: string | null;
+  originProjectId: string | null;
+}
+
+export interface PromotionReviewRequest {
+  lesson: PromotionCandidate;
+  /** The session token: the critic's own token copies its ids and never exceeds it. */
+  token: SignedToken;
+  budget: SessionBudget;
+  /** The session's project settings (ceiling, effort offset); null for none. */
+  projectSettings?: JsonObject | null;
+  signal?: AbortSignal;
+}
+
+export interface PromotionReviewOutcome {
+  reviewId: string | null;
+  verdict: ReviewVerdictKind;
+  grade: number;
+  confidence: number;
+  summary: string;
+  /** False when the review run did not complete (limit, provider failure): nothing is decided. */
+  completed: boolean;
+  costUsdMicro: number;
+}
+
+export interface PromotionResolution {
+  /** `pending` when the review did not complete or accepted without a persisted review row. */
+  status: "promoted" | "rejected" | "pending";
+  /** Offers filed for other projects of the same human (one approval request each). */
+  offers: { projectId: string; requestId: string }[];
+}
+
+/** Proposals the critic reviews at one session's end; the rest wait for the next (spec G.6). */
+export const MAX_PROMOTION_REVIEWS_PER_SESSION = 5;
+/** Cap of one promotion review run; the session token's budget is the hard upper bound. */
+export const PROMOTION_REVIEW_BUDGET_USD_MICRO = 250_000;
+
 export interface CriticPort {
   /** Review a finished task at its tier and apply the verdict through the state workflow. */
   reviewTask(req: TaskReviewRequest): Promise<TaskReviewOutcome>;
   /** The honesty, plan and cost check of a finished session (H.6). */
   reviewSession(req: SessionReviewRequest): Promise<SessionReviewOutcome>;
+  /**
+   * A tier-1 light read of a lesson proposed for the shared store (G.6). Optional: a critic
+   * without it leaves every proposal pending.
+   */
+  reviewPromotion?(req: PromotionReviewRequest): Promise<PromotionReviewOutcome>;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -161,11 +214,20 @@ export interface MemoryRecordResult {
   merged: number;
   /** Candidates not stored: the lint rules, or `injection` with the rules an instruction-shaped text matched. */
   rejected: { text: string; error: string; injection?: string[] }[];
+  /**
+   * Shared-store proposals (proposal row ids) for the recorded critic or shared lessons tagged
+   * `general` (spec G.6); a private lesson is proposed only by its human from the memory view.
+   */
+  proposed?: string[];
 }
 
 export interface MemoryPort {
   recall(req: MemoryRecallRequest): Promise<MemoryRecallResult>;
   record(req: MemoryRecordRequest): Promise<MemoryRecordResult>;
+  /** Proposals of this human's agents the critic has not decided yet (G.6). Optional. */
+  pendingPromotions?(): Promise<PromotionCandidate[]>;
+  /** Apply the critic's decision: promote and offer, reject, or leave pending. Optional. */
+  resolvePromotion?(id: string, review: PromotionReviewOutcome): Promise<PromotionResolution>;
 }
 
 /** Memory loaded per session stays under this many tokens unless the project says otherwise (ADR 0036). */
@@ -282,4 +344,61 @@ export interface ConversationCommands {
   undo(changeLogId: string | null, turn: CommandTurn): Promise<CommandResultView>;
   /** The active project the registry keeps for the human. */
   activeProject(humanId: string): Promise<string | null>;
+}
+
+// ---------------------------------------------------------------------------------------
+// Project docs (spec G.5: the PM keeps the standard doc set current)
+// ---------------------------------------------------------------------------------------
+
+/** The session's outcome as task titles, for the entry in `docs/status.md`. */
+export interface SessionStatusUpdate {
+  sessionId: string;
+  /** ISO-8601 UTC instant the session ended, from the Clock. */
+  endedAt: string;
+  done: string[];
+  inFlight: string[];
+  blocked: string[];
+  next: string[];
+  /** One line: the stop reason, the spend. */
+  note?: string;
+}
+
+/** Where the scaffold went: a branch and pull request of the repository, or the data dir. */
+export interface DocsScaffoldOutcome {
+  location: "repo" | "data_dir";
+  branch?: string;
+  prUrl?: string | null;
+  /** The directory the docs were written to (the data dir without a repository). */
+  dir?: string;
+  /** Repo-relative POSIX paths written, and the ones found and left alone. */
+  created: string[];
+  existing: string[];
+}
+
+export interface SessionStatusOutcome {
+  location: "repo" | "data_dir";
+  /** Repo-relative POSIX path of the doc (`docs/status.md`). */
+  path: string;
+  /** Repository: the branch the update was committed to and the pull request carrying it. */
+  branch?: string;
+  prUrl?: string | null;
+  dir?: string;
+  /** True when the doc did not exist and was scaffolded first. */
+  created: boolean;
+}
+
+export interface ProjectDocsPort {
+  /** Scaffold the missing docs of the standard set for a new project; never overwrites. */
+  scaffoldProject(project: ProjectRow): Promise<DocsScaffoldOutcome>;
+  /**
+   * Write the session's update into `docs/status.md`: on the session's pull request branch
+   * when it opened one (`prBranch`), else on a small PR of its own; without a repository
+   * under the project's data directory.
+   */
+  writeSessionStatus(input: {
+    project: ProjectRow;
+    session: SessionRow;
+    update: SessionStatusUpdate;
+    prBranch?: string | null;
+  }): Promise<SessionStatusOutcome>;
 }

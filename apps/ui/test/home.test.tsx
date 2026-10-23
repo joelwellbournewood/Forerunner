@@ -60,11 +60,13 @@ describe("Home", () => {
     );
     await user.click(within(dialog).getByTestId("create-project"));
     await waitFor(() => expect(postedCalls(harness, "/projects")).toHaveLength(1));
+    // A brief asks for the PM intake (spec A.2), so the proposal lands in the inbox.
     expect(postedCalls(harness, "/projects")[0]?.body).toEqual({
       name: "Gamma",
       goal: "Ship the thing",
       brief: "A longer brief",
       repos: ["https://example.test/org/gamma"],
+      intake: true,
     });
     await waitFor(() => expect(screen.getByTestId("active-project")).toHaveTextContent("Gamma"));
     expect(await screen.findByTestId("project-header")).toHaveTextContent("Gamma");

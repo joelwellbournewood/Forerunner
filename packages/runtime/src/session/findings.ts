@@ -204,16 +204,31 @@ function keyOf(r: HumanRequestRow): string | undefined {
 const ANSWERS_PAGE = 200;
 
 /**
- * The human's answered blocking approvals whose card has this key and is not applied yet,
- * newest first. Every request this file applies is `blocking`, which keeps the scan to the
- * sign-offs, the blocked-findings requests and the few other blocking approvals; the pages
- * run until the last one so an answer that sat behind a long run of later answers (a long
- * downtime of the daemon) is still found.
+ * The human's answered blocking approvals whose card has this key (or whose key the predicate
+ * accepts) and is not applied yet, newest first. Every request this file and
+ * `plan-approval.ts` apply is `blocking`, which keeps the scan to the sign-offs, the
+ * blocked-findings requests, the plan requests and the few other blocking approvals; the
+ * pages run until the last one so an answer that sat behind a long run of later answers (a
+ * long downtime of the daemon) is still found.
  */
-async function unappliedAnswers(
+export async function unappliedAnswers(
   store: StateStore,
   humanId: string,
-  key: string,
+  key: string | ((key: string | undefined) => boolean),
+): Promise<HumanRequestRow[]> {
+  const matches = typeof key === "string" ? (k: string) => k === key : (k: string) => key(k);
+  return unappliedBlockingAnswers(store, humanId, matches);
+}
+
+/**
+ * The same scan for every card key the predicate accepts (the intake's `intake:<project>`
+ * keys, `session/intake.ts`; the plan requests, `plan-approval.ts`), so every answer path pages
+ * the inbox the one way.
+ */
+export async function unappliedBlockingAnswers(
+  store: StateStore,
+  humanId: string,
+  matches: (key: string) => boolean,
 ): Promise<HumanRequestRow[]> {
   const found: HumanRequestRow[] = [];
   for (let offset = 0; ; offset += ANSWERS_PAGE) {
@@ -229,7 +244,8 @@ async function unappliedAnswers(
       },
     );
     for (const row of page) {
-      if (keyOf(row) !== key) continue;
+      const key = keyOf(row);
+      if (key === undefined || !matches(key)) continue;
       if ((row.change_card as JsonObject).applied_at) continue;
       found.push(row);
     }

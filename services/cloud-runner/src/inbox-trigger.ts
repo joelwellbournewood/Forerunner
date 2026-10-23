@@ -1,5 +1,10 @@
 import { type Clock, errorMessage, log } from "@forerunner/platform";
-import type { StartRequest } from "@forerunner/runtime";
+import {
+  approvedPlanIdOf,
+  isPlanRequest,
+  planAnswer,
+  type StartRequest,
+} from "@forerunner/runtime";
 import type { HumanRequestRow, MessageRow, StateStore } from "@forerunner/state";
 
 /**
@@ -14,7 +19,9 @@ import type { HumanRequestRow, MessageRow, StateStore } from "@forerunner/state"
  *    itself (checklist, re-checks between tasks), which is why a check waits while one runs;
  *  - a request a session filed (`session_id` set, `author_agent` the agent) that the human
  *    answered after `since`; a plan approval (`change_card.key` "plan:<session>") answered
- *    "approve" starts the session with `planApproved`, a rejected plan starts nothing.
+ *    "approve" starts the session with `planApproved` bound to the card's `plan_id` (the
+ *    runner runs the plan only while it is still that plan, ADR 0053; a card without the id
+ *    starts a plain session that proposes the plan again), a rejected plan starts nothing.
  *
  * Each item triggers at most once (the ids are remembered until the message is read or the
  * answer falls out of the look-back). When `shouldDefer` says a PC is online the items stay
@@ -24,9 +31,7 @@ import type { HumanRequestRow, MessageRow, StateStore } from "@forerunner/state"
  * the request, so a dropped firing never loses them. Nothing here runs the session: the
  * scheduler keeps one per agent.
  */
-export interface InboxStartRequest extends StartRequest {
-  planApproved?: boolean;
-}
+export type InboxStartRequest = StartRequest;
 
 /**
  * What became of a request: "started", "queued" and "deferred" are the scheduler's answers (it
@@ -63,21 +68,6 @@ export interface InboxTriggerStats {
 }
 
 export const DEFAULT_INBOX_LOOKBACK_MS = 24 * 60 * 60 * 1000;
-
-function planKeyOf(row: HumanRequestRow): string | null {
-  const key = row.change_card?.key;
-  return typeof key === "string" && key.startsWith("plan:") ? key : null;
-}
-
-function answerWord(row: HumanRequestRow): string {
-  const a = row.answer;
-  if (typeof a === "string") return a.trim().toLowerCase();
-  if (a && typeof a === "object" && !Array.isArray(a)) {
-    const option = (a as { option?: unknown }).option;
-    if (typeof option === "string") return option.trim().toLowerCase();
-  }
-  return "";
-}
 
 export class InboxTrigger {
   private readonly logger = log("cloud-runner:inbox");
@@ -191,7 +181,7 @@ export class InboxTrigger {
     this.logger.info("inbox trigger: asking for a session", {
       reason: req.reason,
       projectId: req.projectId ?? null,
-      planApproved: req.planApproved ?? false,
+      planApproved: req.planApproved ?? null,
     });
     const outcome = await this.deps.request(req);
     if (outcome === "skipped") {
@@ -213,13 +203,19 @@ export class InboxTrigger {
   }
 
   private requestFor(messages: MessageRow[], answers: HumanRequestRow[]): InboxStartRequest | null {
-    let planApproved = false;
+    // The newest approved plan's id binds the start (`answers` is newest first); an older
+    // approved plan in the same check is superseded by it and the runner, finding another
+    // plan, asks again. A card without a plan id starts the session unbound: it proposes again.
+    let planApproved: string | undefined;
     let rejectedPlans = 0;
     const useful: HumanRequestRow[] = [];
     for (const r of answers) {
-      if (planKeyOf(r)) {
-        if (answerWord(r) === "approve") {
-          planApproved = true;
+      if (isPlanRequest(r)) {
+        if (planAnswer(r.answer) === "approve") {
+          const id = approvedPlanIdOf(r);
+          if (id && planApproved === undefined) planApproved = id;
+          else if (id) this.logger.info("older approved plan superseded in this check", { id });
+          else this.logger.warn("approved plan names no plan id; proposing again", { id: r.id });
           useful.push(r);
         } else {
           rejectedPlans++;
@@ -246,7 +242,7 @@ export class InboxTrigger {
       ...(only ? { projectId: only } : {}),
       trigger: "message",
       reason: parts.join(", "),
-      ...(planApproved ? { planApproved: true } : {}),
+      ...(planApproved ? { planApproved } : {}),
     };
   }
 }

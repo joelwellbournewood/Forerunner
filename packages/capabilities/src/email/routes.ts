@@ -3,7 +3,9 @@
  * pause/resume, marker rotation and the command audit. The routes are described as a table and
  * mounted on any Hono-compatible app through a minimal structural interface, so this package
  * needs no dependency on hono; the orchestrator does `createEmailRoutes(deps, new Hono())` and
- * mounts the result. Every mutation is recorded as an audit row.
+ * mounts the result. Every mutation is recorded as an audit row, and so is every refusal of
+ * the owner check (an `email.settings` row with `allowed = false`), the way the policy records
+ * a blocked send; a refusal stands whether or not its row could be written.
  */
 import { type Clock, ForerunnerError, log } from "@forerunner/platform";
 import type { AuditLogRepo, JsonObject } from "@forerunner/state";
@@ -47,17 +49,26 @@ export interface EmailRouteDeps {
   commandAudit?: (agentId: string, opts: { limit?: number }) => Promise<unknown[]>;
   /** Settings changes are audited when a repo is given. */
   audit?: AuditLogRepo;
-  /** Human id behind a request (from the daemon's auth), recorded as the author. */
+  /**
+   * Human id behind a request (from the daemon's auth), recorded as the author. A mount that
+   * passes it identifies humans and must pass `identity` too; see there.
+   */
   humanFor?: (c: EmailRouteContext) => string | undefined;
   /**
    * Who owns an agent (`lookup(agentId).humanId`). With `humanFor` set, every route under
-   * `/agents/:agentId` refuses (403) a request whose signed-in human is not the agent's
-   * owner, so on a shared state one human cannot point another human's agent at their own
-   * address. A daemon that identifies humans must pass it; without it the routes cannot tell
-   * the humans apart and say so in the log.
+   * `/agents/:agentId` refuses (403, `tool_not_allowed`, `reason: "not_owner"`) a request
+   * whose signed-in human is not the agent's owner, so on a shared state one human cannot
+   * point another human's agent at their own address. A daemon that identifies humans must
+   * pass it: a mount with `humanFor` and no `identity` cannot tell the humans apart, so it
+   * fails closed and refuses (403, `reason: "identity_port_missing"`) every request under
+   * `/agents/:agentId`, logging the misconfiguration once at construction. Only a mount that
+   * identifies nobody (no `humanFor`: a single-user daemon) applies no owner check.
    */
   identity?: Pick<IdentityPort, "lookup">;
 }
+
+/** Why the owner check refused a request; `denied_reason` of the audit row and `details.reason`. */
+export type EmailOwnerRefusal = "identity_port_missing" | "not_owner";
 
 export function errorStatus(e: ForerunnerError): number {
   switch (e.code) {
@@ -93,30 +104,97 @@ function intQuery(c: EmailRouteContext, name: string, fallback: number, max: num
 
 export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
   if (deps.humanFor && !deps.identity) {
-    logger.warn(
-      "email routes identify the human but have no identity port: a signed-in human is not checked against the agent's owner",
+    logger.error(
+      "email routes identify the human but have no identity port: a signed-in human cannot be checked against the agent's owner, so every request under /agents/:agentId is refused until the mount passes `identity`",
     );
   }
-  /** The signed-in human must own the agent; the check is skipped only when nobody is signed in. */
-  const assertOwner = async (c: EmailRouteContext, agentId: string): Promise<void> => {
-    if (!deps.humanFor || !deps.identity) return;
+  /**
+   * An owner-check refusal is an audit row with allowed = false, like a blocked send, with the
+   * same JSON result shape (`{ status, reason }`) so a reader that parses `result_summary`
+   * never throws on it. The refusal stands whatever the audit store does: a row that cannot
+   * be written must not turn the 403 into a 500 carrying the store's message, so the failure
+   * is one warn line naming the agent, the action and the reason instead.
+   */
+  const recordRefusal = async (
+    c: EmailRouteContext,
+    agentId: string,
+    action: string,
+    reason: EmailOwnerRefusal,
+  ): Promise<void> => {
+    if (!deps.audit) return;
+    const human = deps.humanFor?.(c) ?? null;
+    try {
+      await deps.audit.append({
+        tool: EMAIL_SETTINGS_TOOL,
+        allowed: false,
+        denied_reason: reason,
+        agent_id: agentId,
+        human_id: human,
+        input_summary: JSON.stringify({ action, refused: reason }),
+        result_summary: JSON.stringify({ status: "refused", reason }),
+        cost_usd_micro: 0,
+        occurred_at: deps.clock.nowIso(),
+        author_human: human,
+      });
+    } catch (e) {
+      logger.warn("owner-check refusal not audited", {
+        agentId,
+        action,
+        reason,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+  /** Audits the refusal and returns the error to throw (`throw await refusal(...)`). */
+  const refusal = async (
+    c: EmailRouteContext,
+    agentId: string,
+    action: string,
+    reason: EmailOwnerRefusal,
+    message: string,
+  ): Promise<ForerunnerError> => {
+    await recordRefusal(c, agentId, action, reason);
+    return new ForerunnerError("tool_not_allowed", message, { details: { agentId, reason } });
+  };
+  /**
+   * The signed-in human must own the agent. A mount that identifies humans (`humanFor`) but
+   * cannot resolve owners (no `identity`) fails closed; only a mount that identifies nobody
+   * skips the check.
+   */
+  const assertOwner = async (
+    c: EmailRouteContext,
+    agentId: string,
+    action: string,
+  ): Promise<void> => {
+    if (!deps.humanFor) return;
+    if (!deps.identity) {
+      throw await refusal(
+        c,
+        agentId,
+        action,
+        "identity_port_missing",
+        "the email routes identify the signed-in human but were mounted without an identity port, so the agent's owner cannot be checked; the request is refused",
+      );
+    }
     const human = deps.humanFor(c);
     const owner = await deps.identity.lookup(agentId).then(
       (i) => i.humanId,
       () => undefined,
     );
     if (human === undefined || owner === undefined || owner !== human) {
-      throw new ForerunnerError(
-        "tool_not_allowed",
+      throw await refusal(
+        c,
+        agentId,
+        action,
+        "not_owner",
         "the signed-in human does not own this agent; its email settings are not theirs to read or change",
-        { details: { agentId } },
       );
     }
   };
-  const agentOf = async (c: EmailRouteContext): Promise<string> => {
+  const agentOf = async (c: EmailRouteContext, action: string): Promise<string> => {
     const id = c.req.param("agentId");
     if (!id) throw new ForerunnerError("validation", "agentId missing");
-    await assertOwner(c, id);
+    await assertOwner(c, id, action);
     return id;
   };
   const recordChange = async (
@@ -152,13 +230,15 @@ export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
     {
       method: "GET",
       path: "/agents/:agentId/email/settings",
-      handler: wrap(async (c) => c.json(await deps.settings.get(await agentOf(c)))),
+      handler: wrap(async (c) =>
+        c.json(await deps.settings.get(await agentOf(c, "read_settings"))),
+      ),
     },
     {
       method: "PUT",
       path: "/agents/:agentId/email/settings",
       handler: wrap(async (c) => {
-        const agentId = await agentOf(c);
+        const agentId = await agentOf(c, "update");
         const body = (await c.req.json()) as AgentEmailConfigPatch | null;
         if (!body || typeof body !== "object")
           throw new ForerunnerError("validation", "body must be an object");
@@ -182,7 +262,7 @@ export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
       method: "GET",
       path: "/agents/:agentId/email/sent",
       handler: wrap(async (c) => {
-        const agentId = await agentOf(c);
+        const agentId = await agentOf(c, "read_sent");
         const limit = intQuery(c, "limit", 50, 500);
         const since =
           c.req.query("since") ??
@@ -196,7 +276,7 @@ export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
       method: "POST",
       path: "/agents/:agentId/email/pause",
       handler: wrap(async (c) => {
-        const agentId = await agentOf(c);
+        const agentId = await agentOf(c, "pause");
         const next = await deps.settings.setPaused(agentId, true, {
           authorHuman: deps.humanFor?.(c) ?? null,
         });
@@ -208,7 +288,7 @@ export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
       method: "POST",
       path: "/agents/:agentId/email/resume",
       handler: wrap(async (c) => {
-        const agentId = await agentOf(c);
+        const agentId = await agentOf(c, "resume");
         const next = await deps.settings.setPaused(agentId, false, {
           authorHuman: deps.humanFor?.(c) ?? null,
         });
@@ -220,7 +300,7 @@ export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
       method: "POST",
       path: "/agents/:agentId/email/rotate-marker",
       handler: wrap(async (c) => {
-        const agentId = await agentOf(c);
+        const agentId = await agentOf(c, "rotate_marker");
         const marker = await deps.settings.rotateMarker(agentId, {
           authorHuman: deps.humanFor?.(c) ?? null,
         });
@@ -232,7 +312,7 @@ export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
       method: "GET",
       path: "/agents/:agentId/email/commands",
       handler: wrap(async (c) => {
-        const agentId = await agentOf(c);
+        const agentId = await agentOf(c, "read_commands");
         const limit = intQuery(c, "limit", 50, 500);
         const rows = deps.commandAudit ? await deps.commandAudit(agentId, { limit }) : [];
         return c.json({ rows });

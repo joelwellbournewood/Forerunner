@@ -46,10 +46,12 @@ describe.skipIf(!PG)(
         );
 
         const forward = await migrate(db, { clock });
-        expect(forward.applied).toEqual([2]);
-        expect(await appliedVersions(db)).toEqual([1, 2]);
+        // Every shipped migration applies on a v1 database: 0002 (headroom), 0003 (sources),
+        // 0004 (shared secrets).
+        expect(forward.applied).toEqual([2, 3, 4]);
+        expect(await appliedVersions(db)).toEqual([1, 2, 3, 4]);
         // Idempotent: ADD COLUMN IF NOT EXISTS makes a re-run of the statements harmless too.
-        expect(await migrate(db, { clock })).toEqual({ applied: [], version: 2 });
+        expect(await migrate(db, { clock })).toEqual({ applied: [], version: 4 });
 
         const repos = createRepos(db, clock);
         const run = await repos.run.mustGet("r1");

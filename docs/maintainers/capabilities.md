@@ -20,7 +20,12 @@ with their milestone.
   (bounded by `maxRateLimitWaitSec`); 5xx retries with backoff; 401/403/404/405/409/422 map to
   `provider_auth`, `tool_not_allowed`, `not_found` and `validation` codes. A merge that GitHub
   refuses returns `{ merged: false, message }` instead of throwing so the caller can open a
-  human request.
+  human request. `listRepos({ org })`, `listRepos({ user })` (a user's public repositories)
+  and `listRepos()` (every repository the token is affiliated with) follow the `Link:
+  rel="next"` header page by page up to `MAX_LIST_PAGES` (100), `pageSize` items per page
+  (1 to 100, default 100; `nextPageUrl` parses the header), so a source scan (spec A.4,
+  `packages/runtime/src/sources`) sees an organisation whole; `github.test.ts` serves two
+  pages from its stub.
 - `GitOps` (`git.ts`) runs local git with argv arrays: clone, fetch, branch, commit, rebase onto
   the base before a PR (conflicts are reported by file and the rebase aborted, leaving the tree
   clean), push with `--force-with-lease` only when asked and never on the default branch,

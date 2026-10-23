@@ -1,4 +1,5 @@
 import { SimulatedClock } from "@forerunner/platform";
+import { planIdOf } from "@forerunner/runtime";
 import { type AgentRow, openStore, type StateStore } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type InboxStartRequest, InboxTrigger } from "../src/inbox-trigger.ts";
@@ -8,8 +9,9 @@ import { flush, type Seed, seedWorld } from "./helpers.ts";
  * Inbox triggers on an in-memory store: a peer's message or the human's answer to a session's
  * question asks the scheduler for one "message" session, each item at most once; the agent's
  * own notes, read messages, items from before the runner started, the runner's own unlock
- * challenges and rejected plans never do; nothing is checked while a session runs; a PC that
- * is online keeps the items (ADR 0033) until it is gone.
+ * challenges and rejected plans never do; an approved plan binds the start to the plan the
+ * human saw (`planApproved` = the card's `plan_id`, ADR 0053); nothing is checked while a
+ * session runs; a PC that is online keeps the items (ADR 0033) until it is gone.
  */
 let store: StateStore;
 let clock: SimulatedClock;
@@ -165,7 +167,7 @@ describe("inbox triggers", () => {
     expect(requests).toHaveLength(1);
   });
 
-  it("an answered session question triggers; an approved plan carries planApproved; a rejected plan and the runner's unlock challenge do not", async () => {
+  it("an answered session question triggers; an approved plan carries its plan id as planApproved; a rejected plan and the runner's unlock challenge do not", async () => {
     const t = trigger();
     await clock.advance(1_000);
     const question = await sessionRequest();
@@ -178,24 +180,45 @@ describe("inbox triggers", () => {
     expect(requests[0]?.planApproved).toBeUndefined();
     expect(await t.check()).toBeNull();
 
+    const planId = planIdOf("s1", [{ taskId: "t1" }, { taskId: "t2" }]);
     const plan = await sessionRequest({
       kind: "approval",
       why: "Assisted mode: approve this session plan before work starts.",
       options: ["approve", "reject"],
-      change_card: { key: "plan:s1", plan: [] },
+      change_card: { key: "plan:s1", plan_id: planId, plan: { items: [] } },
     });
     await answer(plan.id, "approve");
-    expect(await t.check()).toMatchObject({ planApproved: true, reason: "1 answered request" });
+    // Bound to the plan the human saw, never a bare "approved": the runner runs it only while
+    // the plan is still that plan.
+    expect(await t.check()).toMatchObject({
+      planApproved: planId,
+      trigger: "message",
+      reason: "1 answered request",
+    });
     expect(requests).toHaveLength(2);
+    expect(requests[1]?.planApproved).toBe(planId);
 
     const rejected = await sessionRequest({
       kind: "approval",
       options: ["approve", "reject"],
-      change_card: { key: "plan:s2", plan: [] },
+      change_card: { key: "plan:s2", plan_id: planIdOf("s2", []), plan: { items: [] } },
     });
     await answer(rejected.id, "reject");
     expect(await t.check()).toBeNull();
     expect(requests).toHaveLength(2);
+
+    // A plan card without the plan's id (an earlier build's request) starts a plain session:
+    // the runner proposes the plan again rather than running it as approved.
+    const unbound = await sessionRequest({
+      kind: "approval",
+      options: ["approve", "reject"],
+      change_card: { key: "plan:s3", plan: [] },
+    });
+    await answer(unbound.id, { option: "approve" });
+    const plain = await t.check();
+    expect(plain).toMatchObject({ trigger: "message", reason: "1 answered request" });
+    expect(plain?.planApproved).toBeUndefined();
+    expect(requests).toHaveLength(3);
 
     // The runner's own unlock challenge (no session) and an answer to an open question of
     // another agent never start a session here.
@@ -214,7 +237,35 @@ describe("inbox triggers", () => {
     const peersQuestion = await sessionRequest({ author_agent: peer.id });
     await answer(peersQuestion.id, "sqlite");
     expect(await t.check()).toBeNull();
-    expect(t.stats.triggered).toBe(2);
+    expect(t.stats.triggered).toBe(3);
+  });
+
+  it("two approved plans in one check: the newest binds the start, the older is superseded", async () => {
+    const t = trigger();
+    await clock.advance(1_000);
+    const older = await sessionRequest({
+      kind: "approval",
+      options: ["approve", "reject"],
+      change_card: { key: "plan:s1", plan_id: planIdOf("s1", [{ taskId: "a" }]), plan: {} },
+    });
+    await answer(older.id, "approve");
+    await clock.advance(1_000);
+    const newer = await sessionRequest({
+      kind: "approval",
+      options: ["approve", "reject"],
+      change_card: {
+        key: "plan:s2",
+        plan_id: planIdOf("s2", [{ taskId: "a" }, { taskId: "b" }]),
+        plan: {},
+      },
+    });
+    await answer(newer.id, "approve");
+    expect(await t.check()).toMatchObject({
+      planApproved: planIdOf("s2", [{ taskId: "a" }, { taskId: "b" }]),
+      reason: "2 answered requests",
+    });
+    expect(await t.check()).toBeNull();
+    expect(requests).toHaveLength(1);
   });
 
   it("leaves the items to a PC that is online, backs off, and takes over once the PC is gone", async () => {

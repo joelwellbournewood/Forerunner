@@ -1,8 +1,9 @@
 # Agent email
 
 > Status: implemented in `packages/capabilities/src/email/` (phase 6). The orchestrator wires
-> the ports listed under "Ports to wire"; the cloud runner's mail watcher calls
-> `Mailbox.watch` and `EmailCommandHandler.handle`.
+> the ports listed under "Ports to wire" and mounts the routes (ADR 0066); the cloud runner's
+> mail watcher calls `Mailbox.watch` and `EmailCommandHandler.handle`; the Settings ->
+> Capabilities -> Email page is `apps/ui/src/pages/EmailSettingsPage.tsx` (apps.md).
 
 ## Purpose
 
@@ -122,7 +123,9 @@ unparsable -> `unclear` reply) -> act:
   (`estimateUsdMicro(taskEstimate(text), estimateModel)`) against the per-email cap
   (`effectivePerEmailCapUsdMicro`: CHF 5 at the day's rate, or an explicit USD cap) ->
   `task_over_cap` reply, no session; else a `task` row (`ready`, budget = cap, estimate,
-  owner agent) and `StartCloudSessionPort.start({ capUsdMicro, autonomyLevel, trigger: "email" })`
+  owner agent, `risk_tier` from the runtime's `defaultRiskTier(project)`: 0 in small-project
+  mode, else 1, spec B.6 and ADR 0051, so an emailed task is reviewed like one created in the
+  app) and `StartCloudSessionPort.start({ capUsdMicro, autonomyLevel, trigger: "email" })`
   (T.7). The acknowledgement reply carries what was understood, the project, the estimate and
   cap in CHF, when it starts, the autonomy level and the session log link; `ackLatencyMs`
   (clock now minus `receivedAt`) is recorded in the audit row, and the tests assert it is under
@@ -182,9 +185,9 @@ runtime's own requests; `EmailPolicy.resolveApproval` for `send_email`, `new_rec
 | `auth.ts` | `AuthVerifier` port and the three verifiers |
 | `mailbox.ts` | `Mailbox` interface, `ImapSmtpMailbox` (imapflow + nodemailer, IDLE push with a polling fallback, credentials resolved per call through `MailboxSecrets`, library errors scrubbed), `defaultSmtpFactory` (implicit TLS when `secure`, else `requireTLS`: STARTTLS mandatory, never `ignoreTLS`), `loopbackSmtpFactory` (plaintext, 127.0.0.1/::1/localhost only, refuses any other host; the `TestMailbox` default), `TestMailbox` over the testenv server, `pollLoop`, `buildOutboundRaw` |
 | `locks.ts` | `KeyedLock`: in-process serialization per agent for the cap checks and command handling |
-| `commands.ts` | `EmailCommandGate`, `EmailCommandHandler` (`handle` once per message, `duplicate`, `error` row), `ModelCommandClassifier`, `parseYesNo`, `pickProject`, `effectivePerEmailCapUsdMicro`, `defaultTaskEstimate` |
+| `commands.ts` | `EmailCommandGate`, `EmailCommandHandler` (`handle` once per message, `duplicate`, `error` row), `emailCommandAudit` / `emailCommandRows` (the command audit for the UI as a reader over the audit log alone, `EmailCommandAuditRow`; the handler's `commandAudit` delegates to it, the daemon serves it without a handler), `ModelCommandClassifier`, `parseYesNo`, `pickProject`, `effectivePerEmailCapUsdMicro`, `defaultTaskEstimate` |
 | `tools.ts` | `emailTools`/`registerEmailTools`: `email_send` (`external_send`, high; routes through `EmailPolicy`), `email_list` and `email_read` (`read`, low; `untrusted` output, references only, the owner's command marker replaced by `[command marker]` through `hideCommandMarker`), `email_draft` (`routine_reversible`, low) |
-| `routes.ts` | `createEmailRoutes(deps, app)` / `emailRouteTable(deps)`; with `humanFor` and `identity` set, every route under `/agents/:agentId` refuses (403, `tool_not_allowed`) a signed-in human who is not the agent's owner |
+| `routes.ts` | `createEmailRoutes(deps, app)` / `emailRouteTable(deps)`; with `humanFor` and `identity` set, every route under `/agents/:agentId` refuses (403, `tool_not_allowed`, `details.reason: "not_owner"`) a signed-in human who is not the agent's owner; a mount with `humanFor` and no `identity` fails closed (403, `reason: "identity_port_missing"`, one error log line at construction); every refusal is an `email.settings` audit row with `allowed = false`, the reason as `denied_reason` (`EmailOwnerRefusal`) and `result_summary` `{ status: "refused", reason }`, and stands (403, one `warn` line) when that row cannot be written (ADR 0084); the daemon mounts the table with both (`packages/runtime/src/daemon/server.ts`, ADR 0066); the seven routes are in `DAEMON_ROUTES` and their views in `api-types.ts` |
 | `ports.ts` | production adapters (`StoreIdentityLookup`, `HumanRequestApprovalPort`, `StoreEventSink`) and fakes (`StaticIdentity`, `FakeApprovalPort`, `FixedRate`, `MemoryEventSink`, `FakeCloudSessions`) |
 | `money.ts` | micro-unit helpers mirroring `@forerunner/billing` (`chfToUsdMicro`, `formatUsdMicroAsChf`, `localDayKey`) |
 
@@ -232,8 +235,34 @@ const handler = new EmailCommandHandler({ gate, settings, identity, policy, appr
   mailboxFor /* marks handled messages seen; without it only the audit-row check stops repeats */ });
 registerEmailTools(registry, { policy, settings, identity, sentLog, mailboxFor, clock });
 app.route("/", createEmailRoutes({ settings, sentLog, clock, audit: store.auditLog,
-  commandAudit: (a, o) => handler.commandAudit(a, o), humanFor }, new Hono()));
+  commandAudit: (a, o) => handler.commandAudit(a, o), humanFor, identity }, new Hono()));
 ```
+
+The routes' owner check (S.15: the mode is the human's to pick, per agent, for their own
+agents): `humanFor` names the signed-in human of a request, `identity` resolves an agent's
+owner. Three mount shapes exist and the table decides at construction which one it is:
+
+| Mount | Owner check | Result |
+| --- | --- | --- |
+| neither `humanFor` nor `identity` | none (a single-user daemon identifies nobody) | every request served, `author_human` null |
+| `humanFor` and `identity` | the signed-in human must be `identity.lookup(agentId).humanId` | 403 `tool_not_allowed`, `reason: "not_owner"` otherwise (an unknown agent, nobody signed in and another human's agent alike) |
+| `humanFor` without `identity` | cannot be made | fails closed: 403 `tool_not_allowed`, `reason: "identity_port_missing"` on every route under `/agents/:agentId`, and one `error` log line at construction naming the fix |
+
+A refusal never changes a row and is itself audited: an `email.settings` row with `allowed =
+false`, `denied_reason` the reason (the stable code, the key to filter on), `input_summary`
+`{ action, refused }` (`read_settings`, `update`, `read_sent`, `pause`, `resume`,
+`rotate_marker`, `read_commands`), `result_summary` `{ status: "refused", reason }` (JSON,
+like the `{ status: "blocked", reason }` of a blocked send, so a reader that parses the
+column never throws on these rows), `human_id` and `author_human` the signed-in human,
+`agent_id` the agent that was aimed at, so the owner of that agent sees the attempt in their
+audit. The sent log and the command audit filter on their own tool names and never pick these
+rows up. The refusal stands whatever the audit store does: when the row cannot be written the
+request still answers 403 with its code and reason, and the gap is one `warn` line
+(`owner-check refusal not audited`, with the agent, the action, the reason and the store's
+message) rather than a 500 carrying that message to the UI. The fail-closed shape and the
+per-request refusal (rather than a throw at construction) are ADR 0084; the daemon must pass
+`identity` beside `humanFor` (`new StoreIdentityLookup(store.agent, store.human)`, as in the
+snippet above), or every Settings -> Email and tray pause/resume call answers 403.
 
 `StartCloudSessionPort.start` receives `humanId`, `capUsdMicro` and `autonomyLevel`; the cloud
 runner picks the owner's billing source (subscription on a personal runner, else an API key,
@@ -272,6 +301,20 @@ and `external_send`; the agent's settings row (`email:<agentId>`) is the spec's 
 the catalog entry is the panel's. `RuntimeApp.capabilities.email` exposes the ports and the
 presence switch. The email command watcher stays on the cloud runner.
 
+The daemon mounts `emailRouteTable()` (ADR 0066; `server.ts`, adapted to Hono's context like
+the desktop routes) over the same ports: `settings`, `sentLog` and `identity` from
+`rt.capabilities.email.ports`, `audit: rt.store.auditLog`, `humanFor: () => rt.human.id` (the
+daemon's single human is the signed-in human) and `commandAudit: emailCommandAudit({ auditLog,
+clock })`. So `GET|PUT /agents/:agentId/email/settings`, `GET .../sent`, `POST .../pause`,
+`POST .../resume`, `POST .../rotate-marker` and `GET .../commands` are served behind the
+bearer check, another human's agent and an unknown id answer 403 before any read or write,
+every change is one `email.settings` audit row, and the tray's click (`apps/desktop`,
+"Pause email") flips `settings.paused` so the policy holds the very next send. The views the
+routes serve (`EmailSettingsView`, `EmailSentView`, `EmailCommandsView`, `EmailPausedView`,
+`EmailMarkerView`) are the daemon's browser-safe copy of the schemas here;
+`packages/runtime/test/email-routes-wiring.test.ts` parses the daemon's answer with both and
+compares the key sets, so a field added on one side fails there.
+
 ## How to change it
 
 - New blocked class: add the rule list in `policy.ts`, extend `BlockedClass`, add a case to the
@@ -290,7 +333,7 @@ presence switch. The email command watcher stays on the cloud runner.
 
 ## Tests
 
-Unit (`pnpm vitest run --project unit packages/capabilities/test/email-*.test.ts`, 121 tests on
+Unit (`pnpm vitest run --project unit packages/capabilities/test/email-*.test.ts`, 122 tests on
 the testenv mail server with DKIM and SPF, an in-memory SQLite store and `SimulatedClock`):
 
 - `email-settings.test.ts`: defaults, merge and validation, credential values refused, marker
@@ -319,9 +362,29 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
 - `email-tools.test.ts`: tool shapes and action classes; `email_send` through the policy in
   every mode; `email_read`/`email_list` untrusted output with references only and the flagged
   marker; `email_draft`.
-- `email-routes.test.ts`: the seven routes over a fake app: settings GET/PUT with audit and
+- `email-routes.test.ts`: the seven routes over a fake app mounted the production way
+  (`humanFor` and `identity`, every call as the owner): settings GET/PUT with audit and
   validation, pause/resume enforced by the policy, marker rotation invalidates the old marker,
   sent log newest first, command audit.
+- `security-email-routes-identity.test.ts` (critic reproduction of the owner check, fixed
+  2026-10-23): a mount with `humanFor` and no `identity` refuses (403, `identity_port_missing`)
+  the cross-human write and every other route under `/agents/:agentId`, the human's own agent
+  and an anonymous request included, logs the misconfiguration once at construction, changes
+  nothing and audits each refusal; with `identity` the owner is served, the other human is
+  refused (`not_owner`) on all seven routes with one audited refusal each naming the action
+  and carrying `result_summary` `{ status: "refused", reason }`, and an unknown agent is
+  refused too; a mount without `humanFor` applies no check; with an audit store whose
+  `append` throws, both refusals stay 403 `tool_not_allowed` with their reason, nothing
+  changes and the missing row is a `warn` line.
+- `packages/runtime/test/email-routes-wiring.test.ts` (runtime, ADR 0066): the seven routes
+  on the composed daemon behind the bearer check and listed in `DAEMON_ROUTES`; the daemon's
+  view and the capability's schema agree on the key sets; `PUT` picks the mode and the mailbox
+  (a credential value refused, references kept), the policy sends to a stranger at once, one
+  `email.settings` row by the daemon's human; the tray's `pause` holds the next send through
+  the policy as `queued` and `resume` releases it, with the `pause` and `resume` rows; the sent
+  log and the command audit (rows written as the runner's handler writes them) newest first
+  with the limit; `rotate-marker`; another human's agent and an unknown id refused with 403
+  on every route and no settings row created.
 - `security-email.test.ts` (security review): every test is an attack from a real input and
   asserts what the code does with it: a forged `Authentication-Results` header naming the
   trusted host plus a bogus signature is data; a display name spelling the owner's address;
@@ -359,14 +422,16 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
 - `email-commands.test.ts`: the gate (marker, thread reply, spoofed DKIM, bogus signature, SPF
   fail, wrong sender, forwarded by another, forwarded by the owner, quoted command, missing
   marker, disabled, each agent obeys only its own human); the handler (question, task with ack
-  under 60 s and the capped cloud session, watched mailbox end to end, ask-which-project then
+  under 60 s and the capped cloud session, the task's tier from the project's default (0 in
+  small-project mode, else 1; B.6), watched mailbox end to end, ask-which-project then
   threaded answer, note, attachments never opened, per-email cap, daily task cap with rollover,
   injection flagged and not acted on (scenario 6), paused, unclear, completion summary, command
-  audit); idempotency and serialization (the same message handled twice acts once and is
-  marked seen, two concurrent deliveries act once, a watcher restart with catch-up replays
-  nothing, the daily task cap holds under concurrent commands, a stranger's subject line is
-  redacted in the audit rows); approvals by reply with the same checks, autonomy decided in
-  code, policy approvals by reply sent once.
+  audit, and `emailCommandAudit` over the audit log alone answering the handler's rows, the
+  limit, and nothing for another agent); idempotency and serialization (the same message
+  handled twice acts once and is marked seen, two concurrent deliveries act once, a watcher
+  restart with catch-up replays nothing, the daily task cap holds under concurrent commands, a
+  stranger's subject line is redacted in the audit rows); approvals by reply with the same
+  checks, autonomy decided in code, policy approvals by reply sent once.
 
 Phase 6 gate evidence ("an emailed task is acknowledged within 1 minute and completed in the
 cloud; a spoofed or forwarded email is ignored"): `email-commands.test.ts` "gate scenario" and
@@ -390,14 +455,20 @@ same file; the live e2e runs under `tests/e2e/`.
   does), or add an IMAP flag claim (`\Flagged` set-and-check) if several must share one.
 - Sends held while paused are not resent on resume (see limit 5); the owner's record is the
   `email.queued` rows.
-- The daemon mounts no email settings routes yet (`createEmailRoutes` is a table for the
-  caller's app); the settings row is written by the cloud runner's routes, the CLI or a test
-  through `EmailSettingsStore`, and the daemon picks a changed mode or mailbox up at the next
-  session start (`emailPresence`), the policy at the next call.
-- The routes' owner check needs both `humanFor` and `identity`: a mount with `humanFor` alone
-  cannot tell the humans apart, warns once in the log and applies no owner check (every
-  agent's settings stay reachable to any signed-in human, as before). The daemon must pass
-  its identity lookup when it mounts them.
+- The daemon picks a changed mode or mailbox up at the next session start (`emailPresence`:
+  the tools join or leave the run), the policy at the next call; a session already running
+  keeps the tools it was offered and the policy refuses the next send.
+- The routes' owner check needs both `humanFor` and `identity`. A mount with `humanFor` alone
+  no longer applies no check (the medium finding of the 2026-10-20/21 review): it fails closed
+  and refuses every request under `/agents/:agentId` with `identity_port_missing`, so a daemon
+  that forgets the identity port sees every Settings -> Email call fail with 403 and one
+  `error` log line at startup rather than a silent cross-human write (ADR 0084). The daemon
+  passes both (`server.ts`, ADR 0066); any other host of the table must too. A refusal whose
+  audit row could not be written is still refused, but its only record is then the `warn`
+  line, not a row the agent's owner sees in their audit.
+- A mode change from the page is not a change-log row and has no undo: its record is the
+  `email.settings` audit row (ADR 0066). Wrapping the `PUT` in an `email.mode` registry
+  command is a later change to `packages/commands`.
 - The private command marker is replaced only on the model-facing paths (`email_read`,
   `email_list`, the classifier's subject). The sent log, the `email.command` audit rows and the
   `source.subject` a cloud session is started with keep it; the first two are the owner's
@@ -418,7 +489,11 @@ In the daemon (ADR 0047, `packages/runtime/test/capabilities-wiring.test.ts`): L
 S.17 (off offers nothing, read only sends nothing: absent at run start, refused and audited
 under a running session), S.20 (full discretion sends to a stranger inside the limits), S.25
 (an inbound instruction is reported, never acted on), S.26 (the `email.send` row), S.27 (the
-signature). In the module:
+signature); (ADR 0066, `packages/runtime/test/email-routes-wiring.test.ts`): S.15 (the mode
+per agent through the daemon's routes, the owner check), S.28 (the tray's pause route holds
+the next send), S.29 (full discretion picked through the route), T.14 (the command audit
+served newest first); the page itself is `apps/ui/test/email-settings.test.tsx` (apps.md).
+In the module:
 S.1, S.2, S.4 (mailbox credentials by reference, values scrubbed), S.6 (paid sign-ups, terms,
 always-human classes through `requestCommandApproval`), S.9 (audit row per outward action),
 S.15, S.16, S.17, S.18, S.19, S.20, S.21, S.22, S.23, S.24, S.25, S.26, S.27, S.28 (the flag
@@ -427,9 +502,11 @@ app's), T.1, T.2, T.3, T.4, T.5, T.6, T.7, T.8, T.9, T.10, T.11, T.12, T.14. T.1
 runner's (the port passes the human id so the runner can pick the billing source).
 
 Requirements close-out (2026-10-20): S.16 to S.27 are `done` on the suites above plus
-`closeout-email.test.ts`; S.15, S.28 and S.29 stay `in progress` because the daemon mounts no
-email routes and `apps/ui` has no Settings -> Capabilities -> Email page (the mode picker, the
-full-discretion warning and the tray's pause route), see `docs/status/BLOCKERS.md`.
+`closeout-email.test.ts`. S.15, S.28 and S.29 closed on 2026-10-23 (ADR 0066): the daemon
+mounts the routes (`email-routes-wiring.test.ts`) and `apps/ui` has the Settings ->
+Capabilities -> Email page with the mode picker per agent, the full-discretion sentence before
+the change and in the confirmation, pause and resume, the limits, the allowlist, the mailbox
+by reference, the marker and the lists (`apps/ui/test/email-settings.test.tsx`).
 
 Email commands close-out (2026-10-20): T.3 to T.12 are `done` on `email-commands.test.ts`,
 `email-auth.test.ts`, `email-inbound.test.ts`, `email-settings.test.ts`, `email-routes.test.ts`
@@ -438,5 +515,7 @@ the acknowledgement within a minute, the completion in the thread). T.1 stays `i
 `closeout-email-commands.test.ts` proves the toggle and the replies in every mode that reads
 mail, but in mode `off` the policy refuses even the reply to the owner while the runner's
 watcher reads only the command toggle, a conflict inside the spec that an ADR has to settle.
-T.14 stays `in progress`: the audit row and `GET .../email/commands` exist, no app mounts or
-shows them. Both have rows in `docs/status/BLOCKERS.md`.
+T.14 closed on 2026-10-23: the daemon serves `GET .../email/commands` from the shared state
+(`emailCommandAudit`, `email-routes-wiring.test.ts`) and the page lists every command with
+when, from, the interpretation, the result and the reason it was ignored, newest first
+(`email-settings.test.tsx`). T.1 keeps its row in `docs/status/BLOCKERS.md`.

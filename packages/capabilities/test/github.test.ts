@@ -91,6 +91,27 @@ function stub(): Promise<{
             ],
           });
         if (u === "/repos/o/missing") return json(404, { message: "Not Found" });
+        // Repository listings page through the Link header the way GitHub does.
+        const repoJson = (owner: string, name: string) => ({
+          name,
+          full_name: `${owner}/${name}`,
+          owner: { login: owner },
+          default_branch: "main",
+          private: false,
+          html_url: `http://x/${owner}/${name}`,
+          clone_url: `http://x/${owner}/${name}.git`,
+        });
+        if (u === "/orgs/acme/repos?per_page=2")
+          return json(200, [repoJson("acme", "alpha"), repoJson("acme", "beta")], {
+            link: `<http://127.0.0.1:${(server.address() as { port: number }).port}/orgs/acme/repos?per_page=2&page=2>; rel="next", <http://x/orgs/acme/repos?per_page=2&page=2>; rel="last"`,
+          });
+        if (u === "/orgs/acme/repos?per_page=2&page=2")
+          return json(200, [repoJson("acme", "gamma")], {
+            link: `<http://x/orgs/acme/repos?per_page=2&page=1>; rel="prev", <http://x/orgs/acme/repos?per_page=2&page=1>; rel="first"`,
+          });
+        if (u === "/users/bob/repos?per_page=100") return json(200, [repoJson("bob", "notes")]);
+        if (u === "/user/repos?per_page=100&affiliation=owner,collaborator,organization_member")
+          return json(200, [repoJson("alice", "mine"), repoJson("acme", "alpha")]);
         if (u === "/flaky") return json(500, { message: "boom" });
         json(404, { message: `unhandled ${u}` });
       });
@@ -149,6 +170,19 @@ describe("GitHubHost", () => {
     expect((await gh.listCheckRuns({ owner: "o", name: "r" }, "abc"))[0]?.conclusion).toBe(
       "success",
     );
+  });
+
+  it("lists an org's, a user's and the token's repositories, following Link pagination", async () => {
+    const gh = new GitHubHost({ token: "tok", baseUrl: s.url, pageSize: 2 });
+    const org = await gh.listRepos({ org: "acme" });
+    expect(org.map((r) => r.fullName)).toEqual(["acme/alpha", "acme/beta", "acme/gamma"]);
+    const pages = s.seen.filter((x) => x.url.startsWith("/orgs/acme/repos")).map((x) => x.url);
+    expect(pages).toEqual(["/orgs/acme/repos?per_page=2", "/orgs/acme/repos?per_page=2&page=2"]);
+    const user = await new GitHubHost({ token: "tok", baseUrl: s.url }).listRepos({ user: "bob" });
+    expect(user.map((r) => r.fullName)).toEqual(["bob/notes"]);
+    const mine = await new GitHubHost({ token: "tok", baseUrl: s.url }).listRepos();
+    expect(mine.map((r) => r.fullName)).toEqual(["alice/mine", "acme/alpha"]);
+    expect(() => new GitHubHost({ token: "tok", baseUrl: s.url, pageSize: 0 })).toThrow(/pageSize/);
   });
 
   it("maps errors to codes and waits once for a rate-limit reset", async () => {

@@ -6,6 +6,7 @@ import { layoutSystem, volatilePreamble } from "../context/cache-layout.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
+import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../injection/scan.ts";
 import type {
   CommandResultView,
   CommandTurn,
@@ -15,6 +16,7 @@ import type {
 import { MODE_DEFAULTS, modelIdFor } from "../models/ladder.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
 import type { ModelProvider } from "../provider/types.ts";
+import { FORWARDED_SENTENCE, type HeardSource, heardMessageBody } from "../session/live-chat.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { isYes } from "../wiring/state-ports.ts";
 
@@ -89,6 +91,13 @@ export interface ChatReply {
   costUsdMicro: number;
   transcriptId: string;
   activeProjectId: string | null;
+  /**
+   * Set when the line was also posted to the principal agent's inbox because one of its
+   * sessions runs (spec O.9): the session and the message the runner reads at its next task
+   * boundary. Null for a command, a yes or no, an undo, a parser question, refused data, or
+   * when no session runs.
+   */
+  forwarded?: { sessionId: string; messageId: string } | null;
 }
 
 export interface PendingConfirmation {
@@ -176,6 +185,7 @@ export class ConversationAgent {
         costUsdMicro: 0,
         transcriptId,
         activeProjectId: await this.currentProject(req.humanId, projectId),
+        forwarded: null,
         ...extra,
       };
     };
@@ -234,6 +244,19 @@ export class ConversationAgent {
         );
       }
     }
+
+    // What you say during a live session (spec O.9, ADR 0078): a line that is not a command
+    // reaches the principal agent at its next step boundary while one of its sessions runs.
+    // It is posted to the agent's own inbox naming the session before the model answers; the
+    // runner collects it between tasks and the next task's brief carries it as quoted data.
+    const forwarded = await this.forwardToRunningSession(
+      agent.id,
+      human.id,
+      req.text,
+      turn.source === "ui" ? "text" : turn.source,
+      sessionId,
+      transcriptId,
+    );
 
     // The model path: a fast model with the registry's command tools and nothing else.
     const context = await this.context(req.humanId, agent.id, projectId);
@@ -322,6 +345,7 @@ export class ConversationAgent {
         result.outcome === "completed"
           ? "Done."
           : `I could not answer (${result.error?.message ?? result.outcome}).`;
+    if (forwarded) reply = `${reply} ${FORWARDED_SENTENCE}`;
     if (ttft !== null && ttft > textChat.targetMs)
       this.logger.warn("chat first token over target", {
         ttftMs: ttft,
@@ -349,7 +373,54 @@ export class ConversationAgent {
       costUsdMicro: result.costUsdMicro,
       transcriptId,
       activeProjectId: await this.currentProject(req.humanId, projectId),
+      forwarded,
     };
+  }
+
+  /**
+   * Spec O.9: while a session of the principal runs (`running`, not the conversation session;
+   * a paused one is ending at its next boundary), the line is posted to the agent's own inbox
+   * as `said (<source>): <text> (session <id>)`, authored by the human, unread, so the runner
+   * reads it between tasks. Text carrying the data envelope is never forwarded (the parser
+   * refuses it on the command path; the read-only chat has no parser). Nothing is posted when
+   * no session runs: the line is the model's alone, and a note is the `note.add` command.
+   */
+  private async forwardToRunningSession(
+    agentId: string,
+    humanId: string,
+    text: string,
+    source: HeardSource,
+    conversationSessionId: string,
+    transcriptId: string,
+  ): Promise<{ sessionId: string; messageId: string } | null> {
+    if (!text.trim()) return null;
+    if (text.includes(DATA_ENVELOPE_OPEN) || text.includes(DATA_ENVELOPE_CLOSE)) return null;
+    const live = (await this.deps.store.session.active(agentId)).find(
+      (s) => s.status === "running" && s.summary !== "conversation",
+    );
+    if (!live) return null;
+    const row = await this.deps.store.message.send({
+      from_agent_id: agentId,
+      to_agent_id: agentId,
+      project_id: live.project_id,
+      type: "info",
+      body: heardMessageBody(live.id, source, text),
+      requires_ack: false,
+      author_agent: agentId,
+      author_human: humanId,
+    });
+    await this.deps.store.event.append(conversationSessionId, "chat.forwarded", {
+      transcriptId,
+      sessionId: live.id,
+      messageId: row.id,
+      source,
+    } as never);
+    this.logger.info("chat line handed to the running session", {
+      sessionId: live.id,
+      messageId: row.id,
+      source,
+    });
+    return { sessionId: live.id, messageId: row.id };
   }
 
   /** The reply for a composed change: done sentences, a pending read-back, or the refusal. */

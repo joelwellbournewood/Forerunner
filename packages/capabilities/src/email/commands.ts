@@ -24,6 +24,7 @@ import {
   type ActionClass,
   type AutonomyLevel,
   decideAutonomy,
+  defaultRiskTier,
   type ModelProvider,
   scanForInjection,
   wrapUntrusted,
@@ -559,27 +560,8 @@ export class EmailCommandHandler {
   }
 
   /** Audit rows of this agent's commands since `sinceIso`, parsed. */
-  private async commandRows(agentId: string, sinceIso: string) {
-    const rows = await this.deps.store.auditLog.list({
-      agentId,
-      tool: EMAIL_COMMAND_TOOL,
-      from: sinceIso,
-    });
-    return rows.map((row) => {
-      let input: Record<string, unknown> = {};
-      let result: Record<string, unknown> = {};
-      try {
-        input = JSON.parse(row.input_summary) as Record<string, unknown>;
-      } catch {
-        // keep empty
-      }
-      try {
-        result = JSON.parse(row.result_summary) as Record<string, unknown>;
-      } catch {
-        // keep empty
-      }
-      return { row, input, result };
-    });
+  private commandRows(agentId: string, sinceIso: string) {
+    return emailCommandRows(this.deps.store.auditLog, agentId, sinceIso);
   }
 
   private async tasksStartedToday(agentId: string, timezone: string): Promise<number> {
@@ -923,7 +905,9 @@ export class EmailCommandHandler {
       title: interpretation.title,
       outcome: `${interpretation.summary}${attachmentNote}`,
       acceptance_criteria: [],
-      risk_tier: 1,
+      // The project's default tier, like every other creation path: 0 in small-project mode,
+      // else 1 (spec B.6, ADR 0051); the critic reviews at the tier stored on the row.
+      risk_tier: defaultRiskTier(project),
       status: "ready",
       priority: 10,
       budget_usd_micro: capUsdMicro,
@@ -1245,12 +1229,71 @@ export class EmailCommandHandler {
     return outcome.status === "sent" ? outcome.messageId : null;
   }
 
-  /** The command audit for the UI (T.14), newest first. */
-  async commandAudit(agentId: string, opts: { limit?: number; sinceIso?: string } = {}) {
+  /** The command audit for the UI (T.14), newest first (`emailCommandAudit`). */
+  commandAudit(
+    agentId: string,
+    opts: { limit?: number; sinceIso?: string } = {},
+  ): Promise<EmailCommandAuditRow[]> {
+    return emailCommandAudit({ auditLog: this.deps.store.auditLog, clock: this.deps.clock })(
+      agentId,
+      opts,
+    );
+  }
+}
+
+/** The `email.command` audit rows of an agent since `sinceIso`, oldest first, parsed. */
+export async function emailCommandRows(
+  auditLog: Pick<AuditLogRepo, "list">,
+  agentId: string,
+  sinceIso: string,
+) {
+  const rows = await auditLog.list({ agentId, tool: EMAIL_COMMAND_TOOL, from: sinceIso });
+  return rows.map((row) => {
+    let input: Record<string, unknown> = {};
+    let result: Record<string, unknown> = {};
+    try {
+      input = JSON.parse(row.input_summary) as Record<string, unknown>;
+    } catch {
+      // keep empty
+    }
+    try {
+      result = JSON.parse(row.result_summary) as Record<string, unknown>;
+    } catch {
+      // keep empty
+    }
+    return { row, input, result };
+  });
+}
+
+/** One row of the command audit as the UI lists it (`GET /agents/:agentId/email/commands`). */
+export interface EmailCommandAuditRow {
+  id: string;
+  occurredAt: string;
+  /** False when the gate ignored the mail; `deniedReason` then says why (`ignored: <reason>`). */
+  obeyed: boolean;
+  deniedReason: string | null;
+  sessionId: string | null;
+  /** The email as audited: message id, from, the redacted subject, the gate's verdict. */
+  email: Record<string, unknown>;
+  /** The interpretation and the outcome (`outcome`, `interpretation`, task or answer ids). */
+  result: Record<string, unknown>;
+}
+
+/**
+ * The command audit for the UI (T.14), newest first, as a reader over the audit log alone:
+ * every email command, its interpretation and its result are one `email.command` row written
+ * by `EmailCommandHandler` on the runner that watches the mailbox; the daemon serves the
+ * rows from the shared state without a handler of its own. The default window is 30 days.
+ */
+export function emailCommandAudit(deps: { auditLog: Pick<AuditLogRepo, "list">; clock: Clock }) {
+  return async (
+    agentId: string,
+    opts: { limit?: number; sinceIso?: string } = {},
+  ): Promise<EmailCommandAuditRow[]> => {
     const since =
-      opts.sinceIso ?? new Date(this.deps.clock.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const rows = await this.commandRows(agentId, since);
-    const out = rows.map(({ row, input, result }) => ({
+      opts.sinceIso ?? new Date(deps.clock.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const rows = await emailCommandRows(deps.auditLog, agentId, since);
+    const out: EmailCommandAuditRow[] = rows.map(({ row, input, result }) => ({
       id: row.id,
       occurredAt: row.occurred_at,
       obeyed: row.allowed,
@@ -1261,7 +1304,7 @@ export class EmailCommandHandler {
     }));
     out.reverse();
     return opts.limit !== undefined ? out.slice(0, opts.limit) : out;
-  }
+  };
 }
 
 export function pickProject(projects: ProjectRow[], named: string | null): ProjectRow | undefined {

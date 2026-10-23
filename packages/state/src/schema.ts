@@ -27,9 +27,12 @@ import {
   REVIEW_VERDICTS,
   RISK_LEVELS,
   RUNNERS,
+  SECRET_GRANT_STATUSES,
   SECRET_SCOPES,
   SESSION_STATUSES,
   SESSION_TRIGGERS,
+  SOURCE_CANDIDATE_KINDS,
+  SOURCE_CANDIDATE_STATUSES,
   SOURCE_KINDS,
   TASK_STATUSES,
   UNDO_STATES,
@@ -500,6 +503,11 @@ export const ENTITIES: Record<string, EntityDef> = {
       ts("revoked_at", "When revoked.", { nullable: true }),
       ts("paired_at", "When paired."),
       text("push_token", "Push notification token.", { nullable: true }),
+      text(
+        "wrap_public_key",
+        "X25519 public key (raw, base64) of the install holding this device's vault; shared secrets are wrapped to it.",
+        { nullable: true },
+      ),
     ],
     indexes: [
       { columns: ["owner_human_id", "revoked"] },
@@ -520,6 +528,53 @@ export const ENTITIES: Record<string, EntityDef> = {
       json("scan_result", "Last scan result (repos found).", { default: {} }),
     ],
     indexes: [{ columns: ["kind", "locator"], unique: true }],
+  },
+  source_candidate: {
+    table: "source_candidate",
+    description:
+      "What a scan of a source found: one proposed project per repository or folder, with duplicate and existing-install detection (spec A.4).",
+    envelope: true,
+    columns: [
+      text("source_id", "The source the scan belongs to.", ref("source")),
+      text("kind", "Repository on a git host, or a folder.", { enum: SOURCE_CANDIDATE_KINDS }),
+      text("name", "Repository or folder name."),
+      text(
+        "locator",
+        "What a project's repos entry carries: owner/name, or the absolute folder path.",
+      ),
+      text(
+        "key",
+        "Normalised duplicate key (github:owner/name lower-cased, folder:<path>); unique per source.",
+      ),
+      text("proposed_name", "Project name a scan proposes."),
+      text("status", "proposed, accepted, duplicate or gone.", {
+        default: "proposed",
+        enum: SOURCE_CANDIDATE_STATUSES,
+      }),
+      bool("existing_install", "A Forerunner install was detected in it.", { default: false }),
+      text(
+        "install_marker",
+        "What marked the install: the .forerunner/project.json file or the install record.",
+        {
+          nullable: true,
+        },
+      ),
+      text(
+        "project_id",
+        "The project this candidate became, or the one it duplicates.",
+        nullableRef("project"),
+      ),
+      bool("is_git", "A git repository (always for a host repo; a folder with .git).", {
+        default: true,
+      }),
+      json("details", "Host facts: url, default branch, private, duplicate_of.", { default: {} }),
+      ts("last_seen_at", "Last scan that found it."),
+    ],
+    indexes: [
+      { columns: ["source_id", "key"], unique: true },
+      { columns: ["key"] },
+      { columns: ["status"] },
+    ],
   },
   cost_ledger: {
     table: "cost_ledger",
@@ -571,6 +626,35 @@ export const ENTITIES: Record<string, EntityDef> = {
       ts("last_used", "Last injection into a tool call.", { nullable: true }),
     ],
     indexes: [{ columns: ["owner_human_id", "name"], unique: true }],
+  },
+  secret_grant: {
+    table: "secret_grant",
+    description:
+      "A shared secret's grant to named agents (spec S.13): who must approve, who did, and the value wrapped per install. Never the value.",
+    envelope: true,
+    columns: [
+      text("name", "Reference name the named agents use, e.g. org_deploy_token."),
+      text("owner_human_id", "Human whose vault holds the value.", ref("human")),
+      text("kind", "api_key, token, password, ssh_key, ...", { default: "token" }),
+      text("why", "Why the owner shares it; shown on the approval card.", { default: "" }),
+      json("agent_ids", "Agents that may read it once the grant is active.", { default: [] }),
+      json("required_human_ids", "Humans other than the owner whose approval the grant needs.", {
+        default: [],
+      }),
+      json("approvals", "Approvals given: human id -> { at, request_id }.", { default: {} }),
+      json("request_ids", "Approval requests opened for the required humans.", { default: [] }),
+      json(
+        "blobs",
+        "Per (agent, device): the value wrapped to that install's key. Ciphertext only; emptied when the grant ends.",
+        { default: [] },
+      ),
+      text("status", "Lifecycle status.", { default: "pending", enum: SECRET_GRANT_STATUSES }),
+      ts("activated_at", "When the last required approval arrived.", { nullable: true }),
+      ts("last_served", "Last time a wrapped blob was served to an install.", { nullable: true }),
+      ts("ended_at", "When the grant was cancelled or revoked.", { nullable: true }),
+      text("ended_reason", "Why it ended.", { nullable: true }),
+    ],
+    indexes: [{ columns: ["owner_human_id", "name"] }, { columns: ["status"] }],
   },
   extension: {
     table: "extension",

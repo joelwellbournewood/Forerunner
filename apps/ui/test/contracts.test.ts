@@ -124,3 +124,33 @@ describe("change cards", () => {
     expect(parseChangeCard({ impact: { risk: "extreme" } })).toBeNull();
   });
 });
+
+/**
+ * Source discovery (spec A.4): the UI reads the daemon's own schemas from `daemon/api-types`
+ * (no mirror); the fixtures the fake daemon serves must satisfy them, and the route table
+ * names every route the client calls.
+ */
+describe("source discovery contract", () => {
+  it("the fixtures satisfy the daemon's schemas and the routes exist", async () => {
+    const { SourceView, SourceCandidateView, SOURCES_ROUTES } = await import(
+      "@forerunner/runtime/daemon/api-types"
+    );
+    const { SOURCES, SOURCE_CANDIDATES } = await import("./fixtures.ts");
+    for (const s of SOURCES) expect(SourceView.safeParse(s).success).toBe(true);
+    for (const c of SOURCE_CANDIDATES) expect(SourceCandidateView.safeParse(c).success).toBe(true);
+    for (const name of [
+      "sources",
+      "addSource",
+      "source",
+      "scanSource",
+      "sourceCandidates",
+      "acceptCandidate",
+      "removeSource",
+    ] as const) {
+      const spec = DAEMON_ROUTES[name];
+      const verb = spec.slice(0, spec.indexOf(" "));
+      const path = spec.slice(spec.indexOf(" ") + 1).split(/[ ?]/)[0];
+      expect(SOURCES_ROUTES).toContain(`${verb} ${path}`);
+    }
+  });
+});

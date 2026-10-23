@@ -54,7 +54,8 @@ export interface RunContext {
   /**
    * Approvals already granted for this run (`tool:<sha256 of the canonical input>` keys). An
    * approval of an always-human action (`ALWAYS_HUMAN`) admits one call and is taken out as
-   * it is used; every other approval holds for the run.
+   * it is used; every other approval holds for the run. The durable port (`StateApprovals`)
+   * keeps the same rule across runs: its always-human rows are spent as they are handed out.
    */
   approvals?: Set<string>;
   /** Working directory of the run; relative paths in tool inputs resolve against it. */
@@ -289,6 +290,8 @@ export class EnforcementHooks {
     // A command tool of the registry is confirmed by the registry's own policy (the change
     // card: a yes for medium risk, the paired device for high, ADR 0030); a hold here would
     // make one change need two answers. Everything above and below still applies to it.
+    // The key is the raw input's (canonical JSON, SHA-256), computed before the display copy
+    // below cuts long strings: the row and the run remember the exact call, never its card.
     const approvalKey = approvalKeyFor(tool.name, input);
     // An approval of an always-human action (delete, purchase, send) admits one call: the key
     // is taken out as it is used, so the resume path re-makes the paused call once and every
@@ -323,6 +326,7 @@ export class EnforcementHooks {
         risk: tool.risk,
         why: `autonomy level ${claims.autonomy} requires approval for ${tool.actionClass}`,
         input: redactForDisplay(input),
+        key: approvalKey,
       });
       if (outcome === "denied") {
         throw await deny("approval_required", `human denied ${tool.name}`);

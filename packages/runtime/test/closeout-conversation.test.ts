@@ -5,6 +5,7 @@ import { LoopAgentDriver } from "../src/agent/loop.ts";
 import { ConversationAgent } from "../src/conversation/agent.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
 import { MODE_DEFAULTS, modelIdFor } from "../src/models/ladder.ts";
+import { FORWARDED_SENTENCE } from "../src/session/live-chat.ts";
 import { SessionRunner, StaticPlanner, type TaskExecutor } from "../src/session/runner.ts";
 import { pausedSessionOf, sessionPausePorts } from "../src/wiring/session-ports.ts";
 import { flatPricing, type Harness, harness } from "./helpers.ts";
@@ -153,7 +154,12 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
 
     const text = "is anything running?";
     const res = await w.chat(text);
-    expect(res.reply).toBe("One session is running on Game.");
+    // A session runs, so the line also reaches the principal at its next step boundary (spec
+    // O.9, ADR 0078; `live-chat.test.ts`): the reply says so after the model's answer.
+    expect(res.reply).toBe(`One session is running on Game. ${FORWARDED_SENTENCE}`);
+    expect(res.forwarded?.sessionId).toBe(
+      (await w.store.session.active(w.alice)).find((s) => s.status === "running")?.id,
+    );
     expect(w.provider.calls).toHaveLength(1);
     const call = w.provider.calls[0]?.request;
     // The fast model at low effort: the ladder's text_chat rung for this provider.
@@ -181,9 +187,10 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
     );
     expect(sessions).toHaveLength(1);
     const events = await w.store.event.list(sessions[0]?.id ?? "");
-    expect(events.map((e) => e.type)).toEqual(["chat.human", "chat.reply"]);
+    expect(events.map((e) => e.type)).toEqual(["chat.human", "chat.forwarded", "chat.reply"]);
     expect(events[0]?.payload).toMatchObject({ text, source: "text" });
-    const reply = events[1]?.payload as { text: string; costUsdMicro: number };
+    expect(events[1]?.payload).toMatchObject({ sessionId: res.forwarded?.sessionId });
+    const reply = events[2]?.payload as { text: string; costUsdMicro: number };
     expect(reply.text).toBe(res.reply);
     expect(reply.costUsdMicro).toBe(res.costUsdMicro);
     expect(reply.costUsdMicro).toBeGreaterThan(0);
