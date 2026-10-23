@@ -185,6 +185,7 @@ realistic paths let a setting step over a limit the rest of the runtime keeps (a
    "max" } } }` → `provider.calls[0].request.effort === "max"`, passed). Needed: the executor
    clamps the run's effort at the file's `max_effort` (with a warning), the command refuses an
    effort above it, the UI lists only the efforts up to it; tests for each.
+   Resolution: fixed in cf20e96: the executor caps the run at `SpecialistSpec.maxEffort` (from the file's `max_effort`, wired in `specialistSpecFrom`) after the risk rules, the slider and the override, with a warning; `resolveRunSettings` and the view show the capped value; `model.settings.set` refuses a higher override through the new `maxEffort` port; the UI's effort list stops there (`run-settings-runs.test.ts` "never runs a specialist above its max_effort", fails without the fix with `expected 'max' to be 'medium'`; `run-settings.test.ts`, `packages/commands/test/model-settings.test.ts`, `model-settings-routes.test.ts`, `settings-models.test.tsx` "offers a specialist's effort only up to its max_effort").
 2. **medium**: `packages/runtime/src/session/intake.ts:636`, `packages/runtime/src/conversation/
    agent.ts:281`, `packages/runtime/src/models/run-settings.ts` (`resolveRunSettings`). The
    principal's `modes.planning.tier` / `modes.text_chat.tier` override is used as is: `fable` (the
@@ -195,6 +196,7 @@ realistic paths let a setting step over a limit the rest of the runtime keeps (a
    "fable" } }).tier === "fable"`, passed) and by reading both call sites (`modelIdFor(tier, …)`,
    no ceiling). Needed: the agent modes capped at the ceiling (the project's for the intake, the
    default for the chat), the screen showing the rung that runs; tests.
+   Resolution: fixed in 5c779ac: `resolveRunSettings` takes a `ceiling`; the intake passes the project's (`projectCeiling` port, wired to `critic_ceiling` in compose, default Opus), the chat `DEFAULT_CEILING`, and the view shows the agent modes capped (`intake.test.ts` "keeps the principal's planning rung under the project's ceiling" and `conversation.test.ts` "never runs above the default ceiling", both fail without the fix; `run-settings.test.ts` resolver and view cases).
 3. **low**: `docs/maintainers/adding-a-specialist.md:57`, `docs/decisions/0072-...md` point 4. The
    doc says nothing about `default_effort` not being a run's base: since before this item the
    executor takes the effort table row (so the model watch's adopted effort applies), and the new
@@ -203,12 +205,14 @@ realistic paths let a setting step over a limit the rest of the runtime keeps (a
    `effortForTask` and `grep default_effort packages/runtime/src` (only `specialistSpecFrom` copies
    it; nothing reads `SpecialistSpec.defaultEffort`). Needed: state it in the field table and the
    ADR (the spec D.4 asks for defaults from the effort table, so the behaviour stays).
+   Resolution: fixed in cf20e96: the `default_effort`/`max_effort` row of adding-a-specialist.md now says a run starts from the effort table's row (spec D.4, the model watch's adoption applies there), that `default_effort` is validated and shown only, and how `max_effort` caps; ADR 0072's amendment (547a0db) repeats it.
 4. **low**: `apps/ui/test/fake-daemon.ts:1723` (the `model.settings.set` fake) and
    `apps/ui/test/settings-models.test.tsx` ("changes a specialist's max tokens"). The fake's
    sentence is "Set the max_tokens of the coder specialist …" but the daemon's command says "Set
    the max tokens per call of …" (`MODEL_SETTING_LABELS`), so the UI test asserts a sentence the
    real daemon never produces. Verified by comparing the two strings with
    `packages/commands/test/model-settings.test.ts`. Needed: the fake uses the command's labels.
+   Resolution: fixed in 0ec99b2: the fake's `model.settings.set` uses the command's field labels and the UI test asserts "Set the max tokens per call of the coder specialist for Alice from the default to 8000. Undo.", the sentence `packages/commands/test/model-settings.test.ts` asserts for the real command.
 5. **low**: `packages/commands/src/types.ts:95`, `packages/runtime/src/daemon/compose.ts:2113`,
    `apps/ui/test/fake-daemon.ts:142`, `docs/maintainers/runtime.md` (Known issues, first entry),
    `docs/maintainers/apps.md:350`. Each addition sits at the same anchor where the base added
@@ -216,6 +220,7 @@ realistic paths let a setting step over a limit the rest of the runtime keeps (a
    merging into `ccr-4d8a843c-1k9syk` stops on five conflicts. No semantic conflict: the union
    typechecks and the tests pass (trial merge above). Needed: move the additions to anchors the
    base did not touch and prove a trial merge is conflict-free.
+   Resolution: fixed in 18ac91e and 57a5270: the port, its wiring, the fake's option, the known issue and the test entry moved to other anchors (same content); a trial merge of `origin/ccr-4d8a843c-1k9syk` into the fixed HEAD in a throwaway worktree reported "Automatic merge went well", then `pnpm typecheck` exit 0 and 16 files / 206 tests passed (the D.4 files, intake, conversation, executor, packages/commands); the merge was aborted, nothing of the base is on the branch.
 6. **high**: `packages/runtime/src/daemon/compose.ts:1698` (intake pricing), `:2175` (chat
    pricing), `:1578` (executor pricing), with `session/intake.ts:636`, `conversation/agent.ts:281`,
    `session/executor.ts` (the loop run's `pricing`). The run's model now follows the agent's
@@ -229,3 +234,13 @@ realistic paths let a setting step over a limit the rest of the runtime keeps (a
    literal `"sonnet"`, never the run's model. Needed: every loop run priced by the model it
    calls (a `pricingFor(modelId)` port on the intake, the chat and the executor, wired in
    compose), with tests that fail when a changed rung is priced at the default one.
+   Resolution: fixed in 8497291: the executor, the intake and the chat take `pricingFor(modelId)`, wired in compose to `livePricing(provider, () => model)` over the price table in force; `model-settings-routes.test.ts` "prices a chat turn as the rung the human chose" (composed daemon, provider named `anthropic`: a turn after `model.settings.set` to Opus costs `pricingFor("claude-opus-5-5")`, fails without the compose change with `expected 350 to be 14000`), plus unit tests in `run-settings-runs.test.ts`, `conversation.test.ts` and `intake.test.ts` that fail without the port.
+
+### After the fixes
+
+All six findings fixed; verdict for the fixed branch: accept. Checks on the fixed HEAD:
+`pnpm typecheck` exit 0; `pnpm lint` exit 0 (59 warnings, the pre-existing count);
+`pnpm exec vitest run --project unit packages/runtime/test` 117 files, 1030 passed, 1 skipped;
+`packages/commands/test` 10 files, 135 passed; `testenv/test` 10 files, 142 passed;
+`pnpm --filter @forerunner/ui test` 43 files, 260 passed; `node scripts/docs-check.mjs --base
+origin/ccr-4d8a843c-1k9syk` ok (46 files); `node scripts/link-check.mjs` ok (107 files).
