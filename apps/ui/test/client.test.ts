@@ -1,3 +1,4 @@
+import { DAEMON_ROUTES } from "@forerunner/runtime/daemon/api-types";
 import { describe, expect, it } from "vitest";
 import {
   ApiError,
@@ -7,6 +8,7 @@ import {
   routePath,
 } from "../src/api/client.ts";
 import { DEFAULT_DAEMON_URL, resolveDaemonConfig } from "../src/api/config.ts";
+import { PROPOSED_ROUTES } from "../src/api/contracts.ts";
 import { createFakeDaemon } from "./fake-daemon.ts";
 import { ME } from "./fixtures.ts";
 import { fetchFromApp, testConfig } from "./helpers.tsx";
@@ -249,9 +251,16 @@ describe("daemon client", () => {
   });
 
   it("tells a missing route apart from a typed not_found", async () => {
-    const daemon = createFakeDaemon({ token: "tok", missingRoutes: ["/performance"] });
+    // The example is a route the daemon does not serve yet (milestones and performance are
+    // served now): `docs` is still proposed.
+    expect("docs" in PROPOSED_ROUTES).toBe(true);
+    expect("docs" in DAEMON_ROUTES).toBe(false);
+    const daemon = createFakeDaemon({
+      token: "tok",
+      missingRoutes: ["/projects/proj_atlas/docs"],
+    });
     const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
-    const missing = await client.performance().catch((e: unknown) => e);
+    const missing = await client.docs("proj_atlas").catch((e: unknown) => e);
     expect(isRouteMissing(missing)).toBe(true);
     const typed = await client.project("proj_missing").catch((e: unknown) => e);
     expect(typed).toMatchObject({ status: 404, code: "not_found" });
@@ -267,7 +276,7 @@ describe("daemon client", () => {
       async () =>
         new Response("404 Not Found", { status: 404, headers: { "content-type": "text/plain" } }),
     );
-    const untyped = await honoDefault.performance().catch((e: unknown) => e);
+    const untyped = await honoDefault.docs("proj_atlas").catch((e: unknown) => e);
     expect(untyped).toMatchObject({
       code: "ui.http_error",
       status: 404,
@@ -279,7 +288,7 @@ describe("daemon client", () => {
       testConfig(),
       async () => new Response(null, { status: 404, statusText: "Not Found" }),
     );
-    expect(isRouteMissing(await empty.performance().catch((e: unknown) => e))).toBe(true);
+    expect(isRouteMissing(await empty.docs("proj_atlas").catch((e: unknown) => e))).toBe(true);
   });
 
   it("round-trips reviews, memory, commands and the change log against the fake daemon", async () => {
@@ -410,7 +419,7 @@ describe("daemon client", () => {
     daemon.close();
   });
 
-  it("round-trips the proposed routes: queue, milestones, data, docs, performance", async () => {
+  it("round-trips the proposed routes and performance: queue, milestones, data, docs", async () => {
     const daemon = createFakeDaemon({ token: "tok" });
     const client = createClient(testConfig("tok"), fetchFromApp(daemon.app));
     const queued = await client.enqueue("proj_atlas", {
@@ -443,6 +452,22 @@ describe("daemon client", () => {
     expect((await client.docs("proj_atlas")).length).toBe(8);
     expect((await client.doc("proj_atlas", "README.md")).content).toContain("# Atlas");
     expect((await client.performance({ projectId: "proj_atlas" })).projectId).toBe("proj_atlas");
+    expect((await client.performance({ days: 30 })).days).toBe(30);
+    await expect(client.performance({ days: 0 })).rejects.toMatchObject({
+      status: 400,
+      code: "validation",
+    });
+    // As the daemon: decimal digits only.
+    for (const bad of ["0x10", "1e1", "7.0", "+7"]) {
+      const res = await daemon.app.request(`/performance?days=${bad}`, {
+        headers: { authorization: "Bearer tok" },
+      });
+      expect(res.status).toBe(400);
+    }
+    await expect(client.performance({ projectId: "proj_missing" })).rejects.toMatchObject({
+      status: 404,
+      code: "not_found",
+    });
     const badPerf = createClient(testConfig(), async () =>
       jsonResponse({ generatedAt: "x", modes: "no" }),
     );

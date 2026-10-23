@@ -140,6 +140,12 @@ export function specialistMode(name: string): Mode {
   return name === "researcher" ? "researcher" : "coder";
 }
 
+/**
+ * The specialist name on the Run row of the intake call (spec A.2): the one planning-rung call
+ * the PM makes. The Performance view (daemon/views.ts) reads it as the planning mode.
+ */
+export const INTAKE_RUN_SPECIALIST = "intake";
+
 const EFFORTS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"] as const;
 
 export function tierIndex(t: ModelTier): number {

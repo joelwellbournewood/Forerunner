@@ -7,8 +7,10 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import { INTAKE_RUN_SPECIALIST } from "../src/models/ladder.ts";
 import {
   INTAKE_AUDIT_TOOL,
+  INTAKE_BUILTIN_PROMPT_VERSION,
   IntakeService,
   intakeKey,
   parseIntakeReply,
@@ -236,6 +238,25 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       const session = await rt.store.session.mustGet(String(c.session_id));
       expect(session).toMatchObject({ project_id: projectId, status: "completed" });
       expect(session.summary).toContain("intake");
+      // Spec D.19: the call has a Run row with its timing, which the Performance view reads
+      // as the planning mode (performance-view.test.ts).
+      const runRow = await rt.store.run.mustGet(String(c.run_id));
+      expect(runRow).toMatchObject({
+        session_id: session.id,
+        task_id: null,
+        specialist: INTAKE_RUN_SPECIALIST,
+        model: "fake-sonnet",
+        effort: "high",
+        outcome: "completed",
+        author_agent: rt.agent.id,
+      });
+      expect(runRow.ttft_ms).not.toBeNull();
+      expect(runRow.duration_ms).not.toBeNull();
+      expect(runRow.cost_usd_micro).toBe(spend.usd_micro);
+      // Spec D.5: the row stores the registry PM prompt's version, as every run does.
+      const pm = rt.registry.principals.get("project-manager");
+      expect(pm?.promptVersion).toMatch(/^project-manager@/);
+      expect(runRow.prompt_version).toBe(pm?.promptVersion);
       const audit = await rt.store.auditLog.list({ tool: INTAKE_AUDIT_TOOL });
       expect(audit.some((a) => a.input_summary.includes(requestId))).toBe(true);
       // The status route reports the open proposal.
@@ -506,6 +527,80 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     const status = await json(await req(`/projects/${id}/intake`));
     expect(status).toMatchObject({ state: "failed" });
     expect(String(status.error)).toContain("JSON");
+  });
+
+  it("on the built-in prompt the intake Run row names the built-in prompt version", async () => {
+    replies.push({ text: "no json here" });
+    const service = new IntakeService({
+      store: rt.store,
+      clock,
+      tokens: rt.tokens,
+      driver: rt.driver,
+      provider,
+      pricing: { estimate: () => 1, cost: () => 1 },
+      billingSourceId: rt.billingSourceId,
+      modelConfig: rt.modelConfig,
+      human: rt.human,
+      agent: rt.agent,
+      gitHost: host,
+      projectsRoot: rt.data.assets.projectsRoot,
+      worktreeRoot: join(home, "wt-builtin"),
+    });
+    const projectId = await createProject({ name: "Sigma", goal: "g", brief: "b" });
+    await expect(service.propose(projectId)).rejects.toMatchObject({ code: "validation" });
+    const runs = (await rt.store.run.list({ specialist: INTAKE_RUN_SPECIALIST } as never)).filter(
+      (r) => r.prompt_version === INTAKE_BUILTIN_PROMPT_VERSION,
+    );
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.prompt_version).not.toBe("");
+  });
+
+  it("the intake Run row stores the effort the call ran at: the slider's shift, held at the cap", async () => {
+    // Spec D.16 and D.19: the Performance view's planning samples carry the effort in force.
+    const service = (maxEffort?: "high") =>
+      new IntakeService({
+        store: rt.store,
+        clock,
+        tokens: rt.tokens,
+        driver: rt.driver,
+        provider,
+        pricing: { estimate: () => 1, cost: () => 1 },
+        billingSourceId: rt.billingSourceId,
+        modelConfig: rt.modelConfig,
+        maxEffort,
+        human: rt.human,
+        agent: rt.agent,
+        gitHost: host,
+        projectsRoot: rt.data.assets.projectsRoot,
+        worktreeRoot: join(home, "wt-effort"),
+      });
+    const projectId = await createProject({ name: "Tau", goal: "g", brief: "b" });
+    const project = await rt.store.project.mustGet(projectId);
+    await rt.store.project.update(projectId, project.version, {
+      settings: { ...project.settings, speed_quality_offset: 1 },
+    });
+    const runIdsOf = async () =>
+      new Set(
+        (await rt.store.run.list({ specialist: INTAKE_RUN_SPECIALIST } as never)).map((r) => r.id),
+      );
+    const newRow = async (before: Set<string>) => {
+      const rows = (await rt.store.run.list({ specialist: INTAKE_RUN_SPECIALIST } as never)).filter(
+        (r) => !before.has(r.id),
+      );
+      expect(rows).toHaveLength(1);
+      return rows[0];
+    };
+    let before = await runIdsOf();
+    replies.push({ text: "no json here" });
+    await expect(service().propose(projectId)).rejects.toMatchObject({ code: "validation" });
+    // Planning's high, one step up.
+    expect(provider.calls.at(-1)?.effort).toBe("xhigh");
+    expect((await newRow(before))?.effort).toBe("xhigh");
+    before = await runIdsOf();
+    replies.push({ text: "no json here" });
+    await expect(service("high").propose(projectId)).rejects.toMatchObject({ code: "validation" });
+    expect(provider.calls.at(-1)?.effort).toBe("high");
+    expect((await newRow(before))?.effort).toBe("high");
   });
 
   it("without a model provider the intake is unavailable", async () => {

@@ -13,6 +13,10 @@ test("performance view shows every mode against its target", async ({ page }) =>
   const critic = page.getByTestId("performance-mode").filter({ hasText: "Critic tier 1" });
   await expect(critic.getByTestId("target-bar")).toHaveAttribute("data-met", "true");
   await expect(page.getByTestId("estimates-overall")).toContainText("21.5%");
+  await expect(page.getByTestId("performance-window")).toContainText("last 7 days");
   await page.getByTestId("performance-project").selectOption("proj_atlas");
   await expect(page.getByTestId("performance-mode")).toHaveCount(8);
+  await page.getByTestId("performance-days").selectOption("30");
+  await expect(page.getByTestId("performance-window")).toContainText("last 30 days");
+  await expect(page.getByTestId("route-missing")).toHaveCount(0);
 });

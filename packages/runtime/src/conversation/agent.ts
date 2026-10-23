@@ -1,7 +1,7 @@
 import { loadDocChunks, selectDocHits } from "@forerunner/memory";
 import { type Clock, errorMessage, log, newId } from "@forerunner/platform";
 import type { AgentRow, StateStore } from "@forerunner/state";
-import type { LoopAgentDriver, RunEvent, RunPricing } from "../agent/loop.ts";
+import { type LoopAgentDriver, type RunEvent, type RunPricing, wholeMs } from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
 import { layoutSystem, volatilePreamble } from "../context/cache-layout.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
@@ -463,7 +463,16 @@ export class ConversationAgent {
       {
         transcriptId,
         text: reply,
+        // Spec D.19: the turn's time to first token and total time, with what produced them;
+        // the Performance view reads text-chat measurements from these rows.
         ttftMs: ttft,
+        durationMs: wholeMs(result.durationMs),
+        model,
+        effort,
+        source: req.source ?? "text",
+        // The turn's active project: the conversation session is one per agent and keeps the
+        // project of its first turn, so the Performance view scopes a turn by this field.
+        projectId,
         costUsdMicro: result.costUsdMicro,
         outcome: result.outcome,
         actions: actions.map((a) => a.kind),

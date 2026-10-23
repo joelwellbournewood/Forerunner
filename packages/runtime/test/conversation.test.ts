@@ -197,6 +197,20 @@ describe("conversation agent over the command registry", () => {
       ),
     ).toBe(true);
     expect((await w.log()).map((e) => e.type)).toEqual(["chat.human", "chat.reply"]);
+    // Spec D.19: the reply row carries the turn's first token and total time and what produced
+    // them; the Performance view's text-chat row reads them (performance-view.test.ts).
+    const reply = (await w.log()).find((e) => e.type === "chat.reply");
+    expect(reply?.payload).toMatchObject({
+      ttftMs: 0,
+      model: "fake-haiku",
+      effort: "low",
+      source: "text",
+    });
+    expect(typeof (reply?.payload as { durationMs?: unknown } | undefined)?.durationMs).toBe(
+      "number",
+    );
+    // The turn's active project, which the Performance view scopes the turn by.
+    expect(reply?.payload).toHaveProperty("projectId");
     await w.store.close();
   });
 

@@ -86,6 +86,7 @@ describe("proposed routes", () => {
       "removeDataAsset",
       "milestones",
       "changeMilestone",
+      "performance",
     ]) {
       expect(served in DAEMON_ROUTES).toBe(true);
       expect(served in PROPOSED_ROUTES).toBe(false);

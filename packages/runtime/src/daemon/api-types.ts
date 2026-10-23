@@ -789,6 +789,103 @@ export const ReviewsView = z.object({
 export type ReviewsView = z.infer<typeof ReviewsView>;
 
 // ---------------------------------------------------------------------------------------
+// Performance view (spec D.7, D.19): time to first token and total time per mode against target
+
+/** What a mode's target measures: first token, first audio, the whole run, or set by the task. */
+export const PERFORMANCE_TARGET_KINDS = ["first_token", "first_audio", "total", "by_task"] as const;
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+/** Where a measurement came from: a Run row, a `chat.reply` event, a `voice.turn` event. */
+export const PERFORMANCE_SOURCES = ["run", "chat", "voice"] as const;
+/** The window `GET /performance` covers without `?days=`, and the longest it accepts. */
+export const PERFORMANCE_DEFAULT_DAYS = 7;
+export const PERFORMANCE_MAX_DAYS = 90;
+
+export const PerformanceModeView = z.object({
+  /** One of the ladder's modes (ladder.ts `Mode`). */
+  mode: z.string(),
+  label: z.string(),
+  /** 0 when the target is set by the task budget and timeout. */
+  targetMs: z.number().int().nonnegative(),
+  targetKind: z.enum(PERFORMANCE_TARGET_KINDS),
+  /** The rung the mode starts on in the effort table in force. */
+  tier: z.string(),
+  /**
+   * The mode's effort before the offset: the table's (built-ins plus the adopted models.json),
+   * or the principal agent's D.4 override where it sets one (`effortSource: "agent"`).
+   */
+  baseEffort: z.enum(EFFORT_LEVELS),
+  /**
+   * Where `baseEffort` comes from (spec D.4, ADR 0072): `table`, or `agent` when the principal's
+   * `model_config` sets the effort (`modes.planning`, `modes.text_chat`, `specialists.coder`,
+   * `specialists.researcher`), as the intake, the conversation agent and the executor read it.
+   */
+  effortSource: z.enum(["table", "agent"]),
+  /**
+   * The effort in force: the base, shifted by the project's offset where the code applies it,
+   * held at `maxEffort`.
+   */
+  effort: z.enum(EFFORT_LEVELS),
+  /** True when the project's speed-versus-quality offset reaches this mode's runs today. */
+  offsetApplied: z.boolean(),
+  /**
+   * The registry `max_effort` the mode's runs are held at (the specialist's, the conversation
+   * agent's, the project manager's, the critic's); null when nothing caps the mode.
+   */
+  maxEffort: z.enum(EFFORT_LEVELS).nullable(),
+  /**
+   * The effort a risky task raises the mode to (`effortForTask`: the coder at risk tier 2 and
+   * above runs at high, a tier 3 critic review at max), with the offset and the cap applied as
+   * for `effort`; null when no risk tier changes the mode's effort.
+   */
+  riskEffort: z.enum(EFFORT_LEVELS).nullable(),
+  /** The lowest risk tier `riskEffort` applies from; null with it. */
+  riskTierFrom: z.number().int().min(0).max(3).nullable(),
+  /** Measurements in the window. */
+  samples: z.number().int().nonnegative(),
+  /** Median and 90th percentile by nearest rank over the samples that carry the figure. */
+  ttftP50Ms: z.number().nullable(),
+  ttftP90Ms: z.number().nullable(),
+  totalP50Ms: z.number().nullable(),
+  totalP90Ms: z.number().nullable(),
+  /** Share of the samples whose measured figure met the target; null without samples or target. */
+  withinTargetShare: z.number().min(0).max(1).nullable(),
+  /** The p90 of the measured figure at or under the target; null without samples or target. */
+  met: z.boolean().nullable(),
+  /** When the newest measurement in the window was taken; null without one. */
+  lastAt: z.string().nullable(),
+});
+export type PerformanceModeView = z.infer<typeof PerformanceModeView>;
+
+export const PerformanceSampleView = z.object({
+  /** The Run row id, or the event id of a chat or voice turn. */
+  runId: z.string(),
+  source: z.enum(PERFORMANCE_SOURCES),
+  mode: z.string(),
+  specialist: z.string(),
+  model: z.string(),
+  effort: z.string(),
+  /** First token; for a voice turn, end of turn to first audio. */
+  ttftMs: z.number().nullable(),
+  durationMs: z.number().nullable(),
+  at: z.string(),
+});
+export type PerformanceSampleView = z.infer<typeof PerformanceSampleView>;
+
+export const PerformanceView = z.object({
+  generatedAt: z.string(),
+  projectId: z.string().nullable(),
+  /** The window: the last `days` days, from `from` to `generatedAt`. */
+  days: z.number().int().positive(),
+  from: z.string(),
+  /** The project's speed-versus-quality offset (-1, 0, +1); 0 for all projects. */
+  effortOffset: z.number().int(),
+  modes: z.array(PerformanceModeView),
+  /** The newest measurements across modes, newest first. */
+  recent: z.array(PerformanceSampleView),
+});
+export type PerformanceView = z.infer<typeof PerformanceView>;
+
+// ---------------------------------------------------------------------------------------
 // Memory views (spec G, K.5): one view per scope, search, edit, delete, pin, consolidation
 
 export const LessonView = z.object({
@@ -1559,6 +1656,8 @@ export const DAEMON_ROUTES = {
   chat: "POST /chat (JSON) | POST /chat/stream (SSE tokens then a final reply event)",
   costs: "GET /costs?projectId=&from=&to=",
   costEstimates: "GET /costs/estimates (estimate-versus-actual accuracy, EstimateAccuracyView)",
+  performance:
+    "GET /performance?projectId=&days= (PerformanceView, spec D.7, D.19: per mode the samples, p50 and p90 by nearest rank of time to first token and total time, the target, met or not, the effort in force; from the Run rows and the chat and voice turns of the last days, 7 by default, at most 90; the install's human's agents only; 400 for a bad days, 404 for an unknown project)",
   auditExport:
     "GET /audit/export?agentId=&sessionId=&from=&to=&format=jsonl|csv (spec S.9: the audit log as a file download, streamed in pages; the install's human's rows and their agents' with the summaries as stored; Content-Disposition names the file; 404 for another human's agent, 400 for a bad format, timestamp or window)",
   settings: "GET /settings?scope=&scopeId=",

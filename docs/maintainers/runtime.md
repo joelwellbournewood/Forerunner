@@ -1939,6 +1939,86 @@ before it records the result, so no recording stays in the shared store once the
 the row. Replays of the same `clientId` are refused like plan and chat envelopes. Tests:
 `test/voice-relay.test.ts` (the drop on every outcome, the expiry, the duration bound).
 
+**Performance view (spec D.7, D.19; `views.ts#performanceView`).** `GET
+/performance?projectId=&days=` answers `PerformanceView` (`api-types.ts`), the shape the
+Performance page reads. It is built from the store at request time, no cache and no table of
+its own:
+
+- *Sources.* Every Run row created in the window that is a measurement (`isMeasurement`: it
+  has a `ttft_ms`, or it timed out with a `duration_ms`; a row still `running`, or one closed
+  before any model answered, such as a refused lease or secret, a budget refusal or an intake
+  call that threw, carries a few ms and no first token and is left out, so it cannot pull a
+  median down or pass a total-time target), every `chat.reply` event carrying `ttftMs`, or
+  `durationMs` with `outcome: "timeout"` (the conversation agent's model turns; a yes, no or
+  undo answered by the registry has neither, a turn whose call failed at once has no first
+  token, and a reply with `source: "voice"` is left to its voice turn),
+  and every `voice.turn` event carrying `latency.totalToFirstAudioMs` (end of turn to first
+  audio, the figure the 1.2 s target is about; reported in the `ttft` columns).
+- *Mode derivation.* The run table has no mode column, so `runMode` derives it from who wrote
+  the row: `specialist: "critic"` is `critic_t1` or `critic_t23` by the tier of the Review row
+  whose evidence names the run (`run:<id>`), and without one by the model's rung (opus and
+  above is tier 2 or 3); `specialist: "intake"` (`INTAKE_RUN_SPECIALIST`, the intake call's
+  Run row) is `planning`; `researcher` is `researcher`; every other specialist is `coder`, as
+  `effortForTask` treats it. `chat.reply` is `text_chat`, `voice.turn` is `voice_chat`.
+  Nothing writes a `routing` run today, so that row shows its target and no samples.
+- *Scope.* Only rows on sessions of the install's human's agents count (a shared store holds
+  other humans'), and with `projectId` only that project's sessions; an unknown project is
+  404. A chat turn is the exception: it sits on the agent's one conversation session, whose
+  `project_id` is the project of its first turn (or none when the daemon opened it for voice
+  or speech, `conversation-session.ts`), so a `chat.reply` row that carries `projectId` (the
+  turn's active project) is scoped by that field instead. The window is the last `days` days up to now on `created_at`: 7 by default
+  (`PERFORMANCE_DEFAULT_DAYS`), capped at 90 (`PERFORMANCE_MAX_DAYS`); a `days` that is not a
+  positive integer in decimal digits (`0x10`, `1e1`, `7.0`, `+7` included) is 400 (`validation`, `reason: "bad_query"`).
+- *Figures.* Per mode, in the effort table's order: `samples`, the median and the 90th
+  percentile by nearest rank (`nearestRank`: `sorted[ceil(p/100 * n) - 1]`) of first token and
+  of total time, each over the samples that carry the figure; the target (`targetMs`,
+  `targetKind`) from the effort table in force (`rt.modelConfig()`); `withinTargetShare` and
+  `met` (the p90 of the figure the target measures, first token / first audio or total, at or
+  under the target), both null without a sample or without a numeric target (coder,
+  researcher, critic tiers 2 and 3); `lastAt`. `recent` lists the 20 newest measurements with
+  their source (`run`, `chat`, `voice`).
+- *Effort in force (the D.7 half).* `tier` and `baseEffort` from the table in force (an effort
+  the model watch adopted shows here); where the principal agent's D.4 settings set an effort
+  (ADR 0072: `model_config.modes.planning` for the intake, `modes.text_chat` for a typed chat
+  turn, `specialists.coder` and `specialists.researcher` for the executor's coder and research
+  rows), that effort is the base instead (`agentEffortOverride`, `effortSource: "agent"`;
+  otherwise `"table"`), as the intake's and the chat's `resolveRunSettings` and the executor's
+  `withModeEffort` take it. The route reads the agent row's `model_config` per request through
+  `parseAgentModelConfig`, so a `model.settings.set` change shows at once and a malformed
+  document applies no override, as the runs read it. A spoken turn keeps the voice mode's table
+  effort, and the critic and routing have no override. Then `effort` is computed as the consumers compute it
+  (D.16, "The speed-versus-quality slider" below): `modeEffort` shifts the base by the
+  project's `speed_quality_offset` (`speedQualityOffsetOf`) for every mode a run reads the
+  slider in (`OFFSET_MODES`: chat, voice, planning, coder, researcher and both critic tiers,
+  `offsetApplied: true`; routing is left out because nothing runs a routing call yet), and
+  `capEffort` holds it at the registry's `max_effort` for the mode (`maxEffort`, from
+  `effortCapsOf(rt.registry)`: the shipped `coder`'s and `researcher`'s, `conversation-agent`'s
+  for chat and voice, `project-manager`'s for planning, the critic's; null when nothing caps
+  it). Without a project the offset is 0. `riskEffort` and `riskTierFrom` (`riskEffortOf`,
+  from the same `effortForTask` the executor uses) name the effort a risky task raises the
+  mode to: the coder at risk tier 2 and above runs at high, a tier 3 critic review at max,
+  with the offset and the cap applied as for `effort`; null where no risk tier changes the
+  mode's effort (the table already has it, or the cap holds both at the same level: the
+  shipped coder at quality runs at high either way).
+
+What feeds it: the executor and the critic write their Run rows as before; the intake call
+now writes one (`specialist: "intake"`, its tokens, cost, first token and duration, and the
+prompt version of spec D.5: the registry PM prompt's `promptVersion`, passed in by compose,
+or `INTAKE_BUILTIN_PROMPT_VERSION` on the built-in line; written in
+the `finally` so a failed call is measured too; a refused row is logged and the intake goes
+on; its `effort` is the one the call ran at, the slider's shift held at the project
+manager's cap); the conversation agent's `chat.reply` row now carries `durationMs` (the loop's
+measured run time), `model`, `effort` (the turn's, after the slider and the cap), `source` and
+`projectId` (the turn's active project) next to `ttftMs`. Tests:
+`performance-view.test.ts` (nearest rank, mode derivation, seeded rows across modes, targets,
+the window, ownership, chat turns scoped by their own project, the effort in force with the
+slider and the registry caps, the principal's D.4 effort overrides as the base),
+`performance-route.test.ts` (the route on the composed daemon with a chat turn through
+`POST /chat`, the slider and the shipped caps per mode, the principal's `model_config` read
+per request and a malformed one ignored, 400 and 404), `intake.test.ts` (the intake Run row, its effort under the slider and a cap),
+`conversation.test.ts` (the reply row's timing and project), `effort-offset.test.ts` (a typed
+chat turn's effort per slider position is what the view shows, for the mode and the sample).
+
 **Core loop routes (ADR 0036, all in `DAEMON_ROUTES`).** Reviews tab (spec K.2):
 `GET /projects/:id/reviews` and `GET /tasks/:id/reviews` answer `ReviewsView` (every review
 with its findings, the open finding count, verdict counts, the grade trend oldest first and
@@ -2162,7 +2242,8 @@ targets from spec table D; effort offset from the project slider; retry ladder
 (improve brief → split/change specialist → escalate under ceiling → human). `tierOfModel`
 also places a fast-mode variant id (`claude-opus-5-5-fast`) on its base model's rung; the
 per-project fast mode itself is in `src/models/fast-mode.ts` (see "Opus fast mode per project"
-under Drivers, ADR 0057).
+under Drivers, ADR 0057). `INTAKE_RUN_SPECIALIST` (`"intake"`) names the intake call's Run row,
+which the Performance view reads as the planning mode.
 
 **The speed-versus-quality slider (spec D.16).** Each project's `settings.speed_quality_offset`
 (-1 speed, 0 balanced, +1 quality; `settings.set` in `@forerunner/commands`, the Settings

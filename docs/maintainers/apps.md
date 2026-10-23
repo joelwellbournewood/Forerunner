@@ -52,7 +52,7 @@ apps/ui/
                          proposed routes of contracts.ts; ApiError, isRouteMissing, describeError
     api/contracts.ts     mirrors of runtime schemas the browser cannot import (extensions,
                          updates, model watch, estimates), the change card, and PROPOSED_ROUTES
-                         with their view schemas (queue, milestones, data, docs, performance)
+                         with their view schemas (queue, milestones, imports, docs)
     api/sse.ts           EventSource subscriptions with polling fallback; SseParser for fetch streams
     api/chat-stream.ts   streamChat(): POST /chat/stream tokens -> final reply
     store/store.ts       reducer + subscribe/getSnapshot (projects, active project, inbox count,
@@ -100,7 +100,7 @@ apps/ui/
 | `/memory` | one view per principal agent (the human's own first, then the peers' as listed-but-not-readable), the critic, shared lessons, each with active and pinned counts; search (debounced); per lesson: pin, tags, confidence, uses, last used, source, project, file; edit text and tags, delete (two clicks); Share (spec G.6: proposes the lesson for every project; shown for an active lesson that is not already global shared, `canShare`; the row then says the critic reviews it at the next session end and gains the `general` tag); "Shared across projects": the proposals waiting for the critic and the offers of promoted lessons to the human's other projects (open first: Accept for that project / Dismiss, applied at once; decided ones with their outcome; its own route-missing notice when the daemon lacks the offers route); consolidation proposals with merged/contradictions/retired and "Run now" (its own route-missing notice, under the Consolidation heading, when the daemon lacks the consolidation routes) | `GET /memory/scopes`, `GET /memory?scope=&agentId=&q=`, `PUT /memory/lessons/:id`, `POST /memory/lessons/:id/pin`, `DELETE /memory/lessons/:id`, `POST /memory/lessons/:id/propose`, `GET /memory/promotions`, `GET /memory/offers`, `POST /memory/offers/:id/answer`, `GET /memory/consolidation`, `POST /memory/consolidation/run` |
 | `/extensions` | grouped by kind (connectors and MCP servers, skills, specialists, capabilities, model providers): name, version, status, connected, cost, description, permissions summary with the full list behind details; On/Off switch; Remove (two clicks); pending rows show the review (stage, risk, summary, tools, requested permissions) with Approve/Deny; Add dialog: catalog with search and kind filter, or an MCP server URL; the capabilities group opens with **Voice providers** (spec O.4): the STT and TTS pair the next voice session uses with kind and reason, available or the reason it is not, a note that enabling a `voice-*` capability chooses the provider (a cloud one needs its key), that a change applies at the next session and that `FORERUNNER_VOICE_STT` / `_TTS` override the panel; every voice row carries a badge (in force for STT/TTS, preferred but not in force with the registry's reason, or not in force with the daemon's reason); a daemon without the route shows nothing there; reloads (list and voice status) on every `extension.changed` frame and after every toggle | `GET /extensions`, `GET /extensions/catalog`, `POST /extensions` (201 or 202), `POST /extensions/:id/toggle`, `/approve`, `/deny`, `DELETE /extensions/:id`, `GET /voice/status` |
 | `/changes` | the change log newest first: source, scope, project, undo state, who asked and when, the sentence, the words used, revert time, commands / before / after behind details, Undo while undoable; project filter and "undoable only" | `GET /changes?projectId=&undoable=`, `POST /changes/:id/undo` |
-| `/performance` | per mode: target (first token / first audio / total / by task), samples, first-token p50/p95, total p50/p95, within-target share, a bar of the p95 against the target (met/missed in words); recent runs; estimate accuracy (overall and per specialist and kind); project filter; "Audit log" with a format select (JSON lines / CSV) and **Export audit log** (spec S.9): fetches the daemon's file through `client.auditExport`, saves it under the daemon's name with `saveTextFile` (`src/lib/download.ts`: a Blob behind an object URL on a hidden anchor, clicked once) and reports `Exported N rows to <file>`; says so when the browser cannot save files or the daemon lacks the route, pointing at `fr audit export` | `GET /performance?projectId=` (proposed), `GET /costs/estimates`, `GET /audit/export?format=` |
+| `/performance` | per mode (spec D.7, D.19): target (first token / first audio / total / by task), the effort in force (`effortLabel`: the effort, the table's when the project's offset moved it, and the effort a risky task raises it to, e.g. "medium; high from risk tier 2"; the title says whether the offset reaches the mode and the registry `max_effort` it is held at), samples, first-token p50/p90 and total p50/p90 by nearest rank, within-target share, a bar of the p90 against the target (met/missed in words), the last measurement; the window (`performance-days`: last 1, 7, 30 or 90 days, sent as `?days=`; the line under the title names the window and the project's offset); recent measurements with their source (run, chat, voice); a daemon failure is an error with a retry (the route is served, so no "route not available" state); estimate accuracy (overall and per specialist and kind); project filter; "Audit log" with a format select (JSON lines / CSV) and **Export audit log** (spec S.9): fetches the daemon's file through `client.auditExport`, saves it under the daemon's name with `saveTextFile` (`src/lib/download.ts`: a Blob behind an object URL on a hidden anchor, clicked once) and reports `Exported N rows to <file>`; says so when the browser cannot save files or the daemon lacks the route, pointing at `fr audit export` | `GET /performance?projectId=&days=`, `GET /costs/estimates`, `GET /audit/export?format=` |
 | `/updates` | app: running and installed version, channel, state, the available release with changelog, size and "Update and restart", previous version with "Roll back and restart", last rollback, rejected releases, last error; connector updates (installed vs available); model updates; model watch: latest report with recommendations to adopt/ignore/remind, "Run now", recent reports. Asks the feed first and falls back to the local state with a banner | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback`, `GET /model-watch/reports`, `/latest`, `POST /model-watch/run`, `POST /model-watch/reports/:id/answer` |
 | `/settings` | theme override, daemon connection status (with links to Updates and Extensions), the **Sources** section (spec A.4: connected GitHub orgs, accounts, repositories and local folders with their last scan's counts; connect one by kind, locator, display name and, for a GitHub kind, the token's vault reference, never a value; Scan or Rescan, Candidates, Remove with a confirmation that says projects stay; each candidate with its status, the existing-install mark, a link to the project it is or duplicates, and Create project on a proposal, which refreshes the project list; a daemon without the route shows a note), a **Models per agent and specialist** section (spec D.4, ADR 0072; `ModelSettingsSection.tsx`): one row per mode of the principal agent (planning, chat), the critic's review modes (read-only, with the note that its tiers set its model) and one per runnable specialist, columns Model (rung and the provider's model id; the daemon sends the rung that runs, so an agent mode set above the default ceiling shows Opus), Effort, Max tokens, Speed mode, Timeout (min) and **Temperature only when the daemon says the provider accepts one** (`provider.acceptsTemperature`; otherwise no column and the line says none is sent); each value shows its source (`effort table`, `registry file`, or a `set` badge whose title names the default it replaces); a click opens the shared change dialog (`SettingChangeDialog`, a select for rung, effort and speed with a "default (…)" entry, a specialist's efforts only up to its `max_effort`, a text input for the numbers with their range, "default" to clear) that runs `model.settings.set`; a daemon without the route shows the route-missing state, a malformed `model_config` the daemon's reason, a **Capabilities** section linking to Email (the browser and desktop control are switched in Extensions), every setting grouped by scope with the scope badge; rows that map to a command have Change: a dialog with the current value (a three-stop slider, speed / balanced / quality, for a project's speed-versus-quality row, spec D.16), the change card from the daemon, Yes/No (a tap; a high-risk card asks this paired device), the sentence with Undo, a link to Changes; other rows say read-only | `GET /settings`, `GET /settings/models`, `POST /commands/execute`, `POST /commands/:id/confirm`, `POST /changes/:id/undo` |
 | `/settings/capabilities/email` | Settings -> Capabilities -> Email (spec S.15, S.28, S.29, T.14; ADR 0066): one card per agent of the signed-in human (`/agents` filtered by `/me`, principal first) with the mode badge and the mailbox address; pause / resume with the state (the tray's routes); the **mode picker** over the five modes with their one-line meanings, the plain full-discretion sentence ("the agent can email strangers on your behalf …") under the option before any change and again in a confirmation dialog that must be answered before the `PUT` (cancel sends nothing; every other mode applies at once); the limits that stay on (daily and per-recipient caps, signature on/off and text, daily digest) and, in allowlist mode only, the allowlist editor (one entry per line); the mailbox form (address, IMAP, SMTP, passwords as `secret:<name>` references; the daemon's 400 for a value shown as such); the command settings (toggle, the registered address, the private marker with Rotate, the task cap, the autonomy level); the **command audit** newest first (when, from, subject, interpretation, result with a session link, the reason a mail was ignored); the sent copies newest first (to you / to others, the copy as sent). A daemon without the routes shows the route-missing state per card; another human's agent is not listed | `GET|PUT /agents/:agentId/email/settings`, `POST /agents/:agentId/email/pause`, `.../resume`, `.../rotate-marker`, `GET /agents/:agentId/email/commands?limit=`, `GET /agents/:agentId/email/sent?limit=` |
@@ -110,9 +110,10 @@ apps/ui/
 `createClient(config, fetchImpl?)` returns a `DaemonClient` with one method per entry of
 `DAEMON_ROUTES` (phase-1 routes, decisions, peers, project settings and the mirror, estimates,
 extensions, updates, model watch, reviews, memory and consolidation, commands and the change
-log, `milestones` and `changeMilestone`) plus the proposed routes (`queue`, `enqueue`,
-`dismissQueueItem`, `dataAssets`, `registerDataAsset`, `removeDataAsset`, `importProject`,
-`docs`, `doc`, `performance`), the source discovery methods (spec A.4: `sources`, `addSource`, `scanSource`,
+log, `milestones` and `changeMilestone`, the data assets `dataAssets`, `registerDataAsset`,
+`removeDataAsset`) plus the proposed routes (`queue`, `enqueue`, `dismissQueueItem`,
+`importProject`, `docs`, `doc`), `performance(filter?)` (`GET /performance?projectId=&days=`
+from `DAEMON_ROUTES`, validated with the runtime's `PerformanceView`, no mirror), the source discovery methods (spec A.4: `sources`, `addSource`, `scanSource`,
 `sourceCandidates`, `acceptCandidate`, `removeSource` over `DAEMON_ROUTES`, their schemas
 read straight from `daemon/api-types`, no mirror), the agent email routes (`emailSettings`,
 `updateEmailSettings`, `emailSent`, `pauseEmail`, `resumeEmail`, `rotateEmailMarker`,
@@ -192,8 +193,11 @@ stop's effect, and "Current: balanced (0)" as the hint. The table cell reads the
 position (`speedQualityLabel`: "quality (+1)"; unset or junk reads balanced, as the runtime
 reads it). A move is still one `settings.set` through `executeCommands` with `source: "ui"`,
 and the words used name the position ("Settings: project.speed_quality_offset to speed (-1)");
-the sentence with the effect comes from the daemon (`commands.md`). The Performance view is
-untouched: it shows response times per mode, not the slider.
+the sentence with the effect comes from the daemon (`commands.md`). The Performance view does
+not move the slider: it shows response times per mode and, per mode, the effort in force that
+the slider's position yields (held at the registry's `max_effort`), as the daemon computes it,
+from the table's effort or the principal's own D.4 setting (`effortSource: "agent"`, which
+`effortLabel` names "your setting", e.g. "medium (your setting low)").
 
 The model settings section (spec D.4) uses the same dialog: `modelSettingCommand(target, field,
 value)` builds a synthetic row (`specialist.<name>.<field>` or `agent.<mode>.<field>`, scope
@@ -310,8 +314,14 @@ consolidation proposals, the change log, pending commands, the queue, data asset
 routes: a scan of a fresh source finds two candidates named after the locator, one an
 existing install, a scan of the fixture source changes nothing, accepting a proposal adds a
 project card and emits `project.changed`, a token value instead of a reference is refused
-with the daemon's message); decisions, the peer feed, docs and performance are served
-read-only) and
+with the daemon's message); decisions, the peer feed and docs are served read-only;
+`GET /performance` serves the `PERFORMANCE` fixture in the runtime's `PerformanceView` shape
+with the query's window and project, 400 for a bad `days` and 404 for an unknown project, as
+the daemon answers; with a project, the slider position Settings left in
+`state.speedQuality` shifts each mode with `offsetApplied` one step, held at its `maxEffort`,
+and sets `effortOffset`; an effort `model.settings.set` left in `state.modelSettings` with
+source `agent` for planning, text chat, `coder` or `researcher` is the base it shifts, with
+`effortSource: "agent"`) and
 `startFakeDaemon({ port })` (`@hono/node-server` on 127.0.0.1). Its `/health` answer is the
 `HEALTH` fixture with the extension counts derived from the extension state (3 enabled, 1
 pending with the fixtures). It requires the bearer token on every route (and accepts `?token=`
@@ -409,8 +419,10 @@ cd apps/ui && pnpm test:ui        # Playwright, headless Chromium, fake daemon +
 Unit tests (`test/*.test.ts[x]`): `client` (config resolution, route paths, token header,
 contract validation rejects malformed bodies, `/health` with its sandbox and extensions
 sections, decisions and peers, phase-1 mutations, a missing route vs a typed not_found incl.
-the real daemon's plain-text and empty-body 404, round trips for reviews / memory / commands /
-the change log, the proposed routes, extensions / updates / model watch), `contracts`
+the real daemon's plain-text and empty-body 404 (on `docs`, a route still proposed: the test
+checks it is in `PROPOSED_ROUTES` and not in `DAEMON_ROUTES`), round trips for reviews / memory / commands /
+the change log, the proposed routes, `performance` with its window and the daemon's 400 for a
+`days` that is not decimal digits, extensions / updates / model watch), `contracts`
 (two-sided parse of the extension, updates and estimate fixtures with key-set comparison,
 proposed routes vs `DAEMON_ROUTES`, `parseChangeCard`), `money`, `sse` (parser, every event
 name incl. `extension.changed`, `restart.requested` and `speak.started` (an unknown `player`
@@ -462,7 +474,10 @@ on `extension.changed`; the voice providers card and the voice rows' badges, re-
 toggle and on `extension.changed`; `voiceBadges` in force, fallen back, skipped, other rows),
 `updates` (states, available release with changelog, apply with the
 restart banner, rollback, model watch adopt and run, feed failure fallback), `performance`
-(formatting, target comparison, every mode with the bar, estimates, missing route),
+(formatting, the fixture parsed with the runtime schema, the p90 against each target, the
+effort in force, every mode with the bar and the last measurement, the window select sent as
+`?days=`, the project's slider shifting every mode it reaches held at the registry cap (the
+title names the cap), a daemon failure as an error with no "route not available" state, estimates),
 `audit-export` (the client's filename parsing and row counting, the fetch with the token and
 the filters in both formats against the fake daemon, 401 without a token; the button downloads
 the daemon's file in the chosen format and reports the count, says so when the browser cannot
@@ -552,11 +567,13 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
   in `server.ts` matching the fake would make the two identical and belongs to the daemon.
 - Proposed routes the daemon does not serve yet (the pages show "route not available" until
   it does): `GET/POST /projects/:id/queue`, `POST /queue/:id/dismiss`,
-  `GET/POST /projects/:id/data`, `DELETE /data/:id`, `POST /projects/:id/import`,
-  `GET /projects/:id/docs[/:path]`, `GET /performance`. Shapes are in `contracts.ts` and the
-  fixtures. `GET /projects/:id/milestones` is served since B.5 landed; the Plan tab still
-  derives the timeline and the milestones from the tasks and the card against an older daemon
-  without it, and offers no Edit on those derived rows.
+  `POST /projects/:id/import`, `GET /projects/:id/docs[/:path]`. Shapes are in `contracts.ts`
+  and the fixtures. `GET /projects/:id/milestones` is served since B.5 landed; the Plan tab
+  still derives the timeline and the milestones from the tasks and the card against an older
+  daemon without it, and offers no Edit on those derived rows. The data asset routes
+  (`GET/POST /projects/:id/data`, `DELETE /data/:id`) and `GET /performance`
+  (`views.ts#performanceView`, runtime.md) are served by the daemon now and left the proposed
+  list; the page reads the runtime's `PerformanceView`.
 - The settings screen's changes are logged with source `ui` (`POST /commands/execute` with
   `source: "ui"`), but the Changes screen's undo (`POST /changes/:id/undo`, no body) is still
   logged as `chat` by the daemon; a `source` on that route and on `undoChange` would close it.

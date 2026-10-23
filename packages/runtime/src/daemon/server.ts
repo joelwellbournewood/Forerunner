@@ -16,6 +16,7 @@ import { createExtensionsRoutes } from "../extensions/routes.ts";
 import type { CommandResultView, CommandTurn } from "../loop/ports.ts";
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { speedQualityOffsetOf } from "../models/ladder.ts";
+import { parseAgentModelConfig } from "../models/run-settings.ts";
 import { createModelWatchRoutes } from "../models/watch-routes.ts";
 import type { NotificationEventPayload } from "../notifications/emitter.ts";
 import { createNotificationRoutes } from "../notifications/routes.ts";
@@ -80,6 +81,8 @@ import {
   type MirrorRunView,
   MirrorSyncBody,
   type MirrorSyncPendingView,
+  PERFORMANCE_DEFAULT_DAYS,
+  PERFORMANCE_MAX_DAYS,
   type PeerFeedView,
   type PendingChangeView,
   PinLessonBody,
@@ -110,11 +113,13 @@ import {
   changeLogView,
   commandDefView,
   costView,
+  effortCapsOf,
   eventView,
   lessonView,
   messageView,
   milestoneView,
   money,
+  performanceView,
   projectCard,
   projectSummary,
   requestView,
@@ -1399,6 +1404,39 @@ export function createDaemonApp(
 
   // Estimate accuracy (spec I): what the Performance screen shows next to the cost view.
   app.get("/costs/estimates", (c) => c.json(estimateAccuracyView(rt.estimates, rt.clock.nowIso())));
+
+  // Performance (spec D.7, D.19): per mode the time to first token and total time against
+  // target, from the Run rows and the chat and voice turns of the window, and the effort in
+  // force. `?days=` is a positive integer (7 by default, at most 90); an unknown project is 404.
+  app.get("/performance", async (c) => {
+    const raw = c.req.query("days");
+    let days = PERFORMANCE_DEFAULT_DAYS;
+    if (raw !== undefined && raw !== "") {
+      // Decimal digits only: Number() would also take "0x10", "1e1", " 7" or "7.0".
+      const n = /^[0-9]+$/.test(raw) ? Number(raw) : Number.NaN;
+      if (!Number.isInteger(n) || n < 1)
+        throw new ForerunnerError("validation", "days must be a positive integer", {
+          details: { reason: "bad_query", param: "days" },
+        });
+      days = Math.min(n, PERFORMANCE_MAX_DAYS);
+    }
+    return c.json(
+      await performanceView(rt.store, {
+        humanId: rt.human.id,
+        projectId: c.req.query("projectId") || null,
+        days,
+        nowIso: rt.clock.nowIso(),
+        modelConfig: rt.modelConfig(),
+        effortCaps: effortCapsOf(rt.registry),
+        // The principal's D.4 effort overrides (spec D.4, ADR 0072), read per request so a
+        // `model.settings.set` change shows at once; a malformed document applies none, as the
+        // runs read it.
+        agentModelConfig: parseAgentModelConfig(
+          (await rt.store.agent.get(rt.agent.id))?.model_config,
+        ).config,
+      }),
+    );
+  });
 
   app.get("/settings", async (c) => {
     const h = await rt.store.human.mustGet(rt.human.id);
