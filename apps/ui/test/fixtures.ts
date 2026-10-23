@@ -10,6 +10,7 @@ import type {
   ReviewView,
   SourceCandidateView,
   SourceView,
+  VoiceStatusView,
 } from "@forerunner/runtime/daemon/api-types";
 import type { AuditExportRecord } from "@forerunner/runtime/daemon/audit-export";
 import type {
@@ -663,6 +664,33 @@ export const EXTENSIONS: ExtensionView[] = [
     source: "catalog:browser",
     installedAt: "2026-10-01T09:00:00.000Z",
     updatedAt: "2026-10-01T09:00:00.000Z",
+    rowVersion: 1,
+    error: null,
+    connected: false,
+  },
+  {
+    id: "ext_voice_deepgram",
+    name: "voice-deepgram",
+    kind: "capability",
+    status: "enabled",
+    enabled: true,
+    description: "Cloud STT through Deepgram for the lowest latency.",
+    permissions: {
+      tools: [],
+      actionClasses: ["read"],
+      domains: ["api.deepgram.com"],
+      paths: [],
+      secrets: ["deepgram_api_key"],
+      scopes: ["send voice audio to Deepgram for transcription"],
+    },
+    pendingPermissions: null,
+    pendingStage: null,
+    review: null,
+    cost: money(0),
+    version: "1.0.0",
+    source: "catalog:voice-deepgram",
+    installedAt: "2026-10-02T09:00:00.000Z",
+    updatedAt: "2026-10-02T09:00:00.000Z",
     rowVersion: 1,
     error: null,
     connected: false,
@@ -1703,6 +1731,79 @@ export const AUDIT_EXPORT: AuditExportRecord[] = [
     recordedAt: "2026-10-19T19:30:12.120Z",
   },
 ];
+
+/**
+ * `GET /voice/status` (spec O.4): the enabled `voice-deepgram` row is the preferred STT and
+ * in force; TTS comes from the registry's policy (local Kokoro); the Cartesia key is missing.
+ */
+export const VOICE_STATUS: VoiceStatusView = {
+  available: true,
+  reason:
+    '"deepgram" selected in Extensions (voice-deepgram); local provider "kokoro": kokoro importable',
+  stt: {
+    name: "deepgram",
+    kind: "cloud",
+    policy: "preferred",
+    reason: '"deepgram" selected in Extensions (voice-deepgram)',
+  },
+  tts: {
+    name: "kokoro",
+    kind: "local",
+    policy: "local",
+    reason: 'local provider "kokoro": kokoro importable',
+  },
+  statuses: {
+    stt: [
+      {
+        name: "faster-whisper",
+        kind: "local",
+        available: true,
+        reason: "faster_whisper importable",
+        selected: false,
+      },
+      {
+        name: "deepgram",
+        kind: "cloud",
+        available: true,
+        reason: "key secret:deepgram_api_key configured (live connection not probed)",
+        secretRef: "secret:deepgram_api_key",
+        secretConfigured: true,
+        selected: true,
+      },
+    ],
+    tts: [
+      {
+        name: "kokoro",
+        kind: "local",
+        available: true,
+        reason: "kokoro importable",
+        selected: true,
+      },
+      {
+        name: "cartesia",
+        kind: "cloud",
+        available: false,
+        reason: "no value for secret:cartesia_api_key",
+        secretRef: "secret:cartesia_api_key",
+        secretConfigured: false,
+        selected: false,
+      },
+    ],
+  },
+  preferences: {
+    stt: {
+      name: "deepgram",
+      source: "extension",
+      extensionId: "ext_voice_deepgram",
+      extension: "voice-deepgram",
+    },
+    tts: null,
+    skipped: [],
+  },
+  sessions: 0,
+  maxSessions: 4,
+  modes: ["push_to_talk", "open_mic"],
+};
 
 /** Source discovery (spec A.4): one connected org, scanned once, with three candidates. */
 export const SOURCES: SourceView[] = [

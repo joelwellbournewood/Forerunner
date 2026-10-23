@@ -18,13 +18,15 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import { VOICE_APPROVAL_AUDIT_TOOL, VOICE_SESSION_AUDIT_TOOL } from "../src/voice/bridge.ts";
 import {
   type AudioChunk,
+  CartesiaTts,
   DeepgramStt,
+  ElevenLabsTts,
   FakeStt,
   type FakeSttScript,
   FakeTts,
   VoiceProviderRegistry,
 } from "../src/voice/pkg.ts";
-import { VOICE_SECRET_REFS } from "../src/voice/providers.ts";
+import { VOICE_PREFERENCE_ENV, VOICE_SECRET_REFS } from "../src/voice/providers.ts";
 import { encodePcm } from "../src/voice/views.ts";
 
 /**
@@ -847,5 +849,263 @@ describe("voice session eviction", () => {
     } finally {
       await rt.close();
     }
+  });
+});
+
+describe("voice providers chosen in the Extensions panel", () => {
+  /**
+   * Spec O.4: the providers the daemon uses are the enabled `voice-*` rows of the panel, read
+   * at every status read and session start (no restart), with the environment variables as
+   * the documented override and a visible reason for every row that is not in force. The
+   * registry has the fakes and the three cloud providers (never connected: no turn runs);
+   * without a row the registry's own policy picks.
+   */
+  const clock = new SimulatedClock("2026-11-03T10:00:00Z");
+  const keyOf = (name: string) =>
+    [name, "_", "live", "_", "0123456789abcdef0123456789abcdef"].join(""); // not-a-secret
+  const KEYS = {
+    deepgram_api_key: keyOf("dg"),
+    cartesia_api_key: keyOf("ct"),
+    elevenlabs_api_key: keyOf("el"),
+  };
+  const vault = new MemoryVault();
+  const env: NodeJS.ProcessEnv = {};
+  const resolveSecret = async (ref: string) =>
+    (await vault.get(ref.replace(/^secret:/, ""))) ?? undefined;
+  let rt: RuntimeApp;
+  let app: ReturnType<typeof createDaemonApp>["app"];
+  let token: string;
+  const rows: Record<string, string> = {};
+  const req = (path: string, init: RequestInit = {}) =>
+    app.request(path, {
+      ...init,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    });
+  const post = (path: string, body: unknown) =>
+    req(path, { method: "POST", body: JSON.stringify(body) });
+  const status = async () => {
+    const body = await (await req("/voice/status")).text();
+    for (const value of Object.values(KEYS)) expect(body).not.toContain(value);
+    return VoiceStatusView.parse(JSON.parse(body));
+  };
+  /** Install a built-in voice entry and say yes in the inbox, as the panel does. */
+  const enable = async (catalogId: string) => {
+    const added = await post("/extensions", { catalogId });
+    expect(added.status).toBe(202);
+    const id = String((await json(added)).id);
+    const request = (
+      await rt.store.humanRequest.open({ humanId: rt.human.id }, { limit: 50 })
+    ).find((r) => (r.change_card as { extensionId?: string } | null)?.extensionId === id);
+    if (!request) throw new Error(`no grant request for ${catalogId}`);
+    const answered = await post(`/requests/${request.id}/answer`, {
+      version: request.version,
+      answer: "approve",
+    });
+    expect(answered.status).toBe(200);
+    expect((await json(await req(`/extensions/${id}`))).enabled).toBe(true);
+    rows[catalogId] = id;
+    return id;
+  };
+
+  beforeAll(async () => {
+    for (const [name, value] of Object.entries(KEYS)) await vault.set(name, value);
+    const home = mkdtempSync(join(tmpdir(), "fr-voice-prefs-"));
+    env.FORERUNNER_HOME = home;
+    const registry = new VoiceProviderRegistry()
+      .registerStt(new FakeStt({ clock, scripts: () => ({ final: "" }) }))
+      .registerStt(
+        new DeepgramStt({ apiKeyRef: VOICE_SECRET_REFS.deepgram, resolveSecret, clock }),
+        { secretRef: VOICE_SECRET_REFS.deepgram },
+      )
+      .registerTts(new FakeTts({ clock }))
+      .registerTts(
+        new CartesiaTts({
+          apiKeyRef: VOICE_SECRET_REFS.cartesia,
+          resolveSecret,
+          clock,
+          voice: "test-voice",
+        }),
+        { secretRef: VOICE_SECRET_REFS.cartesia },
+      )
+      .registerTts(
+        new ElevenLabsTts({
+          apiKeyRef: VOICE_SECRET_REFS.elevenlabs,
+          resolveSecret,
+          voice: "test-voice",
+        }),
+        { secretRef: VOICE_SECRET_REFS.elevenlabs },
+      );
+    rt = await composeRuntime({
+      env,
+      dirs: appDirs({ env }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault,
+      provider: new FakeProvider({ replies: [], clock, latency: "none" }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+      voice: { registry },
+    });
+    ({ app, token } = createDaemonApp(rt));
+  });
+  afterAll(async () => {
+    await rt?.close();
+  });
+
+  it("without a voice row the registry's policy picks and the status says nothing is preferred", async () => {
+    const s = await status();
+    expect(s.available).toBe(true);
+    expect(s.stt).toMatchObject({ name: "deepgram", kind: "cloud", policy: "cloud" });
+    expect(s.tts).toMatchObject({ name: "cartesia", kind: "cloud", policy: "cloud" });
+    expect(s.preferences).toEqual({ stt: null, tts: null, skipped: [] });
+  });
+
+  it("an enabled voice row is the preferred provider at the next status read and session, without a restart", async () => {
+    const id = await enable("voice-elevenlabs");
+    const s = await status();
+    expect(s.tts).toMatchObject({ name: "elevenlabs", policy: "preferred" });
+    expect(s.tts?.reason).toBe('"elevenlabs" selected in Extensions (voice-elevenlabs)');
+    expect(s.preferences.tts).toEqual({
+      name: "elevenlabs",
+      source: "extension",
+      extensionId: id,
+      extension: "voice-elevenlabs",
+    });
+    expect(s.preferences.stt).toBeNull();
+    expect(s.preferences.skipped).toEqual([]);
+    expect(s.statuses.tts.find((p) => p.name === "elevenlabs")?.selected).toBe(true);
+    expect(s.statuses.tts.find((p) => p.name === "cartesia")?.selected).toBe(false);
+    // The session opened now runs on the panel's choice; its audit row names it.
+    const started = await post("/voice/sessions", {});
+    expect(started.status).toBe(201);
+    const view = VoiceSessionView.parse(await json(started));
+    expect(view.providers.tts).toMatchObject({ name: "elevenlabs", policy: "preferred" });
+    expect(view.providers.stt).toMatchObject({ name: "deepgram", policy: "cloud" });
+    const startRow = (await rt.store.auditLog.list({ tool: VOICE_SESSION_AUDIT_TOOL } as never))
+      .map((r) => JSON.parse(r.input_summary) as Json)
+      .find((r) => r.id === view.id);
+    expect(startRow).toMatchObject({ action: "start", stt: "deepgram", tts: "elevenlabs" });
+    expect((await post(`/voice/sessions/${view.id}/stop`, {})).status).toBe(200);
+  });
+
+  it("two rows for one side: one is in force and the other says why not; a toggle applies next", async () => {
+    const cartesiaId = await enable("voice-cartesia");
+    let s = await status();
+    expect(s.tts).toMatchObject({ name: "cartesia", policy: "preferred" });
+    expect(s.preferences.tts).toMatchObject({ name: "cartesia", extensionId: cartesiaId });
+    expect(s.preferences.skipped).toEqual([
+      {
+        extensionId: rows["voice-elevenlabs"],
+        extension: "voice-elevenlabs",
+        side: "tts",
+        provider: "elevenlabs",
+        reason: '"cartesia" (voice-cartesia) is preferred; one TTS provider is in force at a time',
+      },
+    ]);
+    // Off in the panel: the other row is in force at the next read, nothing restarted.
+    expect((await post(`/extensions/${cartesiaId}/toggle`, { enabled: false })).status).toBe(200);
+    s = await status();
+    expect(s.tts).toMatchObject({ name: "elevenlabs", policy: "preferred" });
+    expect(s.preferences.skipped).toEqual([]);
+    const started = await post("/voice/sessions", {});
+    expect(started.status).toBe(201);
+    const view = VoiceSessionView.parse(await json(started));
+    expect(view.providers.tts.name).toBe("elevenlabs");
+    expect((await post(`/voice/sessions/${view.id}/stop`, {})).status).toBe(200);
+  });
+
+  it("a cloud row without its key is skipped with the reference as the reason; the key back makes it preferred", async () => {
+    const id = await enable("voice-deepgram");
+    expect((await status()).stt).toMatchObject({ name: "deepgram", policy: "preferred" });
+    await vault.delete("deepgram_api_key");
+    let s = await status();
+    // Not local, no cloud key: the registry's policy falls back to the fake; the row says why.
+    expect(s.stt).toMatchObject({ name: "fake-stt", policy: "fake" });
+    expect(s.preferences.stt).toBeNull();
+    expect(s.preferences.skipped).toEqual([
+      {
+        extensionId: id,
+        extension: "voice-deepgram",
+        side: "stt",
+        provider: "deepgram",
+        reason: "no value for secret:deepgram_api_key; store the key with fr setup",
+      },
+    ]);
+    expect(s.statuses.stt.find((p) => p.name === "deepgram")).toMatchObject({
+      available: false,
+      secretRef: VOICE_SECRET_REFS.deepgram,
+      secretConfigured: false,
+    });
+    await vault.set("deepgram_api_key", KEYS.deepgram_api_key);
+    s = await status();
+    expect(s.stt).toMatchObject({ name: "deepgram", policy: "preferred" });
+    expect(s.preferences.stt).toMatchObject({ name: "deepgram", extensionId: id });
+    expect(s.preferences.skipped).toEqual([]);
+  });
+
+  it("the environment variables override the panel and the status says so", async () => {
+    env[VOICE_PREFERENCE_ENV.tts] = "fake-tts";
+    let s = await status();
+    expect(s.tts).toMatchObject({ name: "fake-tts", kind: "fake", policy: "preferred" });
+    expect(s.tts?.reason).toBe(`"fake-tts" set by ${VOICE_PREFERENCE_ENV.tts}`);
+    expect(s.preferences.tts).toEqual({
+      name: "fake-tts",
+      source: "env",
+      extensionId: null,
+      extension: null,
+    });
+    expect(s.preferences.skipped).toEqual([
+      expect.objectContaining({
+        extension: "voice-elevenlabs",
+        side: "tts",
+        reason: `overridden by ${VOICE_PREFERENCE_ENV.tts}=fake-tts`,
+      }),
+    ]);
+    // The STT side is untouched by a TTS override.
+    expect(s.stt).toMatchObject({ name: "deepgram", policy: "preferred" });
+    delete env[VOICE_PREFERENCE_ENV.tts];
+    s = await status();
+    expect(s.tts).toMatchObject({ name: "elevenlabs", policy: "preferred" });
+  });
+
+  it("a row whose providers this daemon does not register is reported, not silently ignored", async () => {
+    const id = await enable("voice-local");
+    const s = await status();
+    // Cloud rows win over the local one; the local row says so for STT, and for TTS that
+    // none of its providers is registered here would be the reason without the cloud row.
+    expect(s.stt).toMatchObject({ name: "deepgram", policy: "preferred" });
+    expect(s.preferences.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          extensionId: id,
+          extension: "voice-local",
+          side: "stt",
+          reason: expect.stringContaining('"deepgram" (voice-deepgram) is preferred'),
+        }),
+        expect.objectContaining({
+          extensionId: id,
+          side: "tts",
+          reason: expect.stringContaining('"elevenlabs" (voice-elevenlabs) is preferred'),
+        }),
+      ]),
+    );
+    await post(`/extensions/${rows["voice-elevenlabs"]}/toggle`, { enabled: false });
+    const alone = await status();
+    expect(alone.preferences.tts).toBeNull();
+    expect(alone.preferences.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          extensionId: id,
+          side: "tts",
+          provider: null,
+          reason: "none of kokoro, piper is registered in this daemon",
+        }),
+      ]),
+    );
+    // Nothing chosen for TTS: the registry's policy picks on its own (a cloud key exists).
+    expect(alone.tts).toMatchObject({ name: "cartesia", policy: "cloud" });
   });
 });

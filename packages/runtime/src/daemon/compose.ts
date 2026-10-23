@@ -191,10 +191,11 @@ import type { Restarter } from "../update/ports.ts";
 import { SchemaSync } from "../update/sync.ts";
 import {
   buildVoiceRegistry,
+  resolveVoicePreferences,
   type VoicePreferences,
   VoiceSessions,
   vaultHasSecret,
-  voicePreferences,
+  voiceExtensionRows,
 } from "../voice/index.ts";
 import {
   type AudioSink,
@@ -416,9 +417,11 @@ export interface ComposeOptions {
   };
   /**
    * Voice (spec O; ADR 0012, ADR 0048). Production registers the local helpers and the cloud
-   * providers by secret reference (`buildVoiceRegistry`) and prefers the names in
-   * `FORERUNNER_VOICE_STT` / `FORERUNNER_VOICE_TTS`; tests inject the fake providers (`stt`,
-   * `tts`) or a whole `registry`, and a `sink` in place of the paced one. `storeAudio`
+   * providers by secret reference (`buildVoiceRegistry`) and prefers what the Extensions
+   * panel's enabled `voice-*` rows name, with `FORERUNNER_VOICE_STT` / `FORERUNNER_VOICE_TTS`
+   * as the override, read at every session start (`resolveVoicePreferences`); tests inject
+   * the fake providers (`stt`, `tts`) or a whole `registry`, fixed `preferred` names in place
+   * of the panel, and a `sink` in place of the paced one. `storeAudio`
    * (`FORERUNNER_VOICE_STORE_AUDIO=1`) writes WAVs under `<data>/voice/<session>`; off by default.
    */
   voice?: {
@@ -2168,16 +2171,29 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     : null;
   // Voice (spec O; ADR 0012, ADR 0048): the loop over the conversation agent, behind the
   // daemon's /voice routes. The providers are the local helpers and the cloud ones by secret
-  // reference; none is probed here. Without a usable pair, or without a model credential,
-  // `voice.status()` reports why and a session start is refused with `unavailable`.
+  // reference; none is probed here. Which one is preferred is the Extensions panel's choice
+  // (the enabled `voice-*` rows, spec O.4) under the environment override, read at every
+  // status read and session start so a toggle applies at the next session. Without a usable
+  // pair, or without a model credential, `voice.status()` reports why and a session start is
+  // refused with `unavailable`.
   const voiceRegistry =
     opts.voice?.registry ??
     (opts.voice?.stt || opts.voice?.tts
       ? injectedVoiceRegistry(opts.voice.stt, opts.voice.tts)
       : buildVoiceRegistry({ env, vault, clock }));
+  const fixedVoicePreferences = opts.voice?.preferred;
+  const voiceRows = voiceExtensionRows(extensions);
   const voice = new VoiceSessions({
     registry: voiceRegistry,
-    preferred: opts.voice?.preferred ?? voicePreferences(env),
+    preferences: fixedVoicePreferences
+      ? () => fixedVoicePreferences
+      : () =>
+          resolveVoicePreferences({
+            env,
+            extensions: voiceRows,
+            hasSecret: vaultHasSecret(vault),
+            registered: { stt: voiceRegistry.sttNames(), tts: voiceRegistry.ttsNames() },
+          }),
     hasSecret: vaultHasSecret(vault),
     conversation: () => conversation,
     commands,

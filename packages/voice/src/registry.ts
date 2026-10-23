@@ -35,6 +35,11 @@ export interface Selection<T> {
 export interface SelectInput {
   /** Provider chosen in the Extensions panel; used when it is available. */
   preferred?: string;
+  /**
+   * Where `preferred` came from, for the reason ("selected in Extensions (voice-deepgram)",
+   * "set by FORERUNNER_VOICE_STT"); default "selected in Extensions".
+   */
+  preferredBy?: string;
   /** Whether a secret reference has a value; defaults to "unknown" (treated as configured). */
   hasSecret?: (ref: string) => Promise<boolean> | boolean;
 }
@@ -172,7 +177,13 @@ async function select<T extends Probeable>(
   let note = "";
   if (input.preferred) {
     const s = statuses.find((x) => x.name === input.preferred);
-    if (s?.available) return done(s.name, "preferred", `"${s.name}" selected in Extensions`);
+    if (s?.available) {
+      return done(
+        s.name,
+        "preferred",
+        `"${s.name}" ${input.preferredBy ?? "selected in Extensions"}`,
+      );
+    }
     note = s
       ? `preferred "${s.name}" unavailable (${s.reason}); `
       : `preferred "${input.preferred}" is not registered; `;

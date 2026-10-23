@@ -1,9 +1,11 @@
 /**
  * The daemon's voice sessions (ADR 0048): one `VoiceBridge` per session the shell opens,
- * each on the providers the registry's policy selected at that moment. `status()` never
- * throws: without a usable STT or TTS provider, or without a model credential, it reports
- * `available: false` with the reason the shells show, and `start()` refuses with
- * `unavailable` carrying the same reason.
+ * each on the providers the registry's policy selected at that moment, with the preferences
+ * (the Extensions panel's enabled `voice-*` rows, or the environment override) read afresh
+ * at every status read and session start, so a change in the panel applies at the next
+ * session. `status()` never throws: without a usable STT or TTS provider, or without a model
+ * credential, it reports `available: false` with the reason the shells show, and `start()`
+ * refuses with `unavailable` carrying the same reason.
  */
 import type { Clock } from "@forerunner/platform";
 import { errorMessage, ForerunnerError } from "@forerunner/platform";
@@ -21,7 +23,12 @@ import type {
   VoiceMode,
   VoiceProviderRegistry,
 } from "./pkg.ts";
-import type { VoicePreferences } from "./providers.ts";
+import {
+  preferredBy,
+  type VoicePreference,
+  type VoicePreferences,
+  type VoiceSide,
+} from "./providers.ts";
 
 export interface VoiceProviderPick {
   name: string;
@@ -37,6 +44,8 @@ export interface VoiceAvailability {
   stt: VoiceProviderPick | null;
   tts: VoiceProviderPick | null;
   statuses: { stt: ProviderStatus[]; tts: ProviderStatus[] };
+  /** The panel's (or the environment's) choice per side and the rows not in force, with why. */
+  preferences: VoicePreferences;
   sessions: number;
   maxSessions: number;
 }
@@ -55,7 +64,12 @@ export interface StartVoiceSessionOptions {
 
 export interface VoiceSessionsDeps {
   registry: VoiceProviderRegistry;
-  preferred?: VoicePreferences;
+  /**
+   * The preferred providers, read at every status read and session start: the Extensions
+   * panel's enabled `voice-*` rows and the environment override (`resolveVoicePreferences`).
+   * Default: none, the registry's policy decides.
+   */
+  preferences?: () => Promise<VoicePreferences> | VoicePreferences;
   hasSecret?: (ref: string) => Promise<boolean>;
   /** The conversation agent, null without a model credential. */
   conversation: () => ConversationAgent | null;
@@ -113,17 +127,24 @@ export class VoiceSessions {
   /** What the shells show before opening the microphone; never throws. */
   async status(): Promise<VoiceAvailability> {
     this.sweep();
+    const preferences = await this.preferences();
     const base = {
       stt: null,
       tts: null,
+      preferences,
       sessions: this.open().length,
       maxSessions: this.maxSessions,
     };
     if (!this.deps.conversation()) {
-      return { available: false, reason: NO_MODEL, statuses: await this.probe(), ...base };
+      return {
+        available: false,
+        reason: NO_MODEL,
+        statuses: await this.probe(preferences),
+        ...base,
+      };
     }
     try {
-      const picked = await this.pick();
+      const picked = await this.pick(preferences);
       return {
         available: true,
         reason: `${picked.stt.pick.reason}; ${picked.tts.pick.reason}`,
@@ -133,7 +154,12 @@ export class VoiceSessions {
         statuses: picked.statuses,
       };
     } catch (e) {
-      return { available: false, reason: errorMessage(e), statuses: await this.probe(), ...base };
+      return {
+        available: false,
+        reason: errorMessage(e),
+        statuses: await this.probe(preferences),
+        ...base,
+      };
     }
   }
 
@@ -147,7 +173,8 @@ export class VoiceSessions {
         `voice: ${this.maxSessions} sessions are already open; stop one first`,
       );
     }
-    const picked = await this.pick();
+    // The panel's choice as it stands now: a toggle since the last session is seen here.
+    const picked = await this.pick(await this.preferences());
     const bridge = await VoiceBridge.create({
       agent,
       commands: this.deps.commands,
@@ -225,20 +252,31 @@ export class VoiceSessions {
     }
   }
 
-  private selectInput(): { preferred?: string; hasSecret?: (ref: string) => Promise<boolean> } {
-    return this.deps.hasSecret ? { hasSecret: this.deps.hasSecret } : {};
+  private async preferences(): Promise<VoicePreferences> {
+    return this.deps.preferences
+      ? await this.deps.preferences()
+      : { stt: null, tts: null, skipped: [] };
   }
 
-  private async pick(): Promise<Picked> {
-    const { registry, preferred } = this.deps;
-    const stt = await registry.selectStt({
-      ...this.selectInput(),
-      ...(preferred?.stt ? { preferred: preferred.stt } : {}),
-    });
-    const tts = await registry.selectTts({
-      ...this.selectInput(),
-      ...(preferred?.tts ? { preferred: preferred.tts } : {}),
-    });
+  private selectInput(
+    side: VoiceSide,
+    prefs: VoicePreferences,
+  ): {
+    preferred?: string;
+    preferredBy?: string;
+    hasSecret?: (ref: string) => Promise<boolean>;
+  } {
+    const p: VoicePreference | null = prefs[side];
+    return {
+      ...(this.deps.hasSecret ? { hasSecret: this.deps.hasSecret } : {}),
+      ...(p ? { preferred: p.name, preferredBy: preferredBy(p, side) } : {}),
+    };
+  }
+
+  private async pick(prefs: VoicePreferences): Promise<Picked> {
+    const { registry } = this.deps;
+    const stt = await registry.selectStt(this.selectInput("stt", prefs));
+    const tts = await registry.selectTts(this.selectInput("tts", prefs));
     return {
       stt: {
         provider: stt.provider,
@@ -252,17 +290,13 @@ export class VoiceSessions {
     };
   }
 
-  private async probe(): Promise<{ stt: ProviderStatus[]; tts: ProviderStatus[] }> {
-    const { registry, preferred } = this.deps;
+  private async probe(
+    prefs: VoicePreferences,
+  ): Promise<{ stt: ProviderStatus[]; tts: ProviderStatus[] }> {
+    const { registry } = this.deps;
     return {
-      stt: await registry.statusStt({
-        ...this.selectInput(),
-        ...(preferred?.stt ? { preferred: preferred.stt } : {}),
-      }),
-      tts: await registry.statusTts({
-        ...this.selectInput(),
-        ...(preferred?.tts ? { preferred: preferred.tts } : {}),
-      }),
+      stt: await registry.statusStt(this.selectInput("stt", prefs)),
+      tts: await registry.statusTts(this.selectInput("tts", prefs)),
     };
   }
 }

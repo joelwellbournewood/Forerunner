@@ -163,6 +163,31 @@ keys are ignored, `null` stands for absent, and a line that does not fit is logg
 **local if available, else cloud if its key is configured, else fake**, and returns `policy` and
 a human-readable `reason` plus a status row per provider for the Extensions panel. `preferred`
 is the panel's choice; when it is unavailable the reason says so and the policy continues.
+`preferredBy` names where the choice came from for the reason (`"deepgram" selected in
+Extensions (voice-deepgram)`, `"fake-tts" set by FORERUNNER_VOICE_TTS`); default "selected in
+Extensions".
+
+### Which provider is preferred (spec O.4)
+
+The runtime decides `preferred` per side (`packages/runtime/src/voice/providers.ts`,
+`resolveVoicePreferences`), read afresh at every `GET /voice/status` and every session start,
+so a toggle in the Extensions panel applies at the next voice session without a restart:
+
+1. **Environment override.** `FORERUNNER_VOICE_STT` / `FORERUNNER_VOICE_TTS` name a provider
+   that wins over the panel for that side; every enabled row for the side is reported as
+   `overridden by FORERUNNER_VOICE_TTS=<name>`.
+2. **The enabled `voice-*` rows.** Each built-in voice catalog entry names the providers it
+   stands for (`voice: { stt: [...], tts: [...] }`, in order of preference; `voice-local`
+   names faster-whisper, kokoro and piper). Rows that need a key (the cloud ones) are
+   considered before the local row, then by name. Per side the first row whose granted
+   secrets all have a value in the vault and one of whose providers is registered in this
+   daemon is in force; every other row is listed in `preferences.skipped` with its reason (no
+   value for `secret:<name>`, another row in force, none of its providers registered).
+3. **Nothing chosen.** The registry's policy above picks.
+
+`GET /voice/status` carries the result as `preferences: { stt, tts, skipped }`; the Extensions
+panel shows the pair in force above the capabilities and a badge on every voice row (in force,
+preferred but fallen back with the registry's reason, or not in force with the reason).
 
 Cloud keys are secret references (`secret:deepgram_api_key`) resolved through the injected
 `SecretResolver` right before a connection. Values never go into URLs (unless Cartesia's
@@ -322,15 +347,19 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
   still carries its own copy (`tests/e2e/src/scenario-voice.ts`) until it is pointed at
   `VoiceBridge`. The conversation agent's own per-human copy of a pending card outlives a
   voice answer until its next typed line (`runtime.md`, "Known issues": a bare "yes" typed
-  right after is reported as "Not done"; nothing runs twice). The Extensions panel's `voice-local` / `voice-deepgram` entries do not yet
-  feed the registry's `preferred` name; `FORERUNNER_VOICE_STT` / `FORERUNNER_VOICE_TTS` do.
+  right after is reported as "Not done"; nothing runs twice).
+- A cloud voice row whose secret grant the human removed in the panel is treated like the
+  local row (no key to check before the pick); the registry then finds the provider's own key
+  missing and the row's badge says "preferred, not in force" with the registry's reason.
+- A session already open keeps the providers it started with; a panel change applies to the
+  next session only (by design: no provider swap mid-conversation).
 
 ## Requirements covered
 
 | ID | Clause | Where | Test |
 | --- | --- | --- | --- |
 | O.3 | push-to-talk or open mic with VAD; streaming STT; sentence-by-sentence streaming TTS; interrupt mid-sentence | `loop.ts`, `vad.ts`, `sentences.ts` | `test/loop.test.ts`, `test/vad.test.ts`, `test/sentences.test.ts` |
-| O.4 | local by default (faster-whisper, Kokoro or Piper), cloud option (Deepgram, Cartesia or ElevenLabs), chosen in Extensions | `providers/*`, `registry.ts` | `test/registry.test.ts`, `test/local-helpers.test.ts`, `test/cloud.test.ts`, `test/availability.test.ts` |
+| O.4 | local by default (faster-whisper, Kokoro or Piper), cloud option (Deepgram, Cartesia or ElevenLabs), chosen in Extensions | `providers/*`, `registry.ts`; the panel's choice: `packages/runtime/src/voice/providers.ts` (`resolveVoicePreferences`) | `test/registry.test.ts`, `test/local-helpers.test.ts`, `test/cloud.test.ts`, `test/availability.test.ts`, `packages/runtime/test/voice-preferences.test.ts`, `packages/runtime/test/voice-route.test.ts` ("voice providers chosen in the Extensions panel") |
 | O.5 | latency budget per stage, under 1.2 s to first audio, each part measured and shown | `latency.ts`, `loop.ts` | `test/latency.test.ts`, `test/loop.test.ts` |
 | O.7 | waits for "yes"; spoken approvals logged with the transcript line | `approval.ts` (the read-back and confirm step itself is the runtime's conversation agent) | `test/approval.test.ts`, `test/loop.test.ts` |
 | O.1, O.7, O.9, Q.4, Q.5 (voice) | talk by voice or typed line through the daemon; the card read back and the wait for the yes with the line logged; stop at once; the same registry as chat | `packages/runtime/src/voice/` (`VoiceBridge`, `TextTurnStt`, `VoiceSessions`), the `/voice` routes | `packages/runtime/test/voice-route.test.ts` |

@@ -1,8 +1,8 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { summarizePermissions } from "../src/pages/ExtensionsPage.tsx";
-import { EXTENSIONS } from "./fixtures.ts";
+import { summarizePermissions, voiceBadges } from "../src/pages/ExtensionsPage.tsx";
+import { EXTENSIONS, VOICE_STATUS } from "./fixtures.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 describe("Extensions panel", () => {
@@ -27,7 +27,7 @@ describe("Extensions panel", () => {
   it("lists every kind with status, version, cost and permissions, pending first for approval", async () => {
     renderApp("/extensions");
     const rows = await screen.findAllByTestId("extension");
-    expect(rows).toHaveLength(5);
+    expect(rows).toHaveLength(6);
     const github = rows.find((r) => r.dataset.extensionId === "ext_github");
     if (!github) throw new Error("no github row");
     expect(github).toHaveAttribute("data-kind", "connector");
@@ -73,8 +73,121 @@ describe("Extensions panel", () => {
     if (!browser) throw new Error("no browser row");
     await user.click(within(browser).getByTestId("extension-remove"));
     await user.click(within(browser).getByTestId("extension-remove-confirm"));
-    await waitFor(() => expect(screen.getAllByTestId("extension")).toHaveLength(4));
+    await waitFor(() => expect(screen.getAllByTestId("extension")).toHaveLength(5));
     expect(postedCalls(harness, "/extensions/ext_browser")[0]?.method).toBe("DELETE");
+  });
+
+  it("says which voice provider is in force and why a voice row is not (spec O.4)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/extensions", harness);
+    const card = await screen.findByTestId("voice-providers");
+    expect(within(card).getByTestId("voice-available")).toHaveTextContent("available");
+    expect(within(card).getByTestId("voice-stt")).toHaveTextContent(
+      'deepgram (cloud; "deepgram" selected in Extensions (voice-deepgram))',
+    );
+    expect(within(card).getByTestId("voice-tts")).toHaveTextContent("kokoro (local;");
+    // The card sits with the capabilities, where the voice rows are.
+    expect(screen.getByTestId("extensions-group-capability")).toContainElement(card);
+    const rows = await screen.findAllByTestId("extension");
+    const deepgram = rows.find((r) => r.dataset.extensionId === "ext_voice_deepgram");
+    if (!deepgram) throw new Error("no voice row");
+    expect(within(deepgram).getByTestId("extension-voice")).toHaveTextContent("in force for STT");
+    const browser = rows.find((r) => r.dataset.extensionId === "ext_browser");
+    expect(browser && within(browser).queryByTestId("extension-voice")).toBeNull();
+
+    // The key is gone: the daemon reports the row skipped with the reference as the reason
+    // and the local STT in force; a toggle in the panel re-reads the status.
+    harness.daemon.state.voiceStatus = {
+      ...VOICE_STATUS,
+      reason:
+        'local provider "faster-whisper": faster_whisper importable; local provider "kokoro": kokoro importable',
+      stt: {
+        name: "faster-whisper",
+        kind: "local",
+        policy: "local",
+        reason: 'local provider "faster-whisper": faster_whisper importable',
+      },
+      preferences: {
+        stt: null,
+        tts: null,
+        skipped: [
+          {
+            extensionId: "ext_voice_deepgram",
+            extension: "voice-deepgram",
+            side: "stt",
+            provider: "deepgram",
+            reason: "no value for secret:deepgram_api_key; store the key with fr setup",
+          },
+        ],
+      },
+    };
+    await user.click(within(deepgram).getByTestId("extension-toggle"));
+    await waitFor(() =>
+      expect(within(deepgram).getByTestId("extension-voice")).toHaveTextContent(
+        "not in force for STT: no value for secret:deepgram_api_key; store the key with fr setup",
+      ),
+    );
+    expect(within(card).getByTestId("voice-stt")).toHaveTextContent("faster-whisper (local;");
+    // An extension change from the daemon reloads it too.
+    harness.daemon.state.voiceStatus = {
+      ...VOICE_STATUS,
+      available: false,
+      reason: "no model credential configured; run fr setup",
+      stt: null,
+      tts: null,
+    };
+    harness.store.dispatch({ type: "extension.changed" });
+    await waitFor(() =>
+      expect(screen.getByTestId("voice-available")).toHaveTextContent("unavailable"),
+    );
+    expect(screen.getByTestId("voice-reason")).toHaveTextContent("no model credential");
+    expect(screen.getByTestId("voice-stt")).toHaveTextContent("none");
+  });
+
+  it("voiceBadges: in force, preferred but fallen back, skipped with the reason, nothing for other rows", () => {
+    const row = { id: "ext_voice_deepgram" };
+    expect(voiceBadges(row, null)).toEqual([]);
+    expect(voiceBadges({ id: "ext_browser" }, VOICE_STATUS)).toEqual([]);
+    expect(voiceBadges(row, VOICE_STATUS)).toEqual([{ tone: "good", text: "in force for STT" }]);
+    // Preferred by the row but the registry fell back (the probe failed): say so with its reason.
+    expect(
+      voiceBadges(row, {
+        ...VOICE_STATUS,
+        stt: {
+          name: "faster-whisper",
+          kind: "local",
+          policy: "local",
+          reason:
+            'preferred "deepgram" unavailable (socket refused); local provider "faster-whisper": ok',
+        },
+      }),
+    ).toEqual([
+      {
+        tone: "warn",
+        text: 'preferred for STT, not in force: preferred "deepgram" unavailable (socket refused); local provider "faster-whisper": ok',
+      },
+    ]);
+    expect(
+      voiceBadges(row, {
+        ...VOICE_STATUS,
+        preferences: {
+          stt: null,
+          tts: null,
+          skipped: [
+            {
+              extensionId: "ext_voice_deepgram",
+              extension: "voice-deepgram",
+              side: "stt",
+              provider: "deepgram",
+              reason: "overridden by FORERUNNER_VOICE_STT=fake-stt",
+            },
+          ],
+        },
+      }),
+    ).toEqual([
+      { tone: "warn", text: "not in force for STT: overridden by FORERUNNER_VOICE_STT=fake-stt" },
+    ]);
   });
 
   it("adds a connector from the catalog, which waits for approval, then approves it", async () => {
@@ -139,6 +252,6 @@ describe("Extensions panel", () => {
       (e) => e.id !== "ext_slack",
     );
     harness.store.dispatch({ type: "extension.changed" });
-    await waitFor(() => expect(screen.getAllByTestId("extension")).toHaveLength(4));
+    await waitFor(() => expect(screen.getAllByTestId("extension")).toHaveLength(5));
   });
 });

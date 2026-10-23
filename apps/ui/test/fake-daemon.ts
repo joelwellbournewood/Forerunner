@@ -24,6 +24,7 @@ import type {
   SourceCandidateView,
   SourceView,
   TaskView,
+  VoiceStatusView,
 } from "@forerunner/runtime/daemon/api-types";
 import {
   AnswerRequestBody,
@@ -99,6 +100,7 @@ import {
   TASKS,
   UPDATES_FEED,
   UPDATES_STATUS,
+  VOICE_STATUS,
 } from "./fixtures.ts";
 
 /**
@@ -157,6 +159,8 @@ export interface FakeDaemonState {
   listeners: Set<Listener>;
   timers: Set<ReturnType<typeof setTimeout>>;
   extensions: ExtensionView[];
+  /** `GET /voice/status`: which voice providers are in force and what the panel chose. */
+  voiceStatus: VoiceStatusView;
   /** The daemon's version as /health reports it; changes after an applied update. */
   version: string;
   modelWatchReports: ModelWatchReportSummary[];
@@ -220,6 +224,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     listeners: new Set(),
     timers: new Set(),
     extensions: clone(EXTENSIONS),
+    voiceStatus: clone(VOICE_STATUS),
     version: HEALTH.version,
     modelWatchReports: clone(MODEL_WATCH_REPORTS),
     reviews: clone(REVIEWS),
@@ -317,6 +322,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.pendingConfirmation = null;
     state.nextChatReply = null;
     state.extensions = clone(EXTENSIONS);
+    state.voiceStatus = clone(VOICE_STATUS);
     state.version = HEALTH.version;
     state.modelWatchReports = clone(MODEL_WATCH_REPORTS);
     state.reviews = clone(REVIEWS);
@@ -939,6 +945,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return c.json(state.extensions.filter((e) => !kind || e.kind === kind));
   });
   app.get("/extensions/catalog", (c) => c.json(CATALOG));
+  // Voice providers (spec O.4): what the panel's voice rows put in force; tests mutate it.
+  app.get("/voice/status", (c) => c.json(state.voiceStatus));
   app.get("/extensions/:id", (c) => {
     const e = findExtension(c);
     return e ? c.json(e) : errorBody(c, 404, "not_found", "no such extension");

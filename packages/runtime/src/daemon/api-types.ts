@@ -908,6 +908,34 @@ export const VoiceProviderStatusView = z.object({
 });
 export type VoiceProviderStatusView = z.infer<typeof VoiceProviderStatusView>;
 
+/** One side's preferred provider: the Extensions row that chose it, or the environment override. */
+export const VoicePreferenceView = z.object({
+  name: z.string(),
+  source: z.enum(["env", "extension"]),
+  extensionId: z.string().nullable(),
+  /** The row's name (`voice-deepgram`); null for the environment override. */
+  extension: z.string().nullable(),
+});
+export type VoicePreferenceView = z.infer<typeof VoicePreferenceView>;
+
+/** An enabled voice row that is not in force for a side, with the reason the panel shows. */
+export const VoicePreferenceSkipView = z.object({
+  extensionId: z.string(),
+  extension: z.string(),
+  side: z.enum(["stt", "tts"]),
+  provider: z.string().nullable(),
+  reason: z.string(),
+});
+export type VoicePreferenceSkipView = z.infer<typeof VoicePreferenceSkipView>;
+
+/** What the Extensions panel chose (spec O.4), read afresh for every status and session. */
+export const VoicePreferencesView = z.object({
+  stt: VoicePreferenceView.nullable(),
+  tts: VoicePreferenceView.nullable(),
+  skipped: z.array(VoicePreferenceSkipView),
+});
+export type VoicePreferencesView = z.infer<typeof VoicePreferencesView>;
+
 export const VoiceStatusView = z.object({
   available: z.boolean(),
   /** Why voice is unavailable (no provider, no key, no model credential), or how it was picked. */
@@ -918,6 +946,8 @@ export const VoiceStatusView = z.object({
     stt: z.array(VoiceProviderStatusView),
     tts: z.array(VoiceProviderStatusView),
   }),
+  /** The panel's choice per side and every enabled voice row not in force, with the reason. */
+  preferences: VoicePreferencesView,
   sessions: z.number().int(),
   maxSessions: z.number().int(),
   modes: z.array(z.enum(VOICE_MODES)),

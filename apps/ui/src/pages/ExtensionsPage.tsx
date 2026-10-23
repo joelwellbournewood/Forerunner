@@ -1,6 +1,6 @@
 import { type FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { describeError, type ExtensionView } from "../api/client.ts";
+import { describeError, type ExtensionView, type VoiceStatusView } from "../api/client.ts";
 import {
   type CatalogEntryView,
   EXTENSION_KINDS,
@@ -19,7 +19,7 @@ import {
   type Tone,
 } from "../components/ui.tsx";
 import { formatDateTime } from "../lib/time.ts";
-import { useAsync } from "../lib/use-async.ts";
+import { type AsyncState, useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState } from "../store/context.tsx";
 
 export const KIND_LABELS: Record<ExtensionKind, string> = {
@@ -60,6 +60,95 @@ export function summarizePermissions(p: ExtensionPermissions): string {
   return parts.length === 0 ? "no permissions" : parts.join(" · ");
 }
 
+const VOICE_SIDES = ["stt", "tts"] as const;
+const SIDE_LABELS: Record<(typeof VOICE_SIDES)[number], string> = { stt: "STT", tts: "TTS" };
+
+/**
+ * What the daemon's voice status says about one `voice-*` row (spec O.4): in force for a
+ * side, preferred but not usable (the pick fell back, with the registry's reason), or not in
+ * force with the reason the daemon gives (no key, another row preferred, an override).
+ */
+export function voiceBadges(
+  extension: Pick<ExtensionView, "id">,
+  voice: VoiceStatusView | null,
+): { tone: Tone; text: string }[] {
+  if (!voice) return [];
+  const out: { tone: Tone; text: string }[] = [];
+  for (const side of VOICE_SIDES) {
+    const preferred = voice.preferences[side];
+    if (preferred?.extensionId !== extension.id) continue;
+    const pick = voice[side];
+    out.push(
+      pick?.name === preferred.name
+        ? { tone: "good", text: `in force for ${SIDE_LABELS[side]}` }
+        : {
+            tone: "warn",
+            text: `preferred for ${SIDE_LABELS[side]}, not in force: ${pick?.reason ?? voice.reason}`,
+          },
+    );
+  }
+  for (const s of voice.preferences.skipped) {
+    if (s.extensionId !== extension.id) continue;
+    out.push({ tone: "warn", text: `not in force for ${SIDE_LABELS[s.side]}: ${s.reason}` });
+  }
+  return out;
+}
+
+/** The providers the next voice session uses, above the capabilities (where the voice rows are). */
+function VoiceProvidersCard({ voice }: { voice: AsyncState<VoiceStatusView> }) {
+  // An older daemon without the route: the rows still work, nothing to show here.
+  if (voice.routeMissing) return null;
+  if (voice.error && !voice.data) {
+    return (
+      <p className="mt-1 text-xs text-neutral-500" data-testid="voice-providers">
+        Voice providers: {voice.error}
+      </p>
+    );
+  }
+  const v = voice.data;
+  if (!v) return null;
+  const pick = (side: (typeof VOICE_SIDES)[number]) => {
+    const p = v[side];
+    return p ? `${p.name} (${p.kind}; ${p.reason})` : "none";
+  };
+  return (
+    <div
+      className="mt-1 rounded border border-neutral-200 p-3 text-sm dark:border-neutral-800"
+      data-testid="voice-providers"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">Voice providers</span>
+        <Badge tone={v.available ? "good" : "warn"} testId="voice-available">
+          {v.available ? "available" : "unavailable"}
+        </Badge>
+        {v.sessions > 0 ? (
+          <span className="text-xs text-neutral-500">
+            {v.sessions} of {v.maxSessions} sessions open
+          </span>
+        ) : null}
+      </div>
+      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+        {VOICE_SIDES.map((side) => (
+          <div key={side} className="contents">
+            <dt className="text-neutral-500">{SIDE_LABELS[side]}</dt>
+            <dd data-testid={`voice-${side}`}>{pick(side)}</dd>
+          </div>
+        ))}
+      </dl>
+      {!v.available ? (
+        <p className="mt-1 text-xs text-amber-700 dark:text-amber-300" data-testid="voice-reason">
+          {v.reason}
+        </p>
+      ) : null}
+      <p className="mt-1 text-xs text-neutral-500">
+        Enable a voice capability below to choose a provider; a cloud one needs its key (fr setup).
+        A change applies at the next voice session. FORERUNNER_VOICE_STT and FORERUNNER_VOICE_TTS
+        override the panel.
+      </p>
+    </div>
+  );
+}
+
 function PermissionList({ permissions }: { permissions: ExtensionPermissions }) {
   const keys = (Object.keys(PERMISSION_LABELS) as Array<keyof ExtensionPermissions>).filter(
     (k) => permissions[k].length > 0,
@@ -83,10 +172,13 @@ function PermissionList({ permissions }: { permissions: ExtensionPermissions }) 
 
 function ExtensionRow({
   extension,
+  voice,
   onChange,
   onRemoved,
 }: {
   extension: ExtensionView;
+  /** The daemon's voice status, for the `voice-*` rows' "in force" badges. */
+  voice: VoiceStatusView | null;
   onChange: (next: ExtensionView) => void;
   onRemoved: (id: string) => void;
 }) {
@@ -96,6 +188,7 @@ function ExtensionRow({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const e = extension;
   const pending = e.status === "pending_approval";
+  const voiceState = voiceBadges(e, voice);
 
   const run = async (action: () => Promise<ExtensionView | undefined>) => {
     if (busy) return;
@@ -130,6 +223,11 @@ function ExtensionRow({
             {e.connected ? "connected" : "not connected"}
           </Badge>
         ) : null}
+        {voiceState.map((b) => (
+          <Badge key={b.text} tone={b.tone} testId="extension-voice">
+            {b.text}
+          </Badge>
+        ))}
         <span className="text-xs text-neutral-500" title="Spend attributed to this extension">
           cost <Money value={e.cost} />
         </span>
@@ -425,23 +523,29 @@ function AddExtensionDialog({
  * Extensions panel (spec K.6, L.5): every connector, MCP server, skill, specialist, capability
  * and model provider with status, permissions, cost, version, toggle, remove, and add from the
  * catalog or a URL. Connectors and permission widenings wait for the human's approval (202);
- * the list reloads on every `extension.changed` frame from the daemon.
+ * the list reloads on every `extension.changed` frame from the daemon. The capabilities
+ * group shows the voice providers in force (spec O.4) and each `voice-*` row whether it is
+ * the one in force, or why not; both follow every change in the list.
  */
 export function ExtensionsPage() {
   const client = useClient();
   const version = useUiState((s) => s.extensionsVersion);
   const extensions = useAsync((signal) => client.extensions(undefined, signal), [client, version]);
+  const voice = useAsync((signal) => client.voiceStatus(signal), [client, version]);
   const [addOpen, setAddOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [kindFilter, setKindFilter] = useState<string>("all");
 
-  const upsert = (next: ExtensionView) =>
+  const upsert = (next: ExtensionView) => {
     extensions.setData((prev) => {
       const rows = prev ?? [];
       return rows.some((e) => e.id === next.id)
         ? rows.map((e) => (e.id === next.id ? next : e))
         : [...rows, next];
     });
+    // A toggle may change which voice provider the next session uses.
+    voice.reload();
+  };
   const drop = (id: string) =>
     extensions.setData((prev) => (prev ?? []).filter((e) => e.id !== id));
 
@@ -501,12 +605,19 @@ export function ExtensionsPage() {
       {grouped.map((g) => (
         <div key={g.kind} data-testid={`extensions-group-${g.kind}`}>
           <h2 className="font-semibold">{KIND_LABELS[g.kind]}</h2>
+          {g.kind === "capability" ? <VoiceProvidersCard voice={voice} /> : null}
           {g.rows.length === 0 ? (
             <p className="text-xs text-neutral-500">None installed.</p>
           ) : (
             <ul className="mt-1 space-y-2">
               {g.rows.map((e) => (
-                <ExtensionRow key={e.id} extension={e} onChange={upsert} onRemoved={drop} />
+                <ExtensionRow
+                  key={e.id}
+                  extension={e}
+                  voice={voice.data}
+                  onChange={upsert}
+                  onRemoved={drop}
+                />
               ))}
             </ul>
           )}

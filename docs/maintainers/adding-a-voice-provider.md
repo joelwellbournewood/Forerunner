@@ -116,6 +116,13 @@ registry.registerStt(new MyStt({ apiKeyRef: "secret:my_stt_key", resolveSecret: 
 cloud providers out of the default policy until the key exists. Order of registration is the
 tie-break order inside a kind.
 
+To make the provider choosable in the Extensions panel, give it a capability entry in
+`packages/runtime/src/extensions/catalog.json` with `"voice": { "stt": ["my-stt"] }` (the name
+the provider registers under) and, for a cloud provider, its key's name in
+`permissions.secrets`. Enabling the row makes it the preferred provider at the next voice
+session; a row whose key has no value is skipped with the reason (`voice.md`, "Which provider
+is preferred").
+
 ## How to change it
 
 1. Add `src/providers/<local|cloud>/<name>.ts` and export it from `src/index.ts`.
