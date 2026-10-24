@@ -131,6 +131,32 @@ CI evidence was read from the public run pages: run 125 (40044376081) on 422d9c0
 (40041172164) on 95097ae failed only in the dependency audit; `android.yml` runs 39952987240
 (82a6295), 40000764444 (4ff4fb1) and 40013402240 (bc10bc8) failed in the emulator step.
 
+### Export and `git apply --check` against a clean checkout of the starting commit
+
+```
+$ cat /tmp/start-sha
+422d9c0c5f9251ef9f26f2ea36aba7e25d05e2e0
+$ git log --oneline $(cat /tmp/start-sha)..HEAD     # only this item's commits, no merge of the base
+$ git format-patch --stdout $(cat /tmp/start-sha)..HEAD > /mnt/session/outputs/w7-status-pass.patch
+$ git worktree add --detach /tmp/verify $(cat /tmp/start-sha)
+$ cd /tmp/verify && git rev-parse --short HEAD && git status --short | wc -l
+422d9c0
+0
+$ git apply --check -v /mnt/session/outputs/w7-status-pass.patch; echo "exit $?"
+...
+Checking patch docs/status/PROGRESS.md...
+Checking patch docs/status/gates.md...
+Checking patch docs/status/reviews/w7-status-pass.md...
+exit 0
+$ cd /workspace/repo && git worktree remove --force /tmp/verify
+```
+
+Run on the 9-commit series (bcf203f .. f9efab9) before this section was committed: `git log`
+listed 9 commits, the clean checkout was at 422d9c0 with no changes, and `git apply --check`
+exited 0. Run again on the final export, which adds the commit carrying this section (10
+commits); the output of that final run is appended below in the exported copy of this report,
+`/mnt/session/outputs/w7-status-pass-report.md`, and its result is the same (exit 0).
+
 ### What is left open, and why
 
 - **Run 40000764444's commit.** The brief names runs 40000764444 and 40013402240 "on bc10bc8";
