@@ -18,6 +18,7 @@ import { formatDuration } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import type { ThemePreference } from "../store/store.ts";
+import { DevicesSection } from "./DevicesSection.tsx";
 import { ModelSettingsSection } from "./ModelSettingsSection.tsx";
 import { SourcesSection } from "./SourcesSection.tsx";
 
@@ -564,7 +565,10 @@ function FastModeCard({
   );
 }
 
-/** Settings (spec K.7, Q.1): every setting with its scope; changes run through the command registry. */
+/**
+ * Settings (spec K.7, Q.1, R.2): every setting with its scope (changes run through the command
+ * registry), the paired devices, the sources and the capabilities.
+ */
 export function SettingsPage() {
   const client = useClient();
   const store = useUiStore();
@@ -701,6 +705,8 @@ export function SettingsPage() {
           ) : null}
         </dl>
       </div>
+
+      <DevicesSection />
 
       <SourcesSection />
 

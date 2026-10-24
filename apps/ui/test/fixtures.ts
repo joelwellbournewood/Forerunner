@@ -2,12 +2,14 @@ import type {
   ChangeLogView,
   CommandDefView,
   ConsolidationProposalView,
+  DaemonDeviceView,
   EmailCommandRowView,
   EmailSentRowView,
   EmailSettingsView,
   LessonOfferView,
   LessonView,
   ModelSettingsView,
+  PairingStartView,
   PerformanceView,
   ReviewView,
   SourceCandidateView,
@@ -1918,6 +1920,62 @@ export const VOICE_STATUS: VoiceStatusView = {
   sessions: 0,
   maxSessions: 4,
   modes: ["push_to_talk", "open_mic"],
+};
+
+/**
+ * Settings -> Devices (spec R.2): this desktop install, Alice's phone and an approvals web
+ * session revoked last week, newest pairing first as the daemon answers.
+ */
+export const DEVICES: DaemonDeviceView[] = [
+  {
+    id: "dev_phone",
+    name: "Alice's Pixel",
+    platform: "android",
+    kind: "phone",
+    pairedAt: "2026-10-12T18:30:00.000Z",
+    lastSeen: "2026-10-23T08:40:00.000Z",
+    revoked: false,
+    revokedAt: null,
+    current: false,
+    version: 4,
+  },
+  {
+    id: "dev_desktop",
+    name: "Alice's laptop",
+    platform: "linux",
+    kind: "desktop",
+    pairedAt: "2026-10-01T09:00:00.000Z",
+    lastSeen: "2026-10-23T08:59:00.000Z",
+    revoked: false,
+    revokedAt: null,
+    current: true,
+    version: 9,
+  },
+  {
+    id: "dev_web",
+    name: "web of human_alice",
+    platform: "web",
+    kind: "web",
+    pairedAt: "2026-09-20T10:00:00.000Z",
+    lastSeen: "2026-09-21T07:15:00.000Z",
+    revoked: true,
+    revokedAt: "2026-10-16T12:00:00.000Z",
+    current: false,
+    version: 3,
+  },
+];
+
+/**
+ * What `POST /devices/pairing` answers in the fake: a ten-minute code and its fr:// link (the
+ * fake sets `expiresAt` ten minutes after its clock; this one is for a pairing at 09:00).
+ */
+export const PAIRING: PairingStartView = {
+  code: "K7QX2MPA",
+  expiresAt: "2026-10-23T09:10:00.000Z",
+  kind: "phone",
+  humanId: "human_alice",
+  serviceUrl: "https://state.example.test",
+  link: "fr://pair?u=https%3A%2F%2Fstate.example.test&c=K7QX2MPA&h=human_alice",
 };
 
 /** Source discovery (spec A.4): one connected org, scanned once, with three candidates. */

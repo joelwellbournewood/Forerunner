@@ -60,21 +60,23 @@ apps/ui/
     store/context.tsx    AppProvider (bootstrap: /health, /me, /agents, /projects, /inbox, then
                          the /events stream), useClient, useUiState, useIdentity
     store/theme.ts       prefers-color-scheme + stored override -> data-theme
-    lib/                 money (CHF formatting), time, format (bytes, ms, shares), storage,
-                         use-async (data, error, routeMissing, errorStatus), task-transitions,
+    lib/                 money (CHF formatting), time, clock (UiClock, useNow, formatCountdown),
+                         format (bytes, ms, shares), storage, use-async (data, error,
+                         routeMissing, errorStatus), task-transitions,
                          runner-unlock (the cloud runner unlock bridge contract, ADR 0068)
     components/          ui.tsx (Button, Badge, SpendBar, Money, Loading, ErrorBanner, Field),
                          Dialog.tsx (native <dialog>), RouteMissing.tsx, charts.tsx (TrendLine,
                          TargetBar), ChangeCardDialog.tsx (ChangeCard, CommandResult),
                          UnlockCard.tsx (the cloud runner unlock card, useAutoUnlock and
                          useUnlockWindow, shared by the desktop and phone), RunnerAutoUnlock.tsx
-                         (the desktop's app-wide auto-unlock, mounted in the Shell)
+                         (the desktop's app-wide auto-unlock, mounted in the Shell),
+                         QrCode.tsx (uqr-encoded QR drawn as one SVG path)
     shell/               Shell.tsx (header, nav, switcher, kill switch, banners, RunnerAutoUnlock), CommandPalette,
                          commands.ts, shortcuts.ts (sequence matcher), ShortcutsHelp, ShellContext
     pages/               HomePage, NewProjectDialog, ProjectPage (+ project/*Tab, *Section,
                          NewTaskDialog, StartSessionDialog), SessionPage, InboxPage, MemoryPage,
-                         ExtensionsPage, ChangesPage, PerformancePage, UpdatesPage, SettingsPage,
-                         EmailSettingsPage (Settings -> Capabilities -> Email),
+                         ExtensionsPage, ChangesPage, PerformancePage, UpdatesPage, SettingsPage
+                         (+ DevicesSection, SourcesSection), EmailSettingsPage (Settings -> Capabilities -> Email),
                          PlaceholderPages (NotFound only)
     mobile/              the phone screens (module R; its own doc section, not covered here)
   test/                  Vitest + Testing Library (jsdom); fixtures.ts, fake-daemon.ts, helpers.tsx
@@ -102,7 +104,7 @@ apps/ui/
 | `/changes` | the change log newest first: source, scope, project, undo state, who asked and when, the sentence, the words used, revert time, commands / before / after behind details, Undo while undoable; project filter and "undoable only" | `GET /changes?projectId=&undoable=`, `POST /changes/:id/undo` |
 | `/performance` | per mode (spec D.7, D.19): target (first token / first audio / total / by task), the effort in force (`effortLabel`: the effort, the table's when the project's offset moved it, and the effort a risky task raises it to, e.g. "medium; high from risk tier 2"; the title says whether the offset reaches the mode and the registry `max_effort` it is held at), samples, first-token p50/p90 and total p50/p90 by nearest rank, within-target share, a bar of the p90 against the target (met/missed in words), the last measurement; the window (`performance-days`: last 1, 7, 30 or 90 days, sent as `?days=`; the line under the title names the window and the project's offset); recent measurements with their source (run, chat, voice); a daemon failure is an error with a retry (the route is served, so no "route not available" state); estimate accuracy (overall and per specialist and kind); project filter; "Audit log" with a format select (JSON lines / CSV) and **Export audit log** (spec S.9): fetches the daemon's file through `client.auditExport`, saves it under the daemon's name with `saveTextFile` (`src/lib/download.ts`: a Blob behind an object URL on a hidden anchor, clicked once) and reports `Exported N rows to <file>`; says so when the browser cannot save files or the daemon lacks the route, pointing at `fr audit export` | `GET /performance?projectId=&days=`, `GET /costs/estimates`, `GET /audit/export?format=` |
 | `/updates` | app: running and installed version, channel, state, the available release with changelog, size and "Update and restart", previous version with "Roll back and restart", last rollback, rejected releases, last error; connector updates (installed vs available); model updates; model watch: latest report with recommendations to adopt/ignore/remind, "Run now", recent reports. Asks the feed first and falls back to the local state with a banner | `GET /updates`, `GET /updates/status`, `POST /updates/apply`, `POST /updates/rollback`, `GET /model-watch/reports`, `/latest`, `POST /model-watch/run`, `POST /model-watch/reports/:id/answer` |
-| `/settings` | theme override, daemon connection status (with links to Updates and Extensions), the **Sources** section (spec A.4: connected GitHub orgs, accounts, repositories and local folders with their last scan's counts; connect one by kind, locator, display name and, for a GitHub kind, the token's vault reference, never a value; Scan or Rescan, Candidates, Remove with a confirmation that says projects stay; each candidate with its status, the existing-install mark, a link to the project it is or duplicates, and Create project on a proposal, which refreshes the project list; a daemon without the route shows a note), a **Models per agent and specialist** section (spec D.4, ADR 0072; `ModelSettingsSection.tsx`): one row per mode of the principal agent (planning, chat), the critic's review modes (read-only, with the note that its tiers set its model) and one per runnable specialist, columns Model (rung and the provider's model id; the daemon sends the rung that runs, so an agent mode set above the default ceiling shows Opus), Effort, Max tokens, Speed mode, Timeout (min) and **Temperature only when the daemon says the provider accepts one** (`provider.acceptsTemperature`; otherwise no column and the line says none is sent); each value shows its source (`effort table`, `registry file`, or a `set` badge whose title names the default it replaces); a click opens the shared change dialog (`SettingChangeDialog`, a select for rung, effort and speed with a "default (…)" entry, a specialist's efforts only up to its `max_effort`, a text input for the numbers with their range, "default" to clear) that runs `model.settings.set`; a daemon without the route shows the route-missing state, a malformed `model_config` the daemon's reason, a **Capabilities** section linking to Email (the browser and desktop control are switched in Extensions), every setting grouped by scope with the scope badge; rows that map to a command have Change: a dialog with the current value (a three-stop slider, speed / balanced / quality, for a project's speed-versus-quality row, spec D.16), the change card from the daemon, Yes/No (a tap; a high-risk card asks this paired device), the sentence with Undo, a link to Changes; other rows say read-only | `GET /settings`, `GET /settings/models`, `POST /commands/execute`, `POST /commands/:id/confirm`, `POST /changes/:id/undo` |
+| `/settings` | theme override, daemon connection status (with links to Updates and Extensions), the **Devices** section (spec R.2; `DevicesSection.tsx`: **Pair a phone** asks the daemon for a pairing and shows the QR of its `fr://pair?u=&c=&h=` link (`QrCode`, uqr, ECC M, quiet zone of 4), the code in two groups (`K7QX-2MPA`), the service URL, the link as selectable text and the expiry counting down through the section's `UiClock`; once expired the QR and code are gone and **Start a new pairing** asks again; while the code is live the list is re-read every `pollMs` (3 s), and when a device the list did not have at the start appears the panel closes with "<name> is paired and listed below"; a service URL on a loopback host (`isLoopbackUrl`: `localhost`, `127.0.0.0/8`, `::1`) gets a warning that a phone cannot reach it and what to set; Done closes the panel and reloads the list; the devices newest pairing first with name, kind and platform, paired at, last seen, this install marked "this device" and without Revoke; the revoked ones under a collapsed "Revoked (n)"; **Revoke** opens a confirmation that says the revocation is immediate, then the device leaves the list at once with "<name> is revoked; n session(s) ended" (or, when the daemon revoked the row in the shared store because the service failed, "<name> is revoked in the shared store (the state service failed: …); its next request is refused") and the list reloads; a failure stays in the dialog and the device stays listed; a daemon without a state service answers `pairingAvailable: false` and the section says what to configure with the button disabled; a 503 from the pairing route is a banner with Retry; a daemon without the routes shows the route-missing state for `GET /devices`, or for `POST /devices/pairing` alone, ADR 0037), the **Sources** section (spec A.4: connected GitHub orgs, accounts, repositories and local folders with their last scan's counts; connect one by kind, locator, display name and, for a GitHub kind, the token's vault reference, never a value; Scan or Rescan, Candidates, Remove with a confirmation that says projects stay; each candidate with its status, the existing-install mark, a link to the project it is or duplicates, and Create project on a proposal, which refreshes the project list; a daemon without the route shows a note), a **Models per agent and specialist** section (spec D.4, ADR 0072; `ModelSettingsSection.tsx`): one row per mode of the principal agent (planning, chat), the critic's review modes (read-only, with the note that its tiers set its model) and one per runnable specialist, columns Model (rung and the provider's model id; the daemon sends the rung that runs, so an agent mode set above the default ceiling shows Opus), Effort, Max tokens, Speed mode, Timeout (min) and **Temperature only when the daemon says the provider accepts one** (`provider.acceptsTemperature`; otherwise no column and the line says none is sent); each value shows its source (`effort table`, `registry file`, or a `set` badge whose title names the default it replaces); a click opens the shared change dialog (`SettingChangeDialog`, a select for rung, effort and speed with a "default (…)" entry, a specialist's efforts only up to its `max_effort`, a text input for the numbers with their range, "default" to clear) that runs `model.settings.set`; a daemon without the route shows the route-missing state, a malformed `model_config` the daemon's reason, a **Capabilities** section linking to Email (the browser and desktop control are switched in Extensions), every setting grouped by scope with the scope badge; rows that map to a command have Change: a dialog with the current value (a three-stop slider, speed / balanced / quality, for a project's speed-versus-quality row, spec D.16), the change card from the daemon, Yes/No (a tap; a high-risk card asks this paired device), the sentence with Undo, a link to Changes; other rows say read-only | `GET /settings`, `GET /settings/models`, `POST /commands/execute`, `POST /commands/:id/confirm`, `POST /changes/:id/undo`, `GET /devices`, `POST /devices/pairing`, `POST /devices/:id/revoke` |
 | `/settings/capabilities/email` | Settings -> Capabilities -> Email (spec S.15, S.28, S.29, T.14; ADR 0066): one card per agent of the signed-in human (`/agents` filtered by `/me`, principal first) with the mode badge and the mailbox address; pause / resume with the state (the tray's routes); the **mode picker** over the five modes with their one-line meanings, the plain full-discretion sentence ("the agent can email strangers on your behalf …") under the option before any change and again in a confirmation dialog that must be answered before the `PUT` (cancel sends nothing; every other mode applies at once); the limits that stay on (daily and per-recipient caps, signature on/off and text, daily digest) and, in allowlist mode only, the allowlist editor (one entry per line); the mailbox form (address, IMAP, SMTP, passwords as `secret:<name>` references; the daemon's 400 for a value shown as such); the command settings (toggle, the registered address, the private marker with Rotate, the task cap, the autonomy level; ADR 0081: a mode change to off that turned commands off says so in the mode note (`COMMANDS_TURNED_OFF_NOTE`) and the toggle follows the stored value, and turning commands on at Off shows the daemon's 400 sentence; the fake daemon mirrors that rule, `email-settings.test.tsx`); the **command audit** newest first (when, from, subject, interpretation, result with a session link, the reason a mail was ignored); the sent copies newest first (to you / to others, the copy as sent). A daemon without the routes shows the route-missing state per card; another human's agent is not listed | `GET|PUT /agents/:agentId/email/settings`, `POST /agents/:agentId/email/pause`, `.../resume`, `.../rotate-marker`, `GET /agents/:agentId/email/commands?limit=`, `GET /agents/:agentId/email/sent?limit=` |
 
 ### API client
@@ -119,7 +121,10 @@ read straight from `daemon/api-types`, no mirror), the agent email routes (`emai
 `updateEmailSettings`, `emailSent`, `pauseEmail`, `resumeEmail`, `rotateEmailMarker`,
 `emailCommands`; views from `api-types.ts`, no mirror), the desktop control routes the banner
 uses (`desktopStatus`, `desktopRevoke(reason?)`, `desktopResume`; `DesktopStatusView` and
-`DesktopRevokeView` from `api-types.ts`, ADR 0067), `auditExport(filter?)` (spec S.9:
+`DesktopRevokeView` from `api-types.ts`, ADR 0067), the device methods (spec R.2:
+`devices`, `startPairing`, `revokeDevice` over the daemon's `/devices` routes; the daemon,
+not `state-client.ts`, is the path because the service's `pairing/start` and revoke routes
+are admin-only and the admin token stays in the daemon, ADR 0009), `auditExport(filter?)` (spec S.9:
 `GET /audit/export` with `agentId`, `sessionId`,
 `from`, `to` and `format`; the body as text with the row count and the base name from
 `Content-Disposition`, `filenameFromDisposition` / `countExportRows`) and `url()` / `raw()`
@@ -314,7 +319,12 @@ consolidation proposals, the change log, pending commands, the queue, data asset
 routes: a scan of a fresh source finds two candidates named after the locator, one an
 existing install, a scan of the fixture source changes nothing, accepting a proposal adds a
 project card and emits `project.changed`, a token value instead of a reference is refused
-with the daemon's message); decisions, the peer feed and docs are served read-only;
+with the daemon's message), the human's devices (`/devices`: `DEVICES` with this install
+marked; `POST /devices/pairing` answers the `PAIRING` fixture with `expiresAt` ten minutes
+after its `now` option, the wall clock by default, and counts pairings; `pairingAvailable:
+false` makes it a daemon without a state service, 503 `unavailable`; `pairing` replaces
+fixture fields such as the service URL; revoke marks the row, 400 for the current device, 404
+unknown, and answers `via: "store"` with `revokeServiceError` set); decisions, the peer feed and docs are served read-only;
 `GET /performance` serves the `PERFORMANCE` fixture in the runtime's `PerformanceView` shape
 with the query's window and project, 400 for a bad `days` and 404 for an unknown project, as
 the daemon answers; with a project, the slider position Settings left in
@@ -490,7 +500,18 @@ autonomy by one step: card → yes → sentence → undo → the change log row,
 device: the `/me` row's id is posted and performs, an id the fake does not know is shown as
 the daemon's refusal with the card kept, no id while `/me` failed and the change performs,
 `/me` naming no row: the status line says this PC cannot confirm and the daemon's 409 is shown
-with nothing changed, cancel and refusal; `client`: the literal `desktop` is this PC),
+with nothing changed, cancel and refusal; `client`: the literal `desktop` is this PC; the
+Devices section in the whole app: pairing shows the QR and code, revoke removes the phone),
+`settings-devices` (spec R.2: code grouping, countdown floor, the QR path drawing exactly the
+encoded modules; Pair a phone → the QR equal to `uqr`'s encoding of the link, the link parsed
+by the phone's `parsePairingPayload`, the code, service and `in 10:00`, the countdown at
+`0:30` and expired on a stepped clock shared with the fake, a new pairing from the expired
+state; the list with kind, platform, last seen, this device marked without Revoke, the
+revoked one apart; revoke cancelled sends nothing, confirmed posts the route and the phone
+leaves the list with the note; a failed revoke keeps it with the error; route-missing for the
+list and for the pairing route alone; no state service: pairing off with what to set, a 503
+banner with Retry; the phone completing the pairing closes the panel and lists it with no
+click; the loopback warning and `isLoopbackUrl`; the store-fallback note of a revocation),
 `settings-slider` (spec D.16: the speed-versus-quality row mapped to a three-stop slider
 behind `settings.set`, out-of-range and fractional values refused, the row read by position,
 a move by the range input up to quality and by the stop name down to speed, the posted body
@@ -558,6 +579,13 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
 
 - The fast-mode card names projects from the store's project cards; a project the daemon
   lists in `/settings` but not in `/projects` (archived) shows its id.
+- Settings → Devices pairs phones only: the daemon's `POST /devices/pairing` accepts
+  `kind: "web"`, but the approvals web reads its code from `<page url>#code=`, and no page URL
+  is configured anywhere (the service does not serve `apps/approvals-web/dist`), so there is
+  no "Send web link" button yet. The new phone is noticed by polling `GET /devices` while a
+  code is live (the daemon's `/events` carries no `device.changed` frame); outside a pairing
+  the list changes on Refresh. The countdown compares the service's `expiresAt` with this
+  PC's clock, so a skew between the two shifts it.
 - The UI has so far only been run against the fake daemon. The first run against the real
   one should confirm the shapes end to end and goes into `docs/status/gates.md`.
 - The real daemon registers no `notFound` handler (`packages/runtime/src/daemon/server.ts`),
@@ -1424,9 +1452,10 @@ node apps/mobile/e2e/run.mjs
 - The service's `/me` does not send the human's `monthlyCap` yet (`humans.monthly_cap_usd_micro`
   exists in the schema); the phone's card says "the current cap" and treats a monthly change
   as high risk until the route carries it (`MeView.monthlyCap` is already accepted).
-- The desktop has no "Settings → Devices → Add a phone" screen yet, so pairing starts with
-  `POST /pairing/start` (admin) by hand or from the fake's `/__test/pair`; the QR should
-  encode `buildPairingLink(serviceUrl, code, humanId)`.
+- Settings → Devices on the desktop starts the pairing through the daemon
+  (`POST /devices/pairing`, which needs `FORERUNNER_STATE_API_URL` and the service's admin
+  token in the daemon's vault) and its QR encodes the same link `buildPairingLink` builds; the
+  phone specs still start pairings from the fake's `/__test/pair`.
 - The change log lives on the phone (per install); the service has no device-facing change
   log route, so the desktop's log and the phone's are joined only through the remote command
   rows and `undoOf`.

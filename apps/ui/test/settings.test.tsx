@@ -343,6 +343,40 @@ describe("Settings", () => {
     expect(harness.daemon.state.projects[0]?.autonomyLevel).toBe(2);
     expect(harness.daemon.state.changes).toHaveLength(2);
   });
+
+  it("has a Devices section: pair a phone with the QR, list the devices, revoke one at once (spec R.2)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/settings", harness);
+    const section = await screen.findByTestId("devices-section");
+    expect(within(section).getByRole("heading", { name: "Devices" })).toBeInTheDocument();
+    await within(section).findAllByTestId("device-row");
+    expect(within(section).getByTestId("device-current")).toHaveTextContent("this device");
+
+    await user.click(within(section).getByTestId("pairing-start"));
+    expect(await within(section).findByTestId("qr-code")).toBeInTheDocument();
+    expect(within(section).getByTestId("pairing-code")).toHaveTextContent("K7QX-2MPA");
+    expect(within(section).getByTestId("pairing-link")).toHaveTextContent("fr://pair?");
+    await user.click(within(section).getByTestId("pairing-done"));
+
+    const phone = within(section)
+      .getAllByTestId("device-row")
+      .find((r) => r.dataset.device === "dev_phone") as HTMLElement;
+    await user.click(within(phone).getByTestId("device-revoke"));
+    await user.click(
+      within(await screen.findByTestId("revoke-dialog")).getByTestId("revoke-confirm"),
+    );
+    await waitFor(() =>
+      expect(
+        within(section)
+          .getAllByTestId("device-row")
+          .filter((r) => r.dataset.revoked === "false")
+          .map((r) => r.dataset.device),
+      ).toEqual(["dev_desktop"]),
+    );
+    expect(postedCalls(harness, "/devices/dev_phone/revoke")).toHaveLength(1);
+    expect(harness.daemon.state.devices.find((d) => d.id === "dev_phone")?.revoked).toBe(true);
+  });
 });
 
 /** The pending id the fake handed out last (the confirm path carries it). */

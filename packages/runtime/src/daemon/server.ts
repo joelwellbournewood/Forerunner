@@ -10,6 +10,7 @@ import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { ZodType } from "zod";
 import { createDataRoutes } from "../data/routes.ts";
+import { createDeviceRoutes } from "../devices/routes.ts";
 import { writeKillRequest } from "../enforcement/killfile.ts";
 import { estimateAccuracyView } from "../estimates/view.ts";
 import { createExtensionsRoutes } from "../extensions/routes.ts";
@@ -567,6 +568,9 @@ export function createDaemonApp(
       humanId: () => rt.human.id,
     }),
   );
+  // Settings -> Devices (spec R.2): list, start a pairing (code, expiry, the fr:// link of the
+  // QR) and revoke at once; the state service's admin token stays in this process.
+  app.route("/", createDeviceRoutes({ devices: rt.devices }));
 
   app.get("/me", async (c) => {
     const h = await rt.store.human.mustGet(rt.human.id);

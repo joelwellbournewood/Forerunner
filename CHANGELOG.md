@@ -40,6 +40,9 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   slider in every mode it reaches, from the principal's D.4 effort setting where one is set,
   held at the registry's `max_effort`); the intake call writes a Run row and chat replies
   record their total time, effort and project (D.7, D.19).
+- Settings → Devices on the desktop: pair a phone from the QR of the `fr://` link with the
+  typed code and its expiry, list the paired devices, revoke one at once; the daemon's
+  `/devices` routes keep the state service's admin token out of the app (R.2; ADR 0009).
 - Settings → Capabilities → Email: the capability's routes on the daemon, a page per agent
   with the mode picker and the full-discretion confirmation, pause and resume from the tray,
   the command audit (S.15, S.28, S.29, T.14, L.3; ADR 0066).

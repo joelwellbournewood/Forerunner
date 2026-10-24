@@ -2195,6 +2195,61 @@ Routes (`SOURCES_ROUTES`, documented in `DAEMON_ROUTES`): `GET /sources`, `POST 
 validation`, the daemon's convention for a refused write), 503 for `provider_*` and
 `unavailable`.
 
+### Settings -> Devices (`src/devices/`, spec R.2, ADR 0009)
+
+The desktop app's Devices section talks only to this daemon; the daemon talks to the shared
+state service with its **admin token**, which never reaches the app. `DeviceManager`
+(`devices/manager.ts`, exposed as `rt.devices`) does three things for the daemon's human:
+
+- **List** (`list()`): `GET /devices?humanId=` at the service, filtered again to the human,
+  each row as `DaemonDeviceView` (`devices/types.ts`: name, platform, kind, paired at, last
+  seen, revoked, revoked at, version, and `current` for this install's own `desktop` row, the
+  one `registerDesktopDevice` made when remote control is on). Without a service URL the list
+  comes from the shared store (`store.device`, newest pairing first).
+- **Start a pairing** (`startPairing({ kind?, name? })`): `POST /pairing/start { humanId,
+  kind }` at the service (default `phone`), answered as `PairingStartView`: the one-time code,
+  its expiry (the service's ten minutes), the human, the service URL without a trailing slash
+  and `link = pairingLink(serviceUrl, code, humanId)`, the `fr://pair?u=&c=&h=` link the phone's
+  `parsePairingPayload` reads and the app draws as the QR. Pairing codes live in the service's
+  memory, so there is no store fallback: without a service it throws `unavailable` naming what
+  to set. The audit row `devices.pairing_start` carries the kind and the expiry, never the code.
+- **Revoke** (`revoke(id)`): this install's own device is refused (`validation`: revoke it
+  from another device); another human's device is `tool_not_allowed` when the row is in the
+  local store, and `not_found` when ownership is checked against the human's list at the
+  service (the revoke route is then never called). Through the service it is `POST
+  /devices/:id/revoke` (the row revoked, the device's session tokens dropped, the next request
+  refused, `device.changed` announced); without one the row is revoked in the shared store,
+  which the service reads on every request. When a service is configured but the call fails
+  as `unavailable` (unreachable, hung past the timeout, a 5xx, a missing or refused admin
+  token) and the row is in the daemon's own store (the shared Postgres in hybrid mode), the
+  row is revoked there instead, so a lost phone is never left working because the service is
+  out: the answer says `via: "store"` with the service's failure in `serviceError`. A
+  refusal by the service itself (404, 400) or a row the store does not have is not retried
+  in the store. Audit row `devices.revoke` with the device and how it was revoked, and, when
+  the device was not revoked before, the `change_log` row the registry's `device.revoke`
+  writes for chat or voice (`commands: [device.revoke]`, source `ui`, scope `global`,
+  `irreversible`, before and after, the same sentence), so a revocation from Settings shows in
+  the change log like any other permission change (spec Q).
+
+Configuration (`composeRuntime`): the service URL is `opts.devices.serviceUrl`, else
+`FORERUNNER_STATE_API_URL` (`null` turns it off); the admin token is read from the vault **per
+call** under `FORERUNNER_STATE_API_ADMIN_TOKEN_REF` (default `secret:state_api_admin`, the
+same variable the service reads); `opts.devices.adminToken` and `opts.devices.fetch` replace
+the vault and the network in tests. Admin calls send `X-Forerunner-Install: <this desktop
+device id>` when there is one (the service's per-install rate bucket). A missing token, a
+refused one (the service's 401), an unreachable host or a call the service has not answered
+within `DEVICE_SERVICE_TIMEOUT_MS` (15 s; `service.timeoutMs` in tests) is `unavailable` with
+the status and the service's code in `details`, never the token or the body; so the app's
+"Starting…" and "Revoking…" end with an error instead of waiting minutes on a hung service.
+
+Routes (`DEVICES_ROUTES`, spread into `DAEMON_ROUTES`; `devices/routes.ts`, mounted behind the
+bearer check): `GET /devices` (`DeviceListView { devices, pairingAvailable }`),
+`POST /devices/pairing { kind?, name? }` (201 `PairingStartView`; 400 `validation` for a bad
+body), `POST /devices/:id/revoke` (`RevokeDeviceView { device, tokensRevoked, via, serviceError }`,
+`tokensRevoked` null for a store revocation). Errors: 400 `validation`, 403
+`tool_not_allowed`, 404 `not_found`, 503 `unavailable`, 500 otherwise with no details.
+`devices/types.ts` imports only zod so the UI loads the shapes through `daemon/api-types`.
+
 ### Specialist registry (`src/registry/`)
 
 The loader for `forerunner-registry` content: specialist, principal and critic definitions as
@@ -2614,6 +2669,23 @@ stored as `owner/name`, duplicate of the project; a repository another source pr
 checkout as `install_record`, `gone` and back on rescan, accept with the path, a gone
 candidate refused); a failing host recorded on the source and rethrown; remove (candidates
 gone, projects kept) and the owner rule (hidden from the list, every operation refused).
+`devices-routes.test.ts` (spec R.2): the device routes over a stand-in of the service's admin
+routes: a pairing answered 201 with the code, expiry and `pairingLink`, the admin bearer sent
+and absent from the body, the audit row without the code; 400 for a bad kind; 503
+`unavailable` without a service (naming `FORERUNNER_STATE_API_URL`), without the token (no
+call made), with a refused token (the 401 named, the token not echoed) and an unreachable
+host; the list filtered to the human with this install `current`; revoke through the
+service with the tokens count and the audit row, this install's own device 400, another
+human's 404 without calling the revoke route; without a service the list and the revocation
+over the store (another human's 403, unknown 404); a service that never answers is 503
+`unavailable` after `timeoutMs`; a lost phone in the store is revoked there when the service
+is down, hung, answers 5xx or the token is missing (`via: "store"`, `serviceError`), but not
+after the service's own 404 or for a row only the service has; each revocation writes one
+`change_log` row `device.revoke` (source `ui`, `irreversible`), none for a repeat. In the composed daemon: the three
+`DAEMON_ROUTES` entries, 401 without the bearer, and a pairing for the daemon's human with the
+admin token read from the vault under the default reference and the URL from
+`FORERUNNER_STATE_API_URL`. The real service's routes behind the manager are exercised by
+`services/state-api/test/desktop-devices.test.ts` (state-service.md).
 `sources-routes.test.ts`: the routes over an in-memory host (shapes, 201/400/404/409/403
 `forbidden`, the owner rule, 503 or 500 for a failing host) and in the composed daemon (401
 without the bearer, a typed project linking a repo by URL seen as the duplicate, an accepted
@@ -2920,6 +2992,11 @@ turn priced as the rung the human chose.
 
 ## Requirements covered by the daemon wiring
 
+R.2 (Settings -> Devices: start a pairing whose `fr://` link the app shows as a QR, list the
+human's devices, revoke one at once, with the service's admin token kept in the daemon).
+Tests: `test/devices-routes.test.ts`, `services/state-api/test/desktop-devices.test.ts`; the
+section is the UI's (`apps/ui/test/settings-devices.test.tsx`, apps.md).
+
 G.5 (the standard doc set scaffolded at project creation as a pull request on the linked
 repository or under the project's data dir, `docs/status.md` updated at session end on the
 session's PR or one of its own; the critic's drift check unchanged). Tests:
@@ -3054,6 +3131,11 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   rows (daemon route) and `project.plan` rows (the plan writer's join), and for a session plan
   the `session.planned` event. A future caller of `MilestoneRepo.change` outside those two
   paths records the reason on the row but writes no history row unless it appends one.
+- Settings -> Devices (`src/devices/`): the daemon does not relay the service's
+  `device.changed` frames to its own `/events`; the app polls `GET /devices` while a pairing
+  is shown instead (apps.md). `startPairing` accepts
+  `kind: "web"` but builds the same `fr://` link; the approvals web needs
+  `<page url>#code=` and no page URL is configured yet (apps.md, approvals web).
 - An approved plan the scheduler answers `queued` (the agent is busy) holds the scheduler's
   single pending slot per agent, which a later trigger replaces (`triggers.ts`: the newest
   request wins the slot); the approval is recorded as handed over (`outcome: "queued"`) and

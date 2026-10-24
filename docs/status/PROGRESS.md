@@ -18,6 +18,92 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 ## Log
 
+### 2026-10-24 (item w3-r2-devices rebased onto 95097ae)
+- `wave/w3-r2-devices` rebased a fourth time, onto `origin/ccr-4d8a843c-1k9syk` at 95097ae
+  (after the merges of w3-d7-performance, D.7 and D.19; w3-t1-mode-off, T.1 and ADR 0081; and
+  w3-misc-replay-ceiling). Conflicts in the UI's `fixtures.ts` (the base's `PerformanceView`
+  import next to the branch's `PairingStartView`), CHANGELOG (the base's Performance view line
+  and the branch's R.2 line both under Added), apps.md (the `/settings` row with the Devices
+  section, the email page row with the base's ADR 0081 clause; the fake daemon paragraph with
+  the branch's devices clause and the base's `GET /performance` sentence), BLOCKERS.md (the
+  base's resolved T.1 row; the V.1 row with both sides' clauses and the counts recounted) and
+  this log (the branch's entries above the base's newer ones; the "Next" list's R.2 and T.1
+  clauses on one line); both sides kept (`docs/status/reviews/w3-r2-devices.md` `### Rebase
+  onto 95097ae`). Current counts: UI suite 53 files / 366 tests (`settings-devices.test.tsx`
+  11, `settings.test.tsx` 10, `performance.test.tsx` 9), runtime 140 files / 1297 unit tests
+  passed and 1 skipped (`devices-routes.test.ts` 11), state-api 12 files / 163
+  (`desktop-devices.test.ts` 4); requirements 193 done, 30 in progress, 5 todo on the branch
+  (the base 192 / 31 / 5). Not merged yet.
+
+### 2026-10-23 (item w3-r2-devices rebased onto 38ae8cc)
+- `wave/w3-r2-devices` rebased a third time, onto `origin/ccr-4d8a843c-1k9syk` at 38ae8cc
+  (after the merges of w3-d4-specialist-settings, D.4, and w3-r5-phone, R.5). Conflicts in the
+  UI's `client.ts`, `SettingsPage.tsx` and `fixtures.ts` (the base's model settings imports and
+  `ModelSettingsSection` next to the branch's pairing view and `DevicesSection`; both sections
+  render), `fake-daemon.ts` (the base's model settings types next to `PairingStartView`),
+  apps.md (the `/settings` row holds the Devices section and D.4's Models section, both route
+  lists), BLOCKERS.md (the branch's R.2 row next to the base's R.5 row) and this log; both
+  sides kept (`docs/status/reviews/w3-r2-devices.md` `### Rebase onto 38ae8cc`). Current
+  counts: UI suite 53 files / 360 tests (`settings-devices.test.tsx` 11, `settings.test.tsx`
+  10, `settings-models.test.tsx` 8), runtime 138 files / 1276 unit tests passed and 1 skipped
+  (`devices-routes.test.ts` 11), state-api 12 files / 163 (`desktop-devices.test.ts` 4);
+  requirements 190 done, 33 in progress, 5 todo on the branch (the base 189 / 34 / 5). Not
+  merged yet.
+
+### 2026-10-23 (item w3-r2-devices rebased onto 4ff4fb1)
+- `wave/w3-r2-devices` rebased again, onto `origin/ccr-4d8a843c-1k9syk` at 4ff4fb1 (after the
+  merges of w2-l6-speak, w3-c5-specialist-approval, w3-d16-slider, w3-e4-recheck and
+  w5-android-high-risk). Conflicts in the UI's `client.ts` (the base's speak imports next to
+  the pairing body), apps.md (the `/settings` row holds the Devices section and the D.16
+  slider; the `settings-devices` and `settings-slider` test rows both kept) and this log; both
+  sides kept (`docs/status/reviews/w3-r2-devices.md` `### Rebase onto 4ff4fb1`). Current
+  counts: UI suite 49 files / 334 tests (`settings-devices.test.tsx` 11, `settings.test.tsx`
+  10), runtime 134 files / 1216 unit tests passed and 1 skipped (`devices-routes.test.ts` 11),
+  state-api 12 files / 160 (`desktop-devices.test.ts` 4); requirements 189 done, 34 in
+  progress, 5 todo on the branch (the base 188 / 35 / 5). Not merged yet.
+
+### 2026-10-23 (item w3-r2-devices rebased onto cac6fee)
+- `wave/w3-r2-devices` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
+  daemon's `compose.ts` and `server.ts` (the base's git host watcher and runner unlock routes
+  next to the branch's `DeviceManager` and `/devices` routes), the UI's `client.ts`,
+  `SettingsPage.tsx` (the base's fast-mode card next to the Devices section), `fake-daemon.ts`
+  and `fixtures.ts`, apps.md, runtime.md, CHANGELOG and this log; both sides kept
+  (`docs/status/reviews/w3-r2-devices.md` `## Rebase`). Current counts: UI suite 47 files /
+  310 tests (`settings-devices.test.tsx` 11, `settings.test.tsx` 10), runtime 129 files /
+  1143 unit tests passed and 1 skipped (`devices-routes.test.ts` 11), state-api 12 files /
+  160 (`desktop-devices.test.ts` 4); requirements 186 done, 37 in progress, 5 todo on the
+  branch. Not merged yet.
+
+### 2026-10-23 (item w3-r2-devices reviewed and fixed, R.2)
+- Independent review of `wave/w3-r2-devices` (`docs/status/reviews/w3-r2-devices.md`,
+  verdict revise, 72/100, seven findings). Fixed on the branch: the daemon's calls to the
+  state service time out (`DEVICE_SERVICE_TIMEOUT_MS`, 15 s) instead of holding the app;
+  a lost phone whose row is in the daemon's store is revoked there when the service is down,
+  hung or refuses the token (`via: "store"`); every revocation from Settings writes the
+  `change_log` row the registry's `device.revoke` writes (source `ui`, irreversible); the
+  Devices section re-reads the list while a code is live and closes the pairing when the
+  phone appears; a loopback service URL in the QR is warned about; the state-service.md
+  test table holds its new row. Left to the merge: the textual conflicts with the base in
+  `fixtures.ts`, apps.md and runtime.md. R.2 stays `done` on the branch.
+
+### 2026-10-23 (item w3-r2-devices built: Settings → Devices on the desktop, R.2)
+- Branch `wave/w3-r2-devices`, continuing the earlier attempt's uqr pin and its unverified
+  `wip:` snapshot of the daemon side. The daemon gained `GET /devices`, `POST /devices/pairing`
+  and `POST /devices/:id/revoke` (`packages/runtime/src/devices/`, shapes in
+  `devices/types.ts` through `daemon/api-types`): it asks the state service for a pairing code
+  and revokes through it with the admin token from its vault, which never reaches the app
+  (ADR 0009; no new ADR, the brief named none). The desktop `SettingsPage` has a Devices
+  section: Pair a phone shows the QR of the `fr://` link, the typed code and the expiry
+  counting down on an injectable `UiClock`; the list shows name, kind, paired at, last seen
+  and this device; Revoke asks, then removes the device at once; a daemon without the routes
+  shows the route-missing state (ADR 0037). Tests: `apps/ui/test/settings-devices.test.tsx`
+  (8; 11 after the review), a Devices case in `apps/ui/test/settings.test.tsx`, `packages/runtime/test/devices-routes.test.ts`
+  (7; 11 after the review), `services/state-api/test/desktop-devices.test.ts` (4, the real service routes end to
+  end). R.2 moves to `done` (184 done, 39 in progress, 5 todo on this branch at the build; 186 / 37 / 5
+  after the rebase onto cac6fee); the BLOCKERS.md
+  row says what is left (a web-link button, a live list refresh) and the report is
+  `docs/status/reviews/w3-r2-devices.md`. Not reviewed, not merged.
+
 ### 2026-10-23 (item w3-d7-performance rebased onto 38ae8cc)
 - `wave/w3-d7-performance` rebased onto `origin/ccr-4d8a843c-1k9syk` (38ae8cc, after the merges
   of w3-d4-specialist-settings (D.4, ADR 0072) and w3-r5-phone (R.5, ADR 0080)). Conflicts in
@@ -646,7 +732,8 @@ merge, the requirement row and its BLOCKERS.md row updated at integration.
    findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19; built, reviewed and
    fixed on its branch 2026-10-23, rebased onto 38ae8cc, awaiting the merge), w3-d16-slider (D.16:
    built on its branch, see below; its review is still to run),
-   w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2),
+   w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2;
+   built and reviewed on its branch 2026-10-23, rebased onto 95097ae, merge pending),
    w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1; built on its branch, ADR 0081, reviewed and fixed 2026-10-24, awaiting merge), w3-misc-replay-ceiling (scenario 9's replay
    `it.todo`, the executor's ceiling rung). Then an independent review of each of the ten
    w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
