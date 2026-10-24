@@ -357,7 +357,8 @@ marked; `POST /devices/pairing` answers the `PAIRING` fixture with `expiresAt` t
 after its `now` option, the wall clock by default, and counts pairings; `pairingAvailable:
 false` makes it a daemon without a state service, 503 `unavailable`; `pairing` replaces
 fixture fields such as the service URL; revoke marks the row, 400 for the current device, 404
-unknown, and answers `via: "store"` with `revokeServiceError` set); decisions, the peer feed and docs are served read-only;
+unknown, and answers `via: "store"` with `revokeServiceError` set); decisions, the peer feed
+and docs are served read-only;
 `GET /performance` serves the `PERFORMANCE` fixture in the runtime's `PerformanceView` shape
 with the query's window and project, 400 for a bad `days` and 404 for an unknown project, as
 the daemon answers; with a project, the slider position Settings left in
@@ -387,19 +388,19 @@ first" with the card kept, as the real executor does; no id, or the literal `des
 the row `/me` names, as the daemon's route does, and when `/me` names none, 409 `conflict`
 with the daemon's message), `confirm: "tap"` runs a medium change at once, the `SOURCE_OF` mapping
 `text → chat`, `voice → voice`, `phone → chat`, `ui → ui`, undo rows; the `me` option
-overrides the `/me` answer, e.g. `desktopDeviceId: null` or a row the fake does not have).
-`state.fastMode` maps a project id to its flag, with `null` for a flag never set; it is empty
-by default, so the fixtures' row counts stay. It adds one `project.fast_mode` row per listed
-project to `/settings`: the value is off unless `true`, and the description is the runtime's
-`fastModeDescription()`. `settings.set` with `fast_mode` answers with the daemon's card:
+overrides the `/me` answer, e.g. `desktopDeviceId: null` or a row the fake does not have). Run
+directly (`pnpm exec tsx test/fake-daemon.ts`) it reads `FAKE_DAEMON_PORT`, `FAKE_DAEMON_TOKEN`
+and `FAKE_DAEMON_EVENT_DELAY_MS`.
+
+The fake's Opus fast mode (spec D.20): `state.fastMode` maps a project id to its flag, with
+`null` for a flag never set; it is empty by default, so the fixtures' row counts stay. It adds
+one `project.fast_mode` row per listed project to `/settings`: the value is off unless `true`,
+and the description is the runtime's `fastModeDescription()`. `settings.set` with `fast_mode`
+answers with the daemon's card and flips the flag on apply:
 - what: "Opus fast mode for <project>";
 - the old value, "unset" for `null`, as the daemon's card says;
 - the new value with `fastModeEffect(value)`;
 - the sentence.
-
-It flips the flag on apply. Run directly
-(`pnpm exec tsx test/fake-daemon.ts`) it reads `FAKE_DAEMON_PORT`, `FAKE_DAEMON_TOKEN` and
-`FAKE_DAEMON_EVENT_DELAY_MS`.
 
 The fake's `/voice` routes answer with the fixture's providers: `GET /voice/status` is
 `state.voiceStatus` (the `VOICE_STATUS` answer the O.4 Extensions tests mutate) with

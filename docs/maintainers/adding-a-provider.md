@@ -23,8 +23,10 @@ API so the Anthropic adapter (`provider/anthropic.ts`) is a thin mapping and the
   adapter ends a stream whose `signal` fired with `error: aborted` whatever its client did (the
   Anthropic SDK exits its iterator without throwing after an abort, which would otherwise read
   as a complete `message_end`), unless the vendor's end-of-message event had already arrived:
-  that message is complete and ends with `message_end` and its full usage. `collectStream` turns a stream into a `ModelResponse` with time
-  to first token and duration.
+  that message is complete and ends with `message_end` and its full usage. `collectStream`
+  turns a stream into a `ModelResponse` with time to first token and duration, and keeps the
+  `message_start` usage, so the loop adds a cut-off call's input cost to the run before it
+  rethrows the abort.
 - Effort is a first-class request field. What a provider accepts beyond the common request is
   its **capability flags** (spec D.4, ADR 0072), read through `providerCapabilities(provider)`
   (it fills the defaults; read flags through it, never directly), which returns
@@ -54,7 +56,10 @@ API so the Anthropic adapter (`provider/anthropic.ts`) is a thin mapping and the
 
 1. Create `packages/runtime/src/provider/<vendor>.ts` implementing `ModelProvider` with an injected
    `fetch` (or client) so it can be tested with canned responses, never by hitting the network.
-2. Map the vendor's streaming events onto `StreamEvent`; map HTTP errors onto the three codes.
+2. Map the vendor's streaming events onto `StreamEvent` (with the input-side `usage` on
+   `message_start` when the vendor reports it there); map HTTP errors onto the three error
+   codes, and end a stream whose `signal` fired with `error: aborted` unless the vendor's
+   end-of-message event had already arrived.
 3. Add the vendor's model ids to `DEFAULT_LADDER` in `models/ladder.ts` under its provider name and
    its prices to `packages/billing/src/pricing.ts` (unknown models are refused, never priced at zero).
 4. Declare `capabilities.acceptsTemperature` `true` only when the vendor accepts a temperature
@@ -74,7 +79,9 @@ API so the Anthropic adapter (`provider/anthropic.ts`) is a thin mapping and the
 `packages/runtime/test/anthropic-provider.test.ts` is the template (11 tests; two for the flags:
 no temperature and fast mode only on an API key, a proxied copy keeping them; `speed: "fast"`
 and the beta header on an API key with an Opus id, nothing on a Sonnet id, a subscription token
-or a request without `speed`); the fast-mode wire form (`speed: "fast"` and the beta header
+or a request without `speed`; and the abort rule: the input-side `usage` on `message_start`,
+`error: aborted` for an abort before the response and for the SDK's silent exit after an abort
+mid-stream, a complete `message_end` kept when it came before the abort); the fast-mode wire form (`speed: "fast"` and the beta header
 with the field, neither without) is also pinned in `packages/runtime/test/fast-mode.test.ts`
 ("the Anthropic adapter's fast mode on the wire"). `packages/runtime/test/run-settings-runs.test.ts`
 proves the loop's side with the testenv `FakeProvider`, which takes `capabilities`

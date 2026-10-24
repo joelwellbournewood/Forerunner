@@ -6,570 +6,96 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 | Phase | Name | Status | Gate evidence |
 | --- | --- | --- | --- |
-| 0 | Foundations | CI green on both OS (run 39352102564); fresh-install timing pending the install scripts | gates.md § Phase 0 |
-| 1 | Single agent that does real work | gate passed on the fake provider and live on both billing sources (API key in full; the subscription session through the Agent SDK driver, ADR 0044); kill under 2 s live (49 ms); the API-key half probed again on the new key on 2026-10-23 (4 of 5 cases, kill 129 ms; the harness's classification of the aborted call is open, item w4-metered-aborted) | gates.md § Phase 1 |
+| 0 | Foundations | CI green on both OS (first at run 39352102564; on the integrated branch after the 41 merges of 2026-10-23 and 2026-10-24: run 125 on 422d9c0, https://github.com/joelwellbournewood/Forerunner/actions/runs/40044376081); fresh install timed on fresh runners (Linux 89 s, Windows 200 s) | gates.md § Phase 0 |
+| 1 | Single agent that does real work | gate passed on the fake provider and live on both billing sources (API key in full; the subscription session through the Agent SDK driver, ADR 0044); kill under 2 s live (49 ms); the API-key half probed again on the new key on 2026-10-23 (4 of 5 cases, kill 129 ms; the harness's classification of the aborted call is fixed by w4-metered-aborted, merged in cf22a14, the live-model gate on 422d9c0 on 2026-10-24 passed every live case, 56 passed and 5 skipped, USD 2.44 over 242 calls) | gates.md § Phase 1 |
 | 2 | Two agents, one project | gate passed on the fake provider (two agents, five sessions each, claims, peer feed, PR flow, human requests); state service with device auth, realtime, receipts, decision log, GitHub Projects mirror, approvals web fallback done | gates.md § Phase 2 |
 | 3 | Critic and quality loop | gate passed live (40 of 40 seeded defects caught, 40 of 40 clean submissions accepted after ADR 0042); reviews tab done | gates.md § Phase 3 |
 | 4 | Memory, docs and learning | gate harness passed on the fake provider (four simulated weeks, retrieval under budget, consolidation applied only as approved, no cross-human lesson); memory UI done | gates.md § Phase 4 |
-| 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending: the hosted emulator boots and launches the app (run 6), the raw-CDP attach is merged (ADR 0054) and not yet dispatched; the Settings → Capabilities → Email page (ADR 0066), PM intake (ADR 0055) and what you say during a live session (ADR 0078) landed 2026-10-23 | gates.md § Phase 5 |
+| 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending: on the hosted emulator the raw-CDP smoke (ADR 0054) attaches, pairs by code and passes the signed approval, then misses the bottom-nav click on the API 30 image's old WebView (runs 40000764444 and 40013402240, ADR 0087, BLOCKERS.md "Android emulator smoke"); the Settings → Capabilities → Email page (ADR 0066), PM intake (ADR 0055) and what you say during a live session (ADR 0078) landed 2026-10-23; the global hotkey (O.1), Read aloud and spoken alerts (L.6), the chat's docs and lessons (J.1, O.2), the phone's uploads, reviews and push-to-talk (R.5, emulator run open), Settings → Devices (R.2) and the speed-versus-quality slider (D.16) merged 2026-10-23 and 2026-10-24 | gates.md § Phase 5 |
 | 6 | Capabilities | injection suite, live revocation, overnight cloud-runner session, emailed task and spoofed email passed on the fake provider and the in-process mail server; live halves pending a real mailbox and host | gates.md § Phase 6 |
 | 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts) | gates.md § Phase 7 |
-| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23) and on Windows in CI (last green on both OS: run 97, before the merges of 2026-10-23; the run on e42c730 pending with its Linux job failed on two stale Postgres integration tests); the hosted emulator boots and launches the app (run 6), the raw-CDP attach merged and not dispatched; requirements 190 done, 33 in progress, 5 todo (S.32 merged from `wave/w2-s32-indicator` in c83a15d; D.16 `done` on `wave/w3-d16-slider`, reviewed and rebased onto cac6fee, merged in 443139a; D.4 done on its item branch, rebased onto 4ff4fb1, 2026-10-23; T.1 on `wave/w3-t1-mode-off`, built, rebased onto 38ae8cc, not merged); security suite green, the four review findings of 2026-10-21 closed (ADR 0052, 0084), the three triage P0s fixed, one P1 open; fifteen items merged on 2026-10-23, five of them independently reviewed with their findings open, ten unreviewed; release criteria not met, no release cut; build stopped at the credit limit on 2026-10-23 | gates.md § Phase 8 and § Release 1.0 criteria |
+| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23 and on 422d9c0 on 2026-10-24) and on Windows and Linux in CI (run 125 on 422d9c0, https://github.com/joelwellbournewood/Forerunner/actions/runs/40044376081, and run 121 on bc10bc8 green on both OS); the Android emulator smoke attaches, pairs and approves, then fails at the bottom-nav click (runs 40000764444, 40013402240); 41 items merged on 2026-10-23 and 2026-10-24, the last 27 independently reviewed before the merge (`docs/status/reviews/`), the ten first-wave items without a review still to review; requirements 203 done, 21 in progress, 4 todo of 228; the live-model gate passed on 422d9c0 on 2026-10-24 (56 live cases passed, 5 skipped, USD 2.44 over 242 calls); security suite green in CI, the triage's three P0s and its P1 fixed, the triage re-read for V.4 open; release criteria not met, no release cut | gates.md § Phase 8 and § Release 1.0 criteria |
 
 ## Log
 
-### 2026-10-24 (item w3-r2-devices rebased onto 95097ae)
-- `wave/w3-r2-devices` rebased a fourth time, onto `origin/ccr-4d8a843c-1k9syk` at 95097ae
-  (after the merges of w3-d7-performance, D.7 and D.19; w3-t1-mode-off, T.1 and ADR 0081; and
-  w3-misc-replay-ceiling). Conflicts in the UI's `fixtures.ts` (the base's `PerformanceView`
-  import next to the branch's `PairingStartView`), CHANGELOG (the base's Performance view line
-  and the branch's R.2 line both under Added), apps.md (the `/settings` row with the Devices
-  section, the email page row with the base's ADR 0081 clause; the fake daemon paragraph with
-  the branch's devices clause and the base's `GET /performance` sentence), BLOCKERS.md (the
-  base's resolved T.1 row; the V.1 row with both sides' clauses and the counts recounted) and
-  this log (the branch's entries above the base's newer ones; the "Next" list's R.2 and T.1
-  clauses on one line); both sides kept (`docs/status/reviews/w3-r2-devices.md` `### Rebase
-  onto 95097ae`). Current counts: UI suite 53 files / 366 tests (`settings-devices.test.tsx`
-  11, `settings.test.tsx` 10, `performance.test.tsx` 9), runtime 140 files / 1297 unit tests
-  passed and 1 skipped (`devices-routes.test.ts` 11), state-api 12 files / 163
-  (`desktop-devices.test.ts` 4); requirements 193 done, 30 in progress, 5 todo on the branch
-  (the base 192 / 31 / 5). Not merged yet.
-
-### 2026-10-23 (item w3-r2-devices rebased onto 38ae8cc)
-- `wave/w3-r2-devices` rebased a third time, onto `origin/ccr-4d8a843c-1k9syk` at 38ae8cc
-  (after the merges of w3-d4-specialist-settings, D.4, and w3-r5-phone, R.5). Conflicts in the
-  UI's `client.ts`, `SettingsPage.tsx` and `fixtures.ts` (the base's model settings imports and
-  `ModelSettingsSection` next to the branch's pairing view and `DevicesSection`; both sections
-  render), `fake-daemon.ts` (the base's model settings types next to `PairingStartView`),
-  apps.md (the `/settings` row holds the Devices section and D.4's Models section, both route
-  lists), BLOCKERS.md (the branch's R.2 row next to the base's R.5 row) and this log; both
-  sides kept (`docs/status/reviews/w3-r2-devices.md` `### Rebase onto 38ae8cc`). Current
-  counts: UI suite 53 files / 360 tests (`settings-devices.test.tsx` 11, `settings.test.tsx`
-  10, `settings-models.test.tsx` 8), runtime 138 files / 1276 unit tests passed and 1 skipped
-  (`devices-routes.test.ts` 11), state-api 12 files / 163 (`desktop-devices.test.ts` 4);
-  requirements 190 done, 33 in progress, 5 todo on the branch (the base 189 / 34 / 5). Not
-  merged yet.
-
-### 2026-10-23 (item w3-r2-devices rebased onto 4ff4fb1)
-- `wave/w3-r2-devices` rebased again, onto `origin/ccr-4d8a843c-1k9syk` at 4ff4fb1 (after the
-  merges of w2-l6-speak, w3-c5-specialist-approval, w3-d16-slider, w3-e4-recheck and
-  w5-android-high-risk). Conflicts in the UI's `client.ts` (the base's speak imports next to
-  the pairing body), apps.md (the `/settings` row holds the Devices section and the D.16
-  slider; the `settings-devices` and `settings-slider` test rows both kept) and this log; both
-  sides kept (`docs/status/reviews/w3-r2-devices.md` `### Rebase onto 4ff4fb1`). Current
-  counts: UI suite 49 files / 334 tests (`settings-devices.test.tsx` 11, `settings.test.tsx`
-  10), runtime 134 files / 1216 unit tests passed and 1 skipped (`devices-routes.test.ts` 11),
-  state-api 12 files / 160 (`desktop-devices.test.ts` 4); requirements 189 done, 34 in
-  progress, 5 todo on the branch (the base 188 / 35 / 5). Not merged yet.
-
-### 2026-10-23 (item w3-r2-devices rebased onto cac6fee)
-- `wave/w3-r2-devices` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
-  daemon's `compose.ts` and `server.ts` (the base's git host watcher and runner unlock routes
-  next to the branch's `DeviceManager` and `/devices` routes), the UI's `client.ts`,
-  `SettingsPage.tsx` (the base's fast-mode card next to the Devices section), `fake-daemon.ts`
-  and `fixtures.ts`, apps.md, runtime.md, CHANGELOG and this log; both sides kept
-  (`docs/status/reviews/w3-r2-devices.md` `## Rebase`). Current counts: UI suite 47 files /
-  310 tests (`settings-devices.test.tsx` 11, `settings.test.tsx` 10), runtime 129 files /
-  1143 unit tests passed and 1 skipped (`devices-routes.test.ts` 11), state-api 12 files /
-  160 (`desktop-devices.test.ts` 4); requirements 186 done, 37 in progress, 5 todo on the
-  branch. Not merged yet.
-
-### 2026-10-23 (item w3-r2-devices reviewed and fixed, R.2)
-- Independent review of `wave/w3-r2-devices` (`docs/status/reviews/w3-r2-devices.md`,
-  verdict revise, 72/100, seven findings). Fixed on the branch: the daemon's calls to the
-  state service time out (`DEVICE_SERVICE_TIMEOUT_MS`, 15 s) instead of holding the app;
-  a lost phone whose row is in the daemon's store is revoked there when the service is down,
-  hung or refuses the token (`via: "store"`); every revocation from Settings writes the
-  `change_log` row the registry's `device.revoke` writes (source `ui`, irreversible); the
-  Devices section re-reads the list while a code is live and closes the pairing when the
-  phone appears; a loopback service URL in the QR is warned about; the state-service.md
-  test table holds its new row. Left to the merge: the textual conflicts with the base in
-  `fixtures.ts`, apps.md and runtime.md. R.2 stays `done` on the branch.
-
-### 2026-10-23 (item w3-r2-devices built: Settings → Devices on the desktop, R.2)
-- Branch `wave/w3-r2-devices`, continuing the earlier attempt's uqr pin and its unverified
-  `wip:` snapshot of the daemon side. The daemon gained `GET /devices`, `POST /devices/pairing`
-  and `POST /devices/:id/revoke` (`packages/runtime/src/devices/`, shapes in
-  `devices/types.ts` through `daemon/api-types`): it asks the state service for a pairing code
-  and revokes through it with the admin token from its vault, which never reaches the app
-  (ADR 0009; no new ADR, the brief named none). The desktop `SettingsPage` has a Devices
-  section: Pair a phone shows the QR of the `fr://` link, the typed code and the expiry
-  counting down on an injectable `UiClock`; the list shows name, kind, paired at, last seen
-  and this device; Revoke asks, then removes the device at once; a daemon without the routes
-  shows the route-missing state (ADR 0037). Tests: `apps/ui/test/settings-devices.test.tsx`
-  (8; 11 after the review), a Devices case in `apps/ui/test/settings.test.tsx`, `packages/runtime/test/devices-routes.test.ts`
-  (7; 11 after the review), `services/state-api/test/desktop-devices.test.ts` (4, the real service routes end to
-  end). R.2 moves to `done` (184 done, 39 in progress, 5 todo on this branch at the build; 186 / 37 / 5
-  after the rebase onto cac6fee); the BLOCKERS.md
-  row says what is left (a web-link button, a live list refresh) and the report is
-  `docs/status/reviews/w3-r2-devices.md`. Not reviewed, not merged.
-
-### 2026-10-23 (item w3-d7-performance rebased onto 38ae8cc)
-- `wave/w3-d7-performance` rebased onto `origin/ccr-4d8a843c-1k9syk` (38ae8cc, after the merges
-  of w3-d4-specialist-settings (D.4, ADR 0072) and w3-r5-phone (R.5, ADR 0080)). Conflicts in
-  `models/ladder.ts` (the base's `specialistMode` next to `INTAKE_RUN_SPECIALIST`),
-  `session/intake.ts` imports (the base's `DEFAULT_CEILING`, `effortWithOffset` next to
-  `INTAKE_RUN_SPECIALIST`), the UI fixtures' imports (`ModelSettingsView` next to
-  `PerformanceView`), runtime.md (the phone's push-to-talk paragraph next to the Performance
-  view section), BLOCKERS (the base's D.4 row, the branch's D.7/D.19 row) and this file; both
-  sides kept (`docs/status/reviews/w3-d7-performance.md`, `## Rebase (onto 38ae8cc)`). Two
-  follow-ups against the base's code: the branch's intake Run row tests reused the project
-  names of the base's D.4 intake tests (duplicate name, 500), renamed; and the view's effort in
-  force now starts from the principal's D.4 effort setting where one is set (`effortSource`),
-  as the intake, the chat and the executor take it. Current counts: runtime unit 139 files /
-  1281 passed, 1 skipped (`performance-view.test.ts` 10, `performance-route.test.ts` 4,
-  `intake.test.ts` 16); UI 52 files / 353 tests (`performance.test.tsx` 9); requirements 191
-  done, 32 in progress, 5 todo. Not merged yet.
-### 2026-10-24 (item w3-t1-mode-off rebased onto 38ae8cc)
-- `wave/w3-t1-mode-off` rebased onto `origin/ccr-4d8a843c-1k9syk` (38ae8cc, after the merges
-  of w3-d4-specialist-settings (D.4) and w3-r5-phone (R.5)). Conflicts in the ADR index (0080
-  next to 0081), BLOCKERS (twice: R.5 and V.1 next to T.1), this log (three times: the base's
-  entries, the item list's R.5 and T.1 clauses, the phase 8 row), apps.md (the `/settings` row
-  with the base's Models section, the email page row with the branch's ADR 0081 clause), the
-  command ports (`modelSettings` next to `emailMode`) and the daemon's command ports in
-  `compose.ts` (the same); both sides kept (`docs/status/reviews/w3-t1-mode-off.md` `## Rebase
-  onto 38ae8cc`). Requirements on the rebased branch: 190 done, 33 in progress, 5 todo of
-  228. Current counts: capabilities 36 files / 393 tests, commands 12 / 173, cloud-runner
-  9 / 64, runtime 137 / 1267 (1 skipped), UI 52 / 349 unit tests passed. Not merged yet.
-
-### 2026-10-24 (item w3-t1-mode-off rebased onto 4ff4fb1)
-- `wave/w3-t1-mode-off` rebased again onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1, after the
-  merges of w2-l6-speak, w3-c5-specialist-approval, w3-d16-slider, w3-e4-recheck and
-  w5-android-high-risk). Conflicts in this log (twice: the base's entries and the phase 8 row
-  next to the branch's), commands.md (the test list: the base's `summary.speak` and
-  `voice_alerts` cases and forty-four intent phrases next to the ADR 0081 `email.mode.set`
-  cases), the command ports (`speak` next to `emailMode`), the daemon's command ports in
-  `compose.ts` (the `speak` port next to `emailMode`) and apps.md (the `/settings` row with the
-  base's D.16 slider, the email page row with the branch's ADR 0081 clause); both sides kept
-  (`docs/status/reviews/w3-t1-mode-off.md` `## Rebase onto 4ff4fb1`). Requirements on the
-  rebased branch: 189 done, 34 in progress, 5 todo of 228. Current counts: capabilities 36
-  files / 393 tests, commands 11 / 168, cloud-runner 9 / 64, runtime 133 / 1207 (1 skipped),
-  UI 48 / 323 unit tests passed. Not merged yet.
-
-### 2026-10-24 (item w3-t1-mode-off rebased onto cac6fee)
-- `wave/w3-t1-mode-off` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in
-  BLOCKERS (K.8, L.3, T.1 and V.1), this log, commands.md (the test list), the command ports
-  (`requestAnswered` and `pricingTable` next to `emailMode`) and the daemon's command ports in
-  `compose.ts` (`requestAnswered` and `memory` next to `emailMode`); both sides kept
-  (`docs/status/reviews/w3-t1-mode-off.md` `## Rebase`). Requirements on the rebased branch:
-  186 done, 37 in progress, 5 todo. Current counts: capabilities 36 files / 393 tests,
-  commands 10 / 152, cloud-runner 9 / 64, runtime 128 / 1134 (1 skipped), UI 46 / 299 unit
-  tests passed. Not merged yet.
-
-### 2026-10-24 (item w3-t1-mode-off reviewed and fixed)
-- Independent review of the T.1 build (`docs/status/reviews/w3-t1-mode-off.md`, `## Review`):
-  verdict revise, three findings, all fixed on the branch. High: `email.mode.set` (chat,
-  voice, the phone, the agent's `email_mode_set` tool) wrote the settings row past the store,
-  so a change to off kept commands on with no audit row or notification; the daemon now hands
-  it to the settings store through `CommandPorts.emailMode` (ADR 0081 amended), the card says
-  commands go off and the undo turns them back on. Low: a running cloud-runner watcher stands
-  down with the reason in `/health` when commands go out of force under it; the email page's
-  commands toggle follows the stored value and the mode note says commands went off.
-
-### 2026-10-23 (item w3-t1-mode-off: T.1 done, ADR 0081)
-- Email commands at sending mode off, one reading decided, enforced and tested (ADR 0081):
-  commands need a sending mode other than off. The settings store refuses turning them on at
-  off with a plain message (400 on the daemon's `PUT`; the settings page of wave/w2-email-page
-  reads the same validation), a mode change to off turns them off with an `email.settings`
-  audit row and an `email_commands_off` notification to the owner, the gate obeys nothing at
-  off and the runner's `EmailWatch.start` refuses to start at off with the reason in the log
-  and the health status. Replies to the owner stay allowed in every mode where commands can be
-  on. T.1 `done` (requirements after the rebase onto cac6fee: 186 done, 37 in progress, 5
-  todo); its BLOCKERS row resolved; email.md, cloud-runner.md, notifications.md and runtime.md updated. The B.6
-  residual was left to wave/w1-b6-review as the brief says. Build report:
-  `docs/status/reviews/w3-t1-mode-off.md`.
-### 2026-10-23 (item w3-misc-replay-ceiling rebased onto 38ae8cc)
-- `wave/w3-misc-replay-ceiling` rebased onto `origin/ccr-4d8a843c-1k9syk` (38ae8cc), which had
-  since merged w3-d4-specialist-settings (D.4) and w3-r5-phone (R.5). Conflicts in
-  requirements.md (D.3 next to D.4, R.4 next to R.5: the base's D.4 and R.5 rows and the
-  branch's D.3 and R.4 test lists), this log (the base's D.4 and R.5 entries next to this
-  item's; the "Next" line with both clauses) and the executor's ladder import (D.4's
-  `specialistMode` and mode names next to `projectCeilingOf`); both sides kept
-  (`docs/status/reviews/w3-misc-replay-ceiling.md`, "Third rebase"). Current counts: runtime
-  137 files / 1268 passed, 1 skipped; cloud-runner 9 files / 62 passed; state-api 11 files /
-  159; scenario 9 2 passed, no todo; e2e 13 files / 25 passed, 1 skipped. Not merged yet.
-
-### 2026-10-23 (item w3-misc-replay-ceiling rebased onto 4ff4fb1)
-- `wave/w3-misc-replay-ceiling` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1). Conflicts
-  in this log (the base's w3-d16-slider, w3-e4-recheck and w5-android-high-risk entries next
-  to this item's) and in the executor's ladder import (the base's `capEffort` and
-  `speedQualityOffsetOf` next to `projectCeilingOf`); both sides kept
-  (`docs/status/reviews/w3-misc-replay-ceiling.md` `## Rebase`). Current counts: runtime 133
-  files / 1208 passed, 1 skipped; cloud-runner 9 files / 62 passed; state-api 11 files / 156;
-  scenario 9 2 passed, no todo. Not merged yet.
-
-### 2026-10-23 (item w3-misc-replay-ceiling built on its branch)
-- Two Known issues of `docs/maintainers/testing.md` closed (R.4, V.3 scenario 9's `it.todo`,
-  H.4 and D.3 the critic ceiling, V.4 the known-issues list). The code was already in place
-  from the runtime-gaps wave: `POST /remote/commands` enqueues a device's envelope once per
-  `clientId` (`enqueueRemoteCommandOnce`) and `RemoteCommandWatcher` refuses a replayed
-  envelope as a `duplicate`; `composeRuntime` passes `projectCeiling` so the executor reads
-  the project's `critic_ceiling` at every run. What the item adds is the proof: scenario 9's
-  todo is now a passing case (the envelope posted twice, a copy past the service, one change
-  log row, one session start), and `executor-ceiling.test.ts` / `remote-wiring.test.ts` pin a
-  haiku (tier 1) ceiling keeping the third attempt at haiku and the ceiling re-read per run.
-  Each test was shown to fail with the dedupe or the ceiling read removed. Report:
-  `docs/status/reviews/w3-misc-replay-ceiling.md`. Reviewed the same day (verdict revise, five
-  findings, all fixed on the branch): the cloud runner's executor ignored the project's
-  ceiling (the executor now reads `critic_ceiling` itself when no reader is passed), the
-  replay case was order-dependent, the V.4 blockers edit conflicted with the base, two docs
-  overstated and the build report cited commits not on the branch.
-
-### 2026-10-23 (item w3-d4-specialist-settings rebased onto 4ff4fb1)
-- `wave/w3-d4-specialist-settings` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1), which
-  had since merged w2-l6-speak (L.6), w3-c5-specialist-approval (C.5), w3-d16-slider (D.16),
-  w3-e4-recheck (E.4) and w5-android-high-risk. Conflicts in the intake, the chat and the
-  executor (D.16's slider and `max_effort` cap next to D.4's resolved effort: the agent's
-  effort is the base the slider shifts, then the cap; a spoken turn keeps `voice_chat`), the
-  command ports and compose (`speak` next to `modelSettings`), the daemon's imports, the UI's
-  Settings dialog (D.16's slider next to D.4's select) and fake daemon, five maintainer docs,
-  the ADR index, BLOCKERS and this file; both sides kept
-  (`docs/status/reviews/w3-d4-specialist-settings.md`, "Rebase onto 4ff4fb1"). The approval
-  gate (C.5) now compares the D.4 keys before a promotion; two branch tests were moved to the
-  base's current names (D.16's slider instead of the removed `effortOffset`, the fixture's
-  settings count). ADR 0072 has a second rebase amendment. Requirements 189 done, 34 in
-  progress, 5 todo of 228. Counts: runtime 136 files / 1256 passed, 1 skipped; commands 12 /
-  171; critic 14 / 116; billing 10 / 92; testenv 10 / 142; UI 49 / 330. Not merged yet.
-### 2026-10-23 (item w3-r5-phone, review and fix: verdict revise, eight findings, seven fixed)
-- Review in `docs/status/reviews/w3-r5-phone.md` (`## Review`). Fixed: a review verdict now
-  answers the caller's approval before it messages the agent (a refused high-risk or stale
-  verdict told the agent "Approved"), and leaves another human's approval alone; the phone
-  reads the inbox afresh before a verdict and resends with the biometric after
-  `biometric_required`; the PC drops a relayed recording from the shared row on every
-  outcome and refuses a voice turn older than 2 min; the 5 s cap is a duration bound; the
-  Upload screen warns when a queued file is held in memory only; the emulator smoke opens
-  Reviews, Upload and the Chat voice turn. R.5 stays `in progress` until the emulator run.
-
-### 2026-10-23 (item w3-r5-phone rebased onto 4ff4fb1)
-- `wave/w3-r5-phone` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1). Conflicts in
-  `compose.ts` (the base's read-aloud `SpeakSessions` next to the branch's `VoiceRelay`), the
-  phone store (the base's `BIOMETRIC_TIMEOUT_MS` next to the branch's upload queue key; a
-  high-risk review verdict now gets the base's bounded refusal), runtime.md (the Read aloud
-  and push-to-talk paragraphs) and this log; both sides kept
-  (`docs/status/reviews/w3-r5-phone.md`, `## Rebase` onto 4ff4fb1). Current counts: UI suite
-  51 files / 340 tests (`mobile-upload`, `mobile-reviews`, `mobile-voice` 18), runtime 134
-  files / 1214 unit tests passed, 1 skipped (`voice-relay` 9), state-api 11 files / 159,
-  `cdp.test.ts` 25. R.5 stays `in progress` (the emulator run). Not merged yet.
-
-### 2026-10-23 (item w3-r5-phone rebased onto cac6fee)
-- `wave/w3-r5-phone` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
-  phone store (the base's runner unlock window key next to the branch's upload queue key),
-  apps.md (the screen list and Known issues), requirements.md (R.5 and R.6 in one hunk) and
-  this log; both sides kept (`docs/status/reviews/w3-r5-phone.md` `## Rebase`). Current
-  counts: UI suite 49 files / 316 tests (`mobile-upload` 5, `mobile-reviews` 7,
-  `mobile-voice` 6), runtime 129 files / 1141 unit tests (`voice-relay` 9), state-api 11
-  files / 159. R.5 stays `in progress` (the emulator run). Not merged yet.
-
-### 2026-10-23 (item w3-r5-phone: the phone uploads, reviews and talks; R.5 built, emulator run open)
-- Branch `wave/w3-r5-phone` on the `wip:` snapshot 34bfcdb (the upload route's `clientId`
-  idempotency and `maxBytes` in the list, kept). ADR 0080. The phone gains an Upload screen
-  (file or camera photo, name, project, the cap shown and checked, signed multipart, phase
-  progress, an offline upload queue resent under the same `clientId`), a Reviews screen (the
-  project's critic reviews with PR and findings; comment; approve / reject answering the
-  task's approval at its version, high risk only after the biometric prompt) and push-to-talk
-  on Chat (5 s of 16 kHz PCM, or the typed line in the shell, as a `kind: "voice"` remote
-  command; the reply shown and spoken). The PC's `RemoteCommandWatcher` runs the voice
-  envelope through `VoiceRelay` over the daemon's voice sessions (one held per phone, so a
-  spoken yes answers the last read-back) and drops the audio from the shared row. Both
-  screens are in the nav. R.5 stays `in progress` until the emulator run (BLOCKERS.md, R.5).
-  Build report: `docs/status/reviews/w3-r5-phone.md`.
-### 2026-10-23 (item w6-android-inbox built on `wave/w6-android-inbox`, review pending)
-- Android emulator smoke, scenario 2 (`android.yml` run 40000764444 on 4ff4fb1: 0 `m-request`
-  cards after pairing): the four suspects of the brief are ruled out (the unlock card gates
-  nothing and makes no service call, the high-risk store changes leave pairing, refresh and
-  the sync loop alone, the phone sends no push token); the cause is a click race in the CDP
-  driver that predates 82a6295. The API 30 emulator's Chromium 83-class WebView drops the
-  app's Tailwind v4 rules (cascade layers), so the bottom nav sits in the flow under Home's
-  project list; the runner's "Inbox" click was measured before `/projects` answered and
-  landed on Home once the list pushed the nav down. Reproduced in a Chromium 83 browser
-  stand-in with slow shell IPC (82a6295's driver 8 of 20 runs failed, 4ff4fb1's 4 of 20,
-  the fix 0 of 20; the full `smoke()` 10 of 10). Fix (ADR 0087): the driver's click guard
-  stops events that land outside the measured element and retries the click
-  (`cdp.click_missed`, `cdp.click_lost`); the runner waits for Home's list and each screen's
-  heading, prints `webview engine:` and, after a failure, `page:` lines. Tests:
-  `apps/mobile/e2e/cdp.test.ts` (32 after the review, seven new). Open: the app's layout on a pre-99 WebView.
-  Report: `docs/status/reviews/w6-android-inbox.md`.
-
-### 2026-10-23 (item w3-d7-performance rebased onto 4ff4fb1)
-- `wave/w3-d7-performance` rebased onto `origin/ccr-4d8a843c-1k9syk` (4ff4fb1, after the merges
-  of w2-l6-speak, w3-c5-specialist-approval, w3-d16-slider, w3-e4-recheck and
-  w5-android-high-risk). Conflicts in `session/intake.ts` (the base's slider effort and
-  `maxEffort` next to the branch's intake Run row and `promptVersion`), `compose.ts` (both intake
-  deps), `views.ts` imports (the base's `spokenProjectSummary` next to the branch's
-  `ForerunnerError`), runtime.md (the base's Read aloud and slider paragraphs next to the
-  Performance view section) and this log; both sides kept. The base's D.16 slider now reaches
-  every mode, so the view's effort in force follows it everywhere a run reads it, held at the
-  registry's `max_effort` (`maxEffort`); the intake Run row and the chat reply row store the
-  effort the call ran at, and a chat turn is scoped by its own `projectId`
-  (`docs/status/reviews/w3-d7-performance.md`, second `## Rebase` section). Current counts:
-  runtime unit 135 files / 1219 passed, 1 skipped (`performance-view.test.ts` 9,
-  `performance-route.test.ts` 3, `intake.test.ts` 13, `effort-offset.test.ts` 11); UI 48 files
-  / 326 tests (`performance.test.tsx` 8); requirements 190 done, 33 in progress, 5 todo. Not
-  merged yet.
-
-### 2026-10-23 (item w3-d7-performance rebased onto cac6fee)
-- `wave/w3-d7-performance` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in
-  the conversation agent's imports (the base's `AgentRow` next to the branch's `wholeMs`), the
-  UI contracts header and served-route test (the base's milestones next to the branch's
-  performance), apps.md (client, fake daemon and proposed-routes paragraphs), runtime.md
-  (Ladder: fast mode and `INTAKE_RUN_SPECIALIST`), CHANGELOG (E.1 and D.7/D.19) and this log;
-  both sides kept (`docs/status/reviews/w3-d7-performance.md` `## Rebase`). Current counts:
-  runtime unit 130 files / 1144 passed, 1 skipped (`performance-view.test.ts` 8,
-  `performance-route.test.ts` 3); UI 46 files / 301 tests (`performance.test.tsx` 7);
-  requirements 187 done, 36 in progress, 5 todo. Not merged yet.
-
-### 2026-10-23 (item w3-d7-performance reviewed and fixed on its branch)
-- Independent review of the Performance view build: verdict revise, six findings, all fixed
-  on `wave/w3-d7-performance` (`docs/status/reviews/w3-d7-performance.md`, `## Review`):
-  runs and chat turns that never reached a model no longer count as response-time samples
-  (a timeout still does); the intake call's Run row stores its prompt version (D.5); the view
-  and the page name the effort a risky task raises a mode to (`riskEffort`); `?days=` takes
-  decimal digits only; the client's missing-route test uses a route still proposed; apps.md
-  lists the data asset routes as served. D.7 and D.19 stay `done`.
-
-### 2026-10-23 (item w3-d7-performance built on its branch: the daemon serves the Performance view)
-- `GET /performance?projectId=&days=` is served by the daemon from the store (D.7, D.19):
-  per mode the samples, p50 and p90 by nearest rank of first token and total time against the
-  mode's target (D.8 to D.15), met or not, the last measurement and the effort in force from
-  the effort table and the project's offset; from the Run rows (executor, critic, and the
-  intake call, which now writes one), the chat replies (now with their total time) and the
-  voice turns of the window, the install's human's agents only. The UI page and the fake
-  daemon use the runtime shape; the proposed mirror and the "route not available" state are
-  gone. D.7 and D.19 `done` (requirements 185 done, 38 in progress, 5 todo on this branch).
-  Report: `docs/status/reviews/w3-d7-performance.md`. Awaiting the independent review.
-
-### 2026-10-23 (item w3-d16-slider rebased onto cac6fee)
-- `wave/w3-d16-slider` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in the
-  daemon's `/settings` rows (the base's handover and Opus fast-mode rows next to the slider's
-  row), the executor (the base's fast-mode routing next to the slider's offset and the
-  `max_effort` cap), the UI's fake daemon (runner keys, fast mode and desktop state next to
-  the slider state; the fast-mode and slider `settings.set` cards as two branches), apps.md,
-  commands.md (the `settings.set` row and the `SettingSpec.effect` paragraph name both
-  `fast_mode` and `speed_quality_offset`) and this log; both sides kept
-  (`docs/status/reviews/w3-d16-slider.md` `## Rebase`). Current counts: runtime 129 files /
-  1143 passed, 1 skipped (`effort-offset.test.ts` 11), commands 11 files / 153
-  (`speed-quality.test.ts` 3), critic 14 files / 116, UI 47 files / 301
-  (`settings-slider.test.tsx` 3); requirements 186 done, 37 in progress, 5 todo. Not merged yet.
-
-### 2026-10-23 (item w3-d16-slider reviewed and fixed on `wave/w3-d16-slider`)
-- Independent review of the D.16 build (`docs/status/reviews/w3-d16-slider.md`, `## Review`):
-  verdict revise, 74/100, four findings, all fixed on the branch. The slider no longer lifts a
-  specialist, the conversation agent or the intake above its registry `max_effort` (the
-  researcher at quality stays at high; the critic already capped). `effort-offset.test.ts`
-  now tells voice from chat on an adopted table and runs the researcher and the tier-2 coder
-  from the project row. The UI's fake daemon refuses an off-scale position in the daemon's
-  words. D.16 stays `done`; the BLOCKERS.md row is dropped when the branch merges.
-
-### 2026-10-23 (item w3-d16-slider built on `wave/w3-d16-slider`, review pending)
-- D.16 speed-versus-quality slider: every mode's effort is the default shifted one step by the
-  project's `speed_quality_offset`, read from the project row per run (executor), per turn
-  (chat, voice), per planning session (intake) and per review (critic); `compose.ts` passes no
-  static offset. `settings.set` takes -1 / 0 / +1 with the effect in the card and the change
-  log sentence both ways; Settings shows a three-stop slider (speed / balanced / quality).
-  Tests: `packages/runtime/test/effort-offset.test.ts` (composed daemon, each mode at each
-  position, a move applies to the next turn, session or run), `packages/commands/test/
-  speed-quality.test.ts`, `apps/ui/test/settings-slider.test.tsx`. D.16 `done` on this branch
-  (requirements 186 done, 37 in progress, 5 todo after the rebase onto cac6fee); BLOCKERS.md row D.16 says built, review
-  pending. Report: `docs/status/reviews/w3-d16-slider.md`.
-### 2026-10-23 (item w3-e4-recheck rebased onto cac6fee)
-- `wave/w3-e4-recheck` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts in
-  `runner.ts` (the base's `summarizeMerges` next to the branch's `summarizeEndInbox`; the
-  summary and the handoff carry both the J.9 merges and the end inbox), BLOCKERS (E.1, S.12,
-  S.32 as the base has them; the E.4 row the branch's with the base's O.9 clause) and this log;
-  both sides kept (`docs/status/reviews/w3-e4-recheck.md` `## Rebase`). Current counts:
-  runtime 128 files / 1140 unit tests passed (1 skipped), the E.4 block of
-  `closeout-sessions.test.ts` 8. Not merged yet.
-
-### 2026-10-23 (item w3-e4-recheck: independent review and fixes)
-- Review of the E.4 build (`docs/status/reviews/w3-e4-recheck.md`, "## Review"): verdict
-  revise, 72/100, four findings, all fixed on the branch: a pause read at the end of a session
-  that ends `failed` no longer leaves the row `paused` (which refused every later session of
-  the agent); a message read at the end is carried past a session that ends before its startup
-  receipts (`handoff.carried_forward`); `after_stop` also accounts for the memory, lesson-warning
-  and promotion writes; these status rows name the review. Three new cases in
-  `closeout-sessions.test.ts` (eight in the E.4 block). E.4 stays `done`.
-
-### 2026-10-23 (item w3-e4-recheck: the inbox is re-checked before the session-end writes)
-- E.4 `done` on `wave/w3-e4-recheck` (builder-verified; an independent review is due before the
-  merge): step 4 of `packages/runtime/src/session/runner.ts` re-checks the inbox before the
-  status doc, the summary cache, the peers' handoffs, the note to the human and the session
-  record are written. A stop or pause read there ends the session `stopped`
-  (`stopped_by_message`) and `handoff.end_inbox` names it with what was and was not written
-  (`after_stop`); an ordinary message is read and summarised in the handoff, and the next
-  session's startup checklist carries it once into the brief (it would otherwise vanish from
-  the unread list); a pause leaves the row `paused -> stopped`. Tests: `packages/runtime/test/closeout-sessions.test.ts` (five new
-  cases); doc: runtime.md "The inbox before the session-end writes"; BLOCKERS.md E.4 row
-  resolved. The requirement totals in the milestone table and gates.md criterion 1 move by one
-  (E.4 in progress → done) at integration. Report: `docs/status/reviews/w3-e4-recheck.md`.
-### 2026-10-23 (item w5-android-high-risk rebased onto cac6fee)
-- `wave/w5-android-high-risk` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee). Conflicts
-  in the mobile store (the base's runner unlock window next to the branch's biometric
-  timeout), `run.mjs` and `cdp.test.ts` (the base's `describeFailure` and moved
-  `connectPage` tests next to the branch's `webview-console.mjs` forwarding), apps.md, the
-  ADR index and this log; both sides kept. The base had taken ADR 0085 (FCM push), so the
-  branch's ADR is now 0086 (`docs/status/reviews/w5-android-high-risk.md` `## Rebase`).
-  Current counts: UI suite 46 files / 310 tests, `cdp.test.ts` 25. Not merged yet.
-
-### 2026-10-23 (item w5-android-high-risk: the high-risk refusal on a phone without biometrics; the runner shows the WebView console)
-- `android.yml` run 39952987240 (82a6295) attached to the real WebView, paired and approved,
-  then saw no refusal after Confirm on the high-risk card. Built on
-  `wave/w5-android-high-risk` (ADR 0086, not merged): every failure of the biometric step is a
-  refusal with the platform's reason in bounded time (shell 45 s, UI 60 s); the capability
-  names `biometric:allow-status` and `biometric:allow-authenticate`; `run.mjs` forwards the
-  page's console and uncaught exceptions as `webview:` lines. Tests (after the rebase onto
-  cac6fee): `apps/ui` 46 files / 310 tests, `apps/mobile/e2e/cdp.test.ts` 25, `cargo test` 30
-  (review stage; the base changed no Rust). R.5, R.7 and V.3 keep their
-  status until the emulator run passes; the BLOCKERS.md emulator row names the next step
-  (merge, dispatch `android.yml`). Report: `docs/status/reviews/w5-android-high-risk.md`.
-- Review and fix (same branch): verdict revise (76), six findings, all fixed. The forwarding
-  moved to `apps/mobile/e2e/webview-console.mjs` (typed by its own `.d.mts`) so a merge with
-  the base's typed `cdp.mjs` type-checks; the bounded wait closes an open simulated prompt
-  with the refusal; docs on V8's console replay, the platform prompt that outlives the
-  shell's bound, and the BLOCKERS row corrected. Counts in the review file.
-
-### 2026-10-23 (item w3-d4-specialist-settings rebased onto cac6fee)
-- `wave/w3-d4-specialist-settings` rebased onto `origin/ccr-4d8a843c-1k9syk` (cac6fee), which
-  had since merged D.20 (Opus fast mode, ADR 0057), chat memory, the indicator, the unlock card,
-  the triggers and the FCM sender. Conflicts in the provider contract, the Anthropic adapter,
-  the loop, the executor, compose, the command ports and registry, the UI's Settings page and
-  fake daemon, five maintainer docs, the ADR index, BLOCKERS and this file; both sides kept
-  (`docs/status/reviews/w3-d4-specialist-settings.md` `## Rebase`). The speed mode now
-  composes with D.20's `decideFastMode` (ADR 0072, rebase amendment): one decision, D.20's
-  price rows and audit rows, `speed_mode: standard` opting a run out of a fast-mode project,
-  `fast` only with the project's leave. Requirements 186 done, 37 in progress, 5 todo of 228.
-  Counts: runtime 131 files / 1180 tests, commands 11 / 155, critic 14 / 116, billing 10 / 92,
-  testenv 10 / 142, UI 47 / 306. Not merged yet.
-
-### 2026-10-23 (item w3-d4-specialist-settings, REVIEW AND FIX)
-- Independent review of the D.4 build: verdict revise (68/100), six findings, all fixed on the
-  branch (`docs/status/reviews/w3-d4-specialist-settings.md`, ADR 0072 amendment): every loop
-  run is now priced as the model it calls (the intake and the chat were priced at the table's
-  rung after a `tier` override, an Opus chat turn at the Haiku price); a specialist never runs
-  above its `max_effort` (executor cap, command refusal, screen options); the principal's
-  planning and chat rungs stay under the ladder ceiling; the field table says `default_effort`
-  is not a run's base; the UI fake speaks the daemon's sentence; the additions moved off the
-  anchors the base extends, so a trial merge into the base is conflict-free. Merge pending.
-
-### 2026-10-23 (item w3-d4-specialist-settings, BUILD: D.4 settings per agent and specialist)
-- Built on `wave/w3-d4-specialist-settings` (ADR 0072), over the earlier attempt's `wip:`
-  snapshot (the capability flags, the effort-table columns and the adapter's `speed`, kept and
-  finished): max tokens, speed mode and timeout in the effort table; optional `max_tokens`,
-  `speed_mode`, `temperature` in specialist frontmatter; per-mode and per-specialist overrides
-  on the principal's `model_config` through the new `model.settings.set` command (card, change
-  log, undo); `ModelProvider.capabilities` (`acceptsTemperature`, `fastMode`) read by the loop,
-  the command and the settings view; the executor, the intake and the chat run at the resolved
-  settings; `GET /settings/models` and the Settings section "Models per agent and specialist"
-  with the temperature column only for a provider that accepts one. Speed mode composes with
-  D.20: fast only with the project's `fast_mode` leave, the Opus rung, an API-style source and
-  a fast-mode price (none wired before D.20, so inert and said per run). D.4 `done` in
-  requirements.md (184 done, 39 in progress, 5 todo of 228); the BLOCKERS row keeps the D.20 residual. Review and merge pending. Report:
-  `docs/status/reviews/w3-d4-specialist-settings.md`.
-
-### 2026-10-23 (item w2-s32-indicator rebased onto 22982fa)
-- `wave/w2-s32-indicator` rebased onto `origin/ccr-4d8a843c-1k9syk` (22982fa). Conflicts in
-  the UI's fake daemon (the base's runner keys and fast mode next to the branch's desktop
-  state), the ADR index (0067 and 0068), runtime.md, BLOCKERS (S.12 and S.32) and this log;
-  both sides kept (`docs/status/reviews/w2-s32-indicator.md` `## Rebase`). Current counts:
-  UI suite 46 files / 298 tests (`desktop-indicator.test.tsx` 11), `cargo test` 74 passed,
-  capabilities 383 and runtime 1098 unit tests passed. Not merged yet.
-
-### 2026-10-23 (item w2-s32-indicator reviewed and fixed)
-- Independent review of `wave/w2-s32-indicator` (`docs/status/reviews/w2-s32-indicator.md`
-  `## Review`): verdict revise, 72. Three findings, all fixed on the branch:
-  1. In the UI, a status re-read answered before a newer `desktop.indicator` frame overwrote
-     it and hid the banner for the whole burst. The store now orders frames and reads
-     (`desktopOrder`).
-  2. The tray had the same race (`ShellState::begin_desktop_read` / `apply_desktop_read`).
-  3. The "stopped" line followed any revoke, the Extensions panel's included, and missed a
-     tray stop. It now follows stops only, and the end of control re-reads the status.
-
-  ADR 0067 points 4 to 6 are amended. Tests: `desktop-indicator.test.tsx` 11 (from 9), two
-  more `store.test.ts` cases, `cargo test` 74 (from 73). Not merged yet.
-
-### 2026-10-23 (item w2-s32-indicator: the desktop-control indicator in the shells, S.32)
-- Built on `wave/w2-s32-indicator` from b1804e3 (ADR 0067); builder-verified, not yet
-  independently reviewed or merged. `apps/ui`: `DesktopControlBanner` above the header on
-  every page while the latest `desktop.indicator` frame is on (white on red, `role="alert"`,
-  the agent, the app and the session linked, "Stop desktop control" = `POST /desktop/revoke`,
-  then "Resume desktop control"), hidden on off; the store re-reads `GET /desktop/status` at
-  bootstrap, on every reopened `/events` stream, on `extension.changed` and in polling.
-  Daemon: `GET /desktop/status` carries `desktopControl { active, app, sessionId, agentId,
-  since }` (schemas in `api-types.ts`) and the controller sends a fresh `on` when the named app
-  or session changes. Desktop shell: the tray's tooltip line, icon title, `Desktop control:
-  active (<app>)` item and "Stop desktop control" from the same frame, cleared on off, re-read
-  on every reopened stream (`state.rs`, `sse.rs`, `actions.rs`). S.32 `done`: requirements 184
-  done, 39 in progress, 5 todo. Tests: `apps/ui/test/desktop-indicator.test.tsx` (9), UI suite
-  43 files / 265 tests, `cargo test` 73 passed, capabilities and runtime suites green
-  (`docs/status/reviews/w2-s32-indicator.md`). Open: the Android app and the approvals web page
-  show no indicator (they do not read the PC daemon's `/events`), no overlay while the window
-  is hidden, the manual check on a real desktop and the Windows run of the Rust tests.
-
-### 2026-10-23 (item w2-s12-unlock-card, review and fix: docs/status/reviews/w2-s12-unlock-card.md)
-- The daemon's `POST /runner-unlock/wrap` takes `{ requestId }` and wraps only to the challenge on
-  a stored, open unlock request of this human (it trusted a card from the body: a key-export
-  oracle for any holder of the daemon token). The auto-unlock runs app-wide (desktop Shell,
-  phone MobileShell), not only on the inbox screen. `fr runner-key import|status|remove` puts a
-  runner's vault key where the daemon reads it (the documented `pnpm fr` stand-in did not
-  exist). Tests: runtime `runner-unlock-routes`, `runner-key-cli`; ui `unlock-card`,
-  `mobile-unlock`. Open as before: one unlock on the real host; a key import on the phone.
-
-### 2026-10-23 (item w2-s12-unlock-card: the cloud runner unlock card, S.12, ADR 0068)
-- The desktop and Android inboxes render a runner's vault-unlock challenge as the unlock card
-  (runner, project, filing time, challenge age; Unlock once / allow for 1, 8, 24 h / clear the
-  window / Deny). The device side of the protocol moved to `@forerunner/vault`
-  (`runner-unlock.ts`, WebCrypto, no imports), shared by the runner, the daemon and the web
-  views; the daemon wraps the key from the OS keyring on the desktop (`/runner-unlock/*`), the
-  phone wraps it from the Keystore-wrapped secure store; auto-answer inside the window the
-  device set (the phone's biometric prompt still runs); read-only without a keyring or the
-  key, approvals web included. Tests: cloud-runner `vault-unlock` (WebCrypto answers against
-  the real runner), runtime `runner-unlock-routes`, ui `unlock-card` and `mobile-unlock`,
-  approvals-web `inbox`. Open: one unlock on the real host; a key import screen (BLOCKERS S.12).
-### 2026-10-23 (item w3-e1-triggers: CI results and PR comments start sessions)
-- E.1 `done` on `wave/w3-e1-triggers` (review pending): `GitHostWatcher`
-  (`packages/runtime/src/session/githost-watcher.ts`) polls the git host on the daemon's clock
-  (`FORERUNNER_GITHOST_POLL_MS`, a minute) for the open PRs of the install's agent and fires
-  `ci` (a failed, timed-out, cancelled or action-required check once per check run id, with the
-  check name and conclusion in the reason; a green head once per sha) and `pr_comment` (a
-  comment or review by anyone but the agent's own login) through `Scheduler.requestStart`. The
-  comment is quoted as data in the agent's inbox (the brief shows it), scanned for injection,
-  flagged and reported (`injection.flagged`, notification); the request and the
-  `githost.trigger` audit row carry author and place only. Dedupe keys live in a cursor file
-  saved before the start (at most once, across restarts, a baseline first poll); quiet hours
-  defer; a refused start is audited, not thrown. The git host port reads every page of PR
-  comments with `since` and lists reviews; the fake host honours `since`. ADR 0075 (polling,
-  not webhooks; the dedupe rule). Tests: `githost-watcher.test.ts` (13),
-  `githost-wiring.test.ts` (5), `githost-feedback.test.ts` (3). Report:
-  `docs/status/reviews/w3-e1-triggers.md`.
-- Review of w3-e1-triggers (verdict revise, six findings, all fixed on the branch): the agent's
-  own text is its token's login plus a hidden mark the port appends (`AGENT_TEXT_MARKER`), so
-  the human's comments under their own PAT fire `pr_comment`; the baseline is per PR, so a
-  transient error in the first poll never fires a PR's history; the excerpt in the inbox is a
-  JSON string with the envelope's markers neutralised; review line comments are read
-  (`listPullRequestReviewComments`, fake host `GET|POST /pulls/:n/comments`) and fire
-  `pr_comment`; a draft review fires once submitted; the runtime.md Known issues bullet moved
-  clear of the base's. Tests: `githost-watcher.test.ts` (18), `githost-feedback.test.ts` (4).
-### 2026-10-23 (w4-fcm-sender: the state-service half of Android push, R.6)
-- Built on `wave/w4-fcm-sender`, not yet reviewed or merged. The state service sends Android
-  push through FCM HTTP v1 (`services/state-api/src/push/`): an OAuth2 access token minted
-  from the service account (RS256 JWT, `node:crypto`), the account named by
-  `FORERUNNER_FCM_SERVICE_ACCOUNT_REF` and resolved like the admin token, never a value in
-  config or logs; the change bus fans out approvals, finished sessions, budget warnings (80 %
-  and the cap) and messages to every device of the human with a `push_token`, holding normal
-  kinds through the human's quiet hours (the runtime's `isQuietAt` rule) and sending them
-  when the window ends; 5xx / 429 retried with backoff; a 404 / `UNREGISTERED` token cleared
-  with a `push.token_cleared` audit row; without a service account a visible no-op
-  (`/health` `push.mode: "polling"` with the reason). Pairing stores `pushToken`;
-  `PUT /devices/:id/push-token` (signed) takes refreshes. ADR 0085 (the brief said 0084,
-  which was already taken). Tests: `services/state-api/test/push.test.ts` (17) against fake
-  OAuth and FCM endpoints over loopback HTTP; the DeviceRepo push-token case in
-  `packages/state/test/suite.ts`. R.6 and K.8 stay `in progress`: the Android app's Firebase
-  wiring (google-services.json, firebase-messaging, the messaging service, `fcmToken`) waits
-  for a Firebase project (BLOCKERS.md, FCM row). Report: `docs/status/reviews/w4-fcm-sender.md`.
-- Reviewed (verdict revise, nine findings, all resolved on the branch): the budget push now
-  reads the runner's `stop_reason`, held notices are re-read at the end of quiet hours, only
-  FCM's `UNREGISTERED` clears a token, requests time out, the own agent's `info` summary no
-  longer double-buzzes, one token on two rows is sent once, a blank pairing token is none.
-  `push.test.ts` 25 tests. Review: `docs/status/reviews/w4-fcm-sender.md`, `## Review`.
+### 2026-10-23 and 2026-10-24 (27 reviewed items merged; the review process; three rebase rounds; status pass)
+- After the fifteen merges of the morning (next entry), 27 more items were built, reviewed and
+  merged into `ccr-4d8a843c-1k9syk` between 12:56 UTC on 2026-10-23 and 00:13 UTC on
+  2026-10-24 (`git log --merges --format='%s' origin/ccr-4d8a843c-1k9syk | grep wave/`), 41
+  items in all for the build day. Each has its review file under `docs/status/reviews/<item>.md`
+  (build report, review with findings and resolutions, rebase records, what was left open).
+  The per-item build, review and rebase entries the branches wrote into this log while they
+  were open are folded into this entry; their detail is in those files.
+- What merged, in merge order:
+  - early afternoon: w3-b5-reasons (B.5, afa97b0), w3-o4-voice-prefs (O.4, b1804e3),
+    w4-stale-docs (the triage's 20 stale Known issues entries, e2bfb1e), w4-desktop-confirm (the
+    triage P1, c713755), w5-review-findings (the wave-1 review findings, a5525cd), w2-j9-merge
+    (J.9, ADR 0062, 576fe26);
+  - late afternoon: w4-metered-aborted (the live harness's aborted call, cf22a14),
+    w2-s12-unlock-card (S.12, ADR 0068, 9f71e01), w2-monthly-jobs (H.7, P.15, ADR 0060,
+    be9bc25), w2-d20-fastmode (D.20, ADR 0057, 22982fa), w2-chat-memory (J.1, O.2, ADR 0061,
+    8875c59), w2-s32-indicator (S.32, ADR 0067, c83a15d), w3-e1-triggers (E.1, ADR 0075,
+    7818e65), w4-fcm-sender (R.6 service side, ADR 0085, cac6fee);
+  - evening: w2-l6-speak (L.6, ADR 0063, 78f610e), w3-c5-specialist-approval (C.5, ADR 0071,
+    764621f), w3-d16-slider (D.16, 443139a), w3-e4-recheck (E.4, ef744a5),
+    w5-android-high-risk (ADR 0086, 4ff4fb1), w3-d4-specialist-settings (D.4, ADR 0072,
+    aa497bf), w3-r5-phone (R.5, ADR 0080, 38ae8cc), w6-android-inbox (ADR 0087, bc10bc8);
+  - night: w3-d7-performance (D.7, D.19, 92cfcd7), w3-t1-mode-off (T.1, ADR 0081, abe3bb0),
+    w3-misc-replay-ceiling (scenario 9's replay, the executor's ceiling, 95097ae), the
+    body-parser override for the dependency audit (e4f702f), w3-r2-devices (R.2, 646ee74) and
+    w2-o1-hotkey (O.1, ADR 0064, 422d9c0). The ADR index rows the merges brought without a row
+    were added centrally (f1948dd, fd883ed, 9cd67ba).
+- The review process: every item ran as a chain of sandbox sessions on its `wave/<id>` branch.
+  A build session (or, for the items the credit stops of the morning had cut off, a session
+  that continued from the branch's `wip:` snapshot) wrote the code, the tests, the maintainer
+  docs, the ADR and the build report, and returned the requirement and status rows to the
+  integrator instead of editing the status files. An independent adversarial review session
+  then traced the change from its real callers, proved each defect with a throwaway test or a
+  mutation, gave a verdict and a score, and fixed every finding on the branch with a test that
+  fails without the fix, or recorded it as not a defect. Three items were accepted as built
+  (w3-b5-reasons 86, w3-o4-voice-prefs 78, w4-stale-docs 92); 24 were sent back (scores 62 to
+  80) and fixed in the same stage. The 27 reviews raised 149 findings, twelve of them high (in
+  w2-l6-speak, w2-monthly-jobs, w2-o1-hotkey (two), w2-s32-indicator (two),
+  w3-c5-specialist-approval, w3-d4-specialist-settings, w3-e1-triggers, w3-r5-phone,
+  w3-t1-mode-off and w4-fcm-sender), all fixed before the merge; 7 were resolved as not a defect
+  and 13 stayed open (twelve findings of the three accepted items and one part of a C.5
+  finding), each
+  one line in BLOCKERS.md "Open review findings of 2026-10-23".
+- The three rebase rounds: the head moved under the open branches, so each was rebased commit
+  by commit (never merged with the base) and its conflicts resolved by keeping both sides, each
+  resolution listed in the item's review file (w2-s32-indicator was rebased onto 22982fa before
+  its merge). Round 1 onto cac6fee (after the late-afternoon merges): w3-c5-specialist-approval,
+  w3-d16-slider, w3-e4-recheck, w5-android-high-risk, w3-d4-specialist-settings,
+  w3-d7-performance, w3-r2-devices, w3-r5-phone, w3-t1-mode-off, w3-misc-replay-ceiling and
+  w2-o1-hotkey. Round 2 onto 4ff4fb1 (after the evening's first five merges):
+  w3-d4-specialist-settings, w3-d7-performance, w3-r2-devices, w3-r5-phone, w3-t1-mode-off,
+  w3-misc-replay-ceiling and w2-o1-hotkey (w6-android-inbox was built on 4ff4fb1). Round 3 onto
+  38ae8cc (after D.4 and R.5): w3-d7-performance, w3-t1-mode-off, w3-misc-replay-ceiling and
+  w3-r2-devices; the last two open branches, w3-r2-devices and w2-o1-hotkey, were rebased once
+  more onto 95097ae before their merges. Where a rebase met changed code it also reconciled the
+  meaning, with tests: D.4's settings composed with D.20's `decideFastMode` and D.16's slider
+  (ADR 0072 amendments), the Performance view's effort in force following the slider and the
+  D.4 overrides, the specialist approval gate comparing the D.4 keys.
+- CI on the merged heads: run 121 on bc10bc8 and run 125 on 422d9c0 green on both OS with the
+  dependency audit, gitleaks and the runner image (gates.md phase 0); run 122 on 95097ae failed
+  in the dependency audit only, fixed by e4f702f. Android: `android.yml` runs 40000764444 (on
+  4ff4fb1) and 40013402240 (on bc10bc8) attach, pair and sign, and fail at the bottom-nav click
+  on the API 30 image (BLOCKERS.md "Android emulator smoke").
+- Live: the live-model gate ran on the final head 422d9c0 on 2026-10-24 (run
+  `2026-10-24T00:19:35.074Z`): 8 test files passed and 1 skipped, 56 live cases passed and 5
+  skipped, USD 2.44 over 242 calls under the per-run cap, the call the kill switch cut off
+  recorded `aborted`; ledger `tests/live/spend.json` committed in bd32dda (USD 8.49 of 200).
+  CI run 125 of the same head (https://github.com/joelwellbournewood/Forerunner/actions/runs/40044376081)
+  is green on both OS.
+- Status pass (item w7-status-pass, 2026-10-24, `docs/status/reviews/w7-status-pass.md`): the
+  merges had left the status documents to this pass. Requirements 203 done, 21 in progress,
+  4 todo of 228 (from 183 / 40 / 5 after the morning's merges; B.5, D.20, H.7, J.1, J.9, L.6,
+  O.1, O.2, O.4 and P.15 set to `done` on the tests their reviews name); BLOCKERS.md closes 21
+  rows with their review file and merge commit and lists the open findings; gates.md, COST.md
+  (about USD 230 of Managed Agents sessions and about USD 85 of Claude Code runs on GitHub
+  Actions for the day) and CHANGELOG.md (one Unreleased entry per item) follow; the passages
+  where a merge kept both sides of a paragraph are merged into one (commands.md, apps.md,
+  runtime.md, adding-a-provider.md, this file, BLOCKERS.md).
 
 ### 2026-10-23 (fifteen bounded items merged; wave 1 reviewed, its fix stage and waves 2 to 4 stopped at the credit limit; triage; live probe on the new key)
 - Base b31c2e5 (the handover of 2026-10-21). Fifteen items were built on `wave/<id>` branches
@@ -613,13 +139,13 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   `wave/w3-o4-voice-prefs`, `wave/w4-metered-aborted`. Not started: w2-chat-memory (J.1,
   O.2), w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
   (S.12), w4-stale-docs, w4-fcm-sender (R.6 service side) and the wave-3 items
-  w3-d4-specialist-settings, w3-d7-performance, w3-d16-slider,
-  w3-c5-specialist-approval, w3-d4-specialist-settings, w3-d7-performance,
+  w3-c5-specialist-approval, w3-d4-specialist-settings, w3-d7-performance, w3-d16-slider,
   w3-e1-triggers, w3-e4-recheck, w3-docs-p7-p11, w3-r2-devices, w3-r5-phone, w3-t1-mode-off,
-  w3-misc-replay-ceiling; each is named on its requirement row in BLOCKERS.md.
-  w3-c5-specialist-approval (C.5, ADR 0071) is built and reviewed on its branch (six review
-  findings fixed, see its review), awaiting merge. Build cost in
-  COST.md (wave 1 and 2a and the triage agent measured, the stopped waves not).
+  w3-misc-replay-ceiling; each was named on its requirement row in BLOCKERS.md. All of these
+  but w3-a3-import and w3-docs-p7-p11 were built, reviewed and merged later the same day and
+  overnight (the entry above). Build cost in COST.md (wave 1 and 2a and the triage agent
+  measured, the stopped waves not; the later sessions' spend in "Build spend of 2026-10-23 and
+  2026-10-24").
 - Live: the human provided a new API key and workspace (`.env.build`,
   `FORERUNNER_LIVE_BUDGET_USD=200`, per-run cap 15 USD unchanged). One probe of the phase 1
   file on it, run `2026-10-23T09:49:08.123Z`: USD 0.1170, ledger USD 6.0479 of 200
@@ -648,7 +174,8 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   (`migrations.integration.test.ts` expects `applied [2]`, now `[2, 3, 4]`; the conformance
   "keeps private lessons private" case seeds an `agent_private` row on Postgres, refused since
   ADR 0083); run 100 on e42c730 pending at the time of writing, its Linux job already failed
-  on the same step. Nothing was recorded as passed on today's runs; the fix is handover item 1.
+  on the same step. Nothing was recorded as passed on those runs; 049ed52 fixed the two tests the same day
+  (green on both OS, gates.md phase 0).
 
 ### 2026-10-21 (security fixes landed, audit export, small-project mode, sign-off follow-up; build stopped at the credit limit)
 - Security: the 45 findings pinned by the review's `it.fails` tests are fixed in the state service,
@@ -689,82 +216,85 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   met, no release cut. Progress report 5 posted to the contact issue.
 
 ### Where to pick up (handover)
-In this order, each item a wave of its own with the snapshot procedure in `AGENTS.md`: a
-failing test first, the maintainer doc in the same change, an independent review before the
-merge, the requirement row and its BLOCKERS.md row updated at integration.
-1. CI is green on 049ed52 on both OS (https://github.com/joelwellbournewood/Forerunner/actions/runs/39950018548);
-   fix the open review findings of wave 1 (BLOCKERS.md row "Open review findings of
-   2026-10-23"). CI, done in 049ed52: the two Postgres tests
-   the merges left stale, `packages/state/test/migrations.integration.test.ts` (expects
-   `applied [2]`, now `[2, 3, 4]` and version 4) and the conformance case "keeps private
-   lessons private" in `packages/state/test/suite.ts` (seeds an `agent_private` row on
-   Postgres, refused since ADR 0083: seed it on SQLite only or assert the refusal as the
-   sibling case does); push and record the green run on both OS. The review findings are
-   fixed on `wave/w5-review-findings` (BLOCKERS.md section "Open review findings of
-   2026-10-23"); merge it after its own review, then re-review w1-b6-review and
-   w1-plan-approval on the merged code. The branch's own independent review
-   (`docs/status/reviews/w5-review-findings.md`, revise 80) found two more defects, fixed on
-   the branch (a cloud plan start failing in the background spent the approval silently; the
-   Cloudflare port's own approval card showed a resolved secret). One point found while fixing
-   stays open there: a hooks approval answered after its session ended is never reused (J.7 /
-   S.6 follow-up).
-2. Finish the partly built branches, each with its tests, maintainer doc and review:
-   `wave/w4-desktop-confirm` (the triage P1, 1 commit), `wave/w3-b5-reasons` (B.5, 2 commits),
-   `wave/w2-l6-speak` (L.6, 3 commits, state unknown: read the diff before building on it);
-   then the WIP snapshots `wave/w4-metered-aborted` (the live harness's aborted-call
-   classification, needed before item 5), `wave/w2-monthly-jobs` (H.7, P.15),
-   `wave/w2-o1-hotkey` (O.1), `wave/w3-a3-import` (A.3), `wave/w3-o4-voice-prefs` (O.4); a
-   `wip:` commit is unreviewed and unverified, so start from its diff, not its claims.
-3. Build the unbuilt items one at a time, each with an independent review before the merge
-   (the BLOCKERS.md row of each names the gap and the fix): w2-chat-memory (J.1, O.2),
-   w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32; built and reviewed on
-   its branch 2026-10-23, the findings fixed, awaiting the merge), w2-s12-unlock-card (S.12), w4-fcm-sender (R.6, the service side), w3-c5-specialist-approval (C.5),
-   w2-j9-merge (J.9), w2-d20-fastmode (D.20), w2-s32-indicator (S.32), w2-s12-unlock-card
-   (S.12), w4-fcm-sender (R.6, the service side; built on its branch 2026-10-23, review and
-   merge pending), w3-c5-specialist-approval (C.5; built on its branch with ADR 0071, reviewed
-   with six findings fixed, awaiting merge, see its review in
-   `docs/status/reviews/w3-c5-specialist-approval.md`),
-   w3-d4-specialist-settings (D.4; built and reviewed on its branch 2026-10-23, its six review
-   findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19; built, reviewed and
-   fixed on its branch 2026-10-23, rebased onto 38ae8cc, awaiting the merge), w3-d16-slider (D.16),
-   merge pending), w3-c5-specialist-approval (C.5),
-   w3-d4-specialist-settings (D.4; built and reviewed on its branch 2026-10-23, its six review
-   findings fixed, ADR 0072; rebased onto cac6fee and composed with D.20's `decideFastMode`: merge), w3-d7-performance (D.7, D.19; built, reviewed and
-   fixed on its branch 2026-10-23, rebased onto 38ae8cc, awaiting the merge), w3-d16-slider (D.16:
-   built on its branch, see below; its review is still to run),
-   w3-e1-triggers (E.1), w3-e4-recheck (E.4), w3-docs-p7-p11 (P.7, P.11), w3-r2-devices (R.2;
-   built and reviewed on its branch 2026-10-23, rebased onto 95097ae, merge pending),
-   w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1; built on its branch, ADR 0081, reviewed and fixed 2026-10-24, awaiting merge), w3-misc-replay-ceiling (scenario 9's replay
-   `it.todo`, the executor's ceiling rung). Then an independent review of each of the ten
-   w3-r5-phone (R.5; built on its branch 2026-10-23, emulator run open), w3-t1-mode-off (T.1), w3-misc-replay-ceiling (scenario 9's replay
-   `it.todo`, the executor's ceiling rung; built and reviewed on its branch 2026-10-23, not merged). Then an independent review of each of the ten
-   items merged on 2026-10-23 without one (w4-install-identity, w4-private-memory,
-   w4-android-signing, w2-a2-intake, w2-g5-docs, w2-g6-promotion, w2-a4-sources,
-   w2-email-page, w2-s13-shared-secrets, w3-o9-chat-to-inbox), applying what they find.
-4. The 20 stale doc entries of the triage report (section "Already fixed": the code is right,
-   the Known issues bullet is not): edit each bullet (item w4-stale-docs), then re-read the
-   triage against the items above and confirm no P0 or P1 remains (V.4).
-5. Android dispatch and the live gate re-run. Dispatch `android.yml` (the emulator job runs
-   the raw-CDP smoke, `pnpm --filter @forerunner/mobile test:emulator`, and the apksigner
-   check); on `PASS: Android emulator smoke complete` record the phase 5 emulator row and
-   scenario 9's Android run in gates.md. Live: from `tests/live`, with `ANTHROPIC_BASE_URL`
-   unset and `FORERUNNER_LIVE_BUDGET_USD` as set in `.env.build` (200), the key in
-   `FORERUNNER_ANTHROPIC_KEY` and the workspace in `FORERUNNER_ANTHROPIC_WORKSPACE_ID`, run
-   `pnpm --filter @forerunner/live test:live` (the phase 1, timing and phase 3 files; add
-   `tests/live/test/live-4-subscription.live.test.ts` once a new subscription token exists);
-   fix the aborted-call classification first (item 2) or the kill case fails on the harness
-   again; record every run in COST.md and gates.md with its ledger total.
-6. CI evidence on both OS: a green `ci.yml` run on the final build on `ubuntu-latest` and
-   `windows-latest` (the nine scenarios and the security files run there), linked from
-   gates.md phase 0 and criteria 3 and 5; `desktop.yml` on Windows for the shell; then every
-   earlier gate re-run on the final build and the phase 8 "re-run" row filled.
-7. Severity triage follow-up and the release: re-classify what the items above closed, the
-   P2 list into the release notes, then tag `v1.0.0` only when every row of the criteria
-   table in gates.md reads met (`release.yml` builds Windows, Linux and Android artefacts,
-   writes the changelog section and signs the update manifest with `UPDATE_SIGNING_KEY`).
-Credentials: the API key and the subscription token used on 2026-10-20 must be revoked and
-re-issued (the key of 2026-10-23 is the live one, in `.env.build`); the ledger
-`tests/live/spend.json` carries every live call (USD 6.05 of 200).
+Written 2026-10-24 by the status pass (w7-status-pass) after the 41 merges of the build day;
+it replaces the handover of 2026-10-23. In this order, each item a wave of its own: a failing
+test first, the maintainer doc in the same change, an independent review before the merge, the
+requirement row and its BLOCKERS.md row updated at integration (or returned to the integrator,
+as the sandbox items did).
+1. **The Android emulator row.** The smoke attaches, pairs by code and passes the signed
+   approval on the hosted API 30 `aosp_atd` image, and the release APK's signing and apksigner
+   check pass, but the runner's click on the bottom nav's "Inbox" misses: the image's
+   Chromium 83 WebView drops the app's Tailwind v4 cascade layers, so the unstyled nav moves
+   when Home's project list arrives (ADR 0087, `docs/status/reviews/w6-android-inbox.md`; runs
+   40000764444 on 4ff4fb1 and 40013402240 on bc10bc8 fail there, the second with
+   `cdp.click_missed`). Next step, one of: a newer system image with a current WebView in
+   `.github/workflows/android.yml` (a `google_apis` API 34 image; its boot did not finish in
+   10 minutes on the 2-core runner before, so raise the boot timeout or the runner size with
+   it), or a layout-settle wait before the nav click in `apps/mobile/e2e/run.mjs` (wait until
+   the nav item's box stops moving after the project list arrived), with a `cdp.test.ts` case.
+   Then dispatch `android.yml`; the log must reach scenario 3's refusal, R.5's Reviews, Upload
+   and Chat voice steps and `PASS: Android emulator smoke complete`. Record the gates.md phase 5
+   emulator row and scenario 9's Android run; then R.1, R.5 and V.3 can move (BLOCKERS.md rows
+   "Android emulator smoke", R.1, R.5).
+2. **The live gate run.** Done on the final head: on 2026-10-24 the live-model gate ran on
+   422d9c0 (run `2026-10-24T00:19:35.074Z`: 8 test files passed and 1 skipped, 56 live cases
+   passed and 5 skipped, USD 2.44 over 242 calls, the killed call recorded `aborted`; ledger
+   `tests/live/spend.json` committed in bd32dda, USD 8.49 of 200; gates.md phase 8, COST.md).
+   Still due live: `tests/live/test/live-4-subscription.live.test.ts` once a new subscription
+   token exists, one fast-mode call (D.20; confirm the API takes `speed: "fast"` and the
+   `claude-opus-5-5-fast` price), the monthly handover on Forerunner's own repository
+   (`fr jobs handover <project> --force`, V.8), D.8, D.13 and D.15 timings and the run's timing
+   figures copied into gates.md's response-time table (V.6). Record every run in COST.md and
+   gates.md with its ledger total.
+3. **Key rotation.** The live run is done (item 2), so the human now revokes and re-issues: the API key pasted
+   into the build session on 2026-10-23 (the live one, in `.env.build`), the API key of
+   2026-10-20 and the subscription token of 2026-10-20 (BLOCKERS.md key rows). The repository
+   is public, so nothing of them may reach a commit or a log; `pnpm secrets:scan` and
+   `pnpm secrets:scan --logs` before every push.
+4. **The review findings still open** (BLOCKERS.md "Open review findings of 2026-10-23"): the
+   O.4 medium finding first (a switched-off cloud `voice-*` row is still used by the registry's
+   fallback, a privacy surprise), then the late hooks approval that is never consumed (J.7 /
+   S.6), the B.5, O.4 and w4-stale-docs low findings, the C.5 proposal tool. Then an
+   independent review of the ten first-wave items merged without one (w4-install-identity,
+   w4-private-memory, w4-android-signing, w2-a2-intake, w2-g5-docs, w2-g6-promotion,
+   w2-a4-sources, w2-email-page, w2-s13-shared-secrets, w3-o9-chat-to-inbox), applying what
+   they find.
+5. **The rows still open in code or docs** (each a BLOCKERS.md row): A.3 GitHub import with a
+   migration branch (`wave/w3-a3-import` holds an unverified `wip:` snapshot; start from its
+   diff), P.7 and P.11 (`w3-docs-p7-p11`, not built), the G.5 residual, S.12's unlock on a real
+   runner host and a key import on the phone, R.6's Android Firebase wiring once a Firebase
+   project exists, and the real-device checks the merged items left (S.32's banner and tray on
+   Windows and Linux, O.1's hotkey and microphone in a real desktop window, R.2's pairing
+   against a real daemon and state service).
+6. **The release criteria** (gates.md, "Release 1.0 criteria"): none is met. V.4 needs the
+   triage re-read against the merged items and the open findings, and the P2 list in the
+   release notes; criteria 2, 3 and 5 need every gate, the nine scenarios three times per OS
+   and the security suite on the final build; then tag `v1.0.0` only when every row reads met
+   (`release.yml` builds Windows, Linux and Android artefacts, writes the changelog section from
+   `CHANGELOG.md` and signs the update manifest with `UPDATE_SIGNING_KEY`). CI is green on
+   422d9c0 (run 125); the final build needs its own green run linked from phase 0 and
+   criteria 3 and 5.
+7. **Package-level `test` scripts find no files.** Each package's `test` script is
+   `vitest run --project unit --dir test`, and with the root config's include globs that
+   matches nothing: `pnpm --filter <pkg> test` (and `pnpm --filter <pkg> exec vitest run`)
+   prints "No test files found, exiting with code 0" and passes vacuously (checked on
+   `@forerunner/commands` on 2026-10-24). The real form is the root's
+   `pnpm exec vitest run --project unit packages/<pkg>/test` (add `--project integration` for
+   `*.integration.test.ts` files that need no Postgres); `apps/ui` and `apps/approvals-web` have
+   their own configs (`pnpm --filter @forerunner/ui test`, `pnpm --filter
+   @forerunner/approvals-web test`). Either fix the scripts (pass the package's test path to the
+   root project) or delete them; until then no report may cite them, and a run that prints "No
+   test files found" proves nothing.
+8. **Paragraphs a merge kept from both sides.** The rebases resolved every conflict by keeping
+   both sides, which left passages said twice or split around an insertion. This pass merged
+   the ones it found: the two `settings.set` rows in commands.md, the fake daemon paragraph cut
+   by the fast-mode block in apps.md, the two fast-mode bullets and two stale cross-item
+   sentences (the git host poller's commit statuses, the voice routes' callers) in runtime.md's
+   Known issues, the error codes of adding-a-provider.md's step 2, the duplicated item lists in
+   this file's log and handover, run-on sentences in BLOCKERS.md's V.2, V.3 and V.5 rows, and
+   the commands test count. At the next merge, grep the touched docs for repeated sentences and
+   rows (for example `git show --cc <merge> -- docs/` and a search for a row's first cell twice)
+   before the status pass, and re-count any test count a doc states.
 
 ### 2026-10-20 (subscription path live, gate harnesses 5 and 7, daemon capabilities wired)
 - Snapshots 692a8fe/6c9919e (per-task billing source and the Agent SDK session path, ADR 0044;

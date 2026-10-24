@@ -52,6 +52,37 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   offline, idempotent by `clientId`), a Reviews screen (PRs and critic findings; comment,
   approve, reject, high risk behind the biometric prompt) and push-to-talk relayed to the PC's
   voice loop as a `kind: "voice"` remote command (R.5, R.3, O; ADR 0080).
+- Opus fast mode per project for urgent work: API-key runs on the Opus rung, specialist and
+  critic, are sent with `speed: "fast"` and priced apart as `claude-opus-5-5-fast`; a
+  subscription ignores it with an audit row (D.20; ADR 0057).
+- The quick chat searches the project's docs and the principal's lessons under measured token
+  budgets and cites the paths; `memory.record` keeps a lesson the human states (J.1, O.2;
+  ADR 0061).
+- At autonomy level 3 the runtime merges a reviewed PR after an accepting review, once its
+  checks and commit statuses pass, rebased when the base moved (J.9; ADR 0062).
+- Read aloud and spoken alerts: the project and session summaries through the daemon's voice
+  provider, `summary.speak`, and a voice channel for urgent notifications (L.6, A.6; ADR 0063).
+- Monthly jobs: the critic calibration with its drift notice and the docs handover test on a
+  fresh agent that files a docs task where it got stuck (H.7, P.15; ADR 0060).
+- A global hotkey brings up the conversation and starts a push-to-talk turn; the chord is
+  changed in Settings (O.1; ADR 0064).
+- The voice providers enabled in the Extensions panel are the ones the daemon uses, read again
+  at every voice session (O.4).
+- Milestone and session plan changes carry author and reason; the Plan tab's milestone edit
+  asks for one; migration 0005 (B.5).
+- A desktop-control banner on every page and a tray state while an agent controls the
+  desktop, with "Stop desktop control" (S.32; ADR 0067).
+- The cloud runner unlock card in the desktop and Android inboxes with an auto-unlock window,
+  and `fr runner-key` to put a runner's key where the daemon reads it (S.12; ADR 0068).
+- A proposed specialist goes live only after the human approves it and its eval set passes;
+  `fr specialists approve` (C.5; ADR 0071).
+- Model, effort, max tokens, speed mode and timeout per agent and specialist in Settings and
+  through `model.settings.set`; temperature only where the provider accepts one (D.4; ADR 0072).
+- A speed-versus-quality slider per project that shifts every mode's effort one step, held at
+  each registry entry's `max_effort` (D.16).
+- The state service sends Android push through FCM HTTP v1 for approvals, finished sessions,
+  budget warnings and messages, with quiet hours; the app's Firebase wiring waits for a
+  project (R.6, K.8; ADR 0085).
 
 ### Changed
 
@@ -59,11 +90,27 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   filing session ends `stopped` instead of `paused` (J.6, J.7, E.1; ADR 0053).
 - The Android emulator smoke attaches to the WebView over raw CDP on the page target instead
   of Playwright's browser-level connection (R.1, R.2, R.5, V.3; ADR 0054).
+- The inbox is re-checked once more before the session-end writes; a stop read there ends the
+  session `stopped` and the handoff says what was and was not written (E.4).
+- Email commands need a sending mode other than off: switching to off turns them off with an
+  audit row and a notice, and the cloud runner's watcher stands down (T.1; ADR 0081).
+- The Known issues entries the 2026-10-23 triage found already fixed are closed with their
+  evidence (V.4).
 
 ### Fixed
 
 - Small-project mode: the one milestone is placed after the milestones on file, and a task
   created by email takes the project's default critic tier (B.6; the review of ADR 0051).
+- A high-risk change confirmed from the desktop app works on a solo install: the daemon
+  registers its own desktop device row and `GET /me` names it (J.3, Q.5, Q.8; the triage P1).
+- The live harness records a call the kill switch aborts as `aborted`, and a killed call's
+  input tokens stay in the run's cost (ADR 0040 amendment).
+- The emulator smoke's clicks are guarded: a click that lands on what moved under the point
+  is stopped and sent again, and the runner waits for Home's list (R.1, V.3; ADR 0087).
+- A high-risk answer on a phone that cannot confirm is refused with the platform's reason in
+  bounded time, and the emulator runner shows the WebView's console (R.5, R.7; ADR 0086).
+- Scenario 9's replayed envelope runs once, and the cloud runner's executor keeps a third
+  attempt under the project's `critic_ceiling` (R.4, D.3, H.4, V.3).
 
 ### Security
 
@@ -80,3 +127,6 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   ADR 0083).
 - The Android release APK is signed from the keystore the build writes and verified with
   `apksigner` in the Android and release workflows (R.1, M.3).
+- The wave-1 review findings: a Cloudflare approval card shows a `secret:` reference, never
+  its value, and an approved plan starts once, under the cap the human saw, on every answer
+  path and on the cloud runner (S.4, S.6, J.6, J.7, B.6; ADR 0052 and ADR 0053 amendments).
