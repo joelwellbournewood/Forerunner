@@ -3113,9 +3113,6 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 - Fast mode (ADR 0057): the adapter does not read the response's `usage.speed`, so a fast
   request the API served at the standard speed would still be recorded and priced as the
   variant (an over-statement, never an under-statement).
-- The conversation agent, intake planning and the model watch's evals do not read the
-  `fast_mode` flag. A human who adopts an Opus rung for planning or chat gets standard-speed
-  calls there (ADR 0057).
 - Chat retrieval (ADR 0061): the docs search reads and ranks the doc set on every model turn
   (no index or cache; bounded by the memory package's file caps) and ranks lexically, so a
   question worded unlike the doc finds nothing. The docs clone `docsDirsFor` lists is whatever
@@ -3210,8 +3207,9 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   `ConversationAgent` (`src/conversation`, another item). The other direction is handled: a
   typed line that drops the agent's copy while the voice session still shows the card does
   not lose it, the spoken yes goes to the registry (`test/voice-route.test.ts`). The
-  shells do not call the `/voice`
-  routes yet, and `@forerunner/voice` is reached by relative path from `src/voice/pkg.ts`
+  `/voice` routes are called by the desktop UI's conversation panel (the global hotkey, O.1,
+  ADR 0064); the PC's relay of the phone's push-to-talk (R.5, ADR 0080) drives the same voice
+  sessions in process; the Rust shells themselves call none. `@forerunner/voice` is reached by relative path from `src/voice/pkg.ts`
   because the dependency is not declared in `package.json`.
 - The SDK driver's live behaviour is only verified when a credential is present (see
   `gates.md`); without one the integration test skips with a visible reason. The subscription
@@ -3293,8 +3291,9 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 - Git host poller (ADR 0075): the agent's own text is told apart by the hidden mark the port
   appends (`AGENT_TEXT_MARKER`); a comment the human writes under the token's login that
   happens to contain the mark (pasted from the agent's raw text) fires nothing. Commit
-  statuses (the older status API some CI systems use) are not read: only check runs; the
-  base branch's `listCommitStatuses` (J.9) is the read to use once both are merged. A PR
+  statuses (the older status API some CI systems use) are not read: only check runs. The git
+  host port has `listCommitStatuses` since the J.9 merge step (ADR 0062), which reads it; the
+  watcher does not call it yet, so a CI that reports only statuses fires no `ci` trigger. A PR
   reopened after it was seen closed is not watched again. A webhook receiver was not built:
   the poll is the one path (one-minute latency by default). Delivery is at most once: the
   cursor is saved before the inbox message and the start, so a crash between them loses that
@@ -3303,12 +3302,14 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   start (savings views only; calls are priced from the table in force); an adopt answered in a
   CLI one-shot (`fr models watch` composes its own runtime) reaches a running daemon at its
   next start, answers in the inbox or the updates screen apply at once.
-- D.4 (ADR 0072): a specialist's or an agent's `speed_mode` narrows the project's Opus fast mode
-  (spec D.20) for specialist runs only; the intake and the chat never go fast. The critic's
-  model, effort and per-call output follow its review tiers and the effort table (the critic
-  package's 8192 equals the table's row) and are not overridable per agent, and its fast mode
-  follows the project's flag alone. The Agent SDK path has no per-call output cap or speed
-  parameter; it takes the rung, effort and timeout.
+- Fast mode and D.4 (ADR 0057, ADR 0072): the conversation agent, intake planning and the
+  model watch's evals do not read the project's `fast_mode` flag, so a human who adopts an Opus
+  rung for planning or chat (or sets one through `model.settings.set`) gets standard-speed calls
+  there; a specialist's or an agent's `speed_mode` narrows the project's fast mode for
+  specialist runs only. The critic's model, effort and per-call output follow its review tiers
+  and the effort table (the critic package's 8192 equals the table's row) and are not
+  overridable per agent, and its fast mode follows the project's flag alone. The Agent SDK path
+  has no per-call output cap or speed parameter; it takes the rung, effort and timeout.
 - Desktop control: the Android app and the approvals web page show no indicator (they do not
   read the PC daemon's `/events`; ADR 0067); `screenshotsToModel` is always false because the
   runtime does not forward image artifacts; the module's audit rows carry no token id
