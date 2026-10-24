@@ -7,14 +7,14 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 | Phase | Name | Status | Gate evidence |
 | --- | --- | --- | --- |
 | 0 | Foundations | CI green on both OS (first at run 39352102564; on the integrated branch after the 41 merges of 2026-10-23 and 2026-10-24: run 125 on 422d9c0, https://github.com/joelwellbournewood/Forerunner/actions/runs/40044376081); fresh install timed on fresh runners (Linux 89 s, Windows 200 s) | gates.md § Phase 0 |
-| 1 | Single agent that does real work | gate passed on the fake provider and live on both billing sources (API key in full; the subscription session through the Agent SDK driver, ADR 0044); kill under 2 s live (49 ms); the API-key half probed again on the new key on 2026-10-23 (4 of 5 cases, kill 129 ms; the harness's classification of the aborted call is fixed by w4-metered-aborted, merged in cf22a14, the live re-run of the file is open) | gates.md § Phase 1 |
+| 1 | Single agent that does real work | gate passed on the fake provider and live on both billing sources (API key in full; the subscription session through the Agent SDK driver, ADR 0044); kill under 2 s live (49 ms); the API-key half probed again on the new key on 2026-10-23 (4 of 5 cases, kill 129 ms; the harness's classification of the aborted call is fixed by w4-metered-aborted, merged in cf22a14, the live-model gate on 422d9c0 on 2026-10-24 passed every live case, 56 passed and 5 skipped, USD 2.44 over 242 calls) | gates.md § Phase 1 |
 | 2 | Two agents, one project | gate passed on the fake provider (two agents, five sessions each, claims, peer feed, PR flow, human requests); state service with device auth, realtime, receipts, decision log, GitHub Projects mirror, approvals web fallback done | gates.md § Phase 2 |
 | 3 | Critic and quality loop | gate passed live (40 of 40 seeded defects caught, 40 of 40 clean submissions accepted after ADR 0042); reviews tab done | gates.md § Phase 3 |
 | 4 | Memory, docs and learning | gate harness passed on the fake provider (four simulated weeks, retrieval under budget, consolidation applied only as approved, no cross-human lesson); memory UI done | gates.md § Phase 4 |
 | 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending: on the hosted emulator the raw-CDP smoke (ADR 0054) attaches, pairs by code and passes the signed approval, then misses the bottom-nav click on the API 30 image's old WebView (runs 40000764444 and 40013402240, ADR 0087, BLOCKERS.md "Android emulator smoke"); the Settings → Capabilities → Email page (ADR 0066), PM intake (ADR 0055) and what you say during a live session (ADR 0078) landed 2026-10-23; the global hotkey (O.1), Read aloud and spoken alerts (L.6), the chat's docs and lessons (J.1, O.2), the phone's uploads, reviews and push-to-talk (R.5, emulator run open), Settings → Devices (R.2) and the speed-versus-quality slider (D.16) merged 2026-10-23 and 2026-10-24 | gates.md § Phase 5 |
 | 6 | Capabilities | injection suite, live revocation, overnight cloud-runner session, emailed task and spoofed email passed on the fake provider and the in-process mail server; live halves pending a real mailbox and host | gates.md § Phase 6 |
 | 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts) | gates.md § Phase 7 |
-| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23 and on 422d9c0 on 2026-10-24) and on Windows and Linux in CI (run 125 on 422d9c0, https://github.com/joelwellbournewood/Forerunner/actions/runs/40044376081, and run 121 on bc10bc8 green on both OS); the Android emulator smoke attaches, pairs and approves, then fails at the bottom-nav click (runs 40000764444, 40013402240); 41 items merged on 2026-10-23 and 2026-10-24, the last 27 independently reviewed before the merge (`docs/status/reviews/`), the ten first-wave items without a review still to review; requirements 203 done, 21 in progress, 4 todo of 228; security suite green in CI, the triage's three P0s and its P1 fixed, the triage re-read for V.4 open; release criteria not met, no release cut | gates.md § Phase 8 and § Release 1.0 criteria |
+| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23 and on 422d9c0 on 2026-10-24) and on Windows and Linux in CI (run 125 on 422d9c0, https://github.com/joelwellbournewood/Forerunner/actions/runs/40044376081, and run 121 on bc10bc8 green on both OS); the Android emulator smoke attaches, pairs and approves, then fails at the bottom-nav click (runs 40000764444, 40013402240); 41 items merged on 2026-10-23 and 2026-10-24, the last 27 independently reviewed before the merge (`docs/status/reviews/`), the ten first-wave items without a review still to review; requirements 203 done, 21 in progress, 4 todo of 228; the live-model gate passed on 422d9c0 on 2026-10-24 (56 live cases passed, 5 skipped, USD 2.44 over 242 calls); security suite green in CI, the triage's three P0s and its P1 fixed, the triage re-read for V.4 open; release criteria not met, no release cut | gates.md § Phase 8 and § Release 1.0 criteria |
 
 ## Log
 
@@ -81,6 +81,12 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   in the dependency audit only, fixed by e4f702f. Android: `android.yml` runs 40000764444 (on
   4ff4fb1) and 40013402240 (on bc10bc8) attach, pair and sign, and fail at the bottom-nav click
   on the API 30 image (BLOCKERS.md "Android emulator smoke").
+- Live: the live-model gate ran on the final head 422d9c0 on 2026-10-24 (run
+  `2026-10-24T00:19:35.074Z`): 8 test files passed and 1 skipped, 56 live cases passed and 5
+  skipped, USD 2.44 over 242 calls under the per-run cap, the call the kill switch cut off
+  recorded `aborted`; ledger `tests/live/spend.json` committed in bd32dda (USD 8.49 of 200).
+  CI run 125 of the same head (https://github.com/joelwellbournewood/Forerunner/actions/runs/40044376081)
+  is green on both OS.
 - Status pass (item w7-status-pass, 2026-10-24, `docs/status/reviews/w7-status-pass.md`): the
   merges had left the status documents to this pass. Requirements 203 done, 21 in progress,
   4 todo of 228 (from 183 / 40 / 5 after the morning's merges; B.5, D.20, H.7, J.1, J.9, L.6,
@@ -230,17 +236,17 @@ as the sandbox items did).
    and Chat voice steps and `PASS: Android emulator smoke complete`. Record the gates.md phase 5
    emulator row and scenario 9's Android run; then R.1, R.5 and V.3 can move (BLOCKERS.md rows
    "Android emulator smoke", R.1, R.5).
-2. **The live gate run.** The harness's aborted-call defect is fixed (w4-metered-aborted,
-   cf22a14). From `tests/live`, with `ANTHROPIC_BASE_URL` unset, `FORERUNNER_LIVE_BUDGET_USD`
-   as set in `.env.build` (200), the key in `FORERUNNER_ANTHROPIC_KEY` and the workspace in
-   `FORERUNNER_ANTHROPIC_WORKSPACE_ID`, run `pnpm --filter @forerunner/live test:live` (the
-   phase 1, timing and phase 3 files; the phase 1 kill case should now pass); add
-   `tests/live/test/live-4-subscription.live.test.ts` once a new subscription token exists.
-   Also due live: one fast-mode call (D.20; confirm the API takes `speed: "fast"` and the
+2. **The live gate run.** Done on the final head: on 2026-10-24 the live-model gate ran on
+   422d9c0 (run `2026-10-24T00:19:35.074Z`: 8 test files passed and 1 skipped, 56 live cases
+   passed and 5 skipped, USD 2.44 over 242 calls, the killed call recorded `aborted`; ledger
+   `tests/live/spend.json` committed in bd32dda, USD 8.49 of 200; gates.md phase 8, COST.md).
+   Still due live: `tests/live/test/live-4-subscription.live.test.ts` once a new subscription
+   token exists, one fast-mode call (D.20; confirm the API takes `speed: "fast"` and the
    `claude-opus-5-5-fast` price), the monthly handover on Forerunner's own repository
-   (`fr jobs handover <project> --force`, V.8), D.8, D.13 and D.15 timings (V.6). Record every
-   run in COST.md and gates.md with its ledger total (USD 6.05 of 200 before it).
-3. **Key rotation.** After the live run, the human revokes and re-issues: the API key pasted
+   (`fr jobs handover <project> --force`, V.8), D.8, D.13 and D.15 timings and the run's timing
+   figures copied into gates.md's response-time table (V.6). Record every run in COST.md and
+   gates.md with its ledger total.
+3. **Key rotation.** The live run is done (item 2), so the human now revokes and re-issues: the API key pasted
    into the build session on 2026-10-23 (the live one, in `.env.build`), the API key of
    2026-10-20 and the subscription token of 2026-10-20 (BLOCKERS.md key rows). The repository
    is public, so nothing of them may reach a commit or a log; `pnpm secrets:scan` and

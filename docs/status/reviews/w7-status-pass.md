@@ -80,6 +80,21 @@ review names the tests that prove it.
    run-on rows are fixed in their own commits. `docs/decisions/README.md` has no duplicate or
    missing row (76 rows, 76 ADR files, in order).
 
+8. The live-model gate on the final head (commit after the build, at the human's request).
+   `origin/ccr-4d8a843c-1k9syk` moved to bd32dda during this pass: the live harness ran on
+   422d9c0 on 2026-10-24 (run `2026-10-24T00:19:35.074Z`). Read from the committed ledger
+   (`git show bd32dda:tests/live/spend.json`, compared with 422d9c0's): 242 new calls, USD
+   2.438022 (Sonnet 231 calls USD 2.437256, Haiku 11 calls USD 0.000766), the killed call
+   recorded `aborted`, ledger USD 8.485961 of 200; the human's figures: 8 test files passed and
+   1 skipped, 56 live cases passed and 5 skipped. gates.md gains the phase 8 row "Live-model
+   gate on the final head" (passed, with the CI run of the same head, run 125,
+   https://github.com/joelwellbournewood/Forerunner/actions/runs/40044376081, green on both
+   OS), the evidence paragraph and criterion 6 mention it, the phase 1 kill row notes the
+   `aborted` record; COST.md gets two rows and the ledger paragraph; BLOCKERS.md (budget, key,
+   V.2, V.6 rows and the closed Live harness line) and PROGRESS.md (the day entry, milestone
+   rows 1 and 8, handover items 2 and 3) follow. bd32dda itself is not on this branch (no merge
+   of the base); the docs cite it by hash.
+
 ### Which tests prove it
 
 Docs only, so the proof is the docs checks and the status parsers, plus the full suites on the
@@ -87,7 +102,7 @@ branch head to show nothing else moved:
 
 - `scripts/closeout-docs.test.ts` (ADR index, maintainer doc sections): 19 passed, 1 todo.
 - `scripts/gates-verify.test.ts` ("parses the real status files"): passes; `pnpm gates:verify`
-  ok, 203 done, 21 in progress, 4 todo of 228.
+  ok (the new passed row has command, date, result and CI link), 203 done, 21 in progress, 4 todo of 228.
 - `scripts/release-notes.test.ts` (the Unreleased section): 8 passed.
 - Every test path in a requirement row exists (checked with a script over the test column).
 
@@ -102,7 +117,7 @@ branch head to show nothing else moved:
 | `node scripts/link-check.mjs` | `link-check: ok (149 files with this report)` |
 | `pnpm exec vitest run --project unit scripts/closeout-docs.test.ts` | 1 file, 19 passed, 1 todo |
 | `pnpm exec vitest run --project unit scripts` | 10 files, 97 passed, 2 skipped, 1 todo |
-| `pnpm gates:verify` | ok; checks 26/39 passed, criteria 0/9, requirements 203 / 21 / 4 of 228 |
+| `pnpm gates:verify` | ok; checks 27/40 passed (with the live-gate row), criteria 0/9, requirements 203 / 21 / 4 of 228 |
 | `pnpm check` | exit 0: lint, paths, typecheck, `pnpm test` 304 files, 3132 passed, 4 skipped, 1 todo; link check ok (148 files, before this report); secret scan clean (1560 files); its `docs:check` has no `origin/main` here, hence the explicit run above |
 | `pnpm --filter @forerunner/ui test` (on 422d9c0) | 54 files, 385 passed |
 | `pnpm --filter @forerunner/approvals-web test` (on 422d9c0) | 10 files, 58 passed |

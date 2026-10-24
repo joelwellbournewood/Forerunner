@@ -51,6 +51,8 @@ reserve 10%.
 | 2026-10-20 | 1 | claude-sonnet-5-5 on the Claude subscription (Agent SDK) | same run: 3 coder tasks and the kill-switch run through the SDK driver on the `claude setup-token` value; plan usage, not USD: the SDK's own list-price figure was USD 0.1898 (0.1022 + 0.0540 + 0.0336, none reported for the killed run; the hooks' API-equivalent estimate USD 0.2034), 0.37% of the default USD 50 monthly allowance after the session | 44 (plus 360,654 cache read, 43,306 cache write) | 2,289 | 0 (plan usage) | n/a |
 | 2026-10-23 | 1 | claude-sonnet-5-5 | live run `2026-10-23T09:49:08.123Z` (the phase 1 file alone on the new key and workspace, `tests/live/test/live-1-phase1.live.test.ts`): 3 coder tasks, 3 tier 1 reviews, the kill switch call (19 rows, one of them the aborted call at USD 0 with no usage reported); 4 of 5 cases passed, the kill case failing on the harness's classification of the aborted call (gates.md phase 1) | 19,865 (plus 33,291 cache read, 4,743 cache write) | 5,820 | 0.116442 | 0.09 at 0.8 |
 | 2026-10-23 | 1 | claude-haiku-5-5 | same run: one composed chat turn | 177 (plus 4,111 cache write) | 45 | 0.000554 | 0.00 |
+| 2026-10-24 | 1, 3, 8 | claude-sonnet-5-5 | live-model gate on the final head 422d9c0, run `2026-10-24T00:19:35.074Z` (`pnpm --filter @forerunner/live test:live`: 8 test files passed, 1 skipped; 56 live cases passed, 5 skipped; the killed call recorded `aborted`); ledger committed in bd32dda | 498,093 (plus 668,985 cache read, 4,743 cache write) | 129,550 | 2.437256 | 1.95 at 0.8 |
+| 2026-10-24 | 1 | claude-haiku-5-5 | same run: 11 calls (chat turns, timing requests) | 412 (plus 4,981 cache write) | 210 | 0.000766 | 0.00 |
 
 Sub-agent token counts come from the orchestration tool's usage report per wave; they are the
 build's own cost, not the product's.
@@ -64,10 +66,16 @@ to 3 USD, a rebase 2 to 5 USD) and about USD 85 of Claude Code runs on GitHub Ac
 in the day. These are the figures the human gave for this status pass, rounded; the sessions do
 not report their spend to this repository, so there is no per-item breakdown here. The
 subscription (plan) usage of the build is not metered here. None of this is the live-model
-ledger below: `tests/live/spend.json` is unchanged at USD 6.047939, since no live run was made
-on 2026-10-24.
+ledger below: the live-model gate of 2026-10-24 added USD 2.44 over 242 calls to
+`tests/live/spend.json` (commit bd32dda), now USD 8.485961.
 
 ## Live ledger
+
+On 2026-10-24 the live-model gate ran on the final head 422d9c0 (run
+`2026-10-24T00:19:35.074Z`): 242 calls, USD 2.438022 (Sonnet 231 calls USD 2.437256, Haiku 11
+calls USD 0.000766), under the 15 USD per-run cap; the ledger, committed in bd32dda, holds
+835 rows and USD 8.485961 of the 200 USD live budget (USD 191.514039 left). The paragraph below
+is the ledger as it stood before that run.
 
 `tests/live/spend.json` after the six runs of 2026-10-20 and the probe run of 2026-10-23
 (committed in 1b3de7e): 593 rows, USD 6.047939 charged to the API keys (USD 5.930943 on the key
