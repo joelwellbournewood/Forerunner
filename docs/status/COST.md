@@ -37,6 +37,8 @@ reserve 10%.
 | 2026-10-23 | 5 | build sub-agents (wave 3: stopped at the credit limit before any build completed; the O.9 item was finished afterwards from its branch and merged; not measured) | not measured | | | n/a | n/a |
 | 2026-10-23 | 8 | triage agent (severity triage of every known issue for release criterion 4, `docs/status/reports/triage-2026-10-23.md`; measured) | 293,241 tokens (1 agent) | | | n/a | n/a |
 | 2026-10-23 | 1–8 | integration agent (fifteen merges, the migration renumbering, the gate-5 stand-in, the scaffold, intake and plan-approval integration fixes, the full check; an estimate, not a reported figure) | about 200,000 tokens (1 agent) | | | n/a | n/a |
+| 2026-10-23 | 1–8 | Claude Code runs on GitHub Actions earlier in the day (the first merge wave, its integration and status work, before the build moved to Managed Agents sessions; API-billed) | not reported per run | | | about 85 | about 68 at 0.8 |
+| 2026-10-23 to 2026-10-24 | 1–8 | Managed Agents sessions (API-billed): the builds, independent reviews with their fix stage, and the rebases of the 27 items merged on 2026-10-23 and 2026-10-24, plus this status pass; roughly 90 sessions: a build 1 to 12 USD, a review 1 to 3 USD, a rebase 2 to 5 USD | not reported per session | | | about 230 | about 184 at 0.8 |
 | 2026-10-20 | 1, 3 | claude-sonnet-5-5 | live run `2026-10-20T17:07:09Z` (`pnpm --filter @forerunner/live test:live`): phase 1 live half (3 coder tasks, 3 tier 1 reviews, the kill switch call), 10 timing requests, critic calibration (20 + 80 reviews) | 557,754 (plus 475,277 cache read, 3,821 cache write) | 143,766 | 2.657774 | 2.13 at 0.8 |
 | 2026-10-20 | 1 | claude-haiku-5-5 | same run: one composed chat turn, 10 timing requests | 409 (plus 4,138 cache write) | 194 | 0.000652 | 0.00 |
 | 2026-10-20 | 1, 3 | claude-sonnet-5-5 | live run `2026-10-20T17:52:18Z` (the harness after its review, `test:live -t '^(?!.*full 40-task run)'`): phase 1 live half (3 coder tasks, 3 tier 1 reviews, the kill switch call), 10 timing requests, critic calibration subset (20 reviews, 41 calls) | 150,325 (plus 121,502 cache read, 3,821 cache write) | 32,755 | 0.662051 | 0.53 at 0.8 |
@@ -52,6 +54,18 @@ reserve 10%.
 
 Sub-agent token counts come from the orchestration tool's usage report per wave; they are the
 build's own cost, not the product's.
+
+## Build spend of 2026-10-23 and 2026-10-24
+
+The build day's own API spend was about USD 315 (about CHF 252 at 0.8): about USD 230 on
+Managed Agents sessions (roughly 90 sessions for the builds, the independent reviews and their
+fix stage, the three rebase rounds and this status pass; a build cost 1 to 12 USD, a review 1
+to 3 USD, a rebase 2 to 5 USD) and about USD 85 of Claude Code runs on GitHub Actions earlier
+in the day. These are the figures the human gave for this status pass, rounded; the sessions do
+not report their spend to this repository, so there is no per-item breakdown here. The
+subscription (plan) usage of the build is not metered here. None of this is the live-model
+ledger below: `tests/live/spend.json` is unchanged at USD 6.047939, since no live run was made
+on 2026-10-24.
 
 ## Live ledger
 
