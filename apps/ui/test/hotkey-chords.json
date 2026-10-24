@@ -1,0 +1,43 @@
+{
+  "$comment": "The one grammar for the global hotkey chord (ADR 0064), read by apps/desktop/src-tauri/src/hotkey.rs (the shell validates before it registers) and apps/ui/src/shell/hotkey.ts (Settings validates before it asks the shell). A case added here fails both sides until they agree.",
+  "default": "CommandOrControl+Shift+Space",
+  "accepted": [
+    { "input": "CommandOrControl+Shift+Space", "canonical": "CommandOrControl+Shift+Space" },
+    { "input": " ctrl + shift + space ", "canonical": "Control+Shift+Space" },
+    { "input": "CmdOrCtrl+Space", "canonical": "CommandOrControl+Space" },
+    { "input": "shift+alt+KeyT", "canonical": "Alt+Shift+T" },
+    { "input": "super+f9", "canonical": "Super+F9" },
+    { "input": "F9", "canonical": "F9" },
+    { "input": "Shift+F24", "canonical": "Shift+F24" },
+    { "input": "Option+Command+digit1", "canonical": "Alt+Super+1" },
+    { "input": "Win+Escape", "canonical": "Super+Escape" },
+    { "input": "ctrl+alt+numpad0", "canonical": "Control+Alt+Numpad0" },
+    { "input": "ctrl+up", "canonical": "Control+ArrowUp" },
+    { "input": "Mod+Shift+Period", "canonical": "CommandOrControl+Shift+Period" },
+    { "input": "Ctrl+Alt+Shift+Super+Backquote", "canonical": "Control+Alt+Shift+Super+Backquote" }
+  ],
+  "refused": [
+    { "input": "", "reason": "empty" },
+    { "input": "   ", "reason": "empty" },
+    { "input": "Ctrl++Space", "reason": "empty-token" },
+    { "input": "Ctrl+", "reason": "empty-token" },
+    { "input": "+Space", "reason": "empty-token" },
+    { "input": "Ctrl+Shift", "reason": "no-key" },
+    { "input": "Shift", "reason": "no-key" },
+    { "input": "Ctrl+Space+Shift", "reason": "key-not-last" },
+    { "input": "Ctrl+A+B", "reason": "too-many-keys" },
+    { "input": "Ctrl+Ctrl+A", "reason": "repeated-modifier" },
+    { "input": "Control+Ctrl+A", "reason": "repeated-modifier" },
+    { "input": "CommandOrControl+Control+A", "reason": "conflicting-modifiers" },
+    { "input": "CmdOrCtrl+Super+A", "reason": "conflicting-modifiers" },
+    { "input": "Space", "reason": "needs-modifier" },
+    { "input": "Shift+A", "reason": "needs-modifier" },
+    { "input": "Shift+Space", "reason": "needs-modifier" },
+    { "input": "Ctrl+Fn", "reason": "unknown-token" },
+    { "input": "Hyper+A", "reason": "unknown-token" },
+    { "input": "Ctrl+F25", "reason": "unknown-token" },
+    { "input": "Ctrl+F0", "reason": "unknown-token" },
+    { "input": "Ctrl+MediaPlay", "reason": "unknown-token" },
+    { "input": "Ctrl+Shift+Space; alert(1)", "reason": "unknown-token" }
+  ]
+}

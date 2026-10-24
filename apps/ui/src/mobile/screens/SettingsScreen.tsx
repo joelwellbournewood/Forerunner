@@ -2,6 +2,7 @@ import { useState } from "react";
 import { describeStateError } from "../../api/state-client.ts";
 import { Badge, Button, ErrorBanner, Field, INPUT_CLASS } from "../../components/ui.tsx";
 import { formatDateTime } from "../../lib/time.ts";
+import { hotkeyUnavailableReason } from "../../shell/hotkey.ts";
 import { syncLabel } from "../MobileApp.tsx";
 import { useMobileController, useMobileState } from "../store.tsx";
 
@@ -191,6 +192,18 @@ export function SettingsScreen() {
             Save
           </Button>
         </form>
+      </div>
+
+      <div
+        className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
+        data-testid="m-hotkey"
+      >
+        <h2 className="font-semibold">Global hotkey</h2>
+        <p className="mt-1 text-sm">
+          <Badge tone="neutral">unavailable</Badge> {hotkeyUnavailableReason("android", true)}. On
+          this phone, talk to your agent in Chat; on the PC, the desktop app's Settings shows and
+          changes the shortcut.
+        </p>
       </div>
 
       {error ? <ErrorBanner message={error} /> : null}

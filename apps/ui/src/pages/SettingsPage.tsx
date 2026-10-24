@@ -16,6 +16,7 @@ import {
 import { formatAmount, type MoneyLike } from "../lib/money.ts";
 import { formatDuration } from "../lib/time.ts";
 import { useAsync } from "../lib/use-async.ts";
+import { HotkeySettings } from "../shell/HotkeySettings.tsx";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import type { ThemePreference } from "../store/store.ts";
 import { DevicesSection } from "./DevicesSection.tsx";
@@ -605,6 +606,8 @@ export function SettingsPage() {
           <Badge>scope: this device</Badge>
         </div>
       </div>
+
+      <HotkeySettings />
 
       <div
         className="rounded border border-neutral-200 p-3 dark:border-neutral-800"

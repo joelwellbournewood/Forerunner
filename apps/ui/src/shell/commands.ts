@@ -19,6 +19,10 @@ export interface CommandContext {
   toggleKill: () => void;
   openNewProject: () => void;
   openShortcuts: () => void;
+  /** Opens the conversation and starts a push-to-talk turn (the global hotkey's action). */
+  openConversation?: () => void;
+  /** The global hotkey as it reads here, shown as the hint; null without one. */
+  hotkeyLabel?: string | null;
 }
 
 export function buildCommands(ctx: CommandContext): Command[] {
@@ -101,6 +105,15 @@ export function buildCommands(ctx: CommandContext): Command[] {
         ctx.setActiveProject(p.id);
         navigate(`/projects/${encodeURIComponent(p.id)}`);
       },
+    });
+  }
+  if (ctx.openConversation) {
+    commands.push({
+      id: "action.talk",
+      title: "Talk to your agent (voice or text)",
+      hint: ctx.hotkeyLabel ?? undefined,
+      group: "Actions",
+      run: ctx.openConversation,
     });
   }
   commands.push(

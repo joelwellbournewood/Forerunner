@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The UI window only needs the core IPC; every plugin (tray, notifications, dialogs, deep links, opener) is driven from Rust, so no plugin command is exposed to the webview.",
+  "description": "The UI window only needs the core IPC (and its event listener, for the hotkey events); every plugin (tray, notifications, dialogs, deep links, opener, global shortcut) is driven from Rust, so no plugin command is exposed to the webview. The shell's own hotkey commands are granted in hotkey.json.",
   "windows": ["main", "splash"],
   "permissions": ["core:default"]
 }

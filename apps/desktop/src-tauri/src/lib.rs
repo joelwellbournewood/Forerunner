@@ -2,7 +2,8 @@
 //! local daemon per ADR 0026: resolve the app directories exactly as `appDirs()` does, read
 //! `daemon.json`, check `/health`, start `fr daemon` when needed, inject the daemon address
 //! and token into the webview before the UI loads, and keep a tray with the kill switch,
-//! "pause email", "Update and restart" and Quit. Shell decisions are in ADR 0031.
+//! "pause email", "Update and restart" and Quit, and register the global hotkey that brings up
+//! the conversation (ADR 0064). Shell decisions are in ADR 0031.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -12,8 +13,11 @@ mod deeplink;
 mod dirs;
 mod env;
 mod events;
+mod hotkey;
+mod hotkey_shell;
 mod inject;
 mod install;
+mod media;
 mod restart;
 mod secret;
 mod sse;
@@ -118,6 +122,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(hotkey_shell::plugin())
+        .invoke_handler(tauri::generate_handler![
+            hotkey_shell::hotkey_status,
+            hotkey_shell::hotkey_set
+        ])
         .register_uri_scheme_protocol(deeplink::SPLASH_SCHEME, splash_response)
         .setup(move |app| {
             let install_id = read_or_create_install_id(&dirs.config);
@@ -138,6 +147,8 @@ pub fn run() {
 
             let handle = app.handle().clone();
             tray::install(&handle)?;
+            // The global hotkey (ADR 0064): never fails the start; Settings shows a refusal.
+            hotkey_shell::install(&handle, &dirs.config);
 
             #[cfg(any(windows, target_os = "linux"))]
             if let Err(e) = app.deep_link().register_all() {

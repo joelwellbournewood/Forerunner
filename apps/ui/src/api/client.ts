@@ -124,6 +124,9 @@ import {
   type TransitionTaskBody as TransitionTaskBodySchema,
   type UpdateLessonBody,
   type UpdateProjectSettingsBody,
+  type VoiceAudioBody,
+  type VoiceSessionView,
+  VoiceSessionView as VoiceSessionViewSchema,
   type VoiceStatusView,
   VoiceStatusView as VoiceStatusViewSchema,
 } from "@forerunner/runtime/daemon/api-types";
@@ -259,6 +262,8 @@ export type {
   UpdateLessonBody,
   UpdateProjectSettingsBody,
   UpdatesView,
+  VoiceAudioBody,
+  VoiceSessionView,
   VoiceStatusView,
 };
 
@@ -468,6 +473,19 @@ export interface DaemonClient {
   answerRequest(requestId: string, body: AnswerRequestInput): Promise<HumanRequestView>;
   markRead(messageId: string): Promise<MessageView>;
   chat(body: ChatRequestBody): Promise<ChatReplyView>;
+  // Voice (spec O; the daemon's /voice routes): the conversation panel's push-to-talk turn;
+  // `voiceStatus` (declared with the Extensions methods below) says whether voice is available.
+  startVoiceSession(body: {
+    projectId?: string;
+    language?: string;
+    mode?: "push_to_talk" | "open_mic";
+  }): Promise<VoiceSessionView>;
+  voiceSession(id: string, signal?: AbortSignal): Promise<VoiceSessionView>;
+  /** Push-to-talk press (true) or release (false); a press while the agent speaks barges in. */
+  voicePress(id: string, pressed: boolean): Promise<VoiceSessionView>;
+  /** One captured chunk of 16-bit PCM (base64). */
+  voiceAudio(id: string, chunk: VoiceAudioBody): Promise<VoiceSessionView>;
+  stopVoiceSession(id: string): Promise<VoiceSessionView>;
   costs(
     filter?: { projectId?: string; from?: string; to?: string },
     signal?: AbortSignal,
@@ -508,7 +526,8 @@ export interface DaemonClient {
   removeExtension(id: string): Promise<void>;
   /**
    * Voice providers (spec O.4): the pair the next voice session uses and what the panel's
-   * `voice-*` rows chose, with the reason for every row that is not in force.
+   * `voice-*` rows chose, with the reason for every row that is not in force; the conversation
+   * panel (spec O) reads from it whether a voice session can start and why not.
    */
   voiceStatus(signal?: AbortSignal): Promise<VoiceStatusView>;
 
@@ -806,6 +825,14 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       post(routePath("answerRequest", { id: requestId }), HumanRequestViewSchema, body),
     markRead: (messageId) => post(routePath("markRead", { id: messageId }), MessageViewSchema, {}),
     chat: (body) => post(routePath("chat"), ChatReplyViewSchema, body),
+    startVoiceSession: (body) => post(routePath("startVoiceSession"), VoiceSessionViewSchema, body),
+    voiceSession: (id, signal) =>
+      get(routePath("voiceSession", { id }), VoiceSessionViewSchema, undefined, signal),
+    voicePress: (id, pressed) =>
+      post(routePath("voicePress", { id }), VoiceSessionViewSchema, { pressed }),
+    voiceAudio: (id, chunk) => post(routePath("voiceAudio", { id }), VoiceSessionViewSchema, chunk),
+    stopVoiceSession: (id) =>
+      post(routePath("stopVoiceSession", { id }), VoiceSessionViewSchema, {}),
     costs: (filter, signal) =>
       get(
         routePath("costs"),

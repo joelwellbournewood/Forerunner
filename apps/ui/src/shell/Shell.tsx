@@ -7,8 +7,10 @@ import { NewProjectDialog } from "../pages/NewProjectDialog.tsx";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import { activeProject, type ThemePreference } from "../store/store.ts";
 import { CommandPalette } from "./CommandPalette.tsx";
+import { ConversationPanel } from "./ConversationPanel.tsx";
 import { buildCommands } from "./commands.ts";
 import { DesktopControlBanner } from "./DesktopControlBanner.tsx";
+import { formatChord, useHotkeyBridge } from "./hotkey.ts";
 import { ShellContext } from "./ShellContext.ts";
 import { ShortcutsHelp } from "./ShortcutsHelp.tsx";
 import { createSequenceMatcher, isEditableTarget } from "./shortcuts.ts";
@@ -26,7 +28,9 @@ const NAV = [
 
 /**
  * Always present: the desktop control banner while an agent controls the desktop, header with
- * the active project (click to switch), inbox badge, the kill switch, navigation (collapses under 768px), the command palette and keyboard shortcuts.
+ * the active project (click to switch), inbox badge, the kill switch, navigation (collapses
+ * under 768px), the command palette, keyboard shortcuts and the conversation panel the desktop
+ * shell's global hotkey opens (ADR 0064).
  */
 export function Shell() {
   const client = useClient();
@@ -42,6 +46,36 @@ export function Shell() {
   const [killBusy, setKillBusy] = useState(false);
   const [killError, setKillError] = useState<string | null>(null);
   const switcherRef = useRef<HTMLDivElement>(null);
+  // The conversation (spec O.1): `request` counts voice requests (hotkey presses, the palette).
+  const [conversation, setConversation] = useState({ open: false, request: 0 });
+  const [hotkeyChord, setHotkeyChord] = useState<string | null>(null);
+  const hotkey = useHotkeyBridge();
+
+  const talk = useCallback(
+    () => setConversation((c) => ({ open: true, request: c.request + 1 })),
+    [],
+  );
+
+  // The desktop shell's global hotkey: a press shows the window (the shell does that) and
+  // starts a voice turn here; the chord's label follows the shell's status.
+  useEffect(() => {
+    if (!hotkey.available) return;
+    let active = true;
+    const apply = (s: { chord: string; registered: boolean }) => {
+      if (active) setHotkeyChord(s.registered ? s.chord : null);
+    };
+    hotkey.status().then(apply, () => {});
+    const offChanged = hotkey.onChanged(apply);
+    const offPress = hotkey.onPress((press) => {
+      if (press.state === "pressed") talk();
+    });
+    return () => {
+      active = false;
+      offChanged();
+      offPress();
+    };
+  }, [hotkey, talk]);
+  const hotkeyLabel = hotkeyChord ? formatChord(hotkeyChord, state.config.platform) : null;
 
   const setTheme = useCallback(
     (theme: ThemePreference) => store.dispatch({ type: "theme", theme }),
@@ -78,8 +112,10 @@ export function Shell() {
         toggleKill: () => void toggleKill(),
         openNewProject: () => setNewProjectOpen(true),
         openShortcuts: () => setHelpOpen(true),
+        openConversation: talk,
+        hotkeyLabel,
       }),
-    [state, navigate, setActiveProject, setTheme, toggleKill],
+    [state, navigate, setActiveProject, setTheme, toggleKill, talk, hotkeyLabel],
   );
 
   // Keyboard shortcuts: one matcher for the life of the shell.
@@ -302,6 +338,15 @@ export function Shell() {
             </Badge>
             <Button
               variant="ghost"
+              onClick={() => setConversation((c) => ({ ...c, open: true }))}
+              aria-label="Talk to your agent"
+              title={hotkeyLabel ? `Talk to your agent (${hotkeyLabel})` : "Talk to your agent"}
+              data-testid="talk-open"
+            >
+              Talk
+            </Button>
+            <Button
+              variant="ghost"
               onClick={() => setPaletteOpen(true)}
               aria-label="Command palette"
               title="Command palette (Ctrl+K)"
@@ -367,6 +412,12 @@ export function Shell() {
           onClose={() => setPaletteOpen(false)}
         />
         <ShortcutsHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
+        <ConversationPanel
+          open={conversation.open}
+          onClose={() => setConversation((c) => ({ ...c, open: false }))}
+          voiceRequest={conversation.request}
+          chordLabel={hotkeyLabel}
+        />
         <NewProjectDialog open={newProjectOpen} onClose={() => setNewProjectOpen(false)} />
       </div>
     </ShellContext.Provider>

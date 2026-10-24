@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "hotkey",
+  "description": "The shell's own global-hotkey commands (ADR 0064): Settings reads and changes the chord. The main window only; the splash has no script.",
+  "windows": ["main"],
+  "permissions": ["allow-hotkey-status", "allow-hotkey-set"]
+}
