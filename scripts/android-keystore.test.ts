@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "@forerunner/platform";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  DEVELOPMENT_CERT_CN,
   escapeProperty,
   PROPERTIES_FILE,
   propertiesText,
@@ -34,6 +35,30 @@ const keytoolPresent = (() => {
   return !r.error;
 })();
 
+type KeytoolCall = {
+  cmd: string;
+  args: string[];
+  opts: { env: Record<string, string>; shell?: boolean };
+};
+
+/** A fake keytool that records its calls; by default every call succeeds like `keytool -list` does. */
+function fakeKeytool(
+  reply: (args: string[]) => {
+    status: number | null;
+    stdout?: string;
+    stderr?: string;
+    error?: Error;
+  } = () => ({ status: 0, stdout: "forerunner, Oct 25, 2026, PrivateKeyEntry," }),
+) {
+  const calls: KeytoolCall[] = [];
+  const spawn = (cmd: string, args: string[], opts: KeytoolCall["opts"]) => {
+    calls.push({ cmd, args, opts });
+    const r = reply(args);
+    return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", status: r.status, error: r.error };
+  };
+  return { spawn, calls };
+}
+
 describe("android-keystore helpers", () => {
   it("resolves keytool from JAVA_HOME when it exists there, else from PATH", () => {
     const exists = (p: string) => p.includes("jdk-here");
@@ -50,6 +75,18 @@ describe("android-keystore helpers", () => {
   it("escapes Java properties specials", () => {
     expect(escapeProperty("a=b:c#d!e\\f")).toBe("a=b:c#d!e\\\\f");
     expect(escapeProperty(" lead")).toBe("\\ lead");
+  });
+
+  it("writes characters outside printable ASCII as \\uXXXX, since Gradle loads the file as ISO-8859-1", () => {
+    // Properties.load(InputStream) reads Latin-1: a UTF-8 "ä" would arrive as two characters and
+    // the password would be wrong at signing time. Properties.store escapes exactly like this.
+    expect(escapeProperty("pässwörd")).toBe("p\\u00e4ssw\\u00f6rd");
+    expect(escapeProperty("tab\there\nnew\rret\fff")).toBe("tab\\there\\nnew\\rret\\fff");
+    expect(escapeProperty("日本")).toBe("\\u65e5\\u672c");
+    const text = propertiesText({ storeFile: "k.jks", password: "pä\n", alias: "ü" });
+    expect(text).toMatch(/^[ -~\n]*$/);
+    expect(text).toContain("password=p\\u00e4\\n");
+    expect(text).toContain("keyAlias=\\u00fc");
   });
 
   it("writes the properties Tauri's gradle expects with forward slashes", () => {
@@ -73,6 +110,7 @@ describe("android-keystore from a secret", () => {
     const bytes = randomBytes(300);
     const password = ["dev", "pass", randomBytes(6).toString("hex")].join("-"); // not-a-secret
     const lines: string[] = [];
+    const { spawn, calls } = fakeKeytool();
     const res = setupKeystore({
       androidDir: dir,
       env: {
@@ -80,6 +118,7 @@ describe("android-keystore from a secret", () => {
         ANDROID_KEYSTORE_PASSWORD: password,
       },
       log: (l: string) => lines.push(l),
+      spawn,
     });
     expect(res.mode).toBe("secret");
     expect(readFileSync(join(dir, "keystore.jks")).equals(bytes)).toBe(true);
@@ -91,10 +130,26 @@ describe("android-keystore from a secret", () => {
     if (process.platform !== "win32") {
       expect(statSync(join(dir, "keystore.properties")).mode & 0o077).toBe(0);
     }
+    // the decoded keystore, the alias and the password are checked with keytool before the
+    // build, with an argv array, the password in the environment and never on the command line
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.args).toEqual([
+      "-list",
+      "-keystore",
+      join(dir, "keystore.jks"),
+      "-alias",
+      "forerunner",
+      "-storepass:env",
+      "FORERUNNER_KEYSTORE_PASSWORD_TMP",
+    ]);
+    expect(calls[0]?.opts.env.FORERUNNER_KEYSTORE_PASSWORD_TMP).toBe(password);
+    expect(calls[0]?.opts.shell).toBe(false);
+    expect(lines.join("\n")).toContain("keytool");
   });
 
-  it("honours ANDROID_KEYSTORE_ALIAS", () => {
+  it("honours ANDROID_KEYSTORE_ALIAS, in the properties and in the keytool check", () => {
     const dir = tempDir();
+    const { spawn, calls } = fakeKeytool();
     const res = setupKeystore({
       androidDir: dir,
       env: {
@@ -103,9 +158,70 @@ describe("android-keystore from a secret", () => {
         ANDROID_KEYSTORE_ALIAS: "upload",
       },
       log: () => {},
+      spawn,
     });
     expect(res.alias).toBe("upload");
     expect(readFileSync(join(dir, "keystore.properties"), "utf8")).toContain("keyAlias=upload");
+    expect(calls[0]?.args.slice(3, 5)).toEqual(["-alias", "upload"]);
+  });
+
+  it("fails before the build, leaving nothing behind, when keytool rejects the keystore, password or alias", () => {
+    const dir = tempDir();
+    const password = ["dev", "pass", randomBytes(6).toString("hex")].join("-"); // not-a-secret
+    const env = {
+      ANDROID_KEYSTORE_BASE64: randomBytes(300).toString("base64"),
+      ANDROID_KEYSTORE_PASSWORD: password,
+    };
+    const { spawn } = fakeKeytool(() => ({
+      status: 1,
+      stderr: `keytool error: java.io.IOException: keystore password was incorrect (${password})`,
+    }));
+    let message = "";
+    try {
+      setupKeystore({ androidDir: dir, env, log: () => {}, spawn });
+    } catch (e) {
+      message = String(e);
+    }
+    expect(message).toMatch(/ANDROID_KEYSTORE_BASE64[\s\S]*keystore password was incorrect/);
+    expect(message).toContain("[REDACTED]");
+    expect(message).not.toContain(password);
+    expect(existsSync(join(dir, "keystore.jks"))).toBe(false);
+    expect(existsSync(join(dir, "keystore.properties"))).toBe(false);
+
+    const missing = () => ({ status: null, stdout: "", stderr: "", error: new Error("ENOENT") });
+    expect(() => setupKeystore({ androidDir: dir, env, log: () => {}, spawn: missing })).toThrow(
+      /keytool could not be started/,
+    );
+    expect(existsSync(join(dir, "keystore.jks"))).toBe(false);
+  });
+
+  it("refuses to generate a development key when the secret is required (a release build)", () => {
+    const dir = tempDir();
+    const { spawn, calls } = fakeKeytool();
+    expect(() =>
+      setupKeystore({ androidDir: dir, env: {}, log: () => {}, spawn, requireSecret: true }),
+    ).toThrow(/ANDROID_KEYSTORE_BASE64 is not set[\s\S]*release/);
+    expect(calls).toHaveLength(0);
+    expect(existsSync(join(dir, "keystore.jks"))).toBe(false);
+    expect(existsSync(join(dir, "keystore.properties"))).toBe(false);
+    // an existing development keystore is no substitute either
+    const dev = tempDir();
+    setupKeystore({ androidDir: dev, env: {}, log: () => {}, spawn });
+    expect(() =>
+      setupKeystore({ androidDir: dev, env: {}, log: () => {}, spawn, requireSecret: true }),
+    ).toThrow(/ANDROID_KEYSTORE_BASE64 is not set/);
+    // with the secret the flag changes nothing
+    const res = setupKeystore({
+      androidDir: dir,
+      env: {
+        ANDROID_KEYSTORE_BASE64: randomBytes(64).toString("base64"),
+        ANDROID_KEYSTORE_PASSWORD: "x".repeat(12),
+      },
+      log: () => {},
+      spawn,
+      requireSecret: true,
+    });
+    expect(res.mode).toBe("secret");
   });
 
   it("fails without ANDROID_KEYSTORE_PASSWORD and never echoes the secret", () => {
@@ -144,20 +260,54 @@ describe("android-keystore generated development key", () => {
       expect(lines.join("\n")).toContain("NOTE");
       expect(lines.join("\n")).toContain("not for distribution");
       const firstBytes = readFileSync(join(dir, "keystore.jks"));
-      const second = setupKeystore({ androidDir: dir, env: {}, log: () => {} });
+      const kept: string[] = [];
+      const second = setupKeystore({ androidDir: dir, env: {}, log: (l: string) => kept.push(l) });
       expect(second.mode).toBe("existing");
       expect(readFileSync(join(dir, "keystore.jks")).equals(firstBytes)).toBe(true);
+      // the kept key may be a generated one or the release key of an earlier run with the secret
+      expect(kept.join("\n")).toContain("keeping the existing keystore");
+      expect(kept.join("\n")).toContain("earlier run with the secret");
+
+      // the generated keystore offered as the secret passes the real keytool check; a wrong
+      // password or alias is found here, in a second, not inside Gradle at the end of the build
+      const secretEnv = {
+        JAVA_HOME: process.env.JAVA_HOME ?? "",
+        ANDROID_KEYSTORE_BASE64: firstBytes.toString("base64"),
+        ANDROID_KEYSTORE_PASSWORD: password as string,
+      };
+      const viaSecret = setupKeystore({ androidDir: tempDir(), env: secretEnv, log: () => {} });
+      expect(viaSecret.mode).toBe("secret");
+      const wrongPassword = tempDir();
+      expect(() =>
+        setupKeystore({
+          androidDir: wrongPassword,
+          env: { ...secretEnv, ANDROID_KEYSTORE_PASSWORD: `${password}-wrong` },
+          log: () => {},
+        }),
+      ).toThrow(/password/i);
+      expect(existsSync(join(wrongPassword, "keystore.properties"))).toBe(false);
+      expect(() =>
+        setupKeystore({
+          androidDir: tempDir(),
+          env: { ...secretEnv, ANDROID_KEYSTORE_ALIAS: "nope" },
+          log: () => {},
+        }),
+      ).toThrow(/nope/);
     },
   );
 
   it("redacts the password from a keytool failure and reports a missing keytool clearly", () => {
     const dir = tempDir();
-    const leaky = (_cmd: string, _args: string[], opts: { env: Record<string, string> }) => ({
-      status: 1,
-      stdout: "",
-      stderr: `boom ${opts.env.FORERUNNER_KEYSTORE_PASSWORD_TMP}`,
-      error: undefined,
-    });
+    let genArgs: string[] = [];
+    const leaky = (_cmd: string, args: string[], opts: { env: Record<string, string> }) => {
+      genArgs = args;
+      return {
+        status: 1,
+        stdout: "",
+        stderr: `boom ${opts.env.FORERUNNER_KEYSTORE_PASSWORD_TMP}`,
+        error: undefined,
+      };
+    };
     let message = "";
     try {
       setupKeystore({ androidDir: dir, env: {}, log: () => {}, spawn: leaky });
@@ -167,6 +317,11 @@ describe("android-keystore generated development key", () => {
     expect(message).toContain("keytool exited with 1");
     expect(message).toContain("[REDACTED]");
     expect(message).not.toMatch(/boom [A-Za-z0-9_-]{20,}/);
+    // the generated key carries the DN the verifier refuses on a release
+    expect(genArgs[genArgs.indexOf("-dname") + 1]?.startsWith(`${DEVELOPMENT_CERT_CN},`)).toBe(
+      true,
+    );
+    expect(DEVELOPMENT_CERT_CN).toBe("CN=Forerunner development key");
 
     const missing = () => ({ status: null, stdout: "", stderr: "", error: new Error("ENOENT") });
     expect(() =>
@@ -253,5 +408,34 @@ describe("the workflows verify the release APK signature", () => {
       // build-tools (apksigner) are installed by the job
       expect(text).toContain("build-tools;34.0.0");
     });
+
+    it(`${workflow}: the SDK setup action names its packages (the legacy "tools" package is gone, cb6097e)`, () => {
+      const text = read(".github", "workflows", workflow);
+      const uses = [...text.matchAll(/android-actions\/setup-android/g)].map((m) => m.index);
+      expect(uses.length).toBeGreaterThan(0);
+      for (const at of uses) {
+        const step = text.slice(
+          text.lastIndexOf("\n      - ", at),
+          text.indexOf("\n      - ", at + 1),
+        );
+        expect(step).toMatch(/packages:\s*platform-tools/);
+      }
+    });
   }
+
+  it("release.yml requires the release keystore secret and refuses the development key; android.yml allows it", () => {
+    const release = read(".github", "workflows", "release.yml");
+    const android = read(".github", "workflows", "android.yml");
+    // a v* tag never ships the build-generated key: the keystore step fails without the secret
+    // and the verifier refuses the development key's certificate after the build
+    expect(release).toMatch(/node scripts\/android-keystore\.mjs --require-secret\s*\n/);
+    expect(release).toMatch(/node scripts\/android-apk-verify\.mjs\s*\n/);
+    expect(release).not.toContain("--allow-development-key");
+    expect(release).not.toContain("--allow-debug");
+    // the PR and push workflow (also fork PRs, whose secrets are empty) builds with the
+    // development key and says so; the debug key is refused there too
+    expect(android).not.toContain("--require-secret");
+    expect(android).toMatch(/node scripts\/android-apk-verify\.mjs --allow-development-key\s*\n/);
+    expect(android).not.toContain("--allow-debug");
+  });
 });

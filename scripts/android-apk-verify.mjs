@@ -7,18 +7,24 @@
 //   - when apksigner cannot verify one (an unsigned `-unsigned.apk`, a broken signature),
 //   - when apksigner names no signer certificate at all,
 //   - when the signer is the Android debug certificate (CN=Android Debug): a release artefact must
-//     carry the key from keystore.properties (scripts/android-keystore.mjs), never the SDK's debug key.
+//     carry the key from keystore.properties (scripts/android-keystore.mjs), never the SDK's debug key,
+//   - when the signer is the build-generated development key (CN=Forerunner development key, the
+//     dname scripts/android-keystore.mjs generates without the secret) and --allow-development-key
+//     was not given: android.yml passes it (pull requests, pushes, fork PRs whose secrets are empty);
+//     release.yml does not, so a v* tag never ships a development-signed APK.
 // apksigner comes from the newest build-tools under ANDROID_HOME or ANDROID_SDK_ROOT, else from PATH.
 // The output holds only the certificate's DN and digests, nothing secret.
 //
 // Pure Node, no shell, paths through node:path. Both workflows run it right after the build and
 // before the artefact upload, so an unsigned APK is never uploaded.
 //
-// Usage: node scripts/android-apk-verify.mjs [--apk-root <dir>] [--apksigner <path>] [--allow-debug]
+// Usage: node scripts/android-apk-verify.mjs [--apk-root <dir>] [--apksigner <path>]
+//          [--allow-debug] [--allow-development-key]
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEVELOPMENT_CERT_CN } from "./android-keystore.mjs";
 
 export const DEBUG_CERT_CN = "CN=Android Debug";
 
@@ -124,7 +130,7 @@ export function parseVerifyOutput(text) {
 
 /**
  * Verify every release APK. Returns [{ apk, signers, schemes }] or throws with the reason.
- * options: apkRoot, apksigner, env, platform, spawn, log, allowDebug.
+ * options: apkRoot, apksigner, env, platform, spawn, log, allowDebug, allowDevelopmentKey.
  */
 export function verifyReleaseApks(options = {}) {
   const env = options.env ?? process.env;
@@ -164,6 +170,12 @@ export function verifyReleaseApks(options = {}) {
         `${apk} is signed with the Android debug key (${debug.dn}); a release APK must use the key from keystore.properties (node scripts/android-keystore.mjs before the build)`,
       );
     }
+    const development = parsed.signers.find((s) => s.dn.includes(DEVELOPMENT_CERT_CN));
+    if (development && !options.allowDevelopmentKey) {
+      throw new Error(
+        `${apk} is signed with the build-generated development key (${development.dn}); a release needs the key from ANDROID_KEYSTORE_BASE64 (node scripts/android-keystore.mjs --require-secret before the build). Pass --allow-development-key only for a CI build that is not a release.`,
+      );
+    }
     const schemes = Object.entries(parsed.schemes)
       .filter(([, on]) => on)
       .map(([name]) => name)
@@ -196,6 +208,7 @@ if (isMain) {
       apkRoot: apkRootArg ? path.resolve(apkRootArg) : undefined,
       apksigner: apksignerArg ? path.resolve(apksignerArg) : undefined,
       allowDebug: process.argv.includes("--allow-debug"),
+      allowDevelopmentKey: process.argv.includes("--allow-development-key"),
     });
   } catch (e) {
     console.error(`android-apk-verify: ${e instanceof Error ? e.message : String(e)}`);
