@@ -11,7 +11,7 @@ change log entry". ADR 0030 records the decisions the spec left open.
 ## Purpose
 
 Anything you can do in the app you can also say, and both routes run the same typed command.
-This package is that one command registry: fifteen commands with zod parameters, a risk level,
+This package is that one command registry: nineteen commands with zod parameters, a risk level,
 a scope and an undo; the change card shown (and spoken) before any change; the confirmation
 policy by risk (low acts, medium needs a yes, high needs a paired device, biometric on a phone);
 the executor that writes every change to `change_log`, posts the plain sentence to the activity
@@ -39,7 +39,7 @@ raise its own limits without a human, and text from pages, files or email is nev
 `CommandContext` carries the actor (`{kind: "human" | "agent", id}`), the human the change is
 for, the principal agent, the active project, the store, the Clock, the ports (session start,
 kill switch, pause/resume, the CHF rate, the "costly session" threshold, who shares a project,
-lesson memory),
+lesson memory, the specialist approval gate),
 the source (`ui | chat | voice | email | api | palette`), the words used, the time zone, the
 requesting device and the conversation session that receives the activity event. Who the
 actor is depends on the caller: the runtime's routes, the palette, the phone and email
@@ -78,6 +78,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `email.mode.set` | global | high | yes (undo also turns email commands back on when the change turned them off) | `extension` kind `capability`, name `email:<agentId>`, `config.settings.mode`; a change to `off` also turns email commands off (ADR 0081), see below |
 | `device.revoke` | global | high | no | `device.revoked` |
 | `memory.record` | project | low | yes (retire the lesson; a merged one restores the lesson it superseded) | `ports.memory.recordLesson`: a lesson in the private memory of the human's own principal, for the named or active project (none: every project), source `human:<id>;<chat|voice|...>:<conversation session>` |
+| `specialist.propose` | global | medium | yes (withdraw the proposal while it waits for the human) | nothing itself: `ports.specialists.propose` (the runtime's approval gate, ADR 0071) writes `proposed/<name>/specialist.md` with `status: proposed` and `proposal.json`, and files the human's blocking `approval` request keyed `specialist:<name>`; spec C.5, see below |
 | `model.settings.set` | global | medium for a non-null `tier` or `effort` and for `speed_mode: fast`, else low | yes | one field of the principal agent's `model_config` (`modes.<planning\|text_chat>.<field>` or `specialists.<name>.<field>`; spec D.4, ADR 0072) |
 
 `memory.record` (spec O.2, ADR 0061) is how a lesson the human states in chat or voice reaches
@@ -133,6 +134,41 @@ itself under the same rule, drops the `email-commands` permission and appends th
 row, without a notification. The run records `before.commands_enabled` and
 `after.commands_switched_off`; the undo restores the mode and, when the change turned commands
 off and the restored mode is not `off`, turns them back on (`restoreCommands`).
+
+`specialist.propose` (`src/commands/specialist.ts`; spec C.5 "PM can propose a new specialist;
+it goes live only after human approval and passing its eval set", [ADR 0071](../decisions/0071-specialist-approval-gate.md))
+is how the principal agent reaches the specialist approval gate from a session: on the
+conversation agent's model path it is the `specialist_propose` tool (`CommandLoop.tools`,
+`packages/runtime`), and the palette, the API and the phone run it by name. Its parameters are
+the registry file's frontmatter fields under their file names (`adding-a-specialist.md`):
+`name`, `description`, `default_tier`, `allowed_tools`, `output_contract` are required, with
+`rationale` (why the agent wants it) and `prompt` (the role prompt, markdown); `version`
+(`0.1.0`), `default_effort` (`medium`), `max_effort` (`high`), `allowed_domains` (`[]`),
+`max_budget_usd` (1), `max_turns` (20), `timeout_minutes` (15), `risk_tier_floor` (1) and
+`requires_sandbox` (true) default to a cautious new specialist, and `max_tokens`, `speed_mode`
+and `temperature` travel only when named. `status` and `eval_set` are never parameters: the
+gate forces `proposed` and derives `evals/<name>`. The command writes nothing itself. `plan`
+asks `ports.specialists.check(name)` and refuses a name an active specialist or a pending
+proposal holds (`claim_conflict`), then builds the card ("the specialist registry", from `no
+specialist "x"` to `a proposed specialist "x" (tier; tools; USD n per run; risk tier floor r)
+waiting for your approval in the inbox`; the card never carries the prompt, which the human
+reads in the file). Medium risk: a yes is needed, so a model cannot flood the inbox, and an
+agent's own yes is refused like any other. On the yes `run` hands the proposal to
+`ports.specialists.propose` (the runtime's `SpecialistApprovals.propose`, which runs the
+loader's own checks on the exact bytes, writes `proposed/<name>/` with `runnable: false` and
+files the one blocking approval request), recording `prompt_version`, `request_id`, `file`,
+`eval_set` and `eval_task_count` in `after`; the proposer is the agent on the model path
+(`actor.kind === "agent"`), else the human's principal, with the active project when there is
+one. The sentence says what is still missing: "Proposed the specialist "x" (tier): approve it
+in your inbox; it goes live only after your approve and a passing eval set (n tasks at evals/x
+today; at least 10 are needed and 90% must pass). Undo." Whatever the gate refuses (an unknown
+tool, a prompt over 120 lines, a name taken meanwhile) comes back as its `ForerunnerError`
+code and message in the refusal (`validation`, `claim_conflict`), never a stack; without the
+port the command is `unavailable`. The undo calls `ports.specialists.withdraw`, which takes the
+proposal back while it still waits (the runtime's `SpecialistApprovals.withdraw`: a request the
+human already answered, or a running evaluation, refuses the undo with `claim_conflict`). The
+command has no parser phrase on purpose: a proposal is a structured object the model builds,
+so "propose a specialist" reaches the model path with the tool, never a regex.
 
 ### The change card (`src/change-card.ts`)
 
@@ -397,9 +433,17 @@ the card and the sentence), and `model-settings.test.ts` (5, spec D.4: a special
 a second one undone, `null` back to the default with the group removed; planning and chat
 modes with a medium card for a rung and for fast; bad values, an unknown specialist, both or
 neither targets, another human's agent and the critic refused; a temperature refused without
-the port or the flag and stored with it; an effort above a specialist's `max_effort` refused).
+the port or the flag and stored with it; an effort above a specialist's `max_effort` refused),
+and `specialist.test.ts` (4, spec C.5, ADR 0071, over a fake `ports.specialists`: the card and
+the exact sentence, medium risk needing a yes, the yes handing the proposal with its defaults
+and the agent, human and active project to the port, the change log row and the undo
+withdrawing; the optional settings travelling as given and the card's eval-set size from the
+gate; from an agent actor the human's yes needed and the agent's own refused with the row
+naming the agent; refusals with a stable code: a bad tier and a bad name `validation`, a taken
+name or a pending one `claim_conflict` at the card, the gate's own `validation` with its
+message and no stack, no port `unavailable`, no principal agent `validation`).
 
-Run: `pnpm exec vitest run --project unit packages/commands/test` (12 files, 173 tests).
+Run: `pnpm exec vitest run --project unit packages/commands/test` (13 files, 177 tests).
 
 ## Known issues
 
@@ -427,4 +471,6 @@ is the only way caps change, with the ceiling check); R.4, R.5 and R.7 partially
 session commands from a paired phone, the Android scenario, biometric for high-risk
 confirmations); data model `command` and `change_log`; phase 5 gate "same change log entry
 by voice, chat or UI" (`scenario.test.ts`); O.2 and J.1 with the runtime (`memory.record`, a
-lesson stated in chat recorded in the principal's memory, `packages/runtime/test/conversation.test.ts`).
+lesson stated in chat recorded in the principal's memory, `packages/runtime/test/conversation.test.ts`);
+C.5 with the runtime (`specialist.propose`, the PM's proposal reaching the approval gate from a
+chat turn, `packages/runtime/test/specialist-propose-tool.test.ts`).

@@ -215,12 +215,39 @@ issues a capability token for a non-runnable specialist, so a prompt cannot acti
 ### The approval flow (`src/registry/approval.ts`, ADR 0071)
 
 `RuntimeApp.specialistApprovals.propose(...)` writes a proposal (proposeSpecialist) and files
-its request in one call. No agent-facing tool calls it yet: the PM has no `propose_specialist`
-tool, so today a proposal comes from code, by hand or from a registry pull. A proposal that
-reaches `proposed/` without a request (written directly, pulled, hand-written) is filed by the
-daemon's next approvals sync (`fileMissing()`, run from `syncApprovals` on the answer route
-and the approvals poll, and at start); one whose request is open, or answered and waiting to
-be applied, is not filed again.
+its request in one call. The PM reaches it with the command registry's `specialist.propose`
+(`packages/commands/src/commands/specialist.ts`, commands.md; ADR 0071 amendment of
+2026-10-25): on the conversation agent's model path it is the `specialist_propose` tool
+(`CommandLoop.tools`, with the registry's own gate), and the palette, the API and the phone
+run it by name. Its parameters are this file's frontmatter fields under their file names:
+`name`, `description`, `default_tier`, `allowed_tools` and `output_contract` are required,
+with `rationale` (why the PM wants it) and `prompt` (the role prompt, markdown); `version`
+(`0.1.0`), `default_effort` (`medium`), `max_effort` (`high`), `allowed_domains` (`[]`),
+`max_budget_usd` (1), `max_turns` (20), `timeout_minutes` (15), `risk_tier_floor` (1) and
+`requires_sandbox` (true) have cautious defaults, and `max_tokens`, `speed_mode` and
+`temperature` travel only when named. `status` and `eval_set` are never parameters: the gate
+forces `proposed` and derives `evals/<name>`. The command is medium risk, so the human's yes
+to the change card ("a proposed specialist "x" ... waiting for your approval in the inbox")
+comes first and a model cannot flood the inbox; the yes hands the proposal to the daemon's
+`specialistCommandPort` (`src/wiring/specialist-ports.ts`) and so to `propose(...)`, which
+runs `proposeSpecialist`, reads the written file back with the loader and refuses and removes
+it unless it loads as `status: proposed`, `runnable: false` (the gate's invariant checked in
+code, never only by construction), writes a `registry.specialist_approval` audit row
+`proposed` naming the proposing agent and the prompt version, and files the one blocking
+request. The tool call itself is on the hooks' audit log (`specialist_propose`) and in the
+change log with `author_agent`. What the gate refuses (an unknown tool, a prompt over 120
+lines, a name an active specialist or a pending proposal holds) comes back to the model as
+`Refused: <message>` with the `ForerunnerError` code (`validation`, `claim_conflict`) and
+nothing on disk. The undo of the command is `SpecialistApprovals.withdraw`: the proposal is
+taken back (the same steps as a reject) while it still waits; a request the human already
+answered, or a running evaluation, refuses the undo with `claim_conflict`, and a proposal that
+went live is `not_found`. A proposal that reaches `proposed/` without a request (written
+directly, pulled, hand-written) is filed by the daemon's next approvals sync (`fileMissing()`,
+run from `syncApprovals` on the answer route and the approvals poll, `FORERUNNER_APPROVALS_POLL_MS`,
+default 5 s, and at start); one whose request is open, or answered and waiting to be applied,
+is not filed again. The eval set is not something the tool writes: the ten tasks under
+`evals/<name>/` are files of this registry (below), and the card and the sentence say how many
+exist and that at least 10 must before an approval can activate the specialist.
 
 1. **The request.** One blocking `approval` request for the proposal's human, options
    approve / reject, `change_card.key` `specialist:<name>`, the card carrying the summary
@@ -365,7 +392,7 @@ agree across platforms.
 
 ## Tests
 
-- `packages/runtime/test/specialist-approval.test.ts` (25) and `specialists-cli.test.ts` (5):
+- `packages/runtime/test/specialist-approval.test.ts` (26) and `specialists-cli.test.ts` (5):
   the approval flow end to end (see runtime.md, Tests): request filed once, approve -> evals on
   the fake provider -> pass -> active; 8 of 10 -> stays proposed with the result; reject ->
   withdrawn; another human refused; applied once; another install over the same store leaves
@@ -373,7 +400,21 @@ agree across platforms.
   month's testing share; the sync script carries the promotion; the daemon route, a proposal
   filed by the next sync, a one-shot applying no inbox answer, and `fr specialists`; a
   proposal naming `max_tokens`, `speed_mode` and `temperature` goes live with them unchanged
-  (the promotion's field comparison includes the three D.4 keys).
+  (the promotion's field comparison includes the three D.4 keys); `withdraw` takes back a
+  waiting proposal and refuses another human, an answer already given, a live evaluation and a
+  promoted one.
+- `packages/runtime/test/specialist-propose-tool.test.ts` (5, the PM's `specialist.propose`
+  through `composeRuntime`): a chat turn whose model calls `specialist_propose` forms the card
+  and writes nothing before the human's yes (the agent's own yes refused); the yes writes
+  `proposed/<name>/` and files exactly one blocking request, the loader, the live registry and
+  `rt.specialists` keep it not runnable, the change log names the agent and the audit log has
+  the hooks' row and the gate's `proposed` and `filed` rows; the human's approve runs the eval
+  set and only a pass goes live, a failing set stays proposed; a taken or pending name, a bad
+  tier, an unknown tool and a 130-line prompt come back as refusals with their code and no
+  stack, nothing on disk; a run token without the tool is `tool_not_allowed` with its audit
+  row and a bare tool at autonomy 0 is held for a human; undo withdraws a waiting proposal and
+  is refused once the human answered. `packages/commands/test/specialist.test.ts` (4) covers
+  the command over a fake port (commands.md).
 - `packages/runtime/test/registry.test.ts` (34 tests; four for D.4): `max_tokens`,
   `speed_mode` and `temperature` parse and stay on the definition, are unset in the ten
   repository specialists so the effort table's row applies (and `timeout_minutes` and the tier

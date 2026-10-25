@@ -863,6 +863,52 @@ describe("specialist approval: the claim life cycle", () => {
     expect(await w.store.humanRequest.open({ humanId: w.human })).toHaveLength(0);
   });
 
+  it("withdraw (the command's undo) takes back a waiting proposal; an answer already given, a live evaluation and another human refuse it", async () => {
+    let release: () => void = () => undefined;
+    const hold = new Promise<void>((r) => {
+      release = r;
+    });
+    const w = await make({ evals: fixedEvals(1, hold) });
+    const { request } = await w.approvals.propose(proposalFor(w.human));
+    // Another human cannot take it back; the human's own answer, once given, stands.
+    await expect(w.approvals.withdraw(NAME, w.other)).rejects.toMatchObject({
+      code: "approval_required",
+    });
+    await answer(w, request, "approve");
+    await expect(w.approvals.withdraw(NAME, w.human)).rejects.toMatchObject({
+      code: "claim_conflict",
+    });
+    expect(existsSync(proposedDir(w))).toBe(true);
+    // Nor while the approved evaluation runs.
+    expect(await w.approvals.syncAnswers({ background: true })).toMatchObject({ running: 1 });
+    for (let i = 0; i < 20 && w.runs.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    await expect(w.approvals.withdraw(NAME, w.human)).rejects.toMatchObject({
+      code: "claim_conflict",
+    });
+    release();
+    await w.approvals.settled();
+    expect(w.promoted.map((d) => d.name)).toEqual([NAME]);
+    // Gone (promoted): nothing to withdraw.
+    await expect(w.approvals.withdraw(NAME, w.human)).rejects.toMatchObject({ code: "not_found" });
+    expect(existsSync(activeDir(w))).toBe(true);
+
+    // A proposal that still waits is withdrawn through the same steps as a reject.
+    const second = await make({ evals: fixedEvals(1) });
+    const filed = await second.approvals.propose(proposalFor(second.human));
+    const r = await second.approvals.withdraw(NAME, second.human);
+    expect(r).toMatchObject({ outcome: "withdrawn", requestId: filed.request.id });
+    expect(existsSync(proposedDir(second))).toBe(false);
+    const answered = await second.store.humanRequest.mustGet(filed.request.id);
+    expect(answered.status).toBe("answered");
+    expect(card(answered).outcome).toBe("withdrawn");
+    expect(second.runs).toHaveLength(0);
+    expect(await audits(second)).toEqual([
+      { allowed: true, result: "proposed" },
+      { allowed: true, result: "filed" },
+      { allowed: true, result: "withdrawn" },
+    ]);
+  });
+
   it("fileMissing files a proposal written without a request, never one whose answer waits to be applied", async () => {
     const w = await make({ evals: fixedEvals(1) });
     const { request } = await w.approvals.propose(proposalFor(w.human));

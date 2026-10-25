@@ -4,6 +4,7 @@ import type {
   ActionClass,
   EffortLevel,
   ProviderCapabilities,
+  SpecialistProposal,
   StartRequest,
 } from "@forerunner/runtime";
 import type {
@@ -46,6 +47,7 @@ export const COMMAND_NAMES = [
   "device.revoke",
   "memory.record",
   "model.settings.set",
+  "specialist.propose",
 ] as const;
 export type CommandName = (typeof COMMAND_NAMES)[number];
 
@@ -100,6 +102,54 @@ export interface LessonRecordPortResult {
   supersededId?: string | null;
 }
 
+/**
+ * A specialist the principal agent proposes (`specialist.propose`, spec C.5, ADR 0071): the
+ * registry file's frontmatter without `status` (the gate forces `proposed`) and `eval_set`
+ * (derived from the name), the role prompt, why, and who proposes it for whom. The shape is
+ * the runtime's `SpecialistProposal`, so the port hands it to `SpecialistApprovals.propose`
+ * unchanged.
+ */
+export type SpecialistProposePortRequest = SpecialistProposal;
+
+export interface SpecialistProposePortResult {
+  name: string;
+  /** `<name>@<semver>+<sha8>` of the file written; the human is shown the same version. */
+  promptVersion: string;
+  /** The blocking approval request the gate filed for the human. */
+  requestId: string;
+  /** Registry-relative path of the proposal file (`proposed/<name>/specialist.md`). */
+  file: string;
+  /** `evals/<name>`: where the eval set must be before an approval can activate it. */
+  evalSet: string;
+  evalTaskCount: number;
+  /** The gate's bar (ADR 0071): tasks decided and the pass rate a run needs. */
+  minEvalTasks: number;
+  passRate: number;
+}
+
+/** What the card needs before anything is written: the name's state and the eval set's size. */
+export interface SpecialistNameState {
+  name: string;
+  /** `active`: a specialist of that name exists; `proposed`: a proposal is pending; null: free. */
+  taken: "active" | "proposed" | null;
+  evalTaskCount: number;
+  minEvalTasks: number;
+  passRate: number;
+}
+
+/**
+ * The approval gate of proposed specialists (`RuntimeApp.specialistApprovals`, ADR 0071)
+ * behind `specialist.propose`. `propose` writes `proposed/<name>/` and files the blocking
+ * approval request; nothing here activates a specialist (only the human's approve and a
+ * passing eval set do, in the runtime). `withdraw` is the command's undo: the proposal is
+ * taken back while it still waits for the human.
+ */
+export interface SpecialistCommandPort {
+  check(name: string): Promise<SpecialistNameState>;
+  propose(req: SpecialistProposePortRequest): Promise<SpecialistProposePortResult>;
+  withdraw(req: { name: string; humanId: string }): Promise<{ outcome: string }>;
+}
+
 /** The memory the registry writes to: the runtime's `MemoryLoop` behind `memoryCommandPort`. */
 export interface MemoryCommandPort {
   recordLesson(req: LessonRecordPortRequest): Promise<LessonRecordPortResult>;
@@ -134,6 +184,12 @@ export interface CommandPorts {
   costlySessionUsdMicro?: number;
   /** Lesson memory (`memory.record`); absent: the command is refused as unavailable. */
   memory?: MemoryCommandPort;
+  /**
+   * The specialist approval gate (`specialist.propose`, spec C.5, ADR 0071): the runtime's
+   * `specialistCommandPort` over `RuntimeApp.specialistApprovals`. Absent: the command is
+   * refused as unavailable; no command writes a proposal any other way.
+   */
+  specialists?: SpecialistCommandPort;
   /** Humans who share a project with the asking human. Default: project.settings.shared_with. */
   sharedWith?(projectId: string, humanId: string): Promise<string[]>;
   /**
