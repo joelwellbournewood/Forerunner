@@ -592,6 +592,11 @@ Other stand-ins: to be filled by the testenv items that build them.
 
 ## Known issues
 
+- Scenario 2 (`02-email-task.scenario.test.ts`) read the agent's `email.send` audit rows
+  right after `waitFor` saw the completion email, and once (CI run 40213609167 attempt 1,
+  Linux, 2026-10-25) found only the `ack` row: the completion is delivered before its audit
+  row is written. The re-run of the same commit passed on both OS. Fix: wait for the two rows
+  (`waitFor` on the sent log) instead of reading once; a P2 flake, not a product defect.
 ### Fake provider
 
 - Prompt caching is not simulated: `cache_read_input_tokens` and `cache_creation_input_tokens`
