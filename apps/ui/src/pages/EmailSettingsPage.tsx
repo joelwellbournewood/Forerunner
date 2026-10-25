@@ -3,6 +3,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router";
 import {
   type AgentView,
+  type CommandResultJson,
   describeError,
   type EmailCommandRowView,
   type EmailMode,
@@ -10,6 +11,7 @@ import {
   type EmailSettingsPatchBody,
   type EmailSettingsView,
 } from "../api/client.ts";
+import { CommandResult } from "../components/ChangeCardDialog.tsx";
 import { Dialog } from "../components/Dialog.tsx";
 import { RouteMissing } from "../components/RouteMissing.tsx";
 import {
@@ -29,10 +31,13 @@ import { useClient, useUiState } from "../store/context.tsx";
  * Settings -> Capabilities -> Email (spec S.15, S.28, S.29, T.14; ADR 0066): per agent of the
  * signed-in human, the sending mode with its one-line meaning, the limits that stay on, the
  * allowlist where the mode needs it, the mailbox (credentials by reference), pause and resume,
- * the command toggle with its private marker, the command audit and the sent copies. Every
- * change goes through the capability's own routes, which audit it; the policy reads the row
- * on the next send, so nothing here is UI-only. A switch into full discretion repeats the
- * plain sentence of S.29 in a confirmation before the PUT.
+ * the command toggle with its private marker, the command audit and the sent copies. The
+ * mode is a high-risk change (spec Q "Confirmation by risk"): the picker runs the registry's
+ * `email.mode.set` (the change card, a confirmation on a paired device, one change log row
+ * with Undo, the same path chat and voice take), and a switch into full discretion repeats the
+ * plain sentence of S.29 in that dialog. Every other field goes through the capability's own
+ * routes, which audit it; the policy reads the row on the next send, so nothing here is
+ * UI-only.
  */
 
 export const MODE_LABELS: Record<EmailMode, string> = {
@@ -56,10 +61,6 @@ export const MODE_MEANINGS: Record<EmailMode, string> = {
 /** The plain sentence spec S.29 asks for: shown under the option and again in the confirmation. */
 export const FULL_DISCRETION_WARNING =
   "With full discretion the agent can email strangers on your behalf: anyone it judges right, without asking you first. The daily and per-recipient caps, the blocked-content rules and the signature stay on.";
-
-/** Shown after a mode change to off turned email commands off (ADR 0081). */
-export const COMMANDS_TURNED_OFF_NOTE =
-  "Email commands were turned off with it: at Off the agent sends nothing, so it could not answer them.";
 
 /** "ignored: no_marker" -> "no marker"; a handler error keeps its text. */
 export function ignoredReason(row: Pick<EmailCommandRowView, "obeyed" | "deniedReason">) {
@@ -107,48 +108,68 @@ const asInt = (value: string, fallback: number): number => {
   return Number.isInteger(n) && n >= 0 ? n : fallback;
 };
 
-function ModeConfirmDialog({
+/**
+ * The dialog of a mode change: the registry's card (old -> new, high risk), the S.29 sentence
+ * repeated when full discretion is picked, then the device confirmation, the sentence with
+ * Undo, a cancellation or the daemon's refusal (`CommandResult`, the component every button
+ * that runs a command uses). Nothing is written until the daemon answers `done`.
+ */
+function ModeChangeDialog({
   agent,
   mode,
+  result,
   busy,
   error,
   onConfirm,
-  onCancel,
+  onUndo,
+  onClose,
 }: {
   agent: AgentView;
   mode: EmailMode;
+  result: CommandResultJson | null;
   busy: boolean;
   error: string | null;
-  onConfirm: () => void;
-  onCancel: () => void;
+  onConfirm: (answer: "yes" | "no") => void;
+  onUndo: (changeLogId: string) => void;
+  onClose: () => void;
 }) {
   return (
     <Dialog
       open
-      onClose={onCancel}
-      title={`Allow full discretion for ${agent.name}?`}
-      testId="full-discretion-dialog"
+      onClose={onClose}
+      title={`Change the email mode of ${agent.name}`}
+      testId="email-mode-dialog"
     >
       <div className="space-y-3 text-sm">
-        <p data-testid="full-discretion-confirm-text">{FULL_DISCRETION_WARNING}</p>
+        <p className="text-xs text-neutral-600 dark:text-neutral-400">
+          Runs the <code>email.mode.set</code> command, the same one chat and voice use. A change of
+          the email mode is high risk: it is confirmed on a paired device and written to the change
+          log with Undo.
+        </p>
+        {mode === "full_discretion" ? (
+          <p
+            className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+            data-testid="full-discretion-confirm-text"
+          >
+            {FULL_DISCRETION_WARNING}
+          </p>
+        ) : null}
         <p className="text-xs text-neutral-600 dark:text-neutral-400">
           {MODE_LABELS[mode]}: {MODE_MEANINGS[mode]} You can pause email from the tray at any time,
           and every sent email is logged with a copy here.
         </p>
         {error ? <ErrorBanner message={error} /> : null}
-        <div className="flex gap-2">
-          <Button
-            variant="danger"
-            onClick={onConfirm}
-            disabled={busy}
-            data-testid="full-discretion-confirm"
-          >
-            Yes, let it email anyone on my behalf
-          </Button>
-          <Button variant="ghost" onClick={onCancel} disabled={busy} data-testid="mode-cancel">
-            Cancel
-          </Button>
-        </div>
+        {result ? (
+          <CommandResult
+            result={result}
+            busy={busy}
+            onConfirm={onConfirm}
+            onUndo={onUndo}
+            onDismiss={onClose}
+          />
+        ) : (
+          <Loading what="the change card" />
+        )}
       </div>
     </Dialog>
   );
@@ -157,44 +178,80 @@ function ModeConfirmDialog({
 function ModePicker({
   agent,
   config,
-  onSaved,
+  onChanged,
 }: {
   agent: AgentView;
   config: EmailSettingsView;
-  onSaved: (next: EmailSettingsView) => void;
+  /** The daemon changed the row (a done change, an undo): re-read the settings. */
+  onChanged: () => void;
 }) {
   const client = useClient();
+  // This PC's own device row as the daemon names it on `/me` (ADR 0030): the paired device a
+  // high-risk change is confirmed on; the daemon checks the row, not this screen.
+  const desktopDeviceId = useUiState((s) => s.me?.desktopDeviceId ?? null);
   const current = config.settings.mode;
   const [picked, setPicked] = useState<EmailMode>(current);
-  const [confirming, setConfirming] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [result, setResult] = useState<CommandResultJson | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   useEffect(() => setPicked(current), [current]);
 
-  const save = async (mode: EmailMode) => {
+  const run = async (action: () => Promise<CommandResultJson>) => {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      const next = await client.updateEmailSettings(agent.id, { settings: { mode } });
-      onSaved(next);
-      setConfirming(false);
-      // ADR 0081: the daemon turns email commands off with a change to off; say so here.
-      const commandsWentOff = config.commands.enabled && !next.commands.enabled;
-      setNote(
-        `Mode set to ${MODE_LABELS[next.settings.mode]}.${commandsWentOff ? ` ${COMMANDS_TURNED_OFF_NOTE}` : ""}`,
-      );
+      const r = await action();
+      setResult(r);
+      if (r.status === "done" || r.status === "partial") {
+        // The registry's sentence is the record (it says when commands went off with a
+        // change to off, ADR 0081); the row changed under the forms, so they re-read it.
+        setNote(r.sentence ?? null);
+        onChanged();
+      }
     } catch (err) {
       setError(describeError(err));
     } finally {
       setBusy(false);
     }
   };
+  // A mode change is the registry's `email.mode.set` (spec Q: high risk), never a raw PUT:
+  // the daemon shows the card, the device confirms, the change log gets its row.
   const apply = () => {
     if (picked === current) return;
-    if (picked === "full_discretion") setConfirming(true);
-    else void save(picked);
+    setResult(null);
+    setOpen(true);
+    void run(() =>
+      client.executeCommands({
+        commands: [{ name: "email.mode.set", params: { mode: picked, agent: agent.id } }],
+        wordsUsed: `Settings: email mode of ${agent.name} to ${MODE_LABELS[picked]}`,
+        source: "ui",
+      }),
+    );
+  };
+  const confirm = (answer: "yes" | "no") => {
+    if (result?.status !== "pending" || !result.pendingId) return;
+    const pendingId = result.pendingId;
+    if (answer === "no") {
+      void run(() => client.confirmCommand(pendingId, { answer: "no" }));
+      return;
+    }
+    void run(() =>
+      result.decision === "needs_device"
+        ? client.confirmCommand(pendingId, {
+            answer: "device",
+            ...(desktopDeviceId ? { deviceId: desktopDeviceId } : {}),
+          })
+        : client.confirmCommand(pendingId, { answer: "tap" }),
+    );
+  };
+  const undo = (changeLogId: string) => void run(() => client.undoChange(changeLogId));
+  const close = () => {
+    setOpen(false);
+    setResult(null);
+    setPicked(current);
   };
 
   return (
@@ -235,7 +292,6 @@ function ModePicker({
           </span>
         </label>
       ))}
-      {error ? <ErrorBanner message={error} /> : null}
       <div className="flex items-center gap-2">
         <Button
           variant="primary"
@@ -245,6 +301,9 @@ function ModePicker({
         >
           Apply mode
         </Button>
+        <span className="text-xs text-neutral-500">
+          Shows the change card; confirmed on a paired device.
+        </span>
         {note ? (
           <output
             className="text-xs text-neutral-600 dark:text-neutral-400"
@@ -254,17 +313,16 @@ function ModePicker({
           </output>
         ) : null}
       </div>
-      {confirming ? (
-        <ModeConfirmDialog
+      {open ? (
+        <ModeChangeDialog
           agent={agent}
           mode={picked}
+          result={result}
           busy={busy}
           error={error}
-          onConfirm={() => void save(picked)}
-          onCancel={() => {
-            setConfirming(false);
-            setPicked(current);
-          }}
+          onConfirm={confirm}
+          onUndo={undo}
+          onClose={close}
         />
       ) : null}
     </fieldset>
@@ -504,10 +562,14 @@ function MailboxForm({
             ? null
             : {
                 address: trimmed,
+                // The daemon replaces the mailbox whole (`mergeEmailConfig`), so the stored
+                // values this form has no field for (TLS, the folders) are carried as they
+                // are; otherwise a save of one field would reset them to the schema's defaults.
                 imap:
                   imapHost.trim() === ""
                     ? null
                     : {
+                        ...(m?.imap ?? {}),
                         host: imapHost.trim(),
                         port: asInt(imapPort, 993),
                         user: imapUser.trim(),
@@ -517,6 +579,7 @@ function MailboxForm({
                   smtpHost.trim() === ""
                     ? null
                     : {
+                        ...(m?.smtp ?? {}),
                         host: smtpHost.trim(),
                         port: asInt(smtpPort, 587),
                         user: smtpUser.trim(),
@@ -953,7 +1016,7 @@ function AgentEmailCard({ agent }: { agent: AgentView }) {
             config={config}
             onSaved={(paused) => replace({ ...config, settings: { ...config.settings, paused } })}
           />
-          <ModePicker agent={agent} config={config} onSaved={replace} />
+          <ModePicker agent={agent} config={config} onChanged={settings.reload} />
           <LimitsForm
             key={`limits-${config.settings.mode}`}
             agent={agent}
@@ -992,9 +1055,10 @@ export function EmailSettingsPage() {
         Email
       </h1>
       <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="email-intro">
-        Each agent can get its own mailbox, never your personal inbox. Pick a mode per agent; the
-        limits below stay on in every sending mode, every change is audited, and the policy applies
-        the new setting to the very next email.
+        Each agent can get its own mailbox, never your personal inbox. Pick a mode per agent: a mode
+        change shows its change card and is confirmed on a paired device, like every other high-risk
+        change. The limits below stay on in every sending mode, every change is audited, and the
+        policy applies the new setting to the very next email.
       </p>
       {!me ? <Loading what="your agents" /> : null}
       {me && mine.length === 0 ? (

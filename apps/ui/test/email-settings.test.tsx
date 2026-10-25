@@ -2,7 +2,6 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import {
-  COMMANDS_TURNED_OFF_NOTE,
   FULL_DISCRETION_WARNING,
   ignoredReason,
   interpretationOf,
@@ -11,15 +10,18 @@ import {
   resultOf,
 } from "../src/pages/EmailSettingsPage.tsx";
 import { EMAIL_COMMANDS } from "./fixtures.ts";
-import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
+import { createHarness, type Harness, postedCalls, renderApp } from "./helpers.tsx";
 
 /**
- * Settings -> Capabilities -> Email (spec S.15, S.28, S.29, T.14; ADR 0066): one card per agent
- * of the signed-in human with the mode picker and the five meanings, the plain full-discretion
- * sentence before the change and again in the confirmation, pause and resume through the
- * tray's routes, the limits and the allowlist where the mode needs it, the mailbox by
- * reference, the marker rotation, the command audit newest first and the route-unavailable
- * state against a daemon without the routes.
+ * Settings -> Capabilities -> Email (spec S.15, S.28, S.29, T.14; ADR 0066, amended
+ * 2026-10-25): one card per agent of the signed-in human with the mode picker and the five
+ * meanings, the plain full-discretion sentence before the change and again in the
+ * confirmation; a mode change as the registry's `email.mode.set` (spec Q, high risk: the
+ * change card, the confirmation on this paired device, the change log row, Undo; No cancels
+ * the card and changes nothing; never a raw PUT), pause and resume through the tray's routes,
+ * the limits and the allowlist where the mode needs it, the mailbox by reference, the marker
+ * rotation, the command audit newest first and the route-unavailable state against a daemon
+ * without the routes.
  */
 const card = async (agentId = "agent_alice") => {
   const cards = await screen.findAllByTestId("email-agent");
@@ -27,6 +29,12 @@ const card = async (agentId = "agent_alice") => {
   if (!found) throw new Error(`no email card for ${agentId}`);
   return found;
 };
+
+/** The bodies of every `POST /commands/:id/confirm` the page sent, in order. */
+const confirmBodies = (harness: Harness) =>
+  harness.daemon.state.calls
+    .filter((c) => /^\/commands\/[^/]+\/confirm$/.test(c.path))
+    .map((c) => c.body);
 
 describe("Settings -> Capabilities -> Email", () => {
   it("formats the audit rows: the interpretation, the result and the reason a mail was ignored", () => {
@@ -92,7 +100,7 @@ describe("Settings -> Capabilities -> Email", () => {
     expect(within(critic).getByTestId("email-mode")).toHaveTextContent("Off");
   });
 
-  it("switching to full discretion repeats the sentence in a confirmation; cancel sends nothing, yes PUTs the mode", async () => {
+  it("a switch to full discretion runs email.mode.set: the card with the sentence repeated, No cancels it and changes nothing, the device confirmation sets the mode with a change log row, and Undo puts it back; no PUT carries the mode", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/settings/capabilities/email", harness);
@@ -102,35 +110,83 @@ describe("Settings -> Capabilities -> Email", () => {
     );
     await user.click(within(alice).getByRole("radio", { name: /Full discretion/ }));
     await user.click(within(alice).getByTestId("email-mode-apply"));
-    const dialog = await screen.findByTestId("full-discretion-dialog");
+    // The registry's command, the same one chat and voice run, logged as `ui` (spec Q.1).
+    await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));
+    expect(postedCalls(harness, "/commands/execute")[0]?.body).toEqual({
+      commands: [
+        { name: "email.mode.set", params: { mode: "full_discretion", agent: "agent_alice" } },
+      ],
+      wordsUsed: "Settings: email mode of Alice's agent to Full discretion",
+      source: "ui",
+    });
+    const dialog = await screen.findByTestId("email-mode-dialog");
+    // S.29: the plain sentence again, in the confirmation, beside the card.
     expect(within(dialog).getByTestId("full-discretion-confirm-text")).toHaveTextContent(
       FULL_DISCRETION_WARNING,
     );
-    await user.click(within(dialog).getByTestId("mode-cancel"));
-    await waitFor(() => expect(screen.queryByTestId("full-discretion-dialog")).toBeNull());
-    expect(postedCalls(harness, "/agents/agent_alice/email/settings")).toHaveLength(0);
+    const pending = await within(dialog).findByTestId("command-pending");
+    expect(pending).toHaveAttribute("data-decision", "needs_device");
+    expect(within(pending).getByTestId("change-card")).toHaveAttribute("data-risk", "high");
+    expect(within(pending).getByTestId("card-old")).toHaveTextContent("Draft only");
+    expect(within(pending).getByTestId("card-new")).toHaveTextContent("Full discretion");
+    expect(within(pending).getByTestId("needs-device")).toBeInTheDocument();
+    // No: the card is cancelled on the daemon, nothing changed, the picker shows the old mode.
+    await user.click(within(pending).getByTestId("command-no"));
+    const cancelled = await within(dialog).findByTestId("command-cancelled");
+    expect(confirmBodies(harness)).toEqual([{ answer: "no" }]);
     expect(harness.daemon.state.email.agent_alice?.settings.mode).toBe("draft_only");
+    expect(harness.daemon.state.pendingCommands.size).toBe(0);
+    await user.click(within(cancelled).getByTestId("command-close"));
+    await waitFor(() => expect(screen.queryByTestId("email-mode-dialog")).toBeNull());
     expect(within(alice).getByRole("radio", { name: /Draft only/ })).toBeChecked();
+    expect(within(alice).getByTestId("email-mode")).toHaveTextContent("Draft only");
 
+    // Again, confirmed on this paired device: the sentence, the change log row, the badge.
     await user.click(within(alice).getByRole("radio", { name: /Full discretion/ }));
     await user.click(within(alice).getByTestId("email-mode-apply"));
-    const again = await screen.findByTestId("full-discretion-dialog");
-    await user.click(within(again).getByTestId("full-discretion-confirm"));
-    await waitFor(() =>
-      expect(postedCalls(harness, "/agents/agent_alice/email/settings")).toHaveLength(1),
-    );
-    const put = postedCalls(harness, "/agents/agent_alice/email/settings")[0];
-    expect(put?.method).toBe("PUT");
-    expect(put?.body).toEqual({ settings: { mode: "full_discretion" } });
-    await waitFor(() => expect(screen.queryByTestId("full-discretion-dialog")).toBeNull());
-    expect(within(alice).getByTestId("email-mode")).toHaveTextContent("Full discretion");
-    expect(within(alice).getByTestId("email-mode-note")).toHaveTextContent(
-      "Mode set to Full discretion.",
-    );
+    const again = await screen.findByTestId("email-mode-dialog");
+    const pending2 = await within(again).findByTestId("command-pending");
+    await user.click(within(pending2).getByTestId("command-yes"));
+    const done = await within(again).findByTestId("command-done");
+    const sentence =
+      "Changed the email mode of Alice's agent from Draft only to Full discretion. Undo.";
+    expect(within(done).getByTestId("command-sentence")).toHaveTextContent(sentence);
+    expect(confirmBodies(harness)).toEqual([
+      { answer: "no" },
+      { answer: "device", deviceId: "device_this_pc" },
+    ]);
     expect(harness.daemon.state.email.agent_alice?.settings.mode).toBe("full_discretion");
+    const entry = harness.daemon.state.changes[0];
+    expect(entry).toMatchObject({
+      source: "ui",
+      sentence,
+      wordsUsed: "Settings: email mode of Alice's agent to Full discretion",
+      commands: [
+        { name: "email.mode.set", params: { mode: "full_discretion", agent: "agent_alice" } },
+      ],
+      before: { agent_id: "agent_alice", mode: "draft_only", commands_enabled: true },
+      after: { agent_id: "agent_alice", mode: "full_discretion", commands_switched_off: false },
+    });
+    await waitFor(() =>
+      expect(within(alice).getByTestId("email-mode")).toHaveTextContent("Full discretion"),
+    );
+    expect(within(alice).getByTestId("email-mode-note")).toHaveTextContent(sentence);
+    // The raw route never carried the mode.
+    expect(postedCalls(harness, "/agents/agent_alice/email/settings")).toHaveLength(0);
+    // The card's Undo is the change log's: the mode goes back and the page re-reads it.
+    await user.click(within(done).getByTestId("command-undo"));
+    await waitFor(() => expect(postedCalls(harness, `/changes/${entry?.id}/undo`)).toHaveLength(1));
+    expect(await within(again).findByTestId("command-sentence")).toHaveTextContent(
+      "Undone: Changed the email mode of Alice's agent from Draft only to Full discretion.",
+    );
+    expect(harness.daemon.state.email.agent_alice?.settings.mode).toBe("draft_only");
+    await waitFor(() =>
+      expect(within(alice).getByTestId("email-mode")).toHaveTextContent("Draft only"),
+    );
+    expect(postedCalls(harness, "/agents/agent_alice/email/settings")).toHaveLength(0);
   });
 
-  it("any other mode applies without a confirmation; allowlist shows the editor and saves the entries", async () => {
+  it("every mode change is the high-risk card (allowlist too, without the full-discretion sentence); once confirmed the allowlist editor shows and saves the entries with the caps through PUT", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/settings/capabilities/email", harness);
@@ -141,13 +197,21 @@ describe("Settings -> Capabilities -> Email", () => {
     expect(within(alice).queryByTestId("email-allowlist")).toBeNull();
     await user.click(within(alice).getByRole("radio", { name: /Allowlist/ }));
     await user.click(within(alice).getByTestId("email-mode-apply"));
-    await waitFor(() =>
-      expect(postedCalls(harness, "/agents/agent_alice/email/settings")).toHaveLength(1),
+    const dialog = await screen.findByTestId("email-mode-dialog");
+    expect(within(dialog).queryByTestId("full-discretion-confirm-text")).toBeNull();
+    const pending = await within(dialog).findByTestId("command-pending");
+    expect(pending).toHaveAttribute("data-decision", "needs_device");
+    expect(within(pending).getByTestId("card-new")).toHaveTextContent("Allowlist");
+    await user.click(within(pending).getByTestId("command-yes"));
+    const done = await within(dialog).findByTestId("command-done");
+    expect(within(done).getByTestId("command-sentence")).toHaveTextContent(
+      "Changed the email mode of Alice's agent from Draft only to Allowlist. Undo.",
     );
-    expect(screen.queryByTestId("full-discretion-dialog")).toBeNull();
-    expect(postedCalls(harness, "/agents/agent_alice/email/settings")[0]?.body).toEqual({
-      settings: { mode: "allowlist" },
-    });
+    await user.click(within(done).getByTestId("command-close"));
+    await waitFor(() => expect(screen.queryByTestId("email-mode-dialog")).toBeNull());
+    expect(postedCalls(harness, "/commands/execute")).toHaveLength(1);
+    expect(postedCalls(harness, "/agents/agent_alice/email/settings")).toHaveLength(0);
+    expect(harness.daemon.state.email.agent_alice?.settings.mode).toBe("allowlist");
     const allowlist = await within(alice).findByTestId("email-allowlist");
     expect(within(allowlist).getByTestId("allowlist-addresses")).toHaveValue(
       "partner@example.test",
@@ -161,9 +225,9 @@ describe("Settings -> Capabilities -> Email", () => {
     await user.type(within(alice).getByTestId("limit-daily"), "12");
     await user.click(within(alice).getByTestId("limits-save"));
     await waitFor(() =>
-      expect(postedCalls(harness, "/agents/agent_alice/email/settings")).toHaveLength(2),
+      expect(postedCalls(harness, "/agents/agent_alice/email/settings")).toHaveLength(1),
     );
-    expect(postedCalls(harness, "/agents/agent_alice/email/settings")[1]?.body).toEqual({
+    expect(postedCalls(harness, "/agents/agent_alice/email/settings")[0]?.body).toEqual({
       settings: {
         dailySendCap: 12,
         perRecipientDailyCap: 5,
@@ -279,6 +343,64 @@ describe("Settings -> Capabilities -> Email", () => {
     );
   });
 
+  it("saving the mailbox keeps the stored secure, folder and drafts-folder values the form has no field for", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    // A mailbox set up outside the page (the API, a script): IMAP without TLS in a dedicated
+    // folder, SMTP over implicit TLS on 465. The page shows none of these three fields.
+    const stored = harness.daemon.state.email.agent_alice?.settings.mailbox;
+    if (!stored?.imap || !stored.smtp) throw new Error("fixture");
+    stored.imap = {
+      ...stored.imap,
+      port: 143,
+      secure: false,
+      folder: "Agent",
+      draftsFolder: "Agent/Drafts",
+    };
+    stored.smtp = { ...stored.smtp, port: 465, secure: true };
+    renderApp("/settings/capabilities/email", harness);
+    const alice = await card();
+    const mailbox = await within(alice).findByTestId("email-mailbox");
+    // The owner only corrects the SMTP password reference.
+    await user.clear(within(mailbox).getByTestId("smtp-ref"));
+    await user.type(within(mailbox).getByTestId("smtp-ref"), "secret:alice_agent_smtp2");
+    await user.click(within(mailbox).getByTestId("mailbox-save"));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/agents/agent_alice/email/settings")).toHaveLength(1),
+    );
+    // `mergeEmailConfig` replaces the mailbox whole, so what the form leaves out is reset to
+    // the schema's defaults (IMAP secure in INBOX, SMTP without TLS) unless the form carries
+    // the stored values: a save of one field must not switch TLS off on port 465.
+    expect(postedCalls(harness, "/agents/agent_alice/email/settings")[0]?.body).toEqual({
+      settings: {
+        mailbox: {
+          address: "alice-agent@agents.example.test",
+          imap: {
+            host: "imap.example.test",
+            port: 143,
+            secure: false,
+            user: "alice-agent",
+            passwordRef: "secret:alice_agent_imap",
+            folder: "Agent",
+            draftsFolder: "Agent/Drafts",
+          },
+          smtp: {
+            host: "smtp.example.test",
+            port: 465,
+            secure: true,
+            user: "alice-agent",
+            passwordRef: "secret:alice_agent_smtp2",
+          },
+        },
+      },
+    });
+    expect(await within(mailbox).findByTestId("mailbox-saved")).toHaveTextContent("Saved.");
+    expect(harness.daemon.state.email.agent_alice?.settings.mailbox).toMatchObject({
+      imap: { port: 143, secure: false, folder: "Agent", draftsFolder: "Agent/Drafts" },
+      smtp: { port: 465, secure: true, passwordRef: "secret:alice_agent_smtp2" },
+    });
+  });
+
   it("lists the command audit newest first with when, from, the interpretation, the result and the ignored reason", async () => {
     renderApp("/settings/capabilities/email");
     const alice = await card();
@@ -336,7 +458,7 @@ describe("Settings -> Capabilities -> Email", () => {
     const critic = await card("agent_critic");
     expect(await within(critic).findByTestId("email-mode-picker")).toBeInTheDocument();
   });
-  it("ADR 0081: a mode change to off turns commands off and the page says so; turning them on at off shows the daemon's plain refusal", async () => {
+  it("ADR 0081: a mode change to off says on the card that commands go off with it, the toggle follows the stored value; turning them on at off shows the daemon's plain refusal", async () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/settings/capabilities/email", harness);
@@ -347,11 +469,16 @@ describe("Settings -> Capabilities -> Email", () => {
     expect(within(alice).getByTestId("commands-enabled")).toBeChecked();
     await user.click(within(alice).getByRole("radio", { name: /^Off/ }));
     await user.click(within(alice).getByTestId("email-mode-apply"));
-    await waitFor(() =>
-      expect(within(alice).getByTestId("email-mode-note")).toHaveTextContent(
-        `Mode set to Off. ${COMMANDS_TURNED_OFF_NOTE}`,
-      ),
-    );
+    const dialog = await screen.findByTestId("email-mode-dialog");
+    const pending = await within(dialog).findByTestId("command-pending");
+    await user.click(within(pending).getByTestId("command-yes"));
+    const done = await within(dialog).findByTestId("command-done");
+    const sentence =
+      "Changed the email mode of Alice's agent from Draft only to Off; email commands are turned off with it, because at Off the agent could not answer them. Undo.";
+    expect(within(done).getByTestId("command-sentence")).toHaveTextContent(sentence);
+    await user.click(within(done).getByTestId("command-close"));
+    await waitFor(() => expect(within(alice).getByTestId("email-mode")).toHaveTextContent("Off"));
+    expect(within(alice).getByTestId("email-mode-note")).toHaveTextContent(sentence);
     expect(harness.daemon.state.email.agent_alice?.commands.enabled).toBe(false);
     // The box follows the stored toggle instead of still showing commands on.
     expect(within(alice).getByTestId("commands-enabled")).not.toBeChecked();
@@ -364,5 +491,28 @@ describe("Settings -> Capabilities -> Email", () => {
       ).toBeInTheDocument(),
     );
     expect(harness.daemon.state.email.agent_alice?.commands.enabled).toBe(false);
+  });
+
+  it("a daemon that cannot confirm on this PC (no desktop row) shows its refusal in the dialog and the mode stays", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ me: { desktopDeviceId: null } });
+    renderApp("/settings/capabilities/email", harness);
+    const alice = await card();
+    await waitFor(() =>
+      expect(within(alice).getByTestId("email-mode-current")).toHaveTextContent("Draft only"),
+    );
+    await user.click(within(alice).getByRole("radio", { name: /Full discretion/ }));
+    await user.click(within(alice).getByTestId("email-mode-apply"));
+    const dialog = await screen.findByTestId("email-mode-dialog");
+    const pending = await within(dialog).findByTestId("command-pending");
+    await user.click(within(pending).getByTestId("command-yes"));
+    expect(await within(dialog).findByTestId("error-banner")).toHaveTextContent(
+      "deviceId is required",
+    );
+    expect(confirmBodies(harness)).toEqual([{ answer: "device" }]);
+    expect(harness.daemon.state.email.agent_alice?.settings.mode).toBe("draft_only");
+    // The card is still open on the daemon: a paired phone can answer it.
+    expect(harness.daemon.state.pendingCommands.size).toBe(1);
+    expect(postedCalls(harness, "/agents/agent_alice/email/settings")).toHaveLength(0);
   });
 });
