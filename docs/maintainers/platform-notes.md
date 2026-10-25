@@ -15,11 +15,12 @@ redaction), `ids`, `errors`.
 
 **Errors (`src/errors.ts`).** Every package throws `ForerunnerError` with a stable `code`
 from the `ErrorCode` union, so the UI, logs and tests match on the code, never the message;
-a new code is added to the union here. The latest two: `identity_ambiguous` (ADR 0082), an
-install on a state store holding several humans that names none of them, and `secret_reserved`
-(ADR 0065, amended 2026-10-25), a reserved secret name (`forerunner.*`, the install wrapping
-key) in a grant, a run token or a `secret:` reference; the daemon and the state service answer
-it with 403.
+a new code is added to the union here. Recent ones: `identity_ambiguous` (ADR 0082), an
+install on a state store holding several humans that names none of them;
+`MEMORY_SCOPE_VIOLATION` (ADR 0083, spelled as ADR 0002 names it), a private-memory row about
+to enter a shared store; and `secret_reserved` (ADR 0065, amended 2026-10-25), a reserved secret
+name (`forerunner.*`, the install wrapping key) in a grant, a run token or a `secret:` reference,
+which the daemon and the state service answer with 403.
 
 | Concern | Windows | Linux | Where |
 | --- | --- | --- | --- |

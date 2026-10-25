@@ -1,14 +1,16 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
 import { createInterface, type Interface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
 import { registerMirrorCli } from "@forerunner/capabilities";
 import { appDirs, errorMessage, log, osFacts, run, which } from "@forerunner/platform";
-import { openStore } from "@forerunner/state";
+import { openStore, parseStoreUrl } from "@forerunner/state";
 import { openVault } from "@forerunner/vault";
 import { Command } from "commander";
 import type { RuntimeApp } from "../daemon/compose.ts";
 import {
   describeIdentityCheck,
+  EMPTY_HUMAN_STORE,
   installIdentitySelectors,
   lookupInstallHuman,
 } from "../daemon/identity.ts";
@@ -433,17 +435,36 @@ export function describeConfiguredIdentity(config: SetupConfig): string {
   return "the store's only human (created at first start; on a shared store run fr setup --email or --human-id)";
 }
 
-/** `fr doctor`'s identity line: the store opened read-only for the lookup, closed again. */
+/**
+ * `fr doctor`'s identity line: the lookup on the configured store, which the doctor never
+ * creates or migrates (`migrate: false`; a `sqlite:` file that does not exist yet is not even
+ * opened, since opening would create it: the lookup then answers as the daemon's first start
+ * will, on an empty store). Closed again afterwards.
+ */
 async function identityCheck(
   env: NodeJS.ProcessEnv,
   config: SetupConfig,
 ): Promise<{ name: string; ok: boolean; detail: string }> {
   const name = "identity";
   const stateUrl = env.FORERUNNER_STATE_URL ?? config.stateUrl;
+  const selectors = installIdentitySelectors({ env, config });
   try {
-    const store = await openStore({ url: stateUrl });
+    const parsed = parseStoreUrl(stateUrl);
+    if (
+      parsed.dialect === "sqlite" &&
+      parsed.location !== ":memory:" &&
+      !existsSync(parsed.location)
+    ) {
+      const check = describeIdentityCheck(await lookupInstallHuman(EMPTY_HUMAN_STORE, selectors));
+      return {
+        name,
+        ok: check.ok,
+        detail: `no store yet (the daemon's first start creates it): ${check.detail}`,
+      };
+    }
+    const store = await openStore({ url: stateUrl, migrate: false });
     try {
-      const lookup = await lookupInstallHuman(store, installIdentitySelectors({ env, config }));
+      const lookup = await lookupInstallHuman(store, selectors);
       return { name, ...describeIdentityCheck(lookup) };
     } finally {
       await store.close().catch(() => undefined);

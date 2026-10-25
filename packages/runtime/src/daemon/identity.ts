@@ -42,6 +42,12 @@ export interface InstallIdentity {
   source: IdentitySource;
   /** The id or email that selected the human; null for `only` and `created`. */
   selector: string | null;
+  /**
+   * `config.json`'s `humanId` when it named nobody in this store and the configured email
+   * decided instead (the id was recorded on another store, or the row is gone): the daemon
+   * re-records the human it bound. Absent otherwise.
+   */
+  staleConfigHumanId?: string;
 }
 
 /** The selectors in precedence order; the first one present decides. */
@@ -58,6 +64,22 @@ export interface IdentitySelectors {
 
 export type HumanSummary = Pick<HumanRow, "id" | "name" | "email">;
 
+/** The reads the lookup needs: a `StateStore`'s `human` repository, or `EMPTY_HUMAN_STORE`. */
+export type HumanLookupSource = Pick<StateStore["human"], "get" | "byEmail" | "count" | "list">;
+
+/**
+ * A store that holds nobody, for `fr doctor` on an install whose store does not exist yet: the
+ * lookup answers as the daemon's first start will, without creating the store to ask it.
+ */
+export const EMPTY_HUMAN_STORE: { human: HumanLookupSource } = {
+  human: {
+    get: async () => undefined,
+    byEmail: async () => undefined,
+    count: async () => 0,
+    list: async () => [],
+  },
+};
+
 /** What the store holds for this install's selectors, without creating or throwing anything. */
 export type InstallHumanLookup =
   | {
@@ -65,9 +87,11 @@ export type InstallHumanLookup =
       human: HumanRow;
       source: Exclude<IdentitySource, "created">;
       selector: string | null;
+      /** `config.json`'s `humanId` when it named nobody and the email decided (see `InstallIdentity`). */
+      staleConfigHumanId?: string;
     }
   /** No human for this install yet: the daemon creates one at its first start (with `email` when set). */
-  | { kind: "none"; email: string | null; humans: number }
+  | { kind: "none"; email: string | null; humans: number; staleConfigHumanId?: string }
   /** Several humans and no selector: refused. `rows` lists up to AMBIGUITY_LIST_LIMIT of them. */
   | { kind: "ambiguous"; humans: number; rows: HumanSummary[] }
   /** A selector that names nobody. */
@@ -100,9 +124,19 @@ function summary(h: HumanRow): HumanSummary {
  * Resolve the selectors against the store: a named selector (id, then email, case-insensitive
  * on the email) binds or is `not_found`; an email binds or reports `none` with the email; no
  * selector binds the only human, reports `none` on an empty store, `ambiguous` otherwise.
+ *
+ * One exception to `not_found`: `config.json`'s `humanId` is the id the daemon recorded at an
+ * earlier bind (or `fr setup --human-id` wrote), and an id never travels between stores. When
+ * it names nobody here (the install moved to another store with `fr setup --state-url`, the
+ * data directory was wiped, the row is gone) and the configuration carries an email, the email
+ * decides as if the id were absent, and the result names the stale id so the daemon re-records
+ * the human it bound and `fr doctor` can say so. That path still never adopts a row the
+ * selectors do not name: the email binds its own row or creates one. Without an email the
+ * stale id stays `not_found`; the environment's and the caller's selectors are given per start
+ * and stay strict.
  */
 export async function lookupInstallHuman(
-  store: StateStore,
+  store: { human: HumanLookupSource },
   sel: IdentitySelectors,
 ): Promise<InstallHumanLookup> {
   const named: [string | undefined, "option" | "env" | "config"][] = [
@@ -111,6 +145,8 @@ export async function lookupInstallHuman(
     [sel.configHumanId, "config"],
   ];
   const first = named.find(([value]) => value !== undefined && value.trim() !== "");
+  const configuredEmail = sel.email?.trim();
+  let stale: { staleConfigHumanId: string } | undefined;
   if (first) {
     const [value, source] = first;
     const selector = (value as string).trim();
@@ -118,13 +154,15 @@ export async function lookupInstallHuman(
     if (byId) return { kind: "bound", human: byId, source, selector };
     const byEmail = await store.human.byEmail(selector);
     if (byEmail) return { kind: "bound", human: byEmail, source, selector };
-    return { kind: "not_found", selector, source };
+    if (source !== "config" || !configuredEmail) return { kind: "not_found", selector, source };
+    stale = { staleConfigHumanId: selector };
   }
-  const email = sel.email?.trim();
-  if (email) {
-    const row = await store.human.byEmail(email);
-    if (row) return { kind: "bound", human: row, source: "email", selector: email };
-    return { kind: "none", email, humans: await store.human.count() };
+  if (configuredEmail) {
+    const row = await store.human.byEmail(configuredEmail);
+    if (row) {
+      return { kind: "bound", human: row, source: "email", selector: configuredEmail, ...stale };
+    }
+    return { kind: "none", email: configuredEmail, humans: await store.human.count(), ...stale };
   }
   const humans = await store.human.count();
   if (humans === 0) return { kind: "none", email: null, humans: 0 };
@@ -167,11 +205,24 @@ export async function bindInstallHuman(
     case "bound":
       return {
         human: lookup.human,
-        identity: { humanId: lookup.human.id, source: lookup.source, selector: lookup.selector },
+        identity: {
+          humanId: lookup.human.id,
+          source: lookup.source,
+          selector: lookup.selector,
+          ...(lookup.staleConfigHumanId ? { staleConfigHumanId: lookup.staleConfigHumanId } : {}),
+        },
       };
     case "none": {
       const human = await create(lookup.email);
-      return { human, identity: { humanId: human.id, source: "created", selector: null } };
+      return {
+        human,
+        identity: {
+          humanId: human.id,
+          source: "created",
+          selector: null,
+          ...(lookup.staleConfigHumanId ? { staleConfigHumanId: lookup.staleConfigHumanId } : {}),
+        },
+      };
     }
     case "ambiguous":
       throw new ForerunnerError(
@@ -190,18 +241,28 @@ export async function bindInstallHuman(
 
 /** One `fr doctor` line for a lookup: whether the next start binds, and to whom. */
 export function describeIdentityCheck(lookup: InstallHumanLookup): { ok: boolean; detail: string } {
+  const stale =
+    (lookup.kind === "bound" || lookup.kind === "none") && lookup.staleConfigHumanId
+      ? `config.json humanId ${lookup.staleConfigHumanId} names nobody in this store (recorded on another store, or the row is gone); the email decides and the next start records the new id: `
+      : "";
   switch (lookup.kind) {
     case "bound":
       return {
         ok: true,
-        detail: `${describeHuman(lookup.human)}, from ${SOURCE_LABEL[lookup.source]}`,
+        detail: `${stale}${describeHuman(lookup.human)}, from ${SOURCE_LABEL[lookup.source]}`,
       };
     case "none":
       return {
         ok: true,
-        detail: lookup.email
-          ? `no human with email ${lookup.email} yet: created at the daemon's first start (the store holds ${lookup.humans} other${lookup.humans === 1 ? "" : "s"}; use --human-id to bind to one of them instead)`
-          : "no human yet: created at the daemon's first start",
+        detail: `${stale}${
+          lookup.email
+            ? `no human with email ${lookup.email} yet: created at the daemon's first start${
+                lookup.humans > 0
+                  ? ` (the store holds ${lookup.humans} other${lookup.humans === 1 ? "" : "s"}; use --human-id to bind to one of them instead)`
+                  : ""
+              }`
+            : "no human yet: created at the daemon's first start"
+        }`,
       };
     case "ambiguous": {
       const listed = lookup.rows.map(describeHuman).join(", ");
@@ -220,12 +281,23 @@ export function describeIdentityCheck(lookup: InstallHumanLookup): { ok: boolean
 }
 
 /**
- * The install's principal agent among the human's own principals: the one named (case does
- * not matter) when it exists, else the first; undefined when the human has none yet. Another
- * human's agent is never a candidate: `principals` is already the owner's list.
+ * The install's principal agent among the human's own principals: the one with the given id
+ * when it is among them, else the one named (case does not matter) when it exists, else the
+ * first; undefined when the human has none yet. Another human's agent is never a candidate:
+ * `principals` is already the owner's list. A caller that resolved the agent itself (the cloud
+ * runner) passes the id and checks the pick is that agent: an id that is not among the human's
+ * principals must be refused by the caller, never replaced by another agent.
  */
-export function pickPrincipal(principals: AgentRow[], name?: string): AgentRow | undefined {
-  const wanted = name?.trim().toLowerCase();
+export function pickPrincipal(
+  principals: AgentRow[],
+  sel: { id?: string; name?: string } = {},
+): AgentRow | undefined {
+  const id = sel.id?.trim();
+  if (id) {
+    const byId = principals.find((a) => a.id === id);
+    if (byId) return byId;
+  }
+  const wanted = sel.name?.trim().toLowerCase();
   if (wanted) {
     const named = principals.find((a) => a.name.toLowerCase() === wanted);
     if (named) return named;

@@ -470,9 +470,13 @@ shared store, written to `config.json` as `humanEmail` (lower case, format-check
 `humanId` and kept by later runs; the summary's "Identity:" line says what the next start
 binds to, ADR 0082; `config.json` never holds a secret), `status` (directories, config, secret names only), `doctor`
 (prerequisites, and on a set-up install the human the next daemon start binds to, from the
-configured store without creating anything: `identity` ok with the human and its selector,
-"created at the daemon's first start", or failing with the store's humans and the remedies
-when the start would be `identity_ambiguous` or `not_found`), `kill` (writes a kill request file), `dirs`, `daemon`, `audit export` (the
+configured store without creating or migrating anything (`migrate: false`; a `sqlite:` file
+that does not exist yet is not opened, since opening would create it, and the lookup answers
+as the first start will, "no store yet (the daemon's first start creates it): ..."): `identity`
+ok with the human and its selector, "created at the daemon's first start", a stale
+`config.json` `humanId` named with what the email decides instead, or failing with the
+store's humans and the remedies when the start would be `identity_ambiguous` or
+`not_found`), `kill` (writes a kill request file), `dirs`, `daemon`, `audit export` (the
 audit log to a file, in the table below), `sources` (source discovery, in the table below). The kill request file
 in the runtime directory is polled by `KillFileWatcher` in every running runtime, so the CLI,
 the tray and the app can stop sessions across processes on both platforms.
@@ -1420,21 +1424,32 @@ install names its own: `lookupInstallHuman` resolves the selectors in order, the
 deciding: `ComposeOptions.identity.humanId` (the cloud runner passes the human it resolved),
 `FORERUNNER_HUMAN`, then `config.json`'s `humanId` (written by `fr setup --human-id` or
 recorded by the daemon at its first bind); each is an id or an email (the id tried first, the
-email case-insensitively), and one that names nobody is `not_found`. Without these, an email
+email case-insensitively), and one that names nobody is `not_found`, with one exception: a
+`config.json` `humanId` that names nobody in this store (an id never travels between stores:
+the install moved with `fr setup --state-url`, the data directory was wiped, the row is gone)
+is stale, and when the configuration carries an email the email decides as if the id were
+absent; the lookup names the stale id (`staleConfigHumanId` on the result and on
+`RuntimeApp.identity`), the daemon logs it and re-records the human it bound, and
+`fr doctor` says so. That path never adopts a row the selectors do not name; without an email
+the stale id stays `not_found` (review 2026-10-25, finding 1). Without these, an email
 (`identity.email`, else `config.json`'s `humanEmail` from `fr setup --email`) finds the human
 or names the one created at this start (the joining PC). Without any selector the store must
 hold at most one human: none is the first run (created from `humanName` and `timezone`), one
 is a solo install (`source: "only"`), more is `identity_ambiguous` and nothing is created or
-started, whatever the store's dialect (two profiles can share a `sqlite:` file). A daemon
+started, whatever the store's dialect (two profiles can share a `sqlite:` file). A refused
+start closes the store and the private memory index it opened (ADR 0083). A daemon
 started from its `config.json` that bound by email, as the only human or by creating one
 records the id there (`rememberBoundHuman`), so a later email change never rebinds it; a
 binding from `FORERUNNER_HUMAN` or the caller is for that start only. `RuntimeApp.identity`
 carries `{ humanId, source, selector }`. The agent is picked among the human's own principals
-(`pickPrincipal`: `agentName` / `FORERUNNER_AGENT_NAME` by name when it matches, else the
-first; created with that name only when the human has none), never another human's; the
-critic agent is per owner as before. `fr doctor` runs the lookup on the configured store
-without creating anything and prints who the next start binds to, or the humans and the
-remedies when it would be refused.
+(`pickPrincipal`: `identity.agentId`, the agent a caller resolved itself (the cloud runner's),
+when it is one of them, else `not_found` and nothing started; else `agentName` /
+`FORERUNNER_AGENT_NAME` by name when it matches, else the first; created with that name only
+when the human has none), never another human's; the critic agent is per owner as before.
+`fr doctor` runs the lookup on the configured store without creating or migrating anything
+(a `sqlite:` file that does not exist is not opened; the lookup then answers for an empty
+store) and prints who the next start binds to, or the humans and the remedies when it would
+be refused.
 
 **Modules composed (phases 6 and 7).** In order, each with its ports filled from what exists
 already:
@@ -2976,9 +2991,18 @@ not yet in the store, a missing id) creating nothing; on a single-human store th
 creating the human (`source: "created"`) and the next start binding without a selector
 (`"only"`); the bound id recorded in `config.json` when the daemon started from it, never
 from an environment override, and read back ahead of the email; `runSetup` persisting
-`humanEmail` and `humanId`, keeping them across runs and refusing a malformed email.
-`cli.test.ts` spawns `fr setup --email` / `--human-id` and `fr doctor --json` (the `identity`
-check naming an unknown configured id and the remedy).
+`humanEmail` and `humanId`, keeping them across runs and refusing a malformed email. Review
+2026-10-25: a caller's `identity.agentId` picked by id ahead of the name and another human's
+agent by id refused `not_found` with nothing created; a refused start closing the private
+memory index it opened (the index's `openPrivateIndex` wrapped to record the close); a
+recorded `humanId` that names nobody binding the row with the configured email, or creating
+the install's own human, never another row, with `staleConfigHumanId` on the identity and in
+the doctor's line, staying `not_found` without an email and for `FORERUNNER_HUMAN`;
+`lookupInstallHuman` over `EMPTY_HUMAN_STORE` (the doctor before the store exists); a wiped
+store with a recorded id starting again by email and recording the new id, the next start
+bound by it. `cli.test.ts` spawns `fr setup --email` / `--human-id` and `fr doctor --json`
+(the `identity` check naming an unknown configured id and the remedy without creating the
+store file, "no store yet"; `FORERUNNER_HUMAN` naming nobody read ahead of `config.json`).
 
 `security-daemon.test.ts` and `security-command-actor.test.ts` (security review 2026-10-20,
 ADR 0011, 0025, 0030, 0041): every route but `/health` needs the exact bearer (a prefix, a
@@ -3376,7 +3400,12 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   install before ADR 0082) makes the next start create a second human, since the email
   matches nobody and the daemon never adopts a row the selector does not name; `fr doctor`
   says so beforehand and `fr setup --human-id <id>` binds to the existing row. Once a daemon
-  has started from its `config.json` the recorded `humanId` wins and the email is not consulted.
+  has started from its `config.json` the recorded `humanId` wins and the email is not
+  consulted, as long as the id resolves in the configured store; an id that names nobody
+  there (the install moved to another store, the data directory was wiped) lets the email
+  decide and is replaced by the id of the human it bound (review 2026-10-25, finding 1).
+  `fr setup` still has no flag to drop a recorded `humanId` on purpose; editing `config.json`
+  is the way, and `fr doctor` shows what the next start does.
 - Revoking this PC's own desktop row (`device.revoke`, confirmed on that row) leaves
   `rt.remote.device` holding the revoked row until the daemon restarts: `/me` keeps naming it
   and every high-risk confirmation from the desktop is refused "this device was revoked"

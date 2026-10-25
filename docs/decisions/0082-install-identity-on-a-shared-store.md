@@ -94,3 +94,38 @@ The question was what an install should name, where, and what happens when it na
 - **Make the selector the human's name.** Rejected: names are not unique and change; the id
   is stable, the email is what people know, and both already identify a human in the
   runner's selector.
+
+## Amendment 2026-10-25 (review of w4-install-identity)
+
+The review (`docs/status/reviews/w4-install-identity.md`) found that decisions 1 and 3
+together made a dead end: the id the daemon records in `config.json` is an id of one store,
+and once it names nobody in the configured store (the install moved to the friend's Postgres
+with `fr setup --state-url ... --email ...`, the spec's default paired mode; or the data
+directory was wiped while the config directory stayed) the install never started again.
+`--email` was not consulted while `humanId` was set, nothing cleared the key, and the
+refusal's remedies (`FORERUNNER_HUMAN=<id or email>`, `fr setup --human-id <id>`) could only
+resolve to other people's rows: the P0 by hand.
+
+1. **Decision 1, amended.** A `config.json` `humanId` that names nobody in the configured
+   store is *stale*, not a refusal, when the configuration also carries an email: the email
+   decides as if the id were absent (it binds the row with that email, or the install's own
+   human is created with it), the lookup and `RuntimeApp.identity` name the stale id
+   (`staleConfigHumanId`), the daemon logs a warning, and `fr doctor` says what the next start
+   does. The path never adopts a row the selectors do not name. Without an email the stale id
+   stays `not_found`; `FORERUNNER_HUMAN` and the caller's `identity.humanId` are given per
+   start and stay strict.
+2. **Decision 3, amended.** The recorded id pins the binding against a later email change
+   only while it resolves; a bound start that found it stale re-records the id of the human
+   it bound (the same `rememberBoundHuman` path as the first bind). `fr setup` still has no
+   flag to drop the key on purpose (Known issues, runtime.md).
+3. **Decision 4, amended.** A caller that resolved the agent itself passes
+   `identity.agentId`; the pick is that agent when it is one of the human's principals, else
+   the start is `not_found` and nothing is created. The cloud runner passes the agent
+   `FORERUNNER_RUNNER_AGENT` resolved, so a human with several principals never gets a
+   runtime keyed to the first while the runner's sessions run as another (decision 5's
+   "bound to the same row" now covers the agent too).
+4. **Decision 6, amended.** `fr doctor` opens the store with `migrate: false` and never opens
+   a `sqlite:` file that does not exist (opening would create it): the lookup then answers as
+   the daemon's first start will, over an empty store, prefixed "no store yet".
+5. A refused start closes the private memory index it opened (ADR 0083) together with the
+   store.
