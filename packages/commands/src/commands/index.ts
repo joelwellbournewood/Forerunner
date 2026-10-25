@@ -11,6 +11,7 @@ import { projectCreate, projectSwitch } from "./project.ts";
 import { requestAnswer } from "./request.ts";
 import { sessionPause, sessionStart, sessionStop } from "./session.ts";
 import { settingsSet } from "./settings.ts";
+import { specialistPropose } from "./specialist.ts";
 import { summarySpeak } from "./summary.ts";
 import { taskCreate, taskTransition } from "./task.ts";
 
@@ -27,6 +28,7 @@ export * from "./request.ts";
 export * from "./session.ts";
 export * from "./settings.ts";
 export * from "./shared.ts";
+export * from "./specialist.ts";
 export * from "./summary.ts";
 export * from "./task.ts";
 
@@ -50,5 +52,6 @@ export function defaultRegistry(): CommandRegistry {
     .register(emailModeSet)
     .register(deviceRevoke)
     .register(memoryRecord)
-    .register(modelSettingsSet);
+    .register(modelSettingsSet)
+    .register(specialistPropose);
 }
