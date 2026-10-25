@@ -4,7 +4,7 @@ import { generateDeviceKeyPair, signPairingProof } from "../src/auth/crypto.ts";
 import { readConfig } from "../src/config.ts";
 import { resolvePushSender } from "../src/main.ts";
 import { AUDIT_TOOL_TOKEN_CLEARED, PUSH_NOT_CONFIGURED } from "../src/push/fanout.ts";
-import { FcmSender, parseServiceAccount } from "../src/push/fcm.ts";
+import { channelForKind, FcmSender, parseServiceAccount } from "../src/push/fcm.ts";
 import {
   type FakeGoogle,
   HANG,
@@ -123,6 +123,22 @@ describe("FCM sender (HTTP v1, OAuth2 from the service account)", () => {
     expect(google.sent[0]?.authorization).toBe(`Bearer ${google.accessTokens[0]}`);
     expect(google.sent[0]?.message.android?.priority).toBe("HIGH");
     expect(google.sent[0]?.message.data).toEqual(message.data);
+  });
+
+  it("names the app's notification channel per kind (attention: approval, budget; updates: session, message)", async () => {
+    const s = sender();
+    const kinds = ["approval", "budget", "session", "message", "other"];
+    for (const kind of kinds) {
+      await s.send(`tok-${kind}`, { ...message, data: { ...message.data, kind } });
+    }
+    expect(google.sent.map((m) => m.message.android?.notification?.channel_id)).toEqual([
+      "attention",
+      "attention",
+      "updates",
+      "updates",
+      "updates",
+    ]);
+    expect(channelForKind(undefined)).toBe("updates");
   });
 
   it("retries 5xx with doubling backoff and gives up after the attempt budget", async () => {

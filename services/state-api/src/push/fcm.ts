@@ -114,6 +114,14 @@ export interface PushMessage {
   priority: "high" | "normal";
 }
 
+/**
+ * The Android notification channel for a kind, the ids the app creates (`PushLinks.kt`):
+ * `attention` (high importance) for approvals and budget stops, `updates` for the rest.
+ */
+export function channelForKind(kind: string | undefined): "attention" | "updates" {
+  return kind === "approval" || kind === "budget" ? "attention" : "updates";
+}
+
 export type SendOutcome =
   | { status: "sent"; attempts: number }
   /** The token is dead (FCM's 404 with errorCode UNREGISTERED): the caller clears it. */
@@ -289,7 +297,12 @@ export class FcmSender implements PushSender {
           token,
           notification: { title: message.title, body: message.body },
           data: message.data,
-          android: { priority: message.priority === "high" ? "HIGH" : "NORMAL" },
+          android: {
+            priority: message.priority === "high" ? "HIGH" : "NORMAL",
+            // The channel the app creates for the kind, also for notifications the system
+            // tray shows while the app is in the background (apps.md, "Push").
+            notification: { channel_id: channelForKind(message.data.kind) },
+          },
         },
       }),
     });

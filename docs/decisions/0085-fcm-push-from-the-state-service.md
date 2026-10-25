@@ -163,6 +163,13 @@ What remains is outside the repository, for the human:
 Not verified yet: the Android-dependent Kotlin and Gradle changes are compiled only by CI's
 Android job (no Android SDK where they were written; only the pure `PushLinks` rules were
 compiled and tested on a JVM there), and nothing has run on a device; the first APK built
-with the secret needs a manual check on a phone. Background notifications use the
-manifest's default channel (`updates`) for every kind, because the sender names no
-`android.notification.channel_id`; naming it per kind in `fcm.ts` is a small follow-up.
+with the secret needs a manual check on a phone.
+
+Review follow-up (same day, review of c829a02): the sender names
+`android.notification.channel_id` per kind (`attention` for approval and budget, `updates`
+for session and message), so background notifications land on the app's channels too. The
+first token on a fresh install arrives after the pairing request, so `pair` ends with a sync
+and, while the build reports `fcm` without a token (`FcmPending`, from the new
+`fcmConfigured` in `info`), looks once more after 10 s. The foreground re-check listens to
+Tauri's `tauri://resumed` (the Activity's `onResume`) as well as `visibilitychange`.
+Forgetting the device clears the token on the service first, best effort.

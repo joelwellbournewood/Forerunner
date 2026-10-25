@@ -2,9 +2,10 @@
 //! built with `google-services.json` in `gen/android/app` carries Firebase Cloud Messaging:
 //! `KeystorePlugin.info` reports the registration token (`fcmToken`, kept by
 //! `PushTokenStore` from `FirebaseMessaging.getInstance().token` and `onNewToken`), and
-//! `configured(token)` returns `FcmPush`; the UI sends the token at pairing (`pushToken`) and
-//! after a refresh (`PUT /devices/:id/push-token`). `push_status` re-reads the token on every
-//! call. Without the file (every build that lacks the secret, the emulator smoke) `info`
+//! `configured(token, fcm_configured)` returns `FcmPush`, or `FcmPending` (mode `fcm`, no
+//! token) while the first token is still on its way; the UI sends the token at pairing
+//! (`pushToken`) and after a refresh (`PUT /devices/:id/push-token`). `push_status` re-reads
+//! the token on every call. Without the file (every build that lacks the secret, the emulator smoke) `info`
 //! reports null and the mode is the visible polling stand-in: the UI's change feed (live SSE,
 //! or polling) raises in-app notices, and Settings says so. Nothing here logs the token.
 
@@ -53,12 +54,28 @@ impl PushPort for FcmPush {
   }
 }
 
-/// The port for this launch: FCM when the platform side handed over a registration token
-/// (the Kotlin `KeystorePlugin.info` returns one only once a Firebase project is configured),
-/// else the visible polling stand-in.
-pub fn configured(token: Option<String>) -> Box<dyn PushPort> {
+/// An APK built with Firebase whose registration token has not arrived yet (the first launch:
+/// `FirebaseMessaging.getInstance().token` answers after setup). The mode is `fcm` without a
+/// token, so the UI knows to ask again instead of treating the build as the stand-in.
+pub struct FcmPending;
+
+impl PushPort for FcmPending {
+  fn status(&self) -> PushStatus {
+    PushStatus {
+      mode: "fcm",
+      detail: "Firebase Cloud Messaging (waiting for the registration token)".into(),
+      token: None,
+    }
+  }
+}
+
+/// The port for what the platform reports now: FCM with the registration token when the
+/// Kotlin `KeystorePlugin.info` handed one over, `FcmPending` when the APK carries Firebase
+/// (`fcmConfigured`) but no token yet, else the visible polling stand-in.
+pub fn configured(token: Option<String>, fcm_configured: bool) -> Box<dyn PushPort> {
   match token.filter(|t| !t.trim().is_empty()) {
     Some(token) => Box::new(FcmPush { token }),
+    None if fcm_configured => Box::new(FcmPending),
     None => Box::new(PollingPush),
   }
 }
@@ -69,7 +86,7 @@ mod tests {
 
   #[test]
   fn the_stand_in_is_visible_and_tokenless() {
-    let status = configured(None).status();
+    let status = configured(None, false).status();
     assert_eq!(status.mode, "polling");
     assert!(status.detail.contains("FCM not configured"));
     assert_eq!(status.token, None);
@@ -85,7 +102,22 @@ mod tests {
     };
     assert_eq!(fcm.status().mode, "fcm");
     assert_eq!(fcm.status().token.as_deref(), Some("registration"));
-    assert_eq!(configured(Some("registration".into())).status().mode, "fcm");
-    assert_eq!(configured(Some("  ".into())).status().mode, "polling");
+    assert_eq!(
+      configured(Some("registration".into()), true).status().mode,
+      "fcm"
+    );
+    assert_eq!(
+      configured(Some("  ".into()), false).status().mode,
+      "polling"
+    );
+  }
+
+  #[test]
+  fn a_firebase_build_without_its_token_yet_is_fcm_pending() {
+    let status = configured(None, true).status();
+    assert_eq!(status.mode, "fcm");
+    assert_eq!(status.token, None);
+    assert!(status.detail.contains("waiting"));
+    assert_eq!(configured(Some(" ".into()), true).status().token, None);
   }
 }

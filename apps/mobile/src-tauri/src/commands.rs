@@ -71,10 +71,11 @@ impl Shell {
     }
   }
 
-  /// The registration token the platform reports now: FCM rotates it, and on the first
-  /// launch it may arrive after setup, so `push_status` re-reads it on every call.
-  pub fn set_push_token(&self, token: Option<String>) {
-    let next = push::configured(token);
+  /// What the platform reports now: FCM rotates the registration token, and on the first
+  /// launch it arrives after setup, so `push_status` re-reads it on every call.
+  /// `fcm_configured` is the APK's `BuildConfig.FCM_CONFIGURED`.
+  pub fn set_push_token(&self, token: Option<String>, fcm_configured: bool) {
+    let next = push::configured(token, fcm_configured);
     match self.push.lock() {
       Ok(mut push) => *push = next,
       Err(poisoned) => *poisoned.into_inner() = next,
@@ -243,18 +244,18 @@ pub async fn push_status<R: Runtime>(
   app: AppHandle<R>,
   shell: State<'_, Shell>,
 ) -> Result<PushStatus, String> {
-  if let Some(token) = current_push_token(&app).await {
-    shell.set_push_token(token);
+  if let Some((token, fcm_configured)) = current_push_token(&app).await {
+    shell.set_push_token(token, fcm_configured);
   }
   Ok(shell.push_status())
 }
 
-/// The FCM token `KeystorePlugin.info` reports now (`Some(None)` when Firebase is not
-/// configured or no token has arrived yet). `run_mobile_plugin` blocks until the Kotlin side
-/// answers, so it runs on a blocking thread. `None` = could not ask (no plugin, not Android):
-/// keep what setup found.
+/// The FCM token and `fcmConfigured` that `KeystorePlugin.info` reports now (the token is
+/// `None` when Firebase is not configured or no token has arrived yet). `run_mobile_plugin`
+/// blocks until the Kotlin side answers, so it runs on a blocking thread. `None` = could not
+/// ask (no plugin, not Android): keep what setup found.
 #[cfg(target_os = "android")]
-async fn current_push_token<R: Runtime>(app: &AppHandle<R>) -> Option<Option<String>> {
+async fn current_push_token<R: Runtime>(app: &AppHandle<R>) -> Option<(Option<String>, bool)> {
   let handle = app.try_state::<android::KeystoreHandle<R>>()?.0.clone();
   tauri::async_runtime::spawn_blocking(move || android::fcm_token(&handle))
     .await
@@ -263,10 +264,9 @@ async fn current_push_token<R: Runtime>(app: &AppHandle<R>) -> Option<Option<Str
 }
 
 #[cfg(not(target_os = "android"))]
-async fn current_push_token<R: Runtime>(_app: &AppHandle<R>) -> Option<Option<String>> {
+async fn current_push_token<R: Runtime>(_app: &AppHandle<R>) -> Option<(Option<String>, bool)> {
   None
 }
-
 /// The platform prompt. Only a success returns `asserted: true`, and only a success carries
 /// the ticket `device_key_sign` needs for the one `biometric=1` signature that follows. Every
 /// failure resolves (never rejects, never hangs) with `asserted: false` and a reason the UI
@@ -386,6 +386,9 @@ pub mod android {
     /// or before Firebase handed one over (`PushTokenStore` on the Kotlin side).
     #[serde(default)]
     pub fcm_token: Option<String>,
+    /// `BuildConfig.FCM_CONFIGURED`: the APK carries Firebase (a token may still be on its way).
+    #[serde(default)]
+    pub fcm_configured: bool,
   }
 
   impl<R: Runtime> KeystoreWrapper<R> {
@@ -436,12 +439,13 @@ pub mod android {
       .unwrap_or_default()
   }
 
-  /// Only the FCM token from `info`; `None` when the plugin call failed (keep the old one).
-  pub fn fcm_token<R: Runtime>(handle: &PluginHandle<R>) -> Option<Option<String>> {
+  /// The FCM token and `fcmConfigured` from `info`; `None` when the plugin call failed
+  /// (keep the old ones).
+  pub fn fcm_token<R: Runtime>(handle: &PluginHandle<R>) -> Option<(Option<String>, bool)> {
     handle
       .run_mobile_plugin::<DeviceInfoOut>("info", ())
       .ok()
-      .map(|info| info.fcm_token)
+      .map(|info| (info.fcm_token, info.fcm_configured))
   }
 
   /// Registers the Kotlin side (`app.forerunner.mobile.KeystorePlugin`).
@@ -498,7 +502,7 @@ pub fn build_shell<R: Runtime>(app: &AppHandle<R>) -> Result<Shell, Box<dyn std:
     info.secure_store,
     files.dir().display()
   );
-  let push = push::configured(bits.push_token);
+  let push = push::configured(bits.push_token, bits.fcm_configured);
   Ok(Shell::new(files, app_dirs.config, config, info, push))
 }
 
@@ -509,6 +513,7 @@ struct PlatformBits {
   device_name: String,
   biometric: bool,
   push_token: Option<String>,
+  fcm_configured: bool,
 }
 
 #[cfg(target_os = "android")]
@@ -526,6 +531,7 @@ fn platform_bits<R: Runtime>(app: &AppHandle<R>) -> PlatformBits {
         device_name,
         biometric: info.biometric,
         push_token: info.fcm_token,
+        fcm_configured: info.fcm_configured,
       }
     }
     None => {
@@ -535,6 +541,7 @@ fn platform_bits<R: Runtime>(app: &AppHandle<R>) -> PlatformBits {
         device_name: "Android phone".to_string(),
         biometric: false,
         push_token: None,
+        fcm_configured: false,
       }
     }
   }
@@ -547,6 +554,7 @@ fn platform_bits<R: Runtime>(_app: &AppHandle<R>) -> PlatformBits {
     device_name: "Desktop (dev build)".to_string(),
     biometric: false,
     push_token: None,
+    fcm_configured: false,
   }
 }
 
@@ -588,7 +596,7 @@ mod tests {
       dir.clone(),
       ShellConfig::default(),
       info,
-      push::configured(None),
+      push::configured(None, false),
     );
     (shell, dir)
   }
@@ -660,13 +668,17 @@ mod tests {
     let (shell, dir) = shell_for_test();
     assert_eq!(shell.push_status().token, None);
     // the token arrived after setup, or FCM rotated it
-    shell.set_push_token(Some("registration-a".into())); // not-a-secret
+    shell.set_push_token(Some("registration-a".into()), true); // not-a-secret
     assert_eq!(shell.push_status().mode, "fcm");
     assert_eq!(shell.push_status().token.as_deref(), Some("registration-a"));
-    shell.set_push_token(Some("registration-b".into())); // not-a-secret
+    shell.set_push_token(Some("registration-b".into()), true); // not-a-secret
     assert_eq!(shell.push_status().token.as_deref(), Some("registration-b"));
     // Firebase gone (a build without google-services.json): back to the stand-in
-    shell.set_push_token(None);
+    // a Firebase build whose token is not there yet: fcm without a token
+    shell.set_push_token(None, true);
+    assert_eq!(shell.push_status().mode, "fcm");
+    assert_eq!(shell.push_status().token, None);
+    shell.set_push_token(None, false);
     assert_eq!(shell.push_status().mode, "polling");
     std::fs::remove_dir_all(dir).ok();
   }

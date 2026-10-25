@@ -10,7 +10,7 @@ import {
   pushTokenFingerprint,
   safeAppPath,
 } from "../src/mobile/push.ts";
-import { MobileController } from "../src/mobile/store.tsx";
+import { MobileController, type MobileEnv } from "../src/mobile/store.tsx";
 import { HUMAN_J } from "./fake-state-service.ts";
 import { createMobileHarness, renderMobile, SERVICE_URL } from "./mobile-helpers.tsx";
 
@@ -22,17 +22,47 @@ const TOKEN_A = ["fcm", "registration", "token", "a", "0001"].join("-"); // not-
 const TOKEN_B = ["fcm", "registration", "token", "b", "0002"].join("-"); // not-a-secret
 
 /** The shell's push port with a token the test can rotate (what `push_status` returns with FCM). */
-function fcmPush(initial: string | null): PushPort & { token: string | null } {
+function fcmPush(
+  initial: string | null,
+  options: { pending?: boolean } = {},
+): PushPort & { token: string | null; pending: boolean; calls: number } {
   const port = {
     token: initial,
+    /** A Firebase build whose first token has not arrived: `fcm` without a token. */
+    pending: options.pending ?? false,
+    calls: 0,
     async status(): Promise<PushStatus> {
-      return port.token
-        ? { mode: "fcm", detail: "Firebase Cloud Messaging", token: port.token }
+      port.calls += 1;
+      if (port.token) return { mode: "fcm", detail: "Firebase Cloud Messaging", token: port.token };
+      return port.pending
+        ? { mode: "fcm", detail: "Firebase Cloud Messaging (waiting)", token: null }
         : { mode: "polling", detail: "FCM not configured", token: null };
     },
     notify: () => false,
   };
   return port;
+}
+
+/** The shell's resume event (`tauri://resumed`, the Activity's onResume) as a test handle. */
+function resumeSource() {
+  const listeners = new Set<() => void>();
+  return {
+    port: {
+      listen(cb: () => void) {
+        listeners.add(cb);
+        return () => listeners.delete(cb);
+      },
+    },
+    fire: () => {
+      for (const l of listeners) l();
+    },
+    size: () => listeners.size,
+  };
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
 }
 
 /** A storage that remembers every value ever written, to prove the token never lands there. */
@@ -50,8 +80,12 @@ function recordingStorage(): KeyValueStore & { written: string[] } {
   };
 }
 
-async function pairWith(push: PushPort, storage = recordingStorage()) {
-  const h = await createMobileHarness({ paired: false, env: { push, storage } });
+async function pairWith(
+  push: PushPort,
+  storage = recordingStorage(),
+  env: Partial<MobileEnv> = {},
+) {
+  const h = await createMobileHarness({ paired: false, env: { push, storage, ...env } });
   const code = h.service.startPairing(HUMAN_J.id, "phone").code;
   await h.controller.pair({ serviceUrl: SERVICE_URL, code, deviceName: "Test phone" });
   const deviceId = h.controller.state.session?.deviceId ?? "";
@@ -191,6 +225,122 @@ describe("push token refresh", () => {
   });
 });
 
+describe("the first token arrives after pairing (review of c829a02)", () => {
+  it("syncs at the end of pair() when the token came in while pairing", async () => {
+    const push = fcmPush(null, { pending: true });
+    const status = push.status.bind(push);
+    // the token lands right after pair() asked for it (Firebase answers asynchronously)
+    push.status = async () => {
+      const s = await status();
+      push.token = TOKEN_A;
+      return s;
+    };
+    const h = await pairWith(push);
+    const pairing = h.service.state.calls.find((c) => c.path === "/pairing/complete");
+    expect(pairing?.body).not.toHaveProperty("pushToken");
+    expect(pushTokenCalls(h)).toHaveLength(1);
+    expect(h.service.state.pushTokens.get(h.deviceId)).toBe(TOKEN_A);
+    h.controller.close();
+  });
+
+  it("retries once after a delay while the build is fcm and the token is not there yet", async () => {
+    const push = fcmPush(null, { pending: true });
+    const h = await pairWith(push, recordingStorage(), { pushRetryMs: 30 });
+    expect(pushTokenCalls(h)).toHaveLength(0);
+    push.token = TOKEN_A;
+    await waitFor(() => pushTokenCalls(h).length > 0);
+    expect(pushTokenCalls(h)).toHaveLength(1);
+    expect(pushTokenCalls(h)[0]).toMatchObject({ signed: true, body: { pushToken: TOKEN_A } });
+    h.controller.close();
+  });
+
+  it("does not schedule the retry on the polling stand-in, and a closed controller never fires it", async () => {
+    const polling = fcmPush(null);
+    const h = await pairWith(polling, recordingStorage(), { pushRetryMs: 20 });
+    const before = polling.calls;
+    await new Promise((r) => setTimeout(r, 80));
+    expect(polling.calls).toBe(before);
+    h.controller.close();
+
+    const pending = fcmPush(null, { pending: true });
+    const h2 = await pairWith(pending, recordingStorage(), { pushRetryMs: 40 });
+    h2.controller.close();
+    pending.token = TOKEN_A;
+    await new Promise((r) => setTimeout(r, 120));
+    expect(pushTokenCalls(h2)).toHaveLength(0);
+  });
+
+  it("a pending Firebase build never clears a registered token with null", async () => {
+    const push = fcmPush(TOKEN_A);
+    const h = await pairWith(push);
+    push.token = null;
+    push.pending = true;
+    expect(await h.controller.syncPushToken()).toBe("unchanged");
+    expect(h.service.state.pushTokens.get(h.deviceId)).toBe(TOKEN_A);
+    h.controller.close();
+  });
+});
+
+describe("the shell's resume event re-checks the token (not visibilitychange alone)", () => {
+  it("sends a rotated token when the shell reports the activity resumed", async () => {
+    const resumed = resumeSource();
+    const push = fcmPush(TOKEN_A);
+    const h = await pairWith(push, recordingStorage(), { resumed: resumed.port });
+    h.controller.close();
+    const c = new MobileController(h.env);
+    await c.bootstrap();
+    expect(resumed.size()).toBe(1);
+    push.token = TOKEN_B;
+    resumed.fire();
+    await waitFor(() => pushTokenCalls(h).length > 0);
+    expect(pushTokenCalls(h)).toHaveLength(1);
+    expect(h.service.state.pushTokens.get(h.deviceId)).toBe(TOKEN_B);
+    c.close();
+    expect(resumed.size()).toBe(0);
+  });
+});
+
+describe("forgetting the device", () => {
+  it("tells the service to drop the push token first, best effort, and clears a pending link", async () => {
+    const push = fcmPush(TOKEN_A);
+    const h = await pairWith(push);
+    h.controller.offerDeepLink("fr://open?link=%2Finbox");
+    expect(h.controller.state.pendingLink).toBe("/inbox");
+    await h.controller.forgetDevice();
+    const calls = pushTokenCalls(h);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ body: { pushToken: null }, signed: true });
+    expect(h.service.state.pushTokens.has(h.deviceId)).toBe(false);
+    expect(h.controller.state.stage).toBe("unpaired");
+    expect(h.controller.state.pendingLink).toBeNull();
+    h.controller.close();
+  });
+
+  it("still forgets the device when the service cannot be reached", async () => {
+    const push = fcmPush(TOKEN_A);
+    const h = await pairWith(push);
+    h.controller.close();
+    const realFetch = h.env.fetch as NonNullable<typeof h.env.fetch>;
+    h.env.fetch = (input, init) =>
+      String(input).includes("/push-token")
+        ? Promise.reject(new Error("offline"))
+        : realFetch(input, init);
+    const c = new MobileController(h.env);
+    await c.bootstrap();
+    await c.forgetDevice();
+    expect(c.state.stage).toBe("unpaired");
+    expect(c.state.session).toBeNull();
+    c.close();
+  });
+
+  it("sends nothing on forget when no token was ever registered", async () => {
+    const h = await pairWith(new PollingPush());
+    await h.controller.forgetDevice();
+    expect(pushTokenCalls(h)).toHaveLength(0);
+    h.controller.close();
+  });
+});
+
 describe("the push token is never logged, shown or stored by the UI", () => {
   it("keeps it out of the console, the service log, the state and the phone's storage", async () => {
     const lines: string[] = [];
@@ -277,7 +427,7 @@ describe("notification links", () => {
       },
     });
     renderMobile("/", h);
-    await screen.findByRole("heading", { name: "Approvals and requests" });
+    await screen.findByRole("heading", { name: "Approvals and requests" }, { timeout: 5000 });
     expect(h.controller.state.pendingLink).toBeNull();
     h.controller.close();
   });

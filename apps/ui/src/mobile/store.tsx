@@ -79,6 +79,7 @@ import {
   shellBiometric,
   shellDeepLink,
   shellPush,
+  shellResumed,
   shellSecureStore,
 } from "./shell-bridge.ts";
 import {
@@ -296,6 +297,13 @@ export interface MobileEnv {
   live?: boolean;
   pollIntervalMs?: number;
   retryLiveMs?: number;
+  /**
+   * The shell's "back in the foreground" signal (Tauri's `tauri://resumed`, from the
+   * Activity's `onResume`); null outside the shell, where `visibilitychange` is the signal.
+   */
+  resumed?: { listen(cb: () => void): () => void } | null;
+  /** How long after pairing to look once more for a first FCM token still on its way (10 s). */
+  pushRetryMs?: number;
 }
 
 const SESSION_KEY = "session";
@@ -313,6 +321,9 @@ interface PushRegistration {
   /** SHA-256 of the registered token (`pushTokenFingerprint`); null = registered as none. */
   fingerprint: string | null;
 }
+
+/** After pairing, the one delayed look for a first FCM token that had not arrived yet. */
+export const PUSH_RETRY_MS = 10_000;
 
 /** What `syncPushToken` did; nothing in it carries the token. */
 export type PushSyncOutcome = "sent" | "unchanged" | "skipped" | "failed";
@@ -362,6 +373,7 @@ export function envFromGlobals(injection: ShellInjection | undefined): MobileEnv
     timezone: deviceTimezone(),
     scan: shell ? scanQr : null,
     deepLink: shell ? shellDeepLink : null,
+    resumed: shell ? shellResumed : null,
     // The shell has no microphone command yet (ADR 0080): there the typed line is relayed.
     recorder: shell ? null : webRecorder(),
     speaker: webSpeaker(),
@@ -399,6 +411,7 @@ export class MobileController {
   private inboxReload: ReturnType<typeof setTimeout> | null = null;
   private stopDeepLink: (() => void) | null = null;
   private stopVisibility: (() => void) | null = null;
+  private pushRetry: ReturnType<typeof setTimeout> | null = null;
   private pushSync: Promise<PushSyncOutcome> | null = null;
   private closed = false;
   private losingAuth = false;
@@ -538,6 +551,8 @@ export class MobileController {
     this.stopDeepLink = null;
     this.stopVisibility?.();
     this.stopVisibility = null;
+    if (this.pushRetry) clearTimeout(this.pushRetry);
+    this.pushRetry = null;
     if (this.inboxReload) clearTimeout(this.inboxReload);
   }
 
@@ -582,9 +597,19 @@ export class MobileController {
   }
 
   private async currentPushToken(): Promise<string | null> {
+    return (await this.currentPush()).token;
+  }
+
+  /**
+   * The token now, and whether the build carries Firebase without a token yet (`pending`:
+   * mode `fcm`, token null, the first launch before Firebase answers). A pending build is
+   * never taken as "the token disappeared".
+   */
+  private async currentPush(): Promise<{ token: string | null; pending: boolean }> {
     const status = await this.pushStatus();
-    const token = status?.mode === "fcm" ? status.token?.trim() : "";
-    return token ? token : null;
+    if (status?.mode !== "fcm") return { token: null, pending: false };
+    const token = status.token?.trim();
+    return token ? { token, pending: false } : { token: null, pending: true };
   }
 
   private readRegistration(): PushRegistration | null {
@@ -623,7 +648,9 @@ export class MobileController {
   private async doSyncPushToken(): Promise<PushSyncOutcome> {
     const session = this.state.session;
     if (this.state.stage !== "paired" || !session) return "skipped";
-    const token = await this.currentPushToken();
+    const { token, pending } = await this.currentPush();
+    // Firebase has not handed the first token over yet: nothing to send, nothing to clear.
+    if (pending) return "unchanged";
     const fingerprint = token ? await pushTokenFingerprint(token) : null;
     const registered = this.readRegistration();
     const sameDevice = registered?.deviceId === session.deviceId;
@@ -640,14 +667,47 @@ export class MobileController {
     return "sent";
   }
 
-  /** Coming back to the foreground re-checks the push token (FCM may have rotated it). */
+  /**
+   * Coming back to the foreground re-checks the push token (FCM may have rotated it). Two
+   * signals, because the Android WebView's `visibilitychange` on Activity pause and resume is
+   * not something to rely on alone: the shell's resume event (`env.resumed`, Tauri's
+   * `tauri://resumed` from the Activity's `onResume`) and `visibilitychange` to visible.
+   * `syncPushToken` runs one check at a time, so both firing costs one status read.
+   */
   private watchVisibility(): void {
-    if (this.stopVisibility || typeof document === "undefined") return;
-    const onChange = () => {
-      if (document.visibilityState === "visible" && !this.closed) void this.syncPushToken();
+    if (this.stopVisibility) return;
+    const stops: (() => void)[] = [];
+    const recheck = () => {
+      if (!this.closed) void this.syncPushToken();
     };
-    document.addEventListener("visibilitychange", onChange);
-    this.stopVisibility = () => document.removeEventListener("visibilitychange", onChange);
+    if (this.env.resumed) stops.push(this.env.resumed.listen(recheck));
+    if (typeof document !== "undefined") {
+      const onChange = () => {
+        if (document.visibilityState === "visible") recheck();
+      };
+      document.addEventListener("visibilitychange", onChange);
+      stops.push(() => document.removeEventListener("visibilitychange", onChange));
+    }
+    this.stopVisibility = () => {
+      for (const stop of stops) stop();
+    };
+  }
+
+  /**
+   * After pairing: send a token that arrived while pairing ran, and when the build carries
+   * Firebase but the first token is still on its way, look once more after `pushRetryMs`
+   * (10 s; Firebase usually answers within seconds). Later arrivals are caught on resume.
+   */
+  private async syncAfterPairing(): Promise<void> {
+    await this.syncPushToken();
+    if (this.pushRetry) clearTimeout(this.pushRetry);
+    this.pushRetry = null;
+    const { pending } = await this.currentPush();
+    if (!pending || this.closed) return;
+    this.pushRetry = setTimeout(() => {
+      this.pushRetry = null;
+      if (!this.closed) void this.syncPushToken();
+    }, this.env.pushRetryMs ?? PUSH_RETRY_MS);
   }
 
   async scanPairing(): Promise<PairingPayload | null> {
@@ -694,15 +754,33 @@ export class MobileController {
       this.startStream();
       // Actions queued before an auth loss (spec R.3) go out now, under the new device.
       await this.flushOutbox();
+      // A first-launch token usually arrives after the pairing request went out.
+      await this.syncAfterPairing();
     }
   }
 
   /**
    * Forget key and token here, and drop the queued actions and the change log with them;
    * the desktop revokes the device row (Settings → Devices). This is the only path that
-   * clears the queue: an auth loss (`lostAuth`) keeps it for the next pairing.
+   * clears the queue: an auth loss (`lostAuth`) keeps it for the next pairing. A registered
+   * push token is cleared on the service first (best effort, signed while the key still
+   * exists), so a forgotten phone stops getting notifications even before the revocation.
    */
   async forgetDevice(): Promise<void> {
+    const session = this.state.session;
+    const registered = this.readRegistration();
+    if (
+      session &&
+      this.state.stage === "paired" &&
+      registered?.deviceId === session.deviceId &&
+      registered.fingerprint
+    ) {
+      try {
+        await this.client.setPushToken(session.deviceId, null);
+      } catch {
+        // offline or refused: the desktop's revocation ends push for the device anyway
+      }
+    }
     await this.dropIdentity();
     this.outbox.clear();
     this.uploads.clear();
@@ -756,6 +834,7 @@ export class MobileController {
       inbox: null,
       blockingCount: 0,
       syncMode: "closed",
+      pendingLink: null,
     });
   }
 

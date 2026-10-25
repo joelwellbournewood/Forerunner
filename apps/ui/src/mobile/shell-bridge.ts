@@ -202,6 +202,32 @@ export const shellDeepLink = {
   },
 };
 
+/**
+ * Tauri emits `tauri://resumed` to the window when the Android Activity resumes (its
+ * `onResume`, the first one at creation excepted; `WindowEvent::Resumed`). The controller
+ * re-checks the FCM token on it, next to `visibilitychange`.
+ */
+export const SHELL_RESUMED_EVENT = "tauri://resumed";
+
+export const shellResumed = {
+  listen(callback: () => void): () => void {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    void listen(SHELL_RESUMED_EVENT, () => {
+      if (active) callback();
+    })
+      .then((fn) => {
+        if (active) unlisten = fn;
+        else fn();
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  },
+};
+
 /** Bytes of a shell-signed message, for callers that hold base64 (tests). */
 export function messageBytes(text: string): Uint8Array {
   return utf8(text);

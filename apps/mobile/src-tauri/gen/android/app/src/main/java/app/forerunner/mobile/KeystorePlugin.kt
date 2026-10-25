@@ -135,6 +135,8 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
     // built with google-services.json; null otherwise and until Firebase hands one over.
     val token = if (BuildConfig.FCM_CONFIGURED) PushTokenStore.read(activity) else null
     out.put("fcmToken", token ?: JSONObject.NULL)
+    // Lets the UI tell "Firebase build, token still on its way" from the polling stand-in.
+    out.put("fcmConfigured", BuildConfig.FCM_CONFIGURED)
     invoke.resolve(out)
   }
 

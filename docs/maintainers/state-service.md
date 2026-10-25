@@ -220,7 +220,10 @@ runs on every poller tick, once the human's window is over; each held item is re
 and a request answered or a message read meanwhile is dropped (counted as `expired`). Payloads are data-minimal: a
 generic title and body, and `data { kind, id, link, projectId? }` for the app's deep link;
 request reasons, message text and project names never go through Google. Urgent notices are
-sent with Android priority `HIGH`, the rest `NORMAL`.
+sent with Android priority `HIGH`, the rest `NORMAL`. `android.notification.channel_id` names
+the app's channel for the kind (`channelForKind`: `attention` for approval and budget,
+`updates` for session and message; the ids `PushLinks.kt` creates), so a notification the
+system tray shows in the background lands on the same channel as one the app posts.
 
 `FcmSender` (`src/push/fcm.ts`) posts one message per token. FCM's 404 with the `FcmError` code
 `UNREGISTERED` means the token is dead (a 404 without that code, from a wrong

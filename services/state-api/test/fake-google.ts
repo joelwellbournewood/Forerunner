@@ -34,7 +34,7 @@ export interface SentMessage {
     token: string;
     notification?: { title?: string; body?: string };
     data?: Record<string, string>;
-    android?: { priority?: string };
+    android?: { priority?: string; notification?: { channel_id?: string } };
   };
 }
 
