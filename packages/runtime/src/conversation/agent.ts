@@ -1,6 +1,7 @@
+import { isStopLine } from "@forerunner/commands";
 import { loadDocChunks, selectDocHits } from "@forerunner/memory";
 import { type Clock, errorMessage, log, newId } from "@forerunner/platform";
-import type { AgentRow, StateStore } from "@forerunner/state";
+import type { AgentRow, SessionRow, StateStore } from "@forerunner/state";
 import { type LoopAgentDriver, type RunEvent, type RunPricing, wholeMs } from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
 import { layoutSystem, volatilePreamble } from "../context/cache-layout.ts";
@@ -195,6 +196,8 @@ record it with the memory_record tool in the human's own words.`;
 
 const UNDO_RE = /^\s*(undo|rückgängig|r[üu]ckg[äa]ngig machen)\s*[.!]?\s*$/i;
 const NO_RE = /^\s*(no|nope|cancel|stop|nein|non|abbrechen)\b/i;
+/** Said before the stop's own sentence when the stop cancelled a card waiting for a yes. */
+export const CARD_CANCELLED_SENTENCE = "The change waiting for your yes is cancelled.";
 
 export class ConversationAgent {
   private readonly logger = log("conversation");
@@ -239,11 +242,14 @@ export class ConversationAgent {
       wordsUsed: req.text,
       deviceId: req.deviceId ?? null,
     };
+    /** Set when a stop cancelled the pending card on its way to the registry (spec O.9). */
+    let cancelledForStop = false;
     const finish = async (
-      reply: string,
+      text: string,
       actions: ChatAction[],
       extra: Partial<ChatReply> = {},
     ): Promise<ChatReply> => {
+      const reply = cancelledForStop ? `${CARD_CANCELLED_SENTENCE} ${text}` : text;
       await store.event.append(sessionId, "chat.reply", {
         transcriptId,
         text: reply,
@@ -268,7 +274,24 @@ export class ConversationAgent {
     // A plain "yes"/"no" answers the pending change card without a model call (spec Q.7).
     const pending = this.pending.get(req.humanId);
     if (pending && this.deps.commands) {
-      if (isYes(req.text) || NO_RE.test(req.text)) {
+      if (await this.stopsLiveSession(agent.id, req.text)) {
+        // Spec O.9, "stopping is immediate": a stop said while a work session runs is the kill
+        // switch whatever waits for a yes. The card is cancelled as a "no" (recorded on its
+        // request) and the line goes on to the registry below as the stop it is; the reply
+        // says both. With nothing running a "stop" stays the "no" to the card it has always
+        // been: the kill switch would only freeze the agent until its next start.
+        this.pending.delete(req.humanId);
+        const r = await this.deps.commands.confirmByText(pending.id, "no", turn);
+        await store.event.append(sessionId, "chat.cancelled", {
+          confirmationId: pending.id,
+          transcriptId,
+          commands: pending.commands,
+          words: req.text,
+          status: r.status,
+          stop: true,
+        } as never);
+        cancelledForStop = true;
+      } else if (isYes(req.text) || NO_RE.test(req.text)) {
         this.pending.delete(req.humanId);
         const r = await this.deps.commands.confirmByText(pending.id, req.text, turn);
         await store.event.append(sessionId, isYes(req.text) ? "chat.confirmed" : "chat.cancelled", {
@@ -280,10 +303,11 @@ export class ConversationAgent {
         } as never);
         const actions = this.actionsOf(r, pending.commands);
         return finish(this.sentenceOf(r, "Confirmed"), actions);
+      } else {
+        // Anything else drops the pending card; the human moved on (the request stays open in
+        // the inbox until it expires or is answered there).
+        this.pending.delete(req.humanId);
       }
-      // Anything else drops the pending card; the human moved on (the request stays open in
-      // the inbox until it expires or is answered there).
-      this.pending.delete(req.humanId);
     }
 
     // "undo" undoes the latest change the human can still undo (spec Q.11).
@@ -523,9 +547,7 @@ export class ConversationAgent {
   ): Promise<{ sessionId: string; messageId: string } | null> {
     if (!text.trim()) return null;
     if (text.includes(DATA_ENVELOPE_OPEN) || text.includes(DATA_ENVELOPE_CLOSE)) return null;
-    const live = (await this.deps.store.session.active(agentId)).find(
-      (s) => s.status === "running" && s.summary !== "conversation",
-    );
+    const live = await this.runningWorkSession(agentId);
     if (!live) return null;
     const row = await this.deps.store.message.send({
       from_agent_id: agentId,
@@ -549,6 +571,28 @@ export class ConversationAgent {
       source,
     });
     return { sessionId: live.id, messageId: row.id };
+  }
+
+  /**
+   * Spec O.9, "stopping is immediate": whether the line is a stop command (`isStopLine`, the
+   * parser's own patterns, in any clause and outside the data envelope) while a work session
+   * of the agent runs. Such a line is the kill switch whatever waits for a yes: `chat` cancels
+   * the pending card and runs the stop, and the voice bridge asks here before it answers its
+   * card with the line. With nothing running the line is whatever it was: a "no" to a card, a
+   * stop of nothing.
+   */
+  async stopsLiveSession(agentId: string, text: string): Promise<boolean> {
+    if (!isStopLine(text)) return false;
+    return (await this.runningWorkSession(agentId)) !== null;
+  }
+
+  /** The agent's running work session (not the conversation session; a paused one is ending). */
+  private async runningWorkSession(agentId: string): Promise<SessionRow | null> {
+    return (
+      (await this.deps.store.session.active(agentId)).find(
+        (s) => s.status === "running" && s.summary !== "conversation",
+      ) ?? null
+    );
   }
 
   /**

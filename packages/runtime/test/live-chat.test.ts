@@ -511,6 +511,51 @@ describe("what you say during a live session (spec O.9)", () => {
     await w.store.close();
   });
 
+  it("a 'stop' while a card waits for a yes and a session runs is the kill switch: the card is cancelled, the session stopped (review finding 2)", async () => {
+    const w = await setup([textReply("should not be called")]);
+    await w.addTask("First task", 9);
+    await w.addTask("Second task", 1);
+    const { executor, gate } = gatedExecutor(w);
+    const running = w.start(w.runner(executor));
+    await until(() => gate.release !== null, "the first task to be in flight");
+    const card = await w.chat("give it 20 francs tonight");
+    expect(card.pendingConfirmation).not.toBeNull();
+    const r = await w.chat("stop", { source: "voice" });
+    // The kill switch, not a "no" to the card: the registry's stop ran, the card is gone and
+    // its cancellation is in the transcript, the reply says both, nothing reached the session.
+    expect(w.kills).toEqual([{ scope: { agentId: w.alice }, reason: expect.any(String) }]);
+    expect(r.actions.map((a) => a.kind)).toEqual(["session.stop"]);
+    expect(r.pendingConfirmation).toBeNull();
+    expect(r.reply).toContain("cancelled");
+    expect(r.reply).toContain("Stopped");
+    expect(r.forwarded).toBeNull();
+    expect(w.commands.pending(w.human)).toEqual([]);
+    expect(await heardMessages(w)).toHaveLength(0);
+    expect(w.provider.calls).toHaveLength(0);
+    const events = await w.conversationEvents();
+    expect(events.filter((e) => e.type === "chat.cancelled").at(-1)?.payload).toMatchObject({
+      words: "stop",
+      stop: true,
+      status: "cancelled",
+    });
+    gate.release?.();
+    await running;
+    await w.store.close();
+  });
+
+  it("with nothing running a 'stop' stays the no to the card it was", async () => {
+    const w = await setup([textReply("should not be called")]);
+    const card = await w.chat("give it 20 francs tonight");
+    expect(card.pendingConfirmation).not.toBeNull();
+    const r = await w.chat("stop");
+    expect(r.reply).toBe("Cancelled; nothing was changed.");
+    expect(r.actions).toEqual([]);
+    expect(w.kills).toEqual([]);
+    expect(w.commands.pending(w.human)).toEqual([]);
+    expect(w.provider.calls).toHaveLength(0);
+    await w.store.close();
+  });
+
   it("the LoopTaskExecutor puts the lines after the brief as quoted data and warns on a flagged one", async () => {
     const h = harness();
     const store = await openStore({ url: "sqlite::memory:", clock: h.clock });

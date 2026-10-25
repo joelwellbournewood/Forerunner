@@ -1350,7 +1350,14 @@ which is offered the registry's command tools and nothing else. A stop in any cl
 line runs at once even when the rest was not understood ("stop and tell me what happened":
 the parser returns the stop alone with the rest as `unmatched`, spec O.9), and the reply names
 what it did not act on (`I did not act on "..."`) instead of asking a question or handing the
-line to the model (review of w3-o9-chat-to-inbox, 2026-10-25, finding 1). Every change lands in the
+line to the model (review of w3-o9-chat-to-inbox, 2026-10-25, finding 1). A "stop" said while
+a work session of the agent runs is the kill switch even when a card waits for a yes
+(`stopsLiveSession`: `isStopLine` from the commands package and a `running` work session;
+finding 2 of the same review): the card is cancelled as a "no" (recorded on its request and in
+a `chat.cancelled` event with `stop: true`), the line goes on to the registry's `session.stop`,
+and the reply says both (`CARD_CANCELLED_SENTENCE` before the stop's sentence). With nothing
+running, "stop" stays the "no" to the card it has always been: the kill switch would only
+freeze the agent until its next start. Every change lands in the
 change log with the words used and the undo token (`actions[].undoToken`). Each model turn
 runs through the loop driver with its own small budget and a token at autonomy 4 (the human
 is giving instructions; the registry's confirmation policy guards by risk, and because the
@@ -1972,10 +1979,17 @@ real `VoiceLoop` with the bridge as its one `converse` port over `ConversationAg
 (`source: "voice"`), the spoken approval rules (`expectYes`) in front of a pending card, and
 `TextTurnStt` so a typed line runs as a push-to-talk turn without audio through the same
 loop, rules, TTS and rows. With a card pending the bridge answers the line itself, never the
-agent: a refused line (a question, a qualifier, a deferral, a hesitation) repeats the
-read-back; a yes is carried out through `CommandLoop.confirm(id, { kind: "yes", source:
-"voice" })` and a plain "no" (the registry's own `confirmByText` reading: no, nope, cancel,
-stop, nein, non, abbrechen) through `cancel`, exactly as a tap is, so the registry's outcome
+agent, with one exception: a stop said while a work session of the agent runs
+(`ConversationAgent.stopsLiveSession`: `isStopLine` and a `running` work session) is the kill
+switch, not a "no" (`expectYes` reads "stop" as a negation), so the bridge drops its copy of
+the card and hands the line to the agent, which cancels the card and runs `session.stop` (spec
+O.9; review finding 2 of w3-o9-chat-to-inbox, 2026-10-25); a card the registry still holds
+afterwards (the agent's copy had been dropped by a typed line) is cancelled by the bridge with a
+`voice.answer` record (`answer: "no"`). Otherwise a refused line (a question, a qualifier, a
+deferral, a hesitation) repeats the read-back; a yes is carried out through
+`CommandLoop.confirm(id, { kind: "yes", source: "voice" })` and a plain "no" (the registry's
+own `confirmByText` reading: no, nope, cancel, nein, non, abbrechen, and stop while nothing
+runs) through `cancel`, exactly as a tap is, so the registry's outcome
 (status, sentence, change log id, undo token) is spoken (`spokenOutcome`, the agent's
 wording) and recorded. The registry's pending list (`CommandLoop.pending(humanId)`) is the
 one source of truth for what still waits: the bridge's copy follows it at every answer (a

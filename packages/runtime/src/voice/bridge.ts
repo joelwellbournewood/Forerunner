@@ -752,7 +752,14 @@ export class VoiceBridge {
     const turn = this.loop.currentTurn;
     const st = this.turnState(turn);
     const card = this.pendingCard;
-    if (card) {
+    // Spec O.9, "stopping is immediate": a stop said while a work session runs is the kill
+    // switch, not a "no" to the card (`expectYes` reads "stop" as a negation). The line goes to
+    // the agent, which cancels the card and runs the stop (`ConversationAgent.stopsLiveSession`);
+    // a card the registry still holds after that (the agent's copy had been dropped by a typed
+    // line) is cancelled below, so nothing waits for a yes after a stop.
+    const stopOverCard =
+      card !== null && (await this.opts.agent.stopsLiveSession(this.opts.agentId, transcript));
+    if (card && !stopOverCard) {
       const record = spokenApprovalRecord(
         turn,
         transcript,
@@ -766,8 +773,8 @@ export class VoiceBridge {
         yield await this.spokenAnswer(st, card, record);
         return;
       }
-      this.pendingCard = null;
     }
+    this.pendingCard = null;
     const deltas = new AsyncQueue<string>();
     let streamed = "";
     void this.opts.agent
@@ -784,17 +791,29 @@ export class VoiceBridge {
         },
       })
       .then(
-        (reply) => {
-          st.reply = reply;
-          this.pendingCard = reply.pendingConfirmation;
-          if (reply.pendingConfirmation) {
-            this.record({ type: "voice.readback", turn, pending: reply.pendingConfirmation });
+        async (reply) => {
+          try {
+            st.reply = reply;
+            this.pendingCard = reply.pendingConfirmation;
+            if (reply.pendingConfirmation) {
+              this.record({ type: "voice.readback", turn, pending: reply.pendingConfirmation });
+            }
+            if (stopOverCard && card && this.registryHas(card.id)) {
+              const result = await this.opts.commands.cancel(card.id, {
+                kind: "human",
+                id: this.opts.humanId,
+              });
+              this.record({ type: "voice.answer", turn, pendingId: card.id, answer: "no", result });
+            }
+            // A deterministic turn (no model call) streams nothing: the whole reply is spoken.
+            // After a model turn the agent appends the read-back of a pending card to the text
+            // it streamed: speak what was not streamed yet, never the same words twice.
+            const rest = unstreamedPart(reply, streamed);
+            if (rest.trim()) deltas.push(rest);
+          } catch (e) {
+            deltas.fail(e);
+            return;
           }
-          // A deterministic turn (no model call) streams nothing: the whole reply is spoken.
-          // After a model turn the agent appends the read-back of a pending card to the text
-          // it streamed: speak what was not streamed yet, never the same words twice.
-          const rest = unstreamedPart(reply, streamed);
-          if (rest.trim()) deltas.push(rest);
           deltas.close();
         },
         (e: unknown) => deltas.fail(e),
