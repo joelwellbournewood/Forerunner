@@ -599,21 +599,26 @@ logged, never fatal): the daemon re-reads the settings that decide the monthly j
 there, so a change by any route, command or device applies at the next tick. `state-ports.ts` adapts
 the store to the enforcement ports: ledger rows with CHF at the day's rate, audit rows, and
 approvals as HumanRequests whose "yes"/"no" answers resolve the pending tool call (matched by
-`change_card.key` within the session: the hooks' SHA-256 key of the canonical raw input,
-`ApprovalRequest.key`, while `change_card.input` is the card's copy with long strings cut; a
-row written under the former 32-bit string hash or the former display-copy key no longer
-matches, so such an approval is asked once more). `StateApprovals.request` reads the session's
-rows for the key: an open one keeps the call pending; a "no" denies it for the session; a
-"yes" to an always-human class (`ALWAYS_HUMAN`, delete, purchase, credential, permission,
-capability grant) is handed out once and the row marked spent in the same update
+`change_card.key`: the hooks' SHA-256 key of the canonical raw input, `ApprovalRequest.key`,
+while `change_card.input` is the card's copy with long strings cut; a row written under the
+former 32-bit string hash or the former display-copy key no longer matches, so such an
+approval is asked once more). `StateApprovals.request` reads the session's own rows for the
+key and, when the call names a task, the rows of that task filed by the same agent for the
+same human in its earlier sessions (`task_id`, `author_agent`, `human_id`; ADR 0088), newest
+first: an open one keeps the call pending (no second row); a "no" denies it for the session
+and the task; a "yes" to an always-human class (`ALWAYS_HUMAN`, delete, purchase, credential,
+permission, capability grant) is handed out once and the row marked spent in the same update
 (`change_card.consumedAt`, `consumedByRun`, the envelope's version moving with it; a
-`version_conflict` means another consumer took it and the caller asks afresh), so a later run
-of the same session that re-makes the paused call runs it once and the next identical call
-files a new request and waits (no production path makes such a run yet: see Known issues, a
-paused call's answer is not consumed by a later session); a "yes" to any other
-class holds for the session; a withdrawn or expired row holds nothing (ADR 0052). The answer
-is spent when handed out, before the call runs, so a call that then fails for another reason
-needs a fresh answer: conservative for the classes that always need a human.
+`version_conflict` means another consumer took it and the caller asks afresh), so the run
+that re-makes the paused call, in the same session or in the next session of the task, runs
+it once and the next identical call files a new request and waits; a "yes" to any other
+class holds for the session and the task; a withdrawn or expired row holds nothing (ADR
+0052). Another input, another task, another agent's row and a row addressed to another human
+never match; a run that names no task sees only its own session's rows. The answer is spent
+when handed out, before the call runs, so a call that then fails for another reason needs a
+fresh answer: conservative for the classes that always need a human. The session that
+re-makes a call answered after its session ended is started by the answer itself
+(`syncLateApprovals`, below under "Local daemon").
 
 **CI results and PR comments (spec E.1; [ADR 0075](../decisions/0075-githost-triggers-polling-and-dedupe.md); `src/session/githost-watcher.ts`).**
 `GitHostWatcher` is the producer of the `ci` and `pr_comment` triggers. Every `pollMs`
@@ -1449,6 +1454,44 @@ services run (`startServices`): a CLI one-shot composes the runtime but starts n
 `plan-approval.test.ts` (the sync on a fake port and through the real scheduler and runner),
 `plan-approval-daemon.test.ts` (the answer route, the command registry, the conversation
 agent's command path and the poll).
+
+**Late hooks approvals (`syncLateApprovals`, `src/session/late-approval.ts`, ADR 0088).** A
+tool call the hooks held behind a `human_request` row ends its run `needs_human`; the task
+goes `needs_human`, the session moves on and ends. An answer that comes afterwards has no
+session to consume it (a `needs_human` task is never planned, no start resumes a session),
+so this step makes one: it scans the human's answered blocking approvals whose card is a
+hooks approval (`isToolApprovalRequest`: `tool`, `actionClass` and the key
+`<tool>:<sha256>`), filed by this agent for a task, whose session has ended (`SESSION_ENDED`:
+`stopped`, `completed`, `failed`, `killed`) and whose answer the session did not use: an
+always-human "yes" still unspent (`consumedAt` absent, whenever it came); for any other
+class, whose "yes" is never spent, and for every "no", an answer after the session's
+`ended_at`. Per row, once (`claimLateApproval`): a "yes" with the task `needs_human` claims
+the card (`markAnswer` in `answer-mark.ts`, the version-conditional mark the plan sync and the
+cloud runner's inbox trigger share; `markPlanAnswer` and `planAnswerApplied` are its aliases),
+moves the task `needs_human -> ready` (`approval answered (request <id>): <tool>`, by the
+human), asks the scheduler for one `message` start of the project carrying
+`StartRequest.approvalRequestId` and records the answer (`started`, `queued`, `deferred`) and
+`start_id` (`recordLateStart`); the follow-up plans the task and its re-made call finds the
+answer by task and key (above) and runs. A task already `ready` starts without the move; a
+task `done`, `cancelled` or `failed` is `task_moved_on` (nothing starts; the row stays the
+task's answer for a rework); a task `claimed`, `in_progress` or `in_review` waits (another
+session has it; the port consumes the answer there if the call is re-made). A "no" is
+`refused`: nothing starts, the task records it (`reason: human refused <tool> (request <id>)`,
+`author_human`) and stays `needs_human`, and the row goes on denying the call for the task. A
+start the port throws on, or that fails after the scheduler took it (`reportLateStartFailure`,
+called by `reportingPlanStartFailures` for a request carrying `approvalRequestId`), is
+`start_failed` with the error, one audit row and one warning (`failure_reported_at`); the task
+stays `ready` and the answer stands. A row the cloud runner's trigger claimed first (`lost`),
+another agent's row, a row without a task and a row whose session still runs are left alone.
+Each outcome is one audit row `session.late_approval` (`LATE_APPROVAL_AUDIT_TOOL`: ids, tool,
+class and outcome, never the input). `runSession` (compose.ts) runs `syncApprovals` after every
+session ends, so an answer that came during the session for a call it had moved past is acted
+on at once. The step runs only while the services run; `syncApprovals()` returns it as
+`late: { started, refused, skipped }`. A level 0 or 1 project's follow-up files its plan for
+approval as every session at that level does; the late answer is consumed when that plan
+runs. Tests: `late-approval.test.ts` (the sync over the real runner and hooks),
+`late-approval-daemon.test.ts` (the answer route), `approvals-durable.test.ts` (the port's
+task-and-key lookup) and the cloud runner's `inbox-trigger.test.ts` (the shared mark).
 
 **Eval runner (`src/models/eval-runner.ts`).** `@forerunner/evals` depends on this package, so
 the daemon cannot import it. `LoopEvalRunner` reads the specialist's eval set (the same task
@@ -2914,8 +2957,35 @@ inputs that are cut alike for the card getting different keys and rows, the row 
 cut copy and never the raw input, `approvalKey` honouring the hooks' key; a `merge_pr`
 approval at level 2 holding for the run and for the session and a different pull request
 asking; a "no" denying for the session without a new request; a withdrawn or expired request
-holding nothing. `packages/capabilities/test/cloudflare-tools.test.ts` covers the Cloudflare
-port finding the hooks' row for a long script input through the raw-input key.
+holding nothing. ADR 0088, the task-and-key lookup: a late "yes" found by the next session of
+the task and consumed once by its one matching call (the same call again files under the new
+session); a different input, another task, another agent's row and a row addressed to another
+human never matching, a run that names no task seeing only its own session's rows; an open
+question of an ended session keeping the re-made call pending without a second row; a late
+"no" denying the call for the task; a late non-always-human "yes" holding for the task's later
+sessions. `packages/capabilities/test/cloudflare-tools.test.ts` covers the Cloudflare port
+finding the hooks' row for a long script input through the raw-input key.
+
+`late-approval.test.ts` (ADR 0088; the sync over the real `SessionRunner`, the real hooks and
+`StateApprovals` on the real store, an executor that makes one `delete_repo` call per task
+run): a late "yes" becoming one `message` start naming the request, the task `ready` again
+with the answer as its reason, the follow-up's re-made call consuming the answer once and
+finishing the task, the card (`applied_at`, `outcome`, `start_id`, `consumedByRun`) and one
+audit row, a second sync starting nothing; a refused late answer (`refused`, nothing started,
+the task `needs_human` with `human refused delete_repo (request ...)` by the human, the task's
+next session denied without a new question); an answer the session used itself and a row
+whose session still runs left alone until the session ends; the lateness rule for a class that
+is not always-human (`answered_at` after `ended_at`); a task that moved on (`task_moved_on`),
+a task in another session's hands waiting, another agent's row and a row without a task left
+alone; a start the port throws on (`start_failed`, one warning, not retried, the task `ready`)
+and one that fails after the real scheduler took it (`reportingPlanStartFailures` by
+`approvalRequestId`, reported once); the shared mark both ways (a row the trigger claimed
+first starts nothing here; a stale row cannot be claimed again).
+`late-approval-daemon.test.ts` (`composeRuntime` with the fake provider, the real routes): the
+inbox's yes through `POST /requests/:id/answer` putting the task back to `ready` and starting
+one `message` session that finishes it, the card `started`, one audit row, a second
+`syncApprovals` starting nothing; a refused late answer starting nothing, marked `refused`,
+the task recording it.
 
 `packages/runtime/test/*.test.ts` (unit, fake provider, no network): tokens, autonomy, kill
 switch timing, budget rules, context transforms (golden cases, idempotence, FATAL-at-line-67,
@@ -3306,19 +3376,14 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   first on every call, but it should adopt `realPathOf` so the tools fail closed on their own
   too. A link created between the check and the read (a race inside the worktree) is not
   covered; the sandbox adapter mounts only the worktree so such an escape cannot reach the host.
-- `StateApprovals` matches approval rows within one session (`session_id`), and nothing on
-  the production path re-makes a paused call in that session: a pending approval ends the
-  run `needs_human`, the session moves on and ends, and its task stays `needs_human` until a
-  human moves it back to `ready`. `StartRequest` carries no session id, the daemon's answer
-  route only runs `syncApprovals` (which starts approved session plans, never a paused tool
-  call) and the scheduler and the cloud runner's `InboxTrigger` always start a new session.
-  That new session lists rows under its own `session_id`, does not see the answered row,
-  files a new one and pauses the task again, so a hooks approval (always-human or not)
-  answered after its session ended is never consumed: every later session that re-plans the
-  task asks again and stops there. It fails closed (no call runs without a "yes" in its own
-  session) but a task blocked on an approval cannot progress. Keying the lookup on the task
-  as well, or resuming the paused session from its answer, is open with the J.7 item
-  (verified 2026-10-23 on `state-ports.ts`, `triggers.ts` `StartRequest`, `runner.ts`).
+- Resolved 2026-10-25 (ADR 0088): a hooks approval answered after its session ended is
+  found by the next session of the task (`StateApprovals` matches by task and key across the
+  agent's sessions) and that session is started by the answer (`syncLateApprovals`, the mark
+  shared with the cloud runner's trigger). Limits that remain: several late approvals bundled
+  into one cloud start name only the first on `approvalRequestId` (a background failure of
+  that start is reported on the first; the others keep the scheduler's answer); a late "yes"
+  whose task is `in_review` waits until the review moves the task; a level 0 or 1 project's
+  follow-up files its plan again before the late answer is consumed.
 - On the SDK path a built-in file tool's output (`Read`, `Grep`) is scanned and flagged but
   cannot be rewritten from the `PostToolUse` hook (the SDK applies `updatedMCPToolOutput` to
   MCP tools), so the subprocess sees the file as is. `scrubEnv` withholds `SSH_AUTH_SOCK` from

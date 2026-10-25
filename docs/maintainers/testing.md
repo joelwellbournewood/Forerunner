@@ -950,8 +950,11 @@ stand-in that throws `unavailable` naming the field when a route reaches it; the
 reads `rt.capabilities.email.ports.*` while the daemon app is built, so that field must be a
 stand-in rather than missing, or `createDaemonApp` throws before the week starts. Its `syncApprovals` mirrors
 the daemon's memory, blocked-findings and sign-off halves and reports the plan half (ADR
-0053, `plans`) as zeros: the week's projects run at autonomy 2, so no plan request is filed
-and none is synced; the real step is covered by `packages/runtime/test/plan-approval-daemon.test.ts`. `UiClient` records every call
+0053, `plans`) and the late hooks approval half (ADR 0088, `late`) as zeros: the week's
+projects run at autonomy 2, so no plan request is filed and none is synced, and no week task
+pauses on an always-human call, so no late approval exists; the real steps are covered by
+`packages/runtime/test/plan-approval-daemon.test.ts` and
+`packages/runtime/test/late-approval-daemon.test.ts`. `UiClient` records every call
 for the evidence. The screens are not rendered.
 
 *The phone.* `PhoneApprovals` lists the inbox and answers a request as the app does after a

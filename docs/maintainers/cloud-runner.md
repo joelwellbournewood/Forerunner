@@ -221,6 +221,21 @@ session with trigger `message` when it finds
   `plan_id` (an earlier build's request) starts a plain session that proposes the plan again. A
   rejected plan starts nothing. The runner's own unlock challenges and the email approvals have
   no `session_id` and never count, nor do another agent's requests.
+- a hooks approval (a tool call a session paused on: `change_card.tool`, `actionClass` and the
+  hooks' key, `runtime.md` "Late hooks approvals", ADR 0088) answered after that session
+  ended. The trigger shares the daemon's mark here too: a row whose card carries `applied_at`
+  is not triggered on; one it acts on goes through the runtime's `claimLateApproval` before
+  the start is asked for (the same decisions as the PC daemon's `syncLateApprovals`: a "yes"
+  with the task `needs_human` or `ready` is claimed and the task put back to `ready`; a "no"
+  is consumed as `refused` with the task recording it and nothing started; a task that moved
+  on is `task_moved_on`; a row whose session still runs, whose task another session has, or
+  that the daemon claimed first is left alone), the start names the first claimed request
+  (`approvalRequestId`, so a start that fails after the scheduler took it is reported on it
+  by `reportingPlanStartFailures`), each claimed row is marked with the scheduler's answer
+  after (`recordLateStart`; the trigger's own `failed` is `start_failed` with one warning),
+  and a claim whose start was skipped for a PC that came online is released
+  (`releaseLateClaim`; the task stays `ready` for that PC's daemon). The follow-up's re-made
+  call consumes the answer through the hooks' durable port, which matches by task and key.
 
 Each item triggers at most once (ids are remembered until the message is read or the answer
 leaves the 24 h look-back). A check waits while a session of the agent runs or the kill switch
@@ -390,9 +405,13 @@ or a sidecar on `network_mode: "service:runner"`.
   table, a state-service presence endpoint) goes there with a test in `presence-billing.test.ts`.
 - **Inbox triggers**: what counts is `InboxTrigger.check()` in `inbox-trigger.ts` (the plan
   request's shape and answer words come from `@forerunner/runtime`'s `plan-approval.ts`:
-  `isPlanRequest`, `approvedPlanIdOf`, `planAnswer`, so the daemon and the runner agree), and nothing
-  else starts a `message` session on the runner; a new source (CI results, PR comments) is a
-  new filter there with a case in `inbox-trigger.test.ts`.
+  `isPlanRequest`, `approvedPlanIdOf`, `planAnswer`; a late hooks approval's shape and the
+  decisions on it from `late-approval.ts`: `isToolApprovalRequest`, `claimLateApproval`,
+  `recordLateStart`, `releaseLateClaim`; the mark both kinds share is `answer-mark.ts`'s
+  `markAnswer` / `answerApplied`, so the daemon and the runner agree), and nothing else
+  starts a `message` session on the runner; a new source (CI results, PR comments) is a new
+  filter there with a case in `inbox-trigger.test.ts`. The trigger needs the agent's
+  `humanId` (the task move, the audit row and the warning are the human's).
 - **Billing**: a provider rule change is a change to `DEFAULT_ROUTING_POLICY` in the billing
   package (billing.md), which this service picks up unchanged; what "personal runner" means
   for the policy is `runnerRoutingPolicy` in `billing.ts`, and a deployment that wants another
@@ -416,7 +435,7 @@ file-backed SQLite, testenv mail server on 127.0.0.1, SimulatedClock):
 | --- | --- |
 | `config.test.ts` | defaults, required URL, every issue listed, overrides, lists and booleans, header verifier needs authserv-ids, inbox poll off with 0 and never under 1 s, no credential in the description (a password with a literal `@` included), a non-loopback health host listed with the other issues |
 | `health.test.ts` | the Hono app in process (`/health`, `/ready` 503 then 200, 404, query strings, `cache-control: no-store`, HEAD allowed, other methods 405, a failing status function answered 500 with the message and none of its data) and over a loopback socket on a free port; `localhost` accepted, a non-loopback host refused before binding; close releases the port |
-| `inbox-trigger.test.ts` | a peer's message triggers once (own notes, read and pre-start messages never; two projects give no project); waiting while a session runs; an answered session question, an approved plan carrying its `plan_id` as `planApproved`, a plan card without the id starting a plain session; a rejected plan, the unlock challenge and another agent's question ignored; two approved plans in one check (the newest binds, the older is marked superseded); a plan the daemon marked is not triggered on; a triggered plan is marked, so a fresh trigger and the daemon's sync start nothing again, and carries the filing session's cap; a plan the daemon claims between the read and the claim starts nothing; a claim for a skipped start is released; a PC online defers with a back-off; a start the scheduler skipped leaves the items for the next check; polling on the clock |
+| `inbox-trigger.test.ts` | a peer's message triggers once (own notes, read and pre-start messages never; two projects give no project); waiting while a session runs; an answered session question, an approved plan carrying its `plan_id` as `planApproved`, a plan card without the id starting a plain session; a rejected plan, the unlock challenge and another agent's question ignored; two approved plans in one check (the newest binds, the older is marked superseded); a plan the daemon marked is not triggered on; a triggered plan is marked, so a fresh trigger and the daemon's sync start nothing again, and carries the filing session's cap; a plan the daemon claims between the read and the claim starts nothing; a claim for a skipped start is released (the trigger built with `since` from before the answer, so the release path really runs); a PC online defers with a back-off; a start the scheduler skipped leaves the items for the next check; polling on the clock; ADR 0088: a late hooks "yes" claimed with the task back at `ready` and the start naming the request, a fresh trigger and the daemon's `syncLateApprovals` starting nothing again; one the daemon acted on not triggered on; one the daemon claims between the read and the claim starting nothing here; a refused late answer consumed (`refused`, the task recording it) with no session; a claim for a skipped start released with the task left `ready` for the PC |
 | `vault-unlock.test.ts` | challenge and answer against the real file vault; wrong key, tampered answer, stale challenge, expiry (withdrawn), deny; the key absent from every log line, audit row and request row; the window: cached re-unlock, forgetting at the end, shortened / cleared window, policy ask, window set by the answer, absurd window refused |
 | `presence-billing.test.ts` | desktop seen / stale / revoked / other human / runner kind; active pc session; billing: shared vs personal runner, `personalRunner` opt-in, missing credential and disabled source skipped, other human's agent refused; the router decides (`BillingRouter.pick` called once with `runner: "cloud", purpose: "session"`, a `never` policy skips the subscription on a personal runner, `runnerRoutingPolicy` per runner kind, the plan-share rule falls back to the API key at the cap) |
 | `remote.test.ts` | kill within one poll (runs aborted, freeze, result and audit rows), stop lifts the freeze, start resumes and asks the scheduler, pause refused, pc-targeted and other-runner commands untouched; another human's phone (start of its agent, kill) and a start naming another agent refused with `forbidden: ...`, the runner's run untouched |
@@ -452,6 +471,10 @@ on a real host and a real mailbox is pending the items in `docs/status/BLOCKERS.
   (`FORERUNNER_RUNNER_HUMAN`) or it refuses to start.
 - An email session whose agent is busy fails at once (the human is told the task waits for the
   next session) instead of queueing behind the running session.
+- Several late hooks approvals in one inbox check share one start and only the first is named
+  on `approvalRequestId` (ADR 0088): a background failure of that start is reported on the
+  first row; the others keep the scheduler's answer (`started`) although nothing ran. The
+  tasks stay `ready` and the answers stand, so the next session consumes them.
 - Two runners for the same agent would both pass the handler's audit-row check for a brand-new
   message (email.md "Known issues"); run one runner per agent mailbox.
 - The unlock card (ADR 0068) needs the runner's vault key on the answering device already:

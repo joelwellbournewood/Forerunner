@@ -84,9 +84,12 @@ interface ApprovalChangeCard {
 }
 
 /**
- * Approvals become HumanRequests, matched by `change_card.key` within the session. An open
- * row for the same key keeps the call pending; a "no" denies it for the session; a "yes"
- * approves it. For an always-human class (`ALWAYS_HUMAN`: delete, purchase, credential,
+ * Approvals become HumanRequests, matched by `change_card.key` within the session and, when
+ * the call names a task, across the agent's sessions of that task (the rows with the same
+ * `task_id`, filed by the same agent for the same human; ADR 0088), so an answer that comes
+ * after the filing session ended is found by the next session of the task. An open row for
+ * the same key keeps the call pending; a "no" denies it for the session (and the task); a
+ * "yes" approves it. For an always-human class (`ALWAYS_HUMAN`: delete, purchase, credential,
  * permission, capability grant) the "yes" admits exactly one call: the row is marked spent
  * (`consumedAt`, `consumedByRun`; an envelope update, so the version moves) as the answer is
  * handed out, before the call runs, and the next identical request files a new row and waits.
@@ -94,24 +97,15 @@ interface ApprovalChangeCard {
  * reason (a secret not granted, a network error) has used its answer and the human is asked
  * afresh: conservative on purpose for the classes that always need a human. Two consumers of
  * one "yes" cannot both take it (optimistic concurrency: the loser asks afresh). Every other
- * class's "yes" holds for the session. A withdrawn or expired row holds nothing: the next
- * request files a new one.
+ * class's "yes" holds for the session and the task. A withdrawn or expired row holds nothing:
+ * the next request files a new one.
  */
 export class StateApprovals implements ApprovalPort {
   constructor(private readonly store: StateStore) {}
 
   async request(req: ApprovalRequest): Promise<ApprovalOutcome> {
     const key = approvalKey(req);
-    const existing = await this.store.humanRequest.list(
-      { session_id: req.sessionId, kind: "approval" },
-      {
-        orderBy: [
-          { column: "created_at", direction: "desc" },
-          { column: "id", direction: "desc" },
-        ],
-      },
-    );
-    const rows = existing.filter((r) => cardOf(r).key === key);
+    const rows = (await this.rowsFor(req)).filter((r) => cardOf(r).key === key);
     if (rows.some((r) => r.status === "open")) return "pending";
     const latest = rows.find((r) => r.status === "answered");
     if (latest) {
@@ -157,6 +151,37 @@ export class StateApprovals implements ApprovalPort {
       author_agent: req.agentId,
     });
     return "pending";
+  }
+
+  /**
+   * The approval rows a request is matched against, newest first: the session's own, plus,
+   * for a call that names a task, the rows of that task filed by the same agent for the same
+   * human in its earlier sessions (an answer given after a session ended is otherwise never
+   * found, ADR 0088). Another agent's row for the task, or one addressed to another human, is
+   * never this call's answer.
+   */
+  private async rowsFor(req: ApprovalRequest): Promise<HumanRequestRow[]> {
+    const order = {
+      orderBy: [
+        { column: "created_at", direction: "desc" as const },
+        { column: "id", direction: "desc" as const },
+      ],
+    };
+    const own = await this.store.humanRequest.list(
+      { session_id: req.sessionId, kind: "approval" },
+      order,
+    );
+    if (!req.taskId) return own;
+    const seen = new Set(own.map((r) => r.id));
+    const ofTask = (
+      await this.store.humanRequest.list({ task_id: req.taskId, kind: "approval" }, order)
+    ).filter(
+      (r) => !seen.has(r.id) && r.author_agent === req.agentId && r.human_id === req.humanId,
+    );
+    return [...own, ...ofTask].sort(
+      (a, b) =>
+        b.created_at.localeCompare(a.created_at) || (b.id > a.id ? 1 : b.id < a.id ? -1 : 0),
+    );
   }
 }
 
