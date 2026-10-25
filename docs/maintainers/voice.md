@@ -317,6 +317,50 @@ conversation session, `voice.session` and `voice.approval` audit rows, never aud
   by agents and safe to delete. Entries then carry `audioStored: true` and `audioFile`. The user
   WAV is written in the background so disk IO never delays the model call.
 
+### Real-audio run (phase 5 gate, D.8)
+
+The gate row "Voice first audio on real audio devices" needs push-to-talk turns spoken by a
+human into a real microphone, with the local providers and the live Haiku model.
+`scripts/voice-run.ts` (`pnpm voice:run <check|report>`) holds the two scripted halves; both
+refuse to run without `FORERUNNER_HOME`, so the run has its own config, store and vault
+profile (`--profile voice-run`) apart from the everyday install.
+
+1. `pnpm voice:run check`: Node, Python (`FORERUNNER_PYTHON` first, then the lookup above),
+   and the daemon's own registry (`buildVoiceRegistry` over an empty vault, so only local
+   providers can be picked) with every provider's status row and reason, the pair the daemon
+   would pick, and the install commands for what is missing (a venv under the home with
+   `pip install faster-whisper kokoro`; kokoro 0.9.4 needs Python 3.10 to 3.12). It installs
+   nothing. Exit 1 when either side has no local provider.
+2. `pnpm fr setup --non-interactive --profile voice-run` with `FORERUNNER_ANTHROPIC_KEY` in the
+   environment, then `pnpm fr daemon --port 8787`. The UI reads the token from
+   `<home>/runtime/daemon.json` and is started with `VITE_DAEMON_URL` and `VITE_DAEMON_TOKEN`
+   (`pnpm --filter @forerunner/ui dev`, `http://localhost:1420`). A normal Chromium browser
+   (Edge, Chrome) captures the microphone there: `localhost` is a secure context, the daemon's
+   CORS allows local origins, and `voice-capture.ts` uses `getUserMedia`; the Tauri shell is
+   not needed. Header **Talk** opens the panel; the panel's **Talk** starts a turn (the
+   browser asks for the microphone once), **Send** ends it. The global hotkey exists only in
+   the Tauri shell.
+3. One warm-up turn, then ten. The helpers start on first use (the Whisper model loads on the
+   first press, Kokoro on the first sentence, both download their weights the first time), so
+   the first turn of a daemon is a cold start.
+4. Stop the UI and the daemon (Ctrl+C), then `pnpm voice:run report --exclude-first 1`
+   (`--since <iso>`, default the last 24 h): one line per `voice.turn` row with the stages it
+   records (`endOfTurnMs`, `finalTranscriptMs`, `modelFirstTokenMs`, `firstAudioMs`, and the
+   diagnostics `firstSentenceMs`, `ttsFirstByteMs`), then n, median (as
+   `medianTotalToFirstAudio`) and p90 (nearest rank, as `/performance`) of
+   `totalToFirstAudioMs` against `MODE_DEFAULTS.voice_chat` (1200 ms), the stage medians and
+   `VOICE RESULT: n=<n> median=<ms> p90=<ms> target=<ms> <met|not met>` (met: the median within
+   the target, as the gate measures it). Typed turns and turns without first audio are listed
+   and left out. Exit 0 met, 2 not met, 1 refused.
+
+Recorded where: the `voice.turn` rows on the conversation session in
+`<home>/data/state.sqlite` (they hold `said` and `heard`; the report prints numbers, the
+source and error codes only, never the text or a message), the `voice.session` audit rows, the
+Haiku calls in the cost ledger; no audio unless `FORERUNNER_VOICE_STORE_AUDIO=1`. First audio
+is measured at the daemon's paced sink when the first TTS chunk is handed over, not at the
+speaker: the conversation panel does not play the voice session's `audio` frames (Known
+issues), so the human hears no reply during the run.
+
 ## How to change it
 
 - New provider: see `adding-a-voice-provider.md`.
@@ -413,6 +457,12 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
   row and switching it off is how a keyed provider is ruled out, and removing the row removes
   the exclusion with it. Making a never-installed provider unreachable would mean treating the
   catalog, not the row, as the grant; left as is and noted here.
+- The conversation panel (`ConversationPanel.tsx`) posts the microphone and polls
+  `GET /voice/sessions/:id` for the finished turn, but never subscribes to the session's
+  events, so the reply's `audio` frames are not played: a push-to-talk turn in the UI is
+  heard as text only. The latency report is unaffected (it is taken at the daemon's sink).
+  Playing them through the same Web Audio player as `/speak` is the fix.
+- `fr doctor` does not report voice; `scripts/voice-run.ts check` and `GET /voice/status` do.
 - A session already open keeps the providers it started with; a panel change applies to the
   next session only (by design: no provider swap mid-conversation).
 

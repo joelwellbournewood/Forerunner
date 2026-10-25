@@ -2098,7 +2098,8 @@ like the other EventSource routes: the loop's events, `voice.first_audio`, `voic
 a spoken, tapped or cancelled answer), `voice.turn` = done, `voice.stopped`; audio frames
 live only, 1000 other frames kept per session for a resume). Recorded: on the conversation
 session `voice.turn` (source, said, heard, chunks, audio stored, pending card id, the
-outcome's status, the latency stages) and `voice.approval` (the exact line, approved,
+outcome's status, the latency stages plus the diagnostics `firstSentenceMs` and
+`ttsFirstByteMs`, which `scripts/voice-run.ts report` prints per turn) and `voice.approval` (the exact line, approved,
 `blockedBy`, method, card, commands, the registry's `status` and `reason`) next to the
 `chat.*` rows; in `audit_log` `voice.session` (start with mode, language and provider names;
 stop) and `voice.approval` per decision (`allowed` only when the registry carried the answer

@@ -612,6 +612,10 @@ export class VoiceBridge {
             firstAudioMs: report.firstAudioMs,
             totalToFirstAudioMs: report.totalToFirstAudioMs,
             withinTarget: report.withinTarget,
+            // Diagnostics inside the first-audio stage: first delta -> first sentence, and
+            // sentence sent -> first TTS chunk (the real-audio run's report reads them).
+            firstSentenceMs: report.firstSentenceMs,
+            ttsFirstByteMs: report.ttsFirstByteMs,
           },
         }),
       )

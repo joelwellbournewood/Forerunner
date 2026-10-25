@@ -26,6 +26,7 @@
     "docs:schema": "tsx packages/state/scripts/generate-data-model-doc.ts",
     "secrets:scan": "node scripts/secret-scan.mjs",
     "gates:verify": "tsx scripts/gates-verify.ts",
+    "voice:run": "tsx scripts/voice-run.ts",
     "check": "pnpm lint && pnpm lint:paths && pnpm typecheck && pnpm test && pnpm docs:check && pnpm docs:links && pnpm secrets:scan",
     "state-api": "tsx services/state-api/src/main.ts",
     "runner": "tsx services/cloud-runner/src/main.ts",

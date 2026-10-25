@@ -477,6 +477,18 @@ proves nothing. `scripts/package-test-scripts.test.ts` pins the shape of every s
 that its test directory exists. `apps/ui` and `apps/approvals-web` keep their own vitest configs;
 `tests/e2e` runs the e2e project the same way.
 
+### Real-audio voice run (`scripts/voice-run.test.ts`)
+
+`scripts/voice-run.ts` (`pnpm voice:run check|report`, `voice.md`, "Real-audio run") checks the
+local voice providers before a human speaks the phase 5 turns and reads the `voice.turn` rows
+back afterwards. Its test, in the `unit` project, seeds a SQLite store in a temporary
+`FORERUNNER_HOME` and covers the per-turn lines and the summary with the `VOICE RESULT:` line,
+`--since` and the 24 h default, typed and warm-up turns left out, no transcript or error
+message in the output, the refusals (no home, a store outside it, a non-SQLite store, no store
+yet), one run as a script through `tsx`, the median and p90 against `medianTotalToFirstAudio`
+and `nearestRank`, and `check` over a stubbed registry and Python probe (both providers
+present, packages missing with the venv commands, `FORERUNNER_PYTHON`, no Python, old Node).
+
 ### Docs close-out (`scripts/closeout-docs.test.ts`)
 
 The requirements close-out for the maintainer documentation (spec P.1 to P.3, P.5 to P.14),

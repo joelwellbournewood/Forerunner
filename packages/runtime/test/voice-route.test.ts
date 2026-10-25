@@ -660,6 +660,12 @@ describe("voice routes on the composed daemon", () => {
     const row = (await eventRows("voice.turn")).find((r) => r.turn === turnNo);
     expect(row).toMatchObject({ source: "audio", said: "What is the status?" });
     expect((row?.latency as Json | undefined)?.endOfTurnMs).toBe(20);
+    // The diagnostics split the first-audio stage (the real-audio run's report reads them).
+    expect(l.ttsFirstByteMs).not.toBeNull();
+    expect(row?.latency).toMatchObject({
+      ttsFirstByteMs: l.ttsFirstByteMs,
+      firstSentenceMs: l.firstSentenceMs,
+    });
   });
 
   it("streams the events over SSE and stops at once", async () => {
