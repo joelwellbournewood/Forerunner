@@ -97,6 +97,62 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 - Build spend: about 8.9 million agent tokens over about nineteen sandbox agents on the
   subscription; no USD figure; nothing charged to an API key (COST.md).
 
+### Where to pick up (handover of 2026-10-25 evening, the session on the human's PC)
+Written 2026-10-25 ~18:10 UTC by the session that worked `docs/status/runbook-release-local.md`
+(head 7e95e39; CI run 40216729473 green). It supersedes the handover below where they differ.
+
+Done today: the live suite on the human's Windows PC under the human's caps (USD 10 per run,
+USD 80 in all), every file passing (run `2026-10-25T15:54:57.065Z`, 60 of 61; live-4 after its
+harness fix `2026-10-25T17:27:00.112Z`, 5 of 5), ledger 77b3fd8 (1,107 rows, USD 11.131482);
+the critic calibration live again (10/10 and 40/40 both ways); D.20 confirmed live and the
+Opus 5.5 fast price corrected to the published 8 / 40 (9f86bd4, b7f73cb); release.yml fixed so
+the update manifest is actually signed and the notes report signing truthfully (a787fd9,
+3f93dcf, e46c881, bb054b3); the release signing keys generated on the human's PC
+(`.release-keys/`, git-ignored there) and set as repository secrets (ANDROID_KEYSTORE_*,
+TAURI_SIGNING_*, UPDATE_SIGNING_KEY; WINDOWS_CERTIFICATE deliberately unset, the MSI ships
+unsigned); Firebase project `forerunner-f29da` with the Android app registered. Every code
+change was independently reviewed before it was pushed (verdicts 72->90, 84, 90).
+
+How a session works with this human's machine (learned today):
+- Keys, tokens and passwords never pass through a session: the human types them into
+  `.env.build` (git-ignored) or a console; scripts read them from files or stdin.
+- The cloud workspace cannot push git tags (proxy 403) or set Actions secrets; the desktop
+  app's Linux shell on the PC cannot reach GitHub and kills every process when a command
+  returns (3 min max); computer use cannot type into terminals. So anything long, any tag
+  push and anything with the key runs as a `.cmd` launcher in the human's Forerunner folder
+  (`C:\Users\Domino\Forerunner`), logging to a `.log` the session reads; launchers are
+  listed in `.git/info/exclude` there, not committed. Existing: `run-live.cmd`,
+  `finish-live.cmd`, `set-secrets.cmd`, `push-rc1.cmd`.
+- The human's decision of 2026-10-25: no automatic update check; an Updates menu entry and a
+  "Check for updates" button only; installs stay a human click; the project's update public
+  key `T4+qibk62TL/GuTszYxLstqgKDPTgNIYtXFAaJTwXaA=` (key id `26fae7f48427e5eb`) built in as
+  the default trusted key so friends' fresh installs accept official releases. In progress on
+  branch `wip/manual-update-check` (see its last commit for state); not merged.
+
+Open for v1.0.0 (gates.md "Release 1.0 criteria"; the human tags v1.0.0 only in words):
+1. The human runs `push-rc1.cmd` (tags 7e95e39 as `v1.0.0-rc.1`); watch `release.yml`, fix what
+   fails on this branch, record the run in gates.md phase 0 / criteria 3 and 5.
+2. Finish, review and merge the manual update check (above); then a new rc if release.yml
+   or the app changed.
+3. D.13 (a researcher session) and D.15 (tier 2 and 3 Opus critic reviews): no live test
+   covers them; write them in `tests/live` (offline dry runs first), run them through a launcher
+   under the human's caps, copy the figures into gates.md's response-time table.
+4. D.9: the composed chat turn's first token, four samples 641/807/1505/2453 ms, median
+   1156 ms over the 1 s target; try caching the tool definitions (prompt caching) with a test,
+   then measure live through a launcher; else the human decides.
+5. Human-dependent: real-audio voice run (Windows: ten push-to-talk turns; Linux needs a
+   machine with audio), the Firebase service account (then build the app's FCM wiring, R.6 and
+   K.8, ADR 0085 point 9), a dedicated mailbox with an app password (L.3; S.12 needs a runner
+   host), R.1 on the emulator or a phone with the signed rc APK, V.8 handover through a
+   launcher (`fr setup --non-interactive` reads the `FORERUNNER_*` names of `.env.build`; a
+   separate `--profile`; project from `fr sources add github_repo`; settings.handover.enabled
+   via the daemon's `PUT /projects/:id/settings`; autonomy 2 via `autonomy.set`).
+6. Release paperwork: CHANGELOG `[1.0.0]` with the P2 list of
+   `docs/status/reports/triage-2026-10-25.md`; requirement rows to done with their tests; the
+   nine criteria; COST.md; CI green on the final head; then ask the human for the v1.0.0 tag
+   and rotate the keys after it.
+7. Known flake: scenario 2's sent-log read (testing.md Known issues).
+
 ### Where to pick up (handover)
 Written 2026-10-25 by the orchestrating session after the day's 19 merges; it replaces the
 handover of 2026-10-24. The code is at a76e259; the rules stand: a failing test first, the
