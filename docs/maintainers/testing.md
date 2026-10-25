@@ -466,6 +466,17 @@ Other stand-ins: to be filled by the testenv items that build them.
 
 ## Tests
 
+### Per-package test scripts
+
+`pnpm --filter <package> test` runs `pnpm -w exec vitest run --project unit <dir>/test` for
+every package, service, `testenv` and `evals`: vitest from the workspace root with the package's
+own test directory as the path filter. The earlier form, `vitest run --project unit --dir test`
+inside the package, matched nothing (the root config's include globs are relative to the
+repository root) and passed vacuously with "No test files found"; a run that prints that line
+proves nothing. `scripts/package-test-scripts.test.ts` pins the shape of every such script and
+that its test directory exists. `apps/ui` and `apps/approvals-web` keep their own vitest configs;
+`tests/e2e` runs the e2e project the same way.
+
 ### Fake provider
 
 `pnpm vitest run --project unit testenv/test` (41 tests; with Vitest's project config,
