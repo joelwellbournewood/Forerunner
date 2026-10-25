@@ -4,6 +4,7 @@ import type {
   MemoryCommandPort,
 } from "@forerunner/commands";
 import {
+  type ConsolidationOptions,
   type ConsolidationReport,
   consolidate,
   createMemory,
@@ -914,6 +915,26 @@ export class MemoryLoop implements MemoryPort {
   }
 
   /**
+   * One scope's consolidation options. The approval request is a row of the state store; next
+   * to a private index (a shared state, ADR 0083) that store is the shared Postgres, so a
+   * private plan's lines name ids, counts and dates only and no private text leaves the PC
+   * (spec "never leave that PC", ADR 0002 "shown only to the owner"). In solo mode the one
+   * local store holds both and the previews stay.
+   */
+  private consolidationOptions(s: {
+    scope: MemoryScope;
+    ownerAgentId?: string | null;
+  }): ConsolidationOptions {
+    return {
+      scope: s.scope,
+      ownerAgentId: s.ownerAgentId ?? undefined,
+      clock: this.deps.clock,
+      ...this.deps.consolidation,
+      quoteText: !(s.scope === "agent_private" && this.deps.privateStore !== undefined),
+    };
+  }
+
+  /**
    * Report-only consolidation of every scope; the proposals go to the human as one approval
    * request (reused while one is open). Nothing is changed here.
    */
@@ -922,13 +943,7 @@ export class MemoryLoop implements MemoryPort {
     for (const s of await this.consolidationScopes()) {
       try {
         reports.push(
-          await consolidate(this.ctx, {
-            scope: s.scope,
-            ownerAgentId: s.ownerAgentId,
-            clock: this.deps.clock,
-            apply: false,
-            ...this.deps.consolidation,
-          }),
+          await consolidate(this.ctx, { ...this.consolidationOptions(s), apply: false }),
         );
       } catch (e) {
         this.logger.warn("consolidation report failed", {
@@ -1010,12 +1025,7 @@ export class MemoryLoop implements MemoryPort {
       }
       const staleScopes: string[] = [];
       for (const r of p.reports) {
-        const opts = {
-          scope: r.scope,
-          ownerAgentId: r.ownerAgentId ?? undefined,
-          clock: this.deps.clock,
-          ...this.deps.consolidation,
-        };
+        const opts = this.consolidationOptions(r);
         try {
           const now = await consolidate(this.ctx, { ...opts, apply: false });
           if (!sameProposals(r, now)) {

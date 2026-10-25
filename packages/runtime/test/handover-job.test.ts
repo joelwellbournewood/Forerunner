@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { join, SimulatedClock, safeSegment } from "@forerunner/platform";
-import type { AuditLogRow, TaskStatus } from "@forerunner/state";
+import type { AuditLogRow, LessonRow, LessonSearch, TaskStatus } from "@forerunner/state";
 import { type ScriptedReply, textReply, toolReply } from "@forerunner/testenv";
 import { afterEach, describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
@@ -226,6 +226,46 @@ const REPORT = [
 ].join("\n");
 
 describe("monthly handover test job (P.15)", () => {
+  it("proves the fresh agent's memory empty in the store the memory loop reads, not the state store alone", async () => {
+    // Next to a shared state the private rows live in the local index (ADR 0083), so the check
+    // consults the memory loop's lesson store; a row there for the new agent stops the run.
+    const w = await loopWorld();
+    const reportDir = tempDir("fr-handover-reports-");
+    const asked: LessonSearch[] = [];
+    const job = new HandoverJob({
+      store: w.store,
+      clock: w.clock,
+      humanId: w.human,
+      agentId: w.alice,
+      reportDir,
+      lessons: {
+        search: async (q) => {
+          asked.push(q);
+          return [{ id: "les_already_there" } as unknown as LessonRow];
+        },
+      },
+      runSession: async () => {
+        throw new Error("the session must not run when the fresh agent has lessons");
+      },
+    });
+    try {
+      const project = await w.store.project.mustGet(w.project);
+      await w.store.project.update(w.project, project.version, {
+        settings: { ...project.settings, handover: { enabled: true, seed: SEED } },
+      });
+      await expect(job.run(w.project)).rejects.toMatchObject({
+        code: "internal",
+        message: "a new agent row already has lessons",
+      });
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatchObject({ scope: "agent_private" });
+      const fresh = await w.store.agent.byName(w.human, "Handover 2026-10-20");
+      expect(asked[0]?.ownerAgentId).toBe(fresh?.id);
+    } finally {
+      await w.close();
+    }
+  });
+
   it("a fresh agent with no memory runs the seeded change alone; every stuck place becomes one docs task naming the files; the report reaches the inbox", async () => {
     const h = await harness(
       coderScript(

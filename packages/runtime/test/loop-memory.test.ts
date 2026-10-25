@@ -1,5 +1,6 @@
-import { estimateTokens } from "@forerunner/memory";
+import { estimateTokens, remember } from "@forerunner/memory";
 import { SimulatedClock } from "@forerunner/platform";
+import { openStore } from "@forerunner/state";
 import { describe, expect, it } from "vitest";
 import { ToolRegistry } from "../src/agent/tools.ts";
 import { SessionBudget } from "../src/enforcement/budget.ts";
@@ -31,6 +32,8 @@ const WINDOWS =
 const WINDOWS_DUP =
   "Run the Windows CI job before merging any change that touches file paths or path separators.";
 const VAULT = "Keep vault secret names in kebab case and never write their values into a log line.";
+const VAULT_DUP =
+  "Keep vault secret names in kebab case and never write their values into any log line.";
 
 /** A planner that keeps the brief text it was handed, so a test can read the lessons block. */
 function recordingPlanner(): Planner & { briefs: string[] } {
@@ -433,6 +436,77 @@ describe("memory in the loop", () => {
     // Idempotent: a second sync applies nothing.
     expect(await w.memory.syncApprovals()).toEqual({ applied: 0, skipped: 0, stale: 0 });
     await w.close();
+  });
+
+  it("with a shared state the private scope's consolidation request names ids only: no lesson text enters the shared store", async () => {
+    // Spec "never leave that PC", ADR 0002 "a private plan ... is shown only to the owner",
+    // ADR 0083 (amendment of 2026-10-25): the approval request is a row of the state store,
+    // which is the shared Postgres when a private index exists; a private lesson's text must
+    // not travel in its lines. The shared scope's lines keep their previews: that store is theirs.
+    const w = await loopWorld();
+    const index = await openStore({
+      url: "sqlite::memory:",
+      clock: w.clock,
+      sqlite: { foreignKeys: false },
+    });
+    const memory = new MemoryLoop({
+      store: w.store,
+      privateStore: index,
+      clock: w.clock,
+      root: w.memoryRoot,
+      humanId: w.human,
+    });
+    try {
+      await memory.record({
+        agentId: w.alice,
+        sessionId: "seed",
+        projectId: w.project,
+        lessons: [{ text: WINDOWS, tags: ["windows"], confidence: 0.8 }],
+      });
+      await index.lesson.add({
+        scope: "agent_private",
+        owner_agent_id: w.alice,
+        project_id: w.project,
+        text: WINDOWS_DUP,
+        source: "session:seed2",
+        tags: ["windows"],
+        confidence: 0.5,
+        hit_count: 0,
+        pinned: false,
+        status: "active",
+        embedding: [...memory.ctx.embedder.embed(WINDOWS_DUP)],
+        author_agent: w.alice,
+      });
+      for (const text of [VAULT, VAULT_DUP])
+        await remember(memory.ctx, { scope: "shared", text, tags: ["vault"] }, { noDedup: true });
+      const privateIds = (await index.lesson.list({ scope: "agent_private" })).map((r) => r.id);
+      expect(privateIds).toHaveLength(2);
+
+      const run = await memory.propose();
+      expect(run.proposals).toBe(2);
+      const row = await w.store.humanRequest.mustGet(run.requestId as string);
+      const stored = JSON.stringify({ why: row.why, steps: row.steps, card: row.change_card });
+      // The private plan: ids, hits, confidence and the threshold, never a word of the text.
+      expect(stored).not.toContain("Windows CI job");
+      for (const id of privateIds) expect(stored).toContain(id);
+      const mine = row.steps.find((s) => s.startsWith("agent_private: "));
+      expect(mine).toMatch(
+        /^agent_private: merge: keep \S+ \(hits \d+, confidence [\d.]+\); retire \S+ \(cosine >= /,
+      );
+      // The shared plan is unchanged: its lines quote the previews as before.
+      const ours = row.steps.find((s) => s.startsWith("shared: "));
+      expect(ours).toContain("Keep vault secret names");
+
+      // The answer still applies the private plan from the index.
+      await w.store.humanRequest.answer(row.id, row.version, "apply", w.human);
+      expect(await memory.syncApprovals()).toEqual({ applied: 1, skipped: 0, stale: 0 });
+      expect(await index.lesson.count({ scope: "agent_private", status: "retired" })).toBe(1);
+      expect(await w.store.lesson.count({ scope: "shared", status: "retired" })).toBe(1);
+      expect(await w.store.lesson.count({ scope: "agent_private" })).toBe(0);
+    } finally {
+      await index.close();
+      await w.close();
+    }
   });
 
   it("a declined consolidation changes nothing", async () => {

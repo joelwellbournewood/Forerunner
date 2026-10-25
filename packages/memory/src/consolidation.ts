@@ -29,6 +29,13 @@ export interface ConsolidationOptions {
   unusedAfterDays?: number;
   /** Retire lessons whose last use is more than this many days ago. Default 90. */
   staleAfterDays?: number;
+  /**
+   * Quote a preview of each lesson's text in the proposal lines and in a contradiction's
+   * `reason` (default). `false` names ids, counts and dates only: the runtime passes it for a
+   * private scope whose approval request is filed in a shared state store (ADR 0083, amendment
+   * of 2026-10-25), so no private text leaves the owner's PC.
+   */
+  quoteText?: boolean;
 }
 
 export interface MergeProposal {
@@ -123,6 +130,8 @@ export async function consolidate(
 ): Promise<ConsolidationReport> {
   const clock = opts.clock ?? ctx.clock;
   const cfg = { ...DEFAULT_CONSOLIDATION, ...opts };
+  // The text preview a proposal line carries, or nothing when the plan leaves the private store.
+  const quote = (text: string): string => (cfg.quoteText === false ? "" : ` "${preview(text)}"`);
   if (opts.scope === "agent_private" && !opts.ownerAgentId) {
     throw new ForerunnerError("validation", "private consolidation needs ownerAgentId");
   }
@@ -222,8 +231,8 @@ export async function consolidate(
       projectId,
     });
     report.proposals.push(
-      `merge: keep ${kept.id} "${preview(kept.text)}" (hits ${kept.hit_count}, confidence ${kept.confidence}${becomesGlobal ? ", becomes global" : ""}); retire ${losers
-        .map((l) => `${l.id} "${preview(l.text)}"`)
+      `merge: keep ${kept.id}${quote(kept.text)} (hits ${kept.hit_count}, confidence ${kept.confidence}${becomesGlobal ? ", becomes global" : ""}); retire ${losers
+        .map((l) => `${l.id}${quote(l.text)}`)
         .join(", ")} (cosine >= ${cfg.duplicateThreshold})`,
     );
   }
@@ -240,7 +249,8 @@ export async function consolidate(
       if (s < cfg.contradictionMin) continue;
       const label = polarityConflict(a.text, b.text);
       if (!label) continue;
-      const reason = `${label}: "${preview(a.text)}" vs "${preview(b.text)}"`;
+      const reason =
+        cfg.quoteText === false ? label : `${label}: "${preview(a.text)}" vs "${preview(b.text)}"`;
       report.contradictions.push({ a: a.id, b: b.id, reason, cosine: Math.round(s * 1000) / 1000 });
       report.proposals.push(
         `contradiction (flag only, not resolved): ${a.id} vs ${b.id}: ${reason}`,
@@ -259,8 +269,8 @@ export async function consolidate(
     report.retired.push(r.id);
     report.proposals.push(
       neverUsed
-        ? `retire: ${r.id} "${preview(r.text)}" never used, created ${r.created_at.slice(0, 10)}`
-        : `retire: ${r.id} "${preview(r.text)}" last used ${(r.last_used as string).slice(0, 10)}`,
+        ? `retire: ${r.id}${quote(r.text)} never used, created ${r.created_at.slice(0, 10)}`
+        : `retire: ${r.id}${quote(r.text)} last used ${(r.last_used as string).slice(0, 10)}`,
     );
   }
 

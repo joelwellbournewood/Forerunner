@@ -93,6 +93,48 @@ describe("consolidate", () => {
     expect(await w.files.exists(join(w.files.scopeRoot("shared"), "catalog.md"))).toBe(true);
   });
 
+  it("quoteText: false names ids only, for a plan whose request leaves the private store", async () => {
+    // ADR 0083 (amendment of 2026-10-25): a private plan filed in a shared state store carries
+    // no lesson text; the default keeps the previews for the human reading a local request.
+    const kept = await remember(w.ctx, { scope: "shared", text: TEXTS.windows, tags: ["windows"] });
+    const loser = await remember(w.ctx, {
+      scope: "shared",
+      text: TEXTS.windowsDup2,
+      tags: ["windows"],
+    });
+    const a = await remember(w.ctx, { scope: "shared", text: USE, tags: ["ci"] });
+    const b = await remember(w.ctx, { scope: "shared", text: AVOID, tags: ["ci"] });
+    const old = await remember(w.ctx, { scope: "shared", text: TEXTS.vault, tags: ["vault"] });
+    await w.clock.advance(61 * DAY_MS);
+
+    const bare = await consolidate(w.ctx, { scope: "shared", quoteText: false });
+    expect(bare.merged.map((m) => m.keptId)).toEqual([kept.lesson.id]);
+    expect(bare.contradictions.map((c) => c.reason)).toEqual(["use/avoid"]);
+    expect(bare.retired).toContain(old.lesson.id);
+    const lines = bare.proposals.join("\n");
+    for (const id of [kept.lesson.id, loser.lesson.id, a.lesson.id, b.lesson.id, old.lesson.id])
+      expect(lines).toContain(id);
+    for (const word of ["Windows", "flaky", "vault", '"']) expect(lines).not.toContain(word);
+    expect(bare.proposals).toContainEqual(
+      expect.stringMatching(
+        /^merge: keep \S+ \(hits 0, confidence [\d.]+\); retire \S+ \(cosine >= 0\.9\)$/,
+      ),
+    );
+    expect(bare.proposals).toContainEqual(
+      `contradiction (flag only, not resolved): ${a.lesson.id} vs ${b.lesson.id}: use/avoid`,
+    );
+    expect(bare.proposals).toContainEqual(
+      expect.stringMatching(/^retire: \S+ never used, created \d{4}-\d{2}-\d{2}$/),
+    );
+
+    // The default quotes a preview of each text, as the human's local request shows it.
+    const quoted = await consolidate(w.ctx, { scope: "shared" });
+    expect(quoted.proposals.join("\n")).toContain("Windows CI job");
+    expect(quoted.contradictions[0]?.reason).toMatch(/^use\/avoid: ".*" vs ".*"$/);
+    expect(quoted.merged).toEqual(bare.merged);
+    expect(quoted.retired).toEqual(bare.retired);
+  });
+
   it("flags contradictions without resolving them", async () => {
     const a = await remember(w.ctx, { scope: "shared", text: USE, tags: ["windows", "ci"] });
     const b = await remember(w.ctx, { scope: "shared", text: AVOID, tags: ["ci", "flaky"] });

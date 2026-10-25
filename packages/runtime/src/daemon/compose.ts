@@ -2330,6 +2330,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   });
   const handoverJob = new HandoverJob({
     store,
+    // The fresh agent's memory is checked where private rows live (the index, ADR 0083).
+    lessons: memory.ctx.repo,
     clock,
     humanId: human.id,
     agentId: agent.id,

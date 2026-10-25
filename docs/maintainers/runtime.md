@@ -913,7 +913,9 @@ calibrate [--force]`, `fr jobs handover <project> [--force]`, `fr jobs reports` 
   project; any project can carry it); day 1 at 07:00 local, `budget_usd` default 5, `seed`
   optional. `HandoverJob.run(projectId)` skips a project below autonomy 2 (such a session only
   files its plan), creates a new principal agent row `Handover <date>` (counting up on a
-  second same-day run; no lesson names it), files the seed (`settings.handover.seed`, validated
+  second same-day run; no lesson names it: the check reads `HandoverJobDeps.lessons`, the
+  memory loop's lesson store, which is the private index next to a shared state (ADR 0083), and
+  falls back to `store.lesson` only when none is passed), files the seed (`settings.handover.seed`, validated
   by `HandoverSeedSchema`, else `defaultHandoverSeed(date)`: a dated line at the end of
   `docs/runbook.md`, reachable only by reading README.md and the docs) as a ready task, and
   runs one session through `runSession`: in the daemon a second `SessionRunner` over the same
@@ -1114,7 +1116,9 @@ there and the shared store never receives one (the Postgres adapter refuses one 
 `MEMORY_SCOPE_VIOLATION`). Recall, record, the views, the routes and the consolidation all go
 through that one store. `RuntimeApp.privateMemory` is the index (null in solo mode, where the
 local store holds every scope); `ComposeOptions.privateIndexUrl` overrides the decision (tests
-force an index next to an in-memory state) and the index closes with the store. At session start
+force an index next to an in-memory state) and the index closes with the store. The cloud
+runner composes this same runtime on the shared Postgres URL and so opens its own index on the
+runner host (cloud-runner.md, Known issues; ADR 0083, amendment of 2026-10-25). At session start
 the runner asks `recall` with
 the state brief as the query under `settings.memory_token_budget` (default
 `DEFAULT_MEMORY_TOKEN_BUDGET`, 1,500 tokens); the block joins the planner's brief as data
@@ -1135,7 +1139,13 @@ critic loop and `MemoryLoop.record` itself all run it, a rejected candidate is n
 `quarantined`), and the human gets a `warning` message quoting it. Weekly consolidation is a
 scheduler entry (`scheduleMemoryConsolidation`, `MEMORY_CONSOLIDATION_AGENT_ID`;
 `startSession` routes it to `memory.propose()`): a report-only run per scope files one
-approval request (`change_card.key = "memory:consolidation"`, options `apply`/`skip`);
+approval request (`change_card.key = "memory:consolidation"`, options `apply`/`skip`). That
+request is a row of the state store, which is the shared Postgres next to a private index, so
+`consolidationOptions` passes `quoteText: false` for an `agent_private` report whenever the
+loop has a `privateStore`: the private plan's `steps` and `change_card.reports[].proposals`
+name ids, hits, confidence and dates and never a word of a private lesson (spec "never leave
+that PC", ADR 0002 "shown only to the owner", ADR 0083 amendment of 2026-10-25); in solo mode
+and for critic and shared scopes the lines quote the 67-character previews as before.
 `syncApprovals()` re-reports each scope and applies an answered one with `apply: true` only
 when the same lessons would still be merged, flagged and retired (`sameProposals`); a drifted
 scope is marked `stale` on the card and proposed again. The memory views (`list`, `edit`,
@@ -2675,7 +2685,10 @@ migration version, records a session's private lessons in the index only (the fi
 root as before) and critic lessons in the shared store, gives the principal its private lesson on
 recall and the critic none of it, and serves and edits the private scope through `/memory/scopes`,
 `/memory`, pin, edit and delete against the index; a plain `sqlite:` state has no index and keeps
-every scope in the one store.
+every scope in the one store. `loop-memory.test.ts` adds the shared-state consolidation case
+(ADR 0083 amendment): a `MemoryLoop` with a `privateStore` files the private scope's plan in the
+state store with ids, hits, confidence and the threshold and no word of the lesson texts, keeps
+the shared scope's previews, and the inbox answer still applies the private merge in the index.
 
 `intake.test.ts` (spec A.2, ADR 0055, through `composeRuntime` and the daemon routes on the
 fake provider, an in-memory git host over a bare repository): the proposal filed as one
@@ -3124,7 +3137,9 @@ drain runs it once, `refresh` adds and drops schedules before each tick.
 `calibrate()`, the dated report is written, the notification names the catch rate, the pass
 rate and the drift against the previous report, the audit row is written, a second run in the
 month is skipped unless forced, a run the budget refuses is reported failed with no report,
-and the settings parse with their defaults. `handover-job.test.ts` (P.15): a fresh principal
+and the settings parse with their defaults. `handover-job.test.ts` (P.15): the empty-memory
+check consults the `lessons` store it is given (a row there for the new agent stops the run
+before any session, `internal`); a fresh principal
 agent with no lessons and no memory port runs the seeded change alone on the sample
 repository with real file tools and hooks; the re-read, the failed read and the refused read
 become one docs task naming the files; the report reaches the inbox, a notification and a

@@ -40,6 +40,7 @@ import {
   ACTIVE_TASK_STATUSES,
   type AuditLogRow,
   type JsonObject,
+  type LessonRepo,
   type ProjectRow,
   type SessionStatus,
   type StateStore,
@@ -394,6 +395,12 @@ export interface HandoverJobDeps {
   runSession: (req: HandoverSessionRequest) => Promise<SessionResult>;
   /** `<data dir>/handover`. */
   reportDir: string;
+  /**
+   * Where the fresh agent's private lessons would be: the memory loop's lesson store, which is
+   * the local private index next to a shared state (ADR 0083). Default `store.lesson`, the
+   * right store in solo mode only.
+   */
+  lessons?: Pick<LessonRepo, "search">;
   notifier?: NotifierLike;
   /**
    * The human's time zone, read at every run: the once-a-month check is the local month, the
@@ -512,7 +519,7 @@ export class HandoverJob {
       kind: "principal",
       author_agent: this.deps.agentId,
     });
-    const lessons = await store.lesson.search({
+    const lessons = await (this.deps.lessons ?? store.lesson).search({
       scope: "agent_private",
       ownerAgentId: fresh.id,
     });
