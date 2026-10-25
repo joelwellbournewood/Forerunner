@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, type RunOptions, type RunResult, run } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
-import { GitOps, gitConfigEnv, redactToken } from "../src/githost/git.ts";
+import { GitOps, gitConfigEnv, redactToken, tokenHeaderKey } from "../src/githost/git.ts";
 
 const identity = { name: "Test", email: "test@example.test" };
 
@@ -120,12 +120,61 @@ describe("GitOps", { timeout: 120_000 }, () => {
     });
   });
 
-  it("reads the remote default branch and lists local branches by prefix", async () => {
+  it("scopes the token header to the remote's origin when one is given and reports a killed command as a timeout", async () => {
+    const calls: { argv: string[]; env: NodeJS.ProcessEnv }[] = [];
+    const ok: RunResult = {
+      code: 0,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      truncated: false,
+      timedOut: false,
+      durationMs: 1,
+    };
+    let reply: RunResult = ok;
+    const runner = async (argv: readonly string[], opts: RunOptions = {}): Promise<RunResult> => {
+      calls.push({ argv: [...argv], env: opts.env ?? {} });
+      return reply;
+    };
+    const token = "ghp_scopedtokenvalueXXXXXXXXXXXXXXXXXXXXXXXX"; // not-a-secret
+    const keysOf = (env: NodeJS.ProcessEnv) =>
+      [...Array(Number(env.GIT_CONFIG_COUNT ?? 0)).keys()].map((i) => env[`GIT_CONFIG_KEY_${i}`]);
+    // With an origin the entry is `http.<origin>/.extraheader`: git attaches it to URLs under
+    // that origin only, so an `insteadOf` rewrite or a remote on another host gets no token.
+    const scoped = new GitOps({
+      cwd: join(tmpdir(), "nope"),
+      auth: { token, origin: "http://127.0.0.1:1/ignored/path?x=1" },
+      runner,
+      timeoutMs: 1500,
+    });
+    await scoped.clone("http://127.0.0.1:1/acme/service.git");
+    const env = calls[0]?.env ?? {};
+    expect(keysOf(env)).toContain("http.http://127.0.0.1:1/.extraheader");
+    expect(keysOf(env)).not.toContain("http.extraheader");
+    expect(calls[0]?.argv.join(" ")).not.toContain(token);
+    expect(tokenHeaderKey("https://github.com")).toBe("http.https://github.com/.extraheader");
+    expect(tokenHeaderKey("HTTPS://GitHub.com:443/")).toBe("http.https://github.com/.extraheader");
+    expect(tokenHeaderKey(undefined)).toBe("http.extraheader");
+    for (const bad of ["github.com", "ssh://git@github.com", "", "not a url"]) {
+      expect(() => tokenHeaderKey(bad)).toThrow(/http\(s\)/);
+    }
+    // A command the runner killed at the wall-clock limit is `timeout`, naming the limit.
+    reply = { ...ok, code: null, signal: "SIGKILL", timedOut: true, durationMs: 1500 };
+    await expect(scoped.clone("http://127.0.0.1:1/acme/service.git")).rejects.toMatchObject({
+      code: "timeout",
+      message: expect.stringMatching(/clone timed out after 1500 ms/),
+      details: { timeoutMs: 1500 },
+    });
+  });
+
+  it("reads the remote default branch, the remote URL and lists local branches by prefix", async () => {
     const { url } = await bareRepo();
     const root = mkdtempSync(join(tmpdir(), "fr-wt-"));
     const g = new GitOps({ cwd: join(root, "c"), identity });
     await g.clone(url);
     expect(await g.remoteDefaultBranch()).toBe("main");
+    expect(await g.remoteUrl()).toBe(url);
+    expect(await g.remoteUrl("upstream")).toBeNull();
     await g.createBranch("forerunner/migration-2026-01-01", "origin/main");
     await g.createBranch("forerunner/migration-2026-02-01", "origin/main");
     await g.createBranch("other/branch", "origin/main");

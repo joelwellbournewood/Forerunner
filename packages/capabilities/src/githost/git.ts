@@ -21,6 +21,35 @@ export interface GitAuth {
    * written to the clone's config.
    */
   token?: string;
+  /**
+   * The origin (`scheme://host[:port]`) the token belongs to. When set, the entry is
+   * `http.<origin>/.extraheader`, which git attaches only to URLs under that origin: a remote
+   * on another host, or a `url.*.insteadOf` rewrite in the user's git config, gets no header.
+   * Without it the header goes to every http(s) remote the command reaches.
+   */
+  origin?: string;
+}
+
+/**
+ * The config key that carries the token: scoped to `origin` (normalised to its URL origin)
+ * when one is given, else the global `http.extraheader`. A non-http(s) origin is `validation`.
+ */
+export function tokenHeaderKey(origin?: string): string {
+  if (origin === undefined) return "http.extraheader";
+  let scope: URL | null = null;
+  try {
+    scope = new URL(origin);
+  } catch {
+    scope = null;
+  }
+  if (!scope || (scope.protocol !== "http:" && scope.protocol !== "https:")) {
+    throw new ForerunnerError(
+      "validation",
+      `a token's origin must be an http(s) URL: ${origin.slice(0, 80)}`,
+      { details: { origin: origin.slice(0, 80) } },
+    );
+  }
+  return `http.${scope.origin}/.extraheader`;
 }
 
 export interface GitIdentity {
@@ -101,14 +130,18 @@ export class GitOps {
     if (this.opts.auth?.token) {
       Object.assign(
         env,
-        gitConfigEnv(env, "http.extraheader", `AUTHORIZATION: bearer ${this.opts.auth.token}`),
+        gitConfigEnv(
+          env,
+          tokenHeaderKey(this.opts.auth.origin),
+          `AUTHORIZATION: bearer ${this.opts.auth.token}`,
+        ),
       );
     }
     const runner = this.opts.runner ?? run;
     try {
       return await runner([...this.base(), ...args], {
         cwd: creates ? undefined : this.opts.cwd,
-        timeoutMs: this.opts.timeoutMs ?? 5 * 60 * 1000,
+        timeoutMs: this.timeoutMs(),
         env,
         allowFailure: true,
         ...extra,
@@ -127,7 +160,17 @@ export class GitOps {
     }
   }
 
+  private timeoutMs(): number {
+    return this.opts.timeoutMs ?? 5 * 60 * 1000;
+  }
+
   private must(r: RunResult, what: string): RunResult {
+    if (r.timedOut) {
+      // The runner killed the process tree at the wall-clock limit (a clone that never answers).
+      throw new ForerunnerError("timeout", `git ${what} timed out after ${this.timeoutMs()} ms`, {
+        details: { timeoutMs: this.timeoutMs() },
+      });
+    }
     if (r.code !== 0) {
       const detail = redactToken(`${r.stderr}\n${r.stdout}`.trim(), this.opts.auth?.token);
       throw new ForerunnerError("provider_error", `git ${what} failed: ${detail.slice(-800)}`, {
@@ -180,6 +223,13 @@ export class GitOps {
       );
     }
     return ref.slice(remote.length + 1);
+  }
+
+  /** The URL of `remote` as the checkout's config has it; null when there is no such remote. */
+  async remoteUrl(remote = "origin"): Promise<string | null> {
+    const r = await this.git(["remote", "get-url", remote]);
+    if (r.code !== 0 && !r.timedOut) return null;
+    return this.must(r, `remote get-url ${remote}`).stdout.trim();
   }
 
   /** Local branch names under `prefix`, sorted by name. */
