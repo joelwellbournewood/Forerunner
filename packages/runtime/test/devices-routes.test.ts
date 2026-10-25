@@ -18,6 +18,7 @@ import {
   RevokeDeviceView,
 } from "../src/devices/index.ts";
 import { createDeviceRoutes } from "../src/devices/routes.ts";
+import { SHARED_SECRET_AUDIT } from "../src/secrets/shared-grants.ts";
 import { ScriptedProvider } from "./helpers.ts";
 
 silenceSqliteExperimentalWarning();
@@ -284,6 +285,41 @@ describe("device routes over the state service", () => {
     expect((await app.fetch(json("POST", `/devices/${bobs.id}/revoke`))).status).toBe(403);
     expect((await store.device.get(bobs.id))?.revoked).toBe(false);
     expect((await app.fetch(json("POST", "/devices/dev_nope/revoke"))).status).toBe(404);
+
+    // Spec S.13 with R.2: revoking Ada's other PC drops the shared-secret copies wrapped to
+    // it from every open grant; the copy for this PC stays, and so does the grant.
+    const laptop = await store.device.register({
+      owner_human_id: ada,
+      name: "Ada's laptop",
+      platform: "linux",
+      public_key: ["pk-", "L".repeat(40)].join(""), // not-a-secret
+      kind: "desktop",
+      wrap_public_key: "x".repeat(44),
+    });
+    const alice = await store.agent.insert({ name: "Alice", owner_human_id: ada });
+    const blob = {
+      v: 1,
+      ciphertext: "Y3Q=",
+      tag: "dGFn",
+      iv: "aXY=",
+      salt: "cw==",
+      ephemeralPublicKey: "ZQ==",
+    };
+    const grant = await store.secretGrant.propose({
+      name: "org_deploy_token",
+      owner_human_id: bob.id,
+      agent_ids: [alice.id],
+      required_human_ids: [],
+      blobs: [
+        { agent_id: alice.id, device_id: laptop.id, blob },
+        { agent_id: alice.id, device_id: "dev_pc", blob },
+      ],
+    });
+    expect((await app.fetch(json("POST", `/devices/${laptop.id}/revoke`))).status).toBe(200);
+    const after = await store.secretGrant.mustGet(grant.id);
+    expect(after.status).toBe("active");
+    expect(after.blobs.map((b) => b.device_id)).toEqual(["dev_pc"]);
+    expect(await store.auditLog.list({ tool: SHARED_SECRET_AUDIT.blobsDropped })).toHaveLength(1);
   });
 });
 

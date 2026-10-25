@@ -2030,12 +2030,41 @@ export function defineStateSuite(target: SuiteTarget): void {
           name: "own_token",
           owner_human_id: s.human.id,
           agent_ids: [s.alice.id],
-          blobs: [{ agent_id: s.alice.id, device_id: "ada-pc", blob }],
+          blobs: [
+            { agent_id: s.alice.id, device_id: "ada-pc", blob },
+            { agent_id: s.alice.id, device_id: "ada-laptop", blob },
+          ],
         });
         expect(own.status).toBe("active");
         expect((await store.secretGrant.blobFor("own_token", s.alice.id, "ada-pc"))?.grant.id).toBe(
           own.id,
         );
+        // A revoked install's copies go (spec R.2 with S.13): every pending or active grant
+        // drops the blobs made for that device and keeps the rest; ended grants hold none.
+        const third = await store.secretGrant.propose({
+          name: "org_deploy_token",
+          owner_human_id: s.human.id,
+          agent_ids: [s.bob.id],
+          required_human_ids: [s.human2.id],
+          blobs: [{ agent_id: s.bob.id, device_id: "ada-laptop", blob }],
+        });
+        const dropped = await store.secretGrant.dropBlobsForDevice("ada-laptop");
+        expect(dropped.map((g) => g.id).sort()).toEqual([own.id, third.id].sort());
+        expect((await store.secretGrant.mustGet(own.id)).blobs.map((b) => b.device_id)).toEqual([
+          "ada-pc",
+        ]);
+        expect(await store.secretGrant.mustGet(third.id)).toMatchObject({
+          status: "pending",
+          blobs: [],
+        });
+        expect(
+          await store.secretGrant.blobFor("own_token", s.alice.id, "ada-laptop"),
+        ).toBeUndefined();
+        expect((await store.secretGrant.blobFor("own_token", s.alice.id, "ada-pc"))?.grant.id).toBe(
+          own.id,
+        );
+        expect(await store.secretGrant.dropBlobsForDevice("ada-laptop")).toEqual([]);
+        expect(await store.secretGrant.dropBlobsForDevice("nobody")).toEqual([]);
       });
 
       it("budget windows move ok -> warn80 -> stopped and a zero cap never stops", async () => {

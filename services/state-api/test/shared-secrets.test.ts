@@ -418,6 +418,69 @@ describe("shared secrets through the state service", () => {
     expectNoValue(await everything());
   });
 
+  it("a revoked install loses its wrapped copies: the desktop's revoke of Bob's PC drops its blob from the active grant, the service refuses to serve it, and the next proposal does not target it", async () => {
+    const bobLaptop = await install(h.seed.bob.id, "bob-laptop");
+    const { grant } = await propose();
+    const card = await bobCard();
+    await bobPhone.post(
+      `/requests/${card.id}/answer`,
+      { version: card.version, answer: "approve" },
+      { biometric: true },
+    );
+    expect(await resolverFor(bobPc, h.seed.bobAgent.id).get(NAME)).toBe(value);
+    expect(await resolverFor(bobLaptop, h.seed.bobAgent.id).get(NAME)).toBe(value);
+    // Settings -> Devices -> Revoke on Bob's other PC: the daemon calls this route.
+    const revoked = await h.admin.post(
+      `/devices/${bobPc.device.id}/revoke`,
+      {},
+      { headers: { "x-forerunner-install": "bob-laptop" } },
+    );
+    expect(revoked.status).toBe(200);
+    const row = await h.store.secretGrant.mustGet(grant.id);
+    expect(row.status).toBe("active");
+    expect(row.blobs.map((b) => b.device_id)).toEqual([bobLaptop.device.id]);
+    // Nothing for the revoked install, even over the wire; the laptop's copy still works.
+    const served = await h.admin.get(
+      `/secrets/shared/blob?name=${NAME}&agentId=${h.seed.bobAgent.id}&deviceId=${bobPc.device.id}`,
+      { headers: { "x-forerunner-install": "bob-pc" } },
+    );
+    expect(served.status).toBe(403);
+    expect((await json(served)).code).toBe("secret_not_granted");
+    expect(await resolverFor(bobPc, h.seed.bobAgent.id).get(NAME)).toBeNull();
+    expect(await resolverFor(bobLaptop, h.seed.bobAgent.id).get(NAME)).toBe(value);
+    const dropped = await h.store.auditLog.list({ tool: SHARED_SECRET_AUDIT.blobsDropped });
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]).toMatchObject({ human_id: h.seed.bob.id, allowed: true });
+    expect(dropped[0]?.input_summary).toContain(bobPc.device.id);
+    expect(dropped[0]?.input_summary).toContain("bob-laptop");
+    // The owner re-shares: the revoked PC is no wrap target, and a blob made for it is refused.
+    const again = await propose("laptop only");
+    expect(again.targets.map((t) => t.deviceId)).toEqual([bobLaptop.device.id]);
+    const stale = await h.admin.post("/secrets/shared", {
+      ownerHumanId: h.seed.ada.id,
+      name: NAME,
+      agentIds: [h.seed.bobAgent.id],
+      blobs: [
+        {
+          agentId: h.seed.bobAgent.id,
+          deviceId: bobPc.device.id,
+          blob: wrapSecret(value, bobPc.key.publicKey, {
+            name: NAME,
+            ownerHumanId: h.seed.ada.id,
+            agentId: h.seed.bobAgent.id,
+            deviceId: bobPc.device.id,
+          }),
+        },
+      ],
+    });
+    expect(stale.status).toBe(400);
+    // Revoking it again drops nothing more and is still 200.
+    await h.clock.advance(1_000);
+    expect((await h.admin.post(`/devices/${bobPc.device.id}/revoke`, {})).status).toBe(200);
+    expect(await h.store.auditLog.list({ tool: SHARED_SECRET_AUDIT.blobsDropped })).toHaveLength(1);
+    expectNoValue(await everything());
+  });
+
   it("two-profile round trip over HTTP: Ada proposes, Bob approves, Bob's install unwraps with its own key and nothing but ciphertext crossed the service", async () => {
     const { grant } = await propose();
     const card = await bobCard();
