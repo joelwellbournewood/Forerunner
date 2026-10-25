@@ -2,15 +2,23 @@
  * HTTP routes for the UI (Settings -> Capabilities -> Email): settings per agent, the sent log,
  * pause/resume, marker rotation and the command audit. The routes are described as a table and
  * mounted on any Hono-compatible app through a minimal structural interface, so this package
- * needs no dependency on hono; the orchestrator does `createEmailRoutes(deps, new Hono())` and
- * mounts the result. Every mutation is recorded as an audit row, and so is every refusal of
- * the owner check (an `email.settings` row with `allowed = false`), the way the policy records
- * a blocked send; a refusal stands whether or not its row could be written.
+ * needs no dependency on hono; the daemon iterates `emailRouteTable(deps)` and adapts each
+ * handler to Hono's context (`createEmailRoutes(deps, app)` mounts the same table on a
+ * structural app). Every mutation is recorded as an audit row, and so is every refusal of the
+ * owner check and of a mode change sent to the raw route (an `email.settings` row with
+ * `allowed = false`), the way the policy records a blocked send; a refusal stands whether or
+ * not its row could be written. The sending mode itself is the command registry's
+ * (`modeChangeCommand`): a high-risk change with a card and a device confirmation.
  */
 import { type Clock, ForerunnerError, log } from "@forerunner/platform";
 import type { AuditLogRepo, JsonObject } from "@forerunner/state";
 import { EMAIL_SETTINGS_TOOL, type SentLog } from "./sent-log.ts";
-import type { AgentEmailConfigPatch, EmailSettingsStore, IdentityPort } from "./types.ts";
+import {
+  type AgentEmailConfigPatch,
+  EMAIL_MODES,
+  type EmailSettingsStore,
+  type IdentityPort,
+} from "./types.ts";
 
 const logger = log("capabilities:email:routes");
 
@@ -65,10 +73,23 @@ export interface EmailRouteDeps {
    * identifies nobody (no `humanFor`: a single-user daemon) applies no owner check.
    */
   identity?: Pick<IdentityPort, "lookup">;
+  /**
+   * The registry command a sending-mode change goes through (the daemon passes
+   * `"email.mode.set"`). A mode change is a high-risk permission change (spec Q, "Confirmation
+   * by risk": a change card, then a confirmation on a paired device, one change log row with
+   * undo), which this route cannot provide. With the option set, a `PUT` whose `settings.mode`
+   * is a valid mode other than the stored one is refused (403 `tool_not_allowed`,
+   * `details.reason: "mode_change_needs_command"`, the command named) as an audited refusal,
+   * and nothing in the body is written; the stored mode in the body is no change. A host
+   * without a registry leaves it unset and the table serves the mode as before.
+   */
+  modeChangeCommand?: string;
 }
 
 /** Why the owner check refused a request; `denied_reason` of the audit row and `details.reason`. */
 export type EmailOwnerRefusal = "identity_port_missing" | "not_owner";
+/** Every refusal the routes audit: the owner check's, and a mode change sent to the raw route. */
+export type EmailRouteRefusal = EmailOwnerRefusal | "mode_change_needs_command";
 
 export function errorStatus(e: ForerunnerError): number {
   switch (e.code) {
@@ -119,7 +140,7 @@ export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
     c: EmailRouteContext,
     agentId: string,
     action: string,
-    reason: EmailOwnerRefusal,
+    reason: EmailRouteRefusal,
   ): Promise<void> => {
     if (!deps.audit) return;
     const human = deps.humanFor?.(c) ?? null;
@@ -150,11 +171,14 @@ export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
     c: EmailRouteContext,
     agentId: string,
     action: string,
-    reason: EmailOwnerRefusal,
+    reason: EmailRouteRefusal,
     message: string,
+    extra: JsonObject = {},
   ): Promise<ForerunnerError> => {
     await recordRefusal(c, agentId, action, reason);
-    return new ForerunnerError("tool_not_allowed", message, { details: { agentId, reason } });
+    return new ForerunnerError("tool_not_allowed", message, {
+      details: { agentId, reason, ...extra },
+    });
   };
   /**
    * The signed-in human must own the agent. A mount that identifies humans (`humanFor`) but
@@ -246,6 +270,30 @@ export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
         if (body.settings && typeof body.settings === "object") patch.settings = body.settings;
         if (body.commands && typeof body.commands === "object") patch.commands = body.commands;
         const before = await deps.settings.get(agentId);
+        // The mode is the registry's to change (spec Q: high risk, a card and a device
+        // confirmation): a valid mode other than the stored one is refused here, so no client
+        // skips the card through the raw route. An invalid value falls through to the
+        // schema's 400; the stored mode in the body is no change.
+        const requested = patch.settings?.mode;
+        if (
+          deps.modeChangeCommand &&
+          typeof requested === "string" &&
+          (EMAIL_MODES as readonly string[]).includes(requested) &&
+          requested !== before.settings.mode
+        ) {
+          throw await refusal(
+            c,
+            agentId,
+            "update",
+            "mode_change_needs_command",
+            `the email mode is a high-risk change: it is set with the ${deps.modeChangeCommand} command (a change card, then a confirmation on a paired device), not through this route; nothing was changed`,
+            {
+              command: deps.modeChangeCommand,
+              modeBefore: before.settings.mode,
+              modeRequested: requested,
+            },
+          );
+        }
         const next = await deps.settings.update(agentId, patch, {
           authorHuman: deps.humanFor?.(c) ?? null,
         });
