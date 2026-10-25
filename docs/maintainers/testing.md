@@ -1436,11 +1436,13 @@ names for the SDK path, `LIVE_SDK_CODER_OVERRIDES`), `src/harness.ts` (`liveProv
 `composeLive()` through `composeRuntime`, the fake git host, the audit sink, the subscription
 composition, `settleSubscriptionRuns`, `scrubHostSessionEnv`), `src/tasks.ts` (the three
 phase 1 tasks and the kill task, shared by both halves), `src/dry-run.ts` (fake credentials and
-the fake ladder priced like the real one), `src/stats.ts`, `src/report.ts` (`reportDir`,
+the fake ladder priced like the real one), `src/estimate.ts` (the pre-run cost estimate and
+`preflight`, below), `src/stats.ts`, `src/report.ts` (`reportDir`,
 `writeReport`, `readPhase1Evidence`); the tests under `test/`: `env`, `budget`, `metered`,
-`harness` (the dry runs of both halves; on under the package's own `test` script, which
-`ci.yml` runs on both OS, step "Live harness offline tests") and the four
-`live-*.live.test.ts` files (opt-in).
+`estimate`, `harness` (the dry runs of both halves; on under the package's own `test` script,
+which `ci.yml` runs on both OS, step "Live harness offline tests") and the six
+`live-*.live.test.ts` files (opt-in; `live-6` and `live-7` also carry their own dry run, which
+runs in every mode, so CI's offline step runs it too).
 
 ### How it works
 
@@ -1510,7 +1512,7 @@ margin covers that under-count.
 **A run** is one vitest invocation: `vitest.config.ts` mints `FORERUNNER_LIVE_RUN` once (ISO
 time, or the value already in the environment) and hands it to every file; files run one after
 another in path order (`live-1-phase1`, `live-2-timing`, `live-3-phase3`,
-`live-4-subscription`), so the cheap halves come first and the ledger is never written from
+`live-4-subscription`, `live-6-researcher`, `live-7-critic-tiers`), so the cheap halves come first and the ledger is never written from
 two workers at once. `--mode live` (the
 `test:live` script) sets `FORERUNNER_LIVE=1` for the workers; without it every live case is
 `it.skipIf`'d and the describe title carries the reason. The config also honours
@@ -1623,6 +1625,56 @@ provider (`modelCallMs`), both as `n`, min, median, p90, max and mean. Reports:
 `calibration-<date>.json` from the critic package and `phase3-live.json` (which also carries
 every metered call with its `at` and `durationMs`, so any other derivation can be recomputed).
 
+**Pre-run estimate** (`src/estimate.ts`, used by `live-6` and `live-7`). Before its first
+call a file prices its planned calls from the billing package's table (`estimateSpend`: each
+planned shape's input tokens at the model's dearest input rate, the cache-write price, and its
+expected output at the output price, the shape `LiveBudget.estimateFor` uses) and states a
+ceiling: the most the hooks let it spend (its session caps and review budgets). `preflight`
+prints one line with the expectation, the ceiling, each planned shape and what the ledger has
+left, and throws `budget_exceeded` ("refused to start") when the ceiling would take the ledger
+over the live budget or the run over its per-run cap; that fails the file's `beforeAll`, so no
+call is made. The ceiling, not the expectation, is checked. No reservation is taken; the
+per-call gate still applies to every call after it.
+
+**Researcher, D.13** (`live-6-researcher.live.test.ts`): one researcher task through the
+composed runtime exactly as the phase 1 half runs a coder task (`composeLive`, the PR executor,
+the tier 1 critic), on `researcher-001` of the registry's researcher eval set (the Q2 uptime
+question): its fixture `docs/status-q2.md` is seeded into the sample repository, so the run
+reads local files only. The registry copy gives the researcher the three built-in file tools
+and small caps (`LIVE_RESEARCHER_OVERRIDES` in `src/registry.ts`: USD 0.50, 16 turns, 10
+minutes; the registry's 40 minutes would outlast the 30 minute test timeout) and keeps its
+default tier and effort (Sonnet, high), which is what the row measures. Task budget USD 0.30
+(the eval task's own), session cap USD 1. Measured from the researcher's Run row and its run
+events: wall time, time to first token, model calls and each call's first token, tokens, USD;
+and the whole session (tier 1 review included) from the metered calls. Asserted: the run is on
+the registry default (`modelIdFor(default_tier)`, `default_effort`, both equal to
+`MODE_DEFAULTS.researcher`), completed, did not time out, took no longer than the specialist's
+timeout, cost no more than the task budget, the session stayed under its cap with no refused
+or failed call, and `answer.md` is on the PR branch. The eval's mechanical checks over that
+answer are recorded, not asserted (answer quality is the critic calibration's gate). Estimate:
+expected about USD 0.28, ceiling USD 1.00. Report `researcher-live.json`; the line for the
+D.13 row is printed and kept as `summaryLine`.
+
+**Critic tiers 2 and 3, D.15** (`live-7-critic-tiers.live.test.ts`): the phase 3 world
+(`gateWorld` with the metered provider as the critic's) and the real `CriticService`, four
+reviews of `coder-001` from the coder eval set the phase 3 half calibrates on: clean and
+seeded at tier 2, then at tier 3. The evidence is `calibrate()`'s (`evidenceFor` over the
+eval runner's result with the expected-output driver), the review budget the eval task's own
+(USD 0.50), the time limit the tier's deep-review timeout (10 minutes,
+`DEFAULT_DEEP_REVIEW_TIMEOUT_MS`), the hooks' session cap the four budgets together. A
+pass-through provider (`RequestLog`) records the model and effort of every request the critic
+sends. Measured per review: wall time of the review call (timed by the harness: the world's
+clock is simulated), the eval runner's preparation separately, the first call's time to first
+token, model calls and durations, tokens, USD, verdict, the model's own verdict before the
+rules, grade, confidence, the rule adjustments. Asserted: the pick and every request are on the
+tier table's model and effort (Opus; high at tier 2, max at tier 3), the review completed with
+a verdict, inside its time limit and its budget, with no refused or failed call; tier 3 ends
+`human` (verdict rule 4, H.2). The calibration's per-variant reading (seeded caught = not
+accept, clean passed = accept) is recorded and logged as a soft check, never failed: the gate
+(H.7) is a rate over the set, which one review per variant cannot decide. Estimate: expected
+about USD 0.68, ceiling USD 2.00. Report `critic-tiers-live.json`; one line per review is
+printed and kept as `summaryLines`.
+
 ### Measured on 2026-10-20
 
 Three runs, USD 3.428238 over 342 ledger rows, no refusal, no 80% warning; every figure in
@@ -1710,7 +1762,14 @@ FORERUNNER_LIVE_REPORT_DIR=<dir> pnpm --filter @forerunner/live test:live   # ke
 FORERUNNER_LIVE_BUDGET_USD=100 FORERUNNER_LIVE_RUN_CAP_USD=15 ...            # the caps (these are the defaults)
 pnpm --filter @forerunner/live test:live -t '^(?!.*full 40-task run)'      # everything but the 2 USD full calibration
 pnpm --filter @forerunner/live typecheck       # tsc over the package alone (the root tsconfig.node.json globs it too)
+pnpm --filter @forerunner/live exec vitest run --mode live test/live-6-researcher.live.test.ts test/live-7-critic-tiers.live.test.ts   # D.13 and D.15 only
 ```
+
+The last line runs only the researcher and the critic tier files, live, from the repository
+root, on Windows and Linux alike (`--mode live` sets `FORERUNNER_LIVE=1` through
+`vitest.config.ts`, so no shell-specific variable syntax is needed; both files are one run for
+the per-run cap). Their dry runs run first in each file; either file alone works the same way.
+Expected spend about USD 0.96 for both, at most USD 3.00 (the ceilings `preflight` checks).
 
 The key is read from `.env.build` at the repository root (`FORERUNNER_ANTHROPIC_KEY`,
 `FORERUNNER_ANTHROPIC_WORKSPACE_ID`), or from the environment; the subscription half also
@@ -1752,7 +1811,16 @@ is `pnpm --filter @forerunner/live test`, which skips every live case).
 
 ### Tests
 
-`pnpm --filter @forerunner/live test`: 47 unit tests over 5 files (parser, quoted values with
+`pnpm --filter @forerunner/live test`: 53 tests over 8 files, 50 unit tests in 6 files and
+the 3 dry-run cases of `live-6` and `live-7` (the pre-run estimate, `estimate.test.ts`: the
+planned shapes priced at the cache-write and output rates from the billing table, an unknown
+model refused, the ceiling never below the expectation, a file that fits started and one over
+the per-run cap or over the live budget refused before any call, with no reservation and no
+recorded refusal; the researcher dry run: one `researcher-001` session on a scripted provider
+through the PR executor, on the registry default, `answer.md` on the PR branch passing the
+eval's mechanical checks, and the preflight both ways; the critic tiers dry run: four reviews
+on `fake-opus` at high and max, every request recorded with that model and effort, tier 3
+ending `human` with the scripted verdict kept as the model's own; and the parser, quoted values with
 trailing comments, credential sources and the subscription token from the file or the
 environment, its redaction and its absence from the description; ledger round trip and
 validation, `subscription` rows kept with their kind and note and adding nothing to the totals
@@ -1780,7 +1848,7 @@ refusal that surfaces as a failed task; the dry run of the subscription half on 
 environment and nowhere else, `PreToolUse` denying a path outside the worktree, the Run row on
 the subscription source, `subscription` store rows, the key's ledger untouched, the USD 0 spend
 row with the note settled once, the audit row, the host-session scrub and the note of a killed
-run). The 14 live cases in the four `live-*` files are reported as skipped without
+run). The 16 live cases in the six `live-*` files are reported as skipped without
 `FORERUNNER_LIVE=1` (the subscription file also without a token, with that reason). No network,
 no Docker, no Postgres; Windows and Linux (paths through `@forerunner/platform`, temp roots
 under `os.tmpdir()`). CI runs the script on both OS (`ci.yml`, step "Live harness offline
@@ -1845,7 +1913,15 @@ tests", `pnpm --filter @forerunner/live test`), where every live case skips visi
   (fake `query`) leaves it alone, and `hostSessionEnv: "keep"` turns it off.
 - The registry copy still narrows the coder's caps and, on the API-key half, its tools to the
   three built-ins (ADR 0040 item 5); since ADR 0043 the loop driver maps `cc:` names itself,
-  so the tool rewrite is a choice of the harness, no longer a workaround.
+  so the tool rewrite is a choice of the harness, no longer a workaround. The researcher's copy
+  (`LIVE_RESEARCHER_OVERRIDES`) does the same and also drops `cc:WebFetch`/`cc:WebSearch`;
+  its 10 minute timeout is what `live-6` asserts against, not the registry's 40 minutes.
+- `live-6` and `live-7` have not been run live yet: no D.13 or D.15 number exists until a
+  human runs them with the key. One task and one review per variant and tier are samples, not
+  a distribution; the tier 2 verdict check is soft for that reason (see the D.15 paragraph).
+- `live-7` builds the review evidence with `calibrate()`'s own `evidenceFor` and the eval
+  runner, but calls `CriticService.review` itself, because `calibrate()` returns only the
+  verdict and grade and the row needs the model's verdict before the tier 3 sign-off rule.
 
 ### Requirement IDs covered
 
@@ -1853,7 +1929,10 @@ I.1 and I.5 (the live budget and the per-run cap enforced in code before each ca
 warning; subscription usage as a plan share on the SDK path, the API-equivalent rows under the
 task and session caps), D.9 (text chat first token measured live on Haiku), D.10, D.11, D.14
 (measured totals against their targets), D.12 (coder run durations and costs under the task
-budget, on the loop driver and on the Agent SDK), D.19 (time to first token and total time
+budget, on the loop driver and on the Agent SDK), D.13 (the researcher's run on its registry
+default within the task budget and timeout, `live-6`), D.15 (critic reviews at tiers 2 and 3
+on Opus at high and max within the review budget and the deep-review timeout, `live-7`; tier
+3 ending in a human sign-off, H.2), D.19 (time to first token and total time
 recorded per run), H.7 (calibration on the live critic), E.5 (session end with usage recorded
 on both billing sources), S.1 and S.3 (every live call audited; the hooks as PreToolUse and
 PostToolUse on the SDK path; the key and the subscription token by reference in the vault,

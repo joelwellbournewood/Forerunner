@@ -28,6 +28,22 @@ export const LIVE_CODER_OVERRIDES: SpecialistOverrides = {
 };
 
 /**
+ * The researcher for the D.13 timing run (`live-6-researcher`): the in-process file tools (the
+ * registry's `cc:Read`/`cc:Grep`/`cc:Glob`/`cc:Write` narrowed to the three built-ins; no
+ * `cc:WebFetch` or `cc:WebSearch`, the task reads local fixtures only) and caps small enough
+ * for one bounded question: the registry's 40 minute timeout would outlast the harness's
+ * 30 minute test timeout, and its USD 2.50 cap is far above what a one-file question needs.
+ * The default tier and effort stay as the registry has them; that is what the run measures.
+ */
+export const LIVE_RESEARCHER_OVERRIDES: SpecialistOverrides = {
+  tools: ["read_file", "write_file", "list_dir"],
+  maxBudgetUsd: 0.5,
+  maxTurns: 16,
+  timeoutMinutes: 10,
+  requiresSandbox: false,
+};
+
+/**
  * The coder for the subscription half (ADR 0044): the registry's Claude Code names as written,
  * `cc:Bash` included so the executor's withholding of it (no sandbox lease covers the
  * subprocess) is exercised and audited, under the same small caps as the API-key half. The

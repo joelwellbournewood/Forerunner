@@ -7,6 +7,7 @@
 export * from "./budget.ts";
 export * from "./dry-run.ts";
 export * from "./env.ts";
+export * from "./estimate.ts";
 export * from "./harness.ts";
 export * from "./ledger.ts";
 export * from "./metered.ts";
