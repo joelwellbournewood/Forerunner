@@ -231,6 +231,25 @@ describe("release.yml: the GitHub release job sees the secrets it reports on", (
     expect(stepEnv(image).get("DOCKER_BUILD_RECORD_UPLOAD")).toBe("false");
   });
 
+  it("SHA256SUMS.txt covers every published artefact, the signed manifest included, and never itself (review of 2026-10-25)", () => {
+    const wf = text();
+    const publish = jobBlock(wf, "publish");
+    const sums = stepAround(publish, "SHA256SUMS.txt");
+    expect(sums).toMatch(/! -name SHA256SUMS\.txt/);
+    expect(publish.indexOf("SHA256SUMS.txt")).toBeGreaterThan(
+      publish.indexOf("--out artifacts/forerunner-release.json"),
+    );
+    expect(publish.indexOf("SHA256SUMS.txt")).toBeLessThan(
+      publish.indexOf("softprops/action-gh-release"),
+    );
+  });
+
+  it("the workflow runs on tags only (a manual dispatch had no tag to name the release by)", () => {
+    const on = text().slice(0, text().indexOf("\njobs:"));
+    expect(on).toMatch(/tags: \["v\*"\]/);
+    expect(on).not.toMatch(/workflow_dispatch/);
+  });
+
   it("a step's `if:` reads env names only from its job's or the workflow's env, never from its own (GitHub evaluates `if` without the step env)", () => {
     const wf = text();
     const workflowEnv = envBlock(wf.slice(0, wf.indexOf("\njobs:")), 0);

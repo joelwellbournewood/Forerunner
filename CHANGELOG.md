@@ -107,6 +107,15 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   the name `fr setup` stores.
 ### Changed
 
+- Update checks are manual: opening Updates never asks the release feed; **Check for updates**
+  does, and installing stays a separate **Update and restart** click. The tray item is
+  "Updates…" and only opens the screen. Fresh installs know the project's release feed
+  (`github:joelwellbournewood/Forerunner`) and trust its update key `26fae7f48427e5eb`; both
+  can be replaced in `update.json` or the environment, and a broken `update.json` turns updates
+  off instead of falling back (M.3; ADR 0015 amendment).
+- Release builds carry the tag's version: `scripts/release-version.mjs --set` stamps it into
+  every package and shell manifest before the build (the MSI gets the numeric core), and the
+  daemon reports the root `package.json` version.
 - An approved plan starts the session it was filed for, bound to the plan the human saw; the
   filing session ends `stopped` instead of `paused` (J.6, J.7, E.1; ADR 0053).
 - The Android emulator smoke attaches to the WebView over raw CDP on the page target instead
@@ -126,6 +135,10 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   like every other write (B.5).
 - The milestone edit dialog's reason input is `data-testid="milestone-change-reason"`.
 ### Fixed
+
+- The release workflow's publish job downloads only the build artefacts (the Docker build
+  record failed rc.1's run), `SHA256SUMS.txt` covers the signed manifest and never lists
+  itself, and the broken manual dispatch trigger is gone.
 
 - Small-project mode: the one milestone is placed after the milestones on file, and a task
   created by email takes the project's default critic tier (B.6; the review of ADR 0051).

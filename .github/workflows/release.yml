@@ -3,11 +3,6 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Tag to release (e.g. v1.0.0)
-        required: true
 
 permissions:
   contents: write
@@ -41,6 +36,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libasound2-dev libxdo-dev
       - run: pnpm install --frozen-lockfile
+      - name: Stamp the tag's version (scripts/release-version.mjs)
+        run: node scripts/release-version.mjs --set "$GITHUB_REF_NAME"
       - name: Build and sign
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -94,6 +91,8 @@ jobs:
         run: node scripts/android-google-services.mjs
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+      - name: Stamp the tag's version (scripts/release-version.mjs)
+        run: node scripts/release-version.mjs --set "$GITHUB_REF_NAME"
       - run: pnpm --filter @forerunner/mobile tauri android build --apk --ci
       - name: Verify the release APK signature (apksigner; an unsigned, debug-signed or development-signed APK fails the job)
         run: node scripts/android-apk-verify.mjs
@@ -162,10 +161,8 @@ jobs:
         with:
           name: android
           path: artifacts/android
-      - name: Checksums and release notes
-        run: |
-          cd artifacts && find . -type f -exec sha256sum {} \; > SHA256SUMS.txt && cd ..
-          node scripts/release-notes.mjs "${GITHUB_REF_NAME}" > RELEASE_NOTES.md
+      - name: Release notes
+        run: node scripts/release-notes.mjs "${GITHUB_REF_NAME}" > RELEASE_NOTES.md
       - name: Signed release manifest (ADR 0015; skipped without UPDATE_SIGNING_KEY)
         if: env.HAS_UPDATE_SIGNING_KEY == 'true'
         env:
@@ -190,6 +187,11 @@ jobs:
           pnpm exec tsx packages/runtime/src/cli/main.ts update sign \
             --manifest manifest.json --key-file "$keyfile" --out artifacts/forerunner-release.json
           rm -f "$keyfile" manifest.json
+      # After the manifest, so the sums cover it too; never the sums file itself.
+      - name: Checksums
+        run: |
+          cd artifacts
+          find . -type f ! -name SHA256SUMS.txt -exec sha256sum {} \; | sort -k 2 > SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
           body_path: RELEASE_NOTES.md

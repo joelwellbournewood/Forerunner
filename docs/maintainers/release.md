@@ -21,14 +21,15 @@ is published to app stores or public package registries without a human go.
 
 ### The release workflow (`.github/workflows/release.yml`)
 
-Triggered by a pushed tag matching `v*`, or by hand (`workflow_dispatch` with the tag).
+Triggered by a pushed tag matching `v*` only (the manual `workflow_dispatch` was removed on
+2026-10-25: it built the branch with the branch name as the version and had no tag to publish).
 
 | Job | Runner | Produces | Notes |
 | --- | --- | --- | --- |
 | `desktop` | `ubuntu-22.04`, `windows-latest` | `bundle/msi/*`, `bundle/appimage/*`, `bundle/deb/*` | `pnpm --filter @forerunner/desktop tauri build --ci` with the signing env below. Ubuntu 22.04 is the oldest supported glibc for the AppImage. |
 | `android` | `ubuntu-latest` | `apk/**/*.apk` | `android-actions/setup-android` with `packages: platform-tools` (the legacy `tools` package it installs by default is gone from the SDK repository, cb6097e), then `node scripts/android-keystore.mjs --require-secret` (the release keystore from the secrets; without `ANDROID_KEYSTORE_BASE64` the step fails and no development key is generated), then `node scripts/android-google-services.mjs` (writes `google-services.json` from `GOOGLE_SERVICES_JSON_BASE64` when set, so the APK carries FCM push; optional), then `tauri android build --apk --ci`, then `node scripts/android-apk-verify.mjs` (`apksigner verify --print-certs`; an unsigned, debug-signed or development-signed release APK fails the job before the upload) |
 | `runner-image` | `ubuntu-latest` | `ghcr.io/<owner>/forerunner-runner:<version>` and `:latest` | `services/cloud-runner/Dockerfile`; the tag is the git tag without `v` |
-| `publish` | `ubuntu-latest` | the GitHub Release | downloads the build artefacts by name (`desktop-*` into `artifacts/desktop-<os>/`, `android` into `artifacts/android/`; an unfiltered download also fetched docker/build-push-action's build record, which failed to download and failed rc.1's run 40229971920, so the image step also sets `DOCKER_BUILD_RECORD_UPLOAD: false`; `scripts/release-notes.test.ts` checks both), writes `SHA256SUMS.txt` (`sha256sum` over `artifacts/`), runs `node scripts/release-notes.mjs "$GITHUB_REF_NAME" > RELEASE_NOTES.md` with the job-level presence flags `ANDROID_KEYSTORE_BASE64` and `UPDATE_SIGNING_KEY` (`'present'` or empty, never the values; the same flags reach the manifest step's `release-notes.mjs` run, whose output becomes the signed manifest's notes, so both say the same; `WINDOWS_CERTIFICATE` is deliberately not passed while the Windows signing step is not wired), then `softprops/action-gh-release` uploads `artifacts/**/*`, `docs/user-guide.md` and `docs/setup-guide.md`. A tag containing `-` (for example `v1.0.0-rc.1`) is published as a pre-release. |
+| `publish` | `ubuntu-latest` | the GitHub Release | downloads the build artefacts by name (`desktop-*` into `artifacts/desktop-<os>/`, `android` into `artifacts/android/`; an unfiltered download also fetched docker/build-push-action's build record, which failed to download and failed rc.1's run 40229971920, so the image step also sets `DOCKER_BUILD_RECORD_UPLOAD: false`; `scripts/release-notes.test.ts` checks both), runs `node scripts/release-notes.mjs "$GITHUB_REF_NAME" > RELEASE_NOTES.md` with the job-level presence flags `ANDROID_KEYSTORE_BASE64` and `UPDATE_SIGNING_KEY` (`'present'` or empty, never the values; the same flags reach the manifest step's `release-notes.mjs` run, whose output becomes the signed manifest's notes, so both say the same; `WINDOWS_CERTIFICATE` is deliberately not passed while the Windows signing step is not wired), then, after the signed manifest, writes `SHA256SUMS.txt` (`sha256sum` over every file under `artifacts/`, the manifest included, never the sums file itself, sorted by name), then `softprops/action-gh-release` uploads `artifacts/**/*`, `docs/user-guide.md` and `docs/setup-guide.md`. A tag containing `-` (for example `v1.0.0-rc.1`) is published as a pre-release. |
 
 `scripts/release-notes.mjs <tag>` prints Markdown: the `CHANGELOG.md` section for the tag
 (falling back to `Unreleased` with a visible note), a table of the artefacts actually found
@@ -85,7 +86,15 @@ and keeps the signing config.
 section; entries accumulate under `## [Unreleased]` while work lands. The version lives in the
 root `package.json`, `apps/desktop/src-tauri/tauri.conf.json` (`version`, shown in the MSI and
 AppImage metadata), `apps/mobile/src-tauri/tauri.conf.json` and the Cargo manifests of the two
-shells; keep them equal to the tag.
+shells; keep them equal to the tag. `node scripts/release-version.mjs --check` says whether they
+agree; `--set <tag>` writes them (and `bundle.windows.wix.version` of the desktop config, the
+numeric core, because WiX takes numbers only). Every build job of `release.yml` runs
+`--set "$GITHUB_REF_NAME"` before it builds, so an artefact and the daemon it carries report the
+tag's version even when the committed files lag (a pre-release tag: `1.0.0-rc.2` everywhere,
+`1.0.0` in the MSI). The daemon and `fr` read the root `package.json`
+(`packages/runtime/src/version.ts`, `APP_VERSION`); `FORERUNNER_VERSION` overrides it.
+`scripts/release-version.test.ts` checks the files agree, `APP_VERSION` is theirs, and the
+workflow stamps before both builds.
 
 ### Staged install, health check, rollback (module M, phase 7)
 
