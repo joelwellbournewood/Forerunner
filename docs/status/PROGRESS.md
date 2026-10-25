@@ -102,7 +102,8 @@ Written 2026-10-25 by the orchestrating session after the day's 19 merges; it re
 handover of 2026-10-24. The code is at a76e259; the rules stand: a failing test first, the
 maintainer doc in the same change, an independent review before the merge, the requirement row
 and its BLOCKERS.md row updated at integration, nothing marked passed without command, date,
-result and link.
+result and link. The operational order for a session on the human's own PC is
+`docs/status/runbook-release-local.md`.
 1. **Human-only items.** Revoke and re-issue the API key pasted into the build session of
    2026-10-23 and the key and subscription token of 2026-10-20 (BLOCKERS.md key rows; the
    repository is public, `pnpm secrets:scan --logs` before every push). Then provide: a new
