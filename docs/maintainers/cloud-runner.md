@@ -459,6 +459,15 @@ on a real host and a real mailbox is pending the items in `docs/status/BLOCKERS.
 
 ## Known issues
 
+- Private memory on the runner host: `composeRuntime` runs on the shared Postgres URL, so the
+  runtime opens its own private index `<data>/memory/private.sqlite` under the runner's data
+  directory and writes the canonical lesson files there too (ADR 0083, amendment of
+  2026-10-25). The served human's private memory is then split between the PC and the runner
+  (each learns its own lessons; neither sees the other's), and the runner's copy is unencrypted
+  on the runner's disk rather than in the spec's "own encrypted cloud slot". Passing
+  `privateIndexUrl: null` is not a fix: every private write on the runner would then fail with
+  `MEMORY_SCOPE_VIOLATION` after the lesson file is written. Treat the runner's data directory
+  as holding private memory (volume permissions, no sharing between humans' runners).
 - A `{ target: "cloud" }` command from a human who has no cloud runner stays `pending` for
   ever (no runner owns it); the phone shows it as pending until the human cancels it. Refusing
   it at enqueue needs the state service to know which humans run a cloud runner (ADR 0041).
