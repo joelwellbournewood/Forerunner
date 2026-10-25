@@ -185,7 +185,17 @@ human's instruction (it outranks the spec's "nothing hardcoded"; AGENTS.md prece
 deployment can still replace it, and the tests pin both the defaults and the overrides. Rotating
 the update key needs a release signed by the old key that carries the new key in
 `DEFAULT_TRUSTED_KEYS`, or every install must be given the new key by hand. A check is one
-GitHub API request without a token (60 per hour per address), enough for a button.
+GitHub API request without a token (60 per hour per address) plus one download of each listed
+release's manifest asset (up to 30; release asset downloads are not API-rate-limited), enough
+for a button.
+
+**Review follow-up (2026-10-25).** The tray's "Update and restart" checked and installed the
+newest release in one click without showing it; it is now "Updates…", which opens the Updates
+screen. A broken `update.json` makes the daemon start with updates off instead of the built-in
+feed and key (`updateConfigOrClosed`), with the reason on the screen. A failed check keeps the
+last good result next to its error. After an apply or a rollback the screen drops the earlier
+check. Fresh installs follow `stable`; release candidates are on `beta`
+(`FORERUNNER_UPDATE_CHANNEL=beta` to test them).
 
 **Alternatives considered.** Writing the key into `update.json` from the installer (the
 earlier plan of this ADR): the MSI and AppImage have no post-install step that runs the

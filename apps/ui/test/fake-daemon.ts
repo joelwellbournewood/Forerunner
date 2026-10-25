@@ -186,6 +186,11 @@ export interface FakeDaemonOptions {
    */
   failing?: Record<string, { status: number; code: string; message: string }>;
   /**
+   * `POST /updates/check` answers 200 with the local view and this `app.lastError`, like the
+   * real daemon when the release feed is unreachable.
+   */
+  updatesCheckError?: string;
+  /**
    * Overrides of the `/me` answer, e.g. `desktopDeviceId: null` (a daemon that registered no
    * desktop row) or another id (a row this fake does not know, so a device confirmation
    * naming it is refused like the real executor refuses an unknown device).
@@ -1596,6 +1601,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.get("/updates", (c) => c.json(updatesView(updatesChecked.value)));
   app.get("/updates/status", (c) => c.json(updatesView(updatesChecked.value)));
   app.post("/updates/check", (c) => {
+    if (options.updatesCheckError) {
+      const v = updatesView(updatesChecked.value);
+      v.app.lastError = options.updatesCheckError;
+      v.app.state = "unknown";
+      return c.json(v);
+    }
     updatesChecked.value = true;
     return c.json(updatesView(true));
   });

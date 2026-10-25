@@ -56,7 +56,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     )?;
     let resume = MenuItem::with_id(app, RESUME, "Resume", false, None::<&str>)?;
     let email = MenuItem::with_id(app, EMAIL, "Pause email", false, None::<&str>)?;
-    let update = MenuItem::with_id(app, UPDATE, "Update and restart", false, None::<&str>)?;
+    let update = MenuItem::with_id(app, UPDATE, "Updates…", false, None::<&str>)?;
     let quit = MenuItem::with_id(
         app,
         QUIT,
@@ -165,7 +165,7 @@ fn on_menu(app: &AppHandle, id: &str) {
                 tauri::async_runtime::spawn(actions::email_toggle(app.clone(), action));
             }
         }
-        UPDATE => actions::update_and_restart(app.clone()),
+        UPDATE => windows::show_route(app, "/updates"),
         QUIT => {
             windows::save_main_state(app);
             log::info!("quit from the tray; the daemon keeps running");

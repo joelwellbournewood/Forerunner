@@ -355,14 +355,13 @@ pub fn tray_view(s: &ShellState) -> TrayView {
         }
     };
 
+    // "Updates…" opens the Updates screen; checking and installing are the screen's own
+    // buttons (the human's decision of 2026-10-25, ADR 0015 amendment).
     let (update_text, update_enabled) = match s.busy {
         Some(Busy::Updating) => ("Updating and restarting…".to_string(), false),
-        Some(Busy::Starting) => ("Update and restart (starting)".to_string(), false),
-        None if reachable => ("Update and restart".to_string(), true),
-        None => (
-            "Update and restart (daemon not reachable)".to_string(),
-            false,
-        ),
+        Some(Busy::Starting) => ("Updates… (starting)".to_string(), false),
+        None if reachable => ("Updates…".to_string(), true),
+        None => ("Updates… (daemon not reachable)".to_string(), false),
     };
 
     TrayView {
@@ -464,6 +463,17 @@ mod tests {
         assert!(v.tooltip.ends_with("; email paused"));
         s.email.paused = None;
         assert!(!tray_view(&s).email_enabled);
+    }
+
+    #[test]
+    fn update_item_opens_the_updates_screen_and_never_installs() {
+        // The human's decision of 2026-10-25 (ADR 0015 amendment): the tray only opens the
+        // Updates screen, where "Check for updates" and "Update and restart" are separate clicks.
+        let s = reachable();
+        let v = tray_view(&s);
+        assert_eq!(v.update_text, "Updates…");
+        assert!(v.update_enabled);
+        assert!(tray_view(&base()).update_text.starts_with("Updates…"));
     }
 
     #[test]

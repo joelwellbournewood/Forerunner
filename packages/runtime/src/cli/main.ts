@@ -39,7 +39,9 @@ import { registerVaultCli, type SecretInput } from "./vault.ts";
  * tray and the tests. Every subcommand works on Windows and Linux. `buildProgram()` is what
  * the tests inspect; the module runs it only when it is the entry point.
  */
-export const APP_VERSION = "0.1.0";
+import { APP_VERSION } from "../version.ts";
+
+export { APP_VERSION };
 
 /**
  * Upper bound on the graceful stop before `fr daemon` ends the process on a restart request

@@ -129,7 +129,9 @@ Releases are published on GitHub. Forerunner never checks for updates on its own
 screen shows "Update available" with its changelog and an **Update and restart** button. The
 update is downloaded, its signature and checksum verified against the project's update key
 (built into every install), installed, and rolled back automatically if the new version fails
-its start-up health check. Nothing is installed until you press that button. A fork or a
+its start-up health check. Nothing is installed until you press that button. A fresh install
+follows the `stable` channel; release candidates (`v1.0.0-rc.N`) are published on `beta`, so to
+be offered one set `FORERUNNER_UPDATE_CHANNEL=beta` (or `"channel": "beta"` in `update.json`). A fork or a
 private build points at its own releases and key with `FORERUNNER_UPDATE_FEED` and
 `FORERUNNER_UPDATE_TRUSTED_KEYS` (or `update.json`, `docs/maintainers/updates.md`). You can also
 install the new MSI / AppImage / `.deb` over the old one; your data stays.

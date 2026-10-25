@@ -101,6 +101,8 @@ export interface UpdatesViewDeps {
   fresh?: boolean;
   /** With `checkFeed`: who asked, for the `update.check` audit row. Default the system. */
   checkedBy?: UpdateActor;
+  /** Why update.json was ignored (updates are then off); shown as the view's `lastError`. */
+  configError?: string | null;
 }
 
 /** True when the catalog offers something newer than what is installed. */
@@ -155,12 +157,18 @@ export async function composeUpdatesView(deps: UpdatesViewDeps): Promise<Updates
         }),
       );
     } catch (e) {
+      // Keep showing the last good check (as GET /updates does) next to the error.
+      const last = deps.manager.lastCheckResult();
+      if (last) fill(last);
       app.lastError = errorMessage(e);
     }
   } else {
     // Local state only: the last check's result, never a feed request or an audit row.
     const last = deps.manager.lastCheckResult();
     if (last) fill(last);
+  }
+  if (deps.configError) {
+    app.lastError = `update.json ignored (updates are off): ${deps.configError}`;
   }
   if (pointer?.state === "pending_health_check") app.state = "pending_health_check";
   else if (app.available) app.state = "available";

@@ -601,75 +601,8 @@ pub async fn email_toggle(app: AppHandle, action: EmailAction) {
     }
 }
 
-/// Tray: "Update and restart" (spec M). Confirms, `POST /updates/apply`, then waits for the
-/// daemon to exit with the restart contract. A daemon the shell started reports its exit to
-/// `handle_daemon_exit`; a daemon started by something else is watched by
-/// `watch_external_restart`.
-pub fn update_and_restart(app: AppHandle) {
-    let app2 = app.clone();
-    app.dialog()
-        .message("Install the staged update and restart the daemon? Running sessions are stopped and resume afterwards; the UI reloads.")
-        .title("Forerunner: update and restart")
-        .kind(MessageDialogKind::Info)
-        .buttons(MessageDialogButtons::OkCancelCustom(
-            "Update and restart".into(),
-            "Cancel".into(),
-        ))
-        .show(move |confirmed| {
-            if !confirmed {
-                return;
-            }
-            tauri::async_runtime::spawn(apply_update(app2));
-        });
-}
-
-async fn apply_update(app: AppHandle) {
-    let state = shared(&app);
-    let (client, is_child) = {
-        let mut s = lock(&state);
-        let Some(c) = s.client.clone() else {
-            return;
-        };
-        s.busy = Some(Busy::Updating);
-        s.restart.expected = true;
-        (c, s.child_pid.is_some())
-    };
-    tray::refresh(&app);
-    match client.post_json("/updates/apply", &json!({})).await {
-        Ok((status, v)) if (200..300).contains(&status) => {
-            log::info!("update accepted: {}", v);
-            notify(
-                &app,
-                "Forerunner is updating",
-                "The daemon restarts in a moment; the window reloads when it is back.",
-            );
-            if is_child {
-                // handle_daemon_exit takes over when the process ends.
-                return;
-            }
-            watch_external_restart(app.clone()).await;
-        }
-        Ok((status, v)) => {
-            {
-                let mut s = lock(&state);
-                s.busy = None;
-                s.restart.expected = false;
-            }
-            fail_dialog(&app, "Update not applied", &error_message(status, &v));
-        }
-        Err(e) => {
-            {
-                let mut s = lock(&state);
-                s.busy = None;
-                s.restart.expected = false;
-            }
-            fail_dialog(&app, "Update not applied", &e);
-        }
-    }
-}
-
 /// Watch a daemon the shell did not start go away after a restart was requested ("Update
-/// and restart" from the tray, or from the UI, announced over `/events`), then apply the
+/// and restart" on the Updates screen, announced over `/events`), then apply the
 /// restart contract with the exit code its request names (ADR 0031 §4).
 /// `restart::external_daemon_gone` decides when it is gone: one missed `/health` probe is
 /// not an exit (the daemon may be staging the update: download, verify, unpack), a pid the

@@ -226,10 +226,11 @@ import { readConfig, rememberBoundHuman, SECRET_NAMES, type SetupConfig } from "
 import { SourceDiscovery } from "../sources/discovery.ts";
 import { repoHostsFor } from "../sources/locators.ts";
 import { composeUpdateManager } from "../update/compose.ts";
-import { readUpdateConfig, UpdateConfig } from "../update/config.ts";
+import { type UpdateConfig, updateConfigOrClosed } from "../update/config.ts";
 import type { UpdateManager } from "../update/install.ts";
 import type { Restarter } from "../update/ports.ts";
 import { SchemaSync } from "../update/sync.ts";
+import { APP_VERSION } from "../version.ts";
 import {
   buildVoiceRegistry,
   resolveVoicePreferences,
@@ -710,6 +711,8 @@ export interface RuntimeApp {
   speech: SpeakSessions;
   /** Signed updates (spec M) over this process's store. */
   updates: UpdateManager;
+  /** Why update.json was ignored at start (updates are then off), or null. */
+  updateConfigError: string | null;
   updateConfig: UpdateConfig;
   restarter: Restarter;
   /**
@@ -1737,7 +1740,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     (ghToken
       ? new GitHubHost({ token: ghToken, baseUrl: config?.githubApiBase, clock })
       : new MemoryGitHost(human.name));
-  const appVersion = opts.appVersion ?? env.FORERUNNER_VERSION ?? "0.1.0";
+  const appVersion = opts.appVersion ?? env.FORERUNNER_VERSION ?? APP_VERSION;
 
   // Memory (spec G): one root under the data directory; lessons per agent, critic and shared.
   // With a shared state the private scope is routed to the local index opened above.
@@ -2104,12 +2107,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const restarter =
     opts.restarter ??
     new DaemonRestarter({ dirs, clock, events, exit: opts.exit ?? processExit() });
+  // A broken update.json turns updates off (no feed, no trusted key) and says why on the
+  // Updates screen; it never falls back to the built-in feed and key (ADR 0015 amendment).
   let updateConfig: UpdateConfig;
-  try {
-    updateConfig = opts.updateConfig ?? readUpdateConfig(dirs, env);
-  } catch (e) {
-    logger.warn("update.json ignored", { error: errorMessage(e) });
-    updateConfig = UpdateConfig.parse({});
+  let updateConfigError: string | null = null;
+  if (opts.updateConfig) updateConfig = opts.updateConfig;
+  else {
+    const r = updateConfigOrClosed(dirs, env);
+    updateConfig = r.config;
+    updateConfigError = r.error;
+    if (r.error) logger.warn("update.json ignored; updates are off", { error: r.error });
   }
   const updates = await composeUpdateManager({
     dirs,
@@ -3122,6 +3129,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     extensions,
     gate,
     updates: updates.manager,
+    updateConfigError,
     updateConfig,
     restarter,
     schemaSync,

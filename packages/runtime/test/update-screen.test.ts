@@ -522,3 +522,56 @@ describe("update checks are manual only (the human's decision of 2026-10-25, ADR
     }
   });
 });
+
+describe("review of the manual check (2026-10-25)", () => {
+  it("a failed check keeps showing the last good check's result with the error (no flip-flop between POST and GET)", async () => {
+    let failing = false;
+    const flaky = {
+      kind: feed.kind,
+      list: (channel: Parameters<typeof feed.list>[0]) =>
+        failing ? Promise.reject(new Error("feed down")) : feed.list(channel),
+      latest: (channel: Parameters<typeof feed.latest>[0]) => feed.latest(channel),
+    } as unknown as typeof feed;
+    const h = await makeHarness({ feed: flaky });
+    try {
+      const app = createUpdateRoutes({ manager: h.manager, clock: h.clock, humanId: "human-j" });
+      const check = async () =>
+        UpdatesView.parse(
+          await (
+            await app.request("/updates/check", {
+              method: "POST",
+              body: "{}",
+              headers: { "content-type": "application/json" },
+            })
+          ).json(),
+        );
+      const good = await check();
+      expect(good.app.available?.version).toBe("1.1.0");
+      failing = true;
+      const bad = await check();
+      expect(bad.app.lastError).toMatch(/feed down/);
+      expect(bad.app.available?.version).toBe("1.1.0");
+      expect(bad.app.checkedAt).toBe(good.app.checkedAt);
+      const opened = UpdatesView.parse(await (await app.request("/updates")).json());
+      expect(opened.app.available?.version).toBe(bad.app.available?.version);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("a configuration error is shown in the view", async () => {
+    const h = await makeHarness({ feed });
+    try {
+      const view = await composeUpdatesView({
+        manager: h.manager,
+        clock: h.clock,
+        configError: "update.json is not valid JSON: x",
+      });
+      expect(view.app.lastError).toBe(
+        "update.json ignored (updates are off): update.json is not valid JSON: x",
+      );
+    } finally {
+      await h.close();
+    }
+  });
+});

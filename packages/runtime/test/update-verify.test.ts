@@ -11,6 +11,7 @@ import {
   parseTrustedKeysEnv,
   readUpdateConfig,
   UpdateConfig,
+  updateConfigOrClosed,
   updateConfigPath,
 } from "../src/update/config.ts";
 import { GitHubReleasesFeed, JsonFeed, MemoryReleaseFeed } from "../src/update/feed.ts";
@@ -363,6 +364,23 @@ describe("update configuration", () => {
     expect(builtIn.trustedKeyIds).toEqual(["26fae7f48427e5eb"]);
     const other = signManifest(manifestOf("9.9.9"), testKey().privateKey);
     expect(refusalReason(catchErr(() => builtIn.verifyManifest(other)))).toBe("untrusted_key");
+  });
+
+  it("a broken update.json fails closed: no feed and no trusted key, never the built-in ones", () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-update-cfg-bad-"));
+    const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+    mkdirSync(dirs.config, { recursive: true });
+    writeFileSync(updateConfigPath(dirs), '{"feed": null, "trustedKeys": [{"publicKey": "x"}],');
+    const r = updateConfigOrClosed(dirs, {});
+    expect(r.error).toMatch(/not valid JSON/);
+    expect(r.config.feed).toBeNull();
+    expect(r.config.trustedKeys).toEqual([]);
+    const env = updateConfigOrClosed(dirs, { FORERUNNER_UPDATE_CHANNEL: "nightly" });
+    expect(env.config.feed).toBeNull();
+    writeFileSync(updateConfigPath(dirs), "{}");
+    const ok = updateConfigOrClosed(dirs, {});
+    expect(ok.error).toBeNull();
+    expect(ok.config.feed).toEqual(DEFAULT_UPDATE_FEED);
   });
 
   it("both defaults are overridable: explicit keys replace the built-in key, feed null turns the feed off", () => {

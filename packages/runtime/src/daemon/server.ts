@@ -458,6 +458,7 @@ export function createDaemonApp(
     createUpdateRoutes({
       manager: rt.updates,
       clock: rt.clock,
+      configError: rt.updateConfigError,
       extensions: rt.store.extension,
       catalog: new RegistryConnectorCatalog(rt.extensions.catalog),
       modelWatch: new ModelWatchUpdates(rt.modelWatch),

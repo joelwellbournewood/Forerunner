@@ -87,6 +87,12 @@ describe("Updates screen", () => {
     expect(await screen.findByTestId("restart-banner")).toHaveTextContent("0.1.0-fake → 0.2.0");
     expect(screen.getByTestId("restart-notice")).toHaveTextContent("Restarting");
     expect(screen.getByTestId("update-and-restart")).toBeDisabled();
+    // Once the restart is over the screen shows the daemon's local state, not the old check.
+    harness.store.dispatch({ type: "restart", restart: null });
+    await waitFor(() =>
+      expect(screen.getByTestId("app-version")).toHaveTextContent("running 0.2.0"),
+    );
+    expect(screen.queryByTestId("available-update")).toBeNull();
   });
 
   it("rolls back on request", async () => {
@@ -130,6 +136,26 @@ describe("Updates screen", () => {
     expect(await screen.findByTestId("updates-note")).toHaveTextContent(
       "Nothing changed since the last run",
     );
+  });
+
+  it("shows the daemon's feed error when the check answers 200 with lastError", async () => {
+    const user = userEvent.setup();
+    renderApp("/updates", createHarness({ updatesCheckError: "feed unreachable: ETIMEDOUT" }));
+    await user.click(await screen.findByTestId("updates-check"));
+    expect(await screen.findByTestId("feed-error")).toHaveTextContent("ETIMEDOUT");
+    expect(screen.getByTestId("no-update")).toHaveTextContent("has not been checked yet");
+  });
+
+  it("after a rollback the screen shows the daemon's local state again, not the earlier check", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/updates", harness);
+    await user.click(await screen.findByTestId("updates-check"));
+    await screen.findByTestId("available-update");
+    await user.click(screen.getByTestId("rollback"));
+    await waitFor(() => expect(postedCalls(harness, "/updates/rollback")).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByTestId("available-update")).toBeNull());
+    expect(screen.getByTestId("app-version")).toHaveTextContent("running 0.0.9");
   });
 
   it("keeps the local state when Check for updates cannot reach the feed", async () => {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { describeError } from "../api/client.ts";
 import type { AppUpdateView, ModelWatchAnswerInput, UpdatesView } from "../api/contracts.ts";
@@ -39,6 +39,22 @@ export function UpdatesPage() {
   const [checked, setChecked] = useState<UpdatesView | null>(null);
   const [checking, setChecking] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
+  // After an apply or a rollback the earlier check describes another install: show the
+  // daemon's local state again (it forgets that check too).
+  const forgetCheck = () => {
+    setChecked(null);
+    setFeedError(null);
+    loaded.reload();
+  };
+  // An apply restarts the daemon: forget the check once the restart is over.
+  const wasRestarting = useRef(false);
+  useEffect(() => {
+    if (restart) wasRestarting.current = true;
+    else if (wasRestarting.current) {
+      wasRestarting.current = false;
+      forgetCheck();
+    }
+  });
   const checkNow = async () => {
     if (checking) return;
     setChecking(true);
@@ -213,7 +229,7 @@ export function UpdatesPage() {
               data-testid="no-update"
             >
               {app.state === "up_to_date"
-                ? "You are on the latest release."
+                ? `You are on the latest ${app.channel} release.`
                 : app.checkedAt
                   ? `No newer release known (checked ${formatDateTime(app.checkedAt)}).`
                   : "The feed has not been checked yet."}
@@ -231,6 +247,7 @@ export function UpdatesPage() {
                     onClick={() =>
                       void act("rollback", async () => {
                         const r = await client.rollbackUpdate("from the updates screen");
+                        forgetCheck();
                         return `Rolling back from ${r.from} to ${r.to ?? "the previous version"} (${r.state}).`;
                       })
                     }

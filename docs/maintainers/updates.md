@@ -109,7 +109,10 @@ environment variables:
 | `healthTimeoutMs` | `FORERUNNER_UPDATE_HEALTH_TIMEOUT_MS` | `60000` |
 | `autoCheck` | — | `false`; parsed for older files and read by nothing: the feed is asked only by the human (below) |
 
-A malformed file is a `validation` error, not a silent fallback. The project's feed and update
+A malformed file is a `validation` error, not a silent fallback: `fr update` fails on it, and a
+long-running daemon (`updateConfigOrClosed`) starts with updates off (no feed, no trusted key,
+never the built-in ones, so a fork's file with one typo does not trust the upstream key) and the
+Updates screen shows "update.json ignored (updates are off): <reason>" as its `lastError`. The project's feed and update
 key are built in as defaults (the human's decision of 2026-10-25, ADR 0015 amendment) so a
 fresh install, a friend's included, finds and verifies official releases with no setup; a fork
 or a private build replaces both in `update.json` or the environment. If the update key is
@@ -117,7 +120,7 @@ rotated, a release signed by the old key must ship the new key in `DEFAULT_TRUST
 
 **Checks are manual.** Nothing asks the feed on its own: not the daemon start, the tray, the
 scheduler or the start checklist (which reads the local `release` rows), and not opening the
-Updates screen. The feed is asked only by the human's "Check for updates" button
+Updates screen. The tray's item is "Updates…", which only opens that screen. The feed is asked only by the human's "Check for updates" button
 (`POST /updates/check`), by `fr update check`, and by "Update and restart" (`apply`
 re-checks the version it installs). Installing is always a separate human click.
 
@@ -270,8 +273,9 @@ checkFeed?, fresh?, checkedBy? })` fills it. By default (`checkFeed` false) it i
 only: the pointer facts and `manager.lastCheckResult()` (the last feed query's result for what
 is installed now, however old, null after an apply or rollback), never a feed request or an
 audit row. `checkFeed: true` asks the manager (`fresh` bypasses its cache, `checkedBy` is the
-audited actor); an unreachable feed yields `state: unknown` with `lastError`, never a failed
-page.
+audited actor); an unreachable feed yields `lastError` next to the last good check's result
+(the same one `GET /updates` shows; `state: unknown` when there is none), never a failed page.
+A fresh install follows `stable`; release candidates are published on `beta`.
 
 `createUpdateRoutes({ ...viewDeps, humanId })` is a Hono sub-app the daemon mounts behind its
 bearer-token middleware: `GET /updates` and `GET /updates/status` (local state, no network),

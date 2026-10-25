@@ -255,6 +255,16 @@ pub fn close_splash(app: &AppHandle) {
     }
 }
 
+/// Bring the window up on a UI route the shell knows (the tray's "Updates…").
+pub fn show_route(app: &AppHandle, route: &str) {
+    show_main(app);
+    if let Some(w) = app.get_webview_window(MAIN)
+        && let Err(e) = w.eval(navigate_script(route))
+    {
+        log::warn!("could not navigate the UI: {e}");
+    }
+}
+
 /// Bring the window up and move the UI to the route a deep link names (ADR 0031).
 pub fn handle_deep_link(app: &AppHandle, raw: &str) {
     match route_for_deep_link(raw) {

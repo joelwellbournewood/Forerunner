@@ -158,3 +158,22 @@ export function readUpdateConfig(
   }
   return cfg;
 }
+
+/**
+ * The configuration a long-running process starts with: `readUpdateConfig`, or, when the file or
+ * an override is broken, updates off (no feed, no trusted key) with the reason. Never the
+ * built-in feed and key: a fork's `update.json` with one typo must not trust the upstream key.
+ */
+export function updateConfigOrClosed(
+  dirs: AppDirs = appDirs(),
+  env: NodeJS.ProcessEnv = process.env,
+): { config: UpdateConfig; error: string | null } {
+  try {
+    return { config: readUpdateConfig(dirs, env), error: null };
+  } catch (e) {
+    return {
+      config: { ...UpdateConfig.parse({}), feed: null, trustedKeys: [] },
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}

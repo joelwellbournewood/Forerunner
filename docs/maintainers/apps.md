@@ -738,7 +738,8 @@ The Tauri 2 shell for Windows and Linux that attaches the shared UI to the local
 `<runtime>/daemon.json`, checks `/health`, starts `fr daemon` when nothing healthy is there,
 injects the daemon address and token into the webview before the UI loads, keeps a tray with
 the kill switch, "pause email", the desktop-control state with "Stop desktop control",
-"Update and restart" and Quit, shows OS notifications for the daemon's `notification` events,
+"Updates…" (opens the Updates screen; it never checks or installs by itself, ADR 0015
+amendment of 2026-10-25) and Quit, shows OS notifications for the daemon's `notification` events,
 applies the restart contract, remembers the window, handles `fr://` deep links and registers
 the global hotkey that brings up the conversation (ADR 0064). No TypeScript:
 `apps/desktop/package.json` only runs the Tauri CLI; the UI comes from `apps/ui/dist`.
