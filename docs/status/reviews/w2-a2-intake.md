@@ -109,6 +109,15 @@ data markers can be closed by the brief itself.
    failure on the card (`apply_failed`, the error, an audit row) so it is shown, counted and
    not retried, while a transient store error stays retryable; the status route reports it as
    `failed` with the error.
+   Resolution: fixed in c8ddc42: `shapeProjectPlan` (`project-plan.ts`, `shapeParsed`) runs
+   the dependency ordering and refuses a cycle with `validation`, so `propose` refuses the
+   proposal before filing (409, no request); `syncAnswers` records a `validation` failure of
+   the apply as `apply_failed` with the redacted error through the conditional mark and an
+   audit row, counts it skipped and leaves other errors retryable; `status()` maps
+   `apply_failed` to `failed` with the error. Tests: `intake.test.ts` "a proposal whose tasks
+   depend on each other is refused before it reaches the inbox" and "an approved proposal the
+   plan writer refuses is recorded on the card once, not retried for ever" (both failed before
+   the fix: 202 and `skipped: 0`).
 
 2. **medium**: `packages/runtime/src/session/intake.ts:1033-1045` (`applyApproved`: the card
    mark is `tx.humanRequest.patch(row.id, …)`, unconditional) against `session/answer-mark.ts`
@@ -125,6 +134,13 @@ data markers can be closed by the brief itself.
    mark the card inside the transaction with `humanRequest.update(row.id, row.version, …)`
    (conditional on the version the scan read), so the loser's transaction rolls back its rows
    with the `version_conflict`, which the sync treats as "applied by the other producer".
+   Resolution: fixed in c8ddc42: the approving transaction marks the card with `markAnswer`
+   (`answer-mark.ts`) and throws `version_conflict` / `applied_elsewhere` when the row was
+   marked meanwhile, which rolls the rows back and is skipped silently in the sync; the skip
+   marks and the reject (mark and note in one transaction) use the same conditional mark.
+   Test: `intake.test.ts` "an approval synced by two installs at once is applied by one of
+   them only" (a second `IntakeService` over the same store whose transaction waits for the
+   first's sync; before the fix both answered `applied: 1`).
 
 3. **medium**: `packages/runtime/src/session/intake.ts:684-707` (`callModel`: the session row
    is `planned` then `start`ed, closed only in the `finally` of the same process) with
@@ -143,6 +159,16 @@ data markers can be closed by the brief itself.
    the planning timeout plus the token's margin, from the clock) and close an intake session
    whose deadline has passed as `failed` ("the daemon did not finish the call") at compose
    time and before every `propose`, so the residual lasts at most one planning timeout.
+   Resolution: fixed in c8ddc42: `callModel` writes `plan.intake.deadline` (the planning
+   timeout plus `INTAKE_DEADLINE_MARGIN_MS`, the token's expiry too); `closeExpired()` closes
+   a `running` intake session past its deadline (a row without one from its start plus the
+   default timeout) as `failed` with the reason in its summary; `compose.ts` runs it before the
+   compose-time sync and `propose` before its call. Tests: `intake.test.ts` "an intake session
+   a dead daemon left running is closed once its deadline has passed" (the runner's
+   `claim_conflict` before, the dead row closed, a live one kept, the real call's row carrying
+   its deadline) and "composing on a store with an expired running intake session closes it
+   before anything starts" (a second compose on a file-backed store). The runner's own
+   interrupted sessions keep their residual (another module; named in Known issues).
 
 4. **low**: `packages/runtime/src/session/intake.ts:906-910` (`userMessage`: the brief is put
    raw between `<<<BRIEF` and `BRIEF>>>`). A brief containing `BRIEF>>>` closes the data block
@@ -155,6 +181,11 @@ data markers can be closed by the brief itself.
    outside the block. Fix: neutralise the marker sequences inside the brief before framing it
    (`<<<BRIEF`, `BRIEF>>>` spaced out), with a test that an instruction-shaped brief produces
    a request, is offered no tool and stays inside the block.
+   Resolution: fixed in c8ddc42: `neutralizeMarkers` spaces out the brief's own marker
+   sequences before `userMessage` frames it. Test: `intake.test.ts` "a brief that reads like
+   instructions is data: no tool, framed whole, a proposal only" (one opening and one closing
+   marker, every phrase of the brief between them, the instruction reaching the model as data,
+   no tool, one request and nothing else; before the fix the block closed twice).
 
 5. **low**: `packages/runtime/src/session/intake.ts:530-545` (`propose`: an open request is
    reused before `opts.brief` is read). `POST /projects/:id/intake { brief }` while a proposal
@@ -163,6 +194,11 @@ data markers can be closed by the brief itself.
    a throwaway test (second call with another brief: 202, `reused: true`, no model call). Fix:
    when a brief is given and a proposal is open, refuse with `conflict` naming the open
    request ("answer it first"); reuse stays for a call without a brief.
+   Resolution: fixed in c8ddc42: `propose` throws `claim_conflict` (the daemon's 409 with
+   `cause: "claim_conflict"`, `details.requestId`, `reason: "proposal_open"`) when a brief is
+   given while a proposal is open; the bare re-trigger still reuses. Test: `intake.test.ts`
+   "a new brief while a proposal is open is refused, not silently dropped" (409, no model
+   call, then 202 `reused: true` without a brief; before the fix 202 `reused: true`).
 
 6. **low**: `packages/runtime/src/session/intake.ts:566-590` (`why`, `steps` and the route's
    `summary.milestones` count `plan.milestones`). In small-project mode `shapeProjectPlan`
@@ -171,6 +207,14 @@ data markers can be closed by the brief itself.
    will not be written as shown. Verified with a throwaway test (`small_project_mode: true`,
    a two-phase proposal: `why` "2 milestone(s)", two milestone steps). Fix: count and list the
    shaped plan's milestones and say that the phases join one milestone in the mode.
+   Resolution: fixed in c8ddc42: `propose` keeps the shaped plan and the `why`, the
+   `Milestone:` steps and `summary.milestones` (`sizes(p, shaped)`, for a reused request too)
+   come from it, with a step "Small-project mode: the N planned phases join the one milestone
+   above" when the phases were joined; the card's `proposal` stays the model's, which the
+   writer takes. Test: `intake.test.ts` "in small-project mode the request counts the one
+   milestone the plan becomes" (`summary.milestones` 1, `why` "1 milestone(s)", one milestone
+   step named after the project with the latest date, the mode step, one milestone written;
+   before the fix `milestones: 2`).
 
 7. **low**: `packages/runtime/src/session/intake.ts:1120` (branch
    `fr/intake-${safeSegment(project.id).slice(0, 8)}-docs`). Project ids are UUIDv7
@@ -180,6 +224,12 @@ data markers can be closed by the brief itself.
    request, branches from it, finds every file present, keeps them all and comments on the
    first project's pull request. Fix: the whole safe id in the branch name
    (`fr/intake-<project id>-docs`, as runtime.md already writes it).
+   Resolution: fixed in c8ddc42: `intakeDocsBranch(projectId)` is
+   `fr/intake-${safeSegment(projectId)}-docs` and the pull-request path uses it. Tests:
+   `intake.test.ts` "the docs branch carries the whole project id, so two projects of one
+   minute never share it" (two UUIDv7 ids sharing the first eight characters; before the fix
+   both gave `fr/intake-019cbd02-docs`) and the repository case asserting the pull request's
+   head is `intakeDocsBranch(projectId)`.
 
 8. **low** (docs and dead code): `packages/runtime/src/session/intake.ts:77-79`
    (`INTAKE_TIMEOUT_MS`, `INTAKE_MAX_TOKENS`, exported, used nowhere) and
@@ -188,6 +238,9 @@ data markers can be closed by the brief itself.
    `maxTokens`, which the principal's `model_config.modes.planning` overrides (the item's own
    D.4 test shows `max_tokens: 12_000` reaching the provider). The doc names a constant the
    call does not read. Fix: drop the two constants and name the mode settings in runtime.md.
+   Resolution: fixed in c8ddc42 (the constants removed; `grep -rn INTAKE_TIMEOUT_MS
+   INTAKE_MAX_TOKENS` finds no reader; `pnpm typecheck` clean) and eeda841 (runtime.md names
+   `resolveRunSettings`' planning settings under the principal's override, ADR 0072).
 
 9. **low** (docs): `docs/maintainers/runtime.md:3322-3324` and ADR 0055 decision 7. A project
    created with `intake: true` has its G.5 scaffold deferred (`server.ts:622-624`); when the
@@ -195,6 +248,26 @@ data markers can be closed by the brief itself.
    project keeps no standard doc set until an intake is approved, and the reject note tells the
    human to re-run without saying the docs are missing. Verified by reading the three paths.
    Fix: say so in Known issues and in the reject note.
+   Resolution: fixed in c8ddc42 (the reject note names what stays missing: the milestones,
+   tasks and drafted docs, and that a project created with a brief has no standard doc set
+   until an intake is approved; the reject test asserts it) and eeda841 (runtime.md Known
+   issues and ADR 0055's amendment, point 8).
+
+### Verification after the fixes (2026-10-25)
+
+Fixes in c8ddc42 (code and tests) and eeda841 (docs). `pnpm exec biome check --write` then
+`biome check` on the five changed source and test files (`intake.ts`, `project-plan.ts`,
+`compose.ts`, `api-types.ts`, `intake.test.ts`): no fixes, clean. `node scripts/check-paths.mjs`:
+ok (1093 files). `pnpm typecheck`: clean (node project, approvals-web, ui; the desktop and
+mobile shells have no TypeScript). `pnpm exec vitest run --project unit` on `intake.test.ts`
+and `small-project.test.ts`: 41 passed (the same intake file before the fixes: 11 failed,
+14 passed; the nine new cases and the two extended ones). `packages/runtime/test`: 144 files,
+1341 passed, 1 skipped, 0 failed, 188 s on the shared machine (no re-run needed).
+`node scripts/docs-check.mjs --base ccr-af5a431d-jc9xqj`: ok (8 files). `apps/ui` is not
+touched (the card reads the same `proposal`), so its suite was not run; no integration test on
+Postgres covers the intake or the answer sync (`grep` over `*.integration.test.ts`), and the
+state package is untouched, so none was run. Two throwaway tests written for stage 1 were
+deleted before the review commit; the item's test file holds the kept tests.
 
 Not findings, checked: the one call goes through `driver.run` with the composed hooks
 (`beforeModelCall`: wall clock, steps, the run's precheck, the human's and project's caps;
