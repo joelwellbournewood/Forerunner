@@ -5,10 +5,13 @@ import { join, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore, silenceSqliteExperimentalWarning } from "@forerunner/state";
 import { FakeGitHost } from "@forerunner/testenv";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ProjectDocs, parseRepoRef } from "../src/loop/docs.ts";
 import {
   type AddSourceInput,
   folderKey,
+  INSTALL_MARKER_FILE,
   keysOfProject,
+  parseInstallMarker,
   parseRepoLocator,
   repoHostsFor,
   repoKey,
@@ -589,5 +592,71 @@ describe("source discovery", () => {
       });
     }
     expect(await store.source.get(bobs.id)).toBeDefined();
+  });
+
+  it("a repository this install scaffolded (G.5) scans as an existing install once the scaffold's pull request is merged; unlinked, it is still proposed as one", async () => {
+    // Review w2-g5-docs finding 8 (handed over from w2-a4-sources finding 4): the docs scaffold
+    // writes `.forerunner/project.json` on the same branch and pull request as the doc set.
+    const repo = { owner: "someone", name: "epsilon" };
+    await host.createRepo({ ...repo, initialFiles: { "README.md": "# epsilon\n" } });
+    const gh = new GitHubHost({ token, baseUrl: host.baseUrl, clock });
+    const project = await store.project.insert({
+      name: "Epsilon",
+      goal: "managed from here",
+      repos: ["someone/epsilon"],
+      author_human: ada.humanId,
+    });
+    const docs = new ProjectDocs({
+      store,
+      clock,
+      host: gh,
+      repoFor: async (p) => {
+        const ref = parseRepoRef(p.repos[0] ?? "");
+        if (!ref) return null;
+        const info = await gh.getRepo(ref);
+        return { clone: info.cloneUrl, repo: ref, base: info.defaultBranch };
+      },
+      worktreeRoot: join(root, "docs-worktrees"),
+      projectsRoot: join(root, "docs-projects"),
+      // The install's token: the scaffold scopes it to the host's origin (ADR 0069), which is
+      // what lets the push over HTTP through here.
+      token,
+      identity: { name: "Forerunner", email: "agent@example.test" },
+    });
+    const out = await docs.scaffoldProject(project);
+    expect(out).toMatchObject({
+      location: "repo",
+      branch: "fr/docs-scaffold",
+      marker: { path: INSTALL_MARKER_FILE, status: "created" },
+    });
+    expect(out.prUrl).toBeTruthy();
+    const chosen = await discovery.add({ kind: "github_repo", locator: "someone/epsilon" }, ada);
+    // Before the merge the marker sits on the branch only: the scan reads the default branch.
+    const before = await discovery.scan(chosen.id, ada);
+    expect(
+      before.candidates.map((c) => [c.locator, c.status, c.existingInstall, c.projectId]),
+    ).toEqual([["someone/epsilon", "duplicate", false, project.id]]);
+    // The human merges the scaffold's pull request: the marker is on main and names the project.
+    const [pr] = await gh.listPullRequests(repo, { state: "open" });
+    if (!pr) throw new Error("no scaffold pull request");
+    expect((await gh.mergePullRequest(repo, pr.number)).merged).toBe(true);
+    const file = await gh.getFile(repo, INSTALL_MARKER_FILE);
+    expect(parseInstallMarker(file?.content ?? "")).toEqual({
+      schema: 1,
+      project: project.id,
+      name: "Epsilon",
+    });
+    const after = await discovery.scan(chosen.id, ada);
+    expect(after.candidates.map((c) => [c.status, c.existingInstall, c.installMarker])).toEqual([
+      ["duplicate", true, INSTALL_MARKER_FILE],
+    ]);
+    // Another install (or this one once no project links the repository) proposes it as an
+    // existing install: the mark is information for the human, not a refusal (ADR 0056).
+    await store.project.patch(project.id, { repos: [] });
+    const unlinked = await discovery.scan(chosen.id, ada);
+    expect(unlinked.candidates.map((c) => [c.status, c.existingInstall])).toEqual([
+      ["proposed", true],
+    ]);
+    await discovery.remove(chosen.id, ada);
   });
 });

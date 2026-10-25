@@ -228,6 +228,23 @@ describe("project docs at session end (spec G.5)", () => {
     await w.close();
   });
 
+  it("a session that only filed its plan (assisted mode) writes no status update", async () => {
+    const w = await loopWorld();
+    const root = mkdtempSync(join(tmpdir(), "fr-loop-docs-"));
+    roots.push(root);
+    const { docs } = await docsFor(w, root, null);
+    await w.store.project.patch(w.project, { autonomy_level: 1 });
+    await w.addTask("Add clamp", { risk_tier: 1 });
+    const result = await w.start(w.runner(doneExecutor(w), { docs }));
+    expect(result.status).toBe("stopped");
+    expect(result.stopReason).toBe("plan_awaiting_approval");
+    const types = w.events.map((e) => e.type);
+    expect(types).toContain("session.plan_filed");
+    expect(types.filter((t) => t.startsWith("docs."))).toEqual([]);
+    expect(existsSync(join(root, "projects", w.project, WORKSPACE_DIR))).toBe(false);
+    await w.close();
+  });
+
   it("docsDirsFor lists where G.5 keeps the doc set: a linked folder, the docs clone, the workspace", async () => {
     const w = await loopWorld();
     const { root, bare } = await bareRepo();
