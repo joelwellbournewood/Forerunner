@@ -1176,7 +1176,12 @@ intent parser behind one object. `contextFor(turn)` builds the `CommandContext` 
 caller: the human as actor, the principal, the active project (`activeProjectOf`), the
 human's time zone, the paired device, the conversation session for the activity event, and
 the source (`SOURCE_OF`: `chat` for text and the phone, `voice` for voice, `ui` for the
-settings screen's route calls). The conversation agent calls
+settings screen's route calls). The daemon's ports are the CHF rate, the price table, the
+session ports (`sessionCommandPorts`, `sessionPausePorts`), `requestAnswered`
+(`syncApprovals`), `memory` (`memoryCommandPort`), `speak`, `modelSettings`, `emailMode`
+and `specialists` (`specialistCommandPort` over `RuntimeApp.specialistApprovals`, so
+`specialist.propose` reaches the C.5 approval gate; "The approval gate" under the specialist
+registry). The conversation agent calls
 `parse` (deterministic; `matched: "none"` means the model answers), `compose` (one card, one
 change log row for a combined request), `tools` (the command tools for the model path, each
 `gate: "registry"` so the hooks leave the confirmation to the executor, and each run with the
@@ -2263,7 +2268,10 @@ every new specialist goes through review. The composition root turns registry en
 
 **The approval gate (`approval.ts`, spec C.5, [ADR 0071](../decisions/0071-specialist-approval-gate.md)).**
 `SpecialistApprovals` (composed as `RuntimeApp.specialistApprovals`) is the only way a proposal
-becomes runnable. `propose(input)` writes the proposal (`proposeSpecialist`) and `file(name)`
+becomes runnable. `propose(input)` writes the proposal (`proposeSpecialist`), reads the file
+back with the loader and refuses and removes it unless it loads as `status: proposed` with
+`runnable: false` (the gate's invariant, checked in code), writes a `registry.specialist_approval`
+audit row `proposed` naming the proposing agent and the prompt version, and `file(name)`
 files one blocking `approval` request, options approve / reject, card keyed
 `specialist:<name>` with the summary (description and rationale), the `prompt_version` the
 human is shown, `eval_task_count`, the `threshold` and the limits; `file` returns the open
@@ -2301,6 +2309,19 @@ filed run nothing, are recorded and are filed again. Each step is a
 `registry.specialist_approval` audit row. In the daemon the evaluation runs in the
 background (`settled()` waits; `close()` does); `fr specialists approve` waits for its own
 (and applies an answer already given in the inbox first, rather than filing a second request).
+The PM reaches `propose` from a session through the command registry's `specialist.propose`
+(ADR 0071 amendment of 2026-10-25; `commands.md` has the command, `adding-a-specialist.md`
+the fields): `src/wiring/specialist-ports.ts` (`specialistCommandPort({ approvals,
+registryDir })`) is the `CommandPorts.specialists` port the daemon wires into `CommandLoop`,
+so on the conversation agent's model path the `specialist_propose` tool (medium risk, the
+registry's card and the human's yes; the hooks' allowlist, schema and kill checks as for every
+tool, `gate: "registry"`) hands the proposal to `propose` and nothing else writes one from a
+command. `check(name)` gives the card the eval-set size and whether the name is taken;
+`withdraw(name, by)` is the command's undo: a waiting proposal is taken back through the same
+steps as a reject, while another human (`approval_required`), an answer already given and not
+yet applied or a live evaluation (`claim_conflict`) and a proposal that went live
+(`not_found`) refuse it. A hand-written or pulled proposal is still filed by the next
+approvals sync (the answer route, the 5 s poll), not at once.
 
 ### Models (`src/models/ladder.ts`)
 
@@ -2481,7 +2502,7 @@ read once; the poll runs on the clock and stops. The composed daemon builds the 
 option's interval, polls on the clock, fires `ci` into the scheduler's log once, defers in the
 human's quiet hours, records a flagged comment as `injection.flagged` and stops on close.
 
-`specialist-approval.test.ts` (25) and `specialists-cli.test.ts` (5) (spec C.5, ADR 0071): a
+`specialist-approval.test.ts` (26) and `specialists-cli.test.ts` (5) (spec C.5, ADR 0071): a
 proposal files one blocking request with the summary and the eval-set size and filing again
 returns it; a proposal naming the D.4 run settings (`max_tokens`, `speed_mode`,
 `temperature`, ADR 0072) goes live with them as evaluated (the promotion's field comparison
@@ -2505,7 +2526,26 @@ to the install holding the proposal; an evaluation whose process died is recover
 (`interrupted`, a note, a new request) and one by a live process is left alone until it
 overruns the set's worst case; while a run is live `file`, `approve` and `reject` throw
 `claim_conflict` and exactly one run happens; `fileMissing` never files while an answer waits;
-earlier approval runs this month leave less of the testing share (last month's do not count).
+earlier approval runs this month leave less of the testing share (last month's do not count);
+`withdraw` takes back a waiting proposal (the request answered `reject`, the audit rows
+`proposed`, `filed`, `withdrawn`) and refuses another human, an answer already given, a live
+evaluation and a promoted one.
+
+`specialist-propose-tool.test.ts` (5) (spec C.5 from a session, ADR 0071 amendment of
+2026-10-25), through `composeRuntime` with the fake provider scripted per chat line: the PM's
+chat turn whose model calls `specialist_propose` forms the registry's card and writes nothing
+before the human's yes (the agent's own yes refused); the yes writes `proposed/<name>/` and
+files exactly one blocking request keyed `specialist:<name>`, the loader, the live registry
+and `rt.specialists` keep it not runnable, the change log row names the agent and the audit
+log carries the hooks' `specialist_propose` row and the gate's `proposed` and `filed` rows
+(never the prompt); the human's approve on the daemon route runs the eval set and only a pass
+goes live while a failing set (the palette path with a tap) stays proposed; a taken name, a
+pending name, a bad tier, an unknown tool and a 130-line prompt come back to the model as
+`Refused: ...` with `claim_conflict` or `validation`, no stack, nothing on disk; a run token
+without the tool is refused `tool_not_allowed` with its audit row, in the allowlist the tool
+passes to the registry's gate, and the same tool without `gate: "registry"` is held by the
+autonomy table at level 0 (a human request, no run); undo withdraws a waiting proposal and is
+refused `not_found` once the human's approve promoted it.
 
 `closeout-autonomy.test.ts`, `plan-approval.test.ts` and `plan-approval-daemon.test.ts` (spec
 J.6, J.7; ADR 0053): the runner files the plan of a level 0 or 1 session as a blocking request

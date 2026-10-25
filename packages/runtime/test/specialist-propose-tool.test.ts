@@ -238,7 +238,10 @@ describe("the PM's specialist.propose tool (spec C.5, ADR 0071)", () => {
     });
     expect(asked.pendingConfirmation?.readback).toContain('a proposed specialist "localizer"');
     expect(asked.pendingConfirmation?.readback).not.toContain("Translate what the brief names");
-    expect(asked.reply).toBe("I proposed a localizer; say yes to file it for your approval.");
+    // The model's text, then the card read back for the yes.
+    expect(asked.reply).toMatch(
+      /^I proposed a localizer; say yes to file it for your approval\. Change: the specialist registry\. From no specialist "localizer" to a proposed specialist "localizer" \(haiku; tools cc:Read, cc:Write; USD 1 per run; risk tier floor 1\) waiting for your approval in the inbox\./,
+    );
     expect(existsSync(proposedDir("localizer"))).toBe(false);
     expect(await specialistRequests("localizer")).toEqual([]);
 
@@ -301,8 +304,9 @@ describe("the PM's specialist.propose tool (spec C.5, ADR 0071)", () => {
     const change = changes.find((c) =>
       c.commands.some((x) => (x as { name: string }).name === "specialist.propose"),
     );
+    if (!change) throw new Error("no change log row for specialist.propose");
     expect(change).toMatchObject({ author_agent: rt.agent.id, author_human: null });
-    expect((change?.after as Json).request_id).toBe(request.id);
+    expect((change.after as Json).request_id).toBe(request.id);
     const audit = await rt.store.auditLog.list({ humanId: rt.human.id });
     expect(
       audit.some((a) => a.tool === "specialist_propose" && a.allowed && a.agent_id === rt.agent.id),

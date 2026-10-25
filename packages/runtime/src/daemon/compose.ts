@@ -279,6 +279,7 @@ import {
   SecretCheckedChannel,
 } from "../wiring/notification-ports.ts";
 import { sessionPausePorts } from "../wiring/session-ports.ts";
+import { specialistCommandPort } from "../wiring/specialist-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
 import type { SpeakStartedView } from "./api-types.ts";
 import { conversationSessionId } from "./conversation-session.ts";
@@ -2471,6 +2472,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // memory.record (spec O.2, ADR 0061): a lesson stated in chat or voice goes into the
       // principal's private memory through the same loop the sessions use.
       memory: memoryCommandPort(memory),
+      // specialist.propose (spec C.5, ADR 0071): the PM's proposal, by the model path's tool
+      // or the palette, goes through the approval gate above: the file under proposed/ (never
+      // runnable) and the human's blocking request; approve runs the eval set, a pass promotes.
+      specialists: specialistCommandPort({ approvals: specialistApprovals, registryDir }),
       // summary.speak (spec A.6): the speaker over the registry's TTS; without a usable
       // provider the command answers with the text instead (the reason comes back here).
       speak: async (req) => {

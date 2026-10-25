@@ -8,6 +8,11 @@ Amended 2026-10-23 by the review of `wave/w3-c5-specialist-approval`
 ownership rule, the one-shot rule, the live-evaluation lock and its recovery, and the monthly
 testing share.
 
+Amended 2026-10-25 by item `w8-c5-propose-tool` (review finding 5's open part): point 8
+names the command the PM proposes with (`specialist.propose`), its risk and confirmation,
+the runnable invariant checked in code, the audit rows and the undo. The consequence "no
+agent tool calls `propose` yet" is withdrawn.
+
 ## Context
 
 Spec C.5: "PM can propose a new specialist; it goes live only after human approval and
@@ -95,6 +100,33 @@ recorded, what promotion writes, and how the answer is applied exactly once.
    whose prompt version is no longer the card's (edited after filing) run nothing, are
    recorded, and the proposal is filed again. The CLI path (`fr specialists approve|reject`)
    answers the open request as the install's human through the same steps.
+8. **The PM proposes through the command registry, not a bespoke tool.** `specialist.propose`
+   (`packages/commands/src/commands/specialist.ts`) is a command like `budget.set`: on the
+   conversation agent's model path it is the `specialist_propose` tool, and the palette, the
+   API and the phone run it by name, so the same card, confirmation policy, change log and
+   undo apply whichever way the proposal is made. Its parameters are the registry file's
+   frontmatter fields under their file names plus `prompt` and `rationale`, with cautious
+   defaults for the limits; `status` and `eval_set` are never parameters. It is medium risk:
+   the human says yes to the card before anything is written, so a model cannot fill the
+   inbox with proposals, and the agent's own yes is refused as for every command. On the yes
+   the command hands the proposal to `CommandPorts.specialists` (`specialistCommandPort` in
+   `packages/runtime/src/wiring/specialist-ports.ts`, over `RuntimeApp.specialistApprovals`),
+   whose `propose` runs the loader's checks on the exact bytes, reads the written file back
+   and refuses and removes it unless it loads as `status: proposed`, `runnable: false` (the
+   gate's invariant, enforced in code and not only by construction), writes a
+   `registry.specialist_approval` audit row `proposed` naming the proposing agent and the
+   prompt version, and files the one blocking request of point 1. The tool call is also on
+   the hooks' audit log and in the change log with `author_agent`. The eval set stays a
+   registry file set the tool cannot write; the card and the sentence say how many tasks
+   exist and that at least 10 must before an approval can activate the specialist. What the
+   gate refuses (an unknown tool, a prompt over 120 lines, a taken name) comes back to the
+   model as the `ForerunnerError` code and message (`validation`, `claim_conflict`), never a
+   stack trace, and leaves nothing on disk. The undo is `SpecialistApprovals.withdraw`: a
+   waiting proposal is taken back through the reject steps; a request the human already
+   answered, a live evaluation (`claim_conflict`) and a promoted specialist (`not_found`)
+   refuse it, so an undo never overrides the human's answer. A proposal written by hand or
+   pulled into `proposed/` is still filed by the next approvals sync (the answer route, the
+   5 s poll), not at once; no watch is added.
 
 ## Consequences
 
@@ -108,8 +140,11 @@ recorded, what promotion writes, and how the answer is applied exactly once.
   and per call by the hooks; tests run it on the fake provider.
 - An answered request whose proposal was deleted by hand is never applied (no install holds a
   `proposal.json` naming it); it stays answered.
-- No agent tool calls `propose` yet; proposals come from code, by hand or a registry pull and
-  are filed by the daemon's next sync (BLOCKERS.md, row C.5).
+- The PM proposes with `specialist.propose` from a chat or voice turn (point 8); a proposal
+  written by hand or pulled into `proposed/` is filed by the daemon's next sync. Proposing
+  costs the human two answers: the card's yes (may the agent file this?) and the inbox's
+  approve (shall it run its eval set and go live?). They are different questions and the
+  second costs money, so the two are kept.
 
 ## Alternatives considered
 
@@ -120,3 +155,14 @@ recorded, what promotion writes, and how the answer is applied exactly once.
   the card and audit rows as the second record.
 - **Run the evaluation inside the answer route.** Rejected: an eval set can take minutes;
   the claim is synchronous, the run is not.
+- **A bespoke `propose_specialist` ToolSpec in the daemon's built-in tool registry** (2026-10-25).
+  Rejected: the built-in registry is what specialist runs are offered, and a specialist must
+  not propose specialists; the principal's only model path with tools is the conversation
+  agent's, which offers the command registry's tools and nothing else. A command gets the card,
+  the change log, the undo and the palette for free.
+- **A low-risk command (no yes before the proposal is filed)** (2026-10-25). Rejected: nothing
+  would go live, but a model could file a proposal per turn and each is a blocking inbox
+  request; the yes costs one word and keeps the agent's initiative visible.
+- **A directory watch on `proposed/`** (2026-10-25). Rejected: the tool files its own request,
+  and a hand-written proposal is filed within one approvals poll; a watcher adds a platform
+  dependency for seconds of latency.

@@ -374,7 +374,9 @@ export class SpecialistApprovals {
 
   /**
    * Write the proposal (`proposeSpecialist`) and file its approval request. The proposal must
-   * name the install's human; the request is the one place the human approves it.
+   * name the install's human; the request is the one place the human approves it. This is
+   * what the `specialist.propose` command (the PM's tool on the model path, the palette) calls
+   * through `specialistCommandPort`; the proposer is audited before the request is filed.
    */
   async propose(
     input: SpecialistProposal,
@@ -393,8 +395,75 @@ export class SpecialistApprovals {
       registryDir: this.deps.registryDir,
       clock: this.deps.clock,
     });
+    // The gate's invariant, checked in code and not only by construction: what was written is
+    // a proposal the loader keeps `runnable: false` until the human's approve and a passing
+    // eval set promote it. A file that would load any other way is removed again and refused,
+    // so nothing a caller passes can make the registry run it.
+    const check = readSpecialistFile(
+      receipt.file,
+      this.deps.registryDir,
+      "proposed",
+      this.deps.loadOptions,
+    );
+    if (!check.def || check.def.runnable || check.def.status !== "proposed") {
+      rmSync(receipt.dir, { recursive: true, force: true });
+      throw new ForerunnerError(
+        "internal",
+        `proposal "${receipt.name}" would run before its approval; refused and removed`,
+        { details: { name: receipt.name, issues: check.issues } },
+      );
+    }
+    await this.audit(
+      true,
+      {
+        action: "proposed",
+        name: receipt.name,
+        promptVersion: receipt.promptVersion,
+        by: input.proposedBy.agentId,
+        ...(input.proposedBy.projectId ? { projectId: input.proposedBy.projectId } : {}),
+      },
+      "proposed",
+    );
     const request = await this.file(receipt.name);
     return { receipt, request };
+  }
+
+  /**
+   * The undo of `specialist.propose`: take a proposal back while it still waits for the
+   * human. Unlike `reject`, an answer the human already gave is never overridden: a request
+   * answered and waiting to be applied, and a running evaluation, refuse with
+   * `claim_conflict`; a proposal that is gone (promoted, withdrawn) is `not_found`.
+   */
+  async withdraw(name: string, by: string): Promise<SpecialistApplyResult> {
+    if (by !== this.deps.humanId) {
+      await this.audit(false, { action: "withdraw", name, by }, "wrong_human");
+      throw new ForerunnerError(
+        "approval_required",
+        "only the install's human can withdraw a specialist proposal",
+        { details: { name } },
+      );
+    }
+    const dir = proposedDir(this.deps.registryDir, name);
+    if (!existsSync(join(dir, SPECIALIST_FILE))) {
+      throw new ForerunnerError(
+        "not_found",
+        `no pending proposal named "${name}" (it went live or was withdrawn)`,
+        { details: { name } },
+      );
+    }
+    const record = readProposalRecord(dir);
+    if (record?.approval?.status === "evaluating") this.assertNotLive(name, record);
+    if (record?.approval?.requestId) {
+      const req = await this.deps.store.humanRequest.get(record.approval.requestId);
+      if (req?.status === "answered" && !(req.change_card as JsonObject | null)?.applied_at) {
+        throw new ForerunnerError(
+          "claim_conflict",
+          `the proposal "${name}" was already answered (${specialistAnswer(req.answer) ?? "an answer"} waits to be applied); the answer stands`,
+          { details: { name, requestId: req.id } },
+        );
+      }
+    }
+    return this.answerAndApply(name, by, "reject");
   }
 
   /**
