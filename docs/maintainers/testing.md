@@ -477,6 +477,31 @@ proves nothing. `scripts/package-test-scripts.test.ts` pins the shape of every s
 that its test directory exists. `apps/ui` and `apps/approvals-web` keep their own vitest configs;
 `tests/e2e` runs the e2e project the same way.
 
+### Docs close-out (`scripts/closeout-docs.test.ts`)
+
+The requirements close-out for the maintainer documentation (spec P.1 to P.3, P.5 to P.14),
+in the `unit` project (`pnpm vitest run --project unit scripts`): `AGENTS.md` carries the
+commands for both OSes, the layout (every named directory exists), the conventions and the
+build-prompt rules; every doc the spec names exists, is not a skeleton (no skeleton status
+banner), has the standard sections (Purpose, How it works, How to change it, Tests, Known
+issues; `architecture.md` its own set) each with a body, and says what its clause asks for
+(`runtime.md` the enforcement hooks, autonomy and kill switch; `billing.md` the provider
+rule change; `platform-notes.md` the Windows and Linux table; `release.md` signing, staged
+rollout and rollback; `migrations.md` both migration kinds; `troubleshooting.md` a fix per
+numbered failure); the four `adding-a-*` guides walk through numbered steps, and
+`adding-a-connector.md` names the catalog entry (`catalog.json`, `CatalogEntry`), the
+ToolSpec mapping of ADR 0016 (`BridgedToolSpec`, `inferActionClass`), the permissions
+(`ExtensionPermissions`, `actionClasses`, `grantedToolNames`), live revocation
+(`revokeLive`) and the extensions test files; `security.md` has the threat model and an
+"Injection test suite" section that names the corpus directory, the runner, the scanner,
+scenario 6, `HOSTILE_TECHNIQUES`, `enforcement_only`, `pnpm test:injection`, the report
+file, the exit code and the CI workflow, and carries no "to be filled" placeholder; the
+maintainers README indexes every file; every ADR follows the template and is indexed; the
+changelog keeps its Unreleased section; the module-to-doc mapping of `docs-check.mjs` covers
+every module directory and names docs that exist; the link checker fails on a broken relative
+link and passes on a good one; and `ci.yml` runs the docs check, the link check and the
+schema-doc currency check.
+
 ### Fake provider
 
 `pnpm vitest run --project unit testenv/test` (41 tests; with Vitest's project config,
