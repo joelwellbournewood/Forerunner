@@ -11,6 +11,7 @@ export * from "./estimate.ts";
 export * from "./harness.ts";
 export * from "./ledger.ts";
 export * from "./metered.ts";
+export * from "./probe.ts";
 export * from "./registry.ts";
 export * from "./report.ts";
 export * from "./stats.ts";

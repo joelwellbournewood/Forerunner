@@ -147,6 +147,18 @@ describe("metered provider", () => {
     expect(w.budget.refusals).toHaveLength(1);
   });
 
+  it("records the effort each request asked for, on sent and on refused calls", async () => {
+    const w = world({ replies: [textReply("hi", { times: 2 })] });
+    await w.provider.complete(req("fake-opus", { effort: "max" }));
+    await w.provider.complete(req("fake-sonnet"));
+    expect(w.calls.map((c) => c.effort)).toEqual(["max", null]);
+    const tight = world({ replies: [textReply("never")], runCapUsd: 0.0001 });
+    await expect(tight.provider.complete(req("fake-opus", { effort: "high" }))).rejects.toThrow(
+      LiveBudgetError,
+    );
+    expect(tight.calls[0]).toMatchObject({ status: "refused", effort: "high" });
+  });
+
   it("writes the row for a failed call too, with the error in the note", async () => {
     const w = world({ replies: [errorReply("rate_limit", "slow down")] });
     const res = await w.provider.complete(req());

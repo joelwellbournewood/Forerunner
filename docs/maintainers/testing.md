@@ -1430,16 +1430,19 @@ the subscription token, values returned and never logged), `src/ledger.ts` (`Spe
 `tests/live/spend.json`; a row's optional `kind: "subscription"`), `src/budget.ts`
 (`LiveBudget`: caps from `FORERUNNER_LIVE_BUDGET_USD` and `FORERUNNER_LIVE_RUN_CAP_USD`,
 `reserve`/`settle`, the 80% warning line, `LiveBudgetError`), `src/metered.ts`
-(`MeteredProvider`, the gate in front of any `ModelProvider`), `src/registry.ts` (the registry
+(`MeteredProvider`, the gate in front of any `ModelProvider`; each call record carries the
+effort the request asked for), `src/registry.ts` (the registry
 copy: the coder on the built-in file tools, `LIVE_CODER_OVERRIDES`, or on the registry's `cc:`
 names for the SDK path, `LIVE_SDK_CODER_OVERRIDES`), `src/harness.ts` (`liveProvider()`,
 `composeLive()` through `composeRuntime`, the fake git host, the audit sink, the subscription
-composition, `settleSubscriptionRuns`, `scrubHostSessionEnv`), `src/tasks.ts` (the three
+composition, `settleSubscriptionRuns`, `scrubHostSessionEnv`, `removeTreeOrWarn`: a temp tree
+that cannot be removed, a Windows EPERM, is a warning, never a failure), `src/tasks.ts` (the three
 phase 1 tasks and the kill task, shared by both halves), `src/dry-run.ts` (fake credentials and
 the fake ladder priced like the real one), `src/estimate.ts` (the pre-run cost estimate and
-`preflight`, below), `src/stats.ts`, `src/report.ts` (`reportDir`,
+`preflight`, below), `src/probe.ts` (`probeEffort`: one tiny request at a model and effort
+before work that depends on them), `src/stats.ts`, `src/report.ts` (`reportDir`,
 `writeReport`, `readPhase1Evidence`); the tests under `test/`: `env`, `budget`, `metered`,
-`estimate`, `harness` (the dry runs of both halves; on under the package's own `test` script,
+`estimate`, `probe`, `cleanup`, `harness` (the dry runs of both halves; on under the package's own `test` script,
 which `ci.yml` runs on both OS, step "Live harness offline tests") and the six
 `live-*.live.test.ts` files (opt-in; `live-6` and `live-7` also carry their own dry run, which
 runs in every mode, so CI's offline step runs it too).
@@ -1646,13 +1649,18 @@ minutes; the registry's 40 minutes would outlast the 30 minute test timeout) and
 default tier and effort (Sonnet, high), which is what the row measures. Task budget USD 0.30
 (the eval task's own), session cap USD 1. Measured from the researcher's Run row and its run
 events: wall time, time to first token, model calls and each call's first token, tokens, USD;
-and the whole session (tier 1 review included) from the metered calls. Asserted: the run is on
-the registry default (`modelIdFor(default_tier)`, `default_effort`, both equal to
-`MODE_DEFAULTS.researcher`), completed, did not time out, took no longer than the specialist's
-timeout, cost no more than the task budget, the session stayed under its cap with no refused
-or failed call, and `answer.md` is on the PR branch. The eval's mechanical checks over that
+the run's own metered calls (those settled between its `run_start` and `run_end` events, with
+the effort each was sent at); and the whole session (planning and the tier 1 review included)
+from the metered calls. Asserted: the run is on the registry default
+(`modelIdFor(default_tier)`, `default_effort`, both equal to `MODE_DEFAULTS.researcher`) on its
+Run row and on every request it sent, completed, did not time out, took no longer than the
+specialist's timeout, cost no more than the task budget, its own calls all ended ok, the
+session stayed under its cap with no refused call, and `answer.md` is on the PR branch. The
+session's other calls (the review) are reported, not asserted one by one, so a review hiccup
+does not fail D.13. The eval's mechanical checks over that
 answer are recorded, not asserted (answer quality is the critic calibration's gate). Estimate:
-expected about USD 0.28, ceiling USD 1.00. Report `researcher-live.json`; the line for the
+expected about USD 0.31 (one PM planning call on Sonnet at high counted, though this build's
+code planner may make none), ceiling USD 1.00. Report `researcher-live.json`; the line for the
 D.13 row is printed and kept as `summaryLine`.
 
 **Critic tiers 2 and 3, D.15** (`live-7-critic-tiers.live.test.ts`): the phase 3 world
@@ -1660,19 +1668,30 @@ D.13 row is printed and kept as `summaryLine`.
 reviews of `coder-001` from the coder eval set the phase 3 half calibrates on: clean and
 seeded at tier 2, then at tier 3. The evidence is `calibrate()`'s (`evidenceFor` over the
 eval runner's result with the expected-output driver), the review budget the eval task's own
-(USD 0.50), the time limit the tier's deep-review timeout (10 minutes,
-`DEFAULT_DEEP_REVIEW_TIMEOUT_MS`), the hooks' session cap the four budgets together. A
+(USD 0.50, enforced by the hooks), the time limit the tier's deep-review timeout (10 minutes,
+`DEFAULT_DEEP_REVIEW_TIMEOUT_MS`), checked after the fact rather than enforced: the world runs
+the critic on a `SimulatedClock`, so its own deadline never fires on a live call. The hooks'
+session cap the four budgets together. A
 pass-through provider (`RequestLog`) records the model and effort of every request the critic
-sends. Measured per review: wall time of the review call (timed by the harness: the world's
+sends. Before the first review, after the preflight, `probeEffort` sends one Opus request at
+effort `max` with `max_tokens` 64 through the same metered provider (in the ledger, and in the
+estimate and the ceiling): the tier 3 reviews are the first live requests at `max`, with the
+critic's 8192 `max_tokens` per call, so a provider that rejects `max` fails the file in its
+`beforeAll` with the provider's reason (`not_supported`) and no tier 2 review is paid for.
+Measured per review: wall time of the review call (timed by the harness: the world's
 clock is simulated), the eval runner's preparation separately, the first call's time to first
-token, model calls and durations, tokens, USD, verdict, the model's own verdict before the
+token, model calls with their durations and stop reasons (printed in the line, so a
+`max_tokens` stop is visible; a review that ends `no_verdict` after one says so), tokens, USD,
+verdict, the model's own verdict before the
 rules, grade, confidence, the rule adjustments. Asserted: the pick and every request are on the
 tier table's model and effort (Opus; high at tier 2, max at tier 3), the review completed with
-a verdict, inside its time limit and its budget, with no refused or failed call; tier 3 ends
+a verdict, within its budget and its time limit (checked after the fact), with no refused or
+failed call; tier 3 ends
 `human` (verdict rule 4, H.2). The calibration's per-variant reading (seeded caught = not
 accept, clean passed = accept) is recorded and logged as a soft check, never failed: the gate
 (H.7) is a rate over the set, which one review per variant cannot decide. Estimate: expected
-about USD 0.68, ceiling USD 2.00. Report `critic-tiers-live.json`; one line per review is
+about USD 0.68, ceiling USD 2.0023 (the four review budgets and the probe). Report
+`critic-tiers-live.json`; one line per review is
 printed and kept as `summaryLines`.
 
 ### Measured on 2026-10-20
@@ -1769,7 +1788,7 @@ The last line runs only the researcher and the critic tier files, live, from the
 root, on Windows and Linux alike (`--mode live` sets `FORERUNNER_LIVE=1` through
 `vitest.config.ts`, so no shell-specific variable syntax is needed; both files are one run for
 the per-run cap). Their dry runs run first in each file; either file alone works the same way.
-Expected spend about USD 0.96 for both, at most USD 3.00 (the ceilings `preflight` checks).
+Expected spend about USD 0.99 for both, at most USD 3.0023 (the ceilings `preflight` checks).
 
 The key is read from `.env.build` at the repository root (`FORERUNNER_ANTHROPIC_KEY`,
 `FORERUNNER_ANTHROPIC_WORKSPACE_ID`), or from the environment; the subscription half also
@@ -1811,8 +1830,12 @@ is `pnpm --filter @forerunner/live test`, which skips every live case).
 
 ### Tests
 
-`pnpm --filter @forerunner/live test`: 53 tests over 8 files, 50 unit tests in 6 files and
-the 3 dry-run cases of `live-6` and `live-7` (the pre-run estimate, `estimate.test.ts`: the
+`pnpm --filter @forerunner/live test`: 60 tests over 10 files, 56 unit tests in 8 files and
+the 4 dry-run cases of `live-6` and `live-7` (the effort probe, `probe.test.ts`: one request at
+the effort and `max_tokens` 64 through the metered provider and in the ledger, a rejection
+failing with the provider's reason, its ceiling at the model's prices; the cleanup,
+`cleanup.test.ts`: a tree that cannot be removed warns and returns false instead of throwing;
+the metered call record's `effort`, on sent and refused calls; the pre-run estimate, `estimate.test.ts`: the
 planned shapes priced at the cache-write and output rates from the billing table, an unknown
 model refused, the ceiling never below the expectation, a file that fits started and one over
 the per-run cap or over the live budget refused before any call, with no reservation and no
@@ -1820,7 +1843,10 @@ recorded refusal; the researcher dry run: one `researcher-001` session on a scri
 through the PR executor, on the registry default, `answer.md` on the PR branch passing the
 eval's mechanical checks, and the preflight both ways; the critic tiers dry run: four reviews
 on `fake-opus` at high and max, every request recorded with that model and effort, tier 3
-ending `human` with the scripted verdict kept as the model's own; and the parser, quoted values with
+ending `human` with the scripted verdict kept as the model's own, the probe before them, the
+stop reasons and "checked after the fact" in the printed line, and the `no_verdict` at
+`max_tokens` note; the researcher dry run also checks that only the run's own calls (both at
+high) are attributed to it; and the parser, quoted values with
 trailing comments, credential sources and the subscription token from the file or the
 environment, its redaction and its absence from the description; ledger round trip and
 validation, `subscription` rows kept with their kind and note and adding nothing to the totals

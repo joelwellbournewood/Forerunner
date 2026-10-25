@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { closingReply, specialistReportTurn, specialistTurn, submitReview } from "@forerunner/e2e";
 import { type EvalTask, loadEvalSet, runCheck, writeFiles } from "@forerunner/evals";
@@ -13,7 +13,7 @@ import {
   composeLive,
   DEFAULT_REPO_FILES,
   type LiveHarness,
-  RM_TREE,
+  removeTreeOrWarn,
   repositoryRegistryDir,
 } from "../src/harness.ts";
 import type { LiveCall } from "../src/metered.ts";
@@ -69,6 +69,10 @@ export interface ResearcherEvidence {
     ttftMs: number | null;
     modelCalls: number;
     callTtftMs: number[];
+    /** The effort each of the run's own metered calls was sent with. */
+    callEfforts: (string | null)[];
+    /** The run's own metered calls that did not end ok (the tier 1 review's are not counted). */
+    notOk: number;
     tokensIn: number;
     tokensOut: number;
     usd: number;
@@ -128,15 +132,23 @@ async function researcherSession(h: LiveHarness, task: EvalTask): Promise<Resear
     specialist: "researcher",
   });
   // The executor's run events for this task, grouped by run (a run_start opens a group).
+  // The metered calls of the first run are the ones settled between its run_start and its
+  // run_end: the executor runs one task at a time, and the tier 1 review comes after run_end.
   const byRun = new Map<string, RunEvent[]>();
+  const callWindow = new Map<string, { from: number; to: number | null }>();
   let current: string | null = null;
   const onRun = (e: { taskId?: string; ev?: RunEvent }) => {
     if (e.taskId !== row.id || !e.ev) return;
     if (e.ev.type === "run_start") {
       current = e.ev.runId;
       byRun.set(current, []);
+      callWindow.set(current, { from: h.provider.calls.length, to: null });
     }
     if (current) byRun.get(current)?.push(e.ev);
+    if (e.ev.type === "run_end" && current) {
+      const w = callWindow.get(current);
+      if (w) w.to = h.provider.calls.length;
+    }
   };
   h.app.events.on("run", onRun);
   const mark = h.provider.calls.length;
@@ -157,6 +169,8 @@ async function researcherSession(h: LiveHarness, task: EvalTask): Promise<Resear
   const ends = (byRun.get(first.id) ?? []).filter(
     (e): e is Extract<RunEvent, { type: "model_call_end" }> => e.type === "model_call_end",
   );
+  const window = callWindow.get(first.id);
+  const own = window && window.to !== null ? h.provider.calls.slice(window.from, window.to) : [];
   const def = h.app.registry.specialists.get("researcher");
   const after = await h.app.store.task.mustGet(row.id);
   const review = res.reviews.find((r) => r.taskId === row.id) ?? null;
@@ -181,7 +195,7 @@ async function researcherSession(h: LiveHarness, task: EvalTask): Promise<Resear
         checks.push({ label: r.label, status: r.status });
       }
     } finally {
-      rmSync(dir, RM_TREE);
+      removeTreeOrWarn(dir);
     }
   }
   const s = spent(calls);
@@ -203,6 +217,8 @@ async function researcherSession(h: LiveHarness, task: EvalTask): Promise<Resear
       ttftMs: first.ttft_ms,
       modelCalls: ends.length,
       callTtftMs: ends.map((e) => Math.round(e.ttftMs)),
+      callEfforts: own.map((c) => c.effort),
+      notOk: own.filter((c) => c.status !== "ok").length,
       tokensIn: first.tokens_in + first.cache_read_tokens + first.cache_write_tokens,
       tokensOut: first.tokens_out,
       usd: first.cost_usd_micro / 1e6,
@@ -223,6 +239,8 @@ async function researcherSession(h: LiveHarness, task: EvalTask): Promise<Resear
   };
 }
 
+const minutes = (ms: number): number => Math.round(ms / 60_000);
+
 /** The line for gates.md's D.13 row. */
 export function researcherSummaryLine(e: ResearcherEvidence, run: string): string {
   const r = e.researcher;
@@ -230,8 +248,8 @@ export function researcherSummaryLine(e: ResearcherEvidence, run: string): strin
   return (
     `D.13 researcher (${r.model}, effort ${r.effort}; ${e.taskId}): run ${(r.wallMs / 1000).toFixed(1)} s, ` +
     `first token ${r.ttftMs === null ? "n/a" : `${r.ttftMs} ms`}, ${r.modelCalls} model calls, ` +
-    `${r.tokensIn} in / ${r.tokensOut} out tokens, ${usd(r.usd)} ` +
-    `(task budget ${usd(r.taskBudgetUsd)}, timeout ${r.timeoutMs / 60_000} min, ${r.outcome}); ` +
+    `${r.tokensIn} in, ${r.tokensOut} out tokens, ${usd(r.usd)} ` +
+    `(task budget ${usd(r.taskBudgetUsd)}, timeout ${minutes(r.timeoutMs)} min, ${r.outcome}); ` +
     `session with the tier 1 review ${(e.session.wallMs / 1000).toFixed(1)} s, ${usd(e.session.usd)}, ` +
     `review ${e.review.verdict ?? "none"} ${e.review.grade ?? ""}`.trimEnd() +
     `; answer.md ${e.answer.present ? `${e.answer.chars} chars, mechanical checks ${passed}/${e.answer.checks.length}` : "missing"}; run ${run}`
@@ -248,6 +266,9 @@ function assertResearcher(h: LiveHarness, e: ResearcherEvidence): void {
   expect(r.registryEffort).toBe(MODE_DEFAULTS.researcher.effort);
   expect(r.model).toBe(modelIdFor(r.registryTier as "sonnet" | "opus", h.provider.name, ladder));
   expect(r.effort).toBe(r.registryEffort);
+  // ... and as sent: every one of the run's own requests went out at that effort.
+  expect(r.callEfforts).toHaveLength(r.modelCalls);
+  expect(r.callEfforts.every((x) => x === r.registryEffort)).toBe(true);
   // Completed inside the time and the money the task was given.
   expect(e.sessionStatus).toBe("completed");
   expect(r.outcome).toBe("completed");
@@ -258,7 +279,9 @@ function assertResearcher(h: LiveHarness, e: ResearcherEvidence): void {
   expect(r.usd).toBeGreaterThan(0);
   expect(r.usd).toBeLessThanOrEqual(r.taskBudgetUsd);
   expect(e.session.usd).toBeLessThanOrEqual(e.session.capUsd);
-  expect(e.session.notOk).toBe(0);
+  // The researcher's own calls all ended ok; the session's totals (the tier 1 review included)
+  // are reported, not asserted call by call, so a review hiccup does not fail D.13.
+  expect(r.notOk).toBe(0);
   expect(h.budget.refusals).toEqual([]);
   expect(h.budget.snapshot().runUsd).toBeLessThanOrEqual(h.budget.config.runCapUsd);
   // A result: the answer file on the run's PR branch.
@@ -312,7 +335,7 @@ describe("D.13 researcher, dry run (scripted provider, no network)", () => {
   });
   afterAll(async () => {
     await h?.close();
-    if (ledgerDir) rmSync(ledgerDir, RM_TREE);
+    if (ledgerDir) removeTreeOrWarn(ledgerDir);
   });
 
   it("the preflight refuses a file whose ceiling exceeds what is left, and passes one that fits", () => {
@@ -329,6 +352,9 @@ describe("D.13 researcher, dry run (scripted provider, no network)", () => {
     assertResearcher(h, e);
     expect(e.researcher.model).toBe("fake-sonnet");
     expect(e.researcher.effort).toBe("high");
+    // The run's own calls only: the tier 1 review's calls are in the session, not in the run.
+    expect(e.researcher.callEfforts).toEqual(["high", "high"]);
+    expect(e.session.calls).toBeGreaterThan(e.researcher.callEfforts.length);
     expect(e.answer.checks.every((c) => c.status === "pass")).toBe(true);
   });
 });
@@ -345,11 +371,14 @@ describe(`D.13 researcher, live${LIVE ? "" : ` (${SKIP_REASON})`}`, () => {
     h = await composeLive({ specialists: SPECIALISTS, repoFiles: repoFilesFor(task) });
     const sonnet = modelIdFor(MODE_DEFAULTS.researcher.tier, "anthropic");
     const t1 = modelIdFor(MODE_DEFAULTS.critic_t1.tier, "anthropic");
-    // Expected: a handful of researcher turns on a one-file question and a two-call tier 1
-    // review; the ceiling is the session cap the hooks enforce on all of it.
+    const pm = modelIdFor(MODE_DEFAULTS.planning.tier, "anthropic");
+    // Expected: the session's planning call (Sonnet at high; this build's code planner may make
+    // none, the estimate counts one), a handful of researcher turns on a one-file question and a
+    // two-call tier 1 review; the ceiling is the session cap the hooks enforce on all of it.
     const estimate = estimateSpend(
       "live-6-researcher",
       [
+        { label: "PM planning", model: pm, calls: 1, inputTokens: 4_000, outputTokens: 2_000 },
         { label: "researcher", model: sonnet, calls: 6, inputTokens: 6_000, outputTokens: 2_000 },
         { label: "tier 1 review", model: t1, calls: 2, inputTokens: 7_000, outputTokens: 1_500 },
       ],

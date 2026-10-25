@@ -47,6 +47,23 @@ import { runIdFromEnv } from "./report.ts";
 export const RM_TREE = { recursive: true, force: true, maxRetries: 10, retryDelay: 200 } as const;
 
 /**
+ * Remove a temporary tree, and only warn when it cannot be removed: a temp tree left behind is
+ * harmless, and a cleanup must never fail a run whose cases passed, abort the work still to do
+ * or lose evidence not yet written. Returns whether the tree is gone.
+ */
+export function removeTreeOrWarn(path: string, rm: typeof rmSync = rmSync): boolean {
+  try {
+    rm(path, RM_TREE);
+    return true;
+  } catch (err) {
+    console.warn(
+      `live harness: could not remove the temporary tree ${path} (${(err as Error).message}); remove it by hand`,
+    );
+    return false;
+  }
+}
+
+/**
  * The live harness: the real provider behind the budget gate, and the real runtime composed
  * through `composeRuntime` (the daemon's one wiring) against an in-memory SQLite store, an
  * in-memory vault holding the key by its usual name (so the billing source is an `api_key`
@@ -538,14 +555,7 @@ export async function composeLive(opts: LiveHarnessOptions = {}): Promise<LiveHa
     close: async () => {
       await app.close().catch(() => undefined);
       await host.stop().catch(() => undefined);
-      // A temp tree left behind is harmless; a run whose cases passed is not failed for it.
-      try {
-        rmSync(root, RM_TREE);
-      } catch (err) {
-        console.warn(
-          `live harness: could not remove the temporary tree ${root} (${(err as Error).message}); remove it by hand`,
-        );
-      }
+      removeTreeOrWarn(root);
     },
   };
 }

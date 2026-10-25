@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { type CriticModelPick, evidenceFor, type ReviewOutput } from "@forerunner/critic";
 import { closingReply, gateWorld, submitReview } from "@forerunner/e2e";
@@ -16,12 +16,23 @@ import {
   type StreamEvent,
 } from "@forerunner/runtime";
 import { REVIEW_VERDICTS } from "@forerunner/state";
-import { FakeProvider } from "@forerunner/testenv";
+import { FakeProvider, textReply } from "@forerunner/testenv";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { budgetLine } from "../src/budget.ts";
 import { DRY_RUN_PRICING, dryRunCredentials } from "../src/dry-run.ts";
 import { estimateSpend, preflight } from "../src/estimate.ts";
-import { type LiveProvider, liveProvider, RM_TREE, repositoryRegistryDir } from "../src/harness.ts";
+import {
+  type LiveProvider,
+  liveProvider,
+  removeTreeOrWarn,
+  repositoryRegistryDir,
+} from "../src/harness.ts";
+import {
+  PROBE_INPUT_TOKENS,
+  PROBE_MAX_TOKENS,
+  probeCeilingUsd,
+  probeEffort,
+} from "../src/probe.ts";
 import { liveEnabled, reportDir, SKIP_REASON, usd, writeReport } from "../src/report.ts";
 
 /**
@@ -40,7 +51,9 @@ import { liveEnabled, reportDir, SKIP_REASON, usd, writeReport } from "../src/re
  * `SimulatedClock`, so the critic's own `durationMs` reads 0 and the harness times it), the
  * first call's time to first token, the model calls and their durations, USD, the verdict, the
  * model's verdict before the rules, grade and confidence. Asserted: every review completed with
- * a verdict, on the table's model and effort, inside its time limit and its budget; tier 3 ends
+ * a verdict, on the table's model and effort, within its budget and (checked after the fact,
+ * the world's clock being simulated) its time limit; before any review, one tiny Opus request
+ * at `max` probes that the provider accepts that effort (`src/probe.ts`); tier 3 ends
  * `human` (rule 4 of the verdict rules, spec H.2). The calibration's own per-variant reading
  * (seeded caught = not accept, clean passed = accept, `calibrate()`) is recorded and logged as
  * a soft check: the spec's gate is a rate over the eval set (H.7: 80% and 90%), which one
@@ -101,6 +114,8 @@ export interface TierReviewEvidence {
   modelCalls: number;
   callMs: number[];
   callStatus: string[];
+  /** Each model call's stop reason (`tool_use`, `end_turn`, `max_tokens`, ...). */
+  stopReasons: (string | null)[];
   usd: number;
   tokensIn: number;
   tokensOut: number;
@@ -176,7 +191,7 @@ async function tierReviews(o: TierRunOptions): Promise<TierReviewEvidence[]> {
             ctx,
           );
         } finally {
-          if (result.workDir) rmSync(result.workDir, RM_TREE);
+          if (result.workDir) removeTreeOrWarn(result.workDir);
         }
         const wallMs = Math.round(performance.now() - t0);
         const calls = o.lp.provider.calls.slice(callMark);
@@ -199,6 +214,7 @@ async function tierReviews(o: TierRunOptions): Promise<TierReviewEvidence[]> {
           modelCalls: calls.length,
           callMs: calls.map((c) => c.durationMs),
           callStatus: calls.map((c) => c.status),
+          stopReasons: calls.map((c) => c.stopReason),
           usd: Math.round(calls.reduce((s, c) => s + c.usd, 0) * 1e6) / 1e6,
           tokensIn: calls.reduce((s, c) => s + c.tokensIn + c.cacheRead + c.cacheWrite, 0),
           tokensOut: calls.reduce((s, c) => s + c.tokensOut, 0),
@@ -222,7 +238,7 @@ async function tierReviews(o: TierRunOptions): Promise<TierReviewEvidence[]> {
     expect(await w.store.review.count()).toBe(0);
     return out;
   } finally {
-    rmSync(workRoot, RM_TREE);
+    removeTreeOrWarn(workRoot);
     await w.close();
   }
 }
@@ -239,13 +255,27 @@ export function tierReviewLine(e: TierReviewEvidence): string {
           ? ", clean accepted"
           : ", clean not accepted (soft)"
       : `, model said ${e.modelVerdict} before the sign-off rule`;
+  const stops = e.stopReasons.map((s) => s ?? "none").join(",");
   return (
     `D.15 critic tier ${e.tier} (${e.pick.model}, effort ${e.pick.effort}) ${e.taskId} ${e.variant}: ` +
-    `${e.verdict} ${e.grade} (confidence ${e.confidence.toFixed(2)})${soft}; ` +
+    `${e.verdict} ${e.grade} (confidence ${e.confidence.toFixed(2)})${soft}${outcomeNote(e)}; ` +
     `review ${(e.wallMs / 1000).toFixed(1)} s, first token ${e.firstTokenMs === null ? "n/a" : `${e.firstTokenMs} ms`}, ` +
-    `${e.modelCalls} model calls, ${e.tokensIn} in / ${e.tokensOut} out tokens, ${usd(e.usd)} ` +
-    `(limit ${e.pick.timeoutMs / 60_000} min, ${usd(e.budgetUsd)})`
+    `${e.modelCalls} model calls (stop ${stops || "none"}), ${e.tokensIn} in, ${e.tokensOut} out tokens, ${usd(e.usd)} ` +
+    `(time limit ${e.pick.timeoutMs / 60_000} min checked after the fact, budget ${usd(e.budgetUsd)})`
   );
+}
+
+/**
+ * The review's outcome when it is not `completed`, and the likely cause when a call stopped at
+ * `max_tokens` (the critic sends at most 8192 per call, `maxTokensPerCall` in packages/critic):
+ * at `max` effort the thinking can use them all before the `submit_review` call.
+ */
+export function outcomeNote(e: Pick<TierReviewEvidence, "outcome" | "stopReasons">): string {
+  if (e.outcome === "completed") return "";
+  const capped = e.stopReasons.includes("max_tokens");
+  return capped
+    ? `, ${e.outcome}: a call stopped at max_tokens (8192 per call) before the verdict`
+    : `, ${e.outcome}`;
 }
 
 /** What D.15, the tier table and the verdict rules say must hold; the same for both modes. */
@@ -260,7 +290,9 @@ function assertTierReview(e: TierReviewEvidence, providerName: string, lp: LiveP
     expect(r.model, label).toBe(e.pick.model);
     expect(r.effort, label).toBe(e.pick.effort);
   }
-  // Completed with a verdict, inside the tier's time limit and the review's budget.
+  // Completed with a verdict, within the review's budget (enforced by the hooks) and the tier's
+  // time limit. The time limit is checked after the fact: the calibration world runs the critic
+  // on a SimulatedClock, so its own deadline never fires on a live call.
   expect(e.outcome, `${label}: ${e.adjustments.join("; ")}`).toBe("completed");
   expect(REVIEW_VERDICTS as readonly string[]).toContain(e.verdict);
   expect(e.modelCalls, label).toBe(e.requests.length);
@@ -311,8 +343,10 @@ describe("D.15 critic tiers 2 and 3, dry run (scripted provider, no network)", (
         clock,
         latency: "none",
         onNoMatch: "throw",
-        // In review order: tier 2 clean, tier 2 seeded, tier 3 clean, tier 3 seeded.
+        // The effort probe (no tools), then in review order: tier 2 clean, tier 2 seeded,
+        // tier 3 clean, tier 3 seeded.
         replies: [
+          textReply("ready", { when: (r) => !r.tools?.length, times: 1 }),
           submitReview({}, { times: 1 }),
           revise(40),
           submitReview({}, { times: 1 }),
@@ -328,10 +362,21 @@ describe("D.15 critic tiers 2 and 3, dry run (scripted provider, no network)", (
     });
   });
   afterAll(() => {
-    if (ledgerDir) rmSync(ledgerDir, RM_TREE);
+    if (ledgerDir) removeTreeOrWarn(ledgerDir);
   });
 
-  it("four reviews on the tier table's model and effort, measured and asserted like the live run", async () => {
+  it("names a review that ended without a verdict at max_tokens, and only then", () => {
+    expect(outcomeNote({ outcome: "completed", stopReasons: ["tool_use", "end_turn"] })).toBe("");
+    expect(outcomeNote({ outcome: "no_verdict", stopReasons: ["max_tokens"] })).toBe(
+      ", no_verdict: a call stopped at max_tokens (8192 per call) before the verdict",
+    );
+    expect(outcomeNote({ outcome: "no_verdict", stopReasons: ["end_turn"] })).toBe(", no_verdict");
+  });
+
+  it("four reviews on the tier table's model and effort, after the max-effort probe, measured and asserted like the live run", async () => {
+    const probe = await probeEffort(lp.provider, { model: "fake-opus", effort: "max" });
+    expect(probe).toMatchObject({ status: "ok", effort: "max" });
+    expect(lp.provider.calls[0]).toMatchObject({ effort: "max", model: "fake-opus" });
     const log = new RequestLog(lp.provider);
     const reviews = await tierReviews({
       lp,
@@ -351,6 +396,9 @@ describe("D.15 critic tiers 2 and 3, dry run (scripted provider, no network)", (
     expect(reviews.map((e) => e.verdict)).toEqual(["accept", "revise", "human", "human"]);
     expect(reviews.map((e) => e.modelVerdict)).toEqual(["accept", "revise", "accept", "revise"]);
     expect(softChecks(reviews)).toEqual([]);
+    expect(reviews.every((e) => e.stopReasons.join(",") === "tool_use,end_turn")).toBe(true);
+    expect(tierReviewLine(reviews[0] as TierReviewEvidence)).toContain("(stop tool_use,end_turn)");
+    expect(tierReviewLine(reviews[0] as TierReviewEvidence)).toContain("checked after the fact");
     expect(lp.ledger.rows().every((r) => r.model === "fake-opus")).toBe(true);
     expect(lp.ledger.rows()).toHaveLength(lp.provider.calls.length);
   });
@@ -362,7 +410,7 @@ describe(`D.15 critic tiers 2 and 3, live${LIVE ? "" : ` (${SKIP_REASON})`}`, ()
   const evidence: Record<string, unknown> = {};
   let ceilingUsd = 0;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     if (!LIVE) return;
     dir = reportDir();
     lp = liveProvider();
@@ -373,14 +421,23 @@ describe(`D.15 critic tiers 2 and 3, live${LIVE ? "" : ` (${SKIP_REASON})`}`, ()
     const critic = readFileSync(join(repositoryRegistryDir(), "critic", "critic.md"), "utf8");
     const inputTokens = lp.provider.countTokens(critic + JSON.stringify(task)) + 1_500;
     const reviews = TIERS.length * VARIANTS.length;
+    // The reviews' budgets together, plus the effort probe sent before them.
     ceilingUsd = (reviews * task.brief.budgetUsdMicro) / 1e6;
+    const probeCeiling = probeCeilingUsd(opus);
     const estimate = estimateSpend(
       "live-7-critic-tiers",
       [
+        {
+          label: "effort max probe",
+          model: opus,
+          calls: 1,
+          inputTokens: PROBE_INPUT_TOKENS,
+          outputTokens: PROBE_MAX_TOKENS,
+        },
         { label: "tier 2 reviews", model: opus, calls: 4, inputTokens, outputTokens: 2_500 },
         { label: "tier 3 reviews", model: opus, calls: 4, inputTokens, outputTokens: 4_000 },
       ],
-      ceilingUsd,
+      ceilingUsd + probeCeiling,
     );
     evidence.estimate = estimate;
     try {
@@ -388,6 +445,19 @@ describe(`D.15 critic tiers 2 and 3, live${LIVE ? "" : ` (${SKIP_REASON})`}`, ()
       console.log(`live run ${lp.run}; reports in ${dir}; ${pf.line}`);
     } catch (e) {
       console.log(`live run ${lp.run}: ${(e as Error).message}`);
+      throw e;
+    }
+    // The tier 3 reviews would be the first live requests at effort max: one tiny request
+    // first, so a provider that rejects max fails the file here, before any tier 2 money.
+    try {
+      const probe = await probeEffort(lp.provider, { model: opus, effort: "max" });
+      evidence.probe = probe;
+      console.log(
+        `effort probe: ${opus} at max accepted (stop ${probe.stopReason}, ${probe.durationMs} ms, ${usd(probe.usd)})`,
+      );
+    } catch (e) {
+      evidence.probe = { failed: (e as Error).message };
+      console.log(`${(e as Error).message}; no review was started`);
       throw e;
     }
   });

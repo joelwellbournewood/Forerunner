@@ -46,6 +46,8 @@ export interface LiveCall {
   durationMs: number;
   ttftMs: number | null;
   stopReason: string | null;
+  /** The effort the request asked for (`output_config.effort` on Anthropic), null when unset. */
+  effort: string | null;
 }
 
 export interface MeteredProviderOptions {
@@ -108,6 +110,7 @@ export class MeteredProvider implements ModelProvider {
           durationMs: 0,
           ttftMs: null,
           stopReason: null,
+          effort: req.effort ?? null,
         });
       }
       throw e;
@@ -184,7 +187,18 @@ export class MeteredProvider implements ModelProvider {
         ...(note ? { note } : {}),
       });
       await this.record(
-        callRecord(row, at, status, reason, estimateMicro, t0, this.clock, ttft, stopReason),
+        callRecord(
+          row,
+          at,
+          status,
+          reason,
+          estimateMicro,
+          t0,
+          this.clock,
+          ttft,
+          stopReason,
+          req.effort ?? null,
+        ),
       );
     }
   }
@@ -243,6 +257,7 @@ function callRecord(
   clock: Clock,
   ttft: number | null,
   stopReason: string | null,
+  effort: string | null,
 ): LiveCall {
   return {
     at,
@@ -258,5 +273,6 @@ function callRecord(
     durationMs: Math.max(0, Math.round(clock.monotonic() - t0)),
     ttftMs: ttft === null ? null : Math.round(ttft),
     stopReason,
+    effort,
   };
 }
