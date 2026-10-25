@@ -94,7 +94,15 @@ to its agent; and `fr doctor`'s "without creating anything" creates the store.
    given per start). `fr doctor` says what the next start will do. ADR 0082 decision 1 and 3
    amended (dated section). Test: `compose-identity.test.ts` with a stale recorded id on an
    empty store and on a store holding another human.
-   Resolution: pending.
+   Resolution: fixed in f6423e2: `lookupInstallHuman` treats a `config.json` `humanId` that
+   names nobody as stale when the configuration carries an email (the email binds its own row
+   or creates the install's human, never another row; `staleConfigHumanId` on the lookup and
+   on `RuntimeApp.identity`; the daemon warns and re-records the id; `fr doctor` names it),
+   and keeps `not_found` without an email and for `FORERUNNER_HUMAN` or the caller's selector;
+   ADR 0082 amended (decisions 1 and 3). Tests: `compose-identity.test.ts` "a recorded
+   humanId that names nobody falls through to the configured email, never to another row" and
+   "a wiped store with a recorded humanId starts again by email and records the new id" (both
+   fail before the fix with the `not_found` quoted above).
 2. **medium**: `services/cloud-runner/src/runner.ts:392-397`. The runner resolves its agent
    (`FORERUNNER_RUNNER_AGENT`, id or name, `resolveAgent`) and keys every session, token, claim
    and status to it, but passes only `humanId` to `composeRuntime`, which picks the human's
@@ -108,7 +116,13 @@ to its agent; and `fr doctor`'s "without creating anything" creates the store.
    `ComposeOptions.identity.agentId` (the caller's resolved agent, which must be one of the
    human's principals, else `not_found`; never another human's), the runner passes `agent.id`;
    `pickPrincipal` takes the id ahead of the name. Test in cloud-runner `identity.test.ts`.
-   Resolution: pending.
+   Resolution: fixed in f6423e2: `ComposeOptions.identity.agentId`, picked by id ahead of the
+   name and refused `not_found` (nothing created, stores closed) when it is not one of the
+   human's principals; the runner passes `agent.id`; ADR 0082 decision 4 amended. Tests:
+   cloud-runner `identity.test.ts` "the composed runtime is the runner's agent, not the
+   human's first principal" (fails before the fix: `rt.agent` was the first principal) and
+   `compose-identity.test.ts` "...by name when there are several" extended with the id pick
+   and another human's agent by id refused.
 3. **medium**: `packages/runtime/src/cli/main.ts:423-440` (`identityCheck`). `fr doctor` opens
    the configured store with `openStore({ url })`: `openSqlite`
    (`packages/state/src/db/sqlite.ts:208-209`) creates the directory and the file, and
@@ -120,20 +134,31 @@ to its agent; and `fr doctor`'s "without creating anything" creates the store.
    `sqlite:` file that does not exist is not opened and is reported as an empty store (a named
    selector `not_found`, otherwise "created at the daemon's first start"), with the file still
    absent afterwards. Test in `cli.test.ts` (the store file does not exist after `fr doctor`).
-   Resolution: pending.
+   Resolution: fixed in f6423e2: `identityCheck` opens with `migrate: false` and never opens
+   a `sqlite:` file that does not exist; the lookup then runs over `EMPTY_HUMAN_STORE`
+   (`identity.ts`), prefixed "no store yet (the daemon's first start creates it)"; ADR 0082
+   decision 6 amended. Tests: `cli.test.ts` "doctor reports prerequisites and the human the
+   install binds to, creating no store" (asserts the state file absent before and after; fails
+   before the fix, the file existed) and `compose-identity.test.ts` cases over
+   `EMPTY_HUMAN_STORE`.
 4. **low**: `packages/runtime/src/daemon/compose.ts:1148-1151`. The identity refusal closes
    `store` but not the private memory index opened just before it (`openPrivateIndex`, line
    1115, ADR 0083, merged after the item): on a non-`sqlite:` store a refused start leaves the
    index's SQLite handle open. Verified by reading (the index is closed only in `close()`,
    line 3147). Fix: close it in the same `catch`, with a test that observes the close.
-   Resolution: pending.
+   Resolution: fixed in f6423e2: the identity refusal (and the new agent refusal) closes the
+   private index before the store. Test: `compose-identity.test.ts` "a refused start closes
+   the private memory index it opened" (`openPrivateIndex` wrapped through `vi.mock` to
+   record each close; fails before the fix with an empty list).
 5. **low**: `packages/runtime/test/cli.test.ts:303-312`. The doctor case's "environment
    override is read the way the daemon reads it" sets `FORERUNNER_HUMAN: ""`, which
    `installIdentitySelectors` drops as absent, so the asserted `ok === false` holds with or
    without any environment handling: the assertion proves nothing. Fix: a value that names
    nobody, and assert the detail names it and the `FORERUNNER_HUMAN` label.
-   Resolution: pending.
+   Resolution: fixed in f6423e2: the case sets `FORERUNNER_HUMAN=nobody@env.test` over a
+   `config.json` naming `h-123` and asserts the detail names `nobody@env.test`
+   "(from FORERUNNER_HUMAN)" and not `h-123`.
 6. **low**: `docs/maintainers/platform-notes.md:16-18`. "The latest, `identity_ambiguous`
    (ADR 0082)" is stale: `MEMORY_SCOPE_VIOLATION` (ADR 0083) was added to the union after it.
    Wording; fix in the doc.
-   Resolution: pending.
+   Resolution: fixed in f6423e2: the paragraph names both codes without "the latest".
