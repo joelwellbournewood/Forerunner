@@ -311,6 +311,12 @@ export interface ParsedIntent {
    * command tools) instead of the parser's fallback question.
    */
   matched: "pattern" | "model" | "none";
+  /**
+   * Clauses of the line that were not acted on (spec O.9): when a stop was among the clauses
+   * and another was not understood, the stop ran alone and every other clause is here, for the
+   * reply to name. Empty or absent otherwise.
+   */
+  unmatched?: string[];
 }
 
 export interface CommandResultView {

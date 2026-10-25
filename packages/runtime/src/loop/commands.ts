@@ -168,6 +168,8 @@ export class CommandLoop implements ConversationCommands {
       commands: parsed.commands.map((c) => ({ name: c.name, params: c.params })),
       ...(parsed.question ? { question: parsed.question } : {}),
       matched: parsed.matched,
+      // What a stop left not acted on (spec O.9): the clauses beside it, for the reply to name.
+      ...(parsed.commands.length && parsed.unmatched.length ? { unmatched: parsed.unmatched } : {}),
     };
   }
 

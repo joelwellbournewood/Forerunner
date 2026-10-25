@@ -1346,7 +1346,11 @@ device confirms), a plain "yes"/"ja" or "no" answers the card without a model ca
 undoes the latest undoable change, the parser's questions (an ambiguous project, a budget
 without a time) are asked with options (`question`), text that is data (the envelope) is
 refused without a model call, and only a sentence no pattern understands goes to the model,
-which is offered the registry's command tools and nothing else. Every change lands in the
+which is offered the registry's command tools and nothing else. A stop in any clause of the
+line runs at once even when the rest was not understood ("stop and tell me what happened":
+the parser returns the stop alone with the rest as `unmatched`, spec O.9), and the reply names
+what it did not act on (`I did not act on "..."`) instead of asking a question or handing the
+line to the model (review of w3-o9-chat-to-inbox, 2026-10-25, finding 1). Every change lands in the
 change log with the words used and the undo token (`actions[].undoToken`). Each model turn
 runs through the loop driver with its own small budget and a token at autonomy 4 (the human
 is giving instructions; the registry's confirmation policy guards by risk, and because the

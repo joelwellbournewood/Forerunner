@@ -58,6 +58,8 @@ interface World {
   runner: (executor: TaskExecutor) => SessionRunner;
   start: (runner: SessionRunner) => Promise<SessionResult>;
   conversationEvents: () => Promise<{ type: string; payload: unknown }[]>;
+  /** Every call of the registry's kill port (`session.stop`): the kill switch's record. */
+  kills: { scope: unknown; reason: string }[];
 }
 
 const grant = { allowedTools: ["echo"], allowedPaths: [], allowedDomains: [], grantedSecrets: [] };
@@ -103,13 +105,17 @@ async function setup(replies: ScriptedReply[] = []): Promise<World> {
     })
   ).id;
   const provider = new FakeProvider({ replies, clock: h.clock, latency: "none" });
+  const kills: World["kills"] = [];
   const commands = new CommandLoop({
     store,
     clock: h.clock,
     ports: {
       chfPerUsd: async () => 0.8,
       startSession: async () => ({ sessionId: "s-1" }),
-      kill: async () => ({ stoppedRuns: 1, killedProcesses: 0 }),
+      kill: async (scope, reason) => {
+        kills.push({ scope, reason });
+        return { stoppedRuns: 1, killedProcesses: 0 };
+      },
       ...sessionPausePorts({ store, kill: h.kill, agentId: alice, humanId: human }),
     },
   });
@@ -178,6 +184,7 @@ async function setup(replies: ScriptedReply[] = []): Promise<World> {
     runner,
     start,
     conversationEvents,
+    kills,
   };
 }
 
@@ -476,6 +483,31 @@ describe("what you say during a live session (spec O.9)", () => {
     ]);
     gate.release?.();
     await running;
+    await w.store.close();
+  });
+
+  it("a 'stop' followed by words the parser does not understand is still the kill switch, never a said line (review finding 1)", async () => {
+    const w = await setup([textReply("should not be called")]);
+    await w.addTask("First task", 9);
+    await w.addTask("Second task", 1);
+    const { executor, gate } = gatedExecutor(w);
+    const running = w.start(w.runner(executor));
+    await until(() => gate.release !== null, "the first task to be in flight");
+    const r = await w.chat("stop and tell me what happened", { source: "voice" });
+    // The stop ran through the registry at once; the rest of the line is reported, not asked
+    // about, not answered by the model and not handed to the session as data.
+    expect(w.kills).toEqual([{ scope: { agentId: w.alice }, reason: expect.any(String) }]);
+    expect(r.actions.map((a) => a.kind)).toEqual(["session.stop"]);
+    expect(r.reply).toContain("Stopped");
+    expect(r.reply).toContain('I did not act on "tell me what happened".');
+    expect(r.reply).not.toContain(FORWARDED_SENTENCE);
+    expect(r.forwarded).toBeNull();
+    expect(r.question).toBeNull();
+    expect(w.provider.calls).toHaveLength(0);
+    expect(await heardMessages(w)).toHaveLength(0);
+    gate.release?.();
+    const res = await running;
+    expect(res.heard).toEqual([]);
     await w.store.close();
   });
 

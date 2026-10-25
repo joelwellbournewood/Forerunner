@@ -311,11 +311,18 @@ export class ConversationAgent {
       }
       if (parsed.commands.length) {
         const r = await this.deps.commands.compose(parsed.commands, turn);
+        // Spec O.9: a stop in a line whose rest the parser did not understand ran alone; the
+        // reply names what was left so the human can say it again (never asked as a question
+        // in the stop's way, never handed to the session as data).
+        const left = parsed.unmatched?.length
+          ? ` I did not act on ${parsed.unmatched.map((u) => JSON.stringify(u.slice(0, 80))).join(", ")}.`
+          : "";
         return this.replyForResult(
           r,
           parsed.commands.map((c) => c.name),
           turn,
           finish,
+          left,
         );
       }
     }
@@ -544,7 +551,10 @@ export class ConversationAgent {
     return { sessionId: live.id, messageId: row.id };
   }
 
-  /** The reply for a composed change: done sentences, a pending read-back, or the refusal. */
+  /**
+   * The reply for a composed change: done sentences, a pending read-back, or the refusal;
+   * `tail` is appended to whichever it is (what the line also said and was not acted on).
+   */
   private async replyForResult(
     r: CommandResultView,
     commands: string[],
@@ -554,6 +564,7 @@ export class ConversationAgent {
       actions: ChatAction[],
       extra?: Partial<ChatReply>,
     ) => Promise<ChatReply>,
+    tail = "",
   ): Promise<ChatReply> {
     if (r.status === "pending" && r.pendingId) {
       const card: PendingConfirmation = {
@@ -564,9 +575,9 @@ export class ConversationAgent {
         ...(typeof r.costUsdMicro === "number" ? { costUsdMicro: r.costUsdMicro } : {}),
       };
       this.pending.set(turn.humanId, card);
-      return finish(card.readback, [], { pendingConfirmation: card });
+      return finish(`${card.readback}${tail}`, [], { pendingConfirmation: card });
     }
-    return finish(this.sentenceOf(r, "Done"), this.actionsOf(r, commands));
+    return finish(`${this.sentenceOf(r, "Done")}${tail}`, this.actionsOf(r, commands));
   }
 
   private sentenceOf(r: CommandResultView, prefix: string): string {

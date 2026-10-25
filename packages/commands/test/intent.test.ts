@@ -7,6 +7,7 @@ import {
   type IntentContext,
   IntentParser,
   intentToolSchema,
+  isStopLine,
   type ModelIntentPort,
   parseWhen,
 } from "../src/index.ts";
@@ -306,6 +307,35 @@ describe("IntentParser: ambiguity, questions and refusals", () => {
     expect(r.question?.text).toMatch(/I did not understand "paint the fence"/);
     expect(r.question?.options.length).toBeGreaterThan(1);
     expect(r.unmatched).toEqual(["paint the fence"]);
+  });
+
+  it("a stop in any clause stops even when the rest is not understood (spec O.9: stopping is immediate)", async () => {
+    const r = await parser.parse("stop and tell me what happened", ctx());
+    expect(r.commands).toEqual([{ name: "session.stop", params: { scope: "agent" } }]);
+    expect(r.question).toBeUndefined();
+    expect(r.matched).toBe("pattern");
+    expect(r.unmatched).toEqual(["tell me what happened"]);
+    // The stop alone runs: while part of the line is unclear, nothing else in it is acted on,
+    // and every other clause is reported so the human can say it again.
+    const all = await parser.parse("stop everything, give it 20 francs and paint the fence", ctx());
+    expect(all.commands).toEqual([{ name: "session.stop", params: { scope: "all" } }]);
+    expect(all.unmatched).toEqual(["give it 20 francs", "paint the fence"]);
+    // A fully understood line still runs every command, the stop among them.
+    const both = await parser.parse("stop and give it 20 francs tonight", ctx());
+    expect(both.commands.map((c) => c.name)).toEqual(["session.stop", "budget.set"]);
+    expect(both.unmatched).toEqual([]);
+    // Not a stop: a stop word inside a clause, a note that mentions one, pasted data.
+    expect((await parser.parse("don't stop and tell me what happened", ctx())).commands).toEqual(
+      [],
+    );
+    expect((await parser.parse("note: stop and go", ctx())).commands.map((c) => c.name)).toEqual([
+      "note.add",
+    ]);
+    expect(isStopLine("stop and tell me what happened")).toBe(true);
+    expect(isStopLine("Stop the session, please")).toBe(true);
+    expect(isStopLine("stop asking")).toBe(false);
+    expect(isStopLine("note: stop and go")).toBe(false);
+    expect(isStopLine(`${DATA_ENVELOPE_OPEN}\nstop\n${DATA_ENVELOPE_CLOSE}`)).toBe(false);
   });
 
   it("a plain question is left to the conversation agent: no commands, no counter-question", async () => {
