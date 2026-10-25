@@ -101,3 +101,63 @@ driver, 4 of 20 with 4ff4fb1's. The page log shows why:
   could click twice; `cdp.click_lost` fails instead.
 - **Fix the app's CSS for Chromium 83 in this item.** Outside the brief and not testable here
   (no emulator); listed as open in apps.md and BLOCKERS.md.
+
+## Amendment (2026-10-25, w8-android-nav-settle: android.yml run 40013402240)
+
+The guard met the hosted emulator in run 40013402240 (bc10bc8). `webview engine:` named
+`Chrome/83.0.4103.120 Mobile` (the stylesheet finding stands) and the "Inbox" click failed as
+`cdp.click_missed`: `<div id="root"> "ForerunnerPharmaWatchliveProjectsRefresh" was at
+(67, 453) instead`, events `pointerdown, pointerup, click`, for the whole 30 s. Every retry
+measured the same box, the in-page `elementFromPoint` found the nav item at that point, and
+the WebView delivered the events to bare `#root`, which exists only below the content
+(`#root { height: 100% }` is a plain rule in `styles.css`, outside the layers, so `#root` is
+viewport-tall while the unstyled content is shorter). The box and the hit point disagreed
+consistently: not the race of decision 1 but the coordinate mismatch its Consequences said
+the guard makes visible and does not fix. The cause lies in the WebView's input path (an
+offset or a scale between `Input.dispatchMouseEvent`'s coordinates and the page's), and no
+emulator exists on the build box to measure it; the fix therefore cannot rest on one cause.
+
+Decision 1 is extended as follows; the runner's steps (decisions 2 and 3) are unchanged.
+
+1. **A layout-settle wait before the measurement**, inside the page and bounded by the
+   click's timeout: the element's box, the document's scroll height and scroll position
+   unchanged over five animation frames and 300 ms, and no DOM mutation under the document
+   for 300 ms (a `MutationObserver`; a page that never stops mutating is let through once
+   its geometry has held for 1.5 s). Then `scrollIntoView({ behavior: "instant", block:
+   "center" })`, and the same wait again when the scroll moved the box. The measurement,
+   the `elementFromPoint` probe and the guard's arming happen in that one `Runtime.evaluate`,
+   right before `Input.dispatchMouseEvent`. A wait that runs out reports `settled: false`
+   and no click is sent (`cdp.click_unsettled` at the timeout). A probe that keeps finding
+   another element at the centre stays `cdp.click_intercepted`, with no fallback: the page
+   itself says the element is covered.
+2. **The guard records where the page saw a misplaced event** (`clientX`/`clientY` of the
+   first one) and also covers `touchstart` and `touchend` (`passive: false`), so a tap that
+   would click the wrong element is cancelled like a mouse press.
+3. **A fallback ladder after three guarded misses at one unchanged, settled box** (two
+   "clean" misses after the first: the layout did not move between two settled
+   measurements, so it cannot explain them). Each step prints
+   `click fallback: <locator> (cdp.click_missed: <why>)` on the runner's stdout before it
+   runs, so the log names the path a click took; nothing is printed when the first path
+   lands.
+   - A mouse click shifted back by the offset the page reported, when every miss reported
+     the same non-zero offset: the real input path, which the smoke is there to exercise,
+     is kept.
+   - A tap through `Input.dispatchTouchEvent` (`touchStart`, `touchEnd`) at the point; a
+     protocol refusal moves on.
+   - `element.click()` inside the page under a guard of its own: the alternative decision 1
+     rejected, now the last resort. The event is untrusted and skips the input path, so it
+     runs only after both input paths have missed at one stable point, and the log says so.
+   When even that raises no click event the error stays `cdp.click_missed`, with the hit,
+   the events, the box, the tap's outcome and the element step's outcome in the details.
+
+Consequences: every click of the smoke takes at least 300 ms more (the settle), about 600 ms
+when the scroll moves the element; the ladder costs about 1.5 s before its first line.
+`cdp.test.ts` is 36 tests, 4 new: the growing page gets one press after its last change; the
+stable box whose events the fake delivers 30 px lower gets the shifted click; with no offset
+to learn, the tap; a tap that misses too, `element.click()`, and all three failing,
+`cdp.click_missed`. The 32 earlier cases are unchanged. What the next run tells: a
+`click fallback:` line with "shifted by" means a constant offset in this WebView's input path
+and the smoke still drives the real input; an "element.click()" line means neither input path
+reaches points below the first screen on this image, and a newer image or the flattened
+stylesheet is the real fix. Not changed here: the system image, the app's stylesheet,
+`run.mjs`.

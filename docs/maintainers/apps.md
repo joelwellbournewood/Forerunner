@@ -1265,10 +1265,16 @@ apps/mobile/
                      webview-console.d.mts, so the driver below is untouched; tested in cdp.test.ts
   e2e/cdp.mjs        raw CDP client and DOM driver for the smoke (ADR 0054): /json/list, page socket,
                      Runtime.evaluate queries, Input.* clicks and fills; no eval in the page (CSP);
-                     the click guard (ADR 0087): events that land outside the measured element
-                     are stopped in the page (the guard stays up until the attempt's click
-                     arrives) and the click is sent again; describePage for the
-                     runner's page: lines; cdp.test.ts against a fake endpoint
+                     click = a layout-settle wait, instant scrollIntoView, measure + hit test +
+                     guard in one in-page call, then CDP mouse events; the click guard (ADR
+                     0087): events that land outside the measured element are stopped in the
+                     page (the guard stays up until the attempt's click arrives, and records
+                     where the page saw the event) and the click is sent again; after three
+                     guarded misses at one unchanged box the fallback ladder (ADR 0087
+                     amendment of 2026-10-25: a mouse click shifted by the reported offset, an
+                     Input.dispatchTouchEvent tap, element.click() in the page), each step a
+                     `click fallback:` line on stdout; describePage for the runner's page:
+                     lines; cdp.test.ts against a fake endpoint
   e2e/cdp.d.mts      types of cdp.mjs for the test (keep in step); e2e/jsdom.d.ts: the jsdom slice it uses
   src-tauri/
     Cargo.toml, tauri.conf.json (no static window; deep-link scheme "fr"; CSP allows 127.0.0.1 and 10.0.2.2)
@@ -1561,7 +1567,16 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   never settles ends in `cdp.click_missed` naming what was at the point with no click
   received, a click with no event in the page is `cdp.click_lost`, release events that
   arrive after the CDP answer still meet the guard after a missed press (one click on Inbox,
-  none on Home), a click that replaced the document counts as landed; `describePage` (URL,
+  none on Home), a click that replaced the document counts as landed; the settled click and
+  the fallback ladder (ADR 0087 amendment, android.yml run 40013402240): a page that keeps
+  growing and re-rendering after the click starts gets one press, after the last box change
+  and the last DOM mutation; a stable box whose mouse events the fake delivers 30 px lower
+  (and reports there through `clientX`/`clientY`) gets three guarded misses, then one click
+  shifted back through the mouse path and a `click fallback:` line; the same misses with no
+  offset to learn go to the `Input.dispatchTouchEvent` tap (lands, one line); a tap that
+  misses too goes to `element.click()` in the page (two lines); a page whose
+  `element.click()` raises nothing and a WebView that refuses the touch domain end in
+  `cdp.click_missed` naming everything tried; `describePage` (URL,
   title, capped screen text) and `run.mjs`'s step order (Home's list before the nav click,
   each screen's heading after it, the page read before the cleanups); `evaluate` with the function source spliced into
   the expression (no `eval` call sent, the CSP stand-in in force), `cdp.bad_function` for a
@@ -1611,13 +1626,24 @@ node apps/mobile/e2e/run.mjs
   `aosp_atd` image ships a Chromium 83-class WebView with no Play Store to update it, and
   Tailwind v4 puts every rule in cascade layers (`@layer`, Chrome 99+), which Chromium 83
   drops. There the app renders unstyled: the bottom nav (`m-nav`) is `position: static`, in
-  the flow under the screen's content, and moves when a list arrives. `android.yml` run
-  40000764444 (4ff4fb1) lost the "Inbox" click to that move (the click landed on Home, 0
-  `m-request` matches, nothing logged); the driver's click guard and the runner's wait for
-  Home's list fix the smoke, the runner prints `webview engine: <user agent>` to confirm the
-  version on the next run, and a failure now prints `page:` lines with the route and the
-  screen's text. Still open: the layout itself on a pre-99 WebView (real phones update theirs
-  through the Play Store). Either an emulator image with a current WebView in `android.yml`
+  the flow under the screen's content, and moves when a list arrives; `#root` keeps
+  `height: 100%` (a plain rule in `apps/ui/src/styles.css`, outside the layers), so it is
+  viewport-tall while the unstyled content is shorter. `android.yml` run 40000764444
+  (4ff4fb1) lost the "Inbox" click to that move (the click landed on Home, 0 `m-request`
+  matches, nothing logged); with the click guard and the runner's wait for Home's list, run
+  40013402240 (bc10bc8) printed `webview engine: ... Chrome/83.0.4103.120 Mobile` and then
+  failed the same click as `cdp.click_missed`: for the whole 30 s every retry measured the
+  same stable box, the in-page hit test found the nav item at (67, 453), and the dispatched
+  events landed on bare `#root`, which exists only below the content. That is not the layout
+  race of ADR 0087 but a disagreement between the WebView's input path and the page's own
+  coordinates (the cause ADR 0086 suspected for scenario 3's Confirm, also below the first
+  screen). The driver now waits for the layout to settle, measures and hit-tests in the same
+  call as it arms the guard, and after three guarded misses at one unchanged box runs the
+  fallback ladder of ADR 0087's amendment (a mouse click shifted by the offset the page
+  reported, a tap, then `element.click()` in the page), each step a `click fallback:` line
+  in the log; the next run's lines say which path the nav clicks took (dispatch pending).
+  Still open: the layout itself on a pre-99 WebView (real phones update theirs through the
+  Play Store). Either an emulator image with a current WebView in `android.yml`
   (`google_apis`, API 34) or a build step that flattens the layers for old WebViews.
 - The raw CDP driver (`e2e/cdp.mjs`) met the real WebView in `android.yml` run 39952987240
   (82a6295): the attach, pairing by code (fills) and the approval (a click near the top of
@@ -1630,7 +1656,16 @@ node apps/mobile/e2e/run.mjs
   CSS pixels, untested below the fold: no "asking the biometric prompt" line would show it).
   Since ADR 0087 a click that lands on something else is stopped and retried, and one that
   keeps missing fails as `cdp.click_missed` naming what was at the point, so that second
-  cause can no longer pass silently.
+  cause can no longer pass silently; since its amendment (2026-10-25) the driver no longer
+  assumes that the input path's coordinates and the page's agree: the guard records where
+  the page saw the misplaced event (`clientX`/`clientY`), then the shifted click, the tap
+  and `element.click()` follow, and the `click fallback:` lines say which one landed (a
+  "shifted by" line confirms a constant offset in the WebView's input path; an
+  "element.click()" line means neither input path reaches that point on this image). The
+  driver still assumes the page runs `requestAnimationFrame` and `MutationObserver` (the
+  settle wait; a WebView that stalls frames ends in `cdp.click_unsettled`, named in the
+  `FAIL:` line), and `Input.dispatchTouchEvent` is tried, never required (a refusal moves to
+  the next step).
   The shell's `prompt()` / `platform_prompt()` compile only for Android and iOS; their first
   compile is that run.
 - When the shell's `PROMPT_LIMIT` (45 s) runs out while the platform prompt is on screen, the
@@ -1639,8 +1674,8 @@ node apps/mobile/e2e/run.mjs
   only), and the platform thread behind `wait_bounded` stays blocked in `run_mobile_plugin`
   until then. A touch after the bound confirms nothing (no ticket is issued for a late
   outcome); the human taps Confirm on the card again. Closing it needs a cancel in the plugin. The driver covers the
-  calls `smoke()` makes and nothing more: no keyboard shortcuts, no touch events, no frames,
-  no screenshots.
+  calls `smoke()` makes and nothing more: no keyboard shortcuts, no frames, no screenshots
+  (the tap exists only as a click's fallback, not as a step the smoke can ask for).
 - The CI Android job builds twice: the release APK (signed from `keystore.properties`,
   verified by `scripts/android-apk-verify.mjs`, uploaded as the artefact) and then, inside
   `test:emulator`, a debug APK for the smoke (x86_64, a few minutes on top), because a release

@@ -127,14 +127,26 @@ The attach also prints `webview engine: <user agent>`; after a `FAIL:` line the 
 what the page showed as `page:` lines (URL and title, then the screen's text), so a wait that
 times out says which screen the app was on.
 
-Clicks are guarded (ADR 0087): the driver measures the element, then a capture-phase guard in
-the page lets through only the pointer, mouse and click events that land on it. When the
-element moved in between (on the emulator's old WebView the app's stylesheet does not apply
-and the bottom nav sits in the flow, so it moves when Home's list arrives: run 40000764444),
-the misplaced events are stopped before the page sees them and the click is measured and
-sent again. The guard stays up until the attempt's `click` has arrived, so release events
-queued behind the CDP answer are stopped too; a click that navigates (the guard went with the
-old document) counts as landed. `cdp.click_missed` (names what was at the point) and
+Clicks are settled and guarded (ADR 0087 and its amendment of 2026-10-25). One in-page call
+waits for the layout to settle (the element's box, the page's scroll height and position
+unchanged over five animation frames and 300 ms, no DOM mutation for 300 ms), scrolls the
+element into view instantly and waits again when that moved it, then measures the box,
+hit-tests the centre and arms a capture-phase guard, right before the CDP mouse events. The
+guard lets through only the touch, pointer, mouse and click events that land on the element.
+When the element moved in between (on the emulator's old WebView the app's stylesheet does not
+apply and the bottom nav sits in the flow, so it moves when Home's list arrives: run
+40000764444), the misplaced events are stopped before the page sees them and the click is
+measured and sent again. The guard stays up until the attempt's `click` has arrived, so
+release events queued behind the CDP answer are stopped too; a click that navigates (the
+guard went with the old document) counts as landed. When three clicks at one unchanged box
+all miss (run 40013402240: the WebView's input path put the point on bare `#root` below the
+content while the page's own hit test found the nav item), the fallback ladder runs, each step
+announced on stdout as `click fallback: <locator> (cdp.click_missed: <why>)`: a mouse click
+shifted by the offset the page reported (`clientX`/`clientY` of the misplaced event), a tap
+through `Input.dispatchTouchEvent`, then `element.click()` inside the page. Nothing is printed
+when the first path lands. `cdp.click_missed` (names what was at the point and, after the
+ladder, what each step did), `cdp.click_intercepted` (the page's own hit test finds another
+element at the centre: no fallback), `cdp.click_unsettled` (the layout never held still) and
 `cdp.click_lost` (no event reached the page) are the failures.
 
 Biometrics on the emulator (high-risk answers need the platform prompt, spec R.7): enrol a
