@@ -30,6 +30,7 @@ import {
 import { registerSourcesCli } from "../sources/cli.ts";
 import { registerUpdateCli } from "../update/cli.ts";
 import { composeUpdateManager } from "../update/compose.ts";
+import { APP_VERSION } from "../version.ts";
 import { registerAuditCli } from "./audit.ts";
 import { registerSpecialistsCli } from "./specialists.ts";
 import { registerVaultCli, type SecretInput } from "./vault.ts";
@@ -39,8 +40,6 @@ import { registerVaultCli, type SecretInput } from "./vault.ts";
  * tray and the tests. Every subcommand works on Windows and Linux. `buildProgram()` is what
  * the tests inspect; the module runs it only when it is the entry point.
  */
-import { APP_VERSION } from "../version.ts";
-
 export { APP_VERSION };
 
 /**
