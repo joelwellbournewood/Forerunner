@@ -193,8 +193,8 @@ describe("release.yml: the GitHub release job sees the secrets it reports on", (
     const m = block.match(new RegExp(`\\n${pad}env:\\n((?:${inner}(?:#.*|[A-Z0-9_]+:.*)\\n?)+)`));
     const out = new Map<string, string>();
     if (!m) return out;
-    for (const x of m[1].matchAll(new RegExp(`^${inner}([A-Z0-9_]+):\\s*(.*)$`, "gm"))) {
-      out.set(x[1], x[2].trim());
+    for (const x of (m[1] ?? "").matchAll(new RegExp(`^${inner}([A-Z0-9_]+):\\s*(.*)$`, "gm"))) {
+      out.set(x[1] ?? "", (x[2] ?? "").trim());
     }
     return out;
   };
@@ -218,19 +218,21 @@ describe("release.yml: the GitHub release job sees the secrets it reports on", (
     const wf = text();
     const workflowEnv = envBlock(wf.slice(0, wf.indexOf("\njobs:")), 0);
     let envReads = 0;
-    for (const id of [...wf.matchAll(/\n {2}([a-z][a-z0-9_-]*):\n/g)].map((m) => m[1])) {
+    for (const id of [...wf.matchAll(/\n {2}([a-z][a-z0-9_-]*):\n/g)].map((m) => m[1] ?? "")) {
       const job = jobBlock(wf, id);
       const declared = new Set([...workflowEnv.keys(), ...jobEnv(job).keys()]);
       for (const m of job.matchAll(/\n {8}if: (.*)/g)) {
         const own = stepEnv(stepAround(job, m[0]));
-        for (const x of m[1].matchAll(/env\.([A-Z0-9_]+)/g)) {
+        const cond = m[1] ?? "";
+        for (const x of cond.matchAll(/env\.([A-Z0-9_]+)/g)) {
+          const name = x[1] ?? "";
           envReads++;
-          expect(own.has(x[1]), `${id}: if: ${m[1]} reads env.${x[1]} declared on the step`).toBe(
+          expect(own.has(name), `${id}: if: ${cond} reads env.${name} declared on the step`).toBe(
             false,
           );
           expect(
-            declared.has(x[1]),
-            `${id}: if: ${m[1]} reads env.${x[1]}, not in the job or workflow env`,
+            declared.has(name),
+            `${id}: if: ${cond} reads env.${name}, not in the job or workflow env`,
           ).toBe(true);
         }
       }
