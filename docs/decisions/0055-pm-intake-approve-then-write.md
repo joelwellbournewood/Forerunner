@@ -112,3 +112,41 @@ the proposal waits, what an approval writes and where the docs go.
 - **Overwriting an existing README in the repository with the draft.** The human would see it
   in the pull request, but the memory package's rule (never edit an existing doc) is the safer
   one for a step that runs once on a fresh project.
+
+## Amendment of 2026-10-25 (review `docs/status/reviews/w2-a2-intake.md`)
+
+The independent review found the proposal check incomplete, the apply unguarded against a
+second producer and the crash residual unbounded. The decisions above stand with these
+changes:
+
+1. **What the inbox is shown is writable.** `shapeProjectPlan` refuses a dependency cycle
+   with `validation` (the plan writer's own rule, now applied where the plan is shaped), so a
+   cyclic proposal is refused before it is filed. An approved card the writer still refuses
+   (one filed before this check) is recorded once as `apply_failed` with the error and an
+   audit row, and the status route reports `failed`; it is not retried on every sync. A store
+   or git failure stays retryable.
+2. **One producer applies an answer.** Every mark the intake writes is `markAnswer`'s
+   (`answer-mark.ts`, the version-conditional mark of ADR 0053 and ADR 0088): the approving
+   transaction marks the card conditional on the version the scan read and rolls back, rows
+   and all, when another producer (a second install of the human on a shared store, an
+   overlapping sync) marked it first; a reject's mark and note are one write.
+3. **The crash residual is bounded.** The intake session row carries the call's deadline
+   (`plan.intake.deadline`: the planning timeout plus `INTAKE_DEADLINE_MARGIN_MS`, also the
+   token's expiry). `closeExpired()` runs at compose and before every proposal and closes an
+   intake session still `running` past its deadline as `failed`, whichever install owned it,
+   since the call cannot outlive its timeout. The runner's one-session rule is held by a dead
+   intake call for at most one timeout plus the margin.
+4. **The brief's markers hold.** The brief's own occurrences of `<<<BRIEF` and `BRIEF>>>` are
+   spaced out before the brief is framed, so the data block opens and closes once around the
+   whole brief. The guarantees that matter stay in code (no tool, the strict schema, the
+   allowlisted paths, nothing written before the answer); this keeps the framing honest.
+5. **A new brief while a proposal is open is refused** (`claim_conflict`, 409, the open
+   request's id) rather than dropped with a `reused` answer; the bare re-trigger still reuses.
+6. **The request counts the shaped plan.** In small-project mode the `why`, `steps` and the
+   route's `summary` name the one milestone the phases join, with a step saying so.
+7. **The docs branch is `fr/intake-<the whole project id>-docs`** (`intakeDocsBranch`): the
+   first eight characters of a UUIDv7 are a timestamp shared by every id of one minute.
+8. **Consequence recorded.** A project created with `intake: true` whose intake is rejected or
+   fails has no standard doc set until an intake is approved (the creation deferred the G.5
+   scaffold); the reject note says so. `INTAKE_TIMEOUT_MS` and `INTAKE_MAX_TOKENS` are gone:
+   the call's timeout and output cap are the planning mode's settings (ADR 0072).

@@ -778,43 +778,63 @@ second row at a taken `order_index`, and the next plan joins that one. Tests:
 
 **PM intake (spec A.2, ADR 0055).** `src/session/intake.ts` turns the brief into one proposal
 and writes nothing until the human approves it. `IntakeService.propose(projectId, { brief? })`
-makes one model call on the planning rung (the `planning` mode's tier and effort from the
-tables in force, the effort shifted by the project's speed-versus-quality slider, spec D.16; the registry's `project-manager` prompt plus an intake section; no tools,
-`maxTurns` 1; `DEFAULT_INTAKE_BUDGET_USD_MICRO` or `project.settings.intake_budget_usd_micro`;
-`INTAKE_TIMEOUT_MS`) through the loop driver and the hooks on a session row of its own
-(`summary: "intake: <project>"`, `planned -> running -> completed | failed`), so the call is
-budgeted, billed to the project and audited like any other. The reply must be one JSON object
-(`parseIntakeReply`, `IntakeProposalBody`): `plan` in `ProjectPlanBody`'s shape, `docs` as a
-map of allowlisted paths (`INTAKE_DOC_PATHS`, the standard doc set, plus
-`docs/decisions/0001-<slug>.md`) to markdown, `firstSession` as plan task keys with
-estimates; unknown keys, a doc outside the set, a dependency that is not a plan key, a
-first-session item naming no task or a plan that does not shape (`shapeProjectPlan`) are
-refused with `validation` and nothing is filed. The brief goes to the model whole up to
-`MAX_BRIEF_CHARS`, between markers and named as data. The proposal is filed as one blocking
-approval request (kind `approval`, options `approve` / `reject`, `change_card.key`
-`intake:<project id>`, the whole proposal on the card with the model, the cost and where the
-docs will go) with one `project.intake` audit row; an open intake request for the project is
-reused without a call. `syncAnswers`, run from `RuntimeApp.syncApprovals`, applies the answer
-once: approve writes the milestones and tasks through `applyProjectPlan` (its `keyed` map
-turns the first-session keys into task ids), the items' estimates onto the task rows, the
+makes one model call on the planning rung (the `planning` mode's tier, effort, timeout and
+output cap from `resolveRunSettings`: the tables in force under the principal's
+`model_config.modes.planning` override, ADR 0072, the effort shifted by the project's
+speed-versus-quality slider, spec D.16; the registry's `project-manager` prompt plus an intake
+section; no tools, `maxTurns` 1; `DEFAULT_INTAKE_BUDGET_USD_MICRO` or
+`project.settings.intake_budget_usd_micro`) through the loop driver and the hooks on a
+session row of its own (`summary: "intake: <project>"`, `planned -> running -> completed |
+failed`, `plan.intake.deadline` the planning timeout plus `INTAKE_DEADLINE_MARGIN_MS`, which
+is also the token's expiry), so the call is budgeted, billed to the project and audited like
+any other. The reply must be one JSON object (`parseIntakeReply`, `IntakeProposalBody`):
+`plan` in `ProjectPlanBody`'s shape, `docs` as a map of allowlisted paths (`INTAKE_DOC_PATHS`,
+the standard doc set, plus `docs/decisions/0001-<slug>.md`) to markdown, `firstSession` as
+plan task keys with estimates; unknown keys, a doc outside the set, a dependency that is not
+a plan key, a first-session item naming no task or a plan that does not shape
+(`shapeProjectPlan`, which refuses a dependency cycle too, so what the inbox is shown is a
+plan the writer can write) are refused with `validation` and nothing is filed. The brief goes
+to the model whole up to `MAX_BRIEF_CHARS`, between the markers `<<<BRIEF` and `BRIEF>>>` and
+named as data; the brief's own occurrences of the markers are spaced out
+(`neutralizeMarkers`) so the block closes once, after the whole brief. The proposal is filed
+as one blocking approval request (kind `approval`, options `approve` / `reject`,
+`change_card.key` `intake:<project id>`, the whole proposal on the card with the model, the
+cost and where the docs will go; the `why`, `steps` and the route's `summary` count the
+shaped plan's milestones, one in small-project mode with a step saying the phases join it)
+with one `project.intake` audit row; an open intake request for the project is reused without
+a call, and a call with a new `brief` while one is open is refused with `claim_conflict` (409)
+naming the open request. `syncAnswers`, run from `RuntimeApp.syncApprovals`, applies the
+answer once: approve writes the milestones and tasks through `applyProjectPlan` (its `keyed`
+map turns the first-session keys into task ids), the items' estimates onto the task rows, the
 first-session plan onto `summary_cache.first_session` and `next_steps` and into the queue as
 one `task` item at priority 9, and marks the card applied, all in one transaction with one
-audit row; then the docs: with a repository (`repoRefOf(repos[0])`, `owner/name` or a URL) the
-executor's branch-and-PR flow (`GitOps` clone or fetch into `<worktrees>/intake/<project>`,
-branch `fr/intake-<id>-docs`, push, `createPullRequest` or a comment on the open one), else
-the project's workspace `<data>/projects/<id>/workspace` (`workspaceDir`); a drafted doc is
-written only where no file exists (`kept` otherwise) and `scaffoldDocs` fills the standard
-docs the model left out; a pull request that fails falls back to the workspace with
-`repo_error` on the card, and a docs failure after the rows is recorded on the card
-(`docs.error`) and logged. Reject writes a queue note only. An answer by anyone but the
-request's human is refused (`wrong_human`), as are an unreadable answer, a missing project
-and a card that no longer parses, each recorded on the card with an audit row. Triggers:
+audit row; the mark is `markAnswer`'s (`answer-mark.ts`, the version-conditional mark the
+plan and late approvals share), so of two producers on one store (two installs of the human,
+an overlapping sync) exactly one writes the plan and the other's transaction rolls back
+(`applied_elsewhere`, nothing counted); then the docs: with a repository
+(`repoRefOf(repos[0])`, `owner/name` or a URL) the executor's branch-and-PR flow (`GitOps`
+clone or fetch into `<worktrees>/intake/<project>`, branch `intakeDocsBranch`:
+`fr/intake-<the whole project id>-docs`, push, `createPullRequest` or a comment on the open
+one), else the project's workspace `<data>/projects/<id>/workspace` (`workspaceDir`); a
+drafted doc is written only where no file exists (`kept` otherwise) and `scaffoldDocs` fills
+the standard docs the model left out; a pull request that fails falls back to the workspace
+with `repo_error` on the card, and a docs failure after the rows is recorded on the card
+(`docs.error`) and logged. Reject writes a queue note only (the mark and the note one write).
+An answer by anyone but the request's human is refused (`wrong_human`), as are an unreadable
+answer, a missing project, a card that no longer parses and a proposal the plan writer
+refuses (`apply_failed`, with the error, recorded once rather than retried on every sync; the
+status route reports it as `failed`), each recorded on the card with an audit row; a store
+or git failure is left for the next sync. `closeExpired()`, run at compose and before every
+proposal, closes an intake session still `running` past its deadline as `failed` (a daemon
+that died during the call left it; the call cannot outlive its timeout), so the runner's
+one-session rule is never held by a dead call for longer than one planning timeout. Triggers:
 `POST /projects/:id/intake` (202 `IntakeProposalView`), `GET /projects/:id/intake`
 (`IntakeStatusView`: the latest request, its outcome, where the docs went, or why a
-background run failed), and `POST /projects` with `intake: true` (`enqueue`: the proposal is
-drafted in the background, the card answers at once, a failure lands on
+background run or an apply failed), and `POST /projects` with `intake: true` (`enqueue`: the
+proposal is drafted in the background, the card answers at once, a failure lands on
 `summary_cache.intake`); the flag is off by default so nothing creates a model call unasked.
-Tests: `intake.test.ts`. Requirement: A.2.
+Tests: `intake.test.ts`. Requirement: A.2. Reviewed 2026-10-25
+(`docs/status/reviews/w2-a2-intake.md`; the ADR 0055 amendment of that date).
 
 **Reasons on plan and milestone changes (spec B.5).** Every change to a plan, task or
 milestone is versioned with author and reason, and the store enforces it: `TaskRepo.transition`
@@ -2747,9 +2767,23 @@ set, a task without an outcome, a first-session item naming no task and a depend
 unknown key refused as 409 with no request and the failed calls' sessions closed `failed`;
 `parseIntakeReply` on bare and fenced JSON; another human's answer skipped as `wrong_human`
 with nothing written; with a repository the docs pushed as a pull request on
-`fr/intake-<id>-docs` with the existing README kept; `POST /projects` with `intake: true`
-running the intake in the background and without the flag running nothing; a failed background
-intake recorded on the status route; no provider refused as `unavailable`.
+`intakeDocsBranch(projectId)` with the existing README kept; `POST /projects` with
+`intake: true` running the intake in the background and without the flag running nothing; a
+failed background intake recorded on the status route; no provider refused as `unavailable`.
+From the review of 2026-10-25: a proposal with a dependency cycle refused as 409 with no
+request; an approved card the writer refuses (inserted as filed before the check) recorded
+`apply_failed` once with the error and an audit row, the next sync doing nothing and the
+status route `failed`; two installs syncing one approved request (a second `IntakeService`
+over the same store whose transaction waits for the first's sync) applying it once, the rows
+written once; a `running` intake session with a past deadline holding the runner's start
+(`claim_conflict`), closed `failed` by `closeExpired()` and by the next proposal, a live one
+kept, the real call's row carrying its deadline; a second compose on a file-backed store
+closing the expired session before anything starts; a brief carrying the markers and an
+instruction offered no tool, framed as one data block with every word inside it, a proposal
+only; a new brief while a proposal is open refused 409 with the open request's id and the
+bare re-trigger still reused; small-project mode counting the one milestone in `summary`,
+`why` and `steps` with the mode line, one milestone written on approval; `intakeDocsBranch`
+distinct for two ids of one minute.
 
 `loop-merge.test.ts` (spec J.9, ADR 0062; the runner with `PrTaskExecutor` and
 `ReviewedPrMerge` on the testenv fake git host over REST and git smart HTTP, its own hooks
@@ -3421,16 +3455,25 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   (ADR 0030's revocation rule); the next start skips the revoked row and registers a fresh
   one (`registerDesktopDevice`), as it already did on a shared store.
 - Intake (ADR 0055): the intake session row is `running` while the planning call is in flight
-  and a daemon that dies mid-call leaves it so until a human closes it (the runner's own
-  residual). The first session plans with `StaticPlanner` (ready tasks by priority): the
-  approved first-session plan reaches it as the queue item in the brief and as the tasks'
-  estimates, not as an order it enforces. The pull-request path needs `git` on the PATH and a
-  host token (`secret:github_token`); without them the docs fall back to the workspace with
-  `repo_error` on the card. The intake re-run for a project whose proposal was rejected makes
-  a new call with the same brief (pass `brief` to `POST /projects/:id/intake` to change it).
-  A creation with `intake: true` defers the G.5 scaffold to the intake's approval; a project
-  scaffolded at creation and put through the intake later gets its untouched placeholders
-  replaced by the drafts (an edited file is kept) and, with a repository, a second pull request.
+  (up to the planning timeout, 5 min by default), and the runner starts no session for the
+  agent meanwhile; a daemon that dies mid-call leaves the row `running` until the next
+  compose or proposal closes it `failed` once its deadline (`plan.intake.deadline`) has
+  passed (`closeExpired`), so the block lasts at most one timeout plus the margin. The runner's
+  own interrupted sessions have no such close yet. The first session plans with
+  `StaticPlanner` (ready tasks by priority): the approved first-session plan reaches it as the
+  queue item in the brief and as the tasks' estimates, not as an order it enforces. The
+  pull-request path needs `git` on the PATH and a host token (`secret:github_token`); without
+  them the docs fall back to the workspace with `repo_error` on the card. The intake re-run
+  for a project whose proposal was rejected makes a new call with the same brief (pass `brief`
+  to `POST /projects/:id/intake` to change it; while a proposal is open that is refused, 409).
+  A creation with `intake: true` defers the G.5 scaffold to the intake's approval, so a
+  project whose intake is then rejected or fails has no standard doc set until an intake is
+  approved (the reject note says so; `POST /projects/:id/intake` again, or create without the
+  flag); a project scaffolded at creation and put through the intake later gets its untouched
+  placeholders replaced by the drafts (an edited file is kept) and, with a repository, a second
+  pull request. The request shows the plan as it will be written at proposal time; a
+  small-project mode flipped between the proposal and the approval changes the shape the
+  approval writes (one milestone or several) from what the card showed.
 - Project docs (G.5): the critic's `docs-drift` check runs at review time, before the
   runner's session-end status write, so at tier 2+ it still lists `docs/status.md` for a
   specialist's diff that did not touch it even though the PM's commit lands on the same PR

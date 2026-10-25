@@ -2936,7 +2936,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // A paused install still composes (the updates screen is how it gets fixed); the answered
   // approvals it would apply from the shared state wait for the resume.
   if (schemaSync.paused) logger.warn("sync paused at compose", { ...schemaSync.status() });
-  else await syncApprovals();
+  else {
+    // An intake session a dead daemon left `running` past its deadline (ADR 0055): closed
+    // first, so the runner's one-session rule is not held by a call that no longer exists.
+    await intake.closeExpired().catch((e: unknown) => {
+      logger.warn("expired intake sessions not closed", { error: errorMessage(e) });
+    });
+    await syncApprovals();
+  }
   await refreshMirrorSchedules();
   const jobSchedules = await refreshJobSchedules(scheduler);
   if (services) scheduler.start();
