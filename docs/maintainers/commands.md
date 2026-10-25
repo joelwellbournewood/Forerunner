@@ -309,7 +309,7 @@ and each clause goes through the patterns, in English and German:
 | raise the monthly cap to 200, erhöhe das Monatslimit auf 200 | `budget.set` month |
 | set autonomy to 3, set the autonomy of X to 4, Autonomie auf 3 | `autonomy.set` |
 | start a session [on X] [on my PC / in the cloud] [with 10 francs], starte eine Session auf meinem PC | `session.start` |
-| stop everything / stop all, stopp alles; stop; pause | `session.stop {all}`; `session.stop {agent}`; `session.pause` |
+| stop everything / stop all, stopp alles; stop; pause | `session.stop {all}`; `session.stop {agent}`; `session.pause` (`stopScopeOf` is the exported pattern; `isStopLine` says whether any clause of a line is one, outside the data envelope) |
 | remember that ..., lesson: ..., lesson learned: ..., merk dir, dass ..., Lektion: ..., Lehre: ... | `memory.record` |
 | note: ..., idea: ..., correction: ..., Notiz:, Idee:, Korrektur:, remember ..., merk dir ... | `note.add` |
 | read me the summary [of X] [aloud], speak the project summary for X, summary, lies mir die Zusammenfassung [von X] vor | `summary.speak` (the active project unless one is named; "Which project?" when neither) |
@@ -336,7 +336,14 @@ yields no commands and no counter-question, for the conversation agent to answer
 pattern understands goes to the `ModelIntentPort` when one is configured (a fast model with one
 tool whose schema is `intentToolSchema(registry)`); its commands are validated against the
 registry and an unknown command becomes the offer to create a Forerunner task. Without a model
-port the result is one question with options and nothing runs.
+port the result is one question with options and nothing runs, with one exception (spec O.9,
+"stopping is immediate"; review of w3-o9-chat-to-inbox, 2026-10-25): a clause that is a stop
+("stop and tell me what happened", "stop everything, give it 20 francs and paint the fence")
+runs alone and at once, and every other clause of the line, understood or not, is returned as
+`unmatched` for the conversation agent to name ("I did not act on ..."), never asked about,
+since a question in the stop's way would leave the session running (and the agent would hand
+the line to it as a said line). A line understood in full still runs every command, the stop
+among them.
 
 ## How to change it
 
@@ -427,7 +434,10 @@ with the audit row and the card saying so, the undo turns them back on, and with
 `intent.test.ts` (the two spec sentences,
 forty-four English and German phrases including the lesson phrases, "remember to" staying a note and the summary phrases, seven questions and ordinary sentences that are not lessons,
 ambiguity questions, budget tails that are not a time, invalid values as a question, the
-envelope refusal, the model port, time parsing with `rest`), and `scenario.test.ts` (the
+envelope refusal, the model port, time parsing with `rest`, a stop clause winning over an
+unmatched remainder with every other clause returned as `unmatched` while a fully understood
+line runs every command and a stop word inside a clause, a note or pasted data is no stop,
+and `isStopLine` on the same lines), and `scenario.test.ts` (the
 Android scenario end to end and the phase 5 gate: ui, chat and voice produce the same change
 log entry), `fast-mode.test.ts` (spec D.20: the `fast_mode` spec, its card and the change
 log sentences with the effect and the surcharge both ways, the yes a medium-risk change needs,

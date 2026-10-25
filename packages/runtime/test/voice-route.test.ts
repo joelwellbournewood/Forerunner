@@ -711,6 +711,54 @@ describe("voice routes on the composed daemon", () => {
       expect(r.input_summary).not.toContain('"pcm"');
     }
   });
+
+  it("a spoken 'stop' while a work session runs is the kill switch even with a card pending; with nothing running it stays the no it was (spec O.9, review finding 2 of w3-o9-chat-to-inbox)", async () => {
+    const started = VoiceSessionView.parse(
+      await json(await post("/voice/sessions", { projectId, language: "en" })),
+    );
+    const turn = async (text: string) =>
+      VoiceTurnView.parse(
+        await json(await drive(clock, post(`/voice/sessions/${started.id}/text`, { text }))),
+      );
+    // Nothing runs: "stop" answers the read-back as a plain no, through the registry, as before.
+    const ask = await turn("Give it 20 francs tonight.");
+    expect(ask.pending).toMatchObject({ commands: ["budget.set"] });
+    const no = await turn("stop");
+    expect(no.pending).toBeNull();
+    expect(no.approval).toMatchObject({ approved: false, status: "cancelled" });
+    expect(no.heard).toBe("Cancelled; nothing was changed.");
+    expect(rt.kill.isFrozen({ agentId: rt.agent.id })).toBe(false);
+    // A work session of the agent runs (the row is what the agent and the kill switch read):
+    // the same "stop" is the kill switch, whatever waits for a yes. The bridge hands the line
+    // to the agent instead of answering the card: the card is cancelled, the stop runs, the
+    // reply says both, and no approval decision is booked for it.
+    const row = await rt.store.session.insert({
+      agent_id: rt.agent.id,
+      project_id: projectId,
+      trigger: "manual",
+      runner: "pc",
+    });
+    const live = await rt.store.session.start(row.id, row.version);
+    const ask2 = await turn("Give it 20 francs tonight.");
+    expect(ask2.pending).toMatchObject({ commands: ["budget.set"] });
+    const stop = await turn("stop");
+    expect(stop.approval).toBeNull();
+    expect(stop.pending).toBeNull();
+    expect(stop.reply?.actions.map((a) => a.kind)).toEqual(["session.stop"]);
+    expect(stop.heard).toContain("cancelled");
+    expect(stop.heard).toContain("Stopped");
+    expect(await jsonList(await req("/commands/pending"))).toEqual([]);
+    expect(rt.kill.isFrozen({ agentId: rt.agent.id })).toBe(true);
+    const cancelled = (await rt.store.event.list(started.conversationSessionId))
+      .filter((e) => e.type === "chat.cancelled")
+      .map((e) => e.payload as Json);
+    expect(cancelled.at(-1)).toMatchObject({ words: "stop", stop: true, status: "cancelled" });
+    rt.kill.resume();
+    const current = await rt.store.session.mustGet(live.id);
+    if (current.status === "running")
+      await rt.store.session.setStatus(current.id, current.version, "killed");
+    expect((await post(`/voice/sessions/${started.id}/stop`, {})).status).toBe(200);
+  });
 });
 
 describe("voice unavailable", () => {

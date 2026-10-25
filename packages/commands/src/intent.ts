@@ -89,6 +89,50 @@ interface Match {
   project?: string | null;
 }
 
+/**
+ * The `session.stop` scope one cleaned clause names, or null: "stop everything", "stop all
+ * work", "stopp alles" stop every session (`all`); a bare "stop", "halt", "kill", "stop the
+ * session", "stop work", "Session beenden" stop the agent's (`agent`). The parser's stop
+ * patterns, exported so the conversation agent and the voice bridge read a line the same way.
+ */
+export function stopScopeOf(clause: string): "all" | "agent" | null {
+  if (
+    /^(?:stop|halt|kill|stopp|stoppe|stoppen|beende|anhalten)\s+(?:everything|all(?:\s+(?:sessions|work))?|every\s+session|alles|alle\s+sessions?|alle\s+sitzungen)$/i.test(
+      clause,
+    ) ||
+    /^(?:alles|alle\s+sessions?|alle\s+sitzungen)\s+(?:stoppen|anhalten|beenden)$/i.test(clause)
+  ) {
+    return "all";
+  }
+  if (
+    /^(?:stop|halt|kill|stopp|stoppe|beende)(?:\s+(?:the\s+|die\s+)?(?:session|sitzung|work|arbeit))?$/i.test(
+      clause,
+    ) ||
+    /^(?:session|sitzung)\s+(?:stoppen|beenden)$/i.test(clause)
+  ) {
+    return "agent";
+  }
+  return null;
+}
+
+/**
+ * Whether a line is a stop command by the parser's own patterns (spec O.9, "stopping is
+ * immediate"): any clause of it, split and cleaned as `parse` does, is one `stopScopeOf`
+ * names. A stop word inside another clause ("don't stop", "stop asking"), a note that mentions
+ * one ("note: stop and go") and text carrying the data envelope (pasted content, never a
+ * request: the parser's guard) are not. The conversation agent and the voice bridge ask this
+ * before they read such a line as a "no" to a pending card.
+ */
+export function isStopLine(text: string): boolean {
+  if (text.includes(DATA_ENVELOPE_OPEN) || text.includes(DATA_ENVELOPE_CLOSE)) return false;
+  return text
+    .trim()
+    .split(SPLIT_RE)
+    .map(clean)
+    .filter(Boolean)
+    .some((clause) => stopScopeOf(clause) !== null);
+}
+
 export interface When {
   until: string;
   label: string;
@@ -221,9 +265,12 @@ export class IntentParser {
     const clauses = trimmed.split(SPLIT_RE).map(clean).filter(Boolean);
     const matches: Match[] = [];
     const unmatched: string[] = [];
+    /** Every clause with what it matched, in order, for the stop rule below. */
+    const outcomes: { clause: string; match: Match | null }[] = [];
     let project: string | null = ctx.activeProjectId;
     for (const clause of clauses) {
       const m = this.matchClause(clause, ctx, project);
+      outcomes.push({ clause, match: m });
       if (!m) {
         unmatched.push(clause);
         continue;
@@ -233,6 +280,19 @@ export class IntentParser {
       if (m.question) break;
     }
     if (unmatched.length === 0 && matches.length > 0) return this.finish(matches, ctx, []);
+    // Spec O.9, "stopping is immediate": a clause that is a stop runs even when another clause
+    // was not understood ("stop and tell me what happened"). The stop runs alone (while part of
+    // the line is unclear nothing else in it is acted on) and every other clause is reported as
+    // `unmatched`, never asked about: a question in the stop's way would leave the session
+    // running, and the conversation agent would hand the line to it as data.
+    const stop = outcomes.find((o) => o.match?.command?.name === "session.stop");
+    if (stop?.match && unmatched.length > 0) {
+      return this.finish(
+        [stop.match],
+        ctx,
+        outcomes.filter((o) => o !== stop).map((o) => o.clause),
+      );
+    }
     if (QUESTION_RE.test(trimmed) && matches.length === 0) {
       return { commands: [], matched: "none", unmatched: clauses };
     }
@@ -573,23 +633,8 @@ export class IntentParser {
   }
 
   private matchStop(c: string): Match | null {
-    if (
-      /^(?:stop|halt|kill|stopp|stoppe|stoppen|beende|anhalten)\s+(?:everything|all(?:\s+(?:sessions|work))?|every\s+session|alles|alle\s+sessions?|alle\s+sitzungen)$/i.test(
-        c,
-      ) ||
-      /^(?:alles|alle\s+sessions?|alle\s+sitzungen)\s+(?:stoppen|anhalten|beenden)$/i.test(c)
-    ) {
-      return { command: { name: "session.stop", params: { scope: "all" } } };
-    }
-    if (
-      /^(?:stop|halt|kill|stopp|stoppe|beende)(?:\s+(?:the\s+|die\s+)?(?:session|sitzung|work|arbeit))?$/i.test(
-        c,
-      ) ||
-      /^(?:session|sitzung)\s+(?:stoppen|beenden)$/i.test(c)
-    ) {
-      return { command: { name: "session.stop", params: { scope: "agent" } } };
-    }
-    return null;
+    const scope = stopScopeOf(c);
+    return scope ? { command: { name: "session.stop", params: { scope } } } : null;
   }
 
   private matchPause(c: string): Match | null {

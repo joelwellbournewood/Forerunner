@@ -90,3 +90,41 @@ a step is the specialist's run.
   would be a constraint.
 - Mark the line read when collected: a line collected at the boundary the session stops at
   would then be read by nobody.
+
+## Amendment 2026-10-25 (review of w3-o9-chat-to-inbox)
+
+The independent review (`docs/status/reviews/w3-o9-chat-to-inbox.md`) narrowed decisions 2
+and 4 and added a rule the spec's "stopping is immediate" needs beside them:
+
+1. **Only the human's own agent.** Decision 4 said the human's own words to their own agent
+   are not refused; nothing checked that the agent was the human's. `forwardToRunningSession`
+   now forwards only when `agent.owner_human_id` is the chatting human (the rule ADR 0061
+   decision 5 gives the memory): a turn naming another human's agent is answered by the model
+   and never posted, and the daemon's `/chat` and `/chat/stream` refuse a body naming another
+   human with 403 before anything is parsed, as `/inbox` does. Another human's words therefore
+   never reach this human's live session as their own, and another human's "stop" never
+   reaches this human's kill switch through the daemon.
+2. **A stop wins over an unmatched remainder.** "Stop and tell me what happened" was split by
+   the parser into a stop and a clause it did not understand and came back as a question with
+   `matched: "none"`, which the conversation agent read as "no pattern understood": the model
+   answered and, by decision 2, the whole line was forwarded as a said line while the session
+   ran on. The parser now runs the stop alone and returns every other clause as `unmatched`,
+   never a question; the agent's reply names what it did not act on. The stop patterns are
+   the exported `stopScopeOf` and `isStopLine`.
+3. **A stop wins over a pending card while a session runs.** With a change card waiting for a
+   yes, "stop" was the "no" the registry's `confirmByText` and the spoken rules read it as,
+   and the session ran on. While a work session of the agent runs, a line that is a stop
+   command is the kill switch whatever waits (`ConversationAgent.stopsLiveSession`): the card
+   is cancelled as a "no" (recorded on its request, `chat.cancelled` with `stop: true`), the
+   registry's `session.stop` runs and the reply says both; the voice bridge asks the agent
+   before it answers its card with the line and hands a stop over, cancelling a card the
+   registry still holds afterwards. With nothing running "stop" stays the "no" it was: the
+   kill switch would only freeze the agent until its next start.
+
+Decision 2's "every line that is not a command is forwarded" stands with these three
+qualifications: not another human's line, never a stop, and a stop is one even when the rest
+of the line is not. Tests: `packages/commands/test/intent.test.ts` (the stop clause),
+`packages/runtime/test/live-chat.test.ts` (the stop with a remainder, the stop over a card
+with and without a session, another human naming the agent, a line collected at a boundary no
+task follows), `voice-route.test.ts` (the spoken stop over a card) and `daemon.test.ts` (the
+403 on both chat routes).

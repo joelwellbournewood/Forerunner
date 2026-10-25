@@ -4,7 +4,7 @@ import { email as agentEmail, cloudflare, desktop } from "@forerunner/capabiliti
 import { errorMessage, ForerunnerError, join, log, osFacts, redact } from "@forerunner/platform";
 import type { LessonStatus, MilestoneRow } from "@forerunner/state";
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -1103,8 +1103,18 @@ export function createDaemonApp(
     return c.json(messageView(m, ""));
   });
 
+  // The conversation is the signed-in human's (spec O.9: a line said to this daemon speaks for
+  // its human's agent and may stop or reach that agent's live session, never another human's);
+  // a body naming another human is refused before anything is parsed, as `/inbox` refuses.
+  const notYourConversation = (c: Context, humanId: string) =>
+    humanId === rt.human.id
+      ? null
+      : c.json({ ...NOT_YOURS, message: "not your conversation" }, 403);
+
   app.post("/chat", async (c) => {
     const body = await parse(c, ChatRequestBody);
+    const refused = notYourConversation(c, body.humanId);
+    if (refused) return refused;
     if (!rt.conversation)
       throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
     const r = await rt.conversation.chat({
@@ -1119,6 +1129,8 @@ export function createDaemonApp(
 
   app.post("/chat/stream", async (c) => {
     const body = await parse(c, ChatRequestBody);
+    const refused = notYourConversation(c, body.humanId);
+    if (refused) return refused;
     if (!rt.conversation)
       throw new ForerunnerError("provider_auth", "no model credential configured; run fr setup");
     const conv = rt.conversation;
