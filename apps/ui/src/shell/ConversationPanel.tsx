@@ -3,16 +3,18 @@ import { streamChat } from "../api/chat-stream.ts";
 import { describeError, type VoiceSessionView } from "../api/client.ts";
 import { Dialog } from "../components/Dialog.tsx";
 import { Badge, Button, INPUT_CLASS } from "../components/ui.tsx";
-import { useClient, useIdentity, useUiState } from "../store/context.tsx";
+import { useClient, useIdentity, useRealtime, useUiState } from "../store/context.tsx";
 import type { MicCapture } from "./voice-capture.ts";
 import { useCaptureFactory } from "./voice-capture.ts";
+import { followVoiceReply, type VoiceReplyPlayer } from "./voice-playback.ts";
 
 /**
  * The conversation panel (spec O.1, ADR 0064): the global hotkey, the header's Talk button and
  * the palette open it. Each `voiceRequest` (a new number per hotkey press) toggles a
  * push-to-talk turn through the daemon's /voice routes: the first press opens a session in
  * push_to_talk mode, presses, and streams the microphone; the next press (or "Send") releases
- * and the turn's transcript and reply appear. When voice is unavailable (no provider, no model
+ * and the turn's transcript and reply appear, the reply spoken as the daemon streams its audio
+ * frames (`voice-playback.ts`, followed from the session's start until the panel closes). When voice is unavailable (no provider, no model
  * credential, no microphone) the panel says why and focuses the text input, which talks to
  * the same agent through /chat/stream.
  */
@@ -53,6 +55,7 @@ export function ConversationPanel({
   const identity = useIdentity();
   const activeProjectId = useUiState((s) => s.activeProjectId);
   const captureFactory = useCaptureFactory();
+  const realtime = useRealtime();
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [reason, setReason] = useState<string | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
@@ -61,6 +64,8 @@ export function ConversationPanel({
   const inputRef = useRef<HTMLInputElement>(null);
   const sessionRef = useRef<VoiceSessionView | null>(null);
   const captureRef = useRef<MicCapture | null>(null);
+  // Plays the session's reply audio (the daemon streams it; nothing else in the app plays it).
+  const playerRef = useRef<VoiceReplyPlayer | null>(null);
   const phaseRef = useRef<VoicePhase>("idle");
   const turnsRef = useRef(0);
   // Bumped when the panel closes or unmounts: a turn that is still starting (status, session,
@@ -120,6 +125,13 @@ export function ConversationPanel({
         }
         sessionRef.current = session;
       }
+      if (playerRef.current?.sessionId !== session.id) {
+        playerRef.current?.close();
+        playerRef.current = followVoiceReply(client, session, {
+          ...(realtime && "eventSource" in realtime ? { eventSource: realtime.eventSource } : {}),
+          ...(realtime?.audio ? { audio: realtime.audio } : {}),
+        });
+      }
       turnsRef.current = session.turns;
       const id = session.id;
       await client.voicePress(id, true);
@@ -153,7 +165,7 @@ export function ConversationPanel({
       if (closed()) return;
       unavailable(`voice is unavailable: ${describeError(error)}. Type instead.`);
     }
-  }, [activeProjectId, captureFactory, client, setPhaseBoth, unavailable]);
+  }, [activeProjectId, captureFactory, client, realtime, setPhaseBoth, unavailable]);
 
   const finishTurn = useCallback(async () => {
     const session = sessionRef.current;
@@ -212,6 +224,8 @@ export function ConversationPanel({
     epochRef.current += 1;
     captureRef.current?.stop();
     captureRef.current = null;
+    playerRef.current?.close();
+    playerRef.current = null;
     const session = sessionRef.current;
     sessionRef.current = null;
     if (session && !session.endedAt) void client.stopVoiceSession(session.id).catch(() => {});

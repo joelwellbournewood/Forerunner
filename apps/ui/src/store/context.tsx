@@ -28,9 +28,16 @@ import {
 } from "./store.ts";
 import { applyTheme, watchSystemTheme } from "./theme.ts";
 
+/** The browser seams of what the window plays (tests inject fakes); absent: the browser's own. */
+export interface RealtimeSeams {
+  eventSource?: EventSourceFactory;
+  audio?: () => AudioOutput | null;
+}
+
 interface AppContextValue {
   client: DaemonClient;
   store: UiStore;
+  realtime: RealtimeSeams | undefined;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -48,7 +55,7 @@ export interface AppProviderProps {
    * (`canPlaySpeech`); with `audio` given it is one. An `eventSource` given here is also the
    * `/events` stream's, over `streamOptions.eventSource`.
    */
-  realtime?: { eventSource?: EventSourceFactory; audio?: () => AudioOutput | null };
+  realtime?: RealtimeSeams;
   children: ReactNode;
 }
 
@@ -158,7 +165,8 @@ export function AppProvider({
     };
   }, [store]);
 
-  return <AppContext.Provider value={{ client, store }}>{children}</AppContext.Provider>;
+  const value = useMemo(() => ({ client, store, realtime }), [client, store, realtime]);
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
 /** Fetch the install-wide state once; returns false when the daemon cannot be reached. */
@@ -221,6 +229,11 @@ export function useApp(): AppContextValue {
 
 export function useClient(): DaemonClient {
   return useApp().client;
+}
+
+/** The seams the voice panel's player uses (the same as the speech player's). */
+export function useRealtime(): RealtimeSeams | undefined {
+  return useApp().realtime;
 }
 
 export function useUiStore(): UiStore {

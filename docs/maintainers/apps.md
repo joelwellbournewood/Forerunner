@@ -327,8 +327,20 @@ posted chunk by chunk to `…/audio`, one post after the other (the daemon appen
 arrival order); the next request (or Send) stops the capture, waits until every chunk of the
 turn was posted (the daemon's loop drops audio that arrives after the release), posts
 `{ pressed: false }` and polls `GET /voice/sessions/:id` (500 ms, at most 60 s) until the turn
-count grows, then shows the transcript (`said`) and the spoken reply (`heard`). Closing the
-panel (or unmounting the shell) stops the capture and posts `…/stop`; a turn that is still
+count grows, then shows the transcript (`said`) and the spoken reply (`heard`). The reply is
+also heard: from the session's start the panel follows `GET /voice/sessions/:id/events`
+(EventSource with `?token=`, `afterSeq` = the session's `lastSeq`; `shell/voice-playback.ts`)
+and plays every `audio` frame (base64 16-bit LE PCM at its `sampleRate` and `channels`,
+decoded with `decodeFrame` from `lib/speech.ts`) back to back through Web Audio, in arrival
+order; a `barge_in`, an `error`, a `turn_end` whose latency says `interrupted` and
+`voice.stopped` silence what is queued, a normal `turn_end` lets it finish. The AudioContext
+is created on the Talk click or hotkey press and resumed. Nothing else plays these frames: the
+desktop shell has no native audio path (`media.rs` only grants the microphone), so there is
+no flag to defer to and the webview's player is the only one; without EventSource or Web
+Audio (jsdom without the test seams) nothing plays and the text still shows. The seams are
+`AppProvider`'s `realtime` (`useRealtime()`), the same as the speech player's. Closing the
+panel (or unmounting the shell) stops the capture, silences and closes the player and posts
+`…/stop`; a turn that is still
 starting when the panel closes (status, session start, press, the microphone prompt) notices
 it after every step and undoes what it began, so the microphone never stays on behind a
 closed panel. The Android app's own Settings screen carries a "Global hotkey: unavailable"
@@ -711,10 +723,11 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
   speech player above); with it closed the daemon skips the voice (`notifications.md`) and
   the command answers with the text. A browser tab that blocks audio until clicked stays
   silent until then; with the desktop app and a browser tab both open, both play.
-- The conversation panel shows a voice turn's reply as text (`heard`); it does not play the
-  TTS audio frames the daemon streams on `GET /voice/sessions/:id/events` (audio frames are
-  live-only, never in the JSON replay the panel polls). Playing them needs an SSE reader for
-  that route; the PCM player `Read aloud` uses (`lib/speech.ts`) could play them.
+- The panel's reply player has been exercised in jsdom with a fake EventSource and a fake
+  AudioContext (`test/voice-playback.test.tsx`), not yet in a real window with a real TTS.
+  Chunks are scheduled as they arrive; a stream that stalls longer than the queued audio
+  leaves a gap (no jitter buffer). The Talk button stays disabled until the turn ended, so a
+  press cannot barge in on the reply from the panel.
 - The microphone capture (`browserMicCapture`) uses ScriptProcessorNode, deprecated but
   present in WebView2 and WebKitGTK; it has been exercised in jsdom with a fake capture only,
   not yet in a real desktop window with a real voice provider (no provider key here).

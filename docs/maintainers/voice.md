@@ -271,9 +271,12 @@ attached, no voice session is open and it is not quiet hours (`notifications.md`
 back to text or a `skipped` row when no speech player is attached. `runtime.md` ("Read aloud") has the wiring;
 the UI's button is in `apps.md`.
 
-The desktop shell (`apps/desktop`), the Android app (`apps/mobile`) and the approvals web page
-(`apps/approvals-web`) are not hooked up yet: the desktop and Android shells capture with the
-OS audio APIs above and call `press` and `audio`, play the `audio` frames, show the
+The UI's conversation panel (in a browser and in the desktop webview) captures with
+`getUserMedia`, calls `press` and `audio`, and plays the `audio` frames of the session's event
+stream through Web Audio (`apps/ui/src/shell/voice-playback.ts`, `apps.md`); the desktop shell
+itself plays nothing natively. The Android app (`apps/mobile`) and the approvals web page
+(`apps/approvals-web`) are not hooked up yet: they would capture, call `press` and `audio`,
+play the `audio` frames, show the
 `voice.readback` card with a Yes button that calls `answer`; a shell without capture (the web
 page, a phone without microphone permission) calls `text` and plays or prints the reply. What
 the bridge records is in `runtime.md` ("Voice"): `voice.turn` and `voice.approval` rows on the
@@ -356,10 +359,11 @@ profile (`--profile voice-run`) apart from the everyday install.
 Recorded where: the `voice.turn` rows on the conversation session in
 `<home>/data/state.sqlite` (they hold `said` and `heard`; the report prints numbers, the
 source and error codes only, never the text or a message), the `voice.session` audit rows, the
-Haiku calls in the cost ledger; no audio unless `FORERUNNER_VOICE_STORE_AUDIO=1`. First audio
-is measured at the daemon's paced sink when the first TTS chunk is handed over, not at the
-speaker: the conversation panel does not play the voice session's `audio` frames (Known
-issues), so the human hears no reply during the run.
+Haiku calls in the cost ledger; no audio unless `FORERUNNER_VOICE_STORE_AUDIO=1`. The human
+hears the reply: the panel plays the session's `audio` frames through the browser's output
+device. First audio is measured at the daemon's paced sink when the first TTS chunk is handed
+over; the speaker adds the SSE hop and the output device's latency on top, which the report
+does not include.
 
 ## How to change it
 
@@ -441,7 +445,7 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
   conversation panel, `apps/ui/src/shell/ConversationPanel.tsx`, reads `client.voiceStatus()`
   and posts the frames `voice-capture.ts` captures through `client.voiceAudio()` to
   `POST /voice/sessions/:id/audio`; `apps/ui/src/mobile/voice.ts` captures the phone's;
-  `apps.md`), but
+  `apps.md`; the panel plays the voice session's `audio` frames, `voice-playback.ts`), but
   the shells do not play the `/speak/:id/events` frames: the UI plays them itself through Web
   Audio in the webview (`apps.md`); the desktop sidecar ignores the `speak.started` frame, so
   with the app window closed nothing is spoken (alerts are skipped, `summary.speak` answers
@@ -457,11 +461,6 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
   row and switching it off is how a keyed provider is ruled out, and removing the row removes
   the exclusion with it. Making a never-installed provider unreachable would mean treating the
   catalog, not the row, as the grant; left as is and noted here.
-- The conversation panel (`ConversationPanel.tsx`) posts the microphone and polls
-  `GET /voice/sessions/:id` for the finished turn, but never subscribes to the session's
-  events, so the reply's `audio` frames are not played: a push-to-talk turn in the UI is
-  heard as text only. The latency report is unaffected (it is taken at the daemon's sink).
-  Playing them through the same Web Audio player as `/speak` is the fix.
 - `fr doctor` does not report voice; `scripts/voice-run.ts check` and `GET /voice/status` do.
 - A session already open keeps the providers it started with; a panel change applies to the
   next session only (by design: no provider swap mid-conversation).
