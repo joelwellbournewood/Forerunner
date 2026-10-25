@@ -45,13 +45,29 @@ export const SHARED_SECRET_AUDIT = {
   refused_serve: "secret.blob_refused",
   /** Written by the resolving install when it unwrapped a blob for a tool call. */
   resolved: "secret.shared_resolved",
+  /** A device was revoked: its wrapped copies left every open grant. */
+  blobsDropped: "secret.blobs_dropped",
 } as const;
 
-/** The store surface this module needs; the service's `RouteContext.store` and the daemon's store both have it. */
+/**
+ * The store surface this module needs; the service's `RouteContext.store` and the daemon's
+ * store both have it. With `transaction` present a proposal and a revocation run as one
+ * write (the grant row, its cards, the mirror and the audit rows together); the answer path
+ * is always given the transaction it runs in.
+ */
 export type SharedGrantStore = Pick<
   StateStore,
   "secretGrant" | "secretRef" | "humanRequest" | "human" | "agent" | "device" | "auditLog"
->;
+> &
+  Partial<Pick<StateStore, "transaction">>;
+
+/** Run `fn` inside the store's transaction when it offers one, else as it is. */
+function atomically<T>(
+  store: SharedGrantStore,
+  fn: (tx: SharedGrantStore) => Promise<T>,
+): Promise<T> {
+  return store.transaction ? store.transaction((tx) => fn(tx)) : fn(store);
+}
 
 export interface WrapTarget {
   agentId: string;
@@ -261,79 +277,83 @@ export async function proposeSharedGrant(
   const why = input.why?.trim() ?? "";
   const kind = input.kind?.trim() || "token";
 
-  const grant = await store.secretGrant.propose({
-    name,
-    owner_human_id: owner.id,
-    kind,
-    why,
-    agent_ids: agentIds,
-    required_human_ids: required,
-    blobs,
-    author_human: owner.id,
-  });
-  const requests: HumanRequestRow[] = [];
-  for (const humanId of required) {
-    const theirs = agentIds.filter((id) => owners.get(id) === humanId);
-    const theirNames = theirs.map((id) => agentNames[agentIds.indexOf(id)] ?? id);
-    requests.push(
-      await store.humanRequest.insert({
-        human_id: humanId,
-        kind: "approval",
-        why: `${owner.name} wants to share the secret "${name}" with ${theirNames.join(", ")}${why ? `: ${why}` : ""}`,
-        steps: [
-          `Secret: ${name} (${kind}), owned by ${owner.name}`,
-          `Readable by: ${theirNames.join(", ")}`,
-          "The value stays encrypted to your install; it is never shown to you or to the service.",
-          "Approve to let the named agent use it by reference, deny to cancel the grant.",
-        ],
-        options: [...SHARED_SECRET_OPTIONS],
-        blocking: false,
-        risk: "high",
-        change_card: {
-          kind: SHARED_SECRET_CARD_KIND,
-          grantId: grant.id,
-          name,
-          secretKind: kind,
-          ownerHumanId: owner.id,
-          ownerName: owner.name,
-          agentIds: theirs,
-          agentNames: theirNames,
-          why,
-        },
-        author_human: owner.id,
-      }),
-    );
-  }
-  let row = grant;
-  if (requests.length > 0) {
-    row = await store.secretGrant.patch(grant.id, { request_ids: requests.map((r) => r.id) });
-  } else {
-    await mirrorActive(store, row);
-  }
-  await audit(store, opts.clock, {
-    tool: SHARED_SECRET_AUDIT.proposed,
-    humanId: owner.id,
-    input: {
-      grant: grant.id,
+  // One write: a failure after the grant row would otherwise leave a pending grant nobody
+  // can approve (no cards) or an active one without its audit row.
+  return atomically(store, async (tx) => {
+    const grant = await tx.secretGrant.propose({
       name,
-      agents: agentIds,
-      installs: blobs.map((b) => b.device_id),
-      install: opts.installId,
-    },
-    result:
-      required.length === 0
-        ? "active: only the owner's agents are named"
-        : `pending approval of ${required.join(", ")}`,
-  });
-  if (required.length === 0) {
-    await audit(store, opts.clock, {
-      tool: SHARED_SECRET_AUDIT.activated,
-      humanId: owner.id,
-      input: { grant: grant.id, name, agents: agentIds },
-      result: "active",
+      owner_human_id: owner.id,
+      kind,
+      why,
+      agent_ids: agentIds,
+      required_human_ids: required,
+      blobs,
+      author_human: owner.id,
     });
-  }
-  return { grant: row, requests };
+    const requests: HumanRequestRow[] = [];
+    for (const humanId of required) {
+      const theirs = agentIds.filter((id) => owners.get(id) === humanId);
+      const theirNames = theirs.map((id) => agentNames[agentIds.indexOf(id)] ?? id);
+      requests.push(
+        await tx.humanRequest.insert({
+          human_id: humanId,
+          kind: "approval",
+          why: `${owner.name} wants to share the secret "${name}" with ${theirNames.join(", ")}${why ? `: ${why}` : ""}`,
+          steps: [
+            `Secret: ${name} (${kind}), owned by ${owner.name}`,
+            `Readable by: ${theirNames.join(", ")}`,
+            "The value stays encrypted to your install; it is never shown to you or to the service.",
+            "Approve to let the named agent use it by reference, deny to cancel the grant.",
+          ],
+          options: [...SHARED_SECRET_OPTIONS],
+          blocking: false,
+          risk: "high",
+          change_card: {
+            kind: SHARED_SECRET_CARD_KIND,
+            grantId: grant.id,
+            name,
+            secretKind: kind,
+            ownerHumanId: owner.id,
+            ownerName: owner.name,
+            agentIds: theirs,
+            agentNames: theirNames,
+            why,
+          },
+          author_human: owner.id,
+        }),
+      );
+    }
+    let row = grant;
+    if (requests.length > 0) {
+      row = await tx.secretGrant.patch(grant.id, { request_ids: requests.map((r) => r.id) });
+    } else {
+      await mirrorActive(tx, row);
+    }
+    await audit(tx, opts.clock, {
+      tool: SHARED_SECRET_AUDIT.proposed,
+      humanId: owner.id,
+      input: {
+        grant: grant.id,
+        name,
+        agents: agentIds,
+        installs: blobs.map((b) => b.device_id),
+        install: opts.installId,
+      },
+      result:
+        required.length === 0
+          ? "active: only the owner's agents are named"
+          : `pending approval of ${required.join(", ")}`,
+    });
+    if (required.length === 0) {
+      await audit(tx, opts.clock, {
+        tool: SHARED_SECRET_AUDIT.activated,
+        humanId: owner.id,
+        input: { grant: grant.id, name, agents: agentIds },
+        result: "active",
+      });
+    }
+    return { grant: row, requests };
+  });
 }
 
 /** The grant id a request's change card names, when the request is a shared-secret approval. */
@@ -404,7 +424,11 @@ export async function applySharedGrantAnswer(
   return row;
 }
 
-/** The owner ends a grant: pending or active, the blobs go and the open cards are withdrawn. */
+/**
+ * The owner ends a grant: pending or active, the blobs go and the open cards are withdrawn.
+ * `by` is the human acting; anyone but the owner is `tool_not_allowed` (a recipient's lever is
+ * the card's deny), `null` is the service acting for the owner (its own route checked).
+ */
 export async function revokeSharedGrant(
   store: SharedGrantStore,
   grantId: string,
@@ -416,23 +440,59 @@ export async function revokeSharedGrant(
       details: { id: grantId },
     });
   }
+  if (opts.by !== null && opts.by !== grant.owner_human_id) {
+    throw new ForerunnerError("tool_not_allowed", "only the owner revokes a shared secret", {
+      details: { id: grant.id, ownerHumanId: grant.owner_human_id, by: opts.by },
+    });
+  }
   if (grant.status === "revoked" || grant.status === "cancelled") return grant;
-  const row = await store.secretGrant.end(
-    grant.id,
-    grant.version,
-    "revoked",
-    opts.reason ?? "revoked by the owner",
-    opts.by,
-  );
-  await withdrawOpenCards(store, row, null);
-  await mirrorEnded(store, row);
-  await audit(store, opts.clock, {
-    tool: SHARED_SECRET_AUDIT.revoked,
-    humanId: opts.by ?? row.owner_human_id,
-    input: { grant: row.id, name: row.name, agents: row.agent_ids, install: opts.installId },
-    result: "revoked; wrapped copies dropped",
+  return atomically(store, async (tx) => {
+    const row = await tx.secretGrant.end(
+      grant.id,
+      grant.version,
+      "revoked",
+      opts.reason ?? "revoked by the owner",
+      opts.by,
+    );
+    await withdrawOpenCards(tx, row, null);
+    await mirrorEnded(tx, row);
+    await audit(tx, opts.clock, {
+      tool: SHARED_SECRET_AUDIT.revoked,
+      humanId: opts.by ?? row.owner_human_id,
+      input: { grant: row.id, name: row.name, agents: row.agent_ids, install: opts.installId },
+      result: "revoked; wrapped copies dropped",
+    });
+    return row;
   });
-  return row;
+}
+
+/**
+ * A revoked install loses its wrapped copies (spec R.2 with S.13): both device-revocation
+ * paths (the service's `POST /devices/:id/revoke` and the daemon's store fallback) call this
+ * right after the row is revoked, so a lost PC that still holds its vault and the store
+ * credentials finds no ciphertext to unwrap. The grants stay (an agent whose only install is
+ * gone resolves nothing until the owner shares again); one audit row names them. Idempotent.
+ */
+export async function dropSharedBlobsForDevice(
+  store: Pick<SharedGrantStore, "secretGrant" | "device" | "auditLog">,
+  deviceId: string,
+  opts: SharedGrantOptions,
+): Promise<SecretGrantRow[]> {
+  const grants = await store.secretGrant.dropBlobsForDevice(deviceId);
+  if (grants.length === 0) return grants;
+  const device = await store.device.get(deviceId);
+  await audit(store, opts.clock, {
+    tool: SHARED_SECRET_AUDIT.blobsDropped,
+    humanId: device?.owner_human_id ?? null,
+    input: {
+      device: deviceId,
+      grants: grants.map((g) => g.id),
+      names: [...new Set(grants.map((g) => g.name))],
+      install: opts.installId,
+    },
+    result: `${grants.length} grant(s) dropped the copies wrapped to the revoked device`,
+  });
+  return grants;
 }
 
 /**
@@ -524,8 +584,14 @@ async function mirrorActive(
   });
 }
 
+/**
+ * An ended grant leaves `secret_ref`: the other humans' agents it named go (unless another
+ * active grant of the name keeps them); the owner's own agents stay, because their membership
+ * is the owner's local rule (S.14: `SecretRefRepo.grant`) that a shared grant naming them
+ * alongside the other human's must not take away when it ends.
+ */
 async function mirrorEnded(
-  store: Pick<SharedGrantStore, "secretRef" | "secretGrant">,
+  store: Pick<SharedGrantStore, "secretRef" | "secretGrant" | "agent">,
   grant: SecretGrantRow,
 ): Promise<void> {
   const existing = await store.secretRef.byName(grant.owner_human_id, grant.name);
@@ -535,6 +601,9 @@ async function mirrorEnded(
     (g) => g.name === grant.name && g.id !== grant.id,
   );
   const keep = new Set(stillActive.flatMap((g) => g.agent_ids));
+  for (const id of grant.agent_ids) {
+    if ((await store.agent.get(id))?.owner_human_id === grant.owner_human_id) keep.add(id);
+  }
   const granted = existing.granted_to.filter((a) => !grant.agent_ids.includes(a) || keep.has(a));
   await store.secretRef.update(existing.id, existing.version, {
     granted_to: granted,

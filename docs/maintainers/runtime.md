@@ -91,13 +91,27 @@ this module holds the rules and the two sides.
   daemon's `POST /requests/:id/answer` both do): a yes records the approval and the
   last required one activates the grant and mirrors it into `secret_ref` (`scope: "shared"`,
   the agents in `granted_to`); a no cancels it, drops the blobs and withdraws the other open
-  cards. `revokeSharedGrant` is the owner's end at any time. `serveSharedBlob` is the only
+  cards. `revokeSharedGrant` is the owner's end at any time: `by` must be the owner
+  (`tool_not_allowed` otherwise, so on a shared store the recipient's daemon cannot end a
+  grant it only had to approve; `by: null` is the service acting for the owner after its own
+  check). A proposal and a revocation each run as one `store.transaction` (the grant row, its
+  cards, the mirror and the audit rows together; `SharedGrantStore.transaction` is optional
+  for a caller that already holds one). `serveSharedBlob` is the only
   read that hands a blob out: an active grant of that name naming that agent, the copy
-  wrapped for that device; anything else is `secret_not_granted` after a `secret.blob_refused`
-  row. Audit rows: `secret.grant_proposed`, `secret.grant_approved`, `secret.grant_activated`,
-  `secret.grant_refused`, `secret.grant_revoked`, `secret.blob_served`, `secret.blob_refused`
-  and, on the resolving install, `secret.shared_resolved`; each names the grant, the secret,
-  the agents and the install, never a value.
+  wrapped for that device, the device not revoked; anything else is `secret_not_granted`
+  after a `secret.blob_refused` row. `dropSharedBlobsForDevice(store, deviceId)` is what the
+  two device-revocation paths call (the service's `POST /devices/:id/revoke` and
+  `DeviceManager.revokeInStore`): every pending or active grant drops the copies wrapped to
+  that device (`SecretGrantRepo.dropBlobsForDevice`), the grant itself stays (an agent whose
+  only install is gone resolves nothing until the owner shares again), one
+  `secret.blobs_dropped` row names the grants; idempotent. When a grant ends, the mirror
+  removes the other humans' agents from `granted_to` (unless another active grant of the name
+  keeps them) and leaves the owner's own agents, whose membership is the owner's local rule
+  (S.14, `SecretRefRepo.grant`) and not the shared grant's to take away. Audit rows:
+  `secret.grant_proposed`, `secret.grant_approved`, `secret.grant_activated`,
+  `secret.grant_refused`, `secret.grant_revoked`, `secret.blob_served`, `secret.blob_refused`,
+  `secret.blobs_dropped` and, on the resolving install, `secret.shared_resolved`; each names
+  the grant, the secret, the agents and the install, never a value.
 - **`resolver.ts`, the resolving side.** `SharedSecretVault` is the `Vault` the hooks'
   `SecretResolver` reads: this install's own vault first, then (bound once the daemon's
   device row exists) the wrapped copy the shared state serves for this agent on this install,
@@ -126,7 +140,12 @@ this module holds the rules and the two sides.
   the `secret.shared_resolved` audit row, and exposes `rt.sharedSecrets` (`propose`, `revoke`,
   `list`, `names`). `routes.ts` mounts `POST /secrets/shared { name, agentIds, why?, kind? }`
   (201 `{ grant, requestIds, targets }`), `GET /secrets/shared` and
-  `POST /secrets/shared/:id/revoke` on the daemon API for the app; no body carries a value.
+  `POST /secrets/shared/:id/revoke` (403 `tool_not_allowed` for a grant this daemon's human
+  does not own; `GET` lists what the human owns or must approve, so the id of a grant to
+  approve is at hand but not revocable here) on the daemon API for the app; no body carries a
+  value. Naming the daemon's own agent among the recipients wraps a copy to this install too
+  (every keyed install of every named agent's owner is a target); the resolver never uses it,
+  because the local vault answers first.
 
 ### Cloud runner unlock, desktop side (`src/secrets/runner-unlock-routes.ts`; spec S.12, ADR 0068)
 
@@ -2330,7 +2349,11 @@ state service with its **admin token**, which never reaches the app. `DeviceMana
   service (the revoke route is then never called). Through the service it is `POST
   /devices/:id/revoke` (the row revoked, the device's session tokens dropped, the next request
   refused, `device.changed` announced); without one the row is revoked in the shared store,
-  which the service reads on every request. When a service is configured but the call fails
+  which the service reads on every request. Either way the shared-secret copies wrapped to the
+  device leave every open grant (spec S.13, ADR 0065: the service's route and
+  `revokeInStore` both call `dropSharedBlobsForDevice`, one `secret.blobs_dropped` audit row),
+  so a lost PC that still holds its vault and the store credentials finds no ciphertext to
+  unwrap. When a service is configured but the call fails
   as `unavailable` (unreachable, hung past the timeout, a 5xx, a missing or refused admin
   token) and the row is in the daemon's own store (the shared Postgres in hybrid mode), the
   row is revoked there instead, so a lost phone is never left working because the service is
@@ -2834,7 +2857,9 @@ call made), with a refused token (the 401 named, the token not echoed) and an un
 host; the list filtered to the human with this install `current`; revoke through the
 service with the tokens count and the audit row, this install's own device 400, another
 human's 404 without calling the revoke route; without a service the list and the revocation
-over the store (another human's 403, unknown 404); a service that never answers is 503
+over the store (another human's 403, unknown 404; revoking the human's other PC drops the
+shared-secret copies wrapped to it from an open grant and keeps this PC's, spec S.13); a
+service that never answers is 503
 `unavailable` after `timeoutMs`; a lost phone in the store is revoked there when the service
 is down, hung, answers 5xx or the token is missing (`via: "store"`, `serviceError`), but not
 after the service's own 404 or for a row only the service has; each revocation writes one
@@ -2881,16 +2906,26 @@ vault holds only the install key, `secret.blob_served` names the agent and the i
 first (the service is never asked); another agent, another install, a blob bound to another
 device (`integrity`) and a token without the name are refused before any value moves; a
 refusal cancels and drops the blobs, a revoke ends an active grant and the resolver fails
-from then on, a pending grant's cards are withdrawn; every store table scanned for the value
-in every encoding. `shared-secret-wiring.test.ts`: `composeRuntime` creates the install key
+from then on, a recipient's revoke is `tool_not_allowed` and the grant stays active, a pending
+grant's cards are withdrawn, a revoked install's copies leave the grant
+(`dropSharedBlobsForDevice`: the other install's copy stays, the audit row loop includes
+`secret.blobs_dropped`); a revoked device is refused as a serve target with a copy still on
+the row and as a wrap target (the proposal does not list it, a hand-made blob for it is
+`validation`); the `secret_ref` mirror adds the named agents while active and leaves the
+owner's own local grant (S.14) in place when the grant ends; a proposal whose card insert
+fails and a revocation whose card withdrawal fails (a store proxy) leave no grant row, no
+audit row, and the pending grant with its blobs and card (one transaction each); every store
+table scanned for the value in every encoding. `shared-secret-wiring.test.ts`:
+`composeRuntime` creates the install key
 and registers it on the desktop row (reused on re-registration), the daemon's
 `/secrets/shared` routes propose, list and revoke (400 on a bad body, 403 `secret_reserved`
 on the install wrapping key's name with no grant row, 404 on an unknown grant), the peer's
 approval through `applySharedGrantAnswer` lets the peer install resolve,
 the active names join the session grant per agent, and the other way round: a grant Bob
 proposes to Alice is answered through the daemon's own `POST /requests/:id/answer` (the grant
-moves in the same write) and resolving through this install's vault writes
-`secret.shared_resolved` without the value.
+moves in the same write), resolving through this install's vault writes
+`secret.shared_resolved` without the value, and Ada's daemon lists Bob's grant but its
+revoke is 403 `tool_not_allowed`.
 
 `small-project.test.ts` (spec B.6, ADR 0051): `defaultRiskTier` by flag; `shapeProjectPlan`
 with the flag on (one milestone named after the project, the phases' criteria once each, the
@@ -3537,9 +3572,18 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   an audit row the store failed to write leaves only this process's memory of the pair.
 - Shared secrets (spec S.13): the cloud runner registers no wrapping key on its `runner`
   device row yet (its vault is locked until the unlock protocol ran), so a shared secret
-  reaches an agent on its owner's PC install; the app has no screen for `rt.sharedSecrets`
-  (the daemon routes exist), and the owner's `propose` is not yet a registry command with a
-  change card.
+  reaches an agent on its owner's PC install; on the runner a shared name still joins the
+  session grant and the unbound `SharedSecretVault` answers null, so the hooks deny the call
+  as `not_found` ("not in the vault"), closed but misleading. The app has no screen for
+  `rt.sharedSecrets` (the daemon routes exist), and the owner's `propose` is not yet a
+  registry command with a change card. A vault reset gives the install a new wrapping key
+  (`registerDesktopDevice` patches the row); every copy wrapped to the old key then fails
+  `validation` with reason `integrity` and the hooks deny the call until the owner shares
+  again. A grant activated while a session runs is usable from the next session (the names
+  join the grant at start). The grant names principal agents; a named principal's
+  specialists derive their token from it and read the shared secret like a local one. There
+  is no human-removal flow: a departing human's installs are ended by revoking their devices
+  (which drops their copies) and the owner revoking the grants.
 - The merge after an accepting review (J.9, ADR 0062) waits for running checks for
   `checksWaitMs` (10 minutes, less when the session's wall clock ends sooner) inside the
   session; CI that takes longer leaves the PR open with a request, and no later session retries

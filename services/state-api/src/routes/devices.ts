@@ -1,3 +1,4 @@
+import { dropSharedBlobsForDevice } from "@forerunner/runtime/secrets/shared-grants";
 import { z } from "zod";
 import { requireScope, requireSigned, resolveHumanId } from "../auth/principal.ts";
 import { ApiError, forbidden } from "../errors.ts";
@@ -172,6 +173,9 @@ export function registerDeviceRoutes(app: App, ctx: RouteContext, publicApp: App
       ? current
       : await ctx.store.device.revoke(id, body.version ?? current.version);
     const tokensRemoved = await ctx.tokens.revokeDevice(id);
+    // Spec S.13: the shared-secret copies wrapped to the device go with its tokens, so a lost
+    // install that still holds its vault and the store credentials finds no ciphertext.
+    await dropSharedBlobsForDevice(ctx.store, id, { clock: ctx.clock, installId: p.installId });
     announce(ctx, "device.changed", "device", row, {
       humanId: row.owner_human_id,
       payload: { revoked: true },

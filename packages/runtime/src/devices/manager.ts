@@ -1,5 +1,6 @@
 import { type Clock, errorMessage, ForerunnerError } from "@forerunner/platform";
 import type { DeviceRow, StateStore } from "@forerunner/state";
+import { dropSharedBlobsForDevice } from "../secrets/shared-grants.ts";
 import type { DaemonDeviceView, PairingKind, PairingStartView, RevokeDeviceView } from "./types.ts";
 
 /**
@@ -35,7 +36,7 @@ export interface DeviceServiceConfig {
 export const DEVICE_SERVICE_TIMEOUT_MS = 15_000;
 
 export interface DeviceManagerDeps {
-  store: Pick<StateStore, "device" | "auditLog" | "changeLog">;
+  store: Pick<StateStore, "device" | "auditLog" | "changeLog" | "secretGrant">;
   /** The agent the change log row names as executor; null when there is none. */
   agentId?: string | null;
   clock: Clock;
@@ -193,10 +194,22 @@ export class DeviceManager {
     return view;
   }
 
-  /** Revoke the row in this daemon's store, re-read so a concurrent change is not lost. */
+  /**
+   * Revoke the row in this daemon's store, re-read so a concurrent change is not lost, and drop
+   * the shared-secret copies wrapped to the device (spec S.13; the service does the same on its
+   * route). The drop runs on a row that was already revoked too, so a crash between the two
+   * writes is caught up on the next call.
+   */
   private async revokeInStore(id: string): Promise<DeviceRow> {
     const current = await this.deps.store.device.mustGet(id);
-    return current.revoked ? current : this.deps.store.device.revoke(current.id, current.version);
+    const row = current.revoked
+      ? current
+      : await this.deps.store.device.revoke(current.id, current.version);
+    await dropSharedBlobsForDevice(this.deps.store, row.id, {
+      clock: this.deps.clock,
+      installId: this.deps.currentDeviceId(),
+    });
+    return row;
   }
 
   /**

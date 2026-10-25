@@ -31,7 +31,11 @@ schema and the snapshot disagree.
   `device.wrap_public_key` (the install's X25519 wrapping key, nullable) and the
   `secret_grant` table with its two indexes; its DDL is the generator's output at the time
   of writing, pasted as literals so a later schema change cannot alter a shipped migration.
-  It is v4, not v3, because the sources migration shipped first on the release branch.
+  It is v4, not v3, because the sources migration shipped first on the release branch. The
+  table's repository is `SecretGrantRepo` (`src/repos/secret-grant.ts`: `propose`, `approve`,
+  `end`, `blobFor` as the one read that returns a blob, `activeNamesFor`, `forHuman`,
+  `markServed`, and `dropBlobsForDevice(deviceId)`, which a device revocation calls so a
+  revoked install's copies leave every pending or active grant while the grant stays).
 - `src/migrations/0005-change-reasons.ts` (spec B.5: every change to a plan, task or
   milestone is versioned with author and reason; tasks had `reason` from v1): hand written
   and frozen, `milestone.reason` and `session.reason` (`TEXT NOT NULL DEFAULT ''`, `IF NOT

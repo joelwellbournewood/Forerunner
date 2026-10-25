@@ -147,4 +147,24 @@ export class SecretGrantRepo extends Repository<SecretGrantRow> {
   markServed(id: string, now: string = this.clock.nowIso()): Promise<SecretGrantRow> {
     return this.patch(id, { last_served: now });
   }
+
+  /**
+   * A revoked install loses its wrapped copies (spec R.2 meets S.13): every pending or active
+   * grant that holds a blob for `deviceId` drops it and keeps the rest; the grant itself stays
+   * (an agent whose only install is gone has nothing to resolve until the owner shares again).
+   * Ended grants hold no blobs. Returns the grants that changed, newest first; idempotent.
+   */
+  async dropBlobsForDevice(deviceId: string): Promise<SecretGrantRow[]> {
+    const open = await this.rows(
+      `SELECT * FROM ${this.qt} WHERE "status" IN ('pending', 'active') ORDER BY "created_at" DESC, "id" DESC`,
+    );
+    const out: SecretGrantRow[] = [];
+    for (const grant of open) {
+      if (!grant.blobs.some((b) => b.device_id === deviceId)) continue;
+      out.push(
+        await this.patch(grant.id, { blobs: grant.blobs.filter((b) => b.device_id !== deviceId) }),
+      );
+    }
+    return out;
+  }
 }

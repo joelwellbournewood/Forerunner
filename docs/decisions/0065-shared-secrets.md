@@ -93,6 +93,47 @@ confirmation (ADR 0009). `node:crypto` is the only crypto dependency of the vaul
   must answer) and many blobs; a row of its own keeps `secret_ref` the small "who may use what"
   table it is.
 
+## Amendment 2026-10-25 (review `w2-s13-shared-secrets`)
+
+The item was merged without a review; `docs/status/reviews/w2-s13-shared-secrets.md` has the
+findings. What changed in the decision:
+
+- **Migration number.** `device.wrap_public_key` and `secret_grant` are migration **0004**,
+  not 0003 as §1 says: the sources migration (ADR 0056) shipped first on the release branch.
+- **A revoked install loses its copies.** Decision 3 ended a grant on a refusal or the owner's
+  revoke; nothing ended one install's copies when the human revoked that install (Settings →
+  Devices → Revoke, a lost PC). The serve rule refused a revoked device, but the ciphertext
+  stayed on the row of an active grant, and an install still holding its vault and the store
+  credentials could read and unwrap it. Both device-revocation paths (the service's
+  `POST /devices/:id/revoke` and the daemon's store fallback) now call
+  `dropSharedBlobsForDevice`: every pending or active grant drops the blobs wrapped to that
+  device, the grant stays (a human whose only install is gone resolves nothing until the
+  owner shares again, as for a second install registered later), one `secret.blobs_dropped`
+  audit row names the grants.
+- **Only the owner revokes, on both paths.** The service's route refused a device that is not
+  the owner; the daemon's route (and `revokeSharedGrant` itself) took any caller, so on a
+  shared store the recipient's daemon could end a grant it only had to approve. `by` must now
+  be the owner (`tool_not_allowed`, 403); `null` is the service acting for the owner after
+  its own check. The recipient's lever stays the card's deny.
+- **One transaction.** A proposal (the grant row, its cards, `request_ids`, the mirror, the
+  audit rows) and a revocation (the row, the cards, the mirror, the audit row) each run inside
+  `store.transaction` when the store offers one, as the answer path always did.
+- **The mirror and the owner's own agents.** When a grant ends, `secret_ref.granted_to` loses
+  the other humans' agents it named (unless another active grant keeps them) and keeps the
+  owner's own agents: their membership is the owner's local rule (S.14), which a shared grant
+  that named them alongside the other human's must not take away when it ends.
+- **A self-blob when the owner's own agent is named.** Decision 2 says the value is not
+  wrapped to the owner's install; that holds when only the other human's agents are named.
+  Naming the owner's own agent (decision 3's "local grant with the same plumbing") wraps a
+  copy to every keyed install of its owner, the proposer's included; the resolver never uses
+  it (the local vault answers first).
+- **Unchanged, restated.** The service cannot tell which human's install proposes, answers as
+  admin or revokes (one admin token, ADR 0009); the boundary is the wrapping plus the trust an
+  install already has in the store (decision 4). The `forerunner.*` names, the install's own
+  wrapping key first, are refused on every share, grant and reference path since the same day
+  (the amendment above, `secret_reserved`); `ensureInstallWrapKey`'s own vault reads and writes
+  of the name keep working through the storage-level check.
+
 ## Amendment 2026-10-25: the install wrapping key's name is reserved
 
 The install wrapping key is a vault entry (`forerunner.install_wrap_key`) that `list()`

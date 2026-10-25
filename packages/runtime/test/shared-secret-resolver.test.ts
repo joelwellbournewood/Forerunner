@@ -13,12 +13,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RunContext } from "../src/enforcement/hooks.ts";
 import {
   applySharedGrantAnswer,
+  dropSharedBlobsForDevice,
+  proposeSharedGrant,
   proposeSharedSecret,
   revokeSharedGrant,
   SHARED_SECRET_AUDIT,
   SHARED_SECRET_CARD_KIND,
+  type SharedGrantStore,
   SharedSecretVault,
   StoreSharedSecretService,
+  serveSharedBlob,
 } from "../src/secrets/index.ts";
 import { budget, harness, issue, secretTool } from "./helpers.ts";
 
@@ -342,6 +346,14 @@ describe("resolving a shared secret by reference", () => {
     await approveAs(bob.id, "approve");
     const bobVault = resolverFor(bobPc, bobby.id);
     expect(await bobVault.get(NAME)).toBe(value);
+    // Only the owner revokes: Bob (the recipient, acting through his own daemon) is refused
+    // and the grant stays active; the service acting for the owner (`by: null`) may.
+    const notOwner = await revokeSharedGrant(store, second.grant.id, { clock, by: bob.id }).catch(
+      (e: unknown) => e,
+    );
+    expect(isForerunnerError(notOwner, "tool_not_allowed")).toBe(true);
+    expect((await store.secretGrant.mustGet(second.grant.id)).status).toBe("active");
+    expect(await bobVault.get(NAME)).toBe(value);
     const revoked = await revokeSharedGrant(store, second.grant.id, { clock, by: ada.id });
     expect(revoked).toMatchObject({
       status: "revoked",
@@ -355,11 +367,168 @@ describe("resolving a shared secret by reference", () => {
     const third = await propose();
     await revokeSharedGrant(store, third.grant.id, { clock, by: ada.id });
     expect(await store.humanRequest.open({ humanId: bob.id })).toEqual([]);
+    // A revoked install (Settings -> Devices -> Revoke) loses its wrapped copies: the grant
+    // stays, the other install's copy stays, the dropped one is an audit row.
+    const bobLaptop = await install(bob.id, "bob-laptop", "desktop");
+    const fourth = await propose();
+    await approveAs(bob.id, "approve");
+    expect((await store.secretGrant.mustGet(fourth.grant.id)).blobs).toHaveLength(2);
+    const dropped = await dropSharedBlobsForDevice(store, bobLaptop.deviceId, { clock });
+    expect(dropped.map((g) => g.id)).toEqual([fourth.grant.id]);
+    expect(
+      (await store.secretGrant.mustGet(fourth.grant.id)).blobs.map((b) => b.device_id),
+    ).toEqual([bobPc.deviceId]);
+    expect(await resolverFor(bobLaptop, bobby.id).get(NAME)).toBeNull();
+    expect(await resolverFor(bobPc, bobby.id).get(NAME)).toBe(value);
+    expect(await dropSharedBlobsForDevice(store, bobLaptop.deviceId, { clock })).toEqual([]);
     const tools = (await store.auditLog.list()).map((r) => r.tool);
     for (const t of Object.values(SHARED_SECRET_AUDIT)) {
       if (t === SHARED_SECRET_AUDIT.resolved) continue;
       expect(tools, t).toContain(t);
     }
+    expectNoValue(await storeText());
+  });
+});
+
+describe("revoked installs", () => {
+  it("is refused as a serve target and as a wrap target: a revoked device gets nothing even with a blob still on the row, and a proposal naming it is validation", async () => {
+    const bobLaptop = await install(bob.id, "bob-laptop", "desktop");
+    const { grant } = await propose();
+    await approveAs(bob.id, "approve");
+    const laptopVault = resolverFor(bobLaptop, bobby.id);
+    expect(await laptopVault.get(NAME)).toBe(value);
+    const row = await store.device.mustGet(bobLaptop.deviceId);
+    await store.device.revoke(row.id, row.version);
+    // The copy is still on the row here (the device paths drop it; this is the serve rule alone).
+    expect(
+      (await store.secretGrant.mustGet(grant.id)).blobs.map((b) => b.device_id).sort(),
+    ).toEqual([bobLaptop.deviceId, bobPc.deviceId].sort());
+    const served = await serveSharedBlob(
+      store,
+      { name: NAME, agentId: bobby.id, deviceId: bobLaptop.deviceId },
+      { clock },
+    ).catch((e: unknown) => e);
+    expect(isForerunnerError(served, "secret_not_granted")).toBe(true);
+    expect((served as { details: { reason: string } }).details.reason).toBe(
+      "unknown or revoked install",
+    );
+    expect(await laptopVault.get(NAME)).toBeNull();
+    expect(await resolverFor(bobPc, bobby.id).get(NAME)).toBe(value);
+    // The owner's next proposal does not target it, and a hand-made blob for it is refused.
+    const again = await propose();
+    expect(again.targets.map((t) => t.deviceId)).toEqual([bobPc.deviceId]);
+    const forRevoked = await proposeSharedGrant(
+      store,
+      {
+        ownerHumanId: ada.id,
+        name: NAME,
+        agentIds: [bobby.id],
+        blobs: [
+          {
+            agentId: bobby.id,
+            deviceId: bobLaptop.deviceId,
+            blob: (await store.secretGrant.mustGet(grant.id)).blobs[0]?.blob,
+          },
+        ],
+      },
+      { clock },
+    ).catch((e: unknown) => e);
+    expect(isForerunnerError(forRevoked, "validation")).toBe(true);
+    expectNoValue(await storeText());
+  });
+});
+
+describe("the secret_ref mirror", () => {
+  it("adds the named agents while a grant is active and, when it ends, leaves the owner's own local grant (S.14) in place", async () => {
+    const ref = await store.secretRef.insert({
+      name: NAME,
+      scope: "human",
+      owner_human_id: ada.id,
+      kind: "token",
+      created_by: ada.id,
+      author_human: ada.id,
+    });
+    await store.secretRef.grant(ref.id, ref.version, alice.id);
+    const { grant } = await proposeSharedSecret({
+      vault: adaPc.vault,
+      service,
+      ownerHumanId: ada.id,
+      name: NAME,
+      agentIds: [alice.id, bobby.id],
+    });
+    expect(grant.requiredHumanIds).toEqual([bob.id]);
+    await approveAs(bob.id, "approve");
+    const active = await store.secretRef.mustGet(ref.id);
+    expect(active.scope).toBe("shared");
+    expect([...active.granted_to].sort()).toEqual([alice.id, bobby.id].sort());
+    await revokeSharedGrant(store, grant.id, { clock, by: ada.id });
+    const ended = await store.secretRef.mustGet(ref.id);
+    expect(ended.scope).toBe("human");
+    expect(ended.granted_to).toEqual([alice.id]);
+    expect(await store.secretRef.forAgent(bobby.id)).toEqual([]);
+  });
+});
+
+describe("one transaction per proposal and revocation", () => {
+  /** The store with one repository method failing: what a crash between two writes looks like. */
+  function failing(
+    s: StateStore,
+    repo: "humanRequest",
+    method: "insert" | "withdraw",
+  ): SharedGrantStore {
+    const broken = new Proxy(s[repo], {
+      get(target, prop, receiver) {
+        if (prop === method) return () => Promise.reject(new Error("simulated store failure"));
+        const v = Reflect.get(target, prop, receiver);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    return {
+      secretGrant: s.secretGrant,
+      secretRef: s.secretRef,
+      human: s.human,
+      agent: s.agent,
+      device: s.device,
+      auditLog: s.auditLog,
+      humanRequest: broken,
+      transaction: (fn) => s.transaction((tx) => fn(failing(tx, repo, method) as never)),
+    };
+  }
+
+  it("a proposal whose card insert fails leaves no grant row and no audit row; a revocation whose card withdrawal fails leaves the grant pending with its blobs", async () => {
+    const good = await propose();
+    const blobs = (await store.secretGrant.mustGet(good.grant.id)).blobs.map((b) => ({
+      agentId: b.agent_id,
+      deviceId: b.device_id,
+      blob: b.blob,
+    }));
+    await revokeSharedGrant(store, good.grant.id, { clock, by: ada.id });
+    const before = (await store.auditLog.list()).length;
+    const err = await proposeSharedGrant(
+      failing(store, "humanRequest", "insert"),
+      { ownerHumanId: ada.id, name: NAME, agentIds: [bobby.id], blobs },
+      { clock },
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((await store.secretGrant.list()).map((g) => g.id)).toEqual([good.grant.id]);
+    expect((await store.auditLog.list()).length).toBe(before);
+
+    const pending = await propose();
+    const cards = await store.humanRequest.open({ humanId: bob.id });
+    expect(cards).toHaveLength(1);
+    const err2 = await revokeSharedGrant(
+      failing(store, "humanRequest", "withdraw"),
+      pending.grant.id,
+      {
+        clock,
+        by: ada.id,
+      },
+    ).catch((e: unknown) => e);
+    expect(err2).toBeInstanceOf(Error);
+    const row = await store.secretGrant.mustGet(pending.grant.id);
+    expect(row.status).toBe("pending");
+    expect(row.blobs).toHaveLength(1);
+    expect(await store.humanRequest.open({ humanId: bob.id })).toHaveLength(1);
     expectNoValue(await storeText());
   });
 });

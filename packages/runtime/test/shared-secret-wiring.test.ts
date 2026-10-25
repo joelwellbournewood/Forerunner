@@ -238,6 +238,16 @@ describe("shared secrets in the daemon", () => {
     expect(await rt.sharedSecrets.names()).toEqual(["bob_token"]);
     expect(await rt.sharedSecrets.vault.get("bob_token")).toBe(shared);
     expect(await vault.has("bob_token")).toBe(false);
+    // Ada's daemon lists the grant (she had to approve it) but cannot revoke it: Bob owns it.
+    const listed = (await (await api("GET", "/secrets/shared")).json()) as {
+      grants: { id: string }[];
+    };
+    expect(listed.grants.map((g) => g.id)).toContain(grant.id);
+    const notOwner = await api("POST", `/secrets/shared/${grant.id}/revoke`, {});
+    expect(notOwner.status).toBe(403);
+    expect(((await notOwner.json()) as { code: string }).code).toBe("tool_not_allowed");
+    expect((await rt.store.secretGrant.mustGet(grant.id)).status).toBe("active");
+    expect(await rt.store.secretGrant.activeNamesFor(rt.agent.id)).toEqual(["bob_token"]);
     const rows = await rt.store.auditLog.list({ tool: SHARED_SECRET_AUDIT.resolved });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ human_id: rt.human.id, agent_id: rt.agent.id, allowed: true });
