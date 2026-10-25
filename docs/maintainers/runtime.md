@@ -478,6 +478,7 @@ rename). `cli.test.ts` covers the written record and the parser.
 | `fr mirror sync\|enable\|disable` | `registerMirrorCli` over the composed runtime's `store` and `mirror` | One-way GitHub Projects mirror. |
 | `fr audit export [--agent <id>] [--session <id>] [--from <iso>] [--to <iso>] [--format jsonl\|csv] [--out <path>] [--force]` | `registerAuditCli` (`src/cli/audit.ts`) over the composed runtime's `store`, `clock` and `human`, `startServices: false` | Spec S.9, ADR 0050: the install's human's audit rows and their agents' (plus the install-level rows that name nobody) through the daemon's export module (`src/daemon/audit-export.ts`), paged, as JSON lines or CSV, the summaries as stored. Flags are checked before the runtime is composed; `--out` defaults to `forerunner-audit-<UTC stamp>.<format>` in the current directory (parent directories are created); an existing file is refused unless `--force`; another human's agent is `not_found`; prints `N rows written to <path> (<format>)`. |
 | `fr runner-key import <runner> <file>\|status <runner>\|remove <runner> [--profile <name>]` | `registerRunnerKeyCli` (`src/secrets/runner-key-cli.ts`) over `openVault({ profile, env })`, the vault the daemon opens (the config's profile, else `default`) | Spec S.12, ADR 0068: puts a cloud runner's 32-byte vault key under `cloud_runner_vault_key:<runner>`, where `POST /runner-unlock/wrap` reads it when the desktop inbox's unlock card answers. The key comes from a file (the runner vault's `vault.key`, raw 32 bytes, or its base64; `parseRunnerKeyFile`), never an argument; anything else is `validation` and nothing is stored; no line prints the key. `status` says present or missing (with the import hint), `remove` deletes the entry. |
+| `fr vault set <name>` | `registerVaultCli` (`src/cli/vault.ts`) over the composed runtime's `vault`, `store`, `clock` and `human`, `startServices: false` | adding-a-connector.md, "Secrets": a secret into the vault the daemon opens under the name a connector references (`secret:<name>`), for every name `fr setup` does not store. The value is read from stdin when piped (one trailing line end dropped) or typed at a hidden prompt (raw mode, backspace, Ctrl-C stores nothing), never from an argument; `assertSecretName` runs first, so a reserved `forerunner.*` name (`secret_reserved`) or an invalid one (`validation`) is refused before anything is read or composed; one `vault.set` audit row names the secret and `stored` / `replaced`; prints `Stored <name> in the <backend> vault.`, never the value. |
 | `fr specialists list [--json]\|approve <name> [--json]\|reject <name> [--json]` | `registerSpecialistsCli` (`src/cli/specialists.ts`) over the composed runtime's `specialistApprovals` and `human`, `startServices: false` | Spec C.5, ADR 0071: the headless approval. `approve` applies an answer already given in the inbox and not yet applied, else answers the proposal's open request as the install's human (files one first when there is none, e.g. after a failed run) and applies it at once; while an evaluation of the name is live it (and `reject`) fails with `claim_conflict`: the eval set runs and only a pass promotes; prints `Specialist "<name>" is active (pass rate ...)` or `... stays proposed: <outcome>: <reason>` and exits 1 when it did not go live. `reject` withdraws. `list` shows each pending proposal's prompt version, eval-set size, last result and open request, then the invalid proposals. |
 | `fr sources list [--json]\|add <kind> <locator> [--name <n>] [--credential secret:<name>]\|scan <id> [--json]\|candidates <id> [--status <s>] [--json]\|accept <candidateId> [--name <n>] [--goal <g>]\|remove <id>` | `registerSourcesCli` (`src/sources/cli.ts`) over the composed runtime's `sources` and `human`, `startServices: false` | Spec A.4, ADR 0056: the same `SourceDiscovery` as the daemon's `/sources` routes. `add` refuses a token value (a `secret:<name>` reference only), `scan` prints the counts and one line per candidate (status, locator, proposed name, existing install, project), `accept` creates the project through the same path as `POST /projects`, `remove` keeps every project. |
 
@@ -649,7 +650,7 @@ What is new becomes an event:
 "The agent's own" text is what the host token's login (`whoAmI`, cached) wrote **and** what
 carries the agent's mark (`isAgentText`): `GitHubHost` and `MemoryGitHost` append the hidden
 `AGENT_TEXT_MARKER` (`<!-- forerunner:agent -->`, not rendered by GitHub) to every comment and
-review they write. The login alone is not enough: the vault's `github_pat` is often the
+review they write. The login alone is not enough: the vault's `github_token` is often the
 human's own PAT, and the human's comments under that login are feedback. Until the login is
 known, comments and reviews wait (their cursor does not move). Each event is first one inbox
 message to the agent (`from = to = agent`, the PR's task and project): a check is a `warning`
@@ -2839,7 +2840,13 @@ with a wrong one and with `?token=`, `Access-Control-Expose-Headers` carries
 `audit-cli.test.ts`: `fr audit export` registered with its flags, JSON lines with the count line
 and `startServices: false`, CSV with the header and the filters, the default file name from the
 clock, a foreign agent `not_found`, a bad flag refused before anything is composed, an existing
-file refused without `--force` and overwritten with it.
+file refused without `--force` and overwritten with it. `vault-cli.test.ts`: `fr vault set`
+registered with the value from stdin, never an argument; a piped value stored (one trailing
+line end dropped) and replaced, each with its `vault.set` audit row naming the secret and the
+outcome; the install wrapping key's reserved name and an invalid name refused before the value
+is read or the runtime composed; an empty value refused; the hidden terminal prompt (raw mode
+on then off, backspace, nothing echoed) and Ctrl-C storing nothing; no value in any line, log
+or row.
 
 `security-hooks.test.ts`, `security-sdk.test.ts`, `security-tokens.test.ts` (security review
 2026-10-20, spec S.1, S.3, S.4, S.6, S.9; every finding was fixed in the same change): every

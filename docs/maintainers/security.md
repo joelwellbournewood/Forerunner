@@ -61,6 +61,14 @@ through, refuses them with `ForerunnerError("secret_reserved")` (`isReservedSecr
 predicate; since 2026-10-25, ADR 0065 amendment). Values: non-empty strings up to 64 Ki
 characters. Everything else is a `ForerunnerError("validation")`.
 
+Who writes the vault: `fr setup` (the three `SECRET_NAMES`, validated on paste), `fr
+runner-key import` (a cloud runner's key from a file), `fr vault set <name>` (any other user
+secret, for a connector's `secret:<name>` reference: the value from a piped stdin or a hidden
+prompt, never an argument; `assertSecretName` first, so a reserved name is refused; one
+`vault.set` audit row with the name and `stored` / `replaced`, never the value; runtime.md,
+"CLI", and adding-a-connector.md, "Secrets"), and `ensureInstallWrapKey` for the reserved
+install key.
+
 Per OS:
 
 | | Windows | Linux |
