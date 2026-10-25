@@ -57,6 +57,14 @@ wrong.
    a stop wins over an unmatched remainder (the stop runs, the rest is reported as `unmatched`,
    nothing else in the line runs); the conversation agent says what it did not act on. Test in
    `intent.test.ts` and `live-chat.test.ts`, failing without the fix.
+   Resolution: fixed in 36ef115: `IntentParser.parse` lets a stop clause win over an unmatched
+   remainder (the stop runs alone, every other clause comes back as `unmatched`; `stopScopeOf`
+   and `isStopLine` exported), the command loop carries `unmatched` through `ParsedIntent` and
+   the agent's reply names it ("I did not act on ..."); `intent.test.ts` "a stop in any clause
+   stops even when the rest is not understood" and `live-chat.test.ts` "a 'stop' followed by
+   words the parser does not understand is still the kill switch, never a said line" fail
+   without the change (verified: the parser test fails on `commands: []`, the agent test on an
+   empty kill record).
 
 2. **[MEDIUM] A "stop" while a change card waits for a yes cancels the card and stops
    nothing, by chat and by voice.** `agent.ts:197` (`NO_RE` lists `stop`) and `:269-285`: with
@@ -76,6 +84,15 @@ wrong.
    instead of answering the card itself. With nothing running, "stop" stays the "no" it is today
    (the kill switch would only freeze the agent until the next start). Tests in
    `live-chat.test.ts` and `voice-route.test.ts`, failing without the fix.
+   Resolution: fixed in 88b1ea5: `ConversationAgent.stopsLiveSession` (a stop line while a work
+   session of the agent runs) makes `chat` cancel the card as a "no" (`chat.cancelled` with
+   `stop: true`) and go on to the registry's `session.stop`, the reply saying both
+   (`CARD_CANCELLED_SENTENCE`); the voice bridge asks the agent before answering its card and
+   hands a stop over, cancelling a card the registry still holds afterwards; with nothing
+   running "stop" stays the "no" it was. `live-chat.test.ts` "a 'stop' while a card waits for a
+   yes and a session runs is the kill switch" and `voice-route.test.ts` "a spoken 'stop' while a
+   work session runs is the kill switch even with a card pending" fail without the change
+   (verified before the fix: no kill, "Cancelled; nothing was changed.").
 
 3. **[MEDIUM] A line from another human reaches this human's live session.**
    `agent.ts:509-543` (`forwardToRunningSession`) posts to `agentId`'s inbox without checking
@@ -92,12 +109,22 @@ wrong.
    correct fix: forward only when `agent.owner_human_id === humanId` (otherwise the line is the
    model's alone, as the memory rule does), and `/chat` and `/chat/stream` answer 403 for a
    `humanId` that is not the daemon's. Tests in `live-chat.test.ts` and `daemon.test.ts`.
+   Resolution: fixed in ddbdc54: `forwardToRunningSession` forwards only when
+   `agent.owner_human_id` is the chatting human, and `/chat` and `/chat/stream` answer 403
+   "not your conversation" for a body naming another human; ADR 0078 amended (2026-10-25).
+   `live-chat.test.ts` "a line from another human naming this agent never reaches its live
+   session" and `daemon.test.ts` (the 403 on both routes) fail without the change; the daemon
+   file also showed the foreign "stop" freezing the agent so the later scheduler case could not
+   start a session, which the fix removes.
 
 4. **[LOW] The test "another human's running session is never touched"
    (`packages/runtime/test/live-chat.test.ts`) proves one direction only.** It shows J's line
    does not reach Bob's running session while Alice is idle, and reaches Alice's when both run;
    it never sends a line as another human naming Alice, which is the path finding 3 shows open.
    Fix: the test added with finding 3 covers it; the existing test keeps its name.
+   Resolution: fixed in ddbdc54: the direction the name left open is asserted by the new test of
+   finding 3 (K naming Alice while Alice runs: answered, nothing posted, the owner's own line
+   still delivered); the existing test keeps its name and its assertions.
 
 5. **[LOW] Docs and status rows overstate.** ADR 0078 decision 4 and runtime.md's O.9 passages
    (`docs/maintainers/runtime.md:589-615`, `:1386-1400`) describe the forward as the human's
@@ -108,6 +135,12 @@ wrong.
    session's own end), not a spoken "stop" killing a work session. Fix: the sentences follow the
    code of findings 2 and 3 (an ADR 0078 amendment dated 2026-10-25), and the O.9 row's test list
    is returned to the orchestrator with the tests that do prove the spoken stop.
+   Resolution: fixed in 36ef115, 88b1ea5, ddbdc54 and a12a05f: runtime.md's O.9 passages
+   name the owner rule and the two stop rules, the voice bridge passage and `voice.md`'s
+   answer row say what a spoken "stop" does with and without a running session, ADR 0078
+   carries the amendment; the O.9 row's test list is returned to the orchestrator with
+   `voice-route.test.ts` now proving the spoken stop (the new case) and `daemon.test.ts`,
+   `intent.test.ts` added.
 
 6. **[LOW] A line collected at a boundary that no task follows had no test.** The path is
    right (verified above: `delivered_at` set, `read_at` null, the next session's brief lists it
@@ -115,9 +148,16 @@ wrong.
    case (a pause message read at the same boundary, a claim lost, the budget's no-new-work)
    relies on `unreadOnly` meaning `read_at IS NULL`. Fix: keep the probe as a test in
    `live-chat.test.ts` so a change to the inbox query or the receipts is caught.
+   Resolution: fixed in a12a05f (`live-chat.test.ts` "a line collected at a boundary the
+   session pauses at stays unread and reaches the next session's brief"): not a defect in the
+   code, a kept regression test; it passes on the reviewed head and guards the `read_at IS NULL`
+   reading of `unreadOnly` and the boundary receipts.
 
 7. **[LOW, not a defect] A client retry of `POST /chat` posts the line twice.** The route has
    no idempotency key, so a network retry forwards two said lines (and runs two notes, two
    cards: every chat side effect has the same exposure, before this item). The phone's path is
    deduplicated by `clientId` (`remote/watcher.ts`, the seen map), so the relayed chat is
    posted once. Recorded here; no change in this item.
+
+   Resolution: not a defect: the exposure predates the item and covers every chat side effect;
+   the phone path is idempotent by `clientId`; a request key on `/chat` is a separate item.
