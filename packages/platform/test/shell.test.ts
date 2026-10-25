@@ -36,6 +36,20 @@ describe("shell runner", () => {
     expect(r.durationMs).toBeLessThan(10_000);
   });
 
+  it("resolves at the time limit although a grandchild still holds the inherited pipes", async () => {
+    // git's remote helper, a sandbox runtime, a compiler's worker: a killed command's child
+    // inherits stdout and stderr and lives on, so the stdio streams stay open. The runner must
+    // still return at the limit, or nothing that runs a process is bounded in time.
+    const script = [
+      "const { spawn } = require('node:child_process');",
+      "spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 15000)'], { stdio: 'inherit' });",
+      "setTimeout(()=>{}, 60000)",
+    ].join("\n");
+    const r = await run([process.execPath, "-e", script], { timeoutMs: 300, allowFailure: true });
+    expect(r.timedOut).toBe(true);
+    expect(r.durationMs).toBeLessThan(10_000);
+  });
+
   it("caps captured output", async () => {
     const r = await run([process.execPath, "-e", "process.stdout.write('x'.repeat(200000))"], {
       maxOutputBytes: 1000,
