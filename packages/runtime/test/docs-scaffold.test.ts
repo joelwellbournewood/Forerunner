@@ -174,7 +174,7 @@ describe("standard doc set at project creation (G.5)", () => {
     expect(existsSync(join(projectsRoot, String(card.id), WORKSPACE_DIR))).toBe(false);
   });
 
-  it("files already drafted on the branch (the intake) are kept and no second pull request is opened", async () => {
+  it("files already on the branch (an earlier scaffold, a human's edits on the open PR) are kept and no second pull request is opened", async () => {
     const bare = await bareRepo("delta");
     const drafted = new GitOps({ cwd: join(root, "delta-draft"), identity });
     await drafted.clone(bare);
