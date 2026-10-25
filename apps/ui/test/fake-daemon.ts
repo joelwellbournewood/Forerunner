@@ -2093,7 +2093,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           {
             command: name,
             what: `the email mode of ${agent.name}`,
-            oldValue: EMAIL_MODE_LABELS[from],
+            oldValue: EMAIL_MODE_LABELS[from] ?? from,
             newValue: EMAIL_MODE_LABELS[mode] ?? mode,
             scope: "global",
             sentence,
