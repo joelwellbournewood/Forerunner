@@ -114,3 +114,42 @@ module; wiring it into the state service client's sync path is a separate, pendi
 - **Signing the artefacts only (SHA256SUMS + signature).** Does not bind the version, channel,
   notes or `minSchema`; a swapped manifest could point a signed artefact at the wrong channel.
   Signing the whole manifest binds everything the installer decides on.
+
+## Amendment (2026-10-25, review of w4-android-signing): the Android release key
+
+**Context.** Since ea86d48 the release APK is signed by Gradle from `keystore.properties`,
+written by `scripts/android-keystore.mjs` from the CI secrets `ANDROID_KEYSTORE_BASE64` and
+`ANDROID_KEYSTORE_PASSWORD`, or, without them, from a development keystore the script
+generates with a fresh random password on every runner. Both workflows verified the signature
+with `apksigner` but neither distinguished the two keys, so a `v*` tag without the secret
+published a development-signed APK: the manifest of this ADR would have bound a version to an
+artefact that no later release can update (Android refuses an update signed by another key,
+and the generated key is gone with the runner) and that nobody can compare with a held key.
+
+**Decision.** The Android artefact of a release carries the key from the secret, never the
+generated one, enforced in code at two points of `release.yml`: `android-keystore.mjs
+--require-secret` fails before the build when `ANDROID_KEYSTORE_BASE64` is empty (no
+development key is generated or kept), and `android-apk-verify.mjs` without
+`--allow-development-key` fails after the build when a signer's DN is the development key's
+(`CN=Forerunner development key`, the dname the script generates, exported as
+`DEVELOPMENT_CERT_CN`). `android.yml` (pull requests, pushes, fork PRs whose secrets are
+empty) keeps building with the development key and passes `--allow-development-key`; the SDK's
+debug certificate is refused in both. The secret is checked before the build with `keytool
+-list -storepass:env` (password, alias, keystore format), and the properties file is written
+as `java.util.Properties.store` writes it (ISO-8859-1 with `\uXXXX` escapes), because Gradle
+reads it with `Properties.load(InputStream)`.
+
+**Consequences.** A release cannot be cut without the Android secrets, even when only the
+desktop builds matter; `release.md` says how to create them. A release key whose DN happened
+to be the development key's would be refused; the DN is the script's, so none should. A
+stable development identity across CI builds (the vault-held generated key of the BLOCKERS
+"Android keystore" row) stays open and is unaffected: it would be a second secret, not the
+generated key.
+
+**Alternatives considered.** A warning in the job log or the release notes (the state before
+this amendment): the APK was still published, and an un-updatable artefact is worse than a
+missing one. An expected fingerprint (`ANDROID_KEYSTORE_SHA256`) compared with the signer's
+SHA-256: stronger, but a third value to keep in step with the keystore; the `keytool -list`
+check already proves the APK carries the key the secret holds, since that key is the only one
+Gradle is given. Letting the publish job drop the APK when it is development-signed: a release
+with a missing platform and no failing signal, the pattern this amendment removes.
