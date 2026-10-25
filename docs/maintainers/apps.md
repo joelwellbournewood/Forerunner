@@ -349,7 +349,8 @@ later Talk only resumes it. What the human heard is measured here (`voice.md`, "
 run"): Send or the hotkey's release calls `player.turnEnded()` before anything is awaited, and
 the next turn's first chunk posts `POST /voice/sessions/:id/heard { turn, heardFirstAudioMs }`
 once: its scheduled start in context time mapped onto `performance.now()` (both read at
-scheduling), plus `outputLatency` (else `baseLatency`), minus the release. A released turn that
+scheduling), plus `baseLatency` and `outputLatency` (consecutive stages), minus the release;
+a turn played while the context is not `running` (its clock frozen) is not measured. A released turn that
 ends without audio is not the reference for the next one. The page's clock is a seam too
 (`realtime.now`). Nothing else plays these frames: the
 desktop shell has no native audio path (`media.rs` only grants the microphone), so there is
@@ -746,8 +747,8 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
   `performance.now()` together; `currentTime` advances per render quantum (about 3 ms at
   48 kHz), so the figure is that coarse. `getOutputTimestamp()` would be finer but already
   includes the device latency the figure adds, so it is not mixed in. Where a browser reports
-  no `outputLatency` (or 0; not checked in WebView2 or WebKitGTK yet) `baseLatency` stands in
-  and the device's own buffer is not counted, so the figure is low by that much there.
+  no `outputLatency` (or 0; not checked in WebView2 or WebKitGTK yet) only `baseLatency` is
+  counted and the device's own buffer is not, so the figure is low by that much there.
   Chunks are scheduled as they arrive; a stream that stalls longer than the queued audio
   leaves a gap (no jitter buffer). The Talk button stays disabled until the turn ended, so a
   press cannot barge in on the reply from the panel.

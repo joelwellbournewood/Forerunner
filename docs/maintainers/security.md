@@ -422,6 +422,12 @@ Capability token and autonomy enforcement: `packages/runtime/test/hooks.test.ts`
 
 ## Known issues
 
+- CI's gitleaks job scans the whole history, so a token-shaped test value that was once
+  committed fails it even after the file changes. `.gitleaksignore` lists such findings by
+  fingerprint (`commit:file:rule:line`) when the value is a known fake: one entry, the
+  `ghp_`-shaped "never be printed" string of `scripts/handover-live.test.ts` in e45788a (built
+  at run time since 9b178ba). New tests build such values at run time.
+
 - Values are strings at the API boundary; the string the caller receives cannot be zeroed.
   Keep its lifetime short (resolve immediately before the tool call, drop after).
 - Windows: file modes are advisory; the vault relies on the user profile ACL. The Credential

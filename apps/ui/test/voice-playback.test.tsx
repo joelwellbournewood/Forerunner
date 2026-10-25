@@ -81,6 +81,7 @@ function fakeAudio(atCreate: () => void = () => {}) {
     currentTime: 0,
     outputLatency: undefined as number | undefined,
     baseLatency: undefined as number | undefined,
+    running: "running" as "running" | "suspended",
   };
   const make = (): AudioOutput => {
     state.created++;
@@ -94,6 +95,9 @@ function fakeAudio(atCreate: () => void = () => {}) {
       },
       get baseLatency() {
         return state.baseLatency;
+      },
+      get state() {
+        return state.running;
       },
       destination: {} as AudioNode,
       createBuffer(channels, frames, sampleRate) {
@@ -399,7 +403,9 @@ describe("conversation panel: the voice reply is played", () => {
     await waitFor(() => expect(heardPosts(h)).toHaveLength(1));
     expect(heardPosts(h)[0]).toMatchObject({
       path: `/voice/sessions/${id}/heard`,
-      body: { turn: 1, heardFirstAudioMs: 470 },
+      // 1450 ms on the page + 5 ms in the context (baseLatency) + 20 ms to the device
+      // (outputLatency): the two are consecutive stages.
+      body: { turn: 1, heardFirstAudioMs: 475 },
     });
 
     // The next turn: measured from its own release; without outputLatency, baseLatency counts.
@@ -427,6 +433,22 @@ describe("conversation panel: the voice reply is played", () => {
     });
     await new Promise((r) => setTimeout(r, 20));
     expect(heardPosts(h)).toHaveLength(2);
+  });
+
+  it("does not measure a turn while the output is suspended (its clock is frozen; the sound is late or never)", async () => {
+    const h = setup();
+    const { user, stream } = await startTalking(h);
+    h.page.now = 1000;
+    await user.click(screen.getByTestId("voice-send"));
+    await waitFor(() => expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Press/));
+    h.page.now = 1400;
+    h.audio.state.running = "suspended";
+    act(() => {
+      stream.fire("voice.event", frame("turn_start", 1));
+      stream.fire("voice.event", audioFrame(1, [1, 2]));
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(heardPosts(h)).toHaveLength(0);
   });
 
   it("a released turn that ends without audio is not the reference for the next turn's audio", async () => {

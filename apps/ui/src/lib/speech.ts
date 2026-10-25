@@ -39,6 +39,8 @@ export interface AudioOutput {
   readonly outputLatency?: number;
   /** Seconds the context itself adds before its output (AudioContext). */
   readonly baseLatency?: number;
+  /** "running" while the context's clock advances (AudioContext); suspended: frozen. */
+  readonly state?: string;
 }
 
 export interface PlaybackOptions {

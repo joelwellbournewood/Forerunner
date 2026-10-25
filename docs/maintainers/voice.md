@@ -376,8 +376,8 @@ device. Two first-audio figures are recorded per turn:
   (`apps/ui/src/shell/voice-playback.ts`, `apps.md`) from the press release the human made
   (Send, or the hotkey's second press) to the moment its first chunk of that turn's reply
   reaches the speaker: the chunk's scheduled start in context time mapped onto
-  `performance.now()`, plus the device's `outputLatency` (or `baseLatency` where the browser
-  has no `outputLatency`). Both ends are on the page's one clock, so no clock is compared with
+  `performance.now()`, plus the context's `baseLatency` and the device's `outputLatency` (each
+  where the browser reports it; a turn played while the context is suspended is not measured). Both ends are on the page's one clock, so no clock is compared with
   the daemon's. The reference is the release rather than the daemon's `turn_end` or first
   audio frame: those times are the daemon's clock and its own detection, and the release is
   what the human did; the figure therefore also includes posting the turn's last chunks and

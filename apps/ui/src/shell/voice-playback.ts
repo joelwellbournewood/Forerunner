@@ -28,8 +28,9 @@ import { type AudioOutput, decodeFrame } from "../lib/speech.ts";
  *
  * What the human heard (spec O.5, D.8): after `turnEnded()` (the push-to-talk release: Send or
  * the hotkey) the next turn's first chunk is measured. Its scheduled start in context time is
- * mapped onto the page's clock (`now()` and `currentTime` read together), the output device's
- * latency (`outputLatency`, else `baseLatency`) is added, and the release time is subtracted:
+ * mapped onto the page's clock (`now()` and `currentTime` read together), the context's and the
+ * device's latency (`baseLatency` plus `outputLatency`) is added, and the release time is subtracted
+ * (a turn played while the context is not running is not measured):
  * release to sound at the speaker, all on one clock, lead included. It is posted once per turn
  * (`POST /voice/sessions/:id/heard`) and lands on the turn's `voice.turn` row as
  * `heardFirstAudioMs`, beside the daemon-side `totalToFirstAudioMs`. Without EventSource or an
@@ -98,13 +99,15 @@ export function createVoiceOutput(factory?: () => AudioOutput | null): AudioOutp
   return output;
 }
 
-/** The output device's latency in ms: `outputLatency` where the browser reports it, else `baseLatency`. */
+/**
+ * The latency after a chunk's scheduled start, in ms: the context's own `baseLatency` plus
+ * `outputLatency` to the device (consecutive stages); either is left out where the browser does
+ * not report it.
+ */
 function deviceLatencyMs(audio: AudioOutput): number {
-  const out = audio.outputLatency;
-  if (typeof out === "number" && Number.isFinite(out) && out > 0) return out * 1000;
-  const base = audio.baseLatency;
-  if (typeof base === "number" && Number.isFinite(base) && base > 0) return base * 1000;
-  return 0;
+  const ms = (v: number | undefined) =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? v * 1000 : 0;
+  return ms(audio.baseLatency) + ms(audio.outputLatency);
 }
 
 export function followVoiceReply(
@@ -179,6 +182,13 @@ export function followVoiceReply(
     playingTurn = turn;
     if (release && turn > release.afterTurn && !measured.has(turn)) {
       measured.add(turn);
+      // A suspended context's clock is frozen: its start time says nothing about when (or
+      // whether) the human hears it, so that turn is not measured.
+      if (audio.state !== undefined && audio.state !== "running") {
+        release = null;
+        lastAudioTurn = Math.max(lastAudioTurn, turn);
+        return;
+      }
       const heard = wallNow + (startAt - ctxNow) * 1000 + deviceLatencyMs(audio) - release.atMs;
       release = null;
       if (Number.isFinite(heard) && heard >= 0) onHeard(turn, Math.round(heard));

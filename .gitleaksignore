@@ -1,0 +1,3 @@
+# Gitleaks findings that are known fakes (fingerprint: commit:file:rule:line). Keep this short;
+# a test token is built at run time instead (docs/maintainers/security.md, Known issues).
+e45788afa83f3ff09ccf5a0e2cad1ad766fd43fe:scripts/handover-live.test.ts:github-pat:154
