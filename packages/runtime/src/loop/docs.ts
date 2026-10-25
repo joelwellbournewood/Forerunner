@@ -9,6 +9,7 @@ import {
 } from "@forerunner/memory";
 import { type Clock, errorMessage, isAbsolute, join, log, safeSegment } from "@forerunner/platform";
 import type { ProjectRow, SessionRow, StateStore, TaskRow } from "@forerunner/state";
+import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
 import type {
   DocsScaffoldOutcome,
   ProjectDocsPort,
@@ -22,9 +23,11 @@ import type {
  * a branch and opened as a pull request, and at session end the runner's status update is
  * committed to `docs/status.md` on the session's pull request branch (so that PR carries it)
  * or on a small PR of its own. The default branch is never pushed and an existing file is
- * never overwritten (`scaffoldDocs` skips what is there, drafted intake files included).
- * A project without a repository keeps the set under `<projectsRoot>/<project id>/workspace`.
- * The critic's drift check (`checkDocDrift`) reads the same files.
+ * never overwritten (`scaffoldDocs` skips what is there, whatever the branch already carries).
+ * The scaffold also writes the install marker `.forerunner/project.json` (spec A.4, ADR 0056)
+ * beside the set, never over another project's. A project without a repository keeps the
+ * set under `<projectsRoot>/<project id>/workspace`. The critic's drift check
+ * (`checkDocDrift`) reads the same files.
  */
 export const DOCS_SCAFFOLD_BRANCH = "fr/docs-scaffold";
 
@@ -77,6 +80,28 @@ export function parseRepoRef(text: string): RepoRef | null {
   return { owner, name };
 }
 
+/**
+ * The token for the docs clone, scoped to the repository's origin (ADR 0069, the rule the A.3
+ * import applies): an http(s) clone URL gives `{ token, origin }`, so git attaches the header
+ * to URLs under that origin only (a `url.*.insteadOf` rewrite or a remote on another host
+ * reaches it without the token); any other URL (a local path, ssh) gives no token at all,
+ * since there is no http origin to scope it to and git needs none for it.
+ */
+export function gitAuthFor(
+  token: string | undefined,
+  cloneUrl: string,
+): { token: string; origin: string } | undefined {
+  if (!token) return undefined;
+  let url: URL;
+  try {
+    url = new URL(cloneUrl);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+  return { token, origin: url.origin };
+}
+
 export class ProjectDocs implements ProjectDocsPort {
   private readonly logger = log("project-docs");
 
@@ -117,33 +142,53 @@ export class ProjectDocs implements ProjectDocsPort {
         const dir = this.workspaceDir(project.id);
         mkdirSync(dir, { recursive: true });
         const res = await scaffoldDocs(dir, info);
-        outcome = { location: "data_dir", dir, created: res.created, existing: res.existing };
+        const marker = await this.mark(project, dir);
+        outcome = {
+          location: "data_dir",
+          dir,
+          created: res.created,
+          existing: res.existing,
+          marker,
+        };
       } else {
         const branch = DOCS_SCAFFOLD_BRANCH;
         const { git, dir, existingPr } = await this.checkout(project, target, branch);
         const res = await scaffoldDocs(dir, info);
+        const marker = await this.mark(project, dir);
         let prUrl = existingPr?.htmlUrl ?? null;
-        if (res.created.length) {
-          const list = res.created.map((p) => `- ${p}`).join("\n");
+        const written = [...res.created, ...(marker.status === "created" ? [marker.path] : [])];
+        if (written.length) {
+          const list = written.map((p) => `- ${p}`).join("\n");
+          const markerNote =
+            marker.status === "created"
+              ? `\n\n\`${marker.path}\` marks the repository as managed by a Forerunner project (spec A.4); a source scan by any install reads it.`
+              : "";
           await git.commitAll(`docs: scaffold the standard doc set\n\n${list}`);
           await git.push(branch, { defaultBranch: target.base });
           if (existingPr) {
             await this.deps.host.commentOnPullRequest(
               target.repo,
               existingPr.number,
-              `Added the missing standard docs for project ${project.name}:\n${list}`,
+              `Added the missing standard docs for project ${project.name}:\n${list}${markerNote}`,
             );
           } else {
             const pr = await this.deps.host.createPullRequest(target.repo, {
               title: "docs: scaffold the standard project doc set",
-              body: `Standard project docs for ${project.name} (spec G.5), written from templates for the files the repository lacked:\n${list}\n\nExisting files were left as they are${res.existing.length ? ` (${res.existing.join(", ")})` : ""}. Opened by Forerunner.`,
+              body: `Standard project docs for ${project.name} (spec G.5), written from templates for the files the repository lacked:\n${list}${markerNote}\n\nExisting files were left as they are${res.existing.length ? ` (${res.existing.join(", ")})` : ""}. Opened by Forerunner.`,
               head: branch,
               base: target.base,
             });
             prUrl = pr.htmlUrl;
           }
         }
-        outcome = { location: "repo", branch, prUrl, created: res.created, existing: res.existing };
+        outcome = {
+          location: "repo",
+          branch,
+          prUrl,
+          created: res.created,
+          existing: res.existing,
+          marker,
+        };
       }
     } catch (e) {
       // Project creation never fails on the docs: the gap is recorded on the project and
@@ -160,6 +205,7 @@ export class ProjectDocs implements ProjectDocsPort {
       ...(outcome.dir ? { dir: outcome.dir } : {}),
       created: outcome.created,
       existing: outcome.existing,
+      ...(outcome.marker ? { marker: outcome.marker } : {}),
       scaffolded_at: this.deps.clock.nowIso(),
     });
     this.logger.info("standard docs scaffolded", {
@@ -242,9 +288,11 @@ export class ProjectDocs implements ProjectDocsPort {
   private async checkout(project: ProjectRow, target: ProjectRepoTarget, branch: string) {
     const dir = join(this.deps.worktreeRoot, safeSegment(project.id, "project"));
     mkdirSync(this.deps.worktreeRoot, { recursive: true });
+    // The token goes to the repository's origin only (ADR 0069): never to a remote a git
+    // config rewrite or a host answer points elsewhere, and not at all to a non-http remote.
     const git = new GitOps({
       cwd: dir,
-      auth: this.deps.token ? { token: this.deps.token } : undefined,
+      auth: gitAuthFor(this.deps.token, target.clone),
       identity: this.deps.identity,
     });
     if (existsSync(join(dir, ".git"))) await git.fetch();
@@ -258,6 +306,23 @@ export class ProjectDocs implements ProjectDocsPort {
       await git.createBranch(branch, `origin/${target.base}`);
     }
     return { git, dir, existingPr };
+  }
+
+  /**
+   * The install marker (`.forerunner/project.json`, spec A.4, ADR 0056) beside the doc set,
+   * naming this project, so a source scan by any install tells a managed repository or folder
+   * from a fresh one. Another project's marker (a second install on the repository, or a second
+   * project of this install on it) is reported on the outcome and never overwritten.
+   */
+  private async mark(project: ProjectRow, dir: string): Promise<InstallMarkerWrite> {
+    const marker = await writeInstallMarker(dir, { project: project.id, name: project.name });
+    if (marker.status === "other_project") {
+      this.logger.warn("install marker of another project kept", {
+        projectId: project.id,
+        markedFor: marker.project,
+      });
+    }
+    return marker;
   }
 
   private async record(project: ProjectRow, docs: Record<string, unknown>): Promise<void> {

@@ -380,6 +380,46 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     expect(status).toMatchObject({ state: "rejected", requestId });
   });
 
+  it("a rejection of an intake asked for at creation ends the deferral: the standard set is scaffolded from the templates, nothing drafted (review w2-g5-docs finding 4)", async () => {
+    replies.push({ text: JSON.stringify(proposal()) });
+    const projectId = await createProject({
+      name: "Upsilon",
+      goal: "Deferred docs",
+      brief: "Plan me.",
+      intake: true,
+    });
+    await rt.intake.inFlight(projectId);
+    // Deferred to the answer: nothing under the workspace while the proposal waits.
+    const dir = rt.intake.workspaceDir(projectId);
+    expect(existsSync(dir)).toBe(false);
+    const pending = await json(await req(`/projects/${projectId}/intake`));
+    expect(pending.state).toBe("pending");
+    const requestId = String(pending.requestId);
+    await answer(requestId, "reject");
+    expectNotDrafted(projectId);
+    for (const rel of [
+      ["docs", "overview.md"],
+      ["docs", "status.md"],
+      ["docs", "decisions", "README.md"],
+      ["docs", "testing.md"],
+      [".forerunner", "project.json"],
+    ]) {
+      expect(existsSync(join(dir, ...rel)), rel.join("/")).toBe(true);
+    }
+    expect(await rt.store.task.list({ project_id: projectId } as never)).toHaveLength(0);
+    const row = await rt.store.project.mustGet(projectId);
+    expect(row.summary_cache.docs).toMatchObject({
+      location: "data_dir",
+      marker: { status: "created" },
+    });
+    const note = (await rt.store.queue.pending(projectId)).find((q) => q.text.includes("rejected"));
+    expect(note?.text).toContain("scaffolded from the templates");
+    expect(await json(await req(`/projects/${projectId}/intake`))).toMatchObject({
+      state: "rejected",
+      requestId,
+    });
+  });
+
   it("malformed model output is refused with validation and no request is filed", async () => {
     const projectId = await createProject({
       name: "Epsilon",

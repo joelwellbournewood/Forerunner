@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { MemoryGitHost } from "@forerunner/capabilities";
-import { appDirs, join, SimulatedClock } from "@forerunner/platform";
+import { GitOps, MemoryGitHost } from "@forerunner/capabilities";
+import { appDirs, join, run, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore, silenceSqliteExperimentalWarning } from "@forerunner/state";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -208,6 +208,7 @@ describe("sources routes in the composed daemon", () => {
   let app: ReturnType<typeof createDaemonApp>["app"];
   let token: string;
   let home: string;
+  let host: MemoryGitHost;
   const clock = new SimulatedClock("2026-10-23T09:00:00.000Z");
   const req = (path: string, init: RequestInit = {}, auth = true) =>
     app.request(path, {
@@ -222,8 +223,20 @@ describe("sources routes in the composed daemon", () => {
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), "fr-sources-daemon-"));
     const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
-    const host = new MemoryGitHost("someone");
-    await host.createRepo({ owner: "acme", name: "alpha", private: false });
+    host = new MemoryGitHost("someone");
+    // alpha is a real repository (a local bare one), so the accept's docs scaffold can clone,
+    // push its branch and open the pull request on the host.
+    const bare = join(home, "alpha.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seed = new GitOps({
+      cwd: join(home, "alpha-seed"),
+      identity: { name: "T", email: "t@example.test" },
+    });
+    await seed.clone(bare);
+    writeFileSync(join(home, "alpha-seed", "README.md"), "# alpha\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ owner: "acme", name: "alpha", private: false, cloneUrl: bare });
     await host.createRepo({ owner: "acme", name: "beta", private: true });
     rt = await composeRuntime({
       env: { FORERUNNER_HOME: home },
@@ -295,7 +308,16 @@ describe("sources routes in the composed daemon", () => {
     expect(card).toMatchObject({ id: result.project.id, name: "alpha", stage: "planning" });
     const row = await rt.store.project.mustGet(result.project.id);
     expect(row.repos).toEqual(["acme/alpha"]);
-    expect(row.summary_cache).toEqual({});
+    expect(row.summary_cache.brief).toBeUndefined();
+    // The standard doc set (spec G.5, review finding 1): an accepted repository is scaffolded
+    // like a typed-in one, a pull request on the repository carrying the install marker.
+    expect(row.summary_cache.docs).toMatchObject({
+      location: "repo",
+      branch: "fr/docs-scaffold",
+      marker: { status: "created" },
+    });
+    const prs = await host.listPullRequests({ owner: "acme", name: "alpha" }, { state: "open" });
+    expect(prs.map((p) => p.head.ref)).toEqual(["fr/docs-scaffold"]);
     expect(row.settings).toEqual({ members: [rt.agent.id] });
     expect(await rt.store.queue.list({ project_id: row.id })).toEqual([]);
     const cards = (await (await req("/projects")).json()) as { name: string }[];

@@ -285,7 +285,7 @@ import { specialistCommandPort } from "../wiring/specialist-ports.ts";
 import { statePorts } from "../wiring/state-ports.ts";
 import type { SpeakStartedView } from "./api-types.ts";
 import { conversationSessionId } from "./conversation-session.ts";
-import { createProjectRecord } from "./create-project.ts";
+import { createProjectRecord, scaffoldProjectDocs } from "./create-project.ts";
 import {
   bindInstallHuman,
   type InstallIdentity,
@@ -1769,6 +1769,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     context,
     memory,
     worktreeRoot: dirs.worktrees,
+    // The PM's `ProjectDocs` (below) writes docs/status.md on the session's PR right after the
+    // review (spec G.5), so the drift check leaves the status doc to it.
+    statusDocManaged: true,
     // The tables in force at every review's pick (ADR 0039): an adopted sonnet or opus rung
     // moves the tier-1 and tier-2/3 reviews with the executor and the chat.
     modelConfig: () => modelConfig.get(),
@@ -1963,6 +1966,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     identity: { name: `${agent.name} (Forerunner)`, email: human.email || "forerunner@localhost" },
     projectsRoot: dataAssets.projectsRoot,
     worktreeRoot: dirs.worktrees,
+    // A rejected proposal ends the deferral of a creation with `intake: true` (spec G.5): the
+    // standard set from the templates, through the same scaffold the create path runs.
+    docs,
   });
 
   // GitHub Projects mirror: the host comes from the vault by the secret reference in the
@@ -2537,6 +2543,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           logger.warn("answer not applied yet", { requestId, error: errorMessage(e) });
         }
       },
+      // project.create by chat, voice or the palette (spec G.5, ADR 0058): the standard doc
+      // set the dashboard's create scaffolds, in the background so the reply does not wait
+      // for a clone; the outcome lands on the row (`summary_cache.docs`) as it does there.
+      projectCreated: async (projectId) => {
+        const project = await store.project.get(projectId);
+        if (project) void scaffoldProjectDocs({ docs }, project);
+      },
       // memory.record (spec O.2, ADR 0061): a lesson stated in chat or voice goes into the
       // principal's private memory through the same loop the sessions use.
       memory: memoryCommandPort(memory),
@@ -3015,8 +3028,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         },
       }),
     createProject: async (input) => {
+      // The dashboard's path, the standard doc set included (spec G.5): an accepted repository
+      // gets its docs pull request and install marker like a typed-in one.
       const p = await createProjectRecord(
-        { store, human: { id: human.id }, agent: { id: agent.id }, events, conversation },
+        { store, human: { id: human.id }, agent: { id: agent.id }, events, conversation, docs },
         {
           name: input.name,
           goal: input.goal,

@@ -75,3 +75,33 @@ A parallel item (A.2 intake) drafts doc content and will call `scaffoldDocs`.
   merge; one branch per session (the last PR, or its own) does not.
 - **Scaffold asynchronously after the 201.** The dashboard would not know where the docs went
   until a later event; the synchronous call costs one clone and returns the PR on the card.
+
+## Amendment (2026-10-25, independent review of w2-g5-docs)
+
+1. **The scaffold belongs to project creation, not to one route.** `createProjectRecord`
+   runs it for `POST /projects` and for an accepted source proposal (spec A.4, the path that
+   links a repository found by a scan), and `project.create` by chat, voice or the palette
+   reaches it through the command port `projectCreated`, in the background so the reply does
+   not wait for a clone. The consequence above that `project.create` does not scaffold no
+   longer holds.
+2. **A rejected intake ends the deferral with the templates.** A creation with `intake: true`
+   still leaves the set to the approval; a rejection scaffolds the standard set from the
+   templates through the same port, since the drafts were refused and the set still has to
+   exist. A failed automatic intake is left to the status route, which asks for a re-run.
+3. **The install marker rides with the doc set.** `.forerunner/project.json`
+   (`{ schema: 1, project, name }`, ADR 0056 point 4, `sources/marker.ts`) is written beside
+   the docs: on `fr/docs-scaffold` and its pull request with a repository (the A.4 scan reads
+   the default branch, so the repository shows as an existing install once the PR is merged),
+   in the workspace without one, and by the intake's own doc write. A marker of another
+   project is reported (`other_project`) and never overwritten.
+4. **The token goes to the repository's origin only.** The docs clone scopes the install's
+   token to the clone URL's http(s) origin (`gitAuthFor`, the rule of ADR 0069) and sends none
+   to a local or ssh remote; before, the header was global to every http(s) URL git touched.
+5. **The drift check leaves the status doc to the PM.** With a docs port wired the daemon
+   sets `CriticLoopDeps.statusDocManaged`, and the tier 2+ check neither expects a
+   specialist's change to touch `docs/status.md` nor reports it missing, since the runner
+   writes it on the same pull request right after the review (the consequence above about
+   the repeat finding is closed).
+6. **Wording.** Point 1 said files "the intake drafted" on `fr/docs-scaffold` are kept; the
+   intake writes on `fr/intake-<id8>-docs` (ADR 0055). What is kept is whatever an existing
+   `fr/docs-scaffold` branch already carries.

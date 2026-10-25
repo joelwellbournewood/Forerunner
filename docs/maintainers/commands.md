@@ -39,7 +39,9 @@ raise its own limits without a human, and text from pages, files or email is nev
 `CommandContext` carries the actor (`{kind: "human" | "agent", id}`), the human the change is
 for, the principal agent, the active project, the store, the Clock, the ports (session start,
 kill switch, pause/resume, the CHF rate, the "costly session" threshold, who shares a project,
-lesson memory, the specialist approval gate),
+lesson memory, the specialist approval gate, the docs hook `projectCreated` that
+`project.create` awaits after its insert so the daemon scaffolds the standard doc set, spec
+G.5; a hook that throws is logged and never fails the creation),
 the source (`ui | chat | voice | email | api | palette`), the words used, the time zone, the
 requesting device and the conversation session that receives the activity event. Who the
 actor is depends on the caller: the runtime's routes, the palette, the phone and email
@@ -62,7 +64,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | Command | Scope | Risk | Reversible | Writes |
 | --- | --- | --- | --- | --- |
 | `project.switch` | global | low | yes | `human.notify_prefs.active_project`, `project_history` (last 10; "go back") |
-| `project.create` | global | low | yes (archive) | `project` row, active project |
+| `project.create` | global | low | yes (archive) | `project` row, active project; `ports.projectCreated` (the daemon's G.5 scaffold of the standard doc set, in the background; runtime.md "Project docs") |
 | `task.create` | project | low | yes (cancel) | `task` row, draft or ready; `risk_tier` left out takes the project's default through the runtime's `defaultRiskTier` (0 in small-project mode, else 1; spec B.6, ADR 0051) |
 | `task.transition` | project | low; `done`/`cancelled` medium | when the graph allows the way back | `task.status` through `TaskRepo.transition` |
 | `budget.set` | session / project / global (month) | medium within the ceiling, high above it or raising the ceiling | yes | see below |

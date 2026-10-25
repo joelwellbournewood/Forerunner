@@ -25,6 +25,7 @@ import { type LoopAgentDriver, type RunPricing, type RunResult, wholeMs } from "
 import { ToolRegistry } from "../agent/tools.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
+import type { ProjectDocsPort } from "../loop/ports.ts";
 import {
   capEffort,
   DEFAULT_CEILING,
@@ -42,6 +43,7 @@ import {
   type ModelTier,
   providerCapabilities,
 } from "../provider/types.ts";
+import { type InstallMarkerWrite, writeInstallMarker } from "../sources/marker.ts";
 import { markAnswer } from "./answer-mark.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
 import {
@@ -186,6 +188,8 @@ export type IntakeDocsOutcome =
       kept: string[];
       /** Standard docs the model left out, written from the templates. */
       scaffolded: string[];
+      /** The install marker written beside the set (spec A.4, ADR 0056; `sources/marker.ts`). */
+      marker?: InstallMarkerWrite;
       /** Set when the project has a repository but the pull request could not be opened. */
       repo_error?: string;
     }
@@ -197,6 +201,7 @@ export type IntakeDocsOutcome =
       written: string[];
       kept: string[];
       scaffolded: string[];
+      marker?: InstallMarkerWrite;
     };
 
 /**
@@ -291,6 +296,12 @@ export interface IntakeDeps {
   projectsRoot: string;
   /** Clones for the pull-request path live under `<worktrees>/intake/<project>`. */
   worktreeRoot: string;
+  /**
+   * The G.5 scaffold (`ProjectDocs`, ADR 0058): a rejected proposal ends the deferral of a
+   * creation with `intake: true` by scaffolding the standard set from the templates. Absent,
+   * a rejection scaffolds nothing.
+   */
+  docs?: Pick<ProjectDocsPort, "scaffoldProject">;
 }
 
 const DEFAULT_PROMPT =
@@ -1024,29 +1035,35 @@ export class IntakeService {
         continue;
       }
       if (answer === "reject") {
-        // The mark and the note are one write; a row marked meanwhile gets no second note.
-        const rejected = await store.transaction(async (tx) => {
-          if (!(await markAnswer(tx, clock, row, "rejected"))) return false;
-          await tx.queue.enqueue({
+        // The mark is one conditional write (`markAnswer`): a row another producer marked
+        // meanwhile is left to it, with no second note and no second scaffold. Then the drafts
+        // were refused but the standard doc set still has to exist (spec G.5): a creation with
+        // `intake: true` left the scaffold to this answer, so the templates go in now (a project
+        // scaffolded at creation finds nothing to add). The docs port records its own outcome.
+        const rejected = await store.transaction(async (tx) =>
+          markAnswer(tx, clock, row, "rejected"),
+        );
+        if (rejected) {
+          const scaffolded = await this.scaffoldAfterRejection(project);
+          await store.queue.enqueue({
             project_id: project.id,
             human_id: this.deps.human.id,
             kind: "note",
-            text: `Intake proposal ${row.id} was rejected on ${clock.nowIso()}: nothing was written, neither the milestones and tasks nor the drafted docs (a project created with a brief has no standard doc set until an intake is approved). The brief stays queued; run the intake again with a revised brief or plan by hand.`,
+            text: `Intake proposal ${row.id} was rejected on ${clock.nowIso()}: nothing from the proposal was written${scaffolded}. The brief stays queued; run the intake again with a revised brief or plan by hand.`,
             priority: 7,
             status: "queued",
             author_agent: this.deps.agent.id,
           });
-          await tx.auditLog.append({
+          await store.auditLog.append({
             tool: INTAKE_AUDIT_TOOL,
             allowed: true,
             human_id: this.deps.human.id,
             agent_id: this.deps.agent.id,
             input_summary: cut(`intake request ${row.id} rejected for project ${project.id}`),
-            result_summary: "nothing written; note queued",
+            result_summary: cut(`nothing from the proposal written; note queued${scaffolded}`),
           });
-          return true;
-        });
-        if (rejected) out.rejected++;
+          out.rejected++;
+        }
         continue;
       }
       const parsed = IntakeProposalBody.safeParse(card.proposal);
@@ -1189,6 +1206,28 @@ export class IntakeService {
     };
   }
 
+  /**
+   * The G.5 scaffold after a rejected proposal, as the clause the queue note and the audit
+   * row carry; "" without a docs port. A failure is logged and reported, never thrown: the
+   * rejection itself stands.
+   */
+  private async scaffoldAfterRejection(project: ProjectRow): Promise<string> {
+    if (!this.deps.docs) return "";
+    try {
+      const out = await this.deps.docs.scaffoldProject(project);
+      if (!out.created.length) return "; the standard doc set was already in place";
+      return `; the standard doc set was scaffolded from the templates (${out.created.length} file(s)${
+        out.prUrl ? `, pull request ${out.prUrl}` : ""
+      })`;
+    } catch (e) {
+      this.logger.warn("intake rejected: standard docs not scaffolded", {
+        projectId: project.id,
+        error: errorMessage(e),
+      });
+      return `; the standard doc set could not be scaffolded (${redact(cut(errorMessage(e)))})`;
+    }
+  }
+
   /** The doc set to the repository as a pull request, else to the workspace directory. */
   private async writeDocs(
     project: ProjectRow,
@@ -1285,13 +1324,20 @@ export class IntakeService {
  * templates (`scaffoldDocs`, which never touches a file that exists). An existing file is kept
  * unless it is an untouched placeholder of the creation-time scaffold (spec G.5: byte-equal to
  * `renderStandardDoc` for that path), which the draft replaces; a file anyone edited stays.
- * Paths are the allowlisted repo-relative posix paths of the proposal.
+ * Paths are the allowlisted repo-relative posix paths of the proposal. The install marker
+ * (`.forerunner/project.json`, spec A.4) goes beside the set as the creation-time scaffold
+ * writes it, never over another project's.
  */
 async function writeDocSet(
   dir: string,
   docs: Record<string, string>,
-  project: Pick<ProjectRow, "name" | "goal" | "repos">,
-): Promise<{ written: string[]; kept: string[]; scaffolded: string[] }> {
+  project: Pick<ProjectRow, "id" | "name" | "goal" | "repos">,
+): Promise<{
+  written: string[];
+  kept: string[];
+  scaffolded: string[];
+  marker: InstallMarkerWrite;
+}> {
   const written: string[] = [];
   const kept: string[] = [];
   const info = { name: project.name, goal: project.goal, repos: project.repos };
@@ -1312,7 +1358,8 @@ async function writeDocSet(
     written.push(rel);
   }
   const scaffold = await scaffoldDocs(dir, info);
-  return { written, kept, scaffolded: scaffold.created };
+  const marker = await writeInstallMarker(dir, { project: project.id, name: project.name });
+  return { written, kept, scaffolded: scaffold.created, marker };
 }
 
 /** True when the file at `abs` is exactly what the creation-time scaffold wrote for `rel`. */

@@ -384,6 +384,14 @@ export interface DocsScaffoldOutcome {
   /** Repo-relative POSIX paths written, and the ones found and left alone. */
   created: string[];
   existing: string[];
+  /**
+   * The install marker `.forerunner/project.json` (spec A.4, ADR 0056) written beside the set:
+   * `created`, `kept` when this project's was there, or `other_project` when the file names
+   * another project (its id, or null for a hand-written marker) and was left as it is.
+   */
+  marker?:
+    | { path: string; status: "created" | "kept" }
+    | { path: string; status: "other_project"; project: string | null };
 }
 
 export interface SessionStatusOutcome {

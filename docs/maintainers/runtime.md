@@ -1052,8 +1052,9 @@ fake provider (`test/loop-critic.test.ts`, `test/conversation.test.ts`, `test/lo
 `reviewTask` with the task, the session token and budget, the plan item and the result. The
 loop assembles the evidence (the diff from the task's worktree through `GitDiffPort`, or the
 executor's `changedFiles`; the project's `settings.checks` as argv commands the critic runs at
-tiers 2 and 3; the standard-doc drift at tier 2+ as a non-required check; the final report as
-claims; the attempt and the specialist as artifacts), runs `CriticService.review` at
+tiers 2 and 3; the standard-doc drift at tier 2+ as a non-required check, `docs/status.md`
+left out when `statusDocManaged` says the PM writes it at session end (G.5); the final report
+as claims; the attempt and the specialist as artifacts), runs `CriticService.review` at
 `task.risk_tier` with the project's `critic_ceiling` and `speed_quality_offset` (read from the
 project row), and applies the verdict with `applyVerdict`:
 
@@ -1332,19 +1333,31 @@ The standard doc set (`README.md`, `docs/overview.md`, `architecture.md`, `statu
 (`project.repos[0]`, as `owner/name` or a clone URL, parsed by `parseRepoRef`; the PR
 executor resolves the same way) and is written like any other code change: on a branch and
 through a pull request, never by a push to the default branch, and never over an existing
-file. `scaffoldProject(project)` runs inside `POST /projects` right after the row is inserted
-(the creation waits for it, so the card the dashboard gets back already names the PR): with
-a repository it clones or fetches `<worktrees>/docs/<project id>`, checks out
-`fr/docs-scaffold` (`DOCS_SCAFFOLD_BRANCH`; from `origin/fr/docs-scaffold` when the branch
-exists, so files the intake drafted there are kept, else from the default branch), runs
-`scaffoldDocs` for the missing files, commits, pushes and opens the PR
-("docs: scaffold the standard project doc set", the created files in the body) or comments
-on the open one; nothing to create means nothing pushed. Without a repository the set goes
-under `<projectsRoot>/<project id>/workspace` (`WORKSPACE_DIR`, beside the project's `data/`).
-The outcome is recorded on the row as `summary_cache.docs` (`location`, `branch`, `pr_url`,
-`dir`, `created`, `existing`, `scaffolded_at`; a failure as `error` and `failed_at`); a git
-host that cannot serve the repository is a warning in the daemon log and the creation still
-answers 201, the critic's drift check reporting the missing docs at the first review.
+file. `scaffoldProject(project)` runs for every way a project comes into being:
+`createProjectRecord` (`daemon/create-project.ts`, behind `POST /projects` and an accepted
+source proposal, spec A.4) awaits it right after the row is inserted, so the card the
+dashboard gets back already names the PR, unless the body asks for the intake
+(`intake: true`), which drafts the set on approval and scaffolds the templates on a rejection
+(`IntakeService.docs`); `project.create` by chat, voice or the palette reaches it through the
+command port `projectCreated` (`@forerunner/commands`, commands.md), in the background so the
+reply does not wait for a clone (`scaffoldProjectDocs`, the same never-failing call). With a
+repository it clones or fetches `<worktrees>/docs/<project id>` (the install's token scoped
+to the clone URL's http(s) origin by `gitAuthFor`, ADR 0069; a local or ssh remote gets no
+token), checks out `fr/docs-scaffold` (`DOCS_SCAFFOLD_BRANCH`; from `origin/fr/docs-scaffold`
+when the branch exists, so whatever an earlier scaffold or a human already put on it is
+kept, else from the default branch), runs `scaffoldDocs` for the missing files, writes the
+install marker `.forerunner/project.json` beside them (`sources/marker.ts`: `schema`,
+`project`, `name`; the A.4 scan reads it on the default branch, so the repository shows as
+an existing install once the PR is merged; another project's marker is reported as
+`other_project` and never overwritten), commits, pushes and opens the PR ("docs: scaffold
+the standard project doc set", the created files and the marker in the body) or comments on
+the open one; nothing to create means nothing pushed. Without a repository the set and the
+marker go under `<projectsRoot>/<project id>/workspace` (`WORKSPACE_DIR`, beside the
+project's `data/`). The outcome is recorded on the row as `summary_cache.docs` (`location`,
+`branch`, `pr_url`, `dir`, `created`, `existing`, `marker`, `scaffolded_at`; a failure as
+`error` and `failed_at`); a git host that cannot serve the repository is a warning in the
+daemon log and the creation still answers 201, the critic's drift check reporting the
+missing docs at the first review.
 `writeSessionStatus({ project, session, update, prBranch })` runs in the runner's step 4
 once the task states are final, for a session that executed a plan and changed at least one
 task (`docs.status_skipped` otherwise; a paused session writes nothing): the update is the
@@ -1361,8 +1374,9 @@ session opened none; a repository without `docs/status.md` gets it scaffolded in
 commit. Without a repository the file under the workspace is updated. The result is the
 `docs.status_written` event (`location`, `branch`, `prUrl`, `path`, `created`) and
 `handoff.docs` on the session row; a failure is `docs.status_failed` with the message and
-the session ends as it would have. Not scaffolded from here: a project created by the
-`project.create` command (chat, voice) in `@forerunner/commands` (Known issues).
+the session ends as it would have. The critic's tier 2+ drift check runs before this write
+and is told so (`CriticLoopDeps.statusDocManaged`, set by the daemon): it neither expects
+the specialist's change to touch `docs/status.md` nor reports it missing.
 `docsDirsFor(project)` lists where the chat's docs search reads the set (spec J.1, ADR 0061),
 in order and without cloning or fetching: a local folder the project is linked to (an absolute
 `repos[0]`, spec A.4), this install's docs clone `<worktreeRoot>/<project id>` (made by the
@@ -2361,8 +2375,11 @@ normalisation. Rows are `source` and `source_candidate` (`packages/state`, migra
   `.forerunner/project.json` when that file exists at the root (through `getFile` on the
   default branch for a repository, the file system for a folder), or `install_record` when
   the folder is the checkout named by this install's `install.json`
-  (`readInstallRecord(dirs)`). The marker file is the convention this item introduces;
-  nothing writes it yet (the first session on a managed repository is the place, ADR 0056).
+  (`readInstallRecord(dirs)`). The G.5 docs scaffold writes the marker beside the doc set
+  (`sources/marker.ts`: `{ schema: 1, project, name }`, `renderInstallMarker`,
+  `parseInstallMarker`, `writeInstallMarker`, which keeps this project's and never overwrites
+  another's), on the scaffold's branch and pull request for a repository and in the workspace
+  without one (ADR 0058 amendment of 2026-10-25); the intake's doc write carries it too.
 - **Duplicates, never twice.** Every candidate has a `key` (`locators.ts`):
   `github:<owner>/<name>` lower-cased for a repository, whatever the spelling
   (`owner/name`, `.git`, `github.com/…`, `https://…/tree/…`, `git@…:…`, `ssh://…`), and
@@ -2890,20 +2907,32 @@ human) files `fr/status-<session id>` with its own PR, the entry listing the blo
 the top sections the project's state (a draft task under Next), a second session adding its
 own branch and PR; a project without a repository writes under
 `<projectsRoot>/<id>/workspace`; a session that touched no task writes nothing
-(`docs.status_skipped`) and a port that throws ends the session `completed` with
+(`docs.status_skipped`), a session that only filed its plan (assisted mode) emits no `docs.*`
+event and writes nothing, and a port that throws ends the session `completed` with
 `docs.status_failed`. `docs-scaffold.test.ts` (through `composeRuntime` and `POST /projects`
 with a `MemoryGitHost` and bare repos): `parseRepoRef` on `owner/name`, HTTPS and SSH URLs and
-non-references; a creation with a linked repository opens one PR from `fr/docs-scaffold` to
-`main` with the seven missing docs, the existing README byte-identical on the branch, `main`
-holding only the seed, the overview carrying the goal and the repository, the outcome on
-`summary_cache.docs`, nothing under the data dir; files the intake drafted on the branch kept,
-no second PR, and a second creation on the same repository finding nothing to add; a project
-without a repository scaffolded under its workspace with name and goal; a session started
-through the composed `rt.runner` (the PR executor and loop executor on the scripted
+non-references; `gitAuthFor` scoping the token to an http(s) origin and giving none to a path
+or ssh remote; a creation with a linked repository opens one PR from `fr/docs-scaffold` to
+`main` with the seven missing docs and the install marker naming the project, the existing
+README byte-identical on the branch, `main` holding only the seed, the overview carrying the
+goal and the repository, the outcome on `summary_cache.docs`, nothing under the data dir;
+files already on the branch kept, no second PR, and a second creation on the same repository
+finding nothing to add and reporting the first project's marker as `other_project`,
+unchanged; a project without a repository scaffolded under its workspace with name, goal and
+the marker; a project created by `project.create` through `POST /commands/execute`
+scaffolded in the background (the row's `summary_cache.docs`, the workspace); a session
+started through the composed `rt.runner` (the PR executor and loop executor on the scripted
 provider, whose text-only reply leaves no change and so no task PR) writing its status
 update on `fr/status-<session id>` with a PR of its own, the entry naming the session and
 the task, `main` untouched, `handoff.docs` on the session row; a repository the host cannot
-serve answering 201 with the error recorded.
+serve answering 201 with the error recorded. The other creation paths and the marker's
+reader: `sources-routes.test.ts` (an accepted repository candidate scaffolded through the
+composed daemon, the PR and the marker), `intake.test.ts` (a rejected intake asked for at
+creation scaffolding the templates and the marker into the workspace),
+`loop-critic.test.ts` (the drift check at tier 2 on the task's worktree, `docs/status.md`
+dropped with `statusDocManaged` and the other missing docs still named) and
+`sources.test.ts` (a repository scaffolded over the fake host's HTTP scanned as an existing
+install once the PR is merged, and proposed as one when no project links it).
 
 `loop-memory-promotion.test.ts` (spec G.6, ADR 0059; fake provider, `loopWorld` with a second
 project of the same human and another human's project): a `general` critic lesson recorded
@@ -3348,10 +3377,13 @@ human's devices, revoke one at once, with the service's admin token kept in the 
 Tests: `test/devices-routes.test.ts`, `services/state-api/test/desktop-devices.test.ts`; the
 section is the UI's (`apps/ui/test/settings-devices.test.tsx`, apps.md).
 
-G.5 (the standard doc set scaffolded at project creation as a pull request on the linked
-repository or under the project's data dir, `docs/status.md` updated at session end on the
-session's PR or one of its own; the critic's drift check unchanged). Tests:
-`test/docs-scaffold.test.ts`, `test/loop-docs.test.ts`, `packages/memory/test/docs.test.ts`.
+G.5 (the standard doc set scaffolded at project creation, whatever the path, as a pull
+request on the linked repository with the install marker or under the project's workspace,
+`docs/status.md` updated at session end on the session's PR or one of its own; the critic's
+drift check leaving the status doc to the PM). Tests: `test/docs-scaffold.test.ts`,
+`test/loop-docs.test.ts`, `test/sources-routes.test.ts`, `test/intake.test.ts`,
+`test/loop-critic.test.ts`, `test/sources.test.ts`, `packages/memory/test/docs.test.ts`,
+`packages/commands/test/commands.test.ts`.
 S.15, S.28, S.29 and T.14 (the email settings routes mounted with the owner check, the
 tray's pause holding the next send, full discretion picked through the route, the command
 audit served; ADR 0066, `test/email-routes-wiring.test.ts`; the page is the UI's, apps.md).
@@ -3515,28 +3547,28 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   them the docs fall back to the workspace with `repo_error` on the card. The intake re-run
   for a project whose proposal was rejected makes a new call with the same brief (pass `brief`
   to `POST /projects/:id/intake` to change it; while a proposal is open that is refused, 409).
-  A creation with `intake: true` defers the G.5 scaffold to the intake's approval, so a
-  project whose intake is then rejected or fails has no standard doc set until an intake is
-  approved (the reject note says so; `POST /projects/:id/intake` again, or create without the
-  flag); a project scaffolded at creation and put through the intake later gets its untouched
-  placeholders replaced by the drafts (an edited file is kept) and, with a repository, a second
-  pull request. The request shows the plan as it will be written at proposal time; a
-  small-project mode flipped between the proposal and the approval changes the shape the
-  approval writes (one milestone or several) from what the card showed.
-- Project docs (G.5): the critic's `docs-drift` check runs at review time, before the
-  runner's session-end status write, so at tier 2+ it still lists `docs/status.md` for a
-  specialist's diff that did not touch it even though the PM's commit lands on the same PR
-  minutes later; a check that knows about the docs port would stop the repeat finding.
-  `project.create` from chat or voice (`@forerunner/commands`) inserts the row without the
-  scaffold; only `POST /projects` scaffolds. The docs follow `repos[0]` only. Sessions that
-  open no PR each file their own small status PR, which merge in order; a session whose last
-  PR was force-pushed by its next attempt keeps the status commit, since the attempt branches
-  from `origin/<branch>`.
-- Source discovery (A.4): the `.forerunner/project.json` marker is read, never written; a
-  project Forerunner manages carries no marker until the G.5 docs scaffold writes one with
-  the doc set (ADR 0056 amendment of 2026-10-25, open review finding), so today only a
-  repository or folder marked by hand (or this install's own checkout) shows as an existing
-  install. The install check costs one `contents` call per repository on a host scan, which
+  A creation with `intake: true` defers the G.5 scaffold to the intake's approval; a rejected
+  proposal scaffolds the templates, so the deferral ends either way, while an automatic intake
+  that fails leaves the project without a doc set until the intake is run again or a session's
+  status write scaffolds `docs/status.md`; a project scaffolded at creation and put through the
+  intake later gets its untouched placeholders replaced by the drafts (an edited file is kept)
+  and, with a repository, a second pull request. The request shows the plan as it will be
+  written at proposal time; a small-project mode flipped between the proposal and the approval
+  changes the shape the approval writes (one milestone or several) from what the card showed.
+- Project docs (G.5): the docs follow `repos[0]` only. Sessions that open no PR each file
+  their own small status PR, which merge in order; a session whose last PR was force-pushed
+  by its next attempt keeps the status commit, since the attempt branches from
+  `origin/<branch>`. The chat's `project.create` scaffolds in the background, so a project
+  card read right after the reply may not carry `summary_cache.docs` yet. The install marker
+  reaches the default branch only when the scaffold's pull request is merged; until then a
+  scan proposes the repository as unmarked. A project linked to a local folder keeps marker
+  and docs in its workspace, never in the folder. The PR executor still hands the token to
+  git unscoped (its own residual); the docs clone and the A.3 import scope it.
+- Source discovery (A.4): the `.forerunner/project.json` marker is written by the G.5 docs
+  scaffold with the doc set (ADR 0058 amendment of 2026-10-25) and read on the default
+  branch, so a repository shows as an existing install once that pull request is merged; a
+  repository Forerunner managed before then carries none until its next scaffold.
+  The install check costs one `contents` call per repository on a host scan, which
   is why one scan is bounded at `maxCandidates` (1,000) repositories or subfolders: an
   organisation beyond it is refused and connected as narrower sources instead. A
   project created from a local folder links the path in `repos`; the PR executor then runs

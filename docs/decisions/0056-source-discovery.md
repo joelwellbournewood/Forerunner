@@ -118,3 +118,12 @@ existed (kinds `github_org`, `github_user`, `gitlab`, `git_remote`, `local_folde
    checkout is told by the install record. The G.5 docs scaffold (ADR 0058, the first thing
    Forerunner writes into a managed repository) is the place to write it, on the same branch
    and PR as the doc set. Recorded as an open review finding, not changed here.
+
+## Amendment (2026-10-25, review of w2-g5-docs)
+
+Point 5 above is closed: the G.5 docs scaffold writes `.forerunner/project.json`
+(`{ "schema": 1, "project": <id>, "name": <name> }`, `packages/runtime/src/sources/marker.ts`)
+beside the doc set, on the scaffold's branch and pull request for a repository and in the
+workspace without one, and never over another project's marker (ADR 0058, amendment of
+2026-10-25, point 3). The scan keeps reading it on the default branch, so a repository shows
+as an existing install once that pull request is merged.

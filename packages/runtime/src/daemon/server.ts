@@ -621,21 +621,11 @@ export function createDaemonApp(
 
   app.post("/projects", async (c) => {
     const body = await parse(c, CreateProjectBody);
-    // The same path an accepted source proposal takes (create-project.ts, spec A.4).
+    // The same path an accepted source proposal takes, and the chat's `project.create` through
+    // its port (create-project.ts, spec A.4, G.5): the row, the brief, and the standard doc
+    // set as a pull request on the linked repository or the project's workspace (deferred to
+    // the intake's approval with `intake: true`); the creation never fails on the docs.
     const p = await createProjectRecord(rt, body);
-    // The standard doc set (spec G.5): a pull request on the linked repository, or the
-    // project's data dir. The gap is recorded on the project; the creation never fails on it.
-    // A creation that asks for the intake (spec A.2) leaves the set to the intake's approval,
-    // which drafts the docs from the brief and scaffolds only what the draft left out.
-    if (body.intake === true) {
-      logger.info("project docs deferred to the intake", { projectId: p.id });
-    } else {
-      try {
-        await rt.docs.scaffoldProject(p);
-      } catch (e) {
-        logger.warn("project docs not scaffolded", { projectId: p.id, error: errorMessage(e) });
-      }
-    }
     // PM intake (spec A.2): asked for, the proposal is drafted in the background and lands in
     // the inbox; the card answers now. A failure is recorded on the project (the status route).
     if (body.intake === true) void rt.intake.enqueue(p.id).catch(() => undefined);
