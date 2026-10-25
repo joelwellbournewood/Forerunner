@@ -204,6 +204,11 @@ export interface FakeStateState {
   /** Review comments and verdicts as the service turns them into messages to the agent. */
   reviewMessages: { reviewId: string; kind: "comment" | "approve" | "reject"; body: string }[];
   calls: RecordedCall[];
+  /**
+   * FCM registration tokens by device id (`device.push_token` on the real service, ADR 0085),
+   * kept apart from the device rows so no device view ever carries one.
+   */
+  pushTokens: Map<string, string>;
   /** Access log lines, as a real service would log them: never a token or a key. */
   log: string[];
   seq: number;
@@ -514,6 +519,7 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
     reviews: clone(FAKE_REVIEWS),
     reviewMessages: [],
     calls: [],
+    pushTokens: new Map(),
     log: [],
     seq: 0,
     feed: [],
@@ -753,7 +759,7 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
         "X-Device-Timestamp",
         "X-Biometric-Assertion",
       ],
-      allowMethods: ["GET", "POST", "OPTIONS"],
+      allowMethods: ["GET", "POST", "PUT", "OPTIONS"],
       exposeHeaders: ["Retry-After"],
     }),
   );
@@ -777,7 +783,7 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
       }
     }
     const record = (principal: Principal | null) => {
-      if (c.req.method !== "POST") return;
+      if (c.req.method === "GET" || c.req.method === "HEAD") return;
       state.calls.push({
         method: c.req.method,
         path: url.pathname,
@@ -1049,6 +1055,8 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
       version: 1,
     };
     state.devices.push(device);
+    const pushToken = typeof body.pushToken === "string" ? body.pushToken.trim() : "";
+    if (pushToken) state.pushTokens.set(device.id, pushToken.slice(0, 512));
     const token = newSessionToken();
     const expiresAt = new Date(now() + 30 * 24 * 3600 * 1000).toISOString();
     state.tokens.push({
@@ -1142,6 +1150,33 @@ export function createFakeStateService(options: FakeStateOptions = {}) {
     if (p.kind === "device" && d.ownerHumanId !== p.device.ownerHumanId)
       return errorBody(c, 403, "forbidden", "not your device");
     return c.json(d);
+  });
+  // Like the real route (ADR 0085 point 6): signed, a device sets only its own token, the
+  // answer says `pushRegistered` and never carries the token.
+  app.put("/devices/:id/push-token", async (c) => {
+    const p = principalOf(c);
+    const signedError = requireSigned(c, p);
+    if (signedError) return signedError;
+    const id = c.req.param("id");
+    if (p.kind === "device" && p.device.id !== id)
+      return errorBody(c, 403, "forbidden", "a device sets only its own push token");
+    const body = (await c.req.json().catch(() => null)) as { pushToken?: unknown } | null;
+    const value = body?.pushToken;
+    if (
+      !body ||
+      !(
+        value === null ||
+        (typeof value === "string" && value.trim().length > 0 && value.length <= 512)
+      )
+    ) {
+      return errorBody(c, 400, "validation", "pushToken must be a non-empty string or null");
+    }
+    const d = state.devices.find((x) => x.id === id);
+    if (!d) return errorBody(c, 404, "not_found", "device not found");
+    if (d.revoked) return errorBody(c, 409, "version_conflict", "device is revoked");
+    if (value === null) state.pushTokens.delete(id);
+    else state.pushTokens.set(id, value.trim());
+    return c.json({ device: { ...d, pushRegistered: state.pushTokens.has(id) } });
   });
   app.post("/devices/:id/revoke", (c) => {
     const p = principalOf(c);

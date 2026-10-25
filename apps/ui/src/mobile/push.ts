@@ -1,11 +1,14 @@
 /**
- * Push notifications (spec R.6) behind one port. FCM is not configured for this build (no
- * project keys; `docs/status/BLOCKERS.md`), so the shipped implementation is the visible
- * polling stand-in: the change feed (live or polling) raises in-app notices for approvals,
- * finished sessions, budget warnings and messages, and the Settings screen says "polling
- * stand-in (FCM not configured)". `FcmPush` is the seam the FCM wiring fills (token from the
- * shell's `push_token` command, registered at pairing as `pushToken`); quiet hours apply to
- * both. Nothing in the app depends on push: every screen reads the service itself.
+ * Push notifications (spec R.6) behind one port. Two modes, decided by the Android build:
+ * with a Firebase project (`google-services.json` in the app module, ADR 0085 point 9) the
+ * shell's `push_status` reports `fcm` and the FCM registration token; the controller sends
+ * that token at pairing (`pushToken`) and after a refresh (`PUT /devices/:id/push-token`),
+ * and the state service pushes through FCM. Without it, and in a browser, the visible polling
+ * stand-in raises in-app notices from the change feed (live or polling) and Settings says
+ * "FCM not configured". Quiet hours apply to both. Nothing in the app depends on push: every
+ * screen reads the service itself. The token goes to the state service and nowhere else: the
+ * UI never logs, shows or stores it (only its SHA-256 fingerprint is kept, to tell a refresh
+ * from the token already registered).
  */
 export type PushMode = "fcm" | "polling";
 
@@ -123,4 +126,41 @@ export function noticeFor(
     };
   }
   return null;
+}
+
+/**
+ * The in-app route a tapped notification opens. The Android shell turns the FCM `link` into
+ * `fr://open?link=<path>` (MainActivity) and the deep-link plugin hands it over like a pairing
+ * link. Only a plain absolute app path is accepted (`/inbox`, `/sessions/ses_1`): no scheme,
+ * no host, no `//`, no `..`, no query; anything else is null and opens nothing.
+ */
+export function parsePushLink(text: string): string | null {
+  const t = text.trim();
+  if (!/^fr:\/\/open(?:[/?]|$)/i.test(t)) return null;
+  let u: URL;
+  try {
+    u = new URL(t);
+  } catch {
+    return null;
+  }
+  return safeAppPath(u.searchParams.get("link"));
+}
+
+const APP_PATH = /^\/[A-Za-z0-9._~/-]{0,199}$/;
+
+/** `link` when it is a plain in-app path, else null. */
+export function safeAppPath(link: string | null | undefined): string | null {
+  if (typeof link !== "string") return null;
+  if (!APP_PATH.test(link) || link.startsWith("//")) return null;
+  if (link.split("/").some((part) => part === "." || part === "..")) return null;
+  return link;
+}
+
+/**
+ * The SHA-256 fingerprint (hex) of a registration token, kept in place of the token so the
+ * controller can tell a refresh from the token already registered.
+ */
+export async function pushTokenFingerprint(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }

@@ -139,13 +139,18 @@ export const shellBiometric: BiometricPort = {
   },
 };
 
+/**
+ * The shell's push status: `fcm` with the current registration token when the APK was built
+ * with a Firebase project (the shell re-reads it from `KeystorePlugin.info` on every call, so
+ * a refreshed token shows up), `polling` with a null token otherwise.
+ */
 export const shellPush: PushPort = {
   async status(): Promise<PushStatus> {
     return invoke<PushStatus>("push_status");
   },
   notify() {
-    // Platform notifications arrive through the shell when a push channel exists; the
-    // polling stand-in in push.ts renders in-app notices.
+    // FCM notifications are posted by the shell (ForerunnerMessagingService); the polling
+    // stand-in in push.ts renders in-app notices.
     return false;
   },
 };

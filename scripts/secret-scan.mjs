@@ -16,6 +16,8 @@ const PATTERNS = [
   ["private-key", /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/g],
   ["cloudflare", /\b[A-Za-z0-9_-]{40}\b(?=.*cloudflare)/gi],
   ["deepgram", /\bdg_[A-Za-z0-9]{32,}\b/g],
+  // Google API keys: what a committed google-services.json (FCM, ADR 0085) would leak.
+  ["google-api-key", /\bAIza[0-9A-Za-z_-]{35}\b/g],
   ["jwt", /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g],
   [
     "generic-assignment",

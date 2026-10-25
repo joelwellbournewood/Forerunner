@@ -42,7 +42,7 @@ pub struct Shell {
   files: Mutex<SecureFiles>,
   config: Mutex<(PathBuf, ShellConfig)>,
   info: Mutex<ShellInfo>,
-  push: Box<dyn PushPort>,
+  push: Mutex<Box<dyn PushPort>>,
   tickets: Mutex<TicketBook>,
 }
 
@@ -58,8 +58,26 @@ impl Shell {
       files: Mutex::new(files),
       config: Mutex::new((config_dir, config)),
       info: Mutex::new(info),
-      push,
+      push: Mutex::new(push),
       tickets: Mutex::new(TicketBook::new()),
+    }
+  }
+
+  /// The push port's status for the UI (the token included, for the state service only).
+  pub fn push_status(&self) -> PushStatus {
+    match self.push.lock() {
+      Ok(push) => push.status(),
+      Err(poisoned) => poisoned.into_inner().status(),
+    }
+  }
+
+  /// The registration token the platform reports now: FCM rotates it, and on the first
+  /// launch it may arrive after setup, so `push_status` re-reads it on every call.
+  pub fn set_push_token(&self, token: Option<String>) {
+    let next = push::configured(token);
+    match self.push.lock() {
+      Ok(mut push) => *push = next,
+      Err(poisoned) => *poisoned.into_inner() = next,
     }
   }
 
@@ -221,8 +239,32 @@ pub fn secure_store_delete(shell: State<'_, Shell>, key: String) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn push_status(shell: State<'_, Shell>) -> PushStatus {
-  shell.push.status()
+pub async fn push_status<R: Runtime>(
+  app: AppHandle<R>,
+  shell: State<'_, Shell>,
+) -> Result<PushStatus, String> {
+  if let Some(token) = current_push_token(&app).await {
+    shell.set_push_token(token);
+  }
+  Ok(shell.push_status())
+}
+
+/// The FCM token `KeystorePlugin.info` reports now (`Some(None)` when Firebase is not
+/// configured or no token has arrived yet). `run_mobile_plugin` blocks until the Kotlin side
+/// answers, so it runs on a blocking thread. `None` = could not ask (no plugin, not Android):
+/// keep what setup found.
+#[cfg(target_os = "android")]
+async fn current_push_token<R: Runtime>(app: &AppHandle<R>) -> Option<Option<String>> {
+  let handle = app.try_state::<android::KeystoreHandle<R>>()?.0.clone();
+  tauri::async_runtime::spawn_blocking(move || android::fcm_token(&handle))
+    .await
+    .ok()
+    .flatten()
+}
+
+#[cfg(not(target_os = "android"))]
+async fn current_push_token<R: Runtime>(_app: &AppHandle<R>) -> Option<Option<String>> {
+  None
 }
 
 /// The platform prompt. Only a success returns `asserted: true`, and only a success carries
@@ -340,7 +382,8 @@ pub mod android {
     pub strong_box: bool,
     #[serde(default)]
     pub biometric: bool,
-    /// The FCM registration token; absent until a Firebase project is configured.
+    /// The FCM registration token: null when the APK was built without `google-services.json`
+    /// or before Firebase handed one over (`PushTokenStore` on the Kotlin side).
     #[serde(default)]
     pub fcm_token: Option<String>,
   }
@@ -391,6 +434,14 @@ pub mod android {
     handle
       .run_mobile_plugin::<DeviceInfoOut>("info", ())
       .unwrap_or_default()
+  }
+
+  /// Only the FCM token from `info`; `None` when the plugin call failed (keep the old one).
+  pub fn fcm_token<R: Runtime>(handle: &PluginHandle<R>) -> Option<Option<String>> {
+    handle
+      .run_mobile_plugin::<DeviceInfoOut>("info", ())
+      .ok()
+      .map(|info| info.fcm_token)
   }
 
   /// Registers the Kotlin side (`app.forerunner.mobile.KeystorePlugin`).
@@ -600,7 +651,23 @@ mod tests {
       .set(SESSION_TOKEN_KEY, "token-value-for-test") // not-a-secret
       .expect("set");
     assert!(shell.recovery().paired);
-    assert_eq!(shell.push.status().mode, "polling");
+    assert_eq!(shell.push_status().mode, "polling");
+    std::fs::remove_dir_all(dir).ok();
+  }
+
+  #[test]
+  fn the_push_status_follows_the_token_the_platform_reports_now() {
+    let (shell, dir) = shell_for_test();
+    assert_eq!(shell.push_status().token, None);
+    // the token arrived after setup, or FCM rotated it
+    shell.set_push_token(Some("registration-a".into())); // not-a-secret
+    assert_eq!(shell.push_status().mode, "fcm");
+    assert_eq!(shell.push_status().token.as_deref(), Some("registration-a"));
+    shell.set_push_token(Some("registration-b".into())); // not-a-secret
+    assert_eq!(shell.push_status().token.as_deref(), Some("registration-b"));
+    // Firebase gone (a build without google-services.json): back to the stand-in
+    shell.set_push_token(None);
+    assert_eq!(shell.push_status().mode, "polling");
     std::fs::remove_dir_all(dir).ok();
   }
 

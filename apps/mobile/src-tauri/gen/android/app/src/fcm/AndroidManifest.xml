@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FCM half of the manifest (ADR 0085 point 9). Merged over the main manifest only when
+  app/build.gradle.kts finds google-services.json in this module (or with
+  -PforerunnerFcmCompileCheck=true); every other build has no service, no provider and no
+  POST_NOTIFICATIONS permission.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+        <service
+            android:name="app.forerunner.mobile.ForerunnerMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- After Firebase's own FirebaseInitProvider (initOrder 100). -->
+        <provider
+            android:name="app.forerunner.mobile.FcmStartup"
+            android:authorities="${applicationId}.fcmstartup"
+            android:exported="false"
+            android:initOrder="50" />
+
+        <!-- Background notifications (shown by the system tray) use this channel and icon. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="updates" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+    </application>
+</manifest>

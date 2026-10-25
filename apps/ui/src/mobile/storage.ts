@@ -3,7 +3,8 @@
  * its own key and a scoped session token). Two ports:
  *
  * - `MobileStorage`: non-secret conveniences (service URL, device name, the local change
- *   log, the offline outbox) in `localStorage`, namespaced per install, every access wrapped.
+ *   log, the offline outbox, the SHA-256 fingerprint of the registered push token, never the
+ *   token) in `localStorage`, namespaced per install, every access wrapped.
  * - `SecureStore`: the session token. The Android shell keeps it under a key the Android
  *   Keystore wraps (`secure_store_*` commands); outside the shell the fallback is browser
  *   storage and the Settings screen says so ("insecure fallback").

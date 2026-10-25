@@ -1233,8 +1233,9 @@ service client, live SSE with polling fallback, offline outbox flushed on reconn
 screen), R.5 (quick chat as a remote command, natural-language control, notes to the
 next-session queue, answering requests, uploads, PR and critic review, push-to-talk relayed to
 the PC's voice loop, ADR 0080; the emulator run is open), R.6 partial
-(in-app notices for approvals, sessions, budget warnings and messages with quiet hours; FCM is
-a documented stand-in), R.7 (biometric assertion inside the signed string for high-risk
+(in-app notices for approvals, sessions, budget warnings and messages with quiet hours; FCM
+wired end to end and built in only when the `GOOGLE_SERVICES_JSON_BASE64` secret is set, so
+the shipped APK is the polling stand-in until the human adds it), R.7 (biometric assertion inside the signed string for high-risk
 answers, scoped 30-day tokens, no secret on the phone but its own wrapped key and token, lost
 phone revoked from the desktop), R.8 (the phone only controls, contributes and reviews). On
 the phone side also Q.2 to Q.4, Q.9 and Q.11 (understanding, active project in the header,
@@ -1268,7 +1269,8 @@ apps/ui/src/mobile/
   voice.ts           push-to-talk ports: VoiceRecorder (webRecorder: getUserMedia + AudioContext, 16 kHz
                      mono PCM), Speaker (webSpeaker: speechSynthesis), encodeTurn (5 s cap), toRelayPcm
   pairing.ts         fr://pair?u=&c=&h=, web link, qr JSON, bare code; buildPairingLink
-  push.ts            PushPort, PollingPush (the stand-in), quiet hours, noticeFor(feed event)
+  push.ts            PushPort, PollingPush (the stand-in), quiet hours, noticeFor(feed event),
+                     parsePushLink / safeAppPath (fr://open?link=), pushTokenFingerprint
   storage.ts         per-install localStorage keys, SecureStore (shell | browser | memory); the
                      cloud runner's vault key sits in the shell's secure store under
                      runner-vault-key-<runner> (ADR 0068)
@@ -1318,13 +1320,24 @@ apps/mobile/
     src/config.rs      <config>/mobile.json (state_url, device_name, install_id), recover(), the
                        fr://pair link parser
     src/dirs.rs        app_dirs(): mirror of packages/platform/src/paths.ts appDirs()
-    src/push.rs        PushPort: PollingPush (shipped) and FcmPush (seam), configured(token)
+    src/push.rs        PushPort: PollingPush and FcmPush, configured(token); Shell::set_push_token
+                       follows the token push_status re-reads from info
     gen/android/app/build.gradle.kts
                        the Tauri-generated Gradle module (kept after `android init`), plus the release
-                       signing config read from gen/android/keystore.properties when the file exists
+                       signing config read from gen/android/keystore.properties when the file exists,
+                       and FCM (firebase-messaging, src/fcm, the google-services plugin,
+                       BuildConfig.FCM_CONFIGURED) only when app/google-services.json exists
     gen/android/app/src/main/java/app/forerunner/mobile/KeystorePlugin.kt
                        AES-256-GCM key in the Android Keystore (StrongBox when present) that wraps the
-                       seed and the token; info (model, strongBox, biometric, fcmToken when FCM exists)
+                       seed and the token; info (model, strongBox, biometric, fcmToken or null)
+    gen/android/app/src/main/java/app/forerunner/mobile/MainActivity.kt
+                       notification tap -> fr://open?link=; POST_NOTIFICATIONS asked once (FCM builds)
+    gen/android/app/src/main/java/app/forerunner/mobile/PushLinks.kt, PushTokenStore.kt
+                       pure link, kind and channel rules (JVM-tested); the token in private prefs
+    gen/android/app/src/fcm/   ForerunnerMessagingService, FcmStartup, AndroidManifest.xml (FCM only)
+    gen/android/app/src/test/  PushLinksTest (JUnit 4)
+scripts/android-google-services.mjs
+                       GOOGLE_SERVICES_JSON_BASE64 -> gen/android/app/google-services.json (checked)
 ```
 
 **Boot.** The shell resolves the app directories, loads `mobile.json`, builds the secure
@@ -1441,22 +1454,77 @@ over) the button is "Say it" and relays the typed line as `transcript` instead. 
 voice answers `failed` and the screen says so; so does a PC that picks the turn up more than
 two minutes late (`expired`, never run; `runtime.md`).
 
-**Push.** FCM is not configured (no Firebase project; `docs/status/BLOCKERS.md`). `push.rs`
-and `push.ts` keep one port; the shipped mode is `polling`: the change feed raises in-app
-notices for approvals, finished sessions, budget warnings and messages, suppressed inside
-quiet hours. The FCM wiring is listed in ADR 0032 item 6. The service half is built
-(ADR 0085, `state-service.md`, "Push to Android"): the state service accepts `pushToken` at
-`POST /pairing/complete`, takes refreshed tokens at the signed
+**Push.** `push.rs` and `push.ts` keep one port with two modes, decided by the Android build
+(ADR 0085 point 9 and its amendment of 2026-10-25; ADR 0032 item 6).
+
+The service half (ADR 0085, `state-service.md`, "Push to Android"): the state service
+accepts `pushToken` at `POST /pairing/complete`, takes refreshed tokens at the signed
 `PUT /devices/:id/push-token { pushToken }`, and sends approvals, finished sessions, budget
 warnings and messages through FCM HTTP v1 to every device of the human with a token,
 honouring the human's quiet hours, once a service account is configured by reference
-(`FORERUNNER_FCM_SERVICE_ACCOUNT_REF`). The message carries `data { kind, id, link,
-projectId? }` (kinds `approval`, `session`, `budget`, `message`, the same names as the app's
-`PushCategory`) and a generic title and body; `link` is a route the app opens. What stays
-the stand-in until a Firebase project exists: no `google-services.json` and no
-`firebase-messaging` in the Gradle build (the build would fail without the project), no
-`FirebaseMessagingService`, and `KeystorePlugin.info` hands over no `fcmToken`, so the app
-sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
+(`FORERUNNER_FCM_SERVICE_ACCOUNT_REF`). The message carries a notification block with a
+generic title and body and `data { kind, id, link, projectId? }` (kinds `approval`,
+`session`, `budget`, `message`, the same names as the app's `PushCategory`); `link` is a
+route the app opens.
+
+The app half, the Android push wiring:
+
+- **Gradle.** `gen/android/app/build.gradle.kts` checks for `google-services.json` in the app
+  module. With the file it adds `com.google.firebase:firebase-messaging`, the `src/fcm`
+  sources (`java.srcDir`) and manifest (merged as the `debug` and `release` build-type
+  manifests, which this module does not otherwise have), applies the
+  `com.google.gms.google-services` plugin (on the root classpath only) and sets
+  `BuildConfig.FCM_CONFIGURED = true`. Without it none of that happens and the APK is the
+  polling stand-in, byte for byte the build it was: every build without the secret, fork PRs
+  and the emulator smoke. `-PforerunnerFcmCompileCheck=true` adds the sources and the
+  dependency without the file or the plugin, so CI compiles the FCM code on every run; that
+  APK has no Firebase configuration and stays polling.
+- **The file is a build secret.** It is gitignored (module and root `.gitignore`), never
+  committed, and `pnpm secrets:scan` flags a Google API key shape. `scripts/android-google-services.mjs`
+  decodes the Actions secret `GOOGLE_SERVICES_JSON_BASE64`, checks that it is a Firebase
+  config with an Android client for `app.forerunner.mobile` (a wrong secret fails the step,
+  not Gradle), and writes it mode 0600; without the secret it writes nothing and says push
+  stays polling (a file a maintainer copied by hand is kept). `android.yml` and `release.yml`
+  run it before the build, like `android-keystore.mjs` (`release.md`, "Signing").
+- **`src/fcm`** (compiled only in the cases above): `ForerunnerMessagingService`
+  (`FirebaseMessagingService`, registered in `src/fcm/AndroidManifest.xml`, not exported):
+  `onNewToken` stores the token in `PushTokenStore` (app-private preferences);
+  `onMessageReceived` (a message while the app is in the foreground) drops unknown kinds and
+  any `link` that is not a plain app path, then posts the generic title and body on the
+  `attention` channel (approval, budget; high importance) or `updates` (session, message),
+  one notification per item, with a tap that opens `MainActivity` with the `link` extra.
+  `FcmStartup` (a content provider after Firebase's own) creates both channels and stores
+  `FirebaseMessaging.getInstance().token` at every launch. In the background the system tray
+  shows the notification block on the manifest's default channel (`updates`) and icon
+  (`ic_notification`), and a tap launches `MainActivity` with the data as extras.
+  `POST_NOTIFICATIONS` is declared there and `MainActivity` asks for it once per install on
+  Android 13+, only when `FCM_CONFIGURED`.
+- **Opening `link`.** `MainActivity` turns an intent with a `link` extra into
+  `ACTION_VIEW fr://open?link=<path>` (`PushLinks.deepLink`; `onCreate` before the deep-link
+  plugin reads the intent, `onNewIntent` for a running app). The UI's deep-link handler
+  (`MobileController.offerDeepLink`) takes pairing links as before and `fr://open` through
+  `parsePushLink` (a plain absolute app path only: no scheme, host, `//`, `..`, query or
+  fragment); `pendingLink` is navigated to by `MobileShell` once the phone is paired.
+- **`fcmToken`.** `KeystorePlugin.info` returns `PushTokenStore`'s token when
+  `FCM_CONFIGURED`, `null` otherwise. The Rust shell reads it at setup and again on every
+  `push_status` (on a blocking thread; a failed plugin call keeps the previous value), so
+  `push.rs` `configured(token)` switches to `FcmPush` when a token arrives after launch.
+- **Token at pairing and on refresh (TS).** `MobileController.pair` asks `push_status` and
+  sends the token as `pushToken` on `POST /pairing/complete` when the mode is `fcm` (the
+  field is left out otherwise). `syncPushToken` runs after bootstrap and on every
+  `visibilitychange` to visible: when the token differs from the one registered for this
+  device it sends `StateClient.setPushToken` (`PUT /devices/:id/push-token`, signed with the
+  device key like every mutation; a token that disappeared is sent as null), and a build
+  without Firebase never sends. The phone keeps only `{ deviceId, fingerprint }` (SHA-256 of
+  the token) under `pushRegistration` to tell a refresh from the registered token; the
+  state's `push` keeps mode and detail with `token: null`. Nothing logs the token on either
+  side.
+
+What the human still provides (ADR 0085 amendment): `google-services.json` as the
+`GOOGLE_SERVICES_JSON_BASE64` secret, and on the state service the service account JSON in
+the vault behind `FORERUNNER_FCM_SERVICE_ACCOUNT_REF`. Until then the shipped mode is
+`polling`: the change feed raises in-app notices for approvals, finished sessions, budget
+warnings and messages, suppressed inside quiet hours.
 
 ### How to change it
 
@@ -1483,12 +1551,19 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   book the signer redeems (`Shell::issue_biometric_ticket` in the shell,
   `signer.tickets.issue()` on the web) and put it in the `BiometricAssertion`; nothing else
   gets a `biometric=1` signature.
-- **Turn on FCM**: follow ADR 0032 item 6 for the app half; `configured(token)` in `push.rs`
-  already picks `FcmPush` when the Kotlin `info` command returns `fcmToken`. Send that token as
-  `pushToken` at pairing and through `PUT /devices/:id/push-token` (signed) whenever
-  `FirebaseMessagingService.onNewToken` fires; the service side is ready (ADR 0085). Set
-  `FORERUNNER_FCM_SERVICE_ACCOUNT_REF` on the state service and check `/health` says
-  `push.mode: "fcm"`.
+- **Turn on FCM**: download `google-services.json` for the Android app
+  `app.forerunner.mobile` from the Firebase console, store it base64-encoded as the Actions
+  secret `GOOGLE_SERVICES_JSON_BASE64` (`base64 -w0 google-services.json`; for a local build
+  copy the file to `gen/android/app/` or run `node scripts/android-google-services.mjs` with
+  the variable set), and check that the build log says `google-services.json found: FCM push
+  is built in`. On the state service set `FORERUNNER_FCM_SERVICE_ACCOUNT_REF` to the vault
+  secret holding the service account JSON and check `/health` says `push.mode: "fcm"`. Then a
+  phone paired with that APK shows `fcm — Firebase Cloud Messaging` in Settings.
+- **A new push kind**: the state service's fan-out (`state-service.md`), `PushLinks.KINDS`,
+  `channelFor` and `defaultTitle` (with `PushLinksTest`), and `PushCategory` in `push.ts`.
+- **A new notification route**: it is a mobile route in `MobileRoutes`; `safeAppPath`
+  (`push.ts`) and `PushLinks.safeLink` accept any plain absolute path, so only a route with
+  characters outside `A-Z a-z 0-9 . _ ~ - /` needs both rules changed together.
 - **Change where the key lives**: implement `Wrapper` in `keystore.rs` (or another Kotlin
   plugin) and pick it in `platform_bits`; `SecureFiles` and the tests stay.
 - **Directory rules**: `dirs.rs` mirrors `packages/platform/src/paths.ts`; change both and
@@ -1560,7 +1635,22 @@ sends no `pushToken` and `push.rs` `configured(token)` returns `PollingPush`.
   string without the prompt's ticket and consuming it on use, the status and prompt
   mappings, `wait_bounded` ending a call that hangs or panics, the capability naming
   `biometric:allow-status` / `biometric:allow-authenticate` for the `main` window with the
-  plugin and the command registered in `lib.rs`, push stand-in);
+  plugin and the command registered in `lib.rs`, push stand-in, the push status following the
+  token the platform reports now); no workflow runs the mobile crate's `cargo test` (the
+  Android job compiles the crate for the Android targets only);
+- `apps/ui/test/mobile-push-token.test.ts` (ADR 0085): the shell's FCM token sent as
+  `pushToken` at pairing, the field left out on the polling stand-in (and no PUT ever), a
+  refreshed token sent with `PUT /devices/:id/push-token` signed by the device and not
+  re-sent when unchanged, a token rotated while closed sent at the next launch, a vanished
+  token sent as null, the foreground re-check, nothing while unpaired, a failed PUT retried;
+  the token in no console line, service log line, stored value, state or device view (only
+  its fingerprint stored); `parsePushLink` refusals and the route opened on launch from a
+  notification. `scripts/android-google-services.test.ts`: the secret written mode 0600 and
+  checked (JSON, project id, the app's package) without printing it, nothing without it, the
+  Gradle gating, no Firebase in the main source set or manifest, `fcmToken` in `info`, the
+  gitignore entries and both workflows' steps. `gen/android/app/src/test/.../PushLinksTest.kt`
+  runs in CI only (`android.yml`, `./gradlew :app:testX86_64DebugUnitTest
+  -PforerunnerFcmCompileCheck=true`, which also compiles `src/fcm`);
   `cargo clippy -D warnings`, `cargo fmt --check`.
 - `apps/mobile/e2e/run.mjs`: the emulator smoke (CI's Android job; skips visibly here, and
   every skip, the release-APK one included, fails under `FR_ANDROID_REQUIRE=1`). It attaches
@@ -1646,8 +1736,14 @@ node apps/mobile/e2e/run.mjs
 - The change log lives on the phone (per install); the service has no device-facing change
   log route, so the desktop's log and the phone's are joined only through the remote command
   rows and `undoOf`.
-- Push is the polling stand-in (`docs/status/BLOCKERS.md`, Firebase row); notices appear only
-  while the app is open.
+- Push is the polling stand-in until `GOOGLE_SERVICES_JSON_BASE64` is set and the state
+  service has its service account (`docs/status/BLOCKERS.md`, Firebase row); until then notices
+  appear only while the app is open. The FCM Kotlin (`src/fcm`, `MainActivity`'s intent
+  rewrite, `KeystorePlugin.info`'s token) is compiled in CI but has run on no device yet; the
+  first FCM build needs a manual check on a phone (token at pairing, a notification for each
+  kind, the tap opening its route). Background notifications all land on the `updates`
+  channel, because the service's messages name no `android.notification.channel_id`; adding
+  it per kind in `fcm.ts` would put approvals on `attention` in the background too.
 - The emulator's WebView is too old for the app's stylesheet (ADR 0087): the API 30
   `aosp_atd` image ships a Chromium 83-class WebView with no Play Store to update it, and
   Tailwind v4 puts every rule in cascade layers (`@layer`, Chrome 99+), which Chromium 83

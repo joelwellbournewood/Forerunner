@@ -121,3 +121,48 @@ in the points above:
 - Each request has a 10 s timeout, retried like a network error.
 - Messages from the human's own agent are pushed only when they need the human; one token on
   several device rows is sent to once and cleared from all of them.
+
+## Amendment (2026-10-25): point 9 is built; what is left is the human's two files
+
+A Firebase project now exists with the Android app registered, so point 9's stand-in gives way
+to the app half, built so that it switches itself on only when the Firebase config is present:
+
+- **Gradle, gated on the file.** `gen/android/app/build.gradle.kts` adds `firebase-messaging`,
+  the `src/fcm` sources and manifest and the `com.google.gms.google-services` plugin, and sets
+  `BuildConfig.FCM_CONFIGURED`, only when `google-services.json` is in the app module. Every
+  build without it (fork PRs, runs without the secret, the emulator smoke) is the polling
+  stand-in exactly as before. `-PforerunnerFcmCompileCheck=true` compiles the FCM sources
+  without the file; `android.yml` uses it with the Kotlin unit tests so the code keeps building.
+- **The config is a build secret.** `google-services.json` is never committed (gitignored; the
+  secret scan flags a Google API key). CI writes it from the Actions secret
+  `GOOGLE_SERVICES_JSON_BASE64` through `scripts/android-google-services.mjs`, the pattern of
+  `android-keystore.mjs`, in `android.yml` and `release.yml`; without the secret the step
+  writes nothing and the build stays polling. It is optional in `release.yml`, unlike the
+  release key: a release without push is still a correct release.
+- **The app.** `ForerunnerMessagingService` (`onNewToken` into `PushTokenStore`;
+  `onMessageReceived` posts the generic title and body for the four kinds, on an `attention`
+  or `updates` channel, dropping unknown kinds and any `link` that is not a plain app path);
+  `FcmStartup` stores the current token at each launch and creates the channels;
+  `MainActivity` turns a tapped notification into `fr://open?link=<path>`, which the UI opens
+  through the deep-link plugin like a pairing link, and asks for `POST_NOTIFICATIONS` once on
+  Android 13+. `KeystorePlugin.info` returns `fcmToken` (null without Firebase); the Rust
+  shell re-reads it on every `push_status`.
+- **The token at pairing and on refresh.** The UI sends it as `pushToken` on
+  `POST /pairing/complete` when the shell has one, and on bootstrap and each return to the
+  foreground sends a changed token with the signed `PUT /devices/:id/push-token` (null when
+  it disappeared). It keeps only a SHA-256 fingerprint to detect the change; the token is
+  never logged, shown or stored by the UI.
+
+What remains is outside the repository, for the human:
+
+1. `google-services.json` for the Android app `app.forerunner.mobile` from the Firebase
+   console, stored base64-encoded as the Actions secret `GOOGLE_SERVICES_JSON_BASE64`.
+2. A service account JSON key with the "Firebase Cloud Messaging API Admin" role, stored in
+   the vault and named on the state service by `FORERUNNER_FCM_SERVICE_ACCOUNT_REF` (point 3).
+
+Not verified yet: the Android-dependent Kotlin and Gradle changes are compiled only by CI's
+Android job (no Android SDK where they were written; only the pure `PushLinks` rules were
+compiled and tested on a JVM there), and nothing has run on a device; the first APK built
+with the secret needs a manual check on a phone. Background notifications use the
+manifest's default channel (`updates`) for every kind, because the sender names no
+`android.notification.channel_id`; naming it per kind in `fcm.ts` is a small follow-up.

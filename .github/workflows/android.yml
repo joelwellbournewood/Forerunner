@@ -51,10 +51,17 @@ jobs:
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      - name: Firebase config for FCM push (written only when the secret is set; fork PRs and runs without it build the polling stand-in)
+        run: node scripts/android-google-services.mjs
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
       - name: Tauri android build (apk, x86_64 for the emulator + arm64 for phones)
         run: pnpm --filter @forerunner/mobile tauri android build --apk --target x86_64 --target aarch64 --ci
       - name: Verify the release APK signature (apksigner; an unsigned or debug-signed APK fails the job; the generated development key is allowed here, never in release.yml)
         run: node scripts/android-apk-verify.mjs --allow-development-key
+      - name: Kotlin unit tests and the FCM compile check (src/fcm and firebase-messaging compile even without google-services.json)
+        working-directory: apps/mobile/src-tauri/gen/android
+        run: ./gradlew --no-daemon :app:testX86_64DebugUnitTest -PforerunnerFcmCompileCheck=true
       - name: Free disk space for the emulator (the APK build leaves under 4 GB; the emulator needs 1.8 x disk-size)
         run: |
           df -h / | tail -1

@@ -19,6 +19,7 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import org.json.JSONObject
 
 @InvokeArg
 class WrapArgs {
@@ -36,8 +37,9 @@ class WrapArgs {
  * wrapped bytes or key material; errors name only what failed.
  *
  * `info` reports the device model (suggested device name at pairing), whether StrongBox
- * exists, whether a biometric prompt can be shown and, once a Firebase project is wired,
- * the FCM registration token (absent in this build; see `docs/status/BLOCKERS.md`).
+ * exists, whether a biometric prompt can be shown and `fcmToken`: the FCM registration token
+ * in an APK built with `google-services.json` (ADR 0085 point 9), null otherwise. The Rust
+ * shell reads it at setup and again on every `push_status`, so a refreshed token shows up.
  */
 @TauriPlugin
 class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
@@ -129,8 +131,10 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
     out.put("model", (Build.MANUFACTURER + " " + Build.MODEL).trim())
     out.put("strongBox", hasStrongBox())
     out.put("biometric", biometricAvailable())
-    // FCM: no Firebase project in this build; when one exists, put the token from
-    // FirebaseMessaging.getInstance().token here as "fcmToken" (ADR 0032).
+    // FCM (ADR 0085 point 9): the registration token PushTokenStore holds, only in an APK
+    // built with google-services.json; null otherwise and until Firebase hands one over.
+    val token = if (BuildConfig.FCM_CONFIGURED) PushTokenStore.read(activity) else null
+    out.put("fcmToken", token ?: JSONObject.NULL)
     invoke.resolve(out)
   }
 

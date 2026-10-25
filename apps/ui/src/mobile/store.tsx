@@ -68,6 +68,8 @@ import {
   type PushNotice,
   type PushPort,
   type PushStatus,
+  parsePushLink,
+  pushTokenFingerprint,
   type QuietHours,
 } from "./push.ts";
 import {
@@ -148,6 +150,8 @@ export interface MobileState {
   quietHours: QuietHours;
   /** Pairing details a deep link or scan pre-filled. */
   pendingPairing: PairingPayload | null;
+  /** The in-app route a tapped push notification asked for (`fr://open?link=`), until shown. */
+  pendingLink: string | null;
   secureStoreKind: SecureStore["kind"];
   inShell: boolean;
   shellVersion: string | null;
@@ -189,6 +193,7 @@ export function initialMobileState(partial: Partial<MobileState> = {}): MobileSt
     changeLogVersion: 0,
     quietHours: { from: null, to: null },
     pendingPairing: null,
+    pendingLink: null,
     secureStoreKind: "memory",
     inShell: false,
     shellVersion: null,
@@ -300,6 +305,17 @@ const QUIET_KEY = "quietHours";
 const CHANGES_KEY = "changes";
 const OUTBOX_KEY = "outbox";
 const UNLOCK_WINDOW_KEY = "runnerUnlockWindow";
+/** `{ deviceId, fingerprint }` of the push token the service holds; never the token. */
+const PUSH_REGISTRATION_KEY = "pushRegistration";
+
+interface PushRegistration {
+  deviceId: string;
+  /** SHA-256 of the registered token (`pushTokenFingerprint`); null = registered as none. */
+  fingerprint: string | null;
+}
+
+/** What `syncPushToken` did; nothing in it carries the token. */
+export type PushSyncOutcome = "sent" | "unchanged" | "skipped" | "failed";
 /**
  * A biometric prompt that has not answered by then is a refusal: long enough to touch the
  * sensor and confirm, and well inside the emulator smoke's 180 s wait for the refusal.
@@ -382,6 +398,8 @@ export class MobileController {
   private stream: StateStreamSubscription | null = null;
   private inboxReload: ReturnType<typeof setTimeout> | null = null;
   private stopDeepLink: (() => void) | null = null;
+  private stopVisibility: (() => void) | null = null;
+  private pushSync: Promise<PushSyncOutcome> | null = null;
   private closed = false;
   private losingAuth = false;
 
@@ -483,19 +501,17 @@ export class MobileController {
     } catch {
       token = null;
     }
-    void this.env.push
-      .status()
-      .then((push) => this.patch({ push }))
-      .catch(() => {});
+    void this.pushStatus().catch(() => {});
     void this.biometric
       .available()
       .then((ok) => this.patch({ biometricAvailable: ok }))
       .catch(() => {});
     if (this.env.deepLink) {
       const current = await this.env.deepLink.current().catch(() => null);
-      if (current) this.offerPairing(current);
-      this.stopDeepLink = this.env.deepLink.listen((url) => this.offerPairing(url));
+      if (current) this.offerDeepLink(current);
+      this.stopDeepLink = this.env.deepLink.listen((url) => this.offerDeepLink(url));
     }
+    this.watchVisibility();
     if (saved && token) {
       this.client = createStateClient({ baseUrl: saved.baseUrl, token }, this.env.signer, {
         fetch: this.env.fetch,
@@ -506,6 +522,8 @@ export class MobileController {
       if (this.state.stage === "paired") {
         this.startStream();
         await this.flushOutbox();
+        // A token FCM rotated while the app was closed goes out now (ADR 0085 point 6).
+        await this.syncPushToken();
       }
       return;
     }
@@ -517,6 +535,9 @@ export class MobileController {
     this.stream?.close();
     this.stream = null;
     this.stopDeepLink?.();
+    this.stopDeepLink = null;
+    this.stopVisibility?.();
+    this.stopVisibility = null;
     if (this.inboxReload) clearTimeout(this.inboxReload);
   }
 
@@ -525,6 +546,108 @@ export class MobileController {
     const payload = parsePairingPayload(text);
     if (payload) this.patch({ pendingPairing: payload });
     return payload;
+  }
+
+  /**
+   * A link the shell handed over: a pairing link, or `fr://open?link=<path>` from a tapped
+   * push notification (MainActivity rewrites the FCM `link` to that). The route is held in
+   * `pendingLink` until the shell navigates to it (`takePendingLink`).
+   */
+  offerDeepLink(text: string): void {
+    if (this.offerPairing(text)) return;
+    const link = parsePushLink(text);
+    if (link) this.patch({ pendingLink: link });
+  }
+
+  /** The route a notification asked for, once; null when there is none. */
+  takePendingLink(): string | null {
+    const link = this.state.pendingLink;
+    if (link) this.patch({ pendingLink: null });
+    return link;
+  }
+
+  /**
+   * The push status for Settings. The state keeps mode and detail only: the registration
+   * token goes to the state service and is never held in state, shown or logged.
+   */
+  private async pushStatus(): Promise<PushStatus | null> {
+    let status: PushStatus;
+    try {
+      status = await this.env.push.status();
+    } catch {
+      return null;
+    }
+    this.patch({ push: { mode: status.mode, detail: status.detail, token: null } });
+    return status;
+  }
+
+  private async currentPushToken(): Promise<string | null> {
+    const status = await this.pushStatus();
+    const token = status?.mode === "fcm" ? status.token?.trim() : "";
+    return token ? token : null;
+  }
+
+  private readRegistration(): PushRegistration | null {
+    return readJson<PushRegistration | null>(
+      this.env.storage,
+      mobileKey(this.env.installId, PUSH_REGISTRATION_KEY),
+      null,
+    );
+  }
+
+  private async recordRegistration(deviceId: string, token: string | null): Promise<void> {
+    const registration: PushRegistration = {
+      deviceId,
+      fingerprint: token ? await pushTokenFingerprint(token) : null,
+    };
+    writeJson(this.env.storage, mobileKey(this.env.installId, PUSH_REGISTRATION_KEY), registration);
+  }
+
+  /**
+   * Tell the state service about a refreshed FCM token (`PUT /devices/:id/push-token`, signed
+   * by the device key like every mutation). Runs after bootstrap and whenever the app comes
+   * back to the foreground; sends only when the token differs from the one registered for this
+   * device (a token that disappeared is sent as null). A build without Firebase has no token
+   * and never sends. Failures are quiet and retried on the next foreground; the outcome and
+   * any error never carry the token.
+   */
+  syncPushToken(): Promise<PushSyncOutcome> {
+    if (!this.pushSync) {
+      this.pushSync = this.doSyncPushToken().finally(() => {
+        this.pushSync = null;
+      });
+    }
+    return this.pushSync;
+  }
+
+  private async doSyncPushToken(): Promise<PushSyncOutcome> {
+    const session = this.state.session;
+    if (this.state.stage !== "paired" || !session) return "skipped";
+    const token = await this.currentPushToken();
+    const fingerprint = token ? await pushTokenFingerprint(token) : null;
+    const registered = this.readRegistration();
+    const sameDevice = registered?.deviceId === session.deviceId;
+    if (sameDevice && registered.fingerprint === fingerprint) return "unchanged";
+    // Nothing was ever registered for this device and there is no token: nothing to clear.
+    if (!token && !(sameDevice && registered.fingerprint)) return "unchanged";
+    try {
+      await this.client.setPushToken(session.deviceId, token);
+    } catch (error) {
+      this.handleAuthLoss(error);
+      return "failed";
+    }
+    await this.recordRegistration(session.deviceId, token);
+    return "sent";
+  }
+
+  /** Coming back to the foreground re-checks the push token (FCM may have rotated it). */
+  private watchVisibility(): void {
+    if (this.stopVisibility || typeof document === "undefined") return;
+    const onChange = () => {
+      if (document.visibilityState === "visible" && !this.closed) void this.syncPushToken();
+    };
+    document.addEventListener("visibilitychange", onChange);
+    this.stopVisibility = () => document.removeEventListener("visibilitychange", onChange);
   }
 
   async scanPairing(): Promise<PairingPayload | null> {
@@ -542,11 +665,16 @@ export class MobileController {
       fetch: this.env.fetch,
       now: this.env.now,
     });
+    // The FCM registration token goes with the pairing when the shell has one (ADR 0085
+    // point 6); the polling stand-in has none and the field is left out.
+    const pushToken = await this.currentPushToken();
     const result = await anonymous.completePairing({
       code: input.code,
       name: input.deviceName,
       platform: this.env.platform ?? (this.env.inShell ? "android" : "web"),
+      pushToken,
     });
+    await this.recordRegistration(result.deviceId, pushToken);
     const session: MobileSessionInfo = {
       baseUrl,
       deviceId: result.deviceId,
@@ -617,6 +745,7 @@ export class MobileController {
       // nothing to remove
     }
     this.env.storage.remove(mobileKey(this.env.installId, SESSION_KEY));
+    this.env.storage.remove(mobileKey(this.env.installId, PUSH_REGISTRATION_KEY));
     await this.env.signer.forget().catch(() => {});
     this.client = this.client.withToken(null);
     this.patch({

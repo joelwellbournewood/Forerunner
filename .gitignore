@@ -20,6 +20,8 @@ apps/mobile/src-tauri/gen/android/app/build/
 apps/mobile/src-tauri/gen/android/build/
 *.keystore
 *.jks
+# Firebase configuration for FCM push: a build secret (GOOGLE_SERVICES_JSON_BASE64; ADR 0085)
+google-services.json
 *.apk
 *.aab
 # test artefacts

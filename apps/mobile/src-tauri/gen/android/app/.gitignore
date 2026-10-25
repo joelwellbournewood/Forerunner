@@ -4,3 +4,6 @@
 /tauri.build.gradle.kts
 /proguard-tauri.pro
 /tauri.properties
+# Firebase configuration: a build secret (GOOGLE_SERVICES_JSON_BASE64), written by
+# scripts/android-google-services.mjs. Never commit it (ADR 0085).
+/google-services.json

@@ -105,8 +105,11 @@ export const DeviceView = z.object({
   revokedAt: z.string().nullable(),
   pairedAt: z.string(),
   version: z.number().int(),
+  /** The service holds an FCM registration token for the device (ADR 0085); never the token. */
+  pushRegistered: z.boolean().optional(),
 });
 export type DeviceView = z.infer<typeof DeviceView>;
+const DeviceEnvelope = z.object({ device: DeviceView });
 
 export const QueueItemView = z.object({
   id: z.string(),
@@ -310,7 +313,7 @@ export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 export type Query = Record<string, string | number | null | undefined>;
 
 export interface RawRequestOptions {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT";
   path: string;
   query?: Query;
   body?: unknown;
@@ -346,8 +349,13 @@ export interface StateClient {
     code: string;
     name: string;
     platform: string;
-    pushToken?: string;
+    pushToken?: string | null;
   }): Promise<PairingResultView>;
+  /**
+   * `PUT /devices/:id/push-token` (ADR 0085 point 6), signed like every device mutation: the
+   * FCM registration token after a refresh, or null to stop push for this device.
+   */
+  setPushToken(deviceId: string, pushToken: string | null): Promise<DeviceView>;
   me(signal?: AbortSignal): Promise<MeView>;
   projects(signal?: AbortSignal): Promise<ProjectCard[]>;
   project(id: string, signal?: AbortSignal): Promise<ProjectCard>;
@@ -650,11 +658,24 @@ export function createStateClient(
           proof,
           name: input.name.slice(0, 120),
           platform: input.platform.slice(0, 40),
-          ...(input.pushToken ? { pushToken: input.pushToken } : {}),
+          // The FCM registration token when the shell has one (ADR 0085); omitted, not null,
+          // on the polling stand-in.
+          ...(input.pushToken?.trim() ? { pushToken: input.pushToken.trim() } : {}),
         },
         { anonymous: true },
       );
     },
+    setPushToken: async (deviceId, pushToken) =>
+      (
+        await request(
+          {
+            method: "PUT",
+            path: `/devices/${encodeURIComponent(deviceId)}/push-token`,
+            body: { pushToken: pushToken?.trim() ? pushToken.trim() : null },
+          },
+          DeviceEnvelope,
+        )
+      ).device,
     me: (signal) => get("/me", MeView, undefined, signal),
     projects: async (signal) => (await get("/projects", ProjectList, undefined, signal)).projects,
     project: (id, signal) =>

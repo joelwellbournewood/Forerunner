@@ -1,10 +1,12 @@
-//! Push notifications (spec R.6) behind one port. FCM is not configured for this build:
-//! there is no Firebase project, no `google-services.json` and no server key
-//! (`docs/status/BLOCKERS.md`). The shipped mode is the visible polling stand-in: the UI's
-//! change feed (live SSE, or polling) raises in-app notices, and Settings says so. When a
-//! Firebase project exists, `FcmPush` replaces `PollingPush` here (token from
-//! `FirebaseMessaging.getInstance().token` through a Kotlin command, registered at pairing
-//! as `pushToken`), and the service's `device.push_token` column already holds it.
+//! Push notifications (spec R.6) behind one port (ADR 0032 item 6, ADR 0085 point 9). An APK
+//! built with `google-services.json` in `gen/android/app` carries Firebase Cloud Messaging:
+//! `KeystorePlugin.info` reports the registration token (`fcmToken`, kept by
+//! `PushTokenStore` from `FirebaseMessaging.getInstance().token` and `onNewToken`), and
+//! `configured(token)` returns `FcmPush`; the UI sends the token at pairing (`pushToken`) and
+//! after a refresh (`PUT /devices/:id/push-token`). `push_status` re-reads the token on every
+//! call. Without the file (every build that lacks the secret, the emulator smoke) `info`
+//! reports null and the mode is the visible polling stand-in: the UI's change feed (live SSE,
+//! or polling) raises in-app notices, and Settings says so. Nothing here logs the token.
 
 use serde::Serialize;
 

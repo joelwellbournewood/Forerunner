@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BrowserRouter, Navigate, NavLink, Outlet, Route, Routes, useLocation } from "react-router";
+import {
+  BrowserRouter,
+  Navigate,
+  NavLink,
+  Outlet,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router";
 import type { HumanRequestView } from "../api/state-client.ts";
 import { useAutoUnlock } from "../components/UnlockCard.tsx";
 import { Badge, Button, Loading } from "../components/ui.tsx";
@@ -128,6 +137,15 @@ function MobileShell() {
       controller.answerUnlock(request, prepared),
     [controller],
   );
+  // A tapped push notification (ADR 0085 point 8): the shell hands over `fr://open?link=`,
+  // the controller holds the route and the shell opens it once the phone is paired.
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (state.stage !== "paired" || !state.pendingLink) return;
+    const link = controller.takePendingLink();
+    if (link) navigate(link);
+  }, [controller, navigate, state.stage, state.pendingLink]);
+
   useAutoUnlock({
     requests: state.stage === "paired" ? openRequests : [],
     bridge: controller.runnerKeys,
