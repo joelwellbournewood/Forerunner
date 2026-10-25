@@ -30,7 +30,7 @@ ToolSpecs, how classes are inferred and who may be started for discovery.
 | `catalog.ts`, `catalog.json` | the built-in catalog, `CatalogEntry`/`CatalogFile` schemas, `ConnectorTransport` (stdio argv or http), bounded `fetchJson`, remote catalog fetch and `ExtensionCatalog` (`isBuiltin`) |
 | `mcp.ts` | `McpConnector` (connect, list tools and resources, `review()`, `bridgeTools()`, `callTool()`, `close()`, `child`), `StdioMcpTransport` over the platform shell, class and field inference, `assignBridgedNames`, `withoutSecretRefs`, `toolPrefixOf`/`ownsToolName`, `DefaultMcpConnectorFactory` |
 | `approvals.ts` | `HumanRequestExtensionApprovals` (production port over `HumanRequestRepo`) and `MemoryExtensionApprovals` (tests) |
-| `registry.ts` | `ExtensionRegistry`: list, get, add from catalog or URL, approve/deny (two stages), toggle, remove, updatePermissions, recordCost, start/close, bridged tools, tool ownership index, `enabledCatalogEntries(kind?)` (the enabled catalog rows with their entry, for the voice preferences); `grantedToolNames()`, `extensionCostKey()`, `ledgerCostByExtension()`, `KillPort`, `EXTENSIONS_KILL_AGENT` |
+| `registry.ts` | `ExtensionRegistry`: list, get, add from catalog or URL, approve/deny (two stages), toggle, remove, updatePermissions, recordCost, start/close, bridged tools, tool ownership index, `installedCatalogEntries(kind?)` and `enabledCatalogEntries(kind?)` (the installed catalog rows with their entry, on or off, and the enabled ones among them, for the voice preferences); `grantedToolNames()`, `extensionCostKey()`, `ledgerCostByExtension()`, `KillPort`, `EXTENSIONS_KILL_AGENT` |
 | `gate.ts` | `ExtensionGate.check()`, `GatedEnforcementHooks` (hooks with the gate in front of `beforeToolCall`), `gateTool()` |
 | `routes.ts` | `createExtensionsRoutes(deps)`: the Hono sub-app for the panel |
 
@@ -41,11 +41,13 @@ shown as a connector), `skill`, `specialist`, `capability` (browser, email, desk
 cloudflare, voice providers), `model_provider`. `(kind, name)` is unique.
 
 **Voice rows (spec O.4).** Enabling a `voice-*` capability is how the human chooses a voice
-provider: `enabledCatalogEntries("capability")` hands the enabled installed rows with their
-catalog entry (a fresh read each call) to `src/voice/providers.ts`, which takes the entry's
-`voice` provider names and the row's granted `secrets` and resolves the preferred STT and TTS
-at every voice status read and session start (`voice.md`, "Which provider is preferred").
-A pending, disabled or errored row, or one whose entry left the catalog, is not listed.
+provider, and switching it off is how they rule one out: `installedCatalogEntries("capability")`
+hands the installed rows, on or off, with their catalog entry (a fresh read each call) to
+`src/voice/providers.ts`, which takes the entry's `voice` provider names, the row's `enabled`
+flag and its granted `secrets` and resolves the preferred STT and TTS at every voice status
+read and session start; a switched-off row, or one whose grant no longer lists its provider's
+key, excludes its cloud providers from the registry's fallback (`voice.md`, "Which provider is
+preferred"). A pending or errored row, or one whose entry left the catalog, is not listed.
 
 Panel status is derived from the row: `pending_approval` while `extension.status` is
 `pending_approval` (the view's `pendingStage` says whether the human is asked to allow the
