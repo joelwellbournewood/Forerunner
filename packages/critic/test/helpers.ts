@@ -189,6 +189,9 @@ export async function world(opts: WorldOptions = {}): Promise<World> {
     budget_cap_usd_micro: opts.session?.budgetCapUsdMicro ?? 5_000_000,
     step_cap: 200,
     plan: opts.session?.plan ?? { items: [], estimateUsdMicro: 0, summary: "" },
+    // A row created with its plan names the reason and the author (B.5, the insert guard).
+    reason: "fixture session",
+    author_agent: owner.id,
     summary: opts.session?.summary ?? "",
   });
   const task = await store.task.insert({

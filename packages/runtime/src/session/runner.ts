@@ -643,8 +643,12 @@ export class SessionRunner {
       });
       plan = cutPlanToBudget(plan, Math.floor(opts.budgetCapUsdMicro * (1 - reserveShare)));
       // B.5: the plan is a versioned change to the session with the agent as author and the
-      // planner's summary as the reason. The row may have moved since start (spend counters),
-      // so the version check runs against a fresh read.
+      // planner's summary as the reason. The row is read fresh here because its status may have
+      // moved while the planner worked: the daemon's pause port marks a running row `paused` at
+      // once and a kill ends it, each bumping `version`, and neither is a plan conflict. This
+      // runner is the row's only plan writer (one active session per agent, checked above), so
+      // the fresh version is the one the plan is a change to; the repository still refuses a
+      // stale write (session.test.ts "writes the plan against a fresh read of the row").
       const beforePlan = await store.session.mustGet(session.id);
       session = await store.session.setPlan(
         beforePlan.id,

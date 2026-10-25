@@ -943,9 +943,10 @@ and its read receipt, the settings screen (`POST /commands/execute`, then
 `POST /commands/:id/confirm` with the tap), the Changes screen (`GET /changes`,
 `POST /changes/:id/undo`) and chat (`POST /chat`); the header's Resume (`POST /kill/resume`)
 is wired in `UiClient` but the week no longer needs it (nothing freezes the agent since
-RT-P5-2 closed). What the week never opens (extensions, updates, the model watch, Cloudflare, desktop control,
-data, costs, the mirror, the sandbox, the sync gate, the vault, source discovery, the project
-docs port, shared secrets and the email settings routes' capability ports) is an `absent`
+RT-P5-2 closed). What the week never opens (extensions, updates, the model watch, Cloudflare,
+desktop control, data, costs, the mirror, the sandbox, the sync gate, the vault, source
+discovery, the project docs port, shared secrets and the email settings routes' capability
+ports) is an `absent`
 stand-in that throws `unavailable` naming the field when a route reaches it; the email mount
 reads `rt.capabilities.email.ports.*` while the daemon app is built, so that field must be a
 stand-in rather than missing, or `createDaemonApp` throws before the week starts. Its `syncApprovals` mirrors
@@ -991,9 +992,9 @@ in the phone's inbox, applied by the PC's drain. The report (`formatPhase5`) is 
 written to `FORERUNNER_E2E_REPORT_DIR` as `phase5-week.txt`.
 
 Measured on 2026-10-20 (fake provider, Linux, about 50 s with the daemons' approvals poll
-every simulated minute; 49.8 s, 51.8 s and 51.6 s for the file in the three runs below): 12 scheduled and 1 remote session, 13 completed, 13 tasks done
-(Tuesday's tier 3 task closed by the sign-off's accept) and 13 pull requests on the two
-repositories; 29 voice turns with
+every simulated minute; 49.8 s, 51.8 s and 51.6 s for the file in the three runs below): 12
+scheduled and 1 remote session, 13 completed, 13 tasks done (Tuesday's tier 3 task closed by
+the sign-off's accept) and 13 pull requests on the two repositories; 29 voice turns with
 a median of 520 ms to first audio (end of turn 20, final transcript 300, model first token 0
 on the fake provider's zero-latency stream, first audio 200), all within target, 29
 `voice.turn` rows; 9 settings changes with the same entry across the three channels and 9
@@ -1170,8 +1171,8 @@ doctor and the eval checks as argv arrays).
 
 ### Known issues
 
-- The CI step that runs the e2e project is still named after the phase 3 and 4 harnesses
-  (see "How to run"); the gate rows cite local runs and that step.
+- The CI step that runs the e2e project (`ci.yml`, on both OS) is still named after the
+  phase 3 and 4 harnesses (see "How to run"); the gate rows cite local runs and that step.
 - Phase 5 runtime follow-ups, opened by the gate (ADR 0045 item 7). The ids are the keys of
   `PHASE5_RUNTIME_FOLLOW_UPS` in `tests/e2e/src/gate5-week.ts`, printed as the last line of
   `phase5-week.txt`, and sit on the harness assertions that pin each defect, so the harness
@@ -1266,8 +1267,9 @@ doctor and the eval checks as argv arrays).
     stopped as that session only, an ended one refused, a picked-up row refused as in flight
     and still offered, a done row without an id and a failed row refused as such, a pending
     row cancelled), `packages/runtime/test/remote-watcher.test.ts` (the plain `start`'s
-    result carries the scheduler entry's id). Pins inverted: test 4, `killFrozenAfterUndo` and `resumedFromUi` are `false`
-    (J pressed no Resume; Friday's scheduled session ran on its own).
+    result carries the scheduler entry's id). Pins inverted: test 4, `killFrozenAfterUndo`
+    and `resumedFromUi` are `false` (J pressed no Resume; Friday's scheduled session ran on
+    its own).
   - **RT-P5-3, closed 2026-10-20: the hooks held a command tool on the model path before
     the registry's card formed.** On the conversation's model path `email_mode_set` is
     classed `permission_change` (always-human, `packages/runtime/src/enforcement/autonomy.ts`),
@@ -1376,8 +1378,9 @@ sent-back task resolved its finding before closing), S.1 (every tool call audite
 by the hooks because the grant was right). Phase 7: M.1 (Forerunner as a project, the request
 in its task list through the conversation agent and the change log), M.2 (PR, tier 2 critic
 on the opus rung, the human merge; the "tests in Docker" clause is proven by
-`packages/runtime/test/sandbox-container.test.ts`, not by the harness), M.3 (signed release on the git host's releases, "Update
-available" with the changelog, "Update and restart" on two installs), M.4 (staged install,
+`packages/runtime/test/sandbox-container.test.ts`, not by the harness), M.3 (signed release
+on the git host's releases, "Update available" with the changelog, "Update and restart" on
+two installs), M.4 (staged install,
 health check on restart, automatic rollback, config, data and memory untouched, the second
 install refusing the rolled-back release), M.5 (the model watch's recommendations in the
 updates view next to the app update), D.6 and D.21 (the weekly watch on the eval set with
@@ -1430,7 +1433,8 @@ phase 1 tasks and the kill task, shared by both halves), `src/dry-run.ts` (fake 
 the fake ladder priced like the real one), `src/stats.ts`, `src/report.ts` (`reportDir`,
 `writeReport`, `readPhase1Evidence`); the tests under `test/`: `env`, `budget`, `metered`,
 `harness` (the dry runs of both halves; on under the package's own `test` script, which
-`ci.yml` runs on both OS, step "Live harness offline tests") and the four `live-*.live.test.ts` files (opt-in).
+`ci.yml` runs on both OS, step "Live harness offline tests") and the four
+`live-*.live.test.ts` files (opt-in).
 
 ### How it works
 
@@ -1554,7 +1558,8 @@ no run exceeds its cap, no call is refused, the store's cost ledger for the sess
 the same tokens the provider reported, the runs charge the `api_key` source; (2b) the gate
 case on its own: `completed + inReview === 3` and nothing sent back by the critic, so a
 critic defect such as the tier 1 escalate-at-confidence-0.5 verdicts of runs 1 to 3 below
-(fixed by ADR 0042; the case passed in run `2026-10-20T18:58:41Z`, gates.md) fails that case and no other, with the verdicts in the message; (3) text chat on Haiku through the composed
+(fixed by ADR 0042; the case passed in run `2026-10-20T18:58:41Z`, gates.md) fails that case
+and no other, with the verdicts in the message; (3) text chat on Haiku through the composed
 `ConversationAgent` with its measured `ttftMs`; (4) a fourth, long task started and stopped
 with `kill.stop("all")` 0.5 s after its first model call: the session ends `killed` in under
 2 s of wall time, the claim is released, no call starts after the stop, and when a call was in
@@ -1684,8 +1689,9 @@ ledger, the sources, the metered calls or the evidence; 51 host-session variable
 scrubbed before the subprocess ran. The per-task comparison with the API-key half was not made
 inside the file (its `phase1-live.json` was not in the report directory): gates.md compares the
 recorded outcomes of the two runs (3 of 3 completed on each source); the same-run check and the
-stale flag (`comparePhase1`, `test/report.test.ts`) were added after this run. Found on the way: one `submit_review`
-call of the critic was refused by the schema (`findings` sent as a string) and retried.
+stale flag (`comparePhase1`, `test/report.test.ts`) were added after this run. Found on the
+way: one `submit_review` call of the critic was refused by the schema (`findings` sent as a
+string) and retried.
 
 ### How to run
 
@@ -1707,9 +1713,11 @@ reason without it. One file alone:
 half's `phase1-live.json` of the *same* run: run both files in one invocation with
 `FORERUNNER_LIVE_REPORT_DIR` set, or set `FORERUNNER_LIVE_RUN` to the API-key run's id and put
 its file in `FORERUNNER_LIVE_REPORT_DIR` or name it with `FORERUNNER_LIVE_PHASE1_EVIDENCE`; a
-file from another run is flagged stale in the evidence, not compared). `FORERUNNER_ANTHROPIC_API` overrides the API base; the SDK's
-`ANTHROPIC_*` variables are dropped from the composed runtime's environment. After a run: commit `spend.json`, copy the numbers into
-`docs/status/gates.md` and `docs/status/COST.md`. Never live in CI: `FORERUNNER_LIVE` is never
+file from another run is flagged stale in the evidence, not compared).
+`FORERUNNER_ANTHROPIC_API` overrides the API base; the SDK's `ANTHROPIC_*` variables are
+dropped from the composed runtime's environment. After a run: commit `spend.json`, copy the
+numbers into `docs/status/gates.md` and `docs/status/COST.md`. Never live in CI:
+`FORERUNNER_LIVE` is never
 set there (today `ci.yml` does not invoke the package at all; the step the orchestrator adds
 is `pnpm --filter @forerunner/live test`, which skips every live case).
 
@@ -1748,11 +1756,12 @@ error before the record, the note and the audit row, no credential-looking value
 ledger or the records; the status rule on hand-written inner providers that wait for the
 signal (`metered.test.ts`): a stream that ends cleanly with `message_end` after the abort is
 `aborted` with the usage it reported, the probe's shape (no event before the stop, then an
-empty `message_end`) is `aborted` at USD 0 with no first token, a stream that throws `AbortError` after a
-`message_start` with usage is `aborted` with the input tokens in the row and the
-`message_start` note (and `no usage reported` without one), a call whose `message_end` came
-before the stop stays `ok` (also when its stream then throws `AbortError`), nothing in flight afterwards in every case; the API-key half's
-evidence file and the per-task comparison
+empty `message_end`) is `aborted` at USD 0 with no first token, a stream that throws
+`AbortError` after a `message_start` with usage is `aborted` with the input tokens in the row
+and the `message_start` note (and `no usage reported` without one), a call whose
+`message_end` came before the stop stays `ok` (also when its stream then throws
+`AbortError`), nothing in flight afterwards in every case; the API-key half's evidence file
+and the per-task comparison
 (`report.test.ts`): read from the report directory or the named path, the comparison made only
 for the same run, a file from another run flagged stale and listed with the reason, not made
 without a file, a task the other half lacks compared as null; the dry run through
@@ -1878,7 +1887,8 @@ of the file. What it assembles, and why this way:
   real `GitHubHost` adapter and pushes over git HTTP with the token as a header (the bare
   repository on disk is the fallback when `git http-backend` is missing). The sample repository
   is created with `options.project.files`; the project row names it in `repos`; one milestone
-  is the plan container and `addTask` adds ready tasks to it.
+  is the plan container (seeded with a reason and J as author, as the store's B.5 insert guard
+  requires) and `addTask` adds ready tasks to it.
 - **The fake provider** runs in script mode with `onNoMatch: "throw"` (a gap in a script fails
   the scenario); scenarios push replies per task with the helpers in
   `tests/e2e/src/scenario-scripts.ts` (`coderWrites`, `coderRunaway`, `criticAccepts`), which
@@ -2021,8 +2031,9 @@ spoken sentence into a command, the card, confirmation by risk, the sentence and
 log). Scenario 8 adds P ("Handover test": a fresh agent from the repo and docs alone), G.1 and
 G.2 (lessons into the agent's private memory), H.2 (tier 2 with the project's checks run), F.5.
 Scenario 9 adds R.2 (pairing with a device key), R.3 (the shared state service), R.4 (remote
-control picked up by the PC within one poll; a replayed envelope runs once), R.5 and R.8 (natural-language control from the
-phone, the work on the PC), R.7 (signed requests, no secret on the phone), Q.4 to Q.7, Q.9
+control picked up by the PC within one poll; a replayed envelope runs once), R.5 and R.8
+(natural-language control from the phone, the work on the PC), R.7 (signed requests, no
+secret on the phone), Q.4 to Q.7, Q.9
 (one card for a plan), Q.10, Q.11 (undo from the log), Q.12 (the registry re-plans the phone's
 plan), I.3 (a temporary budget in CHF at the day's rate).
 
@@ -2040,8 +2051,8 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
 - The session cap reaches a run through the task's allowance (`LoopTaskExecutor` caps the run
   at the session's remaining budget); a task with an estimate stops at its own share first.
   Scenario 5 uses a task without an estimate so the session cap is the one that binds.
-- The e2e vitest project runs in CI on both OS (`ci.yml`, the step named after the phase 3
-  and 4 harnesses); the gate rows cite local runs and that step. The Windows and
+- The scenarios run in CI inside the e2e project (the step is named in the gate harness's
+  Known issues above). The Windows and
   Android runs of the scenarios wait for the final build; scenario 9 drives the phone through
   the app's parser and card builder, not through the Android emulator or the screens. The
   emulator run of the same phone steps is `apps/mobile/e2e/run.mjs` (CI's `android.yml`),

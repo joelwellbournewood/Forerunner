@@ -7,6 +7,7 @@ import { renderStateBrief } from "../src/session/brief.ts";
 import { runStartupChecklist } from "../src/session/checklist.ts";
 import {
   cutPlanToBudget,
+  type Planner,
   SessionRunner,
   StaticPlanner,
   type TaskExecutionResult,
@@ -357,6 +358,54 @@ describe("session runner", () => {
     expect(session.reason).toContain("cut to fit");
     expect(session.author_agent).toBe(w.alice);
     expect(session.author_human).toBeNull();
+  });
+
+  it("writes the plan against a fresh read of the row: a pause landing during planning is no plan conflict, a stale version is still refused (B.5)", async () => {
+    await addTask(w, "Only");
+    const exec = fakeExecutor(w);
+    const kill = new KillSwitch();
+    const tokens = new TokenIssuer({ now: () => w.clock.now() });
+    // The daemon's pause port marks a running row `paused` at once (`session-ports.ts`); here
+    // it lands while the planner works, so the row the runner started has moved (its version
+    // bumped) by the time the plan is written. Spend counters never touch the row.
+    const pausing: Planner = {
+      async plan(ctx) {
+        const row = await w.store.session.mustGet(ctx.session.id);
+        expect(row.version).toBe(2); // insert 1, start 2
+        await w.store.session.setStatus(row.id, row.version, "paused");
+        return new StaticPlanner().plan(ctx);
+      },
+    };
+    const r = new SessionRunner({
+      store: w.store,
+      clock: w.clock,
+      tokens,
+      kill,
+      planner: pausing,
+      executor: exec,
+    });
+    const events: string[] = [];
+    const res = await r.start({
+      agentId: w.alice,
+      projectId: w.project,
+      trigger: "manual",
+      budgetCapUsdMicro: 5_000_000,
+      grant,
+      onEvent: (t) => events.push(t),
+    });
+    expect(events).toContain("session.planned");
+    expect(events).not.toContain("session.error");
+    expect(res.status).toBe("completed");
+    const session = await w.store.session.mustGet(res.sessionId);
+    expect((session.plan as { items: unknown[] }).items).toHaveLength(1);
+    expect(session.reason).toBe("1 ready task(s) in priority order");
+    expect(session.author_agent).toBe(w.alice);
+    // The version check itself holds: a write against the version the runner started with is
+    // refused as stale, and the plan on the row stays what the runner wrote.
+    await expect(
+      w.store.session.setPlan(session.id, 2, { items: [] }, "late", { agentId: w.alice }),
+    ).rejects.toMatchObject({ code: "version_conflict" });
+    expect((await w.store.session.mustGet(session.id)).plan).toEqual(session.plan);
   });
 
   it("stops cleanly with a handoff when the budget runs out mid-session", async () => {

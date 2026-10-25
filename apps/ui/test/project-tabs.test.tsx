@@ -109,7 +109,12 @@ describe("Plan tab: timeline and dependency graph", () => {
       within(dialog).getByTestId("milestone-criteria"),
       "{enter}Search results carry the page title",
     );
-    await user.type(within(dialog).getByTestId("milestone-reason"), "search shipped a week early");
+    // The input's id differs from the row's reason line, so a plain lookup never sees both.
+    expect(screen.getAllByTestId("milestone-reason")).toHaveLength(1);
+    await user.type(
+      within(dialog).getByTestId("milestone-change-reason"),
+      "search shipped a week early",
+    );
     await user.click(within(dialog).getByTestId("confirm-milestone"));
     await waitFor(() => expect(postedCalls(harness, "/milestones/ms_search")).toHaveLength(1));
     expect(postedCalls(harness, "/milestones/ms_search")[0]?.body).toEqual({
@@ -156,7 +161,7 @@ describe("Plan tab: timeline and dependency graph", () => {
       .find((m) => m.dataset.milestoneId === "ms_launch") as HTMLElement;
     await user.click(within(launch).getByTestId("edit-milestone"));
     const dialog = await screen.findByTestId("milestone-dialog");
-    await user.type(within(dialog).getByTestId("milestone-reason"), "pulling the date in");
+    await user.type(within(dialog).getByTestId("milestone-change-reason"), "pulling the date in");
     await user.click(within(dialog).getByTestId("confirm-milestone"));
     await waitFor(() => expect(postedCalls(harness, "/milestones/ms_launch")).toHaveLength(1));
     expect(await within(dialog).findByText(/changed since you loaded it/)).toBeInTheDocument();

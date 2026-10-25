@@ -27,12 +27,18 @@ export class ProjectRepo extends Repository<ProjectRow> {
 
 /**
  * Milestones. Every change is versioned with its author and reason (spec B.5): `change` is
- * the write path, and `updateWhere` refuses any update whose patch lacks a reason or an
- * author, so `update` and `patch` cannot bypass it.
+ * the write path for an existing row, `insert` refuses a new row that names no reason or no
+ * author (a new milestone is a change to the project's plan), and `updateWhere` refuses any
+ * update whose patch lacks them, so `update`, `patch` and `insertMany` cannot bypass it.
  */
 export class MilestoneRepo extends Repository<MilestoneRow> {
   constructor(db: Database, clock: Clock) {
     super(db, ENTITIES.milestone as EntityDef, clock);
+  }
+
+  override async insert(input: Record<string, unknown>): Promise<MilestoneRow> {
+    requireChangeReason(this.table, input);
+    return super.insert(input);
   }
 
   /**

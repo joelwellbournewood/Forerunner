@@ -635,6 +635,8 @@ export async function scenarioWorld(opts: ScenarioWorldOptions = {}): Promise<Sc
       name: opts.project?.milestone ?? "Release 0.1",
       success_criteria: ["The planned tasks are done with a PR each"],
       order_index: 0,
+      // A new milestone is a plan change: it names its reason and author (B.5).
+      reason: "seeded by the scenario world",
       author_human: jId,
     })
   ).id;

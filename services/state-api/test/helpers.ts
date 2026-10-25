@@ -168,6 +168,9 @@ export async function seed(store: StateStore): Promise<Seed> {
     name: "First cut",
     success_criteria: ["tests pass", "docs written"],
     status: "active",
+    // A new milestone is a plan change: it names its reason and author (B.5).
+    reason: "seeded by the test harness",
+    author_human: ada.id,
   });
   const task1 = await store.task.insert({
     project_id: project.id,

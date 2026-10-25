@@ -46,6 +46,49 @@ describe("small-project mode (B.6)", () => {
     expect(await screen.findByTestId("dependency-graph")).toBeInTheDocument();
   });
 
+  it("Plan tab: the one milestone's Edit dialog posts the version and the reason; the reason shows under it (B.5)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    smallAtlas(harness);
+    renderApp("/projects/proj_atlas/plan", harness);
+    const milestone = await screen.findByTestId("small-project-milestone");
+    // Edit appears once the route's row (with its version) replaces the card's derived one.
+    await user.click(await within(milestone).findByTestId("edit-milestone"));
+    expect(milestone).toHaveAttribute("data-milestone-id", "ms_search");
+    // The open milestone was never changed: no reason line under it yet.
+    expect(within(milestone).queryByTestId("milestone-reason")).not.toBeInTheDocument();
+    const dialog = await screen.findByTestId("milestone-dialog");
+    expect(within(dialog).getByTestId("milestone-name")).toHaveValue("Search works");
+    expect(within(dialog).getByTestId("confirm-milestone")).toBeDisabled();
+    await user.clear(within(dialog).getByTestId("milestone-target-date"));
+    await user.type(within(dialog).getByTestId("milestone-target-date"), "2026-11-12");
+    await user.type(within(dialog).getByTestId("milestone-change-reason"), "search slipped a week");
+    await user.click(within(dialog).getByTestId("confirm-milestone"));
+    await waitFor(() => expect(postedCalls(harness, "/milestones/ms_search")).toHaveLength(1));
+    expect(postedCalls(harness, "/milestones/ms_search")[0]?.body).toEqual({
+      version: 1,
+      reason: "search slipped a week",
+      name: "Search works",
+      successCriteria: ["Header search returns results under 200 ms"],
+      targetDate: "2026-11-12",
+      status: "active",
+    });
+    await waitFor(() => expect(screen.queryByTestId("milestone-dialog")).not.toBeInTheDocument());
+    // `replaceMilestone` reached the row `smallProjectMilestone` recomputes: the same open
+    // milestone, with the new date and the reason of the change under it.
+    const updated = screen.getByTestId("small-project-milestone");
+    expect(updated).toHaveAttribute("data-milestone-id", "ms_search");
+    await waitFor(() =>
+      expect(within(updated).getByTestId("milestone-reason")).toHaveTextContent(
+        "search slipped a week",
+      ),
+    );
+    expect(updated).toHaveTextContent("target 2026-11-12");
+    expect(screen.getByTestId("small-project-other-milestones")).toHaveTextContent(
+      "Docs indexed (done), Launch (planned)",
+    );
+  });
+
   it("Plan tab: without the milestones route the one milestone comes from the card", async () => {
     const harness = createHarness({ missingRoutes: ["/projects/proj_atlas/milestones"] });
     const card = smallAtlas(harness);

@@ -366,7 +366,9 @@ out).
 ## Tests
 
 `pnpm vitest run --project unit packages/critic/test` (fake provider, in-memory SQLite, no
-network):
+network). The fixture world (`test/helpers.ts`) seeds its session with a plan, so the row names
+a reason (`fixture session`) and the owner agent as author, as the store's B.5 insert guard
+requires.
 
 - `fast-mode.test.ts` (spec D.20, ADR 0057):
   - With the flag on, a tier-2 review on the Opus rung of an API source carries

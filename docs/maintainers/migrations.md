@@ -37,8 +37,9 @@ schema and the snapshot disagree.
   and frozen, `milestone.reason` and `session.reason` (`TEXT NOT NULL DEFAULT ''`, `IF NOT
   EXISTS` on Postgres). Rows written before it read back with `""` and the repository rules
   apply from the next write (`MilestoneRepo.change` and `SessionRepo.setPlan` require the
-  reason and the actor; see data-model.md, Invariants). It is v5 because 0003 and 0004
-  shipped first on the release branch.
+  reason and the actor, and so do `MilestoneRepo.insert` and a `SessionRepo.insert` that
+  carries a plan; see data-model.md, Invariants). It is v5 because 0003 and 0004 shipped
+  first on the release branch.
 - `src/migrations/index.ts`: `MIGRATIONS` (ascending) and `migrate(db, { clock?, migrations? })`.
   `migrate` creates `schema_migrations (version PK, name, applied_at)` if missing, then applies
   every pending migration inside **one transaction** (both dialects have transactional DDL) and
@@ -124,7 +125,8 @@ of kind `skill` named `memory-format`), tested on fixture directories for both p
   accepted, candidates round-trip with the foreign key to their source; devices read back
   without a wrapping key and take one, secret grants can be filed; old `milestone` and
   `session` rows read back with an empty reason and take one through `MilestoneRepo.change`
-  and `SessionRepo.setPlan`, fresh inserts fill the default. Also generator output shape
+  and `SessionRepo.setPlan`, a fresh session without a plan fills the default and a fresh
+  milestone must name its reason and author (the insert guard). Also generator output shape
   (types, checks, FKs, indexes, triggers), `migrate` applies once and records with the
   clock, contiguity check, a failing statement rolls back the whole run, doc currency.
 - `packages/state/test/migrations.integration.test.ts` (Postgres, `FORERUNNER_TEST_PG`): a v1

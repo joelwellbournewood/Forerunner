@@ -411,7 +411,9 @@ Environment:
 remote command five times (exactly one 200 per round: `RemoteCommandRepo.pickUp` relies on
 Postgres re-checking the predicate after the row lock) and the 48-hour offline scenario.
 Skipped visibly without the variable. Unit tests never write outside a per-harness temp
-directory (`helpers.ts` sets `uploadsDir` and `serviceStateDir`; `close()` removes it).
+directory (`helpers.ts` sets `uploadsDir` and `serviceStateDir`; `close()` removes it). The
+harness seeds its milestone with a reason and Ada as author: a new milestone is a plan change
+the store's B.5 insert guard refuses without them.
 
 ## Known issues
 

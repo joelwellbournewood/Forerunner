@@ -251,7 +251,12 @@ export function defineStateSuite(target: SuiteTarget): void {
       });
 
       it("list filters by equality, NULL and IN, orders, paginates and counts", async () => {
-        const ms = await store.milestone.insert({ project_id: s.project.id, name: "M1" });
+        const ms = await store.milestone.insert({
+          project_id: s.project.id,
+          name: "M1",
+          reason: "seed",
+          author_human: s.human.id,
+        });
         await store.task.insert({
           project_id: s.project.id,
           title: "a",
@@ -1627,8 +1632,13 @@ export function defineStateSuite(target: SuiteTarget): void {
 
     describe("reasons on milestone and plan changes (B.5)", () => {
       it("a milestone change carries the reason and the actor, bumps the version and refuses a stale one", async () => {
-        const m = await store.milestone.insert({ project_id: s.project.id, name: "M1" });
-        expect(m.reason).toBe("");
+        const m = await store.milestone.insert({
+          project_id: s.project.id,
+          name: "M1",
+          reason: "planned from the brief",
+          author_agent: s.alice.id,
+        });
+        expect(m).toMatchObject({ reason: "planned from the brief", author_agent: s.alice.id });
         await clock.advance(1_000);
         const changed = await store.milestone.change(
           m.id,
@@ -1672,7 +1682,12 @@ export function defineStateSuite(target: SuiteTarget): void {
       });
 
       it("a milestone change without a reason or an actor is a validation error on every write path", async () => {
-        const m = await store.milestone.insert({ project_id: s.project.id, name: "M2" });
+        const m = await store.milestone.insert({
+          project_id: s.project.id,
+          name: "M2",
+          reason: "planned",
+          author_human: s.human.id,
+        });
         for (const reason of ["", "   "]) {
           const err = await expectCode(
             store.milestone.change(m.id, m.version, { name: "x" }, reason, {
@@ -1757,6 +1772,76 @@ export function defineStateSuite(target: SuiteTarget): void {
           summary: "halfway",
           reason: "cut to the budget",
           plan: { items: [] },
+        });
+      });
+
+      it("a milestone insert, and a session insert that carries a plan, need the reason and the actor too", async () => {
+        // Inserts are a write path like any other (spec B.5 "every change"): a new milestone is
+        // a change to the project's plan, and a session created with a plan already filled in
+        // is a plan change. The error names what is missing, as on the update paths.
+        const noReason = await expectCode(
+          store.milestone.insert({ project_id: s.project.id, name: "M3" }),
+          "validation",
+        );
+        expect(noReason.details).toMatchObject({ table: "milestone", missing: "reason" });
+        const noActor = await expectCode(
+          store.milestone.insert({ project_id: s.project.id, name: "M3", reason: "planned" }),
+          "validation",
+        );
+        expect(noActor.details).toMatchObject({ table: "milestone", missing: "actor" });
+        expect(await store.milestone.list({ name: "M3" })).toEqual([]);
+        const m = await store.milestone.insert({
+          project_id: s.project.id,
+          name: "M3",
+          reason: "planned from the brief",
+          author_agent: s.alice.id,
+        });
+        expect(m).toMatchObject({
+          reason: "planned from the brief",
+          author_agent: s.alice.id,
+          author_human: null,
+          version: 1,
+        });
+        await expectCode(
+          store.milestone.insertMany([
+            { project_id: s.project.id, name: "M4", reason: "x", author_human: s.human.id },
+            { project_id: s.project.id, name: "M5" },
+          ]),
+          "validation",
+        );
+        // The transaction of insertMany is one write: nothing of it stays.
+        expect(await store.milestone.list({ name: ["M4", "M5"] })).toEqual([]);
+
+        // A session without a plan (the runner plans it later, with its reason) needs none;
+        // the empty placeholders `{}` and `[]` are no plan either.
+        const bare = await store.session.insert({ agent_id: s.alice.id });
+        expect(bare.reason).toBe("");
+        expect((await store.session.insert({ agent_id: s.alice.id, plan: {} })).reason).toBe("");
+        expect((await store.session.insert({ agent_id: s.alice.id, plan: [] })).reason).toBe("");
+        const planned = await expectCode(
+          store.session.insert({
+            agent_id: s.alice.id,
+            plan: { items: [{ taskId: "t1" }] },
+            author_agent: s.alice.id,
+          }),
+          "validation",
+        );
+        expect(planned.details).toMatchObject({ table: "session", missing: "reason" });
+        await expectCode(
+          store.session.insert({ agent_id: s.alice.id, plan: [{ kind: "mirror" }], reason: "why" }),
+          "validation",
+        );
+        const withPlan = await store.session.insert({
+          agent_id: s.alice.id,
+          plan: { items: [], summary: "nothing ready" },
+          reason: "scheduled run with nothing ready",
+          author_agent: s.alice.id,
+        });
+        expect(withPlan).toMatchObject({
+          plan: { items: [], summary: "nothing ready" },
+          reason: "scheduled run with nothing ready",
+          author_agent: s.alice.id,
+          version: 1,
         });
       });
     });
@@ -2147,12 +2232,16 @@ export function defineStateSuite(target: SuiteTarget): void {
           project_id: s.project.id,
           name: "Second",
           order_index: 2,
+          reason: "seed",
+          author_human: s.human.id,
         });
         const m1 = await store.milestone.insert({
           project_id: s.project.id,
           name: "First",
           order_index: 1,
           success_criteria: ["ci green"],
+          reason: "seed",
+          author_human: s.human.id,
         });
         expect((await store.milestone.forProject(s.project.id)).map((m) => m.id)).toEqual([
           m1.id,

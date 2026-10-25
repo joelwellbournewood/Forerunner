@@ -506,8 +506,10 @@ timeline and derived milestones when the route is missing, today's tick from an 
 and a reader, data register / remove / import, queue add / dismiss, peers, decisions, solo
 project and missing queue route, cost per accepted), `small-project` (B.6: the flat Plan tab
 list with the one milestone from the route or, without it, the card, milestones from before
-the mode named, a small project without a milestone yet, the grouped tab unchanged with the
-flag off; the dialog's "project default (tier N)" option from the card, no `riskTier` in the
+the mode named, the one milestone's Edit dialog posting the row's version and the reason and
+the reason then shown under it (B.5), a small project without a milestone yet, the grouped tab
+unchanged with the flag off; the dialog's "project default (tier N)" option from the card, no
+`riskTier` in the
 posted body unless picked and the picked one sent, a card without the field naming no number),
 `fast-mode` (D.20: the Settings card with the effect and the surcharge both ways and each
 project's state, no card without the rows, Turn on through the change card with the on effect,
@@ -1177,10 +1179,13 @@ replaced by the code per ADR 0034), Q.8 partial (high risk never from a plain "y
   page, or adding `chat` to the service, would close it. The kill switch completes against
   the real service: the watcher consumes `kill` (ADR 0034 item 6).
 - Nothing issues the link yet (no daemon route or Settings button calls `POST /pairing/start`
-  with `kind: "web"`). The daemon registers and heartbeats its `desktop` device row
-  (`registerDesktopDevice`, `DesktopPresence` in `packages/runtime/src/daemon/compose.ts`)
-  when remote commands are enabled (a shared store with the background services); on a
-  solo `sqlite:` store it has none.
+  with `kind: "web"`). The daemon registers its `desktop` device row (`registerDesktopDevice`
+  in `packages/runtime/src/daemon/compose.ts`) on every store whenever its background
+  services run (ADR 0030: the row the desktop app confirms a high-risk change on), and
+  heartbeats it (`DesktopPresence`) only when remote commands are enabled
+  (`remoteCommandsEnabled`): by default on a shared store; on a solo `sqlite:` store only
+  with `FORERUNNER_REMOTE_COMMANDS=1`, so without the variable the row exists but is never
+  heartbeated and no remote command is picked up.
 - The service does not serve `dist/` yet; build with `pnpm --filter @forerunner/approvals-web
   build` and mount the folder (relative asset paths).
 - Ed25519 in WebCrypto needs a current browser (Chrome 137+, Firefox 130+, Safari 17+); older

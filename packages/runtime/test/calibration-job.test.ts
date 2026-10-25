@@ -199,6 +199,10 @@ describe("monthly critic calibration job (H.7)", () => {
         trigger: "schedule",
         status: "completed",
         budget_cap_usd_micro: 2_000_000,
+        // Created with its plan, so the row names the reason and the agent (B.5).
+        reason: "critic calibration over 4 eval task(s)",
+        author_agent: w.alice,
+        author_human: null,
       });
       expect(session.spent_usd_micro).toBeGreaterThan(0);
       expect(session.spent_usd_micro).toBe(report?.cost.usdMicro);

@@ -238,6 +238,12 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       const session = await rt.store.session.mustGet(String(c.session_id));
       expect(session).toMatchObject({ project_id: projectId, status: "completed" });
       expect(session.summary).toContain("intake");
+      // The row is created with its plan, so it names the reason and the agent (B.5).
+      expect(session).toMatchObject({
+        reason: `intake of ${project.name}`,
+        author_agent: rt.agent.id,
+        author_human: null,
+      });
       // Spec D.19: the call has a Run row with its timing, which the Performance view reads
       // as the planning mode (performance-view.test.ts).
       const runRow = await rt.store.run.mustGet(String(c.run_id));

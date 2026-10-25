@@ -501,10 +501,19 @@ describe("migrations", () => {
         author_agent: "a1",
         version: 2,
       });
-      // Fresh inserts through the repositories fill the v5 default.
-      const fresh = await repos.milestone.insert({ project_id: "p1", name: "Release 0.2" });
-      expect(fresh.reason).toBe("");
+      // A fresh session without a plan fills the v5 default through the repository; a fresh
+      // milestone is a plan change and must name its reason and author (B.5, the insert guard).
       expect((await repos.session.insert({ agent_id: "a1" })).reason).toBe("");
+      await expect(
+        repos.milestone.insert({ project_id: "p1", name: "Release 0.2" }),
+      ).rejects.toMatchObject({ code: "validation", details: { missing: "reason" } });
+      const fresh = await repos.milestone.insert({
+        project_id: "p1",
+        name: "Release 0.2",
+        reason: "the second cut",
+        author_human: "h1",
+      });
+      expect(fresh).toMatchObject({ reason: "the second cut", author_human: "h1", version: 1 });
     } finally {
       await db.close();
     }

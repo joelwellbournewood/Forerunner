@@ -255,10 +255,16 @@ describe("ProjectsMirror", () => {
       expect.arrayContaining(MIRROR_FIELDS.map((f) => f.name)),
     );
 
-    // Event with counts on a session of its own, closed again.
+    // Event with counts on a session of its own, closed again. The row is created with its
+    // plan, so it names the reason and the agent as author (B.5, the insert guard).
     const session = await w.store.session.mustGet(r.sessionId ?? "");
     expect(session.status).toBe("completed");
     expect(session.summary).toContain("2 created");
+    expect(session).toMatchObject({
+      reason: "GitHub projects mirror run (manual)",
+      author_agent: session.agent_id,
+      author_human: null,
+    });
     const [ev] = await w.store.event.list(session.id);
     expect(ev?.type).toBe(MIRROR_EVENT_TYPE);
     expect(ev?.payload).toMatchObject({
@@ -763,7 +769,12 @@ describe("ProjectsMirror", () => {
 
   it("mirrors the milestone name from the store and re-ensures the fields of a board set up by an older field set", async () => {
     const w = await world();
-    const ms = await w.store.milestone.insert({ project_id: w.projectId, name: "Launch" });
+    const ms = await w.store.milestone.insert({
+      project_id: w.projectId,
+      name: "Launch",
+      reason: "seed",
+      author_human: w.humanId,
+    });
     const t1 = await w.addTask("With milestone", { milestone_id: ms.id });
     const t2 = await w.addTask("Without milestone");
     await w.mirror.sync(w.projectId);
