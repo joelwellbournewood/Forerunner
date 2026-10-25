@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { type Clock, errorMessage, ForerunnerError, log } from "@forerunner/platform";
+import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type { HumanRequestRow, JsonObject, JsonValue, StateStore } from "@forerunner/state";
+import { answerApplied, markAnswer } from "./answer-mark.ts";
 import { unappliedAnswers } from "./findings.ts";
+import { reportLateStartFailure } from "./late-approval.ts";
 import type { PlanItem } from "./runner.ts";
 import type { StartOutcome, StartRequest } from "./triggers.ts";
 
@@ -113,48 +115,23 @@ export function planApprovalOf(
 // Acting on an answer: the mark both producers share
 
 /** Whether an answered plan request was acted on (its card carries `applied_at`). */
-export function planAnswerApplied(row: Pick<HumanRequestRow, "change_card">): boolean {
-  return Boolean((row.change_card as JsonObject | null)?.applied_at);
-}
-
-function markOf(row: Pick<HumanRequestRow, "change_card">): string {
-  const card = (row.change_card ?? {}) as JsonObject;
-  return JSON.stringify([card.applied_at ?? null, card.outcome ?? null]);
-}
+export const planAnswerApplied: (row: Pick<HumanRequestRow, "change_card">) => boolean =
+  answerApplied;
 
 /**
  * Records what became of an answered plan request on its card: `applied_at`, the `outcome`
- * and `extra`. The write is conditional on the version the caller read, so of two producers
- * of a start (the daemon's sync and the cloud runner's inbox trigger on a shared store, or
- * two overlapping syncs of one daemon) exactly one marks a request first; the other gets
- * null and starts nothing. A version that moved for another reason (the row was not marked
- * meanwhile) is read again and the mark retried. The claimer's later marks pass the row it
- * got back, so a report written in between (`reportPlanStartFailure`) is kept.
+ * and `extra`, with a write conditional on the version the caller read (`markAnswer` in
+ * `answer-mark.ts`, the mark every producer of a start from an inbox answer shares: of the
+ * daemon's sync and the cloud runner's inbox trigger exactly one marks a request first; the
+ * other gets null and starts nothing).
  */
-export async function markPlanAnswer(
+export const markPlanAnswer: (
   store: Pick<StateStore, "humanRequest">,
   clock: Clock,
   row: HumanRequestRow,
   outcome: string,
-  extra: JsonObject = {},
-): Promise<HumanRequestRow | null> {
-  let current = row;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const card = (current.change_card ?? {}) as JsonObject;
-    try {
-      return await store.humanRequest.update(current.id, current.version, {
-        change_card: { ...card, applied_at: clock.nowIso(), outcome, ...extra },
-      });
-    } catch (e) {
-      if (!(e instanceof ForerunnerError && e.code === "version_conflict")) throw e;
-      const fresh = await store.humanRequest.get(current.id);
-      // Marked meanwhile: by the other producer's claim, or by a report after this claim.
-      if (!fresh || markOf(fresh) !== markOf(current)) return null;
-      current = fresh;
-    }
-  }
-  return null;
-}
+  extra?: JsonObject,
+) => Promise<HumanRequestRow | null> = markAnswer;
 
 // ---------------------------------------------------------------------------------------
 // The daemon's sync step
@@ -263,7 +240,9 @@ export async function reportPlanStartFailure(
 
 /**
  * The scheduler's start port with `reportPlanStartFailure` on a rejection of a start bound to
- * an approved plan; the rejection still propagates (the scheduler logs it).
+ * an approved plan, and `reportLateStartFailure` on one bound to a late hooks approval
+ * (`StartRequest.approvalRequestId`, ADR 0088); the rejection still propagates (the scheduler
+ * logs it).
  */
 export function reportingPlanStartFailures<R>(
   deps: PlanReportDeps,
@@ -276,6 +255,12 @@ export function reportingPlanStartFailures<R>(
       if (req.planApproved) {
         await reportPlanStartFailure(deps, req.planApproved, e).catch((err) =>
           log("plan-approval").warn("plan start failure not reported", {
+            error: errorMessage(err),
+          }),
+        );
+      } else if (req.approvalRequestId) {
+        await reportLateStartFailure(deps, req.approvalRequestId, e).catch((err) =>
+          log("late-approval").warn("late approval start failure not reported", {
             error: errorMessage(err),
           }),
         );

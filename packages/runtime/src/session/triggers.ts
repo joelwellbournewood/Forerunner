@@ -41,6 +41,13 @@ export interface StartRequest {
    * plan carries the cap of the session that filed it, so the plan is cut as the human saw it.
    */
   budgetUsdMicro?: number;
+  /**
+   * The answered hooks approval this start acts on (ADR 0088; `late-approval.ts`): a human
+   * request a session filed for a tool call of its task and answered after that session
+   * ended. A start that fails after the scheduler took it is reported on that request
+   * (`start_failed`, one warning) rather than lost.
+   */
+  approvalRequestId?: string;
 }
 
 export interface SchedulerDeps {

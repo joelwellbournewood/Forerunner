@@ -704,6 +704,7 @@ export async function startCloudRunner(deps: CloudRunnerDeps): Promise<CloudRunn
           store,
           clock,
           agentId: agent.id,
+          humanId: human.id,
           isActive: () =>
             scheduler.isActive(agent.id) ||
             rt.kill.activeCount({ agentId: agent.id }) > 0 ||

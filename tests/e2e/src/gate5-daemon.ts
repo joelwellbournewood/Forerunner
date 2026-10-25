@@ -261,6 +261,8 @@ export function daemonFor(
     findings: await syncBlockedByFindings({ store, clock, humanId, agentId }),
     signoffs: await syncSignoffAnswers({ store, clock, humanId, agentId }),
     plans: { started: 0, rejected: 0, skipped: 0 },
+    // No week task pauses on an always-human call, so no late hooks approval (ADR 0088).
+    late: { started: 0, refused: 0, skipped: 0 },
     intake: { applied: 0, rejected: 0, skipped: 0 },
     specialists: { promoted: 0, failed: 0, rejected: 0, skipped: 0, running: 0 },
   });

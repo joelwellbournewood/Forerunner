@@ -201,6 +201,7 @@ import {
   GitHostWatcher,
 } from "../session/githost-watcher.ts";
 import { IntakeService, type IntakeSyncResult } from "../session/intake.ts";
+import { type LateApprovalSyncResult, syncLateApprovals } from "../session/late-approval.ts";
 import {
   type PlanApprovalSyncResult,
   reportingPlanStartFailures,
@@ -833,9 +834,12 @@ export interface RuntimeApp {
    * consolidations, the rework/accept/cancel answers for tasks blocked by open findings, the
    * accept/revise/cancel answers to critic sign-offs, the approve/reject answers to session
    * plans (an approved plan is handed to the scheduler as a start bound to it, ADR 0053; only
-   * while the services run, a CLI one-shot starts no session) and the approve/reject answers
-   * to intake proposals (ADR 0055). Runs after every answer given through this daemon's route
-   * and, where answers can arrive from another device, on the approvals poll (`approvalsPollMs`).
+   * while the services run, a CLI one-shot starts no session), the yes/no answers to hooks
+   * approvals whose session has ended (the task back at `ready` and one start that consumes
+   * the answer, ADR 0088; the same one-shot rule) and the approve/reject answers to intake
+   * proposals (ADR 0055). Runs after every answer given through this daemon's route, when a
+   * session ends and, where answers can arrive from another device, on the approvals poll
+   * (`approvalsPollMs`).
    */
   syncApprovals(): Promise<{
     extensions: { approved: string[]; denied: string[] };
@@ -846,6 +850,11 @@ export interface RuntimeApp {
     findings: BlockedSyncResult;
     signoffs: SignoffSyncResult;
     plans: PlanApprovalSyncResult;
+    /**
+     * Hooks approvals answered after their session ended (ADR 0088): the task back at `ready`
+     * and one `message` start per approval, which consumes the answer; a refusal consumed.
+     */
+    late: LateApprovalSyncResult;
     intake: IntakeSyncResult;
     /** Answered specialist proposals (ADR 0071): the daemon runs them in the background; a one-shot applies none. */
     specialists: SpecialistSyncResult;
@@ -2414,6 +2423,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         }),
         `session ${result.sessionId} ended`,
       );
+      // An answer that came while the session ran, for a call it did not re-make (a task it
+      // had already moved past), is late now (ADR 0088): apply it at once rather than at the
+      // next answer or poll. The result stands whatever the sync does.
+      if (!schemaSync.paused) {
+        await syncApprovals().catch((e: unknown) =>
+          logger.warn("answers not applied at session end", {
+            sessionId: result.sessionId,
+            error: errorMessage(e),
+          }),
+        );
+      }
       return result;
     },
   );
@@ -2564,6 +2584,19 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
               start: (req) => scheduler.requestStart(req),
             })
           : { started: 0, rejected: 0, skipped: 0 },
+      // A hooks approval answered after its session ended (ADR 0088): the task goes back to
+      // `ready` and one "message" start of the project consumes the answer; a refusal is
+      // consumed with nothing run. The same one-shot rule as the plans above.
+      late:
+        opts.startServices !== false
+          ? await syncLateApprovals({
+              store,
+              clock,
+              humanId: human.id,
+              agentId: agent.id,
+              start: (req) => scheduler.requestStart(req),
+            })
+          : { started: 0, refused: 0, skipped: 0 },
       intake: await intake.syncAnswers(),
       // Proposed specialists (ADR 0071): the daemon claims an approved proposal's answer here
       // and runs its eval set (minutes, real spend) in the background, recovers evaluations

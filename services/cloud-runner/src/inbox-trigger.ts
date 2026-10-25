@@ -1,10 +1,14 @@
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import {
+  answerApplied,
   approvedPlanIdOf,
+  claimLateApproval,
   isPlanRequest,
+  isToolApprovalRequest,
   markPlanAnswer,
   planAnswer,
-  planAnswerApplied,
+  recordLateStart,
+  releaseLateClaim,
   type StartRequest,
 } from "@forerunner/runtime";
 import type { HumanRequestRow, MessageRow, StateStore } from "@forerunner/state";
@@ -31,12 +35,19 @@ import type { HumanRequestRow, MessageRow, StateStore } from "@forerunner/state"
  * whose card carries `applied_at` is not triggered on, and the one a start binds to is
  * claimed (a write conditional on the row's version) before the start is asked for and
  * marked with the scheduler's answer after; an older approved plan in the same check is
- * marked `superseded`. The start carries the cap of the session that filed the plan. When `shouldDefer` says a PC is online the items stay
- * untouched for the PC and the next check waits `deferMs` (ADR 0033: a PC daemon that is
- * online wins). The same holds when the scheduler's start reports "skipped" (a PC came online
- * between `shouldDefer` and the start): the items are remembered only once the scheduler owns
- * the request, so a dropped firing never loses them. Nothing here runs the session: the
- * scheduler keeps one per agent.
+ * marked `superseded`. The start carries the cap of the session that filed the plan. A hooks
+ * approval (a tool call a session paused on, `change_card.tool` and the hooks' key) answered
+ * after that session ended is acted on the same way (ADR 0088, `claimLateApproval` from the
+ * runtime, the same mark): a "yes" is claimed, its task goes back to `ready` and the start
+ * names the request (`approvalRequestId`), so the follow-up's re-made call consumes the
+ * answer; a "no" is consumed with nothing run and the task records it; one the PC daemon
+ * acted on, or whose session still runs, is not triggered on. When `shouldDefer` says a PC is
+ * online the items stay untouched for the PC and the next check waits `deferMs` (ADR 0033: a
+ * PC daemon that is online wins). The same holds when the scheduler's start reports "skipped"
+ * (a PC came online between `shouldDefer` and the start): the items are remembered only once
+ * the scheduler owns the request, so a dropped firing never loses them, and a claim made for
+ * the skipped start is released for the PC. Nothing here runs the session: the scheduler
+ * keeps one per agent.
  */
 export type InboxStartRequest = StartRequest;
 
@@ -48,9 +59,11 @@ export type InboxStartRequest = StartRequest;
 export type InboxRequestOutcome = "started" | "queued" | "deferred" | "skipped" | "failed";
 
 export interface InboxTriggerDeps {
-  store: Pick<StateStore, "message" | "humanRequest" | "session">;
+  store: Pick<StateStore, "message" | "humanRequest" | "session" | "task" | "auditLog">;
   clock: Clock;
   agentId: string;
+  /** The agent's human: a late approval's task move, audit row and warning are theirs. */
+  humanId: string;
   /** A session of the agent runs (or the kill switch holds it): the check waits. */
   isActive: () => boolean;
   /** The PC-wins rule: true leaves the items for the PC and backs the check off. */
@@ -161,8 +174,9 @@ export class InboxTrigger {
         r.answered_at !== null &&
         Date.parse(r.answered_at) > floor &&
         !this.seenAnswers.has(r.id) &&
-        // A plan the PC's daemon (or an earlier check) acted on is not acted on again.
-        !(isPlanRequest(r) && planAnswerApplied(r)),
+        // A plan or a hooks approval the PC's daemon (or an earlier check) acted on is not
+        // acted on again.
+        !((isPlanRequest(r) || isToolApprovalRequest(r)) && answerApplied(r)),
     );
     if (messages.length === 0 && answers.length === 0) return null;
 
@@ -181,6 +195,23 @@ export class InboxTrigger {
       for (const m of messages) this.seenMessages.set(m.id, Date.parse(m.created_at));
       for (const r of answers) this.seenAnswers.set(r.id, Date.parse(r.answered_at ?? ""));
     };
+    // A hooks approval answered after its session ended (ADR 0088): claimed here, with its
+    // task back at `ready`, before the start is asked for; a refusal or a task that moved on is
+    // consumed with no start; one the daemon claimed first, or whose time has not come (its
+    // session still runs, another session has the task), is not this check's.
+    const lateDeps = { ...this.deps, humanId: this.deps.humanId };
+    const late: Array<{ row: HumanRequestRow; claimed: HumanRequestRow }> = [];
+    for (const row of answers.filter((r) => isToolApprovalRequest(r))) {
+      const claim = await claimLateApproval(lateDeps, row);
+      if (claim.kind === "start") {
+        late.push({ row, claimed: claim.claimed });
+        continue;
+      }
+      answers.splice(answers.indexOf(row), 1);
+      if (claim.kind !== "wait") this.seenAnswers.set(row.id, Date.parse(row.answered_at ?? ""));
+      if (claim.kind === "lost")
+        this.logger.info("late approval already acted on by another producer", { id: row.id });
+    }
     // Claim the approved plan the start binds to; one another runner claimed first is its own.
     let planned = this.requestFor(messages, answers);
     let claimed: HumanRequestRow | null = null;
@@ -200,6 +231,11 @@ export class InboxTrigger {
       if (filing && filing.budget_cap_usd_micro > 0)
         req = { ...req, budgetUsdMicro: filing.budget_cap_usd_micro };
     }
+    // A start that fails after the scheduler took it is reported on the late approval it
+    // acts on (`reportingPlanStartFailures` in runner.ts); a plan start is reported on the
+    // plan. Several late approvals in one check share the start: the first is named.
+    const first = late[0];
+    if (req && !planRow && first) req = { ...req, approvalRequestId: first.row.id };
     if (!req) {
       // Only rejected plans: nothing to run, and nothing to look at again.
       remember();
@@ -209,8 +245,23 @@ export class InboxTrigger {
       reason: req.reason,
       projectId: req.projectId ?? null,
       planApproved: req.planApproved ?? null,
+      approvalRequestId: req.approvalRequestId ?? null,
     });
     const outcome = await this.deps.request(req);
+    for (const l of late) {
+      if (outcome === "skipped") {
+        // Released for the PC that came online: its daemon's sync acts on the answer.
+        await releaseLateClaim(this.deps.store, l.claimed, l.row).catch((e) =>
+          this.logger.warn("late approval claim not released", { error: errorMessage(e) }),
+        );
+      } else if (outcome === "failed") {
+        await recordLateStart(lateDeps, l.row, l.claimed, "start_failed", {
+          error: "the runner's start failed before a session existed",
+        });
+      } else {
+        await recordLateStart(lateDeps, l.row, l.claimed, outcome);
+      }
+    }
     if (planRow && claimed) {
       if (outcome === "skipped") {
         // Released for the PC that came online: its daemon's sync acts on the plan.

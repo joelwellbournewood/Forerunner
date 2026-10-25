@@ -1,9 +1,16 @@
 import { SimulatedClock } from "@forerunner/platform";
-import { markPlanAnswer, planIdOf, syncPlanApprovals } from "@forerunner/runtime";
+import {
+  approvalKeyFor,
+  markAnswer,
+  markPlanAnswer,
+  planIdOf,
+  syncLateApprovals,
+  syncPlanApprovals,
+} from "@forerunner/runtime";
 import { type AgentRow, openStore, type StateStore } from "@forerunner/state";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type InboxStartRequest, InboxTrigger } from "../src/inbox-trigger.ts";
-import { flush, type Seed, seedWorld } from "./helpers.ts";
+import { addReadyTask, flush, type Seed, seedWorld } from "./helpers.ts";
 
 /**
  * Inbox triggers on an in-memory store: a peer's message or the human's answer to a session's
@@ -48,6 +55,7 @@ function trigger(opts: Partial<ConstructorParameters<typeof InboxTrigger>[0]> = 
     store,
     clock,
     agentId: seed.agent.id,
+    humanId: seed.human.id,
     isActive: () => active,
     shouldDefer: async () => {
       deferAsked++;
@@ -359,6 +367,9 @@ describe("inbox triggers", () => {
   });
 
   it("a plan claimed for a start the scheduler skipped (a PC came online) is released for the PC", async () => {
+    // `since` from before the answer: a trigger built after it would not see the row at all
+    // (the release path would then pass untested).
+    const since = clock.now();
     await clock.advance(1_000);
     const plan = await sessionRequest({
       kind: "approval",
@@ -366,8 +377,16 @@ describe("inbox triggers", () => {
       change_card: { key: "plan:s1", plan_id: planIdOf("s1", [{ taskId: "a" }]), plan: {} },
     });
     await answer(plan.id, "approve");
-    const t = trigger({ request: async () => "skipped" });
+    let asked = 0;
+    const t = trigger({
+      since,
+      request: async () => {
+        asked++;
+        return "skipped";
+      },
+    });
     expect(await t.check()).toBeNull();
+    expect(asked).toBe(1);
     expect((await store.humanRequest.mustGet(plan.id)).change_card).not.toHaveProperty(
       "applied_at",
     );
@@ -435,5 +454,171 @@ describe("inbox triggers", () => {
     await clock.advance(60_000);
     await flush();
     expect(requests).toHaveLength(1);
+  });
+});
+
+/**
+ * ADR 0088: a hooks approval (an always-human call a session paused on) answered after that
+ * session ended. The trigger shares the daemon's mark: a row the daemon acted on is not
+ * triggered on; one the trigger acts on is claimed before the start (the task back at
+ * `ready`) and marked with the scheduler's answer after, so the daemon's `syncLateApprovals`
+ * then starts nothing; a refused late answer starts nothing and is consumed; a claim for a
+ * skipped start is released for the PC.
+ */
+describe("inbox triggers: a hooks approval answered after its session ended", () => {
+  const INPUT = { repo: "org/old-repo" };
+
+  /** A task paused on `delete_repo` by a cloud session that has ended, and the call's request. */
+  async function pausedCall() {
+    const task = await addReadyTask(store, seed.project.id, "Delete the old repo", {
+      status: "needs_human",
+      reason: "waiting for approval of delete_repo",
+      owner_agent_id: seed.agent.id,
+    });
+    const planned = await store.session.insert({
+      agent_id: seed.agent.id,
+      project_id: seed.project.id,
+      trigger: "schedule",
+      runner: "cloud",
+    });
+    const running = await store.session.start(planned.id, planned.version);
+    const row = await store.humanRequest.insert({
+      human_id: seed.human.id,
+      project_id: seed.project.id,
+      task_id: task.id,
+      session_id: running.id,
+      kind: "approval",
+      why: "autonomy level 2 requires approval for destructive",
+      steps: ["Tool: delete_repo", "Action class: destructive"],
+      options: ["yes", "no"],
+      blocking: true,
+      risk: "high",
+      change_card: {
+        key: approvalKeyFor("delete_repo", INPUT),
+        tool: "delete_repo",
+        actionClass: "destructive",
+        input: INPUT,
+      },
+      author_agent: seed.agent.id,
+    });
+    await store.session.setStatus(running.id, running.version, "completed");
+    await clock.advance(60_000);
+    return { task, row };
+  }
+
+  function daemonSync(started: unknown[]) {
+    return syncLateApprovals({
+      store,
+      clock,
+      humanId: seed.human.id,
+      agentId: seed.agent.id,
+      start: async (req) => {
+        started.push(req);
+        return { id: "x", result: "started" };
+      },
+    });
+  }
+
+  it("a late yes the trigger acts on is claimed, the task is ready again, the start names the request, and a fresh trigger and the daemon start nothing again", async () => {
+    const since = clock.now();
+    const { task, row } = await pausedCall();
+    await answer(row.id, "yes");
+    expect(await trigger({ since }).check()).toMatchObject({
+      trigger: "message",
+      projectId: seed.project.id,
+      reason: "1 answered request",
+      approvalRequestId: row.id,
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.planApproved).toBeUndefined();
+    const ready = await store.task.mustGet(task.id);
+    expect(ready.status).toBe("ready");
+    expect(ready.reason).toBe(`approval answered (request ${row.id}): delete_repo`);
+    expect((await store.humanRequest.mustGet(row.id)).change_card).toMatchObject({
+      outcome: "started",
+      applied_at: clock.nowIso(),
+    });
+    expect(await trigger({ since }).check()).toBeNull();
+    expect(requests).toHaveLength(1);
+    // The PC daemon's sync, at its next boot, finds the answer acted on.
+    const started: unknown[] = [];
+    expect(await daemonSync(started)).toEqual({ started: 0, refused: 0, skipped: 0 });
+    expect(started).toEqual([]);
+  });
+
+  it("a late yes the PC's daemon acted on is not triggered on", async () => {
+    const t = trigger();
+    await clock.advance(1_000);
+    const { task, row } = await pausedCall();
+    await answer(row.id, "yes");
+    const started: unknown[] = [];
+    expect(await daemonSync(started)).toEqual({ started: 1, refused: 0, skipped: 0 });
+    expect((await store.task.mustGet(task.id)).status).toBe("ready");
+    expect(await t.check()).toBeNull();
+    expect(requests).toEqual([]);
+    expect(t.stats.triggered).toBe(0);
+  });
+
+  it("a late yes the daemon claims between the check's read and its claim starts nothing here", async () => {
+    const t = trigger();
+    await clock.advance(1_000);
+    const { row } = await pausedCall();
+    await answer(row.id, "yes");
+    const list = store.humanRequest.list.bind(store.humanRequest);
+    store.humanRequest.list = (async (...args: Parameters<typeof list>) => {
+      const rows = await list(...args);
+      const fresh = await store.humanRequest.mustGet(row.id);
+      if (!(fresh.change_card as { applied_at?: string }).applied_at)
+        await markAnswer(store, clock, fresh, "starting");
+      return rows;
+    }) as typeof list;
+    expect(await t.check()).toBeNull();
+    expect(requests).toEqual([]);
+    expect((await store.humanRequest.mustGet(row.id)).change_card).toMatchObject({
+      outcome: "starting",
+    });
+  });
+
+  it("a refused late answer starts nothing and is consumed: the task stays needs_human and records it", async () => {
+    const t = trigger();
+    await clock.advance(1_000);
+    const { task, row } = await pausedCall();
+    await answer(row.id, "no");
+    expect(await t.check()).toBeNull();
+    expect(requests).toEqual([]);
+    expect((await store.humanRequest.mustGet(row.id)).change_card).toMatchObject({
+      outcome: "refused",
+    });
+    const refused = await store.task.mustGet(task.id);
+    expect(refused.status).toBe("needs_human");
+    expect(refused.reason).toBe(`human refused delete_repo (request ${row.id})`);
+    // Consumed: the next check and the daemon's sync find nothing to do.
+    expect(await t.check()).toBeNull();
+    const started: unknown[] = [];
+    expect(await daemonSync(started)).toEqual({ started: 0, refused: 0, skipped: 0 });
+  });
+
+  it("a late yes claimed for a start the scheduler skipped (a PC came online) is released for the PC", async () => {
+    // `since` from before the answer: a trigger built after it would not see the row at all.
+    const since = clock.now();
+    await clock.advance(1_000);
+    const { task, row } = await pausedCall();
+    await answer(row.id, "yes");
+    let asked = 0;
+    const t = trigger({
+      since,
+      request: async () => {
+        asked++;
+        return "skipped";
+      },
+    });
+    expect(await t.check()).toBeNull();
+    expect(asked).toBe(1);
+    expect(t.stats).toMatchObject({ triggered: 0, deferred: 1 });
+    expect((await store.humanRequest.mustGet(row.id)).change_card).not.toHaveProperty("applied_at");
+    // The task stays ready for the PC's follow-up; its daemon's sync starts it.
+    expect((await store.task.mustGet(task.id)).status).toBe("ready");
+    const started: unknown[] = [];
+    expect(await daemonSync(started)).toEqual({ started: 1, refused: 0, skipped: 0 });
   });
 });
