@@ -180,37 +180,93 @@ describe("release.yml: the GitHub release job sees the secrets it reports on", (
   /** The `- name:` / `- uses:` / `- run:` step block (6-space indent) that contains `marker`. */
   const stepAround = (wf: string, marker: string): string => {
     const at = wf.indexOf(marker);
-    expect(at).toBeGreaterThan(-1);
+    expect(at, `marker not found: ${marker}`).toBeGreaterThan(-1);
     const start = wf.lastIndexOf("\n      - ", at);
     const next = wf.indexOf("\n      - ", at);
     return wf.slice(start, next >= 0 ? next : wf.length);
   };
 
-  /** Names declared in a step's own `env:` block (8-space key, 10-space entries). */
-  const stepEnvNames = (step: string): string[] => {
-    const m = step.match(/\n {8}env:\n((?: {10}(?:#.*|[A-Z0-9_]+:.*)\n?)+)/);
-    if (!m) return [];
-    return [...m[1].matchAll(/^ {10}([A-Z0-9_]+):/gm)].map((x) => x[1]);
+  /** `NAME: value` entries of an `env:` block at `indent` spaces (entries two deeper; comments allowed). */
+  const envBlock = (block: string, indent: number): Map<string, string> => {
+    const pad = " ".repeat(indent);
+    const inner = " ".repeat(indent + 2);
+    const m = block.match(new RegExp(`\\n${pad}env:\\n((?:${inner}(?:#.*|[A-Z0-9_]+:.*)\\n?)+)`));
+    const out = new Map<string, string>();
+    if (!m) return out;
+    for (const x of m[1].matchAll(new RegExp(`^${inner}([A-Z0-9_]+):\\s*(.*)$`, "gm"))) {
+      out.set(x[1], x[2].trim());
+    }
+    return out;
   };
 
-  it("a step's `if:` never reads an env name that only its own `env:` defines (GitHub evaluates `if` before the step env exists)", () => {
+  /** The job block `  <id>:` up to the next job (or the end of the file). */
+  const jobBlock = (wf: string, id: string): string => {
+    const start = wf.indexOf(`\n  ${id}:\n`);
+    expect(start, `job not found: ${id}`).toBeGreaterThan(-1);
+    const rest = wf.slice(start + 1);
+    const next = rest.slice(1).search(/\n {2}[a-z][a-z0-9_-]*:\n/);
+    return next >= 0 ? rest.slice(0, next + 1) : rest;
+  };
+
+  /** The job's own `env:` (4-space key, before `steps:`), not any step's. */
+  const jobEnv = (job: string): Map<string, string> =>
+    envBlock(job.slice(0, job.indexOf("\n    steps:")), 4);
+
+  const stepEnv = (step: string): Map<string, string> => envBlock(step, 8);
+
+  it("a step's `if:` reads env names only from its job's or the workflow's env, never from its own (GitHub evaluates `if` without the step env)", () => {
     const wf = text();
-    for (const m of wf.matchAll(/\n {8}if: (.*)/g)) {
-      const step = stepAround(wf, m[0]);
-      const own = stepEnvNames(step);
-      const read = [...m[1].matchAll(/env\.([A-Z0-9_]+)/g)].map((x) => x[1]);
-      for (const name of read) {
-        expect(own, `if: ${m[1]} reads env.${name}, declared only on the step`).not.toContain(name);
-        // ...and the name is declared somewhere above the step (job or workflow env)
-        expect(wf.slice(0, wf.indexOf(step))).toMatch(new RegExp(`\\n\\s+${name}:`));
+    const workflowEnv = envBlock(wf.slice(0, wf.indexOf("\njobs:")), 0);
+    let envReads = 0;
+    for (const id of [...wf.matchAll(/\n {2}([a-z][a-z0-9_-]*):\n/g)].map((m) => m[1])) {
+      const job = jobBlock(wf, id);
+      const declared = new Set([...workflowEnv.keys(), ...jobEnv(job).keys()]);
+      for (const m of job.matchAll(/\n {8}if: (.*)/g)) {
+        const own = stepEnv(stepAround(job, m[0]));
+        for (const x of m[1].matchAll(/env\.([A-Z0-9_]+)/g)) {
+          envReads++;
+          expect(own.has(x[1]), `${id}: if: ${m[1]} reads env.${x[1]} declared on the step`).toBe(
+            false,
+          );
+          expect(
+            declared.has(x[1]),
+            `${id}: if: ${m[1]} reads env.${x[1]}, not in the job or workflow env`,
+          ).toBe(true);
+        }
       }
     }
+    // the manifest step's condition is one such read; a parser that finds nothing fails here
+    expect(envReads).toBeGreaterThan(0);
   });
 
-  it("the release-notes step gets the Android keystore and update key secrets, so the Signing section is true", () => {
-    const step = stepAround(text(), "> RELEASE_NOTES.md");
-    const env = stepEnvNames(step);
-    expect(env).toContain("ANDROID_KEYSTORE_BASE64");
-    expect(env).toContain("UPDATE_SIGNING_KEY");
+  it("the signed manifest step runs on the job-level presence flag of UPDATE_SIGNING_KEY and signs with the key from its own env", () => {
+    const job = jobBlock(text(), "publish");
+    expect(jobEnv(job).get("HAS_UPDATE_SIGNING_KEY")).toBe(
+      `\${{ secrets.UPDATE_SIGNING_KEY != '' }}`,
+    );
+    const step = stepAround(job, "Signed release manifest");
+    expect(step).toMatch(/\n {8}if: env\.HAS_UPDATE_SIGNING_KEY == 'true'\n/);
+    expect(stepEnv(step).get("UPDATE_SIGNING_KEY")).toBe(`\${{ secrets.UPDATE_SIGNING_KEY }}`);
+  });
+
+  it("both release-notes runs (the release body and the manifest's signed notes) see the same presence-only signing facts", () => {
+    const job = jobBlock(text(), "publish");
+    const jEnv = jobEnv(job);
+    for (const name of ["ANDROID_KEYSTORE_BASE64", "UPDATE_SIGNING_KEY"]) {
+      // a presence flag, never the secret's value, at job level
+      expect(jEnv.get(name), name).toBe(`\${{ secrets.${name} != '' && 'present' || '' }}`);
+    }
+    for (const marker of ["> RELEASE_NOTES.md", "> notes-section.md"]) {
+      const own = stepEnv(stepAround(job, marker));
+      // a step may carry the real key for its own work (the manifest step signs with it), but
+      // never empties a flag the notes rely on
+      for (const name of ["ANDROID_KEYSTORE_BASE64", "UPDATE_SIGNING_KEY"]) {
+        const value = own.get(name) ?? jEnv.get(name);
+        expect(value, `${marker}: ${name}`).toMatch(/secrets\./);
+      }
+      // Windows signing is not wired (release.md): the notes must not call the MSI signed
+      expect(own.has("WINDOWS_CERTIFICATE"), marker).toBe(false);
+    }
+    expect(jEnv.has("WINDOWS_CERTIFICATE")).toBe(false);
   });
 });
