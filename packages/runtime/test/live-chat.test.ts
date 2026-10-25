@@ -571,6 +571,48 @@ describe("what you say during a live session (spec O.9)", () => {
     await w.store.close();
   });
 
+  it("a line collected at a boundary the session pauses at stays unread and reaches the next session's brief (review finding 6)", async () => {
+    const w = await setup([textReply("Noted.")]);
+    await w.addTask("First task", 9);
+    await w.addTask("Second task", 1);
+    const { executor, gate } = gatedExecutor(w);
+    const running = w.start(w.runner(executor));
+    await until(() => gate.release !== null, "the first task to be in flight");
+    const said = await w.chat("use the new renderer");
+    expect(said.forwarded).not.toBeNull();
+    // A pause lands too: at the boundary the runner collects the line and reads the pause, so
+    // no task follows. The line is delivered, never read, listed for the human as waiting for
+    // the next session, and that session's checklist carries it like any unread message.
+    const pause = await w.chat("pause");
+    expect(pause.actions.map((a) => a.kind)).toEqual(["session.pause"]);
+    gate.release?.();
+    const res = await running;
+    expect(res.stopReason).toBe("stopped_by_message");
+    expect(res.completed).toHaveLength(1);
+    expect(res.heard).toEqual([
+      expect.objectContaining({ id: said.forwarded?.messageId, deliveredTo: null }),
+    ]);
+    const m = await w.store.message.mustGet(said.forwarded?.messageId ?? "");
+    expect(m.delivered_at).not.toBeNull();
+    expect(m.read_at).toBeNull();
+    const toHuman = (await w.store.message.inbox({ humanId: w.human })).filter(
+      (x) => x.from_agent_id === w.alice && /^Session /.test(x.body),
+    );
+    expect(toHuman[0]?.body).toContain(
+      '- (text) "use the new renderer" -> after the last task; the next session reads it',
+    );
+    const plain: TaskExecutor = {
+      async execute({ task, budget }) {
+        budget.record(`run-${task.id}`, 1);
+        return { outcome: "done", summary: "ok", costUsdMicro: 1, checksPassed: true };
+      },
+    };
+    const next = await w.start(w.runner(plain));
+    expect(next.brief.inbox.unread.map((u) => u.id)).toContain(m.id);
+    expect((await w.store.message.mustGet(m.id)).read_at).not.toBeNull();
+    await w.store.close();
+  });
+
   it("with nothing running a 'stop' stays the no to the card it was", async () => {
     const w = await setup([textReply("should not be called")]);
     const card = await w.chat("give it 20 francs tonight");

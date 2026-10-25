@@ -434,7 +434,10 @@ with the audit row and the card saying so, the undo turns them back on, and with
 `intent.test.ts` (the two spec sentences,
 forty-four English and German phrases including the lesson phrases, "remember to" staying a note and the summary phrases, seven questions and ordinary sentences that are not lessons,
 ambiguity questions, budget tails that are not a time, invalid values as a question, the
-envelope refusal, the model port, time parsing with `rest`), and `scenario.test.ts` (the
+envelope refusal, the model port, time parsing with `rest`, a stop clause winning over an
+unmatched remainder with every other clause returned as `unmatched` while a fully understood
+line runs every command and a stop word inside a clause, a note or pasted data is no stop,
+and `isStopLine` on the same lines), and `scenario.test.ts` (the
 Android scenario end to end and the phase 5 gate: ui, chat and voice produce the same change
 log entry), `fast-mode.test.ts` (spec D.20: the `fast_mode` spec, its card and the change
 log sentences with the effect and the surcharge both ways, the yes a medium-risk change needs,
