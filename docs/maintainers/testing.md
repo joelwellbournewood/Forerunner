@@ -482,8 +482,8 @@ that its test directory exists. `apps/ui` and `apps/approvals-web` keep their ow
 The requirements close-out for the maintainer documentation (spec P.1 to P.3, P.5 to P.14),
 in the `unit` project (`pnpm vitest run --project unit scripts`): `AGENTS.md` carries the
 commands for both OSes, the layout (every named directory exists), the conventions and the
-build-prompt rules; every doc the spec names exists, is not a skeleton (`Status: skeleton`
-absent), has the standard sections (Purpose, How it works, How to change it, Tests, Known
+build-prompt rules; every doc the spec names exists, is not a skeleton (no skeleton status
+banner), has the standard sections (Purpose, How it works, How to change it, Tests, Known
 issues; `architecture.md` its own set) each with a body, and says what its clause asks for
 (`runtime.md` the enforcement hooks, autonomy and kill switch; `billing.md` the provider
 rule change; `platform-notes.md` the Windows and Linux table; `release.md` signing, staged
