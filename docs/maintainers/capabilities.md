@@ -33,7 +33,14 @@ with their milestone.
   rel="next"` header page by page up to `MAX_LIST_PAGES` (100), `pageSize` items per page
   (1 to 100, default 100; `nextPageUrl` parses the header), so a source scan (spec A.4,
   `packages/runtime/src/sources`) sees an organisation whole; `github.test.ts` serves two
-  pages from its stub.
+  pages from its stub. A `next` URL, like every absolute URL the host answers, must be on
+  `baseUrl`'s origin (`originOf`): otherwise `request` refuses it with `provider_error`
+  before anything is sent, so the token goes to the API host of the install and nowhere the
+  host points (the rule the A.3 import applies to git's `http.<origin>/.extraheader`). The
+  release upload is the one explicit opt-in (`otherOrigin`): GitHub hands out
+  `uploads.github.com` as `upload_url`, and the asset cannot go anywhere else.
+  `github.test.ts` runs a second listener on its own origin: a `Link` to it stops the listing
+  and it sees no request, while an `upload_url` on it receives the asset with the bearer.
 - PR feedback (spec E.1, ADR 0075): `listPullRequestComments(repo, n, { since })` walks every
   page of the conversation comments (GitHub lists the oldest first, so a single page of 100
   would never show a new comment on a long PR) and passes `since` (comments updated at or

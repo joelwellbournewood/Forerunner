@@ -73,6 +73,15 @@ export function nextPageUrl(link: string | null | undefined): string | null {
   return null;
 }
 
+/** `scheme://host[:port]` of a URL, or null when the text is not one. */
+export function originOf(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
 type Json = Record<string, unknown>;
 
 interface GraphqlError {
@@ -101,6 +110,8 @@ export class GitHubHost implements GitHost {
   private readonly headers: Record<string, string>;
   private readonly maxWait: number;
   private readonly pageSize: number;
+  /** `baseUrl`'s origin: the one place the token goes (null when `baseUrl` is not a URL). */
+  private readonly origin: string | null;
   /** projectId -> field name (lower case) -> field. */
   private readonly fieldCache = new Map<string, Map<string, ProjectFieldInfo>>();
   /** projectId -> Forerunner task id -> item. Filled by one listing, kept up to date by writes. */
@@ -122,6 +133,7 @@ export class GitHubHost implements GitHost {
       });
     }
     this.pageSize = pageSize;
+    this.origin = originOf(this.baseUrl);
     this.headers = {
       Authorization: `Bearer ${opts.token}`,
       Accept: "application/vnd.github+json",
@@ -140,9 +152,18 @@ export class GitHubHost implements GitHost {
       allow404?: boolean;
       /** Sees the successful response before its body is read (pagination reads `Link`). */
       onResponse?: (res: Response) => void;
+      /**
+       * Lets an absolute URL on another origin through with the token. Only the release
+       * upload (GitHub's own `upload_url`, `uploads.github.com`) says so; every other URL
+       * the host hands out (a `Link` next page) must be on `baseUrl`'s origin, or the token
+       * would follow whatever the host answers (ADR 0056, amendment of 2026-10-25).
+       */
+      otherOrigin?: boolean;
     } = {},
   ): Promise<T> {
-    const url = path.startsWith("http") ? path : `${this.baseUrl}${path}`;
+    const absolute = path.startsWith("http");
+    if (absolute && !opts.otherOrigin) this.assertOwnOrigin(path);
+    const url = absolute ? path : `${this.baseUrl}${path}`;
     for (let attempt = 0; attempt < 3; attempt++) {
       const res = await this.f(url, {
         method,
@@ -205,6 +226,17 @@ export class GitHubHost implements GitHost {
       "provider_error",
       `GitHub request failed after retries: ${method} ${path}`,
       { retryable: true },
+    );
+  }
+
+  /** A URL the host answered must be on `baseUrl`'s origin before the token is sent to it. */
+  private assertOwnOrigin(url: string): void {
+    const origin = originOf(url);
+    if (origin !== null && this.origin !== null && origin === this.origin) return;
+    throw new ForerunnerError(
+      "provider_error",
+      `GitHub answered with a URL on another origin (${origin ?? "unparsable"}); the token is only sent to ${this.origin ?? this.baseUrl}`,
+      { details: { origin, expected: this.origin } },
     );
   }
 
@@ -505,11 +537,13 @@ export class GitHubHost implements GitHost {
       rel.upload_url ??
         `${this.baseUrl}${this.repoPath(repo)}/releases/${releaseId}/assets{?name,label}`,
     ).replace(/\{[^}]*\}$/, "");
+    // The upload origin GitHub hands out (`uploads.github.com` on github.com; the API host
+    // itself on GHES): the one URL from the host that may carry the token off `baseUrl`.
     const r = await this.request<Json>(
       "POST",
       `${uploadUrl}?name=${encodeURIComponent(name)}`,
       undefined,
-      { raw: data, contentType },
+      { raw: data, contentType, otherOrigin: true },
     );
     return { name: String(r.name ?? name), downloadUrl: String(r.browser_download_url ?? "") };
   }
