@@ -93,3 +93,34 @@ in lower-case snake case.
 - **Refuse a private write on a sqlite store marked `shared`.** Not needed: paired and hybrid
   mode are Postgres through the state service (ADR 0024, state-service.md); a `sqlite:` state is
   solo mode by definition and holds every scope.
+
+## Amendment 2026-10-25
+
+From the independent review of the item (`docs/status/reviews/w4-private-memory.md`), two
+points this ADR left open.
+
+1. **Rows about private memory in other tables of the shared store.** The guards above keep the
+   `lesson` rows home, but the runtime writes about private memory elsewhere: the weekly
+   consolidation files its plan as one `human_request` row of the state store, and its lines
+   quoted a preview of each private lesson proposed for a merge, a flag or a retirement. Next to
+   a private index the state store is the shared Postgres, so the previews left the PC. The
+   rule now: a row about private memory that goes to the shared store names ids, counts and
+   dates only. `consolidate` takes `quoteText` (default true); `MemoryLoop.consolidationOptions`
+   passes `false` for an `agent_private` report whenever the loop has a `privateStore`. Solo
+   mode and the critic and shared scopes keep the previews. The other such rows were checked:
+   a cross-project offer quotes a promoted shared lesson (shared already), the audit rows of
+   memory operations carry ids, the rejected-candidate warning quotes text that never became
+   memory. Alternative rejected: filing the private plan in the index's own `human_request`
+   table, which the inbox never reads.
+
+2. **The cloud runner.** "Nothing changes for solo mode or for the e2e worlds" above said nothing
+   about hybrid and cloud-only mode. The cloud runner composes the same runtime on the shared
+   Postgres URL, so `privateIndexUrl` opens an index under the runner's data directory and the
+   runner holds a second, unencrypted copy of the served human's private memory (the canonical
+   lesson files were written there before this ADR too). That is accepted for now as the lesser
+   evil: with no index every private write on the runner fails with `MEMORY_SCOPE_VIOLATION`
+   after the file is written, and the spec's answer, the owner's encrypted cloud slot, is the
+   unbuilt backup already listed in memory.md. Consequence: the served human's private memory is
+   split between the PC and the runner until that slot exists; cloud-runner.md and memory.md
+   carry the Known issues bullet. A runner serving one human must not share its data directory
+   with another human's runner.

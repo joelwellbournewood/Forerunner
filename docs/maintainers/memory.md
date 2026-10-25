@@ -95,7 +95,19 @@ proposal through the facade, the private origin stays home and is never supersed
 memory function (`remember`, `recall`, `consolidate`, `reconcile`, promotion, the runtime's
 views) sees one `LessonStore` (the `Pick` of `LessonRepo` in `src/types.ts`) and needs no
 knowledge of the split; `mirrorRow` restores a file's envelope through
-`LessonRepo.overwriteEnvelope` instead of raw SQL for the same reason.
+`LessonRepo.overwriteEnvelope` instead of raw SQL for the same reason. What does leave the index
+is rows the runtime writes about private memory into other tables of the shared store: the
+weekly consolidation's approval request (`human_request`) is such a row, so next to a private
+index its private-scope lines name ids only (`quoteText: false`, above; review finding 1 of
+`docs/status/reviews/w4-private-memory.md`), while a cross-project offer quotes a promoted
+shared lesson, which is shared already. The unscoped `list` is unpaged: each store applies the
+caller's `limit` and `offset` and the two results are concatenated private first without
+re-ordering; every caller in this package names one scope, so a future unscoped, paged caller
+must page itself.
+
+The cloud runner (`services/cloud-runner`, hybrid and cloud-only mode) composes the same runtime
+on the same Postgres URL and therefore opens its own `private.sqlite` under its data directory
+on the runner host (cloud-runner.md, Known issues; ADR 0083, amendment of 2026-10-25).
 
 The second, independent guard is in `packages/state`: `LessonRepo` on the Postgres dialect
 refuses an `agent_private` insert, update, patch or supersede with `MEMORY_SCOPE_VIOLATION`
@@ -241,7 +253,7 @@ explicit copies (promotion).
 ### Consolidation (`src/consolidation.ts`)
 
 `consolidate(ctx, { scope, ownerAgentId?, clock?, apply = false, duplicateThreshold = 0.9,
-contradictionMin = 0.6, unusedAfterDays = 60, staleAfterDays = 90 })` returns a
+contradictionMin = 0.6, unusedAfterDays = 60, staleAfterDays = 90, quoteText = true })` returns a
 `ConsolidationReport { scope, ownerAgentId, ranAt, applied, merged: [{ keptId, retiredIds,
 cosine, projectId }], contradictions: [{ a, b, reason, cosine }], retired: [ids], proposals:
 string[] }`:
@@ -256,7 +268,13 @@ With `apply: false` (the default) nothing is written: the report is what the hum
 caller (the runtime scheduler) files a `HumanRequest` of kind approval with `proposals` and calls
 again with `apply: true` after approval; every applied change goes through the repo (version
 bump) and is then exported to the file, and the scope's catalog is regenerated. A private plan
-needs `ownerAgentId` and runs on the owner's machine. `consolidationDue(lastRunIso, now,
+needs `ownerAgentId` and runs on the owner's machine. The proposal lines and a contradiction's
+`reason` quote a 67-character preview of each lesson's text; with `quoteText: false` they name
+ids, hits, confidence, the threshold and dates only (`merge: keep <id> (hits 0, confidence 0.8);
+retire <id> (cosine >= 0.9)`, `contradiction (...): <a> vs <b>: use/avoid`, `retire: <id> never
+used, created <date>`), which is what the runtime asks for a private plan whose approval request
+is filed in a shared state store (ADR 0083, amendment of 2026-10-25): no private text leaves the
+PC in the request row. `consolidationDue(lastRunIso, now,
 intervalDays = 7)` says whether the weekly job is due; wiring it to the scheduler is the runtime's
 job. `polarityConflict(a, b)` is exported for the critic and the UI.
 
@@ -428,7 +446,7 @@ opposite polarity 0.93, unrelated under 0.2).
 | `retrieval.test.ts` | the formula numerically, ranking by tags and similarity, budget never exceeded by the estimator or by the rendered block across budgets, caller tokenizer, pinned first and charged, touch in row and file, exclusions (retired, superseded, proposed, other project) and global inclusion, near-duplicate skip with hints, lesson cap, render order, input validation, a lint-failing row is still served and reported in `touchFailures` while the rest is touched, a row with a credential shape is never rendered (`excluded`) |
 | `scopes.test.ts` | agent B with agent A's id gets nothing (denied, no touch), private scope without owner throws, own private only, critic and shared readable by every principal, critic grant never returns a private lesson, grants by kind, private files under the owner's root, state-layer guard |
 | `record.test.ts` | validation of text, tags, confidence, source and ownership; file plus mirrored row; near-duplicate merge with supersede, tag union, carried hits; below-threshold insert; no merge across scopes, owners or projects (global merges); a merged lesson stays global when either side was global and is still recalled from another project; a critic or shared lesson citing a private id refused at write time (shared ids and private memory unaffected); a private write for another agent refused when `agentId` is given, the service forcing owner = acting agent; opposite polarity not merged; `noDedup`; source grammar |
-| `consolidation.test.ts` | polarity pairs, `consolidationDue`, duplicate merge keeping the most used with report-only then apply, the kept lesson made global when a merged member was global (and kept project-scoped when none was), a project copy accepted from an offer never merged with its global origin (directly or through a third lesson, which merges into the origin while the copy stays), contradictions flagged in both files and never resolved, contradiction above the duplicate threshold, no pairing without a shared tag or across projects, retirement by the simulated clock (never used after 60 days, stale after 90, pinned kept, young kept), custom thresholds, owner required for a private plan |
+| `consolidation.test.ts` | polarity pairs, `consolidationDue`, duplicate merge keeping the most used with report-only then apply, the kept lesson made global when a merged member was global (and kept project-scoped when none was), a project copy accepted from an offer never merged with its global origin (directly or through a third lesson, which merges into the origin while the copy stays), contradictions flagged in both files and never resolved, contradiction above the duplicate threshold, no pairing without a shared tag or across projects, retirement by the simulated clock (never used after 60 days, stale after 90, pinned kept, young kept), custom thresholds, owner required for a private plan; `quoteText: false` names ids, counts and dates only in the merge, contradiction and retire lines and in a contradiction's `reason` while the default keeps the previews and the ids proposed are the same |
 | `promotion.test.ts` | `general` tag required, idempotent proposal with source pointing at the origin, proposals not retrievable, private origin needs owner plus human approval, foreign (critic) ids refused by promotion, promotion needs an accepting review (empty, revise, missing review rejected), promoted copy active and global, shared project origin superseded, critic origin untouched, reject, offers to projects (explicit and derived) |
 | `docs.test.ts` | the eight docs, scaffold with frontmatter, `renderStandardDoc` with name, goal and repos equal to what the scaffold writes (no repos section without repos), existing untouched and idempotent, frontmatter parse, every drift rule including separators, missing docs reported; status.md updates: from the template with the four sections and a dated session entry, a human-edited doc keeping its frontmatter, intro and own sections with only the four rewritten and missing ones added before the log, newest session first, idempotent per session id, "nothing"/"none" for empty lists, the project `state` for the sections while the entry keeps the session's lists, the log capped at `MAX_STATUS_SESSIONS`, long and multi-line titles cut to one line, `writeStatusUpdate` scaffolding the doc first and touching no other doc |
 | `scoped-store.test.ts` | the by-scope store over a private index and a shared store that refuses private writes like the Postgres adapter: `createMemory` builds it; a session's private lessons land only in the index (files in the usual roots) and critic and shared ones only in the shared store; recall unions both for the owner, the critic sees no private row, touches go to the holding store; edit, pin, retire, touch and delete locate the row; a scope change across the boundary (update, patch, supersede) is refused with `MEMORY_SCOPE_VIOLATION` while the near-duplicate merge inside the index still supersedes; promotion copies a private `general` lesson into the shared store and leaves the origin home; consolidation runs per scope on its store; `reconcile` of a private root fills the index and never the shared store; scoped and unscoped list, count and search |
@@ -450,7 +468,19 @@ in `tests/e2e` once the critic wiring lands; the sketch here is its unit-level s
   `supersede` has no transaction across the two SQLite files, which is why the facade refuses it
   instead of attempting it.
 - The private index is unencrypted on disk like the solo-mode state store; the spec's "own
-  encrypted backup" of private memory (spec "Source of truth rules") is not built.
+  encrypted backup" of private memory (spec "Source of truth rules") is not built. The index,
+  its directory and the canonical lesson files under `<data>/memory/agents/` are created with
+  the process umask (typically `0644` / `0755`), not owner-only like the vault's `0600` /
+  `0700`; another local account on the PC can read them. One later change should set an
+  owner-only mode for the whole memory tree (files, catalogs, index) at once.
+- In hybrid and cloud-only mode the cloud runner composes the runtime on the shared Postgres
+  URL and opens its own `private.sqlite` (and writes the canonical lesson files) under its data
+  directory on the runner host: the human's private memory is then split between the PC and
+  the runner, each learning its own lessons, and the runner's copy is not the spec's "own
+  encrypted cloud slot". Until that slot exists the runner's local index is the lesser evil
+  (the alternative, no index, makes every private write there fail with
+  `MEMORY_SCOPE_VIOLATION` after the file is written). ADR 0083, amendment of 2026-10-25;
+  cloud-runner.md, Known issues.
 - No `lesson_use` table yet: usage is `hit_count` and `last_used` only; `cited` (the agent or a
   finding referenced the id) waits for the critic wiring.
 - Contradiction detection is a word heuristic (ADR 0027): contradictions without a polarity
