@@ -2185,7 +2185,9 @@ view per principal, the critic and shared, with counts), `GET /memory?scope=&age
 applies it through `syncApprovals`, which also applies the `rework`/`accept`/`cancel` answers
 of tasks blocked by findings). Cross-project sharing (spec G.6): `POST
 /memory/lessons/:id/propose` (`LessonView` of the proposal; 404 for another human's private
-row), `GET /memory/promotions` (`LessonView[]`, this human's undecided proposals), `GET
+row, 409 `conflict` for a lesson that is shared already (global, or a project copy accepted
+from an offer), 422 `injection_suspected` for a text the gate refuses, with the rules in
+`details`), `GET /memory/promotions` (`LessonView[]`, this human's undecided proposals), `GET
 /memory/offers` (`LessonOfferView[]`, newest first) and `POST /memory/offers/:id/answer
 { answer: accept|dismiss }` (applied at once, `LessonOfferView`; 404 for another human's
 offer, 409 for any other answer or an offer already answered). Commands (spec Q): `GET /commands` (the registry),
