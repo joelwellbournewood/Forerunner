@@ -1165,7 +1165,8 @@ each test stands alone under `-t`, the week runs either way) and
 world, the second and third building on the first, so run the file, not a single test; the
 fourth a guard on the harness's own eval driver, which stands alone under `-t guard` and
 fails without the driver's PASS/FAIL check). All leave no files behind
-(temp roots are removed in `close()`), need no Postgres, no Docker and no network, and run on
+(temp roots are removed in `close()`, with Node's `maxRetries` for the handles Windows holds a
+moment after close; a removal that still fails is a warning naming the path, not a failure), need no Postgres, no Docker and no network, and run on
 Windows and Linux (paths through `@forerunner/platform`, worktrees under `os.tmpdir()`, the
 doctor and the eval checks as argv arrays).
 
@@ -1588,7 +1589,9 @@ denial is a `path_not_allowed` or `tool_not_allowed`; the key's ledger has no su
 and the same `api` entries as before; the critic's metered calls are in the spend ledger as in
 the API-key half; the rows that were in the spend ledger before the session are unchanged and
 the three SDK runs landed as USD 0 `subscription` rows with the note, the budget's run total
-being the metered calls alone; when the API-key half's `phase1-live.json` of the same run is
+having grown by exactly this file's metered calls since the file started (the run total
+covers every file of the vitest run; it was compared absolutely until the first full run with
+a token, 2026-10-25, showed it only held when the file ran alone); when the API-key half's `phase1-live.json` of the same run is
 in the report directory (or `FORERUNNER_LIVE_PHASE1_EVIDENCE` names it; `comparePhase1` in
 `src/report.ts`) each task's "completed or in review" outcome matches; a file from another run
 is listed in the evidence and flagged `stale` with the reason, never compared as this run's;

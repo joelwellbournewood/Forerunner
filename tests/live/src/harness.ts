@@ -39,10 +39,10 @@ import {
 import { runIdFromEnv } from "./report.ts";
 
 /**
- * Removing the harness's temporary tree. On Windows a handle the runtime or an SDK subprocess
- * has only just released (SQLite, a worktree file) makes the first attempt fail with EPERM or
- * EBUSY; `maxRetries` retries those codes with a linear back-off (Node's documented use), so
- * a finished run is not reported failed by its cleanup (live run of 2026-10-25 on Windows).
+ * Removing the harness's temporary tree. On Windows a handle still held a moment after close
+ * (SQLite, a worktree file, possibly a killed SDK subprocess's cwd) made the removal fail with
+ * EPERM (live run of 2026-10-25). `maxRetries` makes Node retry EBUSY, EMFILE, ENFILE,
+ * ENOTEMPTY and EPERM with a linear back-off (about 11 s at most here).
  */
 export const RM_TREE = { recursive: true, force: true, maxRetries: 10, retryDelay: 200 } as const;
 
@@ -538,7 +538,14 @@ export async function composeLive(opts: LiveHarnessOptions = {}): Promise<LiveHa
     close: async () => {
       await app.close().catch(() => undefined);
       await host.stop().catch(() => undefined);
-      rmSync(root, RM_TREE);
+      // A temp tree left behind is harmless; a run whose cases passed is not failed for it.
+      try {
+        rmSync(root, RM_TREE);
+      } catch (err) {
+        console.warn(
+          `live harness: could not remove the temporary tree ${root} (${(err as Error).message}); remove it by hand`,
+        );
+      }
     },
   };
 }
