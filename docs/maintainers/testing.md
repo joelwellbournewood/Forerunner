@@ -483,6 +483,9 @@ that its test directory exists. `apps/ui` and `apps/approvals-web` keep their ow
 local voice providers before a human speaks the phase 5 turns and reads the `voice.turn` rows
 back afterwards. Its test, in the `unit` project, seeds a SQLite store in a temporary
 `FORERUNNER_HOME` and covers the per-turn lines and the summary with the `VOICE RESULT:` line,
+both first-audio figures (the result decided on the heard one when a turn has it, joined from
+a later `voice.heard` row by voice session and turn, and labelled daemon-side otherwise; turns
+without a heard figure named),
 `--since` and the 24 h default, typed and warm-up turns left out, no transcript or error
 message in the output, the refusals (no home, a store outside it, a non-SQLite store, no store
 yet), one run as a script through `tsx`, the median and p90 against `medianTotalToFirstAudio`

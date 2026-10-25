@@ -35,6 +35,10 @@ export interface AudioOutput {
   close(): Promise<void>;
   /** A context created without a user gesture may start suspended; resumed before playing. */
   resume?(): Promise<void>;
+  /** Seconds from the context's output to the device's (AudioContext; not every browser has it). */
+  readonly outputLatency?: number;
+  /** Seconds the context itself adds before its output (AudioContext). */
+  readonly baseLatency?: number;
 }
 
 export interface PlaybackOptions {

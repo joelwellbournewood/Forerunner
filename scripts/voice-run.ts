@@ -13,8 +13,17 @@
  *   tsx scripts/voice-run.ts report [--since <iso>] [--exclude-first <n>]
  *       One line per `voice.turn` row since --since (default: the last 24 h) with the latency
  *       stages the row records, then n, median and p90 of first audio against the voice_chat
- *       target and a final `VOICE RESULT:` line. Exit 0 when the median is within the target,
- *       2 when it is not (or no turn was measured), 1 on a refusal or an error.
+ *       target and a final `VOICE RESULT:` line. Two first-audio figures: the daemon-side one
+ *       (`totalToFirstAudioMs`, taken where the daemon's paced sink gets the first chunk) and
+ *       the heard one (`heardFirstAudioMs`, posted by the conversation panel's player: the
+ *       press release to its first chunk at the speaker, so the SSE hop, decoding, scheduling
+ *       and the output device are in it). The result is decided on the heard figure when any
+ *       counted turn has one, else on the daemon-side figure, and the line says which.
+ *       --exclude-first <n> leaves out the first n audio turns of the whole window (all voice
+ *       sessions together, in time order; typed turns do not count towards n): one warm-up
+ *       per daemon start means passing the number of starts, not 1 per session.
+ *       Exit 0 when the median is within the target, 2 when it is not (or no turn was
+ *       measured), 1 on a refusal or an error.
  *
  * Both refuse to run without FORERUNNER_HOME: the run keeps its config, store and vault profile
  * apart from the everyday install, and `report` reads only a SQLite store inside that home.
@@ -306,9 +315,13 @@ export type StageKey = (typeof STAGES)[number]["key"];
 
 export interface TurnSample {
   at: string;
+  /** The voice session that wrote the row (rows from before it was recorded have none). */
+  voiceSessionId: string | null;
   turn: number | null;
   source: string;
   totalToFirstAudioMs: number | null;
+  /** What the human heard, from the row or a later `voice.heard` row of the same turn. */
+  heardFirstAudioMs: number | null;
   stages: Record<StageKey, number | null>;
   withinTarget: boolean | null;
   interrupted: boolean;
@@ -319,6 +332,10 @@ const num = (v: unknown): number | null => (typeof v === "number" && Number.isFi
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
+/** An id as the runtime makes them (never free text). */
+const idOf = (v: unknown): string | null =>
+  typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : null;
+
 /** Numbers, the source and codes only: never `said`, `heard`, `unspokenText` or a message. */
 export function turnSample(e: Pick<EventRow, "created_at" | "payload">): TurnSample {
   const p = obj(e.payload);
@@ -328,9 +345,11 @@ export function turnSample(e: Pick<EventRow, "created_at" | "payload">): TurnSam
   const code = obj(p.error).code;
   return {
     at: e.created_at,
+    voiceSessionId: idOf(p.voiceSessionId),
     turn: num(p.turn),
     source: typeof p.source === "string" && /^[a-z_]{1,16}$/.test(p.source) ? p.source : "unknown",
     totalToFirstAudioMs: num(l.totalToFirstAudioMs),
+    heardFirstAudioMs: num(l.heardFirstAudioMs),
     stages,
     withinTarget: typeof l.withinTarget === "boolean" ? l.withinTarget : null,
     interrupted: p.interrupted === true,
@@ -348,7 +367,11 @@ export function median(values: readonly number[]): number | null {
     : ((xs[mid - 1] as number) + (xs[mid] as number)) / 2;
 }
 
-/** p90 by nearest rank, as the /performance view takes it (`nearestRank`). */
+/**
+ * p90 by nearest rank, the rule the /performance view uses (`nearestRank`). Only the rule:
+ * /performance counts every turn of its window (typed and warm-up turns too), so its voice p90
+ * is over a different set of turns than this report's.
+ */
 export function p90(values: readonly number[]): number | null {
   if (values.length === 0) return null;
   const xs = [...values].sort((a, b) => a - b);
@@ -369,6 +392,8 @@ export interface ReportDeps {
 
 export interface ReportResult {
   code: 0 | 1 | 2;
+  /** Which figure decided: what the player heard, or the daemon-side one when none was posted. */
+  basis: "heard" | "daemon-side";
   n: number;
   median: number | null;
   p90: number | null;
@@ -410,7 +435,7 @@ export async function runReport(deps: ReportDeps): Promise<ReportResult> {
   const { env, out, argv } = deps;
   const fail = (line: string): ReportResult => {
     out(line);
-    return { code: 1, n: 0, median: null, p90: null, met: false };
+    return { code: 1, basis: "daemon-side", n: 0, median: null, p90: null, met: false };
   };
   const home = dedicatedHome(env);
   if (!home) return fail(REFUSE_HOME);
@@ -440,8 +465,8 @@ export async function runReport(deps: ReportDeps): Promise<ReportResult> {
         ENTITIES.event as EntityDef,
         store.event.clock,
       ).rows(
-        `SELECT * FROM "event" WHERE "type" = ? AND "created_at" >= ? ORDER BY "created_at", "id"`,
-        ["voice.turn", sinceIso],
+        `SELECT * FROM "event" WHERE "type" IN (?, ?) AND "created_at" >= ? ORDER BY "created_at", "id"`,
+        ["voice.turn", "voice.heard", sinceIso],
       );
     } finally {
       await store.close().catch(() => undefined);
@@ -450,15 +475,37 @@ export async function runReport(deps: ReportDeps): Promise<ReportResult> {
     return fail(errorMessage(e));
   }
 
+  // A heard figure that arrived after its turn's row was written is a `voice.heard` row of the
+  // same conversation session, voice session and turn, written after it.
+  const samples: TurnSample[] = [];
+  const byKey = new Map<string, TurnSample>();
+  const key = (sessionId: string, vs: string | null, turn: number | null) =>
+    vs === null || turn === null ? null : `${sessionId}|${vs}|${turn}`;
+  for (const row of rows) {
+    if (row.type === "voice.turn") {
+      const sample = turnSample(row);
+      samples.push(sample);
+      const k = key(row.session_id, sample.voiceSessionId, sample.turn);
+      if (k) byKey.set(k, sample);
+      continue;
+    }
+    const p = obj(row.payload);
+    const k = key(row.session_id, idOf(p.voiceSessionId), num(p.turn));
+    const target = k ? byKey.get(k) : undefined;
+    const heard = num(p.heardFirstAudioMs);
+    if (target && target.heardFirstAudioMs === null && heard !== null)
+      target.heardFirstAudioMs = heard;
+  }
   out(
-    `voice-run report (FORERUNNER_HOME=${home}) voice.turn rows since ${sinceIso}: ${rows.length}`,
+    `voice-run report (FORERUNNER_HOME=${home}) voice.turn rows since ${sinceIso}: ${samples.length}`,
   );
-  const samples = rows.map(turnSample);
   const measured: TurnSample[] = [];
   let audioSeen = 0;
   let typed = 0;
   let warmup = 0;
   let unmeasured = 0;
+  // Only worth saying per turn when the run has heard figures at all.
+  const anyHeard = samples.some((s) => s.heardFirstAudioMs !== null);
   for (const s of samples) {
     let note = "";
     if (s.source !== "audio") {
@@ -470,22 +517,41 @@ export async function runReport(deps: ReportDeps): Promise<ReportResult> {
     } else if (s.totalToFirstAudioMs === null) {
       unmeasured++;
       note = " [not counted: no first audio]";
-    } else measured.push(s);
+    } else {
+      measured.push(s);
+      if (anyHeard && s.heardFirstAudioMs === null) note = " [no heard figure: daemon-side only]";
+    }
     const stages = STAGES.map((st) => `${st.key}=${ms(s.stages[st.key])}`).join(" ");
     out(
-      `${s.at} turn=${s.turn ?? "-"} source=${s.source} totalToFirstAudioMs=${ms(s.totalToFirstAudioMs)} ${stages} within=${s.withinTarget === null ? "-" : s.withinTarget ? "yes" : "no"}${s.interrupted ? " interrupted" : ""}${s.errorCode ? ` error=${s.errorCode}` : ""}${note}`,
+      `${s.at} turn=${s.turn ?? "-"} source=${s.source} totalToFirstAudioMs=${ms(s.totalToFirstAudioMs)} heardFirstAudioMs=${ms(s.heardFirstAudioMs)} ${stages} within=${s.withinTarget === null ? "-" : s.withinTarget ? "yes" : "no"}${s.interrupted ? " interrupted" : ""}${s.errorCode ? ` error=${s.errorCode}` : ""}${note}`,
     );
   }
-  const totals = measured.map((s) => s.totalToFirstAudioMs as number);
-  const med = median(totals);
-  const p = p90(totals);
   const target = FIRST_AUDIO_TARGET_MS;
-  const met = med !== null && med <= target;
+  const targetNote = `target=${target} (MODE_DEFAULTS.voice_chat, ${MODE_DEFAULTS.voice_chat.targetKind})`;
+  const summary = (xs: number[]) => {
+    const m = median(xs);
+    const q = p90(xs);
+    return {
+      n: xs.length,
+      median: m,
+      p90: q,
+      met: m !== null && m <= target,
+      line: `n=${xs.length} median=${ms(m)} p90=${ms(q)} ${targetNote}; median within target: ${m !== null && m <= target ? "yes" : "no"}; p90 within target: ${q !== null && q <= target ? "yes" : "no"}${xs.length > 0 && xs.length < 10 ? "; fewer than 10 turns" : ""}`,
+    };
+  };
+  const daemon = summary(measured.map((s) => s.totalToFirstAudioMs as number));
+  const heardTurns = measured.filter((s) => s.heardFirstAudioMs !== null);
+  const heard = summary(heardTurns.map((s) => s.heardFirstAudioMs as number));
   out(
     `turns: ${samples.length} in the window; ${measured.length} counted; ${typed} typed, ${warmup} warm-up, ${unmeasured} without first audio left out`,
   );
   out(
-    `first audio (totalToFirstAudioMs): n=${measured.length} median=${ms(med)} p90=${ms(p)} target=${target} (MODE_DEFAULTS.voice_chat, ${MODE_DEFAULTS.voice_chat.targetKind}); median within target: ${met ? "yes" : "no"}; p90 within target: ${p !== null && p <= target ? "yes" : "no"}${measured.length > 0 && measured.length < 10 ? "; fewer than 10 turns" : ""}`,
+    `first audio, daemon-side (totalToFirstAudioMs, measured where the daemon's paced sink takes the first chunk; the SSE hop, decoding, scheduling and the output device come after it): ${daemon.line}`,
+  );
+  out(
+    heardTurns.length === 0
+      ? "first audio, heard (heardFirstAudioMs): none recorded (no player posted one: the result is the daemon-side figure)"
+      : `first audio, heard (heardFirstAudioMs, the panel's player: the press release to its first chunk at the speaker): ${heard.line}${heardTurns.length < measured.length ? `; ${measured.length - heardTurns.length} of ${measured.length} counted turns have no heard figure and are left out of it` : ""}`,
   );
   out(
     `stage medians: ${STAGES.map((st) => {
@@ -493,10 +559,19 @@ export async function runReport(deps: ReportDeps): Promise<ReportResult> {
       return `${st.key}=${ms(median(xs))}${st.target === null ? "" : `/${st.target}`}`;
     }).join(" ")}`,
   );
+  const basis: ReportResult["basis"] = heardTurns.length > 0 ? "heard" : "daemon-side";
+  const result = basis === "heard" ? heard : daemon;
   out(
-    `VOICE RESULT: n=${measured.length} median=${ms(med)} p90=${ms(p)} target=${target} ${met ? "met" : "not met"}`,
+    `VOICE RESULT: n=${result.n} median=${ms(result.median)} p90=${ms(result.p90)} target=${target} ${result.met ? "met" : "not met"} (${basis} first audio)`,
   );
-  return { code: met ? 0 : 2, n: measured.length, median: med, p90: p, met };
+  return {
+    code: result.met ? 0 : 2,
+    basis,
+    n: result.n,
+    median: result.median,
+    p90: result.p90,
+    met: result.met,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -505,18 +580,23 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv, out: Out): Pr
   const [cmd, ...rest] = argv;
   if (cmd === "check") return (await runCheck({ env, out })).ok ? 0 : 1;
   if (cmd === "report") return (await runReport({ env, out, argv: rest })).code;
-  out("usage: tsx scripts/voice-run.ts check | report [--since <iso>] [--exclude-first <n>]");
+  out(
+    "usage: tsx scripts/voice-run.ts check | report [--since <iso>] [--exclude-first <n>]  (n: the first n audio turns of the whole window, all sessions together)",
+  );
   return 1;
 }
 
 const isMain =
   process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
+  // exitCode, not exit(): stdout is a pipe in the gate run and exit() can cut it off unflushed.
   main(process.argv.slice(2), process.env, (line) => console.log(line)).then(
-    (code) => process.exit(code),
+    (code) => {
+      process.exitCode = code;
+    },
     (e: unknown) => {
       console.error(`voice-run: ${errorMessage(e)}`);
-      process.exit(1);
+      process.exitCode = 1;
     },
   );
 }

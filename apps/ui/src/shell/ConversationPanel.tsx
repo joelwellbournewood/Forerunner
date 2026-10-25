@@ -3,10 +3,11 @@ import { streamChat } from "../api/chat-stream.ts";
 import { describeError, type VoiceSessionView } from "../api/client.ts";
 import { Dialog } from "../components/Dialog.tsx";
 import { Badge, Button, INPUT_CLASS } from "../components/ui.tsx";
+import type { AudioOutput } from "../lib/speech.ts";
 import { useClient, useIdentity, useRealtime, useUiState } from "../store/context.tsx";
 import type { MicCapture } from "./voice-capture.ts";
 import { useCaptureFactory } from "./voice-capture.ts";
-import { followVoiceReply, type VoiceReplyPlayer } from "./voice-playback.ts";
+import { createVoiceOutput, followVoiceReply, type VoiceReplyPlayer } from "./voice-playback.ts";
 
 /**
  * The conversation panel (spec O.1, ADR 0064): the global hotkey, the header's Talk button and
@@ -14,9 +15,12 @@ import { followVoiceReply, type VoiceReplyPlayer } from "./voice-playback.ts";
  * push-to-talk turn through the daemon's /voice routes: the first press opens a session in
  * push_to_talk mode, presses, and streams the microphone; the next press (or "Send") releases
  * and the turn's transcript and reply appear, the reply spoken as the daemon streams its audio
- * frames (`voice-playback.ts`, followed from the session's start until the panel closes). When voice is unavailable (no provider, no model
- * credential, no microphone) the panel says why and focuses the text input, which talks to
- * the same agent through /chat/stream.
+ * frames (`voice-playback.ts`, followed from the session's start until the panel closes). The
+ * audio output is created and resumed synchronously when a turn starts (the Talk click, or the
+ * hotkey press's render), before any await, and handed to the player; the release (Send or
+ * the next press) tells the player to measure what the human hears of the reply. When voice is
+ * unavailable (no provider, no model credential, no microphone) the panel says why and focuses
+ * the text input, which talks to the same agent through /chat/stream.
  */
 
 export type VoicePhase = "idle" | "starting" | "listening" | "waiting" | "unavailable";
@@ -66,6 +70,8 @@ export function ConversationPanel({
   const captureRef = useRef<MicCapture | null>(null);
   // Plays the session's reply audio (the daemon streams it; nothing else in the app plays it).
   const playerRef = useRef<VoiceReplyPlayer | null>(null);
+  // An output made in the click or key handler, waiting for the session's player to take it.
+  const outputRef = useRef<AudioOutput | null>(null);
   const phaseRef = useRef<VoicePhase>("idle");
   const turnsRef = useRef(0);
   // Bumped when the panel closes or unmounts: a turn that is still starting (status, session,
@@ -98,6 +104,15 @@ export function ConversationPanel({
   const startTurn = useCallback(async () => {
     const epoch = epochRef.current;
     const closed = () => epochRef.current !== epoch;
+    // Before any await: a webview lets an AudioContext start only from the gesture's own task.
+    // The session's player keeps its output; a new session gets the one made here.
+    const keeps =
+      playerRef.current !== null &&
+      sessionRef.current !== null &&
+      !sessionRef.current.endedAt &&
+      playerRef.current.sessionId === sessionRef.current.id;
+    if (keeps) playerRef.current?.resume();
+    else if (!outputRef.current) outputRef.current = createVoiceOutput(realtime?.audio);
     setPhaseBoth("starting");
     setReason(null);
     const capture = captureFactory();
@@ -127,10 +142,15 @@ export function ConversationPanel({
       }
       if (playerRef.current?.sessionId !== session.id) {
         playerRef.current?.close();
+        const output = outputRef.current ?? createVoiceOutput(realtime?.audio);
+        outputRef.current = null;
         playerRef.current = followVoiceReply(client, session, {
           ...(realtime && "eventSource" in realtime ? { eventSource: realtime.eventSource } : {}),
-          ...(realtime?.audio ? { audio: realtime.audio } : {}),
+          output,
+          ...(realtime?.now ? { now: realtime.now } : {}),
         });
+        // No EventSource: no player to own the output.
+        if (!playerRef.current) void output?.close().catch(() => undefined);
       }
       turnsRef.current = session.turns;
       const id = session.id;
@@ -168,6 +188,8 @@ export function ConversationPanel({
   }, [activeProjectId, captureFactory, client, realtime, setPhaseBoth, unavailable]);
 
   const finishTurn = useCallback(async () => {
+    // The release, as the human made it: what they hear of the reply is measured from here.
+    playerRef.current?.turnEnded();
     const session = sessionRef.current;
     captureRef.current?.stop();
     captureRef.current = null;
@@ -226,6 +248,8 @@ export function ConversationPanel({
     captureRef.current = null;
     playerRef.current?.close();
     playerRef.current = null;
+    void outputRef.current?.close().catch(() => undefined);
+    outputRef.current = null;
     const session = sessionRef.current;
     sessionRef.current = null;
     if (session && !session.endedAt) void client.stopVoiceSession(session.id).catch(() => {});

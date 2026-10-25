@@ -98,6 +98,8 @@ import {
   UpdateProjectSettingsBody,
   VoiceAnswerBody,
   VoiceAudioBody,
+  VoiceHeardBody,
+  VoiceHeardView,
   VoicePressBody,
   VoiceTextBody,
 } from "./api-types.ts";
@@ -308,13 +310,25 @@ export function createDaemonApp(
         unsubscribe();
       }
     });
-  /** `?afterSeq=` of a numbered stream: a resume point that is not a number is refused. */
-  const afterSeqOf = (c: { req: { query(name: string): string | undefined } }): number => {
+  /**
+   * The resume point of a numbered stream: `?afterSeq=` (one that is not a number is refused)
+   * or the `Last-Event-ID` header, whichever is later. An EventSource reconnects to the URL it
+   * was given, so its `afterSeq` stays that of the first subscription, and sends the id of the
+   * last frame it received (every frame's `id` is its seq) in the header: without the header a
+   * reconnect would replay what the client already acted on (a `barge_in` that silences the
+   * reply playing now). A header that is not a non-negative integer is ignored: the browser
+   * sends whatever id it last saw, and the query still bounds the replay.
+   */
+  const afterSeqOf = (c: {
+    req: { query(name: string): string | undefined; header(name: string): string | undefined };
+  }): number => {
     const rawAfter = c.req.query("afterSeq");
     const afterSeq = rawAfter === undefined || rawAfter === "" ? 0 : Number(rawAfter);
     if (!Number.isFinite(afterSeq) || afterSeq < 0)
       throw new ForerunnerError("validation", "afterSeq must be a non-negative number");
-    return afterSeq;
+    const rawLast = c.req.header("last-event-id")?.trim() ?? "";
+    const lastEventId = /^\d{1,15}$/.test(rawLast) ? Number(rawLast) : 0;
+    return Math.max(afterSeq, lastEventId);
   };
 
   app.onError((err, c) => {
@@ -355,7 +369,8 @@ export function createDaemonApp(
     "*",
     cors({
       origin: (origin) => (isLocalOrigin(origin) ? origin : ""),
-      allowHeaders: ["Authorization", "Content-Type", "Accept"],
+      // Last-Event-ID: an EventSource from the UI's origin resends it when it reconnects.
+      allowHeaders: ["Authorization", "Content-Type", "Accept", "Last-Event-ID"],
       allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
       // The audit export names its file in Content-Disposition; the UI reads it cross-origin.
       exposeHeaders: ["Content-Disposition"],
@@ -1643,6 +1658,14 @@ export function createDaemonApp(
     const turn = await session.bridge.text(body.text);
     if (turn.pending || turn.approval) rt.events.emit("inbox", {});
     return c.json(voiceTurnView(turn, chf()));
+  });
+
+  // What the human heard (the panel's player): release to the first reply chunk at the
+  // speaker, measured in the page. One figure per turn; the daemon-side figure stays as it was.
+  app.post("/voice/sessions/:id/heard", async (c) => {
+    const session = rt.voice.mustGet(c.req.param("id"));
+    const body = await parse(c, VoiceHeardBody);
+    return c.json(VoiceHeardView.parse(session.bridge.heard(body.turn, body.heardFirstAudioMs)));
   });
 
   // A tap confirms the read-back through the registry as a tap; "no" cancels the card.

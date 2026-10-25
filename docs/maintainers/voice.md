@@ -347,23 +347,48 @@ profile (`--profile voice-run`) apart from the everyday install.
    first press, Kokoro on the first sentence, both download their weights the first time), so
    the first turn of a daemon is a cold start.
 4. Stop the UI and the daemon (Ctrl+C), then `pnpm voice:run report --exclude-first 1`
-   (`--since <iso>`, default the last 24 h): one line per `voice.turn` row with the stages it
-   records (`endOfTurnMs`, `finalTranscriptMs`, `modelFirstTokenMs`, `firstAudioMs`, and the
-   diagnostics `firstSentenceMs`, `ttsFirstByteMs`), then n, median (as
-   `medianTotalToFirstAudio`) and p90 (nearest rank, as `/performance`) of
-   `totalToFirstAudioMs` against `MODE_DEFAULTS.voice_chat` (1200 ms), the stage medians and
-   `VOICE RESULT: n=<n> median=<ms> p90=<ms> target=<ms> <met|not met>` (met: the median within
-   the target, as the gate measures it). Typed turns and turns without first audio are listed
-   and left out. Exit 0 met, 2 not met, 1 refused.
+   (`--since <iso>`, default the last 24 h; `--exclude-first <n>` leaves out the first n
+   audio turns of the whole window, every voice session together in time order, so a run with
+   two daemon starts and a warm-up after each passes 2): one line per `voice.turn` row with
+   both first-audio figures and the stages it records (`endOfTurnMs`, `finalTranscriptMs`,
+   `modelFirstTokenMs`, `firstAudioMs`, and the diagnostics `firstSentenceMs`,
+   `ttsFirstByteMs`), then n, median (as `medianTotalToFirstAudio`) and p90 (by nearest rank,
+   the rule `/performance` uses; `/performance` itself counts typed and warm-up turns too, so
+   its p90 is over other turns) of each figure against `MODE_DEFAULTS.voice_chat` (1200 ms),
+   the stage medians and
+   `VOICE RESULT: n=<n> median=<ms> p90=<ms> target=<ms> <met|not met> (<heard|daemon-side> first audio)`
+   (met: the median within the target). The result is decided on the heard figure when any
+   counted turn has one (turns without one are named and left out of it), and on the
+   daemon-side figure, labelled so, when none has. Typed turns and turns without first audio
+   are listed and left out. Exit 0 met, 2 not met, 1 refused.
 
 Recorded where: the `voice.turn` rows on the conversation session in
 `<home>/data/state.sqlite` (they hold `said` and `heard`; the report prints numbers, the
 source and error codes only, never the text or a message), the `voice.session` audit rows, the
 Haiku calls in the cost ledger; no audio unless `FORERUNNER_VOICE_STORE_AUDIO=1`. The human
 hears the reply: the panel plays the session's `audio` frames through the browser's output
-device. First audio is measured at the daemon's paced sink when the first TTS chunk is handed
-over; the speaker adds the SSE hop and the output device's latency on top, which the report
-does not include.
+device. Two first-audio figures are recorded per turn:
+
+- daemon-side, `latency.totalToFirstAudioMs`: the end of the turn as the loop detects it to
+  the moment the daemon's paced sink takes the first TTS chunk. The SSE hop, decoding,
+  scheduling and the output device come after it.
+- heard, `latency.heardFirstAudioMs`: measured in the page by the panel's player
+  (`apps/ui/src/shell/voice-playback.ts`, `apps.md`) from the press release the human made
+  (Send, or the hotkey's second press) to the moment its first chunk of that turn's reply
+  reaches the speaker: the chunk's scheduled start in context time mapped onto
+  `performance.now()`, plus the device's `outputLatency` (or `baseLatency` where the browser
+  has no `outputLatency`). Both ends are on the page's one clock, so no clock is compared with
+  the daemon's. The reference is the release rather than the daemon's `turn_end` or first
+  audio frame: those times are the daemon's clock and its own detection, and the release is
+  what the human did; the figure therefore also includes posting the turn's last chunks and
+  the release (the panel sends the release after them), which the daemon-side figure starts
+  after. It includes the 50 ms playback lead. The player posts it once per turn
+  (`POST /voice/sessions/:id/heard`); it lands on the turn's `voice.turn` row while the turn
+  runs (the usual case: the reply's first chunk is heard long before the turn ends), or as a
+  `voice.heard` row `{ voiceSessionId, turn, heardFirstAudioMs }` once the row is written (the
+  event log is append-only), which the report joins by conversation session, voice session and
+  turn. A window that plays nothing (no Web Audio) posts nothing and the report falls back to
+  the daemon-side figure, saying so.
 
 ## How to change it
 

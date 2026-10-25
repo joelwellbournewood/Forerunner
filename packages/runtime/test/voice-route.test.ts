@@ -668,6 +668,145 @@ describe("voice routes on the composed daemon", () => {
     });
   });
 
+  it("an EventSource reconnect resumes after its Last-Event-ID: nothing it saw is replayed", async () => {
+    const seen = await events(sessionId);
+    expect(seen.length).toBeGreaterThan(4);
+    const mid = seen[Math.floor(seen.length / 2)]?.seq ?? 0;
+    const last = seen.at(-1)?.seq ?? 0;
+    // The browser reconnects to the URL it was given (`afterSeq` of the first subscription)
+    // and sends the last frame id it received as Last-Event-ID; the later of the two wins.
+    const ids = async (query: string, lastEventId?: string) => {
+      const ac = new AbortController();
+      const res = await app.request(`/voice/sessions/${sessionId}/events?token=${token}${query}`, {
+        headers: {
+          accept: "text/event-stream",
+          ...(lastEventId === undefined ? {} : { "last-event-id": lastEventId }),
+        },
+        signal: ac.signal,
+      });
+      expect(res.status).toBe(200);
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("no body");
+      let text = "";
+      while (!new RegExp(`^id: ${last}$`, "m").test(text)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += new TextDecoder().decode(value);
+      }
+      ac.abort();
+      return [...text.matchAll(/^id: (\d+)$/gm)].map((m) => Number(m[1]));
+    };
+    const resumed = await ids("&afterSeq=0", String(mid));
+    expect(resumed.length).toBeGreaterThan(0);
+    expect(Math.min(...resumed)).toBe(seen.find((e) => e.seq > mid)?.seq);
+    expect(resumed.every((id) => id > mid)).toBe(true);
+    // A larger afterSeq than the header still wins; a header that is not a number is ignored.
+    expect(Math.min(...(await ids(`&afterSeq=${mid}`, "1")))).toBeGreaterThan(mid);
+    expect(Math.min(...(await ids(`&afterSeq=${mid}`, "abc")))).toBeGreaterThan(mid);
+    // Without either, the whole buffer replays (the first subscription of a fresh panel).
+    expect(Math.min(...(await ids("&afterSeq=0")))).toBe(seen[0]?.seq);
+  });
+
+  it("records the first audio the player heard on the turn's row, or as a voice.heard row once the row is written", async () => {
+    const started = VoiceSessionView.parse(
+      await json(await post("/voice/sessions", { projectId, language: "en" })),
+    );
+    const id = started.id;
+    // A turn that has ended: its voice.turn row is written, so the figure is its own row.
+    const typed = VoiceTurnView.parse(
+      await json(
+        await drive(clock, post(`/voice/sessions/${id}/text`, { text: "What is the status?" })),
+      ),
+    );
+    const late = await post(`/voice/sessions/${id}/heard`, {
+      turn: typed.turn,
+      heardFirstAudioMs: 812.4,
+    });
+    expect(late.status).toBe(200);
+    expect(await json(late)).toEqual({
+      turn: typed.turn,
+      heardFirstAudioMs: 812,
+      recordedOn: "voice.heard",
+    });
+    // One figure per turn; an unknown turn, a bad figure and a missing token are refused.
+    expect(
+      (await post(`/voice/sessions/${id}/heard`, { turn: typed.turn, heardFirstAudioMs: 900 }))
+        .status,
+    ).toBe(409);
+    expect(
+      (await post(`/voice/sessions/${id}/heard`, { turn: 99, heardFirstAudioMs: 900 })).status,
+    ).toBe(404);
+    for (const bad of [-1, "fast", null, 3_600_001])
+      expect(
+        (await post(`/voice/sessions/${id}/heard`, { turn: typed.turn, heardFirstAudioMs: bad }))
+          .status,
+      ).toBe(409);
+    expect(
+      (
+        await app.request(`/voice/sessions/${id}/heard?token=${token}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ turn: typed.turn, heardFirstAudioMs: 1 }),
+        })
+      ).status,
+    ).toBe(401);
+
+    // An audio turn: the player's figure arrives while the reply plays, before the row.
+    scripts[stt.sessions.length] = { final: "What is the status?" };
+    await post(`/voice/sessions/${id}/press`, { pressed: true });
+    for (const frame of speechFrames(300)) {
+      clock.tickMonotonic(FRAME_MS);
+      await post(`/voice/sessions/${id}/audio`, {
+        pcm: encodePcm(frame),
+        sampleRate: frame.sampleRate,
+        channels: frame.channels,
+        timestampMs: frame.timestampMs,
+      });
+    }
+    const released = VoiceSessionView.parse(
+      await json(await post(`/voice/sessions/${id}/press`, { pressed: false })),
+    );
+    const live = await post(`/voice/sessions/${id}/heard`, {
+      turn: released.turn,
+      heardFirstAudioMs: 1093,
+    });
+    expect(live.status).toBe(200);
+    expect(await json(live)).toMatchObject({ recordedOn: "voice.turn" });
+    await drive(
+      clock,
+      (async () => {
+        for (;;) {
+          const v = VoiceSessionView.parse(await json(await req(`/voice/sessions/${id}`)));
+          if (v.turns > typed.turn && v.state === "idle") return v;
+          await settle(4);
+        }
+      })(),
+    );
+    await drive(clock, settle(8));
+    // Every voice session of the agent and project writes to the same conversation session,
+    // and turn numbers restart per voice session: the rows name their voice session.
+    const rows = (await rt.store.event.list(started.conversationSessionId)).filter(
+      (e) =>
+        (e.type === "voice.turn" || e.type === "voice.heard") &&
+        (e.payload as Json).voiceSessionId === id,
+    );
+    expect(rows).toHaveLength(3);
+    const latencyOf = (n: number): Json => {
+      const row = rows.find((r) => r.type === "voice.turn" && (r.payload as Json).turn === n);
+      if (!row) throw new Error(`no voice.turn row for turn ${n}`);
+      return (row.payload as Json).latency as Json;
+    };
+    expect(latencyOf(released.turn).heardFirstAudioMs).toBe(1093);
+    // The daemon-side figure stays beside it, unchanged.
+    expect(latencyOf(released.turn).totalToFirstAudioMs).toEqual(expect.any(Number));
+    expect(latencyOf(typed.turn).heardFirstAudioMs).toBeNull();
+    expect(rows.filter((r) => r.type === "voice.heard").map((r) => r.payload as Json)).toEqual([
+      { voiceSessionId: id, turn: typed.turn, heardFirstAudioMs: 812 },
+    ]);
+    expect(DAEMON_ROUTES).toHaveProperty("voiceHeard");
+    expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
+  });
+
   it("streams the events over SSE and stops at once", async () => {
     const ac = new AbortController();
     const res = await app.request(`/voice/sessions/${sessionId}/events?token=${token}&afterSeq=0`, {

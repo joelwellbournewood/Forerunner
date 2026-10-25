@@ -46,6 +46,7 @@ import {
   StartVoiceSessionBody,
   TransitionTaskBody,
   VoiceAudioBody,
+  VoiceHeardBody,
   VoicePressBody,
 } from "@forerunner/runtime/daemon/api-types";
 import {
@@ -1287,6 +1288,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
     if (v.pressed) v.chunks += 1;
     return c.json(v.view);
+  });
+  // What the player heard (once per turn, as the daemon takes it; `state.calls` has the posts).
+  app.post("/voice/sessions/:id/heard", async (c) => {
+    const v = mustVoice(c);
+    if (!v) return errorBody(c, 404, "not_found", "no such voice session");
+    const parsed = VoiceHeardBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return errorBody(c, 409, "conflict", parsed.error.message);
+    return c.json({
+      turn: parsed.data.turn,
+      heardFirstAudioMs: Math.round(parsed.data.heardFirstAudioMs),
+      recordedOn: "voice.turn",
+    });
   });
   app.post("/voice/sessions/:id/stop", (c) => {
     const v = mustVoice(c);

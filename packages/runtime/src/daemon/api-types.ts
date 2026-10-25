@@ -1235,6 +1235,30 @@ export const VoiceAudioBody = z.object({
 });
 export type VoiceAudioBody = z.infer<typeof VoiceAudioBody>;
 
+/**
+ * What the human heard (`POST /voice/sessions/:id/heard`): the panel's player measures, per
+ * turn, from the push-to-talk release (Send or the hotkey) to the moment its first chunk of
+ * the reply reaches the speaker (the chunk's scheduled start in context time mapped to the
+ * page's clock, plus the output device's latency), on the page's own clock. One per turn; it
+ * lands on the turn's `voice.turn` row as `latency.heardFirstAudioMs`, or as a `voice.heard`
+ * row when that row was already written.
+ */
+export const VOICE_HEARD_MAX_MS = 3_600_000;
+export const VoiceHeardBody = z.object({
+  turn: z.number().int().min(1),
+  heardFirstAudioMs: z.number().min(0).max(VOICE_HEARD_MAX_MS),
+});
+export type VoiceHeardBody = z.infer<typeof VoiceHeardBody>;
+
+export const VoiceHeardView = z.object({
+  turn: z.number().int(),
+  /** Rounded to the millisecond. */
+  heardFirstAudioMs: z.number().int(),
+  /** `voice.turn` when the turn was still running, `voice.heard` when its row was written. */
+  recordedOn: z.enum(["voice.turn", "voice.heard"]),
+});
+export type VoiceHeardView = z.infer<typeof VoiceHeardView>;
+
 export const VoiceTextBody = z.object({ text: z.string().min(1) });
 export type VoiceTextBody = z.infer<typeof VoiceTextBody>;
 
@@ -1818,8 +1842,10 @@ export const DAEMON_ROUTES = {
     "POST /voice/sessions/:id/text { text } (the text fallback: one turn through the same loop, approval rules and TTS; VoiceTurnView once the turn has ended, with the registry's outcome when the line answered a card)",
   voiceAnswer:
     "POST /voice/sessions/:id/answer { answer: tap|no } (answers the read-back without speaking through the registry, which decides and whose status is on the decision; VoiceAnswerView; 404 without a card)",
+  voiceHeard:
+    "POST /voice/sessions/:id/heard { turn, heardFirstAudioMs } (the panel's player: push-to-talk release to the first reply chunk at the speaker, on the page's clock; once per turn; on the voice.turn row as latency.heardFirstAudioMs, or a voice.heard row when the row was written; VoiceHeardView; 404 for an unknown turn, 409 for a second figure or a bad one)",
   voiceEvents:
-    "GET /voice/sessions/:id/events?afterSeq= (JSON VoiceEventView[]; 409 when afterSeq is not a number) | Accept: text/event-stream (SSE voice.event frames: state, transcript, model deltas, sentences, audio, first audio, read-back = approval needed, approval with the registry's status, answer = the registry's result of a spoken, tapped or cancelled answer, turn = done; heartbeat; ?token= accepted)",
+    "GET /voice/sessions/:id/events?afterSeq= (JSON VoiceEventView[]; 409 when afterSeq is not a number; a numeric Last-Event-ID header, which an EventSource sends when it reconnects, resumes after the later of the two) | Accept: text/event-stream (SSE voice.event frames: state, transcript, model deltas, sentences, audio, first audio, read-back = approval needed, approval with the registry's status, answer = the registry's result of a spoken, tapped or cancelled answer, turn = done; heartbeat; ?token= accepted)",
   speakProject:
     "POST /projects/:id/speak { language? } (201 SpeakView: the one-screen summary read aloud sentence by sentence through the registry's TTS, the text echoed; a new utterance cancels the one in flight; 403 forbidden for another human's project; 503 unavailable with the reason when no TTS provider can run)",
   speakSession:
@@ -1827,7 +1853,7 @@ export const DAEMON_ROUTES = {
   speak: "GET /speak/:id (SpeakView; finished utterances are kept for a while, then 404)",
   cancelSpeak: "POST /speak/:id/cancel (SpeakView; immediate, a no-op once ended)",
   speakEvents:
-    "GET /speak/:id/events?afterSeq= (JSON SpeakEventView[]; 409 when afterSeq is not a number) | Accept: text/event-stream (SSE speak.event frames: sentence, audio with the voice loop's PCM frame, speaking_start, speaking_end, error, speak.done; heartbeat; ?token= accepted)",
+    "GET /speak/:id/events?afterSeq= (JSON SpeakEventView[]; 409 when afterSeq is not a number; a numeric Last-Event-ID resumes after the later of the two) | Accept: text/event-stream (SSE speak.event frames: sentence, audio with the voice loop's PCM frame, speaking_start, speaking_end, error, speak.done; heartbeat; ?token= accepted)",
   events:
     "GET /events (SSE: session.event, inbox.changed, session.changed, project.changed, extension.changed, restart.requested, notification, desktop.indicator, speak.started, heartbeat; ?client=shell or X-Forerunner-Client: shell marks a stream that shows notification frames as toasts; ?speech=play marks a stream whose client plays the speak.started utterances)",
 } as const;

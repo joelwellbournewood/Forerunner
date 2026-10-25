@@ -128,6 +128,12 @@ export interface VoiceTurn {
   /** The change card waiting after this turn (read back, needs a yes or a tap). */
   pending: PendingConfirmation | null;
   latency: LatencyReport;
+  /**
+   * What the human heard: the panel's player measures from the push-to-talk release to its
+   * first chunk of the reply at the speaker (`POST /voice/sessions/:id/heard`); null until (and
+   * unless) a player posts it. `latency.totalToFirstAudioMs` is the daemon-side figure.
+   */
+  heardFirstAudioMs: number | null;
   /** Audio chunks played for this turn. */
   audioChunks: number;
   audioStored: boolean;
@@ -183,6 +189,7 @@ interface TurnState {
   chunks: number;
   tEndOfTurn: number | null;
   tFinal: number | null;
+  heardMs: number | null;
   error: ForerunnerError | null;
   ended: boolean;
   waiters: Array<(t: VoiceTurn) => void>;
@@ -390,6 +397,50 @@ export class VoiceBridge {
     this.record({ type: "voice.stopped", turn: this.loop.currentTurn });
   }
 
+  /**
+   * The first audio the human heard for a turn, as the panel's player measured it (release to
+   * the first reply chunk at the speaker, on the page's clock). While the turn runs it is kept
+   * for the turn's `voice.turn` row (`latency.heardFirstAudioMs`); once that row is written the
+   * log is append-only, so it becomes a `voice.heard` row `{ turn, heardFirstAudioMs }` that
+   * `scripts/voice-run.ts report` joins by session and turn. One figure per turn. Accepted
+   * after the session's stop too: the measurement can arrive just after it.
+   */
+  heard(
+    turn: number,
+    ms: number,
+  ): { turn: number; heardFirstAudioMs: number; recordedOn: "voice.turn" | "voice.heard" } {
+    if (!Number.isFinite(ms) || ms < 0)
+      throw new ForerunnerError("validation", "heardFirstAudioMs must be a non-negative number");
+    const value = Math.round(ms);
+    const twice = () =>
+      new ForerunnerError("validation", `turn ${turn} already has its heard first audio`);
+    const st = this.live.get(turn);
+    if (st && !st.ended) {
+      if (st.heardMs !== null) throw twice();
+      st.heardMs = value;
+      return { turn, heardFirstAudioMs: value, recordedOn: "voice.turn" };
+    }
+    const record = this.turns.find((t) => t.turn === turn);
+    if (!record) throw new ForerunnerError("not_found", `no voice turn ${turn}`);
+    if (record.heardFirstAudioMs !== null) throw twice();
+    record.heardFirstAudioMs = value;
+    this.chain = this.chain
+      .then(() =>
+        this.appendEvent("voice.heard", {
+          voiceSessionId: this.id,
+          turn,
+          heardFirstAudioMs: value,
+        }),
+      )
+      .then(
+        () => undefined,
+        (e: unknown) => {
+          this.logger.warn("could not write the voice.heard row", { turn, error: errorMessage(e) });
+        },
+      );
+    return { turn, heardFirstAudioMs: value, recordedOn: "voice.heard" };
+  }
+
   /** Resolves with the turn's record once the loop has ended that turn. */
   turnEnded(turn: number): Promise<VoiceTurn> {
     const existing = this.turns.find((t) => t.turn === turn);
@@ -482,6 +533,7 @@ export class VoiceBridge {
         chunks: 0,
         tEndOfTurn: null,
         tFinal: null,
+        heardMs: null,
         error: null,
         ended: false,
         waiters: [],
@@ -580,6 +632,7 @@ export class VoiceBridge {
       outcome: st.outcome,
       pending: this.pendingCard,
       latency: report,
+      heardFirstAudioMs: st.heardMs,
       audioChunks: st.chunks,
       audioStored: assistant?.audioStored ?? user?.audioStored ?? false,
       interrupted: assistant?.interrupted === true || report.interrupted,
@@ -594,6 +647,9 @@ export class VoiceBridge {
     this.chain = this.chain
       .then(() =>
         this.appendEvent("voice.turn", {
+          // Every voice session of the agent and project shares the conversation session and
+          // turn numbers restart per voice session: a `voice.heard` row joins on both.
+          voiceSessionId: this.id,
           turn,
           source: record.source,
           said: record.said,
@@ -616,6 +672,8 @@ export class VoiceBridge {
             // sentence sent -> first TTS chunk (the real-audio run's report reads them).
             firstSentenceMs: report.firstSentenceMs,
             ttsFirstByteMs: report.ttsFirstByteMs,
+            // What the human heard, when the panel's player posted it while the turn ran.
+            heardFirstAudioMs: record.heardFirstAudioMs,
           },
         }),
       )

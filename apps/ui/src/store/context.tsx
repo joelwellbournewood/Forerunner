@@ -32,6 +32,8 @@ import { applyTheme, watchSystemTheme } from "./theme.ts";
 export interface RealtimeSeams {
   eventSource?: EventSourceFactory;
   audio?: () => AudioOutput | null;
+  /** The page's clock in ms (`performance.now()` by default): the voice player's heard figure. */
+  now?: () => number;
 }
 
 interface AppContextValue {

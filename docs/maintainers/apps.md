@@ -332,9 +332,26 @@ also heard: from the session's start the panel follows `GET /voice/sessions/:id/
 (EventSource with `?token=`, `afterSeq` = the session's `lastSeq`; `shell/voice-playback.ts`)
 and plays every `audio` frame (base64 16-bit LE PCM at its `sampleRate` and `channels`,
 decoded with `decodeFrame` from `lib/speech.ts`) back to back through Web Audio, in arrival
-order; a `barge_in`, an `error`, a `turn_end` whose latency says `interrupted` and
-`voice.stopped` silence what is queued, a normal `turn_end` lets it finish. The AudioContext
-is created on the Talk click or hotkey press and resumed. Nothing else plays these frames: the
+order. With an empty (or drained) queue a chunk starts `PLAYBACK_LEAD_MS` (50 ms) after the
+context's current time, so a main-thread stall between scheduling and rendering does not clip
+it into a click; queued chunks follow without a gap. The player keeps the last frame `seq` it
+acted on and drops anything at or below it: an EventSource reconnects by itself (a stream
+hiccup) and the daemon resumes after the `Last-Event-ID` it sends, but a replayed `barge_in`
+must never silence the reply playing now. A `barge_in`, an `error` and a `turn_end` whose
+latency says `interrupted` silence what is queued only when they are for the turn being played
+(that turn's late frames are then dropped); `voice.stopped` always silences and also closes the
+stream (the session is over; an open EventSource would reconnect every few seconds); a normal
+`turn_end` lets the queue finish. The AudioContext is created and resumed synchronously at the
+start of `startTurn` (`createVoiceOutput`), before its first await: in the Talk click itself,
+and for the hotkey and the palette in the render their press causes (a global shortcut from
+the shell carries no user activation in any case); the session's player then keeps it and a
+later Talk only resumes it. What the human heard is measured here (`voice.md`, "Real-audio
+run"): Send or the hotkey's release calls `player.turnEnded()` before anything is awaited, and
+the next turn's first chunk posts `POST /voice/sessions/:id/heard { turn, heardFirstAudioMs }`
+once: its scheduled start in context time mapped onto `performance.now()` (both read at
+scheduling), plus `outputLatency` (else `baseLatency`), minus the release. A released turn that
+ends without audio is not the reference for the next one. The page's clock is a seam too
+(`realtime.now`). Nothing else plays these frames: the
 desktop shell has no native audio path (`media.rs` only grants the microphone), so there is
 no flag to defer to and the webview's player is the only one; without EventSource or Web
 Audio (jsdom without the test seams) nothing plays and the text still shows. The seams are
@@ -725,6 +742,12 @@ state service's for the phone specs) so worker processes agree; the CI desktop w
   silent until then; with the desktop app and a browser tab both open, both play.
 - The panel's reply player has been exercised in jsdom with a fake EventSource and a fake
   AudioContext (`test/voice-playback.test.tsx`), not yet in a real window with a real TTS.
+  The heard figure maps context time to the page's clock by reading `currentTime` and
+  `performance.now()` together; `currentTime` advances per render quantum (about 3 ms at
+  48 kHz), so the figure is that coarse. `getOutputTimestamp()` would be finer but already
+  includes the device latency the figure adds, so it is not mixed in. Where a browser reports
+  no `outputLatency` (or 0; not checked in WebView2 or WebKitGTK yet) `baseLatency` stands in
+  and the device's own buffer is not counted, so the figure is low by that much there.
   Chunks are scheduled as they arrive; a stream that stalls longer than the queued audio
   leaves a gap (no jitter buffer). The Talk button stays disabled until the turn ended, so a
   press cannot barge in on the reply from the panel.

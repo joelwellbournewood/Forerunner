@@ -56,6 +56,13 @@ async function seedHome(
     total: number | null;
     stages?: Partial<Record<string, number | null>>;
     error?: { code: string; message: string };
+    /** The voice session (default `vs-1`) and its turn number (default: the row's position). */
+    vs?: string;
+    turnNo?: number;
+    /** `latency.heardFirstAudioMs` on the row (the player posted it while the turn ran). */
+    heard?: number | null;
+    /** A `voice.heard` row right after the turn's row (the player's figure arrived later). */
+    heardRow?: number;
   }[],
 ): Promise<Seed> {
   const home = tempHome();
@@ -94,7 +101,8 @@ async function seedHome(
       n++;
       const s = t.stages ?? {};
       await store.event.append(session.id, "voice.turn", {
-        turn: n,
+        voiceSessionId: t.vs ?? "vs-1",
+        turn: t.turnNo ?? n,
         source: t.source ?? "audio",
         said: SECRET_SAID,
         heard: SECRET_HEARD,
@@ -114,8 +122,15 @@ async function seedHome(
           withinTarget: t.total !== null && t.total <= 1200,
           firstSentenceMs: s.firstSentenceMs ?? 50,
           ttsFirstByteMs: s.ttsFirstByteMs ?? 150,
+          ...(t.heard === undefined ? {} : { heardFirstAudioMs: t.heard }),
         },
       });
+      if (t.heardRow !== undefined)
+        await store.event.append(session.id, "voice.heard", {
+          voiceSessionId: t.vs ?? "vs-1",
+          turn: t.turnNo ?? n,
+          heardFirstAudioMs: t.heardRow,
+        });
     }
   } finally {
     await store.close();
@@ -145,18 +160,23 @@ describe("voice-run report", () => {
     const turnLines = o.all.filter((l) => / turn=\d+ /.test(l));
     expect(turnLines).toHaveLength(10);
     expect(turnLines[0]).toMatch(
-      /turn=1 source=audio totalToFirstAudioMs=900 endOfTurnMs=20 finalTranscriptMs=300 modelFirstTokenMs=400 firstAudioMs=200 firstSentenceMs=50 ttsFirstByteMs=150 within=yes$/,
+      /turn=1 source=audio totalToFirstAudioMs=900 heardFirstAudioMs=- endOfTurnMs=20 finalTranscriptMs=300 modelFirstTokenMs=400 firstAudioMs=200 firstSentenceMs=50 ttsFirstByteMs=150 within=yes$/,
     );
     expect(turnLines[3]).toMatch(/totalToFirstAudioMs=1300 .* within=no$/);
     // median of ten: mean of 1020 and 1050; p90 by nearest rank: the 9th of ten (1250).
     expect(r).toMatchObject({ code: 0, n: 10, median: 1035, p90: 1250, met: true });
     expect(o.text()).toContain(
-      "first audio (totalToFirstAudioMs): n=10 median=1035 p90=1250 target=1200 (MODE_DEFAULTS.voice_chat, first_audio); median within target: yes; p90 within target: no",
+      "first audio, daemon-side (totalToFirstAudioMs, measured where the daemon's paced sink takes the first chunk; the SSE hop, decoding, scheduling and the output device come after it): n=10 median=1035 p90=1250 target=1200 (MODE_DEFAULTS.voice_chat, first_audio); median within target: yes; p90 within target: no",
+    );
+    expect(o.text()).toContain(
+      "first audio, heard (heardFirstAudioMs): none recorded (no player posted one: the result is the daemon-side figure)",
     );
     expect(o.text()).toContain(
       "stage medians: endOfTurnMs=20/200 finalTranscriptMs=300/300 modelFirstTokenMs=445/500 firstAudioMs=200/200 firstSentenceMs=50 ttsFirstByteMs=150",
     );
-    expect(o.all.at(-1)).toBe("VOICE RESULT: n=10 median=1035 p90=1250 target=1200 met");
+    expect(o.all.at(-1)).toBe(
+      "VOICE RESULT: n=10 median=1035 p90=1250 target=1200 met (daemon-side first audio)",
+    );
   });
 
   it("never prints transcripts or error messages, only numbers, the source and codes", async () => {
@@ -194,7 +214,9 @@ describe("voice-run report", () => {
     const day = lines();
     const r = await runReport({ env, out: day.out, argv: [], clock: clockAt() });
     expect(r).toMatchObject({ n: 2, median: 1050 });
-    expect(day.all.at(-1)).toBe("VOICE RESULT: n=2 median=1050 p90=1100 target=1200 met");
+    expect(day.all.at(-1)).toBe(
+      "VOICE RESULT: n=2 median=1050 p90=1100 target=1200 met (daemon-side first audio)",
+    );
 
     const since = lines();
     const s = await runReport({
@@ -214,7 +236,9 @@ describe("voice-run report", () => {
       clock: clockAt(),
     });
     expect(a).toMatchObject({ code: 2, n: 4, median: 2550, met: false });
-    expect(all.all.at(-1)).toBe("VOICE RESULT: n=4 median=2550 p90=5000 target=1200 not met");
+    expect(all.all.at(-1)).toBe(
+      "VOICE RESULT: n=4 median=2550 p90=5000 target=1200 not met (daemon-side first audio)",
+    );
 
     const bad = lines();
     expect(
@@ -243,6 +267,72 @@ describe("voice-run report", () => {
     expect(o.text()).toContain("source=text totalToFirstAudioMs=300");
     expect(o.text()).toContain("[not counted: typed turn]");
     expect(o.text()).toContain("4 in the window; 2 counted; 1 typed, 1 warm-up, 0 without");
+  });
+
+  it("decides on what the human heard when the player posted it, and prints both figures", async () => {
+    // Daemon-side every turn is within 1200 ms; what the player heard adds the hop, the
+    // decode, the lead and the device, and pushes the median over the target.
+    const { home } = await seedHome([
+      { hoursAgo: 6, total: 4000, heard: 4300 }, // the warm-up
+      { hoursAgo: 5, total: 900, heard: 1150 },
+      { hoursAgo: 4, total: 1000, heard: 1290 },
+      // Its figure arrived after the row was written: a voice.heard row, joined by session and turn.
+      { hoursAgo: 3, total: 1050, heardRow: 1310 },
+      { hoursAgo: 2, total: 1100, heard: 1400 },
+      // Another voice session with the same turn number: its voice.heard row is its own.
+      { hoursAgo: 1, total: 950, vs: "vs-2", turnNo: 4, heardRow: 1240 },
+    ]);
+    const o = lines();
+    const r = await runReport({
+      env: { FORERUNNER_HOME: home },
+      out: o.out,
+      argv: ["--exclude-first", "1"],
+      clock: clockAt(),
+    });
+    expect(r).toMatchObject({
+      code: 2,
+      basis: "heard",
+      n: 5,
+      median: 1290,
+      p90: 1400,
+      met: false,
+    });
+    const turnLines = o.all.filter((l) => / turn=\d+ /.test(l));
+    expect(turnLines[3]).toContain("totalToFirstAudioMs=1050 heardFirstAudioMs=1310 ");
+    expect(turnLines[5]).toContain(
+      "turn=4 source=audio totalToFirstAudioMs=950 heardFirstAudioMs=1240 ",
+    );
+    expect(o.text()).toContain(
+      "first audio, daemon-side (totalToFirstAudioMs, measured where the daemon's paced sink takes the first chunk; the SSE hop, decoding, scheduling and the output device come after it): n=5 median=1000 p90=1100",
+    );
+    expect(o.text()).toContain(
+      "first audio, heard (heardFirstAudioMs, the panel's player: the press release to its first chunk at the speaker): n=5 median=1290 p90=1400 target=1200 (MODE_DEFAULTS.voice_chat, first_audio); median within target: no; p90 within target: no",
+    );
+    expect(o.all.at(-1)).toBe(
+      "VOICE RESULT: n=5 median=1290 p90=1400 target=1200 not met (heard first audio)",
+    );
+  });
+
+  it("says which counted turns have no heard figure and decides on the turns that have one", async () => {
+    const { home } = await seedHome([
+      { hoursAgo: 3, total: 900, heard: 1000 },
+      { hoursAgo: 2, total: 1300 },
+      { hoursAgo: 1, total: 1000, heard: 1100 },
+    ]);
+    const o = lines();
+    const r = await runReport({
+      env: { FORERUNNER_HOME: home },
+      out: o.out,
+      argv: [],
+      clock: clockAt(),
+    });
+    expect(r).toMatchObject({ code: 0, basis: "heard", n: 2, median: 1050, met: true });
+    expect(o.text()).toContain("totalToFirstAudioMs=1300 heardFirstAudioMs=- ");
+    expect(o.text()).toContain("[no heard figure: daemon-side only]");
+    expect(o.text()).toContain("1 of 3 counted turns have no heard figure");
+    expect(o.all.at(-1)).toBe(
+      "VOICE RESULT: n=2 median=1050 p90=1100 target=1200 met (heard first audio)",
+    );
   });
 
   it("refuses without a dedicated FORERUNNER_HOME and a store outside it", async () => {
@@ -290,13 +380,15 @@ describe("voice-run report", () => {
       );
     const ok = run({ FORERUNNER_HOME: home });
     expect(ok.status).toBe(0);
-    expect(ok.stdout).toContain("VOICE RESULT: n=1 median=1000 p90=1000 target=1200 met");
+    expect(ok.stdout).toContain(
+      "VOICE RESULT: n=1 median=1000 p90=1000 target=1200 met (daemon-side first audio)",
+    );
     const refused = run({});
     expect(refused.status).toBe(1);
     expect(refused.stdout).toContain("refusing to run without FORERUNNER_HOME");
   }, 90_000);
 
-  it("takes the median as the gate does and p90 as /performance does", () => {
+  it("takes the median as the gate does and p90 by the nearest rank /performance uses", () => {
     const xs = [900, 1000, 1100, 1300, 950, 1050, 980, 1020, 1150, 1250, 1400];
     for (const sample of [xs, xs.slice(0, 10), xs.slice(0, 3), [42]]) {
       const reports = sample.map((t, i) =>

@@ -125,6 +125,9 @@ import {
   type UpdateLessonBody,
   type UpdateProjectSettingsBody,
   type VoiceAudioBody,
+  type VoiceHeardBody,
+  type VoiceHeardView,
+  VoiceHeardView as VoiceHeardViewSchema,
   type VoiceSessionView,
   VoiceSessionView as VoiceSessionViewSchema,
   type VoiceStatusView,
@@ -485,6 +488,8 @@ export interface DaemonClient {
   voicePress(id: string, pressed: boolean): Promise<VoiceSessionView>;
   /** One captured chunk of 16-bit PCM (base64). */
   voiceAudio(id: string, chunk: VoiceAudioBody): Promise<VoiceSessionView>;
+  /** What the human heard: the player's release-to-speaker first audio of a turn (once per turn). */
+  voiceHeard(id: string, body: VoiceHeardBody): Promise<VoiceHeardView>;
   stopVoiceSession(id: string): Promise<VoiceSessionView>;
   costs(
     filter?: { projectId?: string; from?: string; to?: string },
@@ -833,6 +838,7 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     voicePress: (id, pressed) =>
       post(routePath("voicePress", { id }), VoiceSessionViewSchema, { pressed }),
     voiceAudio: (id, chunk) => post(routePath("voiceAudio", { id }), VoiceSessionViewSchema, chunk),
+    voiceHeard: (id, body) => post(routePath("voiceHeard", { id }), VoiceHeardViewSchema, body),
     stopVoiceSession: (id) =>
       post(routePath("stopVoiceSession", { id }), VoiceSessionViewSchema, {}),
     costs: (filter, signal) =>
