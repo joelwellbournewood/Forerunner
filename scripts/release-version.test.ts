@@ -95,7 +95,21 @@ describe("release-version: one app version, equal to the tag", () => {
     expect(junk.status).toBe(1);
   });
 
-  it("release.yml stamps the tag's version in every build job before it builds", () => {
+  it("--check --expect <tag> fails unless the committed version is the tag's", () => {
+    const root = copyOfVersionFiles();
+    setVersion(root, "1.0.0-rc.2");
+    const run = (...args: string[]) =>
+      spawnSync(process.execPath, [script, "--check", "--root", root, ...args], {
+        encoding: "utf8",
+      });
+    expect(run("--expect", "v1.0.0-rc.2").status).toBe(0);
+    const wrong = run("--expect", "v1.0.0");
+    expect(wrong.status).toBe(1);
+    expect(wrong.stderr).toMatch(/1\.0\.0-rc\.2.*v1\.0\.0|tag v1\.0\.0/);
+    expect(run("--expect", "").status).toBe(1);
+  });
+
+  it("release.yml refuses a tag the committed version does not match, in bash, before both builds", () => {
     const wf = readFileSync(join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
     for (const build of [
       "pnpm --filter @forerunner/desktop tauri build",
@@ -104,12 +118,16 @@ describe("release-version: one app version, equal to the tag", () => {
       const at = wf.indexOf(build);
       expect(at, build).toBeGreaterThan(-1);
       const jobStart = wf.lastIndexOf("\n  ", wf.lastIndexOf("runs-on:", at));
-      const stamp = wf.indexOf(
-        'node scripts/release-version.mjs --set "$GITHUB_REF_NAME"',
+      const step = wf.indexOf(
+        'node scripts/release-version.mjs --check --expect "$GITHUB_REF_NAME"',
         jobStart,
       );
-      expect(stamp, `stamp before: ${build}`).toBeGreaterThan(-1);
-      expect(stamp).toBeLessThan(at);
+      expect(step, `check before: ${build}`).toBeGreaterThan(-1);
+      expect(step).toBeLessThan(at);
+      // $GITHUB_REF_NAME is a bash expansion: the Windows runner's default shell is pwsh, where
+      // it would be an empty PowerShell variable (review of d36c154).
+      const block = wf.slice(wf.lastIndexOf("\n      - ", step), step);
+      expect(block, `shell of the check before ${build}`).toMatch(/\n {8}shell: bash\n/);
     }
   });
 });

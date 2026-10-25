@@ -219,7 +219,8 @@ pub struct TrayView {
 /// Whether a `restart.requested` event must start the shell's own watch for the daemon to
 /// go away (`actions::watch_external_restart`): only for a daemon the shell did not start (a
 /// child reports its exit to the supervisor thread) and only when nothing is watching it
-/// already ("Update and restart" from the tray sets `Busy::Updating` before it posts).
+/// already (the watcher sets `Busy::Updating` while it runs; the tray no longer applies
+/// updates, it opens the Updates screen).
 pub fn needs_external_watch(child_pid: Option<u32>, busy: Option<Busy>) -> bool {
     child_pid.is_none() && busy.is_none()
 }

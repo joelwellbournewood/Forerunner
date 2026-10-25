@@ -113,9 +113,10 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   (`github:joelwellbournewood/Forerunner`) and trust its update key `26fae7f48427e5eb`; both
   can be replaced in `update.json` or the environment, and a broken `update.json` turns updates
   off instead of falling back (M.3; ADR 0015 amendment).
-- Release builds carry the tag's version: `scripts/release-version.mjs --set` stamps it into
-  every package and shell manifest before the build (the MSI gets the numeric core), and the
-  daemon reports the root `package.json` version.
+- The app's version is one committed value, equal to the tag: `scripts/release-version.mjs`
+  writes it into every package and shell manifest (the MSI gets the numeric core), the release
+  workflow refuses a tag whose commit carries another version, and the daemon, `fr` and the
+  cloud runner report the root `package.json` version.
 - An approved plan starts the session it was filed for, bound to the plan the human saw; the
   filing session ends `stopped` instead of `paused` (J.6, J.7, E.1; ADR 0053).
 - The Android emulator smoke attaches to the WebView over raw CDP on the page target instead
@@ -139,7 +140,6 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 - The release workflow's publish job downloads only the build artefacts (the Docker build
   record failed rc.1's run), `SHA256SUMS.txt` covers the signed manifest and never lists
   itself, and the broken manual dispatch trigger is gone.
-
 - Small-project mode: the one milestone is placed after the milestones on file, and a task
   created by email takes the project's default critic tier (B.6; the review of ADR 0051).
 - A high-risk change confirmed from the desktop app works on a solo install: the daemon

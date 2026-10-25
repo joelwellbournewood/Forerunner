@@ -4,9 +4,11 @@
 // The version lives in the root package.json (the daemon and `fr` read it: APP_VERSION in
 // packages/runtime/src/cli/main.ts), apps/desktop, apps/mobile and apps/ui package.json, the two
 // tauri.conf.json files (the MSI, AppImage, .deb and APK metadata) and the [package] version of
-// the two shells' Cargo.toml. release.yml runs `--set "$GITHUB_REF_NAME"` in every build job
-// before the build, so an artefact always reports the version its tag names; `--check` (CI and
-// the release steps) fails when the files disagree.
+// the two shells' Cargo.toml. The version is committed: `--set <version>` writes it in the commit
+// that gets tagged, and release.yml runs `--check --expect "$GITHUB_REF_NAME"` in every build job
+// before the build, so a tag whose commit carries another version fails instead of shipping an
+// app (and a daemon, which runs from the checkout) that reports the wrong version. `--check`
+// alone fails when the files disagree.
 //
 // The full version of the tag goes everywhere (v1.0.0-rc.2 -> 1.0.0-rc.2), so the daemon reports
 // what the update manifest names and one release candidate can update to the next. The Windows
@@ -15,7 +17,7 @@
 //
 // Pure Node, no shell, paths through node:path.
 //
-// Usage: node scripts/release-version.mjs --check [--root <dir>]
+// Usage: node scripts/release-version.mjs --check [--expect <tag>] [--root <dir>]
 //        node scripts/release-version.mjs --set <tag-or-version> [--root <dir>]
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -129,6 +131,7 @@ function main(argv) {
       `release-version: set ${version} in ${JSON_FILES.length + CARGO_FILES.length} files`,
     );
   }
+  const expectAt = argv.indexOf("--expect");
   const versions = readVersions(root);
   const distinct = [...new Set(versions.map((v) => v.version))];
   for (const v of versions) console.log(`${v.file}: ${v.version}`);
@@ -141,6 +144,16 @@ function main(argv) {
   if (wix !== coreVersion(distinct[0])) {
     console.error(`release-version: the MSI version ${wix} is not ${coreVersion(distinct[0])}`);
     return 1;
+  }
+  if (expectAt >= 0) {
+    const tag = String(argv[expectAt + 1] ?? "").trim();
+    const want = tag.replace(/^v/, "");
+    if (!SEMVER.test(want) || want !== distinct[0]) {
+      console.error(
+        `release-version: the committed version ${distinct[0]} is not the tag ${tag || "(none)"}; run --set ${want || "<version>"} in the commit you tag`,
+      );
+      return 1;
+    }
   }
   console.log(`release-version: ${distinct[0]} everywhere`);
   return 0;

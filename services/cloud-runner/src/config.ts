@@ -1,5 +1,6 @@
 import { hostname } from "node:os";
 import { appDirs, ForerunnerError, join, safeSegment } from "@forerunner/platform";
+import { APP_VERSION } from "@forerunner/runtime/version";
 import { z } from "zod";
 
 /**
@@ -184,7 +185,7 @@ export function readRunnerConfig(env: NodeJS.ProcessEnv = process.env): RunnerCo
       "FORERUNNER_RUNNER_SESSION_CAP_USD_MICRO",
       DEFAULT_SESSION_CAP_USD_MICRO,
     ),
-    version: env.FORERUNNER_VERSION || "0.1.0",
+    version: env.FORERUNNER_VERSION || APP_VERSION,
   };
   const parsed = RunnerConfigSchema.safeParse(candidate);
   if (!parsed.success) {

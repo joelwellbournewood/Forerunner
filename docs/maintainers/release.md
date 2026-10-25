@@ -88,13 +88,19 @@ root `package.json`, `apps/desktop/src-tauri/tauri.conf.json` (`version`, shown 
 AppImage metadata), `apps/mobile/src-tauri/tauri.conf.json` and the Cargo manifests of the two
 shells; keep them equal to the tag. `node scripts/release-version.mjs --check` says whether they
 agree; `--set <tag>` writes them (and `bundle.windows.wix.version` of the desktop config, the
-numeric core, because WiX takes numbers only). Every build job of `release.yml` runs
-`--set "$GITHUB_REF_NAME"` before it builds, so an artefact and the daemon it carries report the
-tag's version even when the committed files lag (a pre-release tag: `1.0.0-rc.2` everywhere,
-`1.0.0` in the MSI). The daemon and `fr` read the root `package.json`
-(`packages/runtime/src/version.ts`, `APP_VERSION`); `FORERUNNER_VERSION` overrides it.
+numeric core, because WiX takes numbers only). The version is committed: run
+`--set <version>` in the commit you tag (a pre-release: `1.0.0-rc.2` everywhere, `1.0.0` in the
+MSI). Every build job of `release.yml` runs `--check --expect "$GITHUB_REF_NAME"` (in bash; the
+Windows runner's default shell is pwsh) before it builds and fails when the tagged commit carries
+another version, because the daemon runs from the checkout and would report it. The daemon,
+`fr` and the cloud runner read the root `package.json` (`packages/runtime/src/version.ts`,
+`APP_VERSION`, "0.0.0" when it is missing); `FORERUNNER_VERSION` overrides it.
 `scripts/release-version.test.ts` checks the files agree, `APP_VERSION` is theirs, and the
-workflow stamps before both builds.
+workflow checks before both builds. Known issue: a Debian package ranks `1.0.0-rc.2` above
+`1.0.0` (dpkg reads `rc.2` as a revision) and Android gives both the versionCode 1000000, so a
+sideloaded `.deb` or APK of the final release is not offered over a release candidate by the OS
+package manager; uninstall the candidate first (the in-app updater compares by the manifest and
+is not affected).
 
 ### Staged install, health check, rollback (module M, phase 7)
 

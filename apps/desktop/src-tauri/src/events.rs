@@ -154,8 +154,8 @@ fn handle_event(app: &AppHandle, event: DaemonEvent) {
                 needs_external_watch(s.child_pid, s.busy)
             };
             if watch {
-                // Not the shell's process and nobody is watching it (the request came from
-                // the UI, not the tray): watch it go away and apply the restart contract, so
+                // Not the shell's process and nobody is watching it yet (an apply or rollback
+                // from the Updates screen): watch it go away and apply the restart contract, so
                 // the window is rebuilt with the relaunched daemon's token instead of
                 // keeping a stale one until Quit.
                 tauri::async_runtime::spawn(actions::watch_external_restart(app.clone()));

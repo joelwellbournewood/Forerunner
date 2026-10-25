@@ -270,12 +270,7 @@ pub fn handle_deep_link(app: &AppHandle, raw: &str) {
     match route_for_deep_link(raw) {
         Some(route) => {
             log::info!("deep link to {route}");
-            show_main(app);
-            if let Some(w) = app.get_webview_window(MAIN)
-                && let Err(e) = w.eval(navigate_script(&route))
-            {
-                log::warn!("could not navigate the UI: {e}");
-            }
+            show_route(app, &route);
         }
         None => {
             log::warn!("deep link ignored (not a known route)");

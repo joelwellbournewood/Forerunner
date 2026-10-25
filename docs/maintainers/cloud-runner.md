@@ -89,7 +89,7 @@ path. `FORERUNNER_HOME` sets the app directories as everywhere else (the image u
 | `FORERUNNER_RUNNER_INBOX_POLL_MS` | 30 000 | inbox trigger poll (new peer messages, answered session requests); 0 turns inbox triggers off, otherwise at least 1 000 |
 | `FORERUNNER_RUNNER_SESSION_CAP_USD_MICRO` | 6 250 000 (CHF 5) | session cap when the project sets no `settings.session_cap_usd_micro` |
 | `FORERUNNER_GITHUB_API_BASE` | `https://api.github.com` | the GitHub host for session grants |
-| `FORERUNNER_VERSION` | 0.1.0 | reported by `/health` and recorded on sessions |
+| `FORERUNNER_VERSION` | the root `package.json` version (`APP_VERSION`, `@forerunner/runtime/version`) | reported by `/health` and recorded on sessions |
 
 The runtime's own variables apply too (`FORERUNNER_REGISTRY_DIR`, `FORERUNNER_HEADROOM_*`,
 `FORERUNNER_SANDBOX_ENGINE`, `FORERUNNER_CHF_PER_USD`, ...).
