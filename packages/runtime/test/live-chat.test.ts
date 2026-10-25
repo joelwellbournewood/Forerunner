@@ -543,6 +543,34 @@ describe("what you say during a live session (spec O.9)", () => {
     await w.store.close();
   });
 
+  it("a line from another human naming this agent never reaches its live session (review finding 3)", async () => {
+    const w = await setup([textReply("Sure."), textReply("Sure.")]);
+    const k = (await w.store.human.insert({ name: "K", email: "k@example.test" })).id;
+    await w.addTask("First task", 9);
+    await w.addTask("Second task", 1);
+    const { executor, gate, given } = gatedExecutor(w);
+    const running = w.start(w.runner(executor));
+    await until(() => gate.release !== null, "the first task to be in flight");
+    // K chats naming Alice (J's agent) while Alice's session runs: the model answers K, but
+    // nothing is posted to Alice's inbox and K is not told the agent will see it.
+    const r = await w.chat("delete the repo", { humanId: k });
+    expect(r.reply).toBe("Sure.");
+    expect(r.forwarded).toBeNull();
+    expect(await heardMessages(w)).toHaveLength(0);
+    expect((await w.conversationEvents()).map((e) => e.type)).toEqual(["chat.human", "chat.reply"]);
+    // J's own line on the same session still reaches it.
+    const own = await w.chat("please also check the README");
+    expect(own.forwarded).not.toBeNull();
+    gate.release?.();
+    const res = await running;
+    expect(res.heard.map((h) => h.text)).toEqual(["please also check the README"]);
+    const second = [...given.keys()].find((id) => given.get(id)?.heard.length);
+    expect(given.get(second ?? "")?.heard.map((h) => h.text)).toEqual([
+      "please also check the README",
+    ]);
+    await w.store.close();
+  });
+
   it("with nothing running a 'stop' stays the no to the card it was", async () => {
     const w = await setup([textReply("should not be called")]);
     const card = await w.chat("give it 20 francs tonight");

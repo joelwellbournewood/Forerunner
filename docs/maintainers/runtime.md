@@ -593,7 +593,10 @@ past a session that failed before its receipts; an empty inbox adds nothing.
 **What you say during a live session (spec O.9, ADR 0078; `src/session/live-chat.ts`).** A
 free-form line the human types or speaks to the conversation agent while a session of the
 principal runs is posted to the principal's own inbox as an `info` message from and to the
-agent, authored by the human, whose body names the source and the session
+agent, authored by the human (the human's own agent only, `agent.owner_human_id`: a turn
+naming an agent the human does not own is answered and never forwarded, so another human's
+words never reach this human's live session as their own; review of w3-o9-chat-to-inbox,
+2026-10-25, finding 3), whose body names the source and the session
 (`said (<text|voice|phone>): <words> (session <id>)`, `heardMessageBody` / `heardLineOf`;
 whitespace flattened, 4,000 characters; the type enum is a schema constraint, so an existing
 type with a tagged body, as the pause message). Between tasks `recheckInbox` collects a said
@@ -1402,7 +1405,10 @@ about either. A lesson the human states by pattern ("remember that ...",
 turn (a yes or no to a pending card, "undo", a parsed command, a parser question, text carrying
 the data envelope: none of these is forwarded), a line that goes to the model is first posted
 to the principal's own inbox when a session of that agent is `running` (not the conversation
-session; a `paused` one is ending at its next boundary): `forwardToRunningSession` sends the
+session; a `paused` one is ending at its next boundary) and the agent is the human's own
+(another human's agent named on the turn gets the answer and nothing else; the daemon's
+`/chat` and `/chat/stream` already refuse a body naming another human with 403 "not your
+conversation"): `forwardToRunningSession` sends the
 `said (<source>): <words> (session <id>)` message (`heardMessageBody`), appends a
 `chat.forwarded` event (the session, the message id, the source) to the transcript, and the
 reply ends with `FORWARDED_SENTENCE` ("Your agent sees this at its next step boundary.");

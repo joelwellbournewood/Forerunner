@@ -356,7 +356,7 @@ export class ConversationAgent {
     // It is posted to the agent's own inbox naming the session before the model answers; the
     // runner collects it between tasks and the next task's brief carries it as quoted data.
     const forwarded = await this.forwardToRunningSession(
-      agent.id,
+      agent,
       human.id,
       req.text,
       turn.source === "ui" ? "text" : turn.source,
@@ -534,11 +534,14 @@ export class ConversationAgent {
    * a paused one is ending at its next boundary), the line is posted to the agent's own inbox
    * as `said (<source>): <text> (session <id>)`, authored by the human, unread, so the runner
    * reads it between tasks. Text carrying the data envelope is never forwarded (the parser
-   * refuses it on the command path; the read-only chat has no parser). Nothing is posted when
-   * no session runs: the line is the model's alone, and a note is the `note.add` command.
+   * refuses it on the command path; the read-only chat has no parser). The line reaches the
+   * human's own agent only (the rule ADR 0061 gives the memory): a turn naming an agent the
+   * human does not own is answered, never forwarded, so another human's words never reach this
+   * human's live session as their own. Nothing is posted when no session runs: the line is the
+   * model's alone, and a note is the `note.add` command.
    */
   private async forwardToRunningSession(
-    agentId: string,
+    agent: AgentRow,
     humanId: string,
     text: string,
     source: HeardSource,
@@ -547,16 +550,17 @@ export class ConversationAgent {
   ): Promise<{ sessionId: string; messageId: string } | null> {
     if (!text.trim()) return null;
     if (text.includes(DATA_ENVELOPE_OPEN) || text.includes(DATA_ENVELOPE_CLOSE)) return null;
-    const live = await this.runningWorkSession(agentId);
+    if (agent.owner_human_id !== humanId) return null;
+    const live = await this.runningWorkSession(agent.id);
     if (!live) return null;
     const row = await this.deps.store.message.send({
-      from_agent_id: agentId,
-      to_agent_id: agentId,
+      from_agent_id: agent.id,
+      to_agent_id: agent.id,
       project_id: live.project_id,
       type: "info",
       body: heardMessageBody(live.id, source, text),
       requires_ack: false,
-      author_agent: agentId,
+      author_agent: agent.id,
       author_human: humanId,
     });
     await this.deps.store.event.append(conversationSessionId, "chat.forwarded", {

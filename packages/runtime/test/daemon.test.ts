@@ -140,6 +140,23 @@ describe("local daemon", () => {
       }),
     );
     expect(reply.reply).toBe("Hello from the fake agent.");
+    // Spec O.9 (review of w3-o9-chat-to-inbox, finding 3): the conversation is the signed-in
+    // human's. A body naming another human is refused on both chat routes before anything is
+    // parsed, posted to an inbox or answered, as `/inbox` refuses; the transcript has no row.
+    const other = await rt.store.human.insert({ name: "K", email: "k@example.test" });
+    const foreign = JSON.stringify({ humanId: other.id, agentId: rt.agent.id, text: "stop" });
+    const refused = await req("/chat", { method: "POST", body: foreign });
+    expect(refused.status).toBe(403);
+    expect(await json(refused)).toMatchObject({
+      code: "forbidden",
+      message: "not your conversation",
+    });
+    expect((await req("/chat/stream", { method: "POST", body: foreign })).status).toBe(403);
+    const convo = await rt.conversation?.conversationSessionId(rt.agent.id, projectId);
+    const said = (await rt.store.event.list(convo ?? ""))
+      .filter((e) => e.type === "chat.human")
+      .map((e) => (e.payload as { text: string }).text);
+    expect(said).toEqual(["hello"]);
     const inbox = await json(await req("/inbox"));
     expect(inbox).toMatchObject({ blockingCount: 0 });
     const settings = await jsonList(await req("/settings"));
