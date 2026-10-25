@@ -181,6 +181,36 @@ export function parseRepositorySource(
   return { owner, name, slug: `${owner}/${name}`, url: `${url.origin}/${path}` };
 }
 
+/** An http(s) URL without its userinfo; anything else (an scp form) with a `user@` prefix cut. */
+export function withoutUserinfo(remote: string): string {
+  try {
+    const u = new URL(remote);
+    u.username = "";
+    u.password = "";
+    return u.toString();
+  } catch {
+    return remote.replace(/^[^@/]+@/, "");
+  }
+}
+
+/**
+ * True when two http(s) remote URLs name the same repository: same origin, same path up to a
+ * trailing slash or `.git`. A URL that does not parse never matches.
+ */
+export function sameRepository(a: string, b: string): boolean {
+  const key = (raw: string): string | null => {
+    try {
+      const u = new URL(raw);
+      const path = u.pathname.replace(/\/+$/, "").replace(/\.git$/i, "");
+      return `${u.origin}${path}`;
+    } catch {
+      return null;
+    }
+  };
+  const ka = key(a);
+  return ka !== null && ka === key(b);
+}
+
 /** The in-worktree folder convention for scratch data; always ignored by the guard. */
 export const WORKTREE_DATA_DIR = ".forerunner-data";
 
@@ -520,54 +550,74 @@ export class DataImporter {
       safeSegment(target.owner, "owner"),
       safeSegment(target.name, "repo"),
     );
+    // The header carrying the token is scoped to the repository's origin (ADR 0069): git
+    // attaches it to no other host, whatever a remote's config or an insteadOf rewrite says.
     const git = new GitOps({
       cwd: dir,
-      auth: token ? { token } : undefined,
+      auth: token ? { token, origin: new URL(target.url).origin } : undefined,
       timeoutMs: this.deps.gitTimeoutMs ?? 10 * 60 * 1000,
     });
     const existed = existsSync(join(dir, ".git"));
     if (existed) {
-      await git.fetch();
+      // The directory is keyed on owner/name alone: the same slug on another host must not
+      // quietly reuse (and fetch) somebody else's checkout.
+      const remote = await git.remoteUrl();
+      if (remote === null || !sameRepository(remote, target.url)) {
+        const shown = remote === null ? "no remote" : withoutUserinfo(remote);
+        throw new ForerunnerError(
+          "validation",
+          `the checkout for ${target.slug} at ${dir} belongs to ${shown}, not ${target.url}; import that repository by its own URL or remove the checkout first`,
+          { details: { slug: target.slug, worktree: dir, url: target.url, remote: shown } },
+        );
+      }
     } else {
       mkdirSync(dirname(dir), { recursive: true });
-      try {
-        await git.clone(target.url);
-      } catch (e) {
-        rmSync(dir, { recursive: true, force: true });
-        throw e;
-      }
     }
-    const defaultBranch = await git.remoteDefaultBranch();
-    // The migration branch: the one the checkout already sits on, else the newest one made
-    // earlier, else a new one from today's date, always from the default branch's remote head.
+    let defaultBranch: string;
     let branch: string | null = null;
-    if (existed) {
-      const current = await git.currentBranch();
-      if (current.startsWith(MIGRATION_BRANCH_PREFIX)) branch = current;
-      else {
-        const earlier = await git.localBranches(MIGRATION_BRANCH_PREFIX);
-        const newest = earlier[earlier.length - 1];
-        if (newest) {
-          await git.checkout(newest);
-          branch = newest;
+    let created = false;
+    let headSha: string;
+    try {
+      if (existed) await git.fetch();
+      else await git.clone(target.url);
+      defaultBranch = await git.remoteDefaultBranch();
+      // The migration branch: the one the checkout already sits on, else the newest one made
+      // earlier, else a new one from today's date, always from the default branch's remote head.
+      if (existed) {
+        const current = await git.currentBranch();
+        if (current.startsWith(MIGRATION_BRANCH_PREFIX)) branch = current;
+        else {
+          const earlier = await git.localBranches(MIGRATION_BRANCH_PREFIX);
+          const newest = earlier[earlier.length - 1];
+          if (newest) {
+            await git.checkout(newest);
+            branch = newest;
+          }
         }
       }
+      if (branch === null) {
+        branch = migrationBranchName(this.clock);
+        created = true;
+        await git.createBranch(branch, `origin/${defaultBranch}`);
+      }
+      // Enforced in code, not by naming: the checkout never ends up on the default branch.
+      const onBranch = await git.currentBranch();
+      if (onBranch === defaultBranch || onBranch !== branch) {
+        throw new ForerunnerError(
+          "internal",
+          `the checkout is on ${onBranch}, not the migration branch ${branch}`,
+          { details: { branch, defaultBranch, worktree: dir } },
+        );
+      }
+      headSha = await git.headSha();
+    } catch (e) {
+      // A fresh clone that did not reach the migration branch (a refused checkout, an empty
+      // repository, a clone killed at the time limit) leaves nothing behind; a checkout that
+      // was already there is kept as it was.
+      if (!existed) rmSync(dir, { recursive: true, force: true });
+      throw e;
     }
-    const reused = branch !== null;
-    if (branch === null) {
-      branch = migrationBranchName(this.clock);
-      await git.createBranch(branch, `origin/${defaultBranch}`);
-    }
-    // Enforced in code, not by naming: the checkout never ends up on the default branch.
-    const onBranch = await git.currentBranch();
-    if (onBranch === defaultBranch || onBranch !== branch) {
-      throw new ForerunnerError(
-        "internal",
-        `the checkout is on ${onBranch}, not the migration branch ${branch}`,
-        { details: { branch, defaultBranch, worktree: dir } },
-      );
-    }
-    const headSha = await git.headSha();
+    const reused = !created;
 
     const walk = walkFolder(dir, {
       maxEntries: limits.maxEntries,

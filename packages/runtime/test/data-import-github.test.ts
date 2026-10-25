@@ -1,8 +1,17 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
+import { type AddressInfo, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { GitOps } from "@forerunner/capabilities/githost/git";
-import { isInside, join, Logger, type LogRecord, SimulatedClock } from "@forerunner/platform";
+import { GitOps, gitConfigEnv } from "@forerunner/capabilities/githost/git";
+import {
+  isInside,
+  join,
+  Logger,
+  type LogRecord,
+  relative,
+  SimulatedClock,
+  toPosix,
+} from "@forerunner/platform";
 import { FakeGitHost, git, type IssuedToken, locateHttpBackend } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -30,6 +39,58 @@ const backend = await locateHttpBackend();
 const skipReason = () => (backend ? false : "git http-backend not found next to git --exec-path");
 
 const FULL = "acme/service";
+
+/** Every path under `root` (lstat, symlinks never followed), relative with forward slashes, sorted. */
+function listTree(root: string): string[] {
+  const out: string[] = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop() as string;
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      out.push(toPosix(relative(root, p)));
+      if (lstatSync(p).isDirectory()) stack.push(p);
+    }
+  }
+  return out.sort();
+}
+
+/** A blob in a bare repository. */
+function blob(bareDir: string, text: string): Promise<string> {
+  return git(["hash-object", "-w", "--stdin"], { cwd: bareDir, input: text });
+}
+
+/**
+ * A raw tree object written without validation: what `git mktree` and fsck would refuse (`..`
+ * and `.git` entries), the shape a hostile remote can serve.
+ */
+function rawTree(
+  bareDir: string,
+  entries: { mode: string; name: string; sha: string }[],
+): Promise<string> {
+  const key = (e: { mode: string; name: string }) => (e.mode === "40000" ? `${e.name}/` : e.name);
+  const sorted = [...entries].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  const body = Buffer.concat(
+    sorted.map((e) =>
+      Buffer.concat([Buffer.from(`${e.mode} ${e.name}\0`, "utf8"), Buffer.from(e.sha, "hex")]),
+    ),
+  );
+  return git(["hash-object", "-w", "-t", "tree", "--stdin", "--literally"], {
+    cwd: bareDir,
+    input: body,
+  });
+}
+
+/** Point `main` of a bare repository at a commit of `tree`. */
+async function setMain(bareDir: string, tree: string): Promise<string> {
+  const sha = await git(
+    ["-c", "user.name=Hostile", "-c", "user.email=h@example.test", "commit-tree", tree, "-m", "x"],
+    { cwd: bareDir },
+  );
+  await git(["update-ref", "refs/heads/main", sha], { cwd: bareDir });
+  return sha;
+}
 
 // Dozens of git subprocesses behind an HTTP CGI: well over the 20 s default under load.
 describe("data import: github repository", { timeout: 120_000 }, () => {
@@ -282,6 +343,201 @@ describe("data import: github repository", { timeout: 120_000 }, () => {
       );
       expect(named.repository?.url).toBe(foreign);
       expect(JSON.stringify({ logs, priv, pub, quiet, named })).not.toContain(token.token);
+
+      // That checkout belongs to the other origin now: the same slug from the host's own origin
+      // into the same project is refused before any fetch, and the checkout is left as it was.
+      const seen = host.requests().length;
+      await expect(
+        withDefault.importGitHubRepo({ repo: FULL }, h.projectId, { actor: human }),
+      ).rejects.toMatchObject({
+        code: "validation",
+        message: expect.stringMatching(/belongs to .*localhost/),
+      });
+      expect(host.requests().length).toBe(seen);
+      expect(await new GitOps({ cwd: named.destination as string }).remoteUrl()).toBe(foreign);
+      expect((await h.store.project.mustGet(h.projectId)).repos).toEqual([
+        "acme/public-tool",
+        FULL,
+      ]);
+    },
+  );
+
+  it.skipIf(skipReason())(
+    "a hostile repository cannot write outside its checkout, symlinks are never followed, and an empty repository or a clone that never answers leaves nothing behind",
+    async () => {
+      const base = new DataImporter({
+        assets: h.assets,
+        store: h.store,
+        clock: h.clock,
+        vault,
+        gitRemoteBase: host.baseUrl,
+      });
+      const reposDir = join(h.projectsRoot, h.projectId, "repos");
+      const chain = new Set([
+        "projects",
+        `projects/${h.projectId}`,
+        `projects/${h.projectId}/repos`,
+        `projects/${h.projectId}/repos/acme`,
+      ]);
+      const checkout = `projects/${h.projectId}/repos/acme/links`;
+      // Everything under the harness dir except the directory chain to the checkouts and the one
+      // checkout that is meant to exist: what a hostile repository must never add to.
+      const outside = () =>
+        listTree(h.dir).filter(
+          (rel) => !chain.has(rel) && rel !== checkout && !rel.startsWith(`${checkout}/`),
+        );
+      const before = outside();
+
+      // A tree with `..` and `.git` entries: git refuses the checkout, the import fails, the
+      // half clone is removed and nothing appears anywhere under the install's dir.
+      const traversal = await host.createRepo({ owner: "acme", name: "traversal", private: false });
+      const payload = await blob(traversal.dir, "escaped\n");
+      const escape = await rawTree(traversal.dir, [
+        { mode: "100644", name: "escape.txt", sha: payload },
+      ]);
+      const dotGit = await rawTree(traversal.dir, [{ mode: "100644", name: "config", sha: payload }]);
+      await setMain(
+        traversal.dir,
+        await rawTree(traversal.dir, [
+          { mode: "40000", name: "..", sha: escape },
+          { mode: "40000", name: ".git", sha: dotGit },
+          { mode: "100644", name: "ok.txt", sha: payload },
+        ]),
+      );
+      await expect(
+        base.importGitHubRepo({ repo: "acme/traversal" }, h.projectId, { actor: human }),
+      ).rejects.toMatchObject({ code: "provider_error" });
+      expect(existsSync(join(reposDir, "acme", "traversal"))).toBe(false);
+      expect(outside()).toEqual(before);
+
+      // Symlinks pointing outside: written as links by git where the OS allows, never followed
+      // by the walk, the asset or the sample; no file lands outside the checkout either way.
+      const links = await host.createRepo({ owner: "acme", name: "links", private: false });
+      const fine = await blob(links.dir, "fine\n");
+      await setMain(
+        links.dir,
+        await rawTree(links.dir, [
+          { mode: "100644", name: "ok.txt", sha: fine },
+          { mode: "120000", name: "outside", sha: await blob(links.dir, "../../../../escaped") },
+          { mode: "120000", name: "passwd", sha: await blob(links.dir, "/etc/passwd") },
+        ]),
+      );
+      const result = await base.importGitHubRepo({ repo: "acme/links" }, h.projectId, {
+        actor: human,
+      });
+      const dest = result.destination as string;
+      expect(dest).toBe(join(reposDir, "acme", "links"));
+      const asLinks = lstatSync(join(dest, "outside")).isSymbolicLink();
+      if (asLinks) {
+        expect(result.imported.map((f) => f.rel)).toEqual(["ok.txt"]);
+        expect(result.skipped).toEqual([
+          { rel: "outside", reason: "symlink" },
+          { rel: "passwd", reason: "symlink" },
+        ]);
+      } else {
+        // git had no symlink support here (Windows without the privilege): plain files holding
+        // the link text, which point nowhere.
+        expect(result.imported.map((f) => f.rel)).toEqual(["ok.txt", "outside", "passwd"]);
+      }
+      expect(outside()).toEqual(before);
+      const [view] = await h.assets.list(h.projectId);
+      expect(view?.metadata?.entries).toBe(asLinks ? 1 : 3);
+      const sample = await h.assets.sample(view?.id ?? "");
+      expect(sample.kind).toBe("entries");
+      expect(sample.entries?.some((e) => /escaped|passwd:/.test(e))).toBe(false);
+
+      // An empty repository: cloned, refused at the default branch, and the clone removed.
+      await host.createRepo({ owner: "acme", name: "empty", private: false });
+      await expect(
+        base.importGitHubRepo({ repo: "acme/empty" }, h.projectId, { actor: human }),
+      ).rejects.toMatchObject({
+        code: "validation",
+        message: expect.stringMatching(/default branch/),
+      });
+      expect(existsSync(join(reposDir, "acme", "empty"))).toBe(false);
+
+      // A server that accepts the connection and never answers: the clone is killed at the
+      // importer's git limit and reported as a timeout, the half clone removed.
+      const sockets: Socket[] = [];
+      const server = createServer((s) => {
+        sockets.push(s);
+      });
+      await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+      const port = (server.address() as AddressInfo).port;
+      const slow = new DataImporter({
+        assets: h.assets,
+        store: h.store,
+        clock: h.clock,
+        vault,
+        gitTimeoutMs: 1500,
+      });
+      try {
+        await expect(
+          slow.importGitHubRepo(
+            { repo: `http://127.0.0.1:${port}/acme/slow.git`, tokenRef: "secret:github_token" },
+            h.projectId,
+            { actor: human },
+          ),
+        ).rejects.toMatchObject({
+          code: "timeout",
+          message: expect.stringMatching(/clone timed out after 1500 ms/),
+        });
+      } finally {
+        for (const s of sockets) s.destroy();
+        await new Promise<void>((r) => server.close(() => r()));
+      }
+      expect(existsSync(join(reposDir, "acme", "slow"))).toBe(false);
+      expect(outside()).toEqual(before);
+
+      // Only the links import was recorded.
+      expect(await h.store.auditLog.count({ tool: "data.import" })).toBe(1);
+      expect((await h.store.project.mustGet(h.projectId)).repos).toEqual(["acme/links"]);
+      expect(await h.assets.list(h.projectId)).toHaveLength(1);
+      expect(JSON.stringify(logs)).not.toContain(token.token);
+    },
+  );
+
+  it.skipIf(skipReason())(
+    "a url.*.insteadOf rewrite in the user's git config cannot carry the token to another origin",
+    async () => {
+      // The user's git config (here: the process environment git reads) rewrites the host's
+      // origin to the same server under another name. The header is scoped to the origin the
+      // token belongs to, so the rewritten request carries no Authorization and the private
+      // repository refuses it; nothing is left behind.
+      const localBase = host.baseUrl.replace("127.0.0.1", "localhost");
+      const added = gitConfigEnv(process.env, `url.${localBase}/.insteadOf`, `${host.baseUrl}/`);
+      const previous = Object.fromEntries(Object.keys(added).map((k) => [k, process.env[k]]));
+      Object.assign(process.env, added);
+      const dir = join(h.projectsRoot, h.projectId, "repos", "acme", "service");
+      try {
+        const seen = host.requests().length;
+        await expect(
+          importer.importGitHubRepo(
+            { repo: host.cloneUrl(FULL), tokenRef: "secret:github_token" },
+            h.projectId,
+            { actor: human },
+          ),
+        ).rejects.toMatchObject({ code: "provider_error" });
+        const reached = host.requests().slice(seen).filter((r) => r.path.startsWith(`/${FULL}.git`));
+        expect(reached.length).toBeGreaterThan(0);
+        expect(reached.every((r) => r.auth === null)).toBe(true);
+        expect(existsSync(dir)).toBe(false);
+        expect(await h.assets.list(h.projectId)).toEqual([]);
+      } finally {
+        for (const [k, v] of Object.entries(previous)) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      }
+      // Without the rewrite the same request reaches the origin the token belongs to.
+      const ok = await importer.importGitHubRepo(
+        { repo: host.cloneUrl(FULL), tokenRef: "secret:github_token" },
+        h.projectId,
+        { actor: human },
+      );
+      expect(ok.repository?.slug).toBe(FULL);
+      expect(existsSync(join(dir, "README.md"))).toBe(true);
+      expect(JSON.stringify(logs)).not.toContain(token.token);
     },
   );
 
