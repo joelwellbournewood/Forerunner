@@ -149,7 +149,10 @@ function parsePlan(input: ProjectPlanInput): ProjectPlan {
  * none. In small-project mode exactly one milestone: the planned one when the plan names a
  * single milestone, else one named after the project with every phase's success criteria
  * (in order, once each) and the latest target date; every task joins it in plan order, so the
- * task list is flat. A task's tier is its own or the project's default.
+ * task list is flat. A task's tier is its own or the project's default. A dependency cycle
+ * among the plan's tasks is refused here with `validation` as well: a plan that shapes is one
+ * `applyProjectPlan` can write, so a caller that shapes a plan to show it (the intake,
+ * ADR 0055) never puts an unwritable plan to the human.
  */
 export function shapeProjectPlan(
   input: ProjectPlanInput,
@@ -159,6 +162,23 @@ export function shapeProjectPlan(
 }
 
 function shapeParsed(
+  plan: ProjectPlan,
+  project: Pick<ProjectRow, "name" | "small_project_mode">,
+): ShapedPlan {
+  const shaped = shapeRows(plan, project);
+  orderByDependencies(placedOf(shaped));
+  return shaped;
+}
+
+/** Every shaped task with the milestone it sits under, in plan order. */
+function placedOf(shaped: ShapedPlan): Placed[] {
+  return [
+    ...shaped.milestones.flatMap((m) => m.tasks.map((task) => ({ task, milestone: m }))),
+    ...shaped.unassigned.map((task) => ({ task, milestone: null })),
+  ];
+}
+
+function shapeRows(
   plan: ProjectPlan,
   project: Pick<ProjectRow, "name" | "small_project_mode">,
 ): ShapedPlan {
@@ -364,10 +384,7 @@ export async function applyProjectPlan(
 ): Promise<AppliedPlan> {
   const plan = parsePlan(input);
   const shaped = shapeParsed(plan, project);
-  const placed: Placed[] = [
-    ...shaped.milestones.flatMap((m) => m.tasks.map((task) => ({ task, milestone: m }))),
-    ...shaped.unassigned.map((task) => ({ task, milestone: null })),
-  ];
+  const placed = placedOf(shaped);
   const keys = new Set(placed.map((p) => p.task.key).filter((k): k is string => k !== null));
   for (const p of placed) {
     for (const dep of p.task.dependsOn) {

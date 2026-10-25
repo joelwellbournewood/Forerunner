@@ -42,11 +42,13 @@ import {
   type ModelTier,
   providerCapabilities,
 } from "../provider/types.ts";
+import { markAnswer } from "./answer-mark.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
 import {
   applyProjectPlan,
   type ProjectPlan,
   ProjectPlanBody,
+  type ShapedPlan,
   shapeProjectPlan,
 } from "./project-plan.ts";
 
@@ -73,10 +75,15 @@ export const INTAKE_AUDIT_TOOL = "project.intake";
 export const INTAKE_OPTIONS = ["approve", "reject"] as const;
 /** The one model call's hard cap unless `project.settings.intake_budget_usd_micro` says otherwise. */
 export const DEFAULT_INTAKE_BUDGET_USD_MICRO = 2_000_000;
-/** Wall-clock cap of the one call; the planning target (60 s) is measured, this stops a hang. */
-export const INTAKE_TIMEOUT_MS = MODE_DEFAULTS.planning.timeoutMs;
-/** Output room for the plan and eight docs. */
-export const INTAKE_MAX_TOKENS = MODE_DEFAULTS.planning.maxTokens;
+/**
+ * How long after the planning timeout the call's token and session deadline hold
+ * (`plan.intake.deadline`): an intake session still `running` past it was left by a daemon that
+ * died during the call, and `closeExpired` closes it `failed`.
+ */
+export const INTAKE_DEADLINE_MARGIN_MS = 60_000;
+/** The branch the approved doc set goes up on: the whole project id, so no two projects share it. */
+export const intakeDocsBranch = (projectId: string): string =>
+  `fr/intake-${safeSegment(projectId, "project")}-docs`;
 /** Longest brief handed to the model whole; a longer one is cut and the card says so. */
 export const MAX_BRIEF_CHARS = 600_000;
 /** Longest drafted doc the proposal may carry. */
@@ -192,7 +199,17 @@ export type IntakeDocsOutcome =
       scaffolded: string[];
     };
 
-export type IntakeSkip = "unrecognized_answer" | "wrong_human" | "project_missing" | "card_invalid";
+/**
+ * Why an answered intake request was not applied (`change_card.outcome`). `apply_failed`: the
+ * plan writer refused the approved proposal (a card filed before a check existed); recorded
+ * once with the error, since a retry would fail the same way.
+ */
+export type IntakeSkip =
+  | "unrecognized_answer"
+  | "wrong_human"
+  | "project_missing"
+  | "card_invalid"
+  | "apply_failed";
 
 export interface IntakeSyncResult {
   applied: number;
@@ -458,9 +475,11 @@ export class IntakeService {
           ? "approved"
           : outcome === "rejected"
             ? "rejected"
-            : appliedAt
-              ? "skipped"
-              : "pending";
+            : outcome === "apply_failed"
+              ? "failed"
+              : appliedAt
+                ? "skipped"
+                : "pending";
     return {
       projectId,
       state,
@@ -468,8 +487,48 @@ export class IntakeService {
       outcome,
       appliedAt,
       docs: (card.docs as IntakeDocsOutcome | undefined) ?? null,
-      error: null,
+      error: outcome === "apply_failed" && typeof card.error === "string" ? card.error : null,
     };
+  }
+
+  /**
+   * Close every intake session of the agent still `running` past its deadline
+   * (`plan.intake.deadline`: the planning timeout plus `INTAKE_DEADLINE_MARGIN_MS`, written at
+   * the call; a row without one is given the default planning timeout from its start). The call
+   * cannot outlive its timeout, so such a row was left by a daemon that died during the call,
+   * whichever install owned it, and would otherwise hold the runner's one-session rule for
+   * ever. Run at compose and before every proposal. Returns the ids closed.
+   */
+  async closeExpired(): Promise<string[]> {
+    const { store, clock } = this.deps;
+    const now = clock.now();
+    const closed: string[] = [];
+    for (const s of await store.session.active(this.deps.agent.id)) {
+      if (s.status !== "running") continue;
+      const intake = (s.plan as { intake?: { deadline?: unknown } } | null)?.intake;
+      if (!intake) continue;
+      const deadline =
+        typeof intake.deadline === "string"
+          ? Date.parse(intake.deadline)
+          : Date.parse(s.started_at ?? s.created_at) +
+            MODE_DEFAULTS.planning.timeoutMs +
+            INTAKE_DEADLINE_MARGIN_MS;
+      if (!Number.isFinite(deadline) || deadline > now) continue;
+      try {
+        await store.session.setStatus(s.id, s.version, "failed", {
+          summary: cut(
+            `${s.summary} (failed: the daemon did not finish the planning call by ${new Date(deadline).toISOString()})`,
+          ),
+        });
+        closed.push(s.id);
+        this.logger.warn("intake session left running past its deadline closed", {
+          sessionId: s.id,
+        });
+      } catch (e) {
+        this.logger.warn("intake session not closed", { sessionId: s.id, error: errorMessage(e) });
+      }
+    }
+    return closed;
   }
 
   /**
@@ -516,15 +575,24 @@ export class IntakeService {
   }
 
   /**
-   * One model call, one request. An open intake request for the project is reused (no call).
-   * `brief` overrides the brief on the project's summary cache (`POST /projects` keeps it in
+   * One model call, one request. An open intake request for the project is reused (no call);
+   * a new `brief` while one is open is refused with `claim_conflict` (the human would take the
+   * open proposal for the new brief's), so the open request is answered first. `brief`
+   * overrides the brief on the project's summary cache (`POST /projects` keeps it in
    * `summary_cache.brief`); with neither, the goal alone is planned from.
    */
   async propose(projectId: string, opts: { brief?: string } = {}): Promise<IntakeProposalOutcome> {
-    const { store, clock } = this.deps;
+    const { store } = this.deps;
     const project = await store.project.mustGet(projectId);
     const open = await this.pendingFor(project.id);
     if (open) {
+      if (opts.brief !== undefined) {
+        throw new ForerunnerError(
+          "claim_conflict",
+          `an intake proposal is open for this project (request ${open.id}); answer it in the inbox before planning from a new brief`,
+          { details: { requestId: open.id, reason: "proposal_open" } },
+        );
+      }
       const card = (open.change_card ?? {}) as JsonObject;
       const proposal = IntakeProposalBody.safeParse(card.proposal);
       const p = proposal.success ? proposal.data : null;
@@ -533,7 +601,9 @@ export class IntakeService {
         projectId: project.id,
         requestId: open.id,
         reused: true,
-        summary: p ? sizes(p) : { milestones: 0, tasks: 0, docs: 0, firstSessionTasks: 0 },
+        summary: p
+          ? sizes(p, shapeOrNull(p, project))
+          : { milestones: 0, tasks: 0, docs: 0, firstSessionTasks: 0 },
         estimateUsdMicro: p ? estimateOf(p) : 0,
         costUsdMicro: 0,
         docsTarget: repoRefOf(project.repos[0]) ? "repository" : "workspace",
@@ -545,6 +615,8 @@ export class IntakeService {
         "intake needs a model provider; add a model credential in setup",
       );
     }
+    // A session a dead daemon left running past its deadline is closed before the new call.
+    await this.closeExpired();
     const cached = (project.summary_cache as { brief?: unknown }).brief;
     const briefText = (opts.brief ?? (typeof cached === "string" ? cached : "")).trim();
     const truncated = briefText.length > MAX_BRIEF_CHARS;
@@ -553,15 +625,17 @@ export class IntakeService {
     const called = await this.callModel(project, brief, truncated);
     const proposal = called.proposal;
     const plan = proposal.plan;
-    // The plan must shape without error before it is put to the human (pure, writes nothing).
-    shapeProjectPlan(plan, project);
+    // The plan must shape without error before it is put to the human (pure, writes nothing;
+    // a dependency cycle is refused here). What the request says it will write is the shaped
+    // plan: in small-project mode the phases join one milestone (ADR 0051).
+    const shaped = shapeProjectPlan(plan, project);
     const named = keyedTasks(plan);
     const first = proposal.firstSession.items.map((item, i) => {
       const t = named.get(item.key) as PlanTaskNamed;
       return `${i + 1}. ${t.title} (~${usd(item.estimateUsdMicro)})`;
     });
     const docPaths = Object.keys(proposal.docs);
-    const n = sizes(proposal);
+    const n = sizes(proposal, shaped);
     const estimate = estimateOf(proposal);
     const row = await store.humanRequest.insert({
       human_id: this.deps.human.id,
@@ -575,11 +649,18 @@ export class IntakeService {
         4000,
       ),
       steps: [
-        ...plan.milestones.map(
+        ...shaped.milestones.map(
           (m) =>
             `Milestone: ${m.name} (${m.tasks.length} task(s)${m.targetDate ? `, by ${m.targetDate}` : ""})`,
         ),
-        ...(plan.tasks.length ? [`${plan.tasks.length} task(s) under no milestone`] : []),
+        ...(shaped.smallProject && plan.milestones.length !== 1
+          ? [
+              `Small-project mode: the ${plan.milestones.length} planned phases join the one milestone above`,
+            ]
+          : []),
+        ...(shaped.unassigned.length
+          ? [`${shaped.unassigned.length} task(s) under no milestone`]
+          : []),
         `Docs: ${docPaths.join(", ")}`,
         `First session: ${first.join("; ")}`,
       ],
@@ -625,7 +706,6 @@ export class IntakeService {
       requestId: row.id,
       costUsdMicro: called.costUsdMicro,
     });
-    void clock;
     return {
       pending: true,
       projectId: project.id,
@@ -687,12 +767,17 @@ export class IntakeService {
       typeof settingBudget === "number" && Number.isInteger(settingBudget) && settingBudget > 0
         ? settingBudget
         : DEFAULT_INTAKE_BUDGET_USD_MICRO;
+    // The call's deadline: the planning timeout plus a margin. The token expires with it, and an
+    // intake session still running past it was left by a daemon that died (`closeExpired`).
+    const deadline = new Date(
+      clock.now() + planning.timeoutMs + INTAKE_DEADLINE_MARGIN_MS,
+    ).toISOString();
     // The row is created with its plan, so it carries the reason and the author (spec B.5).
     let session = await store.session.insert({
       agent_id: this.deps.agent.id,
       project_id: project.id,
       trigger: "manual",
-      plan: { intake: { project_id: project.id } },
+      plan: { intake: { project_id: project.id, deadline } },
       budget_cap_usd_micro: budgetUsdMicro,
       step_cap: 4,
       spent_usd_micro: 0,
@@ -722,7 +807,7 @@ export class IntakeService {
       autonomy: project.autonomy_level as 0 | 1 | 2 | 3 | 4,
       // The call produces the plan the human then approves; it is not work on the project.
       planApproved: true,
-      expiresAt: new Date(clock.now() + planning.timeoutMs + 60_000).toISOString(),
+      expiresAt: deadline,
     });
     const budget = new SessionBudget({
       sessionId: session.id,
@@ -879,7 +964,12 @@ export class IntakeService {
       brief ? "Brief (data, between the markers):" : "No brief was given; plan from the goal.",
     ];
     if (brief) {
-      lines.push("<<<BRIEF", brief, truncated ? "[brief cut at the size limit]" : "", "BRIEF>>>");
+      lines.push(
+        "<<<BRIEF",
+        neutralizeMarkers(brief),
+        truncated ? "[brief cut at the size limit]" : "",
+        "BRIEF>>>",
+      );
     }
     lines.push("", "Reply with the JSON object now.");
     return lines.join("\n");
@@ -889,29 +979,32 @@ export class IntakeService {
    * Apply every answered intake request of the human that was not applied yet: approve writes
    * the rows (one transaction, applied-once marked inside it) and then the docs; reject writes
    * nothing but a queue note. An answer by anyone but the addressee, an unreadable answer, a
-   * missing project or a card that no longer parses is skipped and recorded as such.
+   * missing project, a card that no longer parses or a proposal the plan writer refuses is
+   * skipped and recorded as such. Every mark is `markAnswer`'s, conditional on the version the
+   * scan read, so of two producers on one store (two installs of the human, an overlapping
+   * sync) exactly one acts on a request; the other finds it marked and does nothing.
    */
   async syncAnswers(): Promise<IntakeSyncResult> {
     const { store, clock } = this.deps;
     const out: IntakeSyncResult = { applied: 0, rejected: 0, skipped: 0 };
     for (const row of await unappliedBlockingAnswers(store, this.deps.human.id, isIntakeKey)) {
       const card = (row.change_card ?? {}) as JsonObject;
-      const finish = (outcome: string, extra: JsonObject = {}) =>
-        store.humanRequest.patch(row.id, {
-          change_card: { ...card, ...extra, applied_at: clock.nowIso(), outcome },
-        });
-      const skip = async (why: IntakeSkip) => {
-        out.skipped++;
-        await finish(why);
-        await store.auditLog.append({
+      const audit = (allowed: boolean, input: string, result: string, denied?: string) =>
+        store.auditLog.append({
           tool: INTAKE_AUDIT_TOOL,
-          allowed: false,
+          allowed,
           human_id: this.deps.human.id,
           agent_id: this.deps.agent.id,
-          input_summary: cut(`intake request ${row.id} answer not applied`),
-          result_summary: why,
-          denied_reason: why,
+          input_summary: cut(input),
+          result_summary: cut(result),
+          ...(denied ? { denied_reason: denied } : {}),
         });
+      /** Mark and record a skip; false when another producer marked the row first. */
+      const skip = async (why: IntakeSkip, extra: JsonObject = {}): Promise<boolean> => {
+        if (!(await markAnswer(store, clock, row, why, extra))) return false;
+        out.skipped++;
+        await audit(false, `intake request ${row.id} answer not applied`, why, why);
+        return true;
       };
       if (row.answered_by !== this.deps.human.id) {
         this.logger.warn("intake answer by someone other than the addressee refused", {
@@ -931,25 +1024,29 @@ export class IntakeService {
         continue;
       }
       if (answer === "reject") {
-        await store.queue.enqueue({
-          project_id: project.id,
-          human_id: this.deps.human.id,
-          kind: "note",
-          text: `Intake proposal ${row.id} was rejected on ${clock.nowIso()}: nothing was written. The brief stays queued; run the intake again with a revised brief or plan by hand.`,
-          priority: 7,
-          status: "queued",
-          author_agent: this.deps.agent.id,
+        // The mark and the note are one write; a row marked meanwhile gets no second note.
+        const rejected = await store.transaction(async (tx) => {
+          if (!(await markAnswer(tx, clock, row, "rejected"))) return false;
+          await tx.queue.enqueue({
+            project_id: project.id,
+            human_id: this.deps.human.id,
+            kind: "note",
+            text: `Intake proposal ${row.id} was rejected on ${clock.nowIso()}: nothing was written, neither the milestones and tasks nor the drafted docs (a project created with a brief has no standard doc set until an intake is approved). The brief stays queued; run the intake again with a revised brief or plan by hand.`,
+            priority: 7,
+            status: "queued",
+            author_agent: this.deps.agent.id,
+          });
+          await tx.auditLog.append({
+            tool: INTAKE_AUDIT_TOOL,
+            allowed: true,
+            human_id: this.deps.human.id,
+            agent_id: this.deps.agent.id,
+            input_summary: cut(`intake request ${row.id} rejected for project ${project.id}`),
+            result_summary: "nothing written; note queued",
+          });
+          return true;
         });
-        await finish("rejected");
-        await store.auditLog.append({
-          tool: INTAKE_AUDIT_TOOL,
-          allowed: true,
-          human_id: this.deps.human.id,
-          agent_id: this.deps.agent.id,
-          input_summary: cut(`intake request ${row.id} rejected for project ${project.id}`),
-          result_summary: "nothing written; note queued",
-        });
-        out.rejected++;
+        if (rejected) out.rejected++;
         continue;
       }
       const parsed = IntakeProposalBody.safeParse(card.proposal);
@@ -959,7 +1056,7 @@ export class IntakeService {
       }
       const proposal = parsed.data;
       try {
-        const written = await this.applyApproved(row, card, project, proposal);
+        const written = await this.applyApproved(row, project, proposal);
         out.applied++;
         this.logger.info("intake applied", {
           requestId: row.id,
@@ -967,6 +1064,22 @@ export class IntakeService {
           ...written,
         });
       } catch (e) {
+        if (e instanceof ForerunnerError && e.details.reason === "applied_elsewhere") {
+          // Another producer (the other install's sync) marked the row first; its transaction
+          // wrote the rows, this one rolled back.
+          continue;
+        }
+        if (e instanceof ForerunnerError && e.code === "validation") {
+          // The writer refuses the approved proposal (a card filed before a check existed): a
+          // retry would fail the same way, so it is recorded once and shown, not retried.
+          await skip("apply_failed", { error: redact(cut(e.message)) });
+          this.logger.warn("intake answer cannot be applied", {
+            requestId: row.id,
+            error: errorMessage(e),
+          });
+          continue;
+        }
+        // Anything else (the store, git) is left for the next sync.
         this.logger.warn("intake answer not applied", {
           requestId: row.id,
           error: errorMessage(e),
@@ -978,7 +1091,6 @@ export class IntakeService {
 
   private async applyApproved(
     row: HumanRequestRow,
-    card: JsonObject,
     project: ProjectRow,
     proposal: IntakeProposal,
   ): Promise<{ milestones: number; tasks: number; docs: string }> {
@@ -1029,19 +1141,23 @@ export class IntakeService {
         status: "queued",
         author_agent: this.deps.agent.id,
       });
-      // Applied-once is decided inside the transaction with the rows, never after it.
-      await tx.humanRequest.patch(row.id, {
-        change_card: {
-          ...card,
-          applied_at: now,
-          outcome: "approved",
-          milestone_ids: [
-            ...plan.milestones.map((m) => m.id),
-            ...(plan.reusedMilestone ? [plan.reusedMilestone.id] : []),
-          ],
-          task_ids: plan.tasks.map((t) => t.id),
-        },
+      // Applied-once is decided inside the transaction with the rows, never after it, and the
+      // mark is conditional on the version the scan read (`markAnswer`): a row another producer
+      // marked meanwhile rolls this transaction back, rows and all.
+      const marked = await markAnswer(tx, clock, row, "approved", {
+        milestone_ids: [
+          ...plan.milestones.map((m) => m.id),
+          ...(plan.reusedMilestone ? [plan.reusedMilestone.id] : []),
+        ],
+        task_ids: plan.tasks.map((t) => t.id),
       });
+      if (!marked) {
+        throw new ForerunnerError(
+          "version_conflict",
+          `intake request ${row.id} was applied by another producer meanwhile`,
+          { details: { requestId: row.id, reason: "applied_elsewhere" } },
+        );
+      }
       await tx.auditLog.append({
         tool: INTAKE_AUDIT_TOOL,
         allowed: true,
@@ -1124,7 +1240,7 @@ export class IntakeService {
     });
     if (existsSync(join(dir, ".git"))) await git.fetch();
     else await git.clone(info.cloneUrl);
-    const branch = `fr/intake-${safeSegment(project.id, "project").slice(0, 8)}-docs`;
+    const branch = intakeDocsBranch(project.id);
     const existingPr = (await host.listPullRequests(repo, { state: "open", head: branch }))[0];
     await git.createBranch(
       branch,
@@ -1211,9 +1327,31 @@ async function isScaffoldPlaceholder(
   return current === normalizeNewlines(renderStandardDoc(doc, info));
 }
 
-function sizes(p: IntakeProposal): IntakeProposalOutcome["summary"] {
+/**
+ * The brief's own occurrences of the data markers, spaced out so the block the model is shown
+ * opens and closes exactly once around the whole brief: text after a `BRIEF>>>` inside the
+ * brief would otherwise read as the operator's words. The brief is data; this keeps it so.
+ */
+function neutralizeMarkers(brief: string): string {
+  return brief.replace(/<<<BRIEF/g, "< < <BRIEF").replace(/BRIEF>>>/g, "BRIEF> > >");
+}
+
+/** The shaped plan of a filed proposal, or null when the project no longer shapes it. */
+function shapeOrNull(
+  p: IntakeProposal,
+  project: Pick<ProjectRow, "name" | "small_project_mode">,
+): ShapedPlan | null {
+  try {
+    return shapeProjectPlan(p.plan, project);
+  } catch {
+    return null;
+  }
+}
+
+/** The proposal's sizes as the request states them: the milestones the plan becomes. */
+function sizes(p: IntakeProposal, shaped: ShapedPlan | null): IntakeProposalOutcome["summary"] {
   return {
-    milestones: p.plan.milestones.length,
+    milestones: shaped ? shaped.milestones.length : p.plan.milestones.length,
     tasks: p.plan.milestones.reduce((n, m) => n + m.tasks.length, 0) + p.plan.tasks.length,
     docs: Object.keys(p.docs).length,
     firstSessionTasks: p.firstSession.items.length,
