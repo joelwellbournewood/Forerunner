@@ -1000,9 +1000,6 @@ clean, `cargo clippy --all-targets -- -D warnings` clean, `cargo test` 90 passed
 
 ### Known issues
 
-- The daemon does not mount the email routes of `packages/capabilities/src/email/routes.ts`
-  yet, so the tray's email item reads "Pause email (not available: the daemon has no email
-  routes yet)" until the wiring lands.
 - A click on an OS notification does not open the window (the notification plugin reports no
   click on desktop); the `route` field is parsed for that day.
 - Windows-only code (`creation_flags`, `node.exe`, `.cmd` shims, `http://tauri.localhost`)

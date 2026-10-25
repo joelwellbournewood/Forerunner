@@ -159,7 +159,12 @@ the discovery start the human allowed at stage `discovery`, the names the transp
 Discovery before any yes runs with the references stripped and nothing granted. The resolved
 values live in the transport; rows, reviews, human requests, events, audit rows and log lines
 carry names only, and tool output is redacted with the same resolver. A missing vault value
-puts the extension in `error` with the message, never the value.
+puts the extension in `error` with the message, never the value. A reserved name
+(`forerunner.*`, the install wrapping key; `RESERVED_SECRET_PREFIX` in `@forerunner/vault`) in
+an entry's `permissions.secrets` or as a `secret:` reference in its transport is refused with
+`secret_reserved` at add (no row, nothing started, nobody asked), at every approval and at a
+re-permissioning (`refuseReservedSecrets` in `registry.ts`); the hooks' resolver and the token
+issuer refuse the same names again.
 
 ### Processes
 
@@ -300,7 +305,9 @@ concatenation):
   bare endpoint: no connection before the yes, reviewed live after it);
   `HumanRequestExtensionApprovals` round trip with the stage; audit rows and events for every
   change; no secret value in rows, requests, audit rows or logs on the install, approve,
-  toggle, error and remove paths.
+  toggle, error and remove paths; an entry that declares or references the install wrapping
+  key refused at add (catalog and URL manifest) and at `updatePermissions` with
+  `secret_reserved`, nothing started, nobody asked, the grant unchanged.
 - `extensions-gate.test.ts`: approved tool runs through `GatedEnforcementHooks` and is wrapped
   as untrusted; pending → `approval_required` (audited); disable → `tool_not_allowed` in code
   and a running run's token revoked live (next hook `killed`, its kill switch registration

@@ -53,6 +53,7 @@ const STATUS_FOR: Partial<Record<ErrorCode, ContentfulStatusCode>> = {
   path_not_allowed: 403,
   domain_not_allowed: 403,
   secret_not_granted: 403,
+  secret_reserved: 403,
   budget_exceeded: 402,
   unavailable: 503,
   not_supported: 501,

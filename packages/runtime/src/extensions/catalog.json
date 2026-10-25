@@ -247,7 +247,7 @@
       "id": "mcp-github",
       "kind": "connector",
       "name": "github",
-      "description": "GitHub MCP server over a fine-grained token stored in the vault as github_pat (scoped to the repositories you select).",
+      "description": "GitHub MCP server over a fine-grained token stored in the vault as github_token, the name fr setup --github-token stores (scoped to the repositories you select).",
       "version": "latest",
       "homepage": "https://github.com/github/github-mcp-server",
       "transport": {
@@ -255,7 +255,7 @@
         "command": "npx",
         "args": ["-y", "@modelcontextprotocol/server-github"],
         "env": {
-          "GITHUB_PERSONAL_ACCESS_TOKEN": "secret:github_pat"
+          "GITHUB_PERSONAL_ACCESS_TOKEN": "secret:github_token"
         }
       },
       "permissions": {
@@ -263,7 +263,7 @@
         "actionClasses": [],
         "domains": ["api.github.com"],
         "paths": [],
-        "secrets": ["github_pat"],
+        "secrets": ["github_token"],
         "scopes": ["the token's repository scopes"]
       },
       "tags": ["git"]

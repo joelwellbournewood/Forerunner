@@ -1628,6 +1628,54 @@ export function defineStateSuite(target: SuiteTarget): void {
           child.id,
         ]);
       });
+
+      it("latestForAgent picks the newest row, or with `ended` the row that ended last (the startup checklist's last session)", async () => {
+        // The seed left Alice a planned session; the runner inserts the new row before the
+        // checklist runs, so the newest row is never the session to diff against.
+        const first = await store.session.insert({
+          agent_id: s.alice.id,
+          project_id: s.project.id,
+        });
+        await clock.advance(1_000);
+        const started = await store.session.start(first.id, first.version);
+        await clock.advance(1_000);
+        const firstEnded = await store.session.setStatus(started.id, started.version, "completed", {
+          summary: "first done",
+        });
+        await clock.advance(1_000);
+        const later = await store.session.insert({
+          agent_id: s.alice.id,
+          project_id: s.project.id,
+        });
+        await clock.advance(1_000);
+        const current = await store.session.insert({
+          agent_id: s.alice.id,
+          project_id: s.project.id,
+        });
+        const bobs = await store.session.insert({ agent_id: s.bob.id, project_id: s.project.id });
+        expect((await store.session.latestForAgent(s.alice.id))?.id).toBe(current.id);
+        expect((await store.session.latestForAgent(s.alice.id, { ended: true }))?.id).toBe(
+          firstEnded.id,
+        );
+        // another agent's sessions never count, and no ended session is undefined
+        expect(await store.session.latestForAgent(s.bob.id, { ended: true })).toBeUndefined();
+        await clock.advance(1_000);
+        await store.session.setStatus(bobs.id, bobs.version, "stopped");
+        expect((await store.session.latestForAgent(s.bob.id, { ended: true }))?.id).toBe(bobs.id);
+        // ordered by the end, not the start: the row that ended last wins
+        await clock.advance(1_000);
+        await store.session.setStatus(current.id, current.version, "stopped");
+        await clock.advance(1_000);
+        const laterEnded = await store.session.setStatus(later.id, later.version, "stopped", {
+          summary: "later done",
+        });
+        expect((await store.session.latestForAgent(s.alice.id, { ended: true }))?.id).toBe(
+          laterEnded.id,
+        );
+        expect((await store.session.latestForAgent(s.alice.id, { ended: false }))?.id).toBe(
+          current.id,
+        );
+      });
     });
 
     describe("reasons on milestone and plan changes (B.5)", () => {

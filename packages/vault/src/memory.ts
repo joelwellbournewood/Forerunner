@@ -1,4 +1,4 @@
-import { assertSecretName, assertSecretValue, type Vault } from "./types.ts";
+import { assertSecretValue, assertStorableSecretName, type Vault } from "./types.ts";
 
 /** In-process vault for tests and for `FORERUNNER_VAULT_BACKEND=memory`. Nothing persists. */
 export class MemoryVault implements Vault {
@@ -7,20 +7,20 @@ export class MemoryVault implements Vault {
 
   constructor(initial: Record<string, string> = {}) {
     for (const [name, value] of Object.entries(initial)) {
-      this.entries.set(assertSecretName(name), assertSecretValue(value));
+      this.entries.set(assertStorableSecretName(name), assertSecretValue(value));
     }
   }
 
   async set(name: string, value: string): Promise<void> {
-    this.entries.set(assertSecretName(name), assertSecretValue(value));
+    this.entries.set(assertStorableSecretName(name), assertSecretValue(value));
   }
 
   async get(name: string): Promise<string | null> {
-    return this.entries.get(assertSecretName(name)) ?? null;
+    return this.entries.get(assertStorableSecretName(name)) ?? null;
   }
 
   async delete(name: string): Promise<boolean> {
-    return this.entries.delete(assertSecretName(name));
+    return this.entries.delete(assertStorableSecretName(name));
   }
 
   async list(): Promise<string[]> {
@@ -28,7 +28,7 @@ export class MemoryVault implements Vault {
   }
 
   async has(name: string): Promise<boolean> {
-    return this.entries.has(assertSecretName(name));
+    return this.entries.has(assertStorableSecretName(name));
   }
 
   /** Forget everything (tests). */

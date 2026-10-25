@@ -181,6 +181,14 @@ describe("shared secrets in the daemon", () => {
     expect((await api("POST", "/secrets/shared", { name: "Bad Name", agentIds: [] })).status).toBe(
       400,
     );
+    // The install wrapping key sits in this vault under its reserved name; sharing it is refused.
+    const reserved = await api("POST", "/secrets/shared", {
+      name: INSTALL_WRAP_KEY_NAME,
+      agentIds: [bobby.id],
+    });
+    expect(reserved.status).toBe(403);
+    expect(((await reserved.json()) as { code: string }).code).toBe("secret_reserved");
+    expect((await rt.store.secretGrant.list()).map((g) => g.name)).toEqual([NAME]);
 
     // The audit trail names the secret and the installs, never the value.
     const rows = await rt.store.auditLog.list();

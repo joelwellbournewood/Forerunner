@@ -53,8 +53,21 @@ the keyring probe fails. It logs the backend and the reason for a fall back, nev
 `profile` turns the keyring service into `forerunner-<profile>` and the file into
 `vault.<profile>.json` (the two-install test environment: `test-a`, `test-b`).
 
-Names: `^[a-z][a-z0-9_.:-]{0,127}$` (`types.ts`, `assertSecretName`). Values: non-empty
-strings up to 64 Ki characters. Everything else is a `ForerunnerError("validation")`.
+Names: `^[a-z][a-z0-9_.:-]{0,127}$` (`types.ts`, `assertStorableSecretName`: what a backend
+stores under). Names under `RESERVED_SECRET_PREFIX` (`forerunner.`: the runtime's own entries,
+today the install wrapping key `forerunner.install_wrap_key`) are valid for storage but never a
+user secret: `assertSecretName`, the check every grant path and every `secret:` reference goes
+through, refuses them with `ForerunnerError("secret_reserved")` (`isReservedSecretName` is the
+predicate; since 2026-10-25, ADR 0065 amendment). Values: non-empty strings up to 64 Ki
+characters. Everything else is a `ForerunnerError("validation")`.
+
+Who writes the vault: `fr setup` (the three `SECRET_NAMES`, validated on paste), `fr
+runner-key import` (a cloud runner's key from a file), `fr vault set <name>` (any other user
+secret, for a connector's `secret:<name>` reference: the value from a piped stdin or a hidden
+prompt, never an argument; `assertSecretName` first, so a reserved name is refused; one
+`vault.set` audit row with the name and `stored` / `replaced`, never the value; runtime.md,
+"CLI", and adding-a-connector.md, "Secrets"), and `ensureInstallWrapKey` for the reserved
+install key.
 
 Per OS:
 
@@ -153,6 +166,12 @@ other human without the value ever leaving the owner's install in clear.
   (`forerunner.install_wrap_key`, keyring or encrypted file, never a plain file), the public
   key on its `device` row (`wrap_public_key`, migration 0003). `ensureInstallWrapKey(vault)`
   creates it on first use; the daemon registers it with its desktop device row at compose.
+  The name is reserved (`RESERVED_SECRET_PREFIX`, above): no extension permission,
+  shared-secret proposal, run token, `fr vault set` or `secret:` reference can name it, each
+  refusing with `secret_reserved` before any read. Until 2026-10-25 a proposal naming it would
+  have wrapped this install's private key to the other install
+  (`packages/runtime/test/shared-secret-resolver.test.ts` now proves the refusal, with nothing
+  wrapped and no audit row).
 - **Wrapping.** `wrapSecret(value, recipientPublicKey, binding)`: a fresh ephemeral X25519
   pair and a 32-byte salt per blob, `HKDF-SHA256(X25519(ephemeral, install), salt,
   "forerunner-shared-secret:v1")`, AES-256-GCM with the AAD
@@ -177,8 +196,9 @@ other human without the value ever leaving the owner's install in clear.
   plain text, so a typo can never leak anything, it just fails at the tool.
 - `resolveSecretRefs(input, vault, granted, audit?)`: deep-walks arrays and plain objects,
   replaces references whose name is in `granted` with the vault value, throws
-  `secret_not_granted` (before any vault read) otherwise and `not_found` for a granted name that
-  is not stored. Returns a new structure; the input is never mutated; class instances (Date,
+  `secret_reserved` for a reserved name whatever the grant says and `secret_not_granted`
+  otherwise (both before any vault read), and `not_found` for a granted name that is not
+  stored; `parseSecretRef` and `formatSecretRef` refuse a reserved name too. Returns a new structure; the input is never mutated; class instances (Date,
   Buffer) pass through by identity; nesting deeper than 64 is refused.
 - `redactValues(text, values)`: removes every value and its JSON-escaped, URL-encoded, base64,
   base64url (padded and unpadded: JWT segments, some Basic-auth clients, `@base64d` pipelines)
@@ -346,12 +366,15 @@ harnesses and the nine scenarios" step. `docs/status/gates.md` cites the step fo
 ## How to change it
 
 - **Add a backend.** Implement `Vault` from `types.ts`, validate names with
-  `assertSecretName` and values with `assertSecretValue`, throw `ForerunnerError` codes
+  `assertStorableSecretName` (the syntax; the reserved rule is the layer above's,
+  `assertSecretName`) and values with `assertSecretValue`, throw `ForerunnerError` codes
   (`validation`, `unavailable`, `not_found`, `internal`), add it to `openVault` and to
   `VaultBackend`, and add its round-trip and no-leak coverage to the tests.
 - **Change the name rules.** `SECRET_NAME_PATTERN` in `types.ts` is the single source; `refs.ts`
   derives the reference pattern from it. Keep internal keyring accounts (`__index__`,
-  `__probe__*`, `<name>#<i>`) impossible under the new rule.
+  `__probe__*`, `<name>#<i>`) impossible under the new rule. A new entry the runtime owns
+  takes a name under `RESERVED_SECRET_PREFIX` and is thereby refused by every grant path and
+  reference; add it to `names.test.ts`.
 - **Raise the KDF cost.** Change `DEFAULT_SCRYPT` in `file.ts`; existing files keep their
   stored parameters until they are re-created. `maxmem` is computed from N and r.
 - **Change the file format.** Bump `FILE_VAULT_VERSION`, add a migration in `parseDocument`
@@ -367,12 +390,12 @@ harnesses and the nine scenarios" step. `docs/status/gates.md` cites the step fo
 
 | File | Covers |
 | --- | --- |
-| `test/names.test.ts` | name and value validation |
+| `test/names.test.ts` | name and value validation; the reserved prefix (`forerunner.*`, the install wrapping key) refused by `assertSecretName` with `secret_reserved` and taken by `assertStorableSecretName` |
 | `test/memory.test.ts` | memory backend |
 | `test/file.test.ts` | round-trip, layout, no plaintext on disk, 0600 on POSIX, default paths, wrong key and wrong passphrase, tamper (ciphertext, tag, swapped entry, check value), corrupt and newer files, atomic writes (parseable after every write, no temp files, stale temp ignored, concurrent writers), lock/unlock, exportKey/importKey, the runner flow |
 | `test/keyring.test.ts` | index maintenance, profiles, chunking (Windows cap simulated), index chunking, header-lookalike values, incomplete chunk detection, store failures, timeout through `SimulatedClock`, probe detection; a real-keyring round trip that runs only where a probe succeeds (`it.skipIf`, the describe title shows the reason) |
 | `test/open.test.ts` | backend selection, fall back with logged reason, env override, forced keyring failing loudly, invalid env value |
-| `test/refs.test.ts` | reference syntax, nested resolution, immutability, not-granted before vault read, not-found, depth cap, `redactValues` forms, `SecretResolver` |
+| `test/refs.test.ts` | reference syntax, nested resolution, immutability, a reserved reference refused before the vault read whatever the grant (and by `parseSecretRef` / `formatSecretRef`), not-granted before vault read, not-found, depth cap, `redactValues` forms, `SecretResolver` |
 | `test/no-leak.test.ts` | captures Logger sinks, console and every thrown error across all backends and failure paths; asserts no value (or its base64) appears |
 | `test/wrap.test.ts` | spec S.13: raw 32-byte X25519 pairs, the install key created once in the vault under its reserved name (a non-key entry is refused), wrap/unwrap round trip to the recipient and nobody else, every binding field (name, owner, agent, device) fails closed, tampered ciphertext / tag / iv / salt / ephemeral key, a wrong version and malformed blobs are `validation` without the value in the error or the logs, fresh ephemeral key and salt per wrap, values up to the cap and multi-byte text |
 | `test/security-vault.test.ts` | the security review: a vault file copied without its key is refused (`wrong_key`) and no key is written next to it, the locked state names the path and never a value, a world-readable key file is tightened to 0600 before use, a tampered KDF block is `corrupt` and never a raw crypto error, an ungranted name is refused before any vault read, the resolver's edge cases, and base64url and hex forms are scrubbed |
@@ -411,4 +434,5 @@ Capability token and autonomy enforcement: `packages/runtime/test/hooks.test.ts`
   its `runner` device row (its vault is locked until the unlock protocol ran), so a shared
   secret reaches an agent on its owner's PC install; a runner is a follow-up (ADR 0065).
 - The install wrapping key is a vault entry (`forerunner.install_wrap_key`) and shows in
-  `list()`; it is not a user secret and must not be granted to a run.
+  `list()` (and in `fr status`); it is not a user secret, and since 2026-10-25 its reserved
+  prefix is refused by every grant path, reference and `fr vault set`.

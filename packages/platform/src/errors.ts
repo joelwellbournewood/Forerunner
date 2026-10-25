@@ -11,6 +11,8 @@ export type ErrorCode =
   | "path_not_allowed"
   | "domain_not_allowed"
   | "secret_not_granted"
+  /** A reserved secret name (`forerunner.*`, the install wrapping key) in a grant or a reference. */
+  | "secret_reserved"
   | "autonomy_insufficient"
   | "approval_required"
   | "claim_conflict"

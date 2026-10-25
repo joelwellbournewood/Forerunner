@@ -149,8 +149,10 @@ and is marked spent in its `change_card.consumedAt` (durable, so a daemon restar
 answer and the retry cannot hand it out twice; a version conflict on marking it means another
 caller took it, and a new request is opened); an answered "no" keeps denying.
 `approvalPortFromRuntime(port)` adapts the runtime's `ApprovalPort` for in-memory wiring and
-tests; note that the runtime's `StateApprovals` remembers an answered request for the session
-and is not one-shot, so production wires `HumanRequestApprovalPort`. `FakeBrowserApprovals` is
+tests; the runtime's `StateApprovals` spends an always-human "yes" (purchase, credential,
+delete, permission, capability grant) on exactly one call since ADR 0052 and holds a "yes" of
+any other class for the session; production wires `HumanRequestApprovalPort`
+(`daemon/compose.ts`). `FakeBrowserApprovals` is
 the test double. The card never carries a field value (`elementForCard` strips it).
 
 Agent-owned logins: `browser_fill_secret` takes `secret:<name>`. Its `ToolSpec` has the
@@ -384,9 +386,12 @@ nothing or the launch fails. Chromium is expected to be installed where Playwrig
   with `approval_required` (`details.pending: true`) as an error result, the card is open, and
   the model has to call the tool again once the human answered. Only then is the "yes" handed
   out, and only once.
-- `approvalPortFromRuntime` inherits the runtime port's semantics; with `StateApprovals` an
-  answered request is reused for the session, so it is not a one-shot port. Production uses
-  `HumanRequestApprovalPort`.
+- `approvalPortFromRuntime` inherits the runtime port's semantics. Since ADR 0052
+  `StateApprovals` spends an always-human "yes" (purchase, credential, delete, permission,
+  capability grant) on exactly one call (`change_card.consumedAt`,
+  `packages/runtime/src/wiring/state-ports.ts`), so the money and credential gates are one-shot
+  behind it too; a "yes" of any other class holds for the session. Production wires
+  `HumanRequestApprovalPort` (`daemon/compose.ts`).
 - When the hooks resolved the secret reference before `execute`, the session cannot name the
   secret in its result or audit row ("(resolved by runtime)"); the hooks' own audit row has the
   reference.

@@ -41,8 +41,11 @@ parsed by `CatalogFile` (duplicate ids are refused). Each entry is a `CatalogEnt
 secret-free discovery start). The three shipped connectors are `mcp-filesystem`
 (`npx -y @modelcontextprotocol/server-filesystem`), `mcp-fetch` (`uvx mcp-server-fetch`) and
 `mcp-github` (`npx -y @modelcontextprotocol/server-github`, env
-`GITHUB_PERSONAL_ACCESS_TOKEN: secret:github_pat`, declared `domains: ["api.github.com"]`,
-`secrets: ["github_pat"]`). `loadBuiltinCatalog()` reads the file; `ExtensionCatalog`
+`GITHUB_PERSONAL_ACCESS_TOKEN: secret:github_token`, declared `domains: ["api.github.com"]`,
+`secrets: ["github_token"]`: the name `fr setup --github-token` stores, `SECRET_NAMES.github`
+in `packages/runtime/src/setup/wizard.ts`, so the token the wizard validated is the one the
+connector gets; until 2026-10-25 the entry said `github_pat`, a name nothing stored).
+`loadBuiltinCatalog()` reads the file; `ExtensionCatalog`
 merges a remote catalog (`FORERUNNER_EXTENSION_CATALOG_URL`, `ExtensionCatalog.refresh()`)
 whose entries never override a built-in id, and `isBuiltin(id)` is true for the file's
 entries only. Only a built-in entry is started for discovery before the human's first yes,
@@ -163,9 +166,18 @@ the `SecretsPort`, the `SecretResolver` over the vault in production), for the n
 grant (or the allowed discovery start) names. The value must be in the install's vault under
 exactly the referenced name: `fr setup` stores `github_token`, `anthropic_api_key` and
 `anthropic_subscription_token` (`SECRET_NAMES` in `packages/runtime/src/setup/wizard.ts`);
-any other name is written with `Vault.set(name, value)` from `@forerunner/vault`
-(`openVault({ profile })`). A missing value puts the row in `error` with the message, never a
-value; rows, reviews, requests, events, audit rows and logs carry names only.
+any other name is stored with **`fr vault set <name>`** (`packages/runtime/src/cli/vault.ts`,
+`registerVaultCli`): the value is piped on stdin (`printf '%s' "$TOKEN" | fr vault set
+slack_token`; one trailing line end is dropped) or typed at a hidden terminal prompt (raw
+mode, backspace honoured, Ctrl-C stores nothing), never passed as an argument; the name goes
+through `assertSecretName` first, so a reserved `forerunner.*` name is `secret_reserved` and an
+invalid one `validation` before anything is read or composed; the vault is the one the daemon
+opens (the runtime composed without its services, like `fr audit export`); one `vault.set`
+audit row names the secret and `stored` / `replaced`, never the value, and no output or log
+line carries it (`vault-cli.test.ts`). A programmatic caller uses `Vault.set(name, value)`
+from `@forerunner/vault` (`openVault({ profile })`). A missing value puts the row in `error`
+with the message, never a value; rows, reviews, requests, events, audit rows and logs carry
+names only.
 
 ## How to change it
 
@@ -231,9 +243,10 @@ value, `FAKE_TOKEN_VALUE`, is built by concatenation).
 
 | File | Covers |
 | --- | --- |
-| `extensions-catalog.test.ts` (5) | the built-in file parses and lists the shipped ids (`mcp-filesystem`, `mcp-fetch`, `mcp-github` among them) with `mcp-github`'s env holding exactly `secret:github_pat`; duplicate ids, a connector without a transport and wildcard domains rejected; a remote catalog over `node:http` merged without overriding built-ins and not built-in; the env URL; `fetchJson` refusing by `content-length` and cutting a chunked body at the cap |
+| `extensions-catalog.test.ts` (5) | the built-in file parses and lists the shipped ids (`mcp-filesystem`, `mcp-fetch`, `mcp-github` among them) with `mcp-github`'s env holding exactly `secret:` plus `SECRET_NAMES.github` (`github_token`), its declared secret and description naming the same and `github_pat` nowhere in the entry; duplicate ids, a connector without a transport and wildcard domains rejected; a remote catalog over `node:http` merged without overriding built-ins and not built-in; the env URL; `fetchJson` refusing by `content-length` and cutting a chunked body at the cap |
+| `vault-cli.test.ts` (6) | `fr vault set <name>`: registered with the value from stdin, never an argument; a piped value stored (one trailing line end dropped) and replaced, each with a `vault.set` audit row naming the secret and the outcome; the install wrapping key's reserved name and an invalid name refused before the value is read or the runtime composed; an empty value refused; the hidden terminal prompt (raw mode on then off, backspace honoured, nothing echoed) and Ctrl-C storing nothing; no value in any line, log or row |
 | `extensions-mcp.test.ts` (37) | the ADR 0016 inference table (name first, annotations only tighten, conflicts recorded), the conflict line in the summary, colliding names renamed deterministically, the prefix helpers, `withoutSecretRefs`, field inference, the loose schema, the review's contents, bridged `ToolSpec`s with the extension id and untrusted output, secrets resolved at spawn and absent from every log line, an ungranted secret refused, a closed connection refusing calls, an unreachable server `unavailable`; `StdioMcpTransport` with a real child process: pid exposed, tools listed, env seen by the server, a secret-free spec leaving it unset, `close()` killing a server that ignores SIGTERM, a missing command `unavailable` |
-| `extensions-registry.test.ts` (25) | pending before the yes with the review in the request; discovery of a built-in entry without secrets; yes enables, connects with the secret and bridges; no deletes; nothing from outside the built-in catalog started before a yes (URL manifest, remote entry, bare endpoint); a built-in entry that needs its secret to boot asked first; a discovery failure kept pending with the redacted error and retried by `approve`; disable revokes tokens and closes, re-enable asks nothing; remove; narrowing by name and by class at once, widening pends, deny keeps the old grant; ownership (no tool outside the prefix, no shadowing of `browser.open`, no built-in name); cost in CHF; connect error → `error`; `start()` idempotent; `HumanRequestExtensionApprovals` round trip; every change audited; no secret value anywhere on any path |
+| `extensions-registry.test.ts` (28) | pending before the yes with the review in the request; discovery of a built-in entry without secrets; yes enables, connects with the secret and bridges; no deletes; nothing from outside the built-in catalog started before a yes (URL manifest, remote entry, bare endpoint); a built-in entry that needs its secret to boot asked first; a discovery failure kept pending with the redacted error and retried by `approve`; disable revokes tokens and closes, re-enable asks nothing; remove; narrowing by name and by class at once, widening pends, deny keeps the old grant; ownership (no tool outside the prefix, no shadowing of `browser.open`, no built-in name); cost in CHF; connect error → `error`; `start()` idempotent; `HumanRequestExtensionApprovals` round trip; every change audited; no secret value anywhere on any path; a reserved secret name (`forerunner.*`, the install wrapping key) refused at add, from a URL manifest and at a re-permissioning with `secret_reserved` |
 | `extensions-gate.test.ts` (9) | an approved tool through `GatedEnforcementHooks`, wrapped as untrusted; pending `approval_required` (audited); disable `tool_not_allowed` in code and a running run's token revoked live (next hook `killed`); removed refused; the extension's domain and path ceilings; non-extension tools pass; `gateTool()`; narrowing the classes refuses `fake.post_comment` while `fake.fetch_page` passes; `stop("all")` closes every connector and kills a real stdio process tree, a scoped stop does not, a frozen switch cuts a reopen off, `start()` after `resume()` reconnects |
 | `extensions-routes.test.ts` (5) | every route and status code, 202 on `approve` after a discovery yes, the audit trail with the actor |
 
@@ -245,12 +258,6 @@ and remove after a confirmation; reload on an `extension.changed` frame).
 
 ## Known issues
 
-- No command or route stores an arbitrary vault name: `fr setup --github-token` stores
-  `github_token`, while the shipped `mcp-github` entry references `secret:github_pat`. Until
-  the value is stored under `github_pat` (`Vault.set` through `openVault`), approving
-  `mcp-github` ends in `error` with the missing-value message. Either align the entry's
-  reference with `SECRET_NAMES.github` or add a way to store a named secret; both are
-  outside this guide.
 - The shipped connectors say `version: "latest"` and are fetched by `npx -y` or `uvx` at
   every start: the host needs those tools and network access, and nothing pins the server's
   version (the updates screen, spec M.5, is phase 7).

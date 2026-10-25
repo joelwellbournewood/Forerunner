@@ -9,6 +9,7 @@ import {
   parseCatalog,
   parseCatalogEntry,
 } from "../src/extensions/catalog.ts";
+import { SECRET_NAMES } from "../src/setup/wizard.ts";
 import { fakeCatalogEntry, startHttpFixture } from "./extensions-helpers.ts";
 
 const BIG = { pad: "x".repeat(50_000) };
@@ -36,12 +37,17 @@ describe("extension catalog", () => {
     const connectors = file.entries.filter((e) => e.kind === "connector");
     expect(connectors.length).toBeGreaterThanOrEqual(3);
     for (const c of connectors) expect(c.transport).toBeDefined();
+    // The GitHub connector's token is the one `fr setup --github-token` stores, by its name:
+    // the entry, the wizard and the description cannot drift apart.
     const github = file.entries.find((e) => e.id === "mcp-github");
     expect(github?.transport?.type).toBe("stdio");
     if (github?.transport?.type === "stdio") {
-      expect(Object.values(github.transport.env)).toEqual(["secret:github_pat"]);
+      expect(Object.values(github.transport.env)).toEqual([`secret:${SECRET_NAMES.github}`]);
       expect(Array.isArray(github.transport.args)).toBe(true);
     }
+    expect(github?.permissions.secrets).toEqual([SECRET_NAMES.github]);
+    expect(github?.description).toContain(SECRET_NAMES.github);
+    expect(JSON.stringify(github)).not.toContain("github_pat");
     expect(file.entries.find((e) => e.id === "desktop-control")?.requiresAutonomy).toBe(3);
     // The voice entries name the providers they stand for (spec O.4: chosen in the panel); a
     // cloud entry's key is the secret its row is granted, by reference.

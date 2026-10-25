@@ -30,6 +30,7 @@ import { registerUpdateCli } from "../update/cli.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 import { registerAuditCli } from "./audit.ts";
 import { registerSpecialistsCli } from "./specialists.ts";
+import { registerVaultCli, type SecretInput } from "./vault.ts";
 
 /**
  * `fr`: the Forerunner command line. Used by the setup wizard, the fresh-install scripts, the
@@ -65,6 +66,8 @@ export interface CliDeps {
   out?: (line: string) => void;
   /** Where relative output paths land; the process's working directory by default. */
   cwd?: () => string;
+  /** Where `fr vault set` reads the value from; the process's stdin by default. */
+  stdin?: SecretInput;
 }
 
 export function buildProgram(deps: CliDeps = {}): Command {
@@ -395,6 +398,17 @@ export function buildProgram(deps: CliDeps = {}): Command {
       }),
     out,
     cwd: deps.cwd ?? (() => process.cwd()),
+  });
+
+  // A connector's secret by name (adding-a-connector.md, "Secrets"): the value from a piped
+  // stdin or a hidden prompt into the vault the daemon opens, with its audit row; a one-shot.
+  registerVaultCli(program, {
+    open: async () => {
+      const rt = await openRuntime({ startServices: false });
+      return { vault: rt.vault, store: rt.store, clock: rt.clock, human: rt.human };
+    },
+    out,
+    input: deps.stdin,
   });
 
   // Proposed specialists (spec C.5, ADR 0071): approve runs the eval set and promotes on a

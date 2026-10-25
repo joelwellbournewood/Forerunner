@@ -41,6 +41,7 @@ function statusFor(code: string): ContentfulStatusCode {
     case "validation":
       return 400;
     case "secret_not_granted":
+    case "secret_reserved":
       return 403;
     case "unavailable":
       return 503;

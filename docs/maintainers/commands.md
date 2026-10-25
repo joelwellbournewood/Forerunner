@@ -458,8 +458,6 @@ Run: `pnpm exec vitest run --project unit packages/commands/test` (13 files, 177
   loop is wired in the state service and daemon, not here.
 - A posted sentence needs a principal agent (`ctx.agentId`) because messages have a sender;
   without one only the change log and the activity event are written.
-- The rows Q.1 to Q.12, R.4, R.5, R.7 and I.1 in `docs/requirements.md` do not yet cite this
-  package's tests (the file was outside this task's paths); the wiring PR updates them.
 
 ## Requirements covered
 

@@ -1780,12 +1780,11 @@ tests", `pnpm --filter @forerunner/live test`), where every live case skips visi
 
 ### Known issues
 
-- Not in CI yet: the root vitest `unit` project globs `packages/*`, `services/*`, `testenv`,
-  `evals` and `scripts`, and `ci.yml` never runs `pnpm --filter @forerunner/live test`, so the
-  package's always-on tests (ledger, caps, metered provider, the dry-run composition) run only
-  when someone runs them. The orchestrator owns both files; the step to add is
-  `pnpm --filter @forerunner/live test` in the unit and integration jobs on both OS (every live
-  case skips visibly there), or `tests/live/test/**/*.test.ts` in the root unit include.
+- The root vitest `unit` project globs `packages/*`, `services/*`, `testenv`, `evals` and
+  `scripts`, not `tests/live`; the package's always-on tests (ledger, caps, metered provider,
+  the dry-run composition) run in CI through the step `pnpm --filter @forerunner/live test` of
+  both check jobs (`ci.yml`, `check (ubuntu-latest)` and `check (windows-latest)`; every live
+  case skips visibly there), not through the root include.
 - The aborted-call blind spot, narrowed on 2026-10-23: the adapter now reports the input side
   of the bill on `message_start` and the metered provider keeps it for a call cut off before
   `message_end`, so a killed call's billed input tokens are in the ledger when the message had
@@ -2060,12 +2059,12 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
   ADR 0054; apps.md, Android app) and prints the page's console messages and uncaught
   exceptions among its PASS lines as `webview: [level] ...` (`forwardPageConsole`, ADR 0086),
   so a failing step on the emulator shows what the app said.
-- The shell has no voice wiring to the conversation agent yet (the daemon has no voice route;
-  the `VoiceLoop` is used only by its own tests), so the bridge between the loop and the agent
-  lives in `scenario-voice.ts`: the `converse` port over `ConversationAgent.chat` with
-  `source: "voice"`, the spoken approval rules (`expectYes`) in front of a pending card, the
-  `voice.approval` and `voice.turn` rows. When the shell gets that wiring, move the bridge
-  there and point the scenario at it.
+- The daemon has the voice routes and `VoiceBridge` since O.1 (`packages/runtime/src/voice/`,
+  `voice-route.test.ts`; the UI's push-to-talk calls them, `voice.md`), but scenario 3 still
+  carries its own bridge between the loop and the agent in `scenario-voice.ts`: the `converse`
+  port over `ConversationAgent.chat` with `source: "voice"`, the spoken approval rules
+  (`expectYes`) in front of a pending card, the `voice.approval` and `voice.turn` rows. Point
+  the scenario at `VoiceBridge` and drop the copy.
 - Scenario 3 approves a change the parser understands without a model (`budget.set` from
   "give it 20 francs tonight", spec O.7) and leaves the seeded merge request open in J's
   inbox. The reason it was written that way is gone: the hooks no longer hold a registry

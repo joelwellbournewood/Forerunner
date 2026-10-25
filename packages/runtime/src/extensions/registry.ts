@@ -15,6 +15,7 @@ import {
   isUniqueViolation,
   type JsonObject,
 } from "@forerunner/state";
+import { isReservedSecretName, RESERVED_SECRET_PREFIX } from "@forerunner/vault";
 import { z } from "zod";
 import type { SecretsPort } from "../enforcement/ports.ts";
 import type { CapabilityClaims } from "../enforcement/token.ts";
@@ -419,6 +420,10 @@ export class ExtensionRegistry {
   ): Promise<ExtensionView> {
     const existing = await this.deps.extensions.byName(entry.kind, entry.name);
     if (existing) throw alreadyInstalled(entry, existing.id);
+    refuseReservedSecrets(entry.name, [
+      ...entry.permissions.secrets,
+      ...(entry.transport ? secretRefsOf(entry.transport) : []),
+    ]);
     const id = newId(this.deps.clock.now());
     const isConnector = entry.kind === "connector" && entry.transport !== undefined;
     let review: PermissionReview;
@@ -583,6 +588,10 @@ export class ExtensionRegistry {
     const permissions = cfg.pendingPermissions
       ? normalizePermissions(cfg.pendingPermissions as Partial<ExtensionPermissions>)
       : parsePermissions(row.permissions);
+    refuseReservedSecrets(row.name, [
+      ...permissions.secrets,
+      ...(cfg.transport ? secretRefsOf(cfg.transport) : []),
+    ]);
     const review = cfg.pendingReview ?? cfg.review;
     let updated = await this.deps.extensions.update(id, row.version, {
       permissions,
@@ -620,6 +629,7 @@ export class ExtensionRegistry {
     }
     const declared = parsePermissions(row.permissions);
     const granted = uniq([...declared.secrets, ...secretRefsOf(cfg.transport)]);
+    refuseReservedSecrets(row.name, granted);
     await this.audit("extensions.approve_discovery", row, actor, {
       secrets: granted,
       transport: describeTransport(cfg.transport),
@@ -816,6 +826,7 @@ export class ExtensionRegistry {
     }
     const current = parsePermissions(row.permissions);
     const wanted = normalizePermissions({ ...current, ...next });
+    refuseReservedSecrets(row.name, wanted.secrets);
     const cfg = configOf(row);
     const added = widens(current, wanted);
     const addedTools = wanted.tools.filter((t) => !current.tools.includes(t));
@@ -1159,6 +1170,21 @@ function alreadyInstalled(entry: CatalogEntry, extensionId: string | null): Fore
 
 function installWhy(row: ExtensionRow): string {
   return `Install ${panelKind(row.kind)} "${row.name}": granting a new capability needs your approval.`;
+}
+
+/**
+ * No grant path names a reserved secret (`forerunner.*`: the install wrapping key). Checked
+ * before a row, a request or a connection exists, at add, at every approval and at a
+ * re-permissioning; the hooks' resolver and the token issuer refuse the same names again.
+ */
+function refuseReservedSecrets(extensionName: string, names: readonly string[]): void {
+  const reserved = names.find((n) => isReservedSecretName(n));
+  if (reserved === undefined) return;
+  throw new ForerunnerError(
+    "secret_reserved",
+    `${extensionName} asks for the reserved secret "${reserved}": names under "${RESERVED_SECRET_PREFIX}" are the runtime's own and are never granted`,
+    { details: { extensionName, name: reserved } },
+  );
 }
 
 function discoveryWhy(row: ExtensionRow, transport: ConnectorTransport, secrets: string[]): string {
