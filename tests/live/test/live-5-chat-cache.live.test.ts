@@ -119,7 +119,7 @@ async function measureChatTurns(
   log(
     `chat cache summary: warm n=${summary.warmTurns} first token median ${ms(summary.ttft.median)} ` +
       `p90 ${ms(summary.ttft.p90)} (target ${ms(summary.targetMs)}); warm turns with a cache read ` +
-      `${summary.warmWithCacheRead}/${summary.warmTurns}, cache read tokens ${summary.cacheReadTokens}, ` +
+      `${summary.warmWithCacheRead} of ${summary.warmTurns}, cache read tokens ${summary.cacheReadTokens}, ` +
       `cache write tokens ${summary.cacheWriteTokens}; USD ${summary.usd}`,
   );
   return { turns, summary };
