@@ -92,11 +92,15 @@ price). `cacheSavingsUsdMicro` values cache reads at the full input price.
 
 **Fast mode rows (spec D.20, ADR 0057):** Opus fast mode is the same model requested with
 the provider's speed parameter, priced apart under its own row named for the variant:
-`<canonical base id>-fast` (`FAST_MODE_SUFFIX`). `claude-opus-4-6-fast` is the published
-research-preview list price (30 / 150, six times 5 / 25, cache multipliers on top);
-`claude-opus-5-5-fast` applies that 6x to every price of the `claude-opus-5-5` row (24 / 120,
-cache reads 1.2, writes 30) and is `source: "assumed"` until the model watch confirms it. Every
-fast row's notes carry `FAST_MODE_RATE_NOTE` ("research-preview rate"). The helpers name the
+`<canonical base id>-fast` (`FAST_MODE_SUFFIX`). `claude-opus-5-5-fast` is the published
+generally-available price (8 / 40, twice 4 / 20; `source: "list"`, `as_of` 2026-10-25, read off
+the provider's fast-mode page and the "Fast mode pricing" section of its pricing page) with the
+prompt-caching multipliers on top: cache writes 10 (5-minute writes, 1.25x input, as every
+row's `cache_write_per_mtok_usd`) and cache hits 0.4 (0.05x input, as the `claude-opus-5-5`
+row). `claude-opus-4-6-fast` is the research-preview list price published when ADR 0057 was
+written (30 / 150, six times 5 / 25, cache multipliers on top); see Known issues. Every fast
+row's notes carry `FAST_MODE_RATE_NOTE` ("published fast-mode rate"); whether that model's fast
+mode is generally available or a research preview is stated in the row's own notes. The helpers name the
 variant: `fastModeVariantId(id)` (a variant stays itself), `fastModeBaseId(id)` (null for a
 standard id), `isFastModeVariant(id)`; `canonicalModelId` keeps the suffix, so the variant is a
 row of its own and never a spelling of the base. `fastModeBillable(kind)` is the API-only rule:
@@ -238,8 +242,8 @@ max(estimate, 1)` clamped to [-1, 10]. `errorStats(specialist, taskType?)` gives
 ## Tests
 
 `pnpm exec vitest run --project unit packages/billing/test` (10 files, 92 tests, no network):
-`fast-mode-pricing.test.ts` pins the fast rows (the 6x research-preview rate, the 4.6 list
-anchor, the variant naming, costs and estimates at the variant's rate, an override of the
+`fast-mode-pricing.test.ts` pins the fast rows (the 5.5 row at the published 8 / 40 / 0.4 / 10,
+twice the standard row, `source: "list"`, not called a research preview; the 4.6 list row, the variant naming, costs and estimates at the variant's rate, an override of the
 variant alone, the API-only rule, the ledger and `allocation().byModel` listing the variant
 apart); money
 rounding and formatting; rate fetch, cache, fallback and default flag with an injected fetch;
@@ -260,10 +264,17 @@ defaults. All time comes from `SimulatedClock`. The runtime's `views.test.ts` an
   `LedgerEntry` are kept for the in-memory sink and are not written by the state adapter.
 - Haiku 5.5's second price tier above 100K prompt tokens is not modelled; costs there are
   under-estimated by up to 5x until a tiered price row exists.
-- `claude-opus-5-5-fast` is derived from the multiplier published for Opus 4.6 fast mode, not
-  read off a 5.5 price list (`source: "assumed"`); the fast-mode rate is a research preview and
-  may change or end. A price list that names `claude-opus-5-5-fast` reprices the row through
-  the model watch (`diffPrices`).
+- Until 2026-10-25 `claude-opus-5-5-fast` was `source: "assumed"` at 24 / 120 (6x the standard
+  row, copied from Opus 4.6's research-preview multiplier). That over-priced every fast 5.5 run
+  threefold. The provider's fast-mode and pricing pages (checked 2026-10-25) list Opus 5.5 fast
+  mode as generally available at 8 / 40; the row now carries that price (ADR 0057 amendment).
+- The provider no longer lists Opus 4.6 as a fast-mode model (fast-mode page, 2026-10-25): a
+  request on 4.6 with `speed: "fast"` succeeds but runs at the standard speed (`usage.speed:
+  "standard"`). Forerunner would still record and price such a run at the `claude-opus-4-6-fast`
+  row (30 / 150), because the runtime does not read `usage.speed` (ADR 0057, Consequences). The
+  default ladder runs Opus 5.5, so this only bites a ladder or override that puts 4.6 on the Opus
+  rung. Follow-up: price each run by the `usage.speed` the response reports, then retire or
+  correct the 4.6 row. Its numbers are unchanged here.
 - 5.5-generation prices were taken from the provider reference cached on 2026-10-06. The model
   watch must confirm them weekly; `as_of` says when a row was last confirmed.
 - The live `BillingSourceProbe` (plan usage from the subscription, spend from the Console) is

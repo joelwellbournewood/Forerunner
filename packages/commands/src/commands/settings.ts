@@ -152,7 +152,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     risk: "medium",
     schema: z.boolean(),
     description:
-      "Opus fast mode for urgent work (research preview, API only, priced separately): Opus runs of the project on an API key ask for the fast variant.",
+      "Opus fast mode for urgent work (API only, priced separately): Opus runs of the project on an API key ask for the fast variant.",
     // Spec D.20, ADR 0057: the effect and the surcharge both ways, from the price table.
     // Priced from the table in force, so the card quotes the surcharge runs are charged.
     effect: (value, ctx) => fastModeEffect(value === true, ctx.pricing),

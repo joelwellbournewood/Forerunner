@@ -31,7 +31,7 @@ const json = async (r: Response): Promise<Json> => (await r.json()) as Json;
 const str = (v: unknown): string => String(v);
 
 const USAGE = { input_tokens: 10_000, output_tokens: 2_000 };
-/** The corrected research-preview row a human or the model watch adopted. */
+/** A corrected fast-mode row a human or the model watch adopted (differs from the builtin). */
 const CORRECTED = { input_per_mtok_usd: 30, output_per_mtok_usd: 150 };
 
 /** The Anthropic adapter's shape (name and `fastMode`) over scripted replies. */

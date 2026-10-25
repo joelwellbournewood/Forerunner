@@ -191,7 +191,10 @@ The button opens the same setting dialog with the other value prefilled (`fastMo
 `settings.set` command of `commandForSetting` with a flipped `initial`), so the change card
 the daemon returns carries the effect and the surcharge of the direction asked; medium risk,
 so it needs a tap. Without the rows (an older daemon) there is no card. `fast_mode` is in
-`SETTING_KEYS`, so the row in "All settings" opens the same command.
+`SETTING_KEYS`, so the row in "All settings" opens the same command. With the built-in table
+the card reads USD 8 / 40 against 4 / 20, a 2x surcharge, and no longer says "research
+preview": Opus 5.5 fast mode is generally available (ADR 0057 amendment, 2026-10-25);
+`test/fast-mode.test.tsx` pins those sentences exactly.
 
 The project's speed-versus-quality slider (spec D.16; `project.speed_quality_offset` in
 `GET /settings`) is the one row that is not a typed value: `commandForSetting` gives it

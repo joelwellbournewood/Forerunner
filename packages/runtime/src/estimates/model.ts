@@ -455,7 +455,7 @@ export class EstimateModel implements EstimatePort {
         if (!r.task_id || r.outcome === "running" || r.outcome === "") continue;
         const acc = byTask.get(r.task_id) ?? { cost: 0, wall: 0, finished: 0, fast: false };
         // A fast-mode run (its Run row names the `<id>-fast` variant, spec D.20, ADR 0057) costs
-        // the research-preview surcharge: the task is no sample of what the work costs.
+        // the fast-mode surcharge: the task is no sample of what the work costs.
         if (isFastModeVariant(r.model)) acc.fast = true;
         acc.cost += r.cost_usd_micro;
         acc.wall += r.duration_ms ?? 0;

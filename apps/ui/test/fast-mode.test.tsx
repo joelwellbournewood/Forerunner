@@ -11,9 +11,9 @@ import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
  * effect and the surcharge of the direction asked.
  */
 const ON =
-  "Opus runs of this project on an API key are requested in fast mode (research preview) at USD 24 / 120 per million input / output tokens instead of USD 4 / 20, a 6x surcharge; a subscription ignores it (API only)";
+  "Opus runs of this project on an API key are requested in fast mode at USD 8 / 40 per million input / output tokens instead of USD 4 / 20, a 2x surcharge; a subscription ignores it (API only)";
 const OFF =
-  "Opus runs of this project go back to the standard speed at USD 4 / 20 per million input / output tokens; the fast-mode surcharge (6x, USD 24 / 120) stops";
+  "Opus runs of this project go back to the standard speed at USD 4 / 20 per million input / output tokens; the fast-mode surcharge (2x, USD 8 / 40) stops";
 
 function fastHarness() {
   const harness = createHarness();

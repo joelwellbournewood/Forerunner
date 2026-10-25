@@ -22,19 +22,19 @@ import { BILLING_SOURCE_KINDS, makeBillingSource } from "../src/sources.ts";
 /**
  * Opus fast mode (spec D.20, ADR 0057): the variant is priced from its own rows named for it
  * (`<base>-fast`), so the ledger, the estimates and the cost tables show it apart from the
- * standard rung. The rows are the research-preview rate and live in the one price table.
+ * standard rung. The rows are the provider's published fast-mode rates and live in the one price table.
  */
 const M = 1_000_000;
 
 describe("fast-mode price rows (D.20)", () => {
-  it("the Opus 5.5 variant has its own row at the research-preview rate, six times the standard row", () => {
+  it("the Opus 5.5 variant has its own row at the published fast-mode rate, twice the standard row", () => {
     const fast = priceFor("claude-opus-5-5-fast");
     const standard = priceFor("claude-opus-5-5");
     expect(fast).toMatchObject({
-      input_per_mtok_usd: 24,
-      output_per_mtok_usd: 120,
-      cache_read_per_mtok_usd: 1.2,
-      cache_write_per_mtok_usd: 30,
+      input_per_mtok_usd: 8,
+      output_per_mtok_usd: 40,
+      cache_read_per_mtok_usd: 0.4,
+      cache_write_per_mtok_usd: 10,
     });
     for (const field of [
       "input_per_mtok_usd",
@@ -42,11 +42,14 @@ describe("fast-mode price rows (D.20)", () => {
       "cache_read_per_mtok_usd",
       "cache_write_per_mtok_usd",
     ] as const) {
-      expect(fast[field]).toBeCloseTo(standard[field] * 6, 9);
+      expect(fast[field]).toBeCloseTo(standard[field] * 2, 9);
     }
     expect(fast.notes).toContain(FAST_MODE_RATE_NOTE);
-    // Derived from the published multiplier, not read off a 5.5 price list: the watch confirms it.
-    expect(fast.source).toBe("assumed");
+    // Generally available on Opus 5.5 (provider pricing page, 2026-10-25): not a research preview.
+    expect(fast.notes).not.toContain("research preview");
+    // Read off the provider's fast-mode price list (2026-10-25), no longer derived from 4.6's 6x.
+    expect(fast.source).toBe("list");
+    expect(fast.as_of).toBe("2026-10-25");
   });
 
   it("the Opus 4.6 variant carries the published fast-mode list price the multiplier comes from", () => {
@@ -87,11 +90,11 @@ describe("fast-mode price rows (D.20)", () => {
     const standard = costOf(usage, "claude-opus-5-5");
     const fast = costOf(usage, "claude-opus-5-5-fast");
     expect(standard).toBe(10_000 * 4 + 2_000 * 20);
-    expect(fast).toBe(10_000 * 24 + 2_000 * 120);
-    expect(fast).toBe(standard * 6);
+    expect(fast).toBe(10_000 * 8 + 2_000 * 40);
+    expect(fast).toBe(standard * 2);
     expect(
       estimateUsdMicro({ inputTokens: 1_000, maxOutputTokens: 4_096 }, "claude-opus-5-5-fast"),
-    ).toBe(1_000 * 24 + 4_096 * 120);
+    ).toBe(1_000 * 8 + 4_096 * 40);
   });
 
   it("an override in pricing.json corrects the variant without touching the standard row", () => {
@@ -137,9 +140,9 @@ describe("fast-mode price rows (D.20)", () => {
       scope: { ...scope, runId: "r2" },
     });
     expect(std.entry).toMatchObject({ model: "claude-opus-5-5", usd_micro: 4 * M });
-    expect(fast.entry).toMatchObject({ model: "claude-opus-5-5-fast", usd_micro: 24 * M });
+    expect(fast.entry).toMatchObject({ model: "claude-opus-5-5-fast", usd_micro: 8 * M });
     const report = await ledger.allocation({ projectId: "p1" }, () => "open");
     const byModel = Object.fromEntries(report.byModel.map((b) => [b.key, b.usd_micro]));
-    expect(byModel).toEqual({ "claude-opus-5-5": 4 * M, "claude-opus-5-5-fast": 24 * M });
+    expect(byModel).toEqual({ "claude-opus-5-5": 4 * M, "claude-opus-5-5-fast": 8 * M });
   });
 });

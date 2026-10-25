@@ -6,7 +6,7 @@
  * speed parameter (`speed: "fast"` on the Anthropic Messages API). Everything Forerunner
  * records about such a run names the variant (`claude-opus-5-5-fast`): the Run row's model,
  * the ledger row, the per-call estimate and the price row in `@forerunner/billing`, so the
- * research-preview surcharge shows apart from the standard rung.
+ * fast-mode surcharge shows apart from the standard rung.
  *
  * The flag is a request, never a guarantee: the executor decides per run (`decideFastMode`)
  * and writes one `model.fast_mode` audit row whenever the flag meets an Opus rung, applied
@@ -31,7 +31,11 @@ export const FAST_MODE_SETTING = "fast_mode";
 export const FAST_MODE_AUDIT_TOOL = "model.fast_mode";
 /** What the audit row and the session log say when a non-API source meets the flag. */
 export const FAST_MODE_API_ONLY = "API only";
-/** The beta the Messages API wants with `speed` on some models (SDK docs, fast mode). */
+/**
+ * The beta the Messages API wants with `speed` on the research-preview fast-mode models (Opus 5,
+ * Opus 4.8). Opus 5.5 fast mode is generally available and needs none; a live call on
+ * 2026-10-25 showed the header is accepted there and the call still runs fast (ADR 0057).
+ */
 export const FAST_MODE_BETA = "fast-mode-2026-02-01";
 
 /** The flag from a project's settings: on only for a literal `true`. */
@@ -133,7 +137,7 @@ export function fastModeEffect(on: boolean, table: PricingTable = BUILTIN_PRICIN
   const fast = table[fastModeVariantId(OPUS_MODEL)];
   if (!standard || !fast) {
     return on
-      ? "Opus runs of this project on an API key are requested in fast mode (research preview) once a fast-mode price row exists; a subscription ignores it (API only)"
+      ? "Opus runs of this project on an API key are requested in fast mode once a fast-mode price row exists; a subscription ignores it (API only)"
       : "Opus runs of this project go back to the standard speed";
   }
   const std = `USD ${usd(standard.input_per_mtok_usd)} / ${usd(standard.output_per_mtok_usd)}`;
@@ -143,11 +147,11 @@ export function fastModeEffect(on: boolean, table: PricingTable = BUILTIN_PRICIN
       ? `${Math.round((fast.output_per_mtok_usd / standard.output_per_mtok_usd) * 100) / 100}x`
       : "a";
   return on
-    ? `Opus runs of this project on an API key are requested in fast mode (research preview) at ${fst} per million input / output tokens instead of ${std}, a ${factor} surcharge; a subscription ignores it (${FAST_MODE_API_ONLY})`
+    ? `Opus runs of this project on an API key are requested in fast mode at ${fst} per million input / output tokens instead of ${std}, a ${factor} surcharge; a subscription ignores it (${FAST_MODE_API_ONLY})`
     : `Opus runs of this project go back to the standard speed at ${std} per million input / output tokens; the fast-mode surcharge (${factor}, ${fst}) stops`;
 }
 
 /** The Settings row's description: what the flag is, and its effect both ways. */
 export function fastModeDescription(table: PricingTable = BUILTIN_PRICING): string {
-  return `Opus fast mode for urgent work (research preview, API only, priced separately). On: ${fastModeEffect(true, table)}. Off: ${fastModeEffect(false, table)}.`;
+  return `Opus fast mode for urgent work (API only, priced separately). On: ${fastModeEffect(true, table)}. Off: ${fastModeEffect(false, table)}.`;
 }

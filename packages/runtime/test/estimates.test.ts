@@ -342,11 +342,11 @@ describe("estimate model: learning from run rows and the cost ledger", () => {
     worlds.push(w);
     for (let i = 0; i < 6; i++)
       await finishedTask(w, { estimate: 1_000_000, actual: 1_000_000, ledger: true });
-    // Urgent work in a fast-mode project: the same tasks at six times the cost (ADR 0057).
+    // Urgent work in a fast-mode project: the same tasks at twice the cost (ADR 0057).
     for (let i = 0; i < 4; i++)
       await finishedTask(w, {
         estimate: 1_000_000,
-        actual: 6_000_000,
+        actual: 2_000_000,
         ledger: true,
         model: "claude-opus-5-5-fast",
       });
@@ -356,7 +356,7 @@ describe("estimate model: learning from run rows and the cost ledger", () => {
     expect(r.costRatio).toBeCloseTo(1, 5);
     // Folded once and skipped: a refresh neither counts nor re-reads them.
     expect(await m.refresh(w.store)).toBe(0);
-    await finishedTask(w, { estimate: 1_000_000, actual: 6_000_000, model: "fake-opus-fast" });
+    await finishedTask(w, { estimate: 1_000_000, actual: 2_000_000, model: "fake-opus-fast" });
     expect(await m.refresh(w.store)).toBe(0);
     expect(m.stats()[0]?.samples).toBe(6);
   });

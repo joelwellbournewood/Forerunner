@@ -370,6 +370,9 @@ Opus call of the project costs) takes its effect from the runtime's `fastModeEff
 from `@forerunner/runtime/models/fast-mode`, not the package index, which imports this package
 back): on, the fast-mode rate against the standard one and "a subscription ignores it (API
 only)"; off, back to the standard rate and the surcharge stopping (`test/fast-mode.test.ts`).
+With the built-in table that is USD 8 / 40 against 4 / 20, a 2x surcharge; the description
+says "(API only, priced separately)" and not "research preview", because Opus 5.5 fast mode is
+generally available (ADR 0057 amendment, 2026-10-25).
 `SettingSpec.effect(value, ctx)` receives `{ pricing }` from the optional
 `CommandPorts.pricingTable()`. The daemon passes the table in force: the built-ins plus
 `<config>/pricing.json` and adopted rows. So the card the human confirms, and the change-log

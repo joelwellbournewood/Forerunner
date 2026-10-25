@@ -124,3 +124,52 @@ or the budget by hand (BLOCKERS.md row D.20). Open points:
   reversed in review: the critic's source is a known row whose kind the API-only rule can
   read, and the spec routes every Opus rung of the project's runs, of which tier-2 and tier-3
   reviews are the largest share.
+
+## Amendment 2026-10-25: the published Opus 5.5 fast-mode price, generally available
+
+**Context.** Decision 3 priced `claude-opus-5-5-fast` at 24 / 120 (cache reads 1.2, writes 30),
+`source: "assumed"`, on the guess that 5.5 fast mode costs 6x the standard row like Opus 4.6's
+research preview. Evidence gathered on 2026-10-25:
+
+- The provider's fast-mode page
+  (https://platform.claude.com/docs/en/build-with-claude/fast-mode) and pricing page
+  (https://platform.claude.com/docs/en/about-claude/pricing, section "Fast mode pricing") list
+  Opus 5.5 fast mode at USD 8 / 40 per million input / output tokens, twice the standard
+  4 / 20. Prompt-caching multipliers apply on top of fast-mode pricing (Opus 5.5 standard: 5m
+  cache write 5, 1h write 8, cache hit 0.20, so writes 1.25x and hits 0.05x of input).
+- Fast mode on Opus 5.5 is generally available: no beta header, no access request. Only Opus 5
+  and Opus 4.8 are research previews with the `fast-mode-2026-02-01` header. Opus 4.6 is not
+  listed as a supported fast-mode model: with `speed: "fast"` and the header the request
+  succeeds but runs at the standard speed and `usage.speed` reports `"standard"`.
+- A live call on 2026-10-25T15:58Z with the project key on `claude-opus-5-5` with
+  `speed: "fast"`, with and without `anthropic-beta: fast-mode-2026-02-01`, returned HTTP 200
+  with `usage.speed: "fast"` both times (17 input / 4 output tokens each).
+
+**Decision.**
+
+1. `claude-opus-5-5-fast` is 8 / 40, cache writes 10 (5-minute writes at 1.25x input, as every
+   row's `cache_write_per_mtok_usd` models them), cache reads 0.4 (0.05x input), `source:
+   "list"`, `as_of` 2026-10-25. Its notes name the published price, say it is generally
+   available, and say the caching multipliers apply on top.
+2. `FAST_MODE_RATE_NOTE` becomes "published fast-mode rate". Every fast row's notes still must
+   carry it. Whether a row's fast mode is generally available or a research preview is stated
+   in that row's own notes; the 4.6 row keeps "research preview".
+3. The setting's effect sentence and description no longer say "research preview": the
+   surcharge reads "at USD 8 / 40 per million input / output tokens instead of USD 4 / 20, a 2x
+   surcharge", computed from the table in force as before.
+4. The adapter keeps sending the beta header with `speed: "fast"`. It is harmless on 5.5 (the
+   live call above) and still needed on the research-preview models.
+5. The `claude-opus-4-6-fast` row's numbers are unchanged in this amendment.
+
+**Consequences.**
+
+- Fast 5.5 runs were over-priced threefold by the assumed row; their estimates, ledger rows and
+  budget checks now use the published price. Rows already in the ledger keep the price they
+  were recorded at.
+- The Consequences item above about `usage.speed` is now live for Opus 4.6: a fast request on
+  4.6 runs at the standard speed but is still recorded and priced at the 30 / 150 fast row. The
+  default ladder runs Opus 5.5, so it only affects a ladder or override that puts 4.6 on the
+  Opus rung. Follow-up: price each run by the `usage.speed` the response reports and retire or
+  correct the 4.6 row.
+- The spec's wording for D.20 ("research preview") predates this; the behaviour (API only,
+  priced separately, per project) is unchanged.

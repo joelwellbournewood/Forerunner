@@ -262,7 +262,7 @@ describe("Opus fast mode per project (D.20)", () => {
     // The run row names the variant and carries its price.
     expect(o.run.model).toBe("claude-opus-5-5-fast");
     expect(o.run.cost_usd_micro).toBe(FAST_COST);
-    expect(FAST_COST).toBe(STANDARD_COST * 6);
+    expect(FAST_COST).toBe(STANDARD_COST * 2);
     // The ledger row: the variant's model id at the variant's rate, an API row.
     expect(o.h.ledger.entries).toHaveLength(1);
     expect(o.h.ledger.entries[0]).toMatchObject({
@@ -274,14 +274,14 @@ describe("Opus fast mode per project (D.20)", () => {
     // The estimate before the call reads the variant's rate (spec I.3).
     const start = o.events.find((e) => e.type === "model_call_start");
     const est = start && start.type === "model_call_start" ? start.estimateUsdMicro : 0;
-    // The estimate is the input count at 24 USD/MTok plus the 4096-token output ceiling at 120.
+    // The estimate is the input count at 8 USD/MTok plus the 4096-token output ceiling at 40.
     const ceiling = estimateUsdMicro(
       { inputTokens: 0, maxOutputTokens: 4096 },
       "claude-opus-5-5-fast",
     );
-    expect(ceiling).toBe(4096 * 120);
+    expect(ceiling).toBe(4096 * 40);
     expect(est).toBeGreaterThan(ceiling);
-    expect((est - ceiling) % 24).toBe(0);
+    expect((est - ceiling) % 8).toBe(0);
     const runStart = o.events.find((e) => e.type === "run_start");
     expect(runStart && runStart.type === "run_start" ? runStart.model : "").toBe(
       "claude-opus-5-5-fast",
@@ -427,10 +427,10 @@ describe("the fast-mode decision", () => {
 
   it("the effect sentence names the surcharge both ways, from the price table in force", () => {
     expect(fastModeEffect(true)).toBe(
-      "Opus runs of this project on an API key are requested in fast mode (research preview) at USD 24 / 120 per million input / output tokens instead of USD 4 / 20, a 6x surcharge; a subscription ignores it (API only)",
+      "Opus runs of this project on an API key are requested in fast mode at USD 8 / 40 per million input / output tokens instead of USD 4 / 20, a 2x surcharge; a subscription ignores it (API only)",
     );
     expect(fastModeEffect(false)).toBe(
-      "Opus runs of this project go back to the standard speed at USD 4 / 20 per million input / output tokens; the fast-mode surcharge (6x, USD 24 / 120) stops",
+      "Opus runs of this project go back to the standard speed at USD 4 / 20 per million input / output tokens; the fast-mode surcharge (2x, USD 8 / 40) stops",
     );
     const corrected = mergePricing(BUILTIN_PRICING, {
       "claude-opus-5-5-fast": { input_per_mtok_usd: 30, output_per_mtok_usd: 150 },

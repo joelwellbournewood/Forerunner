@@ -328,8 +328,8 @@ describe("the executor honours the D.4 settings of a specialist run", () => {
 
 describe("speed mode: a specialist's fast only takes effect where the project allows it", () => {
   const fastPrice: RunPricing = {
-    estimate: (i, o) => 6 * (i + o),
-    cost: (u) => 6 * (u.input_tokens + u.output_tokens),
+    estimate: (i, o) => 2 * (i + o),
+    cost: (u) => 2 * (u.input_tokens + u.output_tokens),
   };
   // The fake ladder's Opus rung with its fast-mode variant row (D.20: never priced from a guess).
   const withFastRow: PricingTable = {
@@ -356,8 +356,8 @@ describe("speed mode: a specialist's fast only takes effect where the project al
       spec: { ...coder, defaultTier: "opus", speedMode: "standard" },
     });
     expect(standard.provider.calls[0]?.request).not.toHaveProperty("speed");
-    // Same tokens, six times the price: the fast run was priced at the fast row.
-    expect(res.costUsdMicro).toBe(6 * standard.res.costUsdMicro);
+    // Same tokens, twice the price: the fast run was priced at the fast row.
+    expect(res.costUsdMicro).toBe(2 * standard.res.costUsdMicro);
     expect(warnings(events)).toEqual([]);
   });
 

@@ -170,7 +170,8 @@ describe("local daemon", () => {
     expect(fast).toMatchObject({ scope: "project", value: false, risk: "medium" });
     expect(str(fast?.description)).toContain("API only");
     expect(str(fast?.description)).toContain("On: Opus runs of this project on an API key");
-    expect(str(fast?.description)).toContain("USD 24 / 120");
+    expect(str(fast?.description)).toContain("USD 8 / 40");
+    expect(str(fast?.description)).not.toContain("research preview");
     expect(str(fast?.description)).toContain("Off: Opus runs of this project go back");
     await rt.store.project.update(projectId, (await rt.store.project.mustGet(projectId)).version, {
       settings: { ...(await rt.store.project.mustGet(projectId)).settings, fast_mode: true },

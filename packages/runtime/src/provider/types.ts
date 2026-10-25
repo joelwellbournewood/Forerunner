@@ -12,8 +12,7 @@ export type ModelTier = "haiku" | "sonnet" | "opus" | "fable";
 
 /**
  * Speed mode of a model call (spec D.4 and D.20; ADRs 0057 and 0072): "standard", or "fast"
- * where the provider offers it (`fastMode`; Anthropic: Opus fast mode, research preview, API
- * only, priced apart) on the same model id; absent means the provider's standard speed.
+ * where the provider offers it (`fastMode`; Anthropic: Opus fast mode, API only, priced apart) on the same model id; absent means the provider's standard speed.
  */
 export type SpeedMode = "standard" | "fast";
 

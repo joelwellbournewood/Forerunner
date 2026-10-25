@@ -43,7 +43,7 @@ export const PRICING_FILE_NAME = "pricing.json";
 export const CACHE_READ_SHARE = 0.1;
 export const CACHE_WRITE_SHARE = 1.25;
 
-const FAST_MODE_RATE_NOTE_TEXT = "research-preview rate";
+const FAST_MODE_RATE_NOTE_TEXT = "published fast-mode rate";
 
 function price(
   input: number,
@@ -100,17 +100,18 @@ export const BUILTIN_PRICING: PricingTable = Object.freeze({
   "claude-fable-5-1": price(10, 50, "2026-10-06", { cacheRead: 0.25 }),
   // Opus fast mode (spec D.20, ADR 0057): the same model requested with `speed: "fast"`,
   // priced apart under its own `<base>-fast` row so the ledger, estimates and cost tables show
-  // it apart. The 4.6 row is the published research-preview list price (30 / 150, six times
-  // 5 / 25, cache multipliers on top); the 5.5 row applies that multiplier to every price of
-  // the 5.5 row above and is marked assumed until the model watch confirms it.
+  // it apart. The 4.6 row is the research-preview list price published when ADR 0057 was
+  // written (30 / 150, six times 5 / 25, cache multipliers on top); the provider no longer
+  // lists 4.6 as a fast-mode model (2026-10-25, billing.md Known issues). The 5.5 row is the
+  // published generally-available price (8 / 40, twice 4 / 20; fast-mode and pricing pages,
+  // checked 2026-10-25) with the prompt-caching multipliers on top: 5-minute writes 1.25x
+  // input (10, like every row's cache_write) and cache hits 0.05x input (0.4, like the 5.5 row).
   "claude-opus-4-6-fast": price(30, 150, "2026-10-23", {
-    notes: `Opus 4.6 fast mode (speed: fast), ${FAST_MODE_RATE_NOTE_TEXT}: 6x the standard row.`,
+    notes: `Opus 4.6 fast mode (speed: fast), ${FAST_MODE_RATE_NOTE_TEXT} of its research preview: 6x the standard row.`,
   }),
-  "claude-opus-5-5-fast": price(24, 120, "2026-10-23", {
-    source: "assumed",
-    cacheRead: 1.2,
-    cacheWrite: 30,
-    notes: `Opus 5.5 fast mode (speed: fast), ${FAST_MODE_RATE_NOTE_TEXT}: 6x every price of claude-opus-5-5, the multiplier published for Opus 4.6 fast mode.`,
+  "claude-opus-5-5-fast": price(8, 40, "2026-10-25", {
+    cacheRead: 0.4,
+    notes: `Opus 5.5 fast mode (speed: fast, generally available), ${FAST_MODE_RATE_NOTE_TEXT}: USD 8 / 40 per MTok input / output, 2x claude-opus-5-5; the prompt-caching multipliers apply on top (5-minute write 1.25x, cache hit 0.05x of the fast input price).`,
   }),
 });
 
@@ -120,7 +121,11 @@ export const BUILTIN_PRICING: PricingTable = Object.freeze({
  * row, the estimate, the price row) names the variant `<canonical base id>-fast`.
  */
 export const FAST_MODE_SUFFIX = "-fast";
-/** Every fast-mode price row's notes say this: the rate is the provider's research preview. */
+/**
+ * Every fast-mode price row's notes say this: the rate is the provider's published fast-mode
+ * price for that model. Whether that model's fast mode is generally available (Opus 5.5) or a
+ * research preview is stated in the row's own notes.
+ */
 export const FAST_MODE_RATE_NOTE = FAST_MODE_RATE_NOTE_TEXT;
 
 /** True for a variant id (`claude-opus-5-5-fast`). */

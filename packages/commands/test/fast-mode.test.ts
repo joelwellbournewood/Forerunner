@@ -10,9 +10,9 @@ import { world } from "./helpers.ts";
  * switching it changes and what it costs, both ways (ADR 0051 item 4).
  */
 const ON =
-  "Opus runs of this project on an API key are requested in fast mode (research preview) at USD 24 / 120 per million input / output tokens instead of USD 4 / 20, a 6x surcharge; a subscription ignores it (API only)";
+  "Opus runs of this project on an API key are requested in fast mode at USD 8 / 40 per million input / output tokens instead of USD 4 / 20, a 2x surcharge; a subscription ignores it (API only)";
 const OFF =
-  "Opus runs of this project go back to the standard speed at USD 4 / 20 per million input / output tokens; the fast-mode surcharge (6x, USD 24 / 120) stops";
+  "Opus runs of this project go back to the standard speed at USD 4 / 20 per million input / output tokens; the fast-mode surcharge (2x, USD 8 / 40) stops";
 
 function done(r: ExecuteResult): Extract<ExecuteResult, { status: "done" }> {
   if (r.status !== "done") throw new Error(`expected done, got ${r.status}: ${JSON.stringify(r)}`);
@@ -31,7 +31,8 @@ describe("the fast_mode setting (D.20)", () => {
     expect(spec.schema.safeParse(true).success).toBe(true);
     expect(spec.schema.safeParse("on").success).toBe(false);
     expect(spec.label).toBe("Opus fast mode");
-    expect(spec.description).toMatch(/research preview, API only, priced separately/);
+    expect(spec.description).toMatch(/\(API only, priced separately\)/);
+    expect(spec.description).not.toMatch(/research preview/);
     expect(Object.keys(SETTING_SPECS)).toContain("fast_mode");
   });
 
@@ -78,14 +79,14 @@ describe("the fast_mode setting (D.20)", () => {
 
   it("the card and the sentence quote the price table in force, so a corrected fast row is the surcharge the human says yes to", async () => {
     const w = await world();
-    // The model watch (or a human) corrected the assumed 5.5 fast row through pricing.json.
+    // The model watch (or a human) corrected the 5.5 fast row through pricing.json.
     const table = mergePricing(BUILTIN_PRICING, {
       "claude-opus-5-5-fast": { input_per_mtok_usd: 30, output_per_mtok_usd: 150 },
     });
     w.ports.pricingTable = () => table;
     const human = { kind: "human" as const, id: w.human.id };
     const corrected =
-      "Opus runs of this project on an API key are requested in fast mode (research preview) at USD 30 / 150 per million input / output tokens instead of USD 4 / 20, a 7.5x surcharge; a subscription ignores it (API only)";
+      "Opus runs of this project on an API key are requested in fast mode at USD 30 / 150 per million input / output tokens instead of USD 4 / 20, a 7.5x surcharge; a subscription ignores it (API only)";
     const params = { key: "fast_mode", value: true, project: "game" };
     const card = await w.executor.plan({ name: "settings.set", params }, w.ctx());
     expect(card.newValue).toBe(`true (${corrected})`);

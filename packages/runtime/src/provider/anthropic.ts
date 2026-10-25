@@ -23,7 +23,7 @@ import {
  * The credential is passed in by the billing router; this class never reads env itself.
  */
 
-/** Fast mode is an API-only research preview for Opus (spec D.20): never on a subscription. */
+/** Fast mode is API only for Opus (spec D.20): never on a subscription. */
 export function fastModeApplies(modelId: string, auth: "api_key" | "subscription"): boolean {
   return auth === "api_key" && tierFromId(modelId) === "opus";
 }

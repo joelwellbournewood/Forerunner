@@ -14,14 +14,14 @@ import { baseEvidence, closingReply, submitReply, type World, world } from "./he
  * review below the Opus rung, or a project with the flag off, is unchanged and writes nothing.
  */
 
-/** The standard Opus rung priced at 1 µUSD per token, the variant at 6. */
+/** The standard Opus rung priced at 1 µUSD per token, the variant at 2 (its published 2x). */
 const STANDARD: RunPricing = {
   estimate: (i, o) => i + o,
   cost: (u) => u.input_tokens + u.output_tokens,
 };
 const FAST: RunPricing = {
-  estimate: (i, o) => 6 * (i + o),
-  cost: (u) => 6 * (u.input_tokens + u.output_tokens),
+  estimate: (i, o) => 2 * (i + o),
+  cost: (u) => 2 * (u.input_tokens + u.output_tokens),
 };
 const pricing = (modelId: string): RunPricing => (modelId.endsWith("-fast") ? FAST : STANDARD);
 
@@ -78,9 +78,9 @@ describe("the critic under Opus fast mode (D.20)", () => {
       expect(r.runs).toHaveLength(1);
       expect(r.runs[0]).toMatchObject({ specialist: "critic", model: "fake-opus-fast" });
       expect(r.out.model).toBe("fake-opus-fast");
-      // Priced at the variant's rate: six times the tokens.
+      // Priced at the variant's rate: twice the tokens.
       const tokens = (r.runs[0]?.tokens_in ?? 0) + (r.runs[0]?.tokens_out ?? 0);
-      expect(r.runs[0]?.cost_usd_micro).toBe(6 * tokens);
+      expect(r.runs[0]?.cost_usd_micro).toBe(2 * tokens);
       expect(r.w.ledger.entries.length).toBeGreaterThanOrEqual(1);
       for (const e of r.w.ledger.entries) expect(e.model).toBe("fake-opus-fast");
       expect(r.audit).toHaveLength(1);

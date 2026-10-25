@@ -2688,7 +2688,7 @@ the human; it is never acted on.
 `fast-mode.test.ts` (spec D.20, ADR 0057; `sqlite::memory:`, a stub provider named
 `anthropic` with `fastMode`, a stub billing port, a fake Agent SDK `query`): flag on, the Opus
 call carries `speed: "fast"` on `claude-opus-5-5`, the Run row and the one ledger row name
-`claude-opus-5-5-fast` at six times the standard cost, the estimate before the call is at the
+`claude-opus-5-5-fast` at twice the standard cost, the estimate before the call is at the
 variant's rate, `run_start` names the variant and one `model.fast_mode` row says applied; flag
 off (unset or `false`): no speed, the standard model and price, no audit row; a sonnet-rung run
 with the flag on: unchanged; a subscription: the SDK path at the standard model with a
@@ -3351,7 +3351,7 @@ speed only to one declaring `fastMode`; the executor with the table's 4096 and n
 temperature by default, the file's max tokens and temperature (sent only where accepted), the
 agent's override of rung, effort and max tokens on the request and the Run row, the overridden
 timeout in the brief, a malformed config warned and ignored, the specialist's `max_effort`
-cap (against the agent's override and the project's speed-versus-quality slider at +1), fast sent, the Run row naming the variant and priced at the fast row (six times the
+cap (against the agent's override and the project's speed-versus-quality slider at +1), fast sent, the Run row naming the variant and priced at the fast row (twice the
 standard cost for the same tokens) with every condition, a specialist without a speed mode
 left to the project's flag (D.20 unchanged), and standard with the reason without the
 project's leave, off Opus, without a fast-mode price row or on a provider without fast mode,
@@ -3495,7 +3495,11 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 
 - Fast mode (ADR 0057): the adapter does not read the response's `usage.speed`, so a fast
   request the API served at the standard speed would still be recorded and priced as the
-  variant (an over-statement, never an under-statement).
+  variant (an over-statement, never an under-statement). Since 2026-10-25 this is a live case
+  for Opus 4.6, which the provider no longer lists as a fast-mode model (billing.md Known
+  issues). The adapter sends `anthropic-beta: fast-mode-2026-02-01` with every fast request;
+  Opus 5.5 fast mode is generally available and does not need it, and a live call on
+  2026-10-25 showed 5.5 accepts it and still runs fast (`usage.speed: "fast"`).
 - Chat retrieval (ADR 0061): the docs search reads and ranks the doc set on every model turn
   (no index or cache; bounded by the memory package's file caps) and ranks lexically, so a
   question worded unlike the doc finds nothing. The docs clone `docsDirsFor` lists is whatever
