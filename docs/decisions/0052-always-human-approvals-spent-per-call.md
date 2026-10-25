@@ -59,15 +59,15 @@ key is computed from, and what happens to the other classes.
   call after the answer is admitted, in the same run or a later one of the session.
 - A row written before this change under the display-copy key no longer matches an input
   whose strings were cut; the human is asked once more, which fails closed.
-- Approvals are still matched within one session, and no production path re-makes a paused
-  call in its own session: `StartRequest` carries no session id, the daemon's answer route
-  only runs `syncApprovals`, and the scheduler and the cloud runner start a new session. A
-  call answered after its session ended is therefore never consumed: each later session that
-  re-plans the task lists rows under its own `session_id`, files a new row and pauses the task
-  again. That fails closed (nothing runs without a "yes") but leaves the task blocked; keying
-  the lookup on the task as well, or resuming the paused session, is open with the J.7 item
-  (`runtime.md`, Known issues). The resume behaviour of the first bullet holds for a later run of the
-  same session, which the tests drive directly.
+- ~~Approvals are still matched within one session, and no production path re-makes a paused
+  call in its own session (...) A call answered after its session ended is therefore never
+  consumed (...) keying the lookup on the task as well, or resuming the paused session, is
+  open with the J.7 item.~~ Replaced by [ADR 0088](0088-late-hooks-approval-consumed-by-the-task.md)
+  (2026-10-25): the port also matches the rows of the call's task filed by the same agent for
+  the same human in its earlier sessions, and the daemon's `syncLateApprovals` (shared mark
+  with the cloud runner's inbox trigger) puts the task back to `ready` and starts the session
+  whose re-made call consumes the answer once. The one-shot rule of the first bullet is
+  unchanged.
 - Tests: `packages/runtime/test/approvals-durable.test.ts` (the former critic scratch file,
   its `it.fails` now passing) and the long-input case in
   `packages/capabilities/test/cloudflare-tools.test.ts`.
@@ -83,6 +83,15 @@ key is computed from, and what happens to the other classes.
   `displayInput` on its card. Rejected alternative: scrubbing the resolved input with the
   run's resolver (`SecretsPort.redact`) inside the port, which would need the resolver in the
   capability and would show `[REDACTED]` where the human should see which secret is bound.
+
+## Amendment (2026-10-25, ADR 0088)
+
+- The third consequence above is superseded: a hooks approval answered after its session
+  ended is consumed by the next session of the same task (the row matched by `task_id` and
+  key, for the same agent and human) and that session is started by the answer itself
+  (`syncLateApprovals`; the cloud runner's trigger shares the mark). The "match across the
+  sessions of a task" alternative below was taken there, bounded to the task's rows filed by
+  the same agent for the same human, with the session's own rows still read first.
 
 ## Alternatives considered
 
