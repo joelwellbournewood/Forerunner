@@ -23,8 +23,11 @@ import { evaluate } from "./docs-check.mjs";
  * mapping covers every module and names docs that exist, and the link checker fails on a
  * broken relative link and passes on a good one (CI runs it on every PR).
  *
- * `adding-a-connector.md` (P.7) is still a skeleton: see the BLOCKERS.md row; the `it.todo`
- * below keeps the gap visible without inventing a passing test.
+ * The four `adding-a-*` guides (P.7) get the same filled-sections assertion; the connector
+ * guide must also name the catalog entry, the ToolSpec mapping of ADR 0016, the permissions
+ * and the tests. `security.md` (P.11) must describe the injection test suite (where the cases
+ * live, how a vector is added, how the gate reads the result) and carry no "to be filled"
+ * placeholder.
  */
 const repoRoot = resolve(
   dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")),
@@ -173,8 +176,8 @@ describe("P.2, P.3, P.5, P.6, P.8 to P.12: one filled file per area, saying what
     ["release.md", ["### Signing", /staged/i, /rollback/i]],
     // P.10: schema and memory-format migrations
     ["migrations.md", [/schema migration/i, "### Memory-format migrations"]],
-    // P.11: threat model (the injection suite half is open, see BLOCKERS.md)
-    ["security.md", ["### Threat model", /injection/i]],
+    // P.11: threat model and the injection test suite (its own assertion below)
+    ["security.md", ["### Threat model", "### Injection test suite"]],
     // P.12: common failures and fixes
     ["troubleshooting.md", [/### 1\. /, /### 5\. /, /\*\*Fix/]],
   ];
@@ -197,6 +200,30 @@ describe("P.2, P.3, P.5, P.6, P.8 to P.12: one filled file per area, saying what
     expect(fixes.length).toBeGreaterThanOrEqual(failures.length);
   });
 
+  it("security.md describes the injection test suite (cases, adding a vector, how the gate reads the result) and carries no placeholder", () => {
+    const md = maintainers("security.md");
+    expect(md).not.toMatch(/to be filled/i);
+    const suite = md.slice(md.indexOf("### Injection test suite"));
+    expect(suite.length, "the section exists").toBeGreaterThan(60);
+    for (const p of [
+      // where the cases and the harness live
+      "evals/injection/cases/",
+      "evals/src/injection-runner.ts",
+      "evals/test/injection.test.ts",
+      "packages/runtime/src/injection/scan.ts",
+      "tests/e2e/scenarios/06-injection.scenario.test.ts",
+      // how a new vector is added
+      "HOSTILE_TECHNIQUES",
+      "enforcement_only",
+      // how the gate reads the result
+      "pnpm test:injection",
+      "injection-report.json",
+      ".github/workflows/ci.yml",
+    ])
+      expect(suite, `security.md injection suite: ${p}`).toContain(p);
+    expect(suite).toMatch(/exit code/i);
+  });
+
   it("the maintainers README indexes every file in the directory", () => {
     const readme = maintainers("README.md");
     const files = readdirSync(join(repoRoot, "docs", "maintainers")).filter(
@@ -211,6 +238,7 @@ describe("P.7 the adding-a-* guides", () => {
     "adding-a-specialist.md",
     "adding-a-provider.md",
     "adding-a-voice-provider.md",
+    "adding-a-connector.md",
   ]) {
     it(`${name} is filled and walks through numbered steps`, () => {
       const md = maintainers(name);
@@ -218,7 +246,30 @@ describe("P.7 the adding-a-* guides", () => {
       expect(sections(md).get("How to change it") ?? "").toMatch(/^\s*1\. /m);
     });
   }
-  it.todo("adding-a-connector.md is filled in (skeleton today; BLOCKERS.md row P.7)");
+
+  it("adding-a-connector.md names the catalog entry, the ToolSpec mapping of ADR 0016, the permissions and the tests", () => {
+    const md = maintainers("adding-a-connector.md");
+    for (const p of [
+      // the catalog entry
+      "packages/runtime/src/extensions/catalog.json",
+      "CatalogEntry",
+      // the ToolSpec mapping
+      "ADR 0016",
+      "BridgedToolSpec",
+      "inferActionClass",
+      // the permissions
+      "ExtensionPermissions",
+      "actionClasses",
+      "grantedToolNames",
+      // live revocation and the tests
+      "revokeLive",
+      "extensions-catalog.test.ts",
+      "extensions-mcp.test.ts",
+      "extensions-registry.test.ts",
+      "extensions-gate.test.ts",
+    ])
+      expect(md, `adding-a-connector.md: ${p}`).toContain(p);
+  });
 });
 
 describe("P.13 ADRs and the changelog", () => {
