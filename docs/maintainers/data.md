@@ -34,7 +34,7 @@ worktree's `.gitignore` is kept covering the data dir.
 | `metadata.ts` | format detection (magic bytes, then extension), encoding detection, CSV parser and delimiter sniffing, type inference, JSON/JSONL shape, PNG/JPEG/GIF dimensions from headers, bounded head reads, streamed line counts, `describeFile()`, `sampleFile()`, `describeFolder()`, `parseUri()` (returns a `ParsedUri` whose `locator` drops credentials, query and fragment), `describeRemote()` |
 | `walk.ts` | `walkFolder()`: bounded, symlink-free walk that skips `.git`, `node_modules` and friends |
 | `assets.ts` | `DataAssets`: `register`, `registerUpload`, `list`, `get`/`describe`, `sample`, `remove`, `view`, `projectDataDir`, `projectReposDir`; `normalizeKind()`, `isRemoteSource()`, `safeFileName()` |
-| `import.ts` | `DataImporter.importZip()`, `importFolder()` and `importGitHubRepo()`, `parseRepositorySource()`, `migrationBranchName()`, `MIGRATION_BRANCH_PREFIX`, `DEFAULT_GIT_REMOTE_BASE`, `checkZipEntryName()`, `isSymlinkEntry()`, `recordZipEntry()` (name-conflict table), `ensureDataDirIgnored()`, `WORKTREE_DATA_DIR` |
+| `import.ts` | `DataImporter.importZip()`, `importFolder()` and `importGitHubRepo()`, `parseRepositorySource()`, `sameRepository()`, `withoutUserinfo()`, `migrationBranchName()`, `MIGRATION_BRANCH_PREFIX`, `DEFAULT_GIT_REMOTE_BASE`, `checkZipEntryName()`, `isSymlinkEntry()`, `recordZipEntry()` (name-conflict table), `ensureDataDirIgnored()`, `WORKTREE_DATA_DIR` |
 | `tools.ts` | `dataTools(deps)` and `registerDataTools(registry, deps)`: the four ToolSpecs; `renderSample()` |
 | `routes.ts` | `createDataRoutes(deps)`: the Hono sub-app for the Data tab, `DATA_ROUTES`, request bodies |
 | `index.ts` | exports (re-exported by the runtime's `src/index.ts`) |
@@ -178,21 +178,33 @@ gitignore guard. `importZip` and `importFolder` never touch the original (A.3).
    server never receives the install's token. The value is resolved with `resolveSecretRefs`
    at call time (`not_found` for a missing name, `not_supported` without a vault) and reaches
    git only through `GitOps`' environment (`GIT_CONFIG_*`), never argv, the clone's config, a
-   log line, a row or the result.
+   log line, a row or the result. `GitOps` gets the repository's origin with the token, so the
+   entry is `http.<origin>/.extraheader` and git attaches it to that origin only: a
+   `url.*.insteadOf` rewrite in the user's git config, or a remote on another host, reaches
+   that host without it.
 3. The project must exist (`not_found`). All of the above happens before any disk or network
    access.
 4. Clone into `<projectsRoot>/<id>/repos/<owner>/<name>` (both segments through
-   `safeSegment()`); a failed clone removes the half checkout and records nothing. When the
-   checkout already exists, `git fetch` instead.
+   `safeSegment()`). When the checkout already exists, its `origin` URL must name the same
+   repository (`sameRepository()`: origin and path up to `.git`), else `validation` naming the
+   remote without userinfo (`withoutUserinfo()`) before any fetch; then `git fetch` instead of
+   a clone. Every git command runs under `gitTimeoutMs` (default 10 minutes): a command the
+   runner kills at the limit is `timeout`.
 5. The migration branch: on a re-import, the branch the checkout sits on when it is a
    `forerunner/migration-*` branch, else the newest such local branch (checked out), else a
    new `migrationBranchName(clock)` = `forerunner/migration-<YYYY-MM-DD>` created from
    `origin/<default branch>` (`refs/remotes/origin/HEAD`; an empty repository is
    `validation`). The import never checks out, commits to or pushes the default branch, and
    it pushes nothing at all; it then asserts the checkout is on the migration branch and not
-   the default one (`internal` otherwise).
+   the default one (`internal` otherwise). Steps 4 and 5 run under one guard: a fresh clone
+   that fails anywhere before the migration branch (git refusing the checkout, an empty
+   repository, the time limit) is removed whole and nothing is recorded; an existing checkout
+   is kept as it was.
 6. The checkout is walked with `walkFolder()` (the clone's `.git` skipped and not reported);
    a walk that hit a limit sets `note` (`truncatedWalkNote()`) and does not fail the import.
+   A repository's content is data: git itself refuses a tree with `..` or `.git` entries at
+   checkout (the import fails `provider_error`), never writes through a symlink, and symlinks
+   it writes are skipped by the walk, the asset's metadata and the sample.
 7. Records: one `folder` asset (`storage: linked`, locator the checkout, name `owner/name`;
    reused by locator on a re-import; skipped with `register: false`), `owner/name` appended
    once to the project's `repos` (the list the PR executor's `repoFor` reads), and one
@@ -276,6 +288,7 @@ does not call `worktreeFor`.
 | `jsonParseMaxBytes` | 8 MB | `describeJson()` |
 | `maxEntries` / `maxTotalBytes` / `maxDepth` | 10 000 / 2 GB / 32 | `walkFolder()`, `importZip()` |
 | `uploadMaxBytes` | = copy threshold | `registerUpload()`, the multipart route |
+| `DataImporterDeps.gitTimeoutMs` | 10 min | every git command of `importGitHubRepo()` (`GitOps.timeoutMs`); `timeout` when hit |
 | `folderSampleEntries` | 50 | folder samples |
 | `storedSampleRows` / `storedSampleBytes` | 5 / 1 KB | the sample kept on the row |
 
@@ -359,9 +372,18 @@ No ADR number was reserved for this module, so the open points are decided here:
   keeping the worktree, the branch with its commit and the row; `owner/name` against the git
   base, a public clone without a token, `register: false`, a private clone failing without a
   token with the half checkout removed, the install's default reference used on its own git
-  host and withheld from another origin while an explicit reference is honoured; credentials
-  in the URL, a raw token as `tokenRef`, an unknown reference, ssh and scp forms, a missing
-  project and a missing vault refused before any request reaches the host.
+  host and withheld from another origin while an explicit reference is honoured, and the
+  same slug from the host's own origin refused once the checkout belongs to the other origin
+  (no request sent, the checkout untouched); a hostile tree with `..` and `.git` entries
+  (written raw into the fake host's bare repository) refused by git at checkout with the
+  clone removed and nothing anywhere else under the install dir, symlinks pointing outside
+  never followed by the walk, the asset or the sample, an empty repository refused at the
+  default branch with its clone removed, a server that accepts and never answers killed at
+  `gitTimeoutMs` as `timeout` with the clone removed, a `url.*.insteadOf` rewrite in the
+  environment reaching the host without `Authorization` (refused, nothing left) while the
+  unrewritten URL clones; credentials in the URL, a raw token as `tokenRef`, an unknown
+  reference, ssh and scp forms, a missing project and a missing vault refused before any
+  request reaches the host.
 
 - `data-wiring.test.ts` (the module inside `composeRuntime` and the daemon, ADR 0039): the
   four tools registered as built-in tools and the routes listed in `DAEMON_ROUTES`, a folder
@@ -413,6 +435,14 @@ Run: `pnpm vitest run --project unit packages/runtime/test/data-*.test.ts`.
   `tokenRef` unless the daemon is composed with that base.
 - `GitOps` hands the token to git through `GIT_CONFIG_*` (git 2.31+); an older git ignores it
   and clones anonymously.
+- The clone's size on disk is bounded by `gitTimeoutMs` only: the walk limits bound what the
+  result and the asset list, not what git downloads (a partial clone's blob filter would be
+  undone by the checkout's lazy fetch).
+- One checkout per `owner/name` and project: the same slug from two hosts in one project is
+  refused rather than kept twice, because the project's `repos` list carries no host.
+- A clone killed at the time limit may leave git's remote helper running until its socket
+  closes (the platform runner returns at the killed `git`'s exit); the half clone is removed
+  regardless.
 
 ## Requirement IDs covered
 

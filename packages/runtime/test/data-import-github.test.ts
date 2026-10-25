@@ -392,14 +392,16 @@ describe("data import: github repository", { timeout: 120_000 }, () => {
       // half clone is removed and nothing appears anywhere under the install's dir.
       const traversal = await host.createRepo({ owner: "acme", name: "traversal", private: false });
       const payload = await blob(traversal.dir, "escaped\n");
-      const escape = await rawTree(traversal.dir, [
+      const escapeTree = await rawTree(traversal.dir, [
         { mode: "100644", name: "escape.txt", sha: payload },
       ]);
-      const dotGit = await rawTree(traversal.dir, [{ mode: "100644", name: "config", sha: payload }]);
+      const dotGit = await rawTree(traversal.dir, [
+        { mode: "100644", name: "config", sha: payload },
+      ]);
       await setMain(
         traversal.dir,
         await rawTree(traversal.dir, [
-          { mode: "40000", name: "..", sha: escape },
+          { mode: "40000", name: "..", sha: escapeTree },
           { mode: "40000", name: ".git", sha: dotGit },
           { mode: "100644", name: "ok.txt", sha: payload },
         ]),
@@ -518,7 +520,10 @@ describe("data import: github repository", { timeout: 120_000 }, () => {
             { actor: human },
           ),
         ).rejects.toMatchObject({ code: "provider_error" });
-        const reached = host.requests().slice(seen).filter((r) => r.path.startsWith(`/${FULL}.git`));
+        const reached = host
+          .requests()
+          .slice(seen)
+          .filter((r) => r.path.startsWith(`/${FULL}.git`));
         expect(reached.length).toBeGreaterThan(0);
         expect(reached.every((r) => r.auth === null)).toBe(true);
         expect(existsSync(dir)).toBe(false);
