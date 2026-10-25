@@ -52,7 +52,7 @@ describe("fast-mode price rows (D.20)", () => {
     expect(fast.as_of).toBe("2026-10-25");
   });
 
-  it("the Opus 4.6 variant carries the published fast-mode list price the multiplier comes from", () => {
+  it("the Opus 4.6 variant keeps the research-preview list price published when ADR 0057 was written", () => {
     const fast = priceFor("claude-opus-4-6-fast");
     expect(fast).toMatchObject({
       input_per_mtok_usd: 30,

@@ -259,6 +259,10 @@ defaults. All time comes from `SimulatedClock`. The runtime's `views.test.ts` an
 
 ## Known issues
 
+- Opus 5 and Opus 4.8 fast mode (USD 10 / 50 per MTok, research preview, beta header
+  `fast-mode-2026-02-01`) have no `-fast` price rows: a ladder that puts either on the Opus rung
+  in a fast-mode project runs at standard speed with the stated reason (no price row), which is
+  correct but not offered. Add the rows (and the per-model beta header) if those models are used.
 - `cost_ledger` carries no compression columns by design (ADR 0003): `savings()` reads the Run
   and Session rows. The `tokensBeforeCompression` / `tokensAfterCompression` fields on
   `LedgerEntry` are kept for the in-memory sink and are not written by the state adapter.
