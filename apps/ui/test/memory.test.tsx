@@ -219,9 +219,19 @@ describe("Memory page", () => {
       expect(screen.getByTestId("lessons")).toHaveAttribute("data-scope", "shared"),
     );
     expect(screen.queryByTestId("lesson-share")).not.toBeInTheDocument();
-    expect(canShare({ scope: "shared", projectId: null, status: "active" })).toBe(false);
-    expect(canShare({ scope: "shared", projectId: "proj_atlas", status: "active" })).toBe(true);
-    expect(canShare({ scope: "critic", projectId: null, status: "retired" })).toBe(false);
+    const lesson = (over: Partial<Parameters<typeof canShare>[0]>) => ({
+      scope: "shared" as const,
+      projectId: "proj_atlas",
+      status: "active",
+      source: "session:ses_1",
+      ...over,
+    });
+    expect(canShare(lesson({ projectId: null }))).toBe(false);
+    expect(canShare(lesson({}))).toBe(true);
+    expect(canShare(lesson({ scope: "critic", projectId: null, status: "retired" }))).toBe(false);
+    // A project copy accepted from an offer is a note of a lesson that is already global.
+    expect(canShare(lesson({ source: "promotion:les_4;human:hum_me" }))).toBe(false);
+    expect(canShare(lesson({ scope: "agent_private", source: "promotion:les_4" }))).toBe(true);
   });
 
   it("names the missing offers route and keeps the lessons when only the offers are absent", async () => {

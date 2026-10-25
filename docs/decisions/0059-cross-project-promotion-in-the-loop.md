@@ -96,3 +96,34 @@ flow; and how any of this stays inside one human when the state store is shared.
 - Letting the runtime propose private lessons tagged `general` automatically: refused by the
   package and by ADR 0002 ("the owner human must approve the exact text before a private lesson
   leaves the machine"); kept.
+
+## Amendment 2026-10-25
+
+From the independent review of the item (`docs/status/reviews/w2-g6-promotion.md`).
+
+1. **Whose project a project is (decision 3).** "A project is the human's when its
+   `settings.members` names one of the human's principals, or when it declares no members" was
+   the loop's own rule, and it disagreed with the repository's one ownership rule, `ownsProject`
+   of `@forerunner/commands` (ADR 0041 item 4; the daemon's routes and the commands use it), in
+   both directions on a shared store: a project another human authored and left without members
+   was this human's here and not there, so this human was offered lessons for it and could pin a
+   copy into it; a project another human shared with this human (`settings.shared_with`) was not
+   this human's here and is there. `MemoryLoop.humanProjects` now keeps the active projects
+   `ownsProject` gives the human for any of its principals (`agentId: null` when it has none) and
+   nothing else. The rule stays "nothing crosses humans"; what changed is that there is one
+   definition of the human's projects.
+
+2. **The human learns why (decision 2).** "Any other completed verdict retires the proposal ...
+   the human can edit and propose again" said nothing about how the human would know. The retired
+   row names the review in its source, but the memory page lists pending proposals and active
+   lessons only, and the `memory.promotion` event is one line of raw JSON in a session's log; the
+   human who pressed Share on a private lesson saw it leave "Waiting for the critic" and learnt
+   nothing. The runner now sends one non-blocking `warning` message to the owner human for every
+   proposal the critic declined (`human` verdicts included): the verdict and grade, the critic's
+   summary, the lesson's text (the shared proposal's, as data), where the lesson stays and the
+   recourse. It is the channel the runner already uses for lessons the injection gate refused.
+   Alternatives: a `rejected` list on the memory page (a new route and view for a rare event;
+   not taken now), filing a request (nothing to answer). The critic package's comments that said
+   a `human` verdict "leaves the proposal pending" described a behaviour that never existed and
+   now say what the runtime does.
+

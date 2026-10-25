@@ -7,7 +7,8 @@ import { closingReply, submitReply, world } from "./helpers.ts";
  * shared store after critic approval). The runtime asks for a tier-1 light read of the
  * lesson text against the promotion criteria; the review row carries no task and the
  * token's session, and a `human` verdict files no sign-off request (there is no task to
- * sign off: the proposal simply stays pending for the memory view).
+ * sign off; the runtime retires the proposal as on any other non-accepting verdict and tells
+ * the human, ADR 0059).
  */
 const LESSON =
   "Run the Windows CI job before merging any change that touches file paths or separators.";

@@ -193,8 +193,12 @@ export interface ProjectTags {
 
 /**
  * Projects a promoted lesson is worth offering to: those whose tags overlap with the lesson's,
- * excluding the project it came from. Without an explicit list, a project's tags are derived
- * from the critic and shared lessons recorded about it. `general` alone does not count.
+ * excluding the project it came from. `general` alone does not count. Without an explicit list,
+ * a project's tags are derived from the critic and shared lessons recorded about it, over every
+ * project in the store: that default knows nothing of humans, so on a shared state store (two
+ * humans' projects in one database) it would offer across humans. The runtime always passes the
+ * list (`MemoryLoop.fileOffers`: this human's projects by `ownsProject`, with their tags); a
+ * caller on a shared store must do the same.
  */
 export async function offerToProjects(
   ctx: MemoryContext,

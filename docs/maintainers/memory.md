@@ -487,10 +487,14 @@ in `tests/e2e` once the critic wiring lands; the sketch here is its unit-level s
   word are not flagged. They remain visible as two lessons in the memory view.
 - `consolidate` is O(n²) over active lessons of one scope; fine for thousands, not millions
   (ADR 0001). Split by project before it matters.
-- `offerToProjects` without an explicit project list derives tags only from critic and shared
-  lessons; projects with no lessons yet are never offered anything. The runtime passes the
-  human's project list with `settings.tags` and the tags of every scope it may read
-  (`MemoryLoop.projectTags`); a direct caller without a list keeps the narrower derivation.
+- `offerToProjects` without an explicit project list derives candidates from the critic and
+  shared lessons recorded about every project in the store: narrower in tags (a project with no
+  lessons yet is never offered anything) and, on a shared state store, wider in humans, since
+  the package knows nothing of who owns a project and would offer across them. The default is
+  for a single-human store. The runtime never takes it: `MemoryLoop.fileOffers` passes this
+  human's projects (`ownsProject`, runtime.md "Cross-project sharing") with `settings.tags` and
+  the tags of every scope it may read (`MemoryLoop.projectTags`); a direct caller on a shared
+  store must pass the list too (review finding 4 of `docs/status/reviews/w2-g6-promotion.md`).
 - The memory-format migrator (migrations.md, "Memory-format migrations") is still a placeholder:
   format 1 is the only format and a newer `format` is refused rather than migrated. `index.json`
   already records the format a root was indexed with, so the migrator has its trigger.

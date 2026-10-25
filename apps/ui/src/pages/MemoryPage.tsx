@@ -80,9 +80,17 @@ export function sortLessons(rows: LessonView[]): LessonView[] {
   );
 }
 
-/** A lesson the human may propose for every project (spec G.6): active, not yet global shared. */
-export function canShare(lesson: Pick<LessonView, "scope" | "projectId" | "status">): boolean {
-  return lesson.status === "active" && !(lesson.scope === "shared" && lesson.projectId === null);
+/**
+ * A lesson the human may propose for every project (spec G.6): active and not shared already,
+ * which a global shared lesson is and so is a project copy of one (an offer the human accepted:
+ * its `source` names the `promotion` origin). The daemon refuses the same rows.
+ */
+export function canShare(
+  lesson: Pick<LessonView, "scope" | "projectId" | "status" | "source">,
+): boolean {
+  if (lesson.status !== "active") return false;
+  if (lesson.scope !== "shared") return true;
+  return lesson.projectId !== null && !/(^|;)promotion:/.test(lesson.source);
 }
 
 function LessonRow({

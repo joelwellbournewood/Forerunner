@@ -1,7 +1,8 @@
-import type {
-  LessonRecordPortRequest,
-  LessonRecordPortResult,
-  MemoryCommandPort,
+import {
+  type LessonRecordPortRequest,
+  type LessonRecordPortResult,
+  type MemoryCommandPort,
+  ownsProject,
 } from "@forerunner/commands";
 import {
   type ConsolidationOptions,
@@ -477,7 +478,13 @@ export class MemoryLoop implements MemoryPort {
    * `general` first when it is not (the human's own act on the exact text), then proposed:
    * a private lesson with the human's approval and its owner as the proposing agent (the
    * package refuses anything else), a critic or project-level shared one directly. Another
-   * human's private lesson reads as not found.
+   * human's private lesson reads as not found. A global shared lesson, and a project copy of
+   * one (an accepted offer: `source` names its `promotion` origin), are shared already: a
+   * proposal of the copy would have the critic review a lesson that is global and, on accept,
+   * retire the pinned copy for a second global row. The text passes the injection gate again
+   * (`screenLessons`, as when it was recorded): `edit` runs the format lint only, so a text
+   * edited into an instruction is refused here, before it is copied into the shared store,
+   * with the rules that matched.
    */
   async proposeSharing(id: string): Promise<LessonRow> {
     const row = await this.ownLesson(id);
@@ -485,9 +492,14 @@ export class MemoryLoop implements MemoryPort {
       throw new ForerunnerError("validation", "only an active, current lesson can be shared", {
         details: { id, status: row.status },
       });
-    if (row.scope === "shared" && row.project_id === null)
+    if (row.scope === "shared" && (row.project_id === null || parseSource(row.source).promotion))
       throw new ForerunnerError("validation", "lesson is already shared across projects", {
-        details: { id },
+        details: { id, ...(row.project_id ? { copyOf: parseSource(row.source).promotion } : {}) },
+      });
+    const refused = screenLessons([{ text: row.text }], "unknown").rejected[0];
+    if (refused)
+      throw new ForerunnerError("injection_suspected", `not shared: ${refused.error}`, {
+        details: { id, rules: refused.rules },
       });
     const current = row.tags.includes(GENERAL_TAG)
       ? row
@@ -554,19 +566,19 @@ export class MemoryLoop implements MemoryPort {
   }
 
   /**
-   * Projects this human's agents work on: the ones whose `settings.members` name one of the
-   * human's principals, or (a single-human install) a project that declares no members.
+   * The active projects that are this human's by the repository's one ownership rule
+   * (`ownsProject`, ADR 0041 item 4, the rule of the daemon's routes and the commands): the
+   * members (`settings.members`) name one of the human's principals, `settings.shared_with`
+   * names the human, the human authored the project, or nothing records an owner at all. A
+   * project another human authored and left without members is theirs, never this human's.
    */
   async humanProjects(): Promise<ProjectRow[]> {
-    const principals = (await this.deps.store.agent.principals(this.deps.humanId)).map((a) => a.id);
+    const principals = await this.deps.store.agent.principals(this.deps.humanId);
+    const who = principals.length
+      ? principals.map((a) => ({ humanId: this.deps.humanId, agentId: a.id }))
+      : [{ humanId: this.deps.humanId, agentId: null }];
     const projects = await this.deps.store.project.list({}, { limit: 1000 });
-    return projects.filter((p) => {
-      if (!p.active) return false;
-      const members = (p.settings as { members?: unknown }).members;
-      if (Array.isArray(members) && members.length)
-        return members.some((m) => typeof m === "string" && principals.includes(m));
-      return true;
-    });
+    return projects.filter((p) => p.active && who.some((w) => ownsProject(p, w)));
   }
 
   /**
@@ -597,10 +609,10 @@ export class MemoryLoop implements MemoryPort {
   }
 
   /**
-   * One offer per other project of the same human whose tags overlap the promoted lesson's
-   * (the package's rule, never the origin project): a non-blocking approval request with
-   * `accept`/`dismiss`. A pair that already has a request (open or answered) is not offered
-   * again. Nothing crosses humans: only this human's projects are candidates.
+   * One offer per other project of the same human (`humanProjects`) whose tags overlap the
+   * promoted lesson's (the package's rule, never the origin project): a non-blocking approval
+   * request with `accept`/`dismiss`. A pair that already has a request (open or answered) is
+   * not offered again. Nothing crosses humans: only this human's projects are candidates.
    */
   async fileOffers(lesson: LessonRow): Promise<{ projectId: string; requestId: string }[]> {
     const projects = await this.humanProjects();

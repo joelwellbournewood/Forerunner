@@ -330,11 +330,15 @@ export function createDaemonApp(
               ? 409
               : err.code === "approval_required" || err.code === "autonomy_insufficient"
                 ? 403
-                : err.code === "provider_auth" || err.code === "unavailable"
-                  ? 503
-                  : 500;
+                : err.code === "injection_suspected"
+                  ? 422
+                  : err.code === "provider_auth" || err.code === "unavailable"
+                    ? 503
+                    : 500;
       // ADR 0025: a stale version or a lost claim is reported as "conflict"; the runtime's own
-      // code stays in the details for the log.
+      // code stays in the details for the log. A text the injection gate refused (a lesson
+      // proposed for the shared store, spec G.6) is the client's input, not a daemon failure:
+      // 422 with the code, so the page shows the reason instead of a server error.
       const code = status === 409 ? "conflict" : err.code;
       return c.json(
         { code, message: err.message, details: { ...(err.details ?? {}), cause: err.code } },
