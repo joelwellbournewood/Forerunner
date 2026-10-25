@@ -162,6 +162,21 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   w4-private-memory).
 - Saving the mailbox form keeps the stored TLS, folder and drafts-folder values; the sent-log
   `since=` query takes an ISO instant only (review of w2-email-page).
+- PM intake: a proposal with a dependency cycle is refused before it reaches the inbox and an
+  approved proposal the writer refuses is recorded once instead of retried for ever; two installs
+  apply one approval once; an intake session a dead daemon left running is closed at its deadline;
+  a brief that embeds the intake's own markers stays data; a new brief while a proposal is open is
+  refused with 409 (review of w2-a2-intake).
+- The standard doc set is scaffolded on every project creation path (an accepted source proposal,
+  chat and voice `project.create`) and after a rejected intake; the install marker
+  `.forerunner/project.json` is written with the doc set so a scan recognises a repository
+  Forerunner manages; the critic's drift check leaves `docs/status.md` to the PM (review of
+  w2-g5-docs).
+- The human is told why a cross-project promotion was declined; an accepted-offer copy cannot be
+  proposed again (review of w2-g6-promotion).
+- `keystore.properties` escapes non-ASCII as Gradle reads it; the secret keystore, password and
+  alias are checked with `keytool` before the build; `release.yml`'s SDK setup names its packages
+  (review of w4-android-signing).
 ### Security
 
 - Always-human approvals: one answer admits one call, spent by the durable port as it is
@@ -193,3 +208,11 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 - An email mode change from the Settings page goes through `email.mode.set` (the high-risk card,
   this PC's device answer, the change log and undo); the daemon's `PUT` refuses a mode change
   (403, the command named); `email.mode.set` refuses another human's agent.
+- A tagged release refuses to build without the Android release keystore secret and its verifier
+  refuses a development-signed APK (ADR 0015 amendment).
+- A "stop" said or typed during a live session is the kill switch even with other words in the
+  sentence or a change card pending; `/chat` and `/chat/stream` refuse a body naming another human
+  (403) and a line never reaches another human's live session (ADR 0078 amendment).
+- Cross-project offers follow the repository's ownership rule on a shared store; a proposed lesson
+  text is screened by the injection gate again (ADR 0059 amendment).
+- The docs clone's token is scoped to the repository's origin (ADR 0069).
