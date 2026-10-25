@@ -199,6 +199,12 @@ export interface CommandPorts {
    */
   requestAnswered?(requestId: string): Promise<void>;
   /**
+   * Called after `project.create` inserted the row (spec G.5, ADR 0058): the daemon scaffolds
+   * the project's standard doc set, as its create route does. The command awaits the hook and
+   * logs one that throws; the creation never fails on it.
+   */
+  projectCreated?(projectId: string): Promise<void>;
+  /**
    * The price table in force (built-ins plus `<config>/pricing.json` and adopted rows), for a
    * setting whose effect quotes a price (`fast_mode`, spec D.20, ADR 0057). Default: the
    * built-in table.

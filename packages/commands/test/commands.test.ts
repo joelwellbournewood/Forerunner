@@ -840,6 +840,21 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     expect((await w.store.human.mustGet(w.human.id)).notify_prefs[ACTIVE_PROJECT_KEY]).toBe(
       created?.id,
     );
+    // The daemon's docs hook saw the new project (spec G.5: the standard doc set is scaffolded
+    // for a project created by chat too), and a hook that fails never fails the creation.
+    expect(w.ports.created).toEqual([created?.id]);
+    w.ports.failProjectCreated = new Error("docs host down");
+    const zine = done(
+      await w.executor.execute({
+        name: "project.create",
+        params: { name: "Zine", goal: "monthly", switch: false },
+        ctx: w.ctx(),
+      }),
+    );
+    expect(zine.sentence).toBe("Created the project Zine. Undo.");
+    expect(await w.store.project.byName("Zine")).toBeDefined();
+    expect(w.ports.created).toEqual([created?.id]);
+    w.ports.failProjectCreated = undefined;
     done(await w.executor.undo(r.changeLogId, w.ctx()));
     expect((await w.store.project.mustGet(created?.id as string)).status).toBe("archived");
     expect((await w.store.human.mustGet(w.human.id)).notify_prefs[ACTIVE_PROJECT_KEY]).toBe(

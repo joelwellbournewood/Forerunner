@@ -5,7 +5,7 @@ import { GitOps, MemoryGitHost } from "@forerunner/capabilities";
 import { docFile, parseDocFrontmatter, STANDARD_DOCS } from "@forerunner/memory";
 import { appDirs, fromPosix, join, run, SimulatedClock } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import {
@@ -255,6 +255,38 @@ describe("standard doc set at project creation (G.5)", () => {
     expect(
       parseInstallMarker(await readFile(join(dir, fromPosix(INSTALL_MARKER_FILE)), "utf8")),
     ).toEqual({ schema: 1, project: id, name: "Epsilon" });
+  });
+
+  it("a project created by the chat's project.create command gets the doc set too, in the background (review finding 2)", async () => {
+    const res = await req("/commands/execute", {
+      method: "POST",
+      body: JSON.stringify({
+        commands: [
+          { name: "project.create", params: { name: "Kappa", goal: "By chat", switch: false } },
+        ],
+        wordsUsed: "create the project Kappa",
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect((await json(res)).status).toBe("done");
+    const row = await rt.store.project.byName("Kappa");
+    if (!row) throw new Error("Kappa was not created");
+    const dir = join(projectsRoot, row.id, WORKSPACE_DIR);
+    // The reply did not wait for the scaffold; the row records it once it lands.
+    await vi.waitFor(
+      async () => {
+        const fresh = await rt.store.project.mustGet(row.id);
+        expect(fresh.summary_cache.docs).toMatchObject({
+          location: "data_dir",
+          dir,
+          marker: { status: "created" },
+        });
+      },
+      { timeout: 10_000 },
+    );
+    for (const doc of STANDARD_DOCS)
+      expect(existsSync(join(dir, fromPosix(docFile(doc))))).toBe(true);
+    expect(await readFile(join(dir, "README.md"), "utf8")).toContain("# Kappa");
   });
 
   it("the composed chat searches the project's doc set and records a stated lesson in the principal's memory (J.1, O.2)", async () => {

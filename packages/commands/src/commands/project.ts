@@ -1,4 +1,4 @@
-import { ForerunnerError } from "@forerunner/platform";
+import { errorMessage, ForerunnerError, log } from "@forerunner/platform";
 import type { JsonValue, ProjectRow, StateStore } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
@@ -167,6 +167,16 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
       autonomy_level: human.default_autonomy,
       ...authorOf(ctx),
     });
+    // The standard doc set (spec G.5): the daemon's port scaffolds it as the dashboard's
+    // create does; a port that fails never fails the creation (the daemon records the gap).
+    try {
+      await ctx.ports.projectCreated?.(project.id);
+    } catch (e) {
+      log("commands").warn("project docs hook failed", {
+        projectId: project.id,
+        error: errorMessage(e),
+      });
+    }
     const previousActive =
       (human.notify_prefs[ACTIVE_PROJECT_KEY] as string | undefined) ?? ctx.activeProjectId ?? null;
     if (params.switch) {

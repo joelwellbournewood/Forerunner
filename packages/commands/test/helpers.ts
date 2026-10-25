@@ -37,7 +37,10 @@ export interface FakePorts extends CommandPorts {
   lessons: FakeLesson[];
   starts: SessionStartPortRequest[];
   kills: { scope: KillScope | "all"; reason: string }[];
+  /** Project ids `project.create` handed to the docs hook (spec G.5). */
+  created: string[];
   failStart?: Error;
+  failProjectCreated?: Error;
 }
 
 export interface World {
@@ -145,6 +148,11 @@ export async function world(): Promise<World> {
     kill: async (scope, reason) => {
       ports.kills.push({ scope, reason });
       return { stoppedRuns: 1, killedProcesses: 0 };
+    },
+    created: [],
+    projectCreated: async (projectId) => {
+      if (ports.failProjectCreated) throw ports.failProjectCreated;
+      ports.created.push(projectId);
     },
   };
   const registry = defaultRegistry();
