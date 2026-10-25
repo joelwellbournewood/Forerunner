@@ -1,3 +1,4 @@
+import { INSTALL_WRAP_KEY_NAME } from "@forerunner/vault";
 import { afterEach, describe, expect, it } from "vitest";
 import { HumanRequestExtensionApprovals } from "../src/extensions/approvals.ts";
 import { ExtensionCatalog, loadBuiltinCatalog } from "../src/extensions/catalog.ts";
@@ -854,5 +855,83 @@ describe("HumanRequestExtensionApprovals", () => {
       await h.registry.close();
       await h.store.close();
     }
+  });
+});
+
+describe("ExtensionRegistry: the install wrapping key is never a grant", () => {
+  let h: RegistryHarness;
+  afterEach(async () => {
+    h.stopLogs();
+    await h.registry.close();
+    await h.store.close();
+  });
+
+  const declared = fakeCatalogEntry({
+    id: "wants-the-key",
+    name: "wants-the-key",
+    permissions: {
+      tools: [],
+      actionClasses: [],
+      domains: ["example.com"],
+      paths: [],
+      secrets: [INSTALL_WRAP_KEY_NAME],
+      scopes: [],
+    },
+  });
+  const referenced = fakeCatalogEntry({
+    id: "env-wants-the-key",
+    name: "env-wants-the-key",
+    transport: {
+      type: "stdio",
+      command: "fake-mcp-server",
+      args: [],
+      env: { KEY: `secret:${INSTALL_WRAP_KEY_NAME}` },
+    },
+  });
+
+  it("an entry that declares or references a reserved name is refused at add: no row, nothing started, nobody asked", async () => {
+    h = await registryHarness({
+      approval: "approved",
+      catalog: testCatalog([fakeCatalogEntry(), declared, referenced]),
+    });
+    for (const id of [declared.id, referenced.id]) {
+      await expect(h.registry.addFromCatalog(id, human)).rejects.toMatchObject({
+        code: "secret_reserved",
+        details: { name: INSTALL_WRAP_KEY_NAME },
+      });
+    }
+    expect(await h.store.extension.list()).toEqual([]);
+    expect(h.seen).toEqual([]);
+    expect(h.approvals.last()).toBeUndefined();
+    expect(h.events).toEqual([]);
+  });
+
+  it("a manifest from a URL that wants the key is refused before any approval is asked", async () => {
+    const http = await startHttpFixture({ "/key.json": declared });
+    try {
+      h = await registryHarness({ approval: "pending" });
+      await expect(h.registry.addFromUrl(http.url("/key.json"), human)).rejects.toMatchObject({
+        code: "secret_reserved",
+      });
+      expect(await h.store.extension.list()).toEqual([]);
+      expect(h.approvals.last()).toBeUndefined();
+    } finally {
+      await http.close();
+    }
+  });
+
+  it("re-permissioning an installed extension to the key is refused and the grant stays as it was", async () => {
+    h = await registryHarness({ approval: "approved" });
+    const view = await h.registry.addFromCatalog(FAKE_CATALOG_ID, human);
+    await expect(
+      h.registry.updatePermissions(
+        view.id,
+        { secrets: ["fake_token", INSTALL_WRAP_KEY_NAME] },
+        human,
+      ),
+    ).rejects.toMatchObject({ code: "secret_reserved" });
+    const after = await h.registry.get(view.id);
+    expect(after.permissions.secrets).toEqual(["fake_token"]);
+    expect(after.status).toBe("enabled");
   });
 });

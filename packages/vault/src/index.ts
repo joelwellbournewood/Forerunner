@@ -61,8 +61,11 @@ export {
 export {
   assertSecretName,
   assertSecretValue,
+  assertStorableSecretName,
+  isReservedSecretName,
   isValidSecretName,
   MAX_SECRET_VALUE_LENGTH,
+  RESERVED_SECRET_PREFIX,
   SECRET_NAME_PATTERN,
   type Vault,
   type VaultBackend,

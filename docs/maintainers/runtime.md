@@ -79,6 +79,8 @@ this module holds the rules and the two sides.
 
 - **`shared-grants.ts`, the store side**, used by the daemon directly and by the state
   service's `/secrets` routes (ADR 0024: both talk to the same tables). `proposeSharedGrant`
+  refuses a reserved name (`forerunner.*`, the install wrapping key) with `secret_reserved`
+  before anything else (`serveSharedBlob` too; 403 on both routes), then
   validates the owner, the agents and every blob's install (a non-revoked device of that
   agent's owner with a `wrap_public_key`; the blob a `WrappedSecret`), writes the
   `secret_grant` row (pending; active at once when only the owner's agents are named) and
@@ -104,12 +106,15 @@ this module holds the rules and the two sides.
   as for a local secret, and `afterToolCall` redacts it from outputs the same way. The
   `grantedSecrets` rule of the hooks is unchanged: the names of the agent's active grants
   (`sharedSecretNamesFor`) join the session grant at every start, and a name the token does
-  not grant is refused before this vault is asked. Two sources: `StoreSharedSecretService`
+  not grant is refused before this vault is asked; a reserved name (`forerunner.*`) is refused
+  by `resolveSecretRefs` whatever the token says, and `TokenIssuer.issue` never mints a token
+  that grants one (`secret_reserved`; `token.test.ts`). Two sources: `StoreSharedSecretService`
   (the daemon and the runner, over the store) and `HttpSharedSecretService` (an install that
   reaches the state through the service: `GET /secrets/shared/blob`, 403 and 404 are "nothing
   for you", anything else `unavailable`).
 - **`propose.ts`, the owner's side.** `proposeSharedSecret({ vault, service, ownerHumanId,
-  name, agentIds, why })` reads the value from this install's vault, lists the wrap targets
+  name, agentIds, why })` refuses a reserved name first (`secret_reserved`: the install wrapping
+  key lives in that vault), reads the value from this install's vault, lists the wrap targets
   (every install of every named agent's owner with a key; an agent without one is
   `validation`), wraps one blob per target and files the grant. The value leaves the function
   only inside the blobs.
@@ -2720,7 +2725,9 @@ commands.
 its own `MemoryVault` and wrapping key): the proposal wraps per named agent install, files the
 pending grant and Bob's high-risk card with the `shared_secret_grant` change card, serves
 nothing while pending and refuses an unknown agent, an agent without a keyed install, a
-missing name and no agents; after Bob's yes Bobby's install resolves `secret:<name>` through
+missing name, no agents and the install wrapping key's reserved name (`secret_reserved`
+before any read: nothing wrapped, no audit row, the private key in no table); after Bob's yes
+Bobby's install resolves `secret:<name>` through
 `beforeToolCall` (the tool gets the value, the model-facing input keeps the reference,
 `afterToolCall` redacts the output, the hooks' audit rows carry the reference only, the local
 vault holds only the install key, `secret.blob_served` names the agent and the install); local
@@ -2730,8 +2737,9 @@ refusal cancels and drops the blobs, a revoke ends an active grant and the resol
 from then on, a pending grant's cards are withdrawn; every store table scanned for the value
 in every encoding. `shared-secret-wiring.test.ts`: `composeRuntime` creates the install key
 and registers it on the desktop row (reused on re-registration), the daemon's
-`/secrets/shared` routes propose, list and revoke (400 on a bad body, 404 on an unknown
-grant), the peer's approval through `applySharedGrantAnswer` lets the peer install resolve,
+`/secrets/shared` routes propose, list and revoke (400 on a bad body, 403 `secret_reserved`
+on the install wrapping key's name with no grant row, 404 on an unknown grant), the peer's
+approval through `applySharedGrantAnswer` lets the peer install resolve,
 the active names join the session grant per agent, and the other way round: a grant Bob
 proposes to Alice is answered through the daemon's own `POST /requests/:id/answer` (the grant
 moves in the same write) and resolving through this install's vault writes

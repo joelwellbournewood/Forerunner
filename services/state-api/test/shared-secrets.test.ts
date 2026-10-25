@@ -9,6 +9,7 @@ import {
 import type { DeviceRow } from "@forerunner/state";
 import {
   ensureInstallWrapKey,
+  INSTALL_WRAP_KEY_NAME,
   MemoryVault,
   valueEncodings,
   type WrapKeyPair,
@@ -222,6 +223,12 @@ describe("shared secrets through the state service", () => {
     const malformed = { ...base, blobs: [{ ...base.blobs[0], blob: { v: 1, iv: "x" } }] };
     expect((await h.admin.post("/secrets/shared", malformed)).status).toBe(400);
     expect((await h.admin.post("/secrets/shared", { ...base, name: "Bad Name" })).status).toBe(400);
+    const reserved = await h.admin.post("/secrets/shared", {
+      ...base,
+      name: INSTALL_WRAP_KEY_NAME,
+    });
+    expect(reserved.status).toBe(403);
+    expect(((await reserved.json()) as { code: string }).code).toBe("secret_reserved");
     expect((await h.admin.post("/secrets/shared", { ...base, agentIds: ["nobody"] })).status).toBe(
       404,
     );

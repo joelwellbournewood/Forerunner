@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { ForerunnerError, isInside, newId } from "@forerunner/platform";
+import { isReservedSecretName } from "@forerunner/vault";
 
 /**
  * Capability token: the authority a run has. Issued by the runtime, verified by the hooks
@@ -57,6 +58,16 @@ export class TokenIssuer {
   ): SignedToken {
     if (claims.allowedTools.includes("*")) {
       throw new ForerunnerError("validation", "a capability token cannot allow every tool");
+    }
+    // The install wrapping key and every other `forerunner.*` entry are the runtime's own,
+    // never a run's: refused here so no grant path can mint a token that names one.
+    const reserved = claims.grantedSecrets.find((n) => isReservedSecretName(n));
+    if (reserved !== undefined) {
+      throw new ForerunnerError(
+        "secret_reserved",
+        `a capability token cannot grant the reserved secret "${reserved}"`,
+        { details: { name: reserved } },
+      );
     }
     if (claims.depth > claims.maxDepth) {
       throw new ForerunnerError(

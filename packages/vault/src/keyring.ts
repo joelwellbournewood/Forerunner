@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { type Clock, errorMessage, ForerunnerError, log, systemClock } from "@forerunner/platform";
 import { Mutex } from "./mutex.ts";
-import { assertSecretName, assertSecretValue, type Vault } from "./types.ts";
+import { assertSecretValue, assertStorableSecretName, type Vault } from "./types.ts";
 
 /**
  * Vault over the OS keychain through @napi-rs/keyring (keyring-rs): Windows Credential
@@ -135,7 +135,7 @@ export class KeyringVault implements Vault {
   }
 
   async set(name: string, value: string): Promise<void> {
-    assertSecretName(name);
+    assertStorableSecretName(name);
     assertSecretValue(value);
     await this.mutex.run(async () => {
       await this.writeChunked(name, value);
@@ -148,12 +148,12 @@ export class KeyringVault implements Vault {
   }
 
   async get(name: string): Promise<string | null> {
-    assertSecretName(name);
+    assertStorableSecretName(name);
     return this.mutex.run(() => this.readChunked(name));
   }
 
   async delete(name: string): Promise<boolean> {
-    assertSecretName(name);
+    assertStorableSecretName(name);
     return this.mutex.run(async () => {
       const index = await this.readIndex();
       if (index.includes(name)) await this.writeIndex(index.filter((n) => n !== name));

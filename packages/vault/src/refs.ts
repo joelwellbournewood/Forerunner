@@ -1,5 +1,10 @@
 import { ForerunnerError } from "@forerunner/platform";
-import { assertSecretName, SECRET_NAME_PATTERN, type Vault } from "./types.ts";
+import {
+  assertSecretName,
+  isReservedSecretName,
+  SECRET_NAME_PATTERN,
+  type Vault,
+} from "./types.ts";
 
 /**
  * Secrets by reference. An agent writes `secret:github_pat` as a whole string value inside a
@@ -41,10 +46,12 @@ export interface ResolveOptions {
 }
 
 /**
- * Deep-walk a tool input and replace whole-string references with vault values. Names
- * outside `granted` throw `secret_not_granted` (before any vault read); names granted but
- * absent from the vault throw `not_found`. The input is never mutated; a new structure comes
- * back. Only arrays and plain objects are walked; class instances (Date, Buffer) pass through.
+ * Deep-walk a tool input and replace whole-string references with vault values. A reserved
+ * name (`forerunner.*`, the install wrapping key) throws `secret_reserved` whatever the grant
+ * says; names outside `granted` throw `secret_not_granted` (both before any vault read); names
+ * granted but absent from the vault throw `not_found`. The input is never mutated; a new
+ * structure comes back. Only arrays and plain objects are walked; class instances (Date,
+ * Buffer) pass through.
  */
 export async function resolveSecretRefs(
   input: unknown,
@@ -56,6 +63,13 @@ export async function resolveSecretRefs(
   const cache = new Map<string, string>();
 
   const lookup = async (name: string): Promise<string> => {
+    if (isReservedSecretName(name)) {
+      throw new ForerunnerError(
+        "secret_reserved",
+        `secret "${name}" is reserved and is never resolved for a tool call`,
+        { details: { name } },
+      );
+    }
     if (!granted.has(name)) {
       throw new ForerunnerError(
         "secret_not_granted",

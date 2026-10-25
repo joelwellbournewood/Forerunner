@@ -11,6 +11,7 @@ import {
   SECRET_PREFIX,
   SecretResolver,
 } from "../src/refs.ts";
+import { INSTALL_WRAP_KEY_NAME } from "../src/wrap.ts";
 import { caught, freshValue } from "./helpers.ts";
 
 describe("secret reference syntax", () => {
@@ -91,6 +92,30 @@ describe("resolveSecretRefs", () => {
     expect((err as Error).message).not.toContain(value);
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+
+  it("refuses a reference to a reserved name before touching the vault, even when granted", async () => {
+    const reserved = `secret:${INSTALL_WRAP_KEY_NAME}`;
+    expect(isSecretRef(reserved)).toBe(true); // syntax only: it is a whole-string reference
+    const spy = vi.spyOn(vault, "get");
+    const err = await caught(() =>
+      resolveSecretRefs({ env: { KEY: reserved } }, vault, new Set([INSTALL_WRAP_KEY_NAME])),
+    );
+    expect(isForerunnerError(err, "secret_reserved")).toBe(true);
+    expect((err as { details: { name: string } }).details.name).toBe(INSTALL_WRAP_KEY_NAME);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+    for (const fn of [
+      () => parseSecretRef(reserved),
+      () => formatSecretRef(INSTALL_WRAP_KEY_NAME),
+    ]) {
+      try {
+        fn();
+        throw new Error("should have thrown");
+      } catch (e) {
+        expect(isForerunnerError(e, "secret_reserved")).toBe(true);
+      }
+    }
   });
 
   it("throws not_found for a granted name that is not stored", async () => {

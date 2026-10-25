@@ -1,5 +1,5 @@
 import { type Clock, errorMessage, ForerunnerError, isForerunnerError } from "@forerunner/platform";
-import { assertSecretName, unwrapSecret, type Vault } from "@forerunner/vault";
+import { assertStorableSecretName, unwrapSecret, type Vault } from "@forerunner/vault";
 import {
   type ProposeSharedGrantInput,
   proposeSharedGrant,
@@ -99,11 +99,13 @@ export class SharedSecretVault implements Vault {
 
   async has(name: string): Promise<boolean> {
     if (await this.opts.local.has(name)) return true;
-    return (await this.fetch(assertSecretName(name))) !== null;
+    return (await this.fetch(assertStorableSecretName(name))) !== null;
   }
 
   async get(name: string): Promise<string | null> {
-    assertSecretName(name);
+    // A Vault: the syntax rule only. The reserved rule is the resolver's (`resolveSecretRefs`
+    // refuses `forerunner.*` before this vault is asked) and every grant path's.
+    assertStorableSecretName(name);
     const local = await this.opts.local.get(name);
     if (local !== null) return local;
     const served = await this.fetch(name);

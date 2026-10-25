@@ -1,4 +1,5 @@
-import { join } from "@forerunner/platform";
+import { isForerunnerError, join } from "@forerunner/platform";
+import { INSTALL_WRAP_KEY_NAME } from "@forerunner/vault";
 import { describe, expect, it } from "vitest";
 import { TokenIssuer } from "../src/enforcement/token.ts";
 import { harness, issue } from "./helpers.ts";
@@ -17,6 +18,25 @@ describe("capability tokens", () => {
   it("never allows a wildcard tool list", () => {
     const h = harness();
     expect(() => issue(h, { allowedTools: ["*"] })).toThrow(/cannot allow every tool/);
+  });
+
+  it("never grants a reserved secret name (the install wrapping key), so no run token can carry it", () => {
+    const h = harness();
+    try {
+      issue(h, { grantedSecrets: ["github_token", INSTALL_WRAP_KEY_NAME] });
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(isForerunnerError(e, "secret_reserved")).toBe(true);
+      expect((e as { details: { name: string } }).details.name).toBe(INSTALL_WRAP_KEY_NAME);
+    }
+    expect(h.tokens.claimsForRun("run-1")).toBeUndefined();
+    // derive cannot smuggle it in either: the parent never had it, and the issuer re-checks
+    const parent = issue(h, { grantedSecrets: ["github_token"] });
+    const child = h.tokens.derive(parent, {
+      runId: "run-2",
+      grantedSecrets: ["github_token", INSTALL_WRAP_KEY_NAME],
+    });
+    expect(child.claims.grantedSecrets).toEqual(["github_token"]);
   });
 
   it("expires and can be revoked", () => {

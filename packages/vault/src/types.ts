@@ -35,8 +35,21 @@ export function isValidSecretName(name: unknown): name is string {
   return typeof name === "string" && SECRET_NAME_PATTERN.test(name);
 }
 
-/** Returns the name when valid, otherwise throws a `validation` ForerunnerError. */
-export function assertSecretName(name: unknown): string {
+/**
+ * Reserved names: the runtime's own vault entries, such as the install wrapping key
+ * (`forerunner.install_wrap_key`, `wrap.ts`). Valid for storage, never a user secret: no grant
+ * path (extension permissions, shared-secret proposals, run tokens, `fr vault set`) and no
+ * `secret:` reference accepts one. `assertSecretName` refuses them with `secret_reserved`; the
+ * backends store under `assertStorableSecretName`, which checks the syntax only.
+ */
+export const RESERVED_SECRET_PREFIX = "forerunner.";
+
+export function isReservedSecretName(name: unknown): boolean {
+  return typeof name === "string" && name.startsWith(RESERVED_SECRET_PREFIX);
+}
+
+/** Syntax only (what a backend may store under); throws a `validation` ForerunnerError. */
+export function assertStorableSecretName(name: unknown): string {
   if (isValidSecretName(name)) return name;
   const shown = typeof name === "string" ? name.slice(0, 40) : typeof name;
   throw new ForerunnerError(
@@ -44,6 +57,22 @@ export function assertSecretName(name: unknown): string {
     `invalid secret name "${shown}": must match ${SECRET_NAME_PATTERN.source}`,
     { details: { name: shown } },
   );
+}
+
+/**
+ * A user secret's name: valid syntax and not reserved. Throws `validation` for the syntax and
+ * `secret_reserved` for a name under `RESERVED_SECRET_PREFIX`.
+ */
+export function assertSecretName(name: unknown): string {
+  const checked = assertStorableSecretName(name);
+  if (isReservedSecretName(checked)) {
+    throw new ForerunnerError(
+      "secret_reserved",
+      `secret name "${checked}" is reserved: names under "${RESERVED_SECRET_PREFIX}" are the runtime's own and are never granted or referenced`,
+      { details: { name: checked } },
+    );
+  }
+  return checked;
 }
 
 /** Validates a value without ever echoing it. */

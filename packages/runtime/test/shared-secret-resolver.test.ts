@@ -199,7 +199,16 @@ describe("proposing a shared secret", () => {
     expect(isForerunnerError(await attempt([carolAgent.id]), "validation")).toBe(true);
     expect(isForerunnerError(await attempt([bobby.id], "missing_name"), "not_found")).toBe(true);
     expect(isForerunnerError(await attempt([]), "validation")).toBe(true);
+    // The install wrapping key is in Ada's vault under its reserved name: a proposal naming
+    // it would wrap this install's private key to Bob's install. Refused before any read.
+    expect(await adaPc.vault.has(INSTALL_WRAP_KEY_NAME)).toBe(true);
+    const reserved = await attempt([bobby.id], INSTALL_WRAP_KEY_NAME);
+    expect(isForerunnerError(reserved, "secret_reserved")).toBe(true);
     expect(await store.secretGrant.list()).toEqual([]);
+    expect((await store.auditLog.list()).map((r) => r.tool)).not.toContain(
+      SHARED_SECRET_AUDIT.proposed,
+    );
+    expectNoValue(await storeText(), adaPc.key.privateKey);
   });
 });
 

@@ -9,7 +9,7 @@ import { promises as fs } from "node:fs";
 import { errorMessage, ForerunnerError, isWindows, log } from "@forerunner/platform";
 import { appDirs, basename, dirname, extname, join } from "@forerunner/platform/paths";
 import { Mutex } from "./mutex.ts";
-import { assertSecretName, assertSecretValue, type Vault } from "./types.ts";
+import { assertSecretValue, assertStorableSecretName, type Vault } from "./types.ts";
 
 /**
  * Encrypted file store. One JSON document holds the KDF parameters, a key-check value and
@@ -201,7 +201,7 @@ export class EncryptedFileVault implements Vault {
   }
 
   async set(name: string, value: string): Promise<void> {
-    assertSecretName(name);
+    assertStorableSecretName(name);
     assertSecretValue(value);
     await this.mutex.run(async () => {
       const key = this.assertUnlocked();
@@ -217,7 +217,7 @@ export class EncryptedFileVault implements Vault {
   }
 
   async get(name: string): Promise<string | null> {
-    assertSecretName(name);
+    assertStorableSecretName(name);
     return this.mutex.run(async () => {
       const key = this.assertUnlocked();
       const doc = await this.load();
@@ -233,7 +233,7 @@ export class EncryptedFileVault implements Vault {
   }
 
   async delete(name: string): Promise<boolean> {
-    assertSecretName(name);
+    assertStorableSecretName(name);
     return this.mutex.run(async () => {
       this.assertUnlocked();
       const doc = await this.load();
@@ -252,7 +252,7 @@ export class EncryptedFileVault implements Vault {
   }
 
   async has(name: string): Promise<boolean> {
-    assertSecretName(name);
+    assertStorableSecretName(name);
     return this.mutex.run(async () => {
       this.assertUnlocked();
       return name in (await this.load()).entries;

@@ -92,3 +92,24 @@ confirmation (ADR 0009). `node:crypto` is the only crypto dependency of the vaul
 - **Storing blobs on `secret_ref`**: the grant has its own lifecycle (approvals, status, who
   must answer) and many blobs; a row of its own keeps `secret_ref` the small "who may use what"
   table it is.
+
+## Amendment 2026-10-25: the install wrapping key's name is reserved
+
+The install wrapping key is a vault entry (`forerunner.install_wrap_key`) that `list()`
+returns, and no grant path refused it by name (triage 2026-10-25, security.md (7)). Worse than
+the triage's "defense in depth": `proposeSharedSecret` read the vault by the proposed name, so
+a proposal naming it would have wrapped this install's private key to the other install.
+
+Decision: names under `RESERVED_SECRET_PREFIX` (`forerunner.`, `@forerunner/vault` `types.ts`)
+are the runtime's own and never a user secret. `assertSecretName`, the check every grant path
+and every `secret:` reference goes through, refuses them with the new stable code
+`secret_reserved`; the backends store under `assertStorableSecretName` (the syntax rule only),
+which is what `ensureInstallWrapKey` relies on. Refused by name: `resolveSecretRefs` before the
+grant is consulted, `TokenIssuer.issue` (no run token grants one; `derive` cannot add what the
+parent lacks), the extension registry at add, approval and re-permissioning
+(`refuseReservedSecrets`), `proposeSharedGrant` / `proposeSharedSecret` / `serveSharedBlob`
+(403 on the daemon's and the service's routes), and `fr vault set`. A future runtime-owned
+entry takes a name under the prefix and inherits the rule. Tests: `packages/vault/test/names.test.ts`,
+`refs.test.ts`; `packages/runtime/test/token.test.ts`, `extensions-registry.test.ts`,
+`shared-secret-resolver.test.ts`, `shared-secret-wiring.test.ts`;
+`services/state-api/test/shared-secrets.test.ts`.
