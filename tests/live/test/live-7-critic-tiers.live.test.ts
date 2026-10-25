@@ -267,14 +267,14 @@ export function tierReviewLine(e: TierReviewEvidence): string {
 
 /**
  * The review's outcome when it is not `completed`, and the likely cause when a call stopped at
- * `max_tokens` (the critic sends at most 8192 per call, `maxTokensPerCall` in packages/critic):
+ * `max_tokens` (the critic's per-call cap, `reviewTokensPerCall` in packages/critic: 20000 at effort max, else 8192):
  * at `max` effort the thinking can use them all before the `submit_review` call.
  */
 export function outcomeNote(e: Pick<TierReviewEvidence, "outcome" | "stopReasons">): string {
   if (e.outcome === "completed") return "";
   const capped = e.stopReasons.includes("max_tokens");
   return capped
-    ? `, ${e.outcome}: a call stopped at max_tokens (8192 per call) before the verdict`
+    ? `, ${e.outcome}: a call stopped at its max_tokens cap before the verdict`
     : `, ${e.outcome}`;
 }
 
@@ -368,7 +368,7 @@ describe("D.15 critic tiers 2 and 3, dry run (scripted provider, no network)", (
   it("names a review that ended without a verdict at max_tokens, and only then", () => {
     expect(outcomeNote({ outcome: "completed", stopReasons: ["tool_use", "end_turn"] })).toBe("");
     expect(outcomeNote({ outcome: "no_verdict", stopReasons: ["max_tokens"] })).toBe(
-      ", no_verdict: a call stopped at max_tokens (8192 per call) before the verdict",
+      ", no_verdict: a call stopped at its max_tokens cap before the verdict",
     );
     expect(outcomeNote({ outcome: "no_verdict", stopReasons: ["end_turn"] })).toBe(", no_verdict");
   });

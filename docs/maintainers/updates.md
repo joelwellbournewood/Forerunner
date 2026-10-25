@@ -358,7 +358,7 @@ the local store can reach.
 - **Cut a release (signing).** Once per project: `fr update keygen --out release.key`, store the
   file's content in the vault (`secret:update_signing_key`) or as the CI secret
   `UPDATE_SIGNING_KEY`, and put the printed public key into every install's `update.json`
-  (`trustedKeys`) or the shell's compiled-in default. Per release, after `release.yml` built the
+  (`trustedKeys`) or `DEFAULT_TRUSTED_KEYS`. Per release, after `release.yml` built the
   artefacts and `SHA256SUMS.txt`:
   1. `fr update manifest --version <tag without v> --channel stable|beta --notes-file
      <changelog section> --min-schema <oldest schema the release's migrations can upgrade from>
@@ -366,6 +366,9 @@ the local store can reach.
      windows-x64:<msi or zip> --artifact linux-x64:<appimage or zip> --artifact android:<apk>
      --out manifest.json` (hashes and sizes come from the files; the URL of each artefact is
      the base URL plus the file name, which is what the Release asset upload produces);
+     the `--version` after the subcommand is the release's: `fr` enables positional options, so
+     its own `--version` (the program's) counts only before a subcommand (rc.2's publish job
+     wrote no manifest before that; `update-cli-program.test.ts`);
   2. `fr update sign --manifest manifest.json --key-secret secret:update_signing_key --out
      forerunner-release.json` on a machine whose vault holds the key, or `--key-file <the CI
      secret written to a temp file>` in the workflow (or `signManifestWithSecret` in a script);

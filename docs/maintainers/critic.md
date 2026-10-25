@@ -450,6 +450,15 @@ The phase 3 gate (catch at least 80% of seeded defects, pass at least 90% of cle
 real eval sets with a live model) is run with `calibrate` over `loadEvalSet("evals/registry/evals/coder")`
 and `.../researcher`; the result and the report path go to `docs/status/gates.md`.
 
+### Output tokens per review call
+
+`reviewTokensPerCall(effort)` (`critic.ts`): 20000 at effort `max` (tier 3 on Opus), 8192
+otherwise; `CriticDeps.maxTokensPerCall` overrides both. The live D.15 run of 2026-10-25 ended
+both tier 3 reviews at `max_tokens` with no verdict at 8192: max effort thinks longer before it
+calls `submit_review`. The loop prices each call at its full output cap, so 20000 on Opus 5.5
+(USD 20 per million output) is about USD 0.42 with the evidence, inside a review's USD 0.50.
+Tested in `critic.test.ts` ("a max-effort review gets room to finish").
+
 ## Known issues
 
 ### Measured

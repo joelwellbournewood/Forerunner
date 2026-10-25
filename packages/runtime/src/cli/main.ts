@@ -78,7 +78,14 @@ export function buildProgram(deps: CliDeps = {}): Command {
   const out = deps.out ?? ((line: string) => console.log(line));
   const appVersion = env.FORERUNNER_VERSION ?? APP_VERSION;
   const program = new Command();
-  program.name("fr").description("Forerunner command line").version(appVersion);
+  // Positional: the program's own options (its --version) count only before a subcommand, so
+  // `fr update manifest --version 1.0.0` is the release version (release.yml's manifest step;
+  // rc.2's run 40243511397 printed the program's version and wrote no manifest).
+  program
+    .name("fr")
+    .description("Forerunner command line")
+    .version(appVersion)
+    .enablePositionalOptions();
 
   // One composed runtime per invocation for the commands that need it, closed after the action.
   let runtime: RuntimeApp | null = null;

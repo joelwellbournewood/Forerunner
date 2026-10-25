@@ -1,6 +1,6 @@
 {
   "name": "@forerunner/desktop",
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0-rc.3",
   "private": true,
   "type": "module",
   "description": "Tauri 2 shell for Windows and Linux around @forerunner/ui.",

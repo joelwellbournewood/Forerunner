@@ -10,7 +10,7 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 
 ## [Unreleased]
 
-## [1.0.0-rc.2] - 2026-10-25
+## [1.0.0-rc.3] - 2026-10-26
 
 ### Added
 
@@ -138,6 +138,12 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   like every other write (B.5).
 - The milestone edit dialog's reason input is `data-testid="milestone-change-reason"`.
 ### Fixed
+
+- `fr update manifest --version <v>` wrote no manifest: the program's own `--version` took the
+  flag (rc.2's publish job, run 40243511397). Program options now count only before a
+  subcommand.
+- A critic review at effort `max` (tier 3) ran out of output tokens before its verdict; it now
+  gets 20000 tokens per call instead of 8192.
 
 - The release workflow's publish job downloads only the build artefacts (the Docker build
   record failed rc.1's run), `SHA256SUMS.txt` covers the signed manifest and never lists

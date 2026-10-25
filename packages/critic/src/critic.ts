@@ -108,6 +108,20 @@ import type {
  * Every limit (budget, steps, wall clock, tools) is enforced by the runtime hooks the driver
  * calls; the critic adds nothing a prompt could loosen.
  */
+
+/**
+ * Output tokens per critic call. At effort `max` (tier 3 on Opus) the model thinks longer than
+ * 8192 tokens before it calls `submit_review`: the live D.15 run of 2026-10-25 ended both tier 3
+ * reviews at `max_tokens` with no verdict. 20000 still prices under a review's USD 0.50 on Opus
+ * 5.5, since the loop prices a call at its full output cap.
+ */
+export const MAX_EFFORT_TOKENS_PER_CALL = 20_000;
+export const REVIEW_TOKENS_PER_CALL = 8192;
+
+export function reviewTokensPerCall(effort: string | undefined): number {
+  return effort === "max" ? MAX_EFFORT_TOKENS_PER_CALL : REVIEW_TOKENS_PER_CALL;
+}
+
 export interface CriticPromptSource {
   /** The markdown role prompt (registry critic/critic.md body). */
   prompt: string;
@@ -437,7 +451,7 @@ export class CriticService {
         ...(fast.kind === "applied" ? { speed: "fast" as const } : {}),
         timeoutMs: pick.timeoutMs,
         maxTurns: this.deps.maxTurns ?? 3,
-        maxTokensPerCall: this.deps.maxTokensPerCall ?? 8192,
+        maxTokensPerCall: this.deps.maxTokensPerCall ?? reviewTokensPerCall(pick.effort),
         effort: pick.effort,
         phase: "review",
         label: `critic tier ${tier} on ${label}`,
