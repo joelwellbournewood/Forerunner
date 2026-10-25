@@ -102,6 +102,9 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   in-page call before the mouse events, and a fallback ladder announced as `click fallback:` lines
   (shifted mouse click, touch tap, `element.click()`); the hosted emulator smoke passes end to end
   (ADR 0087 amendment).
+- `fr vault set <name>` stores a connector secret from stdin or a hidden prompt, never from an
+  argument, with one audit row; the shipped `mcp-github` entry references `secret:github_token`,
+  the name `fr setup` stores.
 ### Changed
 
 - An approved plan starts the session it was filed for, bound to the plan the human saw; the
@@ -143,6 +146,22 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   instead of a skipped placeholder.
 - `shell.run()` returns when a killed child exits even if a grandchild keeps the inherited pipes
   open (a clone against a host that never answers no longer blocks the import).
+- The startup checklist's "changed since last session" diff reads the last ended session; it read
+  the session being started, so the list was always empty.
+- Install identity: a recorded `config.json` humanId that names nobody in the configured store
+  falls through to the configured email and is re-recorded, never to another human's row; the
+  cloud runner's composed runtime is the runner's own agent; `fr doctor` never creates or
+  migrates the store; a refused start closes the private memory index (review of
+  w4-install-identity).
+- Source discovery: a repository URL on another host is refused instead of being read as a GitHub
+  source; one scan is bounded at 1,000 candidates; the 409 for another human's source names no
+  row; `fr sources` validates kind and status (review of w2-a4-sources).
+- Shared secrets: the `secret_ref` mirror keeps the owner's own local grant when a shared grant
+  ends; a proposal and a revocation each run in one transaction (review of w2-s13-shared-secrets).
+- The handover job checks the fresh agent's memory in the store the memory loop reads (review of
+  w4-private-memory).
+- Saving the mailbox form keeps the stored TLS, folder and drafts-folder values; the sent-log
+  `since=` query takes an ISO instant only (review of w2-email-page).
 ### Security
 
 - Always-human approvals: one answer admits one call, spent by the durable port as it is
@@ -161,3 +180,16 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 - The wave-1 review findings: a Cloudflare approval card shows a `secret:` reference, never
   its value, and an approved plan starts once, under the cap the human saw, on every answer
   path and on the cloud runner (S.4, S.6, J.6, J.7, B.6; ADR 0052 and ADR 0053 amendments).
+- Reserved `forerunner.*` secret names (the install's own wrapping key first) are refused on every
+  grant, share and reference path with `secret_reserved`; a shared-secret proposal naming the
+  wrapping key would have wrapped the install's private key to the peer.
+- A private lesson's text no longer reaches the shared store through the weekly consolidation's
+  approval request (ids only next to a shared state; ADR 0083 amendment).
+- Revoking a device drops the shared-secret copies wrapped to it; only the owner's install can
+  revoke a shared grant (the recipient's daemon got 403); revoked installs are refused on serve
+  and never targeted again.
+- The GitHub token is never sent to a `Link` page on another origin (the release upload origin is
+  the one opt-in).
+- An email mode change from the Settings page goes through `email.mode.set` (the high-risk card,
+  this PC's device answer, the change log and undo); the daemon's `PUT` refuses a mode change
+  (403, the command named); `email.mode.set` refuses another human's agent.
