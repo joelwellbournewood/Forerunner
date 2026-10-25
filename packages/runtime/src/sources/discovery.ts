@@ -29,6 +29,7 @@ import {
   parseRepoLocator,
   repoKey,
 } from "./locators.ts";
+import { INSTALL_MARKER_FILE } from "./marker.ts";
 import {
   type AcceptCandidateBody,
   type AcceptCandidateView,
@@ -117,8 +118,6 @@ export interface SourceDiscoveryDeps {
 }
 
 export const DEFAULT_SOURCE_CREDENTIAL_REF = "secret:github_token";
-/** The file a Forerunner-managed repository or folder carries at its root. */
-export const INSTALL_MARKER_FILE = ".forerunner/project.json";
 export const INSTALL_MARKER_RECORD = "install_record";
 /** Bound on the projects loaded for the duplicate check; a scan beyond it is refused. */
 const MAX_PROJECTS = 10_000;

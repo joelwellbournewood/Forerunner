@@ -7,5 +7,6 @@
 export * from "./cli.ts";
 export * from "./discovery.ts";
 export * from "./locators.ts";
+export * from "./marker.ts";
 export * from "./routes.ts";
 export * from "./types.ts";

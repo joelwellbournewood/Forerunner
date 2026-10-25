@@ -10,10 +10,12 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import {
   DOCS_SCAFFOLD_BRANCH,
+  gitAuthFor,
   parseRepoRef,
   statusBranchFor,
   WORKSPACE_DIR,
 } from "../src/loop/docs.ts";
+import { INSTALL_MARKER_FILE, parseInstallMarker } from "../src/sources/marker.ts";
 import { ScriptedProvider } from "./helpers.ts";
 
 /**
@@ -110,6 +112,22 @@ describe("standard doc set at project creation (G.5)", () => {
     expect(parseRepoRef("https://example.test/")).toBeNull();
   });
 
+  it("scopes the git token to the repository's http(s) origin and sends none to any other remote (ADR 0069)", () => {
+    expect(gitAuthFor("tok", "https://github.com/o/sample.git")).toEqual({
+      token: "tok",
+      origin: "https://github.com",
+    });
+    expect(gitAuthFor("tok", "http://127.0.0.1:8123/acme/epsilon.git")).toEqual({
+      token: "tok",
+      origin: "http://127.0.0.1:8123",
+    });
+    // A local bare repository or an ssh remote has no http origin to scope the token to.
+    expect(gitAuthFor("tok", "/srv/git/sample.git")).toBeUndefined();
+    expect(gitAuthFor("tok", "git@github.com:o/sample.git")).toBeUndefined();
+    expect(gitAuthFor("tok", "ssh://git@github.com/o/sample.git")).toBeUndefined();
+    expect(gitAuthFor(undefined, "https://github.com/o/sample.git")).toBeUndefined();
+  });
+
   it("with a linked repository the missing docs are a branch and a pull request; the original is untouched", async () => {
     const bare = await bareRepo("gamma");
     gammaBare = bare;
@@ -125,10 +143,15 @@ describe("standard doc set at project creation (G.5)", () => {
     expect(prs[0]).toMatchObject({ head: { ref: DOCS_SCAFFOLD_BRANCH }, base: { ref: "main" } });
     expect(prs[0]?.title).toContain("docs");
     expect(prs[0]?.body).toContain("docs/overview.md");
-    // The default branch has only the seed; the branch has the seven missing docs.
+    // The default branch has only the seed; the branch has the seven missing docs and the
+    // install marker the A.4 scan reads (ADR 0056), naming this project.
     expect(await tree(bare, "main")).toEqual(["README.md"]);
     const files = await tree(bare, DOCS_SCAFFOLD_BRANCH);
-    expect(files).toEqual([...STANDARD_DOCS.map(docFile)].sort());
+    expect(files).toEqual([...STANDARD_DOCS.map(docFile), INSTALL_MARKER_FILE].sort());
+    expect(
+      parseInstallMarker((await show(bare, DOCS_SCAFFOLD_BRANCH, INSTALL_MARKER_FILE)) ?? ""),
+    ).toEqual({ schema: 1, project: gammaId, name: "Gamma" });
+    expect(prs[0]?.body).toContain(INSTALL_MARKER_FILE);
     // The existing README was never overwritten; the new docs carry the project's data.
     expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "README.md")).toBe("# gamma\n");
     const overview = (await show(bare, DOCS_SCAFFOLD_BRANCH, "docs/overview.md")) ?? "";
@@ -141,6 +164,7 @@ describe("standard doc set at project creation (G.5)", () => {
       branch: DOCS_SCAFFOLD_BRANCH,
       pr_url: prs[0]?.htmlUrl,
       existing: ["README.md"],
+      marker: { path: INSTALL_MARKER_FILE, status: "created" },
       scaffolded_at: "2026-03-05T08:00:00.000Z",
     });
     expect((row.summary_cache.docs as { created: string[] }).created).toHaveLength(
@@ -181,14 +205,24 @@ describe("standard doc set at project creation (G.5)", () => {
       pr_url: existingPr.htmlUrl,
       existing: ["README.md", "docs/overview.md"],
     });
-    // A second creation against the same repository finds nothing to add.
+    expect(row.summary_cache.docs).toMatchObject({ marker: { status: "created" } });
+    // A second creation against the same repository finds nothing to add, and the marker of
+    // the first project is reported, never overwritten.
     const again = await req("/projects", {
       method: "POST",
       body: JSON.stringify({ name: "Delta 2", goal: "Same repo", repos: ["o/delta"] }),
     });
     expect(again.status).toBe(201);
     const row2 = await rt.store.project.mustGet(String((await json(again)).id));
-    expect(row2.summary_cache.docs).toMatchObject({ location: "repo", created: [] });
+    expect(row2.summary_cache.docs).toMatchObject({
+      location: "repo",
+      created: [],
+      marker: { path: INSTALL_MARKER_FILE, status: "other_project", project: row.id },
+    });
+    expect(
+      parseInstallMarker((await show(bare, DOCS_SCAFFOLD_BRANCH, INSTALL_MARKER_FILE)) ?? "")
+        ?.project,
+    ).toBe(row.id);
     expect(
       await host.listPullRequests({ owner: "o", name: "delta" }, { state: "open" }),
     ).toHaveLength(1);
@@ -208,10 +242,19 @@ describe("standard doc set at project creation (G.5)", () => {
     expect(readme).toContain("# Epsilon");
     expect(readme).toContain("No repo yet");
     const row = await rt.store.project.mustGet(id);
-    expect(row.summary_cache.docs).toMatchObject({ location: "data_dir", dir, existing: [] });
+    expect(row.summary_cache.docs).toMatchObject({
+      location: "data_dir",
+      dir,
+      existing: [],
+      marker: { path: INSTALL_MARKER_FILE, status: "created" },
+    });
     expect((row.summary_cache.docs as { created: string[] }).created).toHaveLength(
       STANDARD_DOCS.length,
     );
+    // The workspace carries the install marker too, so a folder scan knows whose it is.
+    expect(
+      parseInstallMarker(await readFile(join(dir, fromPosix(INSTALL_MARKER_FILE)), "utf8")),
+    ).toEqual({ schema: 1, project: id, name: "Epsilon" });
   });
 
   it("the composed chat searches the project's doc set and records a stated lesson in the principal's memory (J.1, O.2)", async () => {
