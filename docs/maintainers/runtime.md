@@ -1899,7 +1899,12 @@ desktop routes: `GET|PUT /agents/:agentId/email/settings`, `GET /agents/:agentId
 identity), `rt.store.auditLog` (one `email.settings` row per change) and
 `emailCommandAudit({ auditLog, clock })` (the command audit read from the shared state, no
 handler in the daemon), with `humanFor: () => rt.human.id` so another human's agent and an
-unknown id answer 403 `tool_not_allowed` before any read or write; the views are
+unknown id answer 403 `tool_not_allowed` before any read or write, and `modeChangeCommand:
+"email.mode.set"` so a `PUT` whose `settings.mode` differs from the stored mode answers 403
+`mode_change_needs_command` with nothing written: the sending mode is a high-risk change
+(spec Q) that every channel, the Settings -> Capabilities -> Email page included, makes
+through the registry's `email.mode.set` (`POST /commands/execute`: the card, the device
+confirmation, the change log row, undo; ADR 0066 amended 2026-10-25); the views are
 `EmailSettingsView`, `EmailSettingsPatchBody`, `EmailSentView`, `EmailCommandsView`,
 `EmailPausedView` and `EmailMarkerView` in `api-types.ts`, the daemon's browser-safe copy of
 the capability's schemas (key sets compared in `test/email-routes-wiring.test.ts`). The tray's
@@ -2895,14 +2900,18 @@ the kinds) and a missing folder refused before anything is stored.
 
 `email-routes-wiring.test.ts` (spec S.15, S.28, S.29, T.14; ADR 0066): the seven email routes
 on the composed daemon behind the bearer check and in `DAEMON_ROUTES`, the daemon's view and
-the capability's schema agreeing on the key sets, `PUT` picking the mode and the mailbox
-(credential value refused) with the policy sending to a stranger at once and one
-`email.settings` row by the daemon's human, the tray's `pause` holding the next send as
-`queued` and `resume` releasing it, the sent log and the command audit newest first with the
-limit, `rotate-marker`, another human's agent and an unknown id refused with 403 on every
-route and no settings row created; ADR 0081: `PUT` mode off over commands on turns them off
-with the `commands_switched_off` audit row and the `email_commands_off` notification, and `PUT`
-commands on at mode off is a 400 carrying `COMMANDS_NEED_SENDING_MODE`; `email.mode.set` to
+the capability's schema agreeing on the key sets, `PUT` refusing a mode change (403
+`mode_change_needs_command` naming `email.mode.set`, the mailbox beside it unwritten, one
+audited refusal row) while the stored mode in the body saves the mailbox (credential value
+refused) as one `email.settings` row by the daemon's human, the mode then set through
+`email.mode.set` with this PC's device answer (the sentence, a change log row with `source:
+"ui"` and undo) and the policy sending to a stranger at once, the tray's `pause` holding the
+next send as `queued` and `resume` releasing it, the sent log and the command audit newest
+first with the limit, `rotate-marker`, another human's agent and an unknown id refused with
+403 on every route and by `email.mode.set` ("not yours") with no settings row created; ADR
+0081: `email.mode.set` to off over commands on turns them off with the `commands_switched_off`
+audit row and the `email_commands_off` notification, and `PUT` commands on at mode off is a
+400 carrying `COMMANDS_NEED_SENDING_MODE`; `email.mode.set` to
 off through `/commands/execute` and the device confirmation turns commands off through the same
 store (card sentence, row `enabled: false` without `email-commands`, the audit row by the
 human, the notification) and its undo through `/changes/:id/undo` restores the mode and the

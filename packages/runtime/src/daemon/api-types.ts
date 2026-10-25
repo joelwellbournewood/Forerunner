@@ -1789,9 +1789,9 @@ export const DAEMON_ROUTES = {
   emailSettings:
     "GET /agents/:agentId/email/settings (EmailSettingsView; the daemon's human must own the agent, else 403 tool_not_allowed)",
   updateEmailSettings:
-    "PUT /agents/:agentId/email/settings { settings?, commands? } (EmailSettingsView after the merge; 400 validation, credentials as secret references only; one email.settings audit row)",
+    "PUT /agents/:agentId/email/settings { settings?, commands? } (EmailSettingsView after the merge; 400 validation, credentials as secret references only; one email.settings audit row; the sending mode is not changed here: a mode change is the registry's email.mode.set through POST /commands/execute (high risk: a change card, a confirmation on a paired device, undo; spec Q), and a PUT whose settings.mode differs from the stored one is 403 tool_not_allowed with details.reason mode_change_needs_command, nothing written)",
   emailSent:
-    "GET /agents/:agentId/email/sent?limit=&since= (EmailSentView: the owner's copies, newest first, 7 days by default)",
+    "GET /agents/:agentId/email/sent?limit=&since= (EmailSentView: the owner's copies, newest first; since is an ISO-8601 instant, anything else is the 7-day default, the instant used echoed back)",
   pauseEmail:
     "POST /agents/:agentId/email/pause (EmailPausedView { paused: true }; every send is held until resume; the tray's one click, S.28)",
   resumeEmail: "POST /agents/:agentId/email/resume (EmailPausedView { paused: false })",

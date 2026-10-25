@@ -99,3 +99,43 @@ import.
   read over the audit log.
 - **Listing every agent on the state, with the daemon's 403 per card.** Rejected: a card that
   can only say "not yours" is noise; the page lists what the daemon would let its human read.
+
+## Amendment (review of w2-email-page, 2026-10-25)
+
+Point 5 rested on "the registry's `settings.set` has no email key", which overlooked
+`email.mode.set`: in the registry since the phase 5 gate (2026-10-20, `risk: "high"`, so
+`needs_device` on every channel with one change log row and undo; the gate row "Every settings
+change can be made by voice, chat or the UI, and each produces the same change log entry" was
+closed on it), and since ADR 0081's amendment wired to the capability's settings store through
+`CommandPorts.emailMode`. The spec's "Confirmation by risk" table puts "change email mode" in
+the High row: a change card, then confirmation in the app on a paired device. The page's raw
+`PUT` applied four of the five modes on a click and full discretion on a browser dialog,
+wrote no change log row, offered no undo, and let any token holder set full discretion
+unconfirmed. Point 5 is replaced:
+
+5. **A mode change goes through the registry's `email.mode.set`, on the page as everywhere.**
+   Apply runs `POST /commands/execute { commands: [{ name: "email.mode.set", params: { mode,
+   agent } }], wordsUsed, source: "ui" }`; the page's dialog shows the daemon's card
+   (`CommandResult`), the full-discretion sentence repeated beside it when that mode is picked
+   (S.29 keeps its sentence before the change and in the confirmation), "Confirm on this
+   device" answering `{ answer: "device", deviceId: <me.desktopDeviceId> }`, No cancelling the
+   card on the daemon with nothing changed, the done sentence (the registry's words, which say
+   when email commands went off with a change to off, ADR 0081) with the change log's Undo. The
+   daemon mounts the route table with `modeChangeCommand: "email.mode.set"`, so a `PUT` whose
+   `settings.mode` is a valid mode other than the stored one is 403 `tool_not_allowed`
+   (`details.reason: "mode_change_needs_command"`, the command named) as an audited refusal
+   with nothing in the body written: no client skips the card through the raw route. The
+   caps, the allowlist, the signature, the digest, the mailbox (credentials by reference) and
+   the command settings keep their small forms over the same `PUT`, audited as `email.settings`
+   rows without a card or undo; pause and resume, and the marker rotation, keep their routes.
+   `email.mode.set` itself refuses an agent the human does not own (`tool_not_allowed`, "not
+   yours") before any card is formed, the same finding's second half.
+
+Consequences replaced: an email mode change is a change log row with Undo on every channel
+(`GET /changes` lists the page's as `source: "ui"`); the first alternative ("routing the mode
+change through the registry") is what is done, for the reason the spec gives; the follow-up
+about wrapping the `PUT` in an `email.mode` command is closed. Tests:
+`packages/capabilities/test/email-routes.test.ts` (the option),
+`packages/runtime/test/email-routes-wiring.test.ts` (the daemon's refusal and the command
+path), `packages/commands/test/commands.test.ts` (the owner check) and
+`apps/ui/test/email-settings.test.tsx` (the page).

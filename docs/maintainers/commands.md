@@ -75,7 +75,7 @@ read out. The conversation agent's own tools are replaced by these in the daemon
 | `note.add` | project | low | yes (dismiss) | `queue_item` |
 | `summary.speak` | project | low | no (stop the playback in the app) | nothing; `ports.speak` reads the one-screen summary aloud (spec A.6, L.6; ADR 0063). By chat or from the UI the sentence is "Reading the summary of X aloud. <text>"; in a voice session the sentence is the text itself (the loop speaks it, no second voice); without a port, a usable provider or an app window that plays speech (the daemon's port answers "no app window open to play speech", so nothing claims "aloud" into silence) "Voice is unavailable (reason). Summary of X: <text>". `after` says whether it was spoken and by which path. Another human's project (the named one or the active one) is refused as `not_found` "the project "X" is not yours" before anything is read, by `ownsProject` (`src/ownership.ts`: members, `shared_with`, author, or no owner facts at all), the one rule the daemon's speak route uses too. `spokenProjectSummary(project, spendUsdMicro, chfPerUsd)` is the one builder of the text, used by the daemon's `GET /projects/:id/summary` too |
 | `request.answer` | project | the request's own risk | no | `human_request.answer` |
-| `email.mode.set` | global | high | yes (undo also turns email commands back on when the change turned them off) | `extension` kind `capability`, name `email:<agentId>`, `config.settings.mode`; a change to `off` also turns email commands off (ADR 0081), see below |
+| `email.mode.set` | global | high | yes (undo also turns email commands back on when the change turned them off) | `extension` kind `capability`, name `email:<agentId>`, `config.settings.mode`; a change to `off` also turns email commands off (ADR 0081), see below. The agent must be the human's own (S.15): an `agent` id that names another human's agent is refused `tool_not_allowed` ("not yours") on plan, run and undo before any card is formed, and a name is looked up among the human's agents only (`not_found` otherwise); the Settings -> Capabilities -> Email page runs this command for its mode picker (ADR 0066, amended 2026-10-25) |
 | `device.revoke` | global | high | no | `device.revoked` |
 | `memory.record` | project | low | yes (retire the lesson; a merged one restores the lesson it superseded) | `ports.memory.recordLesson`: a lesson in the private memory of the human's own principal, for the named or active project (none: every project), source `human:<id>;<chat|voice|...>:<conversation session>` |
 | `specialist.propose` | global | medium | yes (withdraw the proposal while it waits for the human) | nothing itself: `ports.specialists.propose` (the runtime's approval gate, ADR 0071) writes `proposed/<name>/specialist.md` with `status: proposed` and `proposal.json`, and files the human's blocking `approval` request keyed `specialist:<name>`; spec C.5, see below |
@@ -413,7 +413,10 @@ settings-screen path, a risen risk refused when the yes arrives), `security-comm
 confirmed by the wrong kind of answer, a guessed email token or another actor, a web or runner
 device does not confirm a high-risk change without a second factor), `commands.test.ts` (the
 PharmaWatch sentence exactly, every command's risk, writes and undo, prototype keys as unknown
-settings; `memory.record` acting at once at low risk with the read-back sentence, the source
+settings; `email.mode.set` refusing another human's agent by id (`tool_not_allowed`, "not
+yours") and by name (`not_found`) on plan and on run with no settings row written and the
+`emailMode` port never asked, while the human's own agent by name is served (review of
+w2-email-page, 2026-10-25); `memory.record` acting at once at low risk with the read-back sentence, the source
 naming the human and the conversation session, another project or no project, undo through the
 port, refused without an agent or without the port, an agent actor's lesson refused unless
 grounded in the human's words; `summary.speak` through the port, in a voice session and without

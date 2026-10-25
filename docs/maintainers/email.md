@@ -219,7 +219,7 @@ runtime's own requests; `EmailPolicy.resolveApproval` for `send_email`, `new_rec
 | `locks.ts` | `KeyedLock`: in-process serialization per agent for the cap checks and command handling |
 | `commands.ts` | `EmailCommandGate`, `EmailCommandHandler` (`handle` once per message, `duplicate`, `error` row), `emailCommandAudit` / `emailCommandRows` (the command audit for the UI as a reader over the audit log alone, `EmailCommandAuditRow`; the handler's `commandAudit` delegates to it, the daemon serves it without a handler), `ModelCommandClassifier`, `parseYesNo`, `pickProject`, `effectivePerEmailCapUsdMicro`, `defaultTaskEstimate` |
 | `tools.ts` | `emailTools`/`registerEmailTools`: `email_send` (`external_send`, high; routes through `EmailPolicy`), `email_list` and `email_read` (`read`, low; `untrusted` output, references only, the owner's command marker replaced by `[command marker]` through `hideCommandMarker`), `email_draft` (`routine_reversible`, low) |
-| `routes.ts` | `createEmailRoutes(deps, app)` / `emailRouteTable(deps)`; with `humanFor` and `identity` set, every route under `/agents/:agentId` refuses (403, `tool_not_allowed`, `details.reason: "not_owner"`) a signed-in human who is not the agent's owner; a mount with `humanFor` and no `identity` fails closed (403, `reason: "identity_port_missing"`, one error log line at construction); every refusal is an `email.settings` audit row with `allowed = false`, the reason as `denied_reason` (`EmailOwnerRefusal`) and `result_summary` `{ status: "refused", reason }`, and stands (403, one `warn` line) when that row cannot be written (ADR 0084); the daemon mounts the table with both (`packages/runtime/src/daemon/server.ts`, ADR 0066); the seven routes are in `DAEMON_ROUTES` and their views in `api-types.ts` |
+| `routes.ts` | `createEmailRoutes(deps, app)` / `emailRouteTable(deps)`; with `humanFor` and `identity` set, every route under `/agents/:agentId` refuses (403, `tool_not_allowed`, `details.reason: "not_owner"`) a signed-in human who is not the agent's owner; a mount with `humanFor` and no `identity` fails closed (403, `reason: "identity_port_missing"`, one error log line at construction); every refusal is an `email.settings` audit row with `allowed = false`, the reason as `denied_reason` (`EmailOwnerRefusal`) and `result_summary` `{ status: "refused", reason }`, and stands (403, one `warn` line) when that row cannot be written (ADR 0084); the daemon mounts the table with both (`packages/runtime/src/daemon/server.ts`, ADR 0066); the seven routes are in `DAEMON_ROUTES` and their views in `api-types.ts`. `modeChangeCommand` (the daemon passes `"email.mode.set"`) makes the table refuse a `PUT` whose `settings.mode` is a valid mode other than the stored one (403 `tool_not_allowed`, `reason: "mode_change_needs_command"`, the command in `details.command` and in the message, `modeBefore` and `modeRequested` beside it, an audited refusal like the owner check's, nothing in the body written): the sending mode is the registry's high-risk change (spec Q "Confirmation by risk": a change card, then a confirmation on a paired device, one change log row with undo; ADR 0066 amended 2026-10-25), so neither the page nor any other token holder sets it through the raw route; the stored mode in the body is no change, and a host without a registry leaves the option unset (`EmailRouteRefusal` is the union of every audited reason) |
 | `ports.ts` | production adapters (`StoreIdentityLookup`, `HumanRequestApprovalPort`, `StoreEventSink`) and fakes (`StaticIdentity`, `FakeApprovalPort`, `FixedRate`, `MemoryEventSink`, `FakeCloudSessions`) |
 | `money.ts` | micro-unit helpers mirroring `@forerunner/billing` (`chfToUsdMicro`, `formatUsdMicroAsChf`, `localDayKey`) |
 
@@ -267,7 +267,8 @@ const handler = new EmailCommandHandler({ gate, settings, identity, policy, appr
   mailboxFor /* marks handled messages seen; without it only the audit-row check stops repeats */ });
 registerEmailTools(registry, { policy, settings, identity, sentLog, mailboxFor, clock });
 app.route("/", createEmailRoutes({ settings, sentLog, clock, audit: store.auditLog,
-  commandAudit: (a, o) => handler.commandAudit(a, o), humanFor, identity }, new Hono()));
+  commandAudit: (a, o) => handler.commandAudit(a, o), humanFor, identity,
+  modeChangeCommand: "email.mode.set" /* the mode is the registry's: PUT refuses it */ }, new Hono()));
 ```
 
 The routes' owner check (S.15: the mode is the human's to pick, per agent, for their own
@@ -336,12 +337,18 @@ presence switch. The email command watcher stays on the cloud runner.
 The daemon mounts `emailRouteTable()` (ADR 0066; `server.ts`, adapted to Hono's context like
 the desktop routes) over the same ports: `settings`, `sentLog` and `identity` from
 `rt.capabilities.email.ports`, `audit: rt.store.auditLog`, `humanFor: () => rt.human.id` (the
-daemon's single human is the signed-in human) and `commandAudit: emailCommandAudit({ auditLog,
-clock })`. So `GET|PUT /agents/:agentId/email/settings`, `GET .../sent`, `POST .../pause`,
-`POST .../resume`, `POST .../rotate-marker` and `GET .../commands` are served behind the
-bearer check, another human's agent and an unknown id answer 403 before any read or write,
-every change is one `email.settings` audit row, and the tray's click (`apps/desktop`,
-"Pause email") flips `settings.paused` so the policy holds the very next send. The views the
+daemon's single human is the signed-in human), `commandAudit: emailCommandAudit({ auditLog,
+clock })` and `modeChangeCommand: "email.mode.set"`. So `GET|PUT /agents/:agentId/email/settings`,
+`GET .../sent`, `POST .../pause`, `POST .../resume`, `POST .../rotate-marker` and
+`GET .../commands` are served behind the bearer check, another human's agent and an unknown id
+answer 403 before any read or write, every change is one `email.settings` audit row, and the
+tray's click (`apps/desktop`, "Pause email") flips `settings.paused` so the policy holds the
+very next send. The sending mode is not the `PUT`'s to change: the page, chat, voice and the
+phone run the registry's `email.mode.set` (`POST /commands/execute`, high risk: the change
+card, a confirmation on a paired device, one change log row with undo; `CommandPorts.emailMode`
+hands the write to `EmailSettingsStore.update`, so ADR 0081's switch-off, its audit row and the
+owner's notification are the store's on that path too), and a `PUT` that would change the mode
+answers 403 `mode_change_needs_command` with nothing written. The views the
 routes serve (`EmailSettingsView`, `EmailSentView`, `EmailCommandsView`, `EmailPausedView`,
 `EmailMarkerView`) are the daemon's browser-safe copy of the schemas here;
 `packages/runtime/test/email-routes-wiring.test.ts` parses the daemon's answer with both and
@@ -402,7 +409,13 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
 - `email-routes.test.ts`: the seven routes over a fake app mounted the production way
   (`humanFor` and `identity`, every call as the owner): settings GET/PUT with audit and
   validation, pause/resume enforced by the policy, marker rotation invalidates the old marker,
-  sent log newest first, command audit.
+  sent log newest first (`since` read as an ISO-8601 instant, `tomorrow` or `0` falling back
+  to the seven-day default with the instant used echoed, a valid instant honoured), command
+  audit; with `modeChangeCommand` a `PUT` that changes the
+  mode is refused (403, `mode_change_needs_command`, the command named, one audited refusal
+  row with `{ status: "refused", reason }`, nothing in the body written) while the stored mode
+  in the body and the other fields pass, and a mount without the option still serves the mode
+  (review of w2-email-page, 2026-10-25).
 - `security-email-routes-identity.test.ts` (critic reproduction of the owner check, fixed
   2026-10-23): a mount with `humanFor` and no `identity` refuses (403, `identity_port_missing`)
   the cross-human write and every other route under `/agents/:agentId`, the human's own agent
@@ -506,9 +519,13 @@ same file; the live e2e runs under `tests/e2e/`.
   passes both (`server.ts`, ADR 0066); any other host of the table must too. A refusal whose
   audit row could not be written is still refused, but its only record is then the `warn`
   line, not a row the agent's owner sees in their audit.
-- A mode change from the page is not a change-log row and has no undo: its record is the
-  `email.settings` audit row (ADR 0066). Wrapping the `PUT` in an `email.mode` registry
-  command is a later change to `packages/commands`.
+- The sending mode is the registry's `email.mode.set` on every channel (the page included
+  since the review of 2026-10-25, ADR 0066 amended): a change card, a confirmation on a paired
+  device, a change log row with undo; the `PUT` refuses a mode change. The caps, the
+  allowlist, the signature, the digest, the mailbox and the command settings still go through
+  the `PUT`: their record is the `email.settings` audit row, with no change card and no undo
+  (they are adjustments inside the limits the mode set; the spec's risk table names the mode,
+  not them). Wrapping them in registry commands is open.
 - The private command marker is replaced only on the model-facing paths (`email_read`,
   `email_list`, the classifier's subject). The sent log, the `email.command` audit rows and the
   `source.subject` a cloud session is started with keep it; the first two are the owner's

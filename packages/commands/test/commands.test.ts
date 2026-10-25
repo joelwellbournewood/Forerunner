@@ -801,6 +801,72 @@ describe("capability.grant, settings.set, note.add, task.*, request.answer, emai
     await w.store.close();
   });
 
+  it("email.mode.set refuses another human's agent, named by id or by name, on plan and on run; nothing is written (S.15)", async () => {
+    const w = await world();
+    const maras = await w.store.agent.insert({
+      name: "Mara's agent",
+      owner_human_id: w.other.id,
+      kind: "principal",
+      memory_location: "",
+    });
+    // By id the agent exists and is refused as not the human's; by name the lookup is scoped
+    // to the human, so another's agent is simply unknown and nothing about it is revealed.
+    for (const [agent, code, reason] of [
+      [maras.id, "tool_not_allowed", /not yours/],
+      ["Mara's agent", "not_found", /no agent/],
+    ] as const) {
+      await expect(
+        w.executor.plan(
+          { name: "email.mode.set", params: { mode: "full_discretion", agent } },
+          w.ctx(),
+        ),
+      ).rejects.toMatchObject({ code });
+      const r = refused(
+        await w.executor.execute({
+          name: "email.mode.set",
+          params: { mode: "full_discretion", agent },
+          ctx: w.ctx(),
+          confirmation: deviceOk(w.phone.id),
+        }),
+      );
+      expect(r.code).toBe(code);
+      expect(r.reason).toMatch(reason);
+    }
+    // No settings row of Mara's agent came into being, and the port was never asked.
+    expect(
+      await w.store.extension.byName(EMAIL_EXTENSION_KIND, emailExtensionName(maras.id)),
+    ).toBeUndefined();
+    const calls: unknown[] = [];
+    const ports = {
+      ...w.ports,
+      emailMode: async (req: unknown) => {
+        calls.push(req);
+        return { commandsSwitchedOff: false };
+      },
+    };
+    refused(
+      await w.executor.execute({
+        name: "email.mode.set",
+        params: { mode: "off", agent: maras.id },
+        ctx: w.ctx({ ports }),
+        confirmation: deviceOk(w.phone.id),
+      }),
+    );
+    expect(calls).toEqual([]);
+    // The human's own agent by name still works.
+    expect(
+      done(
+        await w.executor.execute({
+          name: "email.mode.set",
+          params: { mode: "read_only", agent: "Alice" },
+          ctx: w.ctx(),
+          confirmation: deviceOk(w.phone.id),
+        }),
+      ).sentence,
+    ).toBe("Changed the email mode of Alice from Off to Read only. Undo.");
+    await w.store.close();
+  });
+
   it("device.revoke by name revokes at once and cannot be undone", async () => {
     const w = await world();
     const r = done(

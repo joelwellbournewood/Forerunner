@@ -15,11 +15,15 @@ import { createDaemonApp } from "../src/daemon/server.ts";
  * signed-in human and the capability's identity port as the owner check. The tray's two
  * routes (`POST /agents/:id/email/pause|resume`) flip `settings.paused` and the policy holds
  * the next send while paused; a settings change through `PUT` reaches the policy at once and
- * is one `email.settings` audit row; the command audit and the sent log read newest first;
- * another human's agent is refused; email commands cannot be on at sending mode off (ADR 0081):
- * turning them on there is a 400 with the plain message, and switching the mode to off turns
- * them off with an audit row and an `email_commands_off` notification to the owner. Fake provider, a fake mailbox, `sqlite::memory:`, memory
- * vault, SimulatedClock; no network.
+ * is one `email.settings` audit row, but the mode is not the route's to change: it is the
+ * registry's `email.mode.set` (spec Q "Confirmation by risk": high, a card and a device
+ * confirmation, one change log row with undo; ADR 0066 amended 2026-10-25), and a `PUT`
+ * that would change it is a 403 naming the command; the command audit and the sent log read
+ * newest first; another human's agent is refused on the routes and by the command; email
+ * commands cannot be on at sending mode off (ADR 0081): turning them on there is a 400 with
+ * the plain message, and switching the mode to off turns them off with an audit row and an
+ * `email_commands_off` notification to the owner. Fake provider, a fake mailbox,
+ * `sqlite::memory:`, memory vault, SimulatedClock; no network.
  */
 const REGISTRY = join(process.cwd(), "evals", "registry");
 type Json = Record<string, unknown>;
@@ -87,11 +91,33 @@ describe("the email settings routes on the daemon", () => {
         agentId: rt.agent.id,
         tool: agentEmail.EMAIL_SETTINGS_TOOL,
       })
-    ).map((r) => ({
-      action: (JSON.parse(r.input_summary) as { action: string }).action,
-      human: r.human_id,
-      author: r.author_human,
-    }));
+    ).map((r) => {
+      const input = JSON.parse(r.input_summary) as { action: string; refused?: string };
+      return {
+        action: input.action,
+        allowed: r.allowed,
+        refused: input.refused ?? null,
+        human: r.human_id,
+        author: r.author_human,
+      };
+    });
+  /**
+   * The mode the way the page, chat and voice change it: `email.mode.set` through the
+   * registry, a `needs_device` card answered by this PC's own device row (what the page
+   * sends with `/me.desktopDeviceId`), one change log row.
+   */
+  const setMode = async (mode: string, agentId = rt.agent.id): Promise<Json> => {
+    const pending = await json(
+      await post("/commands/execute", {
+        commands: [{ name: "email.mode.set", params: { mode, agent: agentId } }],
+        wordsUsed: `Settings: email mode to ${mode}`,
+        source: "ui",
+      }),
+    );
+    if (pending.status !== "pending") return pending;
+    expect(pending.decision).toBe("needs_device");
+    return json(await post(`/commands/${String(pending.pendingId)}/confirm`, { answer: "device" }));
+  };
 
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), "fr-email-routes-"));
@@ -162,12 +188,32 @@ describe("the email settings routes on the daemon", () => {
     });
   });
 
-  it("PUT settings picks the mode and the mailbox; the policy sees it at once and the change is one email.settings audit row by the daemon's human", async () => {
+  it("PUT refuses a mode change and names email.mode.set; the mailbox saves through PUT as one audit row; the mode set through the command (card, this device, change log) reaches the policy at once", async () => {
     // Mode off: the policy refuses before anything reaches the mailbox.
     await expect(sendToStranger()).rejects.toMatchObject({ code: "tool_not_allowed" });
-    const updated = await put(settingsPath(), {
+    // The mode is a high-risk change (spec Q): the raw route applies no card, so it refuses
+    // and nothing in the body is written, the mailbox beside it included.
+    const viaPut = await put(settingsPath(), {
       settings: {
         mode: "full_discretion",
+        mailbox: { address: AGENT_ADDRESS, imap: null, smtp: null },
+      },
+    });
+    expect(viaPut.status).toBe(403);
+    const viaPutError = (await json(viaPut)).error as { message: string };
+    expect(viaPutError).toMatchObject({
+      code: "tool_not_allowed",
+      details: { reason: "mode_change_needs_command", command: "email.mode.set" },
+    });
+    expect(viaPutError.message).toContain("email.mode.set");
+    expect((await json(await req(settingsPath()))).settings).toMatchObject({
+      mode: "off",
+      mailbox: null,
+    });
+    // The stored mode in the body is no change: the mailbox saves.
+    const updated = await put(settingsPath(), {
+      settings: {
+        mode: "off",
         mailbox: {
           address: AGENT_ADDRESS,
           imap: { host: "imap.agent.test", user: "alice", passwordRef: "secret:alice_imap" },
@@ -178,7 +224,7 @@ describe("the email settings routes on the daemon", () => {
     expect(updated.status).toBe(200);
     expect(await json(updated)).toMatchObject({
       settings: {
-        mode: "full_discretion",
+        mode: "off",
         mailbox: { address: AGENT_ADDRESS, imap: { passwordRef: "secret:alice_imap" } },
       },
     });
@@ -195,9 +241,33 @@ describe("the email settings routes on the daemon", () => {
       },
     });
     expect(value.status).toBe(400);
+    // The refused mode change is an audited refusal the owner sees; the mailbox save a row.
     expect(await settingsAudit()).toEqual([
-      { action: "update", human: rt.human.id, author: rt.human.id },
+      {
+        action: "update",
+        allowed: false,
+        refused: "mode_change_needs_command",
+        human: rt.human.id,
+        author: rt.human.id,
+      },
+      { action: "update", allowed: true, refused: null, human: rt.human.id, author: rt.human.id },
     ]);
+    // The mode: the registry's command, the same one chat and voice run, with its card.
+    const r = await setMode("full_discretion");
+    expect(r).toMatchObject({
+      status: "done",
+      sentence: "Changed the email mode of Alice from Off to Full discretion. Undo.",
+    });
+    expect(typeof r.changeLogId).toBe("string");
+    expect((await json(await req(settingsPath()))).settings).toMatchObject({
+      mode: "full_discretion",
+    });
+    const changes = (await (await req("/changes")).json()) as Array<Record<string, unknown>>;
+    expect(changes.find((c) => c.id === r.changeLogId)).toMatchObject({
+      source: "ui",
+      sentence: "Changed the email mode of Alice from Off to Full discretion. Undo.",
+      undoable: true,
+    });
     await rt.capabilities.refresh();
     expect(rt.capabilities.email.presence.enabled()).toBe(true);
     expect((await sendToStranger()).status).toBe("sent");
@@ -217,7 +287,11 @@ describe("the email settings routes on the daemon", () => {
     expect(await json(resumed)).toEqual({ paused: false });
     expect((await sendToStranger()).status).toBe("sent");
     expect(mailbox.sent).toHaveLength(2);
-    expect((await settingsAudit()).map((r) => r.action)).toEqual(["update", "pause", "resume"]);
+    expect((await settingsAudit()).filter((r) => r.allowed).map((r) => r.action)).toEqual([
+      "update",
+      "pause",
+      "resume",
+    ]);
   });
 
   it("GET sent lists the agent's copies newest first; GET commands serves the audit rows newest first", async () => {
@@ -312,6 +386,11 @@ describe("the email settings routes on the daemon", () => {
       expect(res.status, `${method} ${path}`).toBe(403);
       expect(((await json(res)).error as { code: string }).code).toBe("tool_not_allowed");
     }
+    // The registry's path refuses Bob's agent too: no card is formed, this human's device
+    // confirms nothing for it (S.15; review of w2-email-page, finding 2).
+    const viaCommand = await setMode("full_discretion", otherAgentId);
+    expect(viaCommand).toMatchObject({ status: "refused", code: "tool_not_allowed" });
+    expect(String(viaCommand.reason)).toMatch(/not yours/);
     // Bob's agent has no settings row of its own written by this daemon's human.
     expect(
       await rt.store.extension.byName(
@@ -322,15 +401,21 @@ describe("the email settings routes on the daemon", () => {
   });
 
   it("ADR 0081: switching the mode to off turns email commands off, audits it and notifies the owner; turning them on at off is a 400", async () => {
+    expect(await setMode("read_only")).toMatchObject({ status: "done" });
     const on = await put(settingsPath(), {
-      settings: { mode: "read_only" },
       commands: { enabled: true, registeredHumanAddress: "j@example.test" },
     });
     expect(on.status).toBe(200);
     expect((await json(on)).commands).toMatchObject({ enabled: true });
-    const off = await put(settingsPath(), { settings: { mode: "off" } });
-    expect(off.status).toBe(200);
-    expect(await json(off)).toMatchObject({
+    // The page's mode change to off: the registry's card says commands go off with it, and
+    // the daemon's settings store turns them off in the same write.
+    const off = await setMode("off");
+    expect(off).toMatchObject({
+      status: "done",
+      sentence:
+        "Changed the email mode of Alice from Read only to Off; email commands are turned off with it, because at Off the agent could not answer them. Undo.",
+    });
+    expect(await json(await req(settingsPath()))).toMatchObject({
       settings: { mode: "off" },
       commands: { enabled: false, registeredHumanAddress: "j@example.test" },
     });
@@ -369,8 +454,8 @@ describe("the email settings routes on the daemon", () => {
     expect((await json(await req(settingsPath()))).commands).toMatchObject({ enabled: false });
   });
   it("ADR 0081: email.mode.set (chat, voice, the phone) to off goes through the settings store: commands off, the audit row, the owner told; undo turns them back on", async () => {
+    expect(await setMode("allowlist")).toMatchObject({ status: "done" });
     const on = await put(settingsPath(), {
-      settings: { mode: "allowlist" },
       commands: { enabled: true, registeredHumanAddress: "j@example.test" },
     });
     expect(on.status).toBe(200);

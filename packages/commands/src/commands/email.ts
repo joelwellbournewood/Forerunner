@@ -39,16 +39,32 @@ const params = z.object({
 });
 export type EmailModeSetParams = z.infer<typeof params>;
 
+/**
+ * The agent must be the human's own (S.15: a mode is its owner's to pick). An id names any
+ * agent on a shared state, so the owner is checked here, before the card is formed, on plan,
+ * run and undo alike; `byName` is already scoped to the human.
+ */
+function ownAgent(agent: AgentRow, ctx: CommandContext): AgentRow {
+  if (agent.owner_human_id !== ctx.humanId) {
+    throw new ForerunnerError(
+      "tool_not_allowed",
+      `the agent ${agent.name} is not yours: its email mode is its owner's to change`,
+      { details: { agentId: agent.id } },
+    );
+  }
+  return agent;
+}
+
 async function agentOf(p: EmailModeSetParams, ctx: CommandContext): Promise<AgentRow> {
   if (p.agent) {
     const direct = await ctx.store.agent.get(p.agent);
-    if (direct) return direct;
+    if (direct) return ownAgent(direct, ctx);
     const named = await ctx.store.agent.byName(ctx.humanId, p.agent);
-    if (named) return named;
+    if (named) return ownAgent(named, ctx);
     throw new ForerunnerError("not_found", `no agent ${p.agent}`);
   }
   if (!ctx.agentId) throw new ForerunnerError("validation", "no principal agent for this human");
-  return ctx.store.agent.mustGet(ctx.agentId);
+  return ownAgent(await ctx.store.agent.mustGet(ctx.agentId), ctx);
 }
 
 function modeOf(row: ExtensionRow | undefined): EmailMode {
@@ -200,7 +216,7 @@ export const emailModeSet: CommandDef<EmailModeSetParams> = {
   async undo(_p, before, after, ctx) {
     const b = asObject(before);
     if (typeof b.agent_id !== "string" || typeof b.mode !== "string") return;
-    const agent = await ctx.store.agent.mustGet(b.agent_id);
+    const agent = ownAgent(await ctx.store.agent.mustGet(b.agent_id), ctx);
     // A change to off that turned email commands off is undone with them (ADR 0081).
     const restore = asObject(after).commands_switched_off === true && b.mode !== "off";
     await applyMode(ctx, agent, b.mode as EmailMode, restore);

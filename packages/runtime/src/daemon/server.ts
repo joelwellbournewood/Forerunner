@@ -509,7 +509,10 @@ export function createDaemonApp(
   // the command audit) over the capability's own ports. The daemon's human is the signed-in
   // human and the identity port the owner check: another human's agent answers 403 before
   // any read or write. Every change is one `email.settings` audit row; the policy reads the
-  // settings row per call, so a changed mode or a pause holds the very next send.
+  // settings row per call, so a changed mode or a pause holds the very next send. The sending
+  // mode is not the route's to change: it is the registry's `email.mode.set` (spec Q, high
+  // risk: a change card, a confirmation on a paired device, one change log row with undo,
+  // `POST /commands/execute`), so a PUT that would change it is a 403 naming the command.
   for (const route of agentEmail.emailRouteTable({
     settings: rt.capabilities.email.ports.settings,
     sentLog: rt.capabilities.email.ports.sentLog,
@@ -518,6 +521,7 @@ export function createDaemonApp(
     audit: rt.store.auditLog,
     commandAudit: agentEmail.emailCommandAudit({ auditLog: rt.store.auditLog, clock: rt.clock }),
     humanFor: () => rt.human.id,
+    modeChangeCommand: "email.mode.set",
   })) {
     app.on(route.method, route.path, (c) =>
       route.handler({

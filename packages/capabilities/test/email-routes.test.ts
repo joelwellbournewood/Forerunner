@@ -275,6 +275,38 @@ describe("createEmailRoutes", () => {
     const rows = sent.body.rows as Array<{ subject: string; text: string }>;
     expect(rows.map((r) => r.subject)).toEqual(["three", "two"]);
     expect(rows[0]?.text).toContain("body");
+    // `since` is read as an ISO-8601 instant; anything else is the seven-day default, and the
+    // body echoes the instant that was used (a mistyped query never lists every copy ever
+    // written, nor nothing with the typo echoed back).
+    const sinceOf = async (since: string) => {
+      const res = await app.call("GET", "/agents/:agentId/email/sent", {
+        params: { agentId: world?.agentId ?? "" },
+        human: world?.human.id,
+        query: { since },
+      });
+      return {
+        status: res.status,
+        since: res.body.since as string,
+        subjects: (res.body.rows as Array<{ subject: string }>).map((r) => r.subject),
+      };
+    };
+    const weekAgo = new Date(world.clock.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    expect(await sinceOf("tomorrow")).toEqual({
+      status: 200,
+      since: weekAgo,
+      subjects: ["three", "two", "one"],
+    });
+    expect(await sinceOf("0")).toEqual({
+      status: 200,
+      since: weekAgo,
+      subjects: ["three", "two", "one"],
+    });
+    const afterOne = new Date(world.clock.now() - 2 * 1000).toISOString();
+    expect(await sinceOf(afterOne)).toEqual({
+      status: 200,
+      since: afterOne,
+      subjects: ["three", "two"],
+    });
 
     const spoof = await ownerSends(world, { subject: "cmd", text: "hello", marker: false });
     await world.handler.handle(world.agentId, await inboundOf(spoof));
@@ -285,5 +317,72 @@ describe("createEmailRoutes", () => {
     const audit = commands.body.rows as Array<{ obeyed: boolean; deniedReason: string | null }>;
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({ obeyed: false, deniedReason: "ignored: no_marker" });
+  });
+
+  it("with modeChangeCommand a PUT that changes the mode is refused (403, the command named, an audited refusal, nothing written); the same mode and the other fields pass", async () => {
+    world = await emailWorld({ mode: "draft_only" });
+    const app = createEmailRoutes(
+      {
+        settings: world.settings,
+        sentLog: world.sentLog,
+        clock: world.clock,
+        audit: world.store.auditLog,
+        humanFor: (c) => c.req.header?.("x-human"),
+        identity: world.identity,
+        modeChangeCommand: "email.mode.set",
+      },
+      new FakeApp(),
+    );
+    const call = (body: unknown) =>
+      app.call("PUT", "/agents/:agentId/email/settings", {
+        params: { agentId: world?.agentId ?? "" },
+        human: world?.human.id,
+        body,
+      });
+    // The mode is a high-risk change (spec Q, "Confirmation by risk"): the registry's card and
+    // device confirmation are the one path; the raw route refuses to apply it.
+    const refused = await call({ settings: { mode: "full_discretion", dailySendCap: 3 } });
+    expect(refused.status).toBe(403);
+    expect(refused.body.error).toMatchObject({
+      code: "tool_not_allowed",
+      details: {
+        reason: "mode_change_needs_command",
+        command: "email.mode.set",
+        modeBefore: "draft_only",
+        modeRequested: "full_discretion",
+      },
+    });
+    expect((refused.body.error as { message: string }).message).toContain("email.mode.set");
+    const after = await world.settings.get(world.agentId);
+    expect(after.settings.mode).toBe("draft_only");
+    expect(after.settings.dailySendCap).toBe(20);
+    const rows = await world.store.auditLog.list({
+      agentId: world.agentId,
+      tool: EMAIL_SETTINGS_TOOL,
+    });
+    expect(rows.map((r) => [r.allowed, r.denied_reason, JSON.parse(r.input_summary)])).toEqual([
+      [
+        false,
+        "mode_change_needs_command",
+        { action: "update", refused: "mode_change_needs_command" },
+      ],
+    ]);
+    expect(JSON.parse(rows[0]?.result_summary ?? "")).toEqual({
+      status: "refused",
+      reason: "mode_change_needs_command",
+    });
+    // The stored mode in the body is no change: the other fields save as before.
+    const same = await call({ settings: { mode: "draft_only", dailySendCap: 7 } });
+    expect(same.status).toBe(200);
+    expect((same.body.settings as { dailySendCap: number }).dailySendCap).toBe(7);
+    // Without the option (a host without a registry) the table keeps serving the mode.
+    const plain = appOf(world);
+    const picked = await plain.call("PUT", "/agents/:agentId/email/settings", {
+      params: { agentId: world.agentId },
+      human: world.human.id,
+      body: { settings: { mode: "allowlist" } },
+    });
+    expect(picked.status).toBe(200);
+    expect((picked.body.settings as { mode: string }).mode).toBe("allowlist");
   });
 });

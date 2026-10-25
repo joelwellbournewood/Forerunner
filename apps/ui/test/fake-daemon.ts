@@ -570,6 +570,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         `invalid email settings: settings.mode: ${patch.mode}`,
       );
     }
+    // As the daemon (ADR 0066 amended): the mode is the registry's `email.mode.set`; a PUT
+    // that would change it is refused with nothing written, so a page that regressed to the
+    // raw route fails here.
+    if (patch.mode !== undefined && patch.mode !== current.settings.mode) {
+      return emailError(
+        c,
+        403,
+        "tool_not_allowed",
+        "the email mode is a high-risk change: it is set with the email.mode.set command (a change card, then a confirmation on a paired device), not through this route; nothing was changed",
+      );
+    }
     for (const ref of [patch.mailbox?.imap?.passwordRef, patch.mailbox?.smtp?.passwordRef]) {
       if (ref !== undefined && !SECRET_REF.test(ref)) {
         return emailError(
@@ -2026,6 +2037,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     0: "balanced, every mode at its default effort from the next run, turn or planning session",
     1: "quality, every mode's default effort one step higher (slower, more thorough) from the next run, turn or planning session",
   };
+  /** The daemon's words for the modes (`EMAIL_MODE_LABELS` in @forerunner/commands). */
+  const EMAIL_MODE_LABELS: Record<string, string> = {
+    off: "Off",
+    read_only: "Read only",
+    draft_only: "Draft only",
+    allowlist: "Allowlist",
+    full_discretion: "Full discretion",
+  };
   const SETTING_RISK: Record<string, Risk> = {
     speed_quality_offset: "low",
     small_project_mode: "low",
@@ -2042,6 +2061,56 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   };
   const plan = (name: string, params: Record<string, unknown>): PlanOutcome => {
     const projectRef = typeof params.project === "string" ? params.project : undefined;
+    if (name === "email.mode.set") {
+      // As the daemon's command (spec S.15, Q high risk; ADR 0066 amended): the agent must be
+      // the human's own, the card names the labels, and under ADR 0081 a change to off turns
+      // email commands off in the same write; the undo restores both.
+      const mode = typeof params.mode === "string" ? params.mode : "";
+      if (!(EMAIL_MODES as readonly string[]).includes(mode)) {
+        return refuse(`mode must be one of ${EMAIL_MODES.join(", ")}`);
+      }
+      const ref = typeof params.agent === "string" ? params.agent : "agent_alice";
+      const agent = AGENTS.find((a) => a.id === ref || a.name === ref);
+      if (!agent) return refuse(`no agent ${ref}`, "not_found");
+      if (agent.ownerHumanId !== ME.id) {
+        return refuse(
+          `the agent ${agent.name} is not yours: its email mode is its owner's to change`,
+          "tool_not_allowed",
+        );
+      }
+      const cfg = emailOf(agent.id);
+      const from = cfg.settings.mode;
+      const switchedOff = mode === "off" && cfg.commands.enabled;
+      const also = switchedOff
+        ? "; email commands are turned off with it, because at Off the agent could not answer them"
+        : "";
+      const sentence = `Changed the email mode of ${agent.name} from ${EMAIL_MODE_LABELS[from]} to ${EMAIL_MODE_LABELS[mode] ?? mode}${also}. Undo.`;
+      return {
+        name,
+        params,
+        risk: "high",
+        card: card(
+          {
+            command: name,
+            what: `the email mode of ${agent.name}`,
+            oldValue: EMAIL_MODE_LABELS[from] ?? from,
+            newValue: EMAIL_MODE_LABELS[mode] ?? mode,
+            scope: "global",
+            sentence,
+          },
+          "high",
+        ),
+        apply: () => {
+          const before = { agent_id: agent.id, mode: from, commands_enabled: cfg.commands.enabled };
+          cfg.settings.mode = mode as EmailSettingsView["settings"]["mode"];
+          if (switchedOff) cfg.commands.enabled = false;
+          return {
+            before,
+            after: { agent_id: agent.id, mode, commands_switched_off: switchedOff },
+          };
+        },
+      };
+    }
     if (name === "autonomy.set") {
       const level = Number(params.level);
       const project = projectByRef(projectRef);
@@ -2734,6 +2803,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     ) {
       if (before.value === null) delete state.speedQuality[project.id];
       else state.speedQuality[project.id] = before.value;
+    }
+    if (
+      first?.name === "email.mode.set" &&
+      typeof before?.agent_id === "string" &&
+      typeof before?.mode === "string"
+    ) {
+      // ADR 0081: a change to off that turned email commands off is undone with them.
+      const cfg = emailOf(before.agent_id);
+      cfg.settings.mode = before.mode as EmailSettingsView["settings"]["mode"];
+      const after = (Array.isArray(entry.after) ? entry.after[0] : entry.after) as Record<
+        string,
+        unknown
+      > | null;
+      if (after?.commands_switched_off === true && before.mode !== "off") {
+        cfg.commands.enabled = true;
+      }
     }
     if (first?.name === "budget.set" && project && typeof before?.budgetChf === "number") {
       project.budget = money(Math.round((before.budgetChf * 1_000_000) / 0.8));
