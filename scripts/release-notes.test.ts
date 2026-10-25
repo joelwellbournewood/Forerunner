@@ -214,6 +214,23 @@ describe("release.yml: the GitHub release job sees the secrets it reports on", (
 
   const stepEnv = (step: string): Map<string, string> => envBlock(step, 8);
 
+  it("the GitHub release job downloads only the build artefacts, never another action's records (rc.1 run 40229971920 failed downloading the Docker build record)", () => {
+    const publish = jobBlock(text(), "publish");
+    const downloads = publish
+      .split("\n      - ")
+      .filter((step) => step.startsWith("uses: actions/download-artifact@"));
+    expect(downloads.length).toBeGreaterThan(0);
+    for (const d of downloads) {
+      // Every download names its artefacts; none downloads "everything" in the run.
+      expect(d).toMatch(/\n? {10}(name|pattern): /);
+    }
+    const named = downloads.map((d) => /(?:name|pattern): (\S+)/.exec(d)?.[1]);
+    expect(named).toEqual(expect.arrayContaining(["desktop-*", "android"]));
+    // And the image build does not upload its record as a run artefact in the first place.
+    const image = stepAround(text(), "docker/build-push-action");
+    expect(stepEnv(image).get("DOCKER_BUILD_RECORD_UPLOAD")).toBe("false");
+  });
+
   it("a step's `if:` reads env names only from its job's or the workflow's env, never from its own (GitHub evaluates `if` without the step env)", () => {
     const wf = text();
     const workflowEnv = envBlock(wf.slice(0, wf.indexOf("\njobs:")), 0);

@@ -113,6 +113,9 @@ jobs:
       - id: meta
         run: echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
+        env:
+          # No build record artefact in the run (the publish job downloads named artefacts).
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           file: services/cloud-runner/Dockerfile
@@ -144,9 +147,17 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Only our build artefacts: an unfiltered download also fetches other actions' run
+      # artefacts (docker/build-push-action's build record failed to download in rc.1's run
+      # 40229971920). One name per download keeps the artifacts/<name>/ layout.
       - uses: actions/download-artifact@v4
         with:
+          pattern: desktop-*
           path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          name: android
+          path: artifacts/android
       - name: Checksums and release notes
         run: |
           cd artifacts && find . -type f -exec sha256sum {} \; > SHA256SUMS.txt && cd ..
