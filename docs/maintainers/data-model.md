@@ -58,9 +58,12 @@ Spec B.5: every change to a plan, task or milestone is versioned with author and
 `task.reason`, `milestone.reason` and `session.reason` (the session plan) hold the reason for
 the last change next to the envelope's `author_agent` / `author_human` and `version`.
 `TaskRepo.transition`, `MilestoneRepo.change` and `SessionRepo.setPlan` take the reason and
-the actor as arguments; a milestone update or a session patch that carries `plan` without
-a non-blank reason and an author is refused with `ForerunnerError("validation")` on every
-write path (`update` and `patch` included), so a caller cannot skip them.
+the actor as arguments; a milestone insert or update, or a session insert or patch that
+carries a `plan` (anything but the empty placeholder `{}` or `[]`), without a non-blank
+reason and an author is refused with `ForerunnerError("validation")` on every write path
+(`insert`, `insertMany`, `update` and `patch` included), so a caller cannot skip them. A
+session inserted without a plan needs none: the runner writes the plan later, with its
+reason, through `setPlan`.
 
 ### Findings block close
 

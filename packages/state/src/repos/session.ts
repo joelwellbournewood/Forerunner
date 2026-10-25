@@ -14,14 +14,32 @@ import {
 const TERMINAL: readonly SessionStatus[] = ["stopped", "completed", "failed", "killed"];
 
 /**
+ * Whether a session's `plan` value is the empty placeholder a session starts with (`{}`, `[]`,
+ * or none): the runner inserts its row with `plan: {}` and writes the real plan later through
+ * `setPlan`, with the reason. Anything else is a plan.
+ */
+export function isEmptyPlan(plan: unknown): boolean {
+  if (plan === undefined || plan === null) return true;
+  if (Array.isArray(plan)) return plan.length === 0;
+  return typeof plan === "object" && Object.keys(plan).length === 0;
+}
+
+/**
  * Sessions. A change to the plan is versioned with its author and reason (spec B.5):
- * `setPlan` is the write path, and `updateWhere` refuses a patch that carries `plan` without
- * a reason and an author, so `update` and `patch` cannot bypass it. Spend, status, summary
- * and handoff writes are not plan changes and carry none.
+ * `setPlan` is the write path for an existing row, `insert` refuses a new row that already
+ * carries a plan (anything but `{}` or `[]`, see `isEmptyPlan`) without a reason and an
+ * author, and `updateWhere` refuses a patch that carries `plan` without them, so `update`,
+ * `patch` and `insertMany` cannot bypass it. Spend, status, summary and handoff writes are
+ * not plan changes and carry none.
  */
 export class SessionRepo extends Repository<SessionRow> {
   constructor(db: Database, clock: Clock) {
     super(db, ENTITIES.session as EntityDef, clock);
+  }
+
+  override async insert(input: Record<string, unknown>): Promise<SessionRow> {
+    if (!isEmptyPlan(input.plan)) requireChangeReason(this.table, input);
+    return super.insert(input);
   }
 
   /**
