@@ -1,7 +1,8 @@
 # Capabilities
 
-> Status: partial. Git host adapters are in; browser, email, desktop control and connectors
-> land with phase 6.
+> Status: built. Git host adapters, browser, email, desktop control and connectors are in and
+> pass the phase 6 gate on the fake provider and the in-process mail server; the live halves
+> (a real mailbox and host) are pending rows in `docs/status/gates.md` phase 6.
 
 ## Purpose
 

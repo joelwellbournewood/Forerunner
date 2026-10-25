@@ -69,6 +69,20 @@ subscription (plan) usage of the build is not metered here. None of this is the 
 ledger below: the live-model gate of 2026-10-24 added USD 2.44 over 242 calls to
 `tests/live/spend.json` (commit bd32dda), now USD 8.485961.
 
+## Build spend of 2026-10-25
+
+The build day ran as one orchestrating Claude Code session on the human's subscription with
+about nineteen sandbox agents in git worktrees (the seven handover items, the triage re-read,
+the small-fixes item, the ten independent reviews). The harness reported the agents' usage as
+about 8.9 million tokens in all (about 4.9 million for the first fourteen agents, about 4.0
+million for the five reviews resumed after the usage-limit stop at 12:50 UTC); the
+orchestrating session's own tokens are not reported to it. No USD figure exists for the day:
+subscription usage is not metered here and nothing was charged to an API key (no live-model
+run; the ledger below is unchanged at USD 8.485961 of the 200 USD live budget). GitHub
+Actions on the public repository's free minutes: 24 `ci.yml` runs on the integration branch
+(most cancelled by the next push; 131, 144 and 151 green on both OS, 129 and 139 red and fixed
+by the next commit), five `android.yml` runs (all passed) and one `fresh-install.yml` run.
+
 ## Live ledger
 
 On 2026-10-24 the live-model gate ran on the final head 422d9c0 (run

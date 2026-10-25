@@ -6,17 +6,147 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 
 | Phase | Name | Status | Gate evidence |
 | --- | --- | --- | --- |
-| 0 | Foundations | CI green on both OS (first at run 39352102564; on the integrated branch after the 41 merges of 2026-10-23 and 2026-10-24: run 125 on 422d9c0, https://github.com/joelwellbournewood/Forerunner/actions/runs/40044376081); fresh install timed on fresh runners (Linux 89 s, Windows 200 s) | gates.md § Phase 0 |
+| 0 | Foundations | CI green on both OS (first at run 39352102564; on the integrated branch after the 41 merges of 2026-10-23 and 2026-10-24: run 125 on 422d9c0; on the final code head a76e259 of 2026-10-25: run 151, https://github.com/joelwellbournewood/Forerunner/actions/runs/40198201562); fresh install timed on fresh runners (2026-10-20: Linux 89 s, Windows 200 s; 2026-10-25: Linux 258 s, Windows 494 s, run 40195327081) | gates.md § Phase 0 |
 | 1 | Single agent that does real work | gate passed on the fake provider and live on both billing sources (API key in full; the subscription session through the Agent SDK driver, ADR 0044); kill under 2 s live (49 ms); the API-key half probed again on the new key on 2026-10-23 (4 of 5 cases, kill 129 ms; the harness's classification of the aborted call is fixed by w4-metered-aborted, merged in cf22a14, the live-model gate on 422d9c0 on 2026-10-24 passed every live case, 56 passed and 5 skipped, USD 2.44 over 242 calls) | gates.md § Phase 1 |
-| 2 | Two agents, one project | gate passed on the fake provider (two agents, five sessions each, claims, peer feed, PR flow, human requests); state service with device auth, realtime, receipts, decision log, GitHub Projects mirror, approvals web fallback done | gates.md § Phase 2 |
-| 3 | Critic and quality loop | gate passed live (40 of 40 seeded defects caught, 40 of 40 clean submissions accepted after ADR 0042); reviews tab done | gates.md § Phase 3 |
+| 2 | Two agents, one project | gate passed on the fake provider (two agents, five sessions each, claims, peer feed, PR flow, human requests); state service with device auth, realtime, receipts, decision log, GitHub Projects mirror, approvals web fallback done; the gate's 48-hour offline clause recorded on 2026-10-25 from the state service's integration test (two installs joined by the service, one offline for 48 simulated hours, against Postgres locally and in CI) | gates.md § Phase 2 |
+| 3 | Critic and quality loop | gate passed live (40 of 40 seeded defects caught, 40 of 40 clean submissions accepted after ADR 0042); reviews tab done; the two gate rows folded into one on 2026-10-25 | gates.md § Phase 3 |
 | 4 | Memory, docs and learning | gate harness passed on the fake provider (four simulated weeks, retrieval under budget, consolidation applied only as approved, no cross-human lesson); memory UI done | gates.md § Phase 4 |
-| 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049); the Android emulator and real-audio halves pending: on the hosted emulator the raw-CDP smoke (ADR 0054) attaches, pairs by code and passes the signed approval, then misses the bottom-nav click on the API 30 image's old WebView (runs 40000764444 and 40013402240, ADR 0087, BLOCKERS.md "Android emulator smoke"); the Settings → Capabilities → Email page (ADR 0066), PM intake (ADR 0055) and what you say during a live session (ADR 0078) landed 2026-10-23; the global hotkey (O.1), Read aloud and spoken alerts (L.6), the chat's docs and lessons (J.1, O.2), the phone's uploads, reviews and push-to-talk (R.5, emulator run open), Settings → Devices (R.2) and the speed-versus-quality slider (D.16) merged 2026-10-23 and 2026-10-24 | gates.md § Phase 5 |
+| 5 | Human experience and voice | gate harness passed on the fake provider (simulated week through the daemon API and the phone routes, 29 voice turns, nine settings changes with one change log, 8 phone answers: 5 accepted, 3 of them with the biometric, 3 refused without it; the four runtime findings RT-P5-1 to RT-P5-4 closed, ADR 0049) on Linux and on Windows in CI (runs 144 and 151 of 2026-10-25); the Android emulator half passed on 2026-10-25: the raw-CDP smoke (ADR 0054; ADR 0087 amended by `w8-android-nav-settle`, which found the WebView's input path landing lower than the page's coordinates once the page is longer than the viewport and added the layout-settle wait, the in-page hit test and the shifted-click fallback) attaches, pairs by code, passes the signed approval, the high-risk refusal without the biometric, R.5's Reviews, Upload and Chat voice turn, scenario 9 and the change log's Undo through the real WebView in five consecutive `android.yml` runs on successive heads (40182115934, 40183122342, 40185240435, 40195655038, 40198266359), the last on the final code head a76e259; the real-audio half pending (no devices on the build box); the Settings → Capabilities → Email page (ADR 0066), PM intake (ADR 0055) and what you say during a live session (ADR 0078) landed 2026-10-23 and were independently reviewed and fixed on 2026-10-25; the global hotkey (O.1), Read aloud and spoken alerts (L.6), the chat's docs and lessons (J.1, O.2), the phone's uploads, reviews and push-to-talk (R.5, done), Settings → Devices (R.2) and the speed-versus-quality slider (D.16) merged 2026-10-23 and 2026-10-24 | gates.md § Phase 5 |
 | 6 | Capabilities | injection suite, live revocation, overnight cloud-runner session, emailed task and spoofed email passed on the fake provider and the in-process mail server; live halves pending a real mailbox and host | gates.md § Phase 6 |
-| 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts) | gates.md § Phase 7 |
-| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730 on 2026-10-23 and on 422d9c0 on 2026-10-24) and on Windows and Linux in CI (run 125 on 422d9c0, https://github.com/joelwellbournewood/Forerunner/actions/runs/40044376081, and run 121 on bc10bc8 green on both OS); the Android emulator smoke attaches, pairs and approves, then fails at the bottom-nav click (runs 40000764444, 40013402240); 41 items merged on 2026-10-23 and 2026-10-24, the last 27 independently reviewed before the merge (`docs/status/reviews/`), the ten first-wave items without a review still to review; requirements 203 done, 21 in progress, 4 todo of 228; the live-model gate passed on 422d9c0 on 2026-10-24 (56 live cases passed, 5 skipped, USD 2.44 over 242 calls); security suite green in CI, the triage's three P0s and its P1 fixed, the triage re-read for V.4 open; release criteria not met, no release cut | gates.md § Phase 8 and § Release 1.0 criteria |
+| 7 | Self-improvement and model economics | gate harness passed on the fake provider (a plain-language UI change ships as a signed update, a broken release rolls back on one install and the other never takes it, a model-watch run proposes a switch the human adopts); on Windows in CI runs 144 and 151 of 2026-10-25 | gates.md § Phase 7 |
+| 8 | Full integration and release 1.0 | nine scenarios pass on Linux (three runs each on 2026-10-20, once more on e42c730, 422d9c0 and the final code head a76e259 on 2026-10-25) and in CI on both OS (run 151 on a76e259, https://github.com/joelwellbournewood/Forerunner/actions/runs/40198201562; runs 131 and 144 earlier the same day); the Android emulator smoke passes the whole phone side in five consecutive runs (phase 5 row); 41 items merged on 2026-10-23 and 2026-10-24 and 19 more on 2026-10-25 (the seven handover items, the triage re-read's fixes, the ten independent reviews of the first-wave items with their fixes), every item with its file under `docs/status/reviews/`; requirements 210 done, 16 in progress, 2 todo of 228; the live-model gate passed on 422d9c0 on 2026-10-24 (56 live cases passed, 5 skipped, USD 2.44 over 242 calls; not re-run on a76e259: no live key in the build container); security suite green in CI on a76e259, 0 P0 and 0 P1 after the triage re-read (`docs/status/reports/triage-2026-10-25.md`), nine security findings fixed by the day's reviews; fresh install re-timed (Linux 258 s, Windows 494 s); release criteria 3, 4, 7 and 8 met on the final code head, 1, 2, 5, 6 and 9 not; no release cut | gates.md § Phase 8 and § Release 1.0 criteria |
 
 ## Log
+
+### 2026-10-25 (the 2026-10-24 handover worked through: seven items, the triage re-read, ten independent reviews with their fixes, the emulator smoke passing, no release cut)
+- Base: `ccr-4d8a843c-1k9syk` at 647eb16 (the 41 merged items) plus the maintainer's
+  `build-item.yml` from the default branch; integration branch `ccr-af5a431d-jc9xqj`, final code
+  head a76e259 (19 item merges and 12 direct commits). Items were built and reviewed in parallel
+  git worktrees by sandbox agents (one per item, each with its own Postgres database) and merged
+  by the orchestrating session, which resolved the conflicts (mostly the same Known issues
+  paragraphs in `docs/maintainers/runtime.md`, kept from both sides), ran the checks and wrote
+  the status files from the rows the agents returned; every item has a file under
+  `docs/status/reviews/`.
+- Handover items 1, 4, 5, 7 and 8 done; items 2, 3 and 6 stay with the human or the final build:
+  1. Android emulator: `w8-android-nav-settle` (ADR 0087 amendment) diagnosed run 40013402240's
+     miss as the WebView's input path landing lower than the page's coordinates once the page is
+     longer than the viewport, not the layout race; the driver now waits for the layout to settle,
+     measures, hit-tests and arms its guard in one in-page call right before the mouse events,
+     and after three guarded misses falls back to a mouse click shifted by the offset the page
+     reported, then a touch tap, then `element.click()`, each announced as a `click fallback:`
+     line (`apps/mobile/e2e/cdp.test.ts`, 36 tests). `android.yml` then passed the whole smoke
+     five times on five successive heads (runs 40182115934, 40183122342, 40185240435,
+     40195655038 and 40198266359 on a76e259): every click past the first screen went through the
+     shifted-mouse step with the same nine offsets each run (20 to 207 px per screen), none
+     through a tap or `element.click()`, so the smoke drives the real input path. gates.md phase 5
+     emulator row and scenario 9's Android column filled; R.5 and V.3 done.
+  4. Open review findings: O.4's five (`w8-o4-voice-findings`: a switched-off cloud voice row is
+     excluded from the fallback), the late hooks approval of J.7 and S.6 (`w8-late-approval`,
+     ADR 0088: matched by task and key across the agent's sessions, consumed once, the daemon
+     and the cloud runner share the mark), B.5's four and w4-stale-docs' three lows plus the
+     duplicate-paragraph sweep (`w8-low-findings-docs`), the C.5 proposal tool
+     (`w8-c5-propose-tool`, ADR 0071 point 8: `specialist.propose`, model tool
+     `specialist_propose`). Then the ten first-wave items merged without a review were each
+     reviewed adversarially and fixed on their branch, every fix with a test that failed first
+     (verdicts 58 to 76; 70 findings: 63 fixed, one low left open, the tray's stale pause state
+     after a pause made elsewhere, and six documented as limits or resolved as not a defect):
+     w2-a4-sources (70), w4-private-memory (72), w2-s13-shared-secrets (74), w4-install-identity
+     (62), w2-email-page (58), w4-android-signing (60), w2-a2-intake (70), w2-g6-promotion (76),
+     w3-o9-chat-to-inbox (62), w2-g5-docs (62); their open lines are BLOCKERS.md "Reviews of
+     2026-10-25" and their ADR amendments are dated 2026-10-25 (0015, 0052, 0055, 0056, 0058,
+     0059, 0065, 0066, 0071, 0078, 0082, 0083, 0087).
+  5. A.3 GitHub import finished from its WIP branch (`w3-a3-import`, ADR 0069: clone under the
+     install's data directory onto `forerunner/migration-<date>`, the default branch never
+     written, the token by reference and scoped to the origin); P.7 and P.11 docs
+     (`w3-docs-p7-p11`: `adding-a-connector.md` filled, `security.md` describes the injection
+     suite); the triage re-read's small fixes (`w8-small-fixes`: the startup checklist diffs
+     against the last ended session, reserved `forerunner.*` secret names refused on every grant
+     and reference path with the new code `secret_reserved`, `fr vault set`, the `mcp-github`
+     entry's secret name, six stale doc lines). A.4's install marker is written with the G.5 doc
+     set (`w2-g5-docs`), so A.4 and G.5 are done too.
+  7. Package `test` scripts run vitest from the workspace root on their own test directory,
+     pinned by `scripts/package-test-scripts.test.ts` (they found no files before).
+  8. Duplicate passages swept (one real duplicate merged in testing.md; the rest were not
+     duplicates).
+- Also: the phase 2 "offline 48 hours" gate row was stale (the state service's integration
+  test has covered it since the service landed and passes against Postgres); the phase 3 gate's
+  two rows folded into one; the phase 5 and 7 harness rows record their Windows runs;
+  `scripts/dev-postgres.sh` fixed on the root path (SQL through stdin); the fresh install timed
+  again on fresh runners (Linux 258 s, Windows 494 s, run 40195327081); V.4 re-read: 0 P0, 0 P1,
+  the P2 list in `docs/status/reports/triage-2026-10-25.md`; `.claude/worktrees/` ignored after
+  a `git add -A` had committed the agents' worktree gitlinks (removed again in 345f087).
+- Security findings fixed by the day's reviews (each with a failing test first, CHANGELOG
+  "Security"): a private lesson's text reached the shared Postgres through the weekly
+  consolidation's approval request; a shared-secret proposal naming `forerunner.install_wrap_key`
+  wrapped this install's private key to a peer; a revoked device kept its wrapped shared-secret
+  copies and a recipient's daemon could revoke the owner's grant; the GitHub token followed a
+  `Link` page to another origin; an email mode change from the Settings page skipped the
+  high-risk card and a cross-human agent could make it; a line or a "stop" from another human
+  reached this human's live session, and a "stop" with other words in the sentence was
+  forwarded as data; a `v*` tag without the keystore secret published a development-signed APK
+  (now the tag fails without `ANDROID_KEYSTORE_BASE64`); the docs clone's token was not scoped
+  to the repository's origin; cross-project lesson offers ignored the ownership rule on a shared
+  store.
+- CI on a76e259: run 151 green on both OS (https://github.com/joelwellbournewood/Forerunner/actions/runs/40198201562); runs 131 and 144 green earlier; run 129
+  (the paths lint on a new test) and run 139 (an unhandled socket error on Windows) red and
+  fixed by the next commit. Full local check on a76e259 in gates.md "Release 1.0 criteria".
+  `pnpm gates:verify`: 36 of 39 checks passed, 0 of 9 criteria "passed" (the criteria rows use
+  met/not met), requirements 210 done, 16 in progress, 2 todo. Load-induced flakes seen under
+  the parallel agents and not reproduced alone: `monthly-jobs-wiring.test.ts`,
+  `context.test.ts`, the UI's `mobile-inbox`, `mobile-pairing` and `mobile-upload` tests.
+- Build spend: about 8.9 million agent tokens over about nineteen sandbox agents on the
+  subscription; no USD figure; nothing charged to an API key (COST.md).
+
+### Where to pick up (handover)
+Written 2026-10-25 by the orchestrating session after the day's 19 merges; it replaces the
+handover of 2026-10-24. The code is at a76e259; the rules stand: a failing test first, the
+maintainer doc in the same change, an independent review before the merge, the requirement row
+and its BLOCKERS.md row updated at integration, nothing marked passed without command, date,
+result and link.
+1. **Human-only items.** Revoke and re-issue the API key pasted into the build session of
+   2026-10-23 and the key and subscription token of 2026-10-20 (BLOCKERS.md key rows; the
+   repository is public, `pnpm secrets:scan --logs` before every push). Then provide: a new
+   subscription token for `live-4-subscription`; a real mailbox and host for the phase 6 live
+   halves (S.12's unlock on a real runner host with it); real audio devices for the phase 5
+   real-audio row and D.8; a Firebase project for R.6's Android wiring; the Android release
+   keystore secrets `ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD` (since 2026-10-25
+   a `v*` tag refuses to build without them, ADR 0015 amendment, even for a desktop-only
+   release); the real-device checks the merged items left (S.32's banner and tray on Windows and
+   Linux, O.1's hotkey and microphone in a real desktop window, R.2's pairing against a real
+   daemon and state service).
+2. **Live, on the build box with the live key (never in CI).** The live-model gate on the final
+   build (`pnpm --filter @forerunner/live test:live`; last on 422d9c0, not re-run on a76e259
+   because the build container of 2026-10-25 had no key), `live-4-subscription` once the token
+   exists, one fast-mode call (D.20), the monthly handover on Forerunner's own repository
+   (`fr jobs handover <project> --force`, V.8), D.8, D.13 and D.15 timings, and the run's timing
+   figures copied into gates.md's response-time table (V.6). Record every run in COST.md and
+   gates.md with its ledger total; the phase 1 "first token" row and the phase 8 "re-run on the
+   final build" row move with it.
+3. **The release.** gates.md "Release 1.0 criteria": 3, 4, 7 and 8 are met on a76e259; 1 needs
+   the 18 open requirement rows (all of them item 1 or 2 above, plus the module R rows R.1 and
+   R.6 and P.13's ADR row); 2 needs the three pending gate rows (item 2 and the audio devices);
+   5 is met on the code head and waits for the tag's own run; 6 needs D.8, D.13 and D.15; 9
+   follows. Tag `v1.0.0` only when every criterion reads met; `release.yml` builds Windows,
+   Linux and Android artefacts, writes the changelog section from `CHANGELOG.md` (copy the P2
+   list of `docs/status/reports/triage-2026-10-25.md` "Release notes: known issues" into the
+   `[1.0.0]` section first) and signs the update manifest with `UPDATE_SIGNING_KEY`. The final
+   tag's CI run replaces run 151 in phase 0 and criteria 3 and 5. `build-item.yml`'s default
+   base branch still names `ccr-4d8a843c-1k9syk`; point it at the integration branch or the
+   default branch when this branch merges.
+4. **Residuals the reviews left** (BLOCKERS.md "Reviews of 2026-10-25", each a Known issues
+   line): the cloud runner's own private memory index in hybrid and cloud-only mode (split from
+   the PC's, unencrypted on the runner host) until the spec's encrypted cloud slot is built; the
+   tray's stale email pause state (an `email.paused` frame); `/chat` without an idempotency key;
+   several late approvals bundled into one cloud start name only the first; a cloud voice
+   provider with no `voice-*` row is still the fallback when its key is in the vault; a failed
+   automatic intake leaves no doc set until re-run; the UI's import form not wired to the GitHub
+   source; the PR executor's GitOps without `auth.origin`. Tests that flake only under heavy
+   parallel load (`monthly-jobs-wiring.test.ts`'s settle race first) deserve a small item.
+5. **The Android system image.** The API 30 `aosp_atd` image's Chromium 83 WebView drops
+   Tailwind v4's cascade layers, so the screens render unstyled on the emulator and every click
+   needs the shifted-mouse fallback; a `google_apis` API 34 image renders the app styled but its
+   boot did not finish in 10 minutes on the 2-core runner (raise the boot timeout or the runner
+   size). The smoke passes either way; this is a P2.
 
 ### 2026-10-23 and 2026-10-24 (27 reviewed items merged; the review process; three rebase rounds; status pass)
 - After the fifteen merges of the morning (next entry), 27 more items were built, reviewed and
@@ -214,87 +344,6 @@ Updated by the build agent at every milestone and at least daily. Newest first.
   workflow now frees the disk first. The emulator rows stay pending until a dispatch passes.
 - CI green on both OS at runs 84 and 85. Release criteria table filled in `gates.md`: not
   met, no release cut. Progress report 5 posted to the contact issue.
-
-### Where to pick up (handover)
-Written 2026-10-24 by the status pass (w7-status-pass) after the 41 merges of the build day;
-it replaces the handover of 2026-10-23. In this order, each item a wave of its own: a failing
-test first, the maintainer doc in the same change, an independent review before the merge, the
-requirement row and its BLOCKERS.md row updated at integration (or returned to the integrator,
-as the sandbox items did).
-1. **The Android emulator row.** The smoke attaches, pairs by code and passes the signed
-   approval on the hosted API 30 `aosp_atd` image, and the release APK's signing and apksigner
-   check pass, but the runner's click on the bottom nav's "Inbox" misses: the image's
-   Chromium 83 WebView drops the app's Tailwind v4 cascade layers, so the unstyled nav moves
-   when Home's project list arrives (ADR 0087, `docs/status/reviews/w6-android-inbox.md`; runs
-   40000764444 on 4ff4fb1 and 40013402240 on bc10bc8 fail there, the second with
-   `cdp.click_missed`). Next step, one of: a newer system image with a current WebView in
-   `.github/workflows/android.yml` (a `google_apis` API 34 image; its boot did not finish in
-   10 minutes on the 2-core runner before, so raise the boot timeout or the runner size with
-   it), or a layout-settle wait before the nav click in `apps/mobile/e2e/run.mjs` (wait until
-   the nav item's box stops moving after the project list arrived), with a `cdp.test.ts` case.
-   Then dispatch `android.yml`; the log must reach scenario 3's refusal, R.5's Reviews, Upload
-   and Chat voice steps and `PASS: Android emulator smoke complete`. Record the gates.md phase 5
-   emulator row and scenario 9's Android run; then R.1, R.5 and V.3 can move (BLOCKERS.md rows
-   "Android emulator smoke", R.1, R.5).
-2. **The live gate run.** Done on the final head: on 2026-10-24 the live-model gate ran on
-   422d9c0 (run `2026-10-24T00:19:35.074Z`: 8 test files passed and 1 skipped, 56 live cases
-   passed and 5 skipped, USD 2.44 over 242 calls, the killed call recorded `aborted`; ledger
-   `tests/live/spend.json` committed in bd32dda, USD 8.49 of 200; gates.md phase 8, COST.md).
-   Still due live: `tests/live/test/live-4-subscription.live.test.ts` once a new subscription
-   token exists, one fast-mode call (D.20; confirm the API takes `speed: "fast"` and the
-   `claude-opus-5-5-fast` price), the monthly handover on Forerunner's own repository
-   (`fr jobs handover <project> --force`, V.8), D.8, D.13 and D.15 timings and the run's timing
-   figures copied into gates.md's response-time table (V.6). Record every run in COST.md and
-   gates.md with its ledger total.
-3. **Key rotation.** The live run is done (item 2), so the human now revokes and re-issues: the API key pasted
-   into the build session on 2026-10-23 (the live one, in `.env.build`), the API key of
-   2026-10-20 and the subscription token of 2026-10-20 (BLOCKERS.md key rows). The repository
-   is public, so nothing of them may reach a commit or a log; `pnpm secrets:scan` and
-   `pnpm secrets:scan --logs` before every push.
-4. **The review findings still open** (BLOCKERS.md "Open review findings of 2026-10-23"): the
-   O.4 medium finding first (a switched-off cloud `voice-*` row is still used by the registry's
-   fallback, a privacy surprise), then the late hooks approval that is never consumed (J.7 /
-   S.6), the B.5, O.4 and w4-stale-docs low findings, the C.5 proposal tool. Then an
-   independent review of the ten first-wave items merged without one (w4-install-identity,
-   w4-private-memory, w4-android-signing, w2-a2-intake, w2-g5-docs, w2-g6-promotion,
-   w2-a4-sources, w2-email-page, w2-s13-shared-secrets, w3-o9-chat-to-inbox), applying what
-   they find.
-5. **The rows still open in code or docs** (each a BLOCKERS.md row): A.3 GitHub import with a
-   migration branch (`wave/w3-a3-import` holds an unverified `wip:` snapshot; start from its
-   diff), P.7 and P.11 (`w3-docs-p7-p11`, not built), the G.5 residual, S.12's unlock on a real
-   runner host and a key import on the phone, R.6's Android Firebase wiring once a Firebase
-   project exists, and the real-device checks the merged items left (S.32's banner and tray on
-   Windows and Linux, O.1's hotkey and microphone in a real desktop window, R.2's pairing
-   against a real daemon and state service).
-6. **The release criteria** (gates.md, "Release 1.0 criteria"): none is met. V.4 needs the
-   triage re-read against the merged items and the open findings, and the P2 list in the
-   release notes; criteria 2, 3 and 5 need every gate, the nine scenarios three times per OS
-   and the security suite on the final build; then tag `v1.0.0` only when every row reads met
-   (`release.yml` builds Windows, Linux and Android artefacts, writes the changelog section from
-   `CHANGELOG.md` and signs the update manifest with `UPDATE_SIGNING_KEY`). CI is green on
-   422d9c0 (run 125); the final build needs its own green run linked from phase 0 and
-   criteria 3 and 5.
-7. **Package-level `test` scripts find no files.** Each package's `test` script is
-   `vitest run --project unit --dir test`, and with the root config's include globs that
-   matches nothing: `pnpm --filter <pkg> test` (and `pnpm --filter <pkg> exec vitest run`)
-   prints "No test files found, exiting with code 0" and passes vacuously (checked on
-   `@forerunner/commands` on 2026-10-24). The real form is the root's
-   `pnpm exec vitest run --project unit packages/<pkg>/test` (add `--project integration` for
-   `*.integration.test.ts` files that need no Postgres); `apps/ui` and `apps/approvals-web` have
-   their own configs (`pnpm --filter @forerunner/ui test`, `pnpm --filter
-   @forerunner/approvals-web test`). Either fix the scripts (pass the package's test path to the
-   root project) or delete them; until then no report may cite them, and a run that prints "No
-   test files found" proves nothing.
-8. **Paragraphs a merge kept from both sides.** The rebases resolved every conflict by keeping
-   both sides, which left passages said twice or split around an insertion. This pass merged
-   the ones it found: the two `settings.set` rows in commands.md, the fake daemon paragraph cut
-   by the fast-mode block in apps.md, the two fast-mode bullets and two stale cross-item
-   sentences (the git host poller's commit statuses, the voice routes' callers) in runtime.md's
-   Known issues, the error codes of adding-a-provider.md's step 2, the duplicated item lists in
-   this file's log and handover, run-on sentences in BLOCKERS.md's V.2, V.3 and V.5 rows, and
-   the commands test count. At the next merge, grep the touched docs for repeated sentences and
-   rows (for example `git show --cc <merge> -- docs/` and a search for a row's first cell twice)
-   before the status pass, and re-count any test count a doc states.
 
 ### 2026-10-20 (subscription path live, gate harnesses 5 and 7, daemon capabilities wired)
 - Snapshots 692a8fe/6c9919e (per-task billing source and the Agent SDK session path, ADR 0044;
