@@ -1,4 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { SUBMIT_REVIEW_TOOL } from "@forerunner/critic";
+import { join } from "@forerunner/platform";
 import { FakeProvider } from "@forerunner/testenv";
 import { describe, expect, it } from "vitest";
 import { LoopAgentDriver } from "../src/agent/loop.ts";
@@ -13,6 +16,7 @@ import {
   fileBlockedByFindingsRequest,
   syncBlockedByFindings,
 } from "../src/session/findings.ts";
+import type { TaskExecutor } from "../src/session/runner.ts";
 import { closingReply, doneExecutor, flatPricing, loopWorld, submitReply } from "./loop-helpers.ts";
 
 /**
@@ -54,6 +58,55 @@ describe("critic in the loop", () => {
     const session = await w.store.session.mustGet(result.sessionId);
     expect((session.handoff as { reviews: unknown[] }).reviews).toHaveLength(1);
     await w.close();
+  });
+
+  it("at tier 2 the docs-drift check runs on the task's worktree (G.5); with the PM writing docs/status.md at session end, the status doc is not expected of the specialist", async () => {
+    const review = async (statusDocManaged?: boolean) => {
+      const w = await loopWorld({
+        replies: [submitReply({ grade: 91 }), closingReply()],
+        ...(statusDocManaged === undefined ? {} : { critic: { statusDocManaged } }),
+      });
+      // A worktree with the change and none of the standard docs.
+      const worktree = await mkdtemp(join(tmpdir(), "fr-drift-"));
+      await mkdir(join(worktree, "src"), { recursive: true });
+      await writeFile(join(worktree, "src", "x.ts"), "export const x = 1;\n", "utf8");
+      const task = await w.addTask("Add clamp", { risk_tier: 2 });
+      const inner = doneExecutor(w);
+      const executor: TaskExecutor = {
+        execute: async (ctx) => ({
+          ...(await inner.execute(ctx)),
+          worktree,
+          changedFiles: ["src/x.ts"],
+        }),
+      };
+      const result = await w.start(w.runner(executor));
+      const call = w.provider.calls.find((c) =>
+        c.request.tools?.some((t) => t.name === SUBMIT_REVIEW_TOOL),
+      );
+      const sent = JSON.stringify(call?.request.messages);
+      const review = await w.store.review.latestForTask(task.id);
+      const findings = review
+        ? (await w.store.finding.forReview(review.id)).map((f) => f.description)
+        : [];
+      await w.close();
+      await rm(worktree, { recursive: true, force: true });
+      return { result, task, sent, findings };
+    };
+    // Without the flag (a runner without a docs port): the status doc is the specialist's drift.
+    const plain = await review();
+    expect(plain.result.reviews[0]).toMatchObject({ taskId: plain.task.id, tier: 2 });
+    expect(plain.sent).toContain("docs-drift");
+    expect(plain.sent).toContain("docs/status.md: a task changed state");
+    expect(plain.sent).toContain("docs/architecture.md: missing from the standard doc set");
+    // A failed non-required check is a low finding on the review, never a block.
+    expect(plain.findings).toContain("Check failed: docs-drift");
+    // With it (the daemon, whose ProjectDocs writes the status doc on the same PR afterwards):
+    // the check still runs and still names the other missing docs, never docs/status.md.
+    const managed = await review(true);
+    expect(managed.result.reviews[0]).toMatchObject({ taskId: managed.task.id, tier: 2 });
+    expect(managed.sent).toContain("docs-drift");
+    expect(managed.sent).not.toContain("docs/status.md");
+    expect(managed.sent).toContain("docs/architecture.md: missing from the standard doc set");
   });
 
   it("tier 0 keeps the mechanical path: no critic call, the task closes on passed checks", async () => {

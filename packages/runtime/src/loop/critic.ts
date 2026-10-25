@@ -13,7 +13,7 @@ import {
   SIGNOFF_OPTIONS,
   signoffCard,
 } from "@forerunner/critic";
-import { checkDocDrift } from "@forerunner/memory";
+import { checkDocDrift, STATUS_DOC } from "@forerunner/memory";
 import {
   type Clock,
   errorMessage,
@@ -107,6 +107,13 @@ export interface CriticLoopDeps {
    * reviews on an API-style source. Absent: the critic package's default (API-style, built-ins).
    */
   fastMode?: CriticDeps["fastMode"];
+  /**
+   * The PM writes `docs/status.md` at session end through the runner's docs port (spec G.5,
+   * ADR 0058), so the tier 2+ drift check neither expects a specialist's change to touch it
+   * nor reports it missing. The daemon sets it; a runner without a docs port leaves it off
+   * and the check lists the status doc as before.
+   */
+  statusDocManaged?: boolean;
 }
 
 export interface DiffResult {
@@ -292,9 +299,12 @@ export class CriticLoop implements CriticPort {
     if (tier >= 2 && worktree && changedFiles.length) {
       // Doc drift of the project's standard doc set (spec G.5, memory package); a drift is a
       // non-required check, so it is a low finding the human sees and the PM fixes at session
-      // end, never a reason to block a correct change (ADR 0036).
+      // end, never a reason to block a correct change (ADR 0036). The status doc the PM
+      // itself writes after this review (`statusDocManaged`) is not the specialist's drift.
       try {
-        const drift = await checkDocDrift(worktree, { changedFiles, tasksChanged: true });
+        const drift = (await checkDocDrift(worktree, { changedFiles, tasksChanged: true })).filter(
+          (d) => !(this.deps.statusDocManaged && d.doc === STATUS_DOC),
+        );
         evidence.checkResults = [
           {
             name: "docs-drift",
