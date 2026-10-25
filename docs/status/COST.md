@@ -85,6 +85,22 @@ by the next commit), five `android.yml` runs (all passed) and one `fresh-install
 
 ## Live ledger
 
+On 2026-10-25 the live suite ran from the human's PC under the human's lower caps of the day
+(`FORERUNNER_LIVE_RUN_CAP_USD=10`, `FORERUNNER_LIVE_BUDGET_USD=80`; the key in the git-ignored
+`.env.build`, never read by the session): run `2026-10-25T15:47:34.784Z` in the desktop app's
+Linux shell was cut off after 9 Sonnet calls (USD 0.059167, phase 1 session; the shell stops
+every process when a command returns), then run `2026-10-25T15:54:57.065Z` on Windows
+(Node 24.14.1, 253 ledger rows) ran all nine files: 60 of 61 cases passed (live-4's two harness defects, fixed
+in 7b150f8 and a4a84f5), USD 2.531191 for the run: phase 1 half USD 0.1152 (three-task session
+0.1144, chat turn 0.0008), timing USD 0.0019, critic calibration USD 2.3531 (subset 0.4819,
+full set 1.8712), subscription half USD 0.0610 on the key (the critic's calls; the coder's
+three SDK runs are USD 0 `subscription` rows). Ledger after both: 1,097 rows, USD 11.076319
+(USD 68.92 left under the day's 80 USD cap); no refusal, no 80% warning. The two runs' rows
+are committed from the human's PC by `finish-live.cmd` together with the live-4 re-run. Outside
+the ledger: two one-off fast-mode calls (D.20, ADR 0057 amendment) on Opus 5.5 at 17 input / 4
+output tokens each, about USD 0.0003 at the published 8 / 40, and two calls the API refused
+before any tokens (no workspace header).
+
 On 2026-10-24 the live-model gate ran on the final head 422d9c0 (run
 `2026-10-24T00:19:35.074Z`): 242 calls, USD 2.438022 (Sonnet 231 calls USD 2.437256, Haiku 11
 calls USD 0.000766), under the 15 USD per-run cap; the ledger, committed in bd32dda, holds
