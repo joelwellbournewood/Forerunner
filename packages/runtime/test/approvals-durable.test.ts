@@ -47,12 +47,28 @@ interface World {
   store: StateStore;
   hooks: EnforcementHooks;
   human: string;
+  agent: string;
+  project: string;
   session: string;
-  /** A run context of this session; `ctx.approvals` starts empty, as the drivers make it. */
+  /**
+   * A run context of this session (or of `over.sessionId`, for the task `over.taskId`);
+   * `ctx.approvals` starts empty, as the drivers make it.
+   */
   ctx: (
     runId: string,
-    over?: { allowedTools?: string[]; autonomy?: 0 | 1 | 2 | 3 | 4 },
+    over?: {
+      allowedTools?: string[];
+      autonomy?: 0 | 1 | 2 | 3 | 4;
+      sessionId?: string;
+      taskId?: string;
+    },
   ) => RunContext;
+  /** A ready task of the project. */
+  task: (title: string) => Promise<string>;
+  /** Another session of the agent on the project, `planned` like the first. */
+  newSession: () => Promise<string>;
+  /** The session ended (`stopped`), as a session whose run paused on the call does. */
+  end: (sessionId: string) => Promise<void>;
   openRows: () => Promise<Rows>;
   allRows: () => Promise<Rows>;
   /** Answer the one open request as the human, then let a second pass. */
@@ -100,29 +116,51 @@ async function world(): Promise<World> {
       active: true,
     })
   ).id;
-  const session = (
-    await store.session.insert({
-      agent_id: agent,
-      project_id: project,
-      trigger: "manual",
-      plan: {},
-      budget_cap_usd_micro: 1,
-      step_cap: 10,
-      spent_usd_micro: 0,
-      steps: 0,
-      status: "planned",
-      summary: "",
-      handoff: {},
-      runner: "pc",
-    })
-  ).id;
+  const newSession = async () =>
+    (
+      await store.session.insert({
+        agent_id: agent,
+        project_id: project,
+        trigger: "manual",
+        plan: {},
+        budget_cap_usd_micro: 1,
+        step_cap: 10,
+        spent_usd_micro: 0,
+        steps: 0,
+        status: "planned",
+        summary: "",
+        handoff: {},
+        runner: "pc",
+      })
+    ).id;
+  const session = await newSession();
+  const task = async (title: string) =>
+    (
+      await store.task.insert({
+        project_id: project,
+        title,
+        outcome: `${title} done`,
+        acceptance_criteria: ["works"],
+        risk_tier: 0,
+        status: "ready",
+        budget_usd_micro: 1_000_000,
+        reason: "seed",
+        author_agent: agent,
+      })
+    ).id;
+  const end = async (sessionId: string) => {
+    const row = await store.session.mustGet(sessionId);
+    await store.session.setStatus(row.id, row.version, "stopped");
+    await h.clock.advance(1_000);
+  };
   const ctx: World["ctx"] = (runId, over = {}) => ({
     token: h.tokens.issue({
       runId,
-      sessionId: session,
+      sessionId: over.sessionId ?? session,
       agentId: agent,
       ownerHumanId: human,
       projectId: project,
+      ...(over.taskId ? { taskId: over.taskId } : {}),
       allowedTools: over.allowedTools ?? ["delete_repo"],
       allowedPaths: [],
       allowedDomains: [],
@@ -155,7 +193,22 @@ async function world(): Promise<World> {
     await store.humanRequest.answer(row.id, row.version, a, human);
     await h.clock.advance(1_000);
   };
-  return { h, store, hooks, human, session, ctx, openRows, allRows, answer };
+  return {
+    h,
+    store,
+    hooks,
+    human,
+    agent,
+    project,
+    session,
+    ctx,
+    task,
+    newSession,
+    end,
+    openRows,
+    allRows,
+    answer,
+  };
 }
 
 interface Card {
@@ -420,6 +473,233 @@ describe("durable always-human approvals (StateApprovals over the real store)", 
       await w.h.clock.advance(1_000);
       expect((await w.hooks.beforeToolCall(ctx, deleteRepoTool, input)).allowed).toBe(false);
       expect((await w.allRows()).map((r) => r.status)).toEqual(["withdrawn", "expired", "open"]);
+    } finally {
+      await w.store.close();
+    }
+  });
+});
+
+/**
+ * A hooks approval answered after its session ended (ADR 0088; the open finding of the
+ * w5-review-findings review): the port matches the row by the task and the key across the
+ * agent's sessions, so the next session of the task consumes the late "yes" exactly once for
+ * the one matching call. Another input, another task, another agent's row or another human's
+ * row never matches; an open question of an ended session keeps the re-made call pending
+ * without a second row; a late "no" denies the call for the task.
+ */
+describe("a hooks approval answered after its session ended (ADR 0088)", () => {
+  it("a late yes is found by task and key and consumed once by the next session's one matching call", async () => {
+    const w = await world();
+    try {
+      const task = await w.task("Clean up");
+      const input = { repo: "org/repo" };
+      // Session 1 pauses on the call and ends; the human answers from the inbox later.
+      expect(
+        (await w.hooks.beforeToolCall(w.ctx("r1", { taskId: task }), deleteRepoTool, input))
+          .allowed,
+      ).toBe(false);
+      await w.end(w.session);
+      await w.answer("yes");
+      // Session 2 of the same task re-makes the call: admitted once, the row spent.
+      const s2 = await w.newSession();
+      const run2 = w.ctx("r2", { sessionId: s2, taskId: task });
+      expect((await w.hooks.beforeToolCall(run2, deleteRepoTool, input)).allowed).toBe(true);
+      await w.hooks.afterToolCall(run2, deleteRepoTool, input, { content: "deleted" });
+      const [spent] = await w.allRows();
+      expect(spent).toMatchObject({ status: "answered", session_id: w.session, task_id: task });
+      expect(cardOf(spent)).toMatchObject({ consumedAt: w.h.clock.nowIso(), consumedByRun: "r2" });
+      // The same call again in session 2: a new question, filed under session 2 and the task.
+      expect((await w.hooks.beforeToolCall(run2, deleteRepoTool, input)).allowed).toBe(false);
+      const open = await w.openRows();
+      expect(open).toHaveLength(1);
+      expect(open[0]).toMatchObject({ session_id: s2, task_id: task });
+      expect(open[0]?.id).not.toBe(spent?.id);
+      const executed = w.h.audit.entries.filter((e) => e.tool === "delete_repo" && e.allowed);
+      expect(executed.map((e) => e.runId)).toEqual(["r2"]);
+    } finally {
+      await w.store.close();
+    }
+  });
+
+  it("a different input, another task, another agent's row or another human's row never matches", async () => {
+    const w = await world();
+    try {
+      const task = await w.task("Clean up");
+      const other = await w.task("Other");
+      const input = { repo: "org/repo" };
+      const key = approvalKeyFor("delete_repo", input);
+      const otherHuman = (
+        await w.store.human.insert({
+          name: "K",
+          email: "k@x.test",
+          timezone: "Europe/Zurich",
+          notify_prefs: {},
+          default_autonomy: 2,
+          monthly_cap_usd_micro: 1,
+          locale: "en",
+        })
+      ).id;
+      const otherAgent = (
+        await w.store.agent.insert({
+          name: "Bob",
+          owner_human_id: otherHuman,
+          model_config: {},
+          memory_location: "l",
+          status: "active",
+          kind: "principal",
+        })
+      ).id;
+      // Two answered "yes" rows for the task and the key that are not this agent's for this
+      // human: one filed by another agent, one addressed to another human.
+      for (const [agent, human] of [
+        [otherAgent, w.human],
+        [w.agent, otherHuman],
+      ] as const) {
+        const row = await w.store.humanRequest.insert({
+          human_id: human,
+          project_id: w.project,
+          task_id: task,
+          session_id: w.session,
+          kind: "approval",
+          why: "autonomy level 4 requires approval for destructive",
+          steps: ["Tool: delete_repo", "Action class: destructive"],
+          options: ["yes", "no"],
+          blocking: true,
+          risk: "high",
+          change_card: { key, tool: "delete_repo", actionClass: "destructive", input },
+          author_agent: agent,
+        });
+        await w.store.humanRequest.answer(row.id, row.version, "yes", human);
+      }
+      await w.end(w.session);
+      const s2 = await w.newSession();
+      // Neither admits this agent's call for this human: a new question is filed.
+      const run2 = w.ctx("r2", { sessionId: s2, taskId: task });
+      expect((await w.hooks.beforeToolCall(run2, deleteRepoTool, input)).allowed).toBe(false);
+      expect(await w.openRows()).toHaveLength(1);
+      const rows = await w.allRows();
+      expect(rows.filter((r) => r.status === "answered").map((r) => cardOf(r).consumedAt)).toEqual([
+        undefined,
+        undefined,
+      ]);
+      // The human answers the agent's own question; session 2 ends before it is used. Each
+      // probe below runs in a session of its own: within one session the key alone names the
+      // call (ADR 0052), which is not what is under test here.
+      await w.answer("yes");
+      await w.end(s2);
+      // Another input of the same tool: its own key, a new question.
+      const s3 = await w.newSession();
+      expect(
+        (
+          await w.hooks.beforeToolCall(
+            w.ctx("r3", { sessionId: s3, taskId: task }),
+            deleteRepoTool,
+            {
+              repo: "org/other",
+            },
+          )
+        ).allowed,
+      ).toBe(false);
+      // The same input for another task: a new question.
+      const s4 = await w.newSession();
+      expect(
+        (
+          await w.hooks.beforeToolCall(
+            w.ctx("r4", { sessionId: s4, taskId: other }),
+            deleteRepoTool,
+            input,
+          )
+        ).allowed,
+      ).toBe(false);
+      // A run that names no task sees only its own session's rows: it files a new question
+      // although the task's answer is on file.
+      const s5 = await w.newSession();
+      expect(
+        (await w.hooks.beforeToolCall(w.ctx("r5", { sessionId: s5 }), deleteRepoTool, input))
+          .allowed,
+      ).toBe(false);
+      expect(await w.openRows()).toHaveLength(3);
+      // The one matching call takes it.
+      const s6 = await w.newSession();
+      expect(
+        (
+          await w.hooks.beforeToolCall(
+            w.ctx("r6", { sessionId: s6, taskId: task }),
+            deleteRepoTool,
+            input,
+          )
+        ).allowed,
+      ).toBe(true);
+      const own = (await w.allRows()).find(
+        (r) => r.author_agent === w.agent && r.human_id === w.human && r.status === "answered",
+      );
+      expect(cardOf(own)).toMatchObject({ consumedByRun: "r6" });
+      expect(await w.openRows()).toHaveLength(3);
+    } finally {
+      await w.store.close();
+    }
+  });
+
+  it("an open question of an ended session keeps the re-made call pending without a second row", async () => {
+    const w = await world();
+    try {
+      const task = await w.task("Clean up");
+      const input = { repo: "org/repo" };
+      expect(
+        (await w.hooks.beforeToolCall(w.ctx("r1", { taskId: task }), deleteRepoTool, input))
+          .allowed,
+      ).toBe(false);
+      await w.end(w.session);
+      const s2 = await w.newSession();
+      const run2 = w.ctx("r2", { sessionId: s2, taskId: task });
+      expect((await w.hooks.beforeToolCall(run2, deleteRepoTool, input)).allowed).toBe(false);
+      expect(await w.allRows()).toHaveLength(1);
+      await w.answer("yes");
+      expect((await w.hooks.beforeToolCall(run2, deleteRepoTool, input)).allowed).toBe(true);
+      expect(await w.allRows()).toHaveLength(1);
+    } finally {
+      await w.store.close();
+    }
+  });
+
+  it("a late no denies the call for the task in the next session without a new request", async () => {
+    const w = await world();
+    try {
+      const task = await w.task("Clean up");
+      const input = { repo: "org/repo" };
+      expect(
+        (await w.hooks.beforeToolCall(w.ctx("r1", { taskId: task }), deleteRepoTool, input))
+          .allowed,
+      ).toBe(false);
+      await w.end(w.session);
+      await w.answer("no");
+      const s2 = await w.newSession();
+      await expect(
+        w.hooks.beforeToolCall(w.ctx("r2", { sessionId: s2, taskId: task }), deleteRepoTool, input),
+      ).rejects.toMatchObject({ code: "approval_required" });
+      expect(await w.allRows()).toHaveLength(1);
+    } finally {
+      await w.store.close();
+    }
+  });
+
+  it("a late yes to a class that is not always-human holds for the task's later sessions", async () => {
+    const w = await world();
+    try {
+      const task = await w.task("Merge");
+      const over = { allowedTools: ["merge_pr"], autonomy: 2 as const, taskId: task };
+      expect((await w.hooks.beforeToolCall(w.ctx("r1", over), mergeTool, { pr: 7 })).allowed).toBe(
+        false,
+      );
+      await w.end(w.session);
+      await w.answer("yes");
+      const s2 = await w.newSession();
+      const run2 = w.ctx("r2", { ...over, sessionId: s2 });
+      expect((await w.hooks.beforeToolCall(run2, mergeTool, { pr: 7 })).allowed).toBe(true);
+      expect((await w.hooks.beforeToolCall(run2, mergeTool, { pr: 7 })).allowed).toBe(true);
+      const rows = await w.allRows();
+      expect(rows).toHaveLength(1);
+      expect(cardOf(rows[0]).consumedAt).toBeUndefined();
     } finally {
       await w.store.close();
     }
