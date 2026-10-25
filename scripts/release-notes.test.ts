@@ -258,11 +258,14 @@ describe("release.yml: the GitHub release job sees the secrets it reports on", (
     }
     for (const marker of ["> RELEASE_NOTES.md", "> notes-section.md"]) {
       const own = stepEnv(stepAround(job, marker));
-      // a step may carry the real key for its own work (the manifest step signs with it), but
-      // never empties a flag the notes rely on
+      // Only the manifest step may override a flag, and only UPDATE_SIGNING_KEY with exactly
+      // its own secret (it signs with it); no step re-exposes the keystore or empties a flag.
+      const allowed =
+        marker === "> notes-section.md"
+          ? new Map([["UPDATE_SIGNING_KEY", `\${{ secrets.UPDATE_SIGNING_KEY }}`]])
+          : new Map<string, string>();
       for (const name of ["ANDROID_KEYSTORE_BASE64", "UPDATE_SIGNING_KEY"]) {
-        const value = own.get(name) ?? jEnv.get(name);
-        expect(value, `${marker}: ${name}`).toMatch(/secrets\./);
+        if (own.has(name)) expect(own.get(name), `${marker}: ${name}`).toBe(allowed.get(name));
       }
       // Windows signing is not wired (release.md): the notes must not call the MSI signed
       expect(own.has("WINDOWS_CERTIFICATE"), marker).toBe(false);
