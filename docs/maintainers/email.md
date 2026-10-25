@@ -409,7 +409,9 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
 - `email-routes.test.ts`: the seven routes over a fake app mounted the production way
   (`humanFor` and `identity`, every call as the owner): settings GET/PUT with audit and
   validation, pause/resume enforced by the policy, marker rotation invalidates the old marker,
-  sent log newest first, command audit; with `modeChangeCommand` a `PUT` that changes the
+  sent log newest first (`since` read as an ISO-8601 instant, `tomorrow` or `0` falling back
+  to the seven-day default with the instant used echoed, a valid instant honoured), command
+  audit; with `modeChangeCommand` a `PUT` that changes the
   mode is refused (403, `mode_change_needs_command`, the command named, one audited refusal
   row with `{ status: "refused", reason }`, nothing in the body written) while the stored mode
   in the body and the other fields pass, and a mount without the option still serves the mode

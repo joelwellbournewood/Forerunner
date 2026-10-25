@@ -275,6 +275,38 @@ describe("createEmailRoutes", () => {
     const rows = sent.body.rows as Array<{ subject: string; text: string }>;
     expect(rows.map((r) => r.subject)).toEqual(["three", "two"]);
     expect(rows[0]?.text).toContain("body");
+    // `since` is read as an ISO-8601 instant; anything else is the seven-day default, and the
+    // body echoes the instant that was used (a mistyped query never lists every copy ever
+    // written, nor nothing with the typo echoed back).
+    const sinceOf = async (since: string) => {
+      const res = await app.call("GET", "/agents/:agentId/email/sent", {
+        params: { agentId: world?.agentId ?? "" },
+        human: world?.human.id,
+        query: { since },
+      });
+      return {
+        status: res.status,
+        since: res.body.since as string,
+        subjects: (res.body.rows as Array<{ subject: string }>).map((r) => r.subject),
+      };
+    };
+    const weekAgo = new Date(world.clock.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    expect(await sinceOf("tomorrow")).toEqual({
+      status: 200,
+      since: weekAgo,
+      subjects: ["three", "two", "one"],
+    });
+    expect(await sinceOf("0")).toEqual({
+      status: 200,
+      since: weekAgo,
+      subjects: ["three", "two", "one"],
+    });
+    const afterOne = new Date(world.clock.now() - 2 * 1000).toISOString();
+    expect(await sinceOf(afterOne)).toEqual({
+      status: 200,
+      since: afterOne,
+      subjects: ["three", "two"],
+    });
 
     const spoof = await ownerSends(world, { subject: "cmd", text: "hello", marker: false });
     await world.handler.handle(world.agentId, await inboundOf(spoof));

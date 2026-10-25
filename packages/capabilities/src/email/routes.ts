@@ -116,6 +116,14 @@ function fail(c: EmailRouteContext, e: unknown): Response {
   );
 }
 
+/** An ISO-8601 date-time query value, normalised; anything else (or none) is undefined. */
+function isoInstantQuery(c: EmailRouteContext, name: string): string | undefined {
+  const raw = c.req.query(name);
+  if (raw === undefined || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw)) return undefined;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
+}
+
 function intQuery(c: EmailRouteContext, name: string, fallback: number, max: number): number {
   const raw = c.req.query(name);
   if (raw === undefined) return fallback;
@@ -312,8 +320,11 @@ export function emailRouteTable(deps: EmailRouteDeps): EmailRoute[] {
       handler: wrap(async (c) => {
         const agentId = await agentOf(c, "read_sent");
         const limit = intQuery(c, "limit", 50, 500);
+        // `since` is an ISO-8601 instant or nothing: the store compares it as text with
+        // `occurred_at`, so a mistyped value is not passed through (it would list every copy
+        // ever written, or nothing, with the typo echoed back) but replaced by the default.
         const since =
-          c.req.query("since") ??
+          isoInstantQuery(c, "since") ??
           new Date(deps.clock.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
         const rows = await deps.sentLog.recent(agentId, since);
         rows.reverse();
