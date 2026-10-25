@@ -13,7 +13,8 @@ export const REVIEW_TIERS: readonly ReviewTier[] = [0, 1, 2, 3] as const;
 /**
  * What is reviewed. A `lesson` subject is a memory lesson proposed for cross-project
  * promotion (spec G.6): the review row carries no task, the token's session, and a `human`
- * verdict files no sign-off request (nothing to sign off; the proposal stays pending).
+ * verdict files no sign-off request (nothing to sign off; the runtime retires the proposal
+ * and tells the human, ADR 0059).
  */
 export type ReviewSubject =
   | { kind: "task"; taskId: string }

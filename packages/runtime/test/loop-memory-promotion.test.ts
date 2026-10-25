@@ -295,6 +295,22 @@ describe("cross-project promotion in the loop", () => {
     expect(await w.memory.pendingPromotions()).toEqual([]);
     const ev = w.events.find((e) => e.type === "memory.promotion")?.payload;
     expect(ev).toMatchObject({ verdict: "revise", status: "rejected" });
+    // The human is told why (the proposal is gone from the memory page): one non-blocking
+    // warning from the session's agent with the verdict, the critic's summary, the lesson and
+    // the recourse.
+    const told = (await w.store.message.inbox({ humanId: w.human })).filter(
+      (m) => m.type === "warning" && m.body.includes("did not share a lesson"),
+    );
+    expect(told).toHaveLength(1);
+    expect(told[0]?.body).toContain("revise");
+    expect(told[0]?.body).toContain("Names the project's own CI job; not general.");
+    expect(told[0]?.body).toContain(WINDOWS);
+    expect(told[0]?.body).toContain("share it again");
+    expect(told[0]).toMatchObject({
+      from_agent_id: w.alice,
+      project_id: w.project,
+      requires_ack: false,
+    });
 
     // A second general lesson: the fake provider has no reply left, the review does not
     // complete, and the proposal stays pending for the next session instead of being lost.
@@ -312,6 +328,67 @@ describe("cross-project promotion in the loop", () => {
     expect((await w.store.lesson.mustGet(pendingId)).status).toBe("proposed");
     expect((await w.memory.pendingPromotions()).map((p) => p.id)).toEqual([pendingId]);
     expect(MAX_PROMOTION_REVIEWS_PER_SESSION).toBeGreaterThan(0);
+    // Nothing decided, nothing to tell: still the one message.
+    expect(
+      (await w.store.message.inbox({ humanId: w.human })).filter((m) =>
+        m.body.includes("did not share a lesson"),
+      ),
+    ).toHaveLength(1);
+    await w.close();
+  });
+
+  it("offers follow the repository's ownership rule: a project another human authored without members is not offered, one shared with this human is", async () => {
+    const w = await loopWorld();
+    const { supplements, k, carol, theirs } = await projects(w);
+    // K created a project and left its members empty: by `ownsProject` (ADR 0041) it is K's,
+    // since K authored it, and never J's. K also shares a project with J explicitly.
+    const authored = (
+      await w.store.project.insert({
+        name: "K's unowned tool",
+        goal: "Theirs",
+        settings: { tags: ["windows"] },
+        author_human: k,
+      })
+    ).id;
+    const sharedWithMe = (
+      await w.store.project.insert({
+        name: "K's shared tool",
+        goal: "Both",
+        settings: { members: [carol], shared_with: [w.human], tags: ["windows"] },
+        author_human: k,
+      })
+    ).id;
+    expect((await w.memory.humanProjects()).map((p) => p.id).sort()).toEqual(
+      [w.project, supplements, sharedWithMe].sort(),
+    );
+    const recorded = await w.memory.record({
+      agentId: w.criticAgent,
+      sessionId: "seed",
+      projectId: w.project,
+      scope: "critic",
+      lessons: [{ text: WINDOWS, tags: ["general", "windows"] }],
+    });
+    const review = await w.store.review.insert({
+      critic_model: "fake",
+      verdict: "accept",
+      tier: 1,
+    });
+    const resolved = await w.memory.resolvePromotion(recorded.proposed?.[0] ?? "", {
+      reviewId: review.id,
+      verdict: "accept",
+      grade: 90,
+      confidence: 0.9,
+      summary: "general",
+      completed: true,
+      costUsdMicro: 0,
+    });
+    expect(resolved.status).toBe("promoted");
+    expect(resolved.offers.map((o) => o.projectId).sort()).toEqual(
+      [sharedWithMe, supplements].sort(),
+    );
+    const offered = (await w.memory.offers()).map((o) => o.projectId);
+    expect(offered).not.toContain(authored);
+    expect(offered).not.toContain(theirs);
     await w.close();
   });
 

@@ -32,6 +32,8 @@ import {
   type MergeRequest,
   memoryBudgetOf,
   type ProjectDocsPort,
+  type PromotionCandidate,
+  type PromotionReviewOutcome,
   type SessionReviewOutcome,
   type SessionStatusOutcome,
   type TaskReviewOutcome,
@@ -338,6 +340,27 @@ export interface SessionRunnerDeps {
    * paused, and the peer feed (start and before every task) re-evaluates and is refused too.
    */
   schemaSync?: SchemaSyncPort;
+}
+
+/**
+ * What the human reads when the critic declined a proposal (spec G.6, ADR 0059): the review's
+ * verdict, grade and summary, the lesson (the shared proposal's text, as data), where it stays
+ * and how to try again. The proposal is gone from the memory page, so this is the one place
+ * the reason reaches the human.
+ */
+export function describeRejectedPromotion(
+  lesson: Pick<PromotionCandidate, "text" | "originScope" | "originProjectId">,
+  review: Pick<PromotionReviewOutcome, "verdict" | "grade" | "summary">,
+): string {
+  const where = lesson.originScope
+    ? `${lesson.originScope} memory${lesson.originProjectId ? ` of project ${lesson.originProjectId}` : ""}`
+    : "its memory";
+  const summary = review.summary.trim() || "(no summary)";
+  return [
+    `The critic did not share a lesson across projects (verdict ${review.verdict}, grade ${review.grade}): ${summary}`,
+    `Lesson: "${lesson.text.slice(0, 300)}"`,
+    `It stays in ${where}. Edit it on the Memory page and share it again when it holds beyond its project.`,
+  ].join("\n");
 }
 
 /** Lines a specialist's final report spells out as lessons. */
@@ -1352,6 +1375,8 @@ export class SessionRunner {
       projectSettings: project?.settings ?? null,
       signal: controller.signal,
       emit,
+      agent,
+      projectId: project?.id ?? null,
     });
     if (endInboxRecord && stoppedAtEnd)
       endInboxRecord.after_stop = endWritesAccount({
@@ -1732,13 +1757,20 @@ export class SessionRunner {
     });
   }
 
-  /** The promotion step of the session end (spec G.6); null when either port lacks it. */
+  /**
+   * The promotion step of the session end (spec G.6); null when either port lacks it. A
+   * proposal the critic declined is gone from the memory page's "waiting" list, so the human is
+   * told in one non-blocking warning (as for lessons the injection gate refused): the verdict,
+   * the critic's summary, the lesson and the recourse (edit it, share it again).
+   */
   private async reviewPromotions(args: {
     token: SignedToken;
     budget: SessionBudget;
     projectSettings: JsonObject | null;
     signal: AbortSignal;
     emit: (type: string, payload: Record<string, unknown>, cost?: number) => Promise<void>;
+    agent: AgentRow;
+    projectId: string | null;
   }): Promise<PromotionTally | null> {
     const memory = this.deps.memory;
     const critic = this.deps.critic;
@@ -1766,6 +1798,24 @@ export class SessionRunner {
         const resolved = await memory.resolvePromotion(candidate.id, review);
         tally[resolved.status]++;
         tally.offered += resolved.offers.length;
+        if (resolved.status === "rejected") {
+          try {
+            await this.deps.store.message.send({
+              from_agent_id: args.agent.id,
+              to_human_id: args.agent.owner_human_id,
+              project_id: args.projectId,
+              type: "warning",
+              body: describeRejectedPromotion(candidate, review),
+              requires_ack: false,
+              author_agent: args.agent.id,
+            });
+          } catch (e) {
+            this.logger.warn("declined promotion not reported to the human", {
+              lessonId: candidate.id,
+              error: errorMessage(e),
+            });
+          }
+        }
         await args.emit(
           "memory.promotion",
           {

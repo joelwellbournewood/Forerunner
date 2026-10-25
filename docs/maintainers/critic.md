@@ -242,8 +242,10 @@ the runtime's promotion review of a lesson proposed for the shared store, a tier
 of the lesson text (an input file and the claims) against the promotion criteria the runtime
 sends. The review and finding rows carry no task and the token's session, the run label reads
 `critic tier 1 on lesson <id>`, and a `human` verdict files no sign-off request: there is no
-task to sign off, the proposal stays pending and the memory view shows it. The verdict rules
-apply unchanged; the runtime promotes on `accept` and rejects on any other completed verdict.
+task to sign off. The verdict rules apply unchanged; the runtime promotes on `accept`, retires
+the proposal on any other completed verdict (`human` included; `rejected_by:<review>` in its
+source) and tells the human why in one warning message (runtime.md "Cross-project sharing";
+ADR 0059 amendment of 2026-10-25), and leaves it pending when the run did not complete.
 
 Every sign-off request (the one `CriticService.review` files for a `human` verdict on a task or
 session subject, the one `applyVerdict` files when the ladder ends, and the runtime loop's own

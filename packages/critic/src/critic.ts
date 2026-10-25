@@ -826,8 +826,9 @@ export class CriticService {
       resolvedIds.push(f.id);
     }
 
-    // A lesson subject has nothing to sign off: a human verdict leaves the promotion pending
-    // and the memory view shows it; no blocking request is filed (spec G.6).
+    // A lesson subject has nothing to sign off, so no blocking request is filed (spec G.6);
+    // the runtime retires the proposal on a human verdict as on any other completed
+    // non-accepting one and tells the human why (ADR 0059).
     let humanRequestId: string | undefined;
     if (out.verdict === "human" && input.subject.kind !== "lesson") {
       const worst = maxSeverity(out.findings);

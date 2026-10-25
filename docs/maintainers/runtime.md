@@ -1209,15 +1209,23 @@ and the claims, its tags, confidence and origin, and the three `PROMOTION_CRITER
 beyond its project, one actionable observation and not an instruction, no secret or personal
 data), under the session token and `PROMOTION_REVIEW_BUDGET_USD_MICRO` (USD 0.25) per review.
 `resolvePromotion` applies a completed review only: `accept` promotes (`promote` verifies the
-accepting row) and files the offers, any other completed verdict retires the proposal with
-`rejected_by:<review>` in its source (the origin stays; the human can edit and propose
-again), a run that did not complete leaves it pending for the next session. The offer rule:
+accepting row) and files the offers, any other completed verdict (`human` included) retires the
+proposal with `rejected_by:<review>` in its source (the origin stays; the human can edit and
+propose again), a run that did not complete leaves it pending for the next session. A declined
+proposal is gone from the memory page's "Waiting for the critic" list, so the runner tells the
+human in one non-blocking `warning` message from the session's agent
+(`describeRejectedPromotion`: the verdict and grade, the critic's summary, the lesson's text as
+data, where it stays and the recourse), the same channel as the lessons the injection gate
+refused; a message that cannot be sent is logged and never fails the step. The offer rule:
 one non-blocking approval request (`change_card.key = "memory:offer"`, options
 `accept`/`dismiss`, risk low) per other project of the same human whose tags overlap the
-lesson's (`offerToProjects` with the human's project list: `settings.members` names one of
-the human's principals, or no members declared; a project's tags are `settings.tags` plus the
-tags of the active lessons about it in critic, shared and the human's principals' private
-memory), never the origin project, never re-filed once answered. `answerOffer` (the memory
+lesson's (`offerToProjects` with the human's project list, `humanProjects`: the active projects
+`ownsProject` of `@forerunner/commands` gives this human for any of its principals, the one
+ownership rule of the routes and the commands (ADR 0041 item 4; ADR 0059 amendment of
+2026-10-25), so a project another human authored and left without members is never offered
+and one shared with this human through `settings.shared_with` is; a project's tags are
+`settings.tags` plus the tags of the active lessons about it in critic, shared and the human's
+principals' private memory), never the origin project, never re-filed once answered. `answerOffer` (the memory
 view) and the inbox answer both go through `syncOffers` (part of the daemon's
 `syncApprovals`): an accepted offer writes a pinned project-level copy in shared memory
 (`source: promotion:<promoted>;human:<id>`, authored by the human, never into a private
