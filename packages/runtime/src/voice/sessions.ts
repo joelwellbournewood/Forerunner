@@ -17,6 +17,7 @@ import type {
   LatencyTargets,
   ProviderKind,
   ProviderStatus,
+  SelectInput,
   SelectionPolicy,
   SttProvider,
   TtsProvider,
@@ -24,6 +25,7 @@ import type {
   VoiceProviderRegistry,
 } from "./pkg.ts";
 import {
+  noVoicePreferences,
   preferredBy,
   type VoicePreference,
   type VoicePreferences,
@@ -253,19 +255,10 @@ export class VoiceSessions {
   }
 
   private async preferences(): Promise<VoicePreferences> {
-    return this.deps.preferences
-      ? await this.deps.preferences()
-      : { stt: null, tts: null, skipped: [] };
+    return this.deps.preferences ? await this.deps.preferences() : noVoicePreferences();
   }
 
-  private selectInput(
-    side: VoiceSide,
-    prefs: VoicePreferences,
-  ): {
-    preferred?: string;
-    preferredBy?: string;
-    hasSecret?: (ref: string) => Promise<boolean>;
-  } {
+  private selectInput(side: VoiceSide, prefs: VoicePreferences): SelectInput {
     return selectInputFor(side, prefs, this.deps.hasSecret);
   }
 
@@ -296,17 +289,21 @@ export class VoiceSessions {
 
 /**
  * The registry's selection input for one side: the preferred row's name and why it is
- * preferred (the Extensions panel or the environment override), and the vault probe.
+ * preferred (the Extensions panel or the environment override), the providers the panel rules
+ * out of the fallback (a switched-off cloud row, a grant without its key: off means off), and
+ * the vault probe.
  */
 function selectInputFor(
   side: VoiceSide,
   prefs: VoicePreferences,
   hasSecret: ((ref: string) => Promise<boolean>) | undefined,
-): { preferred?: string; preferredBy?: string; hasSecret?: (ref: string) => Promise<boolean> } {
+): SelectInput {
   const p: VoicePreference | null = prefs[side];
+  const excluded = prefs.excluded[side];
   return {
     ...(hasSecret ? { hasSecret } : {}),
     ...(p ? { preferred: p.name, preferredBy: preferredBy(p, side) } : {}),
+    ...(excluded.length > 0 ? { excluded } : {}),
   };
 }
 
@@ -322,7 +319,7 @@ export async function pickTts(
   hasSecret: ((ref: string) => Promise<boolean>) | undefined,
 ): Promise<{ provider: TtsProvider; pick: VoiceProviderPick; statuses: ProviderStatus[] }> {
   const tts = await registry.selectTts(
-    selectInputFor("tts", preferred ?? { stt: null, tts: null, skipped: [] }, hasSecret),
+    selectInputFor("tts", preferred ?? noVoicePreferences(), hasSecret),
   );
   return {
     provider: tts.provider,

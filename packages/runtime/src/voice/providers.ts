@@ -9,12 +9,15 @@
  *
  * Which provider is preferred is the Extensions panel's choice (`resolveVoicePreferences`):
  * the enabled `voice-*` rows name their providers through the catalog entry's `voice` field,
- * one STT and one TTS provider are in force at a time, a cloud row needs its key in the
- * vault, and every row that is not in force carries the reason the panel shows. The
- * environment variables `FORERUNNER_VOICE_STT` / `FORERUNNER_VOICE_TTS` are an override
- * that wins over the panel (documented in voice.md). Nothing chosen: the registry's policy
- * decides. The preferences are read at every status read and session start, so a toggle in
- * the panel applies at the next voice session without a restart.
+ * one STT and one TTS provider are in force at a time, a cloud row needs its provider's key
+ * granted on the row and stored in the vault, and every row that is not in force carries the
+ * reason the panel shows. Off means off: a cloud provider whose installed row is switched off,
+ * or whose row no longer grants its key, is excluded from the registry's fallback, so no
+ * audio or text reaches it while its key sits in the vault. The environment variables
+ * `FORERUNNER_VOICE_STT` / `FORERUNNER_VOICE_TTS` are an override that wins over the panel
+ * (documented in voice.md). Nothing chosen: the registry's policy decides. The preferences
+ * are read at every status read and session start, so a toggle in the panel applies at the
+ * next voice session without a restart.
  *
  * Keys stay in the vault: a provider gets the reference (`secret:deepgram_api_key`) and a
  * resolver that reads the value right before a connection; the status rows carry the
@@ -22,11 +25,12 @@
  */
 import type { Clock } from "@forerunner/platform";
 import { parseSecretRef, type Vault } from "@forerunner/vault";
-import type { EnabledCatalogExtension } from "../extensions/registry.ts";
+import type { InstalledCatalogExtension } from "../extensions/registry.ts";
 import {
   CartesiaTts,
   DeepgramStt,
   ElevenLabsTts,
+  type ExcludedProvider,
   FasterWhisperStt,
   KokoroTts,
   PiperTts,
@@ -49,6 +53,11 @@ export const VOICE_PREFERENCE_ENV: Record<VoiceSide, string> = {
   tts: "FORERUNNER_VOICE_TTS",
 };
 
+/** The reason a switched-off row (and its excluded cloud provider) carries. */
+export const SWITCHED_OFF_REASON = "switched off in Extensions";
+/** The status reason of a cloud provider whose row no longer grants its key. */
+export const KEY_NOT_GRANTED_REASON = "key not granted in Extensions";
+
 export interface VoiceRegistryOptions {
   env: NodeJS.ProcessEnv;
   vault: Vault;
@@ -62,9 +71,15 @@ export interface VoicePreference {
   extensionId: string | null;
   /** The row's name (its catalog id, `voice-deepgram`); null for the environment override. */
   extension: string | null;
+  /**
+   * Every provider the row stands for on this side that this daemon registers, in the row's
+   * order (`name` is the first); the panel counts the row in force when the registry picked
+   * any of them (Piper after a Kokoro that does not import). The environment names one.
+   */
+  providers: string[];
 }
 
-/** An enabled voice row that is not in force for a side, with the reason the panel shows. */
+/** A voice row that is not in force for a side, with the reason the panel shows. */
 export interface VoicePreferenceSkip {
   extensionId: string;
   extension: string;
@@ -79,36 +94,57 @@ export interface VoicePreferences {
   stt: VoicePreference | null;
   tts: VoicePreference | null;
   skipped: VoicePreferenceSkip[];
+  /**
+   * Cloud providers the registry's policy must not fall back to, per side, each with the
+   * reason its status row shows: the installed row that stands for it is switched off, or the
+   * row's grant no longer lists its key. A provider in force (an enabled row, the environment)
+   * is never on this list.
+   */
+  excluded: Record<VoiceSide, ExcludedProvider[]>;
 }
 
-/** An enabled `voice-*` row of the Extensions panel, as the registry hands it over. */
+/** No preference on either side and nothing excluded: the registry's policy decides. */
+export function noVoicePreferences(): VoicePreferences {
+  return { stt: null, tts: null, skipped: [], excluded: { stt: [], tts: [] } };
+}
+
+/** An installed `voice-*` row of the Extensions panel, as the registry hands it over. */
 export interface VoiceExtensionRow {
   extensionId: string;
   name: string;
   catalogId: string;
+  /**
+   * On or off in the panel. A switched-off row prefers nothing, is reported with the reason,
+   * and its cloud providers are excluded from the policy's fallback (off means off).
+   */
+  enabled: boolean;
   /** The provider names the catalog entry stands for, per side, in order of preference. */
   providers: { stt?: readonly string[]; tts?: readonly string[] };
-  /** Secret names the row is granted (a cloud key); each needs a value in the vault. */
+  /** Secret names the row is granted; a cloud provider's own key must be among them. */
   secrets: readonly string[];
 }
 
 export interface VoicePreferenceDeps {
   env: NodeJS.ProcessEnv;
-  /** The enabled `voice-*` rows; absent (a composition without the panel) means none. */
+  /** The installed `voice-*` rows, on or off; absent (a composition without the panel) means none. */
   extensions?: () => Promise<VoiceExtensionRow[]>;
   /** Whether a secret reference has a value, never the value; absent: taken as configured. */
   hasSecret?: (ref: string) => Promise<boolean>;
   /** The provider names this daemon registered; absent: every declared name counts. */
   registered?: Record<VoiceSide, readonly string[]>;
+  /** The cloud providers' own secret references by provider name; default `VOICE_SECRET_REFS`. */
+  secretRefs?: Readonly<Record<string, string>>;
 }
 
 /** The environment's choice alone (`FORERUNNER_VOICE_STT` / `FORERUNNER_VOICE_TTS`). */
 export function voicePreferences(env: NodeJS.ProcessEnv): VoicePreferences {
   const fromEnv = (side: VoiceSide): VoicePreference | null => {
     const name = env[VOICE_PREFERENCE_ENV[side]]?.trim();
-    return name ? { name, source: "env", extensionId: null, extension: null } : null;
+    return name
+      ? { name, source: "env", extensionId: null, extension: null, providers: [name] }
+      : null;
   };
-  return { stt: fromEnv("stt"), tts: fromEnv("tts"), skipped: [] };
+  return { ...noVoicePreferences(), stt: fromEnv("stt"), tts: fromEnv("tts") };
 }
 
 /**
@@ -116,9 +152,14 @@ export function voicePreferences(env: NodeJS.ProcessEnv): VoicePreferences {
  * cloud providers) come before the local row, because enabling a cloud entry is the choice
  * for the lowest latency while local is the policy's default anyway; then by name, so two
  * rows for one side resolve the same way every time. A row is skipped, with the reason, when
- * the environment overrides the side, when one of its secrets has no value, when another row
- * is already in force for the side, or when none of its providers is registered here. A
- * panel that cannot be read leaves the environment's choice and the policy.
+ * it is switched off, when the environment overrides the side, when its provider's key is not
+ * granted on the row or has no value, when another row is already in force for the side, or
+ * when none of its providers is registered here. Off means off: the cloud providers of a
+ * switched-off row, and a cloud provider whose row does not grant its key, go on `excluded`
+ * so the registry's fallback never reaches them and never reads their key; the local helpers
+ * (free, private, the policy's default) are never excluded. A provider the environment or an
+ * enabled row put in force is not excluded by another row that stands for it. A panel that
+ * cannot be read leaves the environment's choice and the policy.
  */
 export async function resolveVoicePreferences(
   deps: VoicePreferenceDeps,
@@ -131,7 +172,12 @@ export async function resolveVoicePreferences(
   } catch {
     return prefs;
   }
-  const needsKey = (row: VoiceExtensionRow) => (row.secrets.length > 0 ? 0 : 1);
+  const secretRefs: Readonly<Record<string, string>> = deps.secretRefs ?? VOICE_SECRET_REFS;
+  const isCloud = (name: string) => secretRefs[name] !== undefined;
+  const needsKey = (row: VoiceExtensionRow) =>
+    row.secrets.length > 0 || VOICE_SIDES.some((side) => (row.providers[side] ?? []).some(isCloud))
+      ? 0
+      : 1;
   const ordered = [...rows].sort(
     (a, b) => needsKey(a) - needsKey(b) || a.name.localeCompare(b.name),
   );
@@ -141,7 +187,7 @@ export async function resolveVoicePreferences(
       if (declared.length === 0) continue;
       const registered = deps.registered
         ? declared.filter((n) => deps.registered?.[side].includes(n))
-        : declared;
+        : [...declared];
       const provider = registered[0] ?? null;
       const skip = (reason: string) =>
         prefs.skipped.push({
@@ -151,15 +197,37 @@ export async function resolveVoicePreferences(
           provider,
           reason,
         });
+      const exclude = (name: string, reason: string) => prefs.excluded[side].push({ name, reason });
+      if (!row.enabled) {
+        skip(SWITCHED_OFF_REASON);
+        for (const name of registered) if (isCloud(name)) exclude(name, SWITCHED_OFF_REASON);
+        continue;
+      }
       const chosen = prefs[side];
       if (chosen?.source === "env") {
         skip(`overridden by ${VOICE_PREFERENCE_ENV[side]}=${chosen.name}`);
         continue;
       }
-      const missing = await missingSecret(row.secrets, deps.hasSecret);
-      if (missing) {
-        skip(`no value for ${missing}; store the key with fr setup`);
-        continue;
+      if (provider) {
+        const ownRef = secretRefs[provider];
+        if (ownRef) {
+          // The row is the grant: without its provider's key on it, the key is never read.
+          if (!row.secrets.includes(parseSecretRef(ownRef))) {
+            skip(`key not granted: ${ownRef} is not in the row's permissions`);
+            exclude(provider, KEY_NOT_GRANTED_REASON);
+            continue;
+          }
+          if (await missingSecret([parseSecretRef(ownRef)], deps.hasSecret)) {
+            skip(`no value for ${ownRef}; store the key with fr setup`);
+            continue;
+          }
+        } else {
+          const missing = await missingSecret(row.secrets, deps.hasSecret);
+          if (missing) {
+            skip(`no value for ${missing}; store the key with fr setup`);
+            continue;
+          }
+        }
       }
       if (chosen) {
         skip(
@@ -180,8 +248,13 @@ export async function resolveVoicePreferences(
         source: "extension",
         extensionId: row.extensionId,
         extension: row.name,
+        providers: registered,
       };
     }
+    // What is in force (an enabled row, the environment) stays usable whatever another row
+    // standing for the same provider says.
+    const inForce = prefs[side]?.name;
+    if (inForce) prefs.excluded[side] = prefs.excluded[side].filter((e) => e.name !== inForce);
   }
   return prefs;
 }
@@ -212,18 +285,22 @@ export function preferredBy(p: VoicePreference, side: VoiceSide): string {
     : `selected in Extensions (${p.extension})`;
 }
 
-/** The `voice-*` rows of the panel from the extension registry's enabled catalog entries. */
+/**
+ * The `voice-*` rows of the panel from the extension registry's installed catalog entries,
+ * switched on or off (a switched-off row excludes its cloud providers from the fallback).
+ */
 export function voiceExtensionRows(registry: {
-  enabledCatalogEntries(kind: "capability"): Promise<EnabledCatalogExtension[]>;
+  installedCatalogEntries(kind: "capability"): Promise<InstalledCatalogExtension[]>;
 }): () => Promise<VoiceExtensionRow[]> {
   return async () => {
     const rows: VoiceExtensionRow[] = [];
-    for (const e of await registry.enabledCatalogEntries("capability")) {
+    for (const e of await registry.installedCatalogEntries("capability")) {
       if (!e.entry.voice) continue;
       rows.push({
         extensionId: e.extensionId,
         name: e.name,
         catalogId: e.catalogId,
+        enabled: e.enabled,
         providers: e.entry.voice,
         secrets: e.permissions.secrets,
       });

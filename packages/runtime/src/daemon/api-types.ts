@@ -1163,10 +1163,19 @@ export const VoicePreferenceView = z.object({
   extensionId: z.string().nullable(),
   /** The row's name (`voice-deepgram`); null for the environment override. */
   extension: z.string().nullable(),
+  /**
+   * Every registered provider the row stands for on this side, `name` first (`voice-local`:
+   * kokoro, piper); the row is in force when the pick is any of them. The environment names one.
+   */
+  providers: z.array(z.string()),
 });
 export type VoicePreferenceView = z.infer<typeof VoicePreferenceView>;
 
-/** An enabled voice row that is not in force for a side, with the reason the panel shows. */
+/**
+ * A voice row that is not in force for a side, with the reason the panel shows: switched off,
+ * its key not granted or without a value, another row in force, an environment override, or
+ * none of its providers registered.
+ */
 export const VoicePreferenceSkipView = z.object({
   extensionId: z.string(),
   extension: z.string(),

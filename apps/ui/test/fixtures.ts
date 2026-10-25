@@ -1913,6 +1913,7 @@ export const VOICE_STATUS: VoiceStatusView = {
       source: "extension",
       extensionId: "ext_voice_deepgram",
       extension: "voice-deepgram",
+      providers: ["deepgram"],
     },
     tts: null,
     skipped: [],
