@@ -2000,6 +2000,61 @@ never in a log, a report or the ledger), S.14 (the subscription token held by na
 only for its owner's agent, live), U.7 (every Run row with its billing source, the SDK runs
 with the subscription), V.6 (the measured response-time rows in gates.md).
 
+### Live handover run (V.8)
+
+`scripts/handover-live.ts` runs the monthly handover job (ADR 0060, `runtime.md` "Handover
+test") once with a live model on a real repository, on an install of its own. It opens real
+pull requests on that repository.
+
+```
+pnpm exec tsx scripts/handover-live.ts --profile <name> --repo <owner/name> [--budget-usd <usd>] [--dry-run]
+```
+
+- `FORERUNNER_HOME` must be set to a directory used for nothing else. The script refuses a
+  directory that overlaps the normal install's directories or the user's home, a non-empty
+  directory it did not make (it writes `handover-live.json` there on the first run), and a
+  directory another profile made. `--profile` is required and may not be `default` or the
+  normal install's profile (the profile names the vault's keychain service).
+  `FORERUNNER_STATE_URL` and `FORERUNNER_HUMAN` must be unset.
+- Credentials come only from the environment, under the names `fr setup --non-interactive`
+  reads: `FORERUNNER_GITHUB_TOKEN`, `FORERUNNER_ANTHROPIC_KEY` (or
+  `FORERUNNER_SUBSCRIPTION_TOKEN`), and optionally `FORERUNNER_ANTHROPIC_WORKSPACE_ID`.
+  `FORERUNNER_GITHUB_API` and `FORERUNNER_ANTHROPIC_API` point the setup at another host. Every
+  printed line has the values scrubbed. After the setup has stored them in the profile's vault,
+  the variables are removed from the environment that the runtime and its processes see. An
+  unknown option, such as a token passed as an argument, is refused without echoing it.
+- Steps: `runSetup` non-interactively (the same code as `fr setup --non-interactive`, with
+  `--repos <repo>`). Then the composed runtime as a one-shot. The repository is connected as a
+  `github_repo` source through `SourceDiscovery` (`fr sources add`), scanned, and accepted into
+  a project. On a rerun the source and the project are reused. Next, `PUT
+  /projects/:id/settings` with the project's version (`handover.enabled`, `budget_usd`, default
+  the job's 5) and `POST /commands/execute` with `autonomy.set` level 2 and `confirm: "tap"`,
+  both on `createDaemonApp(rt)` in process. Last, `rt.jobs.handover.run(id, { force: true })`.
+- Output: the formatted report, `PR: <url>`, the cost from the cost ledger (the handover
+  session, and the project since the run started), and a last line `HANDOVER RESULT:
+  passed|stuck|skipped|failed|refused|error|dry-run`. Exit 0 only for `passed`, meaning the job
+  ran and the report names no stuck place. Exit 1 for stuck, skipped or failed; exit 2 when the
+  script refused or a step before the job failed. `--dry-run` stops before the job (exit 0).
+- Two side effects on the repository. Accepting the project scaffolds the standard doc set
+  (spec G.5): when the repository lacks a standard doc or `.forerunner/project.json`, a
+  `docs: scaffold the standard project doc set` PR is opened. That happens on the first run,
+  `--dry-run` included, so a dry run against GitHub is not offline. Point
+  `FORERUNNER_GITHUB_API` at the fake git host for that. The job's session opens the handover
+  PR.
+- At autonomy 2 a clean run does not pass today. After the critic accepts, the session's merge
+  step is refused by the hooks (ADR 0062: level 2 leaves the merge to a human), and the
+  stuck-place rule counts that refusal (`merge_pr refused: autonomy_insufficient`). The script
+  reports what the job reports.
+
+Tests: `scripts/handover-live.test.ts` covers the refusals, and the whole path on the fake git
+host (REST and git smart HTTP, a fine-grained token with contents and pull requests write), a
+local stand-in for `GET /v1/models` and the fake provider. That path is the dry run, then a
+full run that reuses the project and ends `stuck` on the merge refusal above (exit 1), then a
+stuck run (exit 1, docs task). The test also checks that no credential value appears in any
+printed or logged line or in the argv of any spawned process (`node:child_process` is wrapped).
+The `passed` exit is covered by `handoverPassed` alone, because no end-to-end run at autonomy 2
+reaches it.
+
 ## Scenarios
 
 Package: `tests/e2e` (`@forerunner/e2e`). The nine release scenarios of the spec ("Phase 8 — Full

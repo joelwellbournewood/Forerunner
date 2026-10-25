@@ -14,9 +14,21 @@ importers:
       '@biomejs/biome':
         specifier: ^2.5.15
         version: 2.5.15
+      '@forerunner/critic':
+        specifier: workspace:*
+        version: link:packages/critic
       '@forerunner/platform':
         specifier: workspace:*
         version: link:packages/platform
+      '@forerunner/runtime':
+        specifier: workspace:*
+        version: link:packages/runtime
+      '@forerunner/testenv':
+        specifier: workspace:*
+        version: link:testenv
+      '@forerunner/vault':
+        specifier: workspace:*
+        version: link:packages/vault
       '@types/node':
         specifier: ^22.19.0
         version: 22.20.5

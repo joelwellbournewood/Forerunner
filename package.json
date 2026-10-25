@@ -33,7 +33,11 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
+    "@forerunner/critic": "workspace:*",
     "@forerunner/platform": "workspace:*",
+    "@forerunner/runtime": "workspace:*",
+    "@forerunner/testenv": "workspace:*",
+    "@forerunner/vault": "workspace:*",
     "@types/node": "^22.19.0",
     "tsx": "^4.23.0",
     "typescript": "^5.9.3",
