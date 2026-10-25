@@ -126,8 +126,20 @@ How a session works with this human's machine (learned today):
 - The human's decision of 2026-10-25: no automatic update check; an Updates menu entry and a
   "Check for updates" button only; installs stay a human click; the project's update public
   key `T4+qibk62TL/GuTszYxLstqgKDPTgNIYtXFAaJTwXaA=` (key id `26fae7f48427e5eb`) built in as
-  the default trusted key so friends' fresh installs accept official releases. In progress on
-  branch `wip/manual-update-check` (see its last commit for state); not merged.
+  the default trusted key so friends' fresh installs accept official releases. Not started in
+  code; investigated: opening the Updates page queries the feed (`apps/ui/src/pages/UpdatesPage.tsx`
+  calls GET /updates on mount; `packages/runtime/src/update/screen.ts` `composeUpdatesView`
+  defaults `checkFeed` to true and calls `manager.check()`); nothing else checks on its own
+  (daemon start, tray, scheduler, checklist; `updateAvailable` has no caller; `autoCheck` in
+  `update/config.ts` is read nowhere). A fresh install has no feed (empty in-memory feed) and no
+  trusted keys, so it can neither find nor verify a release: it needs the built-in key and the
+  default feed `github:joelwellbournewood/Forerunner`. Plan: GET /updates local state only, a new
+  POST /updates/check (`DAEMON_ROUTES`, the UI client) behind the button "Check for updates"
+  (keep testid `updates-check`); `checkFeed` default false; `autoCheck` default false, still
+  parsed; `DEFAULT_TRUSTED_KEYS` and the default feed in `config.ts`, injectable, an explicit
+  `trustedKeys` replacing the default; tests first (`apps/ui/test/updates.test.tsx`,
+  `update-screen.test.ts`, `wiring.test.ts`, the phase 7 gate's GET-based checks,
+  `update-verify.test.ts`); docs updates.md, apps.md, setup-guide.md, ADR 0015 amendment.
 
 Open for v1.0.0 (gates.md "Release 1.0 criteria"; the human tags v1.0.0 only in words):
 1. The human runs `push-rc1.cmd` (tags 7e95e39 as `v1.0.0-rc.1`); watch `release.yml`, fix what
