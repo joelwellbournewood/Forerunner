@@ -654,7 +654,7 @@ function MilestoneDialog({
             onChange={(e) => patch({ reason: e.target.value })}
             required
             autoFocus
-            data-testid="milestone-reason"
+            data-testid="milestone-change-reason"
           />
         </Field>
         {error ? <ErrorBanner message={error} /> : null}
