@@ -2035,25 +2035,30 @@ pnpm exec tsx scripts/handover-live.ts --profile <name> --repo <owner/name> [--b
   passed|stuck|skipped|failed|refused|error|dry-run`. Exit 0 only for `passed`, meaning the job
   ran and the report names no stuck place. Exit 1 for stuck, skipped or failed; exit 2 when the
   script refused or a step before the job failed. `--dry-run` stops before the job (exit 0).
-- Two side effects on the repository. Accepting the project scaffolds the standard doc set
-  (spec G.5): when the repository lacks a standard doc or `.forerunner/project.json`, a
-  `docs: scaffold the standard project doc set` PR is opened. That happens on the first run,
-  `--dry-run` included, so a dry run against GitHub is not offline. Point
-  `FORERUNNER_GITHUB_API` at the fake git host for that. The job's session opens the handover
-  PR.
-- At autonomy 2 a clean run does not pass today. After the critic accepts, the session's merge
-  step is refused by the hooks (ADR 0062: level 2 leaves the merge to a human), and the
-  stuck-place rule counts that refusal (`merge_pr refused: autonomy_insufficient`). The script
-  reports what the job reports.
+- The run opens two pull requests on the repository.
+  - The doc set scaffold. The first accept opens `docs: scaffold the standard project doc set`
+    whenever the repository lacks a standard doc or `.forerunner/project.json` (spec G.5).
+    Forerunner's own repository has no `.forerunner/project.json`, so its first run opens this
+    PR. This happens on `--dry-run` too, so a dry run against GitHub is not offline; point
+    `FORERUNNER_GITHUB_API` at the fake git host for an offline one. Reruns reuse the project
+    and do not accept again.
+  - The handover PR, opened by the job's session.
+- At autonomy 2 the session's merge step is refused by the hooks after the critic accepts (ADR
+  0062: level 2 leaves the merge to a human), and the handover PR stays open. Under the ADR 0060
+  amendment of 2026-10-25, that refusal is not a stuck place when the seed reached `done` or
+  `in_review` with its PR, so a clean run reports `passed`.
 
-Tests: `scripts/handover-live.test.ts` covers the refusals, and the whole path on the fake git
+Tests: `scripts/handover-live.test.ts` covers the refusals and the whole path on the fake git
 host (REST and git smart HTTP, a fine-grained token with contents and pull requests write), a
-local stand-in for `GET /v1/models` and the fake provider. That path is the dry run, then a
-full run that reuses the project and ends `stuck` on the merge refusal above (exit 1), then a
-stuck run (exit 1, docs task). The test also checks that no credential value appears in any
-printed or logged line or in the argv of any spawned process (`node:child_process` is wrapped).
-The `passed` exit is covered by `handoverPassed` alone, because no end-to-end run at autonomy 2
-reaches it.
+local stand-in for `GET /v1/models`, and the fake provider. The path has three runs:
+- the dry run, which opens the scaffold PR #1;
+- a full run at autonomy 2 that reuses the project: the task ends done with its PR open, "got
+  stuck nowhere", `passed`, exit 0;
+- a run where the agent does nothing: `stuck`, exit 1, with a docs task filed.
+
+The test also checks that no credential value appears in any printed or logged line, or in the
+argv of any spawned process (`node:child_process` is wrapped). `handoverPassed` is tested on its
+own as well.
 
 ## Scenarios
 

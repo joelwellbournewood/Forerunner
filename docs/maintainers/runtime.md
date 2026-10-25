@@ -972,7 +972,11 @@ calibrate [--force]`, `fr jobs handover <project> [--force]`, `fr jobs reports` 
   it, `stuckPlaces` reads the fresh agent's audit rows of that session (other agents' rows,
   the critic's included, do not count): a `read_file` of one path more than once (`reread`),
   an allowed call whose result starts `ERROR:` (`failed`), a call the hooks refused
-  (`refused`), the seeded task ending `needs_human` or `failed`, the seeded task ending
+  (`refused`; one exception, ADR 0060 amendment of 2026-10-25 citing ADR 0062: the merge step
+  `merge_pr` refused as `autonomy_insufficient` when the seed reached `done` or `in_review` and
+  has its `pr_url`, which is level 2 leaving the merge to a human, is not a stuck place; the
+  job passes `taskPrUrl`, and the refusal still counts on a seed short of that or without a
+  PR), the seeded task ending `needs_human` or `failed`, the seeded task ending
   anywhere short of `done` or `in_review` (`task_unfinished`: sent back by the critic and left
   `ready`, never planned, stopped `in_progress`; the change was not made), the session ending
   `failed` or `killed`. Any stuck place files ONE docs task on the project (`docsTaskFor`:
@@ -3346,7 +3350,9 @@ repository with real file tools and hooks; the re-read, the failed read and the 
 become one docs task naming the files; the report reaches the inbox, a notification and a
 dated file; a clean run files no docs task; the setting and autonomy gates; a session that
 never ran or left the seed ready cancels the seed; `stuckPlaces`, the settings and the schedule
-sync; an unfinished seed is a `task_unfinished` place; instruction-shaped tool output and
+sync; an unfinished seed is a `task_unfinished` place; the `merge_pr` refusal at
+level 2 is no stuck place on a seed done or in review with its PR, while it counts without a
+PR, on an unfinished seed, with another reason or on another tool; instruction-shaped tool output and
 paths are withheld from the docs task; three projects due the same day all start; the local
 month (Los Angeles, a late-February run that is 1 March UTC does not swallow March's) and the
 report order by `startedAt`. `calibration-job.test.ts` also proves the local month and that a

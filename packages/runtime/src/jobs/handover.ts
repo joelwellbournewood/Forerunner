@@ -47,6 +47,7 @@ import {
   type TaskStatus,
 } from "@forerunner/state";
 import { scanForInjection } from "../injection/scan.ts";
+import { MERGE_PR_TOOL } from "../loop/merge.ts";
 import type { NotifierLike } from "../notifications/producers.ts";
 import { handoverReport as handoverReportNotification } from "../notifications/producers.ts";
 import type { Planner, PlannerContext, SessionPlan, SessionResult } from "../session/runner.ts";
@@ -228,6 +229,13 @@ function asData(text: string, what: "text" | "path"): string {
  * rows count (the critic's reads are its own business); a `read_file` of the same path more
  * than once is a re-read; an allowed call whose result starts with `ERROR:` failed; a row the
  * hooks refused is `refused` with the reason; then the seeded task's end and the session's end.
+ *
+ * One refusal is the autonomy rules working, not the agent stuck (ADR 0060 amendment of
+ * 2026-10-25, citing ADR 0062): the merge step (`merge_pr`) refused as
+ * `autonomy_insufficient` when the seeded task reached done or in review with its pull request
+ * (`taskPrUrl`). Level 2 leaves the merge to a human on purpose. Every other refusal counts; a
+ * merge refusal on a seed short of done or in review, or without a pull request, counts too
+ * (and the seed's end counts through `task_unfinished` and the other task kinds).
  */
 export function stuckPlaces(
   rows: readonly AuditLogRow[],
@@ -236,8 +244,11 @@ export function stuckPlaces(
     seedFiles: readonly string[];
     taskStatus: TaskStatus;
     sessionStatus: SessionStatus;
+    /** The seeded task's pull request, when it has one (`task.pr_url`). */
+    taskPrUrl?: string | null;
   },
 ): StuckPlace[] {
+  const changeMade = FINISHED.includes(facts.taskStatus) && !!facts.taskPrUrl;
   const own = rows.filter((r) => r.agent_id === facts.agentId);
   const reads = new Map<string, number>();
   const failed: StuckPlace[] = [];
@@ -246,6 +257,7 @@ export function stuckPlaces(
     const raw = pathOf(r.input_summary);
     const path = raw === null ? null : asData(raw, "path");
     if (!r.allowed) {
+      if (changeMade && isMergeLeftToHuman(r)) continue;
       refused.push({
         kind: "refused",
         tool: r.tool,
@@ -281,6 +293,11 @@ export function stuckPlaces(
   if (facts.sessionStatus === "failed" || facts.sessionStatus === "killed")
     out.push({ kind: "session_failed", files: seedFiles });
   return out;
+}
+
+/** The merge step refused by the autonomy rules: `autonomy_insufficient` on `merge_pr` (ADR 0062). */
+function isMergeLeftToHuman(r: AuditLogRow): boolean {
+  return r.tool === MERGE_PR_TOOL && /^autonomy_insufficient(:|$)/.test(r.denied_reason ?? "");
 }
 
 export function describeStuckPlace(p: StuckPlace): string {
@@ -594,6 +611,7 @@ export class HandoverJob {
       seedFiles: seed.files,
       taskStatus: taskAfter.status,
       sessionStatus: result.status,
+      taskPrUrl: taskAfter.pr_url,
     });
 
     // 4. One docs task with the file names, when the agent got stuck anywhere.

@@ -696,6 +696,74 @@ describe("monthly handover test job (P.15)", () => {
     expect(stuckPlaces([], facts("failed")).map((p) => p.kind)).toEqual(["task_failed"]);
   });
 
+  it("the merge step refused by the autonomy rules (ADR 0062) is no stuck place once the seed is done or in review with its PR; anything else still is", () => {
+    const row = (over: Partial<AuditLogRow>): AuditLogRow =>
+      ({
+        id: "a",
+        created_at: "",
+        updated_at: "",
+        author_agent: null,
+        author_human: null,
+        version: 1,
+        session_id: "s",
+        run_id: "r",
+        agent_id: "fresh",
+        human_id: "h",
+        tool: "merge_pr",
+        input_summary: '{"pr":1}',
+        result_summary: "",
+        allowed: false,
+        denied_reason:
+          "autonomy_insufficient: autonomy level 2 does not free merge_pr for an unattended step; a human does it",
+        cost_usd_micro: 0,
+        occurred_at: "",
+        token_id: null,
+        ...over,
+      }) as AuditLogRow;
+    const PR = "https://github.example/o/r/pull/7";
+    const facts = (taskStatus: TaskStatus, taskPrUrl: string | null = PR) => ({
+      agentId: "fresh",
+      seedFiles: ["docs/runbook.md"],
+      taskStatus,
+      sessionStatus: "completed" as const,
+      taskPrUrl,
+    });
+    const merge = row({});
+    // The change was made and its PR is there: the level 2 merge refusal is the rule working.
+    expect(stuckPlaces([merge], facts("done"))).toEqual([]);
+    expect(stuckPlaces([merge], facts("in_review"))).toEqual([]);
+    // No PR on the task: the refusal counts.
+    expect(stuckPlaces([merge], facts("done", null)).map((p) => p.kind)).toEqual(["refused"]);
+    // The seed did not reach done or in review: the refusal counts, and so does the end.
+    expect(stuckPlaces([merge], facts("in_progress")).map((p) => p.kind)).toEqual([
+      "refused",
+      "task_unfinished",
+    ]);
+    expect(stuckPlaces([merge], facts("needs_human")).map((p) => p.kind)).toEqual([
+      "refused",
+      "task_needs_human",
+    ]);
+    // Another reason on the merge step, or the same reason on another tool, still counts.
+    expect(
+      stuckPlaces(
+        [row({ denied_reason: "budget_exceeded: session cap reached" })],
+        facts("done"),
+      ).map((p) => p.kind),
+    ).toEqual(["refused"]);
+    expect(
+      stuckPlaces([row({ tool: "write_file", input_summary: '{"path":"x"}' })], facts("done")).map(
+        (p) => p.kind,
+      ),
+    ).toEqual(["refused"]);
+    // An "autonomy_insufficient" that is only a prefix of another code is not this refusal.
+    expect(
+      stuckPlaces(
+        [row({ denied_reason: "autonomy_insufficient_extra: something else" })],
+        facts("done"),
+      ).map((p) => p.kind),
+    ).toEqual(["refused"]);
+  });
+
   it("tool output and paths that read as instructions never reach the docs task: they are data", () => {
     const base = {
       id: "a",

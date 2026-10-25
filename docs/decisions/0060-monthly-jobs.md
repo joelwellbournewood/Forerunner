@@ -107,3 +107,30 @@ a place the handover agent "got stuck".
   recorded.
 - **Counting every repeated tool call, not only `read_file`.** Re-running a test command after
   a fix is normal work, not a sign that the docs were missing.
+
+## Amendment (2026-10-25, the human's decision): a merge the autonomy rules leave to a human is no stuck place
+
+**Context.** The first run of `scripts/handover-live.ts` on the fake git host, at autonomy 2
+(the level the V.8 run uses), made the seeded change cleanly. The task ended `done` and its pull
+request was open. The report still named one stuck place: `merge_pr refused:
+autonomy_insufficient`. After an accepting review the session runs its merge step. At level 2
+the hooks refuse that step on purpose (ADR 0062: level 2 leaves the merge to a human). Decision
+4 counted every hooks refusal, so no run at level 2 could ever report that the agent got stuck
+nowhere.
+
+**Decision.** The handover test measures whether a fresh agent can make the seeded change from
+the docs. A refusal the autonomy rules make on purpose is not a place where the docs failed it.
+`stuckPlaces` therefore skips one refusal. The skipped refusal is on `merge_pr`, with a
+`denied_reason` of `autonomy_insufficient` (that code, then `:` or the end of the text), when
+the seeded task reached `done` or `in_review` and has a pull request on its row (`pr_url`). The
+job passes `taskPrUrl` for this. Every other refusal still counts. A merge refusal on a seed
+that did not reach `done` or `in_review`, or that has no pull request, still counts as
+`refused`, and the seed's end counts as well (`task_unfinished`, `task_needs_human`,
+`task_failed`).
+
+**Consequences.** A clean level 2 run reports no stuck place and files no docs task. The pull
+request stays open for the human. The audit row of the refusal is still written by the hooks;
+only the report leaves it out. "Open" is read from the task's recorded `pr_url`, because the job
+has no access to the git host. A merged PR cannot occur here, since a merge that succeeded is
+not refused. Tests: `handover-job.test.ts` (both sides of the rule) and
+`scripts/handover-live.test.ts` (the end-to-end fake run at autonomy 2 passes with exit 0).
