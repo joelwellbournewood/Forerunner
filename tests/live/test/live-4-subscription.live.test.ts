@@ -19,7 +19,7 @@ import {
   SUBSCRIPTION_RUN_AUDIT_TOOL,
   sdkCostUsdOf,
 } from "../src/harness.ts";
-import { type SpendRow, subscriptionRows } from "../src/ledger.ts";
+import { microFromUsd, type SpendRow, subscriptionRows } from "../src/ledger.ts";
 import type { LiveCall } from "../src/metered.ts";
 import { LIVE_SDK_CODER_OVERRIDES } from "../src/registry.ts";
 import {
@@ -104,6 +104,10 @@ describe(`phase 1 gate, live half on the subscription${SKIP ? ` (${SKIP})` : ""}
   const logs: LogRecord[] = [];
   let offLogs: () => void = () => undefined;
   let ledgerBefore: SpendRow[] = [];
+  // The budget's `runUsd` covers the whole vitest run (every live file shares one run id and
+  // one per-run cap), so this file's own spend is measured from where the run stood when the
+  // file started; 0 when the file runs alone.
+  let runMicroAtStart = 0;
   let session: { result: SessionResult; tasks: TaskEvidence[] } | null = null;
   const callsSince = (mark: number): LiveCall[] => h.provider.calls.slice(mark);
   const spent = (calls: LiveCall[]) => ({
@@ -137,6 +141,7 @@ describe(`phase 1 gate, live half on the subscription${SKIP ? ` (${SKIP})` : ""}
     offLogs = Logger.addSink((r) => logs.push(r));
     h = await composeLive({ subscription: true });
     ledgerBefore = h.ledger.rows();
+    runMicroAtStart = microFromUsd(h.budget.snapshot().runUsd);
     // The hosting session's variables (names only) removed before the SDK subprocess runs.
     evidence.hostEnvScrubbed = h.hostEnvScrubbed;
     console.log(
@@ -486,7 +491,10 @@ describe(`phase 1 gate, live half on the subscription${SKIP ? ` (${SKIP})` : ""}
       }
       const subAudit = sessionAudit.filter((a) => a.tool === SUBSCRIPTION_RUN_AUDIT_TOOL);
       expect(subAudit).toHaveLength(3);
-      expect(h.budget.snapshot().runUsd).toBe(spent(callsSince(0)).usd);
+      // this file's metered calls are exactly what the run's budget grew by while it ran
+      expect(microFromUsd(h.budget.snapshot().runUsd) - runMicroAtStart).toBe(
+        microFromUsd(spent(callsSince(0)).usd),
+      );
 
       // The comparison with the API-key half of this run, when its evidence is there: every
       // task ended the same way on both billing sources.

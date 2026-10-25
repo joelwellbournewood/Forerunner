@@ -39,6 +39,14 @@ import {
 import { runIdFromEnv } from "./report.ts";
 
 /**
+ * Removing the harness's temporary tree. On Windows a handle the runtime or an SDK subprocess
+ * has only just released (SQLite, a worktree file) makes the first attempt fail with EPERM or
+ * EBUSY; `maxRetries` retries those codes with a linear back-off (Node's documented use), so
+ * a finished run is not reported failed by its cleanup (live run of 2026-10-25 on Windows).
+ */
+export const RM_TREE = { recursive: true, force: true, maxRetries: 10, retryDelay: 200 } as const;
+
+/**
  * The live harness: the real provider behind the budget gate, and the real runtime composed
  * through `composeRuntime` (the daemon's one wiring) against an in-memory SQLite store, an
  * in-memory vault holding the key by its usual name (so the billing source is an `api_key`
@@ -428,7 +436,7 @@ export async function composeLive(opts: LiveHarnessOptions = {}): Promise<LiveHa
     });
   } catch (e) {
     await host.stop().catch(() => undefined);
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, RM_TREE);
     throw e;
   }
   live.audit.attach(app.store, { agentId: app.agent.id, humanId: app.human.id });
@@ -530,7 +538,7 @@ export async function composeLive(opts: LiveHarnessOptions = {}): Promise<LiveHa
     close: async () => {
       await app.close().catch(() => undefined);
       await host.stop().catch(() => undefined);
-      rmSync(root, { recursive: true, force: true });
+      rmSync(root, RM_TREE);
     },
   };
 }
