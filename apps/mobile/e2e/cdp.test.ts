@@ -383,7 +383,7 @@ function fakeInputPath(
   });
   if (options.touchTarget) {
     const touchTarget = options.touchTarget;
-    let last = [0, 0];
+    let last: [number, number] = [0, 0];
     fake.handlers.set("Input.dispatchTouchEvent", (params) => {
       const points = params.touchPoints as Array<{ x: number; y: number }>;
       if (params.type === "touchStart") {
@@ -928,7 +928,7 @@ describe("Page and locators over Runtime.evaluate", () => {
     ]);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(
-      /^click fallback: getByTestId\("m-nav"\)\.getByText\("Inbox"\) \(cdp\.click_missed: tap through Input\.dispatchTouchEvent at \(50, 450\); 3 mouse clicks there landed on <div id="root">/,
+      /^click fallback: getByTestId\("m-nav"\)\.getByText\("Inbox"\) \(cdp\.click_missed: tap through Input\.dispatchTouchEvent at \(50, 450\); 3 mouse clicks at \(50, 450\) landed on <div id="root"> "Forerunner PharmaWatch live Projects1 re" with the box stable\)$/,
     );
     // #root never saw a click that passed the guard.
     expect(fake.exec("window.__clicks.length")).toBe(1);
@@ -949,7 +949,7 @@ describe("Page and locators over Runtime.evaluate", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/^click fallback: .* \(cdp\.click_missed: tap through /);
     expect(lines[1]).toMatch(
-      /^click fallback: getByTestId\("m-nav"\)\.getByText\("Inbox"\) \(cdp\.click_missed: element\.click\(\) in the page; 3 mouse clicks and a tap at \(50, 450\) landed on <div id="root">/,
+      /^click fallback: getByTestId\("m-nav"\)\.getByText\("Inbox"\) \(cdp\.click_missed: element\.click\(\) in the page; 3 mouse clicks at \(50, 450\) landed on <div id="root"> .* with the box stable; the tap landed on <div id="root"> /,
     );
     // The last resort has no further fallback: a page whose element.click() raises no event
     // (and a WebView that refuses the touch domain) fails as cdp.click_missed with the hit.

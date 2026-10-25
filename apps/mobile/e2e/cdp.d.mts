@@ -68,6 +68,8 @@ export interface PageOptions {
   timeoutMs?: number;
   pollMs?: number;
   now?: () => number;
+  /** The driver's own lines on the runner's stdout (`click fallback: ...`); default `console.log`. */
+  log?: (line: string) => void;
 }
 
 export interface RoleOptions {
@@ -89,10 +91,13 @@ export declare class Page {
   readonly timeoutMs: number;
   readonly pollMs: number;
   readonly now: () => number;
-  evaluate(expression: string): Promise<unknown>;
+  readonly log: (line: string) => void;
+  evaluate(expression: string, options?: { timeoutMs?: number }): Promise<unknown>;
   title(): Promise<string>;
   url(): Promise<string>;
   mouseClick(x: number, y: number): Promise<void>;
+  /** One tap through `Input.dispatchTouchEvent` (touchStart, touchEnd) at viewport CSS coordinates. */
+  touchTap(x: number, y: number): Promise<void>;
   insertText(text: string): Promise<void>;
   locator(css: string): Locator;
   getByTestId(id: string): Locator;
@@ -117,9 +122,13 @@ export declare class Locator {
   isVisible(): Promise<boolean>;
   waitFor(options?: TimeoutOptions & { state?: "visible" | "attached" }): Promise<void>;
   /**
-   * Clicks the centre through CDP mouse events; an in-page guard stops events that land
-   * outside the element (it moved after the measurement) and the click is sent again
-   * (`cdp.click_missed` at the timeout; `cdp.click_lost` when no event reached the page).
+   * Waits for the layout to settle, scrolls the element into view, measures and hit-tests it
+   * in one in-page call and clicks the centre through CDP mouse events; an in-page guard
+   * stops events that land outside the element and the click is sent again. After three
+   * guarded misses at one unchanged box the fallback ladder runs (a shifted mouse click, a
+   * tap, `element.click()` in the page), each announced on `page.log` as `click fallback:`.
+   * Errors: `cdp.click_missed`, `cdp.click_intercepted`, `cdp.click_unsettled`,
+   * `cdp.click_lost`.
    */
   click(options?: TimeoutOptions): Promise<void>;
   fill(value: string, options?: TimeoutOptions): Promise<void>;
@@ -139,5 +148,6 @@ export declare function connectPage(
     fetchImpl?: typeof fetch;
     WebSocketImpl?: typeof WebSocket;
     now?: () => number;
+    log?: (line: string) => void;
   },
 ): Promise<{ client: CdpClient; page: Page; target: CdpTarget }>;
