@@ -25,6 +25,7 @@ install on a state store holding several humans that names none of them.
 | Line endings | normalised to LF on write | LF | `paths.normalizeNewlines`, `.gitattributes` |
 | Spawning | `.cmd` shims (npm, pnpm, npx, tsx) go through `cmd.exe /d /s /c` with argv passed verbatim | direct exec | `shell.spawnProcess` |
 | Killing a tree | `taskkill /T /F` | `kill -9 -pgid`, fallback to pid | `shell.killTree` |
+| A killed command's return | `run()` resolves at the child's `exit` once it killed it (time limit or abort), with the stdio streams destroyed, instead of waiting for `close`, which a grandchild holding the inherited pipes (git's remote helper) would keep open; a command that ends by itself still resolves at `close` with all its output | same | `shell.run` |
 | Finding binaries | `where` | `command -v` | `shell.which` |
 | Keychain | Credential Manager | libsecret (GNOME Keyring, KWallet) | `vault` (see security.md) |
 | Display server | win32 | wayland or x11 from env | `os.osFacts` (desktop control limits on Wayland) |
@@ -74,7 +75,10 @@ that exercises both branches by passing `platform`/`env` explicitly (see `test/p
 ## Tests
 
 `packages/platform/test/*.test.ts` run on both CI runners. Path tests pass `platform` explicitly
-so Windows behaviour is checked on Linux too and the other way round. `log.test.ts` covers the
+so Windows behaviour is checked on Linux too and the other way round. `shell.test.ts` runs
+node through `run()`: argv passed verbatim, the exit code, the output cap, the wall-clock limit,
+and the limit holding while a grandchild that inherited the pipes lives on (`run()` returns at
+the killed child's exit, not at the grandchild's). `log.test.ts` covers the
 known shapes and the key-name rule; `security-log.test.ts` is the security review's set: a token
 in the message, nested data, an array and an error string, a connection string's password,
 other credential-like key names, a token nested deeper than eight levels, a throwing sink.
@@ -91,5 +95,8 @@ upper-case `*_KEY` names, the key-name rule in every case (`PRIVATE_KEY`, `Priva
   `PLAIN_CAPS_KEY_WORD` list (`MONKEY`, `TURKEY`, `HOTKEY`, ...) has its value masked in logs
   too. That costs a log value, never a credential; add the word to the list when it matters.
 - `shell.killTree` on Linux only kills the process group when the child was started detached;
-  otherwise it falls back to the direct pid. The runtime starts sandboxes detached.
+  otherwise it falls back to the direct pid. The runtime starts sandboxes detached. A
+  grandchild of a command `run()` killed at its limit (git's `git-remote-https`, say) may
+  therefore outlive the command; the runner no longer waits for it, and the output such a
+  grandchild writes after the kill is dropped.
 - Wayland: desktop control is limited to what the xdg-desktop-portal allows.

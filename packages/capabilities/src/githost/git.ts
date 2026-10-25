@@ -1,5 +1,12 @@
 import { existsSync } from "node:fs";
-import { ForerunnerError, join, type RunOptions, type RunResult, run } from "@forerunner/platform";
+import {
+  errorMessage,
+  ForerunnerError,
+  join,
+  type RunOptions,
+  type RunResult,
+  run,
+} from "@forerunner/platform";
 
 /**
  * Local git operations through argv arrays (never shell strings). Branch and PR flow (spec F):
@@ -7,8 +14,42 @@ import { ForerunnerError, join, type RunOptions, type RunResult, run } from "@fo
  * request (the caller decides; this module reports the conflicting files).
  */
 export interface GitAuth {
-  /** Bearer token for HTTPS remotes; passed as an extra header, never written to disk. */
+  /**
+   * Bearer token for HTTPS remotes. It reaches git as an `http.extraheader` entry through the
+   * process environment (`GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`, git
+   * 2.31+): never on the command line, where a process listing would show it, and never
+   * written to the clone's config.
+   */
   token?: string;
+  /**
+   * The origin (`scheme://host[:port]`) the token belongs to. When set, the entry is
+   * `http.<origin>/.extraheader`, which git attaches only to URLs under that origin: a remote
+   * on another host, or a `url.*.insteadOf` rewrite in the user's git config, gets no header.
+   * Without it the header goes to every http(s) remote the command reaches.
+   */
+  origin?: string;
+}
+
+/**
+ * The config key that carries the token: scoped to `origin` (normalised to its URL origin)
+ * when one is given, else the global `http.extraheader`. A non-http(s) origin is `validation`.
+ */
+export function tokenHeaderKey(origin?: string): string {
+  if (origin === undefined) return "http.extraheader";
+  let scope: URL | null = null;
+  try {
+    scope = new URL(origin);
+  } catch {
+    scope = null;
+  }
+  if (!scope || (scope.protocol !== "http:" && scope.protocol !== "https:")) {
+    throw new ForerunnerError(
+      "validation",
+      `a token's origin must be an http(s) URL: ${origin.slice(0, 80)}`,
+      { details: { origin: origin.slice(0, 80) } },
+    );
+  }
+  return `http.${scope.origin}/.extraheader`;
 }
 
 export interface GitIdentity {
@@ -21,6 +62,26 @@ export interface GitOpsOptions {
   auth?: GitAuth;
   identity?: GitIdentity;
   timeoutMs?: number;
+  /** Process runner (tests record argv and env); default the platform's `run`. */
+  runner?: (argv: readonly string[], opts?: RunOptions) => Promise<RunResult>;
+}
+
+/**
+ * One more `GIT_CONFIG_*` entry on top of what `base` already carries, so a caller's own
+ * entries stay and git reads ours after them. A malformed count starts at 0.
+ */
+export function gitConfigEnv(
+  base: NodeJS.ProcessEnv,
+  key: string,
+  value: string,
+): NodeJS.ProcessEnv {
+  const parsed = Number.parseInt(base.GIT_CONFIG_COUNT ?? "", 10);
+  const n = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  return {
+    GIT_CONFIG_COUNT: String(n + 1),
+    [`GIT_CONFIG_KEY_${n}`]: key,
+    [`GIT_CONFIG_VALUE_${n}`]: value,
+  };
 }
 
 export interface RebaseResult {
@@ -34,8 +95,6 @@ export class GitOps {
 
   private base(): string[] {
     const argv = ["git"];
-    if (this.opts.auth?.token)
-      argv.push("-c", `http.extraheader=AUTHORIZATION: bearer ${this.opts.auth.token}`);
     if (this.opts.identity)
       argv.push(
         "-c",
@@ -62,17 +121,56 @@ export class GitOps {
     if (!creates && !existsSync(join(this.opts.cwd, ".git"))) {
       throw new ForerunnerError("not_found", `not a git worktree: ${this.opts.cwd}`);
     }
-    const r = await run([...this.base(), ...args], {
-      cwd: creates ? undefined : this.opts.cwd,
-      timeoutMs: this.opts.timeoutMs ?? 5 * 60 * 1000,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", GCM_INTERACTIVE: "never" },
-      allowFailure: true,
-      ...extra,
-    });
-    return r;
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: "",
+      GCM_INTERACTIVE: "never",
+    };
+    if (this.opts.auth?.token) {
+      Object.assign(
+        env,
+        gitConfigEnv(
+          env,
+          tokenHeaderKey(this.opts.auth.origin),
+          `AUTHORIZATION: bearer ${this.opts.auth.token}`,
+        ),
+      );
+    }
+    const runner = this.opts.runner ?? run;
+    try {
+      return await runner([...this.base(), ...args], {
+        cwd: creates ? undefined : this.opts.cwd,
+        timeoutMs: this.timeoutMs(),
+        env,
+        allowFailure: true,
+        ...extra,
+      });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new ForerunnerError("unavailable", "git is not installed or not on PATH", {
+          cause: e,
+        });
+      }
+      throw new ForerunnerError(
+        "provider_error",
+        `git ${args[0] ?? ""} could not run: ${redactToken(errorMessage(e), this.opts.auth?.token)}`,
+        { cause: e },
+      );
+    }
+  }
+
+  private timeoutMs(): number {
+    return this.opts.timeoutMs ?? 5 * 60 * 1000;
   }
 
   private must(r: RunResult, what: string): RunResult {
+    if (r.timedOut) {
+      // The runner killed the process tree at the wall-clock limit (a clone that never answers).
+      throw new ForerunnerError("timeout", `git ${what} timed out after ${this.timeoutMs()} ms`, {
+        details: { timeoutMs: this.timeoutMs() },
+      });
+    }
     if (r.code !== 0) {
       const detail = redactToken(`${r.stderr}\n${r.stdout}`.trim(), this.opts.auth?.token);
       throw new ForerunnerError("provider_error", `git ${what} failed: ${detail.slice(-800)}`, {
@@ -111,6 +209,44 @@ export class GitOps {
 
   async headSha(): Promise<string> {
     return this.must(await this.git(["rev-parse", "HEAD"]), "rev-parse HEAD").stdout.trim();
+  }
+
+  /** The remote's default branch as the clone recorded it (`refs/remotes/origin/HEAD`). */
+  async remoteDefaultBranch(remote = "origin"): Promise<string> {
+    const r = await this.git(["symbolic-ref", "--short", `refs/remotes/${remote}/HEAD`]);
+    const ref = r.stdout.trim();
+    if (r.code !== 0 || !ref.startsWith(`${remote}/`)) {
+      throw new ForerunnerError(
+        "validation",
+        `the repository has no default branch at ${remote} (an empty repository?)`,
+        { details: { remote } },
+      );
+    }
+    return ref.slice(remote.length + 1);
+  }
+
+  /** The URL of `remote` as the checkout's config has it; null when there is no such remote. */
+  async remoteUrl(remote = "origin"): Promise<string | null> {
+    const r = await this.git(["remote", "get-url", remote]);
+    if (r.code !== 0 && !r.timedOut) return null;
+    return this.must(r, `remote get-url ${remote}`).stdout.trim();
+  }
+
+  /** Local branch names under `prefix`, sorted by name. */
+  async localBranches(prefix = ""): Promise<string[]> {
+    const r = this.must(
+      await this.git([
+        "for-each-ref",
+        "--format=%(refname:short)",
+        `refs/heads/${prefix.replace(/^\/+/, "")}*`,
+      ]),
+      "for-each-ref",
+    );
+    return r.stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && l.startsWith(prefix))
+      .sort();
   }
 
   async createBranch(name: string, from = "HEAD"): Promise<void> {

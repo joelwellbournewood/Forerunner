@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isInside, join } from "@forerunner/platform";
 import { afterEach, describe, expect, it } from "vitest";
+import type { DataImporter, GitHubImportInput } from "../src/data/import.ts";
 import { createDataRoutes, DATA_ROUTES } from "../src/data/routes.ts";
 import { DataAssetView, ImportResultView } from "../src/data/types.ts";
 import { csvText, type DataHarness, dataHarness, makeZip, writeFixture } from "./data-helpers.ts";
@@ -95,6 +96,88 @@ describe("data routes", () => {
     );
     expect(refused.status).toBe(403);
     expect((await read(refused)).code).toBe("approval_required");
+  });
+
+  it("imports a github repository through the route: the body is checked in the schema, the importer gets the reference and the daemon's human", async () => {
+    h = await dataHarness();
+    const calls: { input: GitHubImportInput; projectId: string; actor: unknown }[] = [];
+    const stub = Object.create(h.importer, {
+      importGitHubRepo: {
+        value: async (input: GitHubImportInput, projectId: string, opts: { actor?: unknown }) => {
+          calls.push({ input, projectId, actor: opts.actor });
+          return {
+            source: "github",
+            projectId,
+            destination: join(h.projectsRoot, projectId, "repos", "acme", "service"),
+            imported: [{ rel: "README.md", sizeBytes: 10, assetId: null }],
+            skipped: [],
+            totalBytes: 10,
+            entryCount: 1,
+            gitignore: null,
+            note: null,
+            repository: {
+              slug: "acme/service",
+              url: "https://github.com/acme/service.git",
+              worktree: join(h.projectsRoot, projectId, "repos", "acme", "service"),
+              branch: "forerunner/migration-2026-03-02",
+              defaultBranch: "main",
+              headSha: "0123456789abcdef0123456789abcdef01234567",
+              assetId: "asset-1",
+              reused: false,
+            },
+          };
+        },
+      },
+    }) as DataImporter;
+    const a = createDataRoutes({
+      assets: h.assets,
+      importer: stub,
+      actor: () => ({ humanId: "h-1" }),
+    });
+    const res = await a.fetch(
+      json("POST", `/projects/${h.projectId}/data/import`, {
+        source: "github",
+        locator: "acme/service",
+        tokenRef: "secret:github_token",
+      }),
+    );
+    expect(res.status).toBe(200);
+    const result = ImportResultView.parse(await res.json());
+    expect(result.source).toBe("github");
+    expect(result.repository?.branch).toBe("forerunner/migration-2026-03-02");
+    expect(calls).toEqual([
+      {
+        input: { repo: "acme/service", tokenRef: "secret:github_token" },
+        projectId: h.projectId,
+        actor: { humanId: "h-1" },
+      },
+    ]);
+    // Without a reference the importer decides (the daemon's default); the body never carries a value.
+    const plain = await a.fetch(
+      json("POST", `/projects/${h.projectId}/data/import`, {
+        source: "github",
+        path: "https://github.com/acme/service",
+      }),
+    );
+    expect(plain.status).toBe(200);
+    expect(calls[1]?.input).toEqual({
+      repo: "https://github.com/acme/service",
+      tokenRef: undefined,
+    });
+    const bad: Record<string, unknown>[] = [
+      { source: "github" },
+      { source: "github", path: "acme/service", tokenRef: "ghp_value" },
+      { source: "github", path: "acme/service", tokenRef: "secret:Bad Name" },
+      { source: "github", path: "acme/service", copy: true },
+      { source: "zip", path: "x.zip", tokenRef: "secret:github_token" },
+      { source: "folder", path: "x", tokenRef: "secret:github_token" },
+    ];
+    for (const body of bad) {
+      const r = await a.fetch(json("POST", `/projects/${h.projectId}/data/import`, body));
+      expect(r.status).toBe(400);
+      expect((await read(r)).code).toBe("validation");
+    }
+    expect(calls).toHaveLength(2);
   });
 
   it("uploads multipart files into the project data dir and refuses oversized ones with 413", async () => {

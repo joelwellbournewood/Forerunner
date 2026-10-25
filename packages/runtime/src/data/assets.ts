@@ -142,6 +142,14 @@ export class DataAssets {
     return join(this.projectsRoot, safeSegment(projectId, "project"), "data");
   }
 
+  /**
+   * `<projectsRoot>/<project id>/repos`: where imported repositories are checked out
+   * (`<owner>/<name>` under it), beside the data dir and never inside it (ADR 0069).
+   */
+  projectReposDir(projectId: string): string {
+    return join(this.projectsRoot, safeSegment(projectId, "project"), "repos");
+  }
+
   // -------------------------------------------------------------------------------------
   // Registration
   // -------------------------------------------------------------------------------------

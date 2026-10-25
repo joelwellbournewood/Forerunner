@@ -109,7 +109,11 @@ export async function run(argv: readonly string[], opts: RunOptions = {}): Promi
   if (opts.input !== undefined) child.stdin?.end(opts.input);
   else child.stdin?.end();
 
-  const kill = () => killTree(child);
+  let killed = false;
+  const kill = () => {
+    killed = true;
+    killTree(child);
+  };
   const timer = setTimeout(() => {
     timedOut = true;
     kill();
@@ -122,6 +126,15 @@ export async function run(argv: readonly string[], opts: RunOptions = {}): Promi
     signal: NodeJS.Signals | null;
   }>((resolveExit, reject) => {
     child.on("error", reject);
+    // `close` waits for the stdio streams, which a grandchild that inherited them (git's remote
+    // helper, a runtime inside a sandbox) keeps open after the process we killed is gone. A
+    // killed command therefore resolves at `exit`: the limit bounds the caller, not the tree.
+    child.on("exit", (c, s) => {
+      if (!killed) return;
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      resolveExit({ code: c, signal: s });
+    });
     child.on("close", (c, s) => resolveExit({ code: c, signal: s }));
   }).finally(() => {
     clearTimeout(timer);

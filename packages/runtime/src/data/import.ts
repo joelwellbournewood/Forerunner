@@ -7,6 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { GitOps } from "@forerunner/capabilities/githost/git";
 import {
   basename,
   type Clock,
@@ -26,18 +27,28 @@ import {
   systemClock,
   toPosix,
 } from "@forerunner/platform";
-import type { AuditLogRepo, ProjectRepo } from "@forerunner/state";
+import type { AuditLogRepo, DataAssetRepo, ProjectRepo } from "@forerunner/state";
+import { parseSecretRef, resolveSecretRefs, type Vault } from "@forerunner/vault";
 import AdmZip from "adm-zip";
 import type { DataAssets } from "./assets.ts";
-import type { DataActor, GitignoreGuardResult, ImportedFile, ImportResultView } from "./types.ts";
+import {
+  type DataActor,
+  type GitignoreGuardResult,
+  type ImportedFile,
+  type ImportResultView,
+  type RepositoryImportView,
+  truncatedWalkNote,
+} from "./types.ts";
 import { walkFolder } from "./walk.ts";
 
 /**
- * ZIP and folder import (spec A.3, phase 5). A ZIP is extracted under the project data dir
- * with zip-slip, absolute-path and symlink entries refused or skipped and the entry count and
- * total size bounded; a folder is walked with the same limits and each file registered where
- * it sits (or copied when small and asked). Every file becomes a `data_asset` row. When the
- * project worktree is known, `.gitignore` gets the data dir so nothing large reaches git.
+ * ZIP, folder and GitHub repository import (spec A.3). A ZIP is extracted under the project
+ * data dir with zip-slip, absolute-path and symlink entries refused or skipped and the entry
+ * count and total size bounded; a folder is walked with the same limits and each file
+ * registered where it sits (or copied when small and asked). Every file becomes a `data_asset`
+ * row. When the project worktree is known, `.gitignore` gets the data dir so nothing large
+ * reaches git. A GitHub repository is cloned under the project's repos dir and the migration
+ * branch opened from the default branch, which the import never writes (ADR 0069).
  */
 export interface ImportOptions {
   /** The project worktree; when set the gitignore guard runs. */
@@ -51,8 +62,153 @@ export interface ImportOptions {
 
 export interface DataImporterDeps {
   assets: DataAssets;
-  store: { auditLog: AuditLogRepo; project: ProjectRepo };
+  store: { auditLog: AuditLogRepo; project: ProjectRepo; dataAsset: DataAssetRepo };
   clock?: Clock;
+  /** Resolves `tokenRef` for a repository import; without it a reference is `not_supported`. */
+  vault?: Vault;
+  /** Where `owner/name` resolves to (`<base>/<owner>/<name>.git`). Default `https://github.com`. */
+  gitRemoteBase?: string;
+  /**
+   * The install's token reference (`secret:<name>`) used when an import names none, the vault
+   * holds it and the clone URL is on `gitRemoteBase`'s origin: the human's own GitHub token
+   * from setup. Never a value.
+   */
+  defaultTokenRef?: string;
+  /** Wall-clock limit per git command. Default 10 minutes (a clone can be large). */
+  gitTimeoutMs?: number;
+}
+
+export interface GitHubImportInput {
+  /**
+   * `owner/name` (resolved against `gitRemoteBase`) or an http(s) clone URL. Credentials in
+   * the URL are refused: the token comes by `tokenRef`.
+   */
+  repo: string;
+  /** `secret:<name>` reference of the token; resolved from the vault, handed to git by env. */
+  tokenRef?: string;
+}
+
+export interface RepositorySource {
+  owner: string;
+  name: string;
+  slug: string;
+  /** `scheme://host/path.git`, without userinfo, query or fragment. */
+  url: string;
+}
+
+/** Branches the import opens are `forerunner/migration-<YYYY-MM-DD>` from the Clock. */
+export const MIGRATION_BRANCH_PREFIX = "forerunner/migration-";
+export const DEFAULT_GIT_REMOTE_BASE = "https://github.com";
+const SLUG_SEGMENT = /^[A-Za-z0-9_.-]+$/;
+
+export function migrationBranchName(clock: Clock): string {
+  return `${MIGRATION_BRANCH_PREFIX}${clock.nowIso().slice(0, 10)}`;
+}
+
+function checkSlugSegment(segment: string, what: string): string {
+  if (!SLUG_SEGMENT.test(segment) || segment === "." || segment === "..") {
+    throw new ForerunnerError("validation", `repository ${what} is not a valid name: ${segment}`, {
+      details: { [what]: segment },
+    });
+  }
+  return segment;
+}
+
+/**
+ * `owner/name` or an http(s) URL into owner, name, slug and a credential-free clone URL. A URL
+ * with userinfo is refused outright (the token goes by reference), as is any non-http scheme
+ * (ssh needs keys the runtime does not hold).
+ */
+export function parseRepositorySource(
+  source: string,
+  base: string = DEFAULT_GIT_REMOTE_BASE,
+): RepositorySource {
+  const raw = source.trim();
+  if (!raw) throw new ForerunnerError("validation", "repository is required (owner/name or URL)");
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) && !raw.includes("@")) {
+    const parts = raw.replace(/\.git$/i, "").split("/");
+    if (parts.length !== 2) {
+      throw new ForerunnerError(
+        "validation",
+        `repository must be owner/name or an http(s) URL: ${raw}`,
+        { details: { source: raw } },
+      );
+    }
+    const owner = checkSlugSegment(parts[0] ?? "", "owner");
+    const name = checkSlugSegment(parts[1] ?? "", "name");
+    const root = base.replace(/\/+$/, "");
+    return { owner, name, slug: `${owner}/${name}`, url: `${root}/${owner}/${name}.git` };
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new ForerunnerError(
+      "validation",
+      `repository must be owner/name or an http(s) URL: ${raw}`,
+      { details: { source: raw } },
+    );
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new ForerunnerError(
+      "validation",
+      `repository URL must be http(s) (ssh and other schemes are not supported): ${url.protocol}`,
+      { details: { protocol: url.protocol } },
+    );
+  }
+  if (url.username || url.password) {
+    throw new ForerunnerError(
+      "validation",
+      "credentials in a repository URL are never accepted; pass the token as a secret reference (tokenRef)",
+    );
+  }
+  const segments = url.pathname
+    .split("/")
+    .filter((p) => p.length > 0)
+    .map((p) => decodeURIComponent(p));
+  if (segments.length < 2) {
+    throw new ForerunnerError(
+      "validation",
+      `repository URL must end in owner/name: ${url.origin}${url.pathname}`,
+      { details: { source: `${url.origin}${url.pathname}` } },
+    );
+  }
+  const last = segments[segments.length - 1] ?? "";
+  const name = checkSlugSegment(last.replace(/\.git$/i, ""), "name");
+  const owner = checkSlugSegment(segments[segments.length - 2] ?? "", "owner");
+  const prefix = segments.slice(0, -2).map((p) => encodeURIComponent(p));
+  const path = [...prefix, encodeURIComponent(owner), `${encodeURIComponent(name)}.git`].join("/");
+  return { owner, name, slug: `${owner}/${name}`, url: `${url.origin}/${path}` };
+}
+
+/** An http(s) URL without its userinfo; anything else (an scp form) with a `user@` prefix cut. */
+export function withoutUserinfo(remote: string): string {
+  try {
+    const u = new URL(remote);
+    u.username = "";
+    u.password = "";
+    return u.toString();
+  } catch {
+    return remote.replace(/^[^@/]+@/, "");
+  }
+}
+
+/**
+ * True when two http(s) remote URLs name the same repository: same origin, same path up to a
+ * trailing slash or `.git`. A URL that does not parse never matches.
+ */
+export function sameRepository(a: string, b: string): boolean {
+  const key = (raw: string): string | null => {
+    try {
+      const u = new URL(raw);
+      const path = u.pathname.replace(/\/+$/, "").replace(/\.git$/i, "");
+      return `${u.origin}${path}`;
+    } catch {
+      return null;
+    }
+  };
+  const ka = key(a);
+  return ka !== null && ka === key(b);
 }
 
 /** The in-worktree folder convention for scratch data; always ignored by the guard. */
@@ -281,6 +437,7 @@ export class DataImporter {
       entryCount: entries.length,
       gitignore,
       note: null,
+      repository: null,
     };
   }
 
@@ -364,7 +521,213 @@ export class DataImporter {
       entryCount: walk.files.length + walk.dirs,
       gitignore,
       note,
+      repository: null,
     };
+  }
+
+  /**
+   * Import an existing GitHub repository (spec A.3; ADR 0069): clone it (full history, no
+   * tags) into `<projectsRoot>/<project>/repos/<owner>/<name>`, open the migration branch
+   * `forerunner/migration-<date>` from the remote's default branch, register the checkout as
+   * one folder asset and link `owner/name` on the project. The default branch is never checked
+   * out, committed to or pushed; the import pushes nothing. A token reaches git only through
+   * the process environment, resolved from the vault by reference at call time. A second import
+   * of the same repository into the same project fetches, keeps the worktree and the migration
+   * branch it finds (with its commits) and adds no second row or link.
+   */
+  async importGitHubRepo(
+    input: GitHubImportInput,
+    projectId: string,
+    opts: Pick<ImportOptions, "actor" | "register"> = {},
+  ): Promise<ImportResultView> {
+    const limits = this.deps.assets.limits;
+    const target = parseRepositorySource(input.repo, this.deps.gitRemoteBase);
+    const tokenRef = await this.pickTokenRef(input.tokenRef, target.url);
+    await this.checkProject(projectId);
+    const token = tokenRef ? await this.resolveToken(tokenRef) : null;
+    const dir = join(
+      this.deps.assets.projectReposDir(projectId),
+      safeSegment(target.owner, "owner"),
+      safeSegment(target.name, "repo"),
+    );
+    // The header carrying the token is scoped to the repository's origin (ADR 0069): git
+    // attaches it to no other host, whatever a remote's config or an insteadOf rewrite says.
+    const git = new GitOps({
+      cwd: dir,
+      auth: token ? { token, origin: new URL(target.url).origin } : undefined,
+      timeoutMs: this.deps.gitTimeoutMs ?? 10 * 60 * 1000,
+    });
+    const existed = existsSync(join(dir, ".git"));
+    if (existed) {
+      // The directory is keyed on owner/name alone: the same slug on another host must not
+      // quietly reuse (and fetch) somebody else's checkout.
+      const remote = await git.remoteUrl();
+      if (remote === null || !sameRepository(remote, target.url)) {
+        const shown = remote === null ? "no remote" : withoutUserinfo(remote);
+        throw new ForerunnerError(
+          "validation",
+          `the checkout for ${target.slug} at ${dir} belongs to ${shown}, not ${target.url}; import that repository by its own URL or remove the checkout first`,
+          { details: { slug: target.slug, worktree: dir, url: target.url, remote: shown } },
+        );
+      }
+    } else {
+      mkdirSync(dirname(dir), { recursive: true });
+    }
+    let defaultBranch: string;
+    let branch: string | null = null;
+    let created = false;
+    let headSha: string;
+    try {
+      if (existed) await git.fetch();
+      else await git.clone(target.url);
+      defaultBranch = await git.remoteDefaultBranch();
+      // The migration branch: the one the checkout already sits on, else the newest one made
+      // earlier, else a new one from today's date, always from the default branch's remote head.
+      if (existed) {
+        const current = await git.currentBranch();
+        if (current.startsWith(MIGRATION_BRANCH_PREFIX)) branch = current;
+        else {
+          const earlier = await git.localBranches(MIGRATION_BRANCH_PREFIX);
+          const newest = earlier[earlier.length - 1];
+          if (newest) {
+            await git.checkout(newest);
+            branch = newest;
+          }
+        }
+      }
+      if (branch === null) {
+        branch = migrationBranchName(this.clock);
+        created = true;
+        await git.createBranch(branch, `origin/${defaultBranch}`);
+      }
+      // Enforced in code, not by naming: the checkout never ends up on the default branch.
+      const onBranch = await git.currentBranch();
+      if (onBranch === defaultBranch || onBranch !== branch) {
+        throw new ForerunnerError(
+          "internal",
+          `the checkout is on ${onBranch}, not the migration branch ${branch}`,
+          { details: { branch, defaultBranch, worktree: dir } },
+        );
+      }
+      headSha = await git.headSha();
+    } catch (e) {
+      // A fresh clone that did not reach the migration branch (a refused checkout, an empty
+      // repository, a clone killed at the time limit) leaves nothing behind; a checkout that
+      // was already there is kept as it was.
+      if (!existed) rmSync(dir, { recursive: true, force: true });
+      throw e;
+    }
+    const reused = !created;
+
+    const walk = walkFolder(dir, {
+      maxEntries: limits.maxEntries,
+      maxTotalBytes: limits.maxTotalBytes,
+      maxDepth: limits.maxDepth,
+    });
+    const imported: ImportedFile[] = walk.files.map((f) => ({
+      rel: f.rel,
+      sizeBytes: f.sizeBytes,
+      assetId: null,
+    }));
+    const note = walk.truncated
+      ? truncatedWalkNote(
+          walk.limit ?? "entries",
+          walk.limit === "bytes"
+            ? limits.maxTotalBytes
+            : walk.limit === "depth"
+              ? limits.maxDepth
+              : limits.maxEntries,
+        )
+      : null;
+
+    let assetId: string | null = null;
+    if (opts.register !== false) {
+      const prior = await this.deps.store.dataAsset.byLocator(dir);
+      if (prior?.project_ids.includes(projectId)) assetId = prior.id;
+      else {
+        const view = await this.deps.assets.register(
+          { projectId, source: dir, kind: "folder", mode: "link", name: target.slug },
+          opts.actor ?? {},
+          { audit: false },
+        );
+        assetId = view.id;
+      }
+    }
+    const project = await this.deps.store.project.mustGet(projectId);
+    if (!project.repos.includes(target.slug)) {
+      await this.deps.store.project.patch(projectId, { repos: [...project.repos, target.slug] });
+    }
+    await this.audit(
+      opts.actor ?? {},
+      "data.import",
+      `github ${target.slug} -> ${branch}${reused ? " (kept)" : ""} from ${defaultBranch}, ${imported.length} files${tokenRef ? `, ${tokenRef}` : ""}`,
+      dir,
+    );
+    this.logger.info("github repository imported", {
+      projectId,
+      slug: target.slug,
+      branch,
+      defaultBranch,
+      reused,
+      files: imported.length,
+      tokenRef,
+    });
+    return {
+      source: "github",
+      projectId,
+      destination: dir,
+      imported,
+      // The clone's own `.git` is not user content; every other skip is reported.
+      skipped: walk.skipped.filter((e) => e.rel !== ".git"),
+      totalBytes: walk.totalBytes,
+      entryCount: walk.files.length + walk.dirs,
+      gitignore: null,
+      note,
+      repository: {
+        slug: target.slug,
+        url: target.url,
+        worktree: dir,
+        branch,
+        defaultBranch,
+        headSha,
+        assetId,
+        reused,
+      } satisfies RepositoryImportView,
+    };
+  }
+
+  /**
+   * The reference to use: the caller's (for any host: naming it is the human's choice), else
+   * the install's default when the vault holds it and the clone URL is on the git host that
+   * token belongs to (`gitRemoteBase`'s origin). Another origin is cloned anonymously, so a
+   * request naming some other server never receives the install's GitHub token.
+   */
+  private async pickTokenRef(named: string | undefined, url: string): Promise<string | null> {
+    if (named !== undefined) {
+      parseSecretRef(named);
+      return named;
+    }
+    const fallback = this.deps.defaultTokenRef;
+    if (!fallback || !this.deps.vault) return null;
+    const home = new URL(this.deps.gitRemoteBase ?? DEFAULT_GIT_REMOTE_BASE).origin;
+    if (new URL(url).origin !== home) return null;
+    return (await this.deps.vault.has(parseSecretRef(fallback))) ? fallback : null;
+  }
+
+  /** The vault value for a reference; the name is granted for this one call, never logged as a value. */
+  private async resolveToken(ref: string): Promise<string> {
+    const name = parseSecretRef(ref);
+    if (!this.deps.vault) {
+      throw new ForerunnerError(
+        "not_supported",
+        `a repository token needs a vault to resolve ${ref}; this importer has none`,
+        { details: { tokenRef: ref } },
+      );
+    }
+    const resolved = (await resolveSecretRefs({ token: ref }, this.deps.vault, new Set([name]), {
+      audit: (n) => this.logger.debug("resolved secret reference", { name: n }),
+    })) as { token: string };
+    return resolved.token;
   }
 
   private importDestination(projectId: string, name: string): string {
