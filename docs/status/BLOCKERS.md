@@ -181,3 +181,40 @@ w4-desktop-confirm (revise 78): finding 5, revoking this PC's own desktop row le
 w4-fcm-sender (revise 66): finding 9, the ADR index conflict with the base, **not a defect** (both rows kept at the merge).
 
 w6-android-inbox (revise 74): finding 4, the stand-in's failure rates (8/20, 4/20, 0/20) cannot be checked from the repository, **not a defect** (the build report says so; `cdp.test.ts` reproduces the race and the next `android.yml` run prints `webview engine:`). What the smoke still fails on is the row "Android emulator smoke" above.
+
+## Update of 2026-10-25 night (the cloud session; rows above unchanged where not named)
+
+- **Firebase project for FCM / R.6 / K.8:** the app half is built (ADR 0085 amendment and review
+  follow-up): `firebase-messaging` and the Google services plugin only when
+  `app/google-services.json` exists, which CI writes from the Actions secret
+  `GOOGLE_SERVICES_JSON_BASE64` (`scripts/android-google-services.mjs`, optional in
+  `android.yml` and `release.yml`); the token at pairing and on refresh (signed
+  `PUT /devices/:id/push-token`), a delayed retry on first launch, the four kinds on the
+  `attention` and `updates` channels (`fcm.ts` names the channel per kind), notification links
+  limited to app paths. Compiled only by CI's Android job; nothing has run on a device. Still
+  needed from the human: the secret, the service account key in the state service's vault
+  (`FORERUNNER_FCM_SERVICE_ACCOUNT_REF`), then one device check (token at pairing, one
+  notification per kind, a tap opens its route). R.6 and K.8 stay in progress until then.
+- **Audio devices / D.8:** `voice-run.cmd` on the human's PC (local faster-whisper and Kokoro
+  in a venv, Haiku on the key) with `scripts/voice-run.ts` reporting the first audio the human
+  hears (`heardFirstAudioMs`, from the push-to-talk release to the speaker, posted by the
+  panel's player) and the daemon-side figure. The panel now plays the reply (nothing did
+  before). The Linux half still needs a Linux machine with audio.
+- **D.8 to D.15 (live):** D.9's composed turn was measured cold four times (one sample per run);
+  the prefix is cached and byte-stable (`conversation.test.ts`), and `live-5-chat-cache` measures
+  six warm turns. `live-6-researcher` (D.13) and `live-7-critic-tiers` (D.15, after a probe of
+  effort `max`) are written; all three run from `run-timings.cmd` under the human's caps.
+- **R.1:** rc.1's release run failed in its publish job, so no signed APK was published;
+  `r1-android.cmd` installs the rc.2 APK (signer checked) on the emulator or a phone once
+  rc.2 is out. The emulator smoke cannot drive a release APK (WebView debugging is off in
+  release builds); R.1's remaining clause is install, launch and an update over an earlier
+  release.
+- **V.8:** `scripts/handover-live.ts` and `v8-handover.cmd` (a dedicated install, autonomy 2,
+  real PRs on the repository). The handover job no longer counts as stuck the merge that
+  autonomy 2 leaves to a human (ADR 0060 amendment). Needs `FORERUNNER_GITHUB_TOKEN` in
+  `.env.build`.
+- **Mailbox (L.3) and runner host (S.12):** unchanged; the human's steps are in PROGRESS.md.
+- **Release workflow:** rc.1 run 40229971920 (7e95e39): every build job green, publish red
+  (download-artifact fetched docker/build-push-action's record). Fixed in d8e3fb4, with the
+  sums, the dispatch trigger and the version check (`scripts/release-version.mjs`; the
+  committed version is `1.0.0-rc.2`) after two reviews. Re-test: the rc.2 tag.

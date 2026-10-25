@@ -97,6 +97,72 @@ Updated by the build agent at every milestone and at least daily. Newest first.
 - Build spend: about 8.9 million agent tokens over about nineteen sandbox agents on the
   subscription; no USD figure; nothing charged to an API key (COST.md).
 
+### Where to pick up (handover of 2026-10-25 night, the cloud session)
+Written 2026-10-25 ~22:20 UTC by a cloud session working the evening handover below (code head
+50af41b; CI CI run 40239631674 on 50af41b green on ubuntu-latest and windows-latest with gitleaks, the dependency audit and the runner image (https://github.com/joelwellbournewood/Forerunner/actions/runs/40239631674)). It supersedes that handover where they differ. Every code change below
+was written test-first, had its maintainer doc in the same commit and was independently
+reviewed before the push (verdicts in the log entry under it).
+
+Done tonight:
+- **The manual update check (the human's decision):** nothing asks the release feed on its own;
+  `GET /updates` is local state, `POST /updates/check` is the "Check for updates" button; the
+  tray item is "Updates…" and only opens the screen; installing stays the "Update and restart"
+  click. The project's feed `github:joelwellbournewood/Forerunner` and update key
+  `26fae7f48427e5eb` are the built-in defaults (overridable; a broken `update.json` turns updates
+  off). ADR 0015 amendment.
+- **rc.1:** `push-rc1.cmd` tagged 7e95e39; `release.yml` run 40229971920 built and signed the
+  Windows and Linux desktop bundles, the Android APK and the runner image, then failed in the
+  publish job (download-artifact also fetched docker/build-push-action's build record, which
+  failed to download). Fixed in d8e3fb4 (named downloads, no record upload). No GitHub Release
+  exists for rc.1. Also fixed before the next tag: SHA256SUMS covers the signed manifest and
+  never itself, the broken manual dispatch is gone, and the app's version is one committed
+  value checked against the tag in every build job (it was 0.1.0 everywhere; it is now
+  `1.0.0-rc.2`; `scripts/release-version.mjs`).
+- **Live tests written, offline dry runs green, not yet run live:** `live-5-chat-cache` (D.9:
+  one warm-up and six composed chat turns on Haiku, cache reads asserted; the composed prefix
+  was already cached and byte-stable, so the 1156 ms median was four cold single samples),
+  `live-6-researcher` (D.13) and `live-7-critic-tiers` (D.15, with a probe of effort `max`
+  before any tier review). Expected about USD 1, ceiling about USD 3.
+- **FCM, the app half (ADR 0085 point 9, amended):** built in only when `google-services.json`
+  is present (CI writes it from the secret `GOOGLE_SERVICES_JSON_BASE64`); the token at pairing
+  and on refresh, the four kinds on two channels, links limited to app paths. Compiled only by
+  CI's Android job; never run on a device.
+- **Helpers for the human's runs:** `scripts/handover-live.ts` (V.8 on a dedicated install; the
+  handover job's stuck-place rule no longer counts the merge that autonomy 2 leaves to a human,
+  ADR 0060 amendment), `scripts/voice-run.ts` (check and report) and the voice panel now plays
+  the reply audio (nothing played it before).
+
+Launchers in the human's folder (`.git/info/exclude`), in this order:
+1. `push-rc2.cmd`: tags 50af41b as `v1.0.0-rc.2`; then watch `release.yml` and record it.
+2. `run-timings.cmd`: live-5, live-6, live-7 under the caps (USD 10 per run, 80 in all); commits
+   the ledger after both secret scans; copy the printed lines into gates.md.
+3. `r1-android.cmd`: downloads the rc.2 APK, checks its signer, installs and launches it on the
+   emulator or a phone (R.1); `FROM_TAG` for an update over an earlier release.
+4. `voice-run.cmd`: ten push-to-talk turns plus a warm-up; prints `VOICE RESULT`.
+5. `v8-handover.cmd`: needs `FORERUNNER_GITHUB_TOKEN` in `.env.build` first; opens real PRs.
+
+Still open for v1.0.0 (gates.md "Release 1.0 criteria"): the rc.2 release run (criteria 3 and
+5's tagged run); the live D.9, D.13 and D.15 figures (criterion 6); real audio (criterion 2,
+D.8; Linux still needs a machine with audio); the V.8 live run; R.1 on a device; the Firebase
+service account and the device check (R.6, K.8); a mailbox (L.3) and a runner host (S.12);
+then the status pass; in the commit to tag, `node scripts/release-version.mjs --set 1.0.0` and
+the CHANGELOG heading `[1.0.0-rc.2] - 2026-10-25` renamed to `[1.0.0] - <tag date>` (it already
+carries the P2 list of `docs/status/reports/triage-2026-10-25.md`); and the human's word for
+`v1.0.0`. Rotate the keys after the release.
+
+### 2026-10-25 night (manual update checks, rc.1's release run, live timing tests, FCM app half, helpers for the human's runs)
+
+Commits d8e3fb4 to 50af41b on `ccr-af5a431d-jc9xqj`, each test-first with its maintainer doc,
+and each independently reviewed before the push: the manual check db54fcd (76, revise) and its
+fixes 58f4d7c; the version stamping d36c154 (62, revise: the Windows step ran under pwsh, the
+daemon read an uncommitted version) and its fixes b425531 (86) and fccd7ef; the D.13/D.15 tests
+01019c1 (85) and 8ca9f4f; the FCM app half c829a02 (82) and 2c1d98c; the chat cache guard
+e48133a (88) and 68d0fc1 (92); the V.8 helper e45788a with 654b06a (86) and 9b178ba (90);
+voice-run and the panel's reply playback 766909d/2eb8d55 (79), b1e65fc (78) and 77d100d. Full
+local check on b1e65fc (Postgres 16 via `scripts/dev-postgres.sh`): `pnpm check` (lint, paths, typecheck, 316 unit files with 3334 passed and 4 skipped, docs check, links, secret scan) exit 0; `pnpm test:integration` 8 files passed, 1 skipped, 85 tests passed; the nine scenarios and the phase harnesses (`--project e2e tests/e2e/scenarios`) 13 files passed; `@forerunner/ui` 56 files passed; `@forerunner/live` (offline) 11 files passed, 4 skipped, 61 tests; `@forerunner/approvals-web` passed; the desktop shell `cargo test --lib` 91 passed, clippy and fmt clean. CI: CI run 40239631674 on 50af41b green on ubuntu-latest and windows-latest with gitleaks, the dependency audit and the runner image (https://github.com/joelwellbournewood/Forerunner/actions/runs/40239631674);
+`android.yml` dispatched on fccd7ef, run 40238080672 (https://github.com/joelwellbournewood/Forerunner/actions/runs/40238080672), passed: the FCM Kotlin and Gradle wiring compile and `PushLinksTest` runs. Again on the code head 50af41b: run 40239663025 (https://github.com/joelwellbournewood/Forerunner/actions/runs/40239663025), passed.
+No requirement moved to done (every remaining row needs a live run, a device or a credential).
+
 ### Where to pick up (handover of 2026-10-25 evening, the session on the human's PC)
 Written 2026-10-25 ~18:10 UTC by the session that worked `docs/status/runbook-release-local.md`
 (head 7e95e39; CI run 40216729473 green). It supersedes the handover below where they differ.

@@ -83,6 +83,22 @@ Actions on the public repository's free minutes: 24 `ci.yml` runs on the integra
 (most cancelled by the next push; 131, 144 and 151 green on both OS, 129 and 139 red and fixed
 by the next commit), five `android.yml` runs (all passed) and one `fresh-install.yml` run.
 
+## Build spend of 2026-10-25 night (cloud session)
+
+One orchestrating Claude Code session in the cloud on the human's subscription, with sandbox
+agents in git worktrees for the parallel items and the independent reviews (the live tests, the
+FCM app half, the V.8 and voice helpers, their fix rounds, and nine reviews). The harness
+reported roughly 4.7 million agent tokens; the orchestrating session's own tokens are not
+reported to it. No USD figure: subscription usage is not metered here and nothing was charged
+to an API key (no live-model call; the ledger below is unchanged at USD 11.131482 of the
+human's USD 80 cap). GitHub Actions: `release.yml` run 40229971920 for the rc.1 tag, `ci.yml`
+runs on the pushed heads, one dispatched `android.yml` run (40238080672, passed).
+
+Ahead, all on the human's key from launchers on the PC: `run-timings.cmd` (live-5 about
+USD 0.002, live-6 about USD 0.31 with a USD 1 ceiling, live-7 about USD 0.68 with a USD 2
+ceiling), `voice-run.cmd` (about USD 0.01) and `v8-handover.cmd` (capped at USD 5 for the
+session, expected USD 0.1 to 1).
+
 ## Live ledger
 
 On 2026-10-25 the live suite ran from the human's PC under the human's lower caps of the day
