@@ -463,6 +463,9 @@ describe("data import: github repository", { timeout: 120_000 }, () => {
       const sockets: Socket[] = [];
       const server = createServer((s) => {
         sockets.push(s);
+        // The killed git client drops the connection; on Windows the server side reads it as
+        // ECONNRESET, which would be an unhandled error on the socket (CI run 139).
+        s.on("error", () => {});
       });
       await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
       const port = (server.address() as AddressInfo).port;
