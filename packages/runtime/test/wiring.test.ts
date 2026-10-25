@@ -288,8 +288,15 @@ describe("daemon wiring", () => {
       enabled: false,
       status: "installed",
     });
-    const res = await req("/updates");
+    // Opening the screen reads local state only; the feed is asked on the human's button.
+    const feedHits = () => releases.requests.filter((p) => p.endsWith("/releases")).length;
+    const before = feedHits();
+    const opened = UpdatesView.parse(await (await req("/updates")).json());
+    expect(feedHits()).toBe(before);
+    expect(opened.app.available).toBeNull();
+    const res = await post("/updates/check", {});
     expect(res.status).toBe(200);
+    expect(feedHits()).toBe(before + 1);
     const view = UpdatesView.parse(await res.json());
     expect(view.app).toMatchObject({ runningVersion: "1.0.0", state: "available" });
     expect(view.app.available?.version).toBe("1.1.0");

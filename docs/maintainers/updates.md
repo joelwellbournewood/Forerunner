@@ -103,15 +103,23 @@ environment variables:
 | Field | Env | Default |
 | --- | --- | --- |
 | `channel` | `FORERUNNER_UPDATE_CHANNEL` | `stable` |
-| `feed` (`{kind:"github",owner,repo,apiBase?,manifestAssetName?}` or `{kind:"json",url}`) | `FORERUNNER_UPDATE_FEED` = `github:<owner>/<repo>` or an http(s) URL; `FORERUNNER_UPDATE_API_BASE` | none (no updates offered) |
-| `trustedKeys` | `FORERUNNER_UPDATE_TRUSTED_KEYS` = `id=base64,id2=base64` or `base64,base64` | `[]` (every release refused as `untrusted_key`) |
+| `feed` (`{kind:"github",owner,repo,apiBase?,manifestAssetName?}` or `{kind:"json",url}`, or `null` for no feed) | `FORERUNNER_UPDATE_FEED` = `github:<owner>/<repo>` or an http(s) URL; `FORERUNNER_UPDATE_API_BASE` | `DEFAULT_UPDATE_FEED` = `github:joelwellbournewood/Forerunner` (the project's GitHub Releases); `null` turns the feed off |
+| `trustedKeys` | `FORERUNNER_UPDATE_TRUSTED_KEYS` = `id=base64,id2=base64` or `base64,base64` | `DEFAULT_TRUSTED_KEYS` = the project's update key `26fae7f48427e5eb` (`T4+qibk62TL/GuTszYxLstqgKDPTgNIYtXFAaJTwXaA=`, the public half of release.yml's `UPDATE_SIGNING_KEY`); an explicit list (also `[]`) replaces it, never adds to it |
 | `allowDowngrade` | `FORERUNNER_UPDATE_ALLOW_DOWNGRADE` | `false` |
 | `healthTimeoutMs` | `FORERUNNER_UPDATE_HEALTH_TIMEOUT_MS` | `60000` |
-| `autoCheck` | — | `true` |
+| `autoCheck` | — | `false`; parsed for older files and read by nothing: the feed is asked only by the human (below) |
 
-A malformed file is a `validation` error, not a silent fallback. The build's trusted public key
-is meant to be written into `update.json` by the installer (or compiled into the shell, which
-then passes it in); the registry owner and repo come from the install, never from code.
+A malformed file is a `validation` error, not a silent fallback. The project's feed and update
+key are built in as defaults (the human's decision of 2026-10-25, ADR 0015 amendment) so a
+fresh install, a friend's included, finds and verifies official releases with no setup; a fork
+or a private build replaces both in `update.json` or the environment. If the update key is
+rotated, a release signed by the old key must ship the new key in `DEFAULT_TRUSTED_KEYS` first.
+
+**Checks are manual.** Nothing asks the feed on its own: not the daemon start, the tray, the
+scheduler or the start checklist (which reads the local `release` rows), and not opening the
+Updates screen. The feed is asked only by the human's "Check for updates" button
+(`POST /updates/check`), by `fr update check`, and by "Update and restart" (`apply`
+re-checks the version it installs). Installing is always a separate human click.
 
 ### Install layout and the pointer file (`pointer.ts`, `install.ts`)
 
@@ -258,12 +266,18 @@ ConnectorUpdateView[]` (extension rows whose catalog version is newer: semver co
 both sides are semver, otherwise any difference, `isConnectorUpdate`), `models:
 ModelUpdateView[]` (new models, price changes, deprecations, recommendations with evidence),
 `generatedAt`. `composeUpdatesView({ manager, clock, extensions?, catalog?, modelWatch?,
-checkFeed? })` fills it; an unreachable feed yields `state: unknown` with `lastError`, never
-a failed page.
+checkFeed?, fresh?, checkedBy? })` fills it. By default (`checkFeed` false) it is local state
+only: the pointer facts and `manager.lastCheckResult()` (the last feed query's result for what
+is installed now, however old, null after an apply or rollback), never a feed request or an
+audit row. `checkFeed: true` asks the manager (`fresh` bypasses its cache, `checkedBy` is the
+audited actor); an unreachable feed yields `state: unknown` with `lastError`, never a failed
+page.
 
 `createUpdateRoutes({ ...viewDeps, humanId })` is a Hono sub-app the daemon mounts behind its
-bearer-token middleware: `GET /updates` (the manager's check, served from its cache within
-`checkCacheMs`), `GET /updates/status` (no network), `POST /updates/apply { version? }` → 202
+bearer-token middleware: `GET /updates` and `GET /updates/status` (local state, no network),
+`POST /updates/check` (the "Check for updates" button: a fresh feed query audited as the
+human, answers the view; 200 with `lastError` when the feed is unreachable),
+`POST /updates/apply { version? }` → 202
 `{ version, previous, state, restarting: true }`, `POST /updates/rollback { reason? }` → 202.
 Errors map `not_found` 404, `validation` and `version_conflict` (another operation in
 progress) 409, `approval_required`/`path_not_allowed` 403, `unavailable` 503, `not_supported`

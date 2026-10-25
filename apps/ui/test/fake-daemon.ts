@@ -435,8 +435,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return next();
   });
 
+  const updatesChecked = { value: false };
   app.get("/__test/calls", (c) => c.json(state.calls));
   app.post("/__test/reset", (c) => {
+    updatesChecked.value = false;
     state.projects = clone(PROJECTS);
     state.tasks = clone(TASKS);
     state.sessions = clone(SESSIONS);
@@ -1589,8 +1591,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     return base;
   };
-  app.get("/updates", (c) => c.json(updatesView(true)));
-  app.get("/updates/status", (c) => c.json(updatesView(false)));
+  // Like the daemon: opening reads local state; POST /updates/check asks the "feed" and the
+  // screen keeps that result afterwards.
+  app.get("/updates", (c) => c.json(updatesView(updatesChecked.value)));
+  app.get("/updates/status", (c) => c.json(updatesView(updatesChecked.value)));
+  app.post("/updates/check", (c) => {
+    updatesChecked.value = true;
+    return c.json(updatesView(true));
+  });
   app.post("/updates/apply", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { version?: string };
     const target = body.version ?? UPDATES_FEED.app.available?.version ?? state.version;

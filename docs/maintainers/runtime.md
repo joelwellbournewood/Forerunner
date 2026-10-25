@@ -1940,7 +1940,8 @@ reads `daemon.json` and reports health.
 the Extensions panel sub-app (`GET /extensions`, `GET /extensions/catalog`,
 `GET|DELETE /extensions/:id`, `POST /extensions`, `POST /extensions/:id/toggle|approve|deny`,
 `PUT /extensions/:id/permissions`), the updates screen (`GET /updates`, `GET /updates/status`,
-`POST /updates/apply`, `POST /updates/rollback`), the model watch under `/model-watch`
+both local state only, `POST /updates/check` the human's feed query, `POST /updates/apply`,
+`POST /updates/rollback`; `updates.md`), the model watch under `/model-watch`
 (`GET /reports`, `GET /reports/latest`, `GET /reports/:id`, `POST /run`,
 `POST /reports/:id/answer`, `POST /sync`), `GET /costs/estimates`,
 `PUT /projects/:id/settings` (merges a settings patch with a version check and refreshes the

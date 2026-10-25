@@ -5,9 +5,12 @@ import { appDirs, isForerunnerError, join } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  DEFAULT_TRUSTED_KEYS,
+  DEFAULT_UPDATE_FEED,
   parseFeedEnv,
   parseTrustedKeysEnv,
   readUpdateConfig,
+  UpdateConfig,
   updateConfigPath,
 } from "../src/update/config.ts";
 import { GitHubReleasesFeed, JsonFeed, MemoryReleaseFeed } from "../src/update/feed.ts";
@@ -336,15 +339,64 @@ describe("release feeds over a fake server on 127.0.0.1", () => {
 });
 
 describe("update configuration", () => {
-  it("reads update.json and applies FORERUNNER_UPDATE_* overrides; owner/repo are never hardcoded", () => {
+  it("a fresh install trusts the project's release key and knows the project's feed (ADR 0015 amendment of 2026-10-25)", () => {
+    expect(DEFAULT_UPDATE_FEED).toEqual({
+      kind: "github",
+      owner: "joelwellbournewood",
+      repo: "Forerunner",
+    });
+    expect(DEFAULT_TRUSTED_KEYS).toEqual([
+      { id: "26fae7f48427e5eb", publicKey: "T4+qibk62TL/GuTszYxLstqgKDPTgNIYtXFAaJTwXaA=" },
+    ]);
+    // The declared id is the one the signer derives from the key (verify.ts keyIdOf).
+    const raw = Buffer.from(DEFAULT_TRUSTED_KEYS[0]?.publicKey ?? "", "base64");
+    expect(raw).toHaveLength(32);
+    expect(keyIdOf(raw)).toBe("26fae7f48427e5eb");
+    // Parsing an empty file gives the same defaults; nothing checks on its own.
+    const cfg = UpdateConfig.parse({});
+    expect(cfg.feed).toEqual(DEFAULT_UPDATE_FEED);
+    expect(cfg.trustedKeys).toEqual(DEFAULT_TRUSTED_KEYS);
+    expect(cfg.autoCheck).toBe(false);
+    // The verifier built from the defaults trusts exactly the project key, so a manifest signed
+    // by any other key is refused as untrusted.
+    const builtIn = new ReleaseVerifier(cfg.trustedKeys);
+    expect(builtIn.trustedKeyIds).toEqual(["26fae7f48427e5eb"]);
+    const other = signManifest(manifestOf("9.9.9"), testKey().privateKey);
+    expect(refusalReason(catchErr(() => builtIn.verifyManifest(other)))).toBe("untrusted_key");
+  });
+
+  it("both defaults are overridable: explicit keys replace the built-in key, feed null turns the feed off", () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-update-cfg-ovr-"));
+    const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
+    mkdirSync(dirs.config, { recursive: true });
+    const key = testKey();
+    writeFileSync(
+      updateConfigPath(dirs),
+      JSON.stringify({ feed: null, trustedKeys: [{ publicKey: key.publicKey }] }),
+    );
+    const cfg = readUpdateConfig(dirs, {});
+    expect(cfg.feed).toBeNull();
+    expect(cfg.trustedKeys).toEqual([{ publicKey: key.publicKey }]);
+    writeFileSync(updateConfigPath(dirs), JSON.stringify({ trustedKeys: [] }));
+    expect(readUpdateConfig(dirs, {}).trustedKeys).toEqual([]);
+    const env = readUpdateConfig(dirs, {
+      FORERUNNER_UPDATE_FEED: "github:someone/fork",
+      FORERUNNER_UPDATE_TRUSTED_KEYS: `${key.keyId}=${key.publicKey}`,
+    });
+    expect(env.feed).toEqual({ kind: "github", owner: "someone", repo: "fork" });
+    expect(env.trustedKeys).toEqual([{ id: key.keyId, publicKey: key.publicKey }]);
+  });
+
+  it("reads update.json and applies FORERUNNER_UPDATE_* overrides over the built-in feed and key", () => {
     const home = mkdtempSync(join(tmpdir(), "fr-update-cfg-"));
     const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
     mkdirSync(dirs.config, { recursive: true });
     expect(readUpdateConfig(dirs, {})).toMatchObject({
       channel: "stable",
-      feed: null,
-      trustedKeys: [],
+      feed: DEFAULT_UPDATE_FEED,
+      trustedKeys: DEFAULT_TRUSTED_KEYS,
       allowDowngrade: false,
+      autoCheck: false,
     });
     const key = testKey();
     writeFileSync(

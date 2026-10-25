@@ -498,9 +498,11 @@ describe("daemon client", () => {
     await client.removeExtension(added.id);
     expect((await client.extensions()).length).toBe(6);
 
-    const feed = await client.updates();
+    // Opening reads local state; only the explicit check asks the feed.
+    expect((await client.updates()).app.available).toBeNull();
+    const feed = await client.checkUpdates();
     expect(feed.app.available?.version).toBe("0.2.0");
-    expect((await client.updatesStatus()).app.available).toBeNull();
+    expect((await client.updates()).app.available?.version).toBe("0.2.0");
     const applied = await client.applyUpdate("0.2.0");
     expect(applied).toMatchObject({ version: "0.2.0", restarting: true });
     expect((await client.health()).version).toBe("0.2.0");

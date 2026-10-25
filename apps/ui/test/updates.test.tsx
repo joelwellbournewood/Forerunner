@@ -12,9 +12,40 @@ describe("Updates screen", () => {
     expect(appStateTone("unknown")).toBe("neutral");
   });
 
-  it("shows the available release with its changelog, connector and model updates", async () => {
-    renderApp("/updates");
+  it("the Updates menu entry opens the screen without asking the feed", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/", harness);
+    await user.click(await screen.findByRole("link", { name: "Updates" }));
+    expect(await screen.findByTestId("updates-check")).toHaveTextContent("Check for updates");
+    expect(postedCalls(harness, "/updates/check")).toHaveLength(0);
+  });
+
+  it("opening the screen asks nothing of the feed; Check for updates is the only check", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/updates", harness);
     const app = await screen.findByTestId("app-update");
+    expect(within(app).getByTestId("no-update")).toHaveTextContent("has not been checked yet");
+    expect(screen.queryByTestId("available-update")).toBeNull();
+    expect(postedCalls(harness, "/updates/check")).toHaveLength(0);
+    const button = screen.getByTestId("updates-check");
+    expect(button).toHaveTextContent("Check for updates");
+    await user.click(button);
+    await waitFor(() => expect(postedCalls(harness, "/updates/check")).toHaveLength(1));
+    expect(await screen.findByTestId("available-update")).toHaveTextContent(
+      "Update available: 0.2.0",
+    );
+    // Installing stays the human's own click.
+    expect(postedCalls(harness, "/updates/apply")).toHaveLength(0);
+  });
+
+  it("shows the available release with its changelog, connector and model updates", async () => {
+    const user = userEvent.setup();
+    renderApp("/updates");
+    await user.click(await screen.findByTestId("updates-check"));
+    const app = await screen.findByTestId("app-update");
+    await within(app).findByTestId("available-update");
     expect(within(app).getByTestId("app-version")).toHaveTextContent("running 0.1.0-fake");
     expect(within(app).getByTestId("app-state")).toHaveTextContent("available");
     expect(within(app).getByTestId("available-update")).toHaveTextContent(
@@ -37,6 +68,7 @@ describe("Updates screen", () => {
     const user = userEvent.setup();
     const harness = createHarness();
     renderApp("/updates", harness);
+    await user.click(await screen.findByTestId("updates-check"));
     await screen.findByTestId("available-update");
     await user.click(screen.getByTestId("update-and-restart"));
     await waitFor(() => expect(postedCalls(harness, "/updates/apply")).toHaveLength(1));
@@ -100,14 +132,15 @@ describe("Updates screen", () => {
     );
   });
 
-  it("falls back to the local state when the feed route fails", async () => {
-    // The feed route fails; /updates/status (no network) still answers.
+  it("keeps the local state when Check for updates cannot reach the feed", async () => {
+    const user = userEvent.setup();
     renderApp(
       "/updates",
       createHarness({
-        failing: { "/updates": { status: 503, code: "unavailable", message: "feed down" } },
+        failing: { "/updates/check": { status: 503, code: "unavailable", message: "feed down" } },
       }),
     );
+    await user.click(await screen.findByTestId("updates-check"));
     expect(await screen.findByTestId("feed-error")).toHaveTextContent("feed down");
     expect(screen.getByTestId("no-update")).toHaveTextContent("has not been checked yet");
     expect(screen.getByTestId("app-version")).toHaveTextContent("running 0.1.0-fake");

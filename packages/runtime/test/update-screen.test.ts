@@ -87,6 +87,7 @@ describe("updates view: app, connectors and models on one screen", () => {
       const view = await composeUpdatesView({
         manager: h.manager,
         clock: h.clock,
+        checkFeed: true,
         extensions: h.store.extension,
         catalog,
         modelWatch,
@@ -140,12 +141,12 @@ describe("updates view: app, connectors and models on one screen", () => {
     });
     try {
       await h.manager.apply({ by: { kind: "human", id: "human-j" } });
-      let view = await composeUpdatesView({ manager: h.manager, clock: h.clock });
+      let view = await composeUpdatesView({ manager: h.manager, clock: h.clock, checkFeed: true });
       expect(view.app.state).toBe("pending_health_check");
       expect(view.app.currentVersion).toBe("1.1.0");
       expect(view.app.previousVersion).toBe("1.0.0");
       await h.manager.healthCheck();
-      view = await composeUpdatesView({ manager: h.manager, clock: h.clock });
+      view = await composeUpdatesView({ manager: h.manager, clock: h.clock, checkFeed: true });
       // 1.1.0 was rolled back and is refused now; nothing newer exists
       expect(view.app.state).toBe("rolled_back");
       expect(view.app.lastRollback).toMatchObject({ from: "1.1.0", to: "1.0.0", automatic: true });
@@ -157,20 +158,25 @@ describe("updates view: app, connectors and models on one screen", () => {
         },
       ]);
       expect(view.app.available).toBeNull();
-      // status only (no feed) keeps the pointer facts
+      // status only (no feed) keeps the pointer facts and shows the last check's result
       const quick = await composeUpdatesView({
         manager: h.manager,
         clock: h.clock,
         checkFeed: false,
       });
-      expect(quick.app.checkedAt).toBeNull();
+      expect(quick.app.checkedAt).toBe(view.app.checkedAt);
+      expect(quick.app.rejected).toEqual(view.app.rejected);
       expect(quick.app.currentVersion).toBe("1.0.0");
       // unreachable feed -> unknown with the error, never a crash
       const down = await makeHarness({
         feed: new JsonFeed({ url: "http://127.0.0.1:9/releases.json" }),
       });
       try {
-        const v = await composeUpdatesView({ manager: down.manager, clock: down.clock });
+        const v = await composeUpdatesView({
+          manager: down.manager,
+          clock: down.clock,
+          checkFeed: true,
+        });
         expect(v.app.state).toBe("unknown");
         expect(v.app.lastError).toMatch(/unreachable/);
       } finally {
@@ -190,7 +196,7 @@ describe("updates view: app, connectors and models on one screen", () => {
         feed: new GitHubReleasesFeed({ owner: "owner", repo: "repo", apiBase: s.url }),
       });
       try {
-        const v = await composeUpdatesView({ manager: h.manager, clock: h.clock });
+        const v = await composeUpdatesView({ manager: h.manager, clock: h.clock, checkFeed: true });
         expect(v.app.state).toBe("rejected");
         expect(v.app.rejected).toEqual([
           { version: "5.0.0", reason: "unsigned", message: expect.stringContaining("not signed") },
@@ -205,7 +211,7 @@ describe("updates view: app, connectors and models on one screen", () => {
 });
 
 describe("update routes", () => {
-  it("GET /updates, POST /updates/apply and POST /updates/rollback drive the manager as the human", async () => {
+  it("POST /updates/check, POST /updates/apply and POST /updates/rollback drive the manager as the human", async () => {
     const h = await makeHarness({ feed });
     try {
       await withExtensions(h);
@@ -217,7 +223,11 @@ describe("update routes", () => {
         modelWatch,
         humanId: "human-j",
       });
-      const get = await app.request("/updates");
+      const get = await app.request("/updates/check", {
+        method: "POST",
+        body: "{}",
+        headers: { "content-type": "application/json" },
+      });
       expect(get.status).toBe(200);
       const view = UpdatesView.parse(await get.json());
       expect(view.app.state).toBe("available");
@@ -322,9 +332,9 @@ describe("check results are cached for the screen", () => {
     const h = await makeHarness({ feed, checkCacheMs: 30_000 });
     try {
       const before = feedHits();
-      const v1 = await composeUpdatesView({ manager: h.manager, clock: h.clock });
+      const v1 = await composeUpdatesView({ manager: h.manager, clock: h.clock, checkFeed: true });
       expect(v1.app.state).toBe("available");
-      const v2 = await composeUpdatesView({ manager: h.manager, clock: h.clock });
+      const v2 = await composeUpdatesView({ manager: h.manager, clock: h.clock, checkFeed: true });
       expect(v2.app.checkedAt).toBe(v1.app.checkedAt);
       expect(feedHits() - before).toBe(1);
       expect(await h.store.auditLog.list({ tool: "update.check" })).toHaveLength(1);
@@ -337,11 +347,15 @@ describe("check results are cached for the screen", () => {
       expect(await h.store.auditLog.list({ tool: "update.check" })).toHaveLength(2);
       // the window expires on the injected clock
       await h.clock.advance(30_000);
-      await composeUpdatesView({ manager: h.manager, clock: h.clock });
+      await composeUpdatesView({ manager: h.manager, clock: h.clock, checkFeed: true });
       expect(feedHits() - before).toBe(3);
       // apply invalidates: the next view reflects the new state without waiting
       await h.manager.apply({ by: { kind: "human", id: "human-j" } });
-      const after = await composeUpdatesView({ manager: h.manager, clock: h.clock });
+      const after = await composeUpdatesView({
+        manager: h.manager,
+        clock: h.clock,
+        checkFeed: true,
+      });
       expect(after.app.state).toBe("pending_health_check");
       expect(after.app.available).toBeNull();
       expect(feedHits() - before).toBeGreaterThanOrEqual(5); // apply's own fresh check + the view
@@ -426,6 +440,83 @@ describe("schema compatibility and the sync gate (spec M, last bullet)", () => {
       });
       const raw = JSON.stringify(readPointer(h.dirs));
       expect(raw).not.toMatch(/[\\/]/);
+    } finally {
+      await h.close();
+    }
+  });
+});
+
+describe("update checks are manual only (the human's decision of 2026-10-25, ADR 0015)", () => {
+  const feedHits = () => server.requests.filter((p) => p === "/repos/owner/repo/releases").length;
+  const postCheck = (app: ReturnType<typeof createUpdateRoutes>) =>
+    app.request("/updates/check", {
+      method: "POST",
+      body: "{}",
+      headers: { "content-type": "application/json" },
+    });
+
+  it("composeUpdatesView reads local state only unless a check is asked for", async () => {
+    const h = await makeHarness({ feed, checkCacheMs: 30_000 });
+    try {
+      const before = feedHits();
+      const view = await composeUpdatesView({ manager: h.manager, clock: h.clock });
+      expect(feedHits() - before).toBe(0);
+      expect(view.app.checkedAt).toBeNull();
+      expect(view.app.available).toBeNull();
+      expect(await h.store.auditLog.list({ tool: "update.check" })).toHaveLength(0);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("opening the Updates screen (GET /updates) never asks the feed; POST /updates/check does, as the human, every time", async () => {
+    const h = await makeHarness({ feed, checkCacheMs: 30_000 });
+    try {
+      const app = createUpdateRoutes({ manager: h.manager, clock: h.clock, humanId: "human-j" });
+      const before = feedHits();
+      const opened = UpdatesView.parse(await (await app.request("/updates")).json());
+      expect(feedHits() - before).toBe(0);
+      expect(opened.app.checkedAt).toBeNull();
+      expect(opened.app.state).toBe("unknown");
+
+      const checked = await postCheck(app);
+      expect(checked.status).toBe(200);
+      const view = UpdatesView.parse(await checked.json());
+      expect(view.app.state).toBe("available");
+      expect(view.app.available?.version).toBe("1.1.0");
+      expect(feedHits() - before).toBe(1);
+      const audits = await h.store.auditLog.list({ tool: "update.check" });
+      expect(audits).toHaveLength(1);
+      expect(audits[0]?.human_id).toBe("human-j");
+
+      // The screen now shows the last check's result from local state, without the network.
+      const reopened = UpdatesView.parse(await (await app.request("/updates")).json());
+      expect(reopened.app.available?.version).toBe("1.1.0");
+      expect(reopened.app.checkedAt).toBe(view.app.checkedAt);
+      expect(feedHits() - before).toBe(1);
+
+      // The button always asks the feed, even inside the cache window.
+      await postCheck(app);
+      expect(feedHits() - before).toBe(2);
+      expect(await h.store.auditLog.list({ tool: "update.check" })).toHaveLength(2);
+      // Installing stays its own click: a check never stages anything.
+      expect(h.restarter.requests).toHaveLength(0);
+      expect(readPointer(h.dirs)?.current ?? null).toBeNull();
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("an unreachable feed on the button is reported in the view, not as a server error", async () => {
+    const down = new JsonFeed({ url: "http://127.0.0.1:9/releases.json" });
+    const h = await makeHarness({ feed: down });
+    try {
+      const app = createUpdateRoutes({ manager: h.manager, clock: h.clock, humanId: "human-j" });
+      const res = await postCheck(app);
+      expect(res.status).toBe(200);
+      const view = UpdatesView.parse(await res.json());
+      expect(view.app.lastError).toBeTruthy();
+      expect(view.app.state).toBe("unknown");
     } finally {
       await h.close();
     }

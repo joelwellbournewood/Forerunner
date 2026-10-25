@@ -346,7 +346,12 @@ describe("phase 7 gate: a UI change ships as an update both users install; a bro
       expect(check.available?.notes).toBe(shipped.changelog);
       expect(check.signed?.signature?.keyId).toBe(feed.key.keyId);
       // The updates screen: "Update available" with the changelog, before "Update and restart".
-      const view = await updates.composeUpdatesView({ manager: up.manager, clock: w.clock });
+      // The human pressed "Check for updates" (checks are manual, ADR 0015 amendment of 2026-10-25).
+      const view = await updates.composeUpdatesView({
+        manager: up.manager,
+        clock: w.clock,
+        checkFeed: true,
+      });
       expect(view.app).toMatchObject({
         state: "available",
         runningVersion: PACKAGED,
@@ -583,7 +588,11 @@ describe("phase 7 gate: a UI change ships as an update both users install; a bro
     expect(bobCheck.rejected).toEqual([
       { version: BROKEN, reason: "previously_rejected", message: expect.stringContaining(BROKEN) },
     ]);
-    const bobView = await updates.composeUpdatesView({ manager: bob.manager, clock: w.clock });
+    const bobView = await updates.composeUpdatesView({
+      manager: bob.manager,
+      clock: w.clock,
+      checkFeed: true,
+    });
     expect(bobView.app).toMatchObject({
       state: "rejected",
       currentVersion: SHIPPED,
@@ -842,6 +851,7 @@ describe("phase 7 gate: a UI change ships as an update both users install; a bro
     const view = await updates.composeUpdatesView({
       manager: alice.manager,
       clock: w.clock,
+      checkFeed: true,
       modelWatch: new ModelWatchUpdates(mw.watch),
     });
     expect(view.app).toMatchObject({ currentVersion: SHIPPED, runningVersion: SHIPPED });

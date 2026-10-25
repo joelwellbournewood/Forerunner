@@ -153,3 +153,43 @@ SHA-256: stronger, but a third value to keep in step with the keystore; the `key
 check already proves the APK carries the key the secret holds, since that key is the only one
 Gradle is given. Letting the publish job drop the APK when it is development-signed: a release
 with a missing platform and no failing signal, the pattern this amendment removes.
+
+## Amendment (2026-10-25, the human's decision): manual checks, the project's feed and key built in
+
+**Context.** Opening the Updates screen asked the release feed (`GET /updates` composed the
+view with `checkFeed` true by default, cached 60 s), and `update.autoCheck` defaulted to true
+though nothing read it. A fresh install had no feed (an empty in-memory feed) and no trusted
+key, so it could neither find nor verify an official release: a friend installing the MSI or
+AppImage would never be offered 1.0.1. The human decided on 2026-10-25: no automatic update
+check anywhere; an Updates menu entry and a "Check for updates" button are the only way to
+check; installing stays the human's click; the project's update public key is built in as the
+default trusted key so fresh installs accept official releases.
+
+**Decision.**
+1. Checks are manual. `GET /updates` and `GET /updates/status` are local state only (the
+   pointer and `UpdateManager.lastCheckResult()`, the last check's result for what is installed
+   now); `composeUpdatesView` defaults `checkFeed` to false. `POST /updates/check` (the button)
+   runs a fresh feed query audited as the human. `fr update check` and "Update and restart"
+   (`apply`, which re-checks the version it installs) are the other two feed queries, both
+   human actions. `autoCheck` defaults to false and stays parsed so older `update.json` files
+   load; nothing reads it.
+2. `DEFAULT_UPDATE_FEED` = `github:joelwellbournewood/Forerunner` and `DEFAULT_TRUSTED_KEYS` =
+   `[{ id: "26fae7f48427e5eb", publicKey: "T4+qibk62TL/GuTszYxLstqgKDPTgNIYtXFAaJTwXaA=" }]` (the
+   public half of release.yml's `UPDATE_SIGNING_KEY`, generated on the human's PC on
+   2026-10-25) are the schema defaults. `feed: null` turns the feed off; an explicit
+   `trustedKeys` (also `[]`) replaces the default list, never extends it; the environment
+   variables override both as before.
+
+**Consequences.** This is the one place the code names the project's own repository, by the
+human's instruction (it outranks the spec's "nothing hardcoded"; AGENTS.md precedence). Every
+deployment can still replace it, and the tests pin both the defaults and the overrides. Rotating
+the update key needs a release signed by the old key that carries the new key in
+`DEFAULT_TRUSTED_KEYS`, or every install must be given the new key by hand. A check is one
+GitHub API request without a token (60 per hour per address), enough for a button.
+
+**Alternatives considered.** Writing the key into `update.json` from the installer (the
+earlier plan of this ADR): the MSI and AppImage have no post-install step that runs the
+daemon's config writer, and a portable unzip would have none at all. A background check with a
+"never install by itself" rule: refused by the human; a check is a network request the human
+did not ask for. Compiling the key into the Tauri shell and passing it in: the daemon is also
+run headless (`fr`, the cloud runner), which would then trust nothing.

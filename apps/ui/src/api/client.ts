@@ -532,10 +532,12 @@ export interface DaemonClient {
   voiceStatus(signal?: AbortSignal): Promise<VoiceStatusView>;
 
   // Updates screen (spec M)
-  /** Asks the release feed (network). */
+  /** Local state with the last check's result; never asks the release feed. */
   updates(signal?: AbortSignal): Promise<UpdatesView>;
   /** What is known without the network. */
   updatesStatus(signal?: AbortSignal): Promise<UpdatesView>;
+  /** The human's "Check for updates": the daemon asks the release feed (network). */
+  checkUpdates(): Promise<UpdatesView>;
   /** 202: the daemon stages the version and exits with the restart code. */
   applyUpdate(version?: string): Promise<ApplyUpdateResult>;
   rollbackUpdate(reason?: string): Promise<RollbackResult>;
@@ -880,6 +882,7 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
     updates: (signal) => get(routePath("updates"), UpdatesViewSchema, undefined, signal),
     updatesStatus: (signal) =>
       get(routePath("updatesStatus"), UpdatesViewSchema, undefined, signal),
+    checkUpdates: () => post(routePath("checkUpdates"), UpdatesViewSchema, {}),
     applyUpdate: (version) =>
       post(routePath("applyUpdate"), ApplyUpdateResultSchema, version ? { version } : {}),
     rollbackUpdate: (reason) =>

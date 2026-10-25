@@ -8,6 +8,9 @@ test("updates: the available release shows its changelog; Update and restart app
   request,
 }) => {
   await page.goto("/updates");
+  // Nothing is checked on open; the human's button asks the feed.
+  await expect(page.getByTestId("no-update")).toContainText("has not been checked yet");
+  await page.getByTestId("updates-check").click();
   await expect(page.getByTestId("app-state")).toHaveText("available");
   await expect(page.getByTestId("available-update")).toContainText("Update available: 0.2.0");
   await expect(page.getByTestId("changelog")).toContainText("Reviews tab with the grade trend");

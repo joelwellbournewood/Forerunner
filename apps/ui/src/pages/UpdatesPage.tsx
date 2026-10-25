@@ -25,37 +25,34 @@ export function appStateTone(state: AppUpdateView["state"]): Tone {
   }
 }
 
-interface Loaded {
-  view: UpdatesView;
-  /** "feed" when the release feed answered, "status" when only the local state was readable. */
-  source: "feed" | "status";
-  feedError: string | null;
-}
-
 /**
  * Updates screen (spec M.3 to M.5): the app's version and the available release with its
  * changelog and "Update and restart", connector updates and model updates (the model watch's
- * recommendations with adopt / ignore / remind). Asks the release feed first and falls back to
- * what the daemon knows without the network, saying so.
+ * recommendations with adopt / ignore / remind). Opening the screen reads the daemon's local
+ * state only; the release feed is asked only when the human presses "Check for updates", and
+ * installing is its own click (the human's decision of 2026-10-25, ADR 0015 amendment).
  */
 export function UpdatesPage() {
   const client = useClient();
   const { restart, connection, me } = useUiState((s) => s);
-  const loaded = useAsync<Loaded>(
-    async (signal) => {
-      try {
-        return { view: await client.updates(signal), source: "feed", feedError: null };
-      } catch (error) {
-        if (signal.aborted) throw error;
-        return {
-          view: await client.updatesStatus(signal),
-          source: "status",
-          feedError: describeError(error),
-        };
-      }
-    },
-    [client],
-  );
+  const loaded = useAsync<UpdatesView>((signal) => client.updates(signal), [client]);
+  const [checked, setChecked] = useState<UpdatesView | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [feedError, setFeedError] = useState<string | null>(null);
+  const checkNow = async () => {
+    if (checking) return;
+    setChecking(true);
+    setFeedError(null);
+    try {
+      const v = await client.checkUpdates();
+      setChecked(v);
+      if (v.app.lastError) setFeedError(v.app.lastError);
+    } catch (error) {
+      setFeedError(describeError(error));
+    } finally {
+      setChecking(false);
+    }
+  };
   const watch = useAsync((signal) => client.modelWatchLatest(signal), [client]);
   const reports = useAsync((signal) => client.modelWatchReports(10, signal), [client]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -76,7 +73,7 @@ export function UpdatesPage() {
     }
   };
 
-  const view = loaded.data?.view;
+  const view = checked ?? loaded.data;
   const app = view?.app;
   const report = watch.data?.report ?? null;
   const health = watch.data?.health ?? null;
@@ -105,18 +102,20 @@ export function UpdatesPage() {
           Updates
         </h1>
         {view ? (
-          <span className="text-xs text-neutral-500">
-            {loaded.data?.source === "feed" ? "feed checked" : "feed not reached; local state"}{" "}
-            {formatDateTime(view.generatedAt)}
+          <span className="text-xs text-neutral-500" data-testid="updates-checked-at">
+            {view.app.checkedAt
+              ? `last checked ${formatDateTime(view.app.checkedAt)}`
+              : "not checked yet"}
           </span>
         ) : null}
         <Button
           variant="ghost"
           className="ml-auto"
-          onClick={loaded.reload}
+          disabled={checking}
+          onClick={() => void checkNow()}
           data-testid="updates-check"
         >
-          Check again
+          {checking ? "Checking…" : "Check for updates"}
         </Button>
       </div>
       {restart ? (
@@ -128,9 +127,9 @@ export function UpdatesPage() {
           daemon comes back on its own; this page reconnects.
         </output>
       ) : null}
-      {loaded.data?.feedError ? (
+      {feedError ? (
         <ErrorBanner
-          message={`Release feed not reachable (${loaded.data.feedError}); showing what this daemon knows.`}
+          message={`Release feed not reachable (${feedError}); showing what this daemon knows.`}
           testId="feed-error"
         />
       ) : null}

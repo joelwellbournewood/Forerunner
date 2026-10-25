@@ -395,6 +395,17 @@ export class UpdateManager {
   }
 
   /**
+   * The result of the last feed query for what is installed now, however old, without asking
+   * the feed and without an audit row (the updates screen's local state). Null before the
+   * first check, and again after an apply, a rollback or a refusal invalidated it.
+   */
+  lastCheckResult(): UpdateCheck | null {
+    const cached = this.lastCheck;
+    if (!cached || cached.installed !== this.installedVersion()) return null;
+    return { ...cached.result, cached: true };
+  }
+
+  /**
    * Ask the feed and report the newest release this install may take. The result is reused for
    * `checkCacheMs` (the screen asks on every view) unless `fresh` is set; only a real feed
    * query appends an `update.check` audit row.

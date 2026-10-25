@@ -5,8 +5,9 @@ import { UPDATE_CHANNELS } from "./manifest.ts";
 
 /**
  * Updater configuration: `update.json` in the config directory, overridden by FORERUNNER_UPDATE_*
- * environment variables. Nothing here names an organisation or host: the feed (owner/repo or a
- * manifest URL) and the trusted signing keys are supplied by the install.
+ * environment variables. The project's own release feed and release signing key are the
+ * defaults (the human's decision of 2026-10-25, ADR 0015 amendment) so a fresh install can find
+ * and verify official releases; `update.json` or the environment replaces either one.
  */
 export const TrustedKey = z.object({
   /** Key id as written into signatures; derived from the public key when omitted. */
@@ -30,16 +31,41 @@ export const UpdateFeedConfig = z.discriminatedUnion("kind", [
 ]);
 export type UpdateFeedConfig = z.infer<typeof UpdateFeedConfig>;
 
+/**
+ * The project's release feed: GitHub Releases of the Forerunner repository. `feed: null` in
+ * update.json turns the feed off; `FORERUNNER_UPDATE_FEED` or a `feed` object replaces it.
+ */
+export const DEFAULT_UPDATE_FEED: UpdateFeedConfig = Object.freeze({
+  kind: "github",
+  owner: "joelwellbournewood",
+  repo: "Forerunner",
+}) as UpdateFeedConfig;
+
+/**
+ * The project's update signing public key (Ed25519, raw 32 bytes in base64), whose private half
+ * is the `UPDATE_SIGNING_KEY` release.yml signs the manifest with. An explicit `trustedKeys` in
+ * update.json or `FORERUNNER_UPDATE_TRUSTED_KEYS` replaces this list; it never adds to it.
+ */
+export const DEFAULT_TRUSTED_KEYS: readonly TrustedKey[] = Object.freeze([
+  Object.freeze({
+    id: "26fae7f48427e5eb",
+    publicKey: "T4+qibk62TL/GuTszYxLstqgKDPTgNIYtXFAaJTwXaA=",
+  }),
+]);
+
 export const UpdateConfig = z.object({
   channel: z.enum(UPDATE_CHANNELS).default("stable"),
-  feed: UpdateFeedConfig.nullable().default(null),
-  trustedKeys: z.array(TrustedKey).default([]),
+  feed: UpdateFeedConfig.nullable().default(() => ({ ...DEFAULT_UPDATE_FEED })),
+  trustedKeys: z.array(TrustedKey).default(() => DEFAULT_TRUSTED_KEYS.map((k) => ({ ...k }))),
   /** Install an older release than the running one. Off unless a human turns it on. */
   allowDowngrade: z.boolean().default(false),
   /** How long the first start after an update may take to pass its health check. */
   healthTimeoutMs: z.number().int().positive().default(60_000),
-  /** Check the feed on start and on a schedule (the UI shows "Update available"). */
-  autoCheck: z.boolean().default(true),
+  /**
+   * Kept for older update.json files and read by nothing: the feed is asked only when the human
+   * presses "Check for updates" (or runs `fr update check`), never on start or on a schedule.
+   */
+  autoCheck: z.boolean().default(false),
 });
 export type UpdateConfig = z.infer<typeof UpdateConfig>;
 

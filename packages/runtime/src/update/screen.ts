@@ -2,7 +2,7 @@ import { type Clock, errorMessage, ForerunnerError } from "@forerunner/platform"
 import type { ExtensionRepo } from "@forerunner/state";
 import { Hono } from "hono";
 import { z } from "zod";
-import type { UpdateManager } from "./install.ts";
+import type { UpdateActor, UpdateCheck, UpdateManager } from "./install.ts";
 import { UPDATE_CHANNELS } from "./manifest.ts";
 import type { ExtensionCatalog, ModelWatchReport } from "./ports.ts";
 import { compareSemver, isSemver } from "./semver.ts";
@@ -92,10 +92,15 @@ export interface UpdatesViewDeps {
   catalog?: ExtensionCatalog;
   modelWatch?: ModelWatchReport;
   /**
-   * Skip the feed (status only). Default: ask the manager, which reuses its last check for
-   * `checkCacheMs` so a screen refresh is neither a feed request nor an audit row.
+   * Ask the release feed. Default false: the view is local state only and shows the result of
+   * the last check, if any (the human's decision of 2026-10-25: checks are manual, ADR 0015).
+   * True only for the human's "Check for updates" (POST /updates/check) and the gate harnesses.
    */
   checkFeed?: boolean;
+  /** With `checkFeed`: bypass the manager's check cache (the button always asks the feed). */
+  fresh?: boolean;
+  /** With `checkFeed`: who asked, for the `update.check` audit row. Default the system. */
+  checkedBy?: UpdateActor;
 }
 
 /** True when the catalog offers something newer than what is installed. */
@@ -120,32 +125,42 @@ export async function composeUpdatesView(deps: UpdatesViewDeps): Promise<Updates
     lastError: null,
     checkedAt: null,
   };
-  if (deps.checkFeed !== false) {
+  const fill = (check: UpdateCheck) => {
+    app.checkedAt = check.checkedAt;
+    app.rejected = check.rejected.map((r) => ({
+      version: r.version,
+      reason: r.reason,
+      message: r.message,
+    }));
+    if (check.available) {
+      const artifact = deps.manager.platform
+        ? check.available.artifacts.find((a) => a.platform === deps.manager.platform)
+        : undefined;
+      app.available = {
+        version: check.available.version,
+        changelog: check.available.notes,
+        publishedAt: check.available.publishedAt,
+        sizeBytes: artifact?.size ?? null,
+        artifactName: artifact?.name ?? null,
+        minSchema: check.available.minSchema,
+      };
+    }
+    app.state = "up_to_date";
+  };
+  if (deps.checkFeed === true) {
     try {
-      const check = await deps.manager.check();
-      app.checkedAt = check.checkedAt;
-      app.rejected = check.rejected.map((r) => ({
-        version: r.version,
-        reason: r.reason,
-        message: r.message,
-      }));
-      if (check.available) {
-        const artifact = deps.manager.platform
-          ? check.available.artifacts.find((a) => a.platform === deps.manager.platform)
-          : undefined;
-        app.available = {
-          version: check.available.version,
-          changelog: check.available.notes,
-          publishedAt: check.available.publishedAt,
-          sizeBytes: artifact?.size ?? null,
-          artifactName: artifact?.name ?? null,
-          minSchema: check.available.minSchema,
-        };
-      }
-      app.state = "up_to_date";
+      fill(
+        await deps.manager.check(deps.checkedBy ?? { kind: "system", id: null }, {
+          fresh: deps.fresh === true,
+        }),
+      );
     } catch (e) {
       app.lastError = errorMessage(e);
     }
+  } else {
+    // Local state only: the last check's result, never a feed request or an audit row.
+    const last = deps.manager.lastCheckResult();
+    if (last) fill(last);
   }
   if (pointer?.state === "pending_health_check") app.state = "pending_health_check";
   else if (app.available) app.state = "available";
@@ -221,7 +236,10 @@ function statusOf(err: ForerunnerError): 400 | 403 | 404 | 409 | 500 | 503 {
   }
 }
 
-/** GET /updates, GET /updates/status, POST /updates/apply, POST /updates/rollback. */
+/**
+ * GET /updates and GET /updates/status (local state, no network), POST /updates/check (the
+ * human's "Check for updates": asks the feed), POST /updates/apply, POST /updates/rollback.
+ */
 export function createUpdateRoutes(deps: UpdateRouteDeps): Hono {
   const app = new Hono();
   app.onError((err, c) => {
@@ -230,9 +248,20 @@ export function createUpdateRoutes(deps: UpdateRouteDeps): Hono {
     return c.json({ code: "internal", message: errorMessage(err) }, 500);
   });
 
-  app.get("/updates", async (c) => c.json(await composeUpdatesView(deps)));
+  // Opening the screen never asks the feed (ADR 0015 amendment of 2026-10-25).
+  app.get("/updates", async (c) => c.json(await composeUpdatesView({ ...deps, checkFeed: false })));
   app.get("/updates/status", async (c) =>
     c.json(await composeUpdatesView({ ...deps, checkFeed: false })),
+  );
+  app.post("/updates/check", async (c) =>
+    c.json(
+      await composeUpdatesView({
+        ...deps,
+        checkFeed: true,
+        fresh: true,
+        checkedBy: { kind: "human", id: deps.humanId },
+      }),
+    ),
   );
   app.post("/updates/apply", async (c) => {
     const body = ApplyUpdateBody.safeParse(await c.req.json().catch(() => ({})));
