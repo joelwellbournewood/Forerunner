@@ -87,3 +87,34 @@ existed (kinds `github_org`, `github_user`, `gitlab`, `git_remote`, `local_folde
 - Checking for an install by looking for the standard doc set (`docs/status.md` and friends,
   spec G.5): those files are what Forerunner writes, but many repositories carry a `docs/`
   folder of their own. A dedicated marker file is unambiguous.
+
+## Amendment (2026-10-25, independent review of w2-a4-sources)
+
+1. **A URL names its host.** Point 3 dropped the host from the key because one GitHub host
+   per install is enough; the parser nonetheless accepted a URL on any host, so
+   `https://gitlab.com/acme/alpha` became the GitHub source `acme/alpha` (a repository the
+   human never named) and a project linked to that URL made the GitHub `acme/alpha` a false
+   duplicate. Now `parseRepoLocator` reports the host a URL or scp form names and accepts the
+   install's git hosts only (`repoHostsFor`: the host of `githubApiBase` with `api.`
+   dropped and of the import's `gitRemoteBase`, `github.com` by default); `add` refuses a URL
+   elsewhere with `validation` ("other git hosts come later") and `keysOfProject` gives it no
+   key. The key itself still carries no host.
+2. **A bound on one scan.** `maxCandidates` (`DEFAULT_MAX_CANDIDATES`, 1,000) repositories
+   or subfolders per scan, checked after the listing and before the per-repository marker
+   call or any row. A scan beyond it is refused and recorded on the source like any failed
+   scan, with the advice to connect narrower sources. An organisation of ten thousand
+   repositories would otherwise cost as many `contents` requests against a token budget of
+   five thousand an hour, and a folder of as many subfolders as many rows.
+3. **The token's destination.** The adapter's pagination followed the `Link: rel="next"`
+   URL with the bearer header whatever origin the host named. `GitHubHost.request` now
+   refuses an absolute URL off `baseUrl`'s origin (`provider_error`, nothing sent); the
+   release upload (`upload_url`, GitHub's `uploads.github.com`) is the one explicit opt-in.
+   The same rule the A.3 import applies to git (ADR 0069).
+4. **The 409 for another human's source** (one row per kind and locator) names neither the
+   row nor the human; before it carried the row id, which the owner rule hides everywhere
+   else.
+5. **Point 4 stands as a gap.** Nothing writes `.forerunner/project.json`, so for
+   repositories the existing-install mark fires on hand-marked ones only; this install's
+   checkout is told by the install record. The G.5 docs scaffold (ADR 0058, the first thing
+   Forerunner writes into a managed repository) is the place to write it, on the same branch
+   and PR as the doc set. Recorded as an open review finding, not changed here.

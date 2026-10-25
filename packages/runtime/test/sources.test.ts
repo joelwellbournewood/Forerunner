@@ -10,6 +10,7 @@ import {
   folderKey,
   keysOfProject,
   parseRepoLocator,
+  repoHostsFor,
   repoKey,
   type SourceActor,
   SourceDiscovery,
@@ -131,11 +132,46 @@ describe("source discovery", () => {
     expect(parseRepoLocator("a/b/c")).toBeNull();
     expect(parseRepoLocator("https://example.test/")).toBeNull();
     expect(parseRepoLocator("")).toBeNull();
+    // A URL names its host: one on another git host is not a repository of this install's
+    // GitHub (other hosts come later), whatever the owner and name; a bare owner/name is.
+    for (const foreign of [
+      "https://gitlab.com/acme/alpha",
+      "https://gitlab.com/acme/alpha.git",
+      "git@gitlab.com:acme/alpha.git",
+      "ssh://git@gitlab.com/acme/alpha.git",
+      "gitlab.com/acme/alpha",
+    ]) {
+      expect(parseRepoLocator(foreign), foreign).toBeNull();
+    }
+    expect(parseRepoLocator("https://WWW.GitHub.com/acme/alpha")?.key).toBe("github:acme/alpha");
+    // The hosts an install accepts come from its configuration (a GitHub Enterprise host).
+    const ghes = ["ghe.corp.test", "github.com"];
+    expect(parseRepoLocator("https://ghe.corp.test/acme/alpha", ghes)?.key).toBe(
+      "github:acme/alpha",
+    );
+    expect(parseRepoLocator("git@ghe.corp.test:acme/alpha.git", ghes)?.locator).toBe("acme/alpha");
+    expect(parseRepoLocator("https://ghe.corp.test/acme/alpha")).toBeNull();
+    expect(repoHostsFor({})).toEqual(["github.com"]);
+    expect(
+      repoHostsFor({
+        githubApiBase: "https://ghe.corp.test/api/v3",
+        gitRemoteBase: "https://ghe.corp.test",
+      }),
+    ).toEqual(["ghe.corp.test"]);
+    expect(repoHostsFor({ githubApiBase: "https://api.github.com" })).toEqual(["github.com"]);
     expect(repoKey("Acme", "Alpha")).toBe("github:acme/alpha");
     expect(folderKey(join(folderRoot, "one"))).toBe(folderKey(`${join(folderRoot, "one")}/`));
-    expect(keysOfProject(["https://github.com/acme/alpha", join(folderRoot, "one"), "x"])).toEqual([
+    expect(
+      keysOfProject([
+        "https://github.com/acme/alpha",
+        join(folderRoot, "one"),
+        "x",
+        "https://gitlab.com/acme/beta",
+        "acme/beta",
+      ]),
+    ).toEqual(["github:acme/alpha", folderKey(join(folderRoot, "one")), "github:acme/beta"]);
+    expect(keysOfProject(["https://ghe.corp.test/acme/alpha"], ghes)).toEqual([
       "github:acme/alpha",
-      folderKey(join(folderRoot, "one")),
     ]);
   });
 
@@ -160,6 +196,37 @@ describe("source discovery", () => {
     await refuse({ kind: "github_org", locator: "not a login" }, "validation", /login/);
     await refuse({ kind: "github_user", locator: "-dash" }, "validation", /login/);
     await refuse({ kind: "github_repo", locator: "acme" }, "validation", /owner\/name/);
+    // A repository URL on another git host is refused, never read from this install's GitHub
+    // under the same owner and name; a host the install is configured for is accepted.
+    await refuse(
+      { kind: "github_repo", locator: "https://gitlab.com/acme/alpha" },
+      "validation",
+      /git host/,
+    );
+    await refuse(
+      { kind: "github_repo", locator: "git@gitlab.com:acme/alpha.git" },
+      "validation",
+      /git host/,
+    );
+    const ghes = new SourceDiscovery({
+      store,
+      clock,
+      hostFor: () => new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+      createProject: async () => {
+        throw new Error("never");
+      },
+      repoHosts: ["ghe.corp.test"],
+    });
+    const onGhes = await ghes.add(
+      { kind: "github_repo", locator: "https://ghe.corp.test/acme/omega.git" },
+      ada,
+    );
+    expect(onGhes).toMatchObject({ kind: "github_repo", locator: "acme/omega" });
+    await expect(
+      ghes.add({ kind: "github_repo", locator: "https://github.com/acme/omega" }, ada),
+    ).rejects.toMatchObject({ code: "validation", message: expect.stringMatching(/git host/) });
+    await ghes.remove(onGhes.id, ada);
+    expect(await store.source.list()).toEqual([]);
     await refuse({ kind: "gitlab", locator: "x" }, "not_supported", /later/);
     await refuse({ kind: "git_remote", locator: "x" }, "not_supported", /later/);
     await refuse({ kind: "local_folder", locator: "relative/path" }, "validation", /absolute/);
@@ -186,8 +253,10 @@ describe("source discovery", () => {
     });
     await refuse({ kind: "github_org", locator: "ACME" }, "validation", /already connected/);
     const audit = await store.auditLog.list({ tool: "source.add" });
-    expect(audit).toHaveLength(1);
-    expect(audit[0]?.input_summary).toContain("secret:github_token");
+    // The org's row (the GHES repository above wrote and removed its own); references only.
+    const orgAdds = audit.filter((r) => r.input_summary.startsWith("github_org acme"));
+    expect(orgAdds).toHaveLength(1);
+    expect(orgAdds[0]?.input_summary).toContain("secret:github_token");
     expect(JSON.stringify(audit)).not.toContain(token);
   });
 
@@ -396,6 +465,53 @@ describe("source discovery", () => {
     });
   });
 
+  it("refuses a scan beyond the candidate bound before any host call or row, and records it on the source", async () => {
+    const bounded = new SourceDiscovery({
+      store,
+      clock,
+      hostFor: () => new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+      createProject: async () => {
+        throw new Error("never");
+      },
+      maxCandidates: 3,
+    });
+    // A folder with more subfolders than the bound: refused, nothing written.
+    const many = join(root, "many");
+    for (const n of ["a", "b", "c", "d"]) mkdirSync(join(many, n), { recursive: true });
+    const folder = await bounded.add({ kind: "local_folder", locator: many }, ada);
+    await expect(bounded.scan(folder.id, ada)).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/more than 3/),
+      details: { found: 4, max: 3 },
+    });
+    expect(await store.sourceCandidate.forSource(folder.id)).toEqual([]);
+    const row = await store.source.mustGet(folder.id);
+    expect(row.status).toBe("error");
+    expect(JSON.stringify(row.scan_result)).toContain("more than 3");
+    // The default bound is wide: the same source scans whole through the main discovery.
+    const ok = await discovery.scan(folder.id, ada);
+    expect(ok.summary).toMatchObject({ total: 4, proposed: 4 });
+    expect(ok.source.status).toBe("connected");
+    await discovery.remove(folder.id, ada);
+
+    // An organisation over the bound: the listing is read, but no per-repository marker call
+    // is made (one `contents` request per repository is what a big scan costs the rate limit).
+    host.createOrg({ login: "big", members: ["someone"] });
+    for (const n of ["r1", "r2", "r3", "r4"]) {
+      await host.createRepo({ owner: "big", name: n, initialFiles: { "x.md": "x\n" } });
+    }
+    const before = host.requests().length;
+    const org = await bounded.add({ kind: "github_org", locator: "big" }, ada);
+    await expect(bounded.scan(org.id, ada)).rejects.toMatchObject({
+      code: "validation",
+      details: { found: 4, max: 3 },
+    });
+    const made = host.requests().slice(before);
+    expect(made.map((r) => r.path)).toEqual(["/orgs/big/repos"]);
+    expect(made.some((r) => r.path.includes("/contents/"))).toBe(false);
+    await bounded.remove(org.id, ada);
+  });
+
   it("records a failed scan on the source and rethrows; the source stays connected for a retry", async () => {
     const bad = new SourceDiscovery({
       store,
@@ -413,7 +529,9 @@ describe("source discovery", () => {
     expect(JSON.stringify(row.scan_result)).not.toContain("wrong");
     const view = (await discovery.list(ada)).find((s) => s.id === src.id);
     expect(view?.error).toMatch(/401|auth/i);
-    const audit = (await store.auditLog.list({ tool: "source.scan" })).find((r) => !r.allowed);
+    const audit = (await store.auditLog.list({ tool: "source.scan" })).find(
+      (r) => !r.allowed && r.input_summary === "github_org nobody",
+    );
     expect(audit?.denied_reason).toMatch(/provider_auth/);
     await discovery.remove(src.id, ada);
   });
@@ -443,6 +561,22 @@ describe("source discovery", () => {
     const bobs = await discovery.add({ kind: "github_user", locator: "someone-else" }, bob);
     expect((await discovery.list(ada)).map((s) => s.id)).not.toContain(bobs.id);
     expect((await discovery.list(bob)).map((s) => s.id)).toEqual([bobs.id]);
+    // The same source again is a conflict for Ada too (one row per kind and locator), but the
+    // refusal names neither Bob's row nor Bob: his sources are hidden from her everywhere.
+    const same = (await discovery
+      .add({ kind: "github_user", locator: "SOMEONE-else" }, ada)
+      .catch((e: unknown) => e)) as {
+      code?: string;
+      message?: string;
+      details?: Record<string, unknown>;
+    };
+    expect(same).toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/another human/),
+      details: { conflict: true, kind: "github_user" },
+    });
+    expect(same.details?.id).toBeUndefined();
+    expect(JSON.stringify(same.details)).not.toContain(bobs.id);
     for (const op of [
       () => discovery.get(bobs.id, ada),
       () => discovery.scan(bobs.id, ada),

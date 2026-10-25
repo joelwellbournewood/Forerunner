@@ -2207,8 +2207,15 @@ normalisation. Rows are `source` and `source_candidate` (`packages/state`, migra
   anything that is not a `secret:` reference without echoing it, so a pasted token never
   reaches a row, a log or the audit log. A folder source takes no credential; its path must
   be absolute, exist and not be a symlink; it is stored normalised (no trailing separator).
-  The same source twice (login or key compared lower-cased, folders by `folderKey`) is a
-  409 `conflict`.
+  A chosen repository's URL may name the install's git hosts only (`repoHostsFor` in
+  `compose.ts`: the host of `githubApiBase` with a leading `api.` dropped and the host of the
+  import's `gitRemoteBase`; `github.com` by default): `https://gitlab.com/owner/name` or
+  `git@gitlab.com:owner/name.git` is refused with `validation` ("other git hosts come
+  later") and never read from GitHub under that owner and name; a bare `owner/name` is the
+  install's host. The same source twice (login or key compared lower-cased, folders by
+  `folderKey`) is a 409 `conflict`; when the row is another human's (one row per kind and
+  locator, the table's unique index) the 409 names neither the row nor the human, as the
+  owner rule hides their sources everywhere else.
 - **Scan.** An org lists its repositories through the git host port (`listRepos({ org })`,
   paged through `Link`, capabilities.md); an account lists the token's own repositories
   filtered to that owner when the login is the token's (private ones included), else the
@@ -2218,10 +2225,15 @@ normalisation. Rows are `source` and `source_candidate` (`packages/state`, migra
   skipped; `isGit` says whether a subfolder has a `.git`). The host for a GitHub source is
   built at scan time from the vault by the source's reference (`githubHostForSecretRef`,
   one `secret.resolve` audit row naming the secret) unless `ComposeOptions.gitHost` was
-  injected, which then stands in for every source. A scan that throws records
-  `status: "error"` and the redacted reason in `scan_result.error` on the source, writes a
-  denied `source.scan` audit row and rethrows (503 on the route for a host or credential
-  problem); the next scan clears it.
+  injected, which then stands in for every source. One scan proposes at most
+  `maxCandidates` repositories or subfolders (`DEFAULT_MAX_CANDIDATES`, 1,000), checked
+  right after the listing and before the per-repository marker call (one `contents` request
+  each: what a scan costs the token's hourly rate limit) or any row; beyond it the scan is
+  refused with `validation` (`details.found`, `details.max`; 400 on the route) and the
+  message says to connect narrower sources (a repository, a subfolder). A scan that throws
+  records `status: "error"` and the redacted reason in `scan_result.error` on the source,
+  writes a denied `source.scan` audit row and rethrows (503 on the route for a host or
+  credential problem); the next scan clears it.
 - **Existing install.** A candidate is marked `existing_install` with `install_marker`
   `.forerunner/project.json` when that file exists at the root (through `getFile` on the
   default branch for a repository, the file system for a folder), or `install_record` when
@@ -2232,7 +2244,9 @@ normalisation. Rows are `source` and `source_candidate` (`packages/state`, migra
   `github:<owner>/<name>` lower-cased for a repository, whatever the spelling
   (`owner/name`, `.git`, `github.com/…`, `https://…/tree/…`, `git@…:…`, `ssh://…`), and
   `folder:<normalised path>` (lower-cased on Windows) for a folder; `keysOfProject` reads
-  a project's `repos` entries the same way. A scan loads every project's keys once (capped
+  a project's `repos` entries the same way (a URL on another git host yields no key: a
+  project linked to `https://gitlab.com/acme/alpha` makes the GitHub `acme/alpha` no
+  duplicate). A scan loads every project's keys once (capped
   at 10,000 projects) and marks a candidate `duplicate` with `project_id` when a project
   covers it, or when another source already has it `proposed` or `accepted`
   (`details.duplicate_of` names that candidate), so one repository is never proposed twice
@@ -2266,7 +2280,9 @@ Routes (`SOURCES_ROUTES`, documented in `DAEMON_ROUTES`): `GET /sources`, `POST 
 `POST /sources/candidates/:id/accept`, `DELETE /sources/:id`. Errors: 400 `validation` /
 `not_supported`, 404 `not_found`, 403 `forbidden`, 409 `conflict` (`details.cause:
 validation`, the daemon's convention for a refused write), 503 for `provider_*` and
-`unavailable`.
+`unavailable`. `fr sources add` refuses an unknown kind and `fr sources candidates
+--status` an unknown status with `validation` naming the allowed values, before the runtime
+is opened (the route's 400 for the same).
 
 ### Settings -> Devices (`src/devices/`, spec R.2, ADR 0009)
 
@@ -2763,9 +2779,12 @@ answers refused, the audit row once).
 
 `sources.test.ts` (spec A.4, ADR 0056) against the fake git host and a temp folder:
 locator normalisation (every spelling of a repository to one key, folders, a project's
-`repos`); `add` validation (a token value refused and nothing stored, bad logins, a relative
-or missing folder, a file, a credential on a folder, other hosts "later", the same source
-twice; the audit row names the reference, never the token); an org scanned through
+`repos`; a URL on another git host null and keyless, a configured GitHub Enterprise host
+accepted, `repoHostsFor` from the API and remote bases); `add` validation (a token value
+refused and nothing stored, bad logins, a relative or missing folder, a file, a credential
+on a folder, other hosts "later", a repository URL on another git host refused and one on a
+configured host stored as `owner/name`, the same source twice; the audit row names the
+reference, never the token); an org scanned through
 `GitHubHost` with `pageSize: 2` (two pages seen by the host): one proposal per repo, the
 repo a project links by URL a `duplicate` with its `project_id`, the repo with
 `.forerunner/project.json` an `existing_install`; accept (project with the repo and no
@@ -2775,8 +2794,13 @@ duplicate kept); a user source (the token's own login) and a chosen repository (
 stored as `owner/name`, duplicate of the project; a repository another source proposes is
 `duplicate_of` it); a local folder (subfolders, `isGit`, the marker file, this install's
 checkout as `install_record`, `gone` and back on rescan, accept with the path, a gone
-candidate refused); a failing host recorded on the source and rethrown; remove (candidates
-gone, projects kept) and the owner rule (hidden from the list, every operation refused).
+candidate refused); the candidate bound (`maxCandidates: 3`: a folder of four subfolders
+refused with `details.found` and `max`, nothing written and the refusal on the source, the
+same source scanned whole by the default bound; an org of four repositories refused after
+the listing with no `contents` request made); a failing host recorded on the source and
+rethrown; remove (candidates gone, projects kept) and the owner rule (hidden from the list,
+every operation refused, the 409 for another human's source naming neither the row nor the
+human).
 `devices-routes.test.ts` (spec R.2): the device routes over a stand-in of the service's admin
 routes: a pairing answered 201 with the code, expiry and `pairingLink`, the admin bearer sent
 and absent from the body, the audit row without the code; 400 for a bad kind; 503
@@ -2796,12 +2820,13 @@ admin token read from the vault under the default reference and the URL from
 `services/state-api/test/desktop-devices.test.ts` (state-service.md).
 `sources-routes.test.ts`: the routes over an in-memory host (shapes, 201/400/404/409/403
 `forbidden`, the owner rule, 503 or 500 for a failing host) and in the composed daemon (401
-without the bearer, a typed project linking a repo by URL seen as the duplicate, an accepted
-proposal as a project card with `repos: ["owner/name"]`, an empty summary cache and the
-agent as member, a folder source, remove keeps the projects). `sources-cli.test.ts`: the
-subcommands and flags, the whole flow through `buildProgram()` with a composed stand-in
-(`startServices: false`), a token value, an unknown kind and a missing folder refused before
-anything is stored.
+without the bearer, a repository URL on another git host 400, a typed project linking a repo
+by URL seen as the duplicate, an accepted proposal as a project card with
+`repos: ["owner/name"]`, an empty summary cache and the agent as member, a folder source,
+remove keeps the projects). `sources-cli.test.ts`: the subcommands and flags, the whole flow
+through `buildProgram()` with a composed stand-in (`startServices: false`), an unknown
+`--status` refused with `validation`, a token value, an unknown kind (`validation` naming
+the kinds) and a missing folder refused before anything is stored.
 
 `email-routes-wiring.test.ts` (spec S.15, S.28, S.29, T.14; ADR 0066): the seven email routes
 on the composed daemon behind the bearer check and in `DAEMON_ROUTES`, the daemon's view and
@@ -3307,13 +3332,16 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   PR was force-pushed by its next attempt keeps the status commit, since the attempt branches
   from `origin/<branch>`.
 - Source discovery (A.4): the `.forerunner/project.json` marker is read, never written; a
-  project Forerunner manages carries no marker until a later item writes one at the first
-  session, so today only a repository or folder marked by hand (or this install's own
-  checkout) shows as an existing install. The install check costs one `contents` call per
-  repository on a host scan (a large organisation scans slowly within the rate limit). A
+  project Forerunner manages carries no marker until the G.5 docs scaffold writes one with
+  the doc set (ADR 0056 amendment of 2026-10-25, open review finding), so today only a
+  repository or folder marked by hand (or this install's own checkout) shows as an existing
+  install. The install check costs one `contents` call per repository on a host scan, which
+  is why one scan is bounded at `maxCandidates` (1,000) repositories or subfolders: an
+  organisation beyond it is refused and connected as narrower sources instead. A
   project created from a local folder links the path in `repos`; the PR executor then runs
   the inner executor without a host repository (no branch-and-PR flow) rather than
-  working in that folder. GitLab and plain git remotes are refused at `add`.
+  working in that folder. GitLab and plain git remotes are refused at `add`, and so is a
+  repository URL on any host but the install's (`repoHostsFor`).
 - The task workflow has no `needs_human -> done` edge, so an accepted critic sign-off closes
   the task along the graph's own edges (`ready -> claimed -> in_progress -> in_review -> done`)
   in one store transaction (`syncSignoffAnswers`); a direct edge for a human's acceptance is a
