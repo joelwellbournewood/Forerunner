@@ -283,12 +283,16 @@ describe("small-project mode: writing a plan (B.6)", () => {
       name: "Kickoff",
       order_index: 0,
       status: "done",
+      reason: "seed",
+      author_human: "h1",
     });
     await store.milestone.insert({
       project_id: project.id,
       name: "Old plan",
       order_index: 1,
       status: "cancelled",
+      reason: "seed",
+      author_human: "h1",
     });
     const applied = await applyProjectPlan(store, project, PLAN, { humanId: "h1" });
     expect(applied.reusedMilestone).toBeNull();
@@ -326,7 +330,13 @@ describe("small-project mode: writing a plan (B.6)", () => {
 
   it("flag off: one milestone per phase after the existing ones, the loose task without a milestone", async () => {
     const { store, project } = await worldWith(false);
-    await store.milestone.insert({ project_id: project.id, name: "Kickoff", order_index: 0 });
+    await store.milestone.insert({
+      project_id: project.id,
+      name: "Kickoff",
+      order_index: 0,
+      reason: "seed",
+      author_human: "h1",
+    });
     const applied = await applyProjectPlan(store, project, PLAN, { humanId: "h1" });
     const milestones = await store.milestone.forProject(project.id);
     expect(milestones.map((m) => [m.name, m.order_index])).toEqual([

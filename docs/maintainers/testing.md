@@ -1850,7 +1850,8 @@ of the file. What it assembles, and why this way:
   real `GitHubHost` adapter and pushes over git HTTP with the token as a header (the bare
   repository on disk is the fallback when `git http-backend` is missing). The sample repository
   is created with `options.project.files`; the project row names it in `repos`; one milestone
-  is the plan container and `addTask` adds ready tasks to it.
+  is the plan container (seeded with a reason and J as author, as the store's B.5 insert guard
+  requires) and `addTask` adds ready tasks to it.
 - **The fake provider** runs in script mode with `onNoMatch: "throw"` (a gap in a script fails
   the scenario); scenarios push replies per task with the helpers in
   `tests/e2e/src/scenario-scripts.ts` (`coderWrites`, `coderRunaway`, `criticAccepts`), which

@@ -687,6 +687,7 @@ export class IntakeService {
       typeof settingBudget === "number" && Number.isInteger(settingBudget) && settingBudget > 0
         ? settingBudget
         : DEFAULT_INTAKE_BUDGET_USD_MICRO;
+    // The row is created with its plan, so it carries the reason and the author (spec B.5).
     let session = await store.session.insert({
       agent_id: this.deps.agent.id,
       project_id: project.id,
@@ -700,6 +701,7 @@ export class IntakeService {
       summary: `intake: ${project.name}`,
       handoff: {},
       runner: "pc",
+      reason: `intake of ${project.name}`,
       author_agent: this.deps.agent.id,
     });
     session = await store.session.start(session.id, session.version);

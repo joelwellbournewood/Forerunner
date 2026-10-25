@@ -797,14 +797,17 @@ export class ProjectsMirror {
       });
       return null;
     }
+    const trigger = opts.trigger ?? "manual";
+    // The row is created with its plan, so it carries the reason and the author (spec B.5).
     return store.session.insert({
       agent_id: agentId,
       project_id: project.id,
-      trigger: opts.trigger ?? "manual",
+      trigger,
       plan: [{ kind: "mirror", project_id: project.id }],
       status: "running",
       started_at: this.deps.clock.nowIso(),
       summary: "GitHub projects mirror",
+      reason: `GitHub projects mirror run (${trigger})`,
       author_agent: agentId,
     });
   }

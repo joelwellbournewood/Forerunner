@@ -782,15 +782,19 @@ has always taken the reason and the actor; since migration v5 `milestone.reason`
 `session.reason` (the session plan's) exist too, written only through
 `MilestoneRepo.change(id, version, patch, reason, actor)` and
 `SessionRepo.setPlan(id, version, plan, reason, actor)`, and the repositories refuse a
-milestone update or a session patch that carries `plan` without a non-blank reason and an
-author (`validation`, `details.missing` = `reason` | `actor`) on every write path, `update`
-and `patch` included. In this package the callers are: the plan writer, which puts the plan's
-`reason` on every milestone row it inserts and makes the small-project join a `change` with
-the same reason and author (the `project.plan` audit row stays as the record of what was
-added); the session runner, which writes the plan with `setPlan` against a fresh read of the
-row (spend counters bump the version between start and plan), the agent as author and
-`planReason(plan)` as the reason (the planner's summary, "cut to fit" included, or "planned
-from the brief", cut at `MAX_PLAN_REASON_CHARS` 500); and the daemon, which serves
+milestone insert or update, or a session insert or patch that carries a `plan` (anything but
+the empty placeholder `{}` or `[]` a session starts with), without a non-blank reason and an
+author (`validation`, `details.missing` = `reason` | `actor`) on every write path, `insert`,
+`update` and `patch` included. In this package the callers are: the plan writer, which puts
+the plan's `reason` on every milestone row it inserts and makes the small-project join a
+`change` with the same reason and author (the `project.plan` audit row stays as the record of
+what was added); the session runner, which inserts its row with `plan: {}` (no reason needed
+yet) and then writes the plan with `setPlan`, the agent as author and `planReason(plan)` as
+the reason (the planner's summary, "cut to fit" included, or "planned from the brief", cut at
+`MAX_PLAN_REASON_CHARS` 500); the two sessions created with their plan already filled in, the
+intake's (`reason: "intake of <project>"`, `intake.ts`) and the critic calibration's (its plan
+summary, `jobs/calibration.ts`), each with the agent as author (the projects mirror's session
+in `packages/capabilities` does the same, capabilities.md); and the daemon, which serves
 `GET /projects/:id/milestones` (`MilestoneView[]` with `reason`, `authorAgent`, `authorHuman`,
 `updatedAt`, `version`) and `POST /milestones/:id` (`ChangeMilestoneBody`: `version`, a
 required `reason` of at most 500 characters, and any of `name`, `successCriteria`,

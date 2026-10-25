@@ -257,16 +257,15 @@ export class CalibrationJob {
         details: { specialists: specialists.map((d) => d.name) },
       });
 
-    // The run's session row and token: the budget the hooks enforce before every review.
+    // The run's session row and token: the budget the hooks enforce before every review. The
+    // row is created with its plan, so it carries the reason and the author (spec B.5).
+    const planSummary = `critic calibration over ${evalSet.length} eval task(s)`;
     const session = await store.session.insert({
       agent_id: this.deps.agentId,
       project_id: null,
       trigger: "schedule",
-      plan: {
-        items: [],
-        estimateUsdMicro: 0,
-        summary: `critic calibration over ${evalSet.length} eval task(s)`,
-      },
+      plan: { items: [], estimateUsdMicro: 0, summary: planSummary },
+      reason: planSummary,
       budget_cap_usd_micro: settings.budgetUsdMicro,
       step_cap: 100_000,
       spent_usd_micro: 0,

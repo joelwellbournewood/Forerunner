@@ -109,6 +109,9 @@ cursor -> batches of `batchSize` (default 25) upserts, cursor saved after each b
 archive deleted -> save cursor and `last_sync_at` -> event -> result. The mirror runs on a
 session of its own (trigger `manual` or `schedule`, agent = `opts.agentId` or the first active
 principal) so the run event has a home; pass `sessionId` to write into a running session instead.
+That row is created with its plan (`[{ kind: "mirror", project_id }]`), so it names its reason,
+`GitHub projects mirror run (<trigger>)`, and the agent as author, as the store's B.5 insert
+guard requires (data-model.md, Invariants).
 A run that can get no session (no `sessionId`, no `agentId`, no active principal agent) is not
 silent: the same counts go to the audit log as one `github.projects.sync` row
 (`MIRROR_AUDIT_TOOL`, `runSummary` builds the line the session summary also uses) and the

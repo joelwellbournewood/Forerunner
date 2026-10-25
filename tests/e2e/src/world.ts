@@ -485,6 +485,9 @@ export async function gateWorld(opts: GateWorldOptions = {}): Promise<GateWorld>
         project_id: projectId,
         trigger: "manual",
         plan: { items: [], estimateUsdMicro: 0, summary: "calibration" },
+        // Created with its plan, so the row names the reason and the author (B.5).
+        reason: "calibration review context",
+        author_agent: alice,
         budget_cap_usd_micro: budgetUsdMicro,
         step_cap: 10_000,
         spent_usd_micro: 0,
