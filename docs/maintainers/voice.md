@@ -165,7 +165,11 @@ a human-readable `reason` plus a status row per provider for the Extensions pane
 is the panel's choice; when it is unavailable the reason says so and the policy continues.
 `preferredBy` names where the choice came from for the reason (`"deepgram" selected in
 Extensions (voice-deepgram)`, `"fake-tts" set by FORERUNNER_VOICE_TTS`); default "selected in
-Extensions".
+Extensions". `excluded` names providers the policy must not fall back to, each with the reason
+its status row shows (`switched off in Extensions`, `key not granted in Extensions`): an
+excluded provider is not probed, its secret is never asked for, and its status row is
+`available: false` with that reason; with nothing else to pick the selection throws
+`unavailable` as usual. The runtime fills the list from the panel (below), so off means off.
 
 ### Which provider is preferred (spec O.4)
 
@@ -176,18 +180,32 @@ so a toggle in the Extensions panel applies at the next voice session without a 
 1. **Environment override.** `FORERUNNER_VOICE_STT` / `FORERUNNER_VOICE_TTS` name a provider
    that wins over the panel for that side; every enabled row for the side is reported as
    `overridden by FORERUNNER_VOICE_TTS=<name>`.
-2. **The enabled `voice-*` rows.** Each built-in voice catalog entry names the providers it
-   stands for (`voice: { stt: [...], tts: [...] }`, in order of preference; `voice-local`
-   names faster-whisper, kokoro and piper). Rows that need a key (the cloud ones) are
-   considered before the local row, then by name. Per side the first row whose granted
-   secrets all have a value in the vault and one of whose providers is registered in this
-   daemon is in force; every other row is listed in `preferences.skipped` with its reason (no
-   value for `secret:<name>`, another row in force, none of its providers registered).
-3. **Nothing chosen.** The registry's policy above picks.
+2. **The `voice-*` rows.** Each built-in voice catalog entry names the providers it stands
+   for (`voice: { stt: [...], tts: [...] }`, in order of preference; `voice-local` names
+   faster-whisper, kokoro and piper). Rows that need a key (the cloud ones) are considered
+   before the local row, then by name. Per side the first enabled row whose provider's own
+   key (`VOICE_SECRET_REFS`) is granted on the row and has a value in the vault, and one of
+   whose providers is registered in this daemon, is in force; the preference carries every
+   registered provider the row stands for (`providers`), so the panel counts the row in force
+   when the registry picked any of them (Piper after a Kokoro that does not import). Every
+   other row is listed in `preferences.skipped` with its reason: `switched off in Extensions`,
+   `key not granted: secret:<name> is not in the row's permissions`, `no value for
+   secret:<name>`, another row in force, none of its providers registered.
+3. **Off means off.** A cloud provider whose installed row is switched off, or whose row no
+   longer grants its key (a narrowing the human applied in the panel), goes on
+   `preferences.excluded` for its side and the registry's fallback never reaches it: with no
+   local provider the selection ends at `unavailable` (the fake in tests) rather than at a key
+   in the vault, and the key is never read, not even for the probe. The local helpers are
+   never excluded (free, private, the policy's default): switching `voice-local` off removes
+   the preference only. A provider the environment or an enabled row put in force is never
+   excluded by another row that stands for it.
+4. **Nothing chosen.** The registry's policy above picks.
 
-`GET /voice/status` carries the result as `preferences: { stt, tts, skipped }`; the Extensions
-panel shows the pair in force above the capabilities and a badge on every voice row (in force,
-preferred but fallen back with the registry's reason, or not in force with the reason).
+`GET /voice/status` carries the result as `preferences: { stt, tts, skipped }` (each preference
+with the row's `providers`; `excluded` stays inside the daemon, the providers' status rows carry
+its reason); the Extensions panel shows the pair in force above the capabilities and a badge on
+every voice row (in force, preferred but fallen back with the registry's reason, or not in force
+with the reason).
 
 Cloud keys are secret references (`secret:deepgram_api_key`) resolved through the injected
 `SecretResolver` right before a connection. Values never go into URLs (unless Cartesia's
@@ -323,7 +341,7 @@ conversation session, `voice.session` and `voice.approval` audit rows, never aud
 
 ## Tests
 
-`pnpm vitest run --project unit packages/voice` (186 tests, a few seconds, no network); the
+`pnpm vitest run --project unit packages/voice` (187 tests, a few seconds, no network); the
 speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 `packages/runtime/test/notifications-voice.test.ts` (`FakeTts` on the simulated clock):
 
@@ -336,7 +354,7 @@ speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 | `test/fake-providers.test.ts` | scripted partials/final with Clock delays, per-session scripts, abort |
 | `test/latency.test.ts` | stage sums, over-target flags, null stages, custom targets, median |
 | `test/approval.test.ts` | yes variants in seven languages, short ambiguous lines, negations and hesitation, questions and qualifiers refused (the critic's false positives), instructions with an affirmative word refused, deferrals and hand-offs refused in seven languages ("I need to confirm with my manager first", "Simone said yes"), an affirmative buried late in a long line refused, colliding words ("SIM", "Dale", "prima") gated on the line start or the session language, `blockedBy` and the exact line in the record |
-| `test/registry.test.ts` | local -> cloud -> fake policy with reasons, preferred, throwing probes, replace by name |
+| `test/registry.test.ts` | local -> cloud -> fake policy with reasons, preferred, excluded providers (not probed, the secret never asked for, never picked by the fallback, the status reason; `unavailable` when nothing else can serve), throwing probes, replace by name |
 | `test/availability.test.ts` | probes return `{ok:false}` for missing interpreter/module/binary/model/key; invalid module names never spawn; the Windows Store alias is recognised (`interpreterDidNotRun`, both OSes) and a stub that only prints "Python was not found" is skipped for the next candidate (stub run on Linux) |
 | `test/local-helpers.test.ts` | faster-whisper, Kokoro and Piper Node sides against protocol-identical node stand-ins: streaming, resampling, errors, cancel (no leaked request on a pre-aborted call); `HelperProcess.stop()` grace kill timed on a `SimulatedClock` against a helper that ignores stdin closing; the fr_stt.py message schema (nulls, unknown keys, malformed lines) |
 | `test/python-helpers.test.ts` | `py_compile` of both helpers and `--selftest` (skipped visibly when no Python) |
@@ -385,9 +403,12 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
   `VoiceBridge`. The conversation agent's own per-human copy of a pending card outlives a
   voice answer until its next typed line (`runtime.md`, "Known issues": a bare "yes" typed
   right after is reported as "Not done"; nothing runs twice).
-- A cloud voice row whose secret grant the human removed in the panel is treated like the
-  local row (no key to check before the pick); the registry then finds the provider's own key
-  missing and the row's badge says "preferred, not in force" with the registry's reason.
+- The exclusion follows the installed `voice-*` rows (switched off, or the key not granted). A
+  cloud provider with no row at all, never installed or still pending the first yes, is still
+  the policy's fallback when its key is in the vault (`fr setup` stored it): installing the
+  row and switching it off is how a keyed provider is ruled out, and removing the row removes
+  the exclusion with it. Making a never-installed provider unreachable would mean treating the
+  catalog, not the row, as the grant; left as is and noted here.
 - A session already open keeps the providers it started with; a panel change applies to the
   next session only (by design: no provider swap mid-conversation).
 

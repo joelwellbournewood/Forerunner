@@ -973,6 +973,7 @@ describe("voice providers chosen in the Extensions panel", () => {
       source: "extension",
       extensionId: id,
       extension: "voice-elevenlabs",
+      providers: ["elevenlabs"],
     });
     expect(s.preferences.stt).toBeNull();
     expect(s.preferences.skipped).toEqual([]);
@@ -1005,11 +1006,28 @@ describe("voice providers chosen in the Extensions panel", () => {
         reason: '"cartesia" (voice-cartesia) is preferred; one TTS provider is in force at a time',
       },
     ]);
-    // Off in the panel: the other row is in force at the next read, nothing restarted.
+    // Off in the panel: the other row is in force at the next read, nothing restarted, and
+    // the switched-off row says so (its provider is out of the policy's reach too, below).
     expect((await post(`/extensions/${cartesiaId}/toggle`, { enabled: false })).status).toBe(200);
     s = await status();
     expect(s.tts).toMatchObject({ name: "elevenlabs", policy: "preferred" });
-    expect(s.preferences.skipped).toEqual([]);
+    expect(s.preferences.skipped).toEqual([
+      {
+        extensionId: cartesiaId,
+        extension: "voice-cartesia",
+        side: "tts",
+        provider: "cartesia",
+        reason: "switched off in Extensions",
+      },
+    ]);
+    expect(s.statuses.tts.find((p) => p.name === "cartesia")).toEqual({
+      name: "cartesia",
+      kind: "cloud",
+      available: false,
+      reason: "switched off in Extensions",
+      secretRef: VOICE_SECRET_REFS.cartesia,
+      selected: false,
+    });
     const started = await post("/voice/sessions", {});
     expect(started.status).toBe(201);
     const view = VoiceSessionView.parse(await json(started));
@@ -1033,6 +1051,10 @@ describe("voice providers chosen in the Extensions panel", () => {
         provider: "deepgram",
         reason: "no value for secret:deepgram_api_key; store the key with fr setup",
       },
+      expect.objectContaining({
+        extension: "voice-cartesia",
+        reason: "switched off in Extensions",
+      }),
     ]);
     expect(s.statuses.stt.find((p) => p.name === "deepgram")).toMatchObject({
       available: false,
@@ -1043,7 +1065,7 @@ describe("voice providers chosen in the Extensions panel", () => {
     s = await status();
     expect(s.stt).toMatchObject({ name: "deepgram", policy: "preferred" });
     expect(s.preferences.stt).toMatchObject({ name: "deepgram", extensionId: id });
-    expect(s.preferences.skipped).toEqual([]);
+    expect(s.preferences.skipped.map((p) => p.extension)).toEqual(["voice-cartesia"]);
   });
 
   it("the environment variables override the panel and the status says so", async () => {
@@ -1056,8 +1078,14 @@ describe("voice providers chosen in the Extensions panel", () => {
       source: "env",
       extensionId: null,
       extension: null,
+      providers: ["fake-tts"],
     });
+    // Rows sort by name: the switched-off cartesia row first, then the overridden one.
     expect(s.preferences.skipped).toEqual([
+      expect.objectContaining({
+        extension: "voice-cartesia",
+        reason: "switched off in Extensions",
+      }),
       expect.objectContaining({
         extension: "voice-elevenlabs",
         side: "tts",
@@ -1105,7 +1133,108 @@ describe("voice providers chosen in the Extensions panel", () => {
         }),
       ]),
     );
-    // Nothing chosen for TTS: the registry's policy picks on its own (a cloud key exists).
-    expect(alone.tts).toMatchObject({ name: "cartesia", policy: "cloud" });
+    // Nothing chosen for TTS, and both cloud TTS rows are switched off: the policy must not
+    // reach for their keys (off means off), so the fake is what is left.
+    expect(alone.preferences.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          extension: "voice-cartesia",
+          reason: "switched off in Extensions",
+        }),
+        expect.objectContaining({
+          extension: "voice-elevenlabs",
+          reason: "switched off in Extensions",
+        }),
+      ]),
+    );
+    expect(alone.tts).toMatchObject({ name: "fake-tts", policy: "fake" });
+    expect(alone.statuses.tts.filter((p) => p.kind === "cloud").map((p) => p.reason)).toEqual([
+      "switched off in Extensions",
+      "switched off in Extensions",
+    ]);
+  });
+
+  it("a switched-off cloud row is not used by the fallback: no audio reaches the provider and the row says why", async () => {
+    // Review finding 1 of w3-o4-voice-prefs. The only STT providers here are the fake and
+    // Deepgram, whose key stays in the vault: before this fix, switching the row off left the
+    // policy free to send the microphone to Deepgram with no reason shown anywhere.
+    const deepgramId = rows["voice-deepgram"];
+    if (!deepgramId) throw new Error("no voice-deepgram row");
+    expect((await status()).stt).toMatchObject({ name: "deepgram", policy: "preferred" });
+    expect((await post(`/extensions/${deepgramId}/toggle`, { enabled: false })).status).toBe(200);
+    const s = await status();
+    expect(s.stt).toMatchObject({ name: "fake-stt", policy: "fake" });
+    expect(s.preferences.stt).toBeNull();
+    expect(s.preferences.skipped).toEqual(
+      expect.arrayContaining([
+        {
+          extensionId: deepgramId,
+          extension: "voice-deepgram",
+          side: "stt",
+          provider: "deepgram",
+          reason: "switched off in Extensions",
+        },
+      ]),
+    );
+    // The status row says the same and the key was not even looked at (no secretConfigured).
+    expect(s.statuses.stt.find((p) => p.name === "deepgram")).toEqual({
+      name: "deepgram",
+      kind: "cloud",
+      available: false,
+      reason: "switched off in Extensions",
+      secretRef: VOICE_SECRET_REFS.deepgram,
+      selected: false,
+    });
+    // A session started now runs on the fake; its audit row names no cloud provider.
+    const started = await post("/voice/sessions", {});
+    expect(started.status).toBe(201);
+    const view = VoiceSessionView.parse(await json(started));
+    expect(view.providers.stt).toMatchObject({ name: "fake-stt", policy: "fake" });
+    const startRow = (await rt.store.auditLog.list({ tool: VOICE_SESSION_AUDIT_TOOL } as never))
+      .map((r) => JSON.parse(r.input_summary) as Json)
+      .find((r) => r.id === view.id);
+    expect(startRow).toMatchObject({ action: "start", stt: "fake-stt" });
+    expect((await post(`/voice/sessions/${view.id}/stop`, {})).status).toBe(200);
+    // Back on: preferred again at the next read, no restart.
+    expect((await post(`/extensions/${deepgramId}/toggle`, { enabled: true })).status).toBe(200);
+    expect((await status()).stt).toMatchObject({ name: "deepgram", policy: "preferred" });
+  });
+
+  it("a cloud row whose grant no longer lists its key is skipped as not granted and never read", async () => {
+    // Review finding 3 of w3-o4-voice-prefs: the human narrowed the row's secrets (applied at
+    // once, no approval). The key is still in the vault; the row is the grant, so the daemon
+    // neither prefers the provider nor falls back to it, and does not read the key.
+    const deepgramId = rows["voice-deepgram"];
+    if (!deepgramId) throw new Error("no voice-deepgram row");
+    const narrowed = await rt.extensions.updatePermissions(deepgramId, { secrets: [] });
+    expect(narrowed.permissions.secrets).toEqual([]);
+    expect(narrowed.enabled).toBe(true);
+    const s = await status();
+    expect(s.stt).toMatchObject({ name: "fake-stt", policy: "fake" });
+    expect(s.preferences.stt).toBeNull();
+    expect(s.preferences.skipped).toEqual(
+      expect.arrayContaining([
+        {
+          extensionId: deepgramId,
+          extension: "voice-deepgram",
+          side: "stt",
+          provider: "deepgram",
+          reason: "key not granted: secret:deepgram_api_key is not in the row's permissions",
+        },
+      ]),
+    );
+    expect(s.statuses.stt.find((p) => p.name === "deepgram")).toEqual({
+      name: "deepgram",
+      kind: "cloud",
+      available: false,
+      reason: "key not granted in Extensions",
+      secretRef: VOICE_SECRET_REFS.deepgram,
+      selected: false,
+    });
+    const started = await post("/voice/sessions", {});
+    expect(started.status).toBe(201);
+    const view = VoiceSessionView.parse(await json(started));
+    expect(view.providers.stt.name).toBe("fake-stt");
+    expect((await post(`/voice/sessions/${view.id}/stop`, {})).status).toBe(200);
   });
 });

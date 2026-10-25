@@ -114,14 +114,20 @@ registry.registerStt(new MyStt({ apiKeyRef: "secret:my_stt_key", resolveSecret: 
 
 `secretRef` lets the registry mark the row "no value for secret:..." before any probe and keeps
 cloud providers out of the default policy until the key exists. Order of registration is the
-tie-break order inside a kind.
+tie-break order inside a kind. `excluded` on the selection input (the runtime fills it from the
+panel: a `voice-*` row switched off, or one whose grant no longer lists the provider's key)
+keeps a provider out of the policy altogether: it is not probed, its secret is never asked for,
+and its status row carries the reason.
 
 To make the provider choosable in the Extensions panel, give it a capability entry in
 `packages/runtime/src/extensions/catalog.json` with `"voice": { "stt": ["my-stt"] }` (the name
 the provider registers under) and, for a cloud provider, its key's name in
-`permissions.secrets`. Enabling the row makes it the preferred provider at the next voice
-session; a row whose key has no value is skipped with the reason (`voice.md`, "Which provider
-is preferred").
+`permissions.secrets` plus its reference in `VOICE_SECRET_REFS`
+(`packages/runtime/src/voice/providers.ts`): that is the key the runtime checks on the row's
+grant and in the vault. Enabling the row makes it the preferred provider at the next voice
+session; a row whose key has no value is skipped with the reason; a row switched off, or one
+whose grant no longer lists the key, is skipped and the provider is excluded from the policy's
+fallback (`voice.md`, "Which provider is preferred").
 
 ## How to change it
 

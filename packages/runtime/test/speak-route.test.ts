@@ -627,8 +627,15 @@ describe("the speaker's provider preference", () => {
         // The base's preference shape (spec O.4): here as the environment override would give it.
         preferences: async () => ({
           stt: null,
-          tts: { name: preferred, source: "env", extensionId: null, extension: null },
+          tts: {
+            name: preferred,
+            source: "env",
+            extensionId: null,
+            extension: null,
+            providers: [preferred],
+          },
           skipped: [],
+          excluded: { stt: [], tts: [] },
         }),
         store,
         clock,

@@ -25,6 +25,7 @@ import { money } from "../daemon/views.ts";
 import type { CommandResultView } from "../loop/ports.ts";
 import type { VoiceApproval, VoiceBridgeEntry, VoiceTurn } from "./bridge.ts";
 import { type AudioChunk, bytesToPcm, type LatencyReport, toInt16 } from "./pkg.ts";
+import type { VoicePreference } from "./providers.ts";
 import type { VoiceAvailability, VoiceSession } from "./sessions.ts";
 import type { SpeakEntry, SpeakRecord, Utterance } from "./speak.ts";
 
@@ -136,6 +137,10 @@ export function voiceSessionView(s: VoiceSession, chf: number): VoiceSessionView
 
 export function voiceStatusView(a: VoiceAvailability): VoiceStatusView {
   const pick = (p: VoiceProviderView | null) => (p ? { ...p } : null);
+  // A preference with the row's providers copied; `excluded` stays internal (the status rows
+  // and the skip reasons already say which providers the panel ruled out and why).
+  const preferenceView = (p: VoicePreference | null) =>
+    p ? { ...p, providers: [...p.providers] } : null;
   return {
     available: a.available,
     reason: a.reason,
@@ -146,8 +151,8 @@ export function voiceStatusView(a: VoiceAvailability): VoiceStatusView {
       tts: a.statuses.tts.map((s) => ({ ...s })),
     },
     preferences: {
-      stt: a.preferences.stt ? { ...a.preferences.stt } : null,
-      tts: a.preferences.tts ? { ...a.preferences.tts } : null,
+      stt: preferenceView(a.preferences.stt),
+      tts: preferenceView(a.preferences.tts),
       skipped: a.preferences.skipped.map((s) => ({ ...s })),
     },
     sessions: a.sessions,

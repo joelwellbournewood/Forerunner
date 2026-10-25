@@ -85,6 +85,12 @@ export interface EnabledCatalogExtension {
   permissions: ExtensionPermissions;
 }
 
+/** An installed row from the catalog, on or off in the panel, with the entry it was installed from. */
+export interface InstalledCatalogExtension extends EnabledCatalogExtension {
+  /** On, or switched off by the human (a pending row is not installed and is never listed). */
+  enabled: boolean;
+}
+
 /** The TokenIssuer's revocation entry point (the kill switch holds the same issuer). */
 export interface TokenRevoker {
   revokeWhere(pred: (c: CapabilityClaims) => boolean): string[];
@@ -272,16 +278,20 @@ export class ExtensionRegistry {
   }
 
   /**
-   * The enabled rows that came from the catalog, each with its entry, for a module that
-   * follows the panel's choice (the voice preferences read the `voice-*` capabilities, spec
-   * O.4). A pending or disabled row, or one whose entry left the catalog, is not listed. A
-   * fresh read every time, so a toggle in the panel is seen at the next call.
+   * The installed rows that came from the catalog, on or off, each with its entry, for a
+   * module that follows the panel's choice and must know what the human switched off (the
+   * voice preferences read the `voice-*` capabilities, spec O.4: a switched-off cloud row
+   * keeps its provider out of the fallback). A pending row, or one whose entry left the
+   * catalog, is not listed. A fresh read every time, so a toggle in the panel is seen at the
+   * next call.
    */
-  async enabledCatalogEntries(kind?: ExtensionPanelKind): Promise<EnabledCatalogExtension[]> {
-    const rows = await this.deps.extensions.enabled();
-    const out: EnabledCatalogExtension[] = [];
+  async installedCatalogEntries(kind?: ExtensionPanelKind): Promise<InstalledCatalogExtension[]> {
+    const rows = await this.deps.extensions.list(
+      { status: ROW_STATUS_INSTALLED },
+      { orderBy: "name" },
+    );
+    const out: InstalledCatalogExtension[] = [];
     for (const row of rows) {
-      if (row.status !== ROW_STATUS_INSTALLED) continue;
       if (kind && panelKind(row.kind) !== kind) continue;
       const catalogId = configOf(row).catalogId;
       const entry = catalogId ? this.deps.catalog.get(catalogId) : undefined;
@@ -291,10 +301,16 @@ export class ExtensionRegistry {
         name: row.name,
         catalogId,
         entry,
+        enabled: Boolean(row.enabled),
         permissions: parsePermissions(row.permissions),
       });
     }
     return out;
+  }
+
+  /** The enabled rows among `installedCatalogEntries`. */
+  async enabledCatalogEntries(kind?: ExtensionPanelKind): Promise<EnabledCatalogExtension[]> {
+    return (await this.installedCatalogEntries(kind)).filter((e) => e.enabled);
   }
 
   /** Extension that owns `toolName`, from the rows' granted (and pending) tool lists. */

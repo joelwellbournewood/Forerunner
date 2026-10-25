@@ -15,6 +15,7 @@ const local: VoiceExtensionRow = {
   extensionId: "ext-local",
   name: "voice-local",
   catalogId: "voice-local",
+  enabled: true,
   providers: { stt: ["faster-whisper"], tts: ["kokoro", "piper"] },
   secrets: [],
 };
@@ -22,6 +23,7 @@ const deepgram: VoiceExtensionRow = {
   extensionId: "ext-deepgram",
   name: "voice-deepgram",
   catalogId: "voice-deepgram",
+  enabled: true,
   providers: { stt: ["deepgram"] },
   secrets: ["deepgram_api_key"],
 };
@@ -29,6 +31,7 @@ const cartesia: VoiceExtensionRow = {
   extensionId: "ext-cartesia",
   name: "voice-cartesia",
   catalogId: "voice-cartesia",
+  enabled: true,
   providers: { tts: ["cartesia"] },
   secrets: ["cartesia_api_key"],
 };
@@ -36,9 +39,12 @@ const elevenlabs: VoiceExtensionRow = {
   extensionId: "ext-elevenlabs",
   name: "voice-elevenlabs",
   catalogId: "voice-elevenlabs",
+  enabled: true,
   providers: { tts: ["elevenlabs"] },
   secrets: ["elevenlabs_api_key"],
 };
+const off = (row: VoiceExtensionRow): VoiceExtensionRow => ({ ...row, enabled: false });
+const none = { stt: [], tts: [] };
 const registered = {
   stt: ["faster-whisper", "deepgram"],
   tts: ["kokoro", "cartesia", "elevenlabs"],
@@ -58,12 +64,13 @@ const resolve = (
 
 describe("voice preferences from the Extensions panel", () => {
   it("nothing enabled: no preference on either side, the registry's policy decides", async () => {
-    expect(await resolve([])).toEqual({ stt: null, tts: null, skipped: [] });
+    expect(await resolve([])).toEqual({ stt: null, tts: null, skipped: [], excluded: none });
     // A daemon without the panel (a CLI one-shot) reads the environment only.
     expect(await resolveVoicePreferences({ env: {} })).toEqual({
       stt: null,
       tts: null,
       skipped: [],
+      excluded: none,
     });
   });
 
@@ -74,9 +81,15 @@ describe("voice preferences from the Extensions panel", () => {
       source: "extension",
       extensionId: "ext-local",
       extension: "voice-local",
+      providers: ["faster-whisper"],
     });
-    expect(prefs.tts?.name).toBe("kokoro");
+    // The preference carries every provider the row stands for that is registered here, so
+    // the panel counts the row in force when the registry picked any of them (Piper after a
+    // Kokoro that does not import).
+    expect(prefs.tts).toMatchObject({ name: "kokoro", providers: ["kokoro"] });
     expect(prefs.skipped).toEqual([]);
+    const both = await resolve([local], { registered: { stt: [], tts: ["kokoro", "piper"] } });
+    expect(both.tts).toMatchObject({ name: "kokoro", providers: ["kokoro", "piper"] });
     // With Piper the only local TTS registered, the same row prefers Piper.
     const piper = await resolve([local], { registered: { stt: [], tts: ["piper"] } });
     expect(piper.tts?.name).toBe("piper");
@@ -165,6 +178,7 @@ describe("voice preferences from the Extensions panel", () => {
       source: "env",
       extensionId: null,
       extension: null,
+      providers: ["fake-stt"],
     });
     expect(prefs.tts).toMatchObject({ name: "kokoro", source: "extension" });
     expect(prefs.skipped).toEqual([
@@ -180,9 +194,16 @@ describe("voice preferences from the Extensions panel", () => {
       }),
     ]);
     expect(voicePreferences(env)).toEqual({
-      stt: { name: "fake-stt", source: "env", extensionId: null, extension: null },
+      stt: {
+        name: "fake-stt",
+        source: "env",
+        extensionId: null,
+        extension: null,
+        providers: ["fake-stt"],
+      },
       tts: null,
       skipped: [],
+      excluded: none,
     });
   });
 
@@ -192,6 +213,110 @@ describe("voice preferences from the Extensions panel", () => {
         throw new Error("store closed");
       },
     });
-    expect(prefs).toEqual({ stt: null, tts: null, skipped: [] });
+    expect(prefs).toEqual({ stt: null, tts: null, skipped: [], excluded: none });
+  });
+
+  it("a switched-off row prefers nothing and says so; its cloud providers are excluded from the policy's fallback", async () => {
+    // Off must mean off (review finding 1 of w3-o4-voice-prefs): a cloud row switched off in
+    // the panel is not reached for by the registry's fallback, whatever key is in the vault.
+    const prefs = await resolve([local, off(deepgram), off(elevenlabs)]);
+    expect(prefs.stt).toMatchObject({ name: "faster-whisper", extension: "voice-local" });
+    expect(prefs.tts).toMatchObject({ name: "kokoro", extension: "voice-local" });
+    expect(prefs.skipped).toEqual([
+      {
+        extensionId: "ext-deepgram",
+        extension: "voice-deepgram",
+        side: "stt",
+        provider: "deepgram",
+        reason: "switched off in Extensions",
+      },
+      {
+        extensionId: "ext-elevenlabs",
+        extension: "voice-elevenlabs",
+        side: "tts",
+        provider: "elevenlabs",
+        reason: "switched off in Extensions",
+      },
+    ]);
+    expect(prefs.excluded).toEqual({
+      stt: [{ name: "deepgram", reason: "switched off in Extensions" }],
+      tts: [{ name: "elevenlabs", reason: "switched off in Extensions" }],
+    });
+    // The local row switched off removes the preference only: the local helpers are free and
+    // private and stay the policy's default, so voice does not go dark.
+    const localOff = await resolve([off(local), deepgram]);
+    expect(localOff.stt).toMatchObject({ name: "deepgram" });
+    expect(localOff.tts).toBeNull();
+    expect(localOff.excluded).toEqual(none);
+    expect(localOff.skipped.map((s) => [s.side, s.reason])).toEqual([
+      ["stt", "switched off in Extensions"],
+      ["tts", "switched off in Extensions"],
+    ]);
+    // A switched-off row whose provider this daemon does not register excludes nothing.
+    const unknown = await resolve([off(deepgram)], {
+      registered: { stt: ["faster-whisper"], tts: [] },
+    });
+    expect(unknown.excluded).toEqual(none);
+    expect(unknown.skipped[0]?.reason).toBe("switched off in Extensions");
+  });
+
+  it("a provider in force through the environment or an enabled row is never excluded by a switched-off row", async () => {
+    const env = { [VOICE_PREFERENCE_ENV.stt]: "deepgram" };
+    const prefs = await resolve([off(deepgram)], { env });
+    expect(prefs.stt).toMatchObject({ name: "deepgram", source: "env" });
+    expect(prefs.excluded).toEqual(none);
+    expect(prefs.skipped[0]?.reason).toBe("switched off in Extensions");
+    // Two rows that stand for the same provider, one on and one off: the enabled one decides.
+    const twin: VoiceExtensionRow = { ...deepgram, extensionId: "ext-twin", name: "voice-twin" };
+    const twins = await resolve([off(twin), deepgram]);
+    expect(twins.stt).toMatchObject({ name: "deepgram", extension: "voice-deepgram" });
+    expect(twins.excluded).toEqual(none);
+  });
+
+  it("a cloud row whose grant lacks its provider's key is skipped as not granted, excluded, and the vault is never asked", async () => {
+    // Review finding 3 of w3-o4-voice-prefs: a narrowed grant (the human removed the secret
+    // from the row) is the human saying no to the key; the row must neither be preferred nor
+    // make the daemon read the key, and the policy must not fall back to the provider either.
+    let asked = 0;
+    const hasSecret = async () => {
+      asked += 1;
+      return true;
+    };
+    const narrowed: VoiceExtensionRow = { ...deepgram, secrets: [] };
+    const prefs = await resolve([local, narrowed], { hasSecret });
+    expect(asked).toBe(0);
+    expect(prefs.stt).toMatchObject({ name: "faster-whisper", extension: "voice-local" });
+    expect(prefs.skipped).toEqual([
+      {
+        extensionId: "ext-deepgram",
+        extension: "voice-deepgram",
+        side: "stt",
+        provider: "deepgram",
+        reason: "key not granted: secret:deepgram_api_key is not in the row's permissions",
+      },
+    ]);
+    expect(prefs.excluded).toEqual({
+      stt: [{ name: "deepgram", reason: "key not granted in Extensions" }],
+      tts: [],
+    });
+    // The grant restored: the key is checked and the row is preferred again.
+    const granted = await resolve([local, deepgram], { hasSecret });
+    expect(asked).toBe(1);
+    expect(granted.stt).toMatchObject({ name: "deepgram" });
+    expect(granted.excluded).toEqual(none);
+    // A row granted a secret that is not its provider's key still needs a value for it.
+    const extra: VoiceExtensionRow = {
+      ...local,
+      providers: { stt: ["whisper-x"] },
+      secrets: ["whisper_x_key"],
+    };
+    const custom = await resolve([extra], {
+      registered: { stt: ["whisper-x"], tts: [] },
+      hasSecret: async () => false,
+    });
+    expect(custom.stt).toBeNull();
+    expect(custom.skipped[0]?.reason).toBe(
+      "no value for secret:whisper_x_key; store the key with fr setup",
+    );
   });
 });

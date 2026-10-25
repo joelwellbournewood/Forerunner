@@ -1,6 +1,9 @@
 /**
  * Provider registry with the default selection policy "local if available, else cloud if a
- * key is configured, else fake", exposing the reason so the Extensions panel can show it.
+ * key is configured, else fake", exposing the reason so the Extensions panel can show it. The
+ * caller can rule providers out of the policy (`excluded`: a cloud row switched off in the
+ * panel, spec O.4): they are not probed, their key is never asked for, and the fallback never
+ * reaches them.
  */
 import { ForerunnerError } from "@forerunner/platform";
 import type { ProviderKind, SttProvider, TtsProvider } from "./types.ts";
@@ -32,6 +35,15 @@ export interface Selection<T> {
   statuses: ProviderStatus[];
 }
 
+/**
+ * A provider the caller rules out of the policy, with the reason its status row shows: the
+ * Extensions row that stands for it is switched off, or the row's grant lacks its key.
+ */
+export interface ExcludedProvider {
+  name: string;
+  reason: string;
+}
+
 export interface SelectInput {
   /** Provider chosen in the Extensions panel; used when it is available. */
   preferred?: string;
@@ -42,6 +54,13 @@ export interface SelectInput {
   preferredBy?: string;
   /** Whether a secret reference has a value; defaults to "unknown" (treated as configured). */
   hasSecret?: (ref: string) => Promise<boolean> | boolean;
+  /**
+   * Providers the policy must not fall back to (off means off). An excluded provider is not
+   * probed and its secret is never asked for; its status row is `available: false` with the
+   * given reason. An excluded `preferred` counts as unavailable like any other, so the caller
+   * keeps the provider it put in force off this list.
+   */
+  excluded?: readonly ExcludedProvider[];
 }
 
 interface Entry<T> {
@@ -115,6 +134,18 @@ async function probeAll<T extends Probeable>(
 ): Promise<ProviderStatus[]> {
   return Promise.all(
     list.map(async (e) => {
+      const excluded = input.excluded?.find((x) => x.name === e.provider.name);
+      if (excluded) {
+        // Ruled out by the panel: no probe, no vault question, never picked by the policy.
+        return {
+          name: e.provider.name,
+          kind: e.provider.kind,
+          available: false,
+          reason: excluded.reason,
+          ...(e.secretRef ? { secretRef: e.secretRef } : {}),
+          selected: false,
+        };
+      }
       let secretConfigured: boolean | undefined;
       if (e.secretRef && input.hasSecret) {
         try {

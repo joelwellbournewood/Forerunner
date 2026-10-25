@@ -65,8 +65,10 @@ const SIDE_LABELS: Record<(typeof VOICE_SIDES)[number], string> = { stt: "STT", 
 
 /**
  * What the daemon's voice status says about one `voice-*` row (spec O.4): in force for a
- * side, preferred but not usable (the pick fell back, with the registry's reason), or not in
- * force with the reason the daemon gives (no key, another row preferred, an override).
+ * side (the pick is any provider the row stands for: Piper for voice-local after a Kokoro
+ * that does not import), preferred but not usable (the pick fell back, with the registry's
+ * reason), or not in force with the reason the daemon gives (switched off, no key or key not
+ * granted, another row preferred, an override).
  */
 export function voiceBadges(
   extension: Pick<ExtensionView, "id">,
@@ -78,8 +80,10 @@ export function voiceBadges(
     const preferred = voice.preferences[side];
     if (preferred?.extensionId !== extension.id) continue;
     const pick = voice[side];
+    const inForce =
+      pick !== null && (pick.name === preferred.name || preferred.providers.includes(pick.name));
     out.push(
-      pick?.name === preferred.name
+      inForce
         ? { tone: "good", text: `in force for ${SIDE_LABELS[side]}` }
         : {
             tone: "warn",
@@ -546,8 +550,11 @@ export function ExtensionsPage() {
     // A toggle may change which voice provider the next session uses.
     voice.reload();
   };
-  const drop = (id: string) =>
+  const drop = (id: string) => {
     extensions.setData((prev) => (prev ?? []).filter((e) => e.id !== id));
+    // Removing a voice row changes which provider the next session uses, as a toggle does.
+    voice.reload();
+  };
 
   const rows = extensions.data ?? [];
   const pending = rows.filter((e) => e.status === "pending_approval").length;
