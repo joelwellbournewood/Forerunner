@@ -70,23 +70,26 @@ server_listening() {
 }
 
 # Create the database and set the postgres password on a server we can reach as a superuser.
+# The SQL goes in on stdin: with `su postgres -c "psql ..."` a second `-c` would replace su's
+# command (bash then tried to run "ALTER USER ..." as a program, "ALTER: command not found").
 ensure_db_local() {
   local psql_cmd=()
   if PGPASSWORD="$PASSWORD" psql -h localhost -p "$PORT" -U postgres -d postgres -tAc "select 1" >/dev/null 2>&1; then
-    psql_cmd=(env "PGPASSWORD=$PASSWORD" psql -h localhost -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1)
+    psql_cmd=(env "PGPASSWORD=$PASSWORD" psql -h localhost -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -tA)
   elif [ "$(id -u)" = 0 ] && id postgres >/dev/null 2>&1; then
-    psql_cmd=(su postgres -c "psql -p $PORT -d postgres -v ON_ERROR_STOP=1")
+    psql_cmd=(su postgres -c "psql -p $PORT -d postgres -v ON_ERROR_STOP=1 -tA")
   elif have sudo && id postgres >/dev/null 2>&1; then
-    psql_cmd=(sudo -u postgres psql -p "$PORT" -d postgres -v ON_ERROR_STOP=1)
+    psql_cmd=(sudo -u postgres psql -p "$PORT" -d postgres -v ON_ERROR_STOP=1 -tA)
   else
     echo "dev-postgres: a server answers on port $PORT but neither the test password nor the postgres OS user works." >&2
     echo "Set the password and create the database yourself, then export FORERUNNER_TEST_PG:" >&2
     echo "    ALTER USER postgres PASSWORD '$PASSWORD'; CREATE DATABASE $DB;" >&2
     return 1
   fi
-  "${psql_cmd[@]}" -c "ALTER USER postgres PASSWORD '$PASSWORD';" >/dev/null
-  if ! "${psql_cmd[@]}" -tAc "select 1 from pg_database where datname = '$DB'" | grep -q 1; then
-    "${psql_cmd[@]}" -c "CREATE DATABASE $DB;" >/dev/null
+  run_sql() { printf '%s\n' "$1" | "${psql_cmd[@]}"; }
+  run_sql "ALTER USER postgres PASSWORD '$PASSWORD';" >/dev/null
+  if ! run_sql "select 1 from pg_database where datname = '$DB';" | grep -q 1; then
+    run_sql "CREATE DATABASE $DB;" >/dev/null
   fi
 }
 
