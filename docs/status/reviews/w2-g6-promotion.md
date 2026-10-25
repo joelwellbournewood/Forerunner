@@ -128,6 +128,8 @@ vanishes from the memory page and nothing on any page says why (finding 2).
    offered, the shared-with one is); a dated amendment to ADR 0059 §3 and the runtime.md
    sentence.
 
+   Resolution: fixed in 780426b: `humanProjects` keeps the active projects `ownsProject` (of `@forerunner/commands`) gives the human for any of its principals and nothing else; verified once more before the fix with the new case "offers follow the repository's ownership rule ..." in `loop-memory-promotion.test.ts`, which failed on the project list (the authored no-members project in, the shared-with one out) and passes with the fix; ADR 0059 amendment of 2026-10-25 item 1 and the runtime.md sentence describe the one rule.
+
 2. **medium (requirement partly met)**: `packages/runtime/src/session/runner.ts:1756-1795`
    (`reviewPromotions`) with `packages/runtime/src/loop/memory.ts:541-553` (`resolvePromotion`),
    `server.ts:1224-1226` (`GET /memory/promotions`) and `apps/ui/src/pages/MemoryPage.tsx:377-390`.
@@ -151,6 +153,8 @@ vanishes from the memory page and nothing on any page says why (finding 2).
    grade, the critic's summary, and the recourse; a loop test asserting the message in the
    human's inbox for the rejecting review; runtime.md and ADR 0059 consequences.
 
+   Resolution: fixed in 780426b: `reviewPromotions` sends one non-blocking `warning` message from the session's agent to the owner human per declined proposal (`describeRejectedPromotion`: verdict and grade, the critic's summary, the lesson's text as data, where it stays, the recourse), the channel of the injection-gate warning; a failed send is logged and never fails the step; the loop test's rejecting case failed on the missing message before the fix and now asserts the body (verdict, summary, lesson, "share it again") and that the incomplete run adds none; ADR 0059 amendment item 2 (the memory-page list recorded as the alternative not taken), runtime.md, critic.md.
+
 3. **low (gate)**: `packages/runtime/src/loop/memory.ts:482-500` (`proposeSharing`) with
    `memory.ts:820-852` (`edit`). The injection gate runs when a lesson is recorded
    (`screenLessons`, `record`, `recordStated`), not when it is edited (`edit` runs the format
@@ -168,6 +172,8 @@ vanishes from the memory page and nothing on any page says why (finding 2).
    "unknown")`, as `recordStated` does) and refuses with `injection_suspected`; a loop test
    with the edited text; a sentence in runtime.md.
 
+   Resolution: fixed in bb37449 and 60d38e3: `proposeSharing` runs `screenLessons` with source `unknown` on the row's text and refuses `injection_suspected` with the rules in `details`; the daemon maps the code to 422 (it was unmapped, so the refusal would have reached the page as a 500: the route test read 500 before the mapping). `loop-memory-promotion.test.ts` (the edited text refused, nothing pending, the restored text proposed) and `loop-routes.test.ts` (PUT the instruction, POST propose: 422 `injection_suspected`, no proposal) failed before their fixes; runtime.md and the route doc string carry the answers.
+
 4. **low (docs, residual)**: `packages/memory/src/promotion.ts:197-222` (`offerToProjects`
    without a project list) and `docs/maintainers/memory.md:490-493`. Without an explicit list
    the function derives candidate projects from every critic and shared project-level lesson
@@ -180,6 +186,8 @@ vanishes from the memory page and nothing on any page says why (finding 2).
    Smallest correct fix: the JSDoc and the memory.md bullet say the default is for a
    single-human store and that a caller on a shared store must pass the list.
 
+   Resolution: fixed in bb37449 (docs): the JSDoc of `offerToProjects` and the memory.md Known issues bullet say the default derivation runs over every project in the store, knows nothing of humans and is for a single-human store, that the runtime always passes `humanProjects`' list, and that a caller on a shared store must do the same. Verified once more that no production caller omits the list (`grep -rn offerToProjects`: `fileOffers` and the package test). No code change: the package has no notion of humans; the rule is enforced where the humans are known (finding 1).
+
 5. **low (docs disagree with the code)**: `docs/maintainers/critic.md:244-245` ("the proposal
    stays pending and the memory view shows it"), `packages/critic/src/critic.ts:714-715`,
    `packages/critic/src/types.ts:14-17` and the header of
@@ -190,6 +198,8 @@ vanishes from the memory page and nothing on any page says why (finding 2).
 
    Smallest correct fix: the four sentences say the runtime retires it (and, with finding 2,
    that the human is told).
+
+   Resolution: fixed in 780426b: critic.md, the `persist` comment in `critic.ts`, the `ReviewSubject` comment in `types.ts` and the header of `lesson-subject.test.ts` say the runtime retires the proposal on a `human` verdict as on any other completed non-accepting one and tells the human why (finding 2); the test's assertions were right and unchanged.
 
 6. **low (tests prove less than they claim)**: `packages/runtime/test/loop-memory-promotion.test.ts:321-330`
    asserts "a private lesson is never proposed by itself" on a lesson tagged `["budget"]`, so
@@ -202,6 +212,8 @@ vanishes from the memory page and nothing on any page says why (finding 2).
    Smallest correct fix: record a `general`-tagged private lesson in that test and assert
    `proposed` empty and nothing pending; add the cross-human `answerOffer` refusal (`not_found`,
    nothing copied, the offer still open).
+
+   Resolution: fixed in bb37449: test 3 records a `general`-tagged private lesson and asserts `proposed` empty and nothing pending (the behaviour the name claims, held by the loop's scope guard with the package's `approval_required` behind it); test 1 has K's loop answer J's offer and asserts `not_found`, the request still `open` and no copy in the project. Verified by mutation after the fix: with `answerOffer`'s `human_id` check removed the case fails ("expected 'answered' to be 'open'").
 
 7. **low (wrong path)**: `apps/ui/src/pages/MemoryPage.tsx:84-86` (`canShare`) with
    `packages/runtime/src/loop/memory.ts:482-500` (`proposeSharing`). A copy made by an accepted
@@ -217,6 +229,8 @@ vanishes from the memory page and nothing on any page says why (finding 2).
    Smallest correct fix: `proposeSharing` refuses a shared row whose source names a `promotion`
    origin ("already shared across projects", `validation`), `canShare` hides Share for it, a
    loop test and a UI assertion.
+
+   Resolution: fixed in bb37449: `proposeSharing` refuses a shared row whose `source` names a `promotion` origin as "already shared across projects" (`validation`, 409 on the route) and `canShare` takes the `source` and hides Share for it (the UI fake daemon mirrors the rule); the loop test (the accepted copy cannot be proposed, stays active and pinned, nothing pending) and `memory.test.tsx` (`canShare` false for the copy, true for a private row) failed before the fix; runtime.md, apps.md.
 
 ### Not defects (checked and cleared)
 
@@ -246,3 +260,29 @@ vanishes from the memory page and nothing on any page says why (finding 2).
   auto-proposed, even tagged `general`; the private index routes the proposal to the shared
   store and the origin stays home (`scoped-store.test.ts`); the monthly jobs do not touch
   promotion.
+
+### Verification (2026-10-25, on the branch at the resolutions commits)
+
+- `pnpm exec biome check --write` then `pnpm exec biome check` over the thirteen changed
+  TypeScript files: "Checked 13 files ... No fixes applied".
+- `node scripts/check-paths.mjs`: `check-paths: ok (1095 files)`.
+- `pnpm typecheck`: exit 0 (`tsc -p tsconfig.node.json`, then `apps/ui`, `apps/approvals-web`,
+  `apps/desktop`, `apps/mobile`), run after the last code change.
+- Item files and the review's: `packages/runtime/test/loop-memory-promotion.test.ts` (4 tests),
+  `packages/runtime/test/loop-routes.test.ts` (14), `packages/critic/test/lesson-subject.test.ts`
+  (3), `packages/memory/test/promotion.test.ts` (6), `packages/memory/test/consolidation.test.ts`
+  (11), `apps/ui/test/memory.test.tsx` (10): all passed. Each new assertion was run before its
+  fix and failed: the ownership case on the project list, the rejection message missing, the
+  instruction text accepted by `proposeSharing` (loop and route, the route reading 500), the
+  accepted copy accepted by `proposeSharing`, `canShare` true for the copy.
+- Whole directories: `pnpm exec vitest run --project unit packages/memory/test
+  packages/critic/test`: 26 files, 232 tests passed (18 s); `pnpm exec vitest run --project unit
+  packages/runtime/test`: 145 files, 1354 passed, 1 skipped (150 s, no timeout, no re-run
+  needed); `pnpm --filter @forerunner/ui test`: 54 files, 390 tests passed (61 s).
+- `node scripts/docs-check.mjs --base ccr-af5a431d-jc9xqj`: `docs-check: ok (19 files)`.
+- Postgres: not run; the item's changes and the fixes touch no `packages/state` code, SQL or
+  schema (the loop's rule, a message row and a route status), and the Postgres conformance suite
+  was last run against this database shape by the w4-private-memory review on 2026-10-25.
+- Mutation checks after the fixes (each restored): `answerOffer` without its `human_id` check
+  fails test 1 of the loop file ("expected 'answered' to be 'open'"); before the fixes, the five
+  mutations listed under the verdict were each caught by the test named there.
