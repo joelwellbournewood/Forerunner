@@ -11,6 +11,8 @@ import {
   verifyReleaseApks,
   // @ts-expect-error plain JS module
 } from "./android-apk-verify.mjs";
+// @ts-expect-error plain JS module
+import { DEVELOPMENT_CERT_CN } from "./android-keystore.mjs";
 
 const temps: string[] = [];
 function tempDir(): string {
@@ -172,6 +174,7 @@ describe("verifyReleaseApks", () => {
       platform: "linux",
       spawn,
       log: (l: string) => lines.push(l),
+      allowDevelopmentKey: true, // the android.yml path: the fixture is the generated key
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.cmd).toBe(join(sdk, "build-tools", "34.0.0", "apksigner"));
@@ -251,10 +254,60 @@ describe("verifyReleaseApks", () => {
         ? { status: 1, stdout: "DOES NOT VERIFY" }
         : { status: 0, stdout: SIGNED_OUTPUT },
     );
-    expect(() => verifyReleaseApks({ apkRoot: root, env: {}, spawn, log: () => {} })).toThrow(
-      /app-x86_64-release-unsigned\.apk/,
-    );
+    expect(() =>
+      verifyReleaseApks({
+        apkRoot: root,
+        env: {},
+        spawn,
+        log: () => {},
+        allowDevelopmentKey: true,
+      }),
+    ).toThrow(/app-x86_64-release-unsigned\.apk/);
     expect(calls).toHaveLength(2);
+  });
+
+  it("fails on a release APK signed with the build-generated development key unless allowed (a tag never ships it)", () => {
+    const root = fakeApkRoot([["universal", "release", "app-universal-release.apk"]]);
+    const { spawn } = fakeSpawn(() => ({ status: 0, stdout: SIGNED_OUTPUT }));
+    expect(() => verifyReleaseApks({ apkRoot: root, env: {}, spawn, log: () => {} })).toThrow(
+      /development key[\s\S]*ANDROID_KEYSTORE_BASE64[\s\S]*--allow-development-key/,
+    );
+    const allowed = verifyReleaseApks({
+      apkRoot: root,
+      env: {},
+      spawn,
+      log: () => {},
+      allowDevelopmentKey: true,
+    });
+    expect(allowed[0]?.signers[0]?.dn).toContain(DEVELOPMENT_CERT_CN);
+    // the debug key stays refused even when the development key is allowed
+    const debugOutput = SIGNED_OUTPUT.replace(
+      "CN=Forerunner development key, O=Forerunner, C=CH",
+      `${DEBUG_CERT_CN}, O=Android, C=US`,
+    );
+    const { spawn: debugSpawn } = fakeSpawn(() => ({ status: 0, stdout: debugOutput }));
+    expect(() =>
+      verifyReleaseApks({
+        apkRoot: root,
+        env: {},
+        spawn: debugSpawn,
+        log: () => {},
+        allowDevelopmentKey: true,
+      }),
+    ).toThrow(/Android debug key/);
+    // a release key passes without any flag
+    const releaseOutput = SIGNED_OUTPUT.replace(
+      "CN=Forerunner development key, O=Forerunner, C=CH",
+      "CN=Forerunner, O=Forerunner, C=CH",
+    );
+    const { spawn: releaseSpawn } = fakeSpawn(() => ({ status: 0, stdout: releaseOutput }));
+    const results = verifyReleaseApks({
+      apkRoot: root,
+      env: {},
+      spawn: releaseSpawn,
+      log: () => {},
+    });
+    expect(results[0]?.signers[0]?.dn).toBe("CN=Forerunner, O=Forerunner, C=CH");
   });
 
   it("explains a missing apksigner", () => {

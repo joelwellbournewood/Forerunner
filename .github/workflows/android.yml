@@ -53,8 +53,8 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       - name: Tauri android build (apk, x86_64 for the emulator + arm64 for phones)
         run: pnpm --filter @forerunner/mobile tauri android build --apk --target x86_64 --target aarch64 --ci
-      - name: Verify the release APK signature (apksigner; an unsigned or debug-signed APK fails the job)
-        run: node scripts/android-apk-verify.mjs
+      - name: Verify the release APK signature (apksigner; an unsigned or debug-signed APK fails the job; the generated development key is allowed here, never in release.yml)
+        run: node scripts/android-apk-verify.mjs --allow-development-key
       - name: Free disk space for the emulator (the APK build leaves under 4 GB; the emulator needs 1.8 x disk-size)
         run: |
           df -h / | tail -1

@@ -26,7 +26,7 @@ Triggered by a pushed tag matching `v*`, or by hand (`workflow_dispatch` with th
 | Job | Runner | Produces | Notes |
 | --- | --- | --- | --- |
 | `desktop` | `ubuntu-22.04`, `windows-latest` | `bundle/msi/*`, `bundle/appimage/*`, `bundle/deb/*` | `pnpm --filter @forerunner/desktop tauri build --ci` with the signing env below. Ubuntu 22.04 is the oldest supported glibc for the AppImage. |
-| `android` | `ubuntu-latest` | `apk/**/*.apk` | `node scripts/android-keystore.mjs` prepares the keystore, then `tauri android build --apk --ci`, then `node scripts/android-apk-verify.mjs` (`apksigner verify --print-certs`; an unsigned or debug-signed release APK fails the job before the upload) |
+| `android` | `ubuntu-latest` | `apk/**/*.apk` | `android-actions/setup-android` with `packages: platform-tools` (the legacy `tools` package it installs by default is gone from the SDK repository, cb6097e), then `node scripts/android-keystore.mjs --require-secret` (the release keystore from the secrets; without `ANDROID_KEYSTORE_BASE64` the step fails and no development key is generated), then `tauri android build --apk --ci`, then `node scripts/android-apk-verify.mjs` (`apksigner verify --print-certs`; an unsigned, debug-signed or development-signed release APK fails the job before the upload) |
 | `runner-image` | `ubuntu-latest` | `ghcr.io/<owner>/forerunner-runner:<version>` and `:latest` | `services/cloud-runner/Dockerfile`; the tag is the git tag without `v` |
 | `publish` | `ubuntu-latest` | the GitHub Release | downloads every artefact, writes `SHA256SUMS.txt` (`sha256sum` over `artifacts/`), runs `node scripts/release-notes.mjs "$GITHUB_REF_NAME" > RELEASE_NOTES.md`, then `softprops/action-gh-release` uploads `artifacts/**/*`, `docs/user-guide.md` and `docs/setup-guide.md`. A tag containing `-` (for example `v1.0.0-rc.1`) is published as a pre-release. |
 
@@ -41,25 +41,41 @@ status read from the environment (presence only, never values), and how to verif
 | --- | --- | --- | --- |
 | Update signatures (Tauri updater) | Tauri signs every bundle with a minisign key; the app's updater verifies the signature against `plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json` before installing | `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Bundles build unsigned; the in-app updater (phase 7) refuses them; release notes say "unsigned". Generate the pair once with `pnpm --filter @forerunner/desktop tauri signer generate -w forerunner.key`, store the private key and password as secrets, commit only the public key into `tauri.conf.json`. |
 | Windows installer (Authenticode) | The PFX is imported into the runner's certificate store and Tauri signs the MSI with `bundle.windows.certificateThumbprint` (or a `signCommand` for an HSM/Azure Trusted Signing setup) | `WINDOWS_CERTIFICATE` (base64 PFX), `WINDOWS_CERTIFICATE_PASSWORD` | The MSI is unsigned; SmartScreen warns at install; `release-notes.mjs` prints "unsigned (no certificate provided)" and a SmartScreen note. This is the state of 1.0 unless a certificate arrives (`docs/status/BLOCKERS.md`). |
-| Android APK | `apps/mobile/src-tauri/gen/android/app/build.gradle.kts` loads `rootProject.file("keystore.properties")` (the Android project root, `gen/android`, where `scripts/android-keystore.mjs` writes it) into `signingConfigs.create("release")` (`storeFile` resolved against that root, `keyAlias`, `storePassword`, `keyPassword`) and sets it on the `release` build type; a key missing from the file fails the configuration naming it. Without the file the build still configures, Gradle warns, and the release APK is left unsigned (`-unsigned.apk`, not installable); the `debug` build type keeps the SDK's debug key as generated. After the build, `scripts/android-apk-verify.mjs` runs `apksigner verify --verbose --print-certs` on every release APK and fails the job when one is unsigned, names no signer, or carries the `CN=Android Debug` certificate; the signer DN and SHA-256 land in the job log for the human to compare with the key they hold. | `ANDROID_KEYSTORE_BASE64` (the PKCS12/JKS keystore, base64), `ANDROID_KEYSTORE_PASSWORD` (store and key password; alias `forerunner`, override with `ANDROID_KEYSTORE_ALIAS`) | `scripts/android-keystore.mjs` generates a development keystore with `keytool` (JDK from `JAVA_HOME` or `PATH`), a random password that is written only to the gitignored `keystore.properties`, and prints a NOTE; the release APK is then signed with that key (`CN=Forerunner development key`, so the verify step passes). The APK installs by sideloading but is not for distribution; the generated key is kept in the vault for a stable identity across builds once the vault export exists (BLOCKERS.md). |
+| Android APK | `apps/mobile/src-tauri/gen/android/app/build.gradle.kts` loads `rootProject.file("keystore.properties")` (the Android project root, `gen/android`, where `scripts/android-keystore.mjs` writes it) into `signingConfigs.create("release")` (`storeFile` resolved against that root, `keyAlias`, `storePassword`, `keyPassword`) and sets it on the `release` build type; a key missing from the file fails the configuration naming it. Without the file the build still configures, Gradle warns, and the release APK is left unsigned (`-unsigned.apk`, not installable); the `debug` build type keeps the SDK's debug key as generated. Before the build, `scripts/android-keystore.mjs` decodes the secret and checks with `keytool -list -storepass:env` that it opens with the password and holds the alias, so a wrong secret, password or alias fails the step in a second (Gradle would find it at the end of the build); the properties file is written as `Properties.store` would (ISO-8859-1, `\uXXXX` for anything else), because Gradle reads it with `Properties.load(InputStream)`, so the password may hold any character. After the build, `scripts/android-apk-verify.mjs` runs `apksigner verify --verbose --print-certs` on every release APK and fails the job when one is unsigned, names no signer, carries the `CN=Android Debug` certificate, or carries the build-generated development key (`CN=Forerunner development key`) without `--allow-development-key`; the signer DN and SHA-256 land in the job log for the human to compare with the key they hold. | `ANDROID_KEYSTORE_BASE64` (the PKCS12/JKS keystore, base64), `ANDROID_KEYSTORE_PASSWORD` (store and key password; alias `forerunner`, override with `ANDROID_KEYSTORE_ALIAS`) | Two workflows, two answers (ADR 0015, amendment of 2026-10-25). `release.yml` (a `v*` tag or a dispatch) runs the keystore script with `--require-secret` and fails before the build: a release never ships a development-signed APK, which nobody could verify against a held key and no later release could update (Android refuses an update signed by another key, and the generated key is thrown away with the runner). `android.yml` (pull requests, pushes, fork PRs whose secrets are empty) lets the script generate a development keystore with `keytool` (JDK from `JAVA_HOME` or `PATH`), a random password that is written only to the gitignored `keystore.properties`, and a NOTE; its verify step passes `--allow-development-key`. That APK installs by sideloading but is not for distribution; the generated key is kept in the vault for a stable identity across builds once the vault export exists (BLOCKERS.md). |
 | Checksums | `SHA256SUMS.txt` next to the artefacts | none | always produced |
 
-`scripts/android-keystore.mjs` is pure Node: paths through `node:path`, `keytool` started with
-an argv array (no shell) and the password passed through `-storepass:env` so it never appears
-in a process listing; stdout never contains a secret; a keytool failure is reported with the
-password redacted. Running it twice keeps the existing development key.
+`scripts/android-keystore.mjs [--android-dir <dir>] [--require-secret]` is pure Node: paths
+through `node:path`, `keytool` started with an argv array (no shell) and the password passed
+through `-storepass:env` so it never appears in a process listing; stdout never contains a
+secret; a keytool failure is reported with the password redacted. With the secret it writes the
+keystore, runs `keytool -list -keystore <file> -alias <alias> -storepass:env` and, when that
+fails, removes the keystore, writes no properties file and exits 1 with keytool's reason
+("keystore password was incorrect", "Alias <x> does not exist", "Unrecognized keystore
+format"); only then does it write `keystore.properties`. `--require-secret` makes a missing
+`ANDROID_KEYSTORE_BASE64` an error instead of a generated key (the release workflow). Without
+the flag and the secret it generates the development key, or keeps an existing keystore with
+its properties file (a generated one, or the release key of an earlier run with the secret on
+the same checkout; delete both files to regenerate). `escapeProperty` writes values the way
+`java.util.Properties.store` does: `\\`, `\t` `\n` `\r` `\f`, a leading space as `\ `, and
+every UTF-16 unit outside printable ASCII as `\uXXXX`, so a password with an umlaut reaches
+Gradle intact (`Properties.load(InputStream)` reads ISO-8859-1, not UTF-8). The generated key's
+DN is `CN=Forerunner development key, O=Forerunner, C=CH` (`DEVELOPMENT_CERT_CN`, exported for
+the verifier).
 
-`scripts/android-apk-verify.mjs [--apk-root <dir>] [--apksigner <path>] [--allow-debug]` is the
-signature check both workflows run right after the Android build and before the artefact
-upload. It walks `gen/android/app/build/outputs/apk` for every `*.apk` under a `release`
-directory (the emulator smoke's debug APKs are not its business), finds `apksigner` in the
-newest `build-tools` under `ANDROID_HOME` or `ANDROID_SDK_ROOT` (else on `PATH`; `apksigner.bat`
-on Windows), runs `verify --verbose --print-certs` with an argv array and no shell, and exits 1
-with apksigner's reason when no release APK exists, one does not verify, apksigner names no
-signer, or the signer is the SDK's debug certificate (`--allow-debug` lifts only that last
-rule, for a local check). The output is the certificate's DN and SHA-256, nothing secret.
-Tauri regenerates only `tauri.build.gradle.kts` and `tauri.properties` on each build
-(`gen/android/.gitignore`); `build.gradle.kts` is committed and keeps the signing config.
+`scripts/android-apk-verify.mjs [--apk-root <dir>] [--apksigner <path>] [--allow-debug]
+[--allow-development-key]` is the signature check both workflows run right after the Android
+build and before the artefact upload. It walks `gen/android/app/build/outputs/apk` for every
+`*.apk` under a `release` directory (the emulator smoke's debug APKs are not its business),
+finds `apksigner` in the newest `build-tools` under `ANDROID_HOME` or `ANDROID_SDK_ROOT` (else on
+`PATH`; `apksigner.bat` on Windows), runs `verify --verbose --print-certs` with an argv array
+and no shell, and exits 1 with apksigner's reason when no release APK exists, one does not
+verify, apksigner names no signer, the signer is the SDK's debug certificate (`--allow-debug`
+lifts only that rule, for a local check), or the signer is the build-generated development key
+(`--allow-development-key` lifts only that one; `android.yml` passes it, `release.yml` never
+does, so a release key must not carry the development DN). The output is the certificate's DN
+and SHA-256, nothing secret. Tauri regenerates only `tauri.build.gradle.kts` and
+`tauri.properties` on each build (`gen/android/.gitignore`); `build.gradle.kts` is committed
+and keeps the signing config.
 
 ### Versions and the changelog
 
@@ -183,14 +199,20 @@ prompts and the item briefs it was run with are kept on the `build-briefs` branc
   -validity 10000 -storetype PKCS12`), store `base64 -w0 forerunner.jks` as
   `ANDROID_KEYSTORE_BASE64` and the password as `ANDROID_KEYSTORE_PASSWORD` (plus
   `ANDROID_KEYSTORE_ALIAS` when the alias is not `forerunner`); keep the file in the vault,
-  never in git. The next run's verify step prints the signer DN and SHA-256: compare them with
-  `keytool -list -v -keystore forerunner.jks`. A rotated key changes the signer, so phones
-  with the old key installed must uninstall first (Android refuses an update signed by another
-  key); say so in the release notes. The properties file written by `android-keystore.mjs`
-  carries `storeFile`, `keyAlias`, `password`, `storePassword` and `keyPassword`; the Gradle
-  file reads `storeFile`, `keyAlias`, `storePassword` and `keyPassword` through
-  `keystoreProperty(name)`, so a new key name is added in both places and asserted in
-  `scripts/android-keystore.test.ts`.
+  never in git. The password may hold any character (the properties file escapes it); the store
+  and the key password must be the same value, and the key's DN must not be the development
+  key's (`CN=Forerunner development key`), which the release verify step refuses. A wrong
+  secret, password or alias fails the keystore step of the next run within seconds, with
+  keytool's reason and nothing left on the runner; until the secrets exist, a `v*` tag fails
+  at that step by design (`--require-secret`), so a release needs them even when only the
+  desktop builds matter. The next run's verify step prints the signer DN and SHA-256: compare
+  them with `keytool -list -v -keystore forerunner.jks`. A rotated key changes the signer, so
+  phones with the old key installed must uninstall first (Android refuses an update signed by
+  another key); say so in the release notes. The properties file written by
+  `android-keystore.mjs` carries `storeFile`, `keyAlias`, `password`, `storePassword` and
+  `keyPassword`; the Gradle file reads `storeFile`, `keyAlias`, `storePassword` and
+  `keyPassword` through `keystoreProperty(name)`, so a new key name is added in both places and
+  asserted in `scripts/android-keystore.test.ts`.
 - **Turn the updater on (phase 7).** Add `@tauri-apps/plugin-updater`, set
   `plugins.updater.pubkey` and `endpoints` (the GitHub Releases `latest.json`), add the
   `createUpdaterArtifacts` bundle option, and implement steps 2 to 5 above in the desktop shell.
@@ -223,25 +245,36 @@ prompts and the item briefs it was run with are kept on the `build-briefs` branc
   unused port exits 1; the two `.ps1` files parse with the PowerShell parser and
   `fresh-install.ps1 -DryRun -NonInteractive` exits 0 when `pwsh` exists (skipped with a visible
   reason otherwise; Windows CI runs them).
-- `scripts/android-keystore.test.ts`: keytool resolution, properties escaping, decoding from the
-  secret, alias override, missing password fails without echoing the secret, generation with a
-  real `keytool` (skipped when none is installed) keeping the password out of stdout and
-  idempotent, redaction of a keytool failure; then the Gradle file: it loads
-  `keystore.properties` from the Android project root guarded by its existence, declares the
-  `release` signing config from exactly the keys the script writes with the store file resolved
-  against that root and a missing key failing by name, sets it on the release build type and
-  warns when the file is absent, keeps the Tauri-generated content and the debug build type as
-  generated, and carries no password or store path; and both workflows: keystore step, then
-  the build, then the unconditional `android-apk-verify.mjs` step, then the artefact upload,
-  with `build-tools;34.0.0` installed. (No Android SDK or Gradle exists on the build box, so the
-  Kotlin DSL is asserted textually and compiled by the Android workflow.)
+- `scripts/android-keystore.test.ts`: keytool resolution, properties escaping (specials, and
+  `\uXXXX` plus `\t` `\n` `\r` `\f` for what `Properties.load` cannot read as UTF-8, the file
+  pure ASCII), decoding from the secret with the `keytool -list` check's argv, environment and
+  no shell, alias override reaching the check, a rejected keystore failing with the redacted
+  reason and leaving no file, a missing keytool explained, missing password fails without
+  echoing the secret, `requireSecret` refusing the generated and the kept key but not the
+  secret; generation with a real `keytool` (skipped when none is installed) keeping the
+  password out of stdout, idempotent with the "existing keystore" wording, and the generated
+  key fed back through the secret path passing the real check while a wrong password and a
+  wrong alias fail it; redaction of a keytool failure and the development DN in the dname; then
+  the Gradle file: it loads `keystore.properties` from the Android project root guarded by its
+  existence, declares the `release` signing config from exactly the keys the script writes with
+  the store file resolved against that root and a missing key failing by name, sets it on the
+  release build type and warns when the file is absent, keeps the Tauri-generated content and
+  the debug build type as generated, and carries no password or store path; and both
+  workflows: keystore step, then the build, then the unconditional `android-apk-verify.mjs`
+  step, then the artefact upload, with `build-tools;34.0.0` installed and every
+  `setup-android` step naming `packages: platform-tools`; `release.yml` with `--require-secret`
+  and no `--allow-development-key`, `android.yml` the other way round, `--allow-debug` in
+  neither. (No Android SDK or Gradle exists on the build box, so the Kotlin DSL is asserted
+  textually and compiled by the Android workflow.)
 - `scripts/android-apk-verify.test.ts`: build-tools version order, apksigner resolution
   (`ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `PATH`; `.bat` on Windows), release APKs found
-  and debug ones left alone, apksigner output parsing (schemes, signers, `DOES NOT VERIFY`),
-  and the run against a fake apksigner: argv array without a shell and the signer reported,
-  no release APK fails, an unsigned APK fails with apksigner's reason, the debug certificate
-  fails unless `--allow-debug`, a signer-less exit 0 fails, every APK is checked, a missing
-  apksigner is explained.
+  and debug ones left alone, apksigner output parsing (schemes, signers, `DOES NOT VERIFY`, the
+  V2/V3 signer lines of an APK without a v1 signature), and the run against a fake apksigner:
+  argv array without a shell and the signer reported, no release APK fails, an unsigned APK
+  fails with apksigner's reason, the debug certificate fails unless `--allow-debug`, the
+  development key fails unless `--allow-development-key` (the debug key still refused with it,
+  a release key passing without any flag), a signer-less exit 0 fails, every APK is checked, a
+  missing apksigner is explained.
 - `scripts/release-notes.test.ts`: changelog parsing (CRLF too), section lookup by tag,
   signing status, the body with artefact table, owner, SmartScreen note, checksums.
 - `scripts/gates-verify.test.ts`: fixtures for every failure mode plus a parse of the real
