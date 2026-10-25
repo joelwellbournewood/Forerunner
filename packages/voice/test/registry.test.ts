@@ -92,6 +92,54 @@ describe("VoiceProviderRegistry", () => {
     expect(down.reason).toContain('preferred "deepgram" unavailable');
   });
 
+  it("a provider the panel excludes is not probed, never picked by the fallback, and its status says why", async () => {
+    // Spec O.4: a cloud row switched off in Extensions must not be reached for by the policy,
+    // whatever key sits in the vault, and its key is never read (not even for the probe).
+    let probed = 0;
+    let asked = 0;
+    const deepgram = new StubStt("deepgram", "cloud", { ok: true, reason: "key" });
+    deepgram.isAvailable = async () => {
+      probed += 1;
+      return { ok: true, reason: "key" };
+    };
+    const hasSecret = () => {
+      asked += 1;
+      return true;
+    };
+    const excluded = [{ name: "deepgram", reason: "switched off in Extensions" }];
+    const reg = new VoiceProviderRegistry()
+      .registerStt(new StubStt("faster-whisper", "local", { ok: false, reason: "no module" }))
+      .registerStt(deepgram, { secretRef: "secret:deepgram" })
+      .registerStt(fake);
+    const sel = await reg.selectStt({ excluded, hasSecret });
+    expect(sel.name).toBe("fake-stt");
+    expect(sel.policy).toBe("fake");
+    expect(probed).toBe(0);
+    expect(asked).toBe(0);
+    expect(sel.statuses.find((s) => s.name === "deepgram")).toEqual({
+      name: "deepgram",
+      kind: "cloud",
+      available: false,
+      reason: "switched off in Extensions",
+      secretRef: "secret:deepgram",
+      selected: false,
+    });
+    // Without a fake nothing can serve: the excluded provider is not a way out.
+    const strict = new VoiceProviderRegistry()
+      .registerStt(new StubStt("faster-whisper", "local", { ok: false, reason: "no module" }))
+      .registerStt(deepgram, { secretRef: "secret:deepgram" });
+    await expect(strict.selectStt({ excluded, hasSecret })).rejects.toMatchObject({
+      code: "unavailable",
+    });
+    const rows = await strict.statusStt({ excluded, hasSecret });
+    expect(rows.find((s) => s.name === "deepgram")?.reason).toBe("switched off in Extensions");
+    expect(probed).toBe(0);
+    // Not excluded: the same registry falls back to it as before.
+    const back = await strict.selectStt({ hasSecret });
+    expect(back).toMatchObject({ name: "deepgram", policy: "cloud" });
+    expect(probed).toBe(1);
+  });
+
   it("throws unavailable when nothing can serve, and survives a throwing probe", async () => {
     const throwing = new StubStt("broken", "local", { ok: true, reason: "x" });
     throwing.isAvailable = async () => {
