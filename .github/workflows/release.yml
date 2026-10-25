@@ -125,6 +125,10 @@ jobs:
     name: GitHub release
     needs: [desktop, android, runner-image]
     runs-on: ubuntu-latest
+    env:
+      # A step's `if:` cannot see that step's own `env:`; the flag carries presence only, the key
+      # itself stays in the env of the two steps that need it.
+      HAS_UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -139,11 +143,15 @@ jobs:
         with:
           path: artifacts
       - name: Checksums and release notes
+        env:
+          # presence only: release-notes.mjs reports which signatures the release carries
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
         run: |
           cd artifacts && find . -type f -exec sha256sum {} \; > SHA256SUMS.txt && cd ..
           node scripts/release-notes.mjs "${GITHUB_REF_NAME}" > RELEASE_NOTES.md
       - name: Signed release manifest (ADR 0015; skipped without UPDATE_SIGNING_KEY)
-        if: env.UPDATE_SIGNING_KEY != ''
+        if: env.HAS_UPDATE_SIGNING_KEY == 'true'
         env:
           UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
         run: |

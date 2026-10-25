@@ -5,8 +5,10 @@
 //
 // Usage: node scripts/release-notes.mjs <tag> [--changelog CHANGELOG.md] [--artifacts artifacts]
 //
-// Environment read: WINDOWS_CERTIFICATE (Windows code signing), TAURI_SIGNING_PRIVATE_KEY (updater
-// signatures), ANDROID_KEYSTORE_BASE64 (Android release key), GITHUB_REPOSITORY_OWNER (image name).
+// Environment read: WINDOWS_CERTIFICATE (Windows code signing), TAURI_SIGNING_PRIVATE_KEY (Tauri
+// updater signatures; the Tauri updater is not enabled), UPDATE_SIGNING_KEY (the signed release
+// manifest the in-app updater verifies, ADR 0015), ANDROID_KEYSTORE_BASE64 (Android release key),
+// GITHUB_REPOSITORY_OWNER (image name).
 // Only presence is checked; values are never printed.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -61,7 +63,10 @@ export function signingStatus(env = process.env) {
     windows: has("WINDOWS_CERTIFICATE") ? "signed" : "unsigned (no certificate provided)",
     updater: has("TAURI_SIGNING_PRIVATE_KEY")
       ? "signed (Tauri updater key)"
-      : "unsigned (no updater key provided; the in-app updater will not accept this build)",
+      : "unsigned (the Tauri updater is not enabled; in-app updates are verified through the signed release manifest)",
+    manifest: has("UPDATE_SIGNING_KEY")
+      ? "signed (`forerunner-release.json`; the in-app updater verifies it against `update.trustedKeys`)"
+      : "not signed (no `UPDATE_SIGNING_KEY`; the in-app updater cannot install this release)",
     android: has("ANDROID_KEYSTORE_BASE64")
       ? "signed with the release keystore"
       : "signed with a build-generated development key (sideloading only, not for distribution)",
@@ -157,6 +162,7 @@ export function buildReleaseNotes({ tag, changelog, env = process.env, artefacts
     "",
     `- Windows installer: ${signing.windows}`,
     `- Update signatures: ${signing.updater}`,
+    `- Release manifest: ${signing.manifest}`,
     `- Android APK: ${signing.android}`,
     "",
   );

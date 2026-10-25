@@ -148,3 +148,69 @@ describe("release-notes body", () => {
     expect(notes).not.toContain("SmartScreen");
   });
 });
+
+describe("release-notes: the signed release manifest (ADR 0015)", () => {
+  it("reports the manifest signature from UPDATE_SIGNING_KEY, presence only", () => {
+    expect(signingStatus({}).manifest).toMatch(/^not signed/);
+    expect(signingStatus({ UPDATE_SIGNING_KEY: "" }).manifest).toMatch(/^not signed/);
+    expect(signingStatus({ UPDATE_SIGNING_KEY: "x" }).manifest).toMatch(/^signed/);
+    // the value never reaches the text
+    expect(JSON.stringify(signingStatus({ UPDATE_SIGNING_KEY: "secret-value-123" }))).not.toContain(
+      "secret-value-123",
+    );
+  });
+
+  it("the unsigned updater line does not claim the in-app updater refuses the build (it verifies the manifest)", () => {
+    expect(signingStatus({}).updater).not.toMatch(/in-app updater will not accept/);
+  });
+
+  it("the Signing section names the release manifest", () => {
+    const body = buildReleaseNotes({
+      tag: "v1.0.0",
+      changelog: CHANGELOG,
+      env: { UPDATE_SIGNING_KEY: "x" },
+    });
+    expect(body).toMatch(/- Release manifest: signed/);
+  });
+});
+
+describe("release.yml: the GitHub release job sees the secrets it reports on", () => {
+  const text = () => readFileSync(join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
+
+  /** The `- name:` / `- uses:` / `- run:` step block (6-space indent) that contains `marker`. */
+  const stepAround = (wf: string, marker: string): string => {
+    const at = wf.indexOf(marker);
+    expect(at).toBeGreaterThan(-1);
+    const start = wf.lastIndexOf("\n      - ", at);
+    const next = wf.indexOf("\n      - ", at);
+    return wf.slice(start, next >= 0 ? next : wf.length);
+  };
+
+  /** Names declared in a step's own `env:` block (8-space key, 10-space entries). */
+  const stepEnvNames = (step: string): string[] => {
+    const m = step.match(/\n {8}env:\n((?: {10}(?:#.*|[A-Z0-9_]+:.*)\n?)+)/);
+    if (!m) return [];
+    return [...m[1].matchAll(/^ {10}([A-Z0-9_]+):/gm)].map((x) => x[1]);
+  };
+
+  it("a step's `if:` never reads an env name that only its own `env:` defines (GitHub evaluates `if` before the step env exists)", () => {
+    const wf = text();
+    for (const m of wf.matchAll(/\n {8}if: (.*)/g)) {
+      const step = stepAround(wf, m[0]);
+      const own = stepEnvNames(step);
+      const read = [...m[1].matchAll(/env\.([A-Z0-9_]+)/g)].map((x) => x[1]);
+      for (const name of read) {
+        expect(own, `if: ${m[1]} reads env.${name}, declared only on the step`).not.toContain(name);
+        // ...and the name is declared somewhere above the step (job or workflow env)
+        expect(wf.slice(0, wf.indexOf(step))).toMatch(new RegExp(`\\n\\s+${name}:`));
+      }
+    }
+  });
+
+  it("the release-notes step gets the Android keystore and update key secrets, so the Signing section is true", () => {
+    const step = stepAround(text(), "> RELEASE_NOTES.md");
+    const env = stepEnvNames(step);
+    expect(env).toContain("ANDROID_KEYSTORE_BASE64");
+    expect(env).toContain("UPDATE_SIGNING_KEY");
+  });
+});
