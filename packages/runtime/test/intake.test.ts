@@ -374,8 +374,10 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     const note = queued.find((q) => q.text.includes("rejected"));
     expect(note).toMatchObject({ kind: "note", author_agent: rt.agent.id });
     expect(note?.text).toContain(requestId);
-    // The note says what a rejection leaves missing: the plan and the drafted docs.
-    expect(note?.text).toMatch(/docs/);
+    // The note says what the rejection did about the docs: since the G.5 review a rejection
+    // scaffolds the standard set when the creation deferred it, so the note names the doc set's
+    // outcome (scaffolded now, or already in place) rather than a missing one.
+    expect(note?.text).toMatch(/doc set/);
     const status = await json(await req(`/projects/${projectId}/intake`));
     expect(status).toMatchObject({ state: "rejected", requestId });
   });
