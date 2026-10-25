@@ -332,14 +332,16 @@ export interface ComposeOptions {
    * human ahead of `FORERUNNER_HUMAN` and `config.json`; the cloud runner passes the human it
    * resolved. `email` finds the human by email or names the one created on first run (ahead of
    * `config.json` `humanEmail`). `humanName` and `timezone` are used only when the human is
-   * created; `agentName` picks the principal agent among the human's own (created with that
-   * name when there is none).
+   * created; `agentId` is the principal agent a caller resolved itself (the cloud runner's),
+   * which must be one of the human's own principals or the start is `not_found`; else
+   * `agentName` picks among the human's own by name (created with that name when there is none).
    */
   identity?: {
     humanId?: string;
     humanName?: string;
     email?: string;
     timezone?: string;
+    agentId?: string;
     agentName?: string;
   };
   /** MCP connector factory (tests use an in-memory transport). */
@@ -1147,10 +1149,21 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       }),
     ));
   } catch (e) {
+    // A refused start closes what it opened: the store and the private index next to it.
+    await privateStore?.close().catch(() => undefined);
     await store.close().catch(() => undefined);
     throw e;
   }
   logger.info("install identity", { humanId: human.id, source: identity.source });
+  if (identity.staleConfigHumanId) {
+    // The recorded id named nobody in this store (the install moved, or the row is gone): the
+    // configured email decided; the id is re-recorded below.
+    logger.warn("config.json humanId names nobody in this store; bound by the configured email", {
+      staleHumanId: identity.staleConfigHumanId,
+      humanId: human.id,
+      source: identity.source,
+    });
+  }
   // An install started from its config.json records the human it found or created there, so
   // a later email change in the store never rebinds it; an override from the environment or
   // the caller is for this start only and is never written.
@@ -1163,8 +1176,24 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     logger.info("install identity recorded in config.json", { humanId: human.id });
   }
   const principals = await store.agent.principals(human.id);
+  // A caller that resolved the agent itself (the cloud runner) names it by id; the pick must be
+  // that agent, never another of the human's or anyone else's.
+  const wantedAgentId = opts.identity?.agentId?.trim() || undefined;
+  const picked = pickPrincipal(principals, {
+    id: wantedAgentId,
+    name: opts.identity?.agentName ?? env.FORERUNNER_AGENT_NAME,
+  });
+  if (wantedAgentId && picked?.id !== wantedAgentId) {
+    await privateStore?.close().catch(() => undefined);
+    await store.close().catch(() => undefined);
+    throw new ForerunnerError(
+      "not_found",
+      `agent ${wantedAgentId} is not one of human ${human.name}'s active principal agents`,
+      { details: { agentId: wantedAgentId, humanId: human.id } },
+    );
+  }
   const agent =
-    pickPrincipal(principals, opts.identity?.agentName ?? env.FORERUNNER_AGENT_NAME) ??
+    picked ??
     (await store.agent.insert({
       name: opts.identity?.agentName ?? env.FORERUNNER_AGENT_NAME ?? "Alice",
       owner_human_id: human.id,

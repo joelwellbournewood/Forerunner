@@ -15,8 +15,9 @@ redaction), `ids`, `errors`.
 
 **Errors (`src/errors.ts`).** Every package throws `ForerunnerError` with a stable `code`
 from the `ErrorCode` union, so the UI, logs and tests match on the code, never the message;
-a new code is added to the union here. The latest, `identity_ambiguous` (ADR 0082), is an
-install on a state store holding several humans that names none of them.
+a new code is added to the union here. `identity_ambiguous` (ADR 0082) is an install on a
+state store holding several humans that names none of them; `MEMORY_SCOPE_VIOLATION`
+(ADR 0083, spelled as ADR 0002 names it) a private-memory row about to enter a shared store.
 
 | Concern | Windows | Linux | Where |
 | --- | --- | --- | --- |

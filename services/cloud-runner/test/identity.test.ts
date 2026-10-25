@@ -94,4 +94,63 @@ describe("runner identity on a shared store", () => {
       await store.close();
     }
   });
+
+  it("the composed runtime is the runner's agent, not the human's first principal", async () => {
+    // Review finding 2: J has two principals and the runner serves the second
+    // (FORERUNNER_RUNNER_AGENT); the runtime it composes must run as that same agent, or its
+    // memory loop, context layer, tokens and approval syncs belong to the first one.
+    const home = tempHome("fr-runner-agent-");
+    const clock = new SimulatedClock("2026-10-23T08:00:00Z");
+    const stateUrl = `sqlite:${join(home, "shared.sqlite")}`;
+    const store = await openStore({ url: stateUrl, clock });
+    const seed = await seedWorld(store);
+    const second = await store.agent.insert({
+      name: "Alice2",
+      owner_human_id: seed.human.id,
+      model_config: {},
+      memory_location: "local",
+      status: "active",
+      kind: "principal",
+    });
+    await store.billingSource.insert({
+      human_id: seed.human.id,
+      kind: "api_key",
+      label: "Console key",
+      credential_ref: "anthropic_api_key",
+      limits: {},
+      enabled: true,
+      priority: 2,
+    });
+    const vault = new MemoryVault();
+    await vault.set("anthropic_api_key", ["api", "key", "value"].join("-")); // not-a-secret
+    const provider = new FakeProvider({ clock, latency: "none", replies: [], onNoMatch: "echo" });
+    const { env, config } = testConfig(home, stateUrl, {
+      FORERUNNER_RUNNER_HUMAN: seed.human.id,
+      FORERUNNER_RUNNER_AGENT: second.id,
+    });
+    try {
+      const runner = await startCloudRunner({
+        config,
+        env,
+        clock,
+        vault,
+        provider,
+        gitHost: new MemoryGitHost("alice"),
+        registryDir: REGISTRY,
+        sandboxDetection: { engine: "none" as const, reason: "test", checkedAt: clock.nowIso() },
+      });
+      try {
+        expect(runner.agent.id).toBe(second.id);
+        expect(runner.rt.agent.id).toBe(second.id);
+        expect(runner.rt.human.id).toBe(seed.human.id);
+      } finally {
+        await runner.stop();
+      }
+      expect((await store.agent.principals(seed.human.id)).map((a) => a.id).sort()).toEqual(
+        [seed.agent.id, second.id].sort(),
+      );
+    } finally {
+      await store.close();
+    }
+  });
 });

@@ -290,27 +290,38 @@ describe("fr CLI", { timeout: 180_000 }, () => {
     expect(`${bad.stdout}${bad.stderr}`).toContain("not an email address");
   });
 
-  it("doctor reports prerequisites and the human the install binds to", async () => {
+  it("doctor reports prerequisites and the human the install binds to, creating no store", async () => {
+    // No daemon has run: the configured sqlite store does not exist, and a diagnostic must
+    // not create it (nor migrate a shared one). The lookup answers as for an empty store.
+    const stateFile = join(appDirs({ env: env() }).data, "state.sqlite");
+    expect(existsSync(stateFile)).toBe(false);
     const r = await fr("doctor", "--json");
     const checks = JSON.parse(r.stdout) as { name: string; ok: boolean; detail: string }[];
     expect(checks.find((c) => c.name === "node")?.ok).toBe(true);
     expect(checks.find((c) => c.name === "git")?.ok).toBe(true);
-    // The config from the setups above names human h-123, which the store does not hold yet.
+    // The config from the setups above names human h-123, which no store holds, and the
+    // email j@example.test: the stale id is named and the email decides (ADR 0082 amendment).
     const identity = checks.find((c) => c.name === "identity");
-    expect(identity?.ok).toBe(false);
-    expect(identity?.detail).toContain("h-123");
-    expect(identity?.detail).toContain("FORERUNNER_HUMAN");
-    // The environment override is read the way the daemon reads it.
+    expect(identity?.ok).toBe(true);
+    expect(identity?.detail).toContain("no store yet");
+    expect(identity?.detail).toContain("h-123 names nobody");
+    expect(identity?.detail).toContain("j@example.test");
+    expect(identity?.detail).toContain("first start");
+    expect(existsSync(stateFile)).toBe(false);
+    // The environment override is read the way the daemon reads it: ahead of config.json.
     const over = await run([process.execPath, TSX, CLI, "doctor", "--json"], {
-      env: { ...env(), FORERUNNER_HUMAN: "" },
+      env: { ...env(), FORERUNNER_HUMAN: "nobody@env.test" },
       allowFailure: true,
       timeoutMs: 60_000,
     });
-    expect(
-      (JSON.parse(over.stdout) as { name: string; ok: boolean }[]).find(
-        (c) => c.name === "identity",
-      )?.ok,
-    ).toBe(false);
+    const overridden = (
+      JSON.parse(over.stdout) as { name: string; ok: boolean; detail: string }[]
+    ).find((c) => c.name === "identity");
+    expect(overridden?.ok).toBe(false);
+    expect(overridden?.detail).toContain("nobody@env.test");
+    expect(overridden?.detail).toContain("(from FORERUNNER_HUMAN)");
+    expect(overridden?.detail).not.toContain("h-123");
+    expect(existsSync(stateFile)).toBe(false);
   });
 
   it("kill writes a request that a running runtime picks up", async () => {

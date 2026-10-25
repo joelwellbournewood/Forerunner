@@ -1,18 +1,39 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { appDirs, isForerunnerError, join, SimulatedClock } from "@forerunner/platform";
+import { appDirs, type Clock, isForerunnerError, join, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore } from "@forerunner/state";
 import { FakeProvider, textReply } from "@forerunner/testenv";
 import { MemoryVault } from "@forerunner/vault";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type ComposeOptions, composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import {
   describeIdentityCheck,
+  EMPTY_HUMAN_STORE,
   HUMAN_ENV,
   installIdentitySelectors,
   lookupInstallHuman,
 } from "../src/daemon/identity.ts";
 import { configPath, runSetup, type SetupConfig } from "../src/setup/wizard.ts";
+
+// The private memory index (ADR 0083) as compose opens it, with every close recorded: a
+// refused start must close what it opened (review finding 4). The wrapper is transparent.
+const closedIndexes = vi.hoisted(() => [] as string[]);
+vi.mock("../src/loop/memory.ts", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../src/loop/memory.ts")>();
+  return {
+    ...mod,
+    openPrivateIndex: async (url: string, clock: Clock) => {
+      const store = await mod.openPrivateIndex(url, clock);
+      return {
+        ...store,
+        close: async () => {
+          closedIndexes.push(url);
+          await store.close();
+        },
+      };
+    },
+  };
+});
 
 /**
  * Install identity on a shared store (triage 2026-10-23 P0 #2, ADR 0082): a daemon binds to
@@ -225,6 +246,21 @@ describe("install identity on a shared store", () => {
     open.push(crossed);
     expect((await store.agent.mustGet(crossed.agent.id)).owner_human_id).toBe(mId);
     expect(crossed.agent.name).toBe("Bob");
+    // A caller that resolved the agent itself (the cloud runner) names it by id, ahead of the
+    // name; another human's agent by id is refused, never adopted and never replaced by one
+    // of the human's own (review finding 2).
+    const byId = await compose(home("fr-identity-agent4-"), shared, clock, {
+      identity: { humanId: jId, agentId: zed.id, agentName: "Alice" },
+    });
+    open.push(byId);
+    expect(byId.agent.id).toBe(zed.id);
+    const agents = await store.agent.count();
+    await expect(
+      compose(home("fr-identity-agent5-"), shared, clock, {
+        identity: { humanId: mId, agentId: zed.id },
+      }),
+    ).rejects.toSatisfy((e: unknown) => code(e) === "not_found");
+    expect(await store.agent.count()).toBe(agents);
   });
 
   it("lookupInstallHuman and the doctor's check describe the binding without creating anything", async () => {
@@ -265,6 +301,100 @@ describe("install identity on a shared store", () => {
     expect(missing).toEqual({ kind: "not_found", selector: "ghost", source: "config" });
     expect(describeIdentityCheck(missing).ok).toBe(false);
     expect(await store.human.count()).toBe(3);
+  });
+
+  it("a refused start closes the private memory index it opened", async () => {
+    const indexUrl = `sqlite:${join(home("fr-identity-index-"), "private.sqlite")}`;
+    await expect(
+      compose(home("fr-identity-refused-index-"), shared, clock, { privateIndexUrl: indexUrl }),
+    ).rejects.toSatisfy((e: unknown) => code(e) === "identity_ambiguous");
+    expect(closedIndexes).toContain(indexUrl);
+  });
+
+  it("a recorded humanId that names nobody falls through to the configured email, never to another row", async () => {
+    // The install that moved to this store (fr setup --state-url ... --email ...): config.json
+    // still carries the id the daemon recorded on the old store. Its email binds the row that
+    // has it, or creates the install's own human; the stale id is reported, never another row.
+    const env = { [HUMAN_ENV]: "" };
+    const humans = await store.human.count();
+    const asM = await compose(home("fr-identity-stale-m-"), shared, clock, {
+      config: minimalConfig(shared, { humanId: "stale-from-sqlite", humanEmail: "m@example.test" }),
+    });
+    open.push(asM);
+    expect(asM.human.id).toBe(mId);
+    expect(asM.identity).toEqual({
+      humanId: mId,
+      source: "email",
+      selector: "m@example.test",
+      staleConfigHumanId: "stale-from-sqlite",
+    });
+    const cfg = minimalConfig(shared, {
+      humanName: "K2",
+      humanEmail: "k2@example.test",
+      humanId: "stale-from-sqlite",
+    });
+    const joined = await compose(home("fr-identity-stale-join-"), shared, clock, { config: cfg });
+    open.push(joined);
+    expect(joined.identity.source).toBe("created");
+    expect(joined.identity.staleConfigHumanId).toBe("stale-from-sqlite");
+    expect((await store.human.mustGet(joined.human.id)).email).toBe("k2@example.test");
+    expect([jId, mId]).not.toContain(joined.human.id);
+    expect(await store.human.count()).toBe(humans + 1);
+    // Without an email the stale id stays a refusal: nothing names this install's human.
+    await expect(
+      compose(home("fr-identity-stale-none-"), shared, clock, {
+        config: minimalConfig(shared, { humanId: "stale-from-sqlite" }),
+      }),
+    ).rejects.toSatisfy((e: unknown) => code(e) === "not_found");
+    // FORERUNNER_HUMAN is given per start and stays strict.
+    await expect(
+      compose(home("fr-identity-stale-env-"), shared, clock, {
+        env: { [HUMAN_ENV]: "stale-from-sqlite" },
+        config: minimalConfig(shared, { humanEmail: "m@example.test" }),
+      }),
+    ).rejects.toSatisfy((e: unknown) => code(e) === "not_found");
+    expect(await store.human.count()).toBe(humans + 1);
+    // fr doctor says what the next start does, naming the stale id.
+    const lookup = await lookupInstallHuman(
+      store,
+      installIdentitySelectors({
+        env,
+        config: minimalConfig(shared, {
+          humanId: "stale-from-sqlite",
+          humanEmail: "j@example.test",
+        }),
+      }),
+    );
+    expect(lookup).toMatchObject({
+      kind: "bound",
+      source: "email",
+      human: { id: jId },
+      staleConfigHumanId: "stale-from-sqlite",
+    });
+    const check = describeIdentityCheck(lookup);
+    expect(check.ok).toBe(true);
+    expect(check.detail).toContain("stale-from-sqlite");
+    expect(check.detail).toContain("names nobody");
+    expect(check.detail).toContain("J <j@example.test>");
+    // Without a store yet (fr doctor before the daemon's first start): a named selector is
+    // not found, an email or nothing is "created at the daemon's first start".
+    const noStore = await lookupInstallHuman(
+      EMPTY_HUMAN_STORE,
+      installIdentitySelectors({ env, config: minimalConfig(shared, { humanId: "h-123" }) }),
+    );
+    expect(noStore).toEqual({ kind: "not_found", selector: "h-123", source: "config" });
+    expect(
+      await lookupInstallHuman(
+        EMPTY_HUMAN_STORE,
+        installIdentitySelectors({
+          env,
+          config: minimalConfig(shared, { humanEmail: "a@b.test" }),
+        }),
+      ),
+    ).toEqual({ kind: "none", email: "a@b.test", humans: 0 });
+    expect(
+      await lookupInstallHuman(EMPTY_HUMAN_STORE, installIdentitySelectors({ env, config: null })),
+    ).toEqual({ kind: "none", email: null, humans: 0 });
   });
 });
 
@@ -324,6 +454,37 @@ describe("install identity on a single-human store", () => {
     open.push(back);
     expect(back.human.id).toBe(rt.human.id);
     expect(back.identity.source).toBe("config");
+  });
+
+  it("a wiped store with a recorded humanId starts again by email and records the new id", async () => {
+    // The data directory is gone, the config directory is not: config.json names a human the
+    // fresh store does not hold. The start creates the install's own human from the configured
+    // email and overwrites the stale id, instead of refusing until the file is edited by hand.
+    const fresh = `sqlite:${join(home("fr-identity-wiped-"), "state.sqlite")}`;
+    const installHome = home("fr-identity-wiped-home-");
+    const env = { FORERUNNER_HOME: installHome };
+    const dirs = appDirs({ env });
+    mkdirSync(dirs.config, { recursive: true });
+    const file = configPath(dirs);
+    writeFileSync(
+      file,
+      `${JSON.stringify(minimalConfig(fresh, { humanName: "J", humanEmail: "j@solo.test", humanId: "stale-before-the-wipe" }))}\n`,
+    );
+    const rt = await compose(installHome, fresh, clock, { config: undefined });
+    open.push(rt);
+    expect(rt.identity.source).toBe("created");
+    expect(rt.identity.staleConfigHumanId).toBe("stale-before-the-wipe");
+    expect(rt.human.name).toBe("J");
+    expect((await rt.store.human.mustGet(rt.human.id)).email).toBe("j@solo.test");
+    expect(await rt.store.human.count()).toBe(1);
+    expect((JSON.parse(readFileSync(file, "utf8")) as SetupConfig).humanId).toBe(rt.human.id);
+    const again = await compose(installHome, fresh, clock, { config: undefined });
+    open.push(again);
+    expect(again.identity).toEqual({
+      humanId: rt.human.id,
+      source: "config",
+      selector: rt.human.id,
+    });
   });
 
   it("fr setup persists the selector and keeps it across later runs", async () => {

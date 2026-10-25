@@ -389,11 +389,15 @@ export async function startCloudRunner(deps: CloudRunnerDeps): Promise<CloudRunn
       registryDir: deps.registryDir,
       appVersion: config.version,
       sandboxDetection: deps.sandboxDetection,
+      // The runtime runs as this runner's human and agent (ADR 0082): the agent by id, so a
+      // human with several principals never gets a runtime keyed to the first while the
+      // runner's sessions run as another.
       identity: {
         humanId: human.id,
         humanName: human.name,
         email: human.email,
         timezone: human.timezone,
+        agentId: agent.id,
       },
       startServices: false,
     });
