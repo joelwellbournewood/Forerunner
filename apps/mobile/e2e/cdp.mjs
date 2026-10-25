@@ -14,10 +14,15 @@
  *     links, explicit roles; name from aria-labelledby, aria-label, labels or text; hidden
  *     elements excluded), `getByText` (innermost element whose normalised text contains the
  *     words, case-insensitive unless `exact`), `locator(css)`, `filter({ has })`, `first`,
- *     `nth`, `count`, `waitFor` (visible), `click` (scroll into view, hit test, CDP mouse
- *     events at the centre), `fill` (focus, select all, `Input.insertText`, native setter
- *     fallback with input and change events), `innerText`, `getAttribute`, `isVisible`,
- *     `evaluate`. Actions are strict: a locator that resolves to several elements is refused.
+ *     `nth`, `count`, `waitFor` (visible), `click` (a layout-settle wait, scroll into view,
+ *     measure and hit-test in one call, CDP mouse events at the centre under the in-page
+ *     click guard; after three guarded misses at one unchanged box the fallback ladder of
+ *     ADR 0087's amendment: a mouse click shifted by the offset the page reported, a tap
+ *     through `Input.dispatchTouchEvent`, then `element.click()` in the page, each announced
+ *     as a `click fallback:` line), `fill` (focus, select all, `Input.insertText`, native
+ *     setter fallback with input and change events), `innerText`, `getAttribute`,
+ *     `isVisible`, `evaluate`. Actions are strict: a locator that resolves to several
+ *     elements is refused.
  *
  * Every element lookup runs inside the page through `Runtime.evaluate` with the query steps
  * as JSON; nothing is cached between calls, so a re-render never leaves a stale handle.
@@ -33,6 +38,18 @@ export const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_POLL_MS = 100;
 /** How long a click's events may take to reach the page after the CDP answer (ms). */
 const CLICK_SETTLE_MS = 1_000;
+/**
+ * The most one in-page layout-settle wait may take before it reports back (ms); the click's
+ * own timeout bounds the total, and a wait that ran out is asked again until then.
+ */
+const SETTLE_BUDGET_MS = 10_000;
+/**
+ * Guarded misses at one unchanged, settled box before the fallback ladder runs (the first
+ * miss cannot be judged, so this means three mouse clicks at the same point): a layout that
+ * did not move between settled measurements cannot explain them, so the input path's
+ * coordinates and the page's disagree (android.yml run 40013402240).
+ */
+const CLEAN_MISSES_BEFORE_FALLBACK = 2;
 
 export class CdpError extends Error {
   /**
@@ -505,14 +522,25 @@ function pageScript(steps, action, arg) {
   };
 
   // The click guard (android.yml run 40000764444). Between the box read below and the CDP
-  // mouse events, the page may re-render and move the element (a list arriving above an
+  // input events, the page may re-render and move the element (a list arriving above an
   // in-flow nav): the events then land on whatever is at the old point now. The guard sits
-  // in the capture phase on `window`, ahead of every page listener: a pointer, mouse or
-  // click event whose target is outside the measured element is cancelled and stopped
-  // before the page sees it, and recorded; one inside passes. `clickOutcome` reads the
-  // record and removes the guard, so the driver can measure again and retry a blocked click.
+  // in the capture phase on `window`, ahead of every page listener: a touch, pointer, mouse
+  // or click event whose target is outside the measured element is cancelled and stopped
+  // before the page sees it, and recorded with the viewport point the page saw it at
+  // (`clientX`/`clientY`: where the browser's input path put the event, which the driver
+  // compares with the point it dispatched, run 40013402240); one inside passes.
+  // `clickOutcome` reads the record and removes the guard, so the driver can measure again
+  // and retry a blocked click.
   const GUARD_KEY = "__forerunnerCdpClickGuard";
-  const GUARDED = ["pointerdown", "mousedown", "pointerup", "mouseup", "click"];
+  const GUARDED = [
+    "touchstart",
+    "touchend",
+    "pointerdown",
+    "mousedown",
+    "pointerup",
+    "mouseup",
+    "click",
+  ];
   const disarmClickGuard = () => {
     const guard = win[GUARD_KEY];
     if (!guard) return null;
@@ -523,28 +551,44 @@ function pageScript(steps, action, arg) {
   };
   const armClickGuard = (el) => {
     disarmClickGuard();
-    const guard = { events: [], missed: null, listener: null, timer: null };
+    const guard = { events: [], missed: null, client: null, listener: null, timer: null };
     guard.listener = (event) => {
       const t = event.target;
       const inside =
         Boolean(t) && (t === el || (typeof el.contains === "function" && el.contains(t)));
       guard.events.push(event.type);
       if (inside) return;
-      if (guard.missed === null) guard.missed = describe(t && t.nodeType === 1 ? t : null);
+      if (guard.missed === null) {
+        guard.missed = describe(t && t.nodeType === 1 ? t : null);
+        const p = event.touches?.[0] ?? event;
+        guard.client =
+          typeof p.clientX === "number" && typeof p.clientY === "number"
+            ? { x: p.clientX, y: p.clientY }
+            : null;
+      }
       event.preventDefault();
       event.stopImmediatePropagation();
     };
-    for (const type of GUARDED) win.addEventListener(type, guard.listener, true);
+    // `passive: false`: Chrome makes a window-level touchstart listener passive by default,
+    // and a passive listener cannot cancel the tap that would click the wrong element.
+    for (const type of GUARDED) {
+      win.addEventListener(type, guard.listener, { capture: true, passive: false });
+    }
     // A guard nobody reads (the driver gave up) does not outlive the click for long.
     guard.timer = win.setTimeout(disarmClickGuard, 15_000);
     win[GUARD_KEY] = guard;
   };
   if (action === "clickOutcome") {
     const guard = win[GUARD_KEY];
-    if (!guard) return { armed: false, events: [], missed: null };
+    if (!guard) return { armed: false, events: [], missed: null, client: null };
     // The release's click may still be queued behind the CDP answer: the caller polls until
     // `click` (or a miss) is in, and only then asks to disarm.
-    const out = { armed: true, events: guard.events.slice(), missed: guard.missed };
+    const out = {
+      armed: true,
+      events: guard.events.slice(),
+      missed: guard.missed,
+      client: guard.client,
+    };
     if (arg === "disarm") disarmClickGuard();
     return out;
   }
@@ -572,38 +616,160 @@ function pageScript(steps, action, arg) {
   if (action === "clickPoint") {
     if (!visible(el)) return { error: "not_visible" };
     if (!enabled(el)) return { error: "disabled" };
-    if (typeof el.scrollIntoView === "function") {
-      el.scrollIntoView({ block: "center", inline: "center" });
-    }
-    const before = el.getBoundingClientRect();
-    // One animation frame (or 100 ms when frames are not running) between two reads of the
-    // box: a smooth scroll or a transition still moving the element is reported as unstable
-    // and the caller polls again instead of clicking where the element used to be.
+    // The layout-settle wait (ADR 0087 amendment). Home keeps growing after its first card
+    // (the banner and the other cards arrive, the screen polls and re-renders), and on the
+    // emulator's old WebView the bottom nav sits in the flow under it. So before the box is
+    // measured: the element's box, the page's scroll height and scroll position unchanged
+    // over SETTLE_FRAMES animation frames and SETTLE_MS, and no DOM mutation under the
+    // document for QUIET_MS (a MutationObserver; a page that mutates without end is let
+    // through once its geometry has held for QUIET_CAP_MS). Then the element is scrolled
+    // into view instantly and the same wait runs again when that moved it. The measurement,
+    // the hit test and the guard's arming happen in this one call, right before the caller's
+    // Input.dispatch*, so nothing re-renders between them on this side. The wait is bounded
+    // by `budgetMs`: at the deadline the result says `settled: false` and the caller decides.
+    const opts = arg && typeof arg === "object" ? arg : {};
+    const budgetMs = Number(opts.budgetMs) > 0 ? Number(opts.budgetMs) : 0;
+    const SETTLE_FRAMES = 5;
+    const SETTLE_MS = 300;
+    const QUIET_MS = 300;
+    const QUIET_CAP_MS = 1_500;
+    const clock = () =>
+      win.performance && typeof win.performance.now === "function"
+        ? win.performance.now()
+        : Date.now();
+    const scroller = doc.scrollingElement || doc.documentElement;
+    const geometry = () => {
+      const r = el.getBoundingClientRect();
+      return {
+        box: [r.left, r.top, r.width, r.height],
+        scrollY: Number(win.scrollY || win.pageYOffset || 0),
+        scrollHeight: scroller ? Number(scroller.scrollHeight || 0) : 0,
+      };
+    };
+    const sameGeometry = (a, b) =>
+      a.scrollY === b.scrollY &&
+      a.scrollHeight === b.scrollHeight &&
+      a.box.every((v, i) => v === b.box[i]);
+    const measure = (settled, waited) => {
+      const g = geometry();
+      const x = g.box[0] + g.box[2] / 2;
+      const y = g.box[1] + g.box[3] / 2;
+      const hit = doc.elementFromPoint(x, y);
+      const hitOk = Boolean(hit) && (hit === el || el.contains(hit));
+      if (settled && hitOk) armClickGuard(el);
+      return {
+        x,
+        y,
+        hitOk,
+        hit: describe(hit),
+        settled,
+        box: g.box,
+        scrollY: g.scrollY,
+        scrollHeight: g.scrollHeight,
+        waitedMs: waited.waitedMs,
+        changes: waited.changes,
+        mutations: waited.mutations,
+      };
+    };
+    // `quick`: the fallback ladder re-arms the guard at a box it has just seen stable three
+    // times; it measures and probes now, without the wait or the scroll.
+    if (opts.quick === true) return measure(true, { waitedMs: 0, changes: 0, mutations: 0 });
     return new Promise((resolve) => {
-      let done = false;
-      const settle = () => {
-        if (done) return;
-        done = true;
-        const rect = el.getBoundingClientRect();
-        if (
-          rect.left !== before.left ||
-          rect.top !== before.top ||
-          rect.width !== before.width ||
-          rect.height !== before.height
-        ) {
-          resolve({ error: "unstable" });
+      const t0 = clock();
+      const deadline = t0 + budgetMs;
+      let mutations = 0;
+      let lastMutation = t0;
+      let observer = null;
+      try {
+        observer = new win.MutationObserver((records) => {
+          mutations += records.length;
+          lastMutation = clock();
+        });
+        observer.observe(doc.documentElement, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          characterData: true,
+        });
+      } catch {
+        observer = null;
+      }
+      let last = geometry();
+      let stableSince = t0;
+      let stableFrames = 0;
+      let changes = 0;
+      let scrolled = false;
+      const finish = (settled) => {
+        if (observer) observer.disconnect();
+        resolve(measure(settled, { waitedMs: Math.round(clock() - t0), changes, mutations }));
+      };
+      const frame = (fn) =>
+        typeof win.requestAnimationFrame === "function"
+          ? win.requestAnimationFrame(fn)
+          : win.setTimeout(fn, 16);
+      const tick = () => {
+        if (!el.isConnected) {
+          // Re-rendered away: the caller queries again rather than measuring a stale node.
+          if (observer) observer.disconnect();
+          resolve({ error: "detached" });
           return;
         }
-        const x = rect.left + rect.width / 2;
-        const y = rect.top + rect.height / 2;
-        const hit = doc.elementFromPoint(x, y);
-        const hitOk = Boolean(hit) && (hit === el || el.contains(hit));
-        if (hitOk) armClickGuard(el);
-        resolve({ x, y, hitOk, hit: describe(hit) });
+        const t = clock();
+        const g = geometry();
+        if (sameGeometry(g, last)) {
+          stableFrames += 1;
+        } else {
+          last = g;
+          stableFrames = 0;
+          stableSince = t;
+          changes += 1;
+        }
+        const stable = stableFrames >= SETTLE_FRAMES && t - stableSince >= SETTLE_MS;
+        const quiet = t - lastMutation >= QUIET_MS || t - stableSince >= QUIET_CAP_MS;
+        if (stable && quiet) {
+          if (!scrolled) {
+            scrolled = true;
+            if (typeof el.scrollIntoView === "function") {
+              try {
+                el.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
+              } catch {
+                el.scrollIntoView();
+              }
+            }
+            // The next frame re-measures: a scroll that moved the box restarts the wait.
+            frame(tick);
+            return;
+          }
+          finish(true);
+          return;
+        }
+        if (t >= deadline) {
+          finish(false);
+          return;
+        }
+        frame(tick);
       };
-      if (typeof win.requestAnimationFrame === "function") win.requestAnimationFrame(settle);
-      win.setTimeout(settle, 100);
+      frame(tick);
     });
+  }
+  if (action === "clickElement") {
+    // The last resort of the fallback ladder: the click event raised on the element itself,
+    // inside the page, under a guard of its own so the caller learns whether it fired.
+    if (!enabled(el)) return { error: "disabled" };
+    armClickGuard(el);
+    try {
+      if (typeof el.click === "function") el.click();
+      else el.dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true }));
+    } catch (error) {
+      const failed = disarmClickGuard();
+      return {
+        error: "click_threw",
+        message: String(error?.message ?? error),
+        events: failed ? failed.events : [],
+      };
+    }
+    const guard = disarmClickGuard();
+    return { events: guard ? guard.events.slice() : [], missed: guard ? guard.missed : null };
   }
   if (action === "focusForFill") {
     if (!visible(el)) return { error: "not_visible" };
@@ -696,28 +862,87 @@ function describeSteps(steps) {
 // Page and Locator
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * The offset between where the driver dispatched its clicks and where the page saw them, when
+ * every guarded miss reports the same one (within half a pixel) and it is not zero; null
+ * otherwise. A constant offset means the input path transforms the coordinates differently
+ * from the page's own `getBoundingClientRect`, and the click can be sent shifted back.
+ * @param {Array<{ x: number, y: number, client: { x: number, y: number } | null }>} misses
+ * @returns {{ dx: number, dy: number } | null}
+ */
+function offsetSeenBy(misses) {
+  if (misses.length < 2) return null;
+  let delta = null;
+  for (const m of misses) {
+    if (!m.client || typeof m.client.x !== "number" || typeof m.client.y !== "number") {
+      return null;
+    }
+    const d = { dx: Math.round(m.client.x - m.x), dy: Math.round(m.client.y - m.y) };
+    if (delta && (Math.abs(d.dx - delta.dx) > 0.5 || Math.abs(d.dy - delta.dy) > 0.5)) {
+      return null;
+    }
+    delta = delta ?? d;
+  }
+  return delta && (delta.dx !== 0 || delta.dy !== 0) ? delta : null;
+}
+
+/** Two settled measurements of one element with the same box, scroll position and page height. */
+function sameMeasurement(a, b) {
+  return (
+    a.scrollY === b.scrollY &&
+    a.scrollHeight === b.scrollHeight &&
+    Array.isArray(a.box) &&
+    Array.isArray(b.box) &&
+    a.box.length === b.box.length &&
+    a.box.every((v, i) => v === b.box[i])
+  );
+}
+
+/** A click outcome that counts as landed: the guard saw events, none outside, or the document went. */
+function landed(outcome) {
+  return outcome.navigated || (outcome.missed === null && outcome.events.length > 0);
+}
+
+function roundPoint(x, y) {
+  return `(${Math.round(x)}, ${Math.round(y)})`;
+}
+
 export class Page {
   /**
    * @param {CdpClient} client
-   * @param {{ timeoutMs?: number, pollMs?: number, now?: () => number }} [options]
+   * @param {{
+   *   timeoutMs?: number,
+   *   pollMs?: number,
+   *   now?: () => number,
+   *   log?: (line: string) => void,
+   * }} [options]
    */
   constructor(client, options = {}) {
     this.client = client;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.pollMs = options.pollMs ?? DEFAULT_POLL_MS;
     this.now = options.now ?? (() => Date.now());
+    // The driver's own lines on the runner's stdout (a `click fallback:` line names the path
+    // a click had to take); nothing is written when every action takes its first path.
+    this.log = typeof options.log === "function" ? options.log : (line) => console.log(line);
   }
 
   /**
    * Evaluates a JavaScript expression in the page and returns its value (JSON-serialisable).
    * @param {string} expression
+   * @param {{ timeoutMs?: number }} [options] the CDP request's timeout (an expression that
+   *   waits inside the page, like the layout-settle wait, needs more than the default)
    */
-  async evaluate(expression) {
-    const res = await this.client.send("Runtime.evaluate", {
-      expression,
-      returnByValue: true,
-      awaitPromise: true,
-    });
+  async evaluate(expression, options = {}) {
+    const res = await this.client.send(
+      "Runtime.evaluate",
+      {
+        expression,
+        returnByValue: true,
+        awaitPromise: true,
+      },
+      options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs },
+    );
     if (res.exceptionDetails) {
       const details = res.exceptionDetails;
       const text =
@@ -736,8 +961,8 @@ export class Page {
   }
 
   /** @internal */
-  async run(steps, action, arg) {
-    const value = await this.evaluate(buildExpression(steps, action, arg));
+  async run(steps, action, arg, options = {}) {
+    const value = await this.evaluate(buildExpression(steps, action, arg), options);
     if (!value || typeof value !== "object") {
       throw new CdpError("cdp.evaluate_failed", `page script returned ${JSON.stringify(value)}`);
     }
@@ -772,6 +997,20 @@ export class Page {
     });
     await this.client.send("Input.dispatchMouseEvent", { ...base, type: "mousePressed" });
     await this.client.send("Input.dispatchMouseEvent", { ...base, type: "mouseReleased" });
+  }
+
+  /** One tap at viewport CSS coordinates, the way a phone clicks: touch start, touch end. */
+  async touchTap(x, y) {
+    await this.client.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y }],
+      modifiers: 0,
+    });
+    await this.client.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+      modifiers: 0,
+    });
   }
 
   async insertText(text) {
@@ -943,53 +1182,130 @@ export class Locator {
   }
 
   /**
-   * Scrolls the element into view and clicks its centre through CDP mouse events once the
-   * hit test lands on it (or inside it). The in-page click guard (see `pageScript`) checks
-   * every pointer, mouse and click event of that click against the element: when the element
-   * moved between the measurement and the events, the events that land elsewhere are
-   * cancelled before the page sees them and the click is measured and sent again; when it
-   * keeps missing until `timeout`, `cdp.click_missed` names what was at the point. A click
-   * none of whose events reached the page is `cdp.click_lost` (never retried: a late event
-   * could otherwise click twice). A click that replaced the document (a navigation) counts as
-   * landed: the guard went with the old document.
+   * Clicks the element's centre through CDP mouse events, deterministically (ADR 0087 and
+   * its amendment of 2026-10-25):
+   *
+   *   1. one in-page call waits for the layout to settle (box, scroll height and position
+   *      unchanged over five frames and 300 ms, no DOM mutation for 300 ms), scrolls the
+   *      element into view instantly and waits again when that moved it, then measures the
+   *      box, hit-tests the centre and arms the click guard, all right before the mouse
+   *      events (`settled: false` at the budget's end means the click is not sent);
+   *   2. the guard (see `pageScript`) stops every touch, pointer, mouse and click event that
+   *      lands outside the element before the page sees it, and records where the page saw
+   *      it; a miss is measured and sent again (a box that moved in between: the race of run
+   *      40000764444);
+   *   3. after `CLEAN_MISSES_BEFORE_FALLBACK` further misses at one unchanged settled box the
+   *      input path's coordinates and the page's disagree (run 40013402240), and the fallback
+   *      ladder runs, each step announced with a `click fallback: <locator> (<code>: <why>)`
+   *      line on `page.log`: a mouse click shifted by the offset the page reported (when all
+   *      misses reported the same one), a tap through `Input.dispatchTouchEvent`, then
+   *      `element.click()` inside the page.
+   *
+   * Failures: `cdp.click_missed` when the events kept landing elsewhere until `timeout`, or
+   * when the whole ladder failed (the details name what was at the point);
+   * `cdp.click_intercepted` when the in-page hit test keeps finding another element at the
+   * centre (an overlay: no fallback, the page itself says the element is covered);
+   * `cdp.click_unsettled` when the layout never held still; `cdp.click_lost` when no event
+   * of a click reached the page (never retried: a late event could otherwise click twice).
+   * A click that replaced the document (a navigation) counts as landed: the guard went with
+   * the old document.
    * @param {{ timeout?: number }} [options]
    */
   async click(options = {}) {
     const timeout = options.timeout ?? this.page.timeoutMs;
     const t0 = this.page.now();
-    let lastHit = "nothing";
+    const remaining = () => Math.max(0, timeout - (this.page.now() - t0));
+    let lastError = "not_found";
+    let intercepted = null;
+    let point = null;
+    let last = null;
+    const misses = [];
+    let cleanMisses = 0;
     for (;;) {
-      const remaining = Math.max(0, timeout - (this.page.now() - t0));
-      const point = await this.#resolve("clickPoint", null, remaining, false);
-      if (point.hitOk) {
-        await this.page.mouseClick(point.x, point.y);
+      const budgetMs = Math.min(remaining(), SETTLE_BUDGET_MS);
+      const r = this.#single(
+        await this.page.run(
+          this.steps,
+          "clickPoint",
+          { budgetMs },
+          { timeoutMs: budgetMs + this.page.timeoutMs },
+        ),
+      );
+      if (r === undefined || r.error === "detached") {
+        lastError = "not_found";
+      } else if (r.error) {
+        lastError = r.error;
+      } else if (!r.settled) {
+        lastError = "unsettled";
+        point = r;
+        intercepted = r.hitOk ? null : r.hit;
+      } else if (!r.hitOk) {
+        lastError = "intercepted";
+        point = r;
+        intercepted = r.hit;
+      } else {
+        intercepted = null;
+        const unchanged = last !== null && sameMeasurement(last, r);
+        last = r;
+        point = r;
+        await this.page.mouseClick(r.x, r.y);
         const outcome = await this.#clickOutcome();
-        if (outcome.navigated) return;
-        if (outcome.missed === null && outcome.events.length > 0) return;
+        if (landed(outcome)) return;
         if (outcome.missed === null) {
           throw new CdpError(
             "cdp.click_lost",
-            `${this}: no pointer, mouse or click event of the click at (${Math.round(point.x)}, ${Math.round(point.y)}) reached the page`,
+            `${this}: no pointer, mouse or click event of the click at ${roundPoint(r.x, r.y)} reached the page`,
             { events: outcome.events },
           );
         }
-        lastHit = outcome.missed;
-        if (this.page.now() - t0 >= timeout) {
+        misses.push({
+          x: r.x,
+          y: r.y,
+          hit: outcome.missed,
+          events: outcome.events,
+          client: outcome.client,
+        });
+        lastError = "missed";
+        cleanMisses = unchanged ? cleanMisses + 1 : 0;
+        if (cleanMisses >= CLEAN_MISSES_BEFORE_FALLBACK) {
+          await this.#clickFallbacks(r, misses);
+          return;
+        }
+      }
+      if (remaining() <= 0) {
+        if (misses.length > 0) {
           await this.page.run([], "clickOutcome", "disarm").catch(() => undefined);
+          const m = misses[misses.length - 1];
           throw new CdpError(
             "cdp.click_missed",
-            `${this}: moved before the click landed; ${lastHit} was at (${Math.round(point.x)}, ${Math.round(point.y)}) instead (the click was stopped before the page saw it)`,
-            { hit: lastHit, events: outcome.events },
+            `${this}: moved before the click landed; ${m.hit} was at ${roundPoint(m.x, m.y)} instead (the click was stopped before the page saw it)`,
+            { hit: m.hit, events: m.events, attempts: misses.length },
           );
         }
-        await sleep(this.page.pollMs);
-        continue;
-      }
-      lastHit = point.hit;
-      if (this.page.now() - t0 >= timeout) {
+        if (intercepted !== null) {
+          throw new CdpError(
+            "cdp.click_intercepted",
+            `${this}: ${intercepted} intercepts pointer events at ${roundPoint(point.x, point.y)}`,
+          );
+        }
+        if (lastError === "unsettled") {
+          throw new CdpError(
+            "cdp.click_unsettled",
+            `${this}: the layout did not settle within ${timeout} ms (${point.changes} changes of the box, scroll position or page height and ${point.mutations} DOM mutations in the last ${point.waitedMs} ms)`,
+            { box: point.box, changes: point.changes, mutations: point.mutations },
+          );
+        }
         throw new CdpError(
-          "cdp.click_intercepted",
-          `${this}: ${lastHit} intercepts pointer events at (${Math.round(point.x)}, ${Math.round(point.y)})`,
+          "cdp.timeout",
+          `${this} ${
+            lastError === "not_found"
+              ? "was not found"
+              : lastError === "not_visible"
+                ? "was not visible"
+                : lastError === "disabled"
+                  ? "stayed disabled"
+                  : `failed: ${lastError}`
+          } within ${timeout} ms`,
         );
       }
       await sleep(this.page.pollMs);
@@ -997,18 +1313,104 @@ export class Locator {
   }
 
   /**
+   * The fallback ladder after `misses` guarded mouse clicks at `point`, the box unchanged
+   * and the in-page hit test on the element every time: the input path puts the point
+   * elsewhere than the page does. Each step prints `click fallback: <locator> (<code>: <why>)`
+   * on `page.log` before it runs, so the runner's log names the path a click took; a step
+   * that lands returns. The last step failing is `cdp.click_missed` with everything tried.
+   * @param {{ x: number, y: number, box: number[] }} point
+   * @param {Array<{ x: number, y: number, hit: string, events: string[], client: { x: number, y: number } | null }>} misses
+   */
+  async #clickFallbacks(point, misses) {
+    const at = roundPoint(point.x, point.y);
+    const n = misses.length;
+    const hit = misses[n - 1].hit;
+    const where = `${n} mouse clicks at ${at} landed on ${hit} with the box stable`;
+    const announce = (why) => this.page.log(`click fallback: ${this} (cdp.click_missed: ${why})`);
+    // 1. The page saw every miss at the same offset from the dispatched point: send the
+    //    click shifted back, still through the input path the smoke is there to exercise.
+    const delta = offsetSeenBy(misses);
+    if (delta) {
+      const x = point.x - delta.dx;
+      const y = point.y - delta.dy;
+      announce(
+        `mouse click shifted by (${-delta.dx}, ${-delta.dy}) to ${roundPoint(x, y)}; the page saw ${n} clicks at ${roundPoint(point.x + delta.dx, point.y + delta.dy)} instead of ${at}, on ${hit}`,
+      );
+      if (await this.#armed()) {
+        await this.page.mouseClick(x, y);
+        const outcome = await this.#clickOutcome();
+        if (landed(outcome)) return;
+      }
+    }
+    // 2. A tap, the way a phone clicks.
+    let tap = "raised no event in the page";
+    announce(`tap through Input.dispatchTouchEvent at ${at}; ${where}`);
+    if (await this.#armed()) {
+      try {
+        await this.page.touchTap(point.x, point.y);
+        const outcome = await this.#clickOutcome();
+        if (landed(outcome)) return;
+        if (outcome.missed !== null) tap = `landed on ${outcome.missed}`;
+      } catch (error) {
+        if (!(error instanceof CdpError) || error.code !== "cdp.protocol_error") throw error;
+        tap = `was refused (${error.message})`;
+      }
+    } else {
+      tap = "was not sent (the element moved)";
+    }
+    // 3. The click event raised on the element inside the page: no input path at all.
+    announce(`element.click() in the page; ${where}; the tap ${tap}`);
+    const result = this.#single(await this.page.run(this.steps, "clickElement", null));
+    if (result && !result.error && result.missed === null && result.events.includes("click")) {
+      return;
+    }
+    const element =
+      result === undefined
+        ? "found no element"
+        : result.error === "click_threw"
+          ? `threw: ${result.message}`
+          : result.error
+            ? `failed: ${result.error}`
+            : "raised no click event";
+    throw new CdpError(
+      "cdp.click_missed",
+      `${this}: the click never reached it; ${where}; the tap ${tap}; element.click() in the page ${element}`,
+      {
+        hit,
+        events: misses[n - 1].events,
+        box: point.box,
+        attempts: n,
+        tap,
+        element,
+      },
+    );
+  }
+
+  /**
+   * Re-arms the guard for a fallback step: measures and hit-tests now (no wait, the box has
+   * just been seen stable) and arms when the centre still hits the element.
+   */
+  async #armed() {
+    const r = this.#single(
+      await this.page.run(this.steps, "clickPoint", { budgetMs: 0, quick: true }),
+    );
+    return Boolean(r && !r.error && r.hitOk);
+  }
+
+  /**
    * What the click guard saw: waits up to `CLICK_SETTLE_MS` for the attempt's click event (a
    * miss on the press does not end the wait: the release's events may still be on their way
    * and must meet the guard), then disarms the guard, or keeps it up after a miss whose click
    * never came, until the retry arms its own. `navigated` when the guard is gone: only a new
-   * document (the click navigated) drops it.
+   * document (the click navigated) drops it. `client` is where the page saw the first
+   * misplaced event (its `clientX`/`clientY`), null when nothing missed.
    */
   async #clickOutcome() {
     const t0 = this.page.now();
     for (;;) {
       const seen = await this.page.run([], "clickOutcome", null);
       // The guard is gone only when the measured document was replaced: the click navigated.
-      if (!seen.armed) return { events: seen.events, missed: null, navigated: true };
+      if (!seen.armed) return { events: seen.events, missed: null, client: null, navigated: true };
       // A miss does not settle the attempt: the release's `mouseup` and `click` may still be
       // queued behind the CDP answer, and they must meet the guard too (review finding 1).
       const settled = seen.events.includes("click");
@@ -1018,8 +1420,13 @@ export class Locator {
         // it, so a straggler from this attempt is still stopped until then.
         const keep = seen.missed !== null && !settled;
         const out = await this.page.run([], "clickOutcome", keep ? null : "disarm");
-        if (!out.armed) return { events: seen.events, missed: null, navigated: true };
-        return { events: out.events, missed: out.missed, navigated: false };
+        if (!out.armed) return { events: seen.events, missed: null, client: null, navigated: true };
+        return {
+          events: out.events,
+          missed: out.missed,
+          client: out.client ?? null,
+          navigated: false,
+        };
       }
       await sleep(Math.min(this.page.pollMs, 50));
     }
@@ -1127,6 +1534,7 @@ export async function describePage(page) {
  *   fetchImpl?: typeof fetch,
  *   WebSocketImpl?: typeof WebSocket,
  *   now?: () => number,
+ *   log?: (line: string) => void,
  * }} [options]
  * @returns {Promise<{ client: CdpClient, page: Page, target: Record<string, unknown> }>}
  */
@@ -1161,6 +1569,6 @@ export async function connectPage(httpBase, options = {}) {
     WebSocketImpl: options.WebSocketImpl,
     timeoutMs: options.timeoutMs,
   });
-  const page = new Page(client, { timeoutMs: options.timeoutMs, now });
+  const page = new Page(client, { timeoutMs: options.timeoutMs, now, log: options.log });
   return { client, page, target };
 }

@@ -308,15 +308,94 @@ async function startFakeDevTools(
   return fake;
 }
 
-async function openPage(fake: FakeDevTools, timeoutMs = 2_000): Promise<Page> {
+async function openPage(
+  fake: FakeDevTools,
+  timeoutMs = 2_000,
+  log?: (line: string) => void,
+): Promise<Page> {
   const client = await CdpClient.connect(`ws://127.0.0.1:${fake.port}/devtools/page/PAGE1`);
-  return new Page(client, { timeoutMs, pollMs: 20 });
+  return new Page(client, { timeoutMs, pollMs: 20, log });
 }
 
 const clicks = (fake: FakeDevTools) => fake.exec("window.__clicks") as string[];
 const inputs = (fake: FakeDevTools) => fake.exec("window.__inputs") as string[][];
 const mouse = (fake: FakeDevTools) =>
   fake.calls.filter((c) => c.method === "Input.dispatchMouseEvent").map((c) => c.params);
+const presses = (fake: FakeDevTools) =>
+  mouse(fake)
+    .filter((p) => p.type === "mousePressed")
+    .map((p) => [p.x, p.y]);
+const taps = (fake: FakeDevTools) =>
+  fake.calls
+    .filter((c) => c.method === "Input.dispatchTouchEvent")
+    .map((c) => [c.params.type, c.params.touchPoints]);
+
+/**
+ * The emulator run's page shape (android.yml run 40013402240): `#root` is viewport-tall
+ * (`height: 100%` is a plain rule the old WebView applies) while the unstyled content is
+ * shorter, so a point below the content hits `#root` itself; the nav sits in the flow under
+ * Home's list.
+ */
+const RUN_40013402240 = `<!doctype html><html><head><title>Forerunner</title></head><body>
+<div id="root" data-box="0 0 300 900">
+<div data-testid="m-shell" data-box="0 0 300 470">
+<header data-box="0 0 300 30">Forerunner PharmaWatch live</header>
+<main data-box="0 30 300 400"><section data-testid="m-home"><h1>Projects</h1><p>1 request blocks work until you answer.</p></section></main>
+<nav data-testid="m-nav" aria-label="Main" data-box="0 430 300 40">
+  <a href="/inbox" data-box="0 430 100 40"><span>Inbox</span></a>
+</nav>
+</div></div></body></html>`;
+
+/**
+ * A fake input path: `Input.dispatchMouseEvent` delivers the press and release events to
+ * `target(x, y)` (the element the browser would hit), reporting `clientX`/`clientY` as
+ * `seenAt(x, y)` (where the page would see the event); `Input.dispatchTouchEvent` likewise
+ * through `touchTarget`, when given (without it the fake refuses the touch domain).
+ */
+function fakeInputPath(
+  fake: FakeDevTools,
+  options: {
+    target: string;
+    seenAt?: string;
+    touchTarget?: string;
+    onPress?: (x: number, y: number) => void;
+  },
+): void {
+  const seenAt = options.seenAt ?? "(x, y) => [x, y]";
+  const deliver = (target: string, types: string[], x: number, y: number) =>
+    fake.exec(`(() => {
+      const [cx, cy] = (${seenAt})(${x}, ${y});
+      const el = (${target})(${x}, ${y});
+      for (const type of ${JSON.stringify(types)}) {
+        if (el) el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
+      }
+    })()`);
+  fake.handlers.set("Input.dispatchMouseEvent", (params) => {
+    const x = Number(params.x);
+    const y = Number(params.y);
+    if (params.type === "mousePressed") {
+      options.onPress?.(x, y);
+      deliver(options.target, ["pointerdown", "mousedown"], x, y);
+    } else if (params.type === "mouseReleased") {
+      deliver(options.target, ["pointerup", "mouseup", "click"], x, y);
+    }
+    return {};
+  });
+  if (options.touchTarget) {
+    const touchTarget = options.touchTarget;
+    let last: [number, number] = [0, 0];
+    fake.handlers.set("Input.dispatchTouchEvent", (params) => {
+      const points = params.touchPoints as Array<{ x: number; y: number }>;
+      if (params.type === "touchStart") {
+        last = [Number(points[0]?.x), Number(points[0]?.y)];
+        deliver(touchTarget, ["touchstart", "pointerdown"], last[0], last[1]);
+      } else if (params.type === "touchEnd") {
+        deliver(touchTarget, ["touchend", "pointerup", "click"], last[0], last[1]);
+      }
+      return {};
+    });
+  }
+}
 
 describe("page target selection", () => {
   it("lists /json/list and picks the preferred page target over workers and other pages", async () => {
@@ -736,6 +815,161 @@ describe("Page and locators over Runtime.evaluate", () => {
     expect(mouse(fake)[1]).toMatchObject({ x: 50, y: 510 });
     expect(mouse(fake)[2]).toMatchObject({ x: 50, y: 510 });
     expect(clicks(fake)).toEqual(["m-pair-submit"]);
+  });
+
+  it("waits for the layout to settle (box, page height and DOM mutations quiet) before the one click, when the page keeps growing after the click starts", async () => {
+    // Home's banner and cards arrive after the first card, each pushing the in-flow nav down,
+    // and the screen's text keeps changing for a while (a re-render per poll). The old driver
+    // measured at once and needed the guard's retry; the settled click is one press, after
+    // the last change.
+    const fake = await startFakeDevTools({
+      html: `<!doctype html><html><head><title>Forerunner</title></head><body>
+<main><section data-testid="m-home" data-box="0 0 300 100"><h1>Projects</h1><p>loading</p></section></main>
+<nav data-testid="m-nav" aria-label="Main" data-box="0 100 300 40">
+  <a href="/inbox" data-box="0 100 100 40"><span>Inbox</span></a>
+</nav></body></html>`,
+    });
+    const base = fake.handlers.get("Runtime.evaluate") as Handler;
+    let started = false;
+    fake.handlers.set("Runtime.evaluate", (params, f) => {
+      // The page grows from the moment the driver starts measuring: frame 2 and frame 4 move
+      // the nav (box changes), frames 5 to 30 change Home's text (mutations, no box change).
+      if (!started && String(params.expression).includes('"clickPoint"')) {
+        started = true;
+        f.exec(`(() => {
+          window.__log = [];
+          const home = document.querySelector("[data-testid=m-home]");
+          const nav = document.querySelector("[data-testid=m-nav]");
+          const link = document.querySelector("a[href='/inbox']");
+          const place = (row) => {
+            home.setAttribute("data-box", "0 0 300 " + row);
+            nav.setAttribute("data-box", "0 " + row + " 300 40");
+            link.setAttribute("data-box", "0 " + row + " 100 40");
+            window.__log.push("move");
+          };
+          let frame = 0;
+          const tick = () => {
+            frame += 1;
+            if (frame === 2) place(400);
+            if (frame === 4) place(420);
+            if (frame >= 5 && frame <= 30) {
+              home.querySelector("p").textContent = "poll " + frame;
+              window.__log.push("text");
+            }
+            if (frame <= 30) requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        })()`);
+      }
+      return base(params, f);
+    });
+    fakeInputPath(fake, {
+      target: "(x, y) => document.elementFromPoint(x, y)",
+      onPress: () => fake.exec('window.__log.push("press")'),
+    });
+    const page = await openPage(fake, 5_000);
+    await page.getByTestId("m-nav").getByText("Inbox").click();
+    expect(clicks(fake)).toEqual(["Inbox"]);
+    // One press, at the settled position, after every layout change and text change.
+    expect(presses(fake)).toEqual([[50, 440]]);
+    const log = fake.exec("window.__log") as string[];
+    expect(log.filter((e) => e === "move")).toHaveLength(2);
+    expect(log.filter((e) => e === "text")).toHaveLength(26);
+    expect(log.at(-1)).toBe("press");
+  });
+
+  it("corrects a constant offset between the dispatched point and where the page saw the events, through the mouse path (android.yml run 40013402240)", async () => {
+    // The box is stable and the in-page probe hits the nav item, but every mouse event
+    // arrives 30 px lower than dispatched and lands on bare #root below the content. After
+    // three misses at one unchanged box, the driver reads the offset the guard saw and sends
+    // the click shifted by it: the page sees it at the measured point.
+    const fake = await startFakeDevTools({ html: RUN_40013402240 });
+    fakeInputPath(fake, {
+      target: "(x, y) => document.elementFromPoint(x, y + 30)",
+      seenAt: "(x, y) => [x, y + 30]",
+    });
+    const lines: string[] = [];
+    const page = await openPage(fake, 5_000, (l) => lines.push(l));
+    await page.getByTestId("m-nav").getByText("Inbox").click();
+    expect(clicks(fake)).toEqual(["Inbox"]);
+    expect(presses(fake)).toEqual([
+      [50, 450],
+      [50, 450],
+      [50, 450],
+      [50, 420],
+    ]);
+    expect(taps(fake)).toEqual([]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(
+      /^click fallback: getByTestId\("m-nav"\)\.getByText\("Inbox"\) \(cdp\.click_missed: mouse click shifted by \(0, -30\) to \(50, 420\); the page saw 3 clicks at \(50, 480\) instead of \(50, 450\), on <div id="root">/,
+    );
+  });
+
+  it("taps the way a phone does when the box is stable and the mouse events keep landing on another element with no offset to learn", async () => {
+    // The page sees the events at the dispatched coordinates, yet the browser's hit target
+    // is #root: the mouse path cannot land. The touch path (Input.dispatchTouchEvent) does.
+    const fake = await startFakeDevTools({ html: RUN_40013402240 });
+    fakeInputPath(fake, {
+      target: "() => document.getElementById('root')",
+      touchTarget: "(x, y) => document.elementFromPoint(x, y)",
+    });
+    const lines: string[] = [];
+    const page = await openPage(fake, 5_000, (l) => lines.push(l));
+    await page.getByTestId("m-nav").getByText("Inbox").click();
+    expect(clicks(fake)).toEqual(["Inbox"]);
+    expect(presses(fake)).toEqual([
+      [50, 450],
+      [50, 450],
+      [50, 450],
+    ]);
+    expect(taps(fake)).toEqual([
+      ["touchStart", [{ x: 50, y: 450 }]],
+      ["touchEnd", []],
+    ]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(
+      /^click fallback: getByTestId\("m-nav"\)\.getByText\("Inbox"\) \(cdp\.click_missed: tap through Input\.dispatchTouchEvent at \(50, 450\); 3 mouse clicks at \(50, 450\) landed on <div id="root"> "Forerunner PharmaWatch live Projects1 re" with the box stable\)$/,
+    );
+    // #root never saw a click that passed the guard.
+    expect(fake.exec("window.__clicks.length")).toBe(1);
+  });
+
+  it("falls back to element.click() in the page, with a printed line, when the tap misses too; cdp.click_missed stays the error when even that fails", async () => {
+    const fake = await startFakeDevTools({ html: RUN_40013402240 });
+    fakeInputPath(fake, {
+      target: "() => document.getElementById('root')",
+      touchTarget: "() => document.getElementById('root')",
+    });
+    const lines: string[] = [];
+    const page = await openPage(fake, 5_000, (l) => lines.push(l));
+    await page.getByTestId("m-nav").getByText("Inbox").click();
+    expect(clicks(fake)).toEqual(["Inbox"]);
+    expect(presses(fake)).toHaveLength(3);
+    expect(taps(fake)).toHaveLength(2);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^click fallback: .* \(cdp\.click_missed: tap through /);
+    expect(lines[1]).toMatch(
+      /^click fallback: getByTestId\("m-nav"\)\.getByText\("Inbox"\) \(cdp\.click_missed: element\.click\(\) in the page; 3 mouse clicks at \(50, 450\) landed on <div id="root"> .* with the box stable; the tap landed on <div id="root"> /,
+    );
+    // The last resort has no further fallback: a page whose element.click() raises no event
+    // (and a WebView that refuses the touch domain) fails as cdp.click_missed with the hit.
+    const fake2 = await startFakeDevTools({ html: RUN_40013402240 });
+    fakeInputPath(fake2, { target: "() => document.getElementById('root')" });
+    fake2.exec("HTMLElement.prototype.click = function () {}");
+    const lines2: string[] = [];
+    const page2 = await openPage(fake2, 5_000, (l) => lines2.push(l));
+    const error = await failure(page2.getByTestId("m-nav").getByText("Inbox").click());
+    expect(error).toMatchObject({
+      code: "cdp.click_missed",
+      message: expect.stringMatching(
+        /^getByTestId\("m-nav"\)\.getByText\("Inbox"\): the click never reached it; 3 mouse clicks at \(50, 450\) landed on <div id="root">.*; the tap was refused \(Input\.dispatchTouchEvent: 'Input\.dispatchTouchEvent' wasn't found\); element\.click\(\) in the page raised no click event$/,
+      ),
+    });
+    expect(lines2.map((l) => l.replace(/ \(cdp\.click_missed: (\S+).*/, " $1"))).toEqual([
+      'click fallback: getByTestId("m-nav").getByText("Inbox") tap',
+      'click fallback: getByTestId("m-nav").getByText("Inbox") element.click()',
+    ]);
+    expect(clicks(fake2)).toEqual([]);
   });
 
   it("evaluate splices the function source into the expression; the page never evaluates a string (CSP)", async () => {
