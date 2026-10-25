@@ -375,11 +375,15 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
   or ordering, but the provider's work (and a cloud provider's bill) continues meanwhile. The
   fake, local and cloud providers all honour the signal; the model stream is the only worker
   raced against the abort.
-- The shells do not call the `/voice` routes yet (above, "How the shell reaches it") and do
-  not play the `/speak/:id/events` frames either: the UI plays them itself through Web Audio
-  in the webview (`apps.md`); the desktop sidecar ignores the `speak.started` frame, so with
-  the app window closed nothing is spoken (alerts are skipped, `summary.speak` answers with
-  the text). The
+- The UI calls the `/voice` routes since O.1 (above, "How the shell reaches it": the
+  conversation panel, `apps/ui/src/shell/ConversationPanel.tsx`, reads `client.voiceStatus()`
+  and posts the frames `voice-capture.ts` captures through `client.voiceAudio()` to
+  `POST /voice/sessions/:id/audio`; `apps/ui/src/mobile/voice.ts` captures the phone's;
+  `apps.md`), but
+  the shells do not play the `/speak/:id/events` frames: the UI plays them itself through Web
+  Audio in the webview (`apps.md`); the desktop sidecar ignores the `speak.started` frame, so
+  with the app window closed nothing is spoken (alerts are skipped, `summary.speak` answers
+  with the text). The
   daemon's bridge is exercised by `packages/runtime/test/voice-route.test.ts` and scenario 3
   still carries its own copy (`tests/e2e/src/scenario-voice.ts`) until it is pointed at
   `VoiceBridge`. The conversation agent's own per-human copy of a pending card outlives a
