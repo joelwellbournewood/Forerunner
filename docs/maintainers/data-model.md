@@ -62,6 +62,15 @@ the actor as arguments; a milestone update or a session patch that carries `plan
 a non-blank reason and an author is refused with `ForerunnerError("validation")` on every
 write path (`update` and `patch` included), so a caller cannot skip them.
 
+### The agent's last ended session
+
+`SessionRepo.latestForAgent(agentId)` is the agent's newest session row by `created_at`;
+`latestForAgent(agentId, { ended: true })` is the row that ended last (`ended_at` set, newest
+end first, then creation, then id), or undefined when none has ended. The startup checklist
+(`packages/runtime`, `checklist.ts`) asks for the ended one: the runner inserts the row of the
+session being started before the checklist runs, so the newest row is never the session to
+diff against.
+
 ### Findings block close
 
 `task.transition(..., "done")` is refused with `ForerunnerError("findings_open")` while the task

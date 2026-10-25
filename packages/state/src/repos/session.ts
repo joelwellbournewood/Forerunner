@@ -104,8 +104,30 @@ export class SessionRepo extends Repository<SessionRow> {
     return this.list({ project_id: projectId }, { orderBy: "created_at desc", ...opts });
   }
 
-  async latestForAgent(agentId: string): Promise<SessionRow | undefined> {
-    const [row] = await this.list({ agent_id: agentId }, { orderBy: "created_at desc", limit: 1 });
+  /**
+   * The agent's newest session row by creation, or with `ended` the session that ended last
+   * (`ended_at` set; newest end first, then creation, then id). The startup checklist asks
+   * for the ended one: the runner has already inserted the row of the session being started,
+   * so the newest row is never the session to diff against.
+   */
+  async latestForAgent(
+    agentId: string,
+    opts: { ended?: boolean } = {},
+  ): Promise<SessionRow | undefined> {
+    if (!opts.ended) {
+      const [row] = await this.list(
+        { agent_id: agentId },
+        { orderBy: "created_at desc", limit: 1 },
+      );
+      return row;
+    }
+    const [row] = await this.rows(
+      `SELECT * FROM ${this.qt}
+       WHERE "agent_id" = ? AND "ended_at" IS NOT NULL
+       ORDER BY "ended_at" DESC, "created_at" DESC, "id" DESC
+       LIMIT 1`,
+      [agentId],
+    );
     return row;
   }
 }

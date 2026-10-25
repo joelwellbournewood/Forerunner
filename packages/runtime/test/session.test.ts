@@ -245,6 +245,76 @@ describe("startup checklist and state brief", () => {
     expect(text).toContain("high on");
     expect(text).toContain("peer");
   });
+
+  it("names the agent's last ended session and the tasks changed since it, never the row of the session being started", async () => {
+    // The runner inserts the new session row (planned, started now, no summary) before the
+    // checklist runs, so the newest row by creation is the session itself.
+    const previous = await w.store.session.insert({
+      agent_id: w.alice,
+      project_id: w.project,
+      status: "planned",
+      started_at: w.clock.nowIso(),
+      summary: "",
+      handoff: {},
+    });
+    const running = await w.store.session.start(previous.id, previous.version);
+    await addTask(w, "Untouched since");
+    await w.clock.advance(60_000);
+    const ended = await w.store.session.setStatus(running.id, running.version, "completed", {
+      summary: "Done: 1",
+      handoff: { next: ["Second"] },
+    });
+    await w.clock.advance(60_000);
+    const changed = await addTask(w, "Changed after the last session");
+    await w.clock.advance(60_000);
+    const current = await w.store.session.insert({
+      agent_id: w.alice,
+      project_id: w.project,
+      status: "planned",
+      started_at: w.clock.nowIso(),
+      summary: "",
+      handoff: {},
+    });
+    const brief = await runStartupChecklist({
+      store: w.store,
+      clock: w.clock,
+      agentId: w.alice,
+      projectId: w.project,
+      appVersion: "0.1.0",
+      sessionCapUsdMicro: 5_000_000,
+    });
+    expect(brief.lastSession?.id).not.toBe(current.id);
+    expect(brief.lastSession).toEqual({
+      id: ended.id,
+      endedAt: ended.ended_at,
+      summary: "Done: 1",
+      handoff: { next: ["Second"] },
+    });
+    expect(brief.changesSinceLastSession.count).toBe(1);
+    expect(brief.changesSinceLastSession.tasks.map((t) => t.id)).toEqual([changed.id]);
+    expect(renderStateBrief(brief)).toContain(`Last session ${ended.ended_at}: Done: 1`);
+  });
+
+  it("has no last session before the agent's first session ended", async () => {
+    await w.store.session.insert({
+      agent_id: w.alice,
+      project_id: w.project,
+      status: "planned",
+      started_at: w.clock.nowIso(),
+      summary: "",
+      handoff: {},
+    });
+    const brief = await runStartupChecklist({
+      store: w.store,
+      clock: w.clock,
+      agentId: w.alice,
+      projectId: w.project,
+      appVersion: "0.1.0",
+      sessionCapUsdMicro: 5_000_000,
+    });
+    expect(brief.lastSession).toBeNull();
+    expect(brief.changesSinceLastSession).toEqual({ tasks: [], count: 0 });
+  });
 });
 
 describe("session runner", () => {
@@ -253,6 +323,35 @@ describe("session runner", () => {
     w = await world();
   });
   afterEach(() => w.store.close());
+
+  it("the next session's brief names the previous ended session and what changed since it", async () => {
+    await addTask(w, "First");
+    const exec = fakeExecutor(w);
+    const { runner: r } = runner(w, exec);
+    const start = () =>
+      r.start({
+        agentId: w.alice,
+        projectId: w.project,
+        trigger: "manual",
+        budgetCapUsdMicro: 5_000_000,
+        grant,
+      });
+    const first = await start();
+    expect(first.status).toBe("completed");
+    expect(first.brief.lastSession).toBeNull();
+    await w.clock.advance(60_000);
+    const added = await addTask(w, "Second");
+    await w.clock.advance(60_000);
+    const second = await start();
+    const previous = await w.store.session.mustGet(first.sessionId);
+    expect(previous.ended_at).not.toBeNull();
+    expect(second.brief.lastSession).toMatchObject({
+      id: first.sessionId,
+      endedAt: previous.ended_at,
+      summary: previous.summary,
+    });
+    expect(second.brief.changesSinceLastSession.tasks.map((t) => t.id)).toEqual([added.id]);
+  });
 
   it("plans ready tasks, claims each, executes, closes tier 0 work, hands off and notifies", async () => {
     const t1 = await addTask(w, "First", { priority: 9 });

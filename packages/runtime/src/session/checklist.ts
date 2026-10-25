@@ -47,11 +47,7 @@ export async function carriedFromLastEnd(
   agentId: string,
   skip: ReadonlySet<string>,
 ): Promise<MessageRow[]> {
-  const recent = await store.session.list({ agent_id: agentId } as never, {
-    orderBy: "created_at desc",
-    limit: 5,
-  });
-  const last = recent.find((s) => s.ended_at);
+  const last = await store.session.latestForAgent(agentId, { ended: true });
   const handoff = last?.handoff as {
     end_inbox?: { read?: unknown };
     carried_forward?: unknown;
@@ -184,9 +180,11 @@ export async function runStartupChecklist(input: ChecklistInput): Promise<StateB
   if (human.monthly_cap_usd_micro > 0 && monthSpent.usd_micro >= human.monthly_cap_usd_micro * 0.8)
     warnings.push("monthly cap at 80% or more");
 
-  // 8. diff since last session
-  const lastSession = await store.session.latestForAgent(agentId);
-  const since = lastSession?.ended_at ?? lastSession?.started_at ?? null;
+  // 8. diff since last session: the agent's session that ended last. The runner has already
+  // inserted the row of the session being started, so the newest row is never the one to
+  // diff against (its own start would make the list empty and the summary its own, blank).
+  const lastSession = await store.session.latestForAgent(agentId, { ended: true });
+  const since = lastSession?.ended_at ?? null;
   const changed = since ? projectTasks.filter((t) => t.updated_at > since) : [];
 
   // tasks and peers
