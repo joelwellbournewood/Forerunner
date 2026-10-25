@@ -84,6 +84,24 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
   budget warnings and messages, with quiet hours; the app's Firebase wiring waits for a
   project (R.6, K.8; ADR 0085).
 
+- Import an existing GitHub repository into a project: cloned under the install's data dir onto
+  `forerunner/migration-<date>`, the default branch never written, the token by reference and
+  sent only to the repository's own origin, a re-import idempotent (A.3; ADR 0069).
+- The PM proposes a specialist from a session with `specialist.propose` (`specialist_propose` on
+  the model path): medium risk, the human's yes, then the C.5 approval card and eval gate; the
+  proposal stays `runnable: false` in code until the gate passes; withdraw as the undo (C.5;
+  ADR 0071 point 8).
+- An always-human approval answered after its session ended is consumed once by a follow-up
+  session of the task that the daemon and the cloud runner share a mark for; a refused late
+  answer is consumed and recorded on the task (J.7, S.6; ADR 0088).
+- `adding-a-connector.md` filled in and `security.md` describes the injection test suite; the
+  docs close-out test asserts both (P.2, P.7, P.11).
+- Per-package `test` scripts run vitest from the workspace root on the package's own test
+  directory (they matched no files before); `scripts/package-test-scripts.test.ts` pins the shape.
+- Android emulator driver: a layout-settle wait, the measurement, hit test and click guard in one
+  in-page call before the mouse events, and a fallback ladder announced as `click fallback:` lines
+  (shifted mouse click, touch tap, `element.click()`); the hosted emulator smoke passes end to end
+  (ADR 0087 amendment).
 ### Changed
 
 - An approved plan starts the session it was filed for, bound to the plan the human saw; the
@@ -97,6 +115,13 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 - The Known issues entries the 2026-10-23 triage found already fixed are closed with their
   evidence (V.4).
 
+- A cloud voice provider switched off in the Extensions panel is excluded from the registry's
+  fallback ("switched off in Extensions"); a cloud row whose grant lost its key is skipped as
+  "key not granted" and the vault is never asked; the `voice-local` badge counts any of its
+  providers; removing a voice row reloads the voice card (O.4).
+- A milestone insert, and a session insert that carries a plan, require a reason and an author
+  like every other write (B.5).
+- The milestone edit dialog's reason input is `data-testid="milestone-change-reason"`.
 ### Fixed
 
 - Small-project mode: the one milestone is placed after the milestones on file, and a task
@@ -112,6 +137,12 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 - Scenario 9's replayed envelope runs once, and the cloud runner's executor keeps a third
   attempt under the project's `critic_ceiling` (R.4, D.3, H.4, V.3).
 
+- `scripts/dev-postgres.sh` set no password and created no database when root ran it with a
+  `pg_ctlcluster` server (the SQL now arrives on stdin).
+- The phase 2 gate's "offline for 48 simulated hours" clause points at the state service's test
+  instead of a skipped placeholder.
+- `shell.run()` returns when a killed child exits even if a grandchild keeps the inherited pipes
+  open (a clone against a host that never answers no longer blocks the import).
 ### Security
 
 - Always-human approvals: one answer admits one call, spent by the durable port as it is
