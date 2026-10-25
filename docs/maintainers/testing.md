@@ -1420,8 +1420,9 @@ every call: the phase 1 "same session once on a subscription and once on an API 
 correct usage recorded" check, both halves (the API-key half with the kill switch repeated
 live; the subscription half through the Agent SDK driver on a `claude setup-token` value, ADR
 0044, with the kill switch repeated on a live subprocess), the phase 3 critic calibration on
-the real tier 1 critic, and the response-time table of spec D.8 to D.15 (median and p90 time
-to first token per tier). It also exists so a live run can
+the real tier 1 critic, the response-time table of spec D.8 to D.15 (median and p90 time
+to first token per tier), and the text chat first token with a warm prompt cache (D.9). It
+also exists so a live run can
 never spend more than its caps however it goes: a refused call fails the test with the reason
 and the ledger total, and the spend ledger is committed with the numbers.
 
@@ -1437,14 +1438,15 @@ names for the SDK path, `LIVE_SDK_CODER_OVERRIDES`), `src/harness.ts` (`liveProv
 `composeLive()` through `composeRuntime`, the fake git host, the audit sink, the subscription
 composition, `settleSubscriptionRuns`, `scrubHostSessionEnv`, `removeTreeOrWarn`: a temp tree
 that cannot be removed, a Windows EPERM, is a warning, never a failure), `src/tasks.ts` (the three
-phase 1 tasks and the kill task, shared by both halves), `src/dry-run.ts` (fake credentials and
-the fake ladder priced like the real one), `src/estimate.ts` (the pre-run cost estimate and
+phase 1 tasks and the kill task, shared by both halves), `src/dry-run.ts` (fake credentials,
+the fake ladder priced like the real one, and `PrefixCacheFake`, the prompt-cache stand-in of
+the chat cache dry run), `src/estimate.ts` (the pre-run cost estimate and
 `preflight`, below), `src/probe.ts` (`probeEffort`: one tiny request at a model and effort
 before work that depends on them), `src/stats.ts`, `src/report.ts` (`reportDir`,
 `writeReport`, `readPhase1Evidence`); the tests under `test/`: `env`, `budget`, `metered`,
 `estimate`, `probe`, `cleanup`, `harness` (the dry runs of both halves; on under the package's own `test` script,
-which `ci.yml` runs on both OS, step "Live harness offline tests") and the six
-`live-*.live.test.ts` files (opt-in; `live-6` and `live-7` also carry their own dry run, which
+which `ci.yml` runs on both OS, step "Live harness offline tests") and the seven
+`live-*.live.test.ts` files (opt-in; `live-5`, `live-6` and `live-7` also carry their own dry run, which
 runs in every mode, so CI's offline step runs it too).
 
 ### How it works
@@ -1515,7 +1517,7 @@ margin covers that under-count.
 **A run** is one vitest invocation: `vitest.config.ts` mints `FORERUNNER_LIVE_RUN` once (ISO
 time, or the value already in the environment) and hands it to every file; files run one after
 another in path order (`live-1-phase1`, `live-2-timing`, `live-3-phase3`,
-`live-4-subscription`, `live-6-researcher`, `live-7-critic-tiers`), so the cheap halves come first and the ledger is never written from
+`live-4-subscription`, `live-5-chat-cache`, `live-6-researcher`, `live-7-critic-tiers`), so the cheap halves come first and the ledger is never written from
 two workers at once. `--mode live` (the
 `test:live` script) sets `FORERUNNER_LIVE=1` for the workers; without it every live case is
 `it.skipIf`'d and the describe title carries the reason. The config also honours
@@ -1583,6 +1585,32 @@ reported. Everything measured goes to `phase1-live.json` in the report directory
 adapter's streaming, `median`/`p90` (nearest rank) per tier; the Haiku median against the text
 chat target is asserted (the phase 1 gate's own line), the rest is recorded
 (`timing-live.json`).
+
+**Chat cache** (`live-5-chat-cache.live.test.ts`, requirement D.9): the first token of the
+*composed* chat turn with a warm prompt cache. The phase 1 case measures one chat turn per run,
+so every sample it took was a cache write: the provider caches the tools and system prefix of
+a request (order tools, system, messages; a change at one level invalidates it and what
+follows; Haiku 5.5 caches from 512 tokens) and only a later request with the same prefix reads
+it. This file composes the runtime with `composeLive()`, adds one project, and sends one
+warm-up turn and then six turns through `ConversationAgent.chat` on Haiku in quick succession,
+each a short question the command parser does not understand (so it reaches the model; the
+agent's own caps per call and turn apply, the questions ask for ten words at most). Per turn it
+logs one line: the reply's `ttftMs`, and the first model call's `cache_read_input_tokens` and
+`cache_creation_input_tokens` from the metered call record; then a summary line (warm-turn
+median and p90 first token against `MODE_DEFAULTS.text_chat.targetMs`, warm turns with a cache
+read, total cache read and write tokens, USD). Asserted: every turn answered through the
+model, every warm turn read the cache (`cacheRead > 0`), the warm median first token under
+1 s, every call on the Haiku rung, nothing refused. Report: `chat-cache-live.json`. Expected
+spend under USD 0.01 per run (seven Haiku 5.5 turns over a prefix of a few thousand tokens:
+one cache write at 1.25x input, six reads at 0.1x, short replies). The same file's dry run
+(always on, no network, in CI with the rest of the script) runs the identical measure on the
+composed runtime with a scripted `FakeProvider` wrapped in `PrefixCacheFake`, which rewrites
+each reply's usage as the real cache reports it (a prefix of model, tools and system seen
+before is a read, a new one a write, below 512 estimated tokens neither) while the simulated
+clock moves 4 s between turns; it asserts the warm-up writes, every warm turn reads and none
+writes, so a volatile value in the composed system text or tool definitions fails offline.
+The unit guard for the same property is `packages/runtime/test/conversation.test.ts`,
+"conversation agent cacheable prefix".
 
 **Subscription half** (`live-4-subscription.live.test.ts`; skipped with the reason when the
 token is missing): (1) both sources exist, the loop paths bill the key, a dry `billing.pick`
@@ -1794,8 +1822,12 @@ The key is read from `.env.build` at the repository root (`FORERUNNER_ANTHROPIC_
 `FORERUNNER_ANTHROPIC_WORKSPACE_ID`), or from the environment; the subscription half also
 needs `FORERUNNER_SUBSCRIPTION_TOKEN` there (a `claude setup-token` value) and skips with the
 reason without it. One file alone:
-`FORERUNNER_LIVE=1 pnpm --filter @forerunner/live exec vitest run --config vitest.config.ts test/live-4-subscription.live.test.ts`
-(the run id is then minted for that invocation, and the per-task comparison needs the API-key
+`FORERUNNER_LIVE=1 pnpm --filter @forerunner/live exec vitest run --config vitest.config.ts test/live-4-subscription.live.test.ts`,
+or the same with `--mode live` in place of the variable
+(`pnpm --filter @forerunner/live exec vitest run --mode live test/live-5-chat-cache.live.test.ts`
+runs the chat cache measure alone, a few tenths of a US cent; `exec` runs in `tests/live`, so
+the package's `vitest.config.ts` is picked up either way, and the config turns live on for
+`--mode live` or `FORERUNNER_LIVE=1`; without either, the live case skips; the run id is then minted for that invocation, and the per-task comparison needs the API-key
 half's `phase1-live.json` of the *same* run: run both files in one invocation with
 `FORERUNNER_LIVE_REPORT_DIR` set, or set `FORERUNNER_LIVE_RUN` to the API-key run's id and put
 its file in `FORERUNNER_LIVE_REPORT_DIR` or name it with `FORERUNNER_LIVE_PHASE1_EVIDENCE`; a
@@ -1830,8 +1862,8 @@ is `pnpm --filter @forerunner/live test`, which skips every live case).
 
 ### Tests
 
-`pnpm --filter @forerunner/live test`: 60 tests over 10 files, 56 unit tests in 8 files and
-the 4 dry-run cases of `live-6` and `live-7` (the effort probe, `probe.test.ts`: one request at
+`pnpm --filter @forerunner/live test`: the unit tests in 8 files and the dry-run cases of
+`live-5`, `live-6` and `live-7` (the effort probe, `probe.test.ts`: one request at
 the effort and `max_tokens` 64 through the metered provider and in the ledger, a rejection
 failing with the provider's reason, its ceiling at the model's prices; the cleanup,
 `cleanup.test.ts`: a tree that cannot be removed warns and returns false instead of throwing;
@@ -1874,7 +1906,8 @@ refusal that surfaces as a failed task; the dry run of the subscription half on 
 environment and nowhere else, `PreToolUse` denying a path outside the worktree, the Run row on
 the subscription source, `subscription` store rows, the key's ledger untouched, the USD 0 spend
 row with the note settled once, the audit row, the host-session scrub and the note of a killed
-run). The 16 live cases in the six `live-*` files are reported as skipped without
+run; the chat cache dry run in `live-5-chat-cache`: seven composed chat turns on the
+prefix-cache stand-in, the warm-up a cache write, every warm turn a read). The 17 live cases in the seven `live-*` files are reported as skipped without
 `FORERUNNER_LIVE=1` (the subscription file also without a token, with that reason). No network,
 no Docker, no Postgres; Windows and Linux (paths through `@forerunner/platform`, temp roots
 under `os.tmpdir()`). CI runs the script on both OS (`ci.yml`, step "Live harness offline
@@ -1953,7 +1986,8 @@ tests", `pnpm --filter @forerunner/live test`), where every live case skips visi
 
 I.1 and I.5 (the live budget and the per-run cap enforced in code before each call, the 80%
 warning; subscription usage as a plan share on the SDK path, the API-equivalent rows under the
-task and session caps), D.9 (text chat first token measured live on Haiku), D.10, D.11, D.14
+task and session caps), D.9 (text chat first token measured live on Haiku, on a short prompt, on one composed turn, and
+on composed turns with a warm prompt cache), D.10, D.11, D.14
 (measured totals against their targets), D.12 (coder run durations and costs under the task
 budget, on the loop driver and on the Agent SDK), D.13 (the researcher's run on its registry
 default within the task budget and timeout, `live-6`), D.15 (critic reviews at tiers 2 and 3

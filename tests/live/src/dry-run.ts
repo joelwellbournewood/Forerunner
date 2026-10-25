@@ -1,4 +1,13 @@
 import { BUILTIN_PRICING, type PricingTable } from "@forerunner/billing";
+import type { Clock } from "@forerunner/platform";
+import {
+  collectStream,
+  type ModelProvider,
+  type ModelRef,
+  type ModelRequest,
+  type ModelResponse,
+  type StreamEvent,
+} from "@forerunner/runtime";
 import type { LiveCredentials } from "./env.ts";
 
 /**
@@ -32,4 +41,71 @@ export function dryRunCredentials(opts: { subscription?: boolean } = {}): LiveCr
       : null,
     source: "process-env",
   };
+}
+
+/** The smallest prefix the provider caches on the chat model (Haiku 5.5: 512 tokens). */
+export const DRY_RUN_MIN_CACHEABLE_TOKENS = 512;
+
+/**
+ * A stand-in for the provider's prompt cache, for the dry run of the chat cache measure
+ * (`live-5-chat-cache.live.test.ts`). It wraps a scripted provider and rewrites each reply's
+ * usage the way the real cache reports it: the prefix is the model, the tool definitions and
+ * the system text, in the provider's order (tools -> system), when the request asks for
+ * caching and the prefix reaches the minimum length. A prefix seen before is a cache read, a
+ * new one a cache write. A byte of difference in the tools or the system text is a new prefix,
+ * so an unstable prefix shows up in the dry run as warm turns with no cache read.
+ */
+export class PrefixCacheFake implements ModelProvider {
+  readonly name: string;
+  private readonly seen = new Set<string>();
+
+  constructor(
+    readonly inner: ModelProvider,
+    private readonly clock: Clock,
+    private readonly minTokens = DRY_RUN_MIN_CACHEABLE_TOKENS,
+  ) {
+    this.name = inner.name;
+  }
+
+  listModels(): Promise<ModelRef[]> {
+    return this.inner.listModels();
+  }
+
+  countTokens(text: string): number {
+    return this.inner.countTokens(text);
+  }
+
+  async *stream(req: ModelRequest): AsyncIterable<StreamEvent> {
+    const cached = req.cache?.tools || req.cache?.system;
+    const prefix = JSON.stringify([req.model, req.tools ?? [], req.system ?? ""]);
+    const prefixTokens = this.countTokens(prefix);
+    const cacheable = !!cached && prefixTokens >= this.minTokens;
+    const hit = cacheable && this.seen.has(prefix);
+    if (cacheable) this.seen.add(prefix);
+    for await (const ev of this.inner.stream(req)) {
+      if (ev.type !== "message_end" || !cacheable) {
+        yield ev;
+        continue;
+      }
+      const uncached = Math.max(0, ev.usage.input_tokens - prefixTokens);
+      yield {
+        ...ev,
+        usage: {
+          ...ev.usage,
+          input_tokens: uncached,
+          cache_read_input_tokens: hit ? prefixTokens : 0,
+          cache_creation_input_tokens: hit ? 0 : prefixTokens,
+        },
+      };
+    }
+  }
+
+  complete(req: ModelRequest): Promise<ModelResponse> {
+    const t0 = this.clock.monotonic();
+    return collectStream(
+      this.stream(req),
+      () => t0,
+      () => this.clock.monotonic(),
+    );
+  }
 }

@@ -1467,6 +1467,26 @@ model's alone and a note is the `note.add` command. The same `chat` path serves 
 voice and the phone's relayed chat, so all three reach the session. Tests:
 `live-chat.test.ts`, `closeout-conversation.test.ts` (the O.2 turn during a running session).
 
+Prompt caching on the model path (D.9). The loop driver asks for `cache: { system: true,
+tools: true }` on every call and the Anthropic adapter (`src/provider/anthropic.ts`) puts
+`cache_control: ephemeral` on the system block and on the last tool definition. The provider
+caches the prefix in the order tools, system, messages, a change at one level invalidates it
+and everything after, and only a later request with the same prefix reads it (Haiku 5.5
+caches from 512 tokens; the chat prefix is a few thousand). So the chat keeps its prefix
+byte-identical from turn to turn for one human and project: the tools are the registry's
+command tools in registration order with static descriptions and schemas, the system text is
+the registry prompt, the project list (ordered by name; it changes only when a project, its
+stage, autonomy, summary or the active project changes) and `CHAT_RETRIEVAL_RULES`, and
+everything that moves (the time, unread count, open requests, running sessions, the lessons and
+doc sections retrieved for the question) is in the first user message (`volatilePreamble` and
+the retrieved blocks). The effort and temperature are request parameters, not part of the
+cached prefix. `test/conversation.test.ts` ("conversation agent cacheable prefix") guards
+this: two consecutive turns with the clock moved, a request filed and different doc sections
+retrieved in between send identical tools and system text, with the cache flags, and only the
+user message differs.
+Measured live with a warm cache by `tests/live/test/live-5-chat-cache.live.test.ts`
+(testing.md, "Live runs").
+
 ### Local daemon (`src/daemon/`, ADR 0011)
 
 `compose.ts` is the composition root: `composeRuntime()` opens the store (and, next to a

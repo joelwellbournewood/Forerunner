@@ -879,3 +879,66 @@ describe("chat context: project docs search and the principal's lessons", () => 
     await w.store.close();
   });
 });
+
+/**
+ * Prompt caching on the chat path (requirement D.9). The provider caches the prefix in the
+ * order tools -> system -> messages, and any change at one level invalidates it and everything
+ * after. Two consecutive model-path turns for the same human and project must therefore send
+ * byte-identical tools and system text, with the cache flags set; only the user message, which
+ * carries the volatile preamble and what was retrieved for the question, may differ. If this
+ * fails, every chat turn is a cache write and the first token never gets the cache-read speed-up.
+ */
+describe("conversation agent cacheable prefix", () => {
+  it("two consecutive chat turns send a byte-identical tools + system prefix, with cache flags", async () => {
+    const w = await setup([textReply("Use the switch."), textReply("In SQLite.")], {
+      docs: {
+        "docs/runbook.md": RUNBOOK,
+        "docs/data.md": "# Data\n\n## Stores\n\nSaves live in SQLite.\n",
+      },
+    });
+    await w.chat("how do we deploy the game?");
+    // What the volatile part reports changes between the turns: the time, an open request, and
+    // the doc sections retrieved for a different question.
+    await w.h.clock.advance(7 * 60_000);
+    await w.store.humanRequest.insert({
+      human_id: w.human,
+      project_id: w.game,
+      kind: "decision",
+      why: "Pick a database",
+      steps: [],
+      options: ["postgres", "sqlite"],
+      blocking: false,
+      risk: "low",
+    });
+    await w.chat("where do the game saves live?");
+    expect(w.provider.calls).toHaveLength(2);
+    const [a, b] = w.provider.calls.map((c) => c.request);
+    if (!a || !b) throw new Error("expected two provider calls");
+    // Cache flags reach the provider request on both turns.
+    expect(a.cache).toEqual({ system: true, tools: true });
+    expect(b.cache).toEqual({ system: true, tools: true });
+    // Tools: same names, order, descriptions and schemas, byte for byte.
+    expect((a.tools ?? []).length).toBeGreaterThan(0);
+    expect((b.tools ?? []).map((t) => t.name)).toEqual((a.tools ?? []).map((t) => t.name));
+    expect(JSON.stringify(b.tools)).toBe(JSON.stringify(a.tools));
+    // System: identical text, and nothing volatile in it.
+    expect(typeof a.system).toBe("string");
+    expect(b.system).toBe(a.system);
+    expect(a.system ?? "").not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
+    expect(a.system ?? "").not.toContain("blue-green");
+    // Only the user message differs: the question, the preamble and the retrieved sections.
+    const userA = w.firstUser(0);
+    const userB = w.firstUser(1);
+    expect(userA).toContain("how do we deploy the game?");
+    expect(userB).toContain("where do the game saves live?");
+    expect(userA).toContain("open_requests: 0");
+    expect(userB).toContain("Pick a database");
+    expect(userB).toContain("Saves live in SQLite");
+    expect(userA).not.toBe(userB);
+    // The prefix must reach the provider's minimum cacheable length (512 tokens on Haiku 5.5),
+    // or the flags do nothing. Estimated at four characters per token.
+    const prefixChars = JSON.stringify(a.tools).length + (a.system ?? "").length;
+    expect(prefixChars / 4).toBeGreaterThan(512);
+    await w.store.close();
+  });
+});
