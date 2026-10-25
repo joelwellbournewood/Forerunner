@@ -1,4 +1,5 @@
 import { appDirs, ForerunnerError, join } from "@forerunner/platform";
+import { APP_VERSION } from "@forerunner/runtime/version";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_COMMAND_POLL_MS,
@@ -176,5 +177,21 @@ describe("runner configuration", () => {
         }).health.host,
       ).toBe(host);
     }
+  });
+});
+
+describe("the runner's version", () => {
+  it("reports the app version from the root package.json unless FORERUNNER_VERSION overrides it", () => {
+    expect(readRunnerConfig({ FORERUNNER_HOME: HOME, FORERUNNER_STATE_URL: PG }).version).toBe(
+      APP_VERSION,
+    );
+    expect(APP_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+    expect(
+      readRunnerConfig({
+        FORERUNNER_HOME: HOME,
+        FORERUNNER_STATE_URL: PG,
+        FORERUNNER_VERSION: "9.9.9",
+      }).version,
+    ).toBe("9.9.9");
   });
 });

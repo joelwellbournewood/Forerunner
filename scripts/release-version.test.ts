@@ -129,5 +129,13 @@ describe("release-version: one app version, equal to the tag", () => {
       const block = wf.slice(wf.lastIndexOf("\n      - ", step), step);
       expect(block, `shell of the check before ${build}`).toMatch(/\n {8}shell: bash\n/);
     }
+    // The runner image is tagged with the version too: it is checked before it is built.
+    const image = wf.indexOf("docker/build-push-action");
+    const imageCheck = wf.indexOf(
+      'node scripts/release-version.mjs --check --expect "$GITHUB_REF_NAME"',
+      wf.lastIndexOf("runner-image:", image),
+    );
+    expect(imageCheck).toBeGreaterThan(-1);
+    expect(imageCheck).toBeLessThan(image);
   });
 });
