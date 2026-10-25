@@ -243,7 +243,15 @@ export async function handoverLive(
     return code;
   };
 
-  const pre = preflight(argv, deps.env);
+  // A preflight that throws (FORERUNNER_HOME is a file: ENOTDIR, an unreadable directory) is a
+  // refusal like any other: a scrubbed line and the result line, never a raw stack.
+  let pre: ReturnType<typeof preflight>;
+  try {
+    pre = preflight(argv, deps.env);
+  } catch (e) {
+    out(`refused: the checks before the run failed: ${errorMessage(e)}`);
+    return result("refused", 2);
+  }
   if (pre.help) {
     out(USAGE);
     return 0;
@@ -271,20 +279,19 @@ export async function handoverLive(
       : "  4. fr jobs handover --force: a fresh agent makes the seeded change and opens a REAL pull request",
   );
 
-  mkdirSync(o.home, { recursive: true });
-  const markerPath = join(o.home, HOME_MARKER);
-  if (!existsSync(markerPath))
-    writeFileSync(
-      markerPath,
-      `${JSON.stringify({ profile: o.profile, repo: o.repo, purpose: "scripts/handover-live.ts (V.8)" }, null, 2)}\n`,
-    );
-
   // The runtime and everything it spawns sees the environment without the credential values:
   // from here on they come from the vault by name.
   const runtimeEnv: NodeJS.ProcessEnv = { ...deps.env, FORERUNNER_HOME: o.home };
-  const dirs = appDirs({ env: runtimeEnv });
   let rt: RuntimeApp | null = null;
   try {
+    mkdirSync(o.home, { recursive: true });
+    const markerPath = join(o.home, HOME_MARKER);
+    if (!existsSync(markerPath))
+      writeFileSync(
+        markerPath,
+        `${JSON.stringify({ profile: o.profile, repo: o.repo, purpose: "scripts/handover-live.ts (V.8)" }, null, 2)}\n`,
+      );
+    const dirs = appDirs({ env: runtimeEnv });
     const vault = await (deps.openVault ?? ((profile, env) => openVault({ profile, env })))(
       o.profile,
       runtimeEnv,
@@ -455,8 +462,10 @@ if (isMain) {
     (code) => {
       process.exitCode = code;
     },
-    (e) => {
-      console.error(`error: ${errorMessage(e)}`);
+    // handoverLive catches everything it runs; this is a last resort that never echoes the
+    // error (it could carry a credential) and still ends with the result line.
+    () => {
+      console.log(`${RESULT_PREFIX} error`);
       process.exitCode = 2;
     },
   );

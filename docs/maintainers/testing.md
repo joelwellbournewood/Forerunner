@@ -2047,6 +2047,9 @@ pnpm exec tsx scripts/handover-live.ts --profile <name> --repo <owner/name> [--b
   passed|stuck|skipped|failed|refused|error|dry-run`. Exit 0 only for `passed`, meaning the job
   ran and the report names no stuck place. Exit 1 for stuck, skipped or failed; exit 2 when the
   script refused or a step before the job failed. `--dry-run` stops before the job (exit 0).
+  Every path ends with that line and a scrubbed message: a check that throws (for example
+  `FORERUNNER_HOME` is a file, ENOTDIR) is `refused`, and a home that cannot be created or
+  marked is `error`, both exit 2.
 - The run opens two pull requests on the repository.
   - The doc set scaffold. The first accept opens `docs: scaffold the standard project doc set`
     whenever the repository lacks a standard doc or `.forerunner/project.json` (spec G.5).
@@ -2068,8 +2071,10 @@ local stand-in for `GET /v1/models`, and the fake provider. The path has three r
   stuck nowhere", `passed`, exit 0;
 - a run where the agent does nothing: `stuck`, exit 1, with a docs task filed.
 
-The test also checks that no credential value appears in any printed or logged line, or in the
-argv of any spawned process (`node:child_process` is wrapped). `handoverPassed` is tested on its
+The test also checks that no credential value appears in any printed or logged line, in the
+argv of any spawned process (`node:child_process` is wrapped), or in any file under the home
+after the runs: the logs directory and every other file there (the state store, the handover
+reports, the worktrees), read as bytes and searched in UTF-8 and UTF-16. `handoverPassed` is tested on its
 own as well.
 
 ## Scenarios

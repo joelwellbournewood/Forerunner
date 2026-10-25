@@ -8,11 +8,19 @@
  * recorded (argv) and every line printed or logged is kept, so no credential value appears in
  * either.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { SUBMIT_REVIEW_TOOL } from "@forerunner/critic";
-import { join } from "@forerunner/platform";
+import { appDirs, join } from "@forerunner/platform";
 import type { ModelRequest } from "@forerunner/runtime";
 import {
   FakeGitHost,
@@ -160,6 +168,51 @@ describe("handover-live refuses before it writes anything", () => {
     expect(code).toBe(2);
     expect(out.join("\n")).not.toContain(value);
     expect(out.join("\n")).not.toContain("github-token");
+  });
+
+  it("a preflight that throws (FORERUNNER_HOME is a file, ENOTDIR) ends scrubbed, refused, exit 2", async () => {
+    // Token-shaped at run time only; it names the file, so the thrown message carries it and
+    // only the scrubber keeps it out of the output.
+    const secret = ["ghp", "PreflightThrowMustNotPrint0123456789"].join("_");
+    const file = join(tempDir("fr-hl-"), secret);
+    writeFileSync(file, "x");
+    {
+      const home = file;
+      const { out, sink } = lines();
+      const code = await handoverLive(["--profile", "v8", "--repo", "o/r"], {
+        env: {
+          FORERUNNER_HOME: home,
+          HOME: tempDir("fr-hl-user-"),
+          FORERUNNER_GITHUB_TOKEN: secret,
+        },
+        out: sink,
+      });
+      const text = out.join("\n");
+      expect(code, text).toBe(2);
+      expect(text).toMatch(/^refused: /m);
+      expect(text).not.toContain(secret);
+      expect(out.at(-1)).toBe(`${RESULT_PREFIX} refused`);
+    }
+  });
+
+  it("a home that cannot be made (its parent is a file) ends scrubbed with error, exit 2", async () => {
+    const secret = ["ghp", "MkdirThrowMustNotPrint0123456789abcd"].join("_");
+    const file = join(tempDir("fr-hl-"), secret);
+    writeFileSync(file, "x");
+    const { out, sink } = lines();
+    const code = await handoverLive(["--profile", "v8", "--repo", "o/r"], {
+      env: {
+        FORERUNNER_HOME: join(file, "home"),
+        HOME: tempDir("fr-hl-user-"),
+        FORERUNNER_GITHUB_TOKEN: secret,
+      },
+      out: sink,
+    });
+    const text = out.join("\n");
+    expect(code, text).toBe(2);
+    expect(text).toMatch(/^error: /m);
+    expect(text).not.toContain(secret);
+    expect(out.at(-1)).toBe(`${RESULT_PREFIX} error`);
   });
 });
 
@@ -445,6 +498,34 @@ describe.skipIf(!gitBackend)("handover-live on the fake git host and the fake pr
       expect(secret.length).toBeGreaterThan(20);
       for (const argv of spawned) expect(argv.join(" ")).not.toContain(secret);
       for (const l of logged) expect(l).not.toContain(secret);
+    }
+  });
+
+  it("no credential value in any file under the home: the logs directory and every other file", () => {
+    const walk = (dir: string, acc: string[] = []): string[] => {
+      if (!existsSync(dir)) return acc;
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p, acc);
+        else if (e.isFile()) acc.push(p);
+      }
+      return acc;
+    };
+    // The logs directory first (the headroom proxy's log and anything else written there),
+    // then the whole home: the state store, reports, transcripts and the worktrees' git config
+    // are logs of the run too.
+    const logFiles = walk(appDirs({ env: { FORERUNNER_HOME: home } }).logs);
+    const files = [...new Set([...logFiles, ...walk(home)])];
+    // The scan reached the store and the handover report, so it is not vacuous.
+    expect(files.some((f) => f.endsWith("state.sqlite"))).toBe(true);
+    expect(files.some((f) => f.includes(join("data", "handover")))).toBe(true);
+    for (const secret of [githubToken, anthropicKey]) {
+      expect(secret.length).toBeGreaterThan(20);
+      for (const f of files) {
+        const body = readFileSync(f);
+        expect(body.includes(secret), f).toBe(false);
+        expect(body.includes(Buffer.from(secret, "utf16le")), f).toBe(false);
+      }
     }
   });
 });
