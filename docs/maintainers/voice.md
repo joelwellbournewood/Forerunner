@@ -442,6 +442,16 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
 
 ## Known issues
 
+- The heard figure (review of b1e65fc, low findings left open): the hotkey's release is stamped
+  in the render after the key event, so a hotkey turn reads low by that render and the IPC
+  (Send is stamped in the click); a heard POST that lands between `finish()` and the
+  `voice.turn` append is stored on the row and also as a `voice.heard` row (the report keeps
+  the first); `voice-run report` orders rows by `created_at, id`, so a `voice.heard` row
+  written in the same millisecond as its turn can sort first and be dropped; a previous turn's
+  `turn_end` arriving after the next release leaves that turn unmeasured. None gives a wrong
+  value; some samples can be missing or slightly low. Use Send (not the hotkey) for the
+  real-audio run.
+
 - faster-whisper has no true incremental mode: partials re-transcribe the whole utterance every
   `partialIntervalMs` (1 s) and are skipped when newer audio is already queued. Final transcript
   latency for a 5 s utterance on CPU with the `base` model is around 300 to 600 ms; use
