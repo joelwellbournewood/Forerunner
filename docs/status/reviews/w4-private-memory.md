@@ -95,7 +95,7 @@ merged to end, in a path the brief named, so the verdict is revise.
    shared one). Solo mode keeps the previews. A runtime test over a split store asserting the
    request row carries no lesson text, and a package test of the option.
 
-   Resolution: pending.
+   Resolution: fixed in f04f514: `consolidate` takes `quoteText` and `MemoryLoop.consolidationOptions` passes `false` for a private report next to a `privateStore`, so the request row names ids, hits, confidence and dates only; `consolidation.test.ts` "quoteText: false names ids only ..." and `loop-memory.test.ts` "with a shared state the private scope's consolidation request names ids only ..." fail without the fix (the latter also proves the inbox answer still applies the private merge in the index); ADR 0083 amendment of 2026-10-25, memory.md and runtime.md describe the rule.
 
 2. **medium (docs, design)**: `services/cloud-runner/src/runner.ts:380-397` with
    `docs/decisions/0083-private-memory-index.md` (Consequences: "Nothing changes for solo mode
@@ -120,7 +120,7 @@ merged to end, in a path the brief named, so the verdict is revise.
    change: passing `privateIndexUrl: null` would make every private write on the runner fail
    with `MEMORY_SCOPE_VIOLATION` after the file is written, which is worse.
 
-   Resolution: pending.
+   Resolution: fixed in f04f514 and 67dea35 (docs): the ADR 0083 amendment of 2026-10-25 records the runner's own index as the accepted lesser evil until the encrypted cloud slot exists, memory.md and cloud-runner.md carry the Known issues bullet (split memory, why no index is worse, one data directory per human's runner), runtime.md's memory paragraph names it; the "nothing changes" claim stands qualified by the amendment. Verified once more before the fix: `startCloudRunner` passes no `privateIndexUrl`, `config.ts` requires `postgres://` outside single-machine trials, and the runner has no scheduler entry for consolidation (so finding 1 does not reach it).
 
 3. **low**: `packages/runtime/src/jobs/handover.ts:515`. The handover job proves the fresh
    agent's memory is empty with `store.lesson.search({ scope: "agent_private", ownerAgentId:
@@ -136,7 +136,7 @@ merged to end, in a path the brief named, so the verdict is revise.
    `HandoverJobDeps`, defaulting to `store.lesson`; `composeRuntime` passes the memory loop's
    store (`memory.ctx.repo`), and a test shows the job consults it.
 
-   Resolution: pending.
+   Resolution: fixed in 9120f72: `HandoverJobDeps.lessons` (a lesson store's `search`, default `store.lesson`) is what the check reads and `composeRuntime` passes `memory.ctx.repo`; `handover-job.test.ts` "proves the fresh agent's memory empty in the store the memory loop reads ..." resolved `{ status: "failed" }` before the fix (the stub store was ignored and the session ran) and now rejects with `internal` before any session, the query naming the fresh agent.
 
 4. **low**: `packages/state/src/db/sqlite.ts:208-209` as used by `openPrivateIndex`
    (`packages/runtime/src/loop/memory.ts:216-227`). The index file and its directory are created
@@ -151,7 +151,7 @@ merged to end, in a path the brief named, so the verdict is revise.
    bullet; a mode option for the whole memory tree (files, catalogs, index) is one later item,
    not a per-file change here.
 
-   Resolution: pending.
+   Resolution: not a defect of this item, documented in f04f514: the index carries the same default mode as the solo-mode `state.sqlite` and the canonical lesson files (`LessonFiles` writes with the default mode, `files.ts:334-339`), so an owner-only mode for the index alone would protect nothing the files beside it expose; memory.md Known issues now states the mode and asks for one change over the whole memory tree.
 
 5. **low**: `packages/memory/src/scoped-store.ts:193-208` (`list`, `count`). A list without a
    single scope runs on both stores with the caller's `limit` and `offset` applied in each and
@@ -163,7 +163,7 @@ merged to end, in a path the brief named, so the verdict is revise.
    Smallest correct fix: none needed in code; a sentence in `memory.md` saying the union is
    unpaged so a future caller does not rely on it.
 
-   Resolution: pending.
+   Resolution: not a defect, documented in f04f514: re-checked every `repo.list(` call in `packages/memory/src` and `packages/runtime/src` (record, retrieval, consolidation, promotion x3, reconcile), all name one scope and none pages; memory.md "Where the private rows live" now says the unscoped union is unpaged and concatenated private first.
 
 ### Not defects (checked and cleared)
 
@@ -178,3 +178,32 @@ merged to end, in a path the brief named, so the verdict is revise.
   (`edit` never carries a scope, `proposeSharing` writes a new shared row).
 - The index is a full schema at the state's migration version; a backfill from `agent` or
   `project` finds them empty there, which `migrations.md` records.
+
+### Verification (2026-10-25, on the branch at the resolutions commit)
+
+- `pnpm exec biome check --write` then `pnpm exec biome check` over the seven changed TypeScript
+  files: "Checked 7 files ... No fixes applied".
+- `node scripts/check-paths.mjs`: `check-paths: ok (1093 files)`.
+- `pnpm typecheck`: exit 0 (`tsc -p tsconfig.node.json`, then `apps/ui`, `apps/approvals-web`,
+  `apps/desktop`, `apps/mobile`).
+- Item files and the review's: `packages/memory/test/scoped-store.test.ts`,
+  `packages/runtime/test/compose-memory.test.ts`, `packages/state/test/lesson-scope.test.ts`
+  (3 files, 19 tests passed); `packages/memory/test/consolidation.test.ts` (11 passed),
+  `packages/runtime/test/loop-memory.test.ts` (14 passed),
+  `packages/runtime/test/handover-job.test.ts` (10 passed). Each new case was run before its fix
+  and failed (the previews in the request row; the option ignored; the run resolving `failed`
+  instead of rejecting).
+- Whole directories, `pnpm exec vitest run --project unit packages/memory/test
+  packages/state/test packages/runtime/test`: 162 files, 1549 passed, 1 skipped, 2 failed under
+  load (747 s wall, `context.test.ts` "measures one run inside a session with mark()" on the 20 s
+  test timeout, `monthly-jobs-wiring.test.ts` "the composed scheduler fires the calibration once
+  on day 1" after 41 s); both files re-run alone once, as the rules allow: 2 files, 16 tests
+  passed in 52 s.
+- Postgres, `FORERUNNER_TEST_PG=postgres://postgres:forerunner@localhost:5432/forerunner_test_r2
+  pnpm exec vitest run --project integration packages/state/test/postgres.integration.test.ts`:
+  1 file, 56 tests passed (the "keeps private rows out of the shared store" and "keeps private
+  lessons private" cases among them).
+- `node scripts/docs-check.mjs --base ccr-af5a431d-jc9xqj`: `docs-check: ok (12 files)`.
+- Mutation checks of the item's guards (each restored afterwards): the `updateWhere` guard
+  removed, `search` routed to the shared store, `MemoryLoop` composed without the index,
+  `assertStaysHome` removed; every one made at least one of the item's tests fail.
