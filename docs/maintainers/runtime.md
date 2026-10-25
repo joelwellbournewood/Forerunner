@@ -1646,6 +1646,14 @@ all in `DAEMON_ROUTES`, the shapes the UI's data tab and the CLI import target);
 human is the actor, so a delete always has one and removal never goes through a tool.
 `worktreeFor` is not set: the daemon's worktrees are per task and the data dir lies outside
 them (ADR 0039 point 12). `RuntimeApp.data` exposes the registry and the importer.
+The importer also takes the vault and `defaultTokenRef: secret:github_token` for the GitHub
+repository import (A.3, [ADR 0069](../decisions/0069-github-repository-import.md)):
+`POST /projects/:id/data/import` with `source: "github"` clones `owner/name` (or an http(s)
+URL) into `<data>/projects/<id>/repos/<owner>/<name>` onto `forerunner/migration-<date>`,
+never writes the default branch, registers the checkout as one folder asset and adds the slug
+to the project's `repos`. The install's own token is sent only to the git remote base's
+origin (`ComposeOptions.data.gitRemoteBase`, default `https://github.com`; the wiring test
+points it at the fake git host); another origin needs an explicit `tokenRef`.
 
 **Sandboxed browser and agent email (`@forerunner/capabilities` `browser` and `email`, spec
 L.2, L.3, S.15 to S.31; ADR 0013, ADR 0014, [ADR 0047](../decisions/0047-daemon-wiring-of-browser-email-and-injection-notifications.md);

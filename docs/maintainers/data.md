@@ -1,8 +1,8 @@
 # Files and data
 
 `packages/runtime/src/data`: the Data tab's backend and the data tools (spec L "Files and
-data", K "Project page" Data tab, A "Projects and onboarding" ZIP and folder import, build
-order phase 5). Files, folders and datasets are registered by path or URI as `data_asset`
+data", K "Project page" Data tab, A "Projects and onboarding" ZIP, folder and GitHub
+repository import, build order phase 5; the repository import is ADR 0069). Files, folders and datasets are registered by path or URI as `data_asset`
 rows; agents see metadata and capped samples, never whole files; large data is linked where
 it sits and never copied; ZIP and folder imports are bounded and zip-slip safe; the project
 worktree's `.gitignore` is kept covering the data dir.
@@ -17,6 +17,9 @@ worktree's `.gitignore` is kept covering the data dir.
   copied, and the row carries a note pointing to Git LFS, R2 or S3 (L.1).
 - ZIP and folder import with entry, byte and depth limits, absolute-path and traversal
   entries refused, symlinks skipped, the result listing what was imported (A.3, phase 5).
+- Import of an existing GitHub repository (A.3, ADR 0069): cloned under the project's repos
+  dir onto the migration branch `forerunner/migration-<date>`, the default branch never
+  written, the token by secret reference only, a re-import idempotent.
 - Removing data needs a human at every autonomy level (S.6); file content is data, not
   instructions (S.2): every tool output is marked untrusted so the hooks wrap and scan it.
 - Every registration, upload, import and removal is an `audit_log` row.
@@ -27,11 +30,11 @@ worktree's `.gitignore` is kept covering the data dir.
 
 | File | What it holds |
 | --- | --- |
-| `types.ts` | zod shapes (`DataAssetView`, `DataMetadata`, `DataSample`, `ImportResultView`, `StoredAssetInfo`), kinds, storage modes, `REMOTE_SCHEMES`, `DataLimits` with `DEFAULT_DATA_LIMITS` and `resolveDataLimits()`, the notes `largeDataNote()`, `truncatedWalkNote()`, `URI_STRIPPED_NOTE` (all ending in `LARGE_DATA_ADVICE`), `formatBytes()` |
+| `types.ts` | zod shapes (`DataAssetView`, `DataMetadata`, `DataSample`, `ImportResultView` with `RepositoryImportView`, `StoredAssetInfo`), `IMPORT_SOURCES`, kinds, storage modes, `REMOTE_SCHEMES`, `DataLimits` with `DEFAULT_DATA_LIMITS` and `resolveDataLimits()`, the notes `largeDataNote()`, `truncatedWalkNote()`, `URI_STRIPPED_NOTE` (all ending in `LARGE_DATA_ADVICE`), `formatBytes()` |
 | `metadata.ts` | format detection (magic bytes, then extension), encoding detection, CSV parser and delimiter sniffing, type inference, JSON/JSONL shape, PNG/JPEG/GIF dimensions from headers, bounded head reads, streamed line counts, `describeFile()`, `sampleFile()`, `describeFolder()`, `parseUri()` (returns a `ParsedUri` whose `locator` drops credentials, query and fragment), `describeRemote()` |
 | `walk.ts` | `walkFolder()`: bounded, symlink-free walk that skips `.git`, `node_modules` and friends |
-| `assets.ts` | `DataAssets`: `register`, `registerUpload`, `list`, `get`/`describe`, `sample`, `remove`, `view`, `projectDataDir`; `normalizeKind()`, `isRemoteSource()`, `safeFileName()` |
-| `import.ts` | `DataImporter.importZip()` and `importFolder()`, `checkZipEntryName()`, `isSymlinkEntry()`, `recordZipEntry()` (name-conflict table), `ensureDataDirIgnored()`, `WORKTREE_DATA_DIR` |
+| `assets.ts` | `DataAssets`: `register`, `registerUpload`, `list`, `get`/`describe`, `sample`, `remove`, `view`, `projectDataDir`, `projectReposDir`; `normalizeKind()`, `isRemoteSource()`, `safeFileName()` |
+| `import.ts` | `DataImporter.importZip()`, `importFolder()` and `importGitHubRepo()`, `parseRepositorySource()`, `migrationBranchName()`, `MIGRATION_BRANCH_PREFIX`, `DEFAULT_GIT_REMOTE_BASE`, `checkZipEntryName()`, `isSymlinkEntry()`, `recordZipEntry()` (name-conflict table), `ensureDataDirIgnored()`, `WORKTREE_DATA_DIR` |
 | `tools.ts` | `dataTools(deps)` and `registerDataTools(registry, deps)`: the four ToolSpecs; `renderSample()` |
 | `routes.ts` | `createDataRoutes(deps)`: the Hono sub-app for the Data tab, `DATA_ROUTES`, request bodies |
 | `index.ts` | exports (re-exported by the runtime's `src/index.ts`) |
@@ -42,7 +45,12 @@ worktree's `.gitignore` is kept covering the data dir.
 <projectsRoot>/<project id>/data/                      projectDataDir(projectId)
 <projectsRoot>/<project id>/data/<asset id>-<name>     copies (mode "copy") and uploads
 <projectsRoot>/<project id>/data/imports/<name>-<suffix>/   extracted ZIPs and copied folders
+<projectsRoot>/<project id>/repos/<owner>/<name>/      imported repositories (projectReposDir)
 ```
+
+The repos dir sits beside the data dir, never inside it (a checkout is a worktree; nothing
+under the data dir is), and is not `appDirs().worktrees`, which holds the PR executor's
+disposable per-task worktrees (ADR 0069).
 
 `projectsRoot` defaults to `appDirs().data/projects` (`FORERUNNER_HOME` honoured) and is a
 constructor option so tests and the two-install environment put it elsewhere. Project ids
@@ -157,6 +165,44 @@ copy threshold (above it the files stay linked and `note` says why).
 Both write one `data.import` audit row and, when `opts.worktreePath` is given, run the
 gitignore guard. `importZip` and `importFolder` never touch the original (A.3).
 
+`importGitHubRepo({ repo, tokenRef? }, projectId, opts)` (ADR 0069):
+
+1. `parseRepositorySource()` takes `owner/name` (resolved against `gitRemoteBase`, default
+   `https://github.com`) or an http(s) URL and returns owner, name, slug and a clone URL
+   without userinfo, query or fragment. A URL with credentials, a non-http scheme (ssh, scp
+   form), a path without `owner/name` and a segment outside `[A-Za-z0-9_.-]` are `validation`.
+2. The token: a named `tokenRef` must be `secret:<name>` (`validation` otherwise) and is used
+   for whatever host the URL names. Without one, `defaultTokenRef` (the daemon passes
+   `secret:github_token`) is used only when the vault holds it **and** the clone URL is on
+   `gitRemoteBase`'s origin; any other origin clones anonymously, so a request naming another
+   server never receives the install's token. The value is resolved with `resolveSecretRefs`
+   at call time (`not_found` for a missing name, `not_supported` without a vault) and reaches
+   git only through `GitOps`' environment (`GIT_CONFIG_*`), never argv, the clone's config, a
+   log line, a row or the result.
+3. The project must exist (`not_found`). All of the above happens before any disk or network
+   access.
+4. Clone into `<projectsRoot>/<id>/repos/<owner>/<name>` (both segments through
+   `safeSegment()`); a failed clone removes the half checkout and records nothing. When the
+   checkout already exists, `git fetch` instead.
+5. The migration branch: on a re-import, the branch the checkout sits on when it is a
+   `forerunner/migration-*` branch, else the newest such local branch (checked out), else a
+   new `migrationBranchName(clock)` = `forerunner/migration-<YYYY-MM-DD>` created from
+   `origin/<default branch>` (`refs/remotes/origin/HEAD`; an empty repository is
+   `validation`). The import never checks out, commits to or pushes the default branch, and
+   it pushes nothing at all; it then asserts the checkout is on the migration branch and not
+   the default one (`internal` otherwise).
+6. The checkout is walked with `walkFolder()` (the clone's `.git` skipped and not reported);
+   a walk that hit a limit sets `note` (`truncatedWalkNote()`) and does not fail the import.
+7. Records: one `folder` asset (`storage: linked`, locator the checkout, name `owner/name`;
+   reused by locator on a re-import; skipped with `register: false`), `owner/name` appended
+   once to the project's `repos` (the list the PR executor's `repoFor` reads), and one
+   `data.import` audit row naming the slug, branch, default branch and the reference (never
+   the value). The result's `repository` carries slug, url, worktree, branch, defaultBranch,
+   headSha, assetId and `reused`; `gitignore` is null (the guard is for data, not the clone).
+
+The repository's files are then visible to `GET /projects/:id/data`, `data_list`,
+`data_describe` and `data_sample` through the folder asset, like a linked folder.
+
 ### The gitignore guard
 
 `ensureDataDirIgnored(worktreePath, dataDir)` makes sure the worktree's `.gitignore` has
@@ -201,7 +247,7 @@ removal tool: `DataAssets.remove()` throws `approval_required` for an actor with
 | `GET /projects/:id/data` | | `DataAssetView[]` |
 | `POST /projects/:id/data` | JSON `{ locator, kind?, mode?, name?, sizeBytes? }` | 201 `DataAssetView` |
 | `POST /projects/:id/data` | multipart `file` (+ `kind`, `name`) | 201 `DataAssetView`; 413 above `uploadMaxBytes` |
-| `POST /projects/:id/data/import` | `{ source: "zip" \| "folder", path \| locator, copy? }` | `ImportResultView` |
+| `POST /projects/:id/data/import` | `{ source: "zip" \| "folder" \| "github", path \| locator, copy?, tokenRef? }` | `ImportResultView` |
 | `GET /data/:id` | | `DataAssetView` |
 | `GET /data/:id/sample?rows=&bytes=` | | `DataSample` |
 | `DELETE /data/:id` | | `{ ok: true, id, deletedFromDisk }` |
@@ -212,6 +258,11 @@ format is detected, not declared. Errors are `{ code, message, details }` with 4
 `validation`/`not_supported`, 403 for `approval_required`, 404 for `not_found`, 413 for an
 oversized upload. `deps.actor(c)` names who acts (the daemon's human); `DELETE` answers 403
 without a human. Mount with `app.route("/", createDataRoutes(deps))`.
+
+For `source: "github"`, `path`/`locator` is `owner/name` or an http(s) URL; `tokenRef` must
+match `secret:<name>` (a raw value is refused by the schema) and is accepted for `github`
+only; `copy` is refused for `github`. The route hands the actor to `importGitHubRepo()` and
+does not call `worktreeFor`.
 
 ### Limits
 
@@ -262,7 +313,8 @@ No ADR number was reserved for this module, so the open points are decided here:
   and never return more than `sampleBytes`; add it to `DATA_TOOL_NAMES` and the tests.
 - Wiring in the daemon (done, ADR 0039; `runtime.md` "Files and data"): `compose.ts` builds
   `new DataAssets({ store, clock, projectsRoot: <data>/projects, limits })` and
-  `new DataImporter({ assets, store, clock })`, registers `registerDataTools(tools, { assets,
+  `new DataImporter({ assets, store, clock, vault, defaultTokenRef: "secret:github_token",
+  gitRemoteBase? })` (`ComposeOptions.data.gitRemoteBase`, default github.com), registers `registerDataTools(tools, { assets,
   approvals })` with the hooks' `StateApprovals` into the built-in tool registry, and
   `server.ts` mounts `createDataRoutes({ assets, importer, actor: () => ({ humanId }) })` at
   the root; `ComposeOptions.data` overrides the root and the limits, `RuntimeApp.data` exposes
@@ -296,7 +348,20 @@ No ADR number was reserved for this module, so the open points are decided here:
   tool, the refusal details or the audit log.
 - `data-routes.test.ts`: list, JSON register, describe, sample, delete, error codes, delete
   without a human, multipart upload (sanitised name, 413), zip and folder import with the
-  gitignore guard, a conflicting archive answered 400 with nothing registered.
+  gitignore guard, a conflicting archive answered 400 with nothing registered, and a
+  `github` body (schema checks on `tokenRef` and `copy`, the importer receiving the reference
+  and the daemon's human).
+- `data-import-github.test.ts` (against `FakeGitHost` over git smart HTTP; each git case is
+  skipped with the reason when `git http-backend` is missing): clone under the repos dir onto
+  `forerunner/migration-<date>` from the Clock, the remote's branches and `main` unchanged
+  after the import and after a commit on the migration branch, one folder asset and one
+  `repos` entry, the token absent from logs, rows, the result and `.git/config`, a re-import
+  keeping the worktree, the branch with its commit and the row; `owner/name` against the git
+  base, a public clone without a token, `register: false`, a private clone failing without a
+  token with the half checkout removed, the install's default reference used on its own git
+  host and withheld from another origin while an explicit reference is honoured; credentials
+  in the URL, a raw token as `tokenRef`, an unknown reference, ssh and scp forms, a missing
+  project and a missing vault refused before any request reaches the host.
 
 - `data-wiring.test.ts` (the module inside `composeRuntime` and the daemon, ADR 0039): the
   four tools registered as built-in tools and the routes listed in `DAEMON_ROUTES`, a folder
@@ -307,7 +372,11 @@ No ADR number was reserved for this module, so the open points are decided here:
   archive answered 400 with nothing registered or written, `data_register` for a path outside
   the run's roots refused as `approval_required` with a `capability_grant` request in the
   inbox and nothing registered while a path inside registers freely, and removal only through
-  the route as the daemon's human.
+  the route as the daemon's human; a `github` import through the route with the install's
+  own `secret:github_token` (the fake host as `data.gitRemoteBase`): refused for another
+  origin (anonymous clone of a private repository, nothing left), then cloned under
+  `<data>/projects`, listed as a folder asset, linked in `repos`, audited without the token,
+  and a missing reference answered 404.
 
 Run: `pnpm vitest run --project unit packages/runtime/test/data-*.test.ts`.
 
@@ -334,14 +403,24 @@ Run: `pnpm vitest run --project unit packages/runtime/test/data-*.test.ts`.
   data inside its own checkout relies on the `.forerunner-data/` convention.
 - Multipart uploads through the daemon are bounded by `uploadMaxBytes`, but the UI's data tab
   registers by locator only (`POST /projects/:id/data` JSON); the upload form is not built.
+- The UI's import form still posts to the proposed `POST /projects/:id/import` with
+  `source: "repo"`; it is not wired to `POST /projects/:id/data/import` with `source: "github"`.
+- The repository import does not push the migration branch or open a PR; the PR executor
+  clones its own per-task worktree from the remote, so commits made in the import's checkout
+  reach the remote only when a later change makes the executor reuse it (ADR 0069).
+- A GitHub Enterprise or other host is reached by a full URL; the install's default token is
+  sent only to `gitRemoteBase`'s origin, so a private repository there needs an explicit
+  `tokenRef` unless the daemon is composed with that base.
+- `GitOps` hands the token to git through `GIT_CONFIG_*` (git 2.31+); an older git ignores it
+  and clones anonymously.
 
 ## Requirement IDs covered
 
 - L.1 Files and data: upload, link folders, register large datasets by path or URI; agents
   see metadata and samples, not whole files; large data never goes into git (the copy
   threshold, the note, the gitignore guard).
-- A.3 Import from ZIP or local folder (the original untouched); the GitHub clause is the
-  project import elsewhere.
+- A.3 Import from ZIP, local folder or an existing GitHub repository (the original
+  untouched; the repository's migration runs on `forerunner/migration-<date>`, ADR 0069).
 - K.2 Data tab backend (routes and view shape).
 - U.4, U.16 `data_asset` rows and the project's `data_assets` list.
 - S.2 content is data (untrusted tool output), S.6 deleting data needs a human.

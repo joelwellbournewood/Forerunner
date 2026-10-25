@@ -57,8 +57,16 @@ with their milestone.
   the base before a PR (conflicts are reported by file and the rebase aborted, leaving the tree
   clean), push with `--force-with-lease` only when asked and never on the default branch,
   `isAncestor(base, of)` (has the base moved past the branch; any git failure throws rather
-  than reading as "moved"), changed files, log. HTTPS auth uses an `http.extraheader` config argument so the token never
-  touches disk; error output is redacted.
+  than reading as "moved"), changed files, log, `remoteDefaultBranch()` (from
+  `refs/remotes/origin/HEAD`; `validation` for an empty repository) and
+  `localBranches(prefix)`. HTTPS auth passes an `http.extraheader` entry through the process
+  environment (`gitConfigEnv()`: `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`,
+  git 2.31+, appended after any entries the caller's environment already carries), so the
+  token is never on the command line where a process listing shows it and never touches disk
+  (ADR 0069); error output is redacted. git missing from PATH is `unavailable`, a spawn
+  failure `provider_error`. `GitOpsOptions.runner` swaps the process runner (tests record
+  argv and env). The data module's GitHub repository import (`data.md`) uses it to clone a
+  project's repository onto its migration branch.
 - `PrTaskExecutor` (`pr-executor.ts`) wraps any task executor in the branch-and-PR flow: clone
   or fetch into a per-task worktree, branch from the base (or the existing PR branch), run the
   inner executor inside the worktree, commit, rebase onto the base, push and open a pull
@@ -291,7 +299,15 @@ pinned to a head the PR no longer has; `git.test.ts` has `isAncestor` false whil
 moved and true after the rebase. The runtime's merge step on the fake git host is
 `packages/runtime/test/loop-merge.test.ts`.
 
+`git.test.ts` also runs `GitOps` against local bare repositories: the token reaching git
+through `GIT_CONFIG_*` and never argv (a recording runner), a caller's own `GIT_CONFIG_*`
+entries kept, `remoteDefaultBranch()` and `localBranches(prefix)`, no force-push of the
+default branch, redacted errors.
+
 ## Known issues
+
+- `GitOps` hands the token to git through `GIT_CONFIG_*`, which git older than 2.31 ignores
+  (it then talks to the remote anonymously).
 
 ### Changed files for peer awareness
 

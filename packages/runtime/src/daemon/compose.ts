@@ -401,6 +401,11 @@ export interface ComposeOptions {
   data?: {
     projectsRoot?: string;
     limits?: Partial<DataLimits>;
+    /**
+     * Where a repository import resolves `owner/name`, and the one origin the install's own
+     * GitHub token is sent to (ADR 0069). Default `https://github.com`; tests: the fake host.
+     */
+    gitRemoteBase?: string;
   };
   /**
    * The schema sync gate's view of this install (tests): the schema version the code ships
@@ -1461,7 +1466,18 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     projectsRoot: opts.data?.projectsRoot ?? join(dirs.data, "projects"),
     ...(opts.data?.limits ? { limits: opts.data.limits } : {}),
   });
-  const dataImporter = new DataImporter({ assets: dataAssets, store, clock });
+  // A GitHub repository import (A.3, ADR 0069) resolves its token from the vault by reference
+  // (the install's own `secret:github_token` when the request names none and the URL is on the
+  // git remote base) and hands it to git through the process environment; the clone lands
+  // under `<data>/projects/<id>/repos`.
+  const dataImporter = new DataImporter({
+    assets: dataAssets,
+    store,
+    clock,
+    vault,
+    defaultTokenRef: `secret:${SECRET_NAMES.github}`,
+    ...(opts.data?.gitRemoteBase ? { gitRemoteBase: opts.data.gitRemoteBase } : {}),
+  });
   registerDataTools(tools, { assets: dataAssets, approvals: ports.approvals });
   // Desktop control (spec L.4, S.32; ADR 0021, ADR 0039): one controller per daemon behind the
   // six desktop_* tools. The gate inside every tool reads the binding per call: the
