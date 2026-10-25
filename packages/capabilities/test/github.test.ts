@@ -16,9 +16,12 @@ function stub(): Promise<{
   url: string;
   seen: Seen[];
   rateLimitOnce: { on: boolean };
+  /** Another origin the stub names in a `Link` header and an `upload_url` (set by the test). */
+  other: { url: string };
 }> {
   const seen: Seen[] = [];
   const rateLimitOnce = { on: false };
+  const other = { url: "" };
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
       let body = "";
@@ -117,6 +120,14 @@ function stub(): Promise<{
           return json(200, [repoJson("acme", "gamma")], {
             link: `<http://x/orgs/acme/repos?per_page=2&page=1>; rel="prev", <http://x/orgs/acme/repos?per_page=2&page=1>; rel="first"`,
           });
+        // A host that names another origin as the next page: the token must not follow.
+        if (u === "/orgs/leaky/repos?per_page=100")
+          return json(200, [repoJson("leaky", "one")], {
+            link: `<${other.url}/orgs/leaky/repos?per_page=100&page=2>; rel="next"`,
+          });
+        // GitHub hands out its upload origin for release assets: the one other origin by design.
+        if (u === "/repos/o/r/releases/5")
+          return json(200, { id: 5, upload_url: `${other.url}/uploads/5/assets{?name,label}` });
         if (u === "/users/bob/repos?per_page=100") return json(200, [repoJson("bob", "notes")]);
         if (u === "/user/repos?per_page=100&affiliation=owner,collaborator,organization_member")
           return json(200, [repoJson("alice", "mine"), repoJson("acme", "alpha")]);
@@ -130,6 +141,26 @@ function stub(): Promise<{
         url: `http://127.0.0.1:${(server.address() as { port: number }).port}`,
         seen,
         rateLimitOnce,
+        other,
+      }),
+    );
+  });
+}
+
+/** A second listener on its own origin that records every request it receives. */
+function otherOrigin(): Promise<{ server: Server; url: string; seen: Seen[] }> {
+  const seen: Seen[] = [];
+  return new Promise((resolve) => {
+    const server = createServer((req, res) => {
+      seen.push({ method: req.method ?? "", url: req.url ?? "", headers: req.headers, body: "" });
+      res.writeHead(201, { "content-type": "application/json" });
+      res.end(JSON.stringify(req.url?.startsWith("/uploads/") ? { name: "a.zip" } : []));
+    });
+    server.listen(0, "127.0.0.1", () =>
+      resolve({
+        server,
+        url: `http://127.0.0.1:${(server.address() as { port: number }).port}`,
+        seen,
       }),
     );
   });
@@ -199,6 +230,37 @@ describe("GitHubHost", () => {
     const mine = await new GitHubHost({ token: "tok", baseUrl: s.url }).listRepos();
     expect(mine.map((r) => r.fullName)).toEqual(["alice/mine", "acme/alpha"]);
     expect(() => new GitHubHost({ token: "tok", baseUrl: s.url, pageSize: 0 })).toThrow(/pageSize/);
+  });
+
+  it("never sends the token to a Link URL on another origin; the release upload origin is the one opt-in", async () => {
+    const other = await otherOrigin();
+    s.other.url = other.url;
+    try {
+      const gh = new GitHubHost({ token: "tok", baseUrl: s.url });
+      // The next page the host names is on another origin: the listing stops there, with the
+      // host's answer as the reason, and that origin sees no request at all.
+      await expect(gh.listRepos({ org: "leaky" })).rejects.toMatchObject({
+        code: "provider_error",
+        message: expect.stringMatching(/another origin/),
+      });
+      expect(other.seen).toEqual([]);
+      // Release assets go to the upload origin GitHub hands out (uploads.github.com on
+      // github.com): the explicit opt-in, and the only one.
+      const up = await gh.uploadReleaseAsset(
+        { owner: "o", name: "r" },
+        5,
+        "a.zip",
+        new Uint8Array(3),
+      );
+      expect(up.name).toBe("a.zip");
+      expect(other.seen.map((x) => [x.method, x.url])).toEqual([
+        ["POST", "/uploads/5/assets?name=a.zip"],
+      ]);
+      expect(other.seen[0]?.headers.authorization).toBe("Bearer tok");
+    } finally {
+      other.server.close();
+      s.other.url = "";
+    }
   });
 
   it("maps errors to codes and waits once for a rate-limit reset", async () => {

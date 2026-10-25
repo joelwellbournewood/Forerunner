@@ -1,3 +1,4 @@
+import { ForerunnerError } from "@forerunner/platform";
 import type { Command } from "commander";
 import type { SourceDiscovery } from "./discovery.ts";
 import type { SourceCandidateView, SourceView } from "./types.ts";
@@ -74,10 +75,18 @@ export function registerSourcesCli(program: Command, deps: SourcesCliDeps): void
       "secret reference of the GitHub token (secret:<name>, default secret:github_token); never a token value",
     )
     .action(async (kind: string, locator: string, opts: { name?: string; credential?: string }) => {
+      const parsedKind = SourceKindSchema.safeParse(kind);
+      if (!parsedKind.success) {
+        throw new ForerunnerError(
+          "validation",
+          `unknown source kind ${kind}; one of ${SourceKindSchema.options.join(", ")}`,
+          { details: { kind } },
+        );
+      }
       const rt = await deps.open();
       const view = await rt.sources.add(
         {
-          kind: SourceKindSchema.parse(kind),
+          kind: parsedKind.data,
           locator,
           ...(opts.name ? { displayName: opts.name } : {}),
           ...(opts.credential ? { credentialRef: opts.credential } : {}),
@@ -118,8 +127,18 @@ export function registerSourcesCli(program: Command, deps: SourcesCliDeps): void
     .option("--status <status>", `one of ${SOURCE_CANDIDATE_STATUSES.join(", ")}`)
     .option("--json", "machine readable", false)
     .action(async (id: string, opts: { status?: string; json?: boolean }) => {
-      const rt = await deps.open();
+      if (
+        opts.status !== undefined &&
+        !(SOURCE_CANDIDATE_STATUSES as readonly string[]).includes(opts.status)
+      ) {
+        throw new ForerunnerError(
+          "validation",
+          `status must be one of ${SOURCE_CANDIDATE_STATUSES.join(", ")}`,
+          { details: { status: opts.status } },
+        );
+      }
       const status = opts.status as SourceCandidateStatus | undefined;
+      const rt = await deps.open();
       const rows = await rt.sources.candidates(id, { humanId: rt.human.id }, status);
       if (opts.json) deps.out(JSON.stringify(rows, null, 2));
       else if (rows.length === 0) deps.out("No candidates (scan the source first).");

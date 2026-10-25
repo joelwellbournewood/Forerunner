@@ -259,6 +259,14 @@ describe("sources routes in the composed daemon", () => {
       }),
     });
     expect(typed.status).toBe(201);
+    // A repository URL on another git host is refused by the composed daemon too (the hosts
+    // come from the install's configuration; here the defaults).
+    const foreign = await req("/sources", {
+      method: "POST",
+      body: JSON.stringify({ kind: "github_repo", locator: "https://gitlab.com/acme/beta" }),
+    });
+    expect(foreign.status).toBe(400);
+    expect(((await foreign.json()) as { message: string }).message).toMatch(/git host/);
     const added = await req("/sources", {
       method: "POST",
       body: JSON.stringify({ kind: "github_org", locator: "acme", displayName: "Acme" }),

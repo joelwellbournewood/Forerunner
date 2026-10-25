@@ -9,8 +9,9 @@ import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
  * The Sources section of Settings (spec A.4): connected sources with what their scans found,
  * the candidates with their status and the existing-install mark, Create project on a
  * proposal (the same POST path as the New project dialog, through the daemon), connect a new
- * source (a token value never leaves the form as a credential: the daemon's refusal is shown),
- * scan, rescan and remove with a confirmation; a daemon without the route degrades.
+ * source (a token pasted where the reference goes is sent to the daemon as typed and refused
+ * there; the refusal is shown and nothing is stored), scan, rescan and remove with a
+ * confirmation; a daemon without the route degrades.
  */
 describe("Sources section", () => {
   it("formats counts and kinds", () => {

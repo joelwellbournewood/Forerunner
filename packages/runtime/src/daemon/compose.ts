@@ -224,6 +224,7 @@ import {
 } from "../setup/plan-allowance.ts";
 import { readConfig, rememberBoundHuman, SECRET_NAMES, type SetupConfig } from "../setup/wizard.ts";
 import { SourceDiscovery } from "../sources/discovery.ts";
+import { repoHostsFor } from "../sources/locators.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 import { readUpdateConfig, UpdateConfig } from "../update/config.ts";
 import type { UpdateManager } from "../update/install.ts";
@@ -2946,10 +2947,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // Source discovery (spec A.4, ADR 0056): a GitHub source's host from the vault by the
   // source's own credential reference (never a value in the row), an injected host standing
   // in for every source in tests; an accepted proposal creates the project the way
-  // POST /projects does; the install record tells a scanned folder that is this checkout.
+  // POST /projects does; the install record tells a scanned folder that is this checkout. A
+  // repository URL may name the install's git hosts only (the API base and the git remote
+  // base): one on another host is refused, never read from GitHub under its owner and name.
   const sources = new SourceDiscovery({
     store,
     clock,
+    repoHosts: repoHostsFor({
+      githubApiBase: config?.githubApiBase,
+      gitRemoteBase: opts.data?.gitRemoteBase,
+    }),
     hostFor: async (source) =>
       opts.gitHost ??
       githubHostForSecretRef({

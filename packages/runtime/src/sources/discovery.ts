@@ -20,8 +20,10 @@ import type {
 import { isSecretRef } from "@forerunner/vault";
 import type { InstallRecord } from "../setup/install-record.ts";
 import {
+  DEFAULT_REPO_HOSTS,
   folderKey,
   isGitHubLogin,
+  isRepoHost,
   keysOfProject,
   normaliseFolder,
   parseRepoLocator,
@@ -100,6 +102,18 @@ export interface SourceDiscoveryDeps {
   fs?: SourceFs;
   /** The reference a GitHub source uses when none is given. Default `secret:github_token`. */
   defaultCredentialRef?: string;
+  /**
+   * The git hosts a repository URL may name (`repoHostsFor` in the daemon: the API base and
+   * the git remote base). Default `github.com`. A URL on another host is refused at `add` and
+   * is no duplicate of anything a scan finds.
+   */
+  repoHosts?: readonly string[];
+  /**
+   * Bound on the repositories or subfolders one scan may turn into candidates. Default
+   * `DEFAULT_MAX_CANDIDATES`. Checked right after the listing, before any per-candidate host
+   * call (the marker check costs one `contents` request per repository) or row.
+   */
+  maxCandidates?: number;
 }
 
 export const DEFAULT_SOURCE_CREDENTIAL_REF = "secret:github_token";
@@ -108,6 +122,12 @@ export const INSTALL_MARKER_FILE = ".forerunner/project.json";
 export const INSTALL_MARKER_RECORD = "install_record";
 /** Bound on the projects loaded for the duplicate check; a scan beyond it is refused. */
 const MAX_PROJECTS = 10_000;
+/**
+ * Bound on what one scan proposes. An organisation of ten thousand repositories would cost
+ * as many marker requests against a five-thousand-an-hour token budget and a folder of as
+ * many subfolders as many rows; a source that large is split into narrower ones instead.
+ */
+export const DEFAULT_MAX_CANDIDATES = 1_000;
 
 /** What a scan found, before it is matched against the store. */
 interface Found {
@@ -215,10 +235,20 @@ export function sourceView(row: SourceRow, candidates: readonly SourceCandidateR
 export class SourceDiscovery {
   private readonly fs: SourceFs;
   private readonly defaultRef: string;
+  private readonly hosts: readonly string[];
+  private readonly maxCandidates: number;
 
   constructor(private readonly deps: SourceDiscoveryDeps) {
     this.fs = deps.fs ?? nodeFs;
     this.defaultRef = deps.defaultCredentialRef ?? DEFAULT_SOURCE_CREDENTIAL_REF;
+    this.hosts = deps.repoHosts?.length ? deps.repoHosts : DEFAULT_REPO_HOSTS;
+    const max = deps.maxCandidates ?? DEFAULT_MAX_CANDIDATES;
+    if (!Number.isInteger(max) || max < 1) {
+      throw new ForerunnerError("validation", "maxCandidates must be a positive integer", {
+        details: { maxCandidates: max },
+      });
+    }
+    this.maxCandidates = max;
   }
 
   private get store(): SourceStore {
@@ -327,11 +357,21 @@ export class SourceDiscovery {
       }
       credentialRef = ref;
       if (kind === "github_repo") {
-        const repo = parseRepoLocator(raw);
+        const repo = parseRepoLocator(raw, "any");
         if (!repo) {
           throw new ForerunnerError("validation", `a repository is owner/name or its URL: ${raw}`, {
             details: { locator: raw },
           });
+        }
+        if (repo.host !== null && !isRepoHost(repo.host, this.hosts)) {
+          // The URL names another git host: not this install's GitHub, whatever owner and
+          // name it carries; reading `owner/name` from GitHub instead would be a different
+          // repository.
+          throw new ForerunnerError(
+            "validation",
+            `a repository URL must be on this install's git host (${this.hosts.join(", ")}), not ${repo.host}; other git hosts come later`,
+            { details: { locator: raw, host: repo.host, hosts: [...this.hosts] } },
+          );
         }
         locator = repo.locator;
       } else {
@@ -346,6 +386,14 @@ export class SourceDiscovery {
     }
     const existing = await this.findSame(kind, locator);
     if (existing) {
+      // One row per kind and locator (the table's unique index). Another human's row stays
+      // hidden, as everywhere else under the owner rule: the refusal names neither it nor them.
+      if (existing.author_human !== actor.humanId) {
+        throw conflict(`${kind} ${locator} is already connected by another human of this install`, {
+          kind,
+          locator,
+        });
+      }
       throw conflict(`${kind} ${locator} is already connected`, { id: existing.id, kind, locator });
     }
     const row = await this.store.source.insert({
@@ -493,9 +541,19 @@ export class SourceDiscovery {
     }
     const byKey = new Map<string, ProjectRow>();
     for (const p of projects) {
-      for (const key of keysOfProject(p.repos)) if (!byKey.has(key)) byKey.set(key, p);
+      for (const key of keysOfProject(p.repos, this.hosts)) if (!byKey.has(key)) byKey.set(key, p);
     }
     return byKey;
+  }
+
+  /** The bound on one scan's candidates, checked before any per-candidate work. */
+  private assertWithinBound(found: number, what: string): void {
+    if (found <= this.maxCandidates) return;
+    throw new ForerunnerError(
+      "validation",
+      `more than ${this.maxCandidates} ${what} (${found}); connect narrower sources instead (a repository, a subfolder)`,
+      { details: { found, max: this.maxCandidates } },
+    );
   }
 
   /** The name as found, or qualified when a project of that name exists (and is not this one). */
@@ -544,6 +602,8 @@ export class SourceDiscovery {
   }
 
   private async repoCandidates(host: GitHost, repos: RepoInfo[]): Promise<Found[]> {
+    // Before the marker check: one `contents` request per repository is what a scan costs.
+    this.assertWithinBound(repos.length, "repositories");
     const out: Found[] = [];
     for (const r of repos) {
       const ref: RepoRef = { owner: r.owner, name: r.name };
@@ -583,12 +643,12 @@ export class SourceDiscovery {
     // A folder that is itself a repository or a marked install is the candidate; its
     // subfolders are inside it. Otherwise every immediate subfolder is one.
     if (await this.isProjectRoot(dir)) return [await this.folderFound(dir, basename(dir))];
-    const entries = await this.fs.entries(dir);
+    const entries = (await this.fs.entries(dir)).filter(
+      (e) => e.directory && !e.symlink && !e.name.startsWith("."),
+    );
+    this.assertWithinBound(entries.length, "subfolders");
     const out: Found[] = [];
-    for (const e of entries) {
-      if (!e.directory || e.symlink || e.name.startsWith(".")) continue;
-      out.push(await this.folderFound(join(dir, e.name), basename(dir)));
-    }
+    for (const e of entries) out.push(await this.folderFound(join(dir, e.name), basename(dir)));
     return out;
   }
 
