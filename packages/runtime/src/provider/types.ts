@@ -123,6 +123,12 @@ export interface ModelRequest {
    * exactly as produced: the critic, evals and the model watch set it. Never sent to the provider.
    */
   compression?: "default" | "off";
+  /**
+   * Which run made the call: the run's label (`conversation` for a chat turn), its session
+   * and its run id (a chat turn's transcript id). Set by the loop driver for every call it
+   * makes; measures and meters pick a run's calls by it. Never sent to the provider.
+   */
+  origin?: { label: string; sessionId: string; runId: string };
   signal?: AbortSignal;
 }
 

@@ -1602,17 +1602,25 @@ chat target is asserted (the phase 1 gate's own line), the rest is recorded
 *composed* chat turn with a warm prompt cache. The phase 1 case measures one chat turn per run,
 so every sample it took was a cache write: the provider caches the tools and system prefix of
 a request (order tools, system, messages; a change at one level invalidates it and what
-follows; Haiku 5.5 caches from 512 tokens) and only a later request with the same prefix reads
-it. This file composes the runtime with `composeLive()`, adds one project, and sends one
+follows; Haiku 5.5 caches from 512 tokens, per the minimum cacheable prompt length list under
+"Cache limitations" in https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+and only a later request with the same prefix reads it. This file composes the runtime with `composeLive()`, adds one project, and sends one
 warm-up turn and then six turns through `ConversationAgent.chat` on Haiku in quick succession,
 each a short question the command parser does not understand (so it reaches the model; the
-agent's own caps per call and turn apply, the questions ask for ten words at most). Per turn it
-logs one line: the reply's `ttftMs`, and the first model call's `cache_read_input_tokens` and
-`cache_creation_input_tokens` from the metered call record; then a summary line (warm-turn
-median and p90 first token against `MODE_DEFAULTS.text_chat.targetMs`, warm turns with a cache
-read, total cache read and write tokens, USD). Asserted: every turn answered through the
-model, every warm turn read the cache (`cacheRead > 0`), the warm median first token under
-1 s, every call on the Haiku rung, nothing refused. Report: `chat-cache-live.json`. Expected
+agent's own caps per call and turn apply, the questions ask for ten words at most). A turn's
+calls are the metered calls labelled `conversation` whose run id is the reply's transcript id
+(the request's `origin`, set by the loop driver), never the first call recorded after the
+turn started, so a background model call in between is not measured in the turn's place. Per
+turn it logs one line: the reply's `ttftMs`; the first model call's uncached input tokens,
+`cache_read_input_tokens` and `cache_creation_input_tokens` from the metered call record (a
+prefix under the minimum is neither read nor written, an unstable one is written again on
+every warm turn, so the line tells the two apart); the turn's call count and each call's
+effort. Then a summary line (warm-turn median and p90 first token against
+`MODE_DEFAULTS.text_chat.targetMs`, warm turns with a cache read, total cache read and write
+tokens, USD). Asserted: every turn answered through the model, every call of every turn at
+effort `low` (D.9: Haiku, effort low; the metered record's `effort`), every warm turn read the
+cache (`cacheRead > 0`), the warm median first token under 1 s, every call on the Haiku rung,
+nothing refused. Report: `chat-cache-live.json`. Expected
 spend under USD 0.01 per run (seven Haiku 5.5 turns over a prefix of a few thousand tokens:
 one cache write at 1.25x input, six reads at 0.1x, short replies). The same file's dry run
 (always on, no network, in CI with the rest of the script) runs the identical measure on the
@@ -1621,6 +1629,10 @@ each reply's usage as the real cache reports it (a prefix of model, tools and sy
 before is a read, a new one a write, below 512 estimated tokens neither) while the simulated
 clock moves 4 s between turns; it asserts the warm-up writes, every warm turn reads and none
 writes, so a volatile value in the composed system text or tool definitions fails offline.
+Before warm turn 3 it injects one unrelated call through the metered provider (a short
+uncached prefix at effort high, labelled `dry-run background call`) that is recorded after the
+turn's mark and before the turn's own call; the turn still counts one call, reads the cache
+and runs at effort low, which a positional pick would not.
 The unit guard for the same property is `packages/runtime/test/conversation.test.ts`,
 "conversation agent cacheable prefix".
 

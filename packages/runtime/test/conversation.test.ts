@@ -896,7 +896,7 @@ describe("conversation agent cacheable prefix", () => {
         "docs/data.md": "# Data\n\n## Stores\n\nSaves live in SQLite.\n",
       },
     });
-    await w.chat("how do we deploy the game?");
+    const first = await w.chat("how do we deploy the game?");
     // What the volatile part reports changes between the turns: the time, an open request, and
     // the doc sections retrieved for a different question.
     await w.h.clock.advance(7 * 60_000);
@@ -910,10 +910,19 @@ describe("conversation agent cacheable prefix", () => {
       blocking: false,
       risk: "low",
     });
-    await w.chat("where do the game saves live?");
+    const second = await w.chat("where do the game saves live?");
     expect(w.provider.calls).toHaveLength(2);
     const [a, b] = w.provider.calls.map((c) => c.request);
     if (!a || !b) throw new Error("expected two provider calls");
+    // Each request names the run that made it (never sent to the provider): a measure picks a
+    // turn's calls by the conversation label and the turn's run, not by position, so a
+    // background model call in between is never taken for the turn's first call.
+    expect(a.origin).toMatchObject({ label: "conversation", runId: first.transcriptId });
+    expect(b.origin).toMatchObject({ label: "conversation", runId: second.transcriptId });
+    expect(typeof a.origin?.sessionId).toBe("string");
+    expect(b.origin?.sessionId).toBe(a.origin?.sessionId);
+    // D.9: chat turns run at effort low (the text_chat mode's default).
+    expect([a.effort, b.effort]).toEqual(["low", "low"]);
     // Cache flags reach the provider request on both turns.
     expect(a.cache).toEqual({ system: true, tools: true });
     expect(b.cache).toEqual({ system: true, tools: true });
@@ -936,7 +945,10 @@ describe("conversation agent cacheable prefix", () => {
     expect(userB).toContain("Saves live in SQLite");
     expect(userA).not.toBe(userB);
     // The prefix must reach the provider's minimum cacheable length (512 tokens on Haiku 5.5),
-    // or the flags do nothing. Estimated at four characters per token.
+    // or the flags do nothing: a shorter prefix is processed without caching and no error is
+    // returned. Source: https://platform.claude.com/docs/en/build-with-claude/prompt-caching,
+    // "Cache limitations", the minimum cacheable prompt length per model (Claude API; Bedrock
+    // lists its own). Estimated at four characters per token.
     const prefixChars = JSON.stringify(a.tools).length + (a.system ?? "").length;
     expect(prefixChars / 4).toBeGreaterThan(512);
     await w.store.close();

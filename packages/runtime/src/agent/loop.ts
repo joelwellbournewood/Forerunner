@@ -288,6 +288,11 @@ export class LoopAgentDriver {
               ...(sendTemperature ? { temperature: req.temperature } : {}),
               cache: { system: true, tools: true },
               compression: bypass,
+              origin: {
+                label: req.label ?? `run ${claims.runId}`,
+                sessionId: claims.sessionId,
+                runId: claims.runId,
+              },
               signal: controller.signal,
             }),
             emit,

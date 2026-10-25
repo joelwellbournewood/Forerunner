@@ -1476,7 +1476,11 @@ tools: true }` on every call and the Anthropic adapter (`src/provider/anthropic.
 `cache_control: ephemeral` on the system block and on the last tool definition. The provider
 caches the prefix in the order tools, system, messages, a change at one level invalidates it
 and everything after, and only a later request with the same prefix reads it (Haiku 5.5
-caches from 512 tokens; the chat prefix is a few thousand). So the chat keeps its prefix
+caches from 512 tokens; a shorter prefix is processed without caching and no error is
+returned; the chat prefix is a few thousand). Source for the minimum: the minimum cacheable
+prompt length list under "Cache limitations" in
+https://platform.claude.com/docs/en/build-with-claude/prompt-caching (Claude API; Bedrock
+documents its own minimums). So the chat keeps its prefix
 byte-identical from turn to turn for one human and project: the tools are the registry's
 command tools in registration order with static descriptions and schemas, the system text is
 the registry prompt, the project list (ordered by name; it changes only when a project, its
@@ -1487,7 +1491,11 @@ the retrieved blocks). The effort and temperature are request parameters, not pa
 cached prefix. `test/conversation.test.ts` ("conversation agent cacheable prefix") guards
 this: two consecutive turns with the clock moved, a request filed and different doc sections
 retrieved in between send identical tools and system text, with the cache flags, and only the
-user message differs.
+user message differs. Every request the loop driver sends carries `origin: { label, sessionId,
+runId }` (the run's label, `conversation` for a chat turn, its session and its run id; a chat
+turn's run id is its transcript id). The field is never sent to a provider; meters and measures
+pick a run's calls by it instead of by position. The same test asserts both turns carry it and
+run at effort `low`.
 Measured live with a warm cache by `tests/live/test/live-5-chat-cache.live.test.ts`
 (testing.md, "Live runs").
 

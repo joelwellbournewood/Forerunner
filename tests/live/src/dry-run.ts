@@ -43,7 +43,10 @@ export function dryRunCredentials(opts: { subscription?: boolean } = {}): LiveCr
   };
 }
 
-/** The smallest prefix the provider caches on the chat model (Haiku 5.5: 512 tokens). */
+/**
+ * The smallest prefix the provider caches on the chat model (Haiku 5.5: 512 tokens; source:
+ * https://platform.claude.com/docs/en/build-with-claude/prompt-caching, "Cache limitations").
+ */
 export const DRY_RUN_MIN_CACHEABLE_TOKENS = 512;
 
 /**

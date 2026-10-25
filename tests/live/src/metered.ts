@@ -48,6 +48,13 @@ export interface LiveCall {
   stopReason: string | null;
   /** The effort the request asked for (`output_config.effort` on Anthropic), null when unset. */
   effort: string | null;
+  /**
+   * The run that made the call (the request's `origin`, set by the loop driver): its label
+   * (`conversation` for a chat turn), session and run id. Null for a call made outside a run.
+   */
+  label: string | null;
+  sessionId: string | null;
+  runId: string | null;
 }
 
 export interface MeteredProviderOptions {
@@ -111,6 +118,7 @@ export class MeteredProvider implements ModelProvider {
           ttftMs: null,
           stopReason: null,
           effort: req.effort ?? null,
+          ...originOf(req),
         });
       }
       throw e;
@@ -198,6 +206,7 @@ export class MeteredProvider implements ModelProvider {
           ttft,
           stopReason,
           req.effort ?? null,
+          originOf(req),
         ),
       );
     }
@@ -258,6 +267,7 @@ function callRecord(
   ttft: number | null,
   stopReason: string | null,
   effort: string | null,
+  origin: Pick<LiveCall, "label" | "sessionId" | "runId">,
 ): LiveCall {
   return {
     at,
@@ -274,5 +284,14 @@ function callRecord(
     ttftMs: ttft === null ? null : Math.round(ttft),
     stopReason,
     effort,
+    ...origin,
+  };
+}
+
+function originOf(req: ModelRequest): Pick<LiveCall, "label" | "sessionId" | "runId"> {
+  return {
+    label: req.origin?.label ?? null,
+    sessionId: req.origin?.sessionId ?? null,
+    runId: req.origin?.runId ?? null,
   };
 }

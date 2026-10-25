@@ -1,7 +1,16 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, SimulatedClock } from "@forerunner/platform";
-import { MODE_DEFAULTS, modelIdFor } from "@forerunner/runtime";
+import {
+  collectStream,
+  MODE_DEFAULTS,
+  type ModelProvider,
+  type ModelRef,
+  type ModelRequest,
+  type ModelResponse,
+  modelIdFor,
+  type StreamEvent,
+} from "@forerunner/runtime";
 import { FakeProvider, textReply } from "@forerunner/testenv";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { budgetLine } from "../src/budget.ts";
@@ -44,12 +53,24 @@ export interface ChatCacheTurn {
   question: string;
   reply: string;
   ttftMs: number | null;
-  /** The turn's first model call: the one whose first token the human waits for. */
+  /**
+   * The turn's first model call (the one whose first token the human waits for): its uncached
+   * input tokens, cache read and cache write. Together they tell a miss apart from an unstable
+   * prefix: a prefix under the minimum is neither read nor written (all input), an unstable
+   * one is written again on every warm turn.
+   */
+  inputTokens: number;
   cacheRead: number;
   cacheWrite: number;
+  /** The turn's model calls: those labelled `conversation` from the turn's own run. */
   modelCalls: number;
+  /** The effort of each of the turn's model calls, in order. */
+  efforts: (string | null)[];
   usd: number;
 }
+
+/** D.9: the chat answers on Haiku at effort low (the text_chat mode's defaults). */
+export const CHAT_EFFORT = "low";
 
 export interface ChatCacheSummary {
   warmTurns: number;
@@ -87,7 +108,12 @@ async function measureChatTurns(
       projectId,
       text: question,
     });
-    const calls = h.provider.calls.slice(mark);
+    // The turn's calls are the conversation's calls from this turn's run (the transcript id is
+    // the run id), never whatever was recorded first: a background model call (a consolidation,
+    // a critic) that lands in between is not measured in the turn's place.
+    const calls = h.provider.calls
+      .slice(mark)
+      .filter((c) => c.label === "conversation" && c.runId === reply.transcriptId);
     const first = calls[0];
     const t: ChatCacheTurn = {
       turn: i,
@@ -95,15 +121,18 @@ async function measureChatTurns(
       question,
       reply: reply.reply,
       ttftMs: reply.ttftMs,
+      inputTokens: first?.tokensIn ?? 0,
       cacheRead: first?.cacheRead ?? 0,
       cacheWrite: first?.cacheWrite ?? 0,
       modelCalls: calls.length,
+      efforts: calls.map((c) => c.effort),
       usd: Math.round(calls.reduce((s, c) => s + c.usd, 0) * 1e6) / 1e6,
     };
     turns.push(t);
     log(
       `chat turn ${i}${t.warm ? "" : " (warm-up)"}: first token ${t.ttftMs === null ? "n/a" : ms(t.ttftMs)}, ` +
-        `cache read ${t.cacheRead}, cache write ${t.cacheWrite}, calls ${t.modelCalls}, USD ${t.usd}`,
+        `first call input ${t.inputTokens}, cache read ${t.cacheRead}, cache write ${t.cacheWrite}, ` +
+        `calls ${t.modelCalls}, effort ${t.efforts.join("/") || "n/a"}, USD ${t.usd}`,
     );
   }
   const warmTurns = turns.filter((t) => t.warm);
@@ -131,7 +160,16 @@ function expectWarmCache(turns: ChatCacheTurn[], summary: ChatCacheSummary): voi
     expect(t.reply.trim().length, `turn ${t.turn} answered`).toBeGreaterThan(0);
     expect(t.modelCalls, `turn ${t.turn} went to the model`).toBeGreaterThanOrEqual(1);
     expect(t.ttftMs, `turn ${t.turn} measured a first token`).not.toBeNull();
+    // D.9: "Haiku, effort low". The recorded effort is what the request asked for.
+    expect(t.efforts, `turn ${t.turn} ran at effort ${CHAT_EFFORT}`).toEqual(
+      t.efforts.map(() => CHAT_EFFORT),
+    );
   }
+  // A warm turn reads the cache only if the prefix reaches Haiku 5.5's minimum cacheable
+  // length, 512 tokens; a shorter prefix is processed without caching and no error is
+  // returned. Source: https://platform.claude.com/docs/en/build-with-claude/prompt-caching,
+  // "Cache limitations", the minimum cacheable prompt length per model (Claude API; Bedrock
+  // lists its own).
   for (const t of turns.filter((x) => x.warm))
     expect(t.cacheRead, `warm turn ${t.turn} read the prompt cache`).toBeGreaterThan(0);
   expect(summary.ttft.n).toBe(WARM_TURNS);
@@ -178,17 +216,70 @@ describe(`text chat first token with a warm prompt cache, live (D.9)${LIVE ? "" 
   );
 });
 
+/** The label of the dry run's injected call: no runtime driver uses it. */
+const BACKGROUND_LABEL = "dry-run background call";
+
+/**
+ * Wraps the dry run's provider: once armed, the next conversation call first sends one
+ * unrelated call through the metered provider (`target`), so that call is recorded after the
+ * turn's mark and before the turn's own first call, as a background model call would be. It
+ * asks for a short uncached prefix at effort high: measured in the turn's place it would show
+ * a warm turn with no cache read and the wrong effort.
+ */
+class BackgroundCallInjector implements ModelProvider {
+  readonly name: string;
+  target: ModelProvider | null = null;
+  armed = false;
+  injected = 0;
+
+  constructor(readonly inner: ModelProvider) {
+    this.name = inner.name;
+  }
+
+  listModels(): Promise<ModelRef[]> {
+    return this.inner.listModels();
+  }
+
+  countTokens(text: string): number {
+    return this.inner.countTokens(text);
+  }
+
+  async *stream(req: ModelRequest): AsyncIterable<StreamEvent> {
+    if (this.armed && this.target && req.origin?.label === "conversation") {
+      this.armed = false;
+      this.injected++;
+      await this.target.complete({
+        model: req.model,
+        system: "Summarise the day's notes.",
+        messages: [{ role: "user", content: "notes" }],
+        max_tokens: 64,
+        effort: "high",
+        cache: { system: true },
+        origin: { label: BACKGROUND_LABEL, sessionId: "background", runId: "background" },
+      });
+    }
+    yield* this.inner.stream(req);
+  }
+
+  complete(req: ModelRequest): Promise<ModelResponse> {
+    return collectStream(
+      this.stream(req),
+      () => 0,
+      () => 0,
+    );
+  }
+}
+
 describe("text chat cache measure, dry run (scripted provider, prefix-cache stand-in, no network)", () => {
   let h: LiveHarness;
   let ledgerDir = "";
   const clock = new SimulatedClock("2026-10-25T09:00:00Z");
+  let injector: BackgroundCallInjector;
 
   beforeAll(async () => {
     ledgerDir = mkdtempSync(join(tmpdir(), "fr-live-chat-cache-"));
-    h = await composeLive({
-      env: { FORERUNNER_LIVE_RUN: "dry-run-chat-cache" },
-      clock,
-      inner: new PrefixCacheFake(
+    injector = new BackgroundCallInjector(
+      new PrefixCacheFake(
         new FakeProvider({
           mode: "script",
           clock,
@@ -198,12 +289,18 @@ describe("text chat cache measure, dry run (scripted provider, prefix-cache stan
         }),
         clock,
       ),
+    );
+    h = await composeLive({
+      env: { FORERUNNER_LIVE_RUN: "dry-run-chat-cache" },
+      clock,
+      inner: injector,
       credentials: dryRunCredentials(),
       ledgerPath: join(ledgerDir, "spend.json"),
       config: { capUsd: 100, runCapUsd: 1, warnShare: 0.8 },
       pricing: DRY_RUN_PRICING,
       onWarn: () => undefined,
     });
+    injector.target = h.provider;
   });
   afterAll(async () => {
     await h?.close();
@@ -212,14 +309,27 @@ describe("text chat cache measure, dry run (scripted provider, prefix-cache stan
 
   it("the composed chat sends a stable prefix: the warm-up writes the cache, every warm turn reads it", async () => {
     const lines: string[] = [];
+    let turn = 0;
     const { turns, summary } = await measureChatTurns(
       h,
       WARM_TURNS,
       (l) => lines.push(l),
-      // Seconds pass between real turns; the volatile preamble's clock moves with them.
-      () => clock.advance(4_000),
+      async () => {
+        // Seconds pass between real turns; the volatile preamble's clock moves with them.
+        await clock.advance(4_000);
+        // Before warm turn 3, one unrelated model call lands after the turn's mark.
+        if (++turn === 3) injector.armed = true;
+      },
     );
+    expect(injector.injected).toBe(1);
+    const background = h.provider.calls.filter((c) => c.label === BACKGROUND_LABEL);
+    expect(background).toHaveLength(1);
+    expect(background[0]).toMatchObject({ cacheRead: 0, effort: "high" });
+    expect(turns[3]?.modelCalls).toBe(1);
     expect(lines).toHaveLength(WARM_TURNS + 2);
+    expect(lines[1]).toMatch(
+      /^chat turn 1: first token [^,]+, first call input \d+, cache read [1-9]\d*, cache write 0, calls 1, effort low, USD /,
+    );
     expect(lines.at(-1)).toMatch(/^chat cache summary: warm n=6 first token median/);
     expect(turns[0]?.cacheWrite).toBeGreaterThan(0);
     expect(turns[0]?.cacheRead).toBe(0);
