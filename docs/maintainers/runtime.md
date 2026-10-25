@@ -789,9 +789,12 @@ author (`validation`, `details.missing` = `reason` | `actor`) on every write pat
 the plan's `reason` on every milestone row it inserts and makes the small-project join a
 `change` with the same reason and author (the `project.plan` audit row stays as the record of
 what was added); the session runner, which inserts its row with `plan: {}` (no reason needed
-yet) and then writes the plan with `setPlan`, the agent as author and `planReason(plan)` as
-the reason (the planner's summary, "cut to fit" included, or "planned from the brief", cut at
-`MAX_PLAN_REASON_CHARS` 500); the two sessions created with their plan already filled in, the
+yet) and then writes the plan with `setPlan` against a fresh read of the row (the daemon's
+pause port or a kill may have moved its status, and so its version, while the planner worked;
+nothing else writes a session's plan, so that is no conflict, while a stale version is still
+refused), the agent as author and `planReason(plan)` as the reason (the planner's summary,
+"cut to fit" included, or "planned from the brief", cut at `MAX_PLAN_REASON_CHARS` 500); the
+two sessions created with their plan already filled in, the
 intake's (`reason: "intake of <project>"`, `intake.ts`) and the critic calibration's (its plan
 summary, `jobs/calibration.ts`), each with the agent as author (the projects mirror's session
 in `packages/capabilities` does the same, capabilities.md); and the daemon, which serves
@@ -2762,9 +2765,13 @@ version step, each field before -> after and the reason; a missing reason, a bla
 stale version and a bad date are 409 `conflict` with the cause and leave the row as it was and
 no audit row; an unknown milestone is 404; name, criteria, date and status change under one
 reason, the history naming each. The plan's reason on the session row:
-`session.test.ts` (the cut plan's summary as the reason, the agent as author) and
+`session.test.ts` (the cut plan's summary as the reason, the agent as author; the plan written
+against a fresh read of the row, so a pause landing during planning is no plan conflict while
+a write against the version the runner started with is still refused) and
 `closeout-sessions.test.ts`; the plan writer's reason on milestone rows and the join as a
-reasoned change: `small-project.test.ts`.
+reasoned change: `small-project.test.ts`; the reasons of the sessions created with their plan:
+`intake.test.ts`, `calibration-job.test.ts` and, in `packages/capabilities`,
+`projects-mirror.test.ts`.
 
 `compose-identity.test.ts` (triage 2026-10-23 P0 #2, ADR 0082, two installs on one
 `sqlite:<file>` store as two PCs on the shared Postgres): two humans in one store and two
