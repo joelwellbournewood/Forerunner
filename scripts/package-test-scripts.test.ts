@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 
 // Handover item 7 of 2026-10-24: `vitest run --project unit --dir test` inside a package matched
@@ -11,7 +11,7 @@ const root = process.cwd();
 
 function workspaceDirs(): string[] {
   const yaml = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
-  const globs = [...yaml.matchAll(/^\s*-\s*"([^"]+)"/gm)].map((m) => m[1]);
+  const globs = [...yaml.matchAll(/^\s*-\s*"([^"]+)"/gm)].flatMap((m) => (m[1] ? [m[1]] : []));
   const dirs: string[] = [];
   for (const glob of globs) {
     if (glob.endsWith("/*")) {

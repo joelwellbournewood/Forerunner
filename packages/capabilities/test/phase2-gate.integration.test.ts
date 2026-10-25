@@ -5,7 +5,9 @@
  * one local bare repository as the git host's clone target; no network.
  *
  * The "either install offline for 48 simulated hours" half of the gate needs two stores joined
- * by the shared state service and is covered when that service lands (see gates.md).
+ * by the shared state service; it runs against Postgres in
+ * services/state-api/test/state-api.integration.test.ts ("48 simulated hours offline: the other
+ * install keeps working and the returning one sees everything"), the row's evidence in gates.md.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -392,5 +394,7 @@ describe("phase 2 gate", () => {
     await w.store.close();
   }, 120_000);
 
-  it.skip("either install can be offline for 48 simulated hours without breaking the other (needs the shared state service sync; recorded as pending in gates.md)", () => {});
+  // "Either install can be offline for 48 simulated hours without breaking the other" is the
+  // state service's case (services/state-api/test/state-api.integration.test.ts, "48 simulated
+  // hours offline: ..."): two installs on two stores joined by the service over Postgres.
 });

@@ -137,6 +137,22 @@ every step with its elapsed seconds, and exit 3 when the total is over 900 s. St
 `--dry-run` prints every step and command without changing anything; the unit test runs it.
 Evidence for the gate is the workflow's job summary line `fresh install took Ns`.
 
+### The API build workflow (`.github/workflows/build-item.yml`)
+
+`build-item.yml` (added by the maintainer on 2026-10-23) runs one bounded build, review or fix
+of a Forerunner item on a hosted runner through `anthropics/claude-code-action`, billed to the
+repository's `ANTHROPIC_API_KEY` secret (with `ANTHROPIC_WORKSPACE_ID` as a repository variable
+for a user-scoped key) instead of a Claude Code plan. It is dispatched by hand with the item id,
+the stage (`build`, `review` or `fix`), the full prompt for that stage, the base branch a new
+`wave/<item>` branch starts from (the default is the integration branch of the day; change it
+when that branch moves), the model, a USD spend cap and a turn cap; it checks out or creates
+`wave/<item>`, installs dependencies (and the Tauri Linux libraries and Rust when `rust` is
+set), runs the stage with a prefix-allowlisted tool set, and pushes the branch when the run
+ends, committing anything left uncommitted as a `wip:` snapshot that is marked not verified. It
+never touches the release branch; the integration session merges `wave/<item>` after the item's
+review file under `docs/status/reviews/` says `accept` or its findings are fixed. The stage
+prompts and the item briefs it was run with are kept on the `build-briefs` branch.
+
 ### Other operational scripts
 
 | Script | Used by | Does |
