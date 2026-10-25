@@ -130,6 +130,12 @@ describe("fr sources", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(/accepted {2}acme\/alpha {2}-> "alpha" {2}\[project \S+\]$/);
     lines = [];
+    // A status outside the four is refused the way the route refuses it, not an empty list.
+    await expect(fr("sources", "candidates", sourceId, "--status", "nope")).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/proposed, accepted, duplicate, gone/),
+    });
+    expect(lines).toEqual([]);
 
     await fr("sources", "list", "--json");
     const listed = JSON.parse(lines.join("\n")) as {
@@ -150,7 +156,11 @@ describe("fr sources", () => {
     await expect(
       fr("sources", "add", "github_org", "acme", "--credential", tokenValue),
     ).rejects.toMatchObject({ code: "validation" });
-    await expect(fr("sources", "add", "bitbucket", "acme")).rejects.toThrow();
+    // An unknown kind is a refusal with a code that names the kinds, not a parser's stack.
+    await expect(fr("sources", "add", "bitbucket", "acme")).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/github_org.*local_folder/),
+    });
     const missing = join(home, "nope");
     await expect(fr("sources", "add", "local_folder", missing)).rejects.toMatchObject({
       code: "not_found",
