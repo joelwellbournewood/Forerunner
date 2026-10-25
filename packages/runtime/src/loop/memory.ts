@@ -478,7 +478,13 @@ export class MemoryLoop implements MemoryPort {
    * `general` first when it is not (the human's own act on the exact text), then proposed:
    * a private lesson with the human's approval and its owner as the proposing agent (the
    * package refuses anything else), a critic or project-level shared one directly. Another
-   * human's private lesson reads as not found.
+   * human's private lesson reads as not found. A global shared lesson, and a project copy of
+   * one (an accepted offer: `source` names its `promotion` origin), are shared already: a
+   * proposal of the copy would have the critic review a lesson that is global and, on accept,
+   * retire the pinned copy for a second global row. The text passes the injection gate again
+   * (`screenLessons`, as when it was recorded): `edit` runs the format lint only, so a text
+   * edited into an instruction is refused here, before it is copied into the shared store,
+   * with the rules that matched.
    */
   async proposeSharing(id: string): Promise<LessonRow> {
     const row = await this.ownLesson(id);
@@ -486,9 +492,14 @@ export class MemoryLoop implements MemoryPort {
       throw new ForerunnerError("validation", "only an active, current lesson can be shared", {
         details: { id, status: row.status },
       });
-    if (row.scope === "shared" && row.project_id === null)
+    if (row.scope === "shared" && (row.project_id === null || parseSource(row.source).promotion))
       throw new ForerunnerError("validation", "lesson is already shared across projects", {
-        details: { id },
+        details: { id, ...(row.project_id ? { copyOf: parseSource(row.source).promotion } : {}) },
+      });
+    const refused = screenLessons([{ text: row.text }], "unknown").rejected[0];
+    if (refused)
+      throw new ForerunnerError("injection_suspected", `not shared: ${refused.error}`, {
+        details: { id, rules: refused.rules },
       });
     const current = row.tags.includes(GENERAL_TAG)
       ? row

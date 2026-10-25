@@ -1199,7 +1199,12 @@ lesson that merged its earlier row keeps the one pending proposal, re-pointed an
 and reports the proposal ids in `MemoryRecordResult.proposed`; a private lesson is proposed
 only by its human from the memory view (`proposeSharing`: tags it `general` when needed and
 passes `humanApproval` with the owner agent as proposer, so the package's rule stands; another
-human's private row is `not_found`). At every session end, after the session's lessons are
+human's private row is `not_found`; a global shared lesson and a project copy of one, an
+accepted offer whose `source` names its `promotion` origin, are `validation` "already shared",
+since promoting the copy would retire the pin for a second global row; and the text runs
+through the injection gate again, `screenLessons` with source `unknown`, because `edit` runs
+the format lint only, so a lesson edited into an instruction is refused `injection_suspected`
+with the rules that matched before anything is copied into the shared store). At every session end, after the session's lessons are
 recorded and before the session review, the runner's `reviewPromotions` step takes this
 human's pending proposals (`pendingPromotions`: made by one of the human's agents or by the
 human; another human's are theirs), at most `MAX_PROMOTION_REVIEWS_PER_SESSION` (5), and asks

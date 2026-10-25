@@ -1724,7 +1724,7 @@ export const DAEMON_ROUTES = {
   runConsolidation:
     "POST /memory/consolidation/run (report only; files the approval request the inbox answers; ConsolidationRunView)",
   proposeLesson:
-    "POST /memory/lessons/:id/propose (spec G.6: tags the lesson general and proposes it for the shared store; the critic decides at the next session end; LessonView of the proposal; 404 for another human's private row)",
+    "POST /memory/lessons/:id/propose (spec G.6: tags the lesson general and proposes it for the shared store; the critic decides at the next session end; LessonView of the proposal; 404 for another human's private row; validation for a global shared lesson or a project copy of one; injection_suspected for a text that reads as an instruction)",
   memoryPromotions:
     "GET /memory/promotions (LessonView[]: this human's proposals the critic has not decided yet)",
   memoryOffers:

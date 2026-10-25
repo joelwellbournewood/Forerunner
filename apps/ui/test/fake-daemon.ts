@@ -1889,7 +1889,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.post("/memory/lessons/:id/propose", (c) => {
     const l = state.lessons.find((x) => x.id === c.req.param("id"));
     if (!l) return errorBody(c, 404, "not_found", "no such lesson");
-    if (l.scope === "shared" && l.projectId === null) {
+    if (l.scope === "shared" && (l.projectId === null || /(^|;)promotion:/.test(l.source))) {
       return errorBody(c, 400, "validation", "lesson is already shared across projects");
     }
     if (!l.tags.includes("general")) l.tags = [...l.tags, "general"];
