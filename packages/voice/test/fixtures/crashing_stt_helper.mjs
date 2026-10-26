@@ -2,7 +2,11 @@
 // processes (counted in the file named by `--crash-file`) exit with `--crash-code` when the
 // end-of-speech frame arrives, as faster-whisper did on Windows with an access violation
 // (0xC0000005) under heavy CPU load. Later processes answer like fake_stt_helper.mjs.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+// The ready line reports the device and compute type from argv as fr_stt.py does ("auto"
+// resolves to "cpu": no GPU here). A decode frame (kind 4, JSON) sets the decode options of the
+// current utterance until the next reset or final; `--record-file` gets one JSON line per final
+// with this process's pid, device, compute type, decode options and audio bytes.
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(name);
@@ -18,6 +22,10 @@ const partialLine = process.argv.includes("--partial-line");
 // Write this many numbered lines to stderr before dying (`trace 001` ...), as Python's
 // faulthandler writes its traceback when native code faults.
 const stderrLines = Number(arg("--stderr-lines", "0"));
+const recordFile = arg("--record-file", "");
+const requested = arg("--device", "auto");
+const device = requested === "auto" ? "cpu" : requested;
+const computeType = arg("--compute-type", "default");
 const crashed = crashFile && existsSync(crashFile) ? Number(readFileSync(crashFile, "utf8")) : 0;
 const willCrash = crashFile !== "" && crashed < crashTimes;
 if (willCrash) writeFileSync(crashFile, String(crashed + 1));
@@ -25,6 +33,7 @@ if (willCrash) writeFileSync(crashFile, String(crashed + 1));
 let buf = Buffer.alloc(0);
 let audioBytes = 0;
 let partialSent = false;
+let decode = null;
 
 function emit(obj) {
   process.stdout.write(`${JSON.stringify(obj)}\n`);
@@ -47,7 +56,7 @@ function exitNow() {
   else process.exit(crashCode);
 }
 
-emit({ type: "ready", model: "fake" });
+emit({ type: "ready", model: "fake", device, compute_type: computeType });
 
 process.stdin.on("data", (d) => {
   if (dying) return;
@@ -68,6 +77,11 @@ process.stdin.on("data", (d) => {
       }
     } else if (kind === 1) {
       if (willCrash) return crash();
+      if (recordFile)
+        appendFileSync(
+          recordFile,
+          `${JSON.stringify({ pid: process.pid, device, computeType, decode, audioBytes })}\n`,
+        );
       emit({
         type: "final",
         text: `hello world ${audioBytes}`,
@@ -78,11 +92,15 @@ process.stdin.on("data", (d) => {
       });
       audioBytes = 0;
       partialSent = false;
+      decode = null;
     } else if (kind === 2) {
       process.exit(0);
     } else if (kind === 3) {
       audioBytes = 0;
       partialSent = false;
+      decode = null;
+    } else if (kind === 4) {
+      decode = JSON.parse(payload.toString("utf8"));
     }
   }
 });

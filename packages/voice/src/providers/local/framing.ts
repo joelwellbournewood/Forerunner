@@ -6,7 +6,8 @@
  * TTS helper -> Node:       u8 kind | u32le id | u32le length | payload
  */
 
-export const STT_IN = { audio: 0, endOfSpeech: 1, close: 2, reset: 3 } as const;
+/** STT frames; `decode` carries JSON decode options for the current utterance (fr_stt.py). */
+export const STT_IN = { audio: 0, endOfSpeech: 1, close: 2, reset: 3, decode: 4 } as const;
 export const TTS_IN = { request: 0, cancel: 1, close: 2 } as const;
 export const TTS_OUT = { audio: 0, done: 1, error: 2, ready: 3 } as const;
 

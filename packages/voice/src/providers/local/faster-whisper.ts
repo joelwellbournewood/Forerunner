@@ -69,6 +69,9 @@ export const HelperMessageSchema = z.object({
   end_ms: z.number().nullish(),
   language: z.string().nullish(),
   model: z.string().nullish(),
+  /** The ready line's device as resolved ("cuda", "cpu") and compute type. */
+  device: z.string().nullish(),
+  compute_type: z.string().nullish(),
 });
 type HelperMessage = z.infer<typeof HelperMessageSchema>;
 
@@ -79,6 +82,21 @@ const HELPER_RATE = 16000;
  * mono PCM (3.84 MB). An utterance longer than that is not retried; its crash fails the turn.
  */
 export const STT_RETRY_AUDIO_BYTES = HELPER_RATE * 2 * 120;
+
+/**
+ * How the retry of a crashed utterance decodes: greedy at temperature 0 only, no temperature
+ * fallback. The same audio with the same settings crashed twice on 2026-10-26, so the retry
+ * takes a different path through the decoder (the decode frame, fr_stt.py `parse_decode`).
+ */
+export const STT_RETRY_DECODE = { beam_size: 1, temperature: [0] } as const;
+
+/** After a crash on the GPU, the retry's one-utterance helper runs here instead. */
+export const STT_RETRY_CPU = { device: "cpu", computeType: "int8" } as const;
+
+/** A device name that is not the CPU ("cuda", "cuda:0"); unknown or "auto" counts as the CPU. */
+function isGpuDevice(device: string | null): boolean {
+  return device?.startsWith("cuda") ?? false;
+}
 
 class FasterWhisperSession implements SttSession {
   readonly queue = new AsyncQueue<SttEvent>();
@@ -155,6 +173,12 @@ export class FasterWhisperStt implements SttProvider {
   private pythonExe: string | null = null;
   /** Set by retire(): the helper is never started again (ADR 0090, a voice profile swap). */
   private disposed = false;
+  /** The device the current helper's ready line reported ("cuda", "cpu"), if it said. */
+  private helperDevice: string | null = null;
+  /** The next helper to start runs on the CPU (int8): the retry of an utterance after a GPU crash. */
+  private nextOnCpu = false;
+  /** A helper started for one retried utterance only (on the CPU); stopped when it ends. */
+  private retryOnly: HelperProcess | null = null;
 
   constructor(private readonly opts: FasterWhisperOptions = {}) {
     this.clock = opts.clock ?? systemClock;
@@ -211,6 +235,19 @@ export class FasterWhisperStt implements SttProvider {
 
   sessionClosed(s: FasterWhisperSession): void {
     if (this.current === s) this.current = null;
+    // The CPU helper of a retry after a GPU crash served that one utterance: let it go, so
+    // the next utterance starts the usual (GPU) helper.
+    const p = this.process;
+    if (p && p === this.retryOnly) {
+      this.logger.info("stopping the retry's CPU helper; the next utterance starts the usual one");
+      this.retryOnly = null;
+      this.process = null;
+      this.isReady = false;
+      this.ready = null;
+      this.helperDevice = null;
+      this.pending = [];
+      void p.stop(encodeInFrame(STT_IN.close));
+    }
   }
 
   /**
@@ -238,10 +275,13 @@ export class FasterWhisperStt implements SttProvider {
     this.isReady = false;
     this.ready = null;
     this.pending = [];
+    this.helperDevice = null;
+    this.nextOnCpu = false;
+    this.retryOnly = null;
     if (p) await p.stop(encodeInFrame(STT_IN.close));
   }
 
-  private helperArgv(python: string): string[] {
+  private helperArgv(python: string, onCpu: boolean): string[] {
     const o = this.opts;
     const argv = [
       python,
@@ -251,9 +291,9 @@ export class FasterWhisperStt implements SttProvider {
       "--model",
       o.model ?? "base",
       "--device",
-      o.device ?? "auto",
+      onCpu ? STT_RETRY_CPU.device : (o.device ?? "auto"),
       "--compute-type",
-      o.computeType ?? "default",
+      onCpu ? STT_RETRY_CPU.computeType : (o.computeType ?? "default"),
       "--beam-size",
       String(o.beamSize ?? 5),
       "--partial-interval-ms",
@@ -284,8 +324,10 @@ export class FasterWhisperStt implements SttProvider {
       // One line reader per helper process: a helper that dies in the middle of a line leaves
       // its half line behind with it, never in front of the next helper's ready line.
       const lines = new LineReader();
+      const onCpu = this.nextOnCpu;
+      this.nextOnCpu = false;
       const proc: HelperProcess = new HelperProcess({
-        argv: this.helperArgv(python),
+        argv: this.helperArgv(python, onCpu),
         env: this.opts.env,
         clock: this.clock,
         log: this.logger,
@@ -297,6 +339,8 @@ export class FasterWhisperStt implements SttProvider {
         onSpawnError: (err) => this.readyReject?.(err),
       });
       this.process = proc;
+      this.helperDevice = null;
+      if (onCpu) this.retryOnly = proc;
       const cancel = this.clock.setTimeout(() => {
         this.readyReject?.(
           new ForerunnerError("timeout", "faster-whisper helper did not become ready"),
@@ -337,6 +381,7 @@ export class FasterWhisperStt implements SttProvider {
     switch (msg.type) {
       case "ready": {
         this.isReady = true;
+        this.helperDevice = msg.device ?? null;
         this.readyResolve?.();
         const frames = this.pending.splice(0);
         for (const f of frames) this.process?.write(f);
@@ -407,10 +452,14 @@ export class FasterWhisperStt implements SttProvider {
       return;
     }
     const wasReady = this.isReady;
+    // Where the helper that died ran: its ready line, else the configured device.
+    const onGpu = isGpuDevice(this.helperDevice ?? this.opts.device ?? null);
     this.process = null;
     this.isReady = false;
     this.ready = null;
     this.pending = [];
+    this.helperDevice = null;
+    if (this.retryOnly === proc) this.retryOnly = null;
     if (!wasReady) {
       this.logger.warn("helper exited before it was ready", fields);
       this.readyReject?.(
@@ -423,9 +472,15 @@ export class FasterWhisperStt implements SttProvider {
     if (wasReady && session && !session.retried && session.frames) {
       session.retried = true;
       session.firstCrash = details;
+      // The retry decodes differently (the same audio with the same settings crashed twice on
+      // 2026-10-26), and after a GPU crash on a CPU helper kept for this utterance only.
+      this.nextOnCpu = onGpu;
+      const retryMode = onGpu
+        ? `greedy at temperature 0 on the CPU (${STT_RETRY_CPU.computeType})`
+        : "greedy at temperature 0";
       this.logger.warn(
         "helper crashed mid-transcription; restarting it and retrying the utterance",
-        fields,
+        { ...fields, retryMode },
       );
       this.replay(session, exit.text);
       return;
@@ -444,9 +499,16 @@ export class FasterWhisperStt implements SttProvider {
     });
   }
 
-  /** Send the utterance again to a fresh helper: reset, its audio, and its end if it was said. */
+  /**
+   * Send the utterance again to a fresh helper: reset, the retry's decode options
+   * (`STT_RETRY_DECODE`), its audio, and its end if it was said.
+   */
   private replay(session: FasterWhisperSession, crash: string): void {
-    this.pending.push(encodeInFrame(STT_IN.reset), ...(session.frames ?? []));
+    this.pending.push(
+      encodeInFrame(STT_IN.reset),
+      encodeInFrame(STT_IN.decode, Buffer.from(JSON.stringify(STT_RETRY_DECODE), "utf8")),
+      ...(session.frames ?? []),
+    );
     if (session.ended) this.pending.push(encodeInFrame(STT_IN.endOfSpeech));
     this.ensureProcess().catch((e: unknown) => {
       session.deliver({

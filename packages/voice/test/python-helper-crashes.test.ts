@@ -157,3 +157,58 @@ class WhisperModel:
       expect(c).toEqual({ ...c, main: true, unchanged: true, own: true, dtype: "float32" });
   });
 });
+
+/**
+ * The retry of a crashed utterance decodes differently (the same audio with the same settings
+ * crashed twice on 2026-10-26): the Node side sends a decode frame (kind 4, JSON) after the
+ * reset, and fr_stt.py uses it for that utterance only, partials and final.
+ */
+describe.skipIf(!python)("fr_stt.py: a decode frame sets the options of one utterance", () => {
+  it("greedy at temperature 0 for the retried utterance; the next utterance decodes as usual", () => {
+    const stubs = stubDir(
+      "faster_whisper.py",
+      `
+import json, os
+CALLS = []
+class _Info:
+    language = "en"
+class WhisperModel:
+    def __init__(self, name, device="auto", compute_type="default"):
+        pass
+    def transcribe(self, audio, **kw):
+        CALLS.append({"samples": int(audio.shape[0]), "beam_size": kw.get("beam_size"),
+                      "temperature": kw.get("temperature", "default")})
+        with open(os.environ["FR_STUB_OUT"], "w") as f:
+            json.dump(CALLS, f)
+        return iter(()), _Info()
+`,
+    );
+    const out = join(stubs, "calls.json");
+    const decode = Buffer.from(JSON.stringify({ beam_size: 1, temperature: [0] }), "utf8");
+    const input = Buffer.concat([
+      frame(3),
+      frame(4, decode),
+      frame(0, Buffer.alloc(3200)),
+      frame(1),
+      frame(3),
+      frame(0, Buffer.alloc(1600)),
+      frame(1),
+      frame(2),
+    ]);
+    const r = spawnSync(
+      python as string,
+      [join(helperDir, "fr_stt.py"), "--device", "cpu", "--model", "stub", "--beam-size", "5"],
+      {
+        input,
+        env: { ...process.env, FR_STUB_OUT: out, PYTHONPATH: stubs, PYTHONDONTWRITEBYTECODE: "1" },
+        encoding: "utf8",
+      },
+    );
+    expect(r.status, r.stderr).toBe(0);
+    const calls = JSON.parse(readFileSync(out, "utf8")) as unknown[];
+    expect(calls).toEqual([
+      { samples: 1600, beam_size: 1, temperature: [0] },
+      { samples: 800, beam_size: 5, temperature: "default" },
+    ]);
+  });
+});

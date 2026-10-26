@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { ForerunnerError, join, Logger, log, SimulatedClock } from "@forerunner/platform";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -178,6 +178,81 @@ describe("FasterWhisperStt when the helper crashes mid-transcription", () => {
       // The utterance the provider let go of ended; it is not left waiting.
       for (let r = await it.next(); !r.done; r = await it.next()) firstEvents.push(r.value);
       expect(firstEvents.some((e) => e.type === "final")).toBe(false);
+    } finally {
+      await stt.dispose();
+    }
+  });
+
+  /**
+   * The GPU run of 2026-10-26: the retry sent the same audio with the same settings to a fresh
+   * helper and crashed the same way, so the utterance was lost twice. The retry now decodes
+   * differently: greedy at temperature 0 with no temperature fallback, and after a crash on the
+   * GPU on a one-utterance CPU (int8) helper; later turns go back to the usual helper.
+   */
+  const recorded = async (file: string) =>
+    (await readFile(file, "utf8"))
+      .trim()
+      .split("\n")
+      .map(
+        (l) =>
+          JSON.parse(l) as {
+            pid: number;
+            device: string;
+            computeType: string;
+            decode: unknown;
+            audioBytes: number;
+          },
+      );
+  const retryWith = (name: string, device: string, computeType: string) =>
+    new FasterWhisperStt({
+      python: node,
+      helperPath: fixture("crashing_stt_helper.mjs"),
+      device,
+      computeType,
+      extraArgs: [
+        "--crash-file",
+        join(dir, name),
+        "--crash-times",
+        "1",
+        "--record-file",
+        join(dir, `${name}.jsonl`),
+      ],
+    });
+  const GREEDY = { beam_size: 1, temperature: [0] };
+
+  it("a crash on the CPU: the retry decodes greedy at temperature 0; the next turn decodes as usual", async () => {
+    const stt = retryWith("cpu-retry", "cpu", "int8");
+    try {
+      const { result: events, lines } = await captured(() => utterance(stt));
+      expect(events.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+      const next = await utterance(stt);
+      expect(next.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+      const [retry, later] = await recorded(join(dir, "cpu-retry.jsonl"));
+      expect(retry).toMatchObject({ device: "cpu", computeType: "int8", decode: GREEDY });
+      expect(retry?.audioBytes).toBe(6400);
+      // The helper the retry started stays for later turns, with the usual decode options.
+      expect(later).toMatchObject({ pid: retry?.pid, device: "cpu", decode: null });
+      const warn = lines.find((l) => l.includes("retrying the utterance"));
+      expect(warn).toContain('"retryMode":"greedy at temperature 0"');
+    } finally {
+      await stt.dispose();
+    }
+  });
+
+  it("a crash on the GPU: the retry runs greedy on a CPU (int8) helper for that utterance, then the GPU again", async () => {
+    const stt = retryWith("gpu-retry", "cuda", "float16");
+    try {
+      const { result: events, lines } = await captured(() => utterance(stt));
+      expect(events.filter((e) => e.type === "error")).toEqual([]);
+      expect(events.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+      const next = await utterance(stt);
+      expect(next.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+      const [retry, later] = await recorded(join(dir, "gpu-retry.jsonl"));
+      expect(retry).toMatchObject({ device: "cpu", computeType: "int8", decode: GREEDY });
+      expect(later).toMatchObject({ device: "cuda", computeType: "float16", decode: null });
+      expect(later?.pid).not.toBe(retry?.pid);
+      const warn = lines.find((l) => l.includes("retrying the utterance"));
+      expect(warn).toContain('"retryMode":"greedy at temperature 0 on the CPU (int8)"');
     } finally {
       await stt.dispose();
     }

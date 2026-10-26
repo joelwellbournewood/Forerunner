@@ -649,7 +649,7 @@ device. Two first-audio figures are recorded per turn:
 
 ## Tests
 
-`pnpm vitest run --project unit packages/voice` (238 tests, a few seconds, no network); the
+`pnpm vitest run --project unit packages/voice` (241 tests, a few seconds, no network); the
 speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 `packages/runtime/test/notifications-voice.test.ts` (`FakeTts` on the simulated clock):
 
@@ -664,9 +664,9 @@ speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 | `test/approval.test.ts` | yes variants in seven languages, short ambiguous lines, negations and hesitation, questions and qualifiers refused (the critic's false positives), instructions with an affirmative word refused, deferrals and hand-offs refused in seven languages ("I need to confirm with my manager first", "Simone said yes"), an affirmative buried late in a long line refused, colliding words ("SIM", "Dale", "prima") gated on the line start or the session language, `blockedBy` and the exact line in the record |
 | `test/registry.test.ts` | local -> cloud -> fake policy with reasons, preferred, excluded providers (not probed, the secret never asked for, never picked by the fallback, the status reason; `unavailable` when nothing else can serve), throwing probes, replace by name |
 | `test/availability.test.ts` | probes return `{ok:false}` for missing interpreter/module/binary/model/key; invalid module names never spawn; the Windows Store alias is recognised (`interpreterDidNotRun`, both OSes) and a stub that only prints "Python was not found" is skipped for the next candidate (stub run on Linux) |
-| `test/local-helpers.test.ts` | faster-whisper, Kokoro and Piper Node sides against protocol-identical node stand-ins: streaming, resampling, errors, cancel (no leaked request on a pre-aborted call); `HelperProcess.stop()` grace kill timed on a `SimulatedClock` against a helper that ignores stdin closing; the fr_stt.py message schema (nulls, unknown keys, malformed lines); a helper that crashes once mid-transcription (`fixtures/crashing_stt_helper.mjs`) is restarted and the utterance gets its final with all of its audio, the crash logged as a warning with the code in hex and a cause, and a helper that crashes on the retry too fails the utterance with the hex code; a crash at the first audio frame, before the end of speech, retried with all of the audio; a helper that dies in the middle of a stdout line (`--partial-line`) with the retry still getting its final well inside a 3 s ready timeout; a disposed helper's late exit leaving the next utterance on a new helper untouched; `describeHelperExit` for 0xC0000005 (unsigned and signed), 0xC0000409, SIGSEGV, SIGKILL and exit code 1; a helper that writes 60 stderr lines before each of two crashes (`--stderr-lines`): both crash warnings carry the last 40 lines, and the utterance's error `details` carry the exit (`exitCode`, `exitCodeHex`), that tail, and the first crash's own as `firstCrash`; a Kokoro helper that crashes on a sentence (`CRASH`) fails it with the hex code and the tail in `details`, logged as a warning; `StderrTail` (lines split across chunks, the unfinished last line, the size cap) and a real `HelperProcess` keeping the last 40 of 45 lines |
+| `test/local-helpers.test.ts` | faster-whisper, Kokoro and Piper Node sides against protocol-identical node stand-ins: streaming, resampling, errors, cancel (no leaked request on a pre-aborted call); `HelperProcess.stop()` grace kill timed on a `SimulatedClock` against a helper that ignores stdin closing; the fr_stt.py message schema (nulls, unknown keys, malformed lines); a helper that crashes once mid-transcription (`fixtures/crashing_stt_helper.mjs`) is restarted and the utterance gets its final with all of its audio, the crash logged as a warning with the code in hex and a cause, and a helper that crashes on the retry too fails the utterance with the hex code; a crash at the first audio frame, before the end of speech, retried with all of the audio; a helper that dies in the middle of a stdout line (`--partial-line`) with the retry still getting its final well inside a 3 s ready timeout; a disposed helper's late exit leaving the next utterance on a new helper untouched; `describeHelperExit` for 0xC0000005 (unsigned and signed), 0xC0000409, SIGSEGV, SIGKILL and exit code 1; a helper that writes 60 stderr lines before each of two crashes (`--stderr-lines`): both crash warnings carry the last 40 lines, and the utterance's error `details` carry the exit (`exitCode`, `exitCodeHex`), that tail, and the first crash's own as `firstCrash`; a Kokoro helper that crashes on a sentence (`CRASH`) fails it with the hex code and the tail in `details`, logged as a warning; `StderrTail` (lines split across chunks, the unfinished last line, the size cap) and a real `HelperProcess` keeping the last 40 of 45 lines; the retry's decode: after a CPU crash the retry's final is decoded greedy at temperature 0 and the same helper decodes the next turn as usual, after a GPU crash (`device: "cuda"`) the retry runs on a CPU `int8` helper and the next turn on a new `cuda` helper, each warning naming its `retryMode` |
 | `test/python-helpers.test.ts` | `py_compile` of both helpers and `--selftest` (skipped visibly when no Python) |
-| `test/python-helper-crashes.test.ts` | the real `fr_stt.py` and `fr_tts.py` run as scripts against stub `faster_whisper` / `kokoro` modules that fault in native code (`ctypes.string_at(0)`), with `PYTHONFAULTHANDLER` unset: stderr carries faulthandler's header and the helper's frames (`_run`, `main`; `_pipeline`); and what `fr_stt.py` hands to native code: every transcription on the main thread, each on its own float32 array (no view of the utterance buffer) that later audio leaves unchanged (skipped visibly without a Python with numpy) |
+| `test/python-helper-crashes.test.ts` | the real `fr_stt.py` and `fr_tts.py` run as scripts against stub `faster_whisper` / `kokoro` modules that fault in native code (`ctypes.string_at(0)`), with `PYTHONFAULTHANDLER` unset: stderr carries faulthandler's header and the helper's frames (`_run`, `main`; `_pipeline`); and what `fr_stt.py` hands to native code: every transcription on the main thread, each on its own float32 array (no view of the utterance buffer) that later audio leaves unchanged; a decode frame making one utterance `beam_size=1, temperature=[0.0]` while the next, after a reset, decodes with `--beam-size` and faster-whisper's default temperatures (skipped visibly without a Python with numpy) |
 | `test/stt-device-fallback.test.ts` | `fr_stt.py`'s `Transcriber` against a stub `faster_whisper`: device `auto` falls back to the CPU at load and at the first transcription, an out-of-memory error keeps the GPU, an explicit device is kept |
 | `test/disposed-providers.test.ts` | a retired `FasterWhisperStt` ends a new session with `unavailable` and a retired `KokoroTts` refuses a sentence, neither spawning its helper (a script that records whether it ran); after `dispose()` alone a new utterance starts a new helper |
 | `test/python-device.test.ts` | `setup_cuda_libraries()` on a fake site-packages: Windows `add_dll_directory` and `PATH` for every `nvidia/*/bin`, Linux cuBLAS and the cuDNN loader preloaded, nothing without the wheels; the gpu profile's `--cpu-fallback` (loud, at load when warmed, reported by `resolved_device()`), an explicit cuda without it raising; `fr_tts.py`'s `KokoroEngine` on cuda falling back with the reason, raising without `--cpu-fallback`, `auto` left to Kokoro; the warm-up sentence on cuda falling back loudly when synthesis fails there, the CPU never warmed |
@@ -732,7 +732,9 @@ question); the card in `apps/ui/test/settings-voice.test.tsx`; `pnpm voice:insta
   so the Node side absorbs one crash: `FasterWhisperStt` keeps the utterance's audio frames in
   memory (`FasterWhisperSession.frames`, up to `STT_RETRY_AUDIO_BYTES`, two minutes of 16 kHz
   mono; a longer utterance is not retried), and when the helper exits while an utterance is open
-  it restarts the helper and sends reset, the same audio and the end of speech again, once. The
+  it restarts the helper and sends reset, the retry's decode options (greedy at temperature 0,
+  on the CPU after a GPU crash; see the next entry), the same audio and the end of speech
+  again, once. The
   session only sees the final (a second partial may arrive first). A second crash of the same
   utterance, a restart that fails, or an utterance too long to keep ends the session with
   `provider_error` naming the exit (`faster-whisper helper exited, exit code ... (0x...): <cause>
@@ -789,9 +791,25 @@ question); the card in `apps/ui/test/settings-voice.test.tsx`; `pnpm voice:insta
     on the audio (for example a decode path only some audio reaches, such as the
     temperature-fallback sampling; see SYSTRAN/faster-whisper#71 for Windows crashes tied to
     temperatures above 0) better than a fault on a process's first call. If the input is the
-    cause, retrying identical audio with identical settings cannot help. A retry that decodes
-    differently (greedy with `temperature=0` only, or the CPU after a GPU crash) is the next
-    step once a traceback shows which call faults.
+    cause, retrying identical audio with identical settings cannot help, so the retry now
+    decodes differently (below). Whether that avoids the fault is untested on real hardware;
+    the traceback of the next crash says which call faults.
+
+  The retry decodes differently (since this change). `replay()` sends a decode frame
+  (`STT_IN.decode`, kind 4, JSON `STT_RETRY_DECODE` = `{"beam_size":1,"temperature":[0]}`) after
+  the reset. `fr_stt.py` uses it for that utterance only, partials and final: greedy, temperature
+  0 only, so faster-whisper never falls back to sampling at higher temperatures. The next reset
+  or final clears it (`parse_decode` refuses unknown keys and bad values with an `error` line).
+  When the helper that crashed ran on the GPU (its ready line's `device` starts with `cuda`; a
+  helper that did not say counts by the configured `device`), the retry's helper runs on the CPU
+  (`STT_RETRY_CPU`, `--device cpu --compute-type int8`) for that utterance only. It is stopped
+  when the utterance ends, by its final, its error or a new utterance, and the next utterance
+  starts the usual helper on the GPU again. That costs a CPU model load before the retry and a
+  GPU load before the next turn. After a crash on the CPU the retry's helper stays for later
+  turns, which decode as usual. The crash warning names the mode: `retryMode` is
+  `greedy at temperature 0` or `greedy at temperature 0 on the CPU (int8)`.
+  `test/local-helpers.test.ts` checks both against the crashing stand-in, which records each
+  final's device, compute type and decode options.
   - First call versus later calls. There is no first-call-only path to warm: the gpu warm-up
     already runs language detection, the full 30 s encoder and a greedy decode on silence.
     Each new process's first real utterance then runs the same calls as every later one (a

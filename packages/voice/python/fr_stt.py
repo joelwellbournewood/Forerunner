@@ -7,6 +7,9 @@ Protocol (see packages/voice/src/providers/local/framing.ts):
          kind 1 = end of speech (transcribe everything, emit final)
          kind 2 = close (exit)
          kind 3 = reset (start a new utterance, drop buffered audio)
+         kind 4 = decode options for the current utterance, JSON {"beam_size":1,"temperature":[0]}
+                  (partials and final; cleared by the next reset or final). The Node side
+                  sends it when it retries an utterance whose helper crashed.
   stdout JSON lines:
          {"type":"ready","model":...}
          {"type":"partial","text":...,"at_ms":...}
@@ -54,6 +57,32 @@ KIND_AUDIO = 0
 KIND_END = 1
 KIND_CLOSE = 2
 KIND_RESET = 3
+KIND_DECODE = 4
+
+
+def parse_decode(payload):
+    """A decode frame's options: {"beam_size": int >= 1, "temperature": float or [float, ...]},
+    both optional. Anything else is refused with ValueError."""
+    try:
+        raw = json.loads(payload.decode("utf-8"))
+    except Exception as e:
+        raise ValueError("not JSON: %s" % e)
+    if not isinstance(raw, dict):
+        raise ValueError("not an object")
+    out = {}
+    for key, value in raw.items():
+        if key == "beam_size":
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError("beam_size must be an integer >= 1")
+            out[key] = value
+        elif key == "temperature":
+            values = value if isinstance(value, list) else [value]
+            if not values or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in values):
+                raise ValueError("temperature must be a number or a list of numbers")
+            out[key] = [float(v) for v in values] if isinstance(value, list) else float(value)
+        else:
+            raise ValueError("unknown option %s" % key)
+    return out
 
 
 def emit(obj):
@@ -241,24 +270,33 @@ class Transcriber:
         dev = getattr(inner, "device", None)
         return dev if isinstance(dev, str) and dev else self.device
 
-    def run(self, audio, sample_rate, final):
+    def run(self, audio, sample_rate, final, decode=None):
         try:
-            return self._run(audio, final)
+            return self._run(audio, final, decode)
         except Exception as e:
             if not self._may_fall_back(e):
                 raise
             self._fall_back(e)
-            return self._run(audio, final)
+            return self._run(audio, final, decode)
 
-    def _run(self, audio, final):
+    def _run(self, audio, final, decode=None):
+        """`decode` (from a decode frame, parse_decode) overrides the beam size of partials and
+        final alike, and gives faster-whisper an explicit temperature list."""
         if len(audio) == 0:
             return "", 0.0, 0.0, self.language
+        kwargs = {}
+        beam_size = self.beam_size if final else 1
+        if decode:
+            beam_size = decode.get("beam_size", beam_size)
+            if "temperature" in decode:
+                kwargs["temperature"] = decode["temperature"]
         segments, info = self.model.transcribe(
             audio,
             language=self.language,
-            beam_size=self.beam_size if final else 1,
+            beam_size=beam_size,
             vad_filter=False,
             condition_on_previous_text=False,
+            **kwargs,
         )
         texts = []
         start = None
@@ -328,6 +366,7 @@ def main():
 
     buffered = bytearray()
     since_partial = 0
+    decode = None
     bytes_per_ms = args.sample_rate * 2 / 1000.0
     partial_bytes = int(args.partial_interval_ms * bytes_per_ms)
     started = time.monotonic()
@@ -342,6 +381,13 @@ def main():
         if kind == KIND_RESET:
             buffered = bytearray()
             since_partial = 0
+            decode = None
+            continue
+        if kind == KIND_DECODE:
+            try:
+                decode = parse_decode(payload)
+            except ValueError as e:
+                emit({"type": "error", "message": "bad decode options: %s" % e})
             continue
         if kind == KIND_AUDIO:
             buffered.extend(payload)
@@ -350,7 +396,9 @@ def main():
             if since_partial >= partial_bytes and q.empty():
                 since_partial = 0
                 try:
-                    text, _s, _e, _lang = transcriber.run(pcm_to_float(bytes(buffered)), args.sample_rate, False)
+                    text, _s, _e, _lang = transcriber.run(
+                        pcm_to_float(bytes(buffered)), args.sample_rate, False, decode
+                    )
                 except Exception as e:
                     emit({"type": "error", "message": "partial failed: %s" % e})
                     continue
@@ -359,10 +407,13 @@ def main():
             continue
         if kind == KIND_END:
             try:
-                text, start, end, lang = transcriber.run(pcm_to_float(bytes(buffered)), args.sample_rate, True)
+                text, start, end, lang = transcriber.run(
+                    pcm_to_float(bytes(buffered)), args.sample_rate, True, decode
+                )
             except Exception as e:
                 emit({"type": "error", "message": "final failed: %s" % e})
                 buffered = bytearray()
+                decode = None
                 continue
             emit(
                 {
@@ -376,6 +427,7 @@ def main():
             )
             buffered = bytearray()
             since_partial = 0
+            decode = None
 
 
 if __name__ == "__main__":
