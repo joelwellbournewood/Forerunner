@@ -13,6 +13,7 @@ import {
   type ConversationDeps,
 } from "../src/conversation/agent.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
+import type { CapsPort } from "../src/enforcement/ports.ts";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN } from "../src/injection/scan.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
 import { MemoryLoop, memoryCommandPort } from "../src/loop/memory.ts";
@@ -38,6 +39,8 @@ async function setup(
      * and answers `pending`, as in production, instead of the harness's auto-approve.
      */
     storeApprovals?: boolean;
+    /** The outer caps port (project, month); default: the harness's allow-all. */
+    caps?: CapsPort;
     /** The Game project's checkout: repo-relative POSIX path -> text (spec J.1 docs search). */
     docs?: Record<string, string>;
     retrieval?: ConversationDeps["retrieval"];
@@ -57,9 +60,14 @@ async function setup(
     writeFileSync(abs, text, "utf8");
   }
   const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
-  const hooks = opts.storeApprovals
-    ? new EnforcementHooks({ ...h.deps, approvals: new StateApprovals(store) })
-    : h.hooks;
+  const hooks =
+    opts.storeApprovals || opts.caps
+      ? new EnforcementHooks({
+          ...h.deps,
+          ...(opts.storeApprovals ? { approvals: new StateApprovals(store) } : {}),
+          ...(opts.caps ? { caps: opts.caps } : {}),
+        })
+      : h.hooks;
   const human = (
     await store.human.insert({
       name: "J",
@@ -1117,6 +1125,23 @@ describe("a reply cut off at max_tokens", () => {
       outcome: "budget_exceeded",
       turnBudgetUsdMicro: 250_000,
     });
+    await w.store.close();
+  });
+
+  it("an outer cap refusing the first call keeps the cap's own message, not the turn budget's advice", async () => {
+    // The month cap refuses: shortening the question would not help, and the turn's own budget
+    // (USD 0.05 here) was never the limit.
+    const w = await setup([textReply("never sent", { ttftMs: 0 })], {
+      caps: {
+        check: () => ({ decision: "stop", level: "month", message: "month cap reached" }),
+      },
+    });
+    const res = await w.chat("what is waiting on me?");
+    expect(w.provider.calls).toHaveLength(0);
+    expect(res.reply).toContain("month cap reached");
+    expect(res.reply).not.toMatch(/pasted|cheaper model|USD 0\.05/);
+    const reply = (await w.log()).find((e) => e.type === "chat.reply");
+    expect(reply?.payload).toMatchObject({ outcome: "budget_exceeded" });
     await w.store.close();
   });
 

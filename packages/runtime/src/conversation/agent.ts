@@ -6,7 +6,7 @@ import { z } from "zod";
 import { type LoopAgentDriver, type RunEvent, type RunPricing, wholeMs } from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
 import { layoutSystem, volatilePreamble } from "../context/cache-layout.ts";
-import { SessionBudget } from "../enforcement/budget.ts";
+import { LOCAL_BUDGET_SOURCE, SessionBudget } from "../enforcement/budget.ts";
 import type { KillSwitch } from "../enforcement/killswitch.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import { DATA_ENVELOPE_CLOSE, DATA_ENVELOPE_OPEN, wrapUntrusted } from "../injection/scan.ts";
@@ -583,8 +583,15 @@ export class ConversationAgent {
     }
     // A cut-off answer with nothing whole left says so, unless a card's read-back is the reply.
     if (!reply && truncated) reply = CUT_OFF_REPLY;
-    // The turn's budget refused the first call: nothing was spent; say what would help.
-    if (!reply && result.error?.code === "budget_exceeded" && result.modelCalls === 0)
+    // The turn's own budget (its `SessionBudget`, not a project or month cap) refused the first
+    // call: nothing was spent; say what would help. An outer cap keeps its own message below
+    // ("month cap reached"): a shorter question would not get past it.
+    if (
+      !reply &&
+      result.error?.code === "budget_exceeded" &&
+      result.error.source === LOCAL_BUDGET_SOURCE &&
+      result.modelCalls === 0
+    )
       reply = budgetRefusedReply(turnBudgetUsdMicro);
     if (!reply)
       reply =

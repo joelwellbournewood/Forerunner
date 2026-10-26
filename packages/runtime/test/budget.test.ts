@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { estimateCallUsdMicro, SessionBudget } from "../src/enforcement/budget.ts";
+import {
+  estimateCallUsdMicro,
+  LOCAL_BUDGET_SOURCE,
+  SessionBudget,
+} from "../src/enforcement/budget.ts";
 
 const mk = (cap = 1_000_000) =>
   new SessionBudget({
@@ -28,6 +32,29 @@ describe("session budget", () => {
     expect(b.noNewWork).toBe(true);
     b.record("r1", 299);
     expect(() => b.precheck("r1", 10_000, 2, "review")).toThrow(/session budget would be exceeded/);
+  });
+
+  it("marks its own refusals with LOCAL_BUDGET_SOURCE, so an outer cap's can be told apart", () => {
+    const refusal = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (e) {
+        return e as { code?: string; details?: Record<string, unknown> };
+      }
+      return null;
+    };
+    const run = mk();
+    run.record("r1", 900);
+    expect(refusal(() => run.precheck("r1", 1000, 200, "work"))).toMatchObject({
+      code: "budget_exceeded",
+      details: { level: "run", source: LOCAL_BUDGET_SOURCE },
+    });
+    const session = mk(1000);
+    session.record("r1", 999);
+    expect(refusal(() => session.precheck("r1", 10_000, 2, "review"))).toMatchObject({
+      code: "budget_exceeded",
+      details: { level: "session", source: LOCAL_BUDGET_SOURCE },
+    });
   });
 
   it("keeps the review reserve: work cannot use the last 20%", () => {

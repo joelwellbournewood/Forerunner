@@ -1515,11 +1515,17 @@ of the 400 tokens were left for the visible text. Three changes:
   context the rule alone would give about USD 1.9. A turn whose first call does not fit is
   refused by the precheck before anything is spent, and the reply says so
   (`budgetRefusedReply`: the budget in USD, ask with less pasted text or switch chat to a
-  cheaper model) with outcome `budget_exceeded`. Every `chat.reply` row carries
+  cheaper model) with outcome `budget_exceeded`. That reply is only for a refusal by the turn's
+  own `SessionBudget`: its run and session refusals carry `details.source`
+  `LOCAL_BUDGET_SOURCE` (`src/enforcement/budget.ts`), which the loop copies to
+  `RunResult.error.source`; an outer cap (project, month: `CapsPort`, whose `level` can also
+  read "run" or "session") keeps its own message in the reply ("I could not answer (month cap
+  reached)."). Every `chat.reply` row carries
   `turnBudgetUsdMicro`. A configured turn budget is used as given.
 - Tests: `conversation.test.ts` ("a reply cut off at max_tokens": spoken and typed turns, no
   complete sentence, a pending card's read-back, a cut on a sentence end, an Opus-priced turn
-  with a 150'000-token context refused at the ceiling with no call made, an Opus-priced turn
+  with a 150'000-token context refused at the ceiling with no call made, a month cap refusing
+  the first call with its own message, an Opus-priced turn
   with a 6'000-token context answered at exactly three first-call estimates, a completed reply
   streaming in full),
   `conversation-sentences.test.ts` (the gate into a real `SentenceSplitter` emitting sentence

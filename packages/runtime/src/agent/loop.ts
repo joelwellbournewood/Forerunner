@@ -184,7 +184,11 @@ export interface RunResult {
   toolCalls: number;
   ttftMs: number[];
   durationMs: number;
-  error?: { code: string; message: string };
+  /**
+   * `source`: the error's `details.source` when it names one, e.g. `LOCAL_BUDGET_SOURCE` for a
+   * refusal by the run's own `SessionBudget` rather than an outer cap.
+   */
+  error?: { code: string; message: string; source?: string };
   pending?: string;
   injectionReports: InjectionReport[];
   /** True when the loop stopped because the session says finish current, no new work. */
@@ -539,7 +543,12 @@ export class LoopAgentDriver {
     } catch (e) {
       const code = e instanceof ForerunnerError ? e.code : "internal";
       outcome = outcomeFor(code, controller.signal);
-      error = { code, message: errorMessage(e) };
+      const source = e instanceof ForerunnerError ? e.details.source : undefined;
+      error = {
+        code,
+        message: errorMessage(e),
+        ...(typeof source === "string" ? { source } : {}),
+      };
       if (outcome === "error")
         this.logger.error("run failed", { runId: claims.runId, error: error.message });
     } finally {

@@ -1,6 +1,13 @@
 import { ForerunnerError } from "@forerunner/platform";
 
 /**
+ * `details.source` of a `budget_exceeded` refusal raised by `SessionBudget` itself (its run cap
+ * or its session cap), as opposed to an outer cap (project, month: `CapsPort`), whose `level`
+ * may also read "run" or "session". The conversation agent tells the two apart by it.
+ */
+export const LOCAL_BUDGET_SOURCE = "session_budget";
+
+/**
  * In-process accounting for one session: spend per run, steps, wall clock. The ledger is the
  * durable truth; this object makes the per-call decision fast and works offline.
  */
@@ -108,6 +115,7 @@ export class SessionBudget {
       throw new ForerunnerError("budget_exceeded", "run budget would be exceeded", {
         details: {
           level: "run",
+          source: LOCAL_BUDGET_SOURCE,
           runId,
           spentUsdMicro: runSpent,
           estimateUsdMicro,
@@ -122,6 +130,7 @@ export class SessionBudget {
       throw new ForerunnerError("budget_exceeded", "session budget would be exceeded", {
         details: {
           level: "session",
+          source: LOCAL_BUDGET_SOURCE,
           sessionId: this.limits.sessionId,
           spentUsdMicro: this.spentBySession,
           estimateUsdMicro,

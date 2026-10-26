@@ -33,7 +33,10 @@ cover an answer, or a command tool call and its answer, with room to spare. A co
 `turnBudgetUsdMicro` is used as given. A turn whose first call alone does not fit is refused by
 the precheck before anything is spent; the reply names the budget and says to ask with less pasted
 text or to switch chat to a cheaper model (`budgetRefusedReply`), and the `chat.reply` row has
-outcome `budget_exceeded`. Every `chat.reply` row records `turnBudgetUsdMicro`.
+outcome `budget_exceeded`. That advice is given only when the turn's own budget refused (the
+`SessionBudget` marks its refusals with `details.source` `LOCAL_BUDGET_SOURCE`); a project or
+month cap refusing the call keeps its own message, since a shorter question would not get past
+it. Every `chat.reply` row records `turnBudgetUsdMicro`.
 
 ## Consequences
 
