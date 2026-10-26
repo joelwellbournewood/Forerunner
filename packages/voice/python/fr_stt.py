@@ -69,19 +69,30 @@ def pcm_to_float(raw):
     return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
 
 
-CUDA_ERROR_MARKS = ("cublas", "cudnn", "cudart", "cuda")
+CUDA_ERROR_MARKS = (
+    "cublas",
+    "cudnn",
+    "cudart",
+    "cannot be loaded",
+    "no cuda-capable device",
+    "cuda driver",
+)
 
 
 def is_cuda_runtime_error(e):
-    """A GPU the runtime sees but cannot use (no cuBLAS / cuDNN / driver): the CPU still works."""
+    """A GPU the runtime sees but cannot use (no cuBLAS / cuDNN / driver): the CPU still works.
+    Out of memory on a working GPU is not one of them (transient; the GPU is kept)."""
     msg = str(e).lower()
+    if "out of memory" in msg:
+        return False
     return any(m in msg for m in CUDA_ERROR_MARKS)
 
 
 class Transcriber:
     # device "auto" picks CUDA wherever ctranslate2 sees an NVIDIA GPU, even when the CUDA
     # libraries are missing; that fails at load or at the first transcription ("Library
-    # cublas64_12.dll is not found"). Either way the helper falls back to the CPU once.
+    # cublas64_12.dll is not found"). Either way, with device "auto" only (an explicit device is
+    # kept), the helper falls back to the CPU once.
     def __init__(self, model_name, device, compute_type, language, beam_size):
         self.model_name = model_name
         self.device = device
@@ -91,7 +102,7 @@ class Transcriber:
         try:
             self.model = self._load(device, compute_type)
         except Exception as e:
-            if device == "cpu" or not is_cuda_runtime_error(e):
+            if device != "auto" or not is_cuda_runtime_error(e):
                 raise
             self._fall_back(e)
 
@@ -103,15 +114,15 @@ class Transcriber:
     def _fall_back(self, e):
         sys.stderr.write("fr_stt: %s; falling back to the CPU\n" % e)
         sys.stderr.flush()
+        self.model = self._load("cpu", "int8")
         self.device = "cpu"
         self.compute_type = "int8"
-        self.model = self._load("cpu", "int8")
 
     def run(self, audio, sample_rate, final):
         try:
             return self._run(audio, final)
         except Exception as e:
-            if self.device == "cpu" or not is_cuda_runtime_error(e):
+            if self.device != "auto" or not is_cuda_runtime_error(e):
                 raise
             self._fall_back(e)
             return self._run(audio, final)

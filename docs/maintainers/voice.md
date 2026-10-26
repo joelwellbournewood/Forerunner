@@ -445,7 +445,8 @@ runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
 - faster-whisper's device `auto` picks CUDA wherever ctranslate2 sees an NVIDIA GPU, even when
   the CUDA libraries (cuBLAS, cuDNN) are not installed, and then fails at load or at the first
   transcription ("Library cublas64_12.dll is not found", the real-audio run of 2026-10-26).
-  `fr_stt.py` falls back to the CPU (`int8`) once, with a line on stderr
+  `fr_stt.py` falls back to the CPU (`int8`) once, with device `auto` only (an explicit
+  `--device` is kept) and not on an out-of-memory error of a working GPU, with a line on stderr
   (`test/stt-device-fallback.test.ts`, which runs the helper's `Transcriber` against a stub
   `faster_whisper`). To use the GPU, install the CUDA 12 cuBLAS and cuDNN libraries.
 
