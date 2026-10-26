@@ -108,6 +108,30 @@ import type {
  * Every limit (budget, steps, wall clock, tools) is enforced by the runtime hooks the driver
  * calls; the critic adds nothing a prompt could loosen.
  */
+
+/** Output tokens per critic call at every effort but `max` (`CriticDeps.maxTokensPerCall` overrides). */
+export const REVIEW_TOKENS_PER_CALL = 8192;
+
+/**
+ * At effort `max` the first call's `max_tokens` grows from `REVIEW_TOKENS_PER_CALL` up to this
+ * ceiling, as far as the budget left for the review pays for it at the loop's full-cap price
+ * (`RunRequest.maxTokensCeiling`), and the verdict ends the run (`ToolResult.endRun`): no closing
+ * call is priced after it. The live D.15 run of 2026-10-25 ended both tier 3 reviews (Opus 5.5,
+ * effort max) at 8192 with no verdict. ADR 0028, amendment of 2026-10-26.
+ */
+export const MAX_EFFORT_TOKENS_CEILING = 24_000;
+
+/**
+ * Run outcomes that only refuse further calls. After `submit_review` captured a verdict, the
+ * call they refused was not needed, so the review is completed (the Run row keeps the run's
+ * own outcome). A timeout, a kill or an error still name the review.
+ */
+const REFUSALS_AFTER_VERDICT: ReadonlySet<RunResult["outcome"]> = new Set([
+  "budget_exceeded",
+  "step_cap_exceeded",
+  "max_turns",
+]);
+
 export interface CriticPromptSource {
   /** The markdown role prompt (registry critic/critic.md body). */
   prompt: string;
@@ -406,10 +430,16 @@ export class CriticService {
     });
 
     let captured: SubmitReview | null = null;
+    // Effort max (tier 3 on Opus, or tier 2 raised by the slider): the verdict ends the run and
+    // the first call's cap is sized from the review's budget. Every other effort is unchanged.
+    const maxEffort = pick.effort === "max";
     const tools = new ToolRegistry().register(
-      submitReviewTool((r) => {
-        if (!captured) captured = r;
-      }),
+      submitReviewTool(
+        (r) => {
+          if (!captured) captured = r;
+        },
+        { endRun: maxEffort },
+      ),
     );
     const label = subjectLabel(input.subject);
     if (fast.kind !== "off") {
@@ -437,7 +467,8 @@ export class CriticService {
         ...(fast.kind === "applied" ? { speed: "fast" as const } : {}),
         timeoutMs: pick.timeoutMs,
         maxTurns: this.deps.maxTurns ?? 3,
-        maxTokensPerCall: this.deps.maxTokensPerCall ?? 8192,
+        maxTokensPerCall: this.deps.maxTokensPerCall ?? REVIEW_TOKENS_PER_CALL,
+        ...(maxEffort ? { maxTokensCeiling: MAX_EFFORT_TOKENS_CEILING } : {}),
         effort: pick.effort,
         phase: "review",
         label: `critic tier ${tier} on ${label}`,
@@ -453,9 +484,13 @@ export class CriticService {
       result = failedRun(runId, errorMessage(e));
     }
 
+    const verdictCaptured = (captured as SubmitReview | null) !== null;
     const submitted: SubmitReview | null = captured ?? parseReviewFromText(result.finalText);
+    // A limit that refused a call after the verdict was captured refused a call the review did
+    // not need: the review completed with that verdict.
+    const refusedAfterVerdict = verdictCaptured && REFUSALS_AFTER_VERDICT.has(result.outcome);
     const outcome: ReviewOutcome =
-      result.outcome === "completed"
+      result.outcome === "completed" || refusedAfterVerdict
         ? submitted
           ? "completed"
           : "no_verdict"
@@ -483,6 +518,11 @@ export class CriticService {
       `prompt:${this.deps.prompt.promptVersion}`,
       `run:${runId}`,
     );
+    if (refusedAfterVerdict) {
+      output.evidence.push(
+        `run: ${result.outcome} after the verdict was recorded (a call after submit_review was refused)`,
+      );
+    }
     if (rendered.compression.length) {
       output.evidence.push(
         `context: ${rendered.compression.length} evidence block(s) sent uncompressed (bypass)`,
@@ -902,7 +942,14 @@ export class CriticService {
   }
 }
 
-export function submitReviewTool(onSubmit: (review: SubmitReview) => void): ToolSpec<SubmitReview> {
+/**
+ * The critic's one tool. With `endRun` the recorded verdict ends the run (`ToolResult.endRun`),
+ * so no closing call follows; without it the model gets one more call to stop, as before.
+ */
+export function submitReviewTool(
+  onSubmit: (review: SubmitReview) => void,
+  opts: { endRun?: boolean } = {},
+): ToolSpec<SubmitReview> {
   return {
     name: SUBMIT_REVIEW_TOOL,
     description: SUBMIT_REVIEW_DESCRIPTION,
@@ -911,7 +958,10 @@ export function submitReviewTool(onSubmit: (review: SubmitReview) => void): Tool
     risk: "low",
     async execute(input: SubmitReview | SubmitReviewInput) {
       onSubmit(SubmitReviewSchema.parse(input));
-      return { content: "Review recorded. You may stop now." };
+      return {
+        content: "Review recorded. You may stop now.",
+        ...(opts.endRun ? { endRun: true } : {}),
+      };
     },
   };
 }

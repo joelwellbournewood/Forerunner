@@ -42,7 +42,7 @@ Status: accepted | superseded by NNNN
 | 0025 | UI conventions over the daemon API: config source, SSE auth, chat stream frames, open shapes |
 | 0026 | Daemon lifecycle: one `fr daemon` per install, shells attach to it |
 | 0027 | Memory package parameters: embedder width, frontmatter keys, consolidation thresholds, scope grants |
-| 0028 | Critic independence and verdict rules in code |
+| 0028 | Critic independence and verdict rules in code; amended 2026-10-26: at effort max the verdict ends the run and the first call's cap (8192 to 24000) is sized from the review's budget left, and a captured verdict is never reported as a later refusal (D.15 live run of 2026-10-25) |
 | 0029 | Daemon wiring of the phase 6 and 7 modules: extensions, updates, model watch, estimates, mirror, sandbox |
 | 0030 | Command registry: risk resolution, confirmations, change log and undo |
 | 0031 | Desktop shell: its own `/events` subscription, tray behaviour, restart handling, deep links |

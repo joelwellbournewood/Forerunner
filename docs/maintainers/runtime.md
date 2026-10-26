@@ -183,6 +183,19 @@ stores nothing, `fr` writes the vault the daemon opens).
 for each tool use: `beforeToolCall` → execute with per-tool timeout → `afterToolCall`. Outcomes:
 `completed`, `timeout` (partial text kept), `budget_exceeded`, `step_cap_exceeded`, `killed`,
 `needs_human` (approval pending), `max_turns`, `error`. Events stream to the live session view.
+
+Two options let a run that ends on one recorded answer stay inside a tight budget (the
+critic at effort max, ADR 0028 amendment of 2026-10-26; tests in `test/loop-call-cap.test.ts`):
+- `ToolResult.endRun`: a tool result (not an error) that sets it ends the run after that turn's
+  tool results. No further model call is made and the outcome is `completed`. A pending
+  approval in the same turn still wins (`needs_human`).
+- `RunRequest.maxTokensCeiling`: when above `maxTokensPerCall`, each call's `max_tokens` is
+  the largest value between the two whose `pricing.estimate` fits the budget left for the run
+  (`fitMaxTokens`): the token's run cap less the run's spend, or `SessionBudget.remainingUsdMicro()`,
+  whichever is smaller. When the floor does not fit, the call asks for the floor and the
+  precheck refuses it. Outer caps (`CapsPort`: human, project) are not read when sizing; they
+  still refuse a call their remaining budget does not cover. Without the option every call
+  asks for `maxTokensPerCall`, as before.
 `SdkAgentDriver` (`src/agent/sdk.ts`) wraps the Claude Agent SDK with the same hooks; a task
 runs on it when its billing source is a subscription (see "Billing per task" below, ADR 0044).
 
