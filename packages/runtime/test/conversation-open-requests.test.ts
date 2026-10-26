@@ -183,6 +183,15 @@ describe("conversation agent: open requests are not brought up in every reply", 
       "check my inbox",
       "do I have any decisions?",
       "my approvals?",
+      "whats pending",
+      "whats waiting for me",
+      "do you need anything from me?",
+      "what needs from me today",
+      "anything in my inbox?",
+      "inbox?",
+      "Gibt es offene Anfragen?",
+      "offene Entscheidungen?",
+      "Was wartet auf mich?",
     ];
     const other = [
       "can you review the pull request?",
@@ -191,6 +200,9 @@ describe("conversation agent: open requests are not brought up in every reply", 
       "the deploy is pending",
       "what's the request rate on the server?",
       "pending changes in the repo?",
+      "the inbox page renders slowly",
+      "fix the inbox component",
+      "the offene ticket is closed",
     ];
     const w = await setup(2 + asks.length * 2 + other.length);
     await modelWatchRequest(w);

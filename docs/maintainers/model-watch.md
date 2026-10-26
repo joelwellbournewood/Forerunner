@@ -26,7 +26,7 @@ Rules enforced in code, never only by prompt text:
 | Nothing changes the ladder, an effort default or a price without a human's recorded `adopt` answer. `ModelWatch.applyAdoption` is the only code path that writes `pricing.json` or `models.json`; it refuses any other decision or an answer without `by`. | `watch.ts` `applyAdoption` | `approval_required` |
 | A price is never assumed. A model on neither the pricing table nor the fetched price list is reported as unpriced, not evaluated and never recommended; the eval runner refuses an unpriced model before its first call (`pricingFor` → `costOf` throws). | `diffModels`, `LoopEvalRunner.run` | `validation` |
 | No paid eval without the human's consent (ADR 0089): a run evaluates only when asked (`run({ evals: true })`, `fr models watch --evals`, `POST /run { evals: true }`), after an `evaluate` answer on a pending or reminded report, or when `human.notify_prefs.model_watch.run_evals` is true. Default off. An `adopt` ("yes", "ok", "approve") never starts a paid run. Otherwise the report lists what it would have run in `evals_deferred` and no eval reaches the runner. | `ModelWatch.run`, `resolve` | `validation` for an `evaluate` on a report not pending or reminded |
-| Paid runs are single-flight: while one runs, another paid run joins it (same promise, same report) when it names no model the running one does not cover; one that names more (`--model`, an `evaluate` answer's report) waits for the last paid run to end. Two paid runs never overlap. The paid-or-free decision is serialised in call order. | `ModelWatch.run` (`paidRuns`, `decisions`) | |
+| Paid runs are single-flight: while one runs, another paid run joins it (same promise, same report) when it names no model the running one does not cover; one that names more (`--model`, an `evaluate` answer's report) waits for the run in flight; names asked for while a run waits are merged into it (names are read when it starts), so the queue is at most the run in flight plus one. Two paid runs never overlap. The paid-or-free decision is serialised in call order. | `ModelWatch.run` (`paidRuns`, `decisions`) | |
 | One watch run spends at most `evalBudgetUsdMicro` on evals (default 5 USD). The check runs before every eval; later evals are skipped and the report says so. The monthly cap, kill switch and audit hooks apply to each eval call as to any run (the runner issues a token per task, owned by the human, so every ledger row counts in the human's month). | `guardEvalBudget`, `LoopEvalRunner` | `budget_exceeded` |
 | Eval work is new work under the caps: before every eval task the runner checks the human's outer caps (`LoopEvalRunnerDeps.caps`, the daemon's `DynamicCaps`, the task's budget as the estimate) with the eval source's billing (`LoopEvalRunnerDeps.billing`: kind, and for a subscription the plan share and cap, so the plan level is checked); past the 80% line or at the cap no task starts. A run that ends `budget_exceeded` ends the set only when a re-check of the outer caps no longer allows; a task over its own budget fails that task. A cap stop or a kill ends the watch run's remaining evals without calling the runner. | `LoopEvalRunner.run` (`checkOuterCaps`), `ModelWatch.run` (`halted`) | `budget_exceeded` |
 | Eval commands never execute on the host: the model's `run_command` and the grader's `command_exit0` checks run in a sandbox lease over the task's work directory with no egress. A lease in the process stand-in (`engine: "process"`) is refused before any model call unless `model_watch.allow_process_sandbox` is true (default off). | `LoopEvalRunner` | `not_supported` (`details.reason: "process_sandbox_not_allowed"`); see `sandbox.md` |
@@ -76,6 +76,13 @@ answers from `model_watch.run_evals` and which is off when absent):
      pending report with at least one new model, all of them in the baseline, and no
      recommendation: its request is withdrawn and its health set to `nothing_to_decide`
      (audited `model_watch.decision`). A report with a repricing or an eval result stays open.
+     A human may answer at the same moment, so the close never overrides an answer: the
+     request is withdrawn only while open (a conflict or a refused transition skips the
+     report, logged), the report is closed only when this call withdrew its request or it has
+     none, and only through a versioned update after re-reading the row and finding it still
+     `pending`. Errors are logged per report and the run goes on. The run's report counts the
+     closed ones in `closed_requests` and its summary says "closed N earlier request(s) the
+     baseline covers".
    - *known*: a model in the provider's baseline is not news, and nothing else is: the price
      table does not decide it (a table-priced model listed after the baseline is news).
      `diffModels` takes this as its `known(provider, id)` argument and skips such models:
@@ -522,7 +529,10 @@ reports, a model listed after the baseline is the only news and opens one reques
 table-priced model listed after the baseline is news while a baseline model is not, priced
 or not; an upgraded install (reports, no baseline row) seeds the baseline from its earliest
 report and withdraws the pending request that only named those models, while a pending
-report with a repricing stays open; `evaluate` on a pre-upgrade report runs that report's
+report with a repricing stays open, an answer landing mid-close wins (the request stays
+answered and the report pending until `syncPendingAnswers` applies it), a decision recorded
+after the withdrawal is not overwritten, and the summary counts the closed requests; names
+asked for while a named run waits merge into it (one run, both names); `evaluate` on a pre-upgrade report runs that report's
 candidate (`forReport`); a named model (`models`) is refused without evals, evaluated with
 them under the run's budget (an unlisted or unpriced name skipped), queued behind a paid run
 in flight (never two at once; a plain run joins the first) and reachable as `fr models watch

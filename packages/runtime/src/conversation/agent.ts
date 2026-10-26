@@ -261,11 +261,13 @@ export const CONVERSATION_IDLE_MS = 60 * 60_000;
 
 /**
  * The human asks about their own queue: the open requests are listed in full for this turn.
- * Narrow on purpose: "the pull request", "the API request failed", "a decision on X" or "the
- * deploy is pending" are other senses of the words and do not match.
+ * Narrow on purpose: "the pull request", "the API request failed", "a decision on X", "the
+ * deploy is pending" or "the inbox page" are other senses of the words and do not match.
+ * "Inbox" counts only as "my inbox" or a bare "inbox?". German: "offene Anfragen|
+ * Entscheidungen", "wartet auf mich".
  */
 const ASKS_PENDING_RE =
-  /\b(?:(?:any|my|open|pending)\s+(?:requests?|decisions?|approvals?)|what(?:'s|’s|\s+is)\s+(?:pending|waiting|outstanding)|waiting\s+(?:for|on)\s+me|inbox|anything\s+i\s+should\s+know)\b/i;
+  /\b(?:(?:any|my|open|pending)\s+(?:requests?|decisions?|approvals?)|what(?:'s|’s|s|\s+is)\s+(?:pending|waiting|outstanding)|waiting\s+(?:for|on)\s+me|needs?\s+(?:anything\s+)?from\s+me|my\s+inbox|anything\s+i\s+should\s+know|offenen?\s+(?:anfragen|entscheidungen)|wartet\s+(?:etwas\s+)?auf\s+mich)\b|(?:^|\s)inbox\s*\?/i;
 
 /** What one conversation has listed in full so far (keyed by human and agent). */
 interface ConversationState {

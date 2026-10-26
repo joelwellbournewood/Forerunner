@@ -1577,6 +1577,62 @@ describe("model watch: an install upgraded from before the baseline rule (ADR 00
     expect(await w.store.humanRequest.open({ humanId: w.human })).toHaveLength(0);
     expect((await w.store.humanRequest.mustGet(old.requestId ?? "")).status).toBe("withdrawn");
     expect((await watch.getReport(old.report.id)).health.decision).toBe("nothing_to_decide");
+    // The run says what it closed.
+    expect(next.report.closed_requests).toBe(1);
+    expect(next.report.summary).toMatch(/closed 1 earlier request\(s\) the baseline covers/);
+    expect((await watch.getReport(next.report.id)).release.changelog).toMatch(
+      /closed 1 earlier request\(s\)/,
+    );
+  });
+
+  it("an answer that lands while the baseline closes a request wins: the report keeps the human's decision and the run completes", async () => {
+    const w = await make();
+    const watch = watchFor(w, {
+      approvals: new StateModelWatchApprovals(w.store, { agentId: "alice" }),
+      autoEvals: null,
+      priceList: ONLY_CANDIDATE,
+    });
+    const old = await watch.run();
+    const requestId = old.requestId ?? "";
+    await dropBaselines(w.store);
+    // The human answers "ignore" in the inbox just as the run goes to withdraw the request.
+    const repo = w.store.humanRequest;
+    const withdraw = repo.withdraw.bind(repo);
+    repo.withdraw = async (id, version) => {
+      const req = await repo.mustGet(id);
+      await repo.answer(id, req.version, "ignore", w.human);
+      return withdraw(id, version);
+    };
+    const next = await watch.run();
+    expect(next.decision).toBe("nothing_to_decide");
+    expect(next.report.closed_requests).toBe(0);
+    expect((await repo.mustGet(requestId)).status).toBe("answered");
+    expect((await watch.getReport(old.report.id)).health.decision).toBe("pending");
+    // The answer is applied as usual afterwards.
+    expect(await watch.syncPendingAnswers()).toBe(1);
+    expect((await watch.getReport(old.report.id)).health.decision).toBe("ignored");
+  });
+
+  it("a decision recorded on the report after the withdrawal is not overwritten", async () => {
+    const w = await make();
+    const watch = watchFor(w, {
+      approvals: new StateModelWatchApprovals(w.store, { agentId: "alice" }),
+      autoEvals: null,
+      priceList: ONLY_CANDIDATE,
+    });
+    const old = await watch.run();
+    await dropBaselines(w.store);
+    const repo = w.store.humanRequest;
+    const withdraw = repo.withdraw.bind(repo);
+    repo.withdraw = async (id, version) => {
+      const out = await withdraw(id, version);
+      // The human decides on the updates screen in the same moment.
+      await watch.resolve(old.report.id, { decision: "remind", by: w.human });
+      return out;
+    };
+    const next = await watch.run();
+    expect(next.report.closed_requests).toBe(0);
+    expect((await watch.getReport(old.report.id)).health.decision).toBe("remind");
   });
 
   it("a pending report that also proposes a repricing stays open", async () => {
@@ -1668,6 +1724,61 @@ describe("model watch: a named model forced in as a candidate", () => {
     });
     const c = await capped.run({ evals: true, models: ["fake/fake-sonnet-6"] });
     expect(c.report.evals.every((e) => e.skipped_reason?.startsWith("budget_exceeded"))).toBe(true);
+  });
+
+  it("names asked for while a named run waits are merged into it: the queue is the run in flight plus one", async () => {
+    const extra: ModelRef = { provider: "fake", id: "fake-sonnet-7", tier: "sonnet" };
+    const w = await make({ baseline: false, listed: [...FAKE_MODELS, ...LISTED.slice(-2), extra] });
+    await recordModelWatchBaseline(w.store, {
+      provider: "fake",
+      models: [...FAKE_MODELS, ...LISTED.slice(-2), extra],
+    });
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let firstEval: () => void = () => undefined;
+    const started = new Promise<void>((r) => {
+      firstEval = r;
+    });
+    let active = 0;
+    let most = 0;
+    const evals = new CountingEvals(async (_input, n) => {
+      active += 1;
+      most = Math.max(most, active);
+      if (n === 1) {
+        firstEval();
+        await gate;
+      }
+      active -= 1;
+    });
+    const watch = watchFor(w, {
+      evals,
+      autoEvals: null,
+      priceList: {
+        as_of: "2026-10-19",
+        models: {
+          "fake-sonnet-6": { input_per_mtok_usd: 1.5, output_per_mtok_usd: 7.5 },
+          "fake-sonnet-7": { input_per_mtok_usd: 1, output_per_mtok_usd: 5 },
+        },
+      },
+    });
+    const plain = watch.run({ evals: true });
+    await started;
+    const six = watch.run({ evals: true, models: ["fake/fake-sonnet-6"] });
+    const seven = watch.run({ evals: true, models: ["fake/fake-sonnet-7"] });
+    // Let both requests be decided while the first run still waits at its first eval.
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    release();
+    const [a, b, c] = await Promise.all([plain, six, seven]);
+    expect(most).toBe(1);
+    expect(b.report.id).toBe(c.report.id);
+    expect(b.report.id).not.toBe(a.report.id);
+    expect([...b.report.forced_candidates].sort()).toEqual([
+      "fake/fake-sonnet-6",
+      "fake/fake-sonnet-7",
+    ]);
+    expect(await w.store.release.list({ channel: MODEL_WATCH_CHANNEL })).toHaveLength(2);
   });
 
   it("single flight: a named-model run asked for during a paid run waits for it; never two at once", async () => {

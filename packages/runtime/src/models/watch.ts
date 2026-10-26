@@ -383,6 +383,8 @@ export const ModelWatchReportSchema = z.object({
    * or an "evaluate" answer on a report), not because they were news. Empty by default.
    */
   forced_candidates: z.array(z.string()).default([]),
+  /** Earlier pending reports this run closed because the baseline now holds their new models. */
+  closed_requests: z.number().int().nonnegative().default(0),
   skipped: z.array(z.string()),
   summary: z.string(),
 });
@@ -770,7 +772,8 @@ export class ModelWatch {
    * A paid run asked for joins the oldest one whose named candidates cover its own (a plain
    * run names none, so it joins the first); one that names more waits for the last to end.
    */
-  private paidRuns: { run: Promise<ModelWatchRunResult>; named: Set<string> }[] = [];
+  private paidRuns: { run: Promise<ModelWatchRunResult>; named: Set<string>; started: boolean }[] =
+    [];
   /** Serialises the paid-or-free decision of each run in call order. */
   private decisions: Promise<void> = Promise.resolve();
 
@@ -833,19 +836,37 @@ export class ModelWatch {
       async (): Promise<{ run: Promise<ModelWatchRunResult> }> => {
         const paid =
           opts.evals ?? (this.deps.autoEvals ? (await this.deps.autoEvals()) === true : false);
-        const once = () =>
+        // The names are read when the run starts, so names merged into a queued run count.
+        const startWith = (names: Set<string>) => () =>
           this.runOnce({
             signal,
             evals: paid,
-            models: opts.models ?? [],
-            forReport: opts.forReport ?? null,
+            models: [...names].filter((n) => !n.startsWith("report:")),
+            forReports: [...names]
+              .filter((n) => n.startsWith("report:"))
+              .map((n) => n.slice("report:".length)),
           });
-        if (!paid) return { run: once() };
+        if (!paid) return { run: startWith(named)() };
         const covering = this.paidRuns.find((e) => [...named].every((n) => e.named.has(n)));
         if (covering) return { run: covering.run };
+        // At most one run waits behind the one in flight: new names join the waiting one.
+        const waiting = this.paidRuns.find((e) => !e.started);
+        if (waiting) {
+          for (const n of named) waiting.named.add(n);
+          return { run: waiting.run };
+        }
         const last = this.paidRuns.at(-1);
-        const run = last ? last.run.then(once, once) : once();
-        const entry = { run, named };
+        const entry: { run: Promise<ModelWatchRunResult>; named: Set<string>; started: boolean } = {
+          run: Promise.resolve() as never,
+          named: new Set(named),
+          started: false,
+        };
+        const start = () => {
+          entry.started = true;
+          return startWith(entry.named)();
+        };
+        const run = last ? last.run.then(start, start) : start();
+        entry.run = run;
         this.paidRuns.push(entry);
         const clear = () => {
           this.paidRuns = this.paidRuns.filter((e) => e !== entry);
@@ -878,7 +899,7 @@ export class ModelWatch {
     signal?: AbortSignal;
     evals?: boolean;
     models: string[];
-    forReport: string | null;
+    forReports: string[];
   }): Promise<ModelWatchRunResult> {
     const { clock, store } = this.deps;
     throwIfStopped(opts.signal);
@@ -937,7 +958,7 @@ export class ModelWatch {
       baselines,
     );
     const baselineProviders = Object.keys(listed).filter((p) => !baselines.has(p));
-    const named = await this.namedCandidates(opts.models, opts.forReport);
+    const named = await this.namedCandidates(opts.models, opts.forReports);
     const baselineRun =
       named.length === 0 &&
       baselineProviders.length > 0 &&
@@ -1318,8 +1339,17 @@ export class ModelWatch {
       baselines.set(provider, new Set((listed[provider] ?? []).map((m) => canonicalModelId(m.id))));
     }
     // A baseline recorded now can make older requests moot: close those it covers.
-    if (seeded.length || baselineProviders.length)
-      await this.closeCoveredRequests(baselines, report.id);
+    if (seeded.length || baselineProviders.length) {
+      const closed = await this.closeCoveredRequests(baselines, report.id);
+      if (closed) {
+        report.closed_requests = closed;
+        report.summary = summarizeReport(report);
+        release = await store.release.patch(release.id, {
+          changelog: report.summary,
+          artifacts: [report as unknown as JsonValue],
+        });
+      }
+    }
     if (!needsDecision) {
       return { report, release, decision: health.decision, requestId: null, applied: [] };
     }
@@ -1718,10 +1748,10 @@ export class ModelWatch {
     return seeded;
   }
 
-  /** `provider/id` names to evaluate: the given ones, plus the candidates of `forReport`. */
-  private async namedCandidates(models: string[], forReport: string | null): Promise<string[]> {
+  /** `provider/id` names to evaluate: the given ones, plus the candidates of each report. */
+  private async namedCandidates(models: string[], forReports: string[]): Promise<string[]> {
     const out = [...models];
-    if (forReport) {
+    for (const forReport of forReports) {
       const report = reportFromRelease(await this.releaseFor(forReport));
       for (const p of report.evals_deferred?.planned ?? [])
         if (p.role === "candidate") out.push(`${p.provider}/${p.model}`);
@@ -1739,16 +1769,16 @@ export class ModelWatch {
   private async closeCoveredRequests(
     baselines: Map<string, Set<string>>,
     currentReportId: string,
-  ): Promise<void> {
+  ): Promise<number> {
     const { store } = this.deps;
     const rows = await store.release.list(
       { channel: MODEL_WATCH_CHANNEL, status: "published" },
       { orderBy: "created_at desc", limit: 200 },
     );
+    let closed = 0;
     for (const row of rows) {
       if (row.release_version === currentReportId) continue;
-      const health = healthOf(row);
-      if (health.decision !== "pending") continue;
+      if (healthOf(row).decision !== "pending") continue;
       let report: ModelWatchReport;
       try {
         report = reportFromRelease(row);
@@ -1758,17 +1788,41 @@ export class ModelWatch {
       const news = report.diff.new_models;
       if (!news.length || report.recommendations.length) continue;
       if (!news.every((m) => baselines.get(m.provider)?.has(canonicalModelId(m.id)))) continue;
-      if (health.request_id) {
-        const req = await store.humanRequest.get(health.request_id);
-        if (req?.status === "open") await store.humanRequest.withdraw(req.id, req.version);
+      // A human may answer at any moment: the request is withdrawn only while still open,
+      // the report closed only when this call withdrew its request (or it has none), and
+      // only while the stored row still says pending. Any race leaves the human's answer.
+      try {
+        const requestId = healthOf(row).request_id;
+        if (requestId) {
+          const req = await store.humanRequest.get(requestId);
+          if (req?.status !== "open") continue;
+          await store.humanRequest.withdraw(req.id, req.version);
+        }
+        const current = await store.release.get(row.id);
+        if (!current) continue;
+        const health = healthOf(current);
+        if (health.decision !== "pending") {
+          logger.info("model watch report decided while the baseline closed it; left as decided", {
+            reportId: report.id,
+            decision: health.decision,
+          });
+          continue;
+        }
+        await store.release.update(current.id, current.version, {
+          health: { ...health, decision: "nothing_to_decide" } as unknown as JsonValue,
+        });
+        closed += 1;
+        await this.audit("model_watch.decision", `report ${report.id}: closed by the baseline`, {
+          result: "its new models are all in the baseline; request withdrawn",
+        });
+      } catch (e) {
+        logger.warn("model watch report not closed by the baseline; the human's answer stands", {
+          reportId: report.id,
+          error: errorMessage(e),
+        });
       }
-      await store.release.patch(row.id, {
-        health: { ...health, decision: "nothing_to_decide" } as unknown as JsonValue,
-      });
-      await this.audit("model_watch.decision", `report ${report.id}: closed by the baseline`, {
-        result: "its new models are all in the baseline; request withdrawn",
-      });
     }
+    return closed;
   }
 
   private async releaseFor(reportId: string): Promise<ReleaseRow> {
@@ -1977,6 +2031,10 @@ export function summarizeReport(report: ModelWatchReport): string {
       `${report.evals_deferred.planned.length} eval run(s) not made: paid evals need consent.`,
     );
   if (report.skipped.length) parts.push(`${report.skipped.length} item(s) skipped.`);
+  if (report.closed_requests)
+    parts.push(
+      `Baseline: closed ${report.closed_requests} earlier request(s) the baseline covers.`,
+    );
   return parts.join(" ");
 }
 
