@@ -15,16 +15,30 @@ const SENTENCE_END = /[.!?…。！？]["”’'»)\]}›]*$/u;
 
 export class SentenceGate {
   private readonly splitter = new SentenceSplitter();
+  /** Text given and not passed on yet: always the splitter's pending text, less leading space. */
+  private held = "";
+  private started = false;
 
   constructor(private readonly out: (text: string) => void) {}
 
-  /** Feed a streamed delta; passes on every sentence it completes, exactly as written. */
+  /**
+   * Feed a streamed delta. Every sentence it completes is passed on exactly as written, with the
+   * whitespace after it (the boundary the consumer's own splitter needs to see the sentence end
+   * at once, rather than when the next sentence ends). The first delta always produces a call:
+   * an empty piece when no sentence is complete yet, so a consumer that stamps the model's first
+   * token on its first piece (the voice loop's `modelFirstTokenMs`) still stamps it then.
+   */
   push(delta: string): void {
     if (!delta) return;
-    const all = this.splitter.pending + delta.replace(/\r\n?/g, "\n");
+    const unsent = this.held + delta.replace(/\r\n?/g, "\n");
     this.splitter.push(delta);
-    const ready = all.slice(0, all.length - this.splitter.pending.length);
-    if (ready) this.out(ready);
+    // The splitter's pending text is a suffix of what was not passed on (the part already
+    // passed on is at most its leading whitespace); keep only its non-blank part back.
+    const keep = Math.min(this.splitter.pending.trimStart().length, unsent.length);
+    const ready = unsent.slice(0, unsent.length - keep);
+    this.held = unsent.slice(unsent.length - keep);
+    if (ready || !this.started) this.out(ready);
+    this.started = true;
   }
 
   /**
@@ -33,7 +47,8 @@ export class SentenceGate {
    * keeps its sentence).
    */
   end(cut: boolean): void {
-    const rest = this.splitter.pending;
+    const rest = this.held;
+    this.held = "";
     this.splitter.reset();
     if (!rest) return;
     if (!cut || SENTENCE_END.test(rest.trimEnd())) this.out(rest);

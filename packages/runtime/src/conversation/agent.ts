@@ -2,6 +2,7 @@ import { isStopLine } from "@forerunner/commands";
 import { loadDocChunks, selectDocHits } from "@forerunner/memory";
 import { type Clock, errorMessage, log, newId } from "@forerunner/platform";
 import type { AgentRow, SessionRow, StateStore } from "@forerunner/state";
+import { z } from "zod";
 import { type LoopAgentDriver, type RunEvent, type RunPricing, wholeMs } from "../agent/loop.ts";
 import { ToolRegistry } from "../agent/tools.ts";
 import { layoutSystem, volatilePreamble } from "../context/cache-layout.ts";
@@ -26,11 +27,29 @@ import {
 } from "../models/ladder.ts";
 import { modeOverride, parseAgentModelConfig, resolveRunSettings } from "../models/run-settings.ts";
 import type { EffectiveModelConfig } from "../models/settings.ts";
-import { type EffortLevel, type ModelProvider, providerCapabilities } from "../provider/types.ts";
+import {
+  type ChatMessage,
+  type EffortLevel,
+  type ModelProvider,
+  providerCapabilities,
+} from "../provider/types.ts";
 import { FORWARDED_SENTENCE, type HeardSource, heardMessageBody } from "../session/live-chat.ts";
 import type { StartRequest } from "../session/triggers.ts";
 import { isYes } from "../wiring/state-ports.ts";
 import { completeSentencesOf, SentenceGate } from "./sentences.ts";
+
+/** A chat turn's budget when the composition names none: USD 0.05 (raised per turn, see below). */
+export const DEFAULT_TURN_BUDGET_USD_MICRO = 50_000;
+
+/**
+ * How many model calls the default turn budget leaves room for, each priced as the loop prices
+ * the turn's first call (input as sent plus the whole output cap): an answer, or a command tool
+ * call and its answer, with room to spare. On Haiku 5.5 it stays at USD 0.05 until the context
+ * passes about 160'000 tokens; on Opus
+ * 5.5 with about 6'000 tokens of context (USD 0.024 in, 0.02 for the 1024 cap) it gives about
+ * USD 0.13, where USD 0.05 refused the turn before its first call.
+ */
+export const CHAT_TURN_CALL_ROOM = 3;
 
 /** The reply when the model was cut off at max_tokens before it finished a single sentence. */
 export const CUT_OFF_REPLY =
@@ -72,7 +91,10 @@ export interface ConversationDeps {
    * shifted by the project's speed-versus-quality slider) is held at it. Unset means no cap.
    */
   maxEffort?: EffortLevel;
-  /** Per-conversation-turn budget. Default USD 0.05. */
+  /**
+   * Per-conversation-turn budget, used as given. Absent: USD 0.05, raised for a turn whose
+   * calls cost more (`CHAT_TURN_CALL_ROOM`).
+   */
   turnBudgetUsdMicro?: number;
   modelId?: string;
   /**
@@ -409,9 +431,41 @@ export class ConversationAgent {
       ),
       this.deps.maxEffort,
     );
+    const system = layoutSystem({
+      registryPrompt: this.deps.prompt ?? DEFAULT_PROMPT,
+      projectBrief: context.stable,
+      instructions: CHAT_RETRIEVAL_RULES,
+    });
+    const messages: ChatMessage[] = [
+      { role: "user", content: `${context.volatile}\n\n${req.text}` },
+    ];
+    const pricing = this.deps.pricingFor?.(model) ?? this.deps.pricing;
+    // The turn's budget: the configured one, or by default USD 0.05 raised to room for
+    // `CHAT_TURN_CALL_ROOM` calls priced as the loop prices the first one (its input as sent,
+    // the whole output cap), so a realistic turn on an expensive chat model (Opus 5.5, which
+    // cannot turn thinking off) is not refused before it starts.
+    const turnBudgetUsdMicro =
+      this.deps.turnBudgetUsdMicro ??
+      Math.max(
+        DEFAULT_TURN_BUDGET_USD_MICRO,
+        CHAT_TURN_CALL_ROOM *
+          pricing.estimate(
+            this.deps.provider.countTokens(
+              system +
+                JSON.stringify(messages) +
+                JSON.stringify(
+                  tools.definitions(
+                    tools.names(),
+                    (s) => z.toJSONSchema(s) as Record<string, unknown>,
+                  ),
+                ),
+            ),
+            textChat.maxTokens,
+          ),
+      );
     const budget = new SessionBudget({
       sessionId,
-      budgetUsdMicro: this.deps.turnBudgetUsdMicro ?? 50_000,
+      budgetUsdMicro: turnBudgetUsdMicro,
       stepCap: 12,
       deadlineMs: clock.now() + turnMs,
       reserveShare: 0.15,
@@ -426,7 +480,7 @@ export class ConversationAgent {
       allowedPaths: [],
       allowedDomains: [],
       grantedSecrets: [],
-      budgetUsdMicro: this.deps.turnBudgetUsdMicro ?? 50_000,
+      budgetUsdMicro: turnBudgetUsdMicro,
       depth: 0,
       maxDepth: 0,
       // The human is giving instructions directly: routine actions run; the registry's
@@ -449,14 +503,10 @@ export class ConversationAgent {
       provider: this.deps.provider,
       model,
       billingSourceId: this.deps.billingSourceId,
-      system: layoutSystem({
-        registryPrompt: this.deps.prompt ?? DEFAULT_PROMPT,
-        projectBrief: context.stable,
-        instructions: CHAT_RETRIEVAL_RULES,
-      }),
-      messages: [{ role: "user", content: `${context.volatile}\n\n${req.text}` }],
+      system,
+      messages,
       tools,
-      pricing: this.deps.pricingFor?.(model) ?? this.deps.pricing,
+      pricing,
       timeoutMs: textChat.timeoutMs,
       maxTokensPerCall: textChat.maxTokens,
       effort,
@@ -495,7 +545,6 @@ export class ConversationAgent {
         keptChars: reply.length,
         generatedChars: result.finalText.length,
       });
-      if (!reply) reply = CUT_OFF_REPLY;
     }
     const actions: ChatAction[] = [];
     let pendingCard: PendingConfirmation | null = null;
@@ -514,6 +563,8 @@ export class ConversationAgent {
       this.pending.set(req.humanId, pendingCard);
       reply = `${reply ? `${reply} ` : ""}${pendingCard.readback}`.trim();
     }
+    // A cut-off answer with nothing whole left says so, unless a card's read-back is the reply.
+    if (!reply && truncated) reply = CUT_OFF_REPLY;
     if (!reply)
       reply =
         result.outcome === "completed"

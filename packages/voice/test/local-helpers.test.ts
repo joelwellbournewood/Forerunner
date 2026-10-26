@@ -64,12 +64,19 @@ describe("FasterWhisperStt when the helper crashes mid-transcription", () => {
   });
   afterAll(() => rm(dir, { recursive: true, force: true }));
 
-  const crashing = (name: string, times: number) =>
+  const crashing = (name: string, times: number, extra: string[] = [], readyTimeoutMs?: number) =>
     new FasterWhisperStt({
       python: node,
       helperPath: fixture("crashing_stt_helper.mjs"),
-      extraArgs: ["--crash-file", join(dir, name), "--crash-times", String(times)],
+      extraArgs: ["--crash-file", join(dir, name), "--crash-times", String(times), ...extra],
+      ...(readyTimeoutMs !== undefined ? { readyTimeoutMs } : {}),
     });
+  /** Wait in real time (the helper is a real process) until `cond` holds, at most `ms`. */
+  const waitFor = async (cond: () => boolean, ms = 5000) => {
+    for (let waited = 0; !cond() && waited < ms; waited += 20)
+      await new Promise<void>((r) => setTimeout(r, 20));
+    expect(cond()).toBe(true);
+  };
   const utterance = async (stt: FasterWhisperStt) => {
     const events: SttEvent[] = [];
     const session = stt.start({ sampleRate: 16000 });
@@ -107,6 +114,66 @@ describe("FasterWhisperStt when the helper crashes mid-transcription", () => {
       // The restarted helper serves the next utterance as usual.
       const next = await utterance(stt);
       expect(next.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+    } finally {
+      await stt.dispose();
+    }
+  });
+
+  it("retries a crash in the middle of the audio, before the end of speech, with all of the audio", async () => {
+    const stt = crashing("mid-audio", 1, ["--crash-at", "audio"]);
+    let retried = false;
+    const off = Logger.addSink((rec) => {
+      if (rec.msg.includes("retrying the utterance")) retried = true;
+    });
+    try {
+      const events: SttEvent[] = [];
+      const session = stt.start({ sampleRate: 16000 });
+      const chunks = chunkify(synth(440, 200), 20);
+      for (const c of chunks.slice(0, 4)) session.push(c);
+      // The helper dies on the first audio frame; the human is still talking.
+      await waitFor(() => retried);
+      for (const c of chunks.slice(4)) session.push(c);
+      session.endOfSpeech();
+      for await (const e of session.events) events.push(e);
+      expect(events.filter((e) => e.type === "error")).toEqual([]);
+      expect(events.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+    } finally {
+      off();
+      await stt.dispose();
+    }
+  });
+
+  it("a helper that dies in the middle of a stdout line does not garble the new helper's lines", async () => {
+    // Without a fresh line reader the half line glues onto the new helper's ready line, which
+    // no longer parses, and the retry waits out the ready timeout.
+    const stt = crashing("half-line", 1, ["--partial-line"], 3000);
+    try {
+      const events = await utterance(stt);
+      expect(events.filter((e) => e.type === "error")).toEqual([]);
+      expect(events.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+    } finally {
+      await stt.dispose();
+    }
+  }, 10_000);
+
+  it("the exit of a helper already let go only logs: the next utterance on a new helper is untouched", async () => {
+    const stt = new FasterWhisperStt({ python: node, helperPath: fixture("fake_stt_helper.mjs") });
+    try {
+      const first = stt.start({ sampleRate: 16000 });
+      for (const c of chunkify(synth(440, 100), 20)) first.push(c);
+      const firstEvents: SttEvent[] = [];
+      const it = first.events[Symbol.asyncIterator]();
+      const partial = await it.next();
+      expect(partial.value).toMatchObject({ type: "partial" });
+      // The old helper is stopped and a new utterance starts before its exit arrives.
+      const disposing = stt.dispose();
+      const events = await utterance(stt);
+      await disposing;
+      expect(events.filter((e) => e.type === "error")).toEqual([]);
+      expect(events.at(-1)).toMatchObject({ type: "final", text: "hello world 6400" });
+      // The utterance the provider let go of ended; it is not left waiting.
+      for (let r = await it.next(); !r.done; r = await it.next()) firstEvents.push(r.value);
+      expect(firstEvents.some((e) => e.type === "final")).toBe(false);
     } finally {
       await stt.dispose();
     }

@@ -1478,10 +1478,12 @@ of the 400 tokens were left for the visible text. Three changes:
   can raise it) the turn's run asks `thinking: "off"` (`RunRequest.thinking`, passed on as
   `ModelRequest.thinking`), so the cap is the reply's and the first sentence is not delayed by
   thinking (spec principle 8, "fast when talking"). The Anthropic adapter maps it per model with
-  `anthropicThinkingOff`: Haiku 5.5 and Opus 5 `{type: "disabled"}`, Sonnet 5.5
-  `{type: "between_tools"}`, at effort high or below; nothing for a model that cannot turn
-  thinking off (Opus 5.5, Fable, Mythos), one that thinks only when asked (4.x, Sonnet 5), an
-  unknown model, or effort `xhigh`/`max` (where `disabled` is a 400 error). Above `low` the model
+  `anthropicThinkingOff`: Sonnet 5 `{type: "disabled"}` at any effort (it thinks adaptively by
+  default; the docs give it no effort limit); Haiku 5.5 and Opus 5 `{type: "disabled"}` and
+  Sonnet 5.5 `{type: "between_tools"}`, at effort high or below; nothing for a model that
+  cannot turn thinking off (Opus 5.5, Fable, Mythos), one that thinks only when asked (4.x), an
+  unknown model, or effort `xhigh`/`max` on Haiku 5.5, Opus 5 and Sonnet 5.5 (where it is a
+  400 error). Above `low` the model
   thinks as the effort says (spec D: effort sets thinking depth) within the same cap.
 - A cut-off reply: the loop reports its last call's `stopReason` on `RunResult` (the outcome
   stays `completed`; the Run vocabulary is unchanged). When it is `max_tokens` the conversation
@@ -1490,16 +1492,33 @@ of the 400 tokens were left for the visible text. Three changes:
   terminator keeps that sentence), writes `outcome: "truncated"` and `stopReason` on the
   `chat.reply` event (every reply row now carries `stopReason`), and logs a warning
   (`chat reply cut off at max_tokens`, with the cap, the output tokens, effort and model). A
-  reply with no complete sentence becomes `CUT_OFF_REPLY` ("My answer was cut off..."). On a
-  spoken turn (`source` voice or phone) `onToken` goes through a `SentenceGate`: text is passed
-  on one complete sentence at a time, the unfinished rest of a model call is held until the
-  call ends and released only when it did not stop at `max_tokens`, so the voice loop never
-  receives (and never speaks) the broken tail, and the bridge's `unstreamedPart` finds nothing
-  left to add. A typed turn streams as before; the UI replaces the streamed text with
-  `ChatReply.reply`, which is trimmed. Tests: `conversation.test.ts` ("a reply cut off at
-  max_tokens": spoken and typed turns, no complete sentence, a cut on a sentence end, a
-  completed reply streaming in full), `loop.test.ts` (the stop reason and the thinking request),
-  `anthropic-provider.test.ts` (the per-model thinking mapping).
+  reply with no complete sentence becomes `CUT_OFF_REPLY` ("My answer was cut off..."), unless
+  a change card's read-back is the reply, which then stands alone. On a
+  spoken turn (`source` voice or phone) `onToken` goes through a `SentenceGate`: each sentence
+  is passed on the moment the model completes it, with the whitespace that ends it (the voice
+  loop's own `SentenceSplitter` needs that boundary to emit the sentence at once rather than
+  when the next one ends; the first version held every sentence back by one, review of
+  eead616), the unfinished rest of a model call is held until the call ends and released only
+  when it did not stop at `max_tokens`, so the voice loop never receives (and never speaks) the
+  broken tail, and the bridge's `unstreamedPart` finds nothing left to add. The gate's first
+  call is an empty piece when the first delta completes no sentence, so the voice loop still
+  stamps `modelFirstTokenMs` at the model's first token. A typed turn streams as before; the UI
+  replaces the streamed text with `ChatReply.reply`, which is trimmed.
+- The turn budget: by default (`ConversationDeps.turnBudgetUsdMicro` unset) it is
+  `DEFAULT_TURN_BUDGET_USD_MICRO` (USD 0.05) raised to `CHAT_TURN_CALL_ROOM` (3) calls priced as
+  the loop prices the first one (its input as sent, the whole cap at the output price), with the
+  turn's own pricing. The precheck prices the full cap before the call, so on Opus 5.5 (which
+  cannot turn thinking off) a turn with about 6'000 tokens of context was refused at USD 0.05;
+  it now gets about USD 0.13. On Haiku 5.5 the USD 0.05 holds until the context passes about
+  160'000 tokens. A configured turn budget is used as given.
+- Tests: `conversation.test.ts` ("a reply cut off at max_tokens": spoken and typed turns, no
+  complete sentence, a pending card's read-back, a cut on a sentence end, an Opus-priced turn
+  with a 6'000-token context, a completed reply streaming in full),
+  `conversation-sentences.test.ts` (the gate into a real `SentenceSplitter` emitting sentence
+  one before sentence two completes, the exact text and the empty first piece, cut tails, and a
+  `VoiceLoop` whose `modelFirstTokenMs` and first sentence are not pushed back), `loop.test.ts`
+  (the stop reason and the thinking request), `anthropic-provider.test.ts` (the per-model
+  thinking mapping).
 
 **Docs search and lessons in the context (spec J.1, O.2, [ADR 0061](../decisions/0061-chat-retrieval-budgets-and-stated-lessons.md)).**
 On the model path `context()` adds to the volatile first message (never to the cached system

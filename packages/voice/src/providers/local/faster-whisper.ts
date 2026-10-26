@@ -146,7 +146,6 @@ export class FasterWhisperStt implements SttProvider {
   private current: FasterWhisperSession | null = null;
   private availability: Availability | null = null;
   private pythonExe: string | null = null;
-  private readonly lines = new LineReader();
 
   constructor(private readonly opts: FasterWhisperOptions = {}) {
     this.clock = opts.clock ?? systemClock;
@@ -203,6 +202,15 @@ export class FasterWhisperStt implements SttProvider {
   }
 
   async dispose(): Promise<void> {
+    // An utterance still open ends here: the helper's exit, once it comes, belongs to a helper
+    // already let go and only logs (a new utterance may be on a new helper by then).
+    if (this.current && !this.current.closed)
+      this.current.deliver({
+        type: "error",
+        code: "provider_error",
+        message: "faster-whisper helper stopped",
+        retryable: true,
+      });
     const p = this.process;
     this.process = null;
     this.isReady = false;
@@ -247,12 +255,18 @@ export class FasterWhisperStt implements SttProvider {
         this.readyResolve = res;
         this.readyReject = rej;
       });
-      const proc = new HelperProcess({
+      // One line reader per helper process: a helper that dies in the middle of a line leaves
+      // its half line behind with it, never in front of the next helper's ready line.
+      const lines = new LineReader();
+      const proc: HelperProcess = new HelperProcess({
         argv: this.helperArgv(python),
         env: this.opts.env,
         clock: this.clock,
         log: this.logger,
-        onStdout: (d) => this.onStdout(d),
+        onStdout: (d) => {
+          // A helper already let go speaks for nobody.
+          if (this.process === proc) this.onStdout(lines, d);
+        },
         onExit: (code, signal) => this.onExit(proc, code, signal),
         onSpawnError: (err) => this.readyReject?.(err),
       });
@@ -275,8 +289,8 @@ export class FasterWhisperStt implements SttProvider {
     return this.ready;
   }
 
-  private onStdout(data: Buffer): void {
-    for (const line of this.lines.push(data)) {
+  private onStdout(lines: LineReader, data: Buffer): void {
+    for (const line of lines.push(data)) {
       let raw: unknown;
       try {
         raw = JSON.parse(line);
@@ -350,14 +364,9 @@ export class FasterWhisperStt implements SttProvider {
     const exit = describeHelperExit(code, signal);
     const fields = { code, codeHex: exit.hex, signal, cause: exit.cause };
     if (this.process !== proc) {
-      // A helper already let go (disposed): the provider's state is not its own any more.
+      // A helper already let go (disposed): neither the provider's state nor the current
+      // utterance (on a new helper, if any) is its own any more.
       this.logger.info("helper exited", fields);
-      this.current?.deliver({
-        type: "error",
-        code: "provider_error",
-        message: `faster-whisper helper exited, ${exit.text}`,
-        retryable: true,
-      });
       return;
     }
     const wasReady = this.isReady;

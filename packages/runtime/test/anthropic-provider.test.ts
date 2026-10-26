@@ -158,7 +158,11 @@ describe("AnthropicMessagesProvider", () => {
     await ask("claude-haiku-5-5", { thinking: undefined });
     await ask("claude-haiku-4-5");
     await ask("claude-opus-5");
+    await ask("claude-opus-5", { effort: "max" });
     await ask("claude-sonnet-5");
+    // Sonnet 5 thinks adaptively by default and takes `disabled` at any effort (the docs give
+    // it no effort limit, unlike Haiku 5.5 and Opus 5).
+    await ask("claude-sonnet-5", { effort: "max" });
     expect(bodies.map((b) => b.thinking)).toEqual([
       { type: "disabled" },
       { type: "disabled" },
@@ -166,10 +170,12 @@ describe("AnthropicMessagesProvider", () => {
       undefined,
       undefined,
       undefined,
-      // Thinking is off by default on these: nothing to send.
+      // Claude 4.x thinks only when asked: nothing to send.
       undefined,
       { type: "disabled" },
       undefined,
+      { type: "disabled" },
+      { type: "disabled" },
     ]);
   });
 

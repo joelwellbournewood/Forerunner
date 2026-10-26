@@ -1035,12 +1035,54 @@ describe("a reply cut off at max_tokens", () => {
     await w.store.close();
   });
 
+  it("a cut-off reply with a pending card is the card's read-back, not the cut-off sentence", async () => {
+    const w = await setup(
+      [
+        toolReply("autonomy_set", { level: 3 }, "Raising the autonomy by one step.", {
+          when: { toolAvailable: "autonomy_set" },
+        }),
+        textReply("To confirm, say", {
+          when: { lastUserIncludes: "Needs confirmation" },
+          stopReason: "max_tokens",
+        }),
+      ],
+      { storeApprovals: true },
+    );
+    const res = await w.chat("let alice work on the game with a bit more freedom");
+    expect(res.pendingConfirmation).not.toBeNull();
+    expect(res.reply).toBe(res.pendingConfirmation?.readback);
+    expect(res.reply).not.toMatch(/cut off/i);
+    const reply = (await w.log()).find((e) => e.type === "chat.reply");
+    expect(reply?.payload).toMatchObject({ outcome: "truncated" });
+    await w.store.close();
+  });
+
   it("a reply cut exactly at a sentence end keeps that sentence", async () => {
     const w = await setup([
       textReply("First point. Second point.", { ttftMs: 0, stopReason: "max_tokens" }),
     ]);
     const res = await w.chat("what is waiting on me?", { source: "voice" });
     expect(res.reply).toBe("First point. Second point.");
+    await w.store.close();
+  });
+
+  it("a chat turn on an expensive model with a realistic context is not refused by the turn budget", async () => {
+    // Opus 5.5 list prices in micro-USD per token (USD 4 in, 20 out per million): the 1024 cap
+    // alone is priced at about USD 0.02 before the call, and Opus cannot turn thinking off.
+    const opus = {
+      estimate: (inTok: number, maxOut: number) => inTok * 4 + maxOut * 20,
+      cost: (u: { input_tokens: number; output_tokens: number }) =>
+        u.input_tokens * 4 + u.output_tokens * 20,
+    };
+    const w = await setup([textReply("The menu is next.", { ttftMs: 0 })], {
+      agentDeps: { modelId: "fake-opus", pricing: opus },
+    });
+    // About 6'000 tokens of context (four characters a token): a long pasted question.
+    const context = "The renderer flickers when the menu opens over the map. ".repeat(430);
+    const res = await w.chat(`${context}\nWhat should I look at first?`);
+    expect(res.reply).toBe("The menu is next.");
+    const reply = (await w.log()).find((e) => e.type === "chat.reply");
+    expect(reply?.payload).toMatchObject({ outcome: "completed" });
     await w.store.close();
   });
 
