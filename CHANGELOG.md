@@ -10,6 +10,36 @@ go under Added, Changed, Deprecated, Removed, Fixed or Security.
 
 ## [Unreleased]
 
+## [1.0.0-rc.4] - 2026-10-26
+
+### Added
+
+- Voice install profiles: none, CPU or GPU, chosen in `fr setup` and switchable from Settings ->
+  Voice or `fr voice install|remove|status`; a managed Python 3.12 environment per profile with
+  hashed, pinned packages, model download with progress, and a device check with a loud CPU
+  fallback (ADR 0090).
+- The voice panel shows the reply text as it is generated and the sentence being spoken; a
+  Reply: Voice | Text switch (text replies skip speech entirely); pressing Talk interrupts.
+- `fr models watch --evals --model <provider/id>` evaluates a named model, with consent and
+  within the run budget.
+
+### Changed
+
+- Model watch: paid evaluations run only with the human's consent; the first run on an install
+  records a quiet baseline; stale requests the baseline covers close at start (ADR 0089).
+- The conversation agent mentions an open request at most once per conversation unless asked.
+- Chat and voice replies: thinking off at low effort, a 1024-token cap, a reply cut at the cap
+  ends on its last full sentence and is recorded as truncated; a per-turn budget of at most
+  USD 0.25 when none is configured (ADR 0091).
+- The critic at effort max reviews in one call sized to the budget left (ADR 0028).
+
+### Fixed
+
+- Voice playback cut-outs: a jitter buffer in the player and a drift-free paced sink.
+- A crashed speech-recognition helper restarts and retries the utterance once with a
+  different decode (on the CPU after a GPU crash), and leaves a traceback.
+- Release workflow uploads only the installers (the rc.3 publish hit GitHub's upload limit).
+
 ## [1.0.0-rc.3] - 2026-10-26
 
 ### Added
