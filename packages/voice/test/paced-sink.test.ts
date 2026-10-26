@@ -100,6 +100,50 @@ describe("pacedSink", () => {
     expect(handed[5]).toBe(1400 - PACED_SINK_AHEAD_MS);
   });
 
+  it("drain() resolves once the play-head has ended: the lead is played out, not dropped", async () => {
+    const clock = new SimulatedClock();
+    const sink = pacedSink(clock);
+    const signal = new AbortController().signal;
+    // Three 100 ms chunks fit in the lead: all handed over at 0.
+    for (let i = 0; i < 3; i++) await sink.play(chunk(100), signal);
+    expect(clock.monotonic()).toBe(0);
+    let drained: number | null = null;
+    const draining = sink.drain?.(signal).then(() => {
+      drained = clock.monotonic();
+    });
+    expect(draining).toBeDefined();
+    for (let i = 0; i < 400 && drained === null; i++) {
+      await new Promise<void>((r) => setImmediate(r));
+      if (drained === null) await clock.advance(1);
+    }
+    expect(drained).toBe(300);
+    // Nothing pending: at once.
+    const t = clock.monotonic();
+    await sink.drain?.(signal);
+    expect(clock.monotonic()).toBe(t);
+  });
+
+  it("drain() ends at once on the abort (a barge-in) and after stop()", async () => {
+    const clock = new SimulatedClock();
+    const sink = pacedSink(clock);
+    const abort = new AbortController();
+    await sink.play(chunk(250), abort.signal);
+    let done = false;
+    const draining = sink.drain?.(abort.signal).then(() => {
+      done = true;
+    });
+    await clock.advance(10);
+    expect(done).toBe(false);
+    abort.abort();
+    await draining;
+    expect(done).toBe(true);
+    expect(clock.monotonic()).toBe(10);
+    // 240 ms of the play-head are left; a barge-in's stop() flushes them.
+    sink.stop();
+    await sink.drain?.(new AbortController().signal);
+    expect(clock.monotonic()).toBe(10);
+  });
+
   it("stop() flushes the play-head: the next reply starts from now", async () => {
     const clock = new SimulatedClock();
     const sink = pacedSink(clock);

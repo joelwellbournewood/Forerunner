@@ -111,6 +111,8 @@ export function ConversationPanel({
       sessionRef.current !== null &&
       !sessionRef.current.endedAt &&
       playerRef.current.sessionId === sessionRef.current.id;
+    // A press stops the reply this window still plays (the daemon's turn may already be over).
+    playerRef.current?.interrupt();
     if (keeps) playerRef.current?.resume();
     else if (!outputRef.current) outputRef.current = createVoiceOutput(realtime?.audio);
     setPhaseBoth("starting");

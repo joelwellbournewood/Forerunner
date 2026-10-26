@@ -703,6 +703,50 @@ describe("the composed speaker follows the voice sessions' preference source", (
   });
 });
 
+describe("the end of an utterance waits for its audio", () => {
+  it("speaking_end and speak.done come once the default sink's play-head has played out, so the player does not cut the tail", async () => {
+    const clock = new SimulatedClock("2026-11-03T09:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    try {
+      const human = await store.human.insert({ name: "J", email: "j@example.test" });
+      const agent = await store.agent.insert({
+        name: "Alice",
+        owner_human_id: human.id,
+        kind: "principal",
+        memory_location: "",
+      });
+      const session = await store.session.insert({ agent_id: agent.id });
+      const tts = new FakeTts({ clock, firstChunkLatencyMs: 200, chunkMs: 100, chunks: 3 });
+      // The default sink (the composed daemon passes none): paced, running ahead of real time.
+      const speech = new SpeakSessions({
+        registry: new VoiceProviderRegistry().registerTts(tts),
+        store,
+        clock,
+        humanId: human.id,
+        agentId: agent.id,
+        sessionIdFor: async () => session.id,
+        awaitListenerMs: 0,
+      });
+      const subject = { kind: "notification", id: "n", notificationKind: "budget_stop" } as const;
+      const u = await speech.say({ text: "Read this.", subject, source: "notification" });
+      const at = new Map<string, number>();
+      let audio = 0;
+      u.subscribe((e) => {
+        if (e.event.type === "audio") audio++;
+        if (!at.has(e.event.type)) at.set(e.event.type, clock.monotonic());
+      });
+      await drive(clock, u.done);
+      expect(audio).toBe(3);
+      const first = at.get("speaking_start") ?? Number.NaN;
+      // 300 ms of audio from the first chunk: the end is not announced before it has played.
+      expect(at.get("speaking_end")).toBeGreaterThanOrEqual(first + 300);
+      expect(at.get("speak.done")).toBeGreaterThanOrEqual(first + 300);
+    } finally {
+      await store.close();
+    }
+  });
+});
+
 describe("one voice under concurrent requests", () => {
   it("two overlapping say() calls: the later one cancels the earlier, never both to the end", async () => {
     const clock = new SimulatedClock("2026-11-03T09:00:00Z");

@@ -30,9 +30,12 @@ import { type AudioOutput, decodeFrame } from "../lib/speech.ts";
  * `JITTER_START_MS` of audio is in hand, or earlier when the sentence being buffered is known
  * to be complete (the next sentence's first chunk, `speaking_end`, a normal `turn_end`) or no
  * audio came for `JITTER_IDLE_MS`. When the queue runs dry inside a turn (a chunk arrives after
- * the last one ended) the target doubles, up to `JITTER_MAX_MS`, and the turn re-buffers to it
- * before resuming: one pause instead of a gap per chunk. The target is kept for the rest of the
- * session (the CPU stays as slow) and never shrinks. A buffer's contents start `leadMs` after
+ * the last one ended) the turn re-buffers to the target before resuming: one pause instead of a
+ * gap per chunk. Inside a sentence (the late chunk's `sentenceIndex` is the last scheduled
+ * one's) the target first doubles, up to `JITTER_MAX_MS`; at a sentence boundary it stays (a
+ * pause before the next sentence says nothing about the rate). The target is kept for the rest
+ * of the session (the CPU stays as slow) and never shrinks. `interrupt()` (a Talk press)
+ * silences and drops what is buffered without closing anything. A buffer's contents start `leadMs` after
  * the context's current time (or right after what still plays), so a main-thread stall between
  * scheduling and the render quantum does not clip its start (a click); back-to-back chunks
  * follow without a gap and without a fade (consecutive chunks are one waveform cut at sample
@@ -55,6 +58,12 @@ export interface VoiceReplyPlayer {
   turnEnded(): void;
   /** Resume the output (call it from a click or key handler: a context may start suspended). */
   resume(): void;
+  /**
+   * Silence what plays and drop what is buffered now, keeping the output and the stream: the
+   * human pressed Talk. The daemon's turn may be over while this window still plays its tail
+   * (its buffer and lead), and a press then reaches no reply to barge in on.
+   */
+  interrupt(): void;
   /** Silence what is queued and stop following the session; closes the audio output. */
   close(): void;
   /** The jitter buffer's current target in ms (grows after an underrun; diagnostics). */
@@ -173,6 +182,8 @@ export function followVoiceReply(
   /** Collecting audio before the turn starts or resumes after an underrun. */
   let buffering = false;
   let pending: Array<{ buffer: AudioBuffer; sentenceIndex: number }> = [];
+  /** The sentence of the last chunk scheduled. */
+  let lastSentence = -1;
   let pendingS = 0;
   let targetS = JITTER_START_MS / 1000;
   const maxS = JITTER_MAX_MS / 1000;
@@ -235,7 +246,8 @@ export function followVoiceReply(
     const ctxNow = audio.currentTime;
     const startAt = nextAt > ctxNow ? nextAt : ctxNow + leadS;
     let at = startAt;
-    for (const { buffer } of pending) {
+    for (const { buffer, sentenceIndex } of pending) {
+      lastSentence = sentenceIndex;
       const node = audio.createBufferSource();
       node.buffer = buffer;
       node.connect(audio.destination);
@@ -268,14 +280,17 @@ export function followVoiceReply(
       if (pending.length > 0) flush();
       playingTurn = turn;
       started = false;
+      lastSentence = -1;
       buffering = true;
     } else if (!buffering) {
       if (!started) buffering = true;
       else if (nextAt <= audio.currentTime) {
         // An underrun inside the turn: the queue ran dry before this chunk came. Resume only
-        // with more in hand, so a TTS slower than real time pauses once rather than at every
-        // late chunk.
-        targetS = Math.min(maxS, targetS * 2);
+        // with the target in hand, so a TTS slower than real time pauses once rather than at
+        // every late chunk. Inside a sentence that means the audio comes too slowly and the
+        // target doubles; at a sentence boundary it is a pause before the next sentence (the
+        // model or the TTS was slow to start it), which says nothing about the rate.
+        if (sentenceIndex === lastSentence) targetS = Math.min(maxS, targetS * 2);
         buffering = true;
       }
     }
@@ -362,6 +377,10 @@ export function followVoiceReply(
     },
     resume() {
       void audio?.resume?.().catch(() => undefined);
+    },
+    interrupt() {
+      if (closed) return;
+      silence();
     },
     close() {
       if (closed) return;

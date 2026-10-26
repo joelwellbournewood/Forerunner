@@ -100,6 +100,12 @@ export interface AudioSink {
   play(chunk: AudioChunk, signal: AbortSignal): Promise<void>;
   /** Flush anything queued on the device; called on barge-in. */
   stop(): void;
+  /**
+   * Resolves once what was handed over has played out (or at once on the abort). A sink that
+   * runs ahead of real time implements it; the loop and the speaker await it before they say
+   * the reply ended, so a player that closes on the end does not cut the tail.
+   */
+  drain?(signal: AbortSignal): Promise<void>;
 }
 
 /** Returns the 16-bit samples of a chunk as an Int16Array (a view when aligned, else a copy). */

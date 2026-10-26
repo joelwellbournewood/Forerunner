@@ -668,6 +668,9 @@ export class VoiceLoop {
           if (!signal.aborted) throw e;
         }
       }
+      // A sink that runs ahead has not played the tail yet: the turn (still `speaking`, so a
+      // press barges in) ends once it has.
+      if (!signal.aborted) await this.sink.drain?.(signal).catch(() => {});
     })();
 
     const aborted = new Promise<void>((resolve) => {
@@ -823,6 +826,10 @@ export function pacedSink(clock: Clock, aheadMs = PACED_SINK_AHEAD_MS): AudioSin
       until = start + chunkDurationMs(chunk);
       const wait = until - aheadMs - now;
       if (wait > 0) await clock.sleep(wait, signal).catch(() => {});
+    },
+    drain: async (signal) => {
+      const left = until === null ? 0 : until - clock.monotonic();
+      if (left > 0 && !signal.aborted) await clock.sleep(left, signal).catch(() => {});
     },
     stop: () => {
       until = null;

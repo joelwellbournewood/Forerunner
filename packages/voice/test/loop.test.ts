@@ -3,7 +3,14 @@ import { tmpdir } from "node:os";
 import { ForerunnerError, join, SimulatedClock } from "@forerunner/platform";
 import { afterEach, describe, expect, it } from "vitest";
 import { spokenApprovalRecord } from "../src/approval.ts";
-import { type ConverseFn, VoiceLoop, type VoiceLoopEvent, type VoiceMode } from "../src/loop.ts";
+import {
+  type ConverseFn,
+  PACED_SINK_AHEAD_MS,
+  pacedSink,
+  VoiceLoop,
+  type VoiceLoopEvent,
+  type VoiceMode,
+} from "../src/loop.ts";
 import { FakeStt, type FakeSttScript, FakeTts } from "../src/providers/fake.ts";
 import { AsyncQueue } from "../src/queue.ts";
 import {
@@ -180,6 +187,30 @@ describe("VoiceLoop push-to-talk", () => {
     const types = events.map((e) => e.type);
     expect(types.indexOf("speaking_end")).toBeLessThan(types.indexOf("turn_end"));
     expect(types.filter((t) => t === "turn_end")).toHaveLength(1);
+  });
+
+  it("with a sink that runs ahead, the turn ends only once the sink's play-head has played out", async () => {
+    const clock = new SimulatedClock(0);
+    const { loop, events } = setup({ clock, sink: pacedSink(clock, PACED_SINK_AHEAD_MS) });
+    pttTurn(loop, clock);
+    await throughFirstAudio(clock);
+    const firstAudioAt = clock.monotonic();
+    expect(events.some((e) => e.type === "speaking_start")).toBe(true);
+    let endedAt: number | null = null;
+    for (let i = 0; i < 400 && endedAt === null; i++) {
+      await advance(clock, 10);
+      if (events.some((e) => e.type === "speaking_end")) endedAt = clock.monotonic();
+    }
+    await loop.idle();
+    // Two sentences of three 100 ms chunks: 600 ms of audio from the first chunk. A turn that
+    // ended when the last chunk was handed over (up to the lead early) would end the window's
+    // playback early too (`/speak`'s player closes its output on the end).
+    const audioMs = events.filter((e) => e.type === "audio").length * 100;
+    expect(audioMs).toBe(600);
+    expect(endedAt).not.toBeNull();
+    expect(endedAt ?? 0).toBeGreaterThanOrEqual(firstAudioAt + audioMs);
+    const types = events.map((e) => e.type);
+    expect(types.indexOf("speaking_end")).toBeLessThan(types.indexOf("turn_end"));
   });
 
   it("synthesises sentence i+1 while sentence i plays, in order", async () => {

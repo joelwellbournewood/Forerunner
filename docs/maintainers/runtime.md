@@ -2178,7 +2178,11 @@ the player that attaches after the `POST` or the `speak.started` frame hears the
 (audio frames are live only); `firstAudioMs` includes that hold. Every utterance is announced
 on the bus (`speak`, the `speak.started` frame on `/events` with `player`: `requester` for the
 two routes, whose caller plays it, `any` for an alert or `summary.speak`, which every speech
-player plays). The daemon's own sink only paces the frames: what is heard is what a speech
+player plays). The daemon's own sink only paces the frames (`pacedSink`, up to 300 ms ahead
+of real time; `voice.md`), and the utterance awaits its `drain()` after the last chunk, so
+`speaking_end` and `speak.done` come once the audio has played rather than up to 300 ms
+early (the UI's player closes its output on `speak.done`; test: "the end of an utterance
+waits for its audio" in `test/speak-route.test.ts`): what is heard is what a speech
 player (the UI, `apps.md`) plays; `RuntimeApp.speechPlayers` counts the `/events` streams that
 declared `?speech=play`. It writes one
 `voice.speak` row on the human's conversation session (`src/daemon/conversation-session.ts`

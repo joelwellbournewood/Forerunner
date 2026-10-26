@@ -8,7 +8,10 @@ import type { EventSourceFactory } from "../api/sse.ts";
  * as a voice turn's reply) on `GET /speak/:id/events`; this follows the stream with
  * EventSource and plays the frames through Web Audio, scheduled back to back. Where the
  * browser has no EventSource or no AudioContext (jsdom, a webview without audio) it polls the
- * utterance until it ended, so the screen still follows what the daemon reads.
+ * utterance until it ended, so the screen still follows what the daemon reads. A finished
+ * utterance (`speak.done` with state done) closes the output only once the scheduled audio,
+ * the context's and device's latency and `SPEECH_TAIL_MARGIN_MS` have passed (the daemon may
+ * report the end before this window played it); a cancel, a failure or `stop()` close at once.
  *
  * This window is the only thing that makes the daemon's speech audible: the desktop sidecar
  * shows toasts but plays no audio, and the daemon's own sink only paces the frames. Where the
@@ -50,7 +53,12 @@ export interface PlaybackOptions {
   pollIntervalMs?: number;
   /** The sentence whose audio started (the screen highlights it). */
   onSentence?: (index: number) => void;
+  /** A timer (the wait for the tail after `speak.done`); returns its cancel. Default: setTimeout. */
+  setTimer?: (fn: () => void, ms: number) => () => void;
 }
+
+/** After the scheduled audio's end, this much more before the output closes (device buffers). */
+export const SPEECH_TAIL_MARGIN_MS = 50;
 
 interface AudioFrame {
   sentenceIndex: number;
@@ -114,12 +122,45 @@ export function playSpeech(
   let nextAt = 0;
   let lastSentence = -1;
 
+  let cancelTail: (() => void) | null = null;
+  const setTimer =
+    options.setTimer ??
+    ((fn: () => void, ms: number) => {
+      const t = setTimeout(fn, ms);
+      return () => clearTimeout(t);
+    });
+
   const finish = (end: PlaybackEnd) => {
-    if (finished) return;
-    finished = true;
+    // Finished, or already waiting for the tail (only stop() cuts that short).
+    if (finished || cancelTail !== null) return;
     if (pollHandle !== null) clearTimeout(pollHandle);
+    pollHandle = null;
     source?.close();
     source = null;
+    // The daemon reports the end once its sink has handed the last chunk over, which can be
+    // before this window has played it: a finished utterance keeps the output open until the
+    // scheduled audio (and the device's latency) has played. A cancel or a failure closes now.
+    if (end === "done" && audio) {
+      const leftS = Math.max(0, nextAt - audio.currentTime);
+      if (leftS > 0) {
+        const latency = (v: number | undefined) =>
+          typeof v === "number" && Number.isFinite(v) && v > 0 ? v * 1000 : 0;
+        const ms =
+          leftS * 1000 +
+          latency(audio.baseLatency) +
+          latency(audio.outputLatency) +
+          SPEECH_TAIL_MARGIN_MS;
+        cancelTail = setTimer(() => close("done"), ms);
+        return;
+      }
+    }
+    close(end);
+  };
+
+  const close = (end: PlaybackEnd) => {
+    if (finished) return;
+    finished = true;
+    cancelTail?.();
     void audio?.close().catch(() => undefined);
     resolveDone(end);
   };
@@ -198,7 +239,10 @@ export function playSpeech(
 
   return {
     done,
-    stop: () => finish("cancelled"),
+    stop: () => {
+      finish("cancelled");
+      close("cancelled");
+    },
   };
 }
 

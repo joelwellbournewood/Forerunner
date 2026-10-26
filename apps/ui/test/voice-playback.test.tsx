@@ -501,6 +501,26 @@ describe("conversation panel: the voice reply is played", () => {
     expect(heardPosts(h)).toHaveLength(0);
   });
 
+  it("a Talk press while the ended turn's reply still plays stops it at once", async () => {
+    const h = setup();
+    const { user, stream } = await startTalking(h);
+    await user.click(screen.getByTestId("voice-send"));
+    await waitFor(() => expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Press/));
+    act(() => {
+      stream.fire("voice.event", audioMs(1, 600));
+      stream.fire("voice.event", audioMs(1, 600));
+      stream.fire("voice.event", frame("speaking_end", 1));
+      stream.fire("voice.event", frame("turn_end", 1, { latency: { interrupted: false } }));
+    });
+    // The daemon's turn is over; the window still has 1.2 s of it queued.
+    expect(h.audio.scheduled.map((s) => s.stopped)).toEqual([false, false]);
+    await user.click(screen.getByTestId("voice-talk"));
+    expect(h.audio.scheduled.map((s) => s.stopped)).toEqual([true, true]);
+    await waitFor(() =>
+      expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Listening/),
+    );
+  });
+
   it("creates and resumes the audio output in the Talk click, before the panel's first request", async () => {
     const h = setup();
     await startTalking(h);
@@ -613,6 +633,27 @@ describe("voice reply player: the jitter buffer", () => {
     for (const g of gaps) expect(g).toBeGreaterThanOrEqual(0.3);
   });
 
+  it("a queue that ran dry at a sentence boundary re-buffers without raising the target", () => {
+    const p = directPlayer();
+    p.at(0);
+    p.fire(audioMs(1, 200, 0));
+    // Sentence 1 comes after sentence 0 has played out (the model or TTS was slow to start it):
+    // a pause between sentences, not a sign that the audio within a sentence comes too slowly.
+    p.at(1000);
+    p.fire(audioMs(1, 100, 1));
+    expect(p.audio.scheduled).toHaveLength(1);
+    expect(p.player.bufferTargetMs).toBe(JITTER_START_MS);
+    p.at(1100);
+    p.fire(audioMs(1, 100, 1));
+    expect(p.audio.scheduled).toHaveLength(3);
+    expect(p.player.bufferTargetMs).toBe(JITTER_START_MS);
+    // Within sentence 1 the queue runs dry: that is too slow audio, and the target doubles.
+    p.at(2000);
+    p.fire(audioMs(1, 100, 1));
+    expect(p.player.bufferTargetMs).toBe(JITTER_START_MS * 2);
+    expect(p.audio.scheduled).toHaveLength(3);
+  });
+
   it("bounds the target's growth and keeps it for the session's next turn", () => {
     const p = directPlayer();
     const seen: number[] = [];
@@ -691,5 +732,47 @@ describe("voice reply player: the jitter buffer", () => {
     p.fire(audioMs(2, JITTER_MAX_MS));
     expect(p.audio.scheduled).toHaveLength(3);
     expect(p.audio.scheduled[2]?.stopped).toBe(false);
+  });
+
+  it.each([
+    ["an error", frame("error", 1, { code: "provider_error", message: "x" })],
+    ["the session's stop", frame("voice.stopped", 1, {})],
+    ["a turn cut short", frame("turn_end", 1, { latency: { interrupted: true } })],
+  ])("%s while audio sits buffered drops it: nothing plays later", (_name, event) => {
+    const p = directPlayer();
+    p.at(0);
+    p.fire(audioMs(1, 100));
+    expect(p.audio.scheduled).toHaveLength(0);
+    p.fire({ ...event, seq: ++seq });
+    p.at(JITTER_IDLE_MS * 4);
+    p.fire(frame("speaking_end", 1));
+    expect(p.audio.scheduled).toHaveLength(0);
+  });
+
+  it("close() while audio sits buffered drops it and closes the output", () => {
+    const p = directPlayer();
+    p.at(0);
+    p.fire(audioMs(1, 100));
+    p.player.close();
+    p.at(JITTER_IDLE_MS * 4);
+    expect(p.audio.scheduled).toHaveLength(0);
+    expect(p.audio.state.closed).toBe(1);
+  });
+
+  it("interrupt() stops what plays and drops what is buffered, and the next turn plays", () => {
+    const p = directPlayer();
+    p.at(0);
+    p.fire(audioMs(1, 300));
+    p.at(400); // ran dry
+    p.fire(audioMs(1, 100));
+    expect(p.audio.scheduled).toHaveLength(1);
+    p.player.interrupt();
+    expect(p.audio.scheduled[0]?.stopped).toBe(true);
+    p.at(400 + JITTER_IDLE_MS * 4);
+    p.fire(audioMs(1, 1000));
+    expect(p.audio.scheduled).toHaveLength(1);
+    p.fire(audioMs(2, JITTER_MAX_MS));
+    expect(p.audio.scheduled).toHaveLength(2);
+    expect(p.audio.state.closed).toBe(0);
   });
 });

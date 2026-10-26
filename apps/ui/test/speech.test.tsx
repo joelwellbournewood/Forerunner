@@ -162,6 +162,68 @@ describe("playSpeech", () => {
     expect(audio.state.closed).toBe(true);
   });
 
+  it("speak.done does not cut the tail: the output closes only once the scheduled audio has played", async () => {
+    const { factory, instances } = fakeEventSources();
+    const audio = fakeAudio();
+    const timers: Array<{ ms: number; fn: () => void }> = [];
+    const pb = playSpeech(client, "speak_9", {
+      eventSource: factory,
+      audio: () => audio.output,
+      setTimer: (fn, ms) => {
+        const t = { ms, fn };
+        timers.push(t);
+        return () => {
+          timers.splice(timers.indexOf(t), 1);
+        };
+      },
+    });
+    const es = instances[0];
+    if (!es) throw new Error("no stream opened");
+    // 300 ms of audio at 8 kHz, scheduled from 0; the daemon says it is done at 100 ms.
+    es.fire("speak.event", {
+      seq: 2,
+      type: "audio",
+      data: { sentenceIndex: 0, sampleRate: 8000, channels: 1, pcm: pcm(new Array(2400).fill(1)) },
+    });
+    audio.state.currentTime = 0.1;
+    let ended: string | null = null;
+    void pb.done.then((e) => {
+      ended = e;
+    });
+    es.fire("speak.event", { seq: 3, type: "speak.done", data: { record: { state: "done" } } });
+    await Promise.resolve();
+    expect(audio.state.closed).toBe(false);
+    expect(ended).toBeNull();
+    // The rest of the audio (200 ms) and then some: the timer covers the tail.
+    expect(timers).toHaveLength(1);
+    expect(timers[0]?.ms).toBeGreaterThanOrEqual(200);
+    timers[0]?.fn();
+    await expect(pb.done).resolves.toBe("done");
+    expect(audio.state.closed).toBe(true);
+  });
+
+  it("stop() during the tail closes at once", async () => {
+    const { factory, instances } = fakeEventSources();
+    const audio = fakeAudio();
+    const pb = playSpeech(client, "speak_10", {
+      eventSource: factory,
+      audio: () => audio.output,
+      setTimer: () => () => undefined,
+    });
+    const es = instances[0];
+    if (!es) throw new Error("no stream opened");
+    es.fire("speak.event", {
+      seq: 2,
+      type: "audio",
+      data: { sentenceIndex: 0, sampleRate: 8000, channels: 1, pcm: pcm(new Array(2400).fill(1)) },
+    });
+    es.fire("speak.event", { seq: 3, type: "speak.done", data: { record: { state: "done" } } });
+    expect(audio.state.closed).toBe(false);
+    pb.stop();
+    await expect(pb.done).resolves.toBe("cancelled");
+    expect(audio.state.closed).toBe(true);
+  });
+
   it("an error frame ends it as failed; a cancelled record as cancelled", async () => {
     const one = fakeEventSources();
     const failed = playSpeech(client, "a", { eventSource: one.factory, audio: () => null });

@@ -342,6 +342,10 @@ export class Utterance {
           }
         }
       }
+      // The paced sink runs ahead of real time: `speaking_end` and `speak.done` wait for its
+      // play-head, or the window's player (which closes its output on `speak.done`) cuts the
+      // tail.
+      if (!signal.aborted) await sink.drain?.(signal).catch(() => {});
     })();
 
     let failure: unknown = null;

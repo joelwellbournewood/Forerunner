@@ -255,7 +255,12 @@ replaces it, as the daemon has one voice); one with `player: "requester"` is the
 button's own and left to it. `playSpeech` resumes the AudioContext (one created without a user
 gesture may start suspended), decodes the base64 16-bit PCM frames and schedules them back to
 back. The daemon holds playback until the stream attached (`runtime.md`, "Read aloud"), so the
-first words are not lost.
+first words are not lost. On `speak.done` with state `done` it keeps the output open until the
+scheduled audio has played (what is left after `currentTime`, plus `baseLatency`,
+`outputLatency` and `SPEECH_TAIL_MARGIN_MS`, 50 ms; a `setTimer` seam), then closes it and
+resolves `done`; a cancel, a failure or `stop()` close at once. The daemon also announces the
+end only once its sink's play-head has played out (`voice.md`, `AudioSink.drain`); before
+both, closing on `speak.done` cut the last ~300 ms.
 
 ### State
 
@@ -335,11 +340,16 @@ decoded with `decodeFrame` from `lib/speech.ts`) back to back through Web Audio,
 order, behind a jitter buffer. A turn starts once `JITTER_START_MS` (200 ms) of audio is in
 hand, or earlier once the buffered sentence is known to be complete (a chunk of the next
 `sentenceIndex`, `speaking_end`, a normal `turn_end`) or nothing came for `JITTER_IDLE_MS`
-(250 ms). A chunk that arrives after the queue ran dry inside a turn is an underrun: the
-target doubles, up to `JITTER_MAX_MS` (1 s), and the turn re-buffers to it before resuming,
-so a TTS slower than real time (Kokoro on a CPU, the real-audio run of 2026-10-26: a gap
-inside a word at every late 100 ms chunk) pauses once instead of at every chunk. The target
-lives as long as the session's player and never shrinks (`player.bufferTargetMs`). Buffered
+(250 ms). A chunk that arrives after the queue ran dry inside a turn is an underrun: the turn
+re-buffers to the target before resuming, so late audio (the real-audio run of 2026-10-26: a
+gap inside a word at every late 100 ms chunk; the cause, `voice.md` "Known issues") pauses
+once instead of at every chunk. When the late chunk belongs to the sentence of the last chunk
+scheduled, the target first doubles, up to `JITTER_MAX_MS` (1 s); at a sentence boundary it
+stays (that pause is the model or the TTS starting the next sentence, not the rate). The
+target lives as long as the session's player and never shrinks (`player.bufferTargetMs`).
+`player.interrupt()` silences what plays and drops what is buffered; `startTurn` calls it
+before anything else, so a Talk press stops a reply the window still plays after the daemon's
+turn ended (its buffer and lead: up to ~1.35 s once the target grew). Buffered
 audio starts `PLAYBACK_LEAD_MS` (50 ms) after the context's current time, or right after what
 still plays, so a main-thread stall between scheduling and rendering does not clip it into a
 click; queued chunks follow without a gap and without a fade (consecutive chunks are one
@@ -540,7 +550,8 @@ proposed routes vs `DAEMON_ROUTES`, `parseChangeCard`), `money`, `sse` (parser, 
 name incl. `extension.changed`, `restart.requested` and `speak.started` (an unknown `player`
 dropped), EventSource path, polling fallback, chat stream), `speech` (`playSpeech` with a fake
 EventSource and a fake `AudioOutput`: the PCM decoded per channel, buffers scheduled back to
-back, the sentence followed, `speak.done` / `error` / a cancelled record ending it; the speech
+back, the sentence followed, `speak.done` / `error` / a cancelled record ending it, the tail
+after `speak.done` played before the output closes and `stop()` during it closing at once; the speech
 player playing `player: "any"` utterances one at a time and leaving `requester` ones alone;
 `AppProvider` opening `/events?speech=play` and playing an announced alert's frames), `store`
 (persistence, restart, extensions version), `app`, `home`, `project` (summary, Read aloud
