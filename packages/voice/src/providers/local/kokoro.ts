@@ -50,7 +50,7 @@ export class KokoroTts implements TtsProvider {
   private availability: Availability | null = null;
   private pythonExe: string | null = null;
   private readonly frames = new FrameReader();
-  /** Set by dispose(): the helper is never started again (ADR 0090, a voice profile swap). */
+  /** Set by retire(): the helper is never started again (ADR 0090, a voice profile swap). */
   private disposed = false;
 
   constructor(private readonly opts: KokoroOptions = {}) {
@@ -118,8 +118,17 @@ export class KokoroTts implements TtsProvider {
     }
   }
 
-  async dispose(): Promise<void> {
+  /**
+   * Stop the helper for good (ADR 0090): a voice profile swap lets this provider go, and a
+   * sentence still holding it must not start a helper from the old venv. dispose() alone only
+   * stops the current helper.
+   */
+  async retire(): Promise<void> {
     this.disposed = true;
+    await this.dispose();
+  }
+
+  async dispose(): Promise<void> {
     const p = this.process;
     this.process = null;
     this.isReady = false;
@@ -143,7 +152,9 @@ export class KokoroTts implements TtsProvider {
 
   private ensureProcess(): Promise<void> {
     if (this.disposed)
-      return Promise.reject(new ForerunnerError("unavailable", "kokoro provider was disposed"));
+      return Promise.reject(
+        new ForerunnerError("unavailable", "kokoro provider was disposed (retired)"),
+      );
     if (this.ready) return this.ready;
     this.ready = (async () => {
       let python = this.opts.python ?? this.pythonExe;

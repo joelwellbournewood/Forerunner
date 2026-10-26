@@ -7,9 +7,10 @@ import { KokoroTts } from "../src/providers/local/kokoro.ts";
 import type { SttEvent } from "../src/types.ts";
 
 /**
- * A disposed local provider never starts its helper again (ADR 0090): the voice profile swap
- * disposes the old pair, and a session still holding the old provider must not respawn a
- * helper from the old venv. The "helper" here only records that it ran.
+ * A retired local provider never starts its helper again (ADR 0090): the voice profile swap
+ * retires the old pair, and a session still holding the old provider must not respawn a
+ * helper from the old venv. `dispose()` alone only stops the current helper (ADR 0091's crash
+ * handling relies on that). The "helper" here only records that it ran.
  */
 const node = process.execPath;
 
@@ -24,15 +25,15 @@ function spyHelper(): { path: string; ran: string } {
   return { path, ran };
 }
 
-describe("disposed local providers", () => {
-  it("faster-whisper: a session started after dispose ends with an error and spawns nothing", async () => {
+describe("retired local providers", () => {
+  it("faster-whisper: a session started after retire ends with an error and spawns nothing", async () => {
     const helper = spyHelper();
     const stt = new FasterWhisperStt({
       python: node,
       helperPath: helper.path,
       readyTimeoutMs: 2000,
     });
-    await stt.dispose();
+    await stt.retire();
     const session = stt.start({ sampleRate: 16000 });
     const events: SttEvent[] = [];
     for await (const e of session.events) events.push(e);
@@ -44,10 +45,10 @@ describe("disposed local providers", () => {
     expect(existsSync(helper.ran)).toBe(false);
   });
 
-  it("kokoro: synthesize after dispose fails and spawns nothing", async () => {
+  it("kokoro: synthesize after retire fails and spawns nothing", async () => {
     const helper = spyHelper();
     const tts = new KokoroTts({ python: node, helperPath: helper.path, readyTimeoutMs: 2000 });
-    await tts.dispose();
+    await tts.retire();
     const run = async () => {
       for await (const _ of tts.synthesize("Hello.")) {
         // no audio expected
@@ -56,5 +57,23 @@ describe("disposed local providers", () => {
     await expect(run()).rejects.toThrow(/disposed/);
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(helper.ran)).toBe(false);
+  });
+
+  it("dispose() alone stops the current helper but lets the provider start a new one", async () => {
+    const helper = spyHelper();
+    const stt = new FasterWhisperStt({
+      python: node,
+      helperPath: helper.path,
+      readyTimeoutMs: 2000,
+    });
+    await stt.dispose();
+    const session = stt.start({ sampleRate: 16000 });
+    for await (const _ of session.events) {
+      // the spy helper exits without a ready line: an error ends the session
+    }
+    for (let i = 0; i < 50 && !existsSync(helper.ran); i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(existsSync(helper.ran)).toBe(true);
+    await stt.dispose();
   });
 });

@@ -110,6 +110,8 @@ export interface LocalHelperOptions {
 
 interface Disposable {
   dispose?(): Promise<void>;
+  /** Stop for good: never start the helper again (FasterWhisperStt, KokoroTts). */
+  retire?(): Promise<void>;
 }
 export interface LocalPair {
   stt: SttProvider & Disposable;
@@ -297,7 +299,10 @@ export class LocalVoice {
   }
 
   private async stop(pair: LocalPair): Promise<void> {
-    await Promise.all([pair.stt.dispose?.(), pair.tts.dispose?.()]);
+    // Retired, not only disposed: a session still holding the old provider must not start a
+    // helper from the old venv (dispose() alone lets a provider start a new helper).
+    const end = (p: Disposable) => (p.retire ? p.retire() : p.dispose?.());
+    await Promise.all([end(pair.stt), end(pair.tts)]);
   }
 
   private build(s: LocalVoiceSettings | null): LocalPair {

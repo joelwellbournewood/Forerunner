@@ -133,10 +133,11 @@ Linux (230 on Windows) and exits on the first sentence when the path is longer.
    the sentences being synthesised; while any is in use a changed `voice.json` waits and the old
    helpers keep serving, and the swap happens at the first use after they end. While an install
    runs, new local sessions and new sentences (read-aloud included) are refused with the reason;
-   the install itself is refused while a voice session is open or local voice is in use. A
-   disposed provider never starts its helper again (`FasterWhisperStt` / `KokoroTts`
-   `ensureProcess` rejects after `dispose()`), so a session holding the old provider cannot
-   respawn a helper from the old venv. A voice session using only cloud providers is not
+   the install itself is refused while a voice session is open or local voice is in use. A swap
+   retires the old providers (`FasterWhisperStt` / `KokoroTts` `retire()`: `ensureProcess`
+   rejects afterwards), so a session holding the old provider cannot respawn a helper from the
+   old venv. `dispose()` alone still only stops the current helper and ends the open utterance
+   (ADR 0091's STT crash handling starts a new helper after it). A voice session using only cloud providers is not
    refused during an install: it does not touch the venv.
 
 ## Consequences
