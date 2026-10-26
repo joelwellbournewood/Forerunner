@@ -48,7 +48,7 @@ bar (the header fix, ee056ae, is not confirmed on the phone).
   misses the 1.2 s target (GPU median 1383 ms, then 2139 ms, 4 turns each; CPU about 4 s). Not
   tested on Linux or with cloud voice providers.
 - **GitHub:** V.8's one live attempt failed on the bearer header; the fix is included, the live
-  re-run is pending. That run uses a token with admin rights, which the human chose to keep.
+  re-run is pending. That run uses a token with admin rights, which the human chose to keep (reported 2026-10-26).
   Every other pull request in testing went to the fake git host.
 - **Desktop app:** the installers were built and published, but no record shows the installed
   MSI, AppImage or `.deb` being run. No real Linux desktop session was tested. The MSI is
@@ -298,8 +298,9 @@ sections carry the detail.
   the build the app polls as before. Workaround: the inbox and approvals poll.
 - Upgrading from a release candidate: a `.deb` or APK of 1.0.0 may not be offered over
   1.0.0-rc.N. dpkg ranks the candidate higher. On Android, rc.3, rc.4 and 1.0.0 all carry
-  versionCode 1000000, because the code ignores the pre-release part of the version.
-  Workaround: uninstall the candidate first.
+  versionCode 1000000, because the code ignores the pre-release part of the version. R.1
+  showed an APK with an equal code installs over a candidate (rc.4 over rc.3), so the code
+  does not tell the builds apart. For the `.deb` (not tested): uninstall the candidate first.
 - On rc.3 the Android app's header sat under the status bar. ee056ae pads the WebView below the
   status bar and above the navigation bar; the fix is not confirmed on a phone.
 - The voice panel's heard-first-audio figure can be slightly low for hotkey turns and some
@@ -309,6 +310,9 @@ sections carry the detail.
   GPU profile where a card exists; text chat (first token median 682 ms).
 - The speech-recognition helper crashed once with 0xC0000005 on Windows on a first utterance;
   the cause is not proven. It restarts and retries the utterance. Workaround: say it again.
+- The setup wizard's GitHub check lists "Workflows: read (to see CI results)". The code reads
+  commit statuses and check runs, not Actions: grant "Commit statuses: read" (setup guide).
+  Workaround: follow the setup guide's permission table.
 
 ## [1.0.0-rc.4] - 2026-10-26
 

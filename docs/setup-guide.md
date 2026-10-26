@@ -108,7 +108,7 @@ checkout). It never asks for something without saying what it is for:
    wrong. GitHub's Workflows permission is for changing workflow files, and Forerunner does not
    need it. Forerunner reads CI results in two ways: check runs (for CI-triggered sessions) and
    the combined commit status (before a merge). GitHub's API documentation names "Checks: read"
-   for check runs, but GitHub's list of fine-grained token permissions has no Checks entry. So
+   for check runs, but GitHub's list of fine-grained token permissions does not appear to include Checks. So
    CI-triggered sessions may not see check runs on a private repository with a fine-grained
    token. This was not tested against GitHub. "Actions: read" is not used by Forerunner.
 
