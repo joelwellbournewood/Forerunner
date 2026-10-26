@@ -39,8 +39,16 @@ import {
  * (`voice.turn`, or the polled session after the release) completes the lines and never adds
  * them twice (the lines of a voice turn are keyed by session and turn).
  *
- * "Reply: voice / text" (remembered per install, default voice) is sent with every press and
- * session start: in text the daemon calls no TTS and plays nothing, the reply streams as text
+ * For a screen reader the visible lines are not a live region (they change with every delta);
+ * a visually hidden `role="log"` announces the human's final words, each finished sentence and
+ * the end of each reply (cut short or not), once each.
+ *
+ * Without the event stream (no EventSource) the lines come from the polled session only: every
+ * ended turn in its `recentTurns` is applied, so a turn cut short by a barge-in while the panel
+ * waited for it still shows.
+ *
+ * "Reply in text" (a toggle with `aria-pressed`, remembered per install, default off) is sent
+ * with the session start and every press: in text the daemon calls no TTS and plays nothing, the reply streams as text
  * and the turn ends when it is complete. While a reply is generated or spoken Talk stays
  * available: the press is the barge-in (in text it stops the generation, as a typed stop does).
  */
@@ -88,6 +96,8 @@ const nextId = () => `c${++counter}`;
 /** How long to wait for a released turn to finish: 120 polls of 500 ms. */
 const TURN_POLLS = 120;
 const TURN_POLL_MS = 500;
+/** Announcements kept in the hidden log (older ones have been read already). */
+const ANNOUNCE_KEEP = 20;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -114,6 +124,14 @@ export function ConversationPanel({
   const [lines, setLines] = useState<Line[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // What the screen reader announces (finished sentences, final words, turn ends), newest last.
+  const [announced, setAnnounced] = useState<Array<{ id: string; text: string }>>([]);
+  const announce = useCallback((text: string) => {
+    if (!text) return;
+    setAnnounced((prev) => [...prev, { id: nextId(), text }].slice(-ANNOUNCE_KEEP));
+  }, []);
+  // The voice turns whose record has been applied (`<session>:<turn>`).
+  const appliedRef = useRef(new Set<string>());
   const uiStore = useUiStore();
   const replyMode = useUiState((s) => s.voiceReply);
   const replyRef = useRef<VoiceReplyMode>(replyMode);
@@ -176,6 +194,7 @@ export function ConversationPanel({
   /** The turn's record (the `voice.turn` frame or the polled session): completes its lines. */
   const applyRecord = useCallback(
     (sessionId: string, turn: VoiceTurnView) => {
+      appliedRef.current.add(`${sessionId}:${turn.turn}`);
       upsertTurnLine(sessionId, turn.turn, "human", (l) =>
         l
           ? { ...l, text: turn.said || l.text || "(nothing heard)", partial: false, done: true }
@@ -189,14 +208,21 @@ export function ConversationPanel({
       );
       upsertTurnLine(sessionId, turn.turn, "agent", (l) => {
         const error = turn.error ? { error: turn.error.message } : {};
-        if (l) return { ...l, ...error, reply: turn.replyMode, speaking: null, done: true };
+        // The mark stays until the window has played the sentence (`onSpeakingEnd`), unless the
+        // reply was cut short.
+        const speaking = turn.interrupted ? { speaking: null } : {};
+        if (l) return { ...l, ...error, ...speaking, reply: turn.replyMode, done: true };
+        const text = turn.heard || turn.reply?.reply || "";
+        const unspoken = turn.interrupted && turn.unspokenText ? turn.unspokenText : "";
+        // Nothing heard, no reply, no error: no empty "Agent:" line.
+        if (!text && !unspoken && !turn.error) return null;
         return {
           id: nextId(),
           role: "agent",
-          text: turn.heard || turn.reply?.reply || "",
+          text,
           via: "voice",
           reply: turn.replyMode,
-          ...(turn.interrupted && turn.unspokenText ? { unspoken: turn.unspokenText } : {}),
+          ...(unspoken ? { unspoken } : {}),
           ...error,
           done: true,
         };
@@ -222,6 +248,7 @@ export function ConversationPanel({
           });
           return;
         case "transcript_final":
+          announce(`You: ${str(data.text) || "(nothing heard)"}`);
           upsertTurnLine(sessionId, turn, "human", (l) => ({
             ...(l ?? { id: nextId(), role: "human", via: "voice" }),
             text: str(data.text) || "(nothing heard)",
@@ -247,6 +274,7 @@ export function ConversationPanel({
           const index = typeof data.index === "number" ? data.index : -1;
           const text = str(data.text);
           if (index < 0) return;
+          announce(text);
           upsertTurnLine(sessionId, turn, "agent", (l) => {
             const base: Line = l ?? {
               id: nextId(),
@@ -271,10 +299,18 @@ export function ConversationPanel({
           const interrupted = latency?.interrupted === true || entry?.interrupted === true;
           const reply: VoiceReplyMode | undefined =
             data.replyMode === "text" || data.replyMode === "voice" ? data.replyMode : undefined;
+          if (unspoken) announce("Reply interrupted; the rest was not spoken.");
+          else if (interrupted) announce("Reply stopped.");
+          else if (entry) announce("End of reply.");
           upsertTurnLine(sessionId, turn, "agent", (l) => {
             if (!l && !entry && !unspoken) return null;
             const base: Line = l ?? { id: nextId(), role: "agent", text: "", via: "voice" };
-            const withMode = { ...base, speaking: null, ...(reply ? { reply } : {}) };
+            // A reply that ended normally keeps its mark until the window has played it.
+            const withMode = {
+              ...base,
+              ...(interrupted || unspoken ? { speaking: null } : {}),
+              ...(reply ? { reply } : {}),
+            };
             if (unspoken) return { ...withMode, text: str(entry?.text), unspoken };
             if (interrupted) return { ...withMode, stopped: true };
             if (!withMode.sentences && entry) return { ...withMode, text: str(entry.text) };
@@ -291,15 +327,23 @@ export function ConversationPanel({
           return;
       }
     },
-    [applyRecord, upsertTurnLine],
+    [announce, applyRecord, upsertTurnLine],
   );
 
+  // The window plays a reply after the daemon's turn ended (its buffer): the mark follows
+  // what is heard, so a line already done still takes it.
   const onSpeaking = useCallback(
     (sessionId: string, turn: number, sentenceIndex: number) =>
       upsertTurnLine(sessionId, turn, "agent", (l) =>
-        l && !l.done && l.unspoken === undefined && !l.stopped
-          ? { ...l, speaking: sentenceIndex }
-          : null,
+        l && l.unspoken === undefined && !l.stopped ? { ...l, speaking: sentenceIndex } : null,
+      ),
+    [upsertTurnLine],
+  );
+
+  const onSpeakingEnd = useCallback(
+    (sessionId: string, turn: number) =>
+      upsertTurnLine(sessionId, turn, "agent", (l) =>
+        l && l.speaking !== null && l.speaking !== undefined ? { ...l, speaking: null } : null,
       ),
     [upsertTurnLine],
   );
@@ -327,14 +371,16 @@ export function ConversationPanel({
       return;
     }
     try {
-      const status = await client.voiceStatus();
-      if (closed()) return;
-      if (!status.available) {
-        unavailable(`voice is unavailable: ${status.reason}. Type instead.`);
-        return;
-      }
       let session = sessionRef.current;
+      // A live session needs no status read: the press goes out first, so a barge-in reaches
+      // the daemon without waiting for it.
       if (!session || session.endedAt) {
+        const status = await client.voiceStatus();
+        if (closed()) return;
+        if (!status.available) {
+          unavailable(`voice is unavailable: ${status.reason}. Type instead.`);
+          return;
+        }
         session = await client.startVoiceSession({
           mode: "push_to_talk",
           replyMode: replyRef.current,
@@ -357,6 +403,7 @@ export function ConversationPanel({
           output,
           onFrame: (f) => onFrame(sessionId, f),
           onSpeaking: (turn, index) => onSpeaking(sessionId, turn, index),
+          onSpeakingEnd: (turn) => onSpeakingEnd(sessionId, turn),
           ...(realtime?.now ? { now: realtime.now } : {}),
         });
         // No EventSource: no player to own the output.
@@ -364,16 +411,10 @@ export function ConversationPanel({
       }
       turnsRef.current = session.turns;
       const id = session.id;
-      // The reply mode goes with the press only when it changed since the session last said.
-      const mode = replyRef.current;
-      const pressedView = await client.voicePress(
-        id,
-        true,
-        session.replyMode !== mode ? mode : undefined,
-      );
-      if (sessionRef.current?.id === id && pressedView?.replyMode) {
-        sessionRef.current = { ...sessionRef.current, replyMode: pressedView.replyMode };
-      }
+      // Every press says how its turn replies.
+      const pressedView = await client.voicePress(id, true, replyRef.current);
+      // The press started this turn: nothing of an earlier one plays any more.
+      if (typeof pressedView?.turn === "number") playerRef.current?.silenceBefore(pressedView.turn);
       // Closing stopped the session (it was in sessionRef by then); nothing else to undo.
       if (closed()) return;
       audioRef.current = Promise.resolve();
@@ -410,6 +451,7 @@ export function ConversationPanel({
     client,
     onFrame,
     onSpeaking,
+    onSpeakingEnd,
     realtime,
     setPhaseBoth,
     unavailable,
@@ -442,10 +484,14 @@ export function ConversationPanel({
       }
       if (superseded()) return;
       sessionRef.current = view;
-      const turn = view.turns > turnsRef.current ? view.lastTurn : null;
       turnsRef.current = view.turns;
-      // The stream usually showed the turn already; the record completes it (never twice).
-      if (turn) applyRecord(session.id, turn);
+      // Every ended turn not applied yet, not only the last: a turn cut short by a barge-in
+      // while this panel waited for it is in there too. The stream usually showed them
+      // already; the record completes them (never twice).
+      const recent = view.recentTurns ?? (view.lastTurn ? [view.lastTurn] : []);
+      for (const t of recent) {
+        if (!appliedRef.current.has(`${session.id}:${t.turn}`)) applyRecord(session.id, t);
+      }
       setPhaseBoth("idle");
     } catch (error) {
       if (superseded()) return;
@@ -517,6 +563,7 @@ export function ConversationPanel({
         },
       );
       setLines((prev) => prev.map((l) => (l.id === agentLine ? { ...l, text: reply.reply } : l)));
+      announce(`Agent: ${reply.reply}`);
     } catch (error) {
       const message = describeError(error);
       setLines((prev) => prev.map((l) => (l.id === agentLine ? { ...l, error: message } : l)));
@@ -578,10 +625,10 @@ export function ConversationPanel({
               })
             }
             aria-pressed={replyMode === "text"}
-            title="How the agent replies to what you say: spoken, or as text only (no audio). Applies from your next turn."
+            title="When on, the agent answers what you say in text only, without speech. Applies from your next turn."
             data-testid="voice-reply-mode"
           >
-            Reply: {replyMode}
+            Reply in text
           </Button>
         </div>
         {reason ? (
@@ -615,6 +662,12 @@ export function ConversationPanel({
                 <span className="text-red-700 dark:text-red-300"> ({l.error})</span>
               ) : null}
             </p>
+          ))}
+        </div>
+        {/* What a screen reader hears: final words, finished sentences, turn ends (not deltas). */}
+        <div className="sr-only" role="log" aria-live="polite" data-testid="conversation-announcer">
+          {announced.map((a) => (
+            <p key={a.id}>{a.text}</p>
           ))}
         </div>
         <form onSubmit={submit} className="flex gap-2">
@@ -684,7 +737,7 @@ function LineText({ line }: { line: Line }) {
           <Fragment key={s.index}>
             {n > 0 ? " " : null}
             <span
-              {...(speaking ? { "data-speaking": "true" } : {})}
+              {...(speaking ? { "data-speaking": "true", "aria-current": true } : {})}
               className={speaking ? "rounded bg-amber-100 dark:bg-amber-900/40" : undefined}
             >
               {s.text}

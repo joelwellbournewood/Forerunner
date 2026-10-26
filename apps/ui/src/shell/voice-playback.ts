@@ -57,7 +57,13 @@ import { type AudioOutput, decodeFrame } from "../lib/speech.ts";
  * transcript or a reply delta twice. `onSpeaking(turn, sentenceIndex)` says when a sentence's
  * first chunk starts at the speaker (its scheduled start, by a timer on the page), so the panel
  * marks the sentence being heard rather than the one the daemon is synthesising; silencing
- * cancels what was not announced yet. A turn replied in text has no audio frames: nothing plays
+ * cancels what was not announced yet. `onSpeakingEnd(turn)` says the last chunk scheduled for
+ * the turn has played out (its node ended), which can be well after the daemon's `turn_end`.
+ *
+ * A press silences more than the turn being played: `interrupt()` drops every turn up to the
+ * newest one any frame has named (a turn barged in on while still thinking has no audio yet,
+ * and its late chunks must not play), and `silenceBefore(turn)` (the press's answer names the
+ * new turn) drops every earlier one, even a turn no frame has named yet. A turn replied in text has no audio frames: nothing plays
  * and nothing is measured (the release is forgotten at its `turn_end`).
  */
 export interface VoiceReplyPlayer {
@@ -72,6 +78,8 @@ export interface VoiceReplyPlayer {
    * (its buffer and lead), and a press then reaches no reply to barge in on.
    */
   interrupt(): void;
+  /** Drop every turn before `turn` (the turn a press just started): none of it plays. */
+  silenceBefore(turn: number): void;
   /** Silence what is queued and stop following the session; closes the audio output. */
   close(): void;
   /** The jitter buffer's current target in ms (grows after an underrun; diagnostics). */
@@ -100,6 +108,8 @@ export interface VoiceReplyOptions {
   onFrame?: (frame: VoiceStreamFrame) => void;
   /** A sentence's first chunk starts at the speaker now. */
   onSpeaking?: (turn: number, sentenceIndex: number) => void;
+  /** The last chunk scheduled for the turn has played out. */
+  onSpeakingEnd?: (turn: number) => void;
   eventSource?: EventSourceFactory | undefined;
   /**
    * The audio output, created in the Talk click or the hotkey press (`createVoiceOutput`) so
@@ -213,6 +223,10 @@ export function followVoiceReply(
   const speakingTimers = new Set<() => void>();
   /** Turns cut short: their late frames are not played. */
   const silenced = new Set<number>();
+  /** Every turn up to this one is silenced (a press). */
+  let silencedUpTo = 0;
+  /** The newest turn any frame named. */
+  let maxTurnSeen = 0;
   /** The highest turn that played audio; a release measures the first turn after it. */
   let lastAudioTurn = 0;
   let release: { atMs: number; afterTurn: number } | null = null;
@@ -289,7 +303,18 @@ export function followVoiceReply(
       const node = audio.createBufferSource();
       node.buffer = buffer;
       node.connect(audio.destination);
-      node.onended = () => queued.delete(node);
+      node.onended = () => {
+        queued.delete(node);
+        // The turn's last scheduled chunk has played: nothing of it is heard any more.
+        if (
+          queued.size === 0 &&
+          pending.length === 0 &&
+          turn !== null &&
+          turn === playingTurn &&
+          !closed
+        )
+          options.onSpeakingEnd?.(turn);
+      };
       node.start(at);
       queued.add(node);
       at += buffer.duration;
@@ -305,7 +330,7 @@ export function followVoiceReply(
 
   const play = (turn: number | null, frame: AudioFrame) => {
     if (!audio) return;
-    if (turn !== null && silenced.has(turn)) return;
+    if (turn !== null && (silenced.has(turn) || turn <= silencedUpTo)) return;
     const channels = decodeFrame(frame);
     const frames = channels[0]?.length ?? 0;
     if (frames === 0 || !(frame.sampleRate > 0)) return;
@@ -369,6 +394,7 @@ export function followVoiceReply(
       lastSeq = parsed.seq;
     }
     const turn = typeof parsed.turn === "number" ? parsed.turn : null;
+    if (turn !== null) maxTurnSeen = Math.max(maxTurnSeen, turn);
     if (parsed.type !== "audio" && typeof parsed.type === "string" && options.onFrame) {
       try {
         options.onFrame({
@@ -431,6 +457,12 @@ export function followVoiceReply(
     interrupt() {
       if (closed) return;
       silence();
+      silencedUpTo = Math.max(silencedUpTo, maxTurnSeen);
+    },
+    silenceBefore(turn: number) {
+      if (closed) return;
+      silencedUpTo = Math.max(silencedUpTo, turn - 1);
+      if (playingTurn !== null && playingTurn < turn) silence();
     },
     close() {
       if (closed) return;

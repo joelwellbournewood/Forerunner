@@ -100,6 +100,17 @@ describe("mode derivation", () => {
     expect(
       eventSample({ ...base, type: "voice.turn", payload: { latency: { firstAudioMs: null } } }),
     ).toBeNull();
+    // A turn replied in text played nothing: not a first-audio sample, whatever its row holds.
+    expect(
+      eventSample({
+        ...base,
+        type: "voice.turn",
+        payload: {
+          replyMode: "text",
+          latency: { totalToFirstAudioMs: 640, modelFirstTokenMs: 400 },
+        },
+      }),
+    ).toBeNull();
     expect(eventSample({ ...base, type: "chat.human", payload: { ttftMs: 1 } })).toBeNull();
   });
 });

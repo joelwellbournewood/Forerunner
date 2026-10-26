@@ -789,6 +789,9 @@ export function eventSample(e: EventRow): PerfSample | null {
     };
   }
   if (e.type === "voice.turn") {
+    // A text reply played nothing: no first audio to sample (its first token is not a
+    // voice_chat figure either; text_chat counts the typed chat's replies).
+    if (p.replyMode === "text") return null;
     const firstAudio = num(obj(p.latency).totalToFirstAudioMs);
     if (firstAudio === null) return null;
     return {

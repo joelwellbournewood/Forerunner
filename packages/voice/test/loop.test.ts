@@ -1011,4 +1011,38 @@ describe("VoiceLoop text replies (replyMode: text)", () => {
     ]);
     expect(events.filter((e) => e.type === "audio" && e.turn === 2)).toHaveLength(0);
   });
+
+  it("a turn keeps the mode it started with: a switch during the capture applies to the next turn", async () => {
+    const { clock, loop, events, tts } = setup({
+      scripts: [{ final: "first" }, { final: "" }],
+    });
+    loop.pressStart();
+    expect(events.find((e) => e.type === "turn_start")).toMatchObject({
+      turn: 1,
+      replyMode: "voice",
+    });
+    loop.setReplyMode("text"); // while the human still speaks
+    for (const c of speech(400)) loop.push(c);
+    clock.tickMonotonic(20);
+    loop.pressEnd();
+    await runUntilIdle(loop, clock);
+    expect(tts.calls.length).toBeGreaterThan(0);
+    const firstEnd = events.find((e) => e.type === "turn_end" && e.turn === 1);
+    expect(firstEnd).toMatchObject({ replyMode: "voice" });
+    // An empty transcript (no reply at all) reports the mode its turn started with, not the
+    // mode in force when it ended.
+    loop.pressStart();
+    expect(events.filter((e) => e.type === "turn_start").at(-1)).toMatchObject({
+      turn: 2,
+      replyMode: "text",
+    });
+    loop.setReplyMode("voice");
+    clock.tickMonotonic(20);
+    loop.pressEnd();
+    await runUntilIdle(loop, clock);
+    expect(events.find((e) => e.type === "turn_end" && e.turn === 2)).toMatchObject({
+      replyMode: "text",
+      entry: null,
+    });
+  });
 });

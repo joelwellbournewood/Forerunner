@@ -168,6 +168,8 @@ export class VoiceRelay {
       ...(projectId ? { projectId } : {}),
       ...(req.language ? { language: req.language } : {}),
       mode: "push_to_talk",
+      // The phone reads back what the PC spoke: a window must not switch this session to text.
+      replyModeLocked: true,
     });
     this.held.set(req.deviceId, { session, projectId, lastUsed: this.opts.clock.now() });
     return session;

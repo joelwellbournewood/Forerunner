@@ -902,12 +902,63 @@ describe("voice routes on the composed daemon", () => {
       ),
     );
     expect(again.replyMode).toBe("text");
-    expect(VoiceSessionView.parse(await json(await req(`/voice/sessions/${id}`))).replyMode).toBe(
-      "text",
-    );
+    const view = VoiceSessionView.parse(await json(await req(`/voice/sessions/${id}`)));
+    expect(view.replyMode).toBe("text");
+    // The recent turns, oldest first: a shell that missed a turn (a barge-in while it polled,
+    // no event stream) completes it from here, not only from lastTurn.
+    expect(view.recentTurns.map((t) => [t.turn, t.replyMode])).toEqual([
+      [typed.turn, "text"],
+      [released.turn, "voice"],
+      [again.turn, "text"],
+    ]);
+    expect(view.lastTurn?.turn).toBe(again.turn);
     expect(
       (await post(`/voice/sessions/${id}/press`, { pressed: true, replyMode: "loud" })).status,
     ).toBe(409);
+    // The mode is the turn's, chosen when it starts: a release cannot change it.
+    expect(
+      (await post(`/voice/sessions/${id}/press`, { pressed: false, replyMode: "voice" })).status,
+    ).toBe(409);
+    expect(VoiceSessionView.parse(await json(await req(`/voice/sessions/${id}`))).replyMode).toBe(
+      "text",
+    );
+    expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
+  });
+
+  it("reply mode text with a card pending: the read-back streams as text, the yes confirms, nothing is synthesised", async () => {
+    const started = VoiceSessionView.parse(
+      await json(await post("/voice/sessions", { projectId, language: "en", replyMode: "text" })),
+    );
+    const id = started.id;
+    const ttsBefore = tts.calls.length;
+    const ask = VoiceTurnView.parse(
+      await json(
+        await drive(
+          clock,
+          post(`/voice/sessions/${id}/text`, { text: "Give it 20 francs tonight." }),
+        ),
+      ),
+    );
+    const card = ask.pending;
+    expect(card).toMatchObject({ decision: "needs_yes", commands: ["budget.set"] });
+    expect(ask.replyMode).toBe("text");
+    // The read-back reaches the panel as text: the turn's deltas carry it.
+    const deltas = (await events(id))
+      .filter((e) => e.turn === ask.turn && e.type === "model_delta")
+      .map((e) => (e.data as { text: string }).text)
+      .join("");
+    expect(deltas).toContain(card?.readback ?? "(no card)");
+    const yes = VoiceTurnView.parse(
+      await json(
+        await drive(clock, post(`/voice/sessions/${id}/text`, { text: "Yes, go ahead." })),
+      ),
+    );
+    expect(yes.approval).toMatchObject({ approved: true, method: "spoken", status: "done" });
+    expect(yes.pending).toBeNull();
+    expect(yes.replyMode).toBe("text");
+    expect(yes.heard).toBe(yes.outcome?.sentence);
+    // Neither the read-back nor the registry's sentence went to the TTS.
+    expect(tts.calls).toHaveLength(ttsBefore);
     expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
   });
 

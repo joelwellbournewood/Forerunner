@@ -59,7 +59,8 @@ export interface TranscriptEntry {
 
 export type VoiceLoopEvent =
   | { type: "state"; state: VoiceLoopState; turn: number }
-  | { type: "turn_start"; turn: number }
+  /** `replyMode`: how this turn's reply goes out, taken when the turn starts. */
+  | { type: "turn_start"; turn: number; replyMode: ReplyMode }
   | { type: "transcript_partial"; turn: number; text: string }
   | { type: "transcript_final"; turn: number; text: string; entry: TranscriptEntry }
   | { type: "model_delta"; turn: number; text: string }
@@ -128,6 +129,8 @@ interface Capture {
   final: Promise<Extract<SttEvent, { type: "final" }>>;
   lastAudioAt: number;
   userPcm: Int16Array[];
+  /** The turn's reply mode, taken when the capture opened. */
+  replyMode: ReplyMode;
 }
 
 interface Response {
@@ -209,7 +212,10 @@ export class VoiceLoop {
     return this.replyModeValue;
   }
 
-  /** From the next reply on; a reply already under way keeps the mode it started with. */
+  /**
+   * From the next turn on: a turn takes the mode when it starts (its capture opens), so a
+   * switch while the human speaks or the reply runs leaves that turn alone.
+   */
   setReplyMode(mode: ReplyMode): void {
     this.replyModeValue = mode;
   }
@@ -380,10 +386,11 @@ export class VoiceLoop {
       final,
       lastAudioAt: this.clock.monotonic(),
       userPcm: [],
+      replyMode: this.replyModeValue,
     };
     this.capture = cap;
     this.setState("listening");
-    this.emit({ type: "turn_start", turn });
+    this.emit({ type: "turn_start", turn, replyMode: cap.replyMode });
     for (const c of preRoll) {
       session.push(c);
       if (this.store) cap.userPcm.push(toMono16(c, CAPTURE_RATE));
@@ -453,7 +460,7 @@ export class VoiceLoop {
       ]);
     } catch (e) {
       if (stopSignal.aborted) {
-        this.endStopped(cap.turn, endOfTurnMs, null);
+        this.endStopped(cap, endOfTurnMs, null);
         return;
       }
       throw e;
@@ -465,7 +472,7 @@ export class VoiceLoop {
     const finalTranscriptMs = tFinal - tEnd;
     if (stopSignal.aborted) {
       // The final arrived in the same tick as stop(): keep nothing, call no model.
-      this.endStopped(cap.turn, endOfTurnMs, finalTranscriptMs);
+      this.endStopped(cap, endOfTurnMs, finalTranscriptMs);
       return;
     }
 
@@ -506,7 +513,7 @@ export class VoiceLoop {
       this.emit({
         type: "turn_end",
         turn: cap.turn,
-        replyMode: this.replyModeValue,
+        replyMode: cap.replyMode,
         latency,
         entry: null,
       });
@@ -516,18 +523,24 @@ export class VoiceLoop {
 
     if (stopSignal.aborted) {
       await userWrite;
-      this.endStopped(cap.turn, endOfTurnMs, finalTranscriptMs);
+      this.endStopped(cap, endOfTurnMs, finalTranscriptMs);
       return;
     }
     try {
-      await this.respond(cap.turn, final.text, { tEnd, tFinal, endOfTurnMs, finalTranscriptMs });
+      await this.respond(cap.turn, cap.replyMode, final.text, {
+        tEnd,
+        tFinal,
+        endOfTurnMs,
+        finalTranscriptMs,
+      });
     } finally {
       await userWrite;
     }
   }
 
   /** stop() while waiting for the transcript: end the turn without a model call. */
-  private endStopped(turn: number, endOfTurnMs: number, finalTranscriptMs: number | null): void {
+  private endStopped(cap: Capture, endOfTurnMs: number, finalTranscriptMs: number | null): void {
+    const turn = cap.turn;
     const latency = buildLatencyReport(
       {
         turn,
@@ -541,12 +554,13 @@ export class VoiceLoop {
       this.opts.targets,
     );
     this.latencies.push(latency);
-    this.emit({ type: "turn_end", turn, replyMode: this.replyModeValue, latency, entry: null });
+    this.emit({ type: "turn_end", turn, replyMode: cap.replyMode, latency, entry: null });
     if (this.turn === turn && this.stateValue === "transcribing") this.setState("idle");
   }
 
   private async respond(
     turn: number,
+    replyMode: ReplyMode,
     transcript: string,
     t: { tEnd: number; tFinal: number; endOfTurnMs: number; finalTranscriptMs: number },
   ): Promise<void> {
@@ -562,8 +576,7 @@ export class VoiceLoop {
       abortedBy: null,
     };
     this.response = res;
-    // Taken once: a switch while this reply runs applies from the next one.
-    const replyMode = this.replyModeValue;
+    // The turn's own mode (taken when it started): a switch since then applies to the next one.
     const speak = replyMode === "voice";
     this.setState("thinking");
 

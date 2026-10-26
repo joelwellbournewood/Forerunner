@@ -1158,6 +1158,8 @@ export const VOICE_STATES = ["idle", "listening", "transcribing", "thinking", "s
  * heard figure; the turn ends when the text is complete and a press stops the generation.
  */
 export const VOICE_REPLY_MODES = ["voice", "text"] as const;
+/** How many ended turns `VoiceSessionView.recentTurns` carries. */
+export const VOICE_RECENT_TURNS = 8;
 export type VoiceReplyModeName = (typeof VOICE_REPLY_MODES)[number];
 
 /** The provider the registry's policy picked, with the reason the Extensions panel shows. */
@@ -1404,6 +1406,12 @@ export const VoiceSessionView = z.object({
   endedAt: z.string().nullable(),
   turns: z.number().int(),
   lastTurn: VoiceTurnView.nullable(),
+  /**
+   * The last `VOICE_RECENT_TURNS` ended turns, oldest first (`lastTurn` is the last of them):
+   * a shell without the event stream that missed a turn (a barge-in while it waited for the
+   * previous one) completes its lines from here.
+   */
+  recentTurns: z.array(VoiceTurnView),
   /** The last event's seq, for `GET /voice/sessions/:id/events?afterSeq=`. */
   lastSeq: z.number().int(),
 });

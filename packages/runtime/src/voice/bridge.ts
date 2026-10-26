@@ -82,6 +82,11 @@ export interface VoiceBridgeOptions {
    * press or typed line that names one) changes it from the next reply.
    */
   replyMode?: ReplyMode;
+  /**
+   * The session is held by the phone relay (`relay.ts`): the phone reads back what the PC
+   * spoke, so its replies stay spoken and a reply mode from a route is refused.
+   */
+  replyModeLocked?: boolean;
   stt: SttProvider;
   tts: TtsProvider;
   /** Playback target; default `pacedSink(clock)` (the shell plays the `audio` events). */
@@ -298,9 +303,15 @@ export class VoiceBridge {
     return this.loop.replyMode;
   }
 
-  /** From the next reply on; a reply under way keeps its mode. */
+  /** From the next turn on; a turn keeps the mode it started with. */
   setReplyMode(mode: ReplyMode): void {
     this.assertOpen();
+    if (this.opts.replyModeLocked && mode !== this.loop.replyMode) {
+      throw new ForerunnerError(
+        "validation",
+        "this voice session is held by the phone relay: its replies stay spoken",
+      );
+    }
     this.loop.setReplyMode(mode);
   }
 
@@ -325,12 +336,19 @@ export class VoiceBridge {
 
   /**
    * Push-to-talk pressed or released. While the agent speaks (or, replying in text, while it
-   * writes) a press is the barge-in. A `replyMode` sets how this turn's reply and the next ones
-   * go out.
+   * writes) a press is the barge-in. A `replyMode` with the press sets how the turn it starts
+   * replies, and the next ones; a release cannot carry one (the turn's mode is fixed when it
+   * starts).
    */
   press(pressed: boolean, replyMode?: ReplyMode): void {
     this.assertOpen();
-    if (replyMode) this.loop.setReplyMode(replyMode);
+    if (replyMode && !pressed) {
+      throw new ForerunnerError(
+        "validation",
+        "replyMode goes with a press (pressed: true): a turn's mode is fixed when it starts",
+      );
+    }
+    if (replyMode) this.setReplyMode(replyMode);
     if (pressed) {
       this.nextSource = "audio";
       this.loop.pressStart();
@@ -358,7 +376,7 @@ export class VoiceBridge {
     if (state === "listening" || state === "transcribing") {
       throw new ForerunnerError("validation", `a voice turn is ${state}; wait for it to end`);
     }
-    if (replyMode) this.loop.setReplyMode(replyMode);
+    if (replyMode) this.setReplyMode(replyMode);
     this.nextSource = "text";
     this.textStt.inject(line);
     this.loop.pressStart();
@@ -562,7 +580,7 @@ export class VoiceBridge {
       st = {
         turn,
         source: "audio",
-        // Until the reply starts: the mode it will go out in (the loop's turn_end confirms it).
+        // Set from the loop's turn_start (the turn's own mode); this is only a placeholder.
         replyMode: this.loop.replyMode,
         reply: null,
         approval: null,
@@ -585,6 +603,7 @@ export class VoiceBridge {
       case "turn_start": {
         const st = this.turnState(e.turn);
         st.source = this.nextSource;
+        st.replyMode = e.replyMode;
         this.nextSource = "audio";
         break;
       }

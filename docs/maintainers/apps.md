@@ -327,13 +327,17 @@ header's Talk button (opens without starting voice). Every voice request (a hotk
 palette, the panel's Talk button) toggles a push-to-talk turn through the daemon's `/voice`
 routes: `GET /voice/status`, then `POST /voice/sessions { mode: "push_to_talk", replyMode,
 projectId? }` once per panel (reused for later turns), `POST …/press { pressed: true,
-replyMode? }` (the mode only when it differs from the session's), the microphone
+replyMode }` (every press says it), the microphone
 (`shell/voice-capture.ts`: getUserMedia + ScriptProcessorNode, 16-bit LE mono PCM, base64)
 posted chunk by chunk to `…/audio`, one post after the other (the daemon appends chunks in
 arrival order); the next request (or Send) stops the capture, waits until every chunk of the
 turn was posted (the daemon's loop drops audio that arrives after the release), posts
 `{ pressed: false }` and polls `GET /voice/sessions/:id` (500 ms, at most 60 s) until the turn
-count grows; the turn's record (`said`, `heard`, the error) then completes the turn's lines.
+count grows; every ended turn in the answer's `recentTurns` not applied yet then completes its
+lines (not only `lastTurn`: without the event stream, a turn cut short by a barge-in while the
+panel waited for it would otherwise be lost), and a turn with nothing heard, no reply and no
+error adds no "Agent:" line. A press while a session is live posts the press first, with no
+status read before it, so a barge-in reaches the daemon at once.
 The text itself shows as it comes, from the session's event stream (below; the player hands
 every frame but `audio` to the panel's `onFrame` after its seq check, so a reconnect's replay
 shows nothing twice): the human's line from `transcript_partial` (italic, `data-partial`, as
@@ -342,23 +346,33 @@ is held, a cost the daemon pays anyway) and then `transcript_final`; the agent's
 first `model_delta`, each finished `sentence` its own span and the part of the next sentence
 generated so far after it (`consume` drops a sentence's text from that tail; the splitter's
 sentences are trimmed substrings of the deltas). The sentence being heard is marked
-(`data-speaking`, a highlight): the player's `onSpeaking(turn, sentenceIndex)` fires by a timer
-when a sentence's first chunk is due at the speaker (its scheduled start), not when the frame
-arrived, and silencing cancels what is not due yet. A reply cut short (its `turn_end` carries
+(`data-speaking`, a highlight, `aria-current`; not a live region): the player's
+`onSpeaking(turn, sentenceIndex)` fires by a timer when a sentence's first chunk is due at the
+speaker (its scheduled start), not when the frame arrived, and silencing cancels what is not due
+yet. The mark is cleared by the player's `onSpeakingEnd(turn)`, when the last node scheduled for
+the turn has ended, not at the daemon's `turn_end` (the window plays on after it); a reply cut
+short clears it at once. The visible lines are not a live region (they change with every
+delta); a visually hidden `role="log" aria-live="polite"` (`conversation-announcer`, the last 20)
+announces the human's final words, each finished `sentence`, the end of each reply ("End of
+reply.", "Reply interrupted; the rest was not spoken.", "Reply stopped.") and a typed chat's
+reply once it is complete. A reply cut short (its `turn_end` carries
 `unspokenText`) shows what was heard, then the unspoken rest struck through and labelled
 "(not spoken)" (`conversation-unspoken`); one stopped with nothing unspoken (a text reply)
 says "(stopped)". The lines of a voice turn are keyed by session and turn
 (`<session>:<turn>:<role>`): the `voice.turn` frame and the polled record update them and add
-them only when the stream showed nothing (no EventSource). **Reply: voice / text** (the
-`voice-reply-mode` button, `UiState.voiceReply`, remembered per install like the theme under
-`STORAGE_NAMES.voiceReply`, default voice) is sent with the session start, and with a press
-when it differs from the mode the session last reported (a toggle between turns); the daemon
-applies it from that turn's reply (`voice.md`, "Reply in text"). In text nothing
+them only when the stream showed nothing (no EventSource). **Reply in text** (the
+`voice-reply-mode` toggle, one fixed label with `aria-pressed`; `UiState.voiceReply`,
+remembered per install like the theme under `STORAGE_NAMES.voiceReply`, default off) is sent
+with the session start and with every press; the daemon applies it to the turn the press
+starts (`voice.md`, "Reply in text"). In text nothing
 plays and nothing is measured as heard (no audio frame comes; the release is forgotten at the
 turn's `turn_end`). While a reply is generated or spoken (phase `waiting`) Talk and the hotkey
 stay available: the press is the barge-in (`startTurn` bumps `waitRef`, so the release still
 polling for the previous turn stops without touching the phase), which in text stops the
-generation. The reply is
+generation. The press silences more than the turn being played: `player.interrupt()` drops every
+turn up to the newest one a frame named (the turn barged in on may still be thinking, with no
+audio yet), and `player.silenceBefore(turn)` with the turn the press's answer names drops every
+earlier one, so no late chunk of a turn cut short plays. The reply is
 also heard: from the session's start the panel follows `GET /voice/sessions/:id/events`
 (EventSource with `?token=`, `afterSeq` = the session's `lastSeq`; `shell/voice-playback.ts`)
 and plays every `audio` frame (base64 16-bit LE PCM at its `sampleRate` and `channels`,

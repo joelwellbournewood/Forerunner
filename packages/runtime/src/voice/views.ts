@@ -20,7 +20,7 @@ import type {
   VoiceStatusView,
   VoiceTurnView,
 } from "../daemon/api-types.ts";
-import { VOICE_MODES } from "../daemon/api-types.ts";
+import { VOICE_MODES, VOICE_RECENT_TURNS } from "../daemon/api-types.ts";
 import { money } from "../daemon/views.ts";
 import type { CommandResultView } from "../loop/ports.ts";
 import type { VoiceApproval, VoiceBridgeEntry, VoiceTurn } from "./bridge.ts";
@@ -133,6 +133,7 @@ export function voiceSessionView(s: VoiceSession, chf: number): VoiceSessionView
     endedAt: b.endedAt,
     turns: b.turns.length,
     lastTurn: b.lastTurn ? voiceTurnView(b.lastTurn, chf) : null,
+    recentTurns: b.turns.slice(-VOICE_RECENT_TURNS).map((t) => voiceTurnView(t, chf)),
     lastSeq: b.lastSeq,
   };
 }

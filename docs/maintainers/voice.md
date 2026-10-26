@@ -147,20 +147,32 @@ converse(transcript, signal) ──deltas──▶ SentenceSplitter ──senten
 ### Reply in text
 
 `replyMode` (`"voice" | "text"`, default `voice`; `REPLY_MODES`) decides how a reply goes out.
-`setReplyMode()` changes it from the next reply; a reply under way keeps the mode it started
-with (taken once in `respond()`). In `text` the loop runs the model and the sentence splitter
+`setReplyMode()` changes it from the next turn: a turn takes the mode when it starts (its
+capture opens, `turn_start` carries it) and keeps it through its reply and its `turn_end`,
+including a turn that ends without a reply (an empty transcript, a stop while transcribing),
+so a switch while the human speaks or the reply runs never relabels that turn. In `text` the loop runs the model and the sentence splitter
 as usual (the `model_delta` and `sentence` events) but no synthesis and no playback: the TTS
 is never called (no CPU for it, and a local helper is not even started), no `audio`,
 `speaking_start` or `speaking_end` event comes, the state goes `thinking` -> `idle`, and the
 turn ends when the text is complete. The latency report has `modelFirstTokenMs` and no first
-audio (`firstAudioMs`, `totalToFirstAudioMs`, `ttsFirstByteMs` null), so `/performance` (which
-counts voice turns by `totalToFirstAudioMs`) leaves text replies out. A barge-in (a press, or
+audio (`firstAudioMs`, `totalToFirstAudioMs`, `ttsFirstByteMs` null). `/performance` leaves
+text replies out on purpose (`eventSample` returns null for a `voice.turn` row with
+`replyMode: "text"`, whatever figures it holds): its voice row is `voice_chat`, first audio, and
+a text reply has none; its first token is not sampled under another mode either (`text_chat`
+is the typed chat's replies, which run at another effort), so text-reply turns have no
+response-time figure on that page yet. A barge-in (a press, or
 open-mic speech) stops the generation, as a typed stop does: the assistant entry keeps what was
 generated (it was shown), `interrupted: true`, no `unspokenText`. `turn_end` carries
-`replyMode`. The daemon's bridge takes the mode at the session start, with every press and
-with a typed line (`POST /voice/sessions`, `…/press`, `…/text` with `replyMode`; the session
-keeps the last one), writes it on the `voice.turn` row and the `VoiceTurnView`, and refuses a
-heard figure for a text turn (409: nothing was spoken). `voice-run report` leaves text replies
+`replyMode`. The daemon's bridge takes the mode at the session start, with a press
+(`pressed: true` only: a release carrying `replyMode` is refused, 409, since its turn's mode is
+already fixed) and with a typed line (`POST /voice/sessions`, `…/press`, `…/text` with
+`replyMode`; the session keeps the last one), takes each turn's mode from its `turn_start`,
+writes it on the `voice.turn` row and the `VoiceTurnView`, and refuses a heard figure for a
+text turn (409: nothing was spoken). A session the phone relay holds (`relay.ts`,
+`replyModeLocked`) keeps spoken replies: the phone reads back what the PC said, so a reply mode
+other than voice is refused on it. `VoiceSessionView.recentTurns` carries the last
+`VOICE_RECENT_TURNS` (8) ended turns, so a shell without the event stream that missed one (a
+barge-in while it waited) can still show it. `voice-run report` leaves text replies
 out of both first-audio figures and says how many (below).
 
 ### Latency budget (O.5, D.8)
@@ -605,7 +617,7 @@ device. Two first-audio figures are recorded per turn:
 
 ## Tests
 
-`pnpm vitest run --project unit packages/voice` (191 tests, a few seconds, no network); the
+`pnpm vitest run --project unit packages/voice` (192 tests, a few seconds, no network); the
 speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 `packages/runtime/test/notifications-voice.test.ts` (`FakeTts` on the simulated clock):
 
@@ -627,7 +639,7 @@ speaker over the registry is `packages/runtime/test/speak-route.test.ts` and
 | `test/python-device.test.ts` | `setup_cuda_libraries()` on a fake site-packages: Windows `add_dll_directory` and `PATH` for every `nvidia/*/bin`, Linux cuBLAS and the cuDNN loader preloaded, nothing without the wheels; the gpu profile's `--cpu-fallback` (loud, at load when warmed, reported by `resolved_device()`), an explicit cuda without it raising; `fr_tts.py`'s `KokoroEngine` on cuda falling back with the reason, raising without `--cpu-fallback`, `auto` left to Kokoro; the warm-up sentence on cuda falling back loudly when synthesis fails there, the CPU never warmed |
 | `test/cloud.test.ts` | Deepgram, Cartesia, ElevenLabs with fake transports replaying captured-shaped messages; keys only in headers, never in logs; ElevenLabs returns rather than throws when the abort makes the body reject |
 | `test/paced-sink.test.ts` | `pacedSink` keeps to real time when its timer wakes 12 ms late on every chunk (no drift over 30 chunks, never more than its lead ahead); the first 300 ms handed over at once, then paced; a late chunk restarts the play-head from now; `stop()` resets it; `drain()` waits for the play-head, at once on the abort or after `stop()` |
-| `test/loop.test.ts` | the reply's text before its audio (each `sentence` before its first `audio`, the deltas before that, the final transcript before the model); reply in text: no TTS call, no audio or speaking events, the turn ends with the text, no first audio; a press while the text streams stops the generation and keeps what was shown (no `unspokenText`); `setReplyMode` applies from the next reply; PTT turn where `totalToFirstAudio` equals the sum of scripted delays; pipelining order and overlap (chunks at once and spread over time); PTT and VAD barge-in within one chunk with a clean next turn; PTT ignores mic audio without a press while thinking and speaking; barge-in while thinking writes no empty assistant entry (`unspokenText` on `turn_end`); `unspokenText` with newline-separated model output; a TTS slow to honour its abort leaves the next turn's state alone and its entry lands in turn order; over-target flags; empty transcript; `stop()` while speaking and while transcribing (no model call, no TTS); spoken approval; STT error; converse ignoring its signal; failures: `converse()` throwing while audio plays (synthesis and playback aborted, `sink.stop()`, nothing but the idle transition after `turn_end`), throwing before audio (no late `speaking`), a failing TTS aborting the model signal with no further deltas; open-mic pre-roll and measured end of turn (200 ms in real time, 250 ms with a late chunk); audio storage on/off |
+| `test/loop.test.ts` | a turn keeps the mode it started with (a switch during the capture applies to the next turn; an empty transcript's `turn_end` reports its turn's mode); the reply's text before its audio (each `sentence` before its first `audio`, the deltas before that, the final transcript before the model); reply in text: no TTS call, no audio or speaking events, the turn ends with the text, no first audio; a press while the text streams stops the generation and keeps what was shown (no `unspokenText`); `setReplyMode` applies from the next reply; PTT turn where `totalToFirstAudio` equals the sum of scripted delays; pipelining order and overlap (chunks at once and spread over time); PTT and VAD barge-in within one chunk with a clean next turn; PTT ignores mic audio without a press while thinking and speaking; barge-in while thinking writes no empty assistant entry (`unspokenText` on `turn_end`); `unspokenText` with newline-separated model output; a TTS slow to honour its abort leaves the next turn's state alone and its entry lands in turn order; over-target flags; empty transcript; `stop()` while speaking and while transcribing (no model call, no TTS); spoken approval; STT error; converse ignoring its signal; failures: `converse()` throwing while audio plays (synthesis and playback aborted, `sink.stop()`, nothing but the idle transition after `turn_end`), throwing before audio (no late `speaking`), a failing TTS aborting the model signal with no further deltas; open-mic pre-roll and measured end of turn (200 ms in real time, 250 ms with a late chunk); audio storage on/off |
 
 Live validation of the cloud providers is **pending keys** (`docs/status/BLOCKERS.md`, row
 "Voice keys"): the message shapes come from the vendors' public API documentation, not from

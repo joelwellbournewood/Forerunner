@@ -439,6 +439,18 @@ describe("VoiceRelay over the daemon's voice sessions", () => {
     expect(relay.openSessions).toBe(2);
   });
 
+  it("a session the relay holds keeps spoken replies: a reply mode from the routes is refused", async () => {
+    const r = await drive(clock, relay.turn({ deviceId: "phone-3", transcript: "Note that." }));
+    const bridge = rt.voice.mustGet(r.sessionId).bridge;
+    expect(bridge.replyMode).toBe("voice");
+    // The phone reads the PC's spoken reply back; a window must not switch its session to text.
+    expect(() => bridge.setReplyMode("text")).toThrow(/relay/);
+    expect(() => bridge.press(true, "text")).toThrow(/relay/);
+    await expect(bridge.text("Hello", "text")).rejects.toThrow(/relay/);
+    expect(bridge.replyMode).toBe("voice");
+    expect(bridge.state).toBe("idle");
+  });
+
   it("refuses a turn with both or neither input, and closes its sessions", async () => {
     await expect(relay.turn({ deviceId: "phone-1" })).rejects.toThrow(/audio or a transcript/);
     await expect(

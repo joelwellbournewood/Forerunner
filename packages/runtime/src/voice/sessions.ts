@@ -65,6 +65,8 @@ export interface StartVoiceSessionOptions {
   mode?: VoiceMode;
   /** `voice` (default) speaks the replies; `text` streams them as text only (no TTS, no audio). */
   replyMode?: ReplyMode;
+  /** The phone relay's sessions: replies stay spoken, a reply mode is refused. */
+  replyModeLocked?: boolean;
 }
 
 export interface VoiceSessionsDeps {
@@ -191,6 +193,7 @@ export class VoiceSessions {
       ...(opts.language ? { language: opts.language } : {}),
       ...(opts.mode ? { mode: opts.mode } : {}),
       ...(opts.replyMode ? { replyMode: opts.replyMode } : {}),
+      ...(opts.replyModeLocked ? { replyModeLocked: true } : {}),
       stt: picked.stt.provider,
       tts: picked.tts.provider,
       ...(this.deps.sink ? { sink: this.deps.sink(this.deps.clock) } : {}),

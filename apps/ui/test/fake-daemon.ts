@@ -1219,13 +1219,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     chunks: number,
     replyMode: VoiceTurnView["replyMode"] = "voice",
   ): VoiceTurnView => {
-    const reply = chatReply(said, projectId);
+    // An empty transcript gets no reply at all (nothing heard, nothing said back).
+    const reply = said ? chatReply(said, projectId) : null;
     return {
       turn,
       source: "audio",
       replyMode,
       said,
-      heard: reply.reply,
+      heard: reply?.reply ?? "",
       reply,
       approval: null,
       outcome: null,
@@ -1285,6 +1286,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       endedAt: null,
       turns: 0,
       lastTurn: null,
+      recentTurns: [],
       lastSeq: 0,
     };
     state.voiceSessions.set(view.id, { view, pressed: false, chunks: 0 });
@@ -1299,29 +1301,53 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!v) return errorBody(c, 404, "not_found", "no such voice session");
     const parsed = VoicePressBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
-    if (parsed.data.replyMode) v.view = { ...v.view, replyMode: parsed.data.replyMode };
-    if (parsed.data.pressed) {
-      v.pressed = true;
-      v.chunks = 0;
-      v.view = { ...v.view, state: "listening" };
-    } else if (v.pressed) {
-      v.pressed = false;
-      const turn = v.view.turns + 1;
-      if (state.voiceHold) {
-        v.view = { ...v.view, state: "thinking", turn };
-        return c.json(v.view);
-      }
-      const said = state.nextVoiceLine ?? "what is next";
-      state.nextVoiceLine = null;
-      const last = voiceTurn(turn, said, v.view.projectId ?? undefined, v.chunks, v.view.replyMode);
+    if (parsed.data.replyMode && !parsed.data.pressed)
+      return errorBody(c, 409, "validation", "replyMode goes with a press");
+    const end = (turn: VoiceTurnView) => {
       v.view = {
         ...v.view,
-        state: "idle",
-        turn,
-        turns: turn,
-        lastTurn: last,
+        turns: v.view.turns + 1,
+        lastTurn: turn,
+        recentTurns: [...v.view.recentTurns, turn].slice(-8),
         lastSeq: v.view.lastSeq + 1,
       };
+    };
+    const said = () => {
+      const line = state.nextVoiceLine ?? "what is next";
+      state.nextVoiceLine = null;
+      return line;
+    };
+    if (parsed.data.replyMode) v.view = { ...v.view, replyMode: parsed.data.replyMode };
+    if (parsed.data.pressed) {
+      // A press while a held turn is still replying is the barge-in: that turn ends, cut short.
+      if (v.view.state === "thinking") {
+        const cut = voiceTurn(
+          v.view.turn,
+          said(),
+          v.view.projectId ?? undefined,
+          0,
+          v.view.replyMode,
+        );
+        end({
+          ...cut,
+          heard: "",
+          interrupted: true,
+          unspokenText: cut.reply?.reply ?? null,
+          latency: { ...cut.latency, interrupted: true },
+        });
+      }
+      v.pressed = true;
+      v.chunks = 0;
+      v.view = { ...v.view, state: "listening", turn: v.view.turn + 1 };
+    } else if (v.pressed) {
+      v.pressed = false;
+      const turn = v.view.turn;
+      if (state.voiceHold) {
+        v.view = { ...v.view, state: "thinking" };
+        return c.json(v.view);
+      }
+      end(voiceTurn(turn, said(), v.view.projectId ?? undefined, v.chunks, v.view.replyMode));
+      v.view = { ...v.view, state: "idle" };
     }
     return c.json(v.view);
   });
