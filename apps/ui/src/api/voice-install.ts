@@ -52,6 +52,13 @@ export async function startVoiceInstall(
   return VoiceInstallViewSchema.parse(await res.json());
 }
 
+/** Cancel the running install; resolves with the view once it has stopped. */
+export async function cancelVoiceInstall(client: DaemonClient): Promise<VoiceInstallView> {
+  const res = await client.raw({ method: "POST", path: routePath("cancelVoiceInstall"), body: {} });
+  if (!res.ok) throw await failure(res, "cancelling the voice install");
+  return VoiceInstallViewSchema.parse(await res.json());
+}
+
 /** Follow the job's events after `afterSeq` until the job ends (or `signal` aborts). */
 export async function followVoiceInstall(
   client: DaemonClient,

@@ -14,8 +14,9 @@ milestone of the 1.0 build; the steps there are the ones already in place.
   will work on. The first-run wizard tells you the exact scopes and where to click.
 - Optional: Docker Desktop (Windows) or Docker/Podman (Linux) so coding tasks run in a sandbox.
   Without it, Forerunner still works; tasks run in a process sandbox with fewer guarantees.
-- Optional, for talking to your agent by voice on this PC: Python 3.12 (not 3.11 or older,
-  not 3.13 yet), and for the fast option an NVIDIA graphics card with a current driver. Windows:
+- Optional, for talking to your agent by voice on this PC (Windows x64 or Linux x86_64; not
+  ARM): Python 3.12 (not 3.11 or older, not 3.13 yet), and for the fast option an NVIDIA
+  graphics card with a current driver. Windows:
   `winget install -e --id Python.Python.3.12`. Debian/Ubuntu:
   `sudo apt-get install -y python3.12 python3.12-venv`.
 

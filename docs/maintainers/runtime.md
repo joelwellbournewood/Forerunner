@@ -2164,7 +2164,9 @@ while another runs, a voice session is open or `localVoice.inUse()` is not zero;
 stops the local helpers right before an old venv is deleted; while a job runs `LocalVoice`'s
 `blocked` refuses new local sessions and sentences; `close()` cancels a running job (its
 AbortController kills the running process) before the voice sessions close. `ComposeOptions.voice.installRunner` replaces the process runner
-(tests). `voice.md`, "Voice profiles and the managed install", has the steps.
+(tests). `installVoice` refuses up front outside Windows x64 and Linux x86_64
+(`SUPPORTED_TARGETS`); `LocalVoice.release()` resets a use count a session left behind, with a
+warning, and a session's use ends at its final or error. `voice.md`, "Voice profiles and the managed install", has the steps.
 
 **Voice (`src/voice/`, spec O, Q.4, Q.5; ADR 0012, [ADR 0048](../decisions/0048-voice-bridge-in-the-daemon.md);
 `voice.md` has the loop and "How the shell reaches it").** `composeRuntime` builds one

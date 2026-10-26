@@ -11,8 +11,10 @@ soundfile==0.14.0
 numpy==2.5.4
 # misaki's English G2P loads this spaCy model and otherwise pip-installs it at first use.
 en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85
-# torch 2.11.0+cpu's own Requires-Dist (its wheel metadata, Windows and Linux alike): torch is
-# installed with --no-deps, so the lock carries them.
+# torch 2.11.0+cpu's own Requires-Dist: torch is installed with --no-deps, so the lock
+# carries them. The block is written by scripts/voice-lock.ts from the Windows and Linux wheels'
+# metadata (torch-requires.json records them); do not edit it by hand.
+# BEGIN torch-dependencies
 filelock
 typing-extensions>=4.10.0
 setuptools<82
@@ -20,3 +22,4 @@ sympy>=1.13.3
 networkx>=2.5.1
 jinja2
 fsspec>=0.8.5
+# END torch-dependencies

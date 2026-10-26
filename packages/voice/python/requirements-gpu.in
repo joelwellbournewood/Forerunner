@@ -15,8 +15,10 @@ nvidia-cublas-cu12==12.8.4.1
 nvidia-cudnn-cu12==9.19.0.56
 # misaki's English G2P loads this spaCy model and otherwise pip-installs it at first use.
 en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85
-# torch 2.11.0+cu128's own Requires-Dist (its wheel metadata): torch is installed with
-# --no-deps, so the lock carries them. On Windows the wheel declares no CUDA dependency.
+# torch 2.11.0+cu128's own Requires-Dist: torch is installed with --no-deps, so the lock
+# carries them. The block is written by scripts/voice-lock.ts from the Windows and Linux wheels'
+# metadata (torch-requires.json records them); do not edit it by hand.
+# BEGIN torch-dependencies
 filelock
 typing-extensions>=4.10.0
 setuptools<82
@@ -25,8 +27,10 @@ networkx>=2.5.1
 jinja2
 fsspec>=0.8.5
 cuda-toolkit[cublas,cudart,cufft,cufile,cupti,curand,cusolver,cusparse,nvjitlink,nvrtc,nvtx]==12.8.1 ; platform_system == "Linux"
-cuda-bindings>=12.9.4,<13 ; platform_system == "Linux"
+cuda-bindings<13,>=12.9.4 ; platform_system == "Linux"
+nvidia-cudnn-cu12==9.19.0.56 ; platform_system == "Linux"
 nvidia-cusparselt-cu12==0.7.1 ; platform_system == "Linux"
 nvidia-nccl-cu12==2.28.9 ; platform_system == "Linux"
 nvidia-nvshmem-cu12==3.4.5 ; platform_system == "Linux"
 triton==3.6.0 ; platform_system == "Linux"
+# END torch-dependencies

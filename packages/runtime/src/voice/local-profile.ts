@@ -19,6 +19,7 @@ import {
   type Clock,
   currentPlatform,
   ForerunnerError,
+  log,
   type Platform,
 } from "@forerunner/platform";
 import {
@@ -168,6 +169,8 @@ export interface LocalVoiceOptions extends LocalVoiceDeps {
    * sessions and new sentences are refused with it; the ones running finish.
    */
   blocked?: () => string | null;
+  /** Where a leaked use count is reported (the voice logger by default). */
+  warn?: (message: string) => void;
 }
 
 export class LocalVoice {
@@ -242,6 +245,13 @@ export class LocalVoice {
 
   /** Stop the running helpers (before their venv is deleted); the next use starts new ones. */
   async release(): Promise<void> {
+    if (this.using > 0) {
+      // A session nobody closed or read to its end: the count would hold every later swap.
+      (this.opts.warn ?? ((m: string) => log("voice:local").warn(m)))(
+        `${this.using} local voice use(s) still counted at release; reset to 0`,
+      );
+      this.using = 0;
+    }
     const old = this.pair;
     this.pair = null;
     this.key = null;
@@ -271,7 +281,11 @@ export class LocalVoice {
       events: {
         async *[Symbol.asyncIterator]() {
           try {
-            yield* events;
+            for await (const e of events) {
+              // The final or an error ends the utterance, whether or not the reader stops.
+              if (e.type === "final" || e.type === "error") finish();
+              yield e;
+            }
           } finally {
             finish();
           }

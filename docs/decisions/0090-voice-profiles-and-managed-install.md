@@ -62,12 +62,28 @@ Linux (230 on Windows) and exits on the first sentence when the path is longer.
      spaCy English model by URL with `#sha256=` (misaki otherwise pip-installs it at first use),
      and torch's own Requires-Dist copied from its wheel metadata (on gpu the CUDA 12.8 wheels
      and triton, Linux only), because torch is installed without its dependencies.
-   - `pip.txt`: pip 26.2.2, hashed. `requires-python.json`: every pin's Requires-Python from the
+   - `pip.txt`: pip 26.2.2, hashed. `pin-metadata.json`: every pin's Requires-Python and whether
+     PyPI has a wheel for it, from the
      index metadata, which a unit test checks against the accepted Python offline.
-   - `pnpm voice:lock` (`scripts/voice-lock.ts`, needs uv and the network) regenerates all of
-     them. `pip check` runs after the install. pip gets no `PIP_EXTRA_INDEX_URL` or
-     `PIP_FIND_LINKS` from the environment. A hash over the three files in the venv's marker
-     decides whether pip runs again.
+   - Wheels only: every pip run passes `--only-binary :all:`, so no build step fetches
+     anything. The one exception is docopt 0.6.2 (via num2words, sdist only on PyPI;
+     `SOURCE_BUILDS`): `build-tools.txt` installs the lock's hashed setuptools 81 first, and the
+     lock runs with `--no-binary docopt --no-build-isolation`, so docopt is built from its
+     hashed sdist against that setuptools (which builds wheels itself; no `wheel` package)
+     instead of an isolated environment that would fetch unhashed setuptools and wheel. A pin
+     without a wheel that is not in `SOURCE_BUILDS` fails `pnpm voice:lock`.
+   - torch's dependency block in each `.in` is derived from the Requires-Dist of its Windows
+     and Linux wheels' metadata (a dependency both declare stays bare, a one-platform one gets
+     that platform's marker), recorded in `torch-requires.json` and checked against the `.in`
+     by a unit test.
+   - `pnpm voice:lock` (`scripts/voice-lock.ts`, needs the network and uv 0.13.5, which it
+     checks) regenerates all of them with `--exclude-newer 2026-10-26T00:00:00Z` (recorded in
+     the script; `--exclude-newer <time>` moves it), so the same inputs give the same lock.
+     `pip check` runs after the install. pip gets no `PIP_EXTRA_INDEX_URL` or `PIP_FIND_LINKS`
+     from the environment. A hash over the four files in the venv's marker decides whether pip
+     runs again.
+   - Only Windows x64 and Linux x86_64 are installed (the wheels pinned are those); any other
+     platform or architecture is refused before anything runs, with the reason.
 4. **The install is resumable and idempotent and streams progress.** Each step emits events
    (`step`, `log`, `progress` with bytes and total, `warning`, `error`, `result`). pip runs with
    `--progress-bar raw --resume-retries 5` and its cache; `fr_voice_models.py` fetches the
@@ -140,9 +156,10 @@ Linux (230 on Windows) and exits on the first sentence when the path is longer.
 - Python 3.10 and 3.11 are refused: with them the pinned numpy would not install. Supporting
   them would need a second numpy pin behind a marker; one supported Python keeps the lock and
   the test small.
-- Supply chain, what remains: every file pip installs is pinned by hash, PyTorch only from the
-  PyTorch index and everything else only from PyPI, so a same-named package on another index
-  cannot be picked. The trust is in those two indexes and in the hashes recorded when
+- Supply chain, what remains: every file pip downloads is pinned by hash (wheels, docopt's
+  sdist, the setuptools it builds with), PyTorch only from the PyTorch index and everything else
+  only from PyPI, so a same-named package on another index cannot be picked. docopt is built
+  locally from source: its build runs setup.py from that hashed sdist. The trust is in those two indexes and in the hashes recorded when
   `pnpm voice:lock` ran (it trusts what the indexes served then; nobody reviews wheel
   contents). The lock is universal, so its hashes cover every platform's wheels, including
   macOS and aarch64 ones the installer never uses. The models from Hugging Face are fetched by

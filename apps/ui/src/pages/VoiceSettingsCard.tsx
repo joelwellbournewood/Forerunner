@@ -7,7 +7,12 @@ import {
 } from "@forerunner/runtime/daemon/api-types";
 import { useEffect, useRef, useState } from "react";
 import { describeError } from "../api/client.ts";
-import { followVoiceInstall, startVoiceInstall, voiceInstallView } from "../api/voice-install.ts";
+import {
+  cancelVoiceInstall,
+  followVoiceInstall,
+  startVoiceInstall,
+  voiceInstallView,
+} from "../api/voice-install.ts";
 import { RouteMissing } from "../components/RouteMissing.tsx";
 import { Badge, Button, ErrorBanner, Loading } from "../components/ui.tsx";
 import { useAsync } from "../lib/use-async.ts";
@@ -18,6 +23,14 @@ export function deviceLabel(d: VoiceDeviceView | null): string {
   if (!d) return "not checked yet";
   return `${d.device}${d.computeType ? ` (${d.computeType})` : ""}`;
 }
+
+/** The wait before re-attaching after the n-th stream in a row that brought nothing: 0.5 s doubling to 10 s. */
+export function reattachDelay(attempt: number): number {
+  return Math.min(10_000, 500 * 2 ** attempt);
+}
+
+/** Stream failures in a row after which the card stops re-attaching (the error stays). */
+const MAX_FAILED_STREAMS = 8;
 
 /** What the progress area shows: the last line per download and the last few messages. */
 export function installProgress(entries: VoiceInstallEntryView[]): {
@@ -78,6 +91,19 @@ export function VoiceSettingsCard() {
   const attached = useRef<string | null>(null);
   const lastSeq = useRef(0);
   const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const attempts = useRef(0);
+  const failures = useRef(0);
+  const [cancelling, setCancelling] = useState(false);
+  const cancel = async () => {
+    setCancelling(true);
+    try {
+      await cancelVoiceInstall(client);
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setCancelling(false);
+    }
+  };
   useEffect(
     () => () => {
       if (retry.current) clearTimeout(retry.current);
@@ -90,30 +116,43 @@ export function VoiceSettingsCard() {
     const controller = new AbortController();
     abort.current = controller;
     setFollowing(true);
+    let failed = false;
     followVoiceInstall(
       client,
       afterSeq,
       (e) => {
         lastSeq.current = Math.max(lastSeq.current, e.seq);
+        // Progress again: a stream error shown before is over, and the backoff starts anew.
+        attempts.current = 0;
+        failures.current = 0;
+        setError(null);
         setEntries((prev) => (prev.some((p) => p.seq === e.seq) ? prev : [...prev, e]));
       },
       controller.signal,
     )
       .catch((e: unknown) => {
-        if (!controller.signal.aborted) setError(describeError(e));
+        if (controller.signal.aborted) return;
+        failed = true;
+        failures.current++;
+        setError(describeError(e));
       })
       .finally(async () => {
         if (controller.signal.aborted) return;
-        let still = false;
+        let running = false;
         try {
           const now = await voiceInstallView(client);
-          still = now.job?.state === "running" && now.job.id === attached.current;
+          running = now.job?.state === "running" && now.job.id === attached.current;
         } catch {
-          still = false;
+          running = false;
+          failed = true;
         }
         if (controller.signal.aborted) return;
-        if (still) {
-          retry.current = setTimeout(() => follow(lastSeq.current), 500);
+        // Again while the job runs, or after a failed stream (the job's tail is still to read).
+        if ((running || failed) && failures.current < MAX_FAILED_STREAMS) {
+          retry.current = setTimeout(
+            () => follow(lastSeq.current),
+            reattachDelay(attempts.current++),
+          );
           return;
         }
         setFollowing(false);
@@ -141,6 +180,8 @@ export function VoiceSettingsCard() {
       const started = await startVoiceInstall(client, profile);
       attached.current = started.job?.id ?? null;
       lastSeq.current = 0;
+      attempts.current = 0;
+      failures.current = 0;
       follow(0);
     } catch (e) {
       setError(describeError(e));
@@ -300,7 +341,17 @@ export function VoiceSettingsCard() {
             ))}
           </ul>
           {busy ? (
-            <Loading what="the voice install (it keeps running if you leave this page)" />
+            <div className="flex items-center gap-3">
+              <Loading what="the voice install (it keeps running if you leave this page)" />
+              <Button
+                variant="ghost"
+                onClick={() => void cancel()}
+                disabled={cancelling}
+                data-testid="voice-install-cancel"
+              >
+                Cancel
+              </Button>
+            </div>
           ) : null}
         </div>
       ) : null}

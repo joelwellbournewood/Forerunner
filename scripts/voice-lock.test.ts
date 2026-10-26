@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { parseRequirements } from "../packages/runtime/src/voice/install.ts";
-import { lockedPins, torchHashes, torchRequirementText } from "./voice-lock.ts";
+import {
+  checkUvVersion,
+  compileArgv,
+  LOCK_EXCLUDE_NEWER,
+  lockedPins,
+  parseLockArgs,
+  requiresDist,
+  torchHashes,
+  torchRequirementText,
+  UV_VERSION,
+} from "./voice-lock.ts";
 
 /**
  * scripts/voice-lock.ts (ADR 0090) regenerates the voice pins: torch alone with the hashes of
@@ -43,5 +53,43 @@ describe("voice-lock", () => {
   it("lists the name==version pins of a lock for the Requires-Python table", () => {
     const lock = `numpy==2.5.4 \\\n    --hash=sha256:${"a".repeat(64)}\n    # via kokoro\ntriton==3.6.0 ; sys_platform == 'linux' \\\n    --hash=sha256:${"b".repeat(64)}\nen-core-web-sm @ https://x/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=${"c".repeat(64)} \\\n    --hash=sha256:${"c".repeat(64)}\n`;
     expect(lockedPins(lock)).toEqual(["numpy==2.5.4", "triton==3.6.0"]);
+  });
+
+  it("is reproducible: the recorded --exclude-newer date and the recorded uv version", () => {
+    expect(LOCK_EXCLUDE_NEWER).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(parseLockArgs([])).toEqual({ excludeNewer: LOCK_EXCLUDE_NEWER });
+    expect(parseLockArgs(["--exclude-newer", "2026-11-01T00:00:00Z"])).toEqual({
+      excludeNewer: "2026-11-01T00:00:00Z",
+    });
+    expect(() => parseLockArgs(["--exclude-newer", "yesterday"])).toThrow(/ISO/);
+    const argv = compileArgv("uv", "gpu", "/o/no-torch.txt", LOCK_EXCLUDE_NEWER);
+    expect(argv).toEqual(
+      expect.arrayContaining([
+        "--exclude-newer",
+        LOCK_EXCLUDE_NEWER,
+        "--universal",
+        "--generate-hashes",
+      ]),
+    );
+    expect(() => checkUvVersion(`uv ${UV_VERSION} (x86_64-unknown-linux-gnu)`)).not.toThrow();
+    expect(() => checkUvVersion("uv 0.14.0 (abc)")).toThrow(
+      new RegExp(`needs uv ${UV_VERSION.replace(/\./g, "\\.")}`),
+    );
+  });
+
+  it("reads Requires-Dist from wheel metadata, extras left out", () => {
+    const meta = [
+      "Metadata-Version: 2.4",
+      "Name: torch",
+      "Requires-Dist: filelock",
+      'Requires-Dist: cuda-bindings<13,>=12.9.4; platform_system == "Linux"',
+      'Requires-Dist: optree>=0.13.0; extra == "optree"',
+      "",
+      "Requires-Dist: not-a-header-after-the-body",
+    ].join("\n");
+    expect(requiresDist(meta)).toEqual([
+      "filelock",
+      'cuda-bindings<13,>=12.9.4; platform_system == "Linux"',
+    ]);
   });
 });

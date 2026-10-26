@@ -2,24 +2,31 @@
 /**
  * voice-lock: regenerate the voice profiles' pins in packages/voice/python (ADR 0090). Run it
  * after changing a pin in requirements-<profile>.in, TORCH or PIP_VERSION; it needs the network
- * and uv (`pip install uv`, or set UV to its path). Writes:
+ * and uv at UV_VERSION (`pip install uv==<it>`, or set UV to its path). Writes:
  *
  *   torch-<profile>.txt      PyTorch alone, with the sha256 of its cp312 Windows and Linux
  *                            x86_64 wheels from the PyTorch index (installed with --no-deps)
+ *   torch-requires.json      torch's Requires-Dist from those two wheels' metadata, and the
+ *                            .in's torch-dependencies block derived from it
  *   pip.txt                  pip itself, hashed
- *   requirements-<profile>.txt  `uv pip compile --universal --generate-hashes` of the .in from
- *                            PyPI only; torch is dropped (an override with a marker that
- *                            cannot hold on 3.12) since the .in lists torch's own dependencies
- *   requires-python.json     every pin's Requires-Python from the index metadata, which
- *                            packages/runtime/test/voice-pins.test.ts checks offline
+ *   requirements-<profile>.txt  `uv pip compile --universal --generate-hashes --exclude-newer`
+ *                            of the .in from PyPI only; torch is dropped (an override with a
+ *                            marker that cannot hold on 3.12) since the .in lists its
+ *                            dependencies
+ *   build-tools.txt          the lock's setuptools, which the source builds are built against
+ *   pin-metadata.json        every pin's Requires-Python and whether PyPI has a wheel for it;
+ *                            a pin without one that is not in SOURCE_BUILDS fails the run
  *
- *   pnpm voice:lock
+ *   pnpm voice:lock [--exclude-newer <ISO time>]   (default: LOCK_EXCLUDE_NEWER, recorded)
+ *
+ * The same uv version and the same --exclude-newer give the same lock.
  */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { join, run } from "@forerunner/platform";
 import {
+  buildToolsFile,
   DEFAULT_HELPERS_DIR,
   type InstalledProfile,
   PIP_VERSION,
@@ -28,11 +35,76 @@ import {
   pipFile,
   requirementsFile,
   requirementsSource,
+  SOURCE_BUILDS,
   TORCH,
+  torchDependencyLines,
   torchFile,
+  withTorchBlock,
 } from "../packages/runtime/src/voice/install.ts";
 
+/** The uv the locks were made with; another version may resolve or format differently. */
+export const UV_VERSION = "0.13.5";
+/** Nothing published after this time is considered (the locks' recorded resolution date). */
+export const LOCK_EXCLUDE_NEWER = "2026-10-26T00:00:00Z";
+
 const PLATFORM_TAGS = ["manylinux_2_28_x86_64", "win_amd64"] as const;
+
+export function parseLockArgs(argv: string[]): { excludeNewer: string } {
+  let excludeNewer = LOCK_EXCLUDE_NEWER;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--exclude-newer") {
+      const v = argv[++i] ?? "";
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(v))
+        throw new Error(`--exclude-newer needs an ISO time like ${LOCK_EXCLUDE_NEWER}, got "${v}"`);
+      excludeNewer = v;
+    } else
+      throw new Error(
+        `unknown argument ${argv[i]}; usage: pnpm voice:lock [--exclude-newer <ISO time>]`,
+      );
+  }
+  return { excludeNewer };
+}
+
+/** `uv --version` output must name UV_VERSION. */
+export function checkUvVersion(output: string): void {
+  const v = /^uv\s+(\S+)/.exec(output.trim())?.[1];
+  if (v !== UV_VERSION)
+    throw new Error(
+      `voice-lock needs uv ${UV_VERSION} (found ${v ?? output.trim()}): pip install uv==${UV_VERSION}, or set UV to it`,
+    );
+}
+
+export function compileArgv(
+  uv: string,
+  profile: InstalledProfile,
+  override: string,
+  excludeNewer: string,
+  dir = DEFAULT_HELPERS_DIR,
+): string[] {
+  return [
+    uv,
+    "pip",
+    "compile",
+    requirementsSource(profile, dir),
+    "--override",
+    override,
+    "--no-emit-package",
+    "torch",
+    "--universal",
+    "--python-version",
+    "3.12",
+    "--generate-hashes",
+    "--exclude-newer",
+    excludeNewer,
+    "--index-url",
+    PYPI_INDEX,
+    "--no-header",
+    "--annotation-style",
+    "line",
+    "-o",
+    requirementsFile(profile, dir),
+  ];
+}
 
 /** The sha256 of the pinned torch's cp312 wheels for Linux x86_64 and Windows, in that order. */
 export function torchHashes(indexPage: string, version: string): string[] {
@@ -45,6 +117,15 @@ export function torchHashes(indexPage: string, version: string): string[] {
     if (!m?.[1]) throw new Error(`torch ${version}: no cp312 ${tag} wheel on the index page`);
     return m[1];
   });
+}
+
+/** The Requires-Dist headers of wheel metadata, extras left out. */
+export function requiresDist(metadata: string): string[] {
+  const headers = metadata.split(/\r?\n\r?\n/)[0] ?? "";
+  return headers
+    .split(/\r?\n/)
+    .map((l) => /^Requires-Dist:\s*(.+)$/.exec(l)?.[1]?.trim())
+    .filter((l): l is string => !!l && !/\bextra\s*==/.test(l));
 }
 
 export function torchRequirementText(
@@ -75,32 +156,53 @@ async function getText(url: string): Promise<string> {
   return res.text();
 }
 
-async function requiresPython(pin: string): Promise<string | null> {
+const torchWheelUrl = (profile: InstalledProfile, tag: string) =>
+  `${TORCH[profile].index}/torch-${TORCH[profile].version.replace("+", "%2B")}-cp312-cp312-${tag}.whl`;
+
+async function pinMetadata(
+  pin: string,
+): Promise<{ requiresPython: string | null; wheels: boolean }> {
   const [name, version] = pin.split("==");
   if (name === "torch") {
-    const tv = version as string;
     const profile = (Object.keys(TORCH) as InstalledProfile[]).find(
-      (p) => TORCH[p].version === tv,
+      (p) => TORCH[p].version === version,
     ) as InstalledProfile;
-    const meta = await getText(
-      `${TORCH[profile].index}/torch-${tv.replace("+", "%2B")}-cp312-cp312-win_amd64.whl.metadata`,
-    );
-    return /^Requires-Python:\s*(.*)$/m.exec(meta)?.[1]?.trim() ?? null;
+    const meta = await getText(`${torchWheelUrl(profile, "win_amd64")}.metadata`);
+    return {
+      requiresPython: /^Requires-Python:\s*(.*)$/m.exec(meta)?.[1]?.trim() ?? null,
+      wheels: true,
+    };
   }
   const json = JSON.parse(await getText(`https://pypi.org/pypi/${name}/${version}/json`)) as {
     info: { requires_python: string | null };
+    urls: { packagetype: string }[];
   };
-  return json.info.requires_python ?? null;
+  return {
+    requiresPython: json.info.requires_python || null,
+    wheels: json.urls.some((u) => u.packagetype === "bdist_wheel"),
+  };
 }
 
-export async function main(): Promise<void> {
+const hashedFile = (header: string, name: string, version: string, hashes: string[]) =>
+  [
+    header,
+    `${name}==${version} \\`,
+    ...hashes.map((h, i) => `    --hash=sha256:${h}${i < hashes.length - 1 ? " \\" : ""}`),
+    "",
+  ].join("\n");
+
+export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+  const { excludeNewer } = parseLockArgs(argv);
   const uv = process.env.UV ?? "uv";
+  checkUvVersion((await run([uv, "--version"], { timeoutMs: 30_000 })).stdout);
   const dir = DEFAULT_HELPERS_DIR;
   const tmp = mkdtempSync(join(tmpdir(), "fr-voice-lock-"));
   try {
     const override = join(tmp, "no-torch.txt");
     // A marker disjoint from Python 3.12, so the universal resolver drops torch on every fork.
     writeFileSync(override, 'torch ; python_version < "3"\n');
+    const torchRequires: Record<string, { version: string; windows: string[]; linux: string[] }> =
+      {};
     for (const profile of ["cpu", "gpu"] as const) {
       const { version, index } = TORCH[profile];
       const page = await getText(`${index}/torch/`);
@@ -108,51 +210,60 @@ export async function main(): Promise<void> {
         torchFile(profile, dir),
         torchRequirementText(profile, version, torchHashes(page, version)),
       );
-      await run(
-        [
-          uv,
-          "pip",
-          "compile",
-          requirementsSource(profile, dir),
-          "--override",
-          override,
-          "--no-emit-package",
-          "torch",
-          "--universal",
-          "--python-version",
-          "3.12",
-          "--generate-hashes",
-          "--index-url",
-          PYPI_INDEX,
-          "--no-header",
-          "--annotation-style",
-          "line",
-          "-o",
-          requirementsFile(profile, dir),
-        ],
-        { timeoutMs: 20 * 60_000 },
+      // torch's own dependencies, from both wheels' metadata, into the .in's block.
+      const windows = requiresDist(
+        await getText(`${torchWheelUrl(profile, "win_amd64")}.metadata`),
       );
+      const linux = requiresDist(
+        await getText(`${torchWheelUrl(profile, "manylinux_2_28_x86_64")}.metadata`),
+      );
+      torchRequires[profile] = { version, windows, linux };
+      const source = requirementsSource(profile, dir);
+      writeFileSync(
+        source,
+        withTorchBlock(readFileSync(source, "utf8"), torchDependencyLines(windows, linux)),
+      );
+      await run(compileArgv(uv, profile, override, excludeNewer, dir), { timeoutMs: 20 * 60_000 });
       const lock = readFileSync(requirementsFile(profile, dir), "utf8");
       writeFileSync(
         requirementsFile(profile, dir),
-        `# Voice profile "${profile}" (ADR 0090): everything but PyTorch, hashed, from PyPI only.\n# Generated by scripts/voice-lock.ts from requirements-${profile}.in; do not edit by hand.\n${lock}`,
+        `# Voice profile "${profile}" (ADR 0090): everything but PyTorch, hashed, from PyPI only.\n# Generated by scripts/voice-lock.ts from requirements-${profile}.in with uv ${UV_VERSION}\n# and --exclude-newer ${excludeNewer}; do not edit by hand.\n${lock}`,
       );
     }
+    writeFileSync(join(dir, "torch-requires.json"), `${JSON.stringify(torchRequires, null, 2)}\n`);
+
     const pip = JSON.parse(await getText(`https://pypi.org/pypi/pip/${PIP_VERSION}/json`)) as {
-      urls: { filename: string; digests: { sha256: string } }[];
+      urls: { digests: { sha256: string } }[];
     };
-    const pipHashes = pip.urls.map((u) => u.digests.sha256);
     writeFileSync(
       pipFile(dir),
-      [
+      hashedFile(
         "# pip for the voice venvs (ADR 0090), generated by scripts/voice-lock.ts.",
-        `pip==${PIP_VERSION} \\`,
-        ...pipHashes.map(
-          (h, i) => `    --hash=sha256:${h}${i < pipHashes.length - 1 ? " \\" : ""}`,
-        ),
-        "",
-      ].join("\n"),
+        "pip",
+        PIP_VERSION,
+        pip.urls.map((u) => u.digests.sha256),
+      ),
     );
+
+    // setuptools for the source builds: the locks' own, the same in both.
+    const setuptools = (["cpu", "gpu"] as const).map((p) =>
+      parseRequirements(readFileSync(requirementsFile(p, dir), "utf8")).find(
+        (r) => r.name === "setuptools",
+      ),
+    );
+    const [st, st2] = setuptools;
+    if (!st?.version || st.version !== st2?.version)
+      throw new Error("the cpu and gpu locks must pin the same setuptools");
+    writeFileSync(
+      buildToolsFile(dir),
+      hashedFile(
+        "# setuptools for the voice source builds (ADR 0090), generated by scripts/voice-lock.ts\n# from the locks; installed before them, the source builds use it without build isolation.",
+        "setuptools",
+        st.version,
+        st.hashes,
+      ),
+    );
+
     const pins = new Set<string>();
     for (const f of [
       pipFile(dir),
@@ -162,10 +273,22 @@ export async function main(): Promise<void> {
       requirementsFile("gpu", dir),
     ])
       for (const p of lockedPins(readFileSync(f, "utf8"))) pins.add(p);
-    const table: Record<string, string | null> = {};
-    for (const p of [...pins].sort()) table[p] = await requiresPython(p);
-    writeFileSync(join(dir, "requires-python.json"), `${JSON.stringify(table, null, 2)}\n`);
-    console.log(`voice-lock: ${pins.size} pins written`);
+    const table: Record<string, { requiresPython: string | null; wheels: boolean }> = {};
+    for (const p of [...pins].sort()) table[p] = await pinMetadata(p);
+    const unexpected = Object.entries(table)
+      .filter(
+        ([k, v]) =>
+          !v.wheels && !(SOURCE_BUILDS as readonly string[]).includes(k.split("==")[0] as string),
+      )
+      .map(([k]) => k);
+    if (unexpected.length)
+      throw new Error(
+        `no wheel on PyPI for ${unexpected.join(", ")}: add it to SOURCE_BUILDS in install.ts (built from its hashed sdist without isolation) or pin a version with a wheel`,
+      );
+    writeFileSync(join(dir, "pin-metadata.json"), `${JSON.stringify(table, null, 2)}\n`);
+    console.log(
+      `voice-lock: ${pins.size} pins written (uv ${UV_VERSION}, --exclude-newer ${excludeNewer})`,
+    );
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

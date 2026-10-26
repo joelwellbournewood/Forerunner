@@ -340,3 +340,67 @@ describe("LocalVoice: live sessions and a profile change", () => {
     expect((await local.stt.isAvailable()).ok).toBe(true);
   });
 });
+
+describe("LocalVoice: a session's use always ends", () => {
+  const sessionFactory = (events: () => AsyncIterable<unknown>) => () => {
+    const fake = { isAvailable: async () => ({ ok: true, reason: "ok" }), dispose: async () => {} };
+    return {
+      stt: {
+        name: "faster-whisper",
+        kind: "local" as const,
+        ...fake,
+        start: () => ({
+          events: events() as never,
+          push: () => {},
+          endOfSpeech: () => {},
+          close: async () => {},
+        }),
+      },
+      tts: { name: "kokoro", kind: "local" as const, ...fake, synthesize: async function* () {} },
+    };
+  };
+
+  it("at the inner session's final or error, even when the reader never ends its loop", async () => {
+    const { dirs, env } = home();
+    installed(dirs, "cpu", cpuVerified);
+    for (const last of [
+      { type: "final", text: "hi", atMs: 1 },
+      { type: "error", code: "provider_error", message: "x", retryable: true, atMs: 1 },
+    ]) {
+      const local = new LocalVoice({
+        dirs,
+        env,
+        clock: new SimulatedClock(),
+        factory: sessionFactory(async function* () {
+          yield last;
+          await new Promise(() => {}); // never ends
+        }),
+      });
+      const session = local.stt.start({ sampleRate: 16000 });
+      expect(local.inUse()).toBe(1);
+      const it = session.events[Symbol.asyncIterator]();
+      expect((await it.next()).value).toMatchObject({ type: last.type });
+      expect(local.inUse()).toBe(0);
+    }
+  });
+
+  it("release() resets a leaked count with a warning", async () => {
+    const { dirs, env } = home();
+    installed(dirs, "cpu", cpuVerified);
+    const warnings: string[] = [];
+    const local = new LocalVoice({
+      dirs,
+      env,
+      clock: new SimulatedClock(),
+      warn: (m) => warnings.push(m),
+      factory: sessionFactory(async function* () {
+        await new Promise(() => {});
+      }),
+    });
+    local.stt.start({ sampleRate: 16000 }); // never read, never closed
+    expect(local.inUse()).toBe(1);
+    await local.release();
+    expect(local.inUse()).toBe(0);
+    expect(warnings.join("\n")).toMatch(/1 local voice use.*still counted/);
+  });
+});

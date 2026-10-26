@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { type AppDirs, appDirs, dirname, join, SimulatedClock } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import {
+  buildToolsFile,
   DEFAULT_HELPERS_DIR,
   detectNvidiaGpu,
   findBasePython,
@@ -14,6 +15,7 @@ import {
   recommendedProfile,
   removeVoice,
   requirementsFile,
+  SOURCE_BUILDS,
   torchFile,
   VOICE_PROFILE_QUESTION,
   venvPythonPath,
@@ -85,10 +87,28 @@ describe("fr voice install", () => {
       expect.arrayContaining(["--no-deps", "--require-hashes", "--index-url", PYPI_INDEX]),
     );
     expect(rest?.argv).not.toContain("--extra-index-url");
-    const order = [pipSelf, torch, rest].map((c) => fake.calls.indexOf(c as never));
+    // Only wheels, so no build step fetches anything unhashed; the one source-only package
+    // (docopt) is built against the hashed setuptools installed before, without isolation.
+    const build = pipRun(buildToolsFile(DEFAULT_HELPERS_DIR));
+    expect(build?.argv).toEqual(
+      expect.arrayContaining(["--no-deps", "--require-hashes", "--only-binary", ":all:"]),
+    );
+    for (const c of [pipSelf, build, torch])
+      expect(c?.argv).toEqual(expect.arrayContaining(["--only-binary", ":all:"]));
+    expect(rest?.argv).toEqual(
+      expect.arrayContaining([
+        "--only-binary",
+        ":all:",
+        "--no-binary",
+        SOURCE_BUILDS.join(","),
+        "--no-build-isolation",
+      ]),
+    );
+    expect(SOURCE_BUILDS).toEqual(["docopt"]);
+    const order = [pipSelf, build, torch, rest].map((c) => fake.calls.indexOf(c as never));
     expect(order).toEqual([...order].sort((a, b) => a - b));
     const check = fake.calls.find((c) => c.argv[3] === "check");
-    expect(fake.calls.indexOf(check as never)).toBeGreaterThan(order[2] as number);
+    expect(fake.calls.indexOf(check as never)).toBeGreaterThan(order[3] as number);
     // Models land in the managed folder, never the user's global Hugging Face cache.
     const models = fake.calls.find((c) => c.argv[1]?.endsWith("fr_voice_models.py"));
     expect(models?.env?.HF_HOME).toBe(vd.models);
@@ -290,6 +310,36 @@ describe("fr voice install", () => {
     expect(err).toMatch(/FORERUNNER_HOME/);
     expect(fake.calls.some((c) => c.argv.includes("venv"))).toBe(false);
     expect(fake.calls.some((c) => c.argv.includes("-r"))).toBe(false);
+  });
+
+  it("refuses up front on a platform the pinned wheels do not cover", async () => {
+    for (const [platform, arch] of [
+      ["linux", "arm64"],
+      ["windows", "arm64"],
+      ["macos", "arm64"],
+      ["linux", "ia32"],
+    ] as const) {
+      const { dirs, env } = home();
+      const fake = fakeRunner();
+      const { events, out } = collect();
+      const r = await installVoice("cpu", { dirs, env, platform, arch, run: fake.run, out });
+      expect(r.exitCode).toBe(1);
+      const err = messages(events, "error").join("\n");
+      expect(err).toContain("Windows x64 and Linux x86_64 only");
+      expect(err).toContain(`${platform} ${arch}`);
+      expect(fake.calls).toHaveLength(0);
+      expect(readVoiceSettings(dirs)).toBeNull();
+    }
+    // Removing works anywhere.
+    const { dirs, env } = home();
+    const removed = await installVoice("none", {
+      dirs,
+      env,
+      platform: "macos",
+      arch: "arm64",
+      out: () => {},
+    });
+    expect(removed.exitCode).toBe(0);
   });
 
   it("fails when pip check finds a broken requirement, without writing the marker", async () => {

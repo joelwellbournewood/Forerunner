@@ -2,13 +2,17 @@ import { readFileSync } from "node:fs";
 import { join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import {
+  buildToolsFile,
   DEFAULT_HELPERS_DIR,
   parseRequirements,
   pipFile,
   pythonSpecAdmits,
   requirementsFile,
   requirementsSource,
+  SOURCE_BUILDS,
   TORCH,
+  torchBlock,
+  torchDependencyLines,
   torchFile,
   VOICE_PYTHON,
 } from "../src/voice/install.ts";
@@ -100,10 +104,13 @@ describe("voice pins", () => {
 
   it("every pinned distribution admits the Python the installer accepts (3.12)", () => {
     expect(VOICE_PYTHON).toEqual({ min: [3, 12], below: [3, 13] });
-    const table = JSON.parse(read(join(DEFAULT_HELPERS_DIR, "requires-python.json"))) as Record<
+    const meta = JSON.parse(read(join(DEFAULT_HELPERS_DIR, "pin-metadata.json"))) as Record<
       string,
-      string | null
+      { requiresPython: string | null; wheels: boolean }
     >;
+    const table = Object.fromEntries(
+      Object.entries(meta).map(([k, v]) => [k, v.requiresPython]),
+    ) as Record<string, string | null>;
     const all = [
       ...locks.cpu,
       ...locks.gpu,
@@ -123,6 +130,63 @@ describe("voice pins", () => {
     expect(refused).toEqual([]);
     // The reason the minimum is 3.12: numpy 2.5 needs it.
     expect(table["numpy==2.5.4"]).toBe(">=3.12");
+  });
+
+  it("only the named source builds lack a wheel; setuptools for them is pinned and hashed", () => {
+    const meta = JSON.parse(read(join(DEFAULT_HELPERS_DIR, "pin-metadata.json"))) as Record<
+      string,
+      { requiresPython: string | null; wheels: boolean }
+    >;
+    const sdistOnly = Object.entries(meta)
+      .filter(([, v]) => !v.wheels)
+      .map(([k]) => k.split("==")[0]);
+    expect(sdistOnly).toEqual([...SOURCE_BUILDS]);
+    // The build tools file: the lock's own setuptools, same version and hashes, in both locks.
+    const build = parseRequirements(read(buildToolsFile(DEFAULT_HELPERS_DIR)));
+    expect(build.map((r) => r.name)).toEqual(["setuptools"]);
+    for (const profile of ["cpu", "gpu"] as const) {
+      const inLock = pin(locks[profile], "setuptools");
+      expect(inLock?.version).toBe(build[0]?.version);
+      expect(inLock?.hashes).toEqual(build[0]?.hashes);
+    }
+  });
+
+  it("the .in carries torch's Requires-Dist exactly as its Windows and Linux wheels declare it", () => {
+    const recorded = JSON.parse(read(join(DEFAULT_HELPERS_DIR, "torch-requires.json"))) as Record<
+      "cpu" | "gpu",
+      { version: string; windows: string[]; linux: string[] }
+    >;
+    for (const profile of ["cpu", "gpu"] as const) {
+      expect(recorded[profile].version).toBe(TORCH[profile].version);
+      const expected = torchDependencyLines(recorded[profile].windows, recorded[profile].linux);
+      const source = read(requirementsSource(profile, DEFAULT_HELPERS_DIR));
+      expect(torchBlock(source)).toEqual(expected);
+      // Every generic dependency is in the lock; the CUDA ones only on gpu.
+      for (const line of expected) {
+        const name = parseRequirements(line)[0]?.name as string;
+        expect(pin(locks[profile], name), `${profile}: ${name}`).toBeDefined();
+      }
+    }
+    expect(recorded.gpu.linux.some((l) => l.startsWith("nvidia-cudnn-cu12==9.19.0.56"))).toBe(true);
+    expect(recorded.gpu.windows.some((l) => l.includes("nvidia"))).toBe(false);
+  });
+
+  it("derives torch's dependency lines: shared ones bare, one-platform ones with a marker", () => {
+    expect(
+      torchDependencyLines(
+        ["filelock", "sympy>=1.13.3", "onlywin"],
+        ["filelock", "sympy>=1.13.3", 'triton==3.6.0; platform_system == "Linux"', "onlylinux"],
+      ),
+    ).toEqual([
+      "filelock",
+      "sympy>=1.13.3",
+      'onlywin ; platform_system == "Windows"',
+      'triton==3.6.0 ; platform_system == "Linux"',
+      'onlylinux ; platform_system == "Linux"',
+    ]);
+    const src = "a\n# BEGIN torch-dependencies\nx\ny ; m\n# END torch-dependencies\nb\n";
+    expect(torchBlock(src)).toEqual(["x", "y ; m"]);
+    expect(() => torchBlock("no block")).toThrow(/torch-dependencies/);
   });
 
   it("evaluates Requires-Python specifiers", () => {

@@ -503,7 +503,8 @@ unknown argument, with the fake process runner of `packages/runtime/test/voice-i
 `packages/voice/python` (needs the network and uv). `scripts/voice-lock.test.ts` covers its
 offline parts: the torch hashes taken from an index page (cp312, Windows and Linux x86_64, the
 pinned version only; a missing wheel refused), the torch file's text, the pins listed for the
-Requires-Python table. `packages/runtime/test/voice-pins.test.ts` checks the generated files.
+metadata table, the recorded `--exclude-newer` and uv version (`compileArgv`, `checkUvVersion`,
+`parseLockArgs`), and Requires-Dist read from wheel metadata. `packages/runtime/test/voice-pins.test.ts` checks the generated files.
 
 ### Docs close-out (`scripts/closeout-docs.test.ts`)
 

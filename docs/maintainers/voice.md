@@ -220,7 +220,13 @@ The sizes are measured (`install-types.ts` says how); the catalog with the trade
   the `.in` has the exact top-level pins, on gpu `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` at
   the versions torch 2.11.0+cu128 requires on Linux, the spaCy model by URL with `#sha256=`, and
   torch's own Requires-Dist (copied from its wheel metadata, since torch is installed without
-  dependencies); `pip.txt` is pip itself; `requires-python.json` is every pin's Requires-Python.
+  dependencies); `pip.txt` is pip itself; `build-tools.txt` is the lock's setuptools;
+  `pin-metadata.json` is every pin's Requires-Python and whether PyPI has a wheel;
+  `torch-requires.json` is torch's Requires-Dist per platform. Every pip run is
+  `--only-binary :all:` except docopt (`SOURCE_BUILDS`, sdist only): setuptools from
+  build-tools.txt is installed first and the lock runs with `--no-binary docopt
+  --no-build-isolation`, so its build fetches nothing. Windows x64 and Linux x86_64 only; any
+  other platform or architecture is refused up front (`SUPPORTED_TARGETS`).
   Then `pip check`. The environment's `PIP_EXTRA_INDEX_URL` and `PIP_FIND_LINKS` are not passed
   to pip. The marker `<venv>/forerunner-voice.json` holds a hash over pip.txt, the torch file
   and the lock; a change to any reinstalls.
@@ -230,7 +236,11 @@ The sizes are measured (`install-types.ts` says how); the catalog with the trade
   `UV=<path>`; Node's fetch behind a proxy needs `NODE_USE_ENV_PROXY=1`). It rewrites the torch
   files from the PyTorch index page, the locks with `uv pip compile --universal
   --generate-hashes --python-version 3.12` (torch dropped by an override whose marker cannot
-  hold on 3.12), `pip.txt`, and `requires-python.json`. `test/voice-pins.test.ts` then checks
+  hold on 3.12) and `--exclude-newer` (the recorded `LOCK_EXCLUDE_NEWER`; it checks uv is
+  `UV_VERSION`, so the same inputs give the same lock), the `.in`s' torch-dependencies block from
+  the torch wheels' metadata (`torch-requires.json`), `pip.txt`, `build-tools.txt` and
+  `pin-metadata.json` (a pin without a wheel outside `SOURCE_BUILDS` fails it).
+  `test/voice-pins.test.ts` then checks
   the files offline: exact and hashed, no index options, torch only in its own file, every
   source pin in the lock, and every pin's Requires-Python admitting 3.12.
 - **Steps** (each streams `VoiceInstallEvent`s: `step`, `log`, `progress`, `warning`, `error`,
@@ -277,13 +287,17 @@ The sizes are measured (`install-types.ts` says how); the catalog with the trade
   The install is refused while a voice session is open or `inUse()` is not zero. A disposed
   `FasterWhisperStt` / `KokoroTts` never starts its helper again: `ensureProcess()` rejects with
   `unavailable` "... provider was disposed" (`test/disposed-providers.test.ts`), so a session
-  holding the old provider gets an error instead of a helper respawned from the old venv.
+  holding the old provider gets an error instead of a helper respawned from the old venv. A
+  session's use ends at its final or error even if its reader never leaves the loop, and
+  `release()` resets a count still held (a session nobody read or closed) with a warning.
 - **Settings → Voice** (`apps/ui/src/pages/VoiceSettingsCard.tsx`) reads `GET /voice/install`
   and switches through `POST /voice/install`, a background job of the same installer
   (`install-routes.ts`: one job at a time, 409 while a voice session is open), following
   `GET /voice/install/events` (SSE with the bearer header, or JSON). When the stream ends while
-  the job still runs (a proxy, a sleeping laptop) the card opens it again from the last event it
-  has. `POST /voice/install/cancel` aborts the job (the daemon's shutdown does the same). The
+  the job still runs (a proxy, a sleeping laptop), or fails, the card opens it again from the
+  last event it has, waiting 0.5 s doubling to 10 s (`reattachDelay`) and giving up after 8
+  failures in a row; an error shown clears when events arrive again. **Cancel** calls
+  `POST /voice/install/cancel`. `POST /voice/install/cancel` aborts the job (the daemon's shutdown does the same). The
   route was chosen over showing the CLI command because the installer already streams events;
   the card still shows the command.
 - **CUDA libraries from wheels.** `fr_stt.py` `setup_cuda_libraries()` runs before
@@ -588,8 +602,8 @@ protocol stand-ins; a run with the real packages installed is an integration tes
 runner image has them (`*.integration.test.ts`, skipped visibly otherwise).
 
 The voice profile's install, routes and CLI are tested in `packages/runtime/test`:
-`voice-pins.test.ts` (the hashed pin files and every pin's Requires-Python, offline),
-`voice-install.test.ts` (cpu and gpu installs, the GPU check
+`voice-pins.test.ts` (the hashed pin files, every pin's Requires-Python, only docopt without a wheel and build-tools.txt matching the locks, the .in's torch block against the recorded wheel metadata, offline),
+`voice-install.test.ts` (cpu and gpu installs, the platform refusal, the binary-only pip runs and the docopt source build, the GPU check
 failing and falling back with exit 2, idempotency and resuming, a broken venv repaired, no
 Python 3.12 (3.10 and 3.11 refused) with the winget/apt line, the torch-alone and PyPI-only
 hashed pip runs, `pip check`, the environment's extra index dropped, cancelling, the lock file

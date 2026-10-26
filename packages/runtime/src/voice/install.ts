@@ -70,7 +70,7 @@ export { voiceInstallCommand } from "./install-types.ts";
 export const PIP_VERSION = "26.2.2";
 /**
  * Python 3.12 only: numpy 2.5.4 declares `>=3.12` and kokoro 0.9.4 `<3.13`
- * (packages/voice/python/requires-python.json has every pin's, test/voice-pins.test.ts checks).
+ * (packages/voice/python/pin-metadata.json has every pin's, test/voice-pins.test.ts checks).
  */
 export const VOICE_PYTHON = { min: [3, 12], below: [3, 13] } as const;
 /** Everything but PyTorch comes from here, hashed (the lock). */
@@ -135,6 +135,69 @@ export function torchFile(profile: InstalledProfile, helpersDir = DEFAULT_HELPER
 }
 
 /** pip itself, hashed. */
+/** setuptools, hashed: what the source builds are built against (no isolated build env). */
+export function buildToolsFile(helpersDir = DEFAULT_HELPERS_DIR): string {
+  return join(helpersDir, "build-tools.txt");
+}
+
+/**
+ * The only locked packages without a wheel on PyPI (docopt, via num2words): built from their
+ * hashed sdist with `--no-build-isolation` against build-tools.txt. Everything else is
+ * `--only-binary :all:`; scripts/voice-lock.ts fails when another sdist-only pin appears.
+ */
+export const SOURCE_BUILDS = ["docopt"] as const;
+
+/** Where the pinned wheels exist (cp312 win_amd64 and manylinux x86_64). */
+export const SUPPORTED_TARGETS = [
+  { platform: "windows", arch: "x64" },
+  { platform: "linux", arch: "x64" },
+] as const;
+
+const TORCH_BLOCK_BEGIN = "# BEGIN torch-dependencies";
+const TORCH_BLOCK_END = "# END torch-dependencies";
+
+/** "req; marker" as "req ; marker" (one spelling for comparing and for the .in). */
+function normalizeRequirement(line: string): string {
+  const [req, marker] = line.split(";", 2).map((x) => x.trim());
+  return marker ? `${req} ; ${marker}` : (req as string);
+}
+
+/**
+ * torch's own Requires-Dist for the .in, from its Windows and Linux wheels' metadata: a
+ * dependency both declare (same text) stays bare; one only a platform declares gets that
+ * platform's marker unless it carries one.
+ */
+export function torchDependencyLines(windows: string[], linux: string[]): string[] {
+  const win = windows.map(normalizeRequirement);
+  const lin = linux.map(normalizeRequirement);
+  const out: string[] = [];
+  for (const w of win)
+    out.push(lin.includes(w) || w.includes(";") ? w : `${w} ; platform_system == "Windows"`);
+  for (const l of lin) {
+    if (win.includes(l)) continue;
+    out.push(l.includes(";") ? l : `${l} ; platform_system == "Linux"`);
+  }
+  return out;
+}
+
+/** The lines between the torch-dependencies markers of a .in file. */
+export function torchBlock(source: string): string[] {
+  const lines = source.split(/\r?\n/);
+  const a = lines.indexOf(TORCH_BLOCK_BEGIN);
+  const b = lines.indexOf(TORCH_BLOCK_END);
+  if (a < 0 || b < a) throw new Error(`no ${TORCH_BLOCK_BEGIN} ... ${TORCH_BLOCK_END} block`);
+  return lines.slice(a + 1, b).filter((l) => l.trim() && !l.trim().startsWith("#"));
+}
+
+/** A .in file with its torch-dependencies block replaced. */
+export function withTorchBlock(source: string, lines: string[]): string {
+  const all = source.split(/\r?\n/);
+  const a = all.indexOf(TORCH_BLOCK_BEGIN);
+  const b = all.indexOf(TORCH_BLOCK_END);
+  if (a < 0 || b < a) throw new Error(`no ${TORCH_BLOCK_BEGIN} ... ${TORCH_BLOCK_END} block`);
+  return [...all.slice(0, a + 1), ...lines, ...all.slice(b)].join("\n");
+}
+
 export function pipFile(helpersDir = DEFAULT_HELPERS_DIR): string {
   return join(helpersDir, "pip.txt");
 }
@@ -563,6 +626,8 @@ export interface InstallDeps {
   env: NodeJS.ProcessEnv;
   out: (e: VoiceInstallEvent) => void;
   platform?: Platform;
+  /** `process.arch` by default; with `platform`, checked against SUPPORTED_TARGETS. */
+  arch?: string;
   run?: VoiceProcRunner;
   clock?: Clock;
   helpersDir?: string;
@@ -686,6 +751,17 @@ export async function installVoice(
   deps: InstallDeps,
 ): Promise<InstallResult> {
   if (profile === "none") return removeVoice(deps);
+  const arch = deps.arch ?? process.arch;
+  const supported = SUPPORTED_TARGETS.some(
+    (t) => t.platform === (deps.platform ?? currentPlatform()) && t.arch === arch,
+  );
+  if (!supported) {
+    const where = `${deps.platform ?? currentPlatform()} ${arch}`;
+    const message = `Local voice installs on Windows x64 and Linux x86_64 only: the pinned wheels (PyTorch, ctranslate2, the NVIDIA libraries) are those two. This is ${where}. Voice can still use a cloud provider (Extensions).`;
+    deps.out({ type: "error", message });
+    deps.out({ type: "result", ok: false, profile, exitCode: 1, message });
+    return { ok: false, exitCode: 1, profile, message };
+  }
   const out = deps.out;
   const platform = deps.platform ?? currentPlatform();
   const run = deps.run ?? defaultVoiceRunner;
@@ -697,7 +773,8 @@ export async function installVoice(
   const reqFile = requirementsFile(profile, helpersDir);
   const torchReq = torchFile(profile, helpersDir);
   const pipReq = pipFile(helpersDir);
-  const reqSha = sha256(pipReq, torchReq, reqFile);
+  const buildReq = buildToolsFile(helpersDir);
+  const reqSha = sha256(pipReq, buildReq, torchReq, reqFile);
   const signal = deps.signal;
   /** Between steps and after each process: a cancel (the route, a daemon stop) ends the run. */
   const checkCancelled = () => {
@@ -815,6 +892,8 @@ export async function installVoice(
           "install",
           "--disable-pip-version-check",
           "--require-hashes",
+          "--only-binary",
+          ":all:",
           "--index-url",
           PYPI_INDEX,
           "-r",
@@ -843,9 +922,17 @@ export async function installVoice(
         if (/^(Collecting|Downloading|Installing|Successfully|ERROR|WARNING)\b/.test(t))
           out({ type: "log", message: t.slice(0, 300) });
       };
-      // PyTorch alone from its index (hashed, no dependencies: those are in the lock), then the
-      // lock from PyPI only. Every file is checked against its hash.
-      const pipInstall = async (index: string, file: string, what: string) => {
+      // The hashed setuptools first (the one source build is built against it, without an
+      // isolated build environment, so nothing unhashed is fetched for a build), then PyTorch
+      // alone from its index (hashed, no dependencies: those are in the lock), then the lock
+      // from PyPI only. Wheels only, except the named source builds. Every file is checked
+      // against its hash.
+      const pipInstall = async (
+        index: string,
+        file: string,
+        what: string,
+        extra: string[] = [],
+      ) => {
         const lines = new Lines(onLine);
         const errLines = new Lines(onLine);
         const r = await run({
@@ -857,6 +944,9 @@ export async function installVoice(
             "--disable-pip-version-check",
             "--no-deps",
             "--require-hashes",
+            "--only-binary",
+            ":all:",
+            ...extra,
             "--index-url",
             index,
             "--progress-bar",
@@ -881,8 +971,13 @@ export async function installVoice(
             `pip could not install ${what}: ${tail(r.stderr) || r.error || `exit ${r.code}`}\nWhat was downloaded is kept; run it again to resume (${voiceInstallCommand(profile)}).`,
           );
       };
+      await pipInstall(PYPI_INDEX, buildReq, "the build tools (setuptools)");
       await pipInstall(TORCH[profile].index, torchReq, `PyTorch ${TORCH[profile].version}`);
-      await pipInstall(PYPI_INDEX, reqFile, `the ${profile} packages`);
+      await pipInstall(PYPI_INDEX, reqFile, `the ${profile} packages`, [
+        "--no-binary",
+        SOURCE_BUILDS.join(","),
+        "--no-build-isolation",
+      ]);
       const check = await run({
         argv: [vpy, "-m", "pip", "check", "--disable-pip-version-check"],
         timeoutMs: 5 * 60_000,

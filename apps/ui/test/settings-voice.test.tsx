@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { installProgress } from "../src/pages/VoiceSettingsCard.tsx";
+import { installProgress, reattachDelay } from "../src/pages/VoiceSettingsCard.tsx";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
 /**
@@ -96,6 +96,39 @@ describe("Settings: voice", () => {
     expect(harness.daemon.state.voiceInstallStreamsAfter).toEqual([0, 3]);
   });
 
+  it("Cancel stops a running install: the job ends cancelled and the profile stays", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness({ voiceInstallHold: true });
+    renderApp("/settings", harness);
+    const gpu = await profileRow("gpu");
+    await user.click(within(gpu).getByTestId("voice-profile-switch"));
+    await user.click(within(gpu).getByTestId("voice-profile-confirm"));
+    const cancel = await screen.findByTestId("voice-install-cancel");
+    await user.click(cancel);
+    await waitFor(() => expect(postedCalls(harness, "/voice/install/cancel")).toHaveLength(1));
+    const progress = screen.getByTestId("voice-install-progress");
+    expect(
+      await within(progress).findByText("voice profile gpu not installed: cancelled", undefined, {
+        timeout: 5000,
+      }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId("voice-install-cancel")).toBeNull());
+    expect(screen.getByTestId("voice-profile-current")).toHaveTextContent("cpu");
+  });
+
+  it("a stream error is shown, then cleared once the card re-attaches", async () => {
+    const user = userEvent.setup();
+    renderApp("/settings", createHarness({ voiceInstallStreamFailsOnce: true }));
+    const gpu = await profileRow("gpu");
+    await user.click(within(gpu).getByTestId("voice-profile-switch"));
+    await user.click(within(gpu).getByTestId("voice-profile-confirm"));
+    expect(await screen.findByTestId("voice-install-error")).toHaveTextContent(/stream broke/);
+    expect(
+      await screen.findByText("voice profile gpu installed", undefined, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("voice-install-error")).toBeNull();
+  });
+
   it("a GPU check that fell back shows the warning and the reason", async () => {
     const user = userEvent.setup();
     renderApp(
@@ -128,6 +161,14 @@ describe("Settings: voice", () => {
     expect(await screen.findByTestId("voice-install-error")).toHaveTextContent(
       /a voice session is open/,
     );
+  });
+});
+
+describe("reattachDelay", () => {
+  it("backs off from half a second to ten seconds", () => {
+    expect([0, 1, 2, 3, 4, 5, 6, 20].map(reattachDelay)).toEqual([
+      500, 1000, 2000, 4000, 8000, 10000, 10000, 10000,
+    ]);
   });
 });
 

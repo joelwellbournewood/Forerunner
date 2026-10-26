@@ -222,6 +222,13 @@ export interface FakeDaemonOptions {
    * or a sleep dropping the connection); the next stream carries the rest and the job ends.
    */
   voiceInstallDropOnce?: boolean;
+  /**
+   * The job stays running after its first three events (streams end with nothing more) until
+   * `POST /voice/install/cancel`, which ends it with the cancelled result.
+   */
+  voiceInstallHold?: boolean;
+  /** The first install events request answers 500 (the card shows it, then re-attaches). */
+  voiceInstallStreamFailsOnce?: boolean;
 }
 
 type Listener = (event: string, data: unknown) => void;
@@ -1537,6 +1544,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         recent: state.voiceInstallEntries,
       },
     };
+    if (options.voiceInstallHold && state.voiceInstall.job) {
+      state.voiceInstallEntries = state.voiceInstallEntries.slice(0, 3);
+      const running = {
+        ...state.voiceInstall.job,
+        state: "running" as const,
+        finishedAt: null,
+        exitCode: null,
+        recent: [],
+      };
+      state.voiceInstall = { ...voiceInstallBefore, job: running };
+      return c.json(state.voiceInstall, 202);
+    }
     if (options.voiceInstallDropOnce && state.voiceInstall.job) {
       // Running until the second stream has delivered the rest.
       voiceInstallDone = { ...state.voiceInstall };
@@ -1552,7 +1571,37 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     return c.json(state.voiceInstall, 202);
   });
+  app.post("/voice/install/cancel", (c) => {
+    const job = state.voiceInstall.job;
+    if (job?.state !== "running")
+      return errorBody(c, 409, "conflict", "no voice install is running");
+    const seq = state.voiceInstallEntries.length;
+    const ending: VoiceInstallEvent[] = [
+      { type: "error", message: "cancelled; what was downloaded is kept" },
+      {
+        type: "result",
+        ok: false,
+        profile: job.profile,
+        exitCode: 1,
+        message: `voice profile ${job.profile} not installed: cancelled`,
+      },
+    ];
+    state.voiceInstallEntries = [
+      ...state.voiceInstallEntries,
+      ...ending.map((event, i) => ({ seq: seq + i + 1, event })),
+    ];
+    state.voiceInstall = {
+      ...state.voiceInstall,
+      job: { ...job, state: "failed", exitCode: 1, finishedAt: new Date().toISOString() },
+    };
+    return c.json(state.voiceInstall, 202);
+  });
+  let voiceInstallFailed = false;
   app.get("/voice/install/events", (c) => {
+    if (options.voiceInstallStreamFailsOnce && !voiceInstallFailed) {
+      voiceInstallFailed = true;
+      return c.json({ code: "internal", message: "stream broke" }, 500);
+    }
     const after = Number(c.req.query("afterSeq") ?? 0);
     if ((c.req.header("accept") ?? "").includes("text/event-stream"))
       state.voiceInstallStreamsAfter.push(after);

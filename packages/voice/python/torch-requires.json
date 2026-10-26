@@ -1,0 +1,51 @@
+{
+  "cpu": {
+    "version": "2.11.0+cpu",
+    "windows": [
+      "filelock",
+      "typing-extensions>=4.10.0",
+      "setuptools<82",
+      "sympy>=1.13.3",
+      "networkx>=2.5.1",
+      "jinja2",
+      "fsspec>=0.8.5"
+    ],
+    "linux": [
+      "filelock",
+      "typing-extensions>=4.10.0",
+      "setuptools<82",
+      "sympy>=1.13.3",
+      "networkx>=2.5.1",
+      "jinja2",
+      "fsspec>=0.8.5"
+    ]
+  },
+  "gpu": {
+    "version": "2.11.0+cu128",
+    "windows": [
+      "filelock",
+      "typing-extensions>=4.10.0",
+      "setuptools<82",
+      "sympy>=1.13.3",
+      "networkx>=2.5.1",
+      "jinja2",
+      "fsspec>=0.8.5"
+    ],
+    "linux": [
+      "filelock",
+      "typing-extensions>=4.10.0",
+      "setuptools<82",
+      "sympy>=1.13.3",
+      "networkx>=2.5.1",
+      "jinja2",
+      "fsspec>=0.8.5",
+      "cuda-toolkit[cublas,cudart,cufft,cufile,cupti,curand,cusolver,cusparse,nvjitlink,nvrtc,nvtx]==12.8.1; platform_system == \"Linux\"",
+      "cuda-bindings<13,>=12.9.4; platform_system == \"Linux\"",
+      "nvidia-cudnn-cu12==9.19.0.56; platform_system == \"Linux\"",
+      "nvidia-cusparselt-cu12==0.7.1; platform_system == \"Linux\"",
+      "nvidia-nccl-cu12==2.28.9; platform_system == \"Linux\"",
+      "nvidia-nvshmem-cu12==3.4.5; platform_system == \"Linux\"",
+      "triton==3.6.0; platform_system == \"Linux\""
+    ]
+  }
+}
