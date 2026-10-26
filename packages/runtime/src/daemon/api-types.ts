@@ -1366,6 +1366,12 @@ export const VoiceTurnView = z.object({
   source: z.enum(["audio", "text"]),
   /** How the reply went out; a `text` reply played nothing (no first audio, nothing heard). */
   replyMode: z.enum(VOICE_REPLY_MODES),
+  /**
+   * A press came while this turn transcribed: its words went on in the next turn (no reply of
+   * its own). `carriedFrom` on that next turn names it: its model call got both utterances.
+   */
+  continued: z.boolean(),
+  carriedFrom: z.number().int().nullable(),
   /** The final transcript. */
   said: z.string(),
   /** The assistant line that was played. */

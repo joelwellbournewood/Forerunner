@@ -208,7 +208,12 @@ export class VoiceLoop {
    */
   private queuedPressValue = false;
   /** The words of a turn cut short by a queued press, for the next turn's model call. */
-  private carried: { turn: number; text: string } | null = null;
+  /**
+   * The words of a turn cut short by a queued press, owned by the turn that press opens
+   * (`forTurn`): only that turn's model call gets them; when that turn fails or ends without a
+   * final they are dropped, never handed to a later, unrelated turn.
+   */
+  private carried: { turn: number; text: string; forTurn: number } | null = null;
 
   constructor(private readonly opts: VoiceLoopOptions) {
     this.clock = opts.clock;
@@ -481,12 +486,18 @@ export class VoiceLoop {
       })
       .finally(() => {
         if (this.transcribing === cap) this.transcribing = null;
+        // The words carried to this turn were its own to use: whatever became of it (an STT
+        // failure, a timeout, a stop), they never reach a later turn.
+        if (this.carried?.forTurn === cap.turn) this.carried = null;
         // A press queued while this turn transcribed opens its capture now, whatever became of
         // the turn (its reply cut short, an empty transcript, a failure).
         if (this.queuedPressValue && !this.stopped && this.turn === cap.turn) {
           this.queuedPressValue = false;
           if (this.stateValue === "transcribing") this.setState("idle");
           this.beginCapture([]);
+        } else if (this.carried?.forTurn === cap.turn + 1 && this.turn === cap.turn) {
+          // The press was withdrawn after the cut: no turn will take the words; drop them.
+          this.carried = null;
         }
       });
     this.inFlight = run;
@@ -544,7 +555,8 @@ export class VoiceLoop {
     };
     this.transcript.push(userEntry);
     // Words carried from a turn cut short by a press go to the model with this turn's own.
-    const carried = this.carried;
+    // Only the turn the carry was made for takes it; anything else is stale.
+    const carried = this.carried?.forTurn === cap.turn ? this.carried : null;
     this.carried = null;
     const said = carried
       ? [carried.text, final.text.trim()].filter((t) => t.length > 0).join(" ")
@@ -554,7 +566,7 @@ export class VoiceLoop {
       turn: cap.turn,
       text: final.text,
       entry: userEntry,
-      ...(carried ? { carried } : {}),
+      ...(carried ? { carried: { turn: carried.turn, text: carried.text } } : {}),
     });
     // The write runs in the background so disk IO never delays the model call.
     const userWrite =
@@ -600,9 +612,17 @@ export class VoiceLoop {
     if (this.queuedPressValue) {
       // The human pressed again before the final landed: a barge-in on a reply not started
       // yet. The words are kept; no model is called; the queued capture opens after this.
-      // The words go on in the next turn: the human was not done talking.
-      this.carried = { turn: carried?.turn ?? cap.turn, text: said };
       await userWrite;
+    }
+    if (this.queuedPressValue && !stopSignal.aborted) {
+      // Still queued after the write (a release, the cap or an aborted request can withdraw it
+      // meanwhile; then the turn is answered below with its own words). The words go on in the
+      // turn the press opens: the human was not done talking.
+      this.carried = {
+        turn: carried?.turn ?? cap.turn,
+        text: capCarried(said),
+        forTurn: this.turn + 1,
+      };
       this.emit({ type: "barge_in", turn: cap.turn, spokenText: "" });
       this.endStopped(cap, endOfTurnMs, finalTranscriptMs, true);
       return;
@@ -947,6 +967,19 @@ export class VoiceLoop {
     if (res.abortedBy === null) res.abortedBy = reason;
     res.abort.abort(new ForerunnerError("killed", reason));
   }
+}
+
+/**
+ * The most carried words a turn takes (characters): a chain of presses keeps its most recent
+ * words, cut at a word boundary.
+ */
+export const MAX_CARRIED_CHARS = 2_000;
+
+function capCarried(text: string): string {
+  if (text.length <= MAX_CARRIED_CHARS) return text;
+  const tail = text.slice(text.length - MAX_CARRIED_CHARS);
+  const space = tail.indexOf(" ");
+  return space >= 0 ? tail.slice(space + 1) : tail;
 }
 
 /** How far `pacedSink` hands chunks over ahead of their place on its play-head, in ms. */

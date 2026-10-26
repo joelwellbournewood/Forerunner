@@ -208,15 +208,25 @@ export function ConversationPanel({
   const applyRecord = useCallback(
     (sessionId: string, turn: VoiceTurnView) => {
       appliedRef.current.add(`${sessionId}:${turn.turn}`);
+      // A turn whose model call got the words of the turn before (a press while it
+      // transcribed) shows as continued, from the record as from the stream.
+      const continued = typeof turn.carriedFrom === "number" ? { continued: true } : {};
       upsertTurnLine(sessionId, turn.turn, "human", (l) =>
         l
-          ? { ...l, text: turn.said || l.text || "(nothing heard)", partial: false, done: true }
+          ? {
+              ...l,
+              text: turn.said || l.text || "(nothing heard)",
+              partial: false,
+              done: true,
+              ...continued,
+            }
           : {
               id: nextId(),
               role: "human",
               text: turn.said || "(nothing heard)",
               via: "voice",
               done: true,
+              ...continued,
             },
       );
       upsertTurnLine(sessionId, turn.turn, "agent", (l) => {

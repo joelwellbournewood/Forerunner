@@ -1231,6 +1231,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       turn,
       source: "audio",
       replyMode,
+      continued: false,
+      carriedFrom: null,
       said,
       heard: reply?.reply ?? "",
       reply,

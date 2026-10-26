@@ -101,6 +101,8 @@ export function voiceTurnView(t: VoiceTurn, chf: number): VoiceTurnView {
     turn: t.turn,
     source: t.source,
     replyMode: t.replyMode,
+    continued: t.continued,
+    carriedFrom: t.carriedFrom,
     said: t.said,
     heard: t.heard,
     reply: t.reply ? voiceChatReplyView(t.reply, chf) : null,

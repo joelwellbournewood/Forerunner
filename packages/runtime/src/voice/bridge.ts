@@ -126,6 +126,10 @@ export interface VoiceTurn {
   source: VoiceTurnSource;
   /** How the reply went out: spoken (`voice`) or shown as text only (`text`, nothing heard). */
   replyMode: ReplyMode;
+  /** A press came while this turn transcribed: its words went on in the next turn. */
+  continued: boolean;
+  /** The turn whose words this turn's model call got before its own (or null). */
+  carriedFrom: number | null;
   /** What the human said (the final transcript). */
   said: string;
   /** What the human heard: the assistant transcript line (what was played). */
@@ -198,6 +202,8 @@ interface TurnState {
   turn: number;
   source: VoiceTurnSource;
   replyMode: ReplyMode;
+  continued: boolean;
+  carriedFrom: number | null;
   reply: ChatReply | null;
   approval: VoiceApproval | null;
   outcome: CommandResultView | null;
@@ -626,6 +632,8 @@ export class VoiceBridge {
         source: "audio",
         // Set from the loop's turn_start (the turn's own mode); this is only a placeholder.
         replyMode: this.loop.replyMode,
+        continued: false,
+        carriedFrom: null,
         reply: null,
         approval: null,
         outcome: null,
@@ -675,9 +683,12 @@ export class VoiceBridge {
         }
         break;
       }
-      case "transcript_final":
-        this.turnState(e.turn).tFinal = this.clock.monotonic();
+      case "transcript_final": {
+        const st = this.turnState(e.turn);
+        st.tFinal = this.clock.monotonic();
+        st.carriedFrom = e.carried?.turn ?? null;
         break;
+      }
       case "audio":
         this.turnState(e.turn).chunks++;
         break;
@@ -702,7 +713,9 @@ export class VoiceBridge {
         this.turnState(e.turn).error = e.error;
         break;
       case "turn_end": {
-        this.turnState(e.turn).replyMode = e.replyMode;
+        const st = this.turnState(e.turn);
+        st.replyMode = e.replyMode;
+        st.continued = e.continued === true;
         this.record(e);
         this.finish(this.turnState(e.turn), e.latency, e.entry, e.unspokenText);
         return;
@@ -741,6 +754,8 @@ export class VoiceBridge {
       turn,
       source: st.source,
       replyMode: st.replyMode,
+      continued: st.continued,
+      carriedFrom: st.carriedFrom,
       said: user?.text ?? "",
       heard: assistant?.text ?? "",
       reply: st.reply,
@@ -771,6 +786,8 @@ export class VoiceBridge {
           // A text reply played nothing: no first audio, no heard figure (the run's report and
           // /performance leave it out of the first-audio figures).
           replyMode: record.replyMode,
+          continued: record.continued,
+          carriedFrom: record.carriedFrom,
           said: record.said,
           heard: record.heard,
           audioChunks: record.audioChunks,

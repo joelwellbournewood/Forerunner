@@ -1161,6 +1161,34 @@ describe("conversation panel: review follow-ups", () => {
     expect(h.audio.state.closed).toBe(0);
   });
 
+  it("a turn's record alone (the polled record, no transcript frames) marks a carried line as continued", async () => {
+    const h = setup();
+    const { stream } = await startTalking(h);
+    act(() => {
+      stream.fire(
+        "voice.event",
+        frame("voice.turn", 2, {
+          record: {
+            turn: 2,
+            source: "audio",
+            replyMode: "voice",
+            continued: false,
+            carriedFrom: 1,
+            said: "to Friday.",
+            heard: "Done.",
+            reply: null,
+            error: null,
+            interrupted: false,
+            unspokenText: null,
+          },
+        }),
+      );
+    });
+    const human = screen.getByTestId("conversation-human");
+    expect(human.textContent).toContain("(continued)");
+    expect(human.dataset.continued).toBe("true");
+  });
+
   it("a press while the last turn transcribed carries its words: one line goes on, no reply stopped", async () => {
     const h = setup();
     const { stream } = await startTalking(h);

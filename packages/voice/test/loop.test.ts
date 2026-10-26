@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { spokenApprovalRecord } from "../src/approval.ts";
 import {
   type ConverseFn,
+  MAX_CARRIED_CHARS,
   PACED_SINK_AHEAD_MS,
   pacedSink,
   type ReplyMode,
@@ -1189,5 +1190,91 @@ describe("VoiceLoop text replies (replyMode: text)", () => {
     await runUntilIdle(second.loop, second.clock);
     // After a stop the next turn starts fresh: "first" is not carried into it.
     expect(heard.at(-1)).toBe("second");
+  });
+
+  it("carried words belong to the next turn only: when its STT fails they are dropped, not given to a later turn", async () => {
+    const heard: string[] = [];
+    const { clock, loop } = setup({
+      scripts: [
+        { final: "first part" },
+        { final: "lost", finalDelayMs: 20_000 }, // the next turn's STT never answers in time
+        { final: "an unrelated question" },
+      ],
+      converse: async function* (text) {
+        heard.push(text);
+        yield "Ok.";
+      },
+    });
+    pttTurn(loop, clock);
+    loop.pressStart();
+    await advance(clock, 300);
+    await settle();
+    expect(loop.currentTurn).toBe(2);
+    clock.tickMonotonic(20);
+    loop.pressEnd();
+    await advanceStepwise(clock, 10_050, 50); // turn 2 times out
+    await settle();
+    expect(loop.state).toBe("idle");
+    pttTurn(loop, clock);
+    await runUntilIdle(loop, clock);
+    expect(heard).toEqual(["an unrelated question"]);
+  });
+
+  it("a press withdrawn before the cut: the transcribing turn is answered with its own words and nothing is carried", async () => {
+    const heard: string[] = [];
+    const { clock, loop, events } = setup({
+      scripts: [{ final: "first part" }, { final: "later" }],
+      converse: async function* (text) {
+        heard.push(text);
+        yield "Ok.";
+      },
+    });
+    // The shell gives the press up as the final lands (a release, the cap, an aborted request).
+    const unsubscribeAt = events.length;
+    pttTurn(loop, clock);
+    loop.pressStart();
+    const origPush = events.push.bind(events);
+    events.push = (...items) => {
+      // In the next microtask: while the loop awaits the user audio write, after the final.
+      for (const e of items)
+        if (e.type === "transcript_final" && e.turn === 1)
+          queueMicrotask(() => loop.cancelQueuedPress());
+      return origPush(...items);
+    };
+    await advance(clock, 300);
+    await runUntilIdle(loop, clock);
+    events.push = origPush;
+    expect(unsubscribeAt).toBe(0);
+    expect(heard).toEqual(["first part"]);
+    const end1 = events.find((e) => e.type === "turn_end" && e.turn === 1);
+    expect(end1?.type === "turn_end" && end1.continued).toBeUndefined();
+    expect(end1).toMatchObject({ entry: { role: "assistant", text: "Ok." } });
+    pttTurn(loop, clock);
+    await runUntilIdle(loop, clock);
+    expect(heard).toEqual(["first part", "later"]);
+  });
+
+  it("carried words are capped: a long chain keeps only the most recent words", async () => {
+    const heard: string[] = [];
+    const long = "word ".repeat(1_000).trim(); // 4999 characters
+    const { clock, loop } = setup({
+      scripts: [{ final: long }, { final: "the end" }],
+      converse: async function* (text) {
+        heard.push(text);
+        yield "Ok.";
+      },
+    });
+    pttTurn(loop, clock);
+    loop.pressStart();
+    await advance(clock, 300);
+    await settle();
+    clock.tickMonotonic(20);
+    for (const c of speech(200)) loop.push(c);
+    loop.pressEnd();
+    await runUntilIdle(loop, clock);
+    expect(heard).toHaveLength(1);
+    expect(heard[0]?.endsWith("word the end")).toBe(true);
+    expect((heard[0] ?? "").length).toBeLessThanOrEqual(MAX_CARRIED_CHARS + " the end".length);
+    expect(heard[0]?.startsWith("word")).toBe(true);
   });
 });

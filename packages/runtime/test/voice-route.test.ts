@@ -1062,6 +1062,18 @@ describe("voice routes on the composed daemon", () => {
       [released.turn, "first part", true, ""],
       [pressed.turn, "What is the status?", false, STATUS_REPLY],
     ]);
+    // The records say it too, so a shell that only polls shows the line as continued.
+    expect(done.recentTurns?.map((t) => [t.continued, t.carriedFrom])).toEqual([
+      [true, null],
+      [false, released.turn],
+    ]);
+    const rows = (await rt.store.event.list(started.conversationSessionId))
+      .filter((e) => e.type === "voice.turn" && (e.payload as Json).voiceSessionId === id)
+      .map((e) => e.payload as Json);
+    expect(rows.map((r) => [r.continued, r.carriedFrom])).toEqual([
+      [true, null],
+      [false, released.turn],
+    ]);
     // The agent got both utterances as one line; the new turn's final frame names the carry.
     const calls = (rt.provider as FakeProvider).calls;
     expect(lastUserText(calls.at(-1)?.request as never)).toContain(
