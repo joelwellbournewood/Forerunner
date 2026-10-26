@@ -26,6 +26,7 @@
     "docs:schema": "tsx packages/state/scripts/generate-data-model-doc.ts",
     "secrets:scan": "node scripts/secret-scan.mjs",
     "gates:verify": "tsx scripts/gates-verify.ts",
+    "email:live": "tsx scripts/email-live.ts",
     "voice:run": "tsx scripts/voice-run.ts",
     "voice:install": "tsx scripts/voice-install.ts",
     "voice:lock": "tsx scripts/voice-lock.ts",
@@ -36,6 +37,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
+    "@forerunner/capabilities": "workspace:*",
+    "@forerunner/cloud-runner": "workspace:*",
     "@forerunner/critic": "workspace:*",
     "@forerunner/platform": "workspace:*",
     "@forerunner/runtime": "workspace:*",

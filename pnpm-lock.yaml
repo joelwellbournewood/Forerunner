@@ -14,6 +14,12 @@ importers:
       '@biomejs/biome':
         specifier: ^2.5.15
         version: 2.5.15
+      '@forerunner/capabilities':
+        specifier: workspace:*
+        version: link:packages/capabilities
+      '@forerunner/cloud-runner':
+        specifier: workspace:*
+        version: link:services/cloud-runner
       '@forerunner/critic':
         specifier: workspace:*
         version: link:packages/critic

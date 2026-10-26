@@ -2116,6 +2116,49 @@ after the runs: the logs directory and every other file there (the state store, 
 reports, the worktrees), read as bytes and searched in UTF-8 and UTF-16. `handoverPassed` is tested on its
 own as well.
 
+### Live email check (L.3)
+
+`scripts/email-live.ts` (`pnpm email:live`) checks agent email on a real mailbox, on an install
+of its own. What it does, the environment, the mode it picks and what the human sees are in
+`email.md` ("Live check"). The dedicated-home rules are the handover run's (above), with
+`email-live.json` as the home's marker and `email-live` as the default profile.
+
+`--dry-run` is the offline version and what the tests run: one in-process `LocalMailServer`
+hosts both addresses' domains (DKIM signing, SPF, the `Authentication-Results` header), the
+agent's mailbox is a `TestMailbox` handed in through `notifications.mailboxFactory` and the
+watcher's `mailboxFactory`, the gate believes the stand-in's authserv-id, the fake provider
+classifies the reply as a question, the vault is a `MemoryVault`, and the setup gets no
+credential (so it makes no network call). A scripted human replies "yes" in the check email's
+thread through the submission listener, so the reply is signed and passes SPF. The stand-in
+mailboxes get generated passwords; the real one only goes into the vault.
+
+Tests: `scripts/email-live.test.ts` (17 tests, no network):
+- `mailHostProfile`: Gmail, GMX (`gmx.net`, `gmx.ch`, `gmx.de`) and WEB.DE from the domain,
+  the Gmail hosts for any other domain, every override (hosts, ports, user), 465 as implicit
+  TLS and 587 as STARTTLS, the provider following an overridden IMAP host, a bad port refused;
+  the settings' mailbox carries `secret:mailbox_password` only.
+- `verifierChoice`: `mx.google.com`'s header for Gmail, `mailauth` otherwise, the runner's
+  variables winning, `header` without authserv-ids never meaning "trust any header".
+- `mailboxHint`: Gmail's app-password, IMAP-disabled, web-login and refused-login texts; GMX
+  and WEB.DE ("POP3/IMAP-Abruf"); a custom host; DNS, connection and TLS failures.
+- refusals before anything is written: no home, each of the three variables missing, the same
+  address for agent and human, a bad address, `--profile default`, a bad wait, another
+  install's store, a bad port, a home in use or another profile's, a password passed as an
+  argument (refused without echoing it).
+- the dry run end to end, handed `process.env` itself: PASS, the password in the vault without
+  Gmail's display spaces, the `email.mode.set` card confirmed on this PC's device row, both
+  logins, the check email, the reply's DKIM/alignment/SPF verdict, the question answered, the
+  report, the credential variables gone from `process.env`, the result as the last line after
+  the "Stopped" line, no message body printed; a rerun on the same home (mode already
+  `read_only`, no second card) passes; a spoofed (unsigned) reply fails with `dkim_fail`; no
+  reply fails when the wait ends, with the GMX hosts.
+- live mode with the network replaced: the Anthropic key validated by a stand-in and stored,
+  the product's `ImapSmtpMailbox` resolving `secret:mailbox_password` from the vault (the logins
+  carry the stored value), a Gmail "Application-specific password required" refusal stopping
+  the run at step 3 with the fix, nothing sent.
+- no secret value (the password with and without spaces, the key) in any file under the homes
+  (the store, the report), as UTF-8 or UTF-16.
+
 ## Scenarios
 
 Package: `tests/e2e` (`@forerunner/e2e`). The nine release scenarios of the spec ("Phase 8 — Full

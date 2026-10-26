@@ -87,6 +87,17 @@ describe("TestMailbox over the testenv server", () => {
     ]);
   });
 
+  it("verify logs in to the submission listener and reports the stand-in's one folder", async () => {
+    world = await emailWorld();
+    const check = await world.mailbox.verify();
+    expect(check).toEqual({
+      imap: { ok: true, folders: ["INBOX"] },
+      smtp: { ok: true },
+    });
+    // Nothing was sent by the check.
+    expect(world.mailbox.sent).toHaveLength(0);
+  });
+
   it("lists unseen mail, fetches one message parsed as data, and marks it seen", async () => {
     world = await emailWorld();
     const stored = await ownerSends(world, { subject: "one", text: "first", marker: false });
@@ -312,6 +323,9 @@ class FakeImapClient implements ImapClientLike {
     private readonly store: FakeStore,
     private readonly behaviour: { connectError?: Error; searchError?: Error } = {},
   ) {}
+  async list(): Promise<Array<{ path: string }>> {
+    return [{ path: "INBOX" }, { path: "Drafts" }, { path: "[Gmail]/Sent Mail" }];
+  }
   async connect(): Promise<void> {
     if (this.behaviour.connectError) throw this.behaviour.connectError;
     this.connected = true;
@@ -373,6 +387,13 @@ class FakeTransport implements SmtpTransportLike {
   }
   close(): void {
     this.closed = true;
+  }
+  verified = 0;
+  verifyError: Error | null = null;
+  async verify(): Promise<true> {
+    this.verified++;
+    if (this.verifyError) throw this.verifyError;
+    return true;
   }
 }
 
@@ -544,6 +565,77 @@ describe("ImapSmtpMailbox: credentials by reference, resolved at call time", () 
     expect(isForerunnerError(smtpError, "provider_error")).toBe(true);
     expect(String((smtpError as ForerunnerError).cause)).not.toContain(SMTP_PASSWORD);
     for (const line of smtpLines) expect(line).not.toContain(SMTP_PASSWORD);
+  });
+
+  it("verify logs in to IMAP, lists the folders and checks the SMTP login, sending nothing", async () => {
+    const w = imapWorld();
+    const check = await w.mailbox.verify();
+    expect(check).toEqual({
+      imap: { ok: true, folders: ["INBOX", "Drafts", "[Gmail]/Sent Mail"] },
+      smtp: { ok: true },
+    });
+    expect(w.clients[0]?.connected).toBe(false); // logged out
+    expect(w.transports[0]?.verified).toBe(1);
+    expect(w.transports[0]?.sent).toHaveLength(0);
+    expect(w.transports[0]?.closed).toBe(true);
+    expect(w.audited.sort()).toEqual(["alice_imap", "alice_smtp"]);
+  });
+
+  it("verify reports each failure with the server's words and code, scrubbed, never throwing", async () => {
+    const w = imapWorld();
+    // The shape imapflow gives a refused LOGIN: a generic message, the server's text apart.
+    const refused = Object.assign(new Error("Command failed"), {
+      authenticationFailed: true,
+      serverResponseCode: "AUTHENTICATIONFAILED",
+      responseText: `Invalid credentials (Failure) for alice ${IMAP_PASSWORD}`,
+    });
+    // nodemailer's shape: `code`, the reply line as `response`, its number as `responseCode`.
+    const smtpRefused = Object.assign(new Error(`Invalid login: 535-5.7.8 for ${SMTP_PASSWORD}`), {
+      code: "EAUTH",
+      response: `535-5.7.8 Username and Password not accepted ${SMTP_PASSWORD}`,
+      responseCode: 535,
+    });
+    const t = new FakeTransport({ host: "smtp.example.test", port: 465, secure: true });
+    t.verifyError = smtpRefused;
+    const mailbox = new ImapSmtpMailbox({
+      config: MailboxConfigSchema.parse({
+        address: AGENT,
+        imap: { host: "imap.example.test", user: "alice", passwordRef: "secret:alice_imap" },
+        smtp: { host: "smtp.example.test", user: "alice", passwordRef: "secret:alice_smtp" },
+      }),
+      secrets: w.secrets,
+      granted: new Set(["alice_imap", "alice_smtp"]),
+      clock: w.clock,
+      createImap: async (o) => new FakeImapClient(o, w.store, { connectError: refused }),
+      createTransport: async () => t,
+    });
+    const { result: check, lines } = await captureLogs(() => mailbox.verify());
+    expect(check.imap.ok).toBe(false);
+    expect(check.imap.error).toMatchObject({ code: "AUTHENTICATIONFAILED", authFailed: true });
+    expect(check.imap.error?.serverText).toContain("Invalid credentials (Failure)");
+    expect(check.smtp).toMatchObject({ ok: false, error: { code: "EAUTH", authFailed: true } });
+    expect(check.smtp.error?.serverText).toContain("535-5.7.8 Username and Password not accepted");
+    expect(t.closed).toBe(true);
+    const json = JSON.stringify(check);
+    expect(json).not.toContain(IMAP_PASSWORD);
+    expect(json).not.toContain(SMTP_PASSWORD);
+    expect(json).toContain("[REDACTED]");
+    for (const line of lines) {
+      expect(line).not.toContain(IMAP_PASSWORD);
+      expect(line).not.toContain(SMTP_PASSWORD);
+    }
+    // A mailbox without either side reports both as not configured.
+    const neither = new ImapSmtpMailbox({
+      config: MailboxConfigSchema.parse({ address: AGENT, imap: null, smtp: null }),
+      secrets: w.secrets,
+      granted: new Set(),
+      clock: w.clock,
+    });
+    const none = { code: "not_configured", authFailed: false };
+    expect(await neither.verify()).toMatchObject({
+      imap: { ok: false, error: none },
+      smtp: { ok: false, error: none },
+    });
   });
 
   it("watch delivers by IMAP IDLE push and by the polling fallback", async () => {

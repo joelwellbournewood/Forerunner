@@ -215,7 +215,7 @@ runtime's own requests; `EmailPolicy.resolveApproval` for `send_email`, `new_rec
 | `sent-log.ts` | `SentLog` over `audit_log` (`AuditSentLog`; `MemorySentLog` for tests), tool names `email.send`, `email.draft`, `email.queued`, `email.command`, `email.inbound_flagged`, `email.settings` |
 | `inbound.ts` | `parseInboundEmail` (mailparser, `wrapUntrusted`, links and attachments as references), `saveAttachments`, `parseAuthResultsHeader`, `stripQuotedText`, `hasCommandMarker`, `isReplyToThread` |
 | `auth.ts` | `AuthVerifier` port and the three verifiers |
-| `mailbox.ts` | `Mailbox` interface, `ImapSmtpMailbox` (imapflow + nodemailer, IDLE push with a polling fallback, credentials resolved per call through `MailboxSecrets`, library errors scrubbed), `defaultSmtpFactory` (implicit TLS when `secure`, else `requireTLS`: STARTTLS mandatory, never `ignoreTLS`), `loopbackSmtpFactory` (plaintext, 127.0.0.1/::1/localhost only, refuses any other host; the `TestMailbox` default), `TestMailbox` over the testenv server, `pollLoop`, `buildOutboundRaw` |
+| `mailbox.ts` | `Mailbox` interface, `ImapSmtpMailbox` (imapflow + nodemailer, IDLE push with a polling fallback, credentials resolved per call through `MailboxSecrets`, library errors scrubbed), `defaultSmtpFactory` (implicit TLS when `secure`, else `requireTLS`: STARTTLS mandatory, never `ignoreTLS`), `loopbackSmtpFactory` (plaintext, 127.0.0.1/::1/localhost only, refuses any other host; the `TestMailbox` default), `TestMailbox` over the testenv server, `pollLoop`, `buildOutboundRaw`; `Mailbox.verify` (optional; both implementations have it): the IMAP login and folder list and the SMTP login (nodemailer's `verify`), nothing sent or changed, never throwing for a refused login or an unreachable host; each side reports `MailboxCheckError` (`mailboxCheckError`: the server's code and words, imapflow's `serverResponseCode`/`responseText` or nodemailer's `code`/`response`, scrubbed through `redact`, `authFailed`) |
 | `locks.ts` | `KeyedLock`: in-process serialization per agent for the cap checks and command handling |
 | `commands.ts` | `EmailCommandGate`, `EmailCommandHandler` (`handle` once per message, `duplicate`, `error` row), `emailCommandAudit` / `emailCommandRows` (the command audit for the UI as a reader over the audit log alone, `EmailCommandAuditRow`; the handler's `commandAudit` delegates to it, the daemon serves it without a handler), `ModelCommandClassifier`, `parseYesNo`, `pickProject`, `effectivePerEmailCapUsdMicro`, `defaultTaskEstimate` |
 | `tools.ts` | `emailTools`/`registerEmailTools`: `email_send` (`external_send`, high; routes through `EmailPolicy`), `email_list` and `email_read` (`read`, low; `untrusted` output, references only, the owner's command marker replaced by `[command marker]` through `hideCommandMarker`), `email_draft` (`routine_reversible`, low) |
@@ -372,7 +372,7 @@ compares the key sets, so a field added on one side fails there.
 
 ## Tests
 
-Unit (`pnpm vitest run --project unit packages/capabilities/test/email-*.test.ts`, 8 files, 128 tests on
+Unit (`pnpm vitest run --project unit packages/capabilities/test/email-*.test.ts`, 8 files, 132 tests on
 the testenv mail server with DKIM and SPF, an in-memory SQLite store and `SimulatedClock`):
 
 - `email-settings.test.ts`: defaults, merge and validation, credential values refused, marker
@@ -402,7 +402,11 @@ the testenv mail server with DKIM and SPF, an in-memory SQLite store and `Simula
   STARTTLS; `pollLoop`; `buildOutboundRaw`; `ImapSmtpMailbox` with fake IMAP/SMTP clients and
   the real `SecretResolver` over a `MemoryVault`: resolution at call time, not granted refused
   before any connection, no credential value in any captured log line, error message or JSON;
-  IDLE push, poll fallback, reconnect, non-fatal catch-up.
+  IDLE push, poll fallback, reconnect, non-fatal catch-up; `verify` logs in on both sides,
+  lists the folders and sends nothing, reports a refused IMAP LOGIN (imapflow's shape) and a
+  refused SMTP AUTH (nodemailer's) with the server's words and no credential in the result or
+  a log line, and reports a side without configuration; `TestMailbox.verify` logs in to the
+  submission listener.
 - `email-tools.test.ts`: tool shapes and action classes; `email_send` through the policy in
   every mode; `email_read`/`email_list` untrusted output with references only and the flagged
   marker; `email_draft`.
@@ -491,6 +495,103 @@ cloud; a spoofed or forwarded email is ignored"): `email-commands.test.ts` "gate
 "ignores a spoofed From" / "ignores mail from anyone else, including a forwarded copy". Scenario
 2 (email task) and scenario 6 (injection by email) of phase 8 are covered at unit level by the
 same file; the live e2e runs under `tests/e2e/`.
+
+## Live check (L.3 on a real mailbox)
+
+`scripts/email-live.ts` (`pnpm email:live [--profile <name>] [--wait-minutes <n>] [--dry-run]`)
+checks agent email end to end on a real mailbox, on an install of its own. It runs the
+product's own code at every step; the script only wires it, like `handover-live.ts`
+(testing.md, "Live runs").
+
+Environment (the human's launcher loads `.env.build`):
+
+| Variable | What |
+| --- | --- |
+| `FORERUNNER_HOME` | required; a directory used for nothing else (refusals as for the handover run; marker `email-live.json`; default profile `email-live`) |
+| `FORERUNNER_MAILBOX_ADDRESS` | the agent's own mailbox, never the human's |
+| `FORERUNNER_MAILBOX_PASSWORD` | its password: a 16-letter app password for Gmail (2-Step Verification on; the spaces Google shows are dropped), the account password for GMX or WEB.DE |
+| `FORERUNNER_HUMAN_EMAIL` | the human's own address: `fr setup --email`, and the address registered for commands |
+| `FORERUNNER_ANTHROPIC_KEY` (or `FORERUNNER_SUBSCRIPTION_TOKEN`) | the model the handler classifies the reply with; validated by the setup |
+| `FORERUNNER_MAILBOX_IMAP_HOST`, `_IMAP_PORT`, `_SMTP_HOST`, `_SMTP_PORT`, `_USER` | optional overrides |
+
+Hosts (`mailHostProfile`): `gmail.com`/`googlemail.com` get `imap.gmail.com:993` and
+`smtp.gmail.com:465`; `gmx.net`, `gmx.ch`, `gmx.de` get `imap.gmx.net:993` and
+`mail.gmx.net:465`; `web.de` gets `imap.web.de:993` and `smtp.web.de:465`; any other domain gets
+the Gmail hosts (a Google Workspace address). The overrides win; the user defaults to the
+address. IMAP is implicit TLS; SMTP on 465 is implicit TLS, on any other port (587) STARTTLS,
+which `defaultSmtpFactory` requires. The hints for a refused login follow the provider of the
+IMAP host in use.
+
+Steps:
+
+1. `runSetup` non-interactively for the profile with the human's email; GitHub is not needed
+   and its token is not handed over. The password goes into the profile's vault as
+   `mailbox_password`. Every credential variable (the password, the Anthropic key or token,
+   a GitHub token) is then deleted from the run's environment and from `process.env`. No
+   value is ever in argv, a printed line, the report or a log: output is scrubbed of each value
+   (with and without spaces), and a password passed as an option is refused without echo.
+2. The sending mode `read_only`, through the registry's `email.mode.set` on the daemon app in
+   process: `POST /commands/execute` answers a high-risk change card (`needs_device`), and
+   `POST /commands/:id/confirm { answer: "device" }` confirms it on this PC's paired device row
+   (the compose option `remote.enabled` registers the row on a one-shot). That is the page's
+   path (ADR 0066, amended), one change log row with undo. A rerun whose mode is already
+   `read_only` makes no card. Then `PUT .../email/settings` sets the mailbox (Gmail defaults or
+   the overrides, `passwordRef: "secret:mailbox_password"` on both sides) and the commands
+   (`enabled: true`, `registeredHumanAddress` the human's address). The order matters: commands
+   cannot be turned on at `off` (ADR 0081).
+3. `Mailbox.verify` on `rt.capabilities.email.ports.mailboxFor(agent)`, the daemon's own
+   `ImapSmtpMailbox`: the IMAP login and the folder list, then the SMTP login. A failure prints
+   the server's words and `mailboxHint`'s fix: Gmail's "Application-specific password
+   required" (use an app password), "not enabled for IMAP" (enable IMAP), a web-login alert
+   (sign in in a browser), any other refusal (2-Step Verification off, or a wrong or revoked app
+   password); GMX and WEB.DE ("enable POP3/IMAP-Abruf in the settings"); a host that does not
+   resolve, cannot be reached or fails TLS.
+4. The cloud runner's `EmailWatch` (IMAP IDLE push, a 30 s poll) is started, then one email
+   goes to the human through `EmailPolicy.send`: subject "Forerunner email check: reply to this
+   email with the word yes", three plain lines, and the AI signature. It is logged in the sent
+   log as a mail to the human alone, which makes a reply to it a thread reply.
+5. The watcher hands every inbound message to `EmailCommandHandler`. The check waits (default
+   10 minutes) for a message from the human whose direct parent is the check email. The gate
+   decides: From is exactly the registered address, DKIM passes for a domain aligned (relaxed)
+   with the From domain, SPF passes, the Date is fresh, and the thread holds. The product does
+   not evaluate a DMARC policy; it asks for both aligned DKIM and SPF, which is stricter than
+   DMARC's either one. The mail host's own `Authentication-Results` (dkim, spf, dmarc) is
+   printed beside the verdict as data. The verifier is `verifierChoice`: for a Gmail mailbox
+   the header `mx.google.com` stamps (the wiring above names it for Gmail); for any other host
+   `mailauth`, which re-checks DKIM and SPF with DNS (the runner's default);
+   `FORERUNNER_RUNNER_MAIL_VERIFIER` and `FORERUNNER_RUNNER_MAIL_AUTHSERV_IDS` override it as
+   they do on the runner. An obeyed reply is routed as an email command. Spec T allows a
+   question to be answered by reply, and that is the safe path. The install has no project and
+   the check's `StartCloudSessionPort` refuses, so a reply read as a task or note can only get
+   "Which project is this for?". Nothing is created or run either way.
+6. `EMAIL RESULT: PASS`, or `EMAIL RESULT: FAIL <reason>` as the last line; each step is
+   printed and recorded in `<home>/email-live-report.json`: the addresses, the provider, the
+   mode, the steps, the check email's subject and Message-ID, and the reply's subject, sender,
+   gate verdict, auth verdict, the host's results, the outcome and the answer's subject. No
+   body and no secret. PASS needs every step: both logins, the email sent, a reply in the
+   thread from the registered address, obeyed, answered by email (outcome `question`,
+   `unclear`, `task_needs_project` or `note` with the answer sent). Exit 0 on PASS, 1 on FAIL,
+   2 when it refused to run or failed before the runtime existed.
+7. The watcher, the ticker and the runtime are closed before the result line ("Stopped: ...").
+   If a library still holds a socket 5 s later, the entry point exits anyway, so the launcher
+   window never hangs.
+
+What the human sees: one email from the agent's address with that subject, saying to reply
+"yes". After replying, within about half a minute (at once with IDLE), a reply in the same
+thread from the agent. In live mode it is the classifier's answer to the "yes" (usually a
+short acknowledgement), or "Which project is this for?" if the model read it as a task or a
+note. It ends with the agent's AI signature. The console prints the steps, a "still waiting"
+line each minute, and the result. Live mode cannot open the human's inbox: "answered" means
+the SMTP server accepted the reply.
+
+Mode chosen: `read_only`. It is the least-permissive mode that does both things the check
+needs. Mail whose every recipient is the human is allowed in every mode except `off`, and
+commands need a mode other than `off` (ADR 0081). `read_only` refuses every other recipient,
+while `draft_only`, `allowlist` and `full_discretion` all let the agent reach someone else, as
+drafts, listed addresses or anyone.
+
+`--dry-run` runs every step offline against an in-process testenv server; the scripted human
+replies "yes" (testing.md, "Live email check").
 
 ## Known issues
 

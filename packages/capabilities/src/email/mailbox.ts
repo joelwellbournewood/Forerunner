@@ -58,6 +58,30 @@ export interface WatchOptions {
 
 export type InboundHandler = (message: InboundEmail) => Promise<void> | void;
 
+/** Why one side of a connection check failed, scrubbed of every resolved secret value. */
+export interface MailboxCheckError {
+  /** The server's response code (`AUTHENTICATIONFAILED`, `ALERT`), the library's (`EAUTH`), a socket code (`ENOTFOUND`) or `not_configured`. */
+  code: string;
+  message: string;
+  /** The server's own words when it answered (an IMAP NO text, an SMTP reply line). */
+  serverText?: string;
+  /** The server refused the credentials (as opposed to an unreachable host or a TLS failure). */
+  authFailed: boolean;
+}
+
+export interface MailboxCheck {
+  ok: boolean;
+  /** IMAP only: the folder paths the login can see. */
+  folders?: string[];
+  error?: MailboxCheckError;
+}
+
+/** `Mailbox.verify`: the IMAP login and folder list, the SMTP login; nothing is sent or changed. */
+export interface MailboxVerification {
+  imap: MailboxCheck;
+  smtp: MailboxCheck;
+}
+
 export interface Mailbox {
   readonly address: string;
   listUnseen(opts?: { limit?: number }): Promise<InboundEmail[]>;
@@ -66,7 +90,61 @@ export interface Mailbox {
   send(message: OutboundMessage): Promise<SendReceipt>;
   saveDraft(message: OutboundMessage): Promise<DraftReceipt>;
   markSeen(id: string): Promise<void>;
+  /**
+   * Check both connections with the configured credentials without sending or changing
+   * anything (a setup screen's or a live check's "test connection"). Never throws for a
+   * refused login or an unreachable host: each side reports its own error. Optional, so a
+   * hand-written fake need not implement it.
+   */
+  verify?(): Promise<MailboxVerification>;
 }
+
+/**
+ * The parts of a mail library error worth showing: the server's code and words (imapflow:
+ * `serverResponseCode`, `responseText`; nodemailer: `code`, `response`), each passed through
+ * `redact` so no resolved credential survives.
+ */
+export function mailboxCheckError(e: unknown, redact: (text: string) => string): MailboxCheckError {
+  const err = (e ?? {}) as {
+    message?: unknown;
+    code?: unknown;
+    serverResponseCode?: unknown;
+    responseText?: unknown;
+    response?: unknown;
+    responseCode?: unknown;
+    authenticationFailed?: unknown;
+  };
+  const message = redact(e instanceof Error ? e.message : String(e));
+  const serverRaw =
+    typeof err.responseText === "string"
+      ? err.responseText
+      : typeof err.response === "string"
+        ? err.response
+        : undefined;
+  const code =
+    typeof err.serverResponseCode === "string"
+      ? err.serverResponseCode
+      : typeof err.code === "string"
+        ? err.code
+        : "error";
+  const authFailed =
+    err.authenticationFailed === true ||
+    code === "EAUTH" ||
+    code === "AUTHENTICATIONFAILED" ||
+    err.responseCode === 535 ||
+    err.responseCode === 534;
+  return {
+    code,
+    message,
+    ...(serverRaw ? { serverText: redact(serverRaw) } : {}),
+    authFailed,
+  };
+}
+
+const notConfigured = (what: string): MailboxCheck => ({
+  ok: false,
+  error: { code: "not_configured", message: `no ${what} configuration`, authFailed: false },
+});
 
 /** Build the raw RFC 5322 message with nodemailer's composer; CRLF line endings. */
 export async function buildOutboundRaw(
@@ -141,6 +219,8 @@ export interface ImapClientLike {
   ): Promise<boolean>;
   append(path: string, content: string, flags?: string[]): Promise<unknown>;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
+  /** imapflow's LIST; used by `verify` only. */
+  list?(): Promise<Array<{ path: string }>>;
   readonly usable?: boolean;
 }
 
@@ -156,6 +236,8 @@ export type ImapFactory = (opts: ImapConnectOptions) => Promise<ImapClientLike>;
 export interface SmtpTransportLike {
   sendMail(mail: { envelope: { from: string; to: string[] }; raw: string }): Promise<unknown>;
   close?(): void;
+  /** nodemailer's `verify`: connect, TLS and AUTH, no message; used by `Mailbox.verify` only. */
+  verify?(): Promise<unknown>;
 }
 
 export interface SmtpConnectOptions {
@@ -392,6 +474,53 @@ export class ImapSmtpMailbox implements Mailbox {
     return receipt;
   }
 
+  async verify(): Promise<MailboxVerification> {
+    const redact = (t: string) => this.deps.secrets.redact(t);
+    const { imap, smtp } = this.deps.config;
+    let imapCheck: MailboxCheck;
+    if (!imap) imapCheck = notConfigured("IMAP");
+    else {
+      let client: ImapClientLike | null = null;
+      try {
+        const pass = await this.password(imap.passwordRef);
+        client = await this.createImap({
+          host: imap.host,
+          port: imap.port,
+          secure: imap.secure,
+          auth: { user: imap.user, pass },
+        });
+        await client.connect();
+        const folders = client.list ? (await client.list()).map((f) => f.path) : [];
+        imapCheck = { ok: true, folders };
+      } catch (e) {
+        imapCheck = { ok: false, error: mailboxCheckError(e, redact) };
+      } finally {
+        await client?.logout().catch(() => undefined);
+      }
+    }
+    let smtpCheck: MailboxCheck;
+    if (!smtp) smtpCheck = notConfigured("SMTP");
+    else {
+      let transport: SmtpTransportLike | null = null;
+      try {
+        const pass = await this.password(smtp.passwordRef);
+        transport = await this.createTransport({
+          host: smtp.host,
+          port: smtp.port,
+          secure: smtp.secure,
+          auth: { user: smtp.user, pass },
+        });
+        if (transport.verify) await transport.verify();
+        smtpCheck = { ok: true };
+      } catch (e) {
+        smtpCheck = { ok: false, error: mailboxCheckError(e, redact) };
+      } finally {
+        transport?.close?.();
+      }
+    }
+    return { imap: imapCheck, smtp: smtpCheck };
+  }
+
   async saveDraft(message: OutboundMessage): Promise<DraftReceipt> {
     const receipt = await buildOutboundRaw(this.address, message, this.deps.clock.now());
     await this.withImap(async (client, _folder, drafts) => {
@@ -589,6 +718,35 @@ export class TestMailbox implements Mailbox {
     }
     this.sent.push(receipt);
     return receipt;
+  }
+
+  /**
+   * The stand-in has no IMAP listener: the delivered mailbox is its one folder (`INBOX`). The
+   * SMTP side logs in to the submission listener for real (`verify`, no message).
+   */
+  async verify(): Promise<MailboxVerification> {
+    const { host, submissionPort } = this.opts.server.address();
+    let smtp: MailboxCheck;
+    let transport: SmtpTransportLike | null = null;
+    try {
+      transport = await this.createTransport({
+        host,
+        port: submissionPort,
+        secure: false,
+        auth: { user: this.box.credentials.username, pass: this.box.credentials.password },
+      });
+      if (transport.verify) await transport.verify();
+      smtp = { ok: true };
+    } catch (e) {
+      const password = this.box.credentials.password;
+      smtp = {
+        ok: false,
+        error: mailboxCheckError(e, (t) => t.split(password).join("[REDACTED]")),
+      };
+    } finally {
+      transport?.close?.();
+    }
+    return { imap: { ok: true, folders: ["INBOX"] }, smtp };
   }
 
   async saveDraft(message: OutboundMessage): Promise<DraftReceipt> {
