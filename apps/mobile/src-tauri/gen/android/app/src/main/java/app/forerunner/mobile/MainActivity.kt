@@ -6,7 +6,10 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.View
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -17,8 +20,35 @@ class MainActivity : TauriActivity() {
     pushLinkIntent(intent)?.let { intent = it }
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    padContentForInsets()
     if (BuildConfig.FCM_CONFIGURED) askForNotificationPermission()
   }
+
+  /**
+   * Android 15+ lays every app targeting SDK 35+ out edge to edge, and the WebView started at
+   * y = 0: the header ran under the clock and the sync badge under the battery icon (R.1, the
+   * rc.3 APK on a Samsung SM-S911B). The activity's content view, the WebView's parent, is
+   * padded by the system bars, the display cutout and the keyboard (SafeArea.padding), and the
+   * insets are consumed so a WebView that reports env(safe-area-inset-*) sees zero and the page
+   * never pads them a second time. The padded strips show the theme's window background.
+   */
+  private fun padContentForInsets() {
+    val content = findViewById<View>(android.R.id.content)
+    ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+      val padding =
+        SafeArea.padding(
+          insets.edges(WindowInsetsCompat.Type.systemBars()),
+          insets.edges(WindowInsetsCompat.Type.displayCutout()),
+          insets.edges(WindowInsetsCompat.Type.ime()),
+        )
+      view.setPadding(padding.left, padding.top, padding.right, padding.bottom)
+      WindowInsetsCompat.CONSUMED
+    }
+    ViewCompat.requestApplyInsets(content)
+  }
+
+  private fun WindowInsetsCompat.edges(type: Int): Edges =
+    getInsets(type).let { Edges(it.left, it.top, it.right, it.bottom) }
 
   override fun onNewIntent(intent: Intent) {
     val next = pushLinkIntent(intent) ?: intent

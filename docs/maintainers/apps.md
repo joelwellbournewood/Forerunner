@@ -1370,14 +1370,32 @@ apps/mobile/
                        seed and the token; info (model, strongBox, biometric, fcmToken or null,
                        fcmConfigured)
     gen/android/app/src/main/java/app/forerunner/mobile/MainActivity.kt
-                       notification tap -> fr://open?link=; POST_NOTIFICATIONS asked once (FCM builds)
+                       notification tap -> fr://open?link=; POST_NOTIFICATIONS asked once (FCM builds);
+                       the content view padded by the window insets (edge to edge, below)
+    gen/android/app/src/main/java/app/forerunner/mobile/SafeArea.kt
+                       Edges, SafeArea.padding: per edge the largest of system bars, cutout, keyboard
     gen/android/app/src/main/java/app/forerunner/mobile/PushLinks.kt, PushTokenStore.kt
                        pure link, kind and channel rules (JVM-tested); the token in private prefs
     gen/android/app/src/fcm/   ForerunnerMessagingService, FcmStartup, AndroidManifest.xml (FCM only)
-    gen/android/app/src/test/  PushLinksTest (JUnit 4)
+    gen/android/app/src/test/  PushLinksTest, SafeAreaTest (JUnit 4)
 scripts/android-google-services.mjs
                        GOOGLE_SERVICES_JSON_BASE64 -> gen/android/app/google-services.json (checked)
 ```
+
+**Edge to edge.** Android 15+ draws every app targeting SDK 35+ (this one targets 37) under
+the status and navigation bars, and `MainActivity` also calls `enableEdgeToEdge()`. The WebView
+was laid out from y = 0, so on the signed rc.3 APK (Samsung SM-S911B) the header ran under the
+clock and the sync badge under the battery icon. `MainActivity.padContentForInsets` sets an
+insets listener on `android.R.id.content` (the WebView's parent): it pads that view by
+`SafeArea.padding(systemBars, displayCutout, ime)`, per edge the largest of the three (they
+overlap: the keyboard's bottom inset includes the navigation bar), and returns
+`WindowInsetsCompat.CONSUMED`. The fix is native, not CSS: the page needs no
+`env(safe-area-inset-*)` or inset variables, and because the insets are consumed a WebView that
+reports `env(safe-area-inset-*)` itself sees zero, so nothing pads twice. The UI's fixed header
+and bottom nav sit inside the padded WebView unchanged. The padded strips show the theme's
+window background (Material 3 DayNight); the status bar icons follow `enableEdgeToEdge`'s
+light/dark choice. The keyboard inset means the WebView shrinks above the keyboard, which
+`adjustResize` no longer does for an edge-to-edge window.
 
 **Boot.** The shell resolves the app directories, loads `mobile.json`, builds the secure
 files over the Keystore wrapper (Android) or the file wrapper (desktop dev builds; Settings
@@ -1706,8 +1724,12 @@ warnings and messages, suppressed inside quiet hours.
   notification. `scripts/android-google-services.test.ts`: the secret written mode 0600 and
   checked (JSON, project id, the app's package) without printing it, nothing without it, the
   Gradle gating, no Firebase in the main source set or manifest, `fcmToken` in `info`, the
-  gitignore entries and both workflows' steps. `gen/android/app/src/test/.../PushLinksTest.kt`
-  runs in CI only (`android.yml`, `./gradlew :app:testX86_64DebugUnitTest
+  gitignore entries and both workflows' steps. `scripts/android-insets.test.ts`: the activity
+  pads `android.R.id.content` from system bars, cutout and keyboard through `SafeArea.padding`
+  and consumes the insets; `SafeArea.kt` imports nothing from Android.
+  `gen/android/app/src/test/.../PushLinksTest.kt` and `SafeAreaTest.kt` (status and navigation
+  bar, a cutout taller than the bar, a landscape side cutout, the keyboard replacing the
+  navigation bar, no insets) run in CI only (`android.yml`, `./gradlew :app:testX86_64DebugUnitTest
   -PforerunnerFcmCompileCheck=true`, which also compiles `src/fcm`);
   `cargo clippy -D warnings`, `cargo fmt --check`.
 - `apps/mobile/e2e/run.mjs`: the emulator smoke (CI's Android job; skips visibly here, and
