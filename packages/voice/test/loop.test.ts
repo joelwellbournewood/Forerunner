@@ -1045,4 +1045,76 @@ describe("VoiceLoop text replies (replyMode: text)", () => {
       entry: null,
     });
   });
+
+  it("a press while the last turn is transcribing is queued: the final lands, that turn ends without a reply, the new capture opens", async () => {
+    let converseCalls = 0;
+    const { clock, loop, events, tts } = setup({
+      scripts: [{ final: "first part" }, { final: "and the rest" }],
+      converse: async function* (_t, signal) {
+        converseCalls++;
+        await clock.sleep(500, signal);
+        yield "All good.";
+      },
+    });
+    pttTurn(loop, clock);
+    expect(loop.state).toBe("transcribing");
+    // Only one STT session at a time (a local helper serves one): the press waits for the final.
+    loop.pressStart();
+    expect(loop.pressQueued).toBe(true);
+    expect(loop.state).toBe("transcribing");
+    expect(loop.currentTurn).toBe(1);
+    await advance(clock, 300); // the final of turn 1 lands
+    await settle();
+    expect(loop.pressQueued).toBe(false);
+    expect(loop.state).toBe("listening");
+    expect(loop.currentTurn).toBe(2);
+    // Turn 1 kept what the human said, called no model and ended as cut short by the press.
+    expect(converseCalls).toBe(0);
+    expect(loop.transcript.map((e) => `${e.turn}:${e.role}:${e.text}`)).toEqual([
+      "1:user:first part",
+    ]);
+    expect(events.find((e) => e.type === "barge_in")).toMatchObject({ turn: 1, spokenText: "" });
+    const end1 = events.find((e) => e.type === "turn_end" && e.turn === 1);
+    expect(end1).toMatchObject({ entry: null });
+    expect(end1?.type === "turn_end" && end1.latency.interrupted).toBe(true);
+    const types = typesOf(events);
+    expect(types.lastIndexOf("turn_end")).toBeLessThan(
+      events.findIndex((e) => e.type === "turn_start" && e.turn === 2),
+    );
+    // The new turn runs as usual.
+    for (const c of speech(200)) loop.push(c);
+    clock.tickMonotonic(20);
+    loop.pressEnd();
+    await runUntilIdle(loop, clock);
+    expect(converseCalls).toBe(1);
+    expect(tts.calls.length).toBeGreaterThan(0);
+    expect(loop.transcript.map((e) => `${e.turn}:${e.role}`)).toEqual([
+      "1:user",
+      "2:user",
+      "2:assistant",
+    ]);
+  });
+
+  it("a queued press still opens its capture when the transcribing turn fails, and stop() drops it", async () => {
+    const { clock, loop, events } = setup({
+      scripts: [{ final: "too late", finalDelayMs: 20_000 }, { final: "again" }],
+    });
+    pttTurn(loop, clock);
+    loop.pressStart();
+    await advanceStepwise(clock, 10_050, 50); // no final within the 10 s timeout
+    await settle();
+    expect(events.find((e) => e.type === "error" && e.turn === 1)).toBeTruthy();
+    expect(loop.state).toBe("listening");
+    expect(loop.currentTurn).toBe(2);
+
+    const second = setup({ scripts: [{ final: "first" }, { final: "never" }] });
+    pttTurn(second.loop, second.clock);
+    second.loop.pressStart();
+    await second.loop.stop();
+    await advance(second.clock, 300);
+    await settle();
+    expect(second.loop.pressQueued).toBe(false);
+    expect(second.loop.state).toBe("idle");
+    expect(second.loop.currentTurn).toBe(1);
+  });
 });

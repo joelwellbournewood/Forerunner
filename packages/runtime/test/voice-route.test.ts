@@ -906,7 +906,7 @@ describe("voice routes on the composed daemon", () => {
     expect(view.replyMode).toBe("text");
     // The recent turns, oldest first: a shell that missed a turn (a barge-in while it polled,
     // no event stream) completes it from here, not only from lastTurn.
-    expect(view.recentTurns.map((t) => [t.turn, t.replyMode])).toEqual([
+    expect(view.recentTurns?.map((t) => [t.turn, t.replyMode])).toEqual([
       [typed.turn, "text"],
       [released.turn, "voice"],
       [again.turn, "text"],
@@ -959,6 +959,60 @@ describe("voice routes on the composed daemon", () => {
     expect(yes.heard).toBe(yes.outcome?.sentence);
     // Neither the read-back nor the registry's sentence went to the TTS.
     expect(tts.calls).toHaveLength(ttsBefore);
+    expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
+  });
+
+  it("a press while the last turn is transcribing counts: it waits for the final, then the new turn listens", async () => {
+    const started = VoiceSessionView.parse(
+      await json(await post("/voice/sessions", { projectId, language: "en" })),
+    );
+    const id = started.id;
+    const speak = async () => {
+      for (const frame of speechFrames(200)) {
+        clock.tickMonotonic(FRAME_MS);
+        const sent = await post(`/voice/sessions/${id}/audio`, {
+          pcm: encodePcm(frame),
+          sampleRate: frame.sampleRate,
+          channels: frame.channels,
+          timestampMs: frame.timestampMs,
+        });
+        // The audio posts answer a lean acknowledgement, not the whole session view.
+        const ack = (await json(sent)) as Json;
+        expect(Object.keys(ack).sort()).toEqual(["id", "lastSeq", "state", "turn"]);
+      }
+    };
+    scripts[stt.sessions.length] = { final: "first part" };
+    await post(`/voice/sessions/${id}/press`, { pressed: true });
+    await speak();
+    const released = VoiceSessionView.parse(
+      await json(await post(`/voice/sessions/${id}/press`, { pressed: false })),
+    );
+    expect(released.state).toBe("transcribing");
+    // The press view leaves out the recent turns: only GET /voice/sessions/:id carries them.
+    expect(released.recentTurns).toBeUndefined();
+    scripts[stt.sessions.length] = { final: "What is the status?" }; // the next capture's
+    const pressed = VoiceSessionView.parse(
+      await json(await drive(clock, post(`/voice/sessions/${id}/press`, { pressed: true }))),
+    );
+    expect(pressed).toMatchObject({ state: "listening", turn: released.turn + 1 });
+    const cut = (await events(id)).find((e) => e.type === "turn_end" && e.turn === released.turn);
+    expect(cut?.data).toMatchObject({ latency: { interrupted: true } });
+    await speak();
+    await post(`/voice/sessions/${id}/press`, { pressed: false });
+    const done = await drive(
+      clock,
+      (async () => {
+        for (;;) {
+          const v = VoiceSessionView.parse(await json(await req(`/voice/sessions/${id}`)));
+          if (v.turns >= 2 && v.state === "idle") return v;
+          await settle(4);
+        }
+      })(),
+    );
+    expect(done.recentTurns?.map((t) => [t.turn, t.said, t.interrupted, t.heard])).toEqual([
+      [released.turn, "first part", true, ""],
+      [pressed.turn, "What is the status?", false, STATUS_REPLY],
+    ]);
     expect((await post(`/voice/sessions/${id}/stop`, {})).status).toBe(200);
   });
 

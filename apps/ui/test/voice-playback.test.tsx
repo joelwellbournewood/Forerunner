@@ -555,6 +555,7 @@ function directPlayer() {
   const audio = fakeAudio();
   const page = { now: 0 };
   const heard: Array<[number, number]> = [];
+  const ends: number[] = [];
   const timers: Array<{ at: number; fn: () => void; done: boolean }> = [];
   const client = {
     url: () => "http://daemon.test/voice/sessions/s1/events",
@@ -568,6 +569,7 @@ function directPlayer() {
       output: audio.make(),
       now: () => page.now,
       onHeard: (turn, ms) => heard.push([turn, ms]),
+      onSpeakingEnd: (turn) => ends.push(turn),
       setTimer: (fn, ms) => {
         const t = { at: page.now + ms, fn, done: false };
         timers.push(t);
@@ -596,7 +598,7 @@ function directPlayer() {
       .slice(1)
       .map((s, i) => s.at - ((audio.scheduled[i]?.at ?? 0) + chunkS))
       .filter((g) => g > 1e-9);
-  return { player, audio, heard, at, fire, gaps };
+  return { player, audio, heard, ends, at, fire, gaps };
 }
 
 describe("voice reply player: the jitter buffer", () => {
@@ -1041,7 +1043,7 @@ describe("conversation panel: reply in text", () => {
 describe("conversation panel: review follow-ups", () => {
   const agentLines = () => screen.queryAllByTestId("conversation-agent");
 
-  it("announces finished sentences and the turn's end to screen readers, not every delta", async () => {
+  it("announces the final words, a text reply's finished sentences, errors and turn ends; a spoken reply's sentences are heard, not announced", async () => {
     const h = setup();
     const { stream } = await startTalking(h);
     const lines = screen.getByTestId("conversation-lines");
@@ -1051,7 +1053,7 @@ describe("conversation panel: review follow-ups", () => {
     expect(log.getAttribute("role")).toBe("log");
     expect(log.getAttribute("aria-live")).toBe("polite");
     act(() => {
-      stream.fire("voice.event", frame("turn_start", 1));
+      stream.fire("voice.event", frame("turn_start", 1, { replyMode: "voice" }));
       stream.fire("voice.event", frame("transcript_final", 1, { text: "what is next" }));
       stream.fire("voice.event", frame("model_delta", 1, { text: "All good. Two" }));
     });
@@ -1060,8 +1062,8 @@ describe("conversation panel: review follow-ups", () => {
     act(() => {
       stream.fire("voice.event", frame("sentence", 1, { index: 0, text: "All good." }));
     });
-    expect(log.textContent).toContain("All good.");
-    expect(log.textContent).not.toContain("Two");
+    // The TTS speaks it: announcing it too would talk over the reply.
+    expect(log.textContent).not.toContain("All good.");
     act(() => {
       stream.fire("voice.event", frame("barge_in", 1, { spokenText: "All good." }));
       stream.fire(
@@ -1075,15 +1077,84 @@ describe("conversation panel: review follow-ups", () => {
       );
     });
     expect(log.textContent).toMatch(/interrupted/i);
+    // A text reply is only read: its finished sentences are announced, not the deltas.
+    act(() => {
+      stream.fire("voice.event", frame("turn_start", 2, { replyMode: "text" }));
+      stream.fire("voice.event", frame("model_delta", 2, { text: "Written. Then" }));
+      stream.fire("voice.event", frame("sentence", 2, { index: 0, text: "Written." }));
+    });
+    expect(log.textContent).toContain("Written.");
+    expect(log.textContent).not.toContain("Then");
+    // An error is announced in either mode.
+    act(() => {
+      stream.fire(
+        "voice.event",
+        frame("error", 2, { code: "provider_error", message: "model down" }),
+      );
+    });
+    expect(log.textContent).toMatch(/model down/);
     // Each announcement is said once: a replayed frame adds nothing.
     const before = log.textContent;
     act(() => {
       stream.fire("voice.event", {
-        ...frame("sentence", 1, { index: 0, text: "All good." }),
+        ...frame("sentence", 2, { index: 0, text: "Written." }),
         seq: 1,
       });
     });
     expect(log.textContent).toBe(before);
+  });
+
+  it("a press the daemon did not take is rolled back: the reply keeps playing and the panel waits again", async () => {
+    const h = setup();
+    const { user, stream } = await startTalking(h);
+    h.harness.daemon.state.voiceHold = true;
+    await user.click(screen.getByTestId("voice-send"));
+    await waitFor(() => expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Thinking/));
+    act(() => {
+      stream.fire("voice.event", frame("turn_start", 1, { replyMode: "voice" }));
+      stream.fire("voice.event", audioMs(1, JITTER_START_MS));
+    });
+    expect(h.audio.scheduled).toHaveLength(1);
+    h.harness.daemon.state.voiceRefusePress = true;
+    await user.click(screen.getByTestId("voice-talk"));
+    // Not listening: the press was refused, so the panel goes back to waiting for turn 1.
+    await waitFor(() => expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Thinking/));
+    // The rest of turn 1's reply is not silenced.
+    act(() => {
+      stream.fire("voice.event", audioMs(1, JITTER_START_MS));
+    });
+    expect(h.audio.scheduled).toHaveLength(2);
+    expect(h.audio.scheduled[1]?.stopped).toBe(false);
+    // And the wait for turn 1 resumes: once it ends, the panel is idle again.
+    h.harness.daemon.state.voiceRefusePress = false;
+    h.harness.daemon.state.voiceHold = false;
+    const v = [...h.harness.daemon.state.voiceSessions.values()][0];
+    if (!v) throw new Error("no session");
+    v.view = { ...v.view, state: "idle", turns: 1, lastTurn: null };
+    await waitFor(() => expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Press/), {
+      timeout: 3000,
+    });
+  });
+
+  it("a press on a session the daemon no longer has starts a new one, once", async () => {
+    const h = setup();
+    const { user, stream } = await startTalking(h);
+    await user.click(screen.getByTestId("voice-send"));
+    await waitFor(() => expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Press/));
+    // The daemon restarted: the session is gone.
+    h.harness.daemon.state.voiceSessions.clear();
+    await user.click(screen.getByTestId("voice-talk"));
+    await waitFor(() =>
+      expect(screen.getByTestId("voice-phase").textContent).toMatch(/^Listening/),
+    );
+    expect(h.harness.daemon.state.voiceSessions.size).toBe(1);
+    const fresh = [...h.harness.daemon.state.voiceSessions.keys()][0] ?? "";
+    // The old session's player is closed; the new session has its own stream.
+    expect(stream.closed).toBe(true);
+    expect(h.sources.instances.some((s) => s.url.includes(`/voice/sessions/${fresh}/events`))).toBe(
+      true,
+    );
+    expect(screen.queryByTestId("voice-reason")).toBeNull();
   });
 
   it("keeps the sentence marked until the window has played it, past the daemon's turn end", async () => {
@@ -1221,5 +1292,34 @@ describe("voice reply player: a press silences every turn up to the newest one s
     expect(p.audio.scheduled).toHaveLength(0);
     p.fire(audioMs(5, JITTER_MAX_MS));
     expect(p.audio.scheduled).toHaveLength(1);
+  });
+});
+
+describe("voice reply player: the end of what is heard", () => {
+  it("a queue that runs dry inside a turn is not its end: onSpeakingEnd waits for the turn's end", () => {
+    const p = directPlayer();
+    p.at(0);
+    p.fire(audioMs(1, JITTER_START_MS, 0));
+    expect(p.audio.scheduled).toHaveLength(1);
+    // The chunk played out before the next one came (an underrun): the turn is not over.
+    p.audio.scheduled[0]?.end();
+    expect(p.ends).toEqual([]);
+    p.at(1000);
+    p.fire(audioMs(1, JITTER_START_MS, 0));
+    p.fire(frame("speaking_end", 1));
+    expect(p.audio.scheduled).toHaveLength(2);
+    expect(p.ends).toEqual([]);
+    p.audio.scheduled[1]?.end();
+    expect(p.ends).toEqual([1]);
+  });
+
+  it("when the turn's end comes after its audio played out, that is the end", () => {
+    const p = directPlayer();
+    p.at(0);
+    p.fire(audioMs(1, JITTER_START_MS, 0));
+    p.audio.scheduled[0]?.end();
+    expect(p.ends).toEqual([]);
+    p.fire(frame("turn_end", 1, { latency: { interrupted: false } }));
+    expect(p.ends).toEqual([1]);
   });
 });

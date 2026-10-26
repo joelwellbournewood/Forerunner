@@ -333,11 +333,18 @@ posted chunk by chunk to `…/audio`, one post after the other (the daemon appen
 arrival order); the next request (or Send) stops the capture, waits until every chunk of the
 turn was posted (the daemon's loop drops audio that arrives after the release), posts
 `{ pressed: false }` and polls `GET /voice/sessions/:id` (500 ms, at most 60 s) until the turn
-count grows; every ended turn in the answer's `recentTurns` not applied yet then completes its
+count grows (a press answer has no `recentTurns`, so a last `GET` fetches them when needed);
+every ended turn in the answer's `recentTurns` not applied yet then completes its
 lines (not only `lastTurn`: without the event stream, a turn cut short by a barge-in while the
 panel waited for it would otherwise be lost), and a turn with nothing heard, no reply and no
 error adds no "Agent:" line. A press while a session is live posts the press first, with no
-status read before it, so a barge-in reaches the daemon at once.
+status read before it, so a barge-in reaches the daemon at once. A press counts only when the
+daemon's answer names a newer turn that is `listening` (the daemon queues a press that comes
+while the last turn transcribes and answers once the new turn listens, `voice.md`); otherwise
+the panel undoes the player's silencing (`interrupt()` returns the undo) and, if it was waiting
+for a reply, goes back to waiting for it. A press that gets 404, or 409 "has ended" (the daemon
+restarted, the session was stopped elsewhere), forgets the session, closes its player and tries
+once more through the status read and a new session.
 The text itself shows as it comes, from the session's event stream (below; the player hands
 every frame but `audio` to the panel's `onFrame` after its seq check, so a reconnect's replay
 shows nothing twice): the human's line from `transcript_partial` (italic, `data-partial`, as
@@ -349,13 +356,16 @@ sentences are trimmed substrings of the deltas). The sentence being heard is mar
 (`data-speaking`, a highlight, `aria-current`; not a live region): the player's
 `onSpeaking(turn, sentenceIndex)` fires by a timer when a sentence's first chunk is due at the
 speaker (its scheduled start), not when the frame arrived, and silencing cancels what is not due
-yet. The mark is cleared by the player's `onSpeakingEnd(turn)`, when the last node scheduled for
-the turn has ended, not at the daemon's `turn_end` (the window plays on after it); a reply cut
-short clears it at once. The visible lines are not a live region (they change with every
+yet. The mark is cleared by the player's `onSpeakingEnd(turn)`: once the daemon said the turn's
+audio is complete (`speaking_end` or `turn_end`) and the last node scheduled for it has ended,
+not at the daemon's `turn_end` (the window plays on after it) and not when the queue runs dry in
+the middle of the turn (an underrun); a reply cut short clears it at once. The visible lines are not a live region (they change with every
 delta); a visually hidden `role="log" aria-live="polite"` (`conversation-announcer`, the last 20)
-announces the human's final words, each finished `sentence`, the end of each reply ("End of
-reply.", "Reply interrupted; the rest was not spoken.", "Reply stopped.") and a typed chat's
-reply once it is complete. A reply cut short (its `turn_end` carries
+announces the human's final words, each finished `sentence` of a reply in text (a spoken
+reply's sentences are heard; announcing them would talk over the TTS; the turn's mode comes from
+its `turn_start`), every `error` in either mode, the end of each reply ("End of reply.", "Reply
+interrupted; the rest was not spoken.", "Reply stopped.") and a typed chat's reply once it is
+complete. A reply cut short (its `turn_end` carries
 `unspokenText`) shows what was heard, then the unspoken rest struck through and labelled
 "(not spoken)" (`conversation-unspoken`); one stopped with nothing unspoken (a text reply)
 says "(stopped)". The lines of a voice turn are keyed by session and turn

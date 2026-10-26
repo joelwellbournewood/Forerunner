@@ -1612,7 +1612,7 @@ export function createDaemonApp(
   });
 
   app.get("/voice/sessions/:id", (c) =>
-    c.json(voiceSessionView(rt.voice.mustGet(c.req.param("id")), chf())),
+    c.json(voiceSessionView(rt.voice.mustGet(c.req.param("id")), chf(), { recent: true })),
   );
 
   app.post("/voice/sessions/:id/stop", async (c) => {
@@ -1623,7 +1623,10 @@ export function createDaemonApp(
   app.post("/voice/sessions/:id/press", async (c) => {
     const session = rt.voice.mustGet(c.req.param("id"));
     const body = await parse(c, VoicePressBody);
-    session.bridge.press(body.pressed, body.replyMode);
+    // A press always counts: one that came while the last turn transcribes is queued by the
+    // loop and answered once the new turn listens (or the session stopped).
+    if (body.pressed) await session.bridge.pressAndWait(body.replyMode);
+    else session.bridge.press(false, body.replyMode);
     return c.json(voiceSessionView(session, chf()));
   });
 
@@ -1650,7 +1653,8 @@ export function createDaemonApp(
       chunk = decodePcm(Buffer.from(body.pcm, "base64"), body);
     }
     session.bridge.push(chunk);
-    return c.json(voiceSessionView(session, chf()));
+    const b = session.bridge;
+    return c.json({ id: session.id, state: b.state, turn: b.currentTurn, lastSeq: b.lastSeq });
   });
 
   // The text fallback (shells without audio capture): one turn through the same loop, the

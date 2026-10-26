@@ -57,8 +57,10 @@ import { type AudioOutput, decodeFrame } from "../lib/speech.ts";
  * transcript or a reply delta twice. `onSpeaking(turn, sentenceIndex)` says when a sentence's
  * first chunk starts at the speaker (its scheduled start, by a timer on the page), so the panel
  * marks the sentence being heard rather than the one the daemon is synthesising; silencing
- * cancels what was not announced yet. `onSpeakingEnd(turn)` says the last chunk scheduled for
- * the turn has played out (its node ended), which can be well after the daemon's `turn_end`.
+ * cancels what was not announced yet. `onSpeakingEnd(turn)` says the turn's audio has played
+ * out: its last scheduled node ended after the daemon said the audio is complete
+ * (`speaking_end` or `turn_end`), which can be well after that frame; a queue that runs dry in
+ * the middle of a turn (an underrun) is not its end.
  *
  * A press silences more than the turn being played: `interrupt()` drops every turn up to the
  * newest one any frame has named (a turn barged in on while still thinking has no audio yet,
@@ -75,9 +77,11 @@ export interface VoiceReplyPlayer {
   /**
    * Silence what plays and drop what is buffered now, keeping the output and the stream: the
    * human pressed Talk. The daemon's turn may be over while this window still plays its tail
-   * (its buffer and lead), and a press then reaches no reply to barge in on.
+   * (its buffer and lead), and a press then reaches no reply to barge in on. Returns an undo for
+   * a press the daemon did not take: the turns stop being silenced (what was stopped stays
+   * stopped; later frames of those turns play again).
    */
-  interrupt(): void;
+  interrupt(): () => void;
   /** Drop every turn before `turn` (the turn a press just started): none of it plays. */
   silenceBefore(turn: number): void;
   /** Silence what is queued and stop following the session; closes the audio output. */
@@ -227,6 +231,18 @@ export function followVoiceReply(
   let silencedUpTo = 0;
   /** The newest turn any frame named. */
   let maxTurnSeen = 0;
+  /** Turns whose audio the daemon said is complete (`speaking_end`, `turn_end`). */
+  const audioComplete = new Set<number>();
+  /** Turns whose `onSpeakingEnd` was called. */
+  const speakingEnded = new Set<number>();
+  /** The turn's audio has played out, and the daemon said there is no more: say so once. */
+  const maybeSpeakingEnd = (turn: number | null) => {
+    if (turn === null || closed || turn !== playingTurn) return;
+    if (!audioComplete.has(turn) || speakingEnded.has(turn)) return;
+    if (queued.size > 0 || pending.length > 0 || !started) return;
+    speakingEnded.add(turn);
+    options.onSpeakingEnd?.(turn);
+  };
   /** The highest turn that played audio; a release measures the first turn after it. */
   let lastAudioTurn = 0;
   let release: { atMs: number; afterTurn: number } | null = null;
@@ -305,15 +321,8 @@ export function followVoiceReply(
       node.connect(audio.destination);
       node.onended = () => {
         queued.delete(node);
-        // The turn's last scheduled chunk has played: nothing of it is heard any more.
-        if (
-          queued.size === 0 &&
-          pending.length === 0 &&
-          turn !== null &&
-          turn === playingTurn &&
-          !closed
-        )
-          options.onSpeakingEnd?.(turn);
+        // The last scheduled chunk played: the end, if the daemon said the audio is complete.
+        maybeSpeakingEnd(turn);
       };
       node.start(at);
       queued.add(node);
@@ -425,12 +434,16 @@ export function followVoiceReply(
         break;
       case "speaking_end":
         // The turn's audio is complete: what is buffered starts, short of the target or not.
+        if (turn !== null) audioComplete.add(turn);
         if (forPlaying && buffering) flush();
+        maybeSpeakingEnd(turn);
         break;
       case "turn_end": {
         const latency = (parsed.data as { latency?: { interrupted?: boolean } } | null)?.latency;
+        if (turn !== null) audioComplete.add(turn);
         if (latency?.interrupted && forPlaying) silence();
         else if (forPlaying && buffering) flush();
+        maybeSpeakingEnd(turn);
         // The released turn ended without audio: the next turn is not measured from it.
         if (release && turn !== null && turn > release.afterTurn && !measured.has(turn))
           release = null;
@@ -455,9 +468,15 @@ export function followVoiceReply(
       void audio?.resume?.().catch(() => undefined);
     },
     interrupt() {
-      if (closed) return;
+      if (closed) return () => undefined;
+      const prevUpTo = silencedUpTo;
+      const added = playingTurn !== null && !silenced.has(playingTurn) ? playingTurn : null;
       silence();
       silencedUpTo = Math.max(silencedUpTo, maxTurnSeen);
+      return () => {
+        silencedUpTo = prevUpTo;
+        if (added !== null) silenced.delete(added);
+      };
     },
     silenceBefore(turn: number) {
       if (closed) return;

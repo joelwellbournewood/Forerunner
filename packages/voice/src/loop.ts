@@ -184,6 +184,13 @@ export class VoiceLoop {
   private readonly store: AudioStore | null;
   private stopped = false;
   private replyModeValue: ReplyMode;
+  /**
+   * A push-to-talk press that came while the last turn was transcribing: an STT provider serves
+   * one session at a time (the local helper drops the one in flight when a new one starts), so
+   * the press waits for that turn's final, ends that turn without a reply (a barge-in) and then
+   * opens its capture. A press always counts.
+   */
+  private queuedPressValue = false;
 
   constructor(private readonly opts: VoiceLoopOptions) {
     this.clock = opts.clock;
@@ -206,6 +213,11 @@ export class VoiceLoop {
 
   get currentTurn(): number {
     return this.turn;
+  }
+
+  /** A press is waiting for the transcribing turn's final to open its capture. */
+  get pressQueued(): boolean {
+    return this.queuedPressValue;
   }
 
   get replyMode(): ReplyMode {
@@ -237,6 +249,7 @@ export class VoiceLoop {
    */
   async stop(): Promise<void> {
     this.stopped = true;
+    this.queuedPressValue = false;
     this.abortResponse("stop");
     const caps = [this.capture, this.transcribing].filter((c): c is Capture => c !== null);
     this.capture = null;
@@ -256,11 +269,21 @@ export class VoiceLoop {
       this.beginCapture([]);
       return;
     }
-    if (this.stateValue === "idle") this.beginCapture([]);
+    if (this.stateValue === "idle") {
+      this.beginCapture([]);
+      return;
+    }
+    // The last turn is still waiting for its final: the press is queued, not dropped.
+    if (this.stateValue === "transcribing" && this.transcribing) this.queuedPressValue = true;
   }
 
   /** Push-to-talk released: the turn ends now. */
   pressEnd(): void {
+    // Released before the queued press could open its capture: nothing was captured for it.
+    if (this.queuedPressValue && this.stateValue === "transcribing") {
+      this.queuedPressValue = false;
+      return;
+    }
     const cap = this.capture;
     if (!cap || this.stateValue !== "listening") return;
     this.endTurn(Math.max(0, this.clock.monotonic() - cap.lastAudioAt));
@@ -429,6 +452,13 @@ export class VoiceLoop {
       })
       .finally(() => {
         if (this.transcribing === cap) this.transcribing = null;
+        // A press queued while this turn transcribed opens its capture now, whatever became of
+        // the turn (its reply cut short, an empty transcript, a failure).
+        if (this.queuedPressValue && !this.stopped && this.turn === cap.turn) {
+          this.queuedPressValue = false;
+          if (this.stateValue === "transcribing") this.setState("idle");
+          this.beginCapture([]);
+        }
       });
     this.inFlight = run;
   }
@@ -523,6 +553,14 @@ export class VoiceLoop {
 
     if (stopSignal.aborted) {
       await userWrite;
+      this.endStopped(cap, endOfTurnMs, finalTranscriptMs);
+      return;
+    }
+    if (this.queuedPressValue) {
+      // The human pressed again before the final landed: a barge-in on a reply not started
+      // yet. The words are kept; no model is called; the queued capture opens after this.
+      await userWrite;
+      this.emit({ type: "barge_in", turn: cap.turn, spokenText: "" });
       this.endStopped(cap, endOfTurnMs, finalTranscriptMs);
       return;
     }

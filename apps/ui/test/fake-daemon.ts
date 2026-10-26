@@ -310,6 +310,11 @@ export interface FakeDaemonState {
    * is still being generated or spoken, and a press is the barge-in. Tests stream its frames.
    */
   voiceHold: boolean;
+  /**
+   * When true, a press is not taken (the daemon answers the session as it was: the same turn,
+   * not listening), the case the panel must roll back from.
+   */
+  voiceRefusePress: boolean;
 }
 
 const DESKTOP_OFF: DesktopControlView = {
@@ -412,6 +417,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     voiceInstallEntries: [],
     voiceInstallStreamsAfter: [],
     voiceHold: false,
+    voiceRefusePress: false,
   };
 
   const emit = (event: string, data: unknown) => {
@@ -1303,12 +1309,20 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
     if (parsed.data.replyMode && !parsed.data.pressed)
       return errorBody(c, 409, "validation", "replyMode goes with a press");
+    // As the daemon: only GET /voice/sessions/:id carries the recent turns.
+    const lean = () => {
+      const { recentTurns: _recent, ...rest } = v.view;
+      return rest;
+    };
+    if (v.view.endedAt)
+      return errorBody(c, 409, "validation", `voice session ${v.view.id} has ended`);
+    if (parsed.data.pressed && state.voiceRefusePress) return c.json(lean());
     const end = (turn: VoiceTurnView) => {
       v.view = {
         ...v.view,
         turns: v.view.turns + 1,
         lastTurn: turn,
-        recentTurns: [...v.view.recentTurns, turn].slice(-8),
+        recentTurns: [...(v.view.recentTurns ?? []), turn].slice(-8),
         lastSeq: v.view.lastSeq + 1,
       };
     };
@@ -1344,12 +1358,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const turn = v.view.turn;
       if (state.voiceHold) {
         v.view = { ...v.view, state: "thinking" };
-        return c.json(v.view);
+        return c.json(lean());
       }
       end(voiceTurn(turn, said(), v.view.projectId ?? undefined, v.chunks, v.view.replyMode));
       v.view = { ...v.view, state: "idle" };
     }
-    return c.json(v.view);
+    return c.json(lean());
   });
   app.post("/voice/sessions/:id/audio", async (c) => {
     const v = mustVoice(c);
@@ -1357,7 +1371,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const parsed = VoiceAudioBody.safeParse(await c.req.json());
     if (!parsed.success) return errorBody(c, 400, "validation", parsed.error.message);
     if (v.pressed) v.chunks += 1;
-    return c.json(v.view);
+    // A lean acknowledgement, as the daemon answers a chunk.
+    return c.json({
+      id: v.view.id,
+      state: v.view.state,
+      turn: v.view.turn,
+      lastSeq: v.view.lastSeq,
+    });
   });
   // What the player heard (once per turn, as the daemon takes it; `state.calls` has the posts).
   app.post("/voice/sessions/:id/heard", async (c) => {

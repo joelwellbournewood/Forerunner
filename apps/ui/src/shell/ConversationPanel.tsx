@@ -1,6 +1,11 @@
 import { type FormEvent, Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { streamChat } from "../api/chat-stream.ts";
-import { describeError, type VoiceSessionView, type VoiceTurnView } from "../api/client.ts";
+import {
+  ApiError,
+  describeError,
+  type VoiceSessionView,
+  type VoiceTurnView,
+} from "../api/client.ts";
 import { Dialog } from "../components/Dialog.tsx";
 import { Badge, Button, INPUT_CLASS } from "../components/ui.tsx";
 import type { AudioOutput } from "../lib/speech.ts";
@@ -132,6 +137,12 @@ export function ConversationPanel({
   }, []);
   // The voice turns whose record has been applied (`<session>:<turn>`).
   const appliedRef = useRef(new Set<string>());
+  // The newest turn the daemon named (a press, a poll, a frame): a press is taken when the
+  // daemon answers with a newer turn that listens.
+  const lastTurnRef = useRef(0);
+  // How each turn replies, from its `turn_start` (`<session>:<turn>`): a spoken reply's
+  // sentences are heard, so only a text reply's are announced.
+  const turnModesRef = useRef(new Map<string, VoiceReplyMode>());
   const uiStore = useUiStore();
   const replyMode = useUiState((s) => s.voiceReply);
   const replyRef = useRef<VoiceReplyMode>(replyMode);
@@ -237,7 +248,16 @@ export function ConversationPanel({
       const turn = f.turn;
       if (turn === null) return;
       const data = (f.data ?? {}) as Record<string, unknown>;
+      const modeKey = `${sessionId}:${turn}`;
       switch (f.type) {
+        case "turn_start":
+          lastTurnRef.current = Math.max(lastTurnRef.current, turn);
+          if (data.replyMode === "text" || data.replyMode === "voice")
+            turnModesRef.current.set(modeKey, data.replyMode);
+          return;
+        case "error":
+          announce(`Error: ${str(data.message) || str(data.code) || "the turn failed"}`);
+          return;
         case "transcript_partial":
           upsertTurnLine(sessionId, turn, "human", (l) => {
             // A final line is never taken back to a partial.
@@ -274,7 +294,8 @@ export function ConversationPanel({
           const index = typeof data.index === "number" ? data.index : -1;
           const text = str(data.text);
           if (index < 0) return;
-          announce(text);
+          // A spoken reply is heard sentence by sentence: announcing it would talk over it.
+          if ((turnModesRef.current.get(modeKey) ?? replyRef.current) === "text") announce(text);
           upsertTurnLine(sessionId, turn, "agent", (l) => {
             const base: Line = l ?? {
               id: nextId(),
@@ -348,10 +369,54 @@ export function ConversationPanel({
     [upsertTurnLine],
   );
 
+  /**
+   * Wait for the released turn to end (polling the session), then complete the lines of every
+   * ended turn not applied yet. Stops quietly when a press (a barge-in) started the next turn.
+   */
+  const waitForTurn = useCallback(
+    async (session: VoiceSessionView, first: VoiceSessionView | null) => {
+      setPhaseBoth("waiting");
+      const wait = waitRef.current;
+      // A press while the reply is generated or spoken (the barge-in) started the next turn.
+      const superseded = () => waitRef.current !== wait || phaseRef.current !== "waiting";
+      try {
+        let view = first ?? (await client.voiceSession(session.id));
+        for (let i = 0; i < TURN_POLLS; i++) {
+          if (superseded()) return;
+          lastTurnRef.current = Math.max(lastTurnRef.current, view.turn);
+          if (view.turns > turnsRef.current && view.state === "idle") break;
+          await sleep(TURN_POLL_MS);
+          if (superseded()) return;
+          view = await client.voiceSession(session.id);
+        }
+        // Only GET /voice/sessions/:id carries the recent turns (the press answers do not).
+        if (view.recentTurns === undefined) view = await client.voiceSession(session.id);
+        if (superseded()) return;
+        sessionRef.current = view;
+        turnsRef.current = view.turns;
+        // Every ended turn not applied yet, not only the last: a turn cut short by a barge-in
+        // while this panel waited for it is in there too. The stream usually showed them
+        // already; the record completes them (never twice).
+        const recent = view.recentTurns ?? (view.lastTurn ? [view.lastTurn] : []);
+        for (const t of recent) {
+          if (!appliedRef.current.has(`${session.id}:${t.turn}`)) applyRecord(session.id, t);
+        }
+        setPhaseBoth("idle");
+      } catch (error) {
+        if (superseded()) return;
+        setReason(describeError(error));
+        setPhaseBoth("idle");
+      }
+    },
+    [applyRecord, client, setPhaseBoth],
+  );
+
   const startTurn = useCallback(async () => {
     waitRef.current += 1;
     const epoch = epochRef.current;
     const closed = () => epochRef.current !== epoch;
+    // A press while the reply runs (a barge-in) that the daemon does not take goes back to it.
+    const wasWaiting = phaseRef.current === "waiting";
     // Before any await: a webview lets an AudioContext start only from the gesture's own task.
     // The session's player keeps its output; a new session gets the one made here.
     const keeps =
@@ -360,7 +425,7 @@ export function ConversationPanel({
       !sessionRef.current.endedAt &&
       playerRef.current.sessionId === sessionRef.current.id;
     // A press stops the reply this window still plays (the daemon's turn may already be over).
-    playerRef.current?.interrupt();
+    const undoInterrupt = playerRef.current?.interrupt() ?? (() => undefined);
     if (keeps) playerRef.current?.resume();
     else if (!outputRef.current) outputRef.current = createVoiceOutput(realtime?.audio);
     setPhaseBoth("starting");
@@ -370,16 +435,17 @@ export function ConversationPanel({
       unavailable("voice is unavailable: this window cannot capture audio. Type instead.");
       return;
     }
-    try {
+    /** The session and its player: the live one, or a new one after a status read. */
+    const ensureSession = async (): Promise<VoiceSessionView | null> => {
       let session = sessionRef.current;
       // A live session needs no status read: the press goes out first, so a barge-in reaches
       // the daemon without waiting for it.
       if (!session || session.endedAt) {
         const status = await client.voiceStatus();
-        if (closed()) return;
+        if (closed()) return null;
         if (!status.available) {
           unavailable(`voice is unavailable: ${status.reason}. Type instead.`);
-          return;
+          return null;
         }
         session = await client.startVoiceSession({
           mode: "push_to_talk",
@@ -389,9 +455,10 @@ export function ConversationPanel({
         if (closed()) {
           // The panel closed while the session started: nobody will use it.
           void client.stopVoiceSession(session.id).catch(() => {});
-          return;
+          return null;
         }
         sessionRef.current = session;
+        lastTurnRef.current = session.turn;
       }
       if (playerRef.current?.sessionId !== session.id) {
         playerRef.current?.close();
@@ -409,14 +476,51 @@ export function ConversationPanel({
         // No EventSource: no player to own the output.
         if (!playerRef.current) void output?.close().catch(() => undefined);
       }
+      return session;
+    };
+    try {
+      let session = await ensureSession();
+      if (!session) return;
       turnsRef.current = session.turns;
-      const id = session.id;
+      let before = lastTurnRef.current;
       // Every press says how its turn replies.
-      const pressedView = await client.voicePress(id, true, replyRef.current);
-      // The press started this turn: nothing of an earlier one plays any more.
-      if (typeof pressedView?.turn === "number") playerRef.current?.silenceBefore(pressedView.turn);
-      // Closing stopped the session (it was in sessionRef by then); nothing else to undo.
+      let pressedView: VoiceSessionView;
+      try {
+        pressedView = await client.voicePress(session.id, true, replyRef.current);
+      } catch (error) {
+        // The daemon no longer has the session (it restarted, or the session was stopped
+        // elsewhere): forget it and start a new one, once.
+        const gone =
+          error instanceof ApiError &&
+          (error.status === 404 || (error.status === 409 && /ended/.test(error.message)));
+        if (!gone || closed()) throw error;
+        sessionRef.current = null;
+        playerRef.current?.close();
+        playerRef.current = null;
+        session = await ensureSession();
+        if (!session) return;
+        turnsRef.current = session.turns;
+        before = lastTurnRef.current;
+        pressedView = await client.voicePress(session.id, true, replyRef.current);
+      }
       if (closed()) return;
+      const id = session.id;
+      // A press counts only when the daemon opened a new turn for it (it queues a press that
+      // comes while the last turn transcribes, and answers once the new turn listens).
+      const taken = pressedView.state === "listening" && pressedView.turn > before;
+      if (!taken) {
+        undoInterrupt();
+        if (wasWaiting) {
+          void waitForTurn(session, pressedView);
+        } else {
+          setReason("the daemon did not take the press; try again");
+          setPhaseBoth("idle");
+        }
+        return;
+      }
+      lastTurnRef.current = pressedView.turn;
+      // The press started this turn: nothing of an earlier one plays any more.
+      playerRef.current?.silenceBefore(pressedView.turn);
       audioRef.current = Promise.resolve();
       try {
         await capture.start((chunk) => {
@@ -455,6 +559,7 @@ export function ConversationPanel({
     realtime,
     setPhaseBoth,
     unavailable,
+    waitForTurn,
   ]);
 
   const finishTurn = useCallback(async () => {
@@ -469,36 +574,18 @@ export function ConversationPanel({
     }
     setPhaseBoth("waiting");
     const wait = waitRef.current;
-    // A press while the reply is generated or spoken (the barge-in) started the next turn.
-    const superseded = () => waitRef.current !== wait || phaseRef.current !== "waiting";
     try {
       // Every chunk of the turn first: the daemon drops audio that arrives after the release.
       await audioRef.current;
-      let view = await client.voicePress(session.id, false);
-      for (let i = 0; i < TURN_POLLS; i++) {
-        if (superseded()) return;
-        if (view.turns > turnsRef.current && view.state === "idle") break;
-        await sleep(TURN_POLL_MS);
-        if (superseded()) return;
-        view = await client.voiceSession(session.id);
-      }
-      if (superseded()) return;
-      sessionRef.current = view;
-      turnsRef.current = view.turns;
-      // Every ended turn not applied yet, not only the last: a turn cut short by a barge-in
-      // while this panel waited for it is in there too. The stream usually showed them
-      // already; the record completes them (never twice).
-      const recent = view.recentTurns ?? (view.lastTurn ? [view.lastTurn] : []);
-      for (const t of recent) {
-        if (!appliedRef.current.has(`${session.id}:${t.turn}`)) applyRecord(session.id, t);
-      }
-      setPhaseBoth("idle");
+      const view = await client.voicePress(session.id, false);
+      if (waitRef.current !== wait || phaseRef.current !== "waiting") return;
+      await waitForTurn(session, view);
     } catch (error) {
-      if (superseded()) return;
+      if (waitRef.current !== wait || phaseRef.current !== "waiting") return;
       setReason(describeError(error));
       setPhaseBoth("idle");
     }
-  }, [applyRecord, client, setPhaseBoth]);
+  }, [client, setPhaseBoth, waitForTurn]);
 
   // Every new request toggles: start a turn, or end the one that is listening.
   const lastRequest = useRef(0);

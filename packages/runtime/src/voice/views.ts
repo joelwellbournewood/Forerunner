@@ -116,7 +116,12 @@ export function voiceTurnView(t: VoiceTurn, chf: number): VoiceTurnView {
   };
 }
 
-export function voiceSessionView(s: VoiceSession, chf: number): VoiceSessionView {
+/** `recent`: include the recent turns (only `GET /voice/sessions/:id` does). */
+export function voiceSessionView(
+  s: VoiceSession,
+  chf: number,
+  opts: { recent?: boolean } = {},
+): VoiceSessionView {
   const b = s.bridge;
   return {
     id: s.id,
@@ -133,7 +138,9 @@ export function voiceSessionView(s: VoiceSession, chf: number): VoiceSessionView
     endedAt: b.endedAt,
     turns: b.turns.length,
     lastTurn: b.lastTurn ? voiceTurnView(b.lastTurn, chf) : null,
-    recentTurns: b.turns.slice(-VOICE_RECENT_TURNS).map((t) => voiceTurnView(t, chf)),
+    ...(opts.recent
+      ? { recentTurns: b.turns.slice(-VOICE_RECENT_TURNS).map((t) => voiceTurnView(t, chf)) }
+      : {}),
     lastSeq: b.lastSeq,
   };
 }

@@ -1407,15 +1407,25 @@ export const VoiceSessionView = z.object({
   turns: z.number().int(),
   lastTurn: VoiceTurnView.nullable(),
   /**
-   * The last `VOICE_RECENT_TURNS` ended turns, oldest first (`lastTurn` is the last of them):
-   * a shell without the event stream that missed a turn (a barge-in while it waited for the
-   * previous one) completes its lines from here.
+   * The last `VOICE_RECENT_TURNS` ended turns, in the order they ended (`lastTurn` is the last
+   * of them): a shell without the event stream that missed a turn (a barge-in while it waited
+   * for the previous one) completes its lines from here. Only `GET /voice/sessions/:id`
+   * carries it; the press, start and stop answers leave it out.
    */
-  recentTurns: z.array(VoiceTurnView),
+  recentTurns: z.array(VoiceTurnView).optional(),
   /** The last event's seq, for `GET /voice/sessions/:id/events?afterSeq=`. */
   lastSeq: z.number().int(),
 });
 export type VoiceSessionView = z.infer<typeof VoiceSessionView>;
+
+/** What a captured chunk's post answers: the session's state, nothing more (many per second). */
+export const VoiceAudioAckView = z.object({
+  id: z.string(),
+  state: z.enum(VOICE_STATES),
+  turn: z.number().int(),
+  lastSeq: z.number().int(),
+});
+export type VoiceAudioAckView = z.infer<typeof VoiceAudioAckView>;
 
 export const VoiceAnswerView = z.object({
   pendingId: z.string(),
@@ -1880,12 +1890,13 @@ export const DAEMON_ROUTES = {
     "GET /voice/status (VoiceStatusView: available with the providers picked, or the reason voice is unavailable)",
   startVoiceSession:
     "POST /voice/sessions { projectId?, language?, mode?, replyMode?: voice|text } (201 VoiceSessionView; replyMode text streams every reply as text only, no TTS and no audio; 503 unavailable with the reason when no provider or no model credential is configured)",
-  voiceSession: "GET /voice/sessions/:id (VoiceSessionView)",
+  voiceSession:
+    "GET /voice/sessions/:id (VoiceSessionView with recentTurns, the last 8 ended turns)",
   stopVoiceSession: "POST /voice/sessions/:id/stop (VoiceSessionView; immediate in every state)",
   voicePress:
-    "POST /voice/sessions/:id/press { pressed, replyMode?: voice|text } (push-to-talk press or release; a press while the agent speaks or writes is the barge-in; replyMode applies from this turn's reply on; VoiceSessionView)",
+    "POST /voice/sessions/:id/press { pressed, replyMode?: voice|text } (push-to-talk press or release; a press while the agent speaks or writes is the barge-in; a press while the last turn is transcribing waits for its final, ends that turn without a reply and answers once the new turn listens; replyMode only with pressed: true, for the turn the press starts; VoiceSessionView without recentTurns)",
   voiceAudio:
-    "POST /voice/sessions/:id/audio { pcm (base64 int16 LE), sampleRate, channels, timestampMs } | application/octet-stream ?sampleRate=&channels=&timestampMs= (one captured chunk; VoiceSessionView)",
+    "POST /voice/sessions/:id/audio { pcm (base64 int16 LE), sampleRate, channels, timestampMs } | application/octet-stream ?sampleRate=&channels=&timestampMs= (one captured chunk; VoiceAudioAckView { id, state, turn, lastSeq })",
   voiceText:
     "POST /voice/sessions/:id/text { text, replyMode?: voice|text } (the text fallback: one turn through the same loop, approval rules and TTS (none when the reply mode is text); VoiceTurnView once the turn has ended, with the registry's outcome when the line answered a card)",
   voiceAnswer:

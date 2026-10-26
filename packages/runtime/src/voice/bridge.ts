@@ -240,6 +240,8 @@ export class VoiceBridge {
   private readonly live = new Map<number, TurnState>();
   private nextSource: VoiceTurnSource = "audio";
   private chain: Promise<void> = Promise.resolve();
+  /** `pressAndWait` callers waiting for a queued press to open its capture. */
+  private pressWaiters: Array<() => void> = [];
   private readonly logger = log("voice:bridge");
   private readonly clock: Clock;
 
@@ -357,6 +359,17 @@ export class VoiceBridge {
     }
   }
 
+  /**
+   * A press that resolves once it took effect: at once, or (when the last turn is still
+   * transcribing, and the loop queued the press) once that turn's final landed, the turn ended
+   * without a reply and the new capture opened; or when the session stopped meanwhile.
+   */
+  async pressAndWait(replyMode?: ReplyMode): Promise<void> {
+    this.press(true, replyMode);
+    if (!this.loop.pressQueued) return;
+    await new Promise<void>((resolve) => this.pressWaiters.push(resolve));
+  }
+
   /** Microphone audio (any rate and channel count; the loop converts for STT and the VAD). */
   push(chunk: AudioChunk): void {
     this.assertOpen();
@@ -434,6 +447,7 @@ export class VoiceBridge {
     if (this.endedAt !== null) return;
     this.endedAt = this.clock.nowIso();
     await this.loop.stop();
+    this.releasePressWaiters();
     await this.chain;
     await this.audit(VOICE_SESSION_AUDIT_TOOL, true, {
       action: "stop",
@@ -598,7 +612,21 @@ export class VoiceBridge {
     return st;
   }
 
+  private releasePressWaiters(): void {
+    const waiters = this.pressWaiters;
+    this.pressWaiters = [];
+    for (const w of waiters) w();
+  }
+
   private onLoopEvent(e: VoiceLoopEvent): void {
+    try {
+      this.handleLoopEvent(e);
+    } finally {
+      if (this.pressWaiters.length > 0 && !this.loop.pressQueued) this.releasePressWaiters();
+    }
+  }
+
+  private handleLoopEvent(e: VoiceLoopEvent): void {
     switch (e.type) {
       case "turn_start": {
         const st = this.turnState(e.turn);
